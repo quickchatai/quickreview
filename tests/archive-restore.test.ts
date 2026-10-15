@@ -15,7 +15,15 @@
 // live mount short of its headroom writes nothing; a crash mid-file is swept
 // at the next start; a file that appears at the target is never replaced;
 // and the tick's restores obey every load hold but the drain.
-import { existsSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join, sep } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
@@ -673,14 +681,17 @@ describe("a restore cut short, then a re-close: nothing is compressed twice (reh
       const a = onArchiver(f);
       await a.beforeBirth(f.pr);
       a.stop();
-      // A copy of the tree: same bytes, same mtime, a new inode.
+      // A copy of the tree: same bytes, same mtime, a new inode. The copy is
+      // made while the original still holds its inode, then renamed over it,
+      // so the filesystem cannot hand the old inode number back.
       const t = f.transcripts[1]!;
       const p = join(f.root, t);
       const bytes = readFileSync(p);
       const { ino, mtime } = statSync(p);
-      rmSync(p);
-      writeFileSync(p, bytes);
-      utimesSync(p, mtime, mtime);
+      const copy = `${p}.copy`;
+      writeFileSync(copy, bytes);
+      utimesSync(copy, mtime, mtime);
+      renameSync(copy, p);
       expect(statSync(p).ino).not.toBe(ino);
       const before = gzNames(f);
       const logs: string[] = [];

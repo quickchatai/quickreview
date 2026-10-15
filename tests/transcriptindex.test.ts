@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   nodeTranscriptFs,
+  TRANSCRIPT_RACY_MS,
   TranscriptIndex,
   type TranscriptFs,
   type TranscriptMeasureOpts,
@@ -478,7 +479,15 @@ describe("the answers are the pre-H2 answers, exactly", () => {
   it("a file replaced, shrunk or rewritten before its offset is read again from 0", async () => {
     const sessionDir = join(root, "s");
     const path = writeSession(sessionDir, "f.jsonl", sessionLines("v1"));
-    const idx = new TranscriptIndex({ chunkBytes: 256 });
+    // Every rewrite below lands on the old inode inside one timestamp tick —
+    // the stat reports the first dev, ino and mtime throughout, and the clock
+    // stands still — so dev/ino/size/mtime can never tell the files apart.
+    // MUTATION: drop the head probe — the replacement (v3) resumes from v2's
+    // offset under v2's model, red; trust an unmoved stat without the racy
+    // window — the same-size rewrite is answered from v1, red.
+    const fs = firstStatFs();
+    const t = statSync(path).mtimeMs;
+    const idx = new TranscriptIndex({ fs, chunkBytes: 256, now: () => t });
     const opts = window(sessionDir);
     expect(await measured(idx, opts)).toEqual(oldMeasure(opts));
     // Rewritten in place, same length, different bytes near the end.
@@ -488,7 +497,8 @@ describe("the answers are the pre-H2 answers, exactly", () => {
     // Shrunk.
     writeSession(sessionDir, "f.jsonl", sessionLines("v2").slice(0, 10));
     expect(await measured(idx, opts)).toEqual(oldMeasure(opts));
-    // Replaced by a new file (a new inode).
+    // Replaced by a new file whose tail window matches the old one's: only
+    // its head (the model line's tag) differs.
     rmSync(path);
     writeSession(sessionDir, "f.jsonl", sessionLines("v3"));
     expect(await measured(idx, opts)).toEqual(oldMeasure(opts));
@@ -608,6 +618,31 @@ describe("a 50 MB session dir is read as many event-loop turns", () => {
 
 // ---- 3. not read, and resumed ---------------------------------------------------
 
+/** The real filesystem, with every stat of a file reporting the dev, ino and
+ * mtime its first stat saw: each rewrite as a new file on the old inode,
+ * inside one timestamp tick. */
+function firstStatFs(): TranscriptFs {
+  const first = new Map<string, { dev: number; ino: number; mtimeMs: number }>();
+  return {
+    readdir: (dir) => nodeTranscriptFs.readdir(dir),
+    stat: async (path) => {
+      const st = await nodeTranscriptFs.stat(path);
+      let id = first.get(path);
+      if (id === undefined) {
+        id = { dev: st.dev, ino: st.ino, mtimeMs: st.mtimeMs };
+        first.set(path, id);
+      }
+      return {
+        ...id,
+        size: st.size,
+        isFile: () => st.isFile(),
+        isDirectory: () => st.isDirectory(),
+      };
+    },
+    open: (path) => nodeTranscriptFs.open(path),
+  };
+}
+
 /** The real filesystem, with every open recorded. */
 function spyFs(): TranscriptFs & { opened: string[]; reads: { path: string; position: number }[] } {
   const opened: string[] = [];
@@ -659,7 +694,8 @@ describe("what is read: an old file not at all, a measured file from its offset"
     const live = writeSession(sessionDir, "live.jsonl", sessionLines("x"));
     const size1 = statSync(live).size;
     const fs = spyFs();
-    const idx = new TranscriptIndex({ fs, chunkBytes: 4096 });
+    let clock = Date.now();
+    const idx = new TranscriptIndex({ fs, chunkBytes: 4096, now: () => clock });
     const opts = window(sessionDir);
     await measured(idx, opts);
     expect(idx.stats()).toMatchObject({ full_scans: 1, incremental_scans: 0, bytes_read: size1 });
@@ -669,15 +705,26 @@ describe("what is read: an old file not at all, a measured file from its offset"
     fs.reads.length = 0;
     expect(await measured(idx, opts)).toEqual(oldMeasure(opts));
     expect(idx.stats()).toMatchObject({ full_scans: 1, incremental_scans: 1 });
-    // The tail check (≤ 512 bytes before the old end), then only the new bytes.
-    expect(Math.min(...fs.reads.map((r) => r.position))).toBe(size1 - 512);
-    expect(idx.stats().bytes_read).toBe(size1 + 512 + Buffer.byteLength(added));
+    // The tail and head checks (≤ 512 bytes before the old end, ≤ 512 from
+    // the start), then only the new bytes.
+    expect(fs.reads.slice(0, 2).map((r) => r.position)).toEqual([size1 - 512, 0]);
+    expect(Math.min(...fs.reads.slice(2).map((r) => r.position))).toBe(size1);
+    expect(idx.stats().bytes_read).toBe(size1 + 512 + 512 + Buffer.byteLength(added));
 
-    // Unchanged since: answered without a byte read.
-    const before = idx.stats().bytes_read;
+    // Unchanged since, but written within the racy window of the read: the
+    // head and tail are probed, no line is re-read.
+    let before = idx.stats().bytes_read;
+    expect(await measured(idx, opts)).toEqual(oldMeasure(opts));
+    expect(idx.stats().bytes_read).toBe(before + 512 + 512);
+    expect(idx.stats()).toMatchObject({ full_scans: 1, incremental_scans: 1, hits: 1 });
+    // Confirmed again once its mtime is clear of the window, then answered
+    // without a byte read.
+    clock += TRANSCRIPT_RACY_MS + 1_000;
+    expect(await measured(idx, opts)).toEqual(oldMeasure(opts));
+    before = idx.stats().bytes_read;
     expect(await measured(idx, opts)).toEqual(oldMeasure(opts));
     expect(idx.stats().bytes_read).toBe(before);
-    expect(idx.stats().hits).toBeGreaterThanOrEqual(1);
+    expect(idx.stats()).toMatchObject({ full_scans: 1, incremental_scans: 1, hits: 3 });
 
     // Grown with its mtime unmoved (a coarse clock, or two appends inside one
     // tick): the size alone says there is more to read.

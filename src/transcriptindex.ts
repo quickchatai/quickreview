@@ -7,8 +7,9 @@
 // file at every session rebirth, so reading it synchronously stalls the
 // daemon's event loop for seconds.
 //
-// This index reads each byte of a transcript AT MOST ONCE per daemon lifetime,
-// and never in one synchronous span:
+// This index reads each byte of a transcript AT MOST ONCE per daemon lifetime
+// (beyond the ≤ 1 KiB head and tail probes below), and never in one
+// synchronous span:
 //
 //   - Reads are async, in chunks of TRANSCRIPT_CHUNK_BYTES. A chunk's complete
 //     lines are parsed, then a real event-loop turn is taken (`yieldToLoop`)
@@ -21,14 +22,26 @@
 //     effect, and its classified audit items, each with the line's timestamp.
 //     Lines that contribute nothing are not kept.
 //   - The contributions are kept with the offset the scan reached, the model in
-//     effect there and the last bytes before it. A file that grew is read only
-//     from that offset; one that shrank, was replaced (dev/ino), or whose bytes
-//     just before the offset changed is read again from 0. That rests on pi
-//     writing its session JSONL append-only — pi 1.0.0's SessionManager
-//     `_persist` is `appendFileSync` of one entry per line; it rewrites a file
-//     only to migrate or branch one it LOADED, which a session spawned without
-//     `--continue` never does (the same assumption, and the same tail check,
-//     as `receiptscan.ts`).
+//     effect there, and the first and last bytes before it (the HEAD and the
+//     TAIL). A file that grew is read only from that offset, and only once
+//     both are found unchanged on disk; a file that shrank, was replaced, or
+//     whose head or tail changed is read again from 0. dev/ino alone is not a
+//     file's identity: an unlinked file's inode number is handed to the next
+//     file created, at the same path as often as not. The head is what tells
+//     a new file from the old one — pi's session header, its first line,
+//     carries the session's own id. Bytes between head and tail are trusted,
+//     not re-read: that rests on pi writing its session JSONL append-only —
+//     pi 1.0.0's SessionManager `_persist` is `appendFileSync` of one entry
+//     per line; it rewrites a file only to migrate or branch one it LOADED,
+//     which a session spawned without `--continue` never does (the same
+//     assumption as `receiptscan.ts`).
+//   - A file whose size and mtime have not moved is answered from what was
+//     kept without a byte read — but only once its mtime is older, by
+//     TRANSCRIPT_RACY_MS, than the moment its bytes were last confirmed. A
+//     write inside one timestamp tick of that moment can leave size and mtime
+//     exactly as they were (a same-size rewrite, or a new file on the old
+//     inode); such a "racily clean" file has its head and tail re-read and
+//     compared before it is trusted, and is read again from 0 on a mismatch.
 //   - Bytes after the last newline (a line pi is still writing, or a last line
 //     with no newline) are parsed for the query that read them but never
 //     committed: the next scan reads them again from the committed offset.
@@ -80,8 +93,15 @@ export const TRANSCRIPT_SCOPE_SLACK_MS = 60_000;
 export const TRANSCRIPT_INDEX_MAX_FILES = 1024;
 /** Contributions kept across all files; the oldest-touched files go past it. */
 export const TRANSCRIPT_INDEX_MAX_RECORDS = 1_000_000;
+/** How far a file's mtime must sit before the moment its bytes were last
+ * confirmed for an unmoved size and mtime to be trusted without a read — more
+ * than any timestamp tick a transcript's filesystem keeps (FAT's is 2 s;
+ * Linux's coarse clock a few ms). */
+export const TRANSCRIPT_RACY_MS = 2_000;
 /** Bytes before the committed offset re-read and compared before a resume. */
 const TAIL_BYTES = 512;
+/** Bytes from the start of the file re-read and compared before a resume. */
+const HEAD_BYTES = 512;
 /** The global store's walk depth. */
 const GLOBAL_STORE_DEPTH = 6;
 const NEWLINE = 0x0a;
@@ -155,7 +175,8 @@ export interface TranscriptIndexStats {
   full_scans: number;
   /** Files read from where the last scan stopped. */
   incremental_scans: number;
-  /** Queries answered from a file's kept contributions, no byte read. */
+  /** Queries answered from a file's kept contributions, no line re-read (a
+   * racily clean file's head and tail are probed first). */
   hits: number;
   /** Chunks parsed — each followed by an event-loop turn. */
   chunks: number;
@@ -171,10 +192,16 @@ interface FileEntry {
   dev: number;
   ino: number;
   mtimeMs: number;
+  /** The clock when this file's bytes were last confirmed (read, or probed):
+   * an unmoved stat is trusted only once `mtimeMs` is older than this by the
+   * racy window. */
+  verifiedAtMs: number;
   /** Bytes [0, scanned) have been read. */
   scanned: number;
   /** Bytes [0, committed) end with a newline and are parsed into `records`. */
   committed: number;
+  /** The first ≤ HEAD_BYTES bytes of [0, committed). */
+  head: Buffer;
   /** The last ≤ TAIL_BYTES bytes before `committed`. */
   tail: Buffer;
   /** The model attribution in effect at `committed`. */
@@ -200,6 +227,15 @@ interface Part {
   view: FileView;
   /** Global-store file: every line counts. Otherwise the line window. */
   whole: boolean;
+}
+
+function sameInode(entry: FileEntry, st: TranscriptStat): boolean {
+  return entry.dev === st.dev && entry.ino === st.ino;
+}
+
+/** Neither grown past what was read nor touched since, by `st`'s account. */
+function unmoved(entry: FileEntry, st: TranscriptStat): boolean {
+  return entry.scanned >= st.size && entry.mtimeMs >= st.mtimeMs;
 }
 
 function errnoCode(err: unknown): string | undefined {
@@ -242,6 +278,20 @@ function lastBytes(parts: readonly Buffer[], n: number): Buffer {
   return Buffer.concat(out); // always a copy: never a view into a read buffer
 }
 
+/** `head` extended from the concatenation of `parts` to at most `n` bytes,
+ * as a fresh copy; `head` itself when it is already full. */
+function firstBytes(head: Buffer, parts: readonly Buffer[], n: number): Buffer {
+  if (head.length >= n) return head;
+  const out: Buffer[] = [head];
+  let need = n - head.length;
+  for (const p of parts) {
+    if (need <= 0) break;
+    out.push(p.length <= need ? p : p.subarray(0, need));
+    need -= Math.min(p.length, need);
+  }
+  return Buffer.concat(out); // always a copy: never a view into a read buffer
+}
+
 /** Parse every line of `text` into `into`; returns the model after them. */
 function parseLines(text: string, model: string, into: LineContribution[]): string {
   let m = model;
@@ -261,6 +311,8 @@ export class TranscriptIndex {
   private readonly maxFiles: number;
   private readonly maxRecords: number;
   private readonly slackMs: number;
+  private readonly racyMs: number;
+  private readonly now: () => number;
   private recordsKept = 0;
   private readonly counters = {
     bytes_read: 0,
@@ -278,6 +330,8 @@ export class TranscriptIndex {
       maxFiles?: number;
       maxRecords?: number;
       scopeSlackMs?: number;
+      racyMs?: number;
+      now?: () => number;
     } = {},
   ) {
     this.fs = opts.fs ?? nodeTranscriptFs;
@@ -285,6 +339,8 @@ export class TranscriptIndex {
     this.maxFiles = Math.max(1, opts.maxFiles ?? TRANSCRIPT_INDEX_MAX_FILES);
     this.maxRecords = Math.max(1, opts.maxRecords ?? TRANSCRIPT_INDEX_MAX_RECORDS);
     this.slackMs = Math.max(0, opts.scopeSlackMs ?? TRANSCRIPT_SCOPE_SLACK_MS);
+    this.racyMs = Math.max(0, opts.racyMs ?? TRANSCRIPT_RACY_MS);
+    this.now = opts.now ?? Date.now;
   }
 
   stats(): TranscriptIndexStats {
@@ -478,16 +534,11 @@ export class TranscriptIndex {
       }
     }
     const cached = this.files.get(path);
-    // The same file, already read at least as far as `st` reaches: no byte
-    // read. (A scan this query waited on may have seen MORE than `st` — lines
-    // appended since, which a later read would also have seen.)
-    if (
-      cached &&
-      cached.dev === st.dev &&
-      cached.ino === st.ino &&
-      cached.scanned >= st.size &&
-      cached.mtimeMs >= st.mtimeMs
-    ) {
+    // The same file, already read at least as far as `st` reaches, and its
+    // mtime clear of the racy window: no byte read. (A scan this query waited
+    // on may have seen MORE than `st` — lines appended since, which a later
+    // read would also have seen.) A racily clean one is probed by `scan`.
+    if (cached && sameInode(cached, st) && unmoved(cached, st) && !this.racy(cached)) {
       this.counters.hits++;
       this.touch(path, cached);
       return { records: cached.records, n: cached.records.length, pending: cached.pending };
@@ -504,6 +555,28 @@ export class TranscriptIndex {
     } finally {
       this.inflight.delete(path);
     }
+  }
+
+  /** Written within the racy window of its last confirmation: an unmoved
+   * size and mtime do not prove it unchanged. */
+  private racy(entry: FileEntry): boolean {
+    return entry.mtimeMs >= entry.verifiedAtMs - this.racyMs;
+  }
+
+  /** Whether the kept head and tail are still on disk where they were read. */
+  private async probe(fh: TranscriptHandle, entry: FileEntry): Promise<boolean> {
+    const probes: [Buffer, number][] = [
+      [entry.tail, entry.committed - entry.tail.length],
+      [entry.head, 0],
+    ];
+    for (const [want, at] of probes) {
+      if (want.length === 0) continue;
+      const got = Buffer.allocUnsafe(want.length);
+      const { bytesRead } = await fh.read(got, 0, want.length, at);
+      this.counters.bytes_read += bytesRead;
+      if (bytesRead !== want.length || !got.equals(want)) return false;
+    }
+    return true;
   }
 
   private keep(path: string, entry: FileEntry): void {
@@ -539,34 +612,37 @@ export class TranscriptIndex {
     st: TranscriptStat,
     cached: FileEntry | undefined,
   ): Promise<FileEntry> {
+    const readAt = this.now();
     const fh = await this.fs.open(path);
     try {
+      // The same file as the one kept: the bytes at its start and just before
+      // the old offset are still the ones the last scan saw. Bytes between
+      // them are trusted, not re-read (the header's assumption).
+      const intact =
+        cached !== undefined &&
+        sameInode(cached, st) &&
+        cached.tail.length > 0 &&
+        (await this.probe(fh, cached));
+      if (intact && unmoved(cached, st)) {
+        // Racily clean, and confirmed: nothing to read.
+        cached.verifiedAtMs = readAt;
+        this.counters.hits++;
+        return cached;
+      }
       let records: LineContribution[] = [];
       let model = UNKNOWN_MODEL;
       let pos = 0;
+      let head: Buffer = EMPTY;
       let tail: Buffer = EMPTY;
       let resumed = false;
-      if (
-        cached &&
-        cached.dev === st.dev &&
-        cached.ino === st.ino &&
-        st.size >= cached.committed &&
-        cached.tail.length > 0
-      ) {
-        // Append-only growth: the bytes just before the old offset must be the
-        // ones the last scan saw; then read on from there. Bytes before that
-        // window are trusted, not re-read (the header's assumption).
-        const want = cached.tail.length;
-        const probe = Buffer.allocUnsafe(want);
-        const { bytesRead } = await fh.read(probe, 0, want, cached.committed - want);
-        this.counters.bytes_read += bytesRead;
-        if (bytesRead === want && probe.equals(cached.tail)) {
-          records = cached.records;
-          model = cached.model;
-          pos = cached.committed;
-          tail = cached.tail;
-          resumed = true;
-        }
+      if (intact && st.size >= cached.committed) {
+        // Append-only growth: read on from the old offset.
+        records = cached.records;
+        model = cached.model;
+        pos = cached.committed;
+        head = cached.head;
+        tail = cached.tail;
+        resumed = true;
       }
       if (resumed) this.counters.incremental_scans++;
       else this.counters.full_scans++;
@@ -591,9 +667,10 @@ export class TranscriptIndex {
           // Every line that ends in this chunk, decoded and parsed now. A
           // newline byte never sits inside a multi-byte UTF-8 sequence, so a
           // split here decodes exactly as the whole file did.
-          const head = chunk.subarray(0, nl);
-          const segment = carryLen > 0 ? Buffer.concat([...carry, head]) : head;
+          const upToNl = chunk.subarray(0, nl);
+          const segment = carryLen > 0 ? Buffer.concat([...carry, upToNl]) : upToNl;
           model = parseLines(segment.toString("utf8"), model, records);
+          head = firstBytes(head, [segment, NEWLINE_BUF], HEAD_BYTES);
           tail = lastBytes([tail, segment, NEWLINE_BUF], TAIL_BYTES);
           committed = pos - (bytesRead - nl - 1);
           carry = nl + 1 < bytesRead ? [Buffer.from(chunk.subarray(nl + 1))] : [];
@@ -610,8 +687,10 @@ export class TranscriptIndex {
         dev: st.dev,
         ino: st.ino,
         mtimeMs: st.mtimeMs,
+        verifiedAtMs: readAt,
         scanned: pos,
         committed,
+        head,
         tail,
         model,
         records,
