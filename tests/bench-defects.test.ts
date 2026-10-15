@@ -6,8 +6,9 @@ import {
   writeFileSync,
   existsSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { parseCaseSet } from "../src/bench/aacr.js";
+import { parseCaseSet, type BenchCase } from "../src/bench/aacr.js";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -30,8 +31,13 @@ import {
   loadJudgements,
   readJudgeEvents,
 } from "../src/bench/defectjudge.js";
-import { judgePiArgv, runJudgeSession } from "../src/bench/runner.js";
-import { caseCostUsd, caseTokenCounts } from "../src/bench/cost.js";
+import {
+  judgePiArgv,
+  recordUnprefetched,
+  runJudgeSession,
+  type RunFingerprint,
+} from "../src/bench/runner.js";
+import { caseCostUsd, caseTokenCounts, CODEX_USD_PER_MTOK } from "../src/bench/cost.js";
 
 const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({
   id,
@@ -338,6 +344,25 @@ describe("scoring", () => {
     expect(s.errors).toBe(1);
     expect(s.defects.missed).toBe(2);
     expect(s.comments.unverifiable).toBe(2);
+  });
+
+  it("the report says how judge errors were scored: a case's clean rounds are averaged", () => {
+    // One clean round that found D1, one errored round: the error is not a
+    // miss — the clean round alone scores the case.
+    const err = { ...J(2, "missed", "incorrect"), error: "judge timed out" };
+    const s = scoreRun(
+      set,
+      ["o__r@1234567"],
+      { "o__r@1234567": [J(1, "found", "correct-minor"), err] },
+      { "o__r@1234567": REVIEW },
+    );
+    expect(s.errors).toBe(1);
+    expect(s.by_severity.high.recall).toBe(1);
+    const md = renderDefectReport("t", set, s);
+    expect(md).not.toContain("counted as missed / unverifiable");
+    expect(md).toContain("1 judge error(s) (not scored: a case's clean rounds are averaged");
+    // The weights in the header are the ones scoring used.
+    expect(md).toContain("Weighted recall (high 3, medium 2, low 1)");
   });
 
   it("a report over missing judgements exits 1, like one over judge errors", () => {
@@ -763,6 +788,113 @@ describe("dollar cost, as pi prices it", () => {
     // 0.5M uncached × $2 + 0.5M cached × $0.20 + 0.1M output × $10
     expect(caseCostUsd(dir)).toEqual({ usd: 1 + 0.1 + 1, source: "priced", model: "gpt-6-sol" });
     expect(caseCostUsd(join(dir, "nope"))).toBeNull();
+  });
+});
+
+describe("dollar cost across the arms", () => {
+  it("prices the Claude Code arm at its own recorded cost, labelled apart", () => {
+    const dir = mkdtempSync(join(tmpdir(), "defects-cost-claude-"));
+    writeFileSync(
+      join(dir, "case-summary.json"),
+      JSON.stringify({ arm: "claude", cost_usd: 0.42, tokens: { input: 1, output: 2 } }),
+    );
+    expect(caseCostUsd(dir)).toEqual({ usd: 0.42, source: "claude" });
+    writeFileSync(
+      join(dir, "case-summary.json"),
+      JSON.stringify({ arm: "claude", cost_usd: null }),
+    );
+    expect(caseCostUsd(dir)).toBeNull();
+    const md = renderDefectReport(
+      "t",
+      parseDefectSet(SET),
+      scoreRun(parseDefectSet(SET), [], {}, {}),
+      {
+        medianMinPerPr: 1,
+        usdPerPr: 0.42,
+        usdTotal: 0.42,
+        usdBasis: "Claude Code's own",
+      },
+    );
+    expect(md).toContain("| $ / PR (Claude Code's own prices) |");
+  });
+
+  it("compare.py prices a case exactly as the defect report does — launch_plan children included", () => {
+    const root = join(import.meta.dirname, "..", "bench", "aacr");
+    const dir = mkdtempSync(join(tmpdir(), "defects-cost-parity-"));
+    const pi = join(dir, "pi");
+    mkdirSync(pi);
+    const ev = [
+      { type: "message_end", message: { role: "assistant", usage: { cost: { total: 0.1 } } } },
+      {
+        type: "tool_execution_end",
+        toolName: "subagent",
+        result: { details: { results: [{ usage: { cost: { total: 0.05 } } }] } },
+      },
+      {
+        type: "tool_execution_end",
+        toolName: "launch_plan",
+        result: { details: { results: [{ usage: { cost: { total: 0.25 } } }] } },
+      },
+    ];
+    writeFileSync(join(pi, "pi-events.jsonl"), ev.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    const bridged = join(dir, "bridged");
+    mkdirSync(bridged);
+    writeFileSync(
+      join(bridged, "case-summary.json"),
+      JSON.stringify({
+        model: "gpt-6.1-sol",
+        bridge: { input_tokens: 1_000_000, cached_tokens: 400_000, output_tokens: 50_000 },
+      }),
+    );
+    const py = (caseDir: string): number =>
+      Number(
+        spawnSync(
+          "python3",
+          [
+            "-I",
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]); import compare; print(compare.usd_and_minutes(sys.argv[2])[0])",
+            root,
+            caseDir,
+          ],
+          { encoding: "utf8" },
+        ).stdout.trim(),
+      );
+    expect(caseCostUsd(pi)!.usd).toBeCloseTo(0.4, 12);
+    expect(py(pi)).toBeCloseTo(0.4, 12);
+    expect(py(bridged)).toBeCloseTo(caseCostUsd(bridged)!.usd, 12);
+  });
+
+  it("compare.py carries the same price list as src/bench/cost.ts", () => {
+    const root = join(import.meta.dirname, "..", "bench", "aacr");
+    const r = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        "import json, sys; sys.path.insert(0, sys.argv[1]); import compare; print(json.dumps(compare.CODEX_RATES))",
+        root,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(JSON.parse(r.stdout)).toEqual(CODEX_USD_PER_MTOK);
+  });
+
+  it("a case recorded unprefetched is not priced at an earlier attempt's event stream", () => {
+    const out = mkdtempSync(join(tmpdir(), "defects-cost-unpref-"));
+    const c = { instance_id: "o__r@1234567" } as BenchCase;
+    const caseDir = join(out, "cases", c.instance_id);
+    mkdirSync(caseDir, { recursive: true });
+    writeFileSync(
+      join(caseDir, "pi-events.jsonl"),
+      JSON.stringify({
+        type: "message_end",
+        message: { role: "assistant", usage: { cost: { total: 3 } } },
+      }) + "\n",
+    );
+    recordUnprefetched(out, c, "not prefetched", {} as RunFingerprint);
+    expect(existsSync(join(caseDir, "pi-events.jsonl"))).toBe(false);
+    expect(caseCostUsd(caseDir)).toBeNull();
   });
 });
 

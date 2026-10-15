@@ -173,6 +173,16 @@ const TAG_RE = /^\s*\[([a-z][a-z ]*)\]\s*/i;
 const FOOTER_RE = /\n*_P\d[^\n]*_\s*$/;
 const MAX_BODY = 12_000;
 
+/** A posted comment's tag (`[blocker]` …) and its text without the tag or
+ * the severity footer. */
+function postedText(raw: string): { tag: string | null; text: string } {
+  const m = TAG_RE.exec(raw);
+  return {
+    tag: m ? m[1]!.toLowerCase() : null,
+    text: raw.replace(TAG_RE, "").replace(FOOTER_RE, "").trim(),
+  };
+}
+
 function readJson(path: string): unknown {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
@@ -201,9 +211,7 @@ export function reviewForJudge(runDir: string, instanceId: string): ReviewForJud
     const r = (row ?? {}) as Record<string, unknown>;
     const raw = typeof r["content"] === "string" ? r["content"] : "";
     if (!raw.trim()) continue;
-    const m = TAG_RE.exec(raw);
-    const tag = m ? m[1]!.toLowerCase() : null;
-    const text = raw.replace(TAG_RE, "").replace(FOOTER_RE, "").trim();
+    const { tag, text } = postedText(raw);
     const line = typeof r["start_line"] === "number" ? r["start_line"] : null;
     const end = typeof r["end_line"] === "number" ? r["end_line"] : line;
     comments.push({
@@ -224,15 +232,13 @@ export function reviewForJudge(runDir: string, instanceId: string): ReviewForJud
     if (typeof r["side"] !== "string" || r["side"].toUpperCase() !== "LEFT") continue;
     const raw = typeof r["body"] === "string" ? r["body"] : "";
     if (!raw.trim()) continue;
-    const m = TAG_RE.exec(raw);
     const line = typeof r["line"] === "number" ? r["line"] : null;
     comments.push({
       id: `C${comments.length + 1}`,
       path: typeof r["path"] === "string" ? `${r["path"]} (deleted line)` : null,
       line,
       end_line: line,
-      tag: m ? m[1]!.toLowerCase() : null,
-      text: raw.replace(TAG_RE, "").replace(FOOTER_RE, "").trim(),
+      ...postedText(raw),
     });
   }
   const summary = readJson(join(runDir, "cases", instanceId, "case-summary.json")) as
@@ -653,7 +659,13 @@ export function scoreRun(
     errors,
     stale,
     rounds,
-    defects: { total, found, partial, missed, recall: total ? (found + 0.5 * partial) / total : 0 },
+    defects: {
+      total,
+      found,
+      partial,
+      missed,
+      recall: total ? (CREDIT.found * found + CREDIT.partial * partial) / total : 0,
+    },
     by_severity: sev,
     weighted_recall: wTotal ? wCredit / wTotal : 0,
     comments: {
@@ -688,6 +700,8 @@ export function renderDefectReport(
     usdPerPr?: number;
     usdTotal?: number;
     usdSource?: string;
+    /** Whose prices the dollar column is in; pi's unless said otherwise. */
+    usdBasis?: string;
   } = {},
 ): string {
   const s = score;
@@ -703,11 +717,11 @@ export function renderDefectReport(
     DEFECT_REPORT_PREAMBLE,
     "",
     `- Ground truth: \`${set.set}\` defect set, version \`${set.version}\` — ${set.method || "verified real defects"}`,
-    `- Judged ${s.judged}/${s.cases} cases, ${s.rounds} round(s)${s.errors ? `, ${s.errors} judge error(s) (counted as missed / unverifiable)` : ""}${s.stale ? `, ${s.stale} stale round(s) that judged an earlier review or ground-truth version, or came from another judge model (not scored — re-run defect-judge --resume)` : ""}`,
+    `- Judged ${s.judged}/${s.cases} cases, ${s.rounds} round(s)${s.errors ? `, ${s.errors} judge error(s) (not scored: a case's clean rounds are averaged, and a case with none counts every defect missed and every comment unverifiable)` : ""}${s.stale ? `, ${s.stale} stale round(s) that judged an earlier review or ground-truth version, or came from another judge model (not scored — re-run defect-judge --resume)` : ""}`,
     "",
     "## Did the review find the real defects?",
     "",
-    "| Defects | Found | Partly | Missed | Recall | Weighted recall (high 3, medium 2, low 1) | High | Medium | Low |",
+    `| Defects | Found | Partly | Missed | Recall | Weighted recall (${SEVERITIES.map((k) => `${k} ${SEVERITY_WEIGHT[k]}`).join(", ")}) | High | Medium | Low |`,
     "|---|---|---|---|---|---|---|---|---|",
     `| ${s.defects.total} | ${num(s.defects.found)} | ${num(s.defects.partial)} | ${num(s.defects.missed)} | ${pct(s.defects.recall)} | ${pct(s.weighted_recall)} | ${sevRow.join(" | ")} |`,
     "",
@@ -724,7 +738,7 @@ export function renderDefectReport(
     lines.push(
       "## Cost",
       "",
-      "| $ / PR (pi's prices) | $ total | Input tokens / PR | Output tokens / PR | Median minutes / PR |",
+      `| $ / PR (${extra.usdBasis ?? "pi's"} prices) | $ total | Input tokens / PR | Output tokens / PR | Median minutes / PR |`,
       "|---|---|---|---|---|",
       `| ${extra.usdPerPr !== undefined ? `$${extra.usdPerPr.toFixed(3)}` : "—"} | ${extra.usdTotal !== undefined ? `$${extra.usdTotal.toFixed(2)}` : "—"} | ${extra.tokensInPerPr !== undefined ? `${Math.round(extra.tokensInPerPr / 1000)}k` : "—"} | ${extra.tokensOutPerPr !== undefined ? `${(extra.tokensOutPerPr / 1000).toFixed(1)}k` : "—"} | ${extra.medianMinPerPr !== undefined ? extra.medianMinPerPr.toFixed(1) : "—"} |`,
       "",
