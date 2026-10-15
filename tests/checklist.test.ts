@@ -395,6 +395,20 @@ describe("table + exit code + manual items", () => {
     expect(renderManualItems()).not.toContain("owner_legacy");
   });
 
+  it("renders the configured labels, and has the operator close the PR before the worktree goes", () => {
+    const text = renderManualItems("example-review[bot]", {
+      trigger: "please-review",
+      in_progress: "reviewing",
+      reviewed: "reviewed",
+    });
+    expect(text).toContain('"please-review" label');
+    expect(text).toContain('"reviewing" cycles, then "reviewed" lands');
+    expect(text).not.toContain("AI review requested");
+    expect(renderManualItems()).toContain('"AI review requested" label');
+    expect(text).not.toContain("created and removed again");
+    expect(text).toContain("close the test PR: its worktree is removed");
+  });
+
   it("safeProbe turns a throwing probe into a failed item", async () => {
     const r = await safeProbe("②", "x", async () => {
       throw new Error("boom");
