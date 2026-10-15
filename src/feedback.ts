@@ -39,7 +39,7 @@
 // from the LEDGER (`feedbackCommentsForDay`), never from memory — it therefore
 // survives a memory outage untouched.
 import { opsDay } from "./eod.js";
-import { VALIDATE_PASS, type PassAddendum } from "./include.js";
+import { FEEDBACK_DAY_ADDENDUM_ID, VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { FEEDBACK_FULL_TEXT_LABEL, cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags } from "./memory/eventtags.js";
 import type { MemoryEntry, MemoryStore, MemoryWriteResult } from "./memory/store.js";
@@ -308,7 +308,7 @@ export function feedbackDayAddendum(items: FeedbackSignalRow[], day: string): Pa
       ? `\n- (${omitted} earlier item${omitted === 1 ? "" : "s"} today omitted for size)`
       : "");
   return {
-    id: "feedback-day-validate",
+    id: FEEDBACK_DAY_ADDENDUM_ID,
     scope: [VALIDATE_PASS],
     text:
       `\n## Same-day human feedback — demotion-only scrutiny (sandbox rule, regenerated daily; today: ${day})\n` +

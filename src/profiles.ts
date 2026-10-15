@@ -58,8 +58,10 @@
 //   * the posting policy (`[posting]`) — per key, the nearest
 //     profile that sets it wins.
 // The shipped `default` profile encodes the shipped behaviour (an empty pack,
-// no heuristics, `ecosystem = "none"`) and is the base a generated profile
-// extends: an empty child of it reviews exactly as no profile does.
+// no heuristics, `ecosystem = "none"`, and `[posting] repeat_sites = false`:
+// one comment per root cause) and is the base a generated profile extends. An
+// empty child of it reviews as no profile does, but posts each root cause
+// once where no profile keeps the code default (`repeat_sites = true`).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -68,7 +70,13 @@ import type { EcosystemName } from "./ecosystem.js";
 import { ALL_PASSES } from "./dispatch.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
-import { LESSON_VALIDATE_ADDENDUM_ID, PASS_ADDENDA, SCAN_PASS, splitFrontmatter } from "./include.js";
+import {
+  FEEDBACK_DAY_ADDENDUM_ID,
+  LESSON_VALIDATE_ADDENDUM_ID,
+  PASS_ADDENDA,
+  SCAN_PASS,
+  splitFrontmatter,
+} from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
 import {
   locateProfile,
@@ -248,7 +256,7 @@ export function resolveProfileChain(
 export function reservedAddendumIds(): Set<string> {
   return new Set([
     ...PASS_ADDENDA.map((a) => a.id),
-    "feedback-day-validate",
+    FEEDBACK_DAY_ADDENDUM_ID,
     // The lesson addendum wire.ts composes beside it under `[memory]
     // delivery = "on"` (src/include.ts lessonAddenda).
     LESSON_VALIDATE_ADDENDUM_ID,

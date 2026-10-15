@@ -25,6 +25,7 @@ import {
   CHECK_THIS_TAG,
   DEFERRED_TAG,
   postTag,
+  SANCTIONED_TAGS,
   type Severity,
 } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
@@ -75,14 +76,8 @@ export interface RenderedReview {
 }
 
 type Tag = "blocker" | "question" | "nit" | "check this" | "ask your human" | "deferred";
-const TAGS: readonly Tag[] = [
-  "blocker",
-  "question",
-  "nit",
-  "check this",
-  "ask your human",
-  "deferred",
-];
+/** The closed tag grammar (`severity.ts` `SANCTIONED_TAGS`), bare. */
+const TAGS = SANCTIONED_TAGS.map(bareTag) as readonly Tag[];
 const SEVERITIES = new Set(["P0", "P1", "P2", "P3", "nit"]);
 
 interface Posted {
