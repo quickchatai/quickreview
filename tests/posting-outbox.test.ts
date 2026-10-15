@@ -9,6 +9,7 @@ import {
   postingMarker,
   readPostingReceipt,
   retrySoftenedApproval,
+  type PostingReceipt,
 } from "../src/posting-receipt.js";
 
 let dir: string;
@@ -114,7 +115,7 @@ describe("durable review delivery", () => {
     job.payload = { ...job.payload, event: "APPROVE" };
     save();
     await worker().tick();
-    const receipt = readPostingReceipt(dir, 12, 1)!;
+    const receipt = readPostingReceipt(dir, 12, 1) as PostingReceipt;
     expect(receipt).toMatchObject({
       status: "confirmed",
       intended_event: "APPROVE",
@@ -125,7 +126,7 @@ describe("durable review delivery", () => {
   });
   it("a delivered COMMENT that was asked for carries no delivery provenance", async () => {
     await worker().tick();
-    expect(readPostingReceipt(dir, 12, 1)?.delivered_by).toBeUndefined();
+    expect((readPostingReceipt(dir, 12, 1) as PostingReceipt).delivered_by).toBeUndefined();
   });
   it("survives restart and an unreadable GitHub longer than the round deadline", async () => {
     listReviewsFull.mockRejectedValue(new Error("offline"));
