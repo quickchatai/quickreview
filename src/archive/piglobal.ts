@@ -29,6 +29,7 @@ import { type SpanMeter, walkFiles } from "./prfiles.js";
 import {
   StoreWriter,
   emptyStoreResult,
+  endStorePass,
   settleStore,
   type StoreFile,
   type StorePassDeps,
@@ -163,8 +164,5 @@ export async function archivePiGlobal(deps: PiGlobalPassDeps): Promise<StorePass
       }
   const stop = pass.stop ?? unlinkStop;
   const incomplete = pass.incomplete || pass.unlinks.some((u) => !removed.has(u.source));
-  res.outcome = stop || incomplete ? "partial" : "done";
-  res.reason =
-    stop ?? (incomplete ? (res.verifyFailures > 0 ? "verify_failed" : "incomplete") : null);
-  return res;
+  return endStorePass(res, stop, incomplete);
 }
