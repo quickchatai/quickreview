@@ -66,7 +66,6 @@
 // and covered at its depth: a standard reading never covers a deep row, and a
 // price measured at the other depth is borrowed only when nothing at the
 // row's own depth prices it as well — and the price says so (`across_depth`).
-import { createHash } from "node:crypto";
 import type { ScanDepth } from "../config.js";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
@@ -77,6 +76,7 @@ import {
   coverKey,
   cutRanges,
   focusLine,
+  planKey,
   rangeNote,
   TREE_PATHS_NOTE,
   rangesCover,
@@ -370,6 +370,11 @@ export function lensEffort(lenses: LensTuningMap | undefined, lens: string): str
   return lenses?.[lens]?.effort ?? "tier";
 }
 
+/** A risk pass runs at `sol-high` alone; any other lens, null. */
+function riskTier(riskPasses: readonly string[], lens: string): PassTier | null {
+  return riskPasses.includes(lens) ? "sol-high" : null;
+}
+
 /** The tiers `lens` may run at in a scan: the ones its build variants exist
  * at, at or above its profile floor. */
 export function lensTiers(
@@ -377,8 +382,9 @@ export function lensTiers(
   lens: string,
   riskPasses: readonly string[],
 ): PassTier[] {
-  if (riskPasses.includes(lens)) return ["sol-high"];
-  const floor = flooredTier(lenses, lens, PASS_TIER_ORDER[0]!);
+  const risk = riskTier(riskPasses, lens);
+  if (risk !== null) return [risk];
+  const floor = flooredTier(lenses, lens, PASS_TIER_ORDER[0]);
   return PASS_TIER_ORDER.slice(PASS_TIER_ORDER.indexOf(floor));
 }
 
@@ -488,9 +494,7 @@ const cleanPath = (p: string): string =>
 /** A row's tier when none is named: the lens's floor over `[scan] tier`
  * (`sol-high` for a risk pass). */
 function defaultRowTier(input: Stage2PlanInput, lens: string): PassTier {
-  return input.riskPasses.includes(lens)
-    ? "sol-high"
-    : flooredTier(input.lenses, lens, input.defaultTier);
+  return riskTier(input.riskPasses, lens) ?? flooredTier(input.lenses, lens, input.defaultTier);
 }
 
 /**
@@ -518,6 +522,10 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
   const seen = new Set<string>();
   const rows: Stage2Row[] = [];
 
+  /** One file too big for one case alone: read in line ranges. */
+  const oversized = (sorted: readonly string[], lines: ReadonlyMap<string, number>): boolean =>
+    sorted.length === 1 && lines.get(sorted[0]!)! > input.budget.maxLines;
+
   /** One row over `sorted` (checked files; `lines` holds their counts), its
    * tests paired when `pair` — or why it cannot be priced. */
   const build = (spec: {
@@ -532,7 +540,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
   }): Stage2Row | string => {
     const { lens, sorted, lines } = spec;
     let rowLines = sorted.reduce((n, p) => n + lines.get(p)!, 0);
-    const oversize = sorted.length === 1 && lines.get(sorted[0]!)! > input.budget.maxLines;
+    const oversize = oversized(sorted, lines);
     // Pair the tests, nearest first, while the case budget holds. A ranged
     // row's tests ride in EVERY range case, so they get at most half a case.
     const testFiles = !spec.pair
@@ -573,7 +581,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
         input.budget.maxLines - pairedLines,
         input.textOf?.(p) ?? null,
       ).filter((r) => !rangesCover(done, r.start, r.end));
-      rowLines = ranges.reduce((n, r) => n + (r.end - r.start + 1) + pairedLines, 0);
+      rowLines = ranges.reduce((n, r) => n + rangeCaseLines(r, pairedLines), 0);
     } else {
       rowLines += pairedLines;
     }
@@ -603,10 +611,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       estimate_usd: isCovered
         ? 0
         : ranges !== undefined
-          ? ranges.reduce(
-              (n, r) => n + caseEstimate(r.end - r.start + 1 + pairedLines, price.rate),
-              0,
-            )
+          ? ranges.reduce((n, r) => n + caseEstimate(rangeCaseLines(r, pairedLines), price.rate), 0)
           : caseEstimate(rowLines, price.rate),
       price,
       status: isCovered ? "covered" : "run",
@@ -680,7 +685,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     const rowLines = sorted.reduce((n, p) => n + lines.get(p)!, 0);
     // One file too big for one case is cut into line ranges; anywhere else a
     // row over one case is refused.
-    const oversize = sorted.length === 1 && lines.get(sorted[0]!)! > input.budget.maxLines;
+    const oversize = oversized(sorted, lines);
     if (!oversize && (sorted.length > input.budget.maxFiles || rowLines > input.budget.maxLines)) {
       const big = sorted.filter((p) => lines.get(p)! > input.budget.maxLines);
       return bad(
@@ -798,8 +803,8 @@ export function stage2Cases(
     id: `${row.id}#${i + 1}`,
     part: i + 1,
     parts: row.ranges!.length,
-    files: [{ ...code, lines: r.end - r.start + 1, range: r }, ...row.tests],
-    lines: r.end - r.start + 1 + tests,
+    files: [{ ...code, lines: rangeCaseLines(r, 0), range: r }, ...row.tests],
+    lines: rangeCaseLines(r, tests),
   }));
 }
 
@@ -899,11 +904,15 @@ export function stage2CasePrompt(
   ].join("\n");
 }
 
+/** The lines one range case reads: the range, and the paired tests that
+ * ride in every range case — the row's total, its price and its cases all
+ * count it this one way. */
+function rangeCaseLines(r: FileRange, pairedLines: number): number {
+  return r.end - r.start + 1 + pairedLines;
+}
+
 /** The key a stage-2 start must quote: the runnable rows, the sha, the
  * validator setting and the cap. */
 export function stage2Key(parts: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify({ stage: 2, parts }))
-    .digest("hex")
-    .slice(0, 16);
+  return planKey({ stage: 2, parts });
 }

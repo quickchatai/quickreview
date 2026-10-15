@@ -26,7 +26,7 @@ import { posix } from "node:path";
 import type { PrFileEntry } from "../github.js";
 import { splitFrontmatter } from "../include.js";
 import type { PassTier } from "../types.js";
-import { SEVERITIES, type ScanCandidate } from "./scan.js";
+import { candidateItem, SEVERITIES, type ScanCandidate } from "./scan.js";
 
 export const REPLAY_FILE = "setup/replay.json";
 export const REPLAY_VERSION = 1;
@@ -117,9 +117,8 @@ export function rateFor(
   return m ?? { usd_per_kline: REFERENCE_RATES[tier], basis: REFERENCE_BASIS };
 }
 
-export function caseEstimate(lines: number, rate: ReplayRate): number {
-  return (Math.max(lines, 1) / 1000) * rate.usd_per_kline;
-}
+/** A case's estimate: the scan's one rule (at least one line, per kline). */
+export { caseEstimate } from "./scan.js";
 
 /** What a lens reads: the diff, and every changed file it is pointed at in full. */
 export function linesRead(
@@ -287,28 +286,7 @@ export function replayValidatorPrompt(
   const byLens = new Map<string, ReplayFinding[]>();
   for (const c of candidates) byLens.set(c.lens, [...(byLens.get(c.lens) ?? []), c]);
   const blocks = [...byLens.entries()].map(([lens, fs]) =>
-    [
-      `FINDINGS ${lens} PR#${pr.number} @${tree.sha}`,
-      ...fs.map((f) =>
-        [
-          `- path: ${f.path}`,
-          `  line: ${f.start === f.end ? f.end : `${f.start}-${f.end}`}`,
-          `  kind: ${f.kind}`,
-          // The severity the LENS wrote, not the capped one: the validator
-          // audits reachability, and its survivors are re-read, so the cap
-          // applies again on the way out.
-          `  severity: ${f.capped_from ?? f.severity}`,
-          ...(f.confidence !== null ? [`  confidence: ${f.confidence}`] : []),
-          ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
-          `  claim: ${f.claim}`,
-          ...(f.evidence ? [`  evidence: ${f.evidence}`] : []),
-          // The failure mechanism: the validator judges with it, and a
-          // survivor is re-read from the validator's answer.
-          ...(f.detail ? [`  detail: ${f.detail}`] : []),
-          ...(f.fix ? [`  fix: ${f.fix}`] : []),
-        ].join("\n"),
-      ),
-    ].join("\n"),
+    [`FINDINGS ${lens} PR#${pr.number} @${tree.sha}`, ...fs.map(candidateItem)].join("\n"),
   );
   return [
     `REPLAY VALIDATION — ${validator}.`,

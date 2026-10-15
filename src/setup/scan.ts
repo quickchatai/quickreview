@@ -416,7 +416,7 @@ export interface ScanRate {
   cost_usd: number;
 }
 
-export function caseEstimate(lines: number, rate: ScanRate): number {
+export function caseEstimate(lines: number, rate: Pick<ScanRate, "usd_per_kline">): number {
   return (Math.max(lines, 1) / 1000) * rate.usd_per_kline;
 }
 
@@ -496,6 +496,28 @@ export function scanCasePrompt(
   ].join("\n");
 }
 
+/** One candidate as a validator reads it, in the findings grammar — the
+ * scan's skeptic and the replay's validator alike. */
+export function candidateItem(f: ScanCandidate): string {
+  return [
+    `- path: ${f.path}`,
+    `  line: ${f.start === f.end ? f.end : `${f.start}-${f.end}`}`,
+    `  kind: ${f.kind}`,
+    // The severity the LENS wrote, not the capped one: the validator audits
+    // reachability, and a corrected `routine` must be able to restore it —
+    // its survivors are re-read, so the cap applies again on the way out.
+    `  severity: ${f.capped_from ?? f.severity}`,
+    ...(f.confidence !== null ? [`  confidence: ${f.confidence}`] : []),
+    ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
+    `  claim: ${f.claim}`,
+    ...(f.evidence ? [`  evidence: ${f.evidence}`] : []),
+    // The failure mechanism: the validator judges with it, and a survivor
+    // is re-read from the validator's answer, so it must travel both ways.
+    ...(f.detail ? [`  detail: ${f.detail}`] : []),
+    ...(f.fix ? [`  fix: ${f.fix}`] : []),
+  ].join("\n");
+}
+
 /** The validator's task string over one case's stage-1 candidates. */
 export function scanValidatorPrompt(
   c: ScanCasePlan,
@@ -504,27 +526,7 @@ export function scanValidatorPrompt(
   lens: string = SCAN_PASS,
   label = `stage 1, unit ${c.unit}`,
 ): string {
-  const block = candidates
-    .map((f) =>
-      [
-        `- path: ${f.path}`,
-        `  line: ${f.start === f.end ? f.end : `${f.start}-${f.end}`}`,
-        `  kind: ${f.kind}`,
-        // The severity the LENS wrote, not the capped one: the validator audits
-        // reachability, and a corrected `routine` must be able to restore it —
-        // its survivors are re-read, so the cap applies again on the way out.
-        `  severity: ${f.capped_from ?? f.severity}`,
-        ...(f.confidence !== null ? [`  confidence: ${f.confidence}`] : []),
-        ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
-        `  claim: ${f.claim}`,
-        ...(f.evidence ? [`  evidence: ${f.evidence}`] : []),
-        // The failure mechanism: the validator judges with it, and a survivor
-        // is re-read from the validator's answer, so it must travel both ways.
-        ...(f.detail ? [`  detail: ${f.detail}`] : []),
-        ...(f.fix ? [`  fix: ${f.fix}`] : []),
-      ].join("\n"),
-    )
-    .join("\n");
+  const block = candidates.map(candidateItem).join("\n");
   return [
     `SCAN VALIDATION ${ctx.caseId} — ${label}.`,
     `Scan sha: ${ctx.sha}`,
