@@ -2578,7 +2578,8 @@ export function unpackEntries(
     // before its entry is inflated.
     try {
       mkdirSync(dirname(dest), { recursive: true });
-    } catch {
+    } catch (err) {
+      if (!isNameClash(err)) throw err;
       continue; // a file/dir name clash inside the archive: that one entry is lost
     }
     const data = e.read();
@@ -2594,11 +2595,20 @@ export function unpackEntries(
       writeFileSync(dest, data, { mode: 0o644 });
       files++;
       bytes += data.length;
-    } catch {
+    } catch (err) {
       // A file/dir name clash inside the archive: that one entry is lost.
+      if (!isNameClash(err)) throw err;
     }
   }
   return { files, bytes, dirs: dirs.size, rejected };
+}
+
+/** A file/dir name clash inside one archive — the only filesystem failure an
+ * unpack shrugs off. Anything else (no space, no permission, an I/O error)
+ * fails the unpack, so a partial copy is never marked complete. */
+function isNameClash(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "EEXIST" || code === "ENOTDIR" || code === "EISDIR";
 }
 
 function gunzipCapped(buf: Buffer): Buffer {
@@ -2669,20 +2679,43 @@ function readMarker(dir: string): CacheMarker | null {
   return null;
 }
 
-/** Remove this package's tmp dirs left by a crashed run (older than an hour). */
-function sweepStaleTmp(final: string): void {
+/** An install's private unpack dir: `<package dir>.tmp-<hex>`. */
+const INSTALL_TMP_RE = /\.tmp-[0-9a-f]+$/;
+
+/** Remove the install tmp dirs in `parent` (only those of `owner`, a package
+ * dir's name, when given) that a crashed run left — older than an hour. A
+ * live install's dir is minutes old at most. */
+function sweepStaleTmp(parent: string, owner?: string): void {
   try {
-    const parent = dirname(final);
-    const prefix = `${basename(final)}.tmp-`;
     for (const f of readdirSync(parent)) {
-      if (!f.startsWith(prefix)) continue;
-      const p = join(parent, f);
-      if (Date.now() - statSync(p).mtimeMs > STALE_TMP_MS)
-        rmSync(p, { recursive: true, force: true });
+      if (!INSTALL_TMP_RE.test(f)) continue;
+      if (owner !== undefined && !f.startsWith(`${owner}.tmp-`)) continue;
+      try {
+        const p = join(parent, f);
+        // A complete entry (a version that merely ends like a tmp name) stays.
+        if (readMarker(p)) continue;
+        if (Date.now() - statSync(p).mtimeMs > STALE_TMP_MS)
+          rmSync(p, { recursive: true, force: true });
+      } catch {
+        // vanished, or not ours to remove: the next one
+      }
     }
   } catch {
     // best effort
   }
+}
+
+/** Every ecosystem dir's stale install tmp dirs, whatever package left them:
+ * a run killed mid-unpack whose package is then served from the cache never
+ * installs again, so its own sweep would never come. */
+export function sweepStaleInstallDirs(root: string): void {
+  let ecos: string[] = [];
+  try {
+    ecos = readdirSync(root);
+  } catch {
+    return;
+  }
+  for (const eco of ecos) sweepStaleTmp(join(root, eco));
 }
 
 // ---------------------------------------------------------------------------
@@ -2883,7 +2916,7 @@ function install(
   const raced = fromCache(ctx, req, name, version, range);
   if (raced) return raced;
   mkdirSync(dirname(final), { recursive: true });
-  sweepStaleTmp(final);
+  sweepStaleTmp(dirname(final), basename(final));
   // Unpack into a private tmp dir and rename it into place: a reader either
   // sees no dir or a complete one, never a half-written package.
   const tmp = `${final}.tmp-${randomBytes(6).toString("hex")}`;
@@ -3111,9 +3144,11 @@ async function prepareOne(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
 
 /**
  * Plan, fetch and unpack the third-party sources this PR's review needs.
- * NEVER throws and never blocks past `timeoutMs` (plus one in-flight request
- * settling): every failure is a `skipped` entry, and a cached package is
- * served without touching the network at all.
+ * NEVER throws, and its network phase never runs past `timeoutMs` (plus one
+ * in-flight request settling) — the cache sweep and the planning before it
+ * are local, synchronous and outside that budget. Every failure is a
+ * `skipped` entry, and a cached package is served without touching the
+ * network at all.
  */
 export async function prepareDependencySources(
   tree: string,
@@ -3136,6 +3171,7 @@ export async function prepareDependencySources(
   }
   const manifest: DepManifest = { dir: root, sources: [], skipped: [] };
   try {
+    sweepStaleInstallDirs(root);
     pruneDependencyCache(root, opts.maxCacheBytes ?? DEFAULT_MAX_CACHE_BYTES, log, {
       inUseMs: opts.cacheInUseMs ?? DEFAULT_CACHE_IN_USE_MS,
     });

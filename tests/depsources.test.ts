@@ -4,6 +4,7 @@
 // hand-built tar/zip archives and temp dirs — no network, no package manager.
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -39,6 +40,7 @@ import {
   planDependencyRequests,
   prepareDependencySources,
   pruneDependencyCache,
+  sweepStaleInstallDirs,
   pythonManifestEdits,
   pyVersionMatches,
   renderDependencyNote,
@@ -1783,6 +1785,38 @@ describe("pruneDependencyCache — the cache's size cap", () => {
   });
 });
 
+describe("sweepStaleInstallDirs — a crashed unpack's leftovers, whatever package left them", () => {
+  it("removes install tmp dirs over an hour old; a fresh one and a complete entry stay", () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-depcache-"));
+    try {
+      const old = join(root, "npm", "left@1.0.0.tmp-0a1b2c3d4e5f");
+      const fresh = join(root, "pypi", "busy@2.0.0.tmp-ffeeddccbbaa");
+      const complete = join(root, "npm", "odd@1.0.0.tmp-abc");
+      for (const d of [old, fresh, complete]) mkdirSync(d, { recursive: true });
+      writeFileSync(
+        join(complete, ".qcr-complete"),
+        JSON.stringify({
+          name: "odd",
+          version: "1.0.0.tmp-abc",
+          url: "",
+          sha256: "",
+          files: 0,
+          bytes: 0,
+        }),
+      );
+      const twoHours = new Date(Date.now() - 2 * 3_600_000);
+      utimesSync(old, twoHours, twoHours);
+      utimesSync(complete, twoHours, twoHours);
+      sweepStaleInstallDirs(root);
+      expect(existsSync(old)).toBe(false);
+      expect(existsSync(fresh)).toBe(true);
+      expect(existsSync(complete)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // bounded work, provenance, nearest pins
 // ---------------------------------------------------------------------------
@@ -2529,6 +2563,25 @@ describe("selfscan4: hostile lockfiles and archives are linear work", () => {
     expect(r.files).toBe(1);
     expect(reads).toBe(1);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "unpack: a filesystem failure that is not a name clash fails the unpack rather than dropping files",
+    () => {
+      const target = tmp();
+      chmodSync(target, 0o555);
+      try {
+        expect(() =>
+          unpackEntries(
+            [{ path: "pkg/a.py", kind: "file", size: 1, read: () => Buffer.from("a") }],
+            target,
+            { strip: "none", maxUnpackedBytes: 1 << 20 },
+          ),
+        ).toThrow(/EACCES/);
+      } finally {
+        chmodSync(target, 0o755);
+      }
+    },
+  );
 
   it("unpack: inflate work is bounded in aggregate even when the writes fail", () => {
     // `dN.py/k.py` (kept, empty) makes `dN.py` a directory, so the 2 MiB
