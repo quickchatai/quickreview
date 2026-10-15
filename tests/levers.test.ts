@@ -963,6 +963,30 @@ describe("CommandWatcher over commands/operator/", () => {
     expect(issuers).not.toContain("operator");
   });
 
+  it("the handled-ledger records the version that ran: a file replaced during a parse retry never runs twice", async () => {
+    mkdirSync(opDir());
+    writeFileSync(join(opDir(), "d6.json"), ""); // an empty file parses on retry
+    const { deps: d, issuers } = watcherDeps();
+    const w = new CommandWatcher({
+      dir: opDir(),
+      operator: sealed,
+      deps: d,
+      store,
+      sweepIntervalMs: 0,
+      parseAttempts: 3,
+      parseRetryMs: 30,
+    });
+    const swept = w.sweep(); // the first read has happened synchronously
+    writeFileSync(join(opDir(), ".d6.json.tmp"), JSON.stringify({ command: "drain", on: true }));
+    renameSync(join(opDir(), ".d6.json.tmp"), join(opDir(), "d6.json"));
+    await swept;
+    expect(issuers).toEqual(["operator"]);
+    // MUTATION: mark the version sampled before the read — the next sweep re-runs it.
+    await w.sweep();
+    w.stop();
+    expect(issuers).toEqual(["operator"]);
+  });
+
   it("the seal binds to the bytes executed: a directory swapped BACK before the seal check is still not the operator's", async () => {
     mkdirSync(opDir());
     writeFileSync(join(opDir(), "d5.json"), JSON.stringify({ command: "drain", on: true }));

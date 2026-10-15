@@ -933,11 +933,14 @@ export function operatorSealVerdict(seal: OperatorSeal, dir: string, file: strin
  */
 export function operatorCommandVersion(path: string): string | null {
   try {
-    const s = statSync(path, { bigint: true });
-    return `${basename(path)}:${s.ino}:${s.mtimeNs}:${s.size}`;
+    return commandVersionOf(path, statSync(path, { bigint: true }));
   } catch {
     return null;
   }
+}
+
+function commandVersionOf(path: string, s: { ino: bigint; mtimeNs: bigint; size: bigint }): string {
+  return `${basename(path)}:${s.ino}:${s.mtimeNs}:${s.size}`;
 }
 
 /** `dev:ino` of the object AT `path` (a symlink as itself), `null` when absent. */
@@ -1134,11 +1137,16 @@ export class CommandWatcher {
    * seal can be checked against THOSE bytes rather than against whatever
    * stands at the path a moment earlier or later (the parent `commands/` is
    * the daemon's, so a session can swap the directory between two syscalls).
-   * The operator directory is opened without following a symlink.
+   * `version` is the handled-ledger key of those same bytes
+   * (`operatorCommandVersion`'s), so a file replaced during a parse retry is
+   * recorded as the version that ran, not the one first seen. The operator
+   * directory is opened without following a symlink.
    */
   private async readCommandFile(
     path: string,
-  ): Promise<{ ok: true; value: unknown; identity: string } | { ok: false; reason: string }> {
+  ): Promise<
+    { ok: true; value: unknown; identity: string; version: string } | { ok: false; reason: string }
+  > {
     const attempts = this.opts.parseAttempts ?? 3;
     const delay = this.opts.parseRetryMs ?? 40;
     const flags = this.opts.operator
@@ -1151,9 +1159,11 @@ export class CommandWatcher {
         const fd = openSync(path, flags);
         let text: string;
         let identity: string;
+        let version: string;
         try {
           const st = fstatSync(fd, { bigint: true });
           identity = `${st.dev}:${st.ino}`;
+          version = commandVersionOf(path, st);
           text = readFileSync(fd, "utf8");
         } finally {
           closeSync(fd);
@@ -1161,7 +1171,7 @@ export class CommandWatcher {
         if (text.trim().length === 0) {
           lastError = "empty file";
         } else {
-          return { ok: true, value: JSON.parse(text) as unknown, identity };
+          return { ok: true, value: JSON.parse(text) as unknown, identity, version };
         }
       } catch (err) {
         // A partially-written file is expected transiently — retry before rejecting.
@@ -1209,16 +1219,21 @@ export class CommandWatcher {
     // write), so the store remembers what was handled across restarts — by
     // file VERSION, so a name written again with new content is a new command
     // and an unchanged file re-seen by the sweep is not.
-    const version = this.opts.operator ? operatorCommandVersion(path) : null;
+    const seen = this.opts.operator ? operatorCommandVersion(path) : null;
     if (this.opts.operator) {
-      if (version === null) return null;
-      if (this.opts.store.operatorCommandHandled(version)) return null;
+      if (seen === null) return null;
+      if (this.opts.store.operatorCommandHandled(seen)) return null;
     }
     this.inFlight.add(path);
     try {
       this.ensureDirs();
       const read = await this.readCommandFile(path);
       if (!read.ok && read.reason === "file disappeared") return null;
+      // The ledger records the version whose bytes were parsed — a file
+      // replaced during a parse retry is that new version.
+      const version = this.opts.operator && read.ok ? read.version : seen;
+      if (version !== null && version !== seen && this.opts.store.operatorCommandHandled(version))
+        return null;
       const issuer = this.issuerFor(path, read.ok ? read.identity : null);
       if (!read.ok) {
         return this.finish(
