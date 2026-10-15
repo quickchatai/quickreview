@@ -800,10 +800,13 @@ export class OpenVikingClient {
       const outcome = ovFailed(res.status, code, message);
       const auth = isAuthFailure(res.status, code, message);
       const absent = !auth && isNotFound(res.status, code);
-      // A 409 is the precondition working as designed, and a NOT_FOUND is an
-      // authenticated answer (the path is not there — the store reads it as
-      // known-empty): both are answers, not gaps, so neither is alerted on.
-      if (!outcome.conflict && !absent) this.report({ op, status: res.status, code, message });
+      // A 409 is the precondition working as designed, and the engine's own
+      // NOT_FOUND envelope is an authenticated answer (the path is not there —
+      // the store reads it as known-empty): neither is alerted on. A bare 404
+      // with no such code — a missing route, the wrong service behind the
+      // forward — is still reported: it is the one trace that says so.
+      const answered = outcome.conflict || (absent && code === "NOT_FOUND");
+      if (!answered) this.report({ op, status: res.status, code, message });
       this.observe({
         op,
         outcome: outcome.conflict ? "conflict" : auth ? "auth" : absent ? "absent" : "failed",

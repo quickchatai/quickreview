@@ -1282,6 +1282,27 @@ describe("a failure message never carries the key", () => {
     expect(log).toEqual([]);
   });
 
+  it("a bare 404 without the engine's NOT_FOUND code — a missing route — is still reported", async () => {
+    const log: string[] = [];
+    const gaps: string[] = [];
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: () =>
+        Promise.resolve({
+          ok: false,
+          status: 404,
+          text: () => Promise.resolve("<html>Not Found</html>"),
+        }),
+      log: (m) => log.push(m),
+      onGap: (g) => gaps.push(g.code),
+    });
+    expect((await client.ls(`${ROOT}/preferences/pinned`)).ok).toBe(false);
+    expect(gaps).toEqual(["http_404"]);
+    expect(log.join("\n")).toMatch(/ls failed \(404 http_404\)/);
+  });
+
   for (const arm of ["envelope", "transport"] as const) {
     it(`${arm}: the sweep, the head, the block, the gap sink and the log are all scrubbed`, async () => {
       const log: string[] = [];
