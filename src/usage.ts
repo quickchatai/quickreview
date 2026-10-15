@@ -31,6 +31,7 @@
 import {
   normalizeRedirections,
   redirectTargets,
+  sedWords,
   splitShellSegments,
 } from "../extensions/bash-guard.js";
 
@@ -686,16 +687,7 @@ const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
   // `o` is unambiguous in sort's short options, so a cluster carrying it —
   // its value attached (`-o/tmp/out`) or not — is an output redirect.
   sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o)/,
-  // -i/-f; a w/W/e command at a command position (`sed 'e' f`, `1e`, `p;e`) —
-  // a quote counts only where it OPENS a word and a closing quote only before a
-  // word boundary, so a quoted `'w'` inside a pattern is no command, and an
-  // unquoted word ending the segment counts only as sed's first operand, so a
-  // last FILE operand named `e` or `/tmp/e` is none either; and an
-  // s-command whose flag cluster carries `e` anywhere (it runs the pattern
-  // space: `s/x/y/e`, `/ep`, `/eg`, `/eI`) or ends in `w` (writes a file),
-  // with ANY delimiter (`s|..|..|e`, `s#..#..#e` — the backreference) and a
-  // script glued to its flag (`--expression=s/…/e`, `-es/…/e`).
-  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|(?:(?:^|\s)(?:--e[a-z-]*=|-[a-zA-Z]*e)?['"]|[;{\n]|\s(?=\S*\s))(?:[0-9$,!~+]|\/[^/]*\/)*\s*[wWe](?=\s|[;}]|['"](?:\s|$)|$)|(?:^|\s)sed(?:\s+-\S+)*\s+(?:[0-9$,!~+]|\/[^/]*\/)*[wWe]\s*$|(?:['"\s;{=]|(?:^|\s)-[nEsuzr]*e)(?:[0-9$,!~+]|\/[^/]*\/)*\s*s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiImMnN0-9]*(?:e[gpiImMnN0-9e]*w?|w)(?=['"\s;}]|$)/,
+  // sed has no pattern here: `sedAuditHit` reads its words as bash hands them over.
   // The diff options' `--output=<file>` on any verb, and
   // `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O<cmd>` (any unique
   // abbreviation of the long form; `-O` ending a short cluster).
@@ -772,32 +764,65 @@ function opensAnsiOrLocaleQuote(segment: string): boolean {
   return false;
 }
 
-/** `segment` with every quote character that sits INSIDE the other kind of
- * quote (`"…'w'…"`, `'…"w"…'`) replaced by U+0001 — a literal, not a quote, so
- * the sed rule never reads it as one. Matters where the guard's splitter cuts
- * a quoted pattern at `(`/`)` and leaves `'w'` at a segment's end. U+0001 is
- * neither a word nor a space character, so an s-command delimited by it still
- * reads as one. */
-function maskNestedQuotes(segment: string): string {
-  let out = "";
-  let quote: "'" | '"' | null = null;
-  for (let i = 0; i < segment.length; i++) {
-    const c = segment[i]!;
-    if (quote === "'") {
-      if (c === "'") quote = null;
-      out += c === '"' ? "\u0001" : c;
-    } else if (c === "\\") {
-      out += segment.slice(i, i + 2);
-      i++;
-    } else if (quote === '"') {
-      if (c === '"') quote = null;
-      out += c === "'" ? "\u0001" : c;
-    } else {
-      if (c === "'" || c === '"') quote = c;
-      out += c;
+/** sed's script words in a segment: every `-e X`/`-eX`/`--e…=X`/`--e… X`
+ * value, else its first operand — with an `-i`/`-f` (or `--in-place`/`--file`
+ * by any prefix) reported as `writes`. Read from the words bash hands sed, so
+ * adjacent quoted pieces are one word (`"1"'w out'` is `1w out`), and a word
+ * whose value the text does not fix (`$'…'`, `$X`, a backtick) is read with
+ * its quoting stripped — coarse on purpose, never "no script". */
+function sedScripts(segment: string): { writes: boolean; scripts: string[] } {
+  let after: string | null = null;
+  for (const m of segment.matchAll(/\S+/g)) {
+    const t = m[0].replace(/^[\\'"(]+|['")]+$/g, "");
+    if (t.slice(t.lastIndexOf("/") + 1) === "sed") {
+      after = segment.slice(m.index + m[0].length);
+      break;
     }
   }
-  return out;
+  if (after === null) return { writes: false, scripts: [] };
+  const words =
+    sedWords(after) ??
+    after
+      .replace(/[$'"`\\]/g, "")
+      .split(/\s+/)
+      .filter((w) => w.length > 0);
+  const scripts: string[] = [];
+  let operand: string | null = null;
+  let writes = false;
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k]!;
+    if (w === "--") {
+      if (operand === null && words[k + 1] !== undefined) operand = words[k + 1]!;
+      break;
+    }
+    if (/^--(?:i|f)[a-z-]*(?:=|$)/.test(w)) writes = true;
+    else if (/^--e[a-z-]*=/.test(w)) scripts.push(w.slice(w.indexOf("=") + 1));
+    else if (/^--e[a-z-]*$/.test(w)) scripts.push(words[++k] ?? "");
+    else if (/^-[^-]/.test(w)) {
+      const short = /^-([a-zA-Z0-9]*?)([eif])(.*)$/s.exec(w);
+      if (short?.[2] === "e") scripts.push(short[3] !== "" ? short[3]! : (words[++k] ?? ""));
+      else if (short !== null) writes = true;
+    } else if (operand === null) operand = w;
+  }
+  if (scripts.length === 0 && operand !== null) scripts.push(operand);
+  return { writes, scripts };
+}
+
+/** A sed address run: numbers, `first~step`, `$`, `/re/` and `\cREc` (with
+ * their I/M flags), `,`, `+N` and `!`. */
+const SED_ADDR = String.raw`(?:\s*(?:[0-9]+|\$|~[0-9]*|\+[0-9]*|[,!]|\/(?:\\.|[^/\\\n])*\/[IM]*|\\([^\n\\])(?:\\.|(?!\1)[^\\\n])*\1[IM]*))*`;
+/** A w/W/e command where a command starts: the script's start or after `;`,
+ * `{`, `}` or a newline, behind any address. A `w` glued to its file (`wout`)
+ * is one too. */
+const SED_VERB_RE = new RegExp(String.raw`(?:^|[;{}\n])` + SED_ADDR + String.raw`\s*[wWe]`);
+/** An s command whose flags carry `e` (runs the pattern space) or `w` (writes),
+ * with any delimiter and the flags in any order. */
+const SED_SFLAG_RE = /s([^\\\n])(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1[gpiImMnN0-9]*[ew]/;
+
+/** Whether this segment's sed writes a file or runs a command. */
+function sedAuditHit(segment: string): boolean {
+  const { writes, scripts } = sedScripts(segment);
+  return writes || scripts.some((sc) => SED_VERB_RE.test(sc) || SED_SFLAG_RE.test(sc));
 }
 
 /** Which rule, if any, this ONE segment trips. */
@@ -830,8 +855,11 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
     // rule reads the DEQUOTED segment, as git receives its options
     // (`--out"put"=…` is `--output=…`); sed's reads it with a quote nested in
     // the other kind masked (`maskNestedQuotes`).
-    const subject = prog === "git" ? bare : prog === "sed" ? maskNestedQuotes(segment) : segment;
-    if (READER_MODE_AUDIT[prog]?.test(subject)) return "reader_write_or_exec";
+    const hit =
+      prog === "sed"
+        ? sedAuditHit(segment)
+        : READER_MODE_AUDIT[prog]?.test(prog === "git" ? bare : segment);
+    if (hit === true) return "reader_write_or_exec";
     // A reader's ARGUMENTS are patterns, but an assignment PREFIX in front
     // of it is the environment it runs in — `LD_PRELOAD=… cat f` loads code
     // whatever cat then reads.

@@ -1807,6 +1807,32 @@ describe("the audit does not fire on the reads that ARE the job", () => {
       "echo id | sed e",
       "sed -n /x/e",
       `sed "s'.*'id'e" f`,
+      // Adjacent quoted and unquoted pieces are ONE word to bash, so the
+      // script is read as sed receives it, never from where a quote sits.
+      `sed -n "/it's/"'w out' f`,
+      `sed -n "1"'w out' f`,
+      `sed -n 'p;'"w out" f`,
+      "sed -n $'w out' f",
+      "sed -n '1'e f",
+      "sed -n 1'e' f",
+      "sed -n 'p'\\;'e' f",
+      "sed -n $'e' f",
+      // Glued file names, every address form, and the -e value spellings.
+      "sed '1eid' f",
+      "sed -n '$!e' f",
+      "sed -ee f",
+      "sed --expression=e f",
+      "sed -n 'w/tmp/x' f",
+      "sed -n 'wout' f",
+      "sed 's/.*/x/w/tmp/o' f",
+      "sed -n -e w\\ out f",
+      "sed -n '1!w out' f",
+      "sed -n '0~3w out' f",
+      "sed -n '/a/,+2w out' f",
+      "sed -n '\\%x%w out' f",
+      "sed --expression=w/tmp/x f",
+      "sed -n 'p' f -e e",
+      "sed -n '1a x\ne' f",
     ])
       expect(kindOf(c), c).toBe("reader_write_or_exec");
     // An env prefix in front of a reader is its environment, not a pattern.
@@ -1833,6 +1859,9 @@ describe("the audit does not fire on the reads that ARE the job", () => {
       `sed -n "/open(path, 'w')/p" src/io.py`,
       "sed -n '/x/p' /tmp/e",
       "sed -n 1,5p some.file e",
+      "sed -n '/x = w + 1/p' f",
+      "sed -n '/ e /p' f",
+      "sed -n 1p e w",
     ])
       expect(kindOf(c), c).toBeUndefined();
     expect(kindOf("sort -k1,1 -t: names")).toBeUndefined();
