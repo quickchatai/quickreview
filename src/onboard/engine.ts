@@ -196,7 +196,13 @@ export function readChecklist(stateDir: string): ChecklistFile | null {
  * re-verification, so "the file says so" is a verified claim). */
 export function checklistComplete(stateDir: string): boolean {
   const file = readChecklist(stateDir);
-  return typeof file?.completed_at === "string" && !file.reopened_at;
+  return file !== null && completeNow(file);
+}
+
+/** Is onboarding complete NOW: finished once, and not reopened since. The one
+ * reading of the two fields, for the file on disk and the engine's copy. */
+function completeNow(file: Pick<ChecklistFile, "completed_at" | "reopened_at">): boolean {
+  return typeof file.completed_at === "string" && !file.reopened_at;
 }
 
 /** `<sandbox root>` — the parent of `paths.stateDir`, by the adapters'
@@ -337,7 +343,7 @@ export class OnboardingEngine {
   }
 
   isComplete(): boolean {
-    return this.checklist.completed_at !== null && !this.checklist.reopened_at;
+    return completeNow(this.checklist);
   }
 
   /** A completed checklist no longer verifies: withdraw the current-completion
