@@ -70,6 +70,12 @@ export function hunksTouchLine(
   });
 }
 
+/** A PR's worktree, relative to the sandbox root: the one spelling of the
+ * `wt/pr-<n>` layout every reader of it uses. */
+export function prWorktreeRel(pr: number): string {
+  return `wt/pr-${pr}`;
+}
+
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 
 /** A file diff git renders without text hunks although the content changed:
@@ -728,7 +734,7 @@ export class WorktreeManager {
   }
 
   worktreePath(pr: number): string {
-    return join(this.wtRoot, `pr-${pr}`);
+    return join(this.root, prWorktreeRel(pr));
   }
 
   /** Clone the base repo if it is not there yet. Idempotent. */

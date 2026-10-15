@@ -116,6 +116,7 @@ import {
   type PrOwnedDelta,
   type PrOwnedDeltaFile,
   type WorktreeFacts,
+  prWorktreeRel,
 } from "./worktrees.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
@@ -282,7 +283,7 @@ export interface DispatchDeps {
 }
 
 export function defaultWorktree(pr: number): string {
-  return `wt/pr-${pr}`;
+  return prWorktreeRel(pr);
 }
 
 /** PR size at the reviewed head, summed over the files API response. */

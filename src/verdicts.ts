@@ -96,6 +96,7 @@ import {
   type StandingDecidedVerdict,
 } from "./standing-review.js";
 import { flushHeldWakes, pauseDefersAllHeldWakes } from "./wakes.js";
+import { prWorktreeRel } from "./worktrees.js";
 import {
   describeGap,
   failedPasses,
@@ -2775,7 +2776,7 @@ export class VerdictWatcher {
       const rehash = await withinBudget(
         (this.deps.integrityFingerprint ?? fingerprintRoundIntegrity)({
           clonePath: githubCloneDir(cfg.github),
-          worktreePath: resolve(root, `wt/pr-${pr}`),
+          worktreePath: resolve(root, prWorktreeRel(pr)),
           piHome: join(root, "pihome"),
           sandboxRoot: root,
         }),

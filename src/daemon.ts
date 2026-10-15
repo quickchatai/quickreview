@@ -67,6 +67,7 @@ import type { SessionHooks } from "./types.js";
 import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
 import { applyInterpretation, createWebhookServer, type Interpretation } from "./webhook.js";
 import { wakeOrHold, withRepoFacts } from "./wakes.js";
+import { prWorktreeRel } from "./worktrees.js";
 import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
 import {
   PostingOutbox,
@@ -367,7 +368,7 @@ export async function serveAuthorReply(
         event,
         {
           head_sha: row?.head_sha,
-          worktree: join(deps.root, "wt", `pr-${reply.pr}`),
+          worktree: join(deps.root, prWorktreeRel(reply.pr)),
         },
         pingpong.discipline(reply.in_reply_to_id),
       ),
