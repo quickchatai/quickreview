@@ -214,6 +214,7 @@ export function describeSummary(s: ProfileSummary): string {
     `  lenses tuned:${lenses.length === 0 ? " none" : `\n${lenses.join("\n")}`}`,
     ...(s.heuristics.length > 0 ? [`  heuristics extend: ${s.heuristics.join(", ")}`] : []),
     ...(Object.keys(s.scan).length > 0 ? [`  [scan]: ${JSON.stringify(s.scan)}`] : []),
+    ...(Object.keys(s.posting).length > 0 ? [`  [posting]: ${JSON.stringify(s.posting)}`] : []),
   ].join("\n");
 }
 

@@ -44,7 +44,7 @@ import {
   PRIORITY_SETTINGS,
   type Priority,
 } from "../src/setup/interview.js";
-import { editLensTables } from "../src/setup/profile.js";
+import { describeSummary, editLensTables } from "../src/setup/profile.js";
 import { PIN_PROPOSALS_FILE, parsePinProposals } from "../src/setup/pins.js";
 import { INTERVIEW_FILE, type ApplyResult } from "../src/setup/tuning.js";
 
@@ -756,6 +756,25 @@ describe("the commit hand-off (processProfileCommits)", () => {
 });
 
 // ---- the surgical edit -------------------------------------------------------------------------
+
+describe("describeSummary", () => {
+  const base = {
+    name: "acme",
+    chain: [{ name: "acme" }, { name: "default" }],
+    ecosystem: "none",
+    addenda: [],
+    lenses: {},
+    heuristics: [],
+    scan: {},
+    posting: {},
+  } as unknown as Parameters<typeof describeSummary>[0];
+
+  it("renders the profile's [posting] keys when it sets any, and nothing when it sets none", () => {
+    expect(describeSummary(base)).not.toMatch(/\[posting\]/);
+    const set = { ...base, posting: { max_comments: 5 } } as unknown as typeof base;
+    expect(describeSummary(set)).toMatch(/ {2}\[posting\]: \{"max_comments":5\}/);
+  });
+});
 
 describe("editLensTables", () => {
   it("refuses a [lenses] it cannot edit without losing something", () => {
