@@ -1507,8 +1507,11 @@ export class VerdictWatcher {
    *     failed;
    *   - the PR returns to the state its standing review put it in, read off
    *     the live mark through the one standing-review interpretation; the
-   *     mark itself, GitHub, the withheld-approval mark and any successor or
-   *     held wake are left exactly as they were;
+   *     mark itself, GitHub and the withheld-approval mark are left exactly
+   *     as they were;
+   *   - round-end housekeeping runs as after a verdict: a fresh-head
+   *     successor is promoted, otherwise the wakes held during the round
+   *     flow;
    *   - no `review_failures` row, no retry budget, no Slack FAILED_LOUD, no
    *     replacement round, no escalation.
    *
@@ -1567,20 +1570,22 @@ export class VerdictWatcher {
         `standing ${standing ?? "review (verdict unknown)"} stands, nothing was posted`,
       "no_new_evidence",
     );
-    // ---- claimed; everything below may await ---------------------------------
+    // ---- claimed; the restoration below lands in this same turn --------------
     // The round ran a full review and burned its tokens: measured like every
     // other terminal path, never hidden behind a benign cause. Its window
     // closes here, and the measurement is owed from here, durably; the reads
     // (async — seconds, at most the usage budget) run last, after the
     // restored lifecycle and the held-wake flush, so they
-    // never widen the window before either: a restart cannot strand the PR in
-    // `reviewing`, and no round dispatched while they run can receive this
-    // round's held wakes. A restart while they run resumes them.
+    // never widen the window before either: no round dispatched while they
+    // run can receive this round's held wakes. A restart while they run
+    // resumes them.
+    //
+    // Everything durable — the restored lifecycle, the settlement event, the
+    // successor — lands synchronously with the cancel, before the first
+    // await: a replay of a cancelled round is inert, so a restart inside an
+    // await must find nothing left to do (the PR never stranded in
+    // `reviewing`).
     const owed = this.oweMeasurement(round);
-    await this.safe(
-      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
-      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
-    );
 
     if (standingInfo.kind === "unknown") {
       // A COMMENT-only mark: guard 2 was right to refuse, and nothing here
@@ -1631,6 +1636,11 @@ export class VerdictWatcher {
       this.log(
         `verdicts: #${round.pr} preserved fresh-head successor after skipped round ${round.round_no}`,
       );
+    // ---- everything below may await ------------------------------------------
+    await this.safe(
+      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
+      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
+    );
     await this.safe(
       () => this.deps.hooks.compactSession?.(round.pr) ?? Promise.resolve(),
       `compact pr-${round.pr}`,

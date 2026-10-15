@@ -2976,6 +2976,25 @@ describe("guarded no-op settlement", () => {
     });
   });
 
+  // MUTATION: await the label call before the restoration — a restart inside
+  // it strands the PR in `reviewing` behind a cancelled round no replay settles.
+  it("restores the standing lifecycle before its first await: a restart inside the label call strands nothing", async () => {
+    skippedRound(510);
+    let atLabelCall: { state?: string; settled: number } | undefined;
+    adapter.removeLabel = async (n, label) => {
+      adapter.calls.push(`removeLabel:${n}:${label}`);
+      atLabelCall = {
+        state: store.getPr(510)?.state,
+        settled: events("posting_guarded_noop", 510).length,
+      };
+      return { executed: false, dryRunFile: "d" };
+    };
+
+    await watcher().handleFile(write(510, 1, verdictFile({ pr: 510 })));
+
+    expect(atLabelCall).toEqual({ state: "awaiting_author", settled: 1 });
+  });
+
   it("a COMMENT-only standing mark is never guessed: tracked, an anomaly, still no failure and no approve", async () => {
     skippedRound(503, "COMMENT");
 
