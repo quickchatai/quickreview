@@ -247,7 +247,18 @@ export interface AnomalyWakePolicyDeps {
   now?: () => Date;
   dedupWindowMs?: number;
   log?: (msg: string, extra?: unknown) => void;
+  /** The waits before each RETRY of a failed wake inject — its length is the
+   * retry count. Defaults to `WAKE_RETRY_BACKOFF_MS`. */
+  retryBackoffMs?: readonly number[];
+  setTimer?: (cb: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
 }
+
+/** A failed wake inject is retried after these waits: a producer that records
+ * its incident once (a stranded round, a withheld comment) never signals
+ * again, so the policy owns the retry. Past the last one the wake is lost and
+ * the row stays for the heartbeat's review. */
+export const WAKE_RETRY_BACKOFF_MS: readonly number[] = Object.freeze([60_000, 300_000, 900_000]);
 
 /**
  * The sink `StateStore.setAnomalySink` is wired to. Never throws and never
@@ -259,11 +270,26 @@ export class AnomalyWakePolicy {
   private readonly now: () => Date;
   private readonly windowMs: number;
   private readonly log: (msg: string, extra?: unknown) => void;
+  private readonly backoff: readonly number[];
+  private readonly setTimer: (cb: () => void, ms: number) => unknown;
+  private readonly clearTimer: (handle: unknown) => void;
+  /** Retries armed and not yet run. */
+  private readonly retries = new Set<unknown>();
+  private stopped = false;
 
   constructor(private readonly deps: AnomalyWakePolicyDeps) {
     this.now = deps.now ?? (() => new Date());
     this.windowMs = deps.dedupWindowMs ?? ANOMALY_DEDUP_WINDOW_MS;
     this.log = deps.log ?? (() => {});
+    this.backoff = deps.retryBackoffMs ?? WAKE_RETRY_BACKOFF_MS;
+    this.setTimer =
+      deps.setTimer ??
+      ((cb, ms) => {
+        const t = setTimeout(cb, ms);
+        t.unref?.();
+        return t;
+      });
+    this.clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   }
 
   onAnomaly(signal: AnomalySignal): void {
@@ -275,18 +301,53 @@ export class AnomalyWakePolicy {
       this.log(`anomaly wake suppressed (dedup ${key}) — row written, inject skipped`);
       return;
     }
-    this.lastInject.set(key, nowMs);
     const message =
       signal.injectMessage ??
       [
         `ANOMALY (${signal.kind})${signal.pr !== null ? ` — PR #${signal.pr}` : ""}${signal.round_no !== null ? ` round ${signal.round_no}` : ""}`,
         signal.detail,
       ].join("\n");
-    this.deps.injectOverseer(message).catch((err) => {
-      // The wake never arrived, so it holds no dedup window: the next
-      // identical signal injects again (the row is written either way).
-      if (this.lastInject.get(key) === nowMs) this.lastInject.delete(key);
-      this.log(`anomaly wake inject failed (${key}) — row is written, wake lost`, err);
+    this.deliver(key, message, 0);
+  }
+
+  /** Disarm every pending retry (daemon shutdown). */
+  stop(): void {
+    this.stopped = true;
+    for (const h of this.retries) this.clearTimer(h);
+    this.retries.clear();
+  }
+
+  /** Inject one wake, holding the dedup window from now. A failed inject —
+   * a rejection, or a hook that throws before it returns its promise —
+   * releases the window (the next identical signal injects again) and is
+   * retried after `backoff[attempt]` unless a later identical signal has
+   * taken the key meanwhile. */
+  private deliver(key: string, message: string, attempt: number): void {
+    const stampMs = this.now().getTime();
+    this.lastInject.set(key, stampMs);
+    let sent: Promise<void>;
+    try {
+      sent = this.deps.injectOverseer(message);
+    } catch (err) {
+      sent = Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+    sent.catch((err: unknown) => {
+      if (this.lastInject.get(key) === stampMs) this.lastInject.delete(key);
+      const wait = this.backoff[attempt];
+      if (this.stopped || wait === undefined) {
+        this.log(`anomaly wake inject failed (${key}) — row is written, wake lost`, err);
+        return;
+      }
+      this.log(
+        `anomaly wake inject failed (${key}) — retried in ${Math.round(wait / 1000)} s`,
+        err,
+      );
+      const handle = this.setTimer(() => {
+        this.retries.delete(handle);
+        if (this.stopped || this.lastInject.has(key)) return;
+        this.deliver(key, message, attempt + 1);
+      }, wait);
+      this.retries.add(handle);
     });
   }
 }
@@ -329,9 +390,7 @@ export interface HeartbeatDeps {
 
 /** A failed heartbeat inject is retried after these waits, the same day's
  * check-in each time; past the last one the next day's slot is armed. */
-export const HEARTBEAT_RETRY_BACKOFF_MS: readonly number[] = Object.freeze([
-  60_000, 300_000, 900_000,
-]);
+export const HEARTBEAT_RETRY_BACKOFF_MS: readonly number[] = WAKE_RETRY_BACKOFF_MS;
 
 export interface HeartbeatTimer {
   nextFire(): Date;
@@ -365,19 +424,25 @@ export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
   /** The day a failed inject is being retried for, and the retries spent. */
   let retry: { date: string; attempt: number } | null = null;
 
-  /** Inject one day's check-in. True when it is delivered (or was already). */
+  /** Inject one day's check-in. True when it is delivered (or was already).
+   * A delivered check-in whose stamp could not be recorded is still
+   * delivered: it is never injected again for that. */
   const fire = async (date: string): Promise<boolean> => {
     const last = deps.lastFired();
     if (last === date) return true; // already fired this local day (restart, race)
     try {
       await deps.injectOverseer(renderHeartbeatMessage(date, last));
-      deps.recordFired(date);
-      log(`heartbeat injected for ${date}`);
-      return true;
     } catch (err) {
       onError(err);
       return false;
     }
+    log(`heartbeat injected for ${date}`);
+    try {
+      deps.recordFired(date);
+    } catch (err) {
+      log(`heartbeat for ${date} delivered, but its stamp was not recorded`, err);
+    }
+    return true;
   };
 
   const arm = (): void => {

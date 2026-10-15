@@ -261,6 +261,130 @@ describe("logAnomaly → wake funnel", () => {
     expect(injected).toHaveLength(1);
   });
 
+  it("a failed inject is retried by the policy itself — a one-shot producer never signals again", async () => {
+    const injected: string[] = [];
+    const timers: Array<() => void> = [];
+    let failures = 2;
+    const policy = new AnomalyWakePolicy({
+      injectOverseer: (m) => {
+        if (failures-- > 0) return Promise.reject(new Error("tmux gone"));
+        injected.push(m);
+        return Promise.resolve();
+      },
+      now: () => new Date(0),
+      retryBackoffMs: [60_000, 60_000],
+      setTimer: (cb) => timers.push(cb),
+    });
+    policy.onAnomaly({
+      ts: new Date(0).toISOString(),
+      kind: "round_stranded",
+      pr: 7,
+      round_no: 2,
+      detail: "stranded",
+    });
+    await new Promise((r) => setImmediate(r));
+    expect(timers).toHaveLength(1);
+    timers.shift()!(); // retry 1 fails
+    await new Promise((r) => setImmediate(r));
+    expect(injected).toEqual([]);
+    timers.shift()!(); // retry 2 delivers
+    await new Promise((r) => setImmediate(r));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toContain("stranded");
+    expect(timers).toHaveLength(0);
+  });
+
+  it("past the last retry the wake is lost (the row stays); a later identical signal skips the retry", async () => {
+    const timers: Array<() => void> = [];
+    let calls = 0;
+    let fail = true;
+    const policy = new AnomalyWakePolicy({
+      injectOverseer: () => {
+        calls += 1;
+        return fail ? Promise.reject(new Error("tmux gone")) : Promise.resolve();
+      },
+      now: () => new Date(0),
+      retryBackoffMs: [60_000],
+      setTimer: (cb) => timers.push(cb),
+    });
+    const signal = {
+      ts: new Date(0).toISOString(),
+      kind: "round_stranded",
+      pr: 7,
+      round_no: 2,
+      detail: "stranded",
+    };
+    policy.onAnomaly(signal);
+    await new Promise((r) => setImmediate(r));
+    timers.shift()!();
+    await new Promise((r) => setImmediate(r));
+    expect(calls).toBe(2);
+    expect(timers).toHaveLength(0); // exhausted
+    // A new failure arms a retry; the next identical signal delivers first,
+    // and the retry then injects nothing more.
+    policy.onAnomaly(signal);
+    await new Promise((r) => setImmediate(r));
+    expect(timers).toHaveLength(1);
+    fail = false;
+    policy.onAnomaly(signal);
+    await new Promise((r) => setImmediate(r));
+    expect(calls).toBe(4);
+    timers.shift()!();
+    await new Promise((r) => setImmediate(r));
+    expect(calls).toBe(4);
+  });
+
+  it("a hook that throws synchronously is contained: logAnomaly never throws, and it is retried", async () => {
+    const timers: Array<() => void> = [];
+    const store = new StateStore(":memory:");
+    const policy = new AnomalyWakePolicy({
+      injectOverseer: () => {
+        throw new Error("sync failure");
+      },
+      now: () => new Date(0),
+      retryBackoffMs: [60_000],
+      setTimer: (cb) => timers.push(cb),
+    });
+    store.setAnomalySink((s) => policy.onAnomaly(s));
+    expect(() => store.logAnomaly("round_stranded", 3, 1, "detail")).not.toThrow();
+    await new Promise((r) => setImmediate(r));
+    expect(store.anomalies()).toHaveLength(1);
+    expect(timers).toHaveLength(1);
+    policy.stop();
+  });
+
+  it("stop() disarms a pending retry", async () => {
+    const timers: Array<() => void> = [];
+    const cleared: unknown[] = [];
+    let calls = 0;
+    const policy = new AnomalyWakePolicy({
+      injectOverseer: () => {
+        calls += 1;
+        return Promise.reject(new Error("tmux gone"));
+      },
+      now: () => new Date(0),
+      retryBackoffMs: [60_000],
+      setTimer: (cb) => {
+        timers.push(cb);
+        return cb;
+      },
+      clearTimer: (h) => cleared.push(h),
+    });
+    policy.onAnomaly({
+      ts: new Date(0).toISOString(),
+      kind: "round_stranded",
+      pr: 7,
+      round_no: 2,
+      detail: "stranded",
+    });
+    await new Promise((r) => setImmediate(r));
+    policy.stop();
+    expect(cleared).toEqual([timers[0]]);
+    timers[0]!(); // even a timer that ran anyway injects nothing
+    await new Promise((r) => setImmediate(r));
+    expect(calls).toBe(1);
+  });
+
   it("a bare store (no sink) still records — nothing wakes, nothing throws", () => {
     const store = new StateStore(":memory:");
     store.logAnomaly("malformed", 1, 1, "no sink wired");
@@ -510,6 +634,32 @@ describe("startHeartbeat — daily fire", () => {
     await clock.advanceTo("2026-08-19T12:02:00Z");
     expect(injected).toHaveLength(1);
     expect(injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+    expect(hb.nextFire().toISOString()).toBe("2026-08-20T07:00:00.000Z");
+    hb.stop();
+  });
+
+  it("a delivered check-in whose stamp fails to record is not injected again", async () => {
+    const clock = new FakeClock(new Date("2026-08-19T06:00:00Z").getTime());
+    let calls = 0;
+    const hb = startHeartbeat({
+      timeHHMM: "09:00",
+      timeZone: TZ,
+      lastFired: () => null,
+      recordFired: () => {
+        throw new Error("SQLITE_BUSY");
+      },
+      injectOverseer: () => {
+        calls += 1;
+        return Promise.resolve();
+      },
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      retryBackoffMs: [60_000, 300_000],
+    });
+    await hb.booted;
+    await clock.advanceTo("2026-08-19T08:00:00Z");
+    expect(calls).toBe(1);
     expect(hb.nextFire().toISOString()).toBe("2026-08-20T07:00:00.000Z");
     hb.stop();
   });
