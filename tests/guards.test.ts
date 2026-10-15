@@ -278,6 +278,27 @@ describe("guard 2 — the same head is never reviewed twice", () => {
     expect(executor).not.toHaveBeenCalled();
   });
 
+  // MUTATION: drop the APPROVE exemption — the CI-green retry of a withheld
+  // approval, delivered by the daemon, is refused as no-new-evidence.
+  it("never gates an APPROVE, exactly as approve-pr.sh: the withheld approval's retry posts at its stamped head", async () => {
+    const { gate, executor } = harness();
+    // The withheld round's COMMENT stamped this head.
+    await gate.execute(reviewIntent("COMMENT"));
+    expect(store.reviewedHead(5180)).toMatchObject({ head_sha: HEAD, posted_event: "COMMENT" });
+    executor.mockClear();
+
+    const key = `v1:5180:2:${HEAD}`;
+    const result = await gate.execute({
+      ...reviewIntent("APPROVE", HEAD, `Approved\n\n<!-- qcr-post:${key} -->`),
+      postingRetry: key,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(executor).toHaveBeenCalledTimes(1);
+    // A second REQUEST_CHANGES at the head is still refused.
+    expect((await gate.execute(reviewIntent("REQUEST_CHANGES"))).blocked).toBe("no-new-evidence");
+  });
+
   it("lets the review through again after an author reply", async () => {
     const { gate, executor } = harness();
     await gate.execute(reviewIntent("REQUEST_CHANGES"));
