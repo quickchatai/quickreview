@@ -284,8 +284,9 @@ describe("the full concierge loop", () => {
         thread: ev.ts,
       });
 
-      // (6) ledgered under the command file's own idem key (one post per file)
-      const row = store.slackPost("reply:reply-1");
+      // (6) ledgered under the command file's own idem key (one post per file),
+      // named by the directory that served it
+      const row = store.slackPost("reply:slack/reply-1");
       expect(row).toMatchObject({ kind: "reply", thread_ts: ev.ts, ok: 1 });
       expect(row?.ts).toMatch(/^\d{10}\.\d{6}$/); // the delivered message's ts, as a string
 
@@ -306,9 +307,28 @@ describe("the full concierge loop", () => {
     expect(transport.posts.filter((p) => p.thread_ts === ev.ts)).toHaveLength(1);
     expect(resultFile("reply-2")).toMatchObject({ ok: false });
     expect(String(resultFile("reply-2").reason)).toContain(
-      "already posted (idem_key reply:reply-2)",
+      "already posted (idem_key reply:slack/reply-2)",
     );
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("a same-named reply served from commands/ is a different delivery, not a replay", async () => {
+    const ev = event();
+    await deliver(ev);
+    writeSlackCommand("reply-3", { command: "slack_reply", thread: ev.ts, text: "from slack/" });
+    await runtime.commands.sweep();
+    // What the commands/ watcher hands the same handler for its reply-3.json.
+    const out = await runtime.slackReply({
+      thread: ev.ts,
+      text: "from commands/",
+      file: "reply-3",
+    });
+
+    expect(out).toMatchObject({ ok: true });
+    expect(transport.posts.filter((p) => p.thread_ts === ev.ts).map((p) => p.text)).toEqual([
+      "from slack/",
+      "from commands/",
+    ]);
   });
 });
 

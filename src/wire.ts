@@ -396,6 +396,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   const slackReply = makeSlackReply({ cfg, store, api: transport, now, log: (line) => log(line) });
   const commands = new CommandWatcher({
     dir: join(root, "commands", "slack"),
+    scope: "slack",
     tier: { dir: "slack", currentOrigin: () => origins.latest() },
     deps: { ...opts.commandDeps, slackReply },
     store,

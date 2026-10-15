@@ -174,7 +174,9 @@ export type CommandIssuer = LeverIssuer;
 /** Context a command file carries with it (its own name, for idempotence,
  * and the issuer the watcher stamped from the channel). */
 export interface CommandContext {
-  /** Basename of the command file, "" for a direct executeCommand call. */
+  /** The command file's name without `.json` — `<scope>/<name>` when the
+   * watcher serving it has a `scope` — or "" for a direct executeCommand
+   * call. It names one delivery, stable across that file's retries. */
   file: string;
   issuer: CommandIssuer;
 }
@@ -978,6 +980,10 @@ export interface CommandWatcherOptions {
    * `<parent>/results` — so the operator's clients read them from one place.
    */
   operator?: OperatorSeal;
+  /** Names this directory in each command's context `file`
+   * (`<scope>/<name>`), so a same-named file in another served directory is a
+   * different delivery to a handler's idempotence key. Absent ⇒ the bare name. */
+  scope?: string;
   deps: CommandDeps;
   store: StateStore;
   now?: () => Date;
@@ -1298,7 +1304,10 @@ export class CommandWatcher {
         );
       let outcome: FileOutcome;
       try {
-        outcome = await executeCommand(validation.command, this.opts.deps, { file: name, issuer });
+        outcome = await executeCommand(validation.command, this.opts.deps, {
+          file: this.opts.scope ? `${this.opts.scope}/${name}` : name,
+          issuer,
+        });
       } catch (err) {
         outcome = { ok: false, reason: `handler threw: ${(err as Error).message}` };
       }
