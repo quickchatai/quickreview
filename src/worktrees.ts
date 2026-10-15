@@ -882,6 +882,9 @@ export class WorktreeManager {
   ): Promise<{ files: string[]; degraded: boolean; reason?: string }> {
     if (!SHA_RE.test(from) || !SHA_RE.test(to))
       return { files: [], degraded: true, reason: "not a commit sha" };
+    // Every degraded answer keeps the files already verified: a later merge
+    // that cannot be read makes the set incomplete, not wrong.
+    const files = new Set<string>();
     try {
       // A recheck classifies a push minutes after it lands — usually before
       // any round has fetched the new objects into the base clone, so without
@@ -893,7 +896,6 @@ export class WorktreeManager {
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean);
-      const files = new Set<string>();
       const unverified: string[] = [];
       for (const m of merges) {
         const parents = (await this.git(["rev-list", "--parents", "-n", "1", m])).stdout
@@ -932,7 +934,7 @@ export class WorktreeManager {
         : { files: [...files], degraded: false };
     } catch (err) {
       return {
-        files: [],
+        files: [...files],
         degraded: true,
         reason: (err instanceof Error ? err.message : String(err)).slice(0, 300),
       };

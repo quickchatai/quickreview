@@ -415,6 +415,38 @@ describe("resolvedFilesInMerges", () => {
     expect(res).toEqual({ files: ["café.txt"], degraded: false });
   });
 
+  it("a git failure partway keeps the files already verified — degraded, never emptied", async () => {
+    const { from } = mergeScenario({ conflicting: false });
+    // A second merge, newer, that resolves shared.txt by hand.
+    git(origin, "checkout", "-q", "master");
+    writeFileSync(join(origin, "shared.txt"), "line1 MASTER2\nline2\nline3\n");
+    git(origin, "commit", "-q", "-am", "master edit 2");
+    git(origin, "checkout", "-q", "side");
+    writeFileSync(join(origin, "shared.txt"), "line1 SIDE2\nline2\nline3\n");
+    git(origin, "commit", "-q", "-am", "side edit 2");
+    try {
+      git(origin, "merge", "-q", "master");
+    } catch {
+      writeFileSync(join(origin, "shared.txt"), "line1 SIDE2\nline2\nline3\n");
+      git(origin, "add", "-A");
+      git(origin, "commit", "-q", "-m", "resolve 2");
+    }
+    const to = git(origin, "rev-parse", "HEAD").trim();
+    // The second merge's parent read (the older, clean merge) fails.
+    let parentReads = 0;
+    const run: ExecFn = async (cmd, args, opts) => {
+      if (args[0] === "rev-list" && args[1] === "--parents" && ++parentReads === 2)
+        return { code: 128, stdout: "", stderr: "fatal: unable to read" };
+      return nodeExec(cmd, args, opts);
+    };
+    const m = new WorktreeManager({ root, repo: "exampleorg/example-app", cloneUrl: origin, run });
+    await m.ensureBaseClone();
+    git(join(root, "example-app"), "fetch", "-q", "origin", "side", "master");
+    const res = await m.resolvedFilesInMerges(from, to);
+    expect(res.degraded).toBe(true);
+    expect(res.files).toEqual(["shared.txt"]);
+  });
+
   it("fetches missing objects on demand instead of degrading", async () => {
     const m = mgr();
     await m.ensureBaseClone(); // clone BEFORE the merge exists — the live recheck timing
