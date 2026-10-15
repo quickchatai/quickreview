@@ -20,15 +20,20 @@
 // adapter, and the output is markdown on disk.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkAnchor, runsByPath } from "./anchors.js";
+import { checkAnchor, runsByPath, type Side } from "./anchors.js";
 import type { MutationKind } from "./gate.js";
 
 // ---- shapes ------------------------------------------------------------------
 
 export interface ReviewComment {
   path: string;
-  /** Line on the head side of the diff the comment anchors to. */
+  /** Line the comment anchors to (its last line, for a range), in the file
+   * version of `side`. */
   line: number;
+  /** Diff side of the anchor; absent = RIGHT, GitHub's default. */
+  side?: Side;
+  /** First line of a multi-line anchor; absent = a single line. */
+  start_line?: number;
   body: string;
 }
 
@@ -143,7 +148,14 @@ export function sandboxReviewFrom(records: DryrunRecord[], pr: number): ReviewSn
     event?: string;
     body?: string;
     commit_id?: string;
-    comments?: Array<{ path?: string; line?: number; position?: number; body?: string }>;
+    comments?: Array<{
+      path?: string;
+      line?: number;
+      position?: number;
+      side?: unknown;
+      start_line?: unknown;
+      body?: string;
+    }>;
   };
   return {
     source: "sandbox",
@@ -154,6 +166,8 @@ export function sandboxReviewFrom(records: DryrunRecord[], pr: number): ReviewSn
     comments: (body.comments ?? []).map((c) => ({
       path: c.path ?? "",
       line: c.line ?? c.position ?? 0,
+      ...(c.side === "LEFT" || c.side === "RIGHT" ? { side: c.side } : {}),
+      ...(typeof c.start_line === "number" ? { start_line: c.start_line } : {}),
       body: c.body ?? "",
     })),
   };
@@ -397,46 +411,28 @@ export function invariantScan(records: DryrunRecord[], pr: number): InvariantVio
 //
 // The verdict comes from src/anchors.ts — the same changed-run containment
 // check the posting path uses, so the report cannot disagree with what the
-// daemon would have accepted. The two local diff walkers below are kept only to
+// daemon would have accepted. The local diff walker below is kept only to
 // classify a *failed* anchor for the human (context line inside a hunk vs
 // nowhere near the diff), which anchors.ts does not distinguish.
 
-/** New-side line numbers of `+` lines in a unified diff. */
-export function addedLineNumbers(patch: string): Set<number> {
-  const added = new Set<number>();
-  let newLine = 0;
-  for (const line of patch.split("\n")) {
-    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-    if (hunk) {
-      newLine = Number(hunk[1]);
-      continue;
-    }
-    if (line.startsWith("+")) {
-      added.add(newLine);
-      newLine++;
-    } else if (line.startsWith("-") || line.startsWith("\\")) {
-      // removed / "no newline" — no new-side line consumed
-    } else if (newLine > 0) {
-      newLine++;
-    }
-  }
-  return added;
-}
-
-/** Every new-side line number covered by a hunk (added + context). */
-export function hunkLineNumbers(patch: string): Set<number> {
+/** Every line number one side of a hunk covers — RIGHT: added + context, in
+ * the new file; LEFT: removed + context, in the old one. */
+export function hunkLineNumbers(patch: string, side: Side = "RIGHT"): Set<number> {
   const lines = new Set<number>();
-  let newLine = 0;
+  // The side's own changed-line marker; the other side's is skipped.
+  const own = side === "RIGHT" ? "+" : "-";
+  const other = side === "RIGHT" ? "-" : "+";
+  let lineNo = 0;
   for (const line of patch.split("\n")) {
-    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunk) {
-      newLine = Number(hunk[1]);
+      lineNo = Number(side === "RIGHT" ? hunk[2] : hunk[1]);
       continue;
     }
-    if (line.startsWith("-") || line.startsWith("\\")) continue;
-    if (newLine > 0) {
-      lines.add(newLine);
-      newLine++;
+    if (line.startsWith(other) || line.startsWith("\\")) continue;
+    if (lineNo > 0 && (line.startsWith(own) || line.startsWith(" ") || line === "")) {
+      lines.add(lineNo);
+      lineNo++;
     }
   }
   return lines;
@@ -449,7 +445,8 @@ export interface AnchorCheck {
 }
 
 /** Provenance line for the report: which module judged the anchors. */
-export const ANCHOR_SOURCE = "src/anchors.ts (changed-run containment, RIGHT side)";
+export const ANCHOR_SOURCE =
+  "src/anchors.ts (changed-run containment, on each comment's own side and range)";
 
 export function checkAnchors(
   comments: ReviewComment[],
@@ -460,9 +457,15 @@ export function checkAnchors(
   return comments.map((c) => {
     const patch = byPath.get(c.path);
     if (patch === undefined) return { path: c.path, line: c.line, status: "unknown-file" as const };
-    const verdict = checkAnchor(runs, { path: c.path, side: "RIGHT", line: c.line });
+    const side = c.side ?? "RIGHT";
+    const verdict = checkAnchor(runs, {
+      path: c.path,
+      side,
+      line: c.line,
+      ...(c.start_line !== undefined ? { start_line: c.start_line } : {}),
+    });
     if (verdict.ok) return { path: c.path, line: c.line, status: "on-changed-line" as const };
-    if (hunkLineNumbers(patch).has(c.line))
+    if (hunkLineNumbers(patch, side).has(c.line))
       return { path: c.path, line: c.line, status: "context-only" as const };
     return { path: c.path, line: c.line, status: "outside-diff" as const };
   });

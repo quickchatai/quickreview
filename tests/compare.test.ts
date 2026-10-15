@@ -8,7 +8,6 @@ import { join } from "node:path";
 import {
   ALLOWED_MUTATION_KINDS,
   NOT_ALLOWED_MUTATION_KINDS,
-  addedLineNumbers,
   attestDryRun,
   blockerParity,
   checkAnchors,
@@ -277,12 +276,60 @@ describe("(b) invariant scan", () => {
 });
 
 describe("(c) anchor validity", () => {
-  it("computes added and hunk line numbers from a unified diff", () => {
-    expect([...addedLineNumbers(PATCH)].sort((a, b) => a - b)).toEqual([11, 12, 13, 44]);
+  it("computes each side's hunk line numbers from a unified diff", () => {
     const hunk = hunkLineNumbers(PATCH);
     expect(hunk.has(10)).toBe(true); // context line
     expect(hunk.has(11)).toBe(true); // added line
     expect(hunk.has(100)).toBe(false);
+    expect([...hunk].sort((a, b) => a - b)).toEqual([10, 11, 12, 13, 14, 43, 44]);
+    // The old file: context and the removed line, numbered from `-10` / `-40`.
+    expect([...hunkLineNumbers(PATCH, "LEFT")].sort((a, b) => a - b)).toEqual([10, 11, 12, 40]);
+  });
+
+  it("judges each comment on its own side and whole range, as the posting path does", () => {
+    const checks = checkAnchors(
+      [
+        { path: "api/handler.py", line: 11, side: "LEFT", body: "on the removed line" },
+        { path: "api/handler.py", line: 12, side: "LEFT", body: "old-side context" },
+        { path: "api/handler.py", line: 13, start_line: 11, body: "range inside the added run" },
+        { path: "api/handler.py", line: 12, start_line: 10, body: "range starting on context" },
+      ],
+      patches,
+    );
+    expect(checks.map((c) => c.status)).toEqual([
+      "on-changed-line",
+      "context-only",
+      "on-changed-line",
+      "context-only",
+    ]);
+  });
+
+  it("keeps a recorded comment's side and start line", () => {
+    const snap = sandboxReviewFrom(
+      [
+        {
+          kind: "create_review",
+          method: "POST",
+          path: "/repos/o/r/pulls/9/reviews",
+          pr: 9,
+          body: {
+            event: "COMMENT",
+            body: "b",
+            comments: [
+              { path: "a.py", line: 4, side: "LEFT", body: "x" },
+              { path: "a.py", line: 6, start_line: 5, side: "RIGHT", body: "y" },
+              { path: "a.py", line: 7, body: "z" },
+            ],
+          },
+        },
+      ],
+      9,
+    )!;
+    expect(snap.comments).toEqual([
+      { path: "a.py", line: 4, side: "LEFT", body: "x" },
+      { path: "a.py", line: 6, side: "RIGHT", start_line: 5, body: "y" },
+      { path: "a.py", line: 7, body: "z" },
+    ]);
   });
 
   it("classifies anchors against the patch", () => {
