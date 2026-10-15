@@ -107,8 +107,8 @@ export function decodeRecord(r: BundleRecord): Buffer | null {
 }
 
 /**
- * Write the bundle `dest` from `sources` (relative paths against `root`), then
- * verify it, then place it. Returns what it holds; a verify failure deletes
+ * Write the bundle `dest` from `sources` (absolute paths, each record named
+ * by its path relative to `root`), then verify it, then place it. Returns what it holds; a verify failure deletes
  * the partial and leaves every source in place.
  */
 export async function writeBundle(
@@ -249,7 +249,8 @@ async function eachRecord(
  * Decompress a bundle, re-parse every line and re-hash every record's bytes
  * (a `same_as` record against the record it names). With `expected`, each
  * record's sha256 must also be the one its source read gave, and every
- * expected path must be there. Returns null when it verifies, else why.
+ * expected path must be there. Returns null when it verifies, else why; an
+ * abort throws.
  */
 export async function verifyBundle(
   gz: string,
@@ -271,6 +272,9 @@ export async function verifyBundle(
         problem = `${r.path}: the bundle holds ${r.sha256.slice(0, 12)}…, the source read ${expected.get(r.path)?.slice(0, 12) ?? "nothing"}`;
     });
   } catch (err) {
+    // A stop is not a verdict on the bundle: it propagates, as in the
+    // per-file protocol.
+    if (opts.signal?.aborted) throw err;
     return `${gz}: ${(err as Error).message}`;
   }
   if (problem) return problem;
