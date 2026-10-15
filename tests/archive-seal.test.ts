@@ -585,6 +585,21 @@ describe("the manifest", () => {
     await expect(b.open()).rejects.toBeInstanceOf(ManifestUnreadable);
   });
 
+  it("an entry without a positive integer seq is unreadable, never a NaN file name", async () => {
+    const r = await moved();
+    r.adb.close();
+    const m = JSON.parse(readFileSync(join(r.dir, "manifest.json"), "utf8")) as {
+      files: Array<Record<string, unknown>>;
+    };
+    for (const seq of [undefined, 0, 1.5, "2"]) {
+      const files = m.files.map((f) => ({ ...f }));
+      if (seq === undefined) delete files[0]!.seq;
+      else files[0]!.seq = seq;
+      writeFileSync(join(r.dir, "manifest.json"), JSON.stringify({ format: 1, files }));
+      await expect(readDbManifest(r.dir), String(seq)).rejects.toBeInstanceOf(ManifestUnreadable);
+    }
+  });
+
   it("a new file takes a seq no name on disk has used (a stray -wal included)", async () => {
     const r = await rig();
     rigs.push(r);
