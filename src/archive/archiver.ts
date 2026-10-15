@@ -564,7 +564,7 @@ export class Archiver {
         this.filesSincePlan = { prs: 0, bytes: 0 };
         this.doneSincePlan = new Set();
         this.fileHeld.clear();
-        this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, plan.max_sync_span_ms);
+        this.foldSpan(plan.max_sync_span_ms);
         this.dbCache = null;
         planned = true;
         this.log(
@@ -827,17 +827,21 @@ export class Archiver {
     return last === undefined || this.now().getTime() - last >= RESTORE_RETRY_MS;
   }
 
+  /** The daemon's load reading; a reader that throws is UNKNOWN (undefined),
+   * never a hold by itself. */
+  private readLoad(): DaemonLoadStatus | undefined {
+    try {
+      return this.deps.load?.();
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The load holds a tick's restores obey: every one but the drain (§10). */
   private restoreLoadHold(): ArchiveHoldReason | null {
-    let load: DaemonLoadStatus | undefined;
-    try {
-      load = this.deps.load?.();
-    } catch {
-      load = undefined;
-    }
     return loadHold({
       draining: false,
-      load,
+      load: this.readLoad(),
       starvedRatio: this.deps.starvedRatio ?? DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO,
     });
   }
@@ -1219,7 +1223,7 @@ export class Archiver {
       }
       await yieldToLoop();
     }
-    this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, Math.round(meter.max * 10) / 10);
+    this.foldSpan(meter.max);
     this.files = run;
     if (run.prs_started > 0) this.dbCache = null;
     if (run.removed + run.transcripts + run.state_files + run.duplicates_removed > 0)
@@ -1260,12 +1264,7 @@ export class Archiver {
   /** The rate the file work runs at: an UNKNOWN load reading runs at the
    * minimum — one PR, half the MB/s (§10). */
   private fileRate(): { maxPrs: number; bytesPerS: number } {
-    let load: DaemonLoadStatus | undefined;
-    try {
-      load = this.deps.load?.();
-    } catch {
-      load = undefined;
-    }
+    const load = this.readLoad();
     const unknown = !load || load.event_loop?.state !== "ok" || load.cpu?.state !== "measured";
     return unknown
       ? { maxPrs: 1, bytesPerS: Math.max(1, Math.floor(this.policy.maxBytesPerS / 2)) }
@@ -1305,8 +1304,7 @@ export class Archiver {
       });
     const meter = new SpanMeter();
     const fold = (): void => {
-      if (meter.max > 0)
-        this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, Math.round(meter.max * 10) / 10);
+      if (meter.max > 0) this.foldSpan(meter.max);
     };
     for (const p of passes) {
       const stop = this.fileStop(at);
@@ -1405,15 +1403,9 @@ export class Archiver {
 
   /** The load half of the holds, as it reads now. */
   private loadReason(): ArchiveHoldReason | null {
-    let load: DaemonLoadStatus | undefined;
-    try {
-      load = this.deps.load?.();
-    } catch {
-      load = undefined;
-    }
     return loadHold({
       draining: this.deps.store.drainState().draining,
-      load,
+      load: this.readLoad(),
       starvedRatio: this.deps.starvedRatio ?? DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO,
     });
   }
@@ -1425,16 +1417,28 @@ export class Archiver {
     return this.loadReason();
   }
 
+  /** Is incident `key` to be raised now — its first time, or ANOMALY_REPEAT_MS
+   * after the last? Admitting it starts that window. */
+  private admitIncident(key: string): boolean {
+    const nowMs = this.now().getTime();
+    const last = this.raised.get(key);
+    if (last !== undefined && nowMs - last < ANOMALY_REPEAT_MS) return false;
+    this.raised.set(key, nowMs);
+    return true;
+  }
+
+  /** Fold a measured synchronous span (ms) into the longest seen, to 0.1 ms. */
+  private foldSpan(ms: number): void {
+    this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, Math.round(ms * 10) / 10);
+  }
+
   /** The quiet `archive_verify_failed` anomaly, once per incident (`key`) and
    * again only after ANOMALY_REPEAT_MS; a repeat inside it is logged only. */
   private raiseQuiet(key: string, detail: string): void {
-    const nowMs = this.now().getTime();
-    const last = this.raised.get(key);
-    if (last !== undefined && nowMs - last < ANOMALY_REPEAT_MS) {
+    if (!this.admitIncident(key)) {
       this.log(`archive: ${detail} (archive_verify_failed already raised for ${key})`);
       return;
     }
-    this.raised.set(key, nowMs);
     this.deps.store.logAnomaly("archive_verify_failed", null, null, detail);
     this.dbCache = null;
   }
@@ -1509,7 +1513,7 @@ export class Archiver {
       months_open: counts.open,
       months_sealed: counts.sealed,
     };
-    this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, r.max_span_ms);
+    this.foldSpan(r.max_span_ms);
     this.movedSincePlan.events += r.events.moved;
     this.movedSincePlan.deliveries += r.deliveries.moved;
     if (r.events.moved + r.deliveries.moved > 0) this.dbCache = null;
@@ -1698,13 +1702,10 @@ export class Archiver {
   /** A WAKE kind, once per incident (`key`) and again only after
    * ANOMALY_REPEAT_MS. */
   private raiseWake(kind: string, pr: number | null, key: string, detail: string): void {
-    const nowMs = this.now().getTime();
-    const last = this.raised.get(key);
-    if (last !== undefined && nowMs - last < ANOMALY_REPEAT_MS) {
+    if (!this.admitIncident(key)) {
       this.log(`archive: ${detail} (${kind} already raised for ${key})`);
       return;
     }
-    this.raised.set(key, nowMs);
     try {
       this.deps.store.logAnomaly(kind, pr, null, detail);
     } catch (err) {
