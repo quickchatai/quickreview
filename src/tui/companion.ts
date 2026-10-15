@@ -178,6 +178,10 @@ export const CONTAINER = {
 
 export type EnsureOutcome = "adopted" | "started" | "created" | "recreated";
 
+/** The vendored patched OpenViking pi extension, relative to the repo root —
+ * checked on the host and loaded from the container's bind mount of it. */
+const VENDOR_EXTENSION = "extensions/vendor/openviking-pi/index.ts";
+
 // ---- the memory forward -----------------------------------------------------
 
 /**
@@ -189,10 +193,6 @@ export type EnsureOutcome = "adopted" | "started" | "created" | "recreated";
  * exists; `resolveMemoryWiring()` still asks docker for the real gateway and
  * only falls back to this constant.
  */
-/** The vendored patched OpenViking pi extension, relative to the repo root —
- * checked on the host and loaded from the container's bind mount of it. */
-const VENDOR_EXTENSION = "extensions/vendor/openviking-pi/index.ts";
-
 export const MEMORY = {
   /** User-defined docker bridge shared by the forward and the companion. */
   network: "qcr-memory",
