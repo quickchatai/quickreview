@@ -359,6 +359,9 @@ function readStores(v: unknown): ArchiveStatus["stores"] {
   };
 }
 
+/** The backlog's figures, as both readers check them. */
+const BACKLOG_KEYS = ["prs", "bytes", "event_rows", "delivery_rows"] as const;
+
 /** The figures an `archive-run` result carries — the backlog and the
  * last DB, file and store passes — read with the same checks as the block;
  * null when they cannot be read whole (never a guess). */
@@ -368,10 +371,7 @@ export function readArchiveRunFigures(
   if (!isObj(v)) return null;
   try {
     return {
-      backlog:
-        v.backlog === undefined
-          ? null
-          : numbers(v, "backlog", ["prs", "bytes", "event_rows", "delivery_rows"] as const),
+      backlog: v.backlog === undefined ? null : numbers(v, "backlog", BACKLOG_KEYS),
       db: readDb(v.db),
       files: readFiles(v.files),
       stores: readStores(v.stores),
@@ -426,7 +426,7 @@ export function readArchiveStatus(v: unknown): ArchiveStatusRead {
       last_success_at: strOrNull(v, "last_success_at"),
       last_error: strOrNull(v, "last_error"),
       plan_at: strOrNull(v, "plan_at"),
-      backlog: numbers(v, "backlog", ["prs", "bytes", "event_rows", "delivery_rows"] as const),
+      backlog: numbers(v, "backlog", BACKLOG_KEYS),
       totals: numbers(v, "totals", [
         "prs",
         "files",
@@ -626,7 +626,7 @@ export function archiveStatusLine(v: unknown): string {
   const mode = `mode ${s.mode}`;
   switch (s.state) {
     case "unknown":
-      return `archive: ${mode} — UNKNOWN, not ticked yet; ${backlogPhrase(s)}`;
+      return `archive: ${mode} — UNKNOWN, not ticked yet; ${backlogPhrase(s)}${tail}`;
     case "held": {
       const why = s.held_reason ? (HOLD_WORDS[s.held_reason] ?? s.held_reason) : "reason unknown";
       const until = s.held_until ? ` until ${s.held_until}` : "";

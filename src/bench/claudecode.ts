@@ -164,6 +164,15 @@ export function pickCredential(env: NodeJS.ProcessEnv): {
   );
 }
 
+/** git without any system or global config, and never prompting — every
+ * git this arm runs, the driver's and its own. */
+const GIT_ISOLATION = {
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_TERMINAL_PROMPT: "0",
+} as const;
+
 /** The environment the driver (and so the harness, and so `claude`) runs
  * with: a fresh per-case HOME and CLAUDE_CONFIG_DIR, exactly one credential,
  * the pinned model (ANTHROPIC_MODEL) when there is one, no auto-update, no
@@ -194,10 +203,7 @@ export function claudeEnv(o: {
     CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1",
     CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
     PYTHONDONTWRITEBYTECODE: "1",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_TERMINAL_PROMPT: "0",
+    ...GIT_ISOLATION,
   };
 }
 
@@ -309,10 +315,7 @@ export function claudeViewOf(
 const GIT_ENV: NodeJS.ProcessEnv = {
   PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
   HOME: tmpdir(),
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-  GIT_CONFIG_GLOBAL: "/dev/null",
+  ...GIT_ISOLATION,
 };
 
 /** The PR's changed files (`diff --name-only -M <merge base> <head>`, the new
@@ -557,10 +560,36 @@ export interface ClaudeRunnerOptions {
   credential: Record<string, string>;
   /** ANTHROPIC_MODEL for `claude`; absent = Claude Code's default. */
   model?: string;
+  /** CLAUDE_CODE_MAX_RETRIES for `claude`, from the command's environment. */
+  maxRetries?: string;
   timeoutMin: number;
   fingerprint: ClaudeFingerprint;
   keepTree?: boolean;
   log?: (line: string) => void;
+}
+
+/** A case's summary before anything is known of it: failed, nothing ran. */
+function failedClaudeSummary(c: BenchCase, fingerprint: ClaudeFingerprint): ClaudeCaseSummary {
+  return {
+    instance_id: c.instance_id,
+    arm: "claude",
+    status: "failed",
+    fingerprint,
+    exit_code: null,
+    duration_seconds: 0,
+    comments: 0,
+    review_output_source: null,
+    raw_text_fallback: false,
+    models: [],
+    model: null,
+    tokens: null,
+    cost_usd: null,
+    num_turns: null,
+    argv_ok: false,
+    argv_mismatches: [],
+    merge_base_ok: false,
+    warnings: [],
+  };
 }
 
 function writeClaudeSummary(outDir: string, s: ClaudeCaseSummary): void {
@@ -595,26 +624,7 @@ export async function reviewCaseClaude(
   mkdirSync(caseDir, { recursive: true });
   mkdirSync(resultsDir, { recursive: true });
   const started = Date.now();
-  const summary: ClaudeCaseSummary = {
-    instance_id: c.instance_id,
-    arm: "claude",
-    status: "failed",
-    fingerprint: o.fingerprint,
-    exit_code: null,
-    duration_seconds: 0,
-    comments: 0,
-    review_output_source: null,
-    raw_text_fallback: false,
-    models: [],
-    model: null,
-    tokens: null,
-    cost_usd: null,
-    num_turns: null,
-    argv_ok: false,
-    argv_mismatches: [],
-    merge_base_ok: false,
-    warnings: [],
-  };
+  const summary = failedClaudeSummary(c, o.fingerprint);
   const resultFile = join(resultsDir, `${safe}.json`);
   rmSync(resultFile, { force: true });
   // An earlier attempt's body must not outlive it: the defect judge and
@@ -631,7 +641,7 @@ export async function reviewCaseClaude(
       home,
       tmpDir,
       credential: o.credential,
-      maxRetries: process.env.CLAUDE_CODE_MAX_RETRIES,
+      maxRetries: o.maxRetries,
       model: o.model,
     });
     const mb = await run("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
@@ -757,27 +767,7 @@ export function unprefetchedClaudeCase(
   fingerprint: ClaudeFingerprint,
   error: string,
 ): ClaudeCaseSummary {
-  const s: ClaudeCaseSummary = {
-    instance_id: c.instance_id,
-    arm: "claude",
-    status: "failed",
-    error,
-    fingerprint,
-    exit_code: null,
-    duration_seconds: 0,
-    comments: 0,
-    review_output_source: null,
-    raw_text_fallback: false,
-    models: [],
-    model: null,
-    tokens: null,
-    cost_usd: null,
-    num_turns: null,
-    argv_ok: false,
-    argv_mismatches: [],
-    merge_base_ok: false,
-    warnings: [],
-  };
+  const s: ClaudeCaseSummary = { ...failedClaudeSummary(c, fingerprint), error };
   writeClaudeSummary(outDir, s);
   // An earlier attempt's body must not outlive it: the defect judge and
   // claude-rebuild read review.md whatever this case's status.
@@ -834,7 +824,11 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
     const result = readJson(resultFile);
     if (!isObj(result)) {
       missing++;
-      o.log(`claude-rebuild: ${c.instance_id} — no result file, skipped`);
+      o.log(
+        existsSync(resultFile)
+          ? `claude-rebuild: ${c.instance_id} — ${resultFile} is unreadable or not a JSON object, skipped`
+          : `claude-rebuild: ${c.instance_id} — no result file, skipped`,
+      );
       continue;
     }
     let files: string[] | null = o.filesDir
@@ -854,8 +848,14 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
       existsSync(md) ? readFileSync(md, "utf8") : undefined,
     );
     const text = JSON.stringify(next, null, 2) + "\n";
-    if (readFileSync(resultFile, "utf8") !== text) changed++;
-    writeFileSync(resultFile, text);
+    if (readFileSync(resultFile, "utf8") !== text) {
+      // The metrics scored the old results: they go BEFORE the first result
+      // changes, so a rebuild cut short never leaves them beside new findings
+      // (and a re-run, finding those bytes already written, would not know).
+      if (changed === 0) dropStaleMetrics(o.outDir, o.log, "claude-rebuild", "the rebuilt view");
+      changed++;
+      writeFileSync(resultFile, text);
+    }
     const view = claudeViewOf(next)!;
     const bench = next["bench"] as Obj;
     const prose = bench["claude_prose_parsed"] as ClaudeProseMarker | undefined;
@@ -876,11 +876,10 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
           : ""),
     );
   }
-  if (changed > 0) dropStaleMetrics(o.outDir, o.log, "claude-rebuild", "the rebuilt view");
   const n = out.reduce((a, x) => a + x.comments, 0);
   o.log(
     `claude-rebuild: ${out.length} case(s) rebuilt (${out.filter((x) => x.source === "prose").length} from prose), ${n} comment(s)` +
-      (missing ? `; ${missing} case(s) had no result file` : ""),
+      (missing ? `; ${missing} case(s) had no readable result file` : ""),
   );
   return out;
 }
@@ -955,12 +954,20 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
     metricsDropped = true;
     dropStaleMetrics(o.outDir, o.log, "claude-review", "the new reviews");
   };
-  if (!o.resume) {
+  // run.json is about to carry THIS configuration, so no case reviewed under
+  // another may stay a result of the run: without --resume every case goes;
+  // with it, every case whose fingerprint differs goes now, not when the loop
+  // reaches it — a stop partway (an auth failure) must leave those cases
+  // unreviewed, never scored under the new label.
+  for (const c of cases) {
+    const prior = o.resume ? readClaudeSummary(o.outDir, c) : null;
+    if (o.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
+      continue;
     dropMetricsOnce();
-    for (const c of cases) {
-      rmSync(join(o.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-      rmSync(join(o.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
-    }
+    if (prior)
+      o.log(`claude: ${c.instance_id} was reviewed by a different build/version — re-running`);
+    rmSync(join(o.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
+    rmSync(join(o.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
   }
   const runRecord = {
     reviewer: "claude",
@@ -986,13 +993,11 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
   const summaries: ClaudeCaseSummary[] = [];
   for (const c of cases) {
     const prior = readClaudeSummary(o.outDir, c);
+    // A prior summary left here is this configuration's (the rest went above).
     if (o.resume && prior && prior.status === "ok") {
-      if (JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)) {
-        o.log(`claude: ${c.instance_id} already done — skipped (--resume)`);
-        summaries.push(prior);
-        continue;
-      }
-      o.log(`claude: ${c.instance_id} was reviewed by a different build/version — re-running`);
+      o.log(`claude: ${c.instance_id} already done — skipped (--resume)`);
+      summaries.push(prior);
+      continue;
     }
     dropMetricsOnce();
     let meta: PrefetchMeta;
@@ -1014,6 +1019,7 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
       homeRoot: o.homeRoot,
       credential: cred.vars,
       model,
+      maxRetries: o.env["CLAUDE_CODE_MAX_RETRIES"],
       timeoutMin: o.timeoutMin,
       fingerprint,
       keepTree: o.keepTree,
@@ -1089,20 +1095,27 @@ export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCas
   );
   L.push("|---|---|---|---|---|---|---|---|---|---|");
   let usd = 0;
+  let unknownCost = 0;
   for (const { c, s } of summaries) {
     if (!s) {
       L.push(`| ${c.instance_id} | ${c.references} | not run | — | — | — | — | — | — | — |`);
       continue;
     }
-    usd += s.cost_usd ?? 0;
+    if (s.cost_usd === null) unknownCost++;
+    else usd += s.cost_usd;
     const t = s.tokens;
     L.push(
       `| ${c.instance_id} | ${c.references} | ${s.status}${s.argv_ok ? "" : " (argv drift)"} | ${s.comments}${s.view_source === "prose" ? " (prose)" : s.raw_text_fallback ? " (raw text)" : ""} | ${s.review_output_source ?? "?"} | ${s.model ?? "?"} | ${s.num_turns ?? "?"} | ${(s.duration_seconds / 60).toFixed(1)} | ${t ? `${t.input} (${t.cache_read}/${t.cache_creation}) / ${t.output}` : "?"} | ${s.cost_usd !== null ? s.cost_usd.toFixed(2) : "?"} |`,
     );
   }
   L.push("");
+  const ran = summaries.filter((x) => x.s).length;
   L.push(
-    `Total Claude Code cost (its own \`total_cost_usd\`, API-price equivalent): $${usd.toFixed(2)}`,
+    unknownCost === 0
+      ? `Total Claude Code cost (its own \`total_cost_usd\`, API-price equivalent): $${usd.toFixed(2)}`
+      : unknownCost === ran
+        ? "Total Claude Code cost (its own `total_cost_usd`, API-price equivalent): UNKNOWN — no case recorded one"
+        : `Claude Code cost recorded (its own \`total_cost_usd\`, API-price equivalent): $${usd.toFixed(2)} over ${ran - unknownCost} of ${ran} case(s) — ${unknownCost} recorded none, so the total is at least this`,
   );
   const bad = summaries.filter((x) => x.s && (x.s.error || x.s.warnings.length || !x.s.argv_ok));
   if (bad.length) {

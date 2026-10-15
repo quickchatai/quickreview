@@ -54,6 +54,7 @@ import {
   type PrefetchMeta,
 } from "../src/bench/aacr.js";
 import { parseReferenceLabels, recallByQuality, renderReport } from "../src/bench/report.js";
+import { renderReviewFromRecord } from "../src/reviewrender.js";
 import { AuthExpiring, benchAuthFrom, DISABLED_REFRESH, syncBenchAuth, BENCH_RETRY } from "../src/bench/auth.js";
 import {
   bridgeDelta,
@@ -328,6 +329,9 @@ describe("git diff → the files list the lens heuristics read", () => {
     expect(patchFromGitDiff(d)).toBe("@@ -1,2 +1,2 @@\n-a\n+b\n c\n");
     expect(patchFromGitDiff("Binary files a/x and b/x differ\n")).toBeUndefined();
     expect(patchFromGitDiff(`@@ -1 +1 @@\n${"x".repeat(50)}`, 10)).toBeUndefined();
+    // The cap is in UTF-8 bytes: 8 CJK characters are 24 bytes.
+    expect(patchFromGitDiff(`@@ -1 +1 @@\n${"漢".repeat(8)}`, 30)).toBeUndefined();
+    expect(patchFromGitDiff(`@@ -1 +1 @@\n${"漢".repeat(4)}`, 30)).toBeDefined();
   });
 });
 
@@ -514,6 +518,112 @@ describe("what the session wrote → what the scorer reads", () => {
     // No bullet in the body for y.py: the record's own reason + evidence.
     expect(got[1]!.body).toBe("[check this] why\n\nev");
     expect(bodyPostedFindings(undefined, "", [])).toEqual([]);
+  });
+
+  describe("body findings on the rendered route (render_outputs)", () => {
+    const entry = (over: Record<string, unknown>) => ({
+      disposition: "posted",
+      posted_as: "blocker",
+      severity: "P1",
+      confidence: 0.9,
+      lens: "pass-baseline",
+      title: "T",
+      body: "B",
+      ...over,
+    });
+    const rendered = (findings: Array<Record<string, unknown>>) => {
+      const r = renderReviewFromRecord(
+        { verdict: "REQUEST_CHANGES", summary: "S.", lenses_applied: "pass-baseline", findings },
+        {},
+      );
+      return {
+        body: r.body,
+        inline: parseSessionComments(r.comments).comments,
+      };
+    };
+
+    it("an inline:false finding keeps its posted EXPLANATION, not the section's title-only bullet", () => {
+      const findings = [
+        entry({
+          path: "a.py",
+          line: 12,
+          inline: false,
+          title: "Loses data",
+          body: "Why it loses data.",
+        }),
+      ];
+      const { body, inline } = rendered(findings);
+      const got = bodyPostedFindings({ findings }, body, inline);
+      expect(got.map((c) => c.body)).toEqual(["[blocker] Loses data\n\nWhy it loses data."]);
+    });
+
+    it("a distinct finding beside an inline one is still scored — proximity is not identity", () => {
+      const findings = [
+        entry({ path: "a.py", line: 10, title: "Inline one", body: "x" }),
+        entry({ path: "a.py", line: 12, inline: false, title: "Body one", body: "y" }),
+      ];
+      const { body, inline } = rendered(findings);
+      expect(inline.map((c) => c.line)).toEqual([10]);
+      const got = bodyPostedFindings({ findings }, body, inline);
+      expect(got.map((c) => [c.line, c.body])).toEqual([[12, "[blocker] Body one\n\ny"]]);
+    });
+
+    it("an ask-your-human or deferred finding carries its severity's tag in the body as it does inline", () => {
+      const findings = [
+        entry({ path: "a.py", line: 3, posted_as: "ask your human", severity: "P1", title: "H" }),
+        entry({ path: "a.py", line: 30, posted_as: "deferred", severity: "nit", inline: false }),
+        entry({
+          path: "a.py",
+          line: 50,
+          posted_as: "ask your human",
+          severity: "P1",
+          inline: false,
+        }),
+      ];
+      const { body, inline } = rendered(findings);
+      expect(inline.map((c) => c.tag)).toEqual(["blocker"]);
+      const got = bodyPostedFindings({ findings }, body, inline);
+      expect(got.map((c) => [c.line, c.tag])).toEqual([
+        [30, "nit"],
+        [50, "blocker"],
+      ]);
+    });
+  });
+
+  it("the handwritten route: one comment carries one record entry; a second beside it is in the body only when the body names it", () => {
+    const inline: BenchComment[] = [
+      { path: "a.py", line: 10, side: "RIGHT", body: "[question] x", tag: "question" },
+    ];
+    const record = {
+      findings: [
+        { path: "a.py", line: 12, disposition: "posted", posted_as: "question", reason: "r12" },
+        { path: "a.py", line: 10, disposition: "posted", posted_as: "question", reason: "r10" },
+      ],
+    };
+    // The body names a.py:12: a distinct finding the session posted there.
+    const named = bodyPostedFindings(record, "- `a.py:12` — Twelve _(P2, pass-x)_\n", inline);
+    expect(named.map((c) => [c.line, c.body])).toEqual([[12, "[question] Twelve"]]);
+    // It does not: folded into the comment beside it, as the session merged it.
+    expect(bodyPostedFindings(record, "", inline)).toEqual([]);
+  });
+
+  it("the handwritten route: record-only neighbours the session posted nowhere count ONCE, as they always did", () => {
+    // Three posted rows a line apart, in neither comments.json nor review.md.
+    const record = {
+      findings: [
+        { path: "m.go", line: 50, disposition: "posted", posted_as: "blocker", reason: "a" },
+        { path: "m.go", line: 51, disposition: "posted", posted_as: "blocker", reason: "b" },
+        { path: "m.go", line: 51, disposition: "posted", posted_as: "nit", reason: "c" },
+        { path: "m.go", line: 90, disposition: "posted", posted_as: "nit", reason: "far" },
+      ],
+    };
+    expect(bodyPostedFindings(record, "", []).map((c) => [c.line, c.body])).toEqual([
+      [50, "[blocker] a"],
+      [90, "[nit] far"],
+    ]);
+    // Named in the body, each is its own finding.
+    const md = ["- `m.go:50` — A", "- `m.go:51` — B"].join("\n");
+    expect(bodyPostedFindings(record, md, []).map((c) => c.line)).toEqual([50, 51, 51, 90]);
   });
 
   it("a failed case still yields a file with zero comments — its references count against recall", () => {
@@ -1345,6 +1455,13 @@ describe("reanchorLeftLine / reanchorLeftComments", () => {
 
   it("uses the head-side position when the hunk adds nothing", () => {
     expect(reanchorLeftLine(patch, 41)).toEqual({ line: 40, how: "hunk" });
+  });
+
+  it("a deletion at the END of the file lands on the head's last line, never past it", () => {
+    expect(reanchorLeftLine("@@ -1,3 +1,2 @@\n a\n b\n-c", 3)).toEqual({ line: 2, how: "hunk" });
+    expect(reanchorLeftLine("@@ -1,2 +1 @@\n a\n-b", 2)).toEqual({ line: 1, how: "hunk" });
+    // A zero-context hunk names the line before it, which exists.
+    expect(reanchorLeftLine("@@ -5,2 +4,0 @@\n-x\n-y", 6)).toEqual({ line: 4, how: "hunk" });
   });
 
   it("gives a deleted file a file-level anchor, and refuses a line the patch lacks", () => {

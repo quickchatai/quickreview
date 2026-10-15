@@ -21,9 +21,11 @@
 //     for a cut comment the session never recorded, so nothing vanishes.
 //
 // Items are the inline comments plus the findings the record marks posted
-// that went to the BODY (aacr.ts `bodyPostedFindings`' rule: no inline
-// comment within three lines) — the body ones count against the budget too,
-// because they are scored as comments.
+// that went to the BODY (aacr.ts `placePosted`, the rule `bodyPostedFindings`
+// scores by) — the body ones count against the budget too, because they are
+// scored as comments. Each inline comment's record entry is the one
+// `placePosted` pairs it with, one to one: cutting a comment marks ITS entry,
+// never a neighbour's, and a comment with none gets a synthesised entry.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -35,7 +37,16 @@ import {
   type PostingPolicy,
   type WithholdWord,
 } from "../postingpolicy.js";
-import { CASE_FILES, parseSessionComments } from "./aacr.js";
+import { markWithheld, postedClassOf, withheldReason } from "../reviewrender.js";
+import { SANCTIONED_TAGS } from "../severity.js";
+import {
+  benchPath,
+  CASE_FILES,
+  parseSessionComments,
+  placePosted,
+  posInt,
+  type BenchSite,
+} from "./aacr.js";
 import { checkAnchor, runsByPath } from "../anchors.js";
 
 /** The session's own files, kept beside the policed ones. */
@@ -71,46 +82,30 @@ interface Item {
   side: "LEFT" | "RIGHT";
   /** inline: the session's raw row, written back verbatim when kept. */
   row?: unknown;
-  /** body: the record entry it came from. */
+  /** The record entry it states (a body item's always; an inline comment's
+   * when the record has one). */
   entry?: Record<string, unknown>;
 }
 
 const SEV_TAIL = /_\s*(P[0-3]|nit)\s*·\s*confidence/i;
-const NEAR = 3;
 
 function classOf(tag: string): PolicyClass {
   return tag === "blocker" || tag === "question" || tag === "nit" ? tag : "check";
 }
 
-function postedClass(postedAs: string): PolicyClass {
-  const t = postedAs
-    .trim()
-    .replace(/^\[|\]$/g, "")
-    .toLowerCase();
-  return t === "blocker" || t === "question" || t === "nit" ? t : "check";
-}
+/** Every sanctioned tag (`severity.ts`), as a title strips it. */
+const ANY_TAG_RE = new RegExp(
+  SANCTIONED_TAGS.map((t) => t.replace(/[[\]]/g, "\\$&")).join("|"),
+  "gi",
+);
 
 function firstLineTitle(body: string): string {
   const first = (body.split("\n", 1)[0] ?? "").trim();
-  return first
-    .replace(/\[(blocker|question|nit|check this|ask your human|deferred)\]/gi, "")
-    .trim();
+  return first.replace(ANY_TAG_RE, "").trim();
 }
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
-}
-
-function lineOf(v: unknown): number | undefined {
-  const n =
-    typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : NaN;
-  return Number.isInteger(n) && n > 0 ? n : undefined;
-}
-
-function normPath(p: unknown): string {
-  return str(p)
-    .trim()
-    .replace(/^\.?\/+/, "");
 }
 
 /** Remove each bullet naming `` `path:line` `` (and its indented
@@ -208,12 +203,10 @@ export function policeBenchOutput(args: {
       )
     : [];
   const posted = entries.filter((e) => e["disposition"] === "posted");
-  const near = (e: Record<string, unknown>, path: string, line: number) => {
-    const l = lineOf(e["line"]);
-    return normPath(e["path"]) === path && l !== undefined && Math.abs(l - line) <= NEAR;
-  };
 
   const items: Item[] = [];
+  const sites: BenchSite[] = [];
+  const bodies: string[] = [];
   const passthrough: unknown[] = []; // rows the scorer drops anyway
   for (const row of rawRows) {
     const parsed = parseSessionComments([row]).comments[0];
@@ -221,42 +214,48 @@ export function policeBenchOutput(args: {
       passthrough.push(row);
       continue;
     }
-    const sev =
-      SEV_TAIL.exec(parsed.body)?.[1] ||
-      str(posted.find((e) => near(e, parsed.path, parsed.line))?.["severity"]);
     items.push({
       source: "inline",
       path: parsed.path,
       line: parsed.line,
       cls: classOf(parsed.tag),
-      severity: sev ? (sev.toUpperCase() === "NIT" ? "nit" : sev.toUpperCase()) : null,
+      severity: null,
       title: firstLineTitle(parsed.body),
       side: parsed.side === "LEFT" ? "LEFT" : "RIGHT",
       row,
     });
+    bodies.push(parsed.body);
+    sites.push({
+      path: parsed.path,
+      line: parsed.line,
+      ...(parsed.start_line !== undefined ? { start_line: parsed.start_line } : {}),
+      tag: parsed.tag,
+    });
   }
-  const inlineItems = [...items];
-  for (const e of posted) {
-    const path = normPath(e["path"]);
-    const line = lineOf(e["line"]);
-    if (!path || line === undefined) continue;
-    if (
-      [...inlineItems, ...items.filter((x) => x.source === "body")].some(
-        (c) => c.path === path && Math.abs(c.line - line) <= NEAR,
-      )
-    )
-      continue;
+  const places = placePosted(posted, args.reviewMd, sites);
+  places.forEach((place, i) => {
+    if (place?.at === "inline") items[place.comment]!.entry = posted[i]!;
+  });
+  // An inline comment's severity: its trailer's, else its record entry's.
+  items.forEach((it, i) => {
+    const sev = SEV_TAIL.exec(bodies[i]!)?.[1] || str(it.entry?.["severity"]);
+    it.severity = sev ? (sev.toUpperCase() === "NIT" ? "nit" : sev.toUpperCase()) : null;
+  });
+  posted.forEach((e, i) => {
+    if (places[i]?.at !== "body") return;
+    const path = benchPath(e["path"]);
+    const line = posInt(e["line"])!;
     items.push({
       source: "body",
       path,
       line,
-      cls: postedClass(str(e["posted_as"])),
+      cls: postedClassOf(e["posted_as"]),
       severity: str(e["severity"]) || null,
       title: str(e["title"]) || str(e["reason"]).split("\n", 1)[0] || `${path}:${line}`,
       side: "RIGHT",
       entry: e,
     });
-  }
+  });
 
   const sel = selectPosted(
     items,
@@ -273,26 +272,9 @@ export function policeBenchOutput(args: {
   const kept = new Set(sel.kept);
 
   // The record: every cut finding is `withheld`, with its word.
-  const claimed = new Set<Record<string, unknown>>();
   for (const { item, word } of sel.withheld) {
-    const why = `Withheld by this repo's posting policy (${word}); kept here, never posted.`;
-    const entry =
-      item.entry ??
-      posted.find(
-        (e) =>
-          !claimed.has(e) &&
-          near(e, item.path, item.line) &&
-          postedClass(str(e["posted_as"])) === item.cls,
-      ) ??
-      posted.find((e) => !claimed.has(e) && near(e, item.path, item.line));
-    if (entry) {
-      claimed.add(entry);
-      entry["withheld_as"] = entry["posted_as"];
-      delete entry["posted_as"];
-      entry["disposition"] = "withheld";
-      entry["word"] = word;
-      entry["reason"] = `${why} ${str(entry["reason"])}`.trim();
-    } else if (record) {
+    if (item.entry) markWithheld(item.entry, word);
+    else if (record) {
       entries.push({
         id: `posting-${entries.length + 1}`,
         path: item.path,
@@ -301,7 +283,7 @@ export function policeBenchOutput(args: {
         severity: item.severity,
         disposition: "withheld",
         word,
-        reason: `${why} The session posted it without a findings-record entry: ${item.title}`,
+        reason: `${withheldReason(word)} The session posted it without a findings-record entry: ${item.title}`,
       });
     }
   }
@@ -364,8 +346,8 @@ function readJsonOr(path: string): unknown {
 /**
  * Apply the policy to one case dir, in place: the session's files move to
  * `POLICED_ORIGINALS`, the policed ones take their names, and the report goes
- * to `posting-policy.json`. Null when the session wrote no comments file
- * (nothing to police — the case scores as it stands).
+ * to `posting-policy.json`. Null when the session wrote no comments file, or
+ * one that does not parse (nothing to police — the case scores as it stands).
  */
 export function enforceBenchPosting(
   caseDir: string,
@@ -374,9 +356,12 @@ export function enforceBenchPosting(
 ): BenchPostingReport | null {
   const cPath = join(caseDir, CASE_FILES.comments);
   if (!existsSync(cPath)) return null;
+  // A comments file that does not parse is left as the session wrote it, so
+  // the case reads as unparseable output — never rewritten as an empty review.
+  const comments = readJsonOr(cPath);
+  if (comments === undefined) return null;
   const rPath = join(caseDir, CASE_FILES.review);
   const fPath = join(caseDir, CASE_FILES.findings);
-  const comments = readJsonOr(cPath);
   const reviewMd = existsSync(rPath) ? readFileSync(rPath, "utf8") : "";
   const record = readJsonOr(fPath);
   const outcome = readJsonOr(join(caseDir, CASE_FILES.outcome)) as

@@ -2,8 +2,9 @@
 //
 // READ-ONLY against GitHub: two issue searches to enumerate the PR set, then
 // one GraphQL query per PR (reviews by the bot identity + the timeline items
-// triggers are reconstructed from). Nothing here mutates GitHub, so the
-// MutationGate is deliberately not involved.
+// triggers are reconstructed from), plus one more per page when either
+// connection pages. Nothing here mutates GitHub, so the MutationGate is
+// deliberately not involved.
 //
 // What lands in sqlite: one `rounds` row per historical bot
 // review with `backfilled = 1` / `round_type = 'backfill'`, plus one
@@ -15,7 +16,9 @@
 //   * epoch cut — reviews submitted at/after the oldest natively-run round are
 //     already recorded by the daemon, so they are skipped;
 //   * round numbering — historical rounds are numbered *below* the PR's lowest
-//     existing round_no, so MAX(round_no) and running-round lookups are inert.
+//     existing round_no, so MAX(round_no) and running-round lookups are inert;
+//     a PR's rounds are written in ONE transaction, so an interrupted import
+//     never leaves part of a PR to be numbered below its own later reviews.
 import type { Config } from "./config.js";
 import type { PrReviewHistory, PrTimelineRecord, SearchIssueItem } from "./github.js";
 import type { StateStore } from "./state.js";
@@ -33,7 +36,6 @@ export interface BackfillOptions {
   limit?: number;
   /** Progress sink — the CLI points it at stderr. */
   log?: (line: string) => void;
-  now?: () => Date;
 }
 
 export interface BackfillStats {
@@ -333,15 +335,19 @@ export async function runBackfill(
       }
       continue;
     }
-    for (const r of plan.rounds) {
-      const inserted = store.insertBackfilledRound(r);
-      if (inserted) {
+    // All of a PR's rounds or none: the numbering is planned over the whole
+    // PR (oldest first), so a resumed import must plan it whole again.
+    const inserted = store.db.transaction(() =>
+      plan.rounds.map((r) => store.insertBackfilledRound(r)),
+    )();
+    plan.rounds.forEach((r, i) => {
+      if (inserted[i]) {
         stats.reviews_imported++;
         imported.add(r.gh_review_id);
       } else {
         stats.skipped_existing++;
       }
-    }
+    });
     if (plan.rounds.length > 0) log(`  #${plan.meta.pr}: +${plan.rounds.length} rounds`);
   }
 

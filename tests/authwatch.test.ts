@@ -3,6 +3,7 @@
 // calls: detection is purely observational over the session JSONLs pi
 // already writes.
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -171,6 +172,54 @@ describe("PiAuthWatch", () => {
     watch.scan();
     expect(watch.status()!.hits).toBe(1);
   });
+});
+
+describe("an observation that failed is not a quiet one", () => {
+  it.skipIf(process.getuid?.() === 0)(
+    "an error in a file the scan could not read is still caught once it can — the window waits for it",
+    () => {
+      let t = Date.parse("2026-08-19T15:00:00Z");
+      const watch = new PiAuthWatch(dir, () => new Date(t));
+      const path = jsonl("pr-1/s.jsonl", ERR, new Date(t));
+      chmodSync(path, 0o000);
+      try {
+        t += 60_000;
+        expect(watch.scan()).toEqual([]);
+        // Unreadable for longer than the scan's overlap; the file is not touched.
+        t += 10 * 60_000;
+        expect(watch.scan()).toEqual([]);
+      } finally {
+        chmodSync(path, 0o644);
+      }
+      t += 60_000;
+      expect(watch.scan()).toHaveLength(1);
+      // …and counted once.
+      t += 60_000;
+      expect(watch.scan()).toEqual([]);
+    },
+  );
+
+  it.skipIf(process.getuid?.() === 0)(
+    "a session dir that cannot be stat'd keeps its files' offsets — unknown is never gone",
+    () => {
+      const seen = new Map<string, number>();
+      const t = Date.parse("2026-10-21T12:00:00Z");
+      const file = jsonl("pr-1/a.jsonl", ERR, new Date(t));
+      expect(scanPiAuthErrors(dir, 0, seen)).toHaveLength(1);
+      expect(seen.has(file)).toBe(true);
+      // The root listable but not searchable: `pr-1` is listed, never stat'd,
+      // so its files are not seen — and not gone.
+      chmodSync(dir, 0o600);
+      try {
+        scanPiAuthErrors(dir, 0, seen);
+      } finally {
+        chmodSync(dir, 0o755);
+      }
+      expect(seen.has(file)).toBe(true);
+      // Readable again: the old error is not counted a second time.
+      expect(scanPiAuthErrors(dir, 0, seen)).toEqual([]);
+    },
+  );
 });
 
 // The archiver unlinks closed PRs' transcripts and

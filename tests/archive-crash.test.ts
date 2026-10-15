@@ -19,6 +19,7 @@
 import {
   existsSync,
   readdirSync,
+  rmSync,
   readFileSync,
   statSync,
   utimesSync,
@@ -366,6 +367,8 @@ describe("interference (acceptance 4)", () => {
         });
         expect(f.store.anomalies().map((x) => x.kind)).toContain("archive_verify_failed");
         expect(archiveRow(f.store, f.pr)?.state).toBe("archiving");
+        // The row says why the pass is incomplete, as the result does.
+        expect(archiveRow(f.store, f.pr)?.last_error).toBe("verify_failed");
         expect(partials(f)).toEqual([]);
         // The other files moved; nothing was lost.
         expect(lostBytes(f)).toEqual([]);
@@ -609,6 +612,29 @@ describe("interference (acceptance 4)", () => {
         const gone = [...f.transcripts, ...f.small].filter((rel) => !existsSync(join(f.root, rel)));
         expect(gone).toHaveLength(2);
         expect(archiveRow(f.store, f.pr)?.state).toBe("archiving");
+      } finally {
+        a.stop();
+      }
+    },
+  );
+});
+
+describe("a PR with nothing but small files", () => {
+  it(
+    "is archived even when its archive dir does not exist yet — the bundle is its first file",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = fixture();
+      for (const rel of f.transcripts) rmSync(join(f.root, rel));
+      rmSync(join(f.root, "archive", `pr-${f.pr}`), { recursive: true });
+      const a = onArchiver(f);
+      try {
+        await a.tick();
+        expect(archiveRow(f.store, f.pr)?.state).toBe("archived");
+        expect(bundles(f)).toHaveLength(1);
+        for (const rel of f.small) expect(existsSync(join(f.root, rel)), rel).toBe(false);
+        const bundle = manifestOf(f).entries.find((e) => e.kind === "bundle")!;
+        expect(bundle.sources_removed_at).toBeTruthy();
       } finally {
         a.stop();
       }

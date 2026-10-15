@@ -18,8 +18,9 @@
 //      entry too (`commitPacked`).
 //   5. The small files as ONE bundle (`bundle.ts`), the ledger snapshotted.
 //   6. The legacy `archive/pr-<n>/session.jsonl`: a verified duplicate (whole,
-//      or a byte-prefix) of the transcript `meta.json` names is removed with a
-//      `duplicate_removed` entry; anything else is gzipped and kept (§7.5).
+//      or a byte-prefix) of the transcript `meta.json` names is removed, its
+//      `duplicate_removed` entry committed BEFORE the unlink; anything else is
+//      gzipped and kept (§7.5).
 //   7. Eligibility again, in two steps: the async tmux probe and inject
 //      listing, then — synchronously, before EACH unlink — the registry, the
 //      births and every database clause. A reopen at any point stops the
@@ -32,11 +33,12 @@
 //      that completes only reuses, and those must still be counted.
 //
 // Between files the pass asks whether it must stop (the tick budget, a hold,
-// a restore waiting for the mutex, `stop()`); a stopped PR stays `archiving`
+// a restore waiting for the mutex, `stop()` — between two unlinks only the
+// last two, as a store pass does); a stopped PR stays `archiving`
 // and the next pass resumes it — every step is idempotent. Disk is checked
 // before each file (§7.7). Nothing here spawns, injects, wakes or kills a
 // session (rule 9), and nothing reads or writes memory.
-import { readFile, lstat, mkdir, readdir, rmdir } from "node:fs/promises";
+import { readFile, mkdir, readdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "../yieldloop.js";
@@ -46,11 +48,21 @@ import {
   writeBundle,
   type BundleSource,
 } from "./bundle.js";
-import { prEligibility, type OutsideFacts } from "./eligibility.js";
-import { fsyncDir, unlinkIfPresent, type FileIdentity } from "./fsutil.js";
 import {
-  adoptOrphan,
-  archiveFile,
+  archiveFileSize,
+  archiveStamp,
+  bundleName,
+  bundlePassOf,
+  bytesHeld,
+  identityFields,
+  placeArchive,
+  sameRecorded,
+  unlinkStopOf,
+  type Packed,
+} from "./archivewrite.js";
+import { prEligibility, type OutsideFacts } from "./eligibility.js";
+import { fsyncDir, sameIdentity, unlinkIfPresent, type FileIdentity } from "./fsutil.js";
+import {
   fileDigestWithPrefix,
   identityOrNull,
   sweepPartials,
@@ -106,8 +118,9 @@ export interface PrPassResult {
   pr: number;
   /** `archived` — nothing of the PR left live; `partial` — the pass stopped
    * (budget, hold, restore, a changed source, a verify failure) and the next
-   * resumes; `held` — the eligibility rule or the manifest stopped it before
-   * any unlink. */
+   * resumes; `held` — the eligibility rule or the manifest stopped it (a
+   * reopen between two unlinks too: what left before it stays left, on the
+   * record). */
   outcome: "archived" | "partial" | "held";
   reason: string | null;
   transcripts: number;
@@ -127,37 +140,6 @@ interface Unlink {
   rel: string;
   identity: { dev: number | null; ino: number | null; bytes: number; mtime_ms: number };
 }
-
-const stampOf = (d: Date): string =>
-  d
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}/, "");
-
-/** Does the archive file exist (a regular file)? */
-async function archiveExists(dir: string, rel: string): Promise<number | null> {
-  try {
-    const st = await lstat(join(dir, rel));
-    return st.isFile() ? st.size : null;
-  } catch {
-    return null;
-  }
-}
-
-const sameRecorded = (rec: SettledRecord | undefined, id: FileIdentity | null): boolean =>
-  rec !== undefined &&
-  id !== null &&
-  rec.dev === id.dev &&
-  rec.ino === id.ino &&
-  rec.bytes === id.size &&
-  rec.mtime_ms === id.mtimeMs;
-
-const toFields = (id: FileIdentity) => ({
-  bytes: id.size,
-  mtime_ms: id.mtimeMs,
-  dev: id.dev,
-  ino: id.ino,
-});
 
 /** Non-recursive rmdir: an emptied dir goes, anything else stays. */
 async function rmdirQuiet(dir: string): Promise<boolean> {
@@ -271,10 +253,10 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
-  const passBase = stampOf(deps.now());
+  const passBase = archiveStamp(deps.now());
   const taken = new Set([
     ...manifest.passes.map((p) => p.id),
-    ...onDisk.flatMap((f) => /^state-(.+)\.jsonl\.gz(?:\.partial)?$/.exec(f)?.[1] ?? []),
+    ...onDisk.flatMap((f) => bundlePassOf(f, true) ?? []),
   ]);
   let passId = passBase;
   for (let k = 2; taken.has(passId); k++) passId = `${passBase}-${k}`;
@@ -302,8 +284,8 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
   // then adopted with the identities of the sources that still match it.
   const referenced = referencedArchives(manifest);
   for (const name of onDisk) {
-    const m = /^state-(.+)\.jsonl\.gz$/.exec(name);
-    if (!m || referenced.has(name)) continue;
+    const orphanPass = bundlePassOf(name);
+    if (orphanPass === null || referenced.has(name)) continue;
     let records: Awaited<ReturnType<typeof readBundleRecords>>;
     try {
       records = await readBundleRecords(join(dir, name), null, {
@@ -326,8 +308,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
       let matched = false;
       if (id && id.size === record.bytes) {
         const digest = await fileDigestWithPrefix(live, { bytesPerS: deps.bytesPerS, signal });
-        matched =
-          digest.sha256 === record.sha256 && sameIdentityNow(id, await identityOrNull(live));
+        matched = digest.sha256 === record.sha256 && sameIdentity(id, await identityOrNull(live));
       }
       bytes += data.length;
       files.push({
@@ -342,8 +323,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         ...(record.session_command ? { session_command: record.session_command } : {}),
       });
     }
-    const gz = (await archiveExists(dir, name)) ?? 0;
-    const orphanPass = m[1]!;
+    const gz = (await archiveFileSize(dir, name)) ?? 0;
     await commit((next) => {
       if (!next.passes.some((p) => p.id === orphanPass))
         next.passes.push({
@@ -377,54 +357,11 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
   let legacySrc: { bytes: number; sha256: string; prefixSha256: string | null } | null = null;
 
   /**
-   * The archive name for a source: its base name while no entry references
-   * that, else the first `.v<k>` no entry references (§7.6). A name that
-   * EXISTS on disk unreferenced is returned too — an orphan a crash left
-   * between a rename and its entry — so `archiveOne` adopts it, keeps it or
-   * redoes it; skipping it would leave it orphaned forever and compress the
-   * same bytes again under the next name.
-   */
-  const destFor = (baseRel: string): string => {
-    const refs = referencedArchives(manifest);
-    if (!refs.has(baseRel)) return baseRel;
-    for (let k = 2; ; k++) {
-      const cand = baseRel.replace(/\.gz$/, `.v${k}.gz`);
-      if (!refs.has(cand)) return cand;
-    }
-  };
-
-  /** Bytes some entry of this manifest already holds in an archive file on
-   * disk (an orphan holding them is a proven duplicate). */
-  const heldAlready = async (sha256: string, bytes: number): Promise<boolean> => {
-    for (const e of manifest.entries)
-      if (
-        (e.kind === "transcript" || e.kind === "file") &&
-        e.sha256 === sha256 &&
-        e.bytes === bytes &&
-        (await archiveExists(dir, e.archive)) !== null
-      )
-        return true;
-    return false;
-  };
-
-  /** The facts an entry for one archived gzip records. */
-  interface Packed {
-    bytes: number;
-    mtime_ms: number;
-    dev: number | null;
-    ino: number | null;
-    sha256: string;
-    gz_bytes: number;
-    adopted?: true;
-  }
-
-  /**
-   * One file through the protocol, under the name `destFor(baseRel)` gives —
-   * or adoption of the orphan gzip already at that name. An orphan that
-   * decompresses cleanly to OTHER bytes (an earlier version of the source) is
-   * kept under its own entry (`entryOf`, `adopted`, identity null — unless an
-   * entry already holds those bytes, when it is a proven duplicate and
-   * removed) and the live file goes to the next name. Returns the name used.
+   * One file through the protocol (`placeArchive`): its base name while no
+   * entry references that, else the first `.v<k>` no entry references (§7.6)
+   * — a name that EXISTS on disk unreferenced is an orphan a crash left
+   * between a rename and its entry, adopted, kept under its own entry
+   * (`entryOf`) or redone there, never skipped.
    */
   const archiveOne = async (
     path: string,
@@ -434,65 +371,36 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
     prefixBytes: number | undefined,
     entryOf: (archive: string, p: Packed) => FileEntry,
   ): Promise<{ ok: ArchiveFileOk; dest: string } | "verify_failed" | "changed"> => {
-    const opts = {
-      level: deps.level,
-      bytesPerS: deps.bytesPerS,
-      signal,
-      identity: id,
-      ...(prefixBytes !== undefined ? { prefixBytes } : {}),
-      ...(deps.step ? { step: deps.step } : {}),
-    };
-    let dest = destFor(baseRel);
-    while ((await archiveExists(dir, dest)) !== null && !referencedArchives(manifest).has(dest)) {
-      const o = await adoptOrphan(path, join(dir, dest), opts);
-      if (o.kind === "ok") {
-        deps.log(`archive: pr-${pr} — adopted the orphan gzip ${dest} (no recompress)`);
-        return { ok: o, dest };
-      }
-      if (o.kind === "changed") {
-        deps.log(`archive: pr-${pr} — ${o.detail}; this PR stops for this pass`);
-        return "changed";
-      }
-      if (o.kind === "corrupt") {
-        deps.log(`archive: pr-${pr} — ${o.detail}: removed, the file is archived again`);
-        break;
-      }
-      if (await heldAlready(o.sha256, o.bytes)) {
-        await unlinkIfPresent(join(dir, dest));
-        await fsyncDir(dirname(join(dir, dest)));
-        deps.log(`archive: pr-${pr} — the orphan gzip ${dest} duplicates an entry: removed`);
-        break;
-      }
-      const kept: Packed = {
-        bytes: o.bytes,
-        mtime_ms: o.mtimeMs,
-        dev: null,
-        ino: null,
-        sha256: o.sha256,
-        gz_bytes: o.gzBytes,
-        adopted: true,
-      };
-      await commit((next) => next.entries.push(entryOf(dest, kept)));
-      deps.log(
-        `archive: pr-${pr} — the orphan gzip ${dest} holds an earlier version of ${rel}: kept under its own entry`,
-      );
-      dest = destFor(baseRel);
-    }
-    const r = await archiveFile(path, join(dir, dest), opts);
+    const r = await placeArchive({
+      path,
+      dir,
+      base: baseRel,
+      source: rel,
+      who: subject,
+      opts: {
+        level: deps.level,
+        bytesPerS: deps.bytesPerS,
+        signal,
+        identity: id,
+        ...(prefixBytes !== undefined ? { prefixBytes } : {}),
+        ...(deps.step ? { step: deps.step } : {}),
+      },
+      refs: () => referencedArchives(manifest),
+      heldAlready: (sha256, bytes) => bytesHeld(manifest.entries, dir, sha256, bytes),
+      keep: (dest, p) => commit((next) => next.entries.push(entryOf(dest, p))),
+      log: (m) => deps.log(m),
+    });
     if (r.kind === "verify_failed") {
       res.verifyFailures += 1;
       deps.verifyFailed(`file:${pr}:${rel}`, `archive pr-${pr}: ${r.detail} — the source is kept`);
       return "verify_failed";
     }
-    if (r.kind === "changed") {
-      deps.log(`archive: pr-${pr} — ${r.detail}; this PR stops for this pass`);
-      return "changed";
-    }
-    return { ok: r, dest };
+    if (r.kind === "changed") return "changed";
+    return { ok: r.ok, dest: r.dest };
   };
 
   const packedOf = (r: ArchiveFileOk, id: FileIdentity): Packed => ({
-    ...toFields(id),
+    ...identityFields(id),
     sha256: r.sha256,
     gz_bytes: r.gzBytes,
   });
@@ -523,7 +431,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         e.archive !== dest &&
         e.sha256 === p.sha256 &&
         e.bytes === p.bytes &&
-        (await archiveExists(dir, e.archive)) !== null
+        (await archiveFileSize(dir, e.archive)) !== null
       ) {
         held = e;
         break;
@@ -554,23 +462,23 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
     if (stop) break;
     // Step 1, fresh: a transcript that moved since the guard was armed stops
     // the PR (the next pass re-arms with its new mtime).
-    if (!sameIdentityNow(t.id, await identityOrNull(t.path))) {
+    if (!sameIdentity(t.id, await identityOrNull(t.path))) {
       stop = "source_changed";
       break;
     }
     const rec = index.get(t.rel);
     const prefixBytes = legacyCmp?.rel === t.rel ? inv.legacy!.size : undefined;
-    if (sameRecorded(rec, t.id) && (await archiveExists(dir, rec!.archive)) !== null) {
+    if (sameRecorded(rec, t.id) && (await archiveFileSize(dir, rec!.archive)) !== null) {
       // Archived already with exactly these bytes: unlink only.
       if (rec!.via === "restore") {
-        const gz = (await archiveExists(dir, rec!.archive)) ?? 0;
+        const gz = (await archiveFileSize(dir, rec!.archive)) ?? 0;
         await commit((next) =>
           next.entries.push({
             pass: passId,
             kind: "transcript",
             source: t.rel,
             archive: rec!.archive,
-            ...toFields(t.id),
+            ...identityFields(t.id),
             sha256: rec!.sha256,
             gz_bytes: gz,
             verified_at: now(),
@@ -579,7 +487,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         );
         res.reused += 1;
       }
-      unlinks.push({ path: t.path, rel: t.rel, identity: toFields(t.id) });
+      unlinks.push({ path: t.path, rel: t.rel, identity: identityFields(t.id) });
       if (prefixBytes !== undefined)
         legacySrc = {
           bytes: rec!.bytes,
@@ -627,7 +535,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
       res.bytesIn += r.bytes;
       res.bytesOut += r.gzBytes;
     }
-    unlinks.push({ path: t.path, rel: t.rel, identity: toFields(t.id) });
+    unlinks.push({ path: t.path, rel: t.rel, identity: identityFields(t.id) });
     if (prefixBytes !== undefined)
       legacySrc = { bytes: r.bytes, sha256: r.sha256, prefixSha256: r.prefixSha256 };
     await yieldToLoop();
@@ -644,7 +552,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
       if (!id) continue;
       const rec = index.get(rel);
       const cls = f.snapshot ? "ledger" : f.cls;
-      if (sameRecorded(rec, id) && (await archiveExists(dir, rec!.archive)) !== null) {
+      if (sameRecorded(rec, id) && (await archiveFileSize(dir, rec!.archive)) !== null) {
         if (f.snapshot) continue; // the same snapshot is already in a bundle
         if (rec!.via === "restore") {
           await commit((next) =>
@@ -653,7 +561,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
               kind: "reused",
               source: rel,
               archive: rec!.archive,
-              ...toFields(id),
+              ...identityFields(id),
               sha256: rec!.sha256,
               class: rec!.class ?? cls,
               verified_at: now(),
@@ -661,7 +569,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
           );
           res.reused += 1;
         }
-        unlinks.push({ path: f.path, rel, identity: toFields(id) });
+        unlinks.push({ path: f.path, rel, identity: identityFields(id) });
         continue;
       }
       if (!f.snapshot && id.size > BUNDLE_RECORD_MAX_BYTES) {
@@ -688,7 +596,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
           res.bytesIn += r.bytes;
           res.bytesOut += r.gzBytes;
         }
-        unlinks.push({ path: f.path, rel, identity: toFields(id) });
+        unlinks.push({ path: f.path, rel, identity: identityFields(id) });
         await yieldToLoop();
         continue;
       }
@@ -704,7 +612,10 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
       stop =
         deps.stopReason() ?? (await deps.diskFor(bundle.reduce((n, b) => n + b.identity.size, 0)));
       if (!stop) {
-        const name = `state-${passId}.jsonl.gz`;
+        const name = bundleName(passId);
+        // A PR whose transcripts are gone (or none) has created no archive
+        // dir yet; the bundle is its first file there.
+        await mkdir(dir, { recursive: true });
         const r = await writeBundle(join(dir, name), root, bundle, {
           level: deps.level,
           bytesPerS: deps.bytesPerS,
@@ -759,7 +670,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
       srcRec !== undefined &&
       srcRec.via === "archive" &&
       !srcRec.legacy &&
-      (await archiveExists(dir, srcRec.archive)) !== null;
+      (await archiveFileSize(dir, srcRec.archive)) !== null;
     if (legacyCmp && !srcArchived) {
       // The transcript it is checked against is not archived yet: next pass.
       incomplete = true;
@@ -799,14 +710,18 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         // Matched nothing (or there is no transcript at all): kept, gzipped
         // under the protocol, then removed.
         const rec = index.get(legacyRel);
-        if (sameRecorded(rec, legacyId) && (await archiveExists(dir, rec!.archive)) !== null)
-          unlinks.push({ path: inv.legacy.path, rel: legacyRel, identity: toFields(legacyId) });
+        if (sameRecorded(rec, legacyId) && (await archiveFileSize(dir, rec!.archive)) !== null)
+          unlinks.push({
+            path: inv.legacy.path,
+            rel: legacyRel,
+            identity: identityFields(legacyId),
+          });
         else {
           stop = deps.stopReason() ?? (await deps.diskFor(legacyId.size));
           if (!stop) {
             const meta = await metaOf(dir);
             const at = Date.parse(meta.archived_at ?? "");
-            const baseRel = `transcripts/session-at-close-${stampOf(new Date(Number.isFinite(at) ? at : legacyId.mtimeMs))}.jsonl.gz`;
+            const baseRel = `transcripts/session-at-close-${archiveStamp(new Date(Number.isFinite(at) ? at : legacyId.mtimeMs))}.jsonl.gz`;
             const entryOf = (archive: string, p: Packed): FileEntry => ({
               pass: passId,
               kind: "transcript",
@@ -832,7 +747,11 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
                 res.bytesIn += r.bytes;
                 res.bytesOut += r.gzBytes;
               }
-              unlinks.push({ path: inv.legacy.path, rel: legacyRel, identity: toFields(legacyId) });
+              unlinks.push({
+                path: inv.legacy.path,
+                rel: legacyRel,
+                identity: identityFields(legacyId),
+              });
             }
           }
         }
@@ -849,6 +768,9 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
   // unlink.
   const removed = new Set<string>();
   let unlinkStop: string | null = null;
+  // The archiver stopping, or a restore waiting for the mutex: served at the
+  // next file boundary — an unlink is one.
+  let unlinkYield: string | null = null;
   if (!stop && (unlinks.length > 0 || duplicate)) {
     await deps.step?.("before_unlink", { pr });
     facts = await deps.outside(pr);
@@ -856,6 +778,8 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
     if (!again.eligible) unlinkStop = again.reason ?? "ineligible";
     let k = 0;
     for (const u of unlinkStop ? [] : unlinks) {
+      unlinkYield = unlinkStopOf(deps.stopReason());
+      if (unlinkYield) break;
       const now2 = eligibility(facts);
       if (!now2.eligible) {
         unlinkStop = now2.reason ?? "ineligible";
@@ -870,28 +794,62 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         await deps.step?.("unlinked", { pr, k, of: unlinks.length, path: u.path });
       }
     }
-    if (!unlinkStop && duplicate && inv.legacy) {
-      const now3 = eligibility(facts);
-      if (!now3.eligible) unlinkStop = now3.reason ?? "ineligible";
-      else {
-        const r = await unlinkIfIdentity(inv.legacy.path, toFields(duplicate.id));
-        if (r === "removed") res.duplicatesRemoved += 1;
-        if (r === "changed") duplicate = null;
+    if (!unlinkStop && !unlinkYield && duplicate && inv.legacy) {
+      unlinkYield = unlinkStopOf(deps.stopReason());
+      const now3 = unlinkYield ? null : eligibility(facts);
+      if (now3 && !now3.eligible) unlinkStop = now3.reason ?? "ineligible";
+      else if (now3) {
+        // The removal is on the record BEFORE the unlink, as every other
+        // removal's entry is: nothing after the unlink could rebuild it (the
+        // copy is gone). A record an earlier pass committed before a crash
+        // stopped its unlink is not written twice.
+        const dup = duplicate;
+        const entry = {
+          kind: "duplicate_removed" as const,
+          path: basename(inv.legacy.path),
+          bytes: dup.id.size,
+          sha256: dup.sha256,
+          duplicate_of: dup.of,
+          match: dup.match,
+        };
+        const recorded = manifest.entries.some(
+          (e) =>
+            e.kind === "duplicate_removed" &&
+            e.path === entry.path &&
+            e.bytes === entry.bytes &&
+            e.sha256 === entry.sha256,
+        );
+        if (!recorded) {
+          await commit((next) => next.entries.push({ pass: passId, ...entry, removed_at: now() }));
+          bumpMark(store, "duplicates.removed", 1);
+          await deps.step?.("duplicate_recorded", { pr });
+        }
+        const r = await unlinkIfIdentity(inv.legacy.path, identityFields(dup.id));
+        if (r === "removed") {
+          res.duplicatesRemoved += 1;
+          await deps.step?.("duplicate_unlinked", { pr });
+        }
+        if (r === "changed") {
+          // It moved after it was compared: left live, the next pass
+          // compares it again.
+          duplicate = null;
+          incomplete = true;
+        }
       }
     }
   }
-  if (unlinkStop) {
-    res.reason = unlinkStop;
+  if (unlinkStop || unlinkYield) {
+    res.reason = unlinkStop ?? unlinkYield;
     incomplete = true;
   }
   const kept = unlinks.filter((u) => !removed.has(u.rel)).map((u) => u.rel);
   if (kept.length > 0) incomplete = true;
 
-  // 8. Stamp what left, append the duplicate, finish the pass. A source an
-  // earlier run removed but never stamped (a crash between its unlink and the
-  // stamp) is stamped now: it is not live, its entry verified.
+  // 8. Stamp what left, finish the pass. A source an earlier run removed but
+  // never stamped (a crash between its unlink and the stamp) is stamped now:
+  // it is not live, its entry verified.
   const goneFrom = bundleRemovals(manifest);
-  if (!unlinkStop && !stop)
+  if (!unlinkStop && !unlinkYield && !stop)
     for (const entry of manifest.entries) {
       const sources =
         entry.kind === "transcript" || entry.kind === "file" || entry.kind === "reused"
@@ -937,35 +895,23 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
       });
       for (const x of extra)
         next.entries.push({ pass: passId, kind: "sources_removed", ...x, removed_at: at });
-      if (duplicate && res.duplicatesRemoved > 0 && inv.legacy)
-        next.entries.push({
-          pass: passId,
-          kind: "duplicate_removed",
-          path: basename(inv.legacy.path),
-          bytes: duplicate.id.size,
-          sha256: duplicate.sha256,
-          duplicate_of: duplicate.of,
-          match: duplicate.match,
-          removed_at: at,
-        });
       const pass = next.passes.find((p) => p.id === passId);
       if (pass && pass.finished_at === undefined) pass.finished_at = at;
     });
   }
-  if (res.duplicatesRemoved > 0) bumpMark(store, "duplicates.removed", res.duplicatesRemoved);
   // Emptied directories, deepest first, never recursively.
   if (removed.size > 0) for (const d of inv.dirs) await rmdirQuiet(d);
 
   const complete = !incomplete;
+  res.outcome = complete ? "archived" : unlinkStop ? "held" : "partial";
+  if (res.outcome === "partial" && !res.reason)
+    res.reason = res.verifyFailures > 0 ? "verify_failed" : "incomplete";
   finishArchiveRow(store, pr, {
     at,
     complete,
     tallies: deps.meter.measure(() => rowTallies(manifest)),
     error: complete ? null : res.reason,
   });
-  res.outcome = complete ? "archived" : unlinkStop ? "held" : "partial";
-  if (res.outcome === "partial" && !res.reason)
-    res.reason = res.verifyFailures > 0 ? "verify_failed" : "incomplete";
   return res;
 }
 
@@ -988,9 +934,6 @@ function bundleRemovals(m: Manifest): Map<string, Set<string>> {
   }
   return out;
 }
-
-const sameIdentityNow = (a: FileIdentity, b: FileIdentity | null): boolean =>
-  b !== null && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
 
 /**
  * Which transcript the legacy copy is checked against (§7.5): the one

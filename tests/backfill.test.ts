@@ -388,6 +388,28 @@ describe("runBackfill", () => {
     s.close();
   });
 
+  it("an import cut short inside a PR writes none of its rounds — the retry numbers them oldest first", async () => {
+    const { adapter } = harness([PR_5000]);
+    const s = store();
+    const real = s.insertBackfilledRound.bind(s);
+    let calls = 0;
+    s.insertBackfilledRound = (row) => {
+      calls += 1;
+      if (calls === 2) throw new Error("killed mid-PR");
+      return real(row);
+    };
+    await expect(runBackfill(s, adapter, cfg, {})).rejects.toThrow("killed mid-PR");
+    expect(backfilledRows(s)).toEqual([]);
+    s.insertBackfilledRound = real;
+    const stats = await runBackfill(s, adapter, cfg, {});
+    expect(stats.reviews_imported).toBe(2);
+    expect(backfilledRows(s).map((r) => [r.round_no, r.gh_review_id])).toEqual([
+      [1, 111],
+      [2, 222],
+    ]);
+    s.close();
+  });
+
   it("skips DISMISSED/PENDING reviews and reviews without a submit time", async () => {
     const pr: FakePr = {
       ...PR_5000,

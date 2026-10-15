@@ -298,6 +298,16 @@ describe("the one line `qcr status` prints", () => {
     expect(archiveStatusLine(pendingArchiveStatus("plan"))).toBe(
       "archive: mode plan — UNKNOWN, not ticked yet; backlog UNKNOWN (no plan has completed yet)",
     );
+    // Before the first tick, a failed or stranded restore the ledger already
+    // shows is said all the same.
+    expect(
+      archiveStatusLine({
+        ...pendingArchiveStatus("plan"),
+        restores: { pending: 2, done: 0, failed: 1 },
+      }),
+    ).toBe(
+      "archive: mode plan — UNKNOWN, not ticked yet; backlog UNKNOWN (no plan has completed yet); 1 RESTORE(S) FAILED; 2 REOPENED PR(S) AWAITING RESTORE — mode is plan, so no tick or birth restores them: run `qcr archive restore <pr>`",
+    );
     expect(archiveStatusLine({ ...pendingArchiveStatus("plan"), state: "off" })).toContain(
       "archive: off",
     );

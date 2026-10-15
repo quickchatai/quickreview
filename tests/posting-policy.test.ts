@@ -623,6 +623,69 @@ describe("benchmark export (src/bench/benchposting.ts) enforces the policy", () 
   });
 });
 
+describe("benchmark export: a cut comment marks ITS record entry, never a neighbour's", () => {
+  const q = (line: number, title: string) => ({
+    path: "src/a.ts",
+    line,
+    side: "RIGHT",
+    body: `[question] ${title}\n\nx.${tail("P2")}`,
+  });
+  const entry = (id: string, line: number, postedAs: string, severity: string) => ({
+    id,
+    path: "src/a.ts",
+    line,
+    lens: "pass-baseline",
+    severity,
+    disposition: "posted",
+    posted_as: postedAs,
+  });
+  const findingsOf = (rec: unknown) =>
+    (rec as { findings: Array<Record<string, unknown>> }).findings;
+
+  it("two questions two lines apart, the second cut over budget: the second's entry is withheld", () => {
+    const out = policeBenchOutput({
+      comments: [q(10, "First?"), q(12, "Second?")],
+      reviewMd: "",
+      record: {
+        findings: [entry("f10", 10, "question", "P2"), entry("f12", 12, "question", "P2")],
+      },
+      outcome: { verdict: "APPROVE", summary: "s" },
+      policy: { ...SNAPPY, questions: "post", max_comments: 1 },
+    });
+    expect(out.report.withheld.map((w) => w.line)).toEqual([12]);
+    const byId = Object.fromEntries(findingsOf(out.record).map((e) => [e["id"], e]));
+    expect(byId["f10"]!["disposition"]).toBe("posted");
+    expect(byId["f12"]!["disposition"]).toBe("withheld");
+  });
+
+  it("an unrecorded nit beside a recorded blocker: the blocker's entry stays posted, the nit gets its own", () => {
+    const out = policeBenchOutput({
+      comments: [
+        { path: "src/a.ts", line: 10, side: "RIGHT", body: `[blocker] B\n\nx.${tail("P1")}` },
+        { path: "src/a.ts", line: 11, side: "RIGHT", body: `[nit] N\n\nx.${tail("nit")}` },
+      ],
+      reviewMd: "",
+      record: { findings: [entry("b", 10, "blocker", "P1")] },
+      outcome: { verdict: "REQUEST_CHANGES", summary: "s" },
+      policy: SNAPPY,
+    });
+    expect(out.report.withheld.map((w) => [w.line, w.word])).toEqual([[11, "nits-off"]]);
+    const findings = findingsOf(out.record);
+    expect(findings.find((e) => e["id"] === "b")!["disposition"]).toBe("posted");
+    expect(findings.filter((e) => e["disposition"] === "withheld")).toEqual([
+      expect.objectContaining({ line: 11, word: "nits-off" }),
+    ]);
+  });
+
+  it("a comments file that does not parse is left as written — never policed into an empty review", () => {
+    const d = caseDir(SESSION);
+    writeFileSync(join(d, "comments.json"), '[{"path": "src/a.ts", "line": 3,');
+    expect(enforceBenchPosting(d, SNAPPY)).toBeNull();
+    expect(readFileSync(join(d, "comments.json"), "utf8")).toBe('[{"path": "src/a.ts", "line": 3,');
+    expect(existsSync(join(d, "comments.session.json"))).toBe(false);
+  });
+});
+
 // The budget counts root causes, not sites, and within one severity prefers
 // the changed line (GOLDEN-MINING.md §5.4). Both are policy-only — the
 // default's byte-identity is pinned in tests/posting-default-identity.test.ts.
