@@ -1168,6 +1168,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       for (const t of timers) clearInterval(t);
       timers.length = 0;
       load.stop();
+      wakePolicy.stop();
       verdicts.stop();
       threadDecisions.stop();
       rechecks.stop();

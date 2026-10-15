@@ -150,6 +150,21 @@ export const emptyStoreResult = (
   keptLive: 0,
 });
 
+/** Settle a pass's outcome from how it ended: `partial` when it stopped
+ * (`stop` names why), was left incomplete (a verify failure named before a
+ * plain `incomplete`) or `waits` by design (that reason last); else `done`. */
+export function endStorePass(
+  res: StorePassResult,
+  stop: string | null,
+  incomplete: boolean,
+  waits: string | null = null,
+): StorePassResult {
+  res.outcome = stop || incomplete || waits ? "partial" : "done";
+  res.reason =
+    stop ?? (incomplete ? (res.verifyFailures > 0 ? "verify_failed" : "incomplete") : waits);
+  return res;
+}
+
 export { archiveFileSize, unlinkStopOf, type Packed } from "./archivewrite.js";
 
 /** A pass with nothing to move: when `deps.settle` asks, the manifest is
@@ -250,8 +265,6 @@ export class StoreWriter {
   private readonly index = new Map<string, SettledRecord>();
   /** Every archive name an entry references, across every shard. */
   private readonly refs = new Set<string>();
-  /** Entries across every shard (the next entry's index). */
-  private total = 0;
   /** The shards this pass wrote to. */
   private readonly touched = new Set<number>();
   private readonly meter: SpanMeter;
@@ -301,12 +314,11 @@ export class StoreWriter {
   }
 
   private absorb(entries: readonly ManifestEntry[]): void {
-    indexEntries(this.index, entries, this.total);
+    indexEntries(this.index, entries);
     for (const e of entries) {
       const a = placedArchive(e);
       if (a !== null) this.refs.add(a);
     }
-    this.total += entries.length;
   }
 
   /** The latest record per source. */

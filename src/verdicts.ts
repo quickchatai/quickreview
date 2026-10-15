@@ -23,7 +23,6 @@ import {
   watch,
   type FSWatcher,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { checkOutcome, classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
 import {
@@ -55,6 +54,7 @@ import {
 import { estimateUsd, type ModelPricing } from "./usage.js";
 import { TranscriptIndex } from "./transcriptindex.js";
 import { withinBudget } from "./budget.js";
+import { piGlobalSessionsDir } from "./archive/piglobal.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
@@ -2735,7 +2735,7 @@ export class VerdictWatcher {
     if (configured === null) return undefined;
     // The subagent tool's isolated children skip --session-dir → pi HOME
     // global store (in-container /home/review/.pi/agent/sessions). Best-effort.
-    return configured ?? join(homedir(), ".pi", "agent", "sessions");
+    return configured ?? piGlobalSessionsDir();
   }
 
   /**

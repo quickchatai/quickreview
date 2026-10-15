@@ -22,11 +22,12 @@
 // them, and the longest is measured. Plan mode writes nothing: no file, no
 // directory, no row.
 import { stat } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { join, relative } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "../yieldloop.js";
 import { prEligibility, type IneligibleReason } from "./eligibility.js";
+import { atNearestExisting } from "./fsutil.js";
 import {
   DELIVERIES_TABLE,
   EVENTS_TABLE,
@@ -118,8 +119,9 @@ export interface ArchivePlan {
     /** Archived already, with nothing live left. */
     archived: number;
   };
-  /** Eligible PRs with something to move, the oldest close first (the order
-   * an archive pass takes them). */
+  /** Eligible PRs with something to move, oldest first by the time their
+   * window counts from — the later of the close and a restore (the order an
+   * archive pass takes them). */
   candidates: PlannedPr[];
   /** Eligible PRs with nothing live to move — they still get a zero-file
    * `archived` row (§7.4), so passes stop revisiting them. */
@@ -254,16 +256,10 @@ export function askLiveSessions(
 /** The device a path lives on — the nearest existing ancestor's, since a
  * directory not yet created will be created there. */
 async function deviceOf(path: string): Promise<number | null> {
-  let p = resolve(path);
-  for (;;) {
-    try {
-      return (await stat(p)).dev;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return null;
-      const up = dirname(p);
-      if (up === p) return null;
-      p = up;
-    }
+  try {
+    return (await atNearestExisting(path, (p) => stat(p))).dev;
+  } catch {
+    return null;
   }
 }
 

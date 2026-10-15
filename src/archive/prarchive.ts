@@ -38,7 +38,7 @@
 // and the next pass resumes it — every step is idempotent. Disk is checked
 // before each file (§7.7). Nothing here spawns, injects, wakes or kills a
 // session (rule 9), and nothing reads or writes memory.
-import { readFile, mkdir, readdir, rmdir } from "node:fs/promises";
+import { mkdir, readdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "../yieldloop.js";
@@ -55,7 +55,10 @@ import {
   bundlePassOf,
   bytesHeld,
   identityFields,
+  legacyArchiveName,
+  legacyMatch,
   placeArchive,
+  readSessionMeta,
   sameRecorded,
   unlinkStopOf,
   type Packed,
@@ -148,21 +151,6 @@ async function rmdirQuiet(dir: string): Promise<boolean> {
     return true;
   } catch {
     return false;
-  }
-}
-
-/** The `session_file` `archive/pr-<n>/meta.json` names, if it can be read. */
-async function metaOf(
-  dir: string,
-): Promise<{ session_file: string | null; archived_at: string | null }> {
-  try {
-    const m = JSON.parse(await readFile(join(dir, "meta.json"), "utf8")) as Record<string, unknown>;
-    return {
-      session_file: typeof m.session_file === "string" ? m.session_file : null,
-      archived_at: typeof m.archived_at === "string" ? m.archived_at : null,
-    };
-  } catch {
-    return { session_file: null, archived_at: null };
   }
 }
 
@@ -701,10 +689,8 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
           bytesPerS: deps.bytesPerS,
           signal,
         });
-        if (mine.bytes === legacySrc.bytes && mine.sha256 === legacySrc.sha256)
-          duplicate = { match: "exact", of: srcRec.archive, sha256: mine.sha256, id: legacyId };
-        else if (mine.bytes < legacySrc.bytes && mine.sha256 === legacySrc.prefixSha256)
-          duplicate = { match: "prefix", of: srcRec.archive, sha256: mine.sha256, id: legacyId };
+        const match = legacyMatch(mine, legacySrc);
+        if (match) duplicate = { match, of: srcRec.archive, sha256: mine.sha256, id: legacyId };
       }
       if (!duplicate) {
         // Matched nothing (or there is no transcript at all): kept, gzipped
@@ -719,9 +705,8 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         else {
           stop = deps.stopReason() ?? (await deps.diskFor(legacyId.size));
           if (!stop) {
-            const meta = await metaOf(dir);
-            const at = Date.parse(meta.archived_at ?? "");
-            const baseRel = `transcripts/session-at-close-${archiveStamp(new Date(Number.isFinite(at) ? at : legacyId.mtimeMs))}.jsonl.gz`;
+            const meta = await readSessionMeta(dir);
+            const baseRel = legacyArchiveName(meta.archived_at, legacyId.mtimeMs);
             const entryOf = (archive: string, p: Packed): FileEntry => ({
               pass: passId,
               kind: "transcript",
@@ -952,7 +937,7 @@ async function legacySource(
     if (r.kind === "transcript" && !r.legacy && r.source.endsWith(".jsonl") && !cands.has(r.source))
       cands.set(r.source, r.mtime_ms);
   if (cands.size === 0) return null;
-  const meta = await metaOf(dir);
+  const meta = await readSessionMeta(dir);
   if (meta.session_file) {
     const rel = relative(root, meta.session_file);
     if (cands.has(rel)) return { rel };

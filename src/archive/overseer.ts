@@ -24,8 +24,8 @@
 // Daemon bookkeeping only (rule 9): nothing here spawns, injects, wakes or
 // kills a session — the overseer session is never touched, only files it
 // stopped writing.
-import { readFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
+import { identityFields, legacyArchiveName, legacyMatch, readSessionMeta } from "./archivewrite.js";
 import { fileDigestWithPrefix, identityOrNull } from "./gzfile.js";
 import type { FileIdentity } from "./fsutil.js";
 import type { DuplicateEntry } from "./manifest.js";
@@ -34,6 +34,7 @@ import {
   StoreWriter,
   archiveFileSize,
   emptyStoreResult,
+  endStorePass,
   settleStore,
   type StoreFile,
   type StorePassDeps,
@@ -63,27 +64,6 @@ export interface OverseerPassDeps extends Omit<StorePassDeps, "dir" | "subject" 
   bornAt: () => Date | null;
 }
 
-const stampOf = (ms: number): string =>
-  new Date(ms)
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}/, "");
-
-/** A rotation record's `meta.json`: the live transcript it named, and when. */
-async function metaOf(
-  dir: string,
-): Promise<{ session_file: string | null; archived_at: string | null }> {
-  try {
-    const m = JSON.parse(await readFile(join(dir, "meta.json"), "utf8")) as Record<string, unknown>;
-    return {
-      session_file: typeof m.session_file === "string" ? m.session_file : null,
-      archived_at: typeof m.archived_at === "string" ? m.archived_at : null,
-    };
-  } catch {
-    return { session_file: null, archived_at: null };
-  }
-}
-
 const validBirth = (d: Date | null): d is Date => d !== null && Number.isFinite(d.getTime());
 
 /** The overseer's live transcripts, oldest first. Throws when the dir
@@ -111,7 +91,8 @@ async function listOverseer(
 }
 
 /** The files a pass may move (§5): never the newest, never one written
- * within CURRENT_SLACK_MS of the current birth or after it. */
+ * within CURRENT_SLACK_MS of the current birth or after it. `live` is oldest
+ * first (as `listOverseer` gives it): its last element is the newest. */
 export function overseerMovable<T extends { path: string; id: FileIdentity }>(
   live: readonly T[],
   born: Date,
@@ -223,7 +204,7 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
     if (stop) break;
     const id = await identityOrNull(l.path);
     if (!id) continue;
-    const meta = await metaOf(l.recordDir);
+    const meta = await readSessionMeta(l.recordDir);
     const target = namedTranscript(meta.session_file, root, writer, live);
     if (target === "live") {
       // The transcript it copies is still live (current, or not archived
@@ -261,11 +242,10 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
       stop = disk;
       break;
     }
-    const at = Date.parse(meta.archived_at ?? "");
     const f: StoreFile = {
       path: l.path,
       source,
-      archive: `transcripts/session-at-close-${stampOf(Number.isFinite(at) ? at : id.mtimeMs)}.jsonl.gz`,
+      archive: legacyArchiveName(meta.archived_at, id.mtimeMs),
       identity: id,
     };
     const entryOf = writer.transcriptEntry(f, { legacy: true });
@@ -301,25 +281,8 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
   stop = stop ?? unlinkStop ?? duplicateStop;
   if (unlinks.some((u) => !removed.has(u.source))) incomplete = true;
   if (removedDuplicates.length < duplicates.length) incomplete = true;
-  res.outcome = stop || incomplete || waits > 0 ? "partial" : "done";
-  res.reason =
-    stop ??
-    (incomplete
-      ? res.verifyFailures > 0
-        ? "verify_failed"
-        : "incomplete"
-      : waits > 0
-        ? "legacy_copy_waits"
-        : null);
-  return res;
+  return endStorePass(res, stop, incomplete, waits > 0 ? "legacy_copy_waits" : null);
 }
-
-const identityFields = (id: FileIdentity) => ({
-  bytes: id.size,
-  mtime_ms: id.mtimeMs,
-  dev: id.dev,
-  ino: id.ino,
-});
 
 /**
  * The transcript a legacy copy names: its archived record (by path under this
@@ -367,9 +330,6 @@ async function compareLegacy(
   });
   const mine = await fileDigestWithPrefix(copy, { bytesPerS: deps.bytesPerS, signal: deps.signal });
   if (src.bytes !== target.bytes || src.sha256 !== target.sha256) return null;
-  if (mine.bytes === src.bytes && mine.sha256 === src.sha256)
-    return { match: "exact", sha256: mine.sha256 };
-  if (mine.bytes < src.bytes && mine.sha256 === src.prefixSha256)
-    return { match: "prefix", sha256: mine.sha256 };
-  return null;
+  const match = legacyMatch(mine, src);
+  return match ? { match, sha256: mine.sha256 } : null;
 }

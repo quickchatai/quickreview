@@ -44,10 +44,12 @@ const DAY_MS = 86_400_000;
  * (groups: the month, the seq when written). `monthFile` writes it. */
 const FILE_NAME = String.raw`state-(\d{4}-\d{2})(?:-(\d+))?\.sqlite`;
 const FILE_RE = new RegExp(`^${FILE_NAME}$`);
+/** The in-progress suffix, escaped for a pattern. */
+const PARTIAL_RE = PARTIAL_SUFFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Every name a month file leaves on disk: the database, its WAL and shared
  * memory, its sealed gzip and a gzip in progress. A new file takes a seq none
  * of these has used. */
-const ANY_FILE_RE = new RegExp(`^${FILE_NAME}(?:-wal|-shm|\\.gz|\\.gz\\.partial)?$`);
+const ANY_FILE_RE = new RegExp(`^${FILE_NAME}(?:-wal|-shm|\\.gz|\\.gz${PARTIAL_RE})?$`);
 /** A sealed gzip (group 1: the database file it seals). */
 const GZ_RE = new RegExp(`^(${FILE_NAME})\\.gz$`);
 

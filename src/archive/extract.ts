@@ -162,6 +162,32 @@ async function preparePartial(to: string, target: string): Promise<void> {
   await unlinkIfPresent(`${target}${EXTRACT_PARTIAL_SUFFIX}`);
 }
 
+/**
+ * Write one target through its partial: `preparePartial`, then `write` (which
+ * creates the partial and places it). Any failure removes the partial — never
+ * through a directory that was refused — and is returned as its message; a
+ * stop is thrown.
+ */
+async function throughPartial(
+  to: string,
+  target: string,
+  signal: AbortSignal | undefined,
+  write: (partial: string) => Promise<void>,
+): Promise<string | null> {
+  const partial = `${target}${EXTRACT_PARTIAL_SUFFIX}`;
+  let prepared = false;
+  try {
+    await preparePartial(to, target);
+    prepared = true;
+    await write(partial);
+    return null;
+  } catch (err) {
+    if (prepared) await unlinkIfPresent(partial).catch(() => false);
+    if (signal?.aborted) throw err;
+    return (err as Error).message;
+  }
+}
+
 /** Place `partial` at `target` without replacing anything: a target already
  * holding the same bytes is `present`; one holding others is an error. */
 async function place(
@@ -175,6 +201,10 @@ async function place(
   if (mtimeMs !== null) await utimes(partial, mtimeMs / 1000, mtimeMs / 1000);
   if ((await renameNoReplace(partial, target)) === "placed") return "written";
   await unlinkIfPresent(partial);
+  // What is there is read only when it is a plain file: a link is never
+  // followed out of `--to`, and a FIFO never blocks the read.
+  if (!(await lstat(target)).isFile())
+    throw new Error(`${target} exists and is not a plain file — never followed or overwritten`);
   const there = await fileDigest(target, { bytesPerS, ...(signal ? { signal } : {}) });
   if (there.bytes === got.bytes && there.sha256 === got.sha256) return "present";
   throw new Error(`${target} already holds other bytes — never overwritten`);
@@ -225,11 +255,7 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
       errors.push({ path: archive, error: "an unsafe archive name — skipped" });
       continue;
     }
-    const partial = `${target}${EXTRACT_PARTIAL_SUFFIX}`;
-    let prepared = false;
-    try {
-      await preparePartial(to, target);
-      prepared = true;
+    const error = await throughPartial(to, target, signal, async (partial) => {
       const tap = new HashTap();
       await pipeline(
         createReadStream(join(dir, archive), { highWaterMark: CHUNK_BYTES }),
@@ -240,22 +266,14 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
         { signal },
       );
       const got = { bytes: tap.bytes, sha256: tap.digest() };
-      if (got.bytes !== expect.bytes || got.sha256 !== expect.sha256) {
-        await unlinkIfPresent(partial);
-        errors.push({
-          path: rel,
-          error: `${archive} decompressed to ${got.bytes} bytes / ${got.sha256.slice(0, 12)}…, the manifest records ${expect.bytes} / ${expect.sha256.slice(0, 12)}…`,
-        });
-        continue;
-      }
+      if (got.bytes !== expect.bytes || got.sha256 !== expect.sha256)
+        throw new Error(
+          `${archive} decompressed to ${got.bytes} bytes / ${got.sha256.slice(0, 12)}…, the manifest records ${expect.bytes} / ${expect.sha256.slice(0, 12)}…`,
+        );
       const outcome = await place(partial, target, got, expect.mtime_ms, bytesPerS, signal);
       files.push({ path: relative(to, target), from: archive, ...got, outcome });
-    } catch (err) {
-      // Never through a directory that was refused.
-      if (prepared) await unlinkIfPresent(partial).catch(() => false);
-      if (signal?.aborted) throw err;
-      errors.push({ path: rel, error: (err as Error).message });
-    }
+    });
+    if (error !== null) errors.push({ path: rel, error });
   }
 
   // Each bundle's records, under `state-<pass>/`.
@@ -295,21 +313,13 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
         });
         continue;
       }
-      const partial = `${target}${EXTRACT_PARTIAL_SUFFIX}`;
-      let prepared = false;
-      try {
-        await preparePartial(to, target);
-        prepared = true;
+      const error = await throughPartial(to, target, signal, async (partial) => {
         await writeFile(partial, rec.data, { flag: "wx" });
         const got = { bytes: rec.data.length, sha256: sha };
         const outcome = await place(partial, target, got, f.mtime_ms, bytesPerS, signal);
         files.push({ path: relative(to, target), from: e.archive, ...got, outcome });
-      } catch (err) {
-        // Never through a directory that was refused.
-        if (prepared) await unlinkIfPresent(partial).catch(() => false);
-        if (signal?.aborted) throw err;
-        errors.push({ path: relative(to, target), error: (err as Error).message });
-      }
+      });
+      if (error !== null) errors.push({ path: relative(to, target), error });
     }
   }
 
@@ -323,21 +333,13 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
       continue;
     }
     const target = join(to, name);
-    const partial = `${target}${EXTRACT_PARTIAL_SUFFIX}`;
-    let prepared = false;
-    try {
-      await preparePartial(to, target);
-      prepared = true;
+    const error = await throughPartial(to, target, signal, async (partial) => {
       await copyFile(src, partial, constants.COPYFILE_EXCL);
       const got = await fileDigest(partial, { bytesPerS, ...(signal ? { signal } : {}) });
       await place(partial, target, got, null, bytesPerS, signal);
       copied.push(name);
-    } catch (err) {
-      // Never through a directory that was refused.
-      if (prepared) await unlinkIfPresent(partial).catch(() => false);
-      if (signal?.aborted) throw err;
-      errors.push({ path: name, error: (err as Error).message });
-    }
+    });
+    if (error !== null) errors.push({ path: name, error });
   }
   return { ok: true, dir: to, files, copied, errors };
 }

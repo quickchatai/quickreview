@@ -303,6 +303,33 @@ describe("below --to, no link is followed", () => {
     expect(r.copied).toContain("manifest.json");
     expect(existsSync(join(to, "manifest.json.extract-partial"))).toBe(false);
   });
+
+  it(
+    "an existing target that is a link is never followed — not even to call it present",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = await archivedFixture();
+      const to = scratchDir();
+      await extractPr(opts(f, to));
+      // A link at manifest.json to a file holding exactly its bytes.
+      const elsewhere = mkdtempSync(join(tmpdir(), "qcr-extract-elsewhere-"));
+      scratch.push(elsewhere);
+      const copy = join(elsewhere, "manifest.json");
+      writeFileSync(copy, readFileSync(join(to, "manifest.json")));
+      rmSync(join(to, "manifest.json"));
+      symlinkSync(copy, join(to, "manifest.json"));
+      const r = await extractPr(opts(f, to));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.copied).not.toContain("manifest.json");
+      expect(r.errors).toEqual([
+        expect.objectContaining({
+          path: "manifest.json",
+          error: expect.stringContaining("is not a plain file"),
+        }),
+      ]);
+    },
+  );
 });
 
 describe("what extract will not pretend", () => {

@@ -10,9 +10,15 @@
 //   - placing one file: an orphan gzip a crash left at the name is adopted,
 //     kept under its own entry, removed as a proven duplicate or redone
 //     (`placeArchive`) — the per-file protocol (`gzfile.ts`) after that.
-import { lstat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fsyncDir, unlinkIfPresent, PARTIAL_SUFFIX, type FileIdentity } from "./fsutil.js";
+import {
+  fsyncDir,
+  sameRecordedIdentity,
+  unlinkIfPresent,
+  PARTIAL_SUFFIX,
+  type FileIdentity,
+} from "./fsutil.js";
 import { adoptOrphan, archiveFile, type ArchiveFileOk, type ArchiveFileOpts } from "./gzfile.js";
 import type { ManifestEntry, SettledRecord } from "./manifest.js";
 
@@ -34,18 +40,47 @@ export const identityFields = (
   ino: id.ino,
 });
 
+/** A session record's `meta.json` (`archive/pr-<n>/`, or an overseer
+ * rotation's `archive/overseer/<date>/`): the live transcript it named, and
+ * when it was archived — each null when the file or the field cannot be read. */
+export async function readSessionMeta(
+  dir: string,
+): Promise<{ session_file: string | null; archived_at: string | null }> {
+  try {
+    const m = JSON.parse(await readFile(join(dir, "meta.json"), "utf8")) as Record<string, unknown>;
+    return {
+      session_file: typeof m.session_file === "string" ? m.session_file : null,
+      archived_at: typeof m.archived_at === "string" ? m.archived_at : null,
+    };
+  } catch {
+    return { session_file: null, archived_at: null };
+  }
+}
+
+/** The archive name a legacy session-at-close copy is kept under (§7.5):
+ * stamped with its record's `archived_at`, else the copy's own mtime. */
+export function legacyArchiveName(archivedAt: string | null, mtimeMs: number): string {
+  const at = Date.parse(archivedAt ?? "");
+  return `transcripts/session-at-close-${archiveStamp(new Date(Number.isFinite(at) ? at : mtimeMs))}.jsonl.gz`;
+}
+
+/** Is a legacy copy (its digest `mine`) the transcript it names (`src`, with
+ * the sha256 of its first `mine.bytes` bytes) — whole, or a byte-prefix? */
+export function legacyMatch(
+  mine: { bytes: number; sha256: string },
+  src: { bytes: number; sha256: string; prefixSha256: string | null },
+): "exact" | "prefix" | null {
+  if (mine.bytes === src.bytes && mine.sha256 === src.sha256) return "exact";
+  if (mine.bytes < src.bytes && mine.sha256 === src.prefixSha256) return "prefix";
+  return null;
+}
+
 /** Does the manifest record hold exactly this live identity (a source
  * archived already with these bytes — unlink only)? */
 export const sameRecorded = (
   rec: Pick<SettledRecord, "dev" | "ino" | "bytes" | "mtime_ms"> | undefined,
   id: FileIdentity | null,
-): boolean =>
-  rec !== undefined &&
-  id !== null &&
-  rec.dev === id.dev &&
-  rec.ino === id.ino &&
-  rec.bytes === id.size &&
-  rec.mtime_ms === id.mtimeMs;
+): boolean => sameRecordedIdentity(rec, id);
 
 /** Is `rel` (relative to `dir`) an existing regular file? Its size, or null. */
 export async function archiveFileSize(dir: string, rel: string): Promise<number | null> {

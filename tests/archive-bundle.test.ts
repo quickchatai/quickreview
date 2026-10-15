@@ -46,4 +46,21 @@ describe("writeBundle", () => {
     expect(r.kind).toBe("ok");
     expect(statSync(dest).isFile()).toBe(true);
   });
+
+  it("a stop during the verify read propagates — it is never a verify failure", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-bundle-"));
+    roots.push(root);
+    const sources = [await source(root, "a.md", Buffer.from("a\n"))];
+    const dest = join(root, "archive", "pr-78", "state-p.jsonl.gz");
+    const ctrl = new AbortController();
+    await expect(
+      writeBundle(dest, root, sources, {
+        ...opts,
+        signal: ctrl.signal,
+        step: (name) => {
+          if (name === "partial_written") ctrl.abort();
+        },
+      }),
+    ).rejects.toThrow();
+  });
 });

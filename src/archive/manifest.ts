@@ -14,7 +14,7 @@
 // whatever it held.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { writeJsonAtomic } from "./fsutil.js";
+import { writeTextAtomic } from "./fsutil.js";
 
 export const MANIFEST_FORMAT = 1;
 export const MANIFEST_FILE = "manifest.json";
@@ -282,21 +282,22 @@ export function summarizeManifest(m: Manifest): ManifestSummary {
     if (p.started_at && (out.last_pass_at === null || p.started_at > out.last_pass_at))
       out.last_pass_at = p.started_at;
   for (const e of m.entries) {
+    const held = archivedBytes(e);
+    if (held) {
+      out.bytes += held.bytes;
+      out.gz_bytes += held.gzBytes;
+    }
     switch (e.kind) {
       case "transcript":
       case "file":
         if (e.reused) break;
         if (e.kind === "transcript") out.transcripts += 1;
         else out.files += 1;
-        out.bytes += e.bytes;
-        out.gz_bytes += e.gz_bytes;
         if (e.source_removed_at !== undefined) out.sources_removed += 1;
         break;
       case "bundle": {
         out.bundles += 1;
         out.records += e.records;
-        out.bytes += e.bytes;
-        out.gz_bytes += e.gz_bytes;
         out.sources_removed += stampedBundleSources(e).size;
         break;
       }
@@ -332,23 +333,28 @@ export interface RowTallies {
   bytesOut: number;
 }
 
+/** The bytes an entry adds to the archive — original and compressed: a
+ * transcript or file it placed (not a `reused` one, whose bytes another entry
+ * holds) and a bundle whole; null for every other entry. */
+function archivedBytes(e: ManifestEntry): { bytes: number; gzBytes: number } | null {
+  if (((e.kind === "transcript" || e.kind === "file") && !e.reused) || e.kind === "bundle")
+    return { bytes: e.bytes, gzBytes: e.gz_bytes };
+  return null;
+}
+
 /** The counts a PR's manifest holds — derived, so a pass that completes after
  * one a crash or a throw cut short counts everything the archive holds. A
  * `reused` entry (bytes another entry already holds) counts nothing. Pure. */
 export function rowTallies(m: Manifest): RowTallies {
   const out: RowTallies = { transcriptFiles: 0, stateFiles: 0, bytesIn: 0, bytesOut: 0 };
   for (const e of m.entries) {
-    if (e.kind === "transcript" || e.kind === "file") {
-      if (e.reused) continue;
-      if (e.kind === "file") out.stateFiles += 1;
-      else if (!e.legacy) out.transcriptFiles += 1;
-      out.bytesIn += e.bytes;
-      out.bytesOut += e.gz_bytes;
-    } else if (e.kind === "bundle") {
-      out.stateFiles += e.files.filter((f) => !f.snapshot).length;
-      out.bytesIn += e.bytes;
-      out.bytesOut += e.gz_bytes;
-    }
+    const held = archivedBytes(e);
+    if (!held) continue;
+    out.bytesIn += held.bytes;
+    out.bytesOut += held.gzBytes;
+    if (e.kind === "file") out.stateFiles += 1;
+    else if (e.kind === "transcript" && !e.legacy) out.transcriptFiles += 1;
+    else if (e.kind === "bundle") out.stateFiles += e.files.filter((f) => !f.snapshot).length;
   }
   return out;
 }
@@ -386,7 +392,7 @@ export function assertAppendOnly(prev: Manifest, next: Manifest): void {
  */
 export async function writeManifest(dir: string, prev: Manifest, next: Manifest): Promise<void> {
   assertAppendOnly(prev, next);
-  await writeJsonAtomic(manifestPath(dir), next);
+  await writeTextAtomic(manifestPath(dir), manifestText(next));
 }
 
 /** The latest archived copy of one live path, as the manifest records it. */
@@ -406,10 +412,6 @@ export interface SettledRecord {
   /** For a bundle record: its class. */
   class?: string;
   legacy?: boolean;
-  /** The entry the record came from (its index in `entries`). */
-  entry: number;
-  /** Whether that entry says the source was removed. */
-  removed: boolean;
 }
 
 /** For each live path the manifest knows, its LATEST record — archive
@@ -421,15 +423,12 @@ export function settledIndex(m: Manifest): Map<string, SettledRecord> {
 }
 
 /** Apply `entries` to an index, in order — what `settledIndex` does for one
- * manifest, for a store whose entries span several shards (`base` is the
- * index of the first, counted across the shards before it). */
+ * manifest, for a store whose entries span several shards. */
 export function indexEntries(
   out: Map<string, SettledRecord>,
   entries: readonly ManifestEntry[],
-  base = 0,
 ): void {
-  entries.forEach((e, at) => {
-    const i = base + at;
+  for (const e of entries) {
     if (e.kind === "transcript" || e.kind === "file" || e.kind === "reused") {
       out.set(e.source, {
         source: e.source,
@@ -443,11 +442,8 @@ export function indexEntries(
         ino: e.ino,
         ...(e.kind === "file" || e.kind === "reused" ? { class: e.class } : {}),
         ...(e.kind === "transcript" && e.legacy ? { legacy: true } : {}),
-        entry: i,
-        removed: e.source_removed_at !== undefined,
       });
     } else if (e.kind === "bundle") {
-      const stamped = stampedBundleSources(e);
       for (const f of e.files)
         out.set(f.path, {
           source: f.path,
@@ -460,14 +456,7 @@ export function indexEntries(
           dev: f.dev,
           ino: f.ino,
           class: f.class,
-          entry: i,
-          removed: stamped.has(f.path),
         });
-    } else if (e.kind === "sources_removed") {
-      for (const p of e.paths) {
-        const r = out.get(p);
-        if (r && r.via === "archive" && r.archive === e.archive) r.removed = true;
-      }
     } else if (e.kind === "restore") {
       for (const r of e.restored) {
         const prior = out.get(r.source);
@@ -482,12 +471,10 @@ export function indexEntries(
           dev: r.dev,
           ino: r.ino,
           ...(prior?.class !== undefined ? { class: prior.class } : {}),
-          entry: i,
-          removed: false,
         });
       }
     }
-  });
+  }
 }
 
 /** The sources a bundle entry's own removal stamp records as gone: none
@@ -500,8 +487,10 @@ export function stampedBundleSources(e: BundleEntry): Set<string> {
   return new Set(e.files.filter((f) => !f.snapshot && !kept.has(f.path)).map((f) => f.path));
 }
 
-/** The archive file an entry placed (relative to the dir); null for an entry
- * that places none (a reuse, a removal, a restore). */
+/** The archive file a transcript, file or bundle entry names (relative to
+ * the dir) — for a `reused: true` transcript or file entry, the gzip an
+ * earlier entry placed; null for an entry that names none of its own (a
+ * `reused` entry, a removal, a restore). */
 export function placedArchive(e: ManifestEntry): string | null {
   return e.kind === "transcript" || e.kind === "file" || e.kind === "bundle" ? e.archive : null;
 }

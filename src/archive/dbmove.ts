@@ -74,7 +74,7 @@ import {
 } from "./archivedb.js";
 import { ARCHIVE_EVENT_KINDS } from "./kinds.js";
 import { workerCheckpointer, type LiveCheckpointer } from "./livecheckpoint.js";
-import { bumpMark } from "./rows.js";
+import { bumpMark, markNumber } from "./rows.js";
 
 const DAY_MS = 86_400_000;
 
@@ -123,10 +123,8 @@ export function classifyRow(row: {
  * when absent or not a positive number). The mover resumes after it and the
  * planner counts from it. */
 export function readWatermark(store: StateStore, name: string): number {
-  const row = store.db.prepare("SELECT value FROM archive_marks WHERE name = ?").get(name) as
-    { value: unknown } | undefined;
-  const n = Number(row?.value ?? 0);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  const n = markNumber(store, name);
+  return n > 0 ? Math.floor(n) : 0;
 }
 
 /** One table the mover empties of old rows. */
@@ -549,7 +547,7 @@ export class DbMover {
   }
 
   private checkStop(result: DbMoveResult, started: number): void {
-    if (this.deps.signal?.aborted) throw new Stop("aborted", null, "stopped");
+    this.checkAborted();
     const held = this.deps.hold?.() ?? null;
     if (held) throw new Stop("held", null, held);
     if (result.sync_ms >= (this.deps.syncBudgetMs ?? DB_SYNC_BUDGET_MS))
@@ -601,10 +599,7 @@ export class DbMover {
       if (watermark === persisted && !caughtUp) return;
       meter.measure(() =>
         live
-          .transaction(() => {
-            if (watermark !== persisted) this.setMark(spec.mark, watermark);
-            if (caughtUp) this.setMark(spec.caughtUpMark, cutoffIso);
-          })
+          .transaction(() => this.writeStamps(spec, watermark, persisted, caughtUp, cutoffIso))
           .immediate(),
       );
       persisted = watermark;
@@ -731,8 +726,7 @@ export class DbMover {
               for (const { conn, rows: group } of byFile.values())
                 bumpMark(this.deps.store, fileRowsMark(conn.file, spec.table), group.length);
               this.deps.fault?.("before_watermark", spec.table);
-              if (watermark !== persisted) this.setMark(spec.mark, watermark);
-              if (stop) this.setMark(spec.caughtUpMark, cutoffIso);
+              this.writeStamps(spec, watermark, persisted, stop, cutoffIso);
             })
             .immediate(),
         );
@@ -791,6 +785,20 @@ export class DbMover {
         throw new Stop("skipped", "live_busy", `state.db is locked: ${(err as Error).message}`);
       throw err;
     }
+  }
+
+  /** A window's stamps, inside the caller's transaction: the watermark when
+   * it moved, and the caught-up mark (the cut-off it reached) once the table
+   * holds nothing more to move. */
+  private writeStamps(
+    spec: MoveTable,
+    watermark: number,
+    persisted: number,
+    caughtUp: boolean,
+    cutoffIso: string,
+  ): void {
+    if (watermark !== persisted) this.setMark(spec.mark, watermark);
+    if (caughtUp) this.setMark(spec.caughtUpMark, cutoffIso);
   }
 
   private checkAborted(): void {
