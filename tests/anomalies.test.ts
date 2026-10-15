@@ -231,6 +231,36 @@ describe("logAnomaly → wake funnel", () => {
     expect(store.anomalies()).toHaveLength(1);
   });
 
+  it("a failed inject holds no dedup window: the next identical signal wakes", async () => {
+    const injected: string[] = [];
+    let fail = true;
+    const policy = new AnomalyWakePolicy({
+      injectOverseer: (m) => {
+        if (fail) return Promise.reject(new Error("tmux gone"));
+        injected.push(m);
+        return Promise.resolve();
+      },
+      now: () => new Date(0),
+    });
+    const signal = {
+      ts: new Date(0).toISOString(),
+      kind: "round_stranded",
+      pr: 7,
+      round_no: 2,
+      detail: "stranded",
+    };
+    policy.onAnomaly(signal);
+    await new Promise((r) => setImmediate(r));
+    fail = false;
+    policy.onAnomaly(signal);
+    await new Promise((r) => setImmediate(r));
+    expect(injected).toHaveLength(1);
+    // Delivered now: the window holds the third.
+    policy.onAnomaly(signal);
+    await new Promise((r) => setImmediate(r));
+    expect(injected).toHaveLength(1);
+  });
+
   it("a bare store (no sink) still records — nothing wakes, nothing throws", () => {
     const store = new StateStore(":memory:");
     store.logAnomaly("malformed", 1, 1, "no sink wired");
@@ -395,6 +425,94 @@ describe("startHeartbeat — daily fire", () => {
       hb.stop();
     },
   );
+
+  it("a failed inject is retried the same day, then the next day's slot is armed", async () => {
+    const store = new StateStore(":memory:");
+    const clock = new FakeClock(new Date("2026-08-19T06:00:00Z").getTime());
+    const injected: string[] = [];
+    let failures = 2;
+    const hb = startHeartbeat({
+      timeHHMM: "09:00",
+      timeZone: TZ,
+      lastFired: () => store.lastHeartbeatDate(),
+      recordFired: (date) => store.recordHeartbeat(date),
+      injectOverseer: (m) => {
+        if (failures > 0) {
+          failures -= 1;
+          return Promise.reject(new Error("tmux gone"));
+        }
+        injected.push(m);
+        return Promise.resolve();
+      },
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      retryBackoffMs: [60_000, 300_000],
+    });
+    await hb.booted;
+    await clock.advanceTo("2026-08-19T07:00:01Z"); // the slot: fails
+    expect(injected).toEqual([]);
+    expect(hb.nextFire().toISOString()).toBe("2026-08-19T07:01:00.000Z");
+    await clock.advanceTo("2026-08-19T07:10:00Z"); // retry 1 fails, retry 2 delivers
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+    expect(store.lastHeartbeatDate()).toBe("2026-08-19");
+    expect(hb.nextFire().toISOString()).toBe("2026-08-20T07:00:00.000Z");
+    hb.stop();
+  });
+
+  it("a day's retries exhausted: the next day's slot is armed, nothing more today", async () => {
+    const clock = new FakeClock(new Date("2026-08-19T06:00:00Z").getTime());
+    let calls = 0;
+    const hb = startHeartbeat({
+      timeHHMM: "09:00",
+      timeZone: TZ,
+      lastFired: () => null,
+      recordFired: () => {},
+      injectOverseer: () => {
+        calls += 1;
+        return Promise.reject(new Error("tmux gone"));
+      },
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      retryBackoffMs: [60_000],
+    });
+    await hb.booted;
+    await clock.advanceTo("2026-08-19T08:00:00Z");
+    expect(calls).toBe(2); // the slot and one retry
+    expect(hb.nextFire().toISOString()).toBe("2026-08-20T07:00:00.000Z");
+    hb.stop();
+  });
+
+  it("a failed boot catch-up is retried too", async () => {
+    const store = new StateStore(":memory:");
+    const clock = new FakeClock(new Date("2026-08-19T12:00:00Z").getTime());
+    let failures = 1;
+    const injected: string[] = [];
+    const hb = startHeartbeat({
+      timeHHMM: "09:00",
+      timeZone: TZ,
+      lastFired: () => store.lastHeartbeatDate(),
+      recordFired: (date) => store.recordHeartbeat(date),
+      injectOverseer: (m) => {
+        if (failures-- > 0) return Promise.reject(new Error("tmux gone"));
+        injected.push(m);
+        return Promise.resolve();
+      },
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      retryBackoffMs: [60_000],
+    });
+    await hb.booted;
+    expect(injected).toEqual([]);
+    await clock.advanceTo("2026-08-19T12:02:00Z");
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+    expect(hb.nextFire().toISOString()).toBe("2026-08-20T07:00:00.000Z");
+    hb.stop();
+  });
 
   it("stop() disarms — nothing fires after", async () => {
     const h = heartbeatHarness("2026-08-19T06:00:00Z");
