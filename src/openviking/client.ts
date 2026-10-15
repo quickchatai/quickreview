@@ -41,6 +41,7 @@
 //      lazily, and NEVER logged — `redact()` scrubs it out of every failure
 //      message at construction, before any caller can log or render one.
 import { readFileSync, statSync } from "node:fs";
+import type { HealthRequest } from "../memory/health.js";
 
 /** The `fetch` slice this client uses — the whole network seam. */
 export interface HttpFetch {
@@ -206,24 +207,17 @@ export function isNotFound(status: number, code: string): boolean {
   return status === 404 || code === "NOT_FOUND";
 }
 
-/** One request, as the client's observer sees it: what was
- * asked, how it ended, how long it took. Never the key, never a header, never
- * a body — it is a counter's input, not a log line. */
-export interface OvRequestRecord {
-  op: string;
-  /** `ok` — answered; `absent` — a NOT_FOUND answer (authenticated; the path
-   * is not there — an answer, not a failure); `conflict` — a 409 precondition
-   * refusal (an answer, not a failure); `auth` — the key did not
-   * authenticate, or there was no key to send; `failed` — everything else
-   * (transport, 5xx, bad body). */
-  outcome: "ok" | "absent" | "conflict" | "auth" | "failed";
-  status: number;
-  code: string;
-  /** Wall-clock ms the request took (0 when nothing was sent). */
-  ms: number;
-  /** The failure message, already scrubbed of the key. Absent on success. */
-  message?: string;
-}
+/** One request, as the client's observer sees it: what was asked, how it
+ * ended, how long it took. Never the key, never a header, never a body — it is
+ * a counter's input, not a log line. It IS the health monitor's
+ * `HealthRequest` (one declaration): `ok` — answered; `absent` — a NOT_FOUND
+ * answer (authenticated; the path is not there — an answer, not a failure);
+ * `conflict` — a 409 precondition refusal (an answer, not a failure); `auth` —
+ * the key did not authenticate, or there was no key to send; `failed` —
+ * everything else (transport, 5xx, bad body). `ms` is wall-clock (0 when
+ * nothing was sent); `message` is already scrubbed of the key and absent on
+ * success. */
+export type OvRequestRecord = HealthRequest;
 
 // ---- request/response shapes ------------------------------------------------
 
