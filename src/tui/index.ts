@@ -1050,7 +1050,6 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     wire: () => wireCompanionChannels(),
   });
   installCompanionTabHooks(app, {
-    lifecycle: companion,
     available: () => companionUp,
     failure: () => companionError,
     retry: companionOn ? startAndWire : undefined,

@@ -790,6 +790,38 @@ describe("CompanionLifecycle state machine", () => {
     expect(calls[1]).toContain("new-session");
   });
 
+  it("adopts the session another TUI created between the check and the spawn", async () => {
+    let checks = 0;
+    const { lc, calls } = lifecycle([
+      (argv) => (argv.includes("has-session") ? (++checks === 1 ? FAIL : OK) : undefined),
+      (argv) =>
+        argv.includes("new-session")
+          ? { ok: false, stdout: "", stderr: "duplicate session: qcr-companion", code: 1 }
+          : undefined,
+    ]);
+    expect(await lc.spawnPi()).toBe(false);
+    expect(calls.filter((c) => c.includes("new-session"))).toHaveLength(1);
+  });
+
+  it("a spawn failure that leaves no session is still raised", async () => {
+    const { lc } = lifecycle([
+      (argv) => (argv.includes("has-session") ? FAIL : undefined),
+      (argv) =>
+        argv.includes("new-session")
+          ? { ok: false, stdout: "", stderr: "no server running", code: 1 }
+          : undefined,
+    ]);
+    await expect(lc.spawnPi()).rejects.toThrow(/no server running/);
+  });
+
+  it("a binary that cannot be spawned names its cause, never 'exit null'", async () => {
+    const { runCommand, dockerFailureLine } = await import("../src/tui/companion.js");
+    const res = await runCommand("/nonexistent/qcr-no-such-binary", ["ps"]);
+    expect(res.ok).toBe(false);
+    expect(dockerFailureLine(res)).toContain("ENOENT");
+    expect(dockerFailureLine(res)).not.toBe("exit null");
+  });
+
   it("stops gracefully with docker stop", async () => {
     const { lc, calls } = lifecycle([inspect(true), okFor("stop")]);
     await lc.gracefulStop();
