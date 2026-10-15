@@ -554,7 +554,7 @@ describe("interpretEvent — issue comments", () => {
     );
   });
 
-  it("needs a mention — a plain PR comment is noise", () => {
+  it("a plain PR comment from anyone but a blocked author is noise", () => {
     expect(
       interpretEvent("issue_comment", "created", issueCommentPayload({ body: "rebased" }), deps())
         .kind,
