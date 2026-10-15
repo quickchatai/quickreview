@@ -1651,11 +1651,14 @@ export class VerdictWatcher {
     // run can receive this round's held wakes. A restart while they run
     // resumes them.
     //
-    // Everything durable — the restored lifecycle, the settlement event, the
-    // successor — lands synchronously with the cancel, before the first
-    // await: a replay of a cancelled round is inert, so a restart inside an
-    // await must find nothing left to do (the PR never stranded in
-    // `reviewing`).
+    // The restored lifecycle and the settlement event land synchronously
+    // with the cancel, before the first await: a replay of a cancelled round
+    // is inert, so a restart inside an await must find nothing left to do
+    // (the PR never stranded in `reviewing`). The successor is promoted only
+    // once this round's in-progress label is off, so that removal can never
+    // strip the label the successor's dispatch adds; a restart between the
+    // two leaves the durable successor obligation to reconcile's
+    // successor-obligations step.
     const owed = this.oweMeasurement(round);
 
     if (standingInfo.kind === "unknown") {
@@ -1700,6 +1703,11 @@ export class VerdictWatcher {
       `verdicts: #${round.pr} round ${round.round_no} closed as a guarded no-op — guard 2 refused at ${head7}, ` +
         `standing ${standing ?? "unknown"} stands, PR ${restored} (via ${via})`,
     );
+    // ---- everything below may await ------------------------------------------
+    await this.safe(
+      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
+      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
+    );
     // Round-end housekeeping, the same as a verdict's: a fresh-head successor
     // takes the session slot; otherwise the wakes held during the round flow.
     const successorPromoted = store.promoteSuccessor(round.pr);
@@ -1707,11 +1715,6 @@ export class VerdictWatcher {
       this.log(
         `verdicts: #${round.pr} preserved fresh-head successor after skipped round ${round.round_no}`,
       );
-    // ---- everything below may await ------------------------------------------
-    await this.safe(
-      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
-      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
-    );
     await this.safe(
       () => this.deps.hooks.compactSession?.(round.pr) ?? Promise.resolve(),
       `compact pr-${round.pr}`,

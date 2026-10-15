@@ -3030,6 +3030,30 @@ describe("guarded no-op settlement", () => {
     expect(atLabelCall).toEqual({ state: "awaiting_author", settled: 1 });
   });
 
+  // MUTATION: promote the successor before the label call — the old round's
+  // removal can then strip the label the successor's dispatch adds.
+  it("takes its in-progress label off before it promotes a fresh-head successor", async () => {
+    const { roundId } = skippedRound(511);
+    store.recordSuccessor({
+      pr: 511,
+      predecessor_round_id: roundId,
+      head_sha: "fresh-head",
+      provenance: "system",
+      reason: "test",
+    });
+    let stateAtLabelCall: string | undefined;
+    adapter.removeLabel = async (n, label) => {
+      adapter.calls.push(`removeLabel:${n}:${label}`);
+      stateAtLabelCall = store.getPr(511)?.state;
+      return { executed: false, dryRunFile: "d" };
+    };
+
+    await watcher().handleFile(write(511, 1, verdictFile({ pr: 511 })));
+
+    expect(stateAtLabelCall).toBe("awaiting_author");
+    expect(store.getPr(511)?.state).toBe("queued");
+  });
+
   it("a COMMENT-only standing mark is never guessed: tracked, an anomaly, still no failure and no approve", async () => {
     skippedRound(503, "COMMENT");
 
