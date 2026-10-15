@@ -63,9 +63,12 @@ function dockerSh(cfg: TuiConfig, script: string): string[] {
   ];
 }
 
-/** BUILD_SHA rides the deploy rsync into the sandbox root on the VM. */
+/** BUILD_SHA rides the deploy rsync into the sandbox root on the VM. A
+ * missing file answers empty (no marker); a file that exists but cannot be
+ * read fails the exec, so it stays an unanswered read rather than "absent". */
 export function buildShaArgv(cfg: TuiConfig): string[] {
-  return dockerSh(cfg, `cat '${cfg.remote_sandbox_root}/BUILD_SHA' 2>/dev/null || true`);
+  const file = `${cfg.remote_sandbox_root}/BUILD_SHA`;
+  return dockerSh(cfg, `if [ -e '${file}' ]; then cat '${file}'; fi`);
 }
 
 /** The config home the last sync shipped, fingerprinted inside the
@@ -227,6 +230,18 @@ export interface DeployState {
 
 export type RunKind = "deploy" | "stop" | "start";
 
+/**
+ * The power action a container status offers: definitely up → stop,
+ * definitely not up → start, and not yet read → none at all.
+ *
+ * Unknown is not stopped: if the reviewer is up and `docker ps` merely has
+ * not been read, a "stop" would stop a live container on data nobody fetched.
+ */
+export function powerActionFor(containerStatus: string | undefined): "stop" | "start" | undefined {
+  if (containerStatus === undefined) return undefined;
+  return /^Up /.test(containerStatus) ? "stop" : "start";
+}
+
 /** deploy.sh / docker stop / docker start output streamed into the pane —
  * the TUI never suspends. */
 export interface DeployRun {
@@ -291,9 +306,10 @@ export class RealDeployFetcher implements DeployFetcher {
       this.ssh(this.cfg.ssh_host, configFingerprintArgv(this.cfg)),
       this.local(CONFIG_FINGERPRINT_ARGV),
     ]);
-    // `buildShaArgv` swallows a missing file into empty output, so an ok/empty
+    // `buildShaArgv` answers a missing file with empty output, so an ok/empty
     // answer is a VM with no marker; ok/garbage is a marker we read but could
-    // not parse; a failed exec is a VM we could not ask.
+    // not parse; a failed exec is a VM we could not ask (or a marker it could
+    // not read).
     const deployed = marker.ok
       ? marker.stdout.trim() === ""
         ? "absent"
@@ -307,6 +323,10 @@ export class RealDeployFetcher implements DeployFetcher {
       retunes: this.retuneLog(),
       head: head.ok ? head.stdout.trim() : undefined,
       dirty: dirty.ok ? dirty.stdout.split("\n").filter((l) => l.trim() !== "") : undefined,
+      // Present even when unread: the tab merges each load over the last one,
+      // so an omitted key would keep the previous load's range on screen.
+      commits: undefined,
+      diffstat: undefined,
       // A refusal exits non-zero with the reason on stderr — that IS the plan.
       plan: (plan.ok ? plan.stdout : `${plan.stdout}${plan.stderr}`).split("\n"),
     };
@@ -415,12 +435,11 @@ export function deployLines(st: DeployState, width: number): string[] {
   for (const p of st.plan) lines.push(truncate(`  ${p}`, width));
   lines.push("");
   if (st.armedAt !== undefined) {
-    lines.push(
-      truncate(
-        `${badge("warn", "ARMED")} press ${STRONG}D${DRESET} again to drain → wait for zero → deploy (any other key cancels)`,
-        width,
-      ),
-    );
+    const armed =
+      st.armedKind === "stop" || st.armedKind === "start"
+        ? `press ${STRONG}S${DRESET} again to ${st.armedKind} the VM app`
+        : `press ${STRONG}D${DRESET} again to drain → wait for zero → deploy`;
+    lines.push(truncate(`${badge("warn", "ARMED")} ${armed} (any other key cancels)`, width));
   } else {
     lines.push(
       truncate(
@@ -447,8 +466,8 @@ export function deployKeys(st: DeployState): LiveKeys {
     return { bar, inline: [] };
   }
   bar.push({ key: "D", label: st.armedKind === "deploy" ? "D confirm deploy" : "D deploy" });
-  if (st.containerStatus !== undefined) {
-    const kind = /^Up /.test(st.containerStatus) ? "stop" : "start";
+  const kind = powerActionFor(st.containerStatus);
+  if (kind !== undefined) {
     bar.push({ key: "S", label: st.armedKind === kind ? `S confirm ${kind}` : `S ${kind} VM app` });
   }
   return { bar, inline: [] };
@@ -505,9 +524,10 @@ export function renderDeployTab(
     st.buttonZone = undefined;
     st.powerZone = undefined;
   } else {
-    const running = st.containerStatus === undefined ? undefined : /^Up /.test(st.containerStatus);
+    const action = powerActionFor(st.containerStatus);
+    const running = action === undefined ? undefined : action === "stop";
     const deployArmed = st.armedKind === "deploy";
-    const powerKind: RunKind = running === false ? "start" : "stop";
+    const powerKind: RunKind = action ?? "stop";
     const powerArmed = st.armedKind === powerKind;
     const dLabel = deployArmed ? " ⚠ CLICK AGAIN TO DEPLOY NOW " : " ▶ DEPLOY TO VM ";
     // An unfetched (or failed) container status must not paint
@@ -627,6 +647,16 @@ export function installDeployHooks(
   let drainAttempt = 0;
   let abortDrainRequested = false;
 
+  /** A run's process ended: flush its trailing fragment and record the exit. */
+  const finishRun = (run: DeployRun, code: number | null): void => {
+    if (run.partial) {
+      run.lines.push(stripAnsi(run.partial));
+      run.partial = "";
+    }
+    run.running = false;
+    run.code = code;
+    handle = undefined;
+  };
   const line = (run: DeployRun, text: string): void => {
     if (run.lines[run.lines.length - 1] !== text) run.lines.push(text);
   };
@@ -671,13 +701,7 @@ export function installDeployHooks(
       },
       (code) => {
         if (st.run !== run) return;
-        if (run.partial) {
-          run.lines.push(stripAnsi(run.partial));
-          run.partial = "";
-        }
-        run.running = false;
-        run.code = code;
-        handle = undefined;
+        finishRun(run, code);
         if (code === 0) {
           st.deployPhase = "awaiting-lift";
           persist("awaiting-lift");
@@ -700,10 +724,34 @@ export function installDeployHooks(
     theApp.repaint();
   };
 
+  /** The latest daemon status is fresh and shows the drain on with no round running. */
+  const drainQuiet = (theApp: App): boolean => {
+    const snap = theApp.view.snapshot;
+    const health = theApp.view.health;
+    return (
+      snap !== undefined &&
+      health.kind !== "stale" &&
+      health.kind !== "unreachable" &&
+      snap.draining === true &&
+      snap.running_rounds === 0
+    );
+  };
+
   const launchDeployProcess = (theApp: App, run: DeployRun): void => {
     if (st.run !== run || st.deployPhase !== "waiting-rounds") return;
     if (!st.loaded) {
       line(run, "… waiting for local deploy target to reload before sync");
+      return;
+    }
+    // The preflight refresh is asynchronous: the status that started it may
+    // have gone stale, or the board busy again, while it ran. A sync starts
+    // only on a status that proves the drain quiet now; otherwise the next
+    // fresh zero-round poll starts the preflight again.
+    if (!drainQuiet(theApp)) {
+      const note = "waiting for a fresh zero-round daemon status before sync";
+      if (st.drainStatusNote !== note) line(run, `… ${note}`);
+      st.drainStatusNote = note;
+      theApp.repaint();
       return;
     }
     if (!st.head) {
@@ -997,11 +1045,7 @@ export function installDeployHooks(
         theApp.repaint();
       },
       (code) => {
-        if (run.partial) run.lines.push(stripAnsi(run.partial));
-        run.partial = "";
-        run.running = false;
-        run.code = code;
-        handle = undefined;
+        finishRun(run, code);
         st.loaded = false;
         void load();
         theApp.repaint();
@@ -1084,26 +1128,12 @@ export function installDeployHooks(
     theApp.repaint();
   };
 
-  /**
-   * The power button's action follows the container's observed state:
-   * definitely up → stop, definitely stopped → start, and not yet read →
-   * nothing at all.
-   *
-   * Unknown is not stopped: if the reviewer is up and `docker ps` merely has
-   * not been read, a "stop" press would stop a live container on data nobody
-   * fetched. The tab's load runs behind the first frame, so the unread window
-   * is open from the moment the TUI opens.
-   */
-  const powerKind = (): RunKind | undefined =>
-    st.containerStatus === undefined
-      ? undefined
-      : /^Up /.test(st.containerStatus)
-        ? "stop"
-        : "start";
-
-  /** The power button/key: refuse on an unread state, and go and read it. */
+  /** The power button/key follows the container's observed state
+   * (`powerActionFor`): refuse on an unread state, and go and read it. The
+   * tab's load runs behind the first frame, so the unread window is open from
+   * the moment the TUI opens. */
   const pressPower = (theApp: App): void => {
-    const kind = powerKind();
+    const kind = powerActionFor(st.containerStatus);
     if (kind === undefined) {
       st.armedAt = undefined;
       st.armedKind = undefined;
@@ -1203,8 +1233,14 @@ export function installDeployHooks(
       }
       case "refresh":
         if (st.run?.running) return true; // never reload state under a live run
-        st.run = undefined;
-        st.scroll = 0;
+        // A finished deploy whose ceremony still owns the drain (a failure
+        // awaiting x, a sync awaiting its auto-lift) stays on screen: x is
+        // the only way to acknowledge it, and it needs the run.
+        if (!(st.run?.kind === "deploy" && ceremony.read())) {
+          st.run = undefined;
+          st.deployPhase = undefined;
+          st.scroll = 0;
+        }
         void load();
         theApp.repaint();
         return true;
