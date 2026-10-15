@@ -32,9 +32,11 @@
 //            It reads the collection's own embedding metadata
 //            (`vectordb/<name>/collection_meta.json`, the same record the
 //            server checks) and, when it names a different embedder than
-//            ov.conf, MOVES the collection aside (never deletes — the old
-//            vectors stay on disk for a rollback) and writes the journal
-//            `reembed.json` beside ov.conf: the namespace THIS host re-embeds
+//            ov.conf, writes the journal `reembed.json` beside ov.conf and
+//            only then MOVES the collection aside (never deletes — the old
+//            vectors stay on disk for a rollback), so no interruption can
+//            leave a moved collection with no rebuild on record. The journal
+//            names the namespace THIS host re-embeds
 //            (`--user`, the reviewer) as `pending`, every other provisioned
 //            namespace as `operator` — its key holder's to re-embed, from
 //            wherever that key lives. On a matching store it is a no-op and
@@ -72,6 +74,7 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -336,8 +339,13 @@ export function settle({ home, user, detail = "", now = () => new Date() }) {
  *   refuse  cannot decide safely: the meta is unreadable, or a reset for THIS
  *           embedder already happened and the collection still disagrees
  *           (another server wrote it since) — resetting again would loop
+ *
+ * The journal is written BEFORE the collection is moved, so a journal whose
+ * reset names a `moved_to` that does not exist (`movedAsidePresent` false)
+ * records a reset interrupted before its move: that collection is still the
+ * old one, and the reset is finished rather than refused.
  */
-export function planPrepare({ stored, metaPresent, expected, journal }) {
+export function planPrepare({ stored, metaPresent, expected, journal, movedAsidePresent }) {
   if (!metaPresent)
     return {
       action: "none",
@@ -351,6 +359,11 @@ export function planPrepare({ stored, metaPresent, expected, journal }) {
   if (sameEmbedder(stored, expected))
     return { action: "none", reason: `the collection already matches ${describe(expected)}` };
   if (journal && sameEmbedder(journal.embedder, expected) && journal.reset_at) {
+    if (typeof journal.moved_to === "string" && movedAsidePresent === false)
+      return {
+        action: "reset",
+        reason: `a reset for ${describe(expected)} was journalled at ${journal.reset_at} but the collection was never moved aside — finishing it: the collection still reports ${describe(stored)}`,
+      };
     return {
       action: "refuse",
       reason: `the collection was already reset for ${describe(expected)} at ${journal.reset_at} and still reports ${describe(stored)} — a server with a different ov.conf wrote it since; not resetting again`,
@@ -400,8 +413,10 @@ export async function serverIsUp({
 
 /**
  * The disk half. Returns a report and NEVER throws; the only side effects are
- * ONE rename (the collection directory, aside) and the journal write, and both
- * happen only on `action: "reset"`.
+ * the journal write and ONE rename (the collection directory, aside), both
+ * only on `action: "reset"`, in that order: the rebuild obligation is durable
+ * before the collection leaves, and a failed move puts the journal back as it
+ * was.
  */
 export async function prepare({
   home,
@@ -432,7 +447,9 @@ export async function prepare({
       stored = null;
     }
   }
-  const plan = planPrepare({ stored, metaPresent, expected, journal });
+  const movedAsidePresent =
+    journal && typeof journal.moved_to === "string" ? existsSync(journal.moved_to) : undefined;
+  const plan = planPrepare({ stored, metaPresent, expected, journal, movedAsidePresent });
   if (plan.action !== "reset") {
     log(`openviking: reembed prepare — ${plan.action}: ${plan.reason}`);
     return { ...plan, expected, stored, collectionDir };
@@ -444,13 +461,6 @@ export async function prepare({
   }
   const at = now();
   const movedTo = `${collectionDir}.pre-reembed-${stamp(at)}`;
-  try {
-    renameSync(collectionDir, movedTo);
-  } catch (err) {
-    const reason = `could not move ${collectionDir} aside: ${err instanceof Error ? err.message : String(err)}`;
-    log(`openviking: reembed prepare FAILED — ${reason}`);
-    return { action: "refuse", reason, expected, stored, collectionDir };
-  }
   // This host re-embeds ONLY the namespace whose key it holds; every other
   // provisioned namespace is journalled for its key holder to rebuild (the
   // server confines a user key to its own tree — a 403 otherwise, verified).
@@ -465,7 +475,21 @@ export async function prepare({
     moved_to: movedTo,
     namespaces,
   };
-  writeJournal(home, next);
+  try {
+    writeJournal(home, next);
+  } catch (err) {
+    const reason = `could not write ${journalPath(home)}: ${err instanceof Error ? err.message : String(err)} — the collection stays where it is`;
+    log(`openviking: reembed prepare FAILED — ${reason}`);
+    return { action: "refuse", reason, expected, stored, collectionDir };
+  }
+  try {
+    renameSync(collectionDir, movedTo);
+  } catch (err) {
+    const reason = `could not move ${collectionDir} aside: ${err instanceof Error ? err.message : String(err)}`;
+    log(`openviking: reembed prepare FAILED — ${reason}`);
+    restoreJournal(home, journal, log);
+    return { action: "refuse", reason, expected, stored, collectionDir };
+  }
   const operators = Object.keys(namespaces).filter((u) => u !== own);
   log(
     `openviking: reembed prepare — RESET: ${plan.reason}. The old collection is kept at ${movedTo}; ` +
@@ -483,6 +507,21 @@ export async function prepare({
     movedTo,
     journal: next,
   };
+}
+
+/** Put the journal back as it was before a reset whose move failed: the
+ * previous journal, or none. A restore that fails is logged; the journal it
+ * leaves names a `moved_to` that does not exist, which the next `prepare`
+ * reads as an interrupted reset and finishes. */
+function restoreJournal(home, previous, log) {
+  try {
+    if (previous) writeJournal(home, previous);
+    else unlinkSync(journalPath(home));
+  } catch (err) {
+    log(
+      `openviking: reembed prepare — could not restore ${journalPath(home)}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 // ---- resume (HTTP half) --------------------------------------------------------------
