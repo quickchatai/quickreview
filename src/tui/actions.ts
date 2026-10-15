@@ -52,7 +52,7 @@ import { TABS, isTab, type Tab } from "./tabs.js";
 export interface TuiDriver {
   switchTab(tab: Tab): void;
   selectPr(pr: number): void;
-  metricsWindow(w: "7d" | "30d" | "all"): void;
+  metricsWindow(w: ActionMetricsWindow): void;
   metricsPr(pr: number): void;
   /** The digest tab, paged to that day. */
   digestDay(date: string): void;
@@ -73,15 +73,22 @@ export interface TuiDriver {
    * REJECTS when it went undelivered, so the result file says it failed. */
   msgSession(session: string, text: string): Promise<string>;
   overseerInject(text: string): Promise<string>;
-  deployTab(action: "deploy" | "stop" | "start" | "abort"): void;
+  deployTab(action: DeployTabAction): void;
 }
 
 // ---- the schema -------------------------------------------------------------
 
+/** The metrics windows a `metrics` request may name. */
+export const METRICS_WINDOWS = ["7d", "30d", "all"] as const;
+export type ActionMetricsWindow = (typeof METRICS_WINDOWS)[number];
+/** The deploy tab's buttons a `deploy_tab` request may press. */
+export const DEPLOY_TAB_ACTIONS = ["deploy", "stop", "start", "abort"] as const;
+export type DeployTabAction = (typeof DEPLOY_TAB_ACTIONS)[number];
+
 export type TuiAction =
   | { verb: "switch_tab"; tab: Tab }
   | { verb: "select_pr"; pr: number }
-  | { verb: "metrics"; window: "7d" | "30d" | "all" }
+  | { verb: "metrics"; window: ActionMetricsWindow }
   | { verb: "metrics"; pr: number }
   | { verb: "digest_day"; date: string }
   | { verb: "memory_view"; day?: string; tag?: string }
@@ -90,12 +97,10 @@ export type TuiAction =
   | { verb: "memory_pin"; entry: string; pin: boolean }
   | { verb: "msg_session"; session: string; text: string }
   | { verb: "overseer_inject"; text: string }
-  | { verb: "deploy_tab"; action: "deploy" | "stop" | "start" | "abort" };
+  | { verb: "deploy_tab"; action: DeployTabAction };
 
 export const ACTION_TEXT_MAX = 2000;
 
-const WINDOWS = new Set(["7d", "30d", "all"]);
-const DEPLOY_ACTIONS = new Set(["deploy", "stop", "start", "abort"]);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** The only params `memory_pin` takes. Anything else is REFUSED, not
  * ignored: a request that reads like an edit (`text`, `op`, `content`) must
@@ -106,11 +111,15 @@ const MEMORY_PIN_PARAMS = new Set(["entry", "pin"]);
 const STATES = new Set(Object.keys(STATE_GLYPHS));
 
 /** Positive-integer PR number; digit strings are coerced (the companion is an
- * LLM — the same courtesy verdicts.ts extends to pr/round_no). */
+ * LLM — the same courtesy verdicts.ts extends to pr/round_no) and then held
+ * to the same bar, so `"0"` or an overflowing string is refused like `0`. */
 function prNumber(v: unknown): number | undefined {
-  if (typeof v === "number" && Number.isInteger(v) && v > 0) return v;
-  if (typeof v === "string" && /^\d+$/.test(v)) return Number(v);
-  return undefined;
+  const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
+  return typeof n === "number" && Number.isSafeInteger(n) && n > 0 ? n : undefined;
+}
+
+function isOneOf<T extends string>(values: readonly T[], v: unknown): v is T {
+  return typeof v === "string" && (values as readonly string[]).includes(v);
 }
 
 function boundedText(v: unknown): string | undefined {
@@ -166,9 +175,9 @@ export function parseTuiAction(
         return { ok: false, error: "metrics needs exactly one of window|pr" };
       if (hasWindow) {
         const w = p["window"];
-        if (typeof w !== "string" || !WINDOWS.has(w))
-          return { ok: false, error: "metrics window must be 7d|30d|all" };
-        return { ok: true, action: { verb, window: w as "7d" | "30d" | "all" } };
+        if (!isOneOf(METRICS_WINDOWS, w))
+          return { ok: false, error: `metrics window must be ${METRICS_WINDOWS.join("|")}` };
+        return { ok: true, action: { verb, window: w } };
       }
       const pr = prNumber(p["pr"]);
       if (pr === undefined) return { ok: false, error: "metrics pr must be a positive integer" };
@@ -263,12 +272,9 @@ export function parseTuiAction(
     }
     case "deploy_tab": {
       const action = p["action"];
-      if (typeof action !== "string" || !DEPLOY_ACTIONS.has(action))
-        return { ok: false, error: "deploy_tab needs action: deploy|stop|start|abort" };
-      return {
-        ok: true,
-        action: { verb, action: action as "deploy" | "stop" | "start" | "abort" },
-      };
+      if (!isOneOf(DEPLOY_TAB_ACTIONS, action))
+        return { ok: false, error: `deploy_tab needs action: ${DEPLOY_TAB_ACTIONS.join("|")}` };
+      return { ok: true, action: { verb, action } };
     }
     default:
       return { ok: false, error: `unknown verb '${verb}'` };

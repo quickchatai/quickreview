@@ -205,6 +205,12 @@ describe("parseTuiAction — refusals, never a throw", () => {
     for (const pr of [0, -1, 1.5, "abc", "12x", "", null, undefined]) {
       expect(err({ verb: "select_pr", params: { pr } })).toContain("select_pr");
     }
+    // A digit string meets the numeric bar too. MUTATION: return Number(v)
+    // for any digit string — red.
+    for (const pr of ["0", "000", "9".repeat(400)]) {
+      expect(err({ verb: "select_pr", params: { pr } })).toContain("select_pr");
+      expect(err({ verb: "metrics", params: { pr } })).toContain("positive integer");
+    }
   });
 
   it("metrics refuses neither, both, and bad values", () => {
