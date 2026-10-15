@@ -54,7 +54,10 @@ import {
   bundleName,
   bundlePassOf,
   bytesHeld,
+  freshPassId,
+  heldAsRecorded,
   identityFields,
+  packedOf,
   placeArchive,
   sameRecorded,
   unlinkStopOf,
@@ -77,6 +80,7 @@ import {
   referencedArchives,
   rowTallies,
   settledIndex,
+  stampedBundleSources,
   writeManifest,
   type BundleFile,
   type FileEntry,
@@ -258,8 +262,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
     ...manifest.passes.map((p) => p.id),
     ...onDisk.flatMap((f) => bundlePassOf(f, true) ?? []),
   ]);
-  let passId = passBase;
-  for (let k = 2; taken.has(passId); k++) passId = `${passBase}-${k}`;
+  const passId = freshPassId(passBase, (id) => taken.has(id));
   let passRecorded = manifest.passes.some((p) => p.id === passId);
 
   /** Append to the manifest: append-only, durable before the next step. */
@@ -399,12 +402,6 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
     return { ok: r.ok, dest: r.dest };
   };
 
-  const packedOf = (r: ArchiveFileOk, id: FileIdentity): Packed => ({
-    ...identityFields(id),
-    sha256: r.sha256,
-    gz_bytes: r.gzBytes,
-  });
-
   /**
    * The entry for a freshly verified gzip at `dest` — unless an earlier entry
    * of the SAME source already holds these exact bytes (sha256 and length) in
@@ -468,7 +465,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
     }
     const rec = index.get(t.rel);
     const prefixBytes = legacyCmp?.rel === t.rel ? inv.legacy!.size : undefined;
-    if (sameRecorded(rec, t.id) && (await archiveFileSize(dir, rec!.archive)) !== null) {
+    if (await heldAsRecorded(dir, rec, t.id)) {
       // Archived already with exactly these bytes: unlink only.
       if (rec!.via === "restore") {
         const gz = (await archiveFileSize(dir, rec!.archive)) ?? 0;
@@ -552,7 +549,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
       if (!id) continue;
       const rec = index.get(rel);
       const cls = f.snapshot ? "ledger" : f.cls;
-      if (sameRecorded(rec, id) && (await archiveFileSize(dir, rec!.archive)) !== null) {
+      if (await heldAsRecorded(dir, rec, id)) {
         if (f.snapshot) continue; // the same snapshot is already in a bundle
         if (rec!.via === "restore") {
           await commit((next) =>
@@ -710,7 +707,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         // Matched nothing (or there is no transcript at all): kept, gzipped
         // under the protocol, then removed.
         const rec = index.get(legacyRel);
-        if (sameRecorded(rec, legacyId) && (await archiveFileSize(dir, rec!.archive)) !== null)
+        if (await heldAsRecorded(dir, rec, legacyId))
           unlinks.push({
             path: inv.legacy.path,
             rel: legacyRel,
@@ -765,13 +762,18 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
   }
 
   // 7. Eligibility again — the async half once, the sync half before each
-  // unlink.
+  // unlink. The verified copies' sources go even when a later file was
+  // refused for the disk, the budget or a load hold — as the store passes'
+  // do: each unlink is one cheap step that frees space, and leaving it would
+  // re-meet the same refusal next pass with the source still live. A source
+  // that changed, the archiver stopping or a restore waiting keeps them.
   const removed = new Set<string>();
   let unlinkStop: string | null = null;
   // The archiver stopping, or a restore waiting for the mutex: served at the
   // next file boundary — an unlink is one.
   let unlinkYield: string | null = null;
-  if (!stop && (unlinks.length > 0 || duplicate)) {
+  const unlinksGo = stop === null || (stop !== "source_changed" && unlinkStopOf(stop) === null);
+  if (unlinksGo && (unlinks.length > 0 || duplicate)) {
     await deps.step?.("before_unlink", { pr });
     facts = await deps.outside(pr);
     const again = eligibility(facts);
@@ -821,19 +823,29 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         );
         if (!recorded) {
           await commit((next) => next.entries.push({ pass: passId, ...entry, removed_at: now() }));
-          bumpMark(store, "duplicates.removed", 1);
           await deps.step?.("duplicate_recorded", { pr });
         }
-        const r = await unlinkIfIdentity(inv.legacy.path, identityFields(dup.id));
-        if (r === "removed") {
-          res.duplicatesRemoved += 1;
-          await deps.step?.("duplicate_unlinked", { pr });
-        }
-        if (r === "changed") {
-          // It moved after it was compared: left live, the next pass
-          // compares it again.
-          duplicate = null;
-          incomplete = true;
+        // The commit awaited: the stops and eligibility are asked again, as
+        // before every other unlink. A pass that stops here leaves the record
+        // for the next one, which only unlinks.
+        unlinkYield = unlinkStopOf(deps.stopReason());
+        const now4 = unlinkYield ? null : eligibility(facts);
+        if (now4 && !now4.eligible) unlinkStop = now4.reason ?? "ineligible";
+        else if (now4) {
+          const r = await unlinkIfIdentity(inv.legacy.path, identityFields(dup.id));
+          // Counted with the removal itself, so a pass that unlinks an earlier
+          // pass's record counts it once and a copy that moved counts nothing.
+          if (r === "removed") {
+            bumpMark(store, "duplicates.removed", 1);
+            res.duplicatesRemoved += 1;
+            await deps.step?.("duplicate_unlinked", { pr });
+          }
+          if (r === "changed") {
+            // It moved after it was compared: left live, the next pass
+            // compares it again.
+            duplicate = null;
+            incomplete = true;
+          }
         }
       }
     }
@@ -921,11 +933,7 @@ function bundleRemovals(m: Manifest): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   for (const e of m.entries) {
     if (e.kind === "bundle" && e.sources_removed_at !== undefined) {
-      const kept = new Set(e.kept ?? []);
-      out.set(
-        e.archive,
-        new Set(e.files.filter((f) => !f.snapshot && !kept.has(f.path)).map((f) => f.path)),
-      );
+      out.set(e.archive, stampedBundleSources(e));
     } else if (e.kind === "sources_removed") {
       const set = out.get(e.archive) ?? new Set<string>();
       for (const p of e.paths) set.add(p);

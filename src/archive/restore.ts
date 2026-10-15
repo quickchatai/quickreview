@@ -32,7 +32,13 @@ import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "../yieldloop.js";
-import { archiveStamp, bundlePassOf, identityFields, sameRecorded } from "./archivewrite.js";
+import {
+  archiveStamp,
+  bundlePassOf,
+  freshPassId,
+  identityFields,
+  sameRecorded,
+} from "./archivewrite.js";
 import { readBundleRecords } from "./bundle.js";
 import { sameIdentity } from "./fsutil.js";
 import {
@@ -249,8 +255,7 @@ export async function restorePr(
   if (restored.length > 0 || failed.length > 0 || out.liveDiffers.length > 0) {
     const next = cloneManifest(manifest);
     const id = `restore-${archiveStamp(deps.now())}`;
-    let passId = id;
-    for (let k = 2; next.passes.some((p) => p.id === passId); k++) passId = `${id}-${k}`;
+    const passId = freshPassId(id, (cand) => next.passes.some((p) => p.id === cand));
     next.passes.push({ id: passId, kind: "restore", started_at: at(), finished_at: at(), trigger });
     next.entries.push({
       pass: passId,
