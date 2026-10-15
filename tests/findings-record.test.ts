@@ -584,6 +584,35 @@ describe("VerdictWatcher round-end findings check", () => {
     expect(injects[0]).toContain("FINDINGS RECORD MISSING");
   });
 
+  it("a record written AFTER its nudge is stored by a later sweep — once, with no second nudge", async () => {
+    verdicted(100);
+    const told: Array<{ pr: number; roundNo: number; roundId: number | null }> = [];
+    const { watcher, injects } = setup({ onFindingsRecorded: (t) => told.push(t) });
+    await watcher.sweep();
+    expect(injects).toHaveLength(1);
+    expect(store.findingsForRound(100, 1)).toHaveLength(0);
+
+    // A sweep before the session answered: nothing to store, nothing said.
+    await watcher.sweep();
+    expect(anomalyKinds()).toEqual(["findings_record_missing"]);
+
+    // The session reconstructs the record the nudge asked for.
+    writeRecord("pr-100-round-1.json", { ...RECORD, pr: 100, round_no: 1, comments_posted: 4 });
+    await watcher.sweep();
+    const round = store.roundsFor(100)[0]!;
+    expect(store.findingsForRound(100, 1)).toHaveLength(2);
+    expect(store.findingsForRound(100, 1)[0]).toMatchObject({ unplanned: 0 });
+    expect(round.comments_posted).toBe(4);
+    expect(told).toEqual([{ pr: 100, roundNo: 1, roundId: round.id }]);
+
+    // Stored once: a later sweep finds the round recorded and leaves it.
+    await watcher.sweep();
+    expect(told).toHaveLength(1);
+    expect(store.prEvents(100, ["findings_recorded"])).toHaveLength(1);
+    expect(injects).toHaveLength(1);
+    expect(anomalyKinds()).toEqual(["findings_record_missing"]);
+  });
+
   it("a second sweep of the same round never sends a second nudge", async () => {
     verdicted(100);
     const { watcher, injects } = setup();
