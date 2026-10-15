@@ -181,6 +181,9 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
     expect(() => parseConfig(`${fixtureToml}\n[scan]\neffort = "max"\n`)).toThrow(
       /\[scan\] effort/,
     );
+    // The effort vocabulary every effort knob shares: `med` is `medium`; empty is no effort.
+    expect(parseConfig(`${fixtureToml}\n[scan]\neffort = "med"\n`).scan.effort).toBe("medium");
+    expect(() => parseConfig(`${fixtureToml}\n[scan]\neffort = ""\n`)).toThrow(/\[scan\] effort/);
     expect(() => parseConfig(`${fixtureToml}\n[scan]\nconcurrency = 0\n`)).toThrow(
       /positive integer/,
     );

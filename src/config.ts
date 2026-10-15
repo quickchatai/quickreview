@@ -2075,10 +2075,8 @@ export function parseScanTable(
     }
     switch (key) {
       case "effort": {
-        const e = String(v ?? "")
-          .trim()
-          .toLowerCase();
-        if (e === "low" || e === "medium" || e === "high") out.effort = e;
+        const e = normalizeEffort(v);
+        if (e) out.effort = e;
         else fail(key, 'must be "low", "medium" or "high"', v);
         break;
       }
