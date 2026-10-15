@@ -63,7 +63,12 @@ import {
 } from "./replay.js";
 import type { ReplaySide, SideRequest } from "./replaybuild.js";
 import type { ReplaySource } from "./replaysource.js";
-import { parseScanAnswer, parseValidatorAnswer, type ScanCandidate } from "./scan.js";
+import {
+  parseScanAnswer,
+  parseValidatorAnswer,
+  survivorSource,
+  type ScanCandidate,
+} from "./scan.js";
 
 // ---- ports ---------------------------------------------------------------------
 
@@ -980,9 +985,7 @@ export function validated(
   const used = new Set<ReplayFinding>();
   const findings: ReplayFinding[] = [];
   for (const s of answer.survivors) {
-    const from =
-      candidates.find((c) => !used.has(c) && near(s, c) && c.kind === s.kind) ??
-      candidates.find((c) => !used.has(c) && near(s, c));
+    const from = survivorSource(s, candidates, used);
     if (from) used.add(from);
     findings.push({ ...s, lens: from?.lens ?? VALIDATE_PASS, doubt: null, validated: true });
   }

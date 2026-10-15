@@ -548,6 +548,36 @@ export const SEVERITIES = ["P0", "P1", "P2", "P3", "nit"] as const;
 export type ScanSeverity = (typeof SEVERITIES)[number];
 
 /** A stage-1 candidate as read back, anchored or not yet checked. */
+/** A finding's place: its file, its line range and its kind. */
+interface Placed {
+  path: string;
+  start: number;
+  end: number;
+  kind: string;
+}
+
+/**
+ * The candidate a validator's survivor stands for: one not yet `used`, on the
+ * same file with overlapping lines — the same kind first. One survivor stands
+ * for at most one candidate, so a duplicate on the same lines or a neighbour
+ * of another kind is never silently claimed by a survivor that did not mean
+ * it. The scan and the replay attribute survivors through this one rule.
+ */
+export function survivorSource<T extends Placed>(
+  survivor: Placed,
+  candidates: readonly T[],
+  used: ReadonlySet<T>,
+): T | undefined {
+  const open = candidates.filter(
+    (c) =>
+      !used.has(c) &&
+      c.path === survivor.path &&
+      c.start <= survivor.end &&
+      survivor.start <= c.end,
+  );
+  return open.find((c) => c.kind === survivor.kind) ?? open[0];
+}
+
 export interface ScanCandidate {
   path: string;
   start: number;

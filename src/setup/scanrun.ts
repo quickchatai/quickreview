@@ -116,6 +116,7 @@ import {
   planStage1,
   scanCasePrompt,
   scanValidatorPrompt,
+  survivorSource,
   SCAN_DEEP_MAX_SUGGESTIONS,
   SCAN_PASS,
   type ExclusionReason,
@@ -1699,23 +1700,21 @@ export class ScanRunner {
       return finish("failed", "the lens answered with no finding and no NONE line");
     }
     let dropped = answer.dropped + answer.suggestions_dropped;
-    const anchored: Array<{ cand: ScanCandidate; code: string; quoted: boolean }> = [];
-    for (const cand of answer.candidates) {
-      if (outside(cand)) {
-        dropped++;
-        continue;
-      }
+    // A candidate — a lens's or a skeptic's survivor — stands on the code at
+    // its anchor: null when it falls outside the case's range or its lines
+    // are not in the tree (dropped).
+    const anchor = (cand: ScanCandidate): { code: string; quoted: boolean } | null => {
+      if (outside(cand)) return null;
       const text = inTree.has(cand.path) ? tree.read(cand.path) : null;
       const lines = text === null ? null : anchoredLines(text, cand.start, cand.end);
-      if (lines === null) {
-        dropped++;
-        continue;
-      }
-      anchored.push({
-        cand,
-        code: normalizeCode(lines),
-        quoted: evidenceQuotesAnchor(cand.evidence, lines),
-      });
+      if (lines === null) return null;
+      return { code: normalizeCode(lines), quoted: evidenceQuotesAnchor(cand.evidence, lines) };
+    };
+    const anchored: Array<{ cand: ScanCandidate; code: string; quoted: boolean }> = [];
+    for (const cand of answer.candidates) {
+      const at = anchor(cand);
+      if (at === null) dropped++;
+      else anchored.push({ cand, ...at });
     }
 
     // The validator, when this scan runs one, is the skeptic: at the tier of
@@ -1778,33 +1777,18 @@ export class ScanRunner {
         // duplicate on the same lines, a neighbour of another kind) would be
         // neither upheld nor unmentioned — silently dropped, a kill.
         const upheld = new Set<ScanCandidate>();
-        const standsFor = (s: ScanCandidate): ScanCandidate | undefined => {
-          const open = anchored.filter(
-            (a) =>
-              !upheld.has(a.cand) &&
-              a.cand.path === s.path &&
-              a.cand.start <= s.end &&
-              s.start <= a.cand.end,
-          );
-          return (open.find((a) => a.cand.kind === s.kind) ?? open[0])?.cand;
-        };
+        const cands = anchored.map((a) => a.cand);
         for (const s of read.survivors) {
-          if (outside(s)) {
+          const at = anchor(s);
+          if (at === null) {
             dropped++;
             continue;
           }
-          const text = inTree.has(s.path) ? tree.read(s.path) : null;
-          const lines = text === null ? null : anchoredLines(text, s.start, s.end);
-          if (lines === null) {
-            dropped++;
-            continue;
-          }
-          const meant = standsFor(s);
+          const meant = survivorSource(s, cands, upheld);
           if (meant) upheld.add(meant);
           judged.push({
             cand: s,
-            code: normalizeCode(lines),
-            quoted: evidenceQuotesAnchor(s.evidence, lines),
+            ...at,
             validity: s.validity,
             scenario: s.scenario,
             doubt: null,
