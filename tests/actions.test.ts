@@ -455,7 +455,7 @@ describe("msg_session / overseer_inject — the result waits for delivery", () =
         JSON.stringify({ verb: "overseer_inject", params: { text: "look" } }),
       );
       const { driver } = mockDriver({
-        msgSession: () => Promise.reject(new Error("✖ msg pr-7 undelivered (session down?)")),
+        msgSession: () => Promise.reject(new Error("✖ msg pr-7 undelivered (write failed)")),
       });
       const [msg, ov] = await processTuiActions(dir, driver);
       expect(msg).toMatchObject({ ok: false, message: expect.stringContaining("undelivered") });

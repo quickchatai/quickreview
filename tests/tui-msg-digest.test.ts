@@ -121,14 +121,23 @@ describe("InjectSender", () => {
     expect(states[1]![1]).toContain("write failed");
   });
 
-  it("times out to undelivered (session down?) — never silent", async () => {
+  // The bridge consumes nothing while its session is busy, so a file still
+  // pending at the timeout will be delivered later: queued, never lost.
+  it("times out to queued while the file is still pending — never silent", async () => {
     const probes = Array.from({ length: 20 }, () => ok("pending\n"));
     const { sender, states, record } = senderWith([ok(""), ...probes], 10);
     await sender.send("pr-5012", "x", record);
     expect(states[states.length - 1]).toEqual([
-      "undelivered",
-      "✖ msg pr-5012 undelivered (session down?)",
+      "queued",
+      "⧗ msg pr-5012 queued — will deliver when the session is idle; do not re-send",
     ]);
+  });
+
+  it("times out to unconfirmed when no probe saw the file pending", async () => {
+    const { sender, states, record } = senderWith([ok(""), ok("missing\n")], 4);
+    await sender.send("pr-5012", "x", record);
+    expect(states[states.length - 1]![0]).toBe("unconfirmed");
+    expect(states[states.length - 1]![1]).toContain("check the session before re-sending");
   });
 
   it("refuses to build paths from a bad session name", async () => {
@@ -141,10 +150,14 @@ describe("InjectSender", () => {
 
 // ---- the input box flow through the App ------------------------------------
 
-// The action channel's message verbs read the sender's LAST word: delivered
-// resolves, undelivered (or a throwing sender) rejects with its label.
+// The action channel's message verbs read the sender's LAST word: delivered,
+// queued and unconfirmed resolve with their label; only a definite
+// non-delivery (undelivered, a throwing sender, no sender) rejects — a failed
+// result file asks the companion to re-send, and a queued message re-sent is
+// delivered twice.
+// MUTATION: reject on any state but delivered — the queued case goes red.
 describe("deliverMessage — the outcome the action result carries", () => {
-  it("resolves on delivered, rejects on undelivered or a sender that throws", async () => {
+  it("resolves on delivered or queued, rejects on undelivered or a sender that throws", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let final: DeliveryState = "delivered";
@@ -156,14 +169,20 @@ describe("deliverMessage — the outcome the action result carries", () => {
           final,
           final === "delivered"
             ? `✓ msg ${session} delivered`
-            : `✖ msg ${session} undelivered (session down?)`,
+            : final === "queued"
+              ? `⧗ msg ${session} queued — will deliver when the session is idle; do not re-send`
+              : `✖ msg ${session} undelivered (write failed)`,
         );
       },
     });
     await expect(deliverMessage(app, "pr-7", "hi")).resolves.toBe("✓ msg pr-7 delivered");
+    final = "queued";
+    await expect(deliverMessage(app, "overseer", "hi")).resolves.toMatch(
+      /overseer queued .* do not re-send/,
+    );
     final = "undelivered";
     await expect(deliverMessage(app, "overseer", "hi")).rejects.toThrow(
-      /overseer undelivered \(session down/,
+      /overseer undelivered \(write failed/,
     );
     final = "pending";
     await expect(deliverMessage(app, "pr-7", "hi")).rejects.toThrow(/undelivered \(ssh died\)/);

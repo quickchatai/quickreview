@@ -69,8 +69,9 @@ export interface TuiDriver {
   setBoardFilter(f: BoardFilter | null): void;
   setMemoryFilter(tag: string | null): void;
   /** A quick-message to `session` (`overseerInject`: to the overseer).
-   * Resolves with the delivered label once the inject bridge consumed it;
-   * REJECTS when it went undelivered, so the result file says it failed. */
+   * Resolves with the sender's label — delivered, queued behind a busy
+   * session, or unconfirmed; REJECTS only on a definite non-delivery, so a
+   * failed result file never asks for a re-send of a message still queued. */
   msgSession(session: string, text: string): Promise<string>;
   overseerInject(text: string): Promise<string>;
   deployTab(action: DeployTabAction): void;
