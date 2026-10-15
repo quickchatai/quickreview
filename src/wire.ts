@@ -17,7 +17,12 @@ import {
   type Config,
   type SecretReader,
 } from "./config.js";
-import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./commands.js";
+import {
+  CommandWatcher,
+  processOperatorSeal,
+  type CommandDeps,
+  type CommandWatcherOptions,
+} from "./commands.js";
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { CaseWriter } from "./cases.js";
 import { Archiver } from "./archive/archiver.js";
@@ -451,6 +456,17 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
 }
 
 /**
+ * The local Slack belt both daemon-side watchers install (`commands/` and
+ * `commands/operator/`): with Slack live, a file is refused while the turn
+ * being served was caused by a non-owner Slack message — read through
+ * `latestAny()`, which only a daemon wake's `local` origin supersedes. Slack
+ * off ⇒ no tier gate at all.
+ */
+function localSlackBelt(slack: SlackRuntime | null): Pick<CommandWatcherOptions, "tier"> {
+  return slack ? { tier: { dir: "local", currentOrigin: () => slack.origins.latestAny() } } : {};
+}
+
+/**
  * The legacy `commands/` watcher. Two things change when Slack is live, and
  * only those two: `slack_reply` becomes executable from this dir as well, and
  * the belt gate is installed — when the turn being served was caused by a
@@ -473,9 +489,7 @@ export function buildLocalCommandWatcher(opts: {
   const { slack } = opts;
   return new CommandWatcher({
     dir: join(opts.root, "commands"),
-    ...(slack
-      ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latestAny() } }
-      : {}),
+    ...localSlackBelt(slack),
     deps: slack ? { ...opts.deps, slackReply: slack.slackReply } : opts.deps,
     store: opts.store,
     log: opts.log,
@@ -505,9 +519,7 @@ export function buildOperatorCommandWatcher(opts: {
   return new CommandWatcher({
     dir: join(opts.root, "commands", "operator"),
     operator: processOperatorSeal(),
-    ...(slack
-      ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latestAny() } }
-      : {}),
+    ...localSlackBelt(slack),
     deps: opts.deps,
     store: opts.store,
     log: opts.log,
