@@ -2474,6 +2474,44 @@ describe("a newer push/re-request during trigger consumption is never settled aw
   );
 });
 
+describe("a person's re-request that only upgrades the provenance during consumption", () => {
+  // MUTATION: drop the provenance comparison from movedDuringConsume — the
+  // short-circuit settles the PR and the person's ask never gets its round.
+  it(
+    "is never settled away by the system short-circuit: the next pump runs the round",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg: Config = { ...baseCfg, guards: { ...baseCfg.guards, skip_unchanged_head: false } };
+      queue(94, "2026-09-30T09:00:00Z", { head: "h1", provenance: "system" });
+      const id = store.startRound(94, "first", ["pass-baseline"], 60);
+      store.finishRound(id, "APPROVE", null);
+      store.recordReviewedHead(94, { head_sha: "h1", verdict: "APPROVE", round_no: 1 });
+      // The statemachine keeps a queued row's trigger time and upgrades only
+      // its provenance when a person asks.
+      class Upgrading extends FakeAdapter {
+        upgraded = false;
+        override async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+          if (!this.upgraded) {
+            this.upgraded = true;
+            store.upsertPr({ ...store.getPr(94)!, trigger_provenance: "human" });
+          }
+          return super.deleteTeamReviewRequest(n);
+        }
+      }
+      const racing = new Upgrading();
+      racing.files.set(94, [file("a.py")]);
+      const { hooks, orders } = recordingHooks();
+
+      expect(await dispatchOnce({ cfg, store, adapter: racing, hooks })).toEqual([]);
+      expect(store.getPr(94)).toMatchObject({ state: "queued", trigger_provenance: "human" });
+
+      await dispatchOnce({ cfg, store, adapter: racing, hooks });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.order.head_sha).toBe("h1");
+    },
+  );
+});
+
 describe("a later round with no git seam is today's full re-review, said out loud", () => {
   it(
     "logs followup_full_round {reason: no-adapter}, stamps scope full, and the order carries no follow-up field",

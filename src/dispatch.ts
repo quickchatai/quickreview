@@ -856,12 +856,15 @@ async function consumeTriggers(
  */
 function movedDuringConsume(
   store: DispatchDeps["store"],
-  row: { number: number; head_sha: string; trigger_ts: string | null },
+  row: Pick<PrStateRow, "number" | "head_sha" | "trigger_ts" | "trigger_provenance">,
 ): string | null {
   const now = store.getPr(row.number);
   if (!now) return null;
   if (now.head_sha !== row.head_sha) return "head_moved";
-  if (now.trigger_ts !== row.trigger_ts) return "retriggered";
+  // A person's ask on a queued row keeps its trigger time and upgrades only
+  // the provenance — a re-request the system short-circuit must not settle.
+  if (now.trigger_ts !== row.trigger_ts || now.trigger_provenance !== row.trigger_provenance)
+    return "retriggered";
   return null;
 }
 
