@@ -54,11 +54,16 @@ lives where both routes run the same code:
     lens count;
   - otherwise split, each part judged alone;
   - merged-away members are recorded `merged` with `group` and `merged_into`.
-- **The post-check** lives in `renderReviewFromRecord` (`src/reviewrender.ts`).
-  That is the one function both routes render the posted review through: the live
-  route via `scripts/render-review.sh` → `src/reviewrendercli.ts`, the bench via
+- **The post-check** is `postCheckRecord` (`src/dedup.ts`), run by
+  `renderPostedReview` (`src/reviewrender.ts`) before it hands the record to
+  `renderReviewFromRecord`. `renderPostedReview` is the one function both routes
+  render the posted review through: the live route via
+  `scripts/render-review.sh` → `src/reviewrendercli.ts`, the bench via
   `src/bench/runner.ts`. Two posted findings in the same file whose anchors
-  overlap (±3 lines) and that share a named identifier are merged by rule:
+  overlap (±3 lines), that share a named identifier, and that the validator
+  recorded in two DIFFERENT groups are merged by rule. Two findings of one
+  recorded group, or with no group recorded, are left alone: the validator
+  kept them apart on purpose, or cannot be shown not to have.
   - the higher severity leads;
   - the follower is listed as an extra site;
   - the record marks it `merged` with `word: post-check`.
@@ -78,8 +83,10 @@ lives where both routes run the same code:
 Union-find over the candidates. Two candidates join a group when ANY of these holds:
 
 - **Same file and close lines.** The same path, with anchors within 10 lines.
-- **Shared identifier.** Both name the same code identifier in a code span
-  (backticks): at least 3 characters, not a common word, not a file path.
+- **Shared identifier.** Both name the same code identifier, in a code span
+  (backticks) or bare in the prose (camelCase, PascalCase, snake_case,
+  SCREAMING_CASE, a `name(` call or an `a.b` member): at least 3 characters,
+  not a common word, not a file path.
 - **Same fix target.** Both name the same `fix_target` (`path:line` or a symbol).
 
 "Same consequence" has no deterministic signal. The validator judges it inside a

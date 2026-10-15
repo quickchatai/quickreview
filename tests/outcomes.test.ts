@@ -1696,7 +1696,17 @@ describe("`qcr outcomes --capture [--read-github]`", () => {
           body: { url: "https://x.trycloudflare.com/webhook" },
           note: "re-point own App webhook URL",
         }),
-      ).rejects.toThrow(/performs no mutations/);
+      ).rejects.toThrow(/^qcr outcomes performs no mutations$/);
+      // Every other read-only command names itself in the refusal.
+      await expect(
+        recordOnlyGate(join(dir, "dryrun"), "qcr history").execute({
+          kind: "update_own_webhook_url",
+          method: "PATCH",
+          path: "/app/hook/config",
+          body: { url: "https://x.trycloudflare.com/webhook" },
+          note: "re-point own App webhook URL",
+        }),
+      ).rejects.toThrow(/^qcr history performs no mutations$/);
     } finally {
       quiet.mockRestore();
       rmSync(dir, { recursive: true, force: true });

@@ -54,14 +54,6 @@ export function stalenessSimulation(
     searchTeamTriggered: async () => [],
     listOpenPrs: async () => [prRef],
     getPr: async () => prRef,
-    stalenessScan: async () => [
-      {
-        number: fixture.number,
-        head_sha: fixture.head_sha,
-        approved_sha: fixture.approved_sha,
-        approved_at: "",
-      },
-    ],
     listBotReviewComments: async () => [],
     listPrFiles: async () => [
       { filename: "src/x.ts", additions: 1, deletions: 0, status: "modified" },
@@ -174,6 +166,33 @@ export function derivedQueueOf(
     .map((r) => r.number);
 }
 
+/** ② The manual searches' side, with reconcile's dry-run suppression applied:
+ * dry-run never consumes a trigger, so a PR reviewed at the head its last
+ * verdict was applied to keeps its label or team request, and reconcile
+ * deliberately leaves it unqueued until the head moves. Such a PR is dropped
+ * from the search results — exactly as reconcile drops it, so only a row it
+ * would reach that check for (not queued, not reviewing, not closed). A PR
+ * whose trigger was withdrawn is in no search result, so it is never counted. */
+export function manualQueueOf(
+  found: readonly number[],
+  dryRun: boolean,
+  row: (pr: number) => { state: string; head_sha: string } | undefined,
+  lastVerdictHead: (pr: number) => string | undefined,
+): number[] {
+  if (!dryRun) return [...found];
+  return found.filter((pr) => {
+    const r = row(pr);
+    const suppressed =
+      r !== undefined &&
+      r.state !== "queued" &&
+      r.state !== "reviewing" &&
+      r.state !== "closed" &&
+      r.head_sha !== "" &&
+      lastVerdictHead(pr) === r.head_sha;
+    return !suppressed;
+  });
+}
+
 export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
   const root = sandboxRoot();
   const cfg = loadConfig();
@@ -196,8 +215,20 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
       },
     },
     queue: {
-      labelTriggered: async () => (await p.adapter.searchLabelTriggered()).map((i) => i.number),
-      teamTriggered: async () => (await p.adapter.searchTeamTriggered()).map((i) => i.number),
+      labelTriggered: async () =>
+        manualQueueOf(
+          (await p.adapter.searchLabelTriggered()).map((i) => i.number),
+          cfg.dry_run,
+          (pr) => store.getPr(pr),
+          (pr) => store.lastVerdictHead(pr),
+        ),
+      teamTriggered: async () =>
+        manualQueueOf(
+          (await p.adapter.searchTeamTriggered()).map((i) => i.number),
+          cfg.dry_run,
+          (pr) => store.getPr(pr),
+          (pr) => store.lastVerdictHead(pr),
+        ),
       derivedQueue: () => derivedQueueOf(store.allPrs(), cfg.dry_run),
     },
     staleness: stalenessSimulation(cfg),

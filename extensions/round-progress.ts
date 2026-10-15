@@ -317,12 +317,12 @@ export default function activate(pi: Pi): void {
     write();
   };
 
-  pi.on("agent_start", () => {
+  const freshSnapshot = (lastActivity: string): RoundProgressSnapshot => {
     const at = nowIso();
     agents.clear();
     callAgents.clear();
     endLogged.clear();
-    snapshot = {
+    return {
       version: 2,
       pr,
       session,
@@ -330,9 +330,22 @@ export default function activate(pi: Pi): void {
       updated_at: at,
       parent_status: "active",
       last_activity_at: at,
-      last_activity: "parent run started",
+      last_activity: lastActivity,
       agents: [],
     };
+  };
+
+  // pi's automatic retry or queued continuation emits another agent_start
+  // inside the SAME outer run (only one agent_settled follows the whole run,
+  // as extensions/inject-bridge.ts reads it too). An inner start keeps the
+  // run's command identity, milestones and passes; only a start after the
+  // run settled — or a different command, below — begins a fresh snapshot.
+  pi.on("agent_start", () => {
+    if (snapshot && snapshot.parent_status === "active") {
+      activity("parent run continued");
+      return;
+    }
+    snapshot = freshSnapshot("parent run started");
     write();
     transition({ event: "parent_start" });
   });
@@ -342,6 +355,11 @@ export default function activate(pi: Pi): void {
     const body = userMessageText(event);
     const marker = body ? parseSessionCommandMarker(body) : undefined;
     if (!marker) return;
+    // A different command in a run that has one already (a follow-up
+    // delivered into the same run, or a settle never seen) is a new
+    // execution: nothing of the previous command's progress carries over.
+    if (snapshot.command_id !== undefined && snapshot.command_id !== marker.id)
+      snapshot = freshSnapshot("parent run started");
     snapshot.command_id = marker.id;
     snapshot.command_sha256 = marker.payloadSha256;
     const identity = reviewIdentity(body!);

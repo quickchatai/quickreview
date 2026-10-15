@@ -804,8 +804,22 @@ describe("the reviewer USER key", () => {
     const { client, store } = wire(server, log);
     await store.apply({ op: "note", text: "#feedback something" });
     await store.read();
-    // Force a failure so the error path gets a chance to leak it.
+    // An absent file is an answer, not a failure: nothing is logged for it.
+    const before = log.length;
     await client.readContent(`${ROOT}/experiences/absent.md`);
+    expect(log.length).toBe(before);
+    // Force a real failure (a 5xx) so the error path gets a chance to leak it.
+    const failing = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: (url, init) =>
+        url.includes("/content/read")
+          ? Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve("") })
+          : server.fetch(url, init),
+      log: (m) => log.push(m),
+    });
+    await failing.readContent(`${ROOT}/experiences/any.md`);
 
     expect(server.calls.length).toBeGreaterThan(0);
     for (const call of server.calls) expect(call.headers["Authorization"]).toBe(`Bearer ${KEY}`);
@@ -1199,6 +1213,95 @@ describe("a failure message never carries the key", () => {
           })
       : () =>
           Promise.reject(new Error(`connect failed while sending Authorization: Bearer ${KEY}`));
+
+  it("scrubs the key the request CARRIED, even when the key source rotated while it was out", async () => {
+    const OLD = `${KEY}-old`;
+    let current = OLD;
+    const log: string[] = [];
+    const gaps: string[] = [];
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: () => current,
+      user: "reviewer",
+      // The key file is rotated while the request is in flight; the server's
+      // error echoes the key it was sent.
+      fetchFn: (_url, init) => {
+        const sent = String((init.headers as Record<string, string>)["Authorization"]);
+        current = `${KEY}-new`;
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                status: "error",
+                result: null,
+                error: { code: "INTERNAL", message: `failed for ${sent}` },
+              }),
+            ),
+        });
+      },
+      log: (m) => log.push(m),
+      onGap: (g) => gaps.push(g.message),
+    });
+    const res = await client.readContent(`${ROOT}/experiences/x.md`);
+    const everything = JSON.stringify({ res, gaps, log });
+    expect(res.ok).toBe(false);
+    expect(everything).not.toContain(OLD);
+    expect(everything).toContain("<redacted>");
+  });
+
+  it("a NOT_FOUND is an answer: observed as absent, never logged or sent to the gap sink", async () => {
+    const log: string[] = [];
+    const gaps: string[] = [];
+    const outcomes: string[] = [];
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: () =>
+        Promise.resolve({
+          ok: false,
+          status: 404,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                status: "error",
+                result: null,
+                error: { code: "NOT_FOUND", message: "no such directory" },
+              }),
+            ),
+        }),
+      log: (m) => log.push(m),
+      onGap: (g) => gaps.push(g.code),
+      onRequest: (r) => outcomes.push(r.outcome),
+    });
+    expect((await client.ls(`${ROOT}/preferences/pinned`)).ok).toBe(false);
+    expect(outcomes).toEqual(["absent"]);
+    expect(gaps).toEqual([]);
+    expect(log).toEqual([]);
+  });
+
+  it("a bare 404 without the engine's NOT_FOUND code — a missing route — is still reported", async () => {
+    const log: string[] = [];
+    const gaps: string[] = [];
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: () =>
+        Promise.resolve({
+          ok: false,
+          status: 404,
+          text: () => Promise.resolve("<html>Not Found</html>"),
+        }),
+      log: (m) => log.push(m),
+      onGap: (g) => gaps.push(g.code),
+    });
+    expect((await client.ls(`${ROOT}/preferences/pinned`)).ok).toBe(false);
+    expect(gaps).toEqual(["http_404"]);
+    expect(log.join("\n")).toMatch(/ls failed \(404 http_404\)/);
+  });
 
   for (const arm of ["envelope", "transport"] as const) {
     it(`${arm}: the sweep, the head, the block, the gap sink and the log are all scrubbed`, async () => {

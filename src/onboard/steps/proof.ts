@@ -31,7 +31,7 @@ import type {
   StepReport,
 } from "../engine.js";
 import { sandboxReviewFrom, type DryrunRecord, type ReviewSnapshot } from "../../compare.js";
-import { CONTAINER_DRYRUN_DIR, readConfigText } from "./compose.js";
+import { CONTAINER_DRYRUN_DIR, configPath, readConfigText } from "./compose.js";
 import { readTomlKey } from "./ingress.js";
 import { DEFAULT_LABELS } from "./githubapp.js";
 import { stackTransportFor, type StackTransport, type TransportOptions } from "./transport.js";
@@ -140,6 +140,18 @@ export function classifyRounds(obs: RoundObservation): RoundOutcome {
 export interface DryrunRead {
   records: DryrunRecord[];
   problem: string;
+  /** Files that were listed but could not be read, each with why. */
+  unread: string[];
+}
+
+/** When the gate wrote a dry-run file, from its name
+ * (`<ISO time with : and . as ->-<seq>-<kind>.json`); null when the name does
+ * not carry one. */
+export function dryrunFileTime(name: string): number | null {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z-/.exec(name);
+  if (!m) return null;
+  const t = Date.parse(`${m[1]}:${m[2]}:${m[3]}.${m[4]}Z`);
+  return Number.isNaN(t) ? null : t;
 }
 
 /**
@@ -147,10 +159,16 @@ export interface DryrunRead {
  * newest few. Through the transport's `exec`, because the state lives on the
  * daemon's own volume — `docker compose exec` on this machine, `ssh <alias>
  * sudo docker exec` on the server route, and this function never learns which.
+ *
+ * `since` narrows the listing to files written at or after it (by the time in
+ * their name) BEFORE the limit applies, and the review files are read apart
+ * from the rest, each up to `limit` — so other PRs' traffic recorded after the
+ * round cannot push the round's own review out of the window.
  */
 export async function readContainerDryrun(
   transport: StackTransport,
   limit = 40,
+  opts: { since?: number } = {},
 ): Promise<DryrunRead> {
   const list = await transport.exec(["ls", "-1", CONTAINER_DRYRUN_DIR]);
   if (list.code !== 0) {
@@ -159,18 +177,36 @@ export async function readContainerDryrun(
       problem:
         `could not list ${CONTAINER_DRYRUN_DIR} in the daemon container (${(list.stderr || list.stdout).trim() || `exit ${list.code}`}). ` +
         "That directory only exists once the gate has recorded its first would-be mutation",
+      unread: [],
     };
   }
+  const since = opts.since;
   const names = list.stdout
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l.endsWith(".json"))
+    .filter((l) => {
+      if (since === undefined || Number.isNaN(since)) return true;
+      const at = dryrunFileTime(l);
+      return at === null || at >= since;
+    })
     .sort();
-  const wanted = names.slice(Math.max(0, names.length - limit));
+  const newest = (xs: string[]): string[] => xs.slice(Math.max(0, xs.length - limit));
+  const isReview = (name: string): boolean => name.endsWith("-create_review.json");
+  const wanted = new Set([
+    ...newest(names.filter(isReview)),
+    ...newest(names.filter((n) => !isReview(n))),
+  ]);
   const records: DryrunRecord[] = [];
-  for (const name of wanted) {
+  const unread: string[] = [];
+  for (const name of names.filter((n) => wanted.has(n))) {
     const cat = await transport.exec(["cat", `${CONTAINER_DRYRUN_DIR}/${name}`]);
-    if (cat.code !== 0) continue;
+    if (cat.code !== 0) {
+      unread.push(
+        `${name}: ${(cat.stderr || cat.stdout).trim().slice(0, 120) || `exit ${cat.code}`}`,
+      );
+      continue;
+    }
     try {
       records.push({ ...(JSON.parse(cat.stdout) as DryrunRecord), file: name });
     } catch {
@@ -183,7 +219,12 @@ export async function readContainerDryrun(
       });
     }
   }
-  return { records, problem: "" };
+  return { records, problem: "", unread };
+}
+
+/** Does this dry-run record belong to PR `pr`? */
+export function recordForPr(r: DryrunRecord, pr: number): boolean {
+  return r.pr === pr || new RegExp(`/(pulls|issues)/${pr}(/|$)`).test(r.path);
 }
 
 /** The would-be review, rendered for a human to judge. */
@@ -441,17 +482,32 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
           `${round.summary ? `\nThe session's own summary: ${round.summary}` : ""}`,
       },
     ];
-    const read = await readContainerDryrun(transport, dryrunLimit);
-    const { problem } = read;
-    const records = roundRecords(read.records, round);
+    const read = await readContainerDryrun(transport, dryrunLimit, {
+      since: Date.parse(round.started_at),
+    });
+    const { problem, unread } = read;
+    const records = roundRecords(read.records, round).filter((r) => recordForPr(r, pr));
     const review = problem ? null : sandboxReviewFrom(records, pr);
     if (!review) {
+      const cause = [
+        problem,
+        unread.length > 0
+          ? `${unread.length} recorded file${unread.length === 1 ? "" : "s"} could not be read — ${unread.slice(0, 3).join("; ")}` +
+            `${unread.length > 3 ? "; …" : ""}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("; ");
       checks.push({
         name: "review",
         ok: false,
         detail:
           `the round finished, but no recorded review for #${pr} was found in the dry-run record` +
-          `${problem ? ` (${problem})` : ""}. Fix: check that dry_run is still true (\`grep dry_run config.toml\`) — if it is ` +
+          `${cause ? ` (${cause})` : ""}. Fix: ` +
+          (unread.length > 0
+            ? "the files above are on the daemon's volume but unreadable from here — fix that read first; then "
+            : "") +
+          `check that dry_run is still true (\`grep -n '^dry_run' ${configPath(ctx.adapters)}\`) — if it is ` +
           "false the review went to GitHub for real and you can read it there; otherwise " +
           `\`${transport.execCommand(`ls ${CONTAINER_DRYRUN_DIR}`)}\` shows what the gate did record`,
       });
@@ -463,9 +519,9 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       name: "nothing-posted",
       ok: true,
       detail:
-        `${records.length} would-be GitHub call${records.length === 1 ? "" : "s"} were recorded to state/dryrun/ and none was ` +
-        `executed — the review above plus ${other} other intent${other === 1 ? "" : "s"} (labels, comments). This is what ` +
-        "dry_run means: the reviewer does all the work and the gate writes the result to a file instead of to GitHub",
+        `${records.length} would-be GitHub call${records.length === 1 ? "" : "s"} for #${pr} were recorded to state/dryrun/ and ` +
+        `none was executed — the review above plus ${other} other intent${other === 1 ? "" : "s"} (labels, comments). This is ` +
+        "what dry_run means: the reviewer does all the work and the gate writes the result to a file instead of to GitHub",
     });
     const record: ProofRecord = {
       pr,

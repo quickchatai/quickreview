@@ -312,6 +312,71 @@ describe("round progress extension", () => {
     }
   });
 
+  it("an inner agent_start (retry or continuation) keeps the run's command, milestones and passes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    process.env.QCR_SANDBOX_ROOT = root;
+    process.env.QCR_SESSION_NAME = "pr-5408";
+    process.env.QCR_PR = "5408";
+    const handlers = new Map<string, PiEventHandler[]>();
+    const pi = {
+      on(name: string, handler: PiEventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    };
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    const command = (id: string) => ({
+      message: {
+        role: "user",
+        content: [{ type: "text", text: `<!-- qcr-command:${id}:${"a".repeat(64)} -->` }],
+      },
+    });
+    try {
+      activate(pi as never);
+      const path = join(root, "state", "round-progress", "pr-5408.json");
+      await emit("agent_start");
+      await emit("message_start", command("cmd-1"));
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "lens-1",
+        args: { agent: "pass-security" },
+      });
+      const before = JSON.parse(readFileSync(path, "utf8"));
+      await new Promise((r) => setTimeout(r, 5));
+
+      // pi's automatic retry: another agent_start, no settle in between.
+      await emit("agent_start");
+      const inner = JSON.parse(readFileSync(path, "utf8"));
+      expect(inner.run_started_at).toBe(before.run_started_at);
+      expect(inner.command_id).toBe("cmd-1");
+      expect(inner.command_accepted_at).toBe(before.command_accepted_at);
+      expect(inner.first_lens_started_at).toBe(before.first_lens_started_at);
+      expect(inner.agents).toEqual(before.agents);
+      expect(inner.parent_status).toBe("active");
+
+      // A different command delivered into the same run starts afresh.
+      await emit("message_start", command("cmd-2"));
+      const next = JSON.parse(readFileSync(path, "utf8"));
+      expect(next.command_id).toBe("cmd-2");
+      expect(next.agents).toEqual([]);
+      expect(next.first_lens_started_at).toBeUndefined();
+
+      // After the run settles, the next agent_start is a new run.
+      await emit("agent_settled");
+      await new Promise((r) => setTimeout(r, 5));
+      await emit("agent_start");
+      const fresh = JSON.parse(readFileSync(path, "utf8"));
+      expect(fresh.command_id).toBeUndefined();
+      expect(fresh.parent_status).toBe("active");
+      expect(fresh.run_started_at > next.run_started_at).toBe(true);
+    } finally {
+      process.env = previous;
+    }
+  });
+
   it("keeps every task slot of one agent within a single call apart", async () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
     dirs.push(root);

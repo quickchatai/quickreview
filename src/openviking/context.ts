@@ -34,13 +34,15 @@
 //     the quotas name nothing else whatever config.toml says, and an entry
 //     from anywhere else that comes back anyway is dropped — no ops notes, no
 //     raw feedback events, no folder blurbs in a round.
+import { DEFAULT_ROUND_QUOTA, OPENVIKING_DEFAULTS } from "../config.js";
 import type { ContextAssembler, MemoryRead } from "../memory/context.js";
 import { ROUND_SEARCH_AREAS } from "../memory/layout.js";
 import type { ContextSearchOptions, ContextSearchResult, OpenVikingClient } from "./client.js";
 import type { OpenVikingStore } from "./store.js";
 
-/** The quota each round-search area gets when config names none of them. */
-export const DEFAULT_ROUND_QUOTA = 24;
+/** The quota each round-search area gets when config names none of them —
+ * the loader's own default. */
+export { DEFAULT_ROUND_QUOTA };
 
 /**
  * The round search's quotas: the configured ones, cut to the areas a round
@@ -59,9 +61,18 @@ export function roundSearchQuotas(
   return out;
 }
 
-/** Is this recalled URI inside an area a round may search? */
+/** Is this recalled URI an entry a round may see: a file directly inside an
+ * area a round may search? Not a dot-file (the engine's folder blurbs,
+ * `.abstract.md`/`.overview.md`) and not anything nested deeper — the same
+ * rule the lesson selection applies (`inArea`, memory/selection.ts). */
 export function inRoundSearchScope(uri: string): boolean {
-  return ROUND_SEARCH_AREAS.some((area) => uri.includes(`/memories/${area}/`));
+  return ROUND_SEARCH_AREAS.some((area) => {
+    const marker = `/memories/${area}/`;
+    const at = uri.indexOf(marker);
+    if (at < 0) return false;
+    const rest = uri.slice(at + marker.length);
+    return rest !== "" && !rest.includes("/") && !rest.startsWith(".");
+  });
 }
 
 export interface OpenVikingContextOptions {
@@ -81,9 +92,9 @@ export interface OpenVikingContextOptions {
 }
 
 /** One document embedding on the live VM takes 3 s or more, and a query
- * queued behind one must still be answered inside this. Mirrors
- * `OPENVIKING_DEFAULTS.search_timeout_ms`. */
-export const DEFAULT_SEARCH_TIMEOUT_MS = 8_000;
+ * queued behind one must still be answered inside this — the loader's own
+ * `[openviking] search_timeout_ms` default. */
+export const DEFAULT_SEARCH_TIMEOUT_MS = OPENVIKING_DEFAULTS.search_timeout_ms;
 
 export class OpenVikingContextAssembler implements ContextAssembler {
   private readonly client: OpenVikingClient;
@@ -167,14 +178,30 @@ export class OpenVikingContextAssembler implements ContextAssembler {
       // behind a sweep inside the round's deadline; the store refreshes that
       // sweep in the background for the next round. A sweep that fails yields no exclusions rather
       // than no block.
+      const askedAt = Date.now();
       const excludeUris = await this.store.retiredUris().catch(() => [] as string[]);
+      // The seed's time left, when it says — less what the exclusion list
+      // took (a cold store waits for its first sweep). With none left the
+      // search is not sent at all: its embedding work would outlive the seed.
+      const given =
+        typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
+          ? opts.timeoutMs
+          : null;
+      const spent = Date.now() - askedAt;
+      if (given !== null && spent > 0 && spent >= given) {
+        this.lastSearch = null;
+        return {
+          status: "unreadable",
+          reason: `no time left for the search: reading the retired list took ${spent} ms`,
+        };
+      }
       const search: ContextSearchOptions = {
         maxTokens: opts.maxTokens,
         purpose: "coding",
-        // The seed's time left, when it says: never past it.
+        // Never past the seed's deadline.
         timeoutMs:
-          typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
-            ? Math.max(1, Math.min(this.searchTimeoutMs, Math.floor(opts.timeoutMs)))
+          given !== null
+            ? Math.max(1, Math.min(this.searchTimeoutMs, Math.floor(given - spent)))
             : this.searchTimeoutMs,
         // `experiences/` alone — never the server's own balance
         // across every scope, never an area config.toml adds.
