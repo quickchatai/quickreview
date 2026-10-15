@@ -19,7 +19,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { codePath } from "./codespan.js";
 import { fenceAsData } from "./memory/datafence.js";
 import type { PrFileEntry } from "./github.js";
-import { isSweepSkipped, isTestFile } from "./heuristics.js";
+import { isTestFile } from "./heuristics.js";
 
 /** A changed file's text at the worktree's head, for the pack — or undefined.
  * The worktree is the PR author's: a path is read only when it is a REGULAR
@@ -50,14 +50,20 @@ export const CONTEXT_PACK_FILE = "context-pack.md";
  * the token budget into a character cap. */
 export const CHARS_PER_TOKEN = 4;
 
-/** What the pack leaves out of full text beyond the shared classifiers
- * (`isTestFile`, and the sweep's skip list for generated, vendored, lock,
- * binary and prose files): an RSpec-style `spec/` tree and numbered
- * migrations. */
-const PACK_FULL_TEXT_SKIP_RE = /(^|\/)spec\/|(^|\/)migrations\/\d+/i;
+/** Test files whose full text never rides the pack — beside the shared
+ * `isTestFile` (which adds fixtures and conftest), the pack's own spelling,
+ * an RSpec-style `spec/` tree included. */
+const TEST_PATH_RE =
+  /(^|\/)(tests?|__tests__|spec)\/|(^|\/)test_[^/]*$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$/i;
+/** Lockfiles, minified/binary assets, numbered migrations, and generated or
+ * vendored trees. */
+const LOCK_OR_GENERATED_RE =
+  /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|uv\.lock|Cargo\.lock)$|\.(min\.js|map|snap|svg|png|jpe?g|gif|ico|pdf|woff2?)$|(^|\/)migrations\/\d+|(^|\/)(vendor|third_party|node_modules|dist|generated)\//i;
 
-/** The most the "Not in this pack" note may take: past it, files are
- * counted rather than named, so the note's room in the budget is bounded. */
+/** The room the "Not in this pack" note is sure of while the diff fills:
+ * the diff never takes the last of it. Past this many characters a note
+ * that would otherwise not fit counts files instead of naming them; it names
+ * every one whenever the budget left after the diff holds them. */
 const OMITTED_NOTE_MAX = 600;
 
 export interface ContextPackInput {
@@ -92,9 +98,9 @@ export function mustSeeCandidates(files: readonly PrFileEntry[]): PrFileEntry[] 
     .filter(
       (f) =>
         f.status !== "removed" &&
+        !TEST_PATH_RE.test(f.filename) &&
         !isTestFile(f.filename) &&
-        !isSweepSkipped(f.filename) &&
-        !PACK_FULL_TEXT_SKIP_RE.test(f.filename),
+        !LOCK_OR_GENERATED_RE.test(f.filename),
     )
     .sort(
       (a, b) =>
@@ -141,10 +147,12 @@ export function omittedNote(paths: readonly string[], max: number): string {
  * rounds), the PR's diff file by file, then the full text of the most-changed
  * files — each section filled until the budget runs out, and what did not fit
  * named, so a lens knows to fetch it. The note naming those is inside the
- * budget too: every fill leaves room for the note as it would read if
- * everything still undecided were left out. Only the fixed section headings
- * ride regardless, and the config's smallest budget holds them many times
- * over.
+ * budget too: the diff fill leaves room for the note as it would read if
+ * everything still undecided were left out (at most `OMITTED_NOTE_MAX`), and
+ * the note then takes what it needs ahead of the full text — every name when
+ * the budget holds them, a count of the rest only when it does not. Only the
+ * fixed section headings ride regardless, and the config's smallest budget
+ * holds them many times over.
  */
 export function renderContextPack(input: ContextPackInput): ContextPack {
   const cap = Math.max(0, input.maxTokens) * CHARS_PER_TOKEN;
@@ -205,7 +213,9 @@ export function renderContextPack(input: ContextPackInput): ContextPack {
     } else diffOmitted.push(f.filename);
   });
 
-  const note = omittedNote(diffOmitted, OMITTED_NOTE_MAX);
+  // Every omitted file named whenever what is left of the budget holds the
+  // list — the diff left at least the room `noteRoom` promised for it.
+  const note = omittedNote(diffOmitted, cap - used);
 
   const fullFiles: string[] = [];
   const fullHeader = "## Full text of the most-changed files, at the head\n\n";

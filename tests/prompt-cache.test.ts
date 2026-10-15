@@ -325,7 +325,7 @@ describe("the context pack (daemon side)", () => {
     expect(one.text).toContain("`b.py`, `c.bin`");
   });
 
-  it("full text skips what the shared classifiers call tests or generated: fixtures, conftest, dist, generated, vendored", () => {
+  it("full text skips generated, vendored and fixture files and conftest — and still reads prose and build sources", () => {
     const files = [
       f("app/core.py", 5, "@@ +1 @@\n+c"),
       f("dist/bundle.js", 900, "@@ +1 @@\n+d"),
@@ -336,8 +336,15 @@ describe("the context pack (daemon side)", () => {
       f("spec/models/user_spec.rb", 400, "@@ +1 @@\n+s"),
       f("app/migrations/0042_x.py", 300, "@@ +1 @@\n+m"),
       f("README.md", 200, "@@ +1 @@\n+r"),
+      f("build/gen.py", 100, "@@ +1 @@\n+b"),
+      f("app/locales/en.json", 50, "@@ +1 @@\n+l"),
     ];
-    expect(mustSeeCandidates(files).map((x) => x.filename)).toEqual(["app/core.py"]);
+    expect(mustSeeCandidates(files).map((x) => x.filename)).toEqual([
+      "README.md",
+      "build/gen.py",
+      "app/locales/en.json",
+      "app/core.py",
+    ]);
   });
 
   it("stays within its budget however many files the note has to name", () => {
@@ -357,6 +364,25 @@ describe("the context pack (daemon side)", () => {
     expect(pack.diffOmitted).toHaveLength(400);
     // The note names what fits and counts the rest.
     expect(pack.text).toMatch(/and \d+ more \(the PR's file list names them\)\.\n$/);
+  });
+
+  it("names every omitted file whenever the budget holds the list, however long", () => {
+    const files = [
+      f("a.py", 1, "x".repeat(100)),
+      ...Array.from({ length: 30 }, (_, i) => f(`pkg/module_${i}/file_name_${i}.py`, 1)),
+    ];
+    const pack = renderContextPack({
+      pr: 1,
+      headSha: "h",
+      mergeBase: "m",
+      files,
+      readFile: () => undefined,
+      maxTokens: 10_000,
+    });
+    const note = pack.text.slice(pack.text.indexOf("## Not in this pack"));
+    expect(note.length).toBeGreaterThan(600);
+    expect(note).not.toContain("more (the PR's file list names them)");
+    for (const p of pack.diffOmitted) expect(note).toContain(`\`${p}\``);
   });
 
   it("names every omitted file when the list fits, and counts them when none fits", () => {
