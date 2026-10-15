@@ -31,7 +31,13 @@ function upsertReviewing(n: number): void {
   });
 }
 
-function writeJob(pr: number, roundNo: number, key: string, status: PostingJob["status"]): void {
+function writeJob(
+  pr: number,
+  roundNo: number,
+  key: string,
+  status: PostingJob["status"],
+  over: Partial<Pick<PostingJob, "mode" | "repo">> = {},
+): void {
   const payload = {
     commit_id: head,
     event: "COMMENT" as const,
@@ -52,6 +58,7 @@ function writeJob(pr: number, roundNo: number, key: string, status: PostingJob["
     attempts: 0,
     next_attempt_at: "2026-10-12T10:30:00.000Z",
     created_at: "2026-10-12T10:00:00.000Z",
+    ...over,
   };
   writeFileSync(join(dir, `pr-${pr}-round-${roundNo}.outbox.json`), JSON.stringify(job));
 }
@@ -78,7 +85,7 @@ describe("startup orphan sweep with the production posting-debt predicate", () =
 
     const res = reconcileOrphanedRounds(store, [], {
       botLogin: "bot[bot]",
-      postingOwed: orphanPostingOwed(dir, false),
+      postingOwed: orphanPostingOwed(dir, false, "org/repo"),
     });
 
     expect(res.kept_for_posting).toEqual([30]);
@@ -96,7 +103,7 @@ describe("startup orphan sweep with the production posting-debt predicate", () =
   });
 
   it("a delivered (done) job, a job for another posting key, or a dry run owes nothing", () => {
-    const owed = orphanPostingOwed(dir, false);
+    const owed = orphanPostingOwed(dir, false, "org/repo");
     const key = roundPostingKey(40, 1, head);
     writeJob(40, 1, key, "done");
     expect(owed({ pr: 40, round_no: 1, posting_key: key })).toBe(false);
@@ -106,6 +113,34 @@ describe("startup orphan sweep with the production posting-debt predicate", () =
       false,
     );
     expect(owed({ pr: 40, round_no: 1, posting_key: null })).toBe(false);
-    expect(orphanPostingOwed(dir, true)({ pr: 40, round_no: 1, posting_key: key })).toBe(false);
+    expect(
+      orphanPostingOwed(dir, true, "org/repo")({ pr: 40, round_no: 1, posting_key: key }),
+    ).toBe(false);
+  });
+
+  // The outbox processes only live jobs of its own repo. A pending job outside
+  // that — a dry-run snapshot left over a flip to live, another repo's — is
+  // never delivered, so its round is an ordinary orphan: cancelled and
+  // requeued, never held until the operator's `u`.
+  it.each([
+    ["a dry-run snapshot", { mode: "dryrun" as const }],
+    ["another repo's job", { repo: "org/other" }],
+  ])("a pending job the outbox will never process owes nothing: %s", (_label, over) => {
+    upsertReviewing(50);
+    const id = store.startRound(50, "first", ["pass-baseline"], 75);
+    const key = roundPostingKey(50, 1, head);
+    store.stampPostingKey(id, key);
+    writeJob(50, 1, key, "pending", over);
+
+    expect(
+      orphanPostingOwed(dir, false, "org/repo")({ pr: 50, round_no: 1, posting_key: key }),
+    ).toBe(false);
+    const res = reconcileOrphanedRounds(store, [], {
+      botLogin: "bot[bot]",
+      postingOwed: orphanPostingOwed(dir, false, "org/repo"),
+    });
+    expect(res.kept_for_posting).toEqual([]);
+    expect(res.cancelled).toEqual([50]);
+    expect(res.requeued).toEqual([50]);
   });
 });

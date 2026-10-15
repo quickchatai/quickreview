@@ -19,7 +19,12 @@ stay behaviourally identical to the TS side:
   mark the guard read, so the daemon settles the round as a no-op instead of
   a lost POST. The record is never written over an attempted post and an
   attempt is never written over it; a legacy round (no `QCR_ROUND_NO`)
-  records nothing and refuses exactly as before.
+  records nothing and refuses exactly as before. A guard-4 refusal in
+  approve-pr.sh WITHDRAWS the delivery snapshot the script queued before the
+  guard read: `guard_on_approval_refused` runs `posting-receipt.py withdraw`,
+  which renames the pending outbox job aside only while no receipt exists, so
+  the session's COMMENT under the same round key is accepted and the outbox
+  never delivers the refused approval.
 - Parity is test-enforced: `tests/guards-shell-*.test.ts` runs the real scripts
   against a loopback stub over the same cases as `tests/guards.test.ts` runs
   the gate. Change a guard on one side → change it on both + both tests.

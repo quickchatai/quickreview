@@ -345,6 +345,18 @@ guard_ci_state() { # guard_ci_state <head-sha> — green|red|pending|none|unknow
       end' 2>/dev/null || echo unknown
 }
 
+# A refusal is handed to `guard_on_approval_refused` when the sourcing script
+# defines it, so approve-pr.sh can take back the delivery snapshot it queued
+# before the guard read — the session answers this refusal with a COMMENT
+# under the same round key. The hook runs before die and its failure never
+# changes the guard's answer.
+guard_refuse_approval() { # guard_refuse_approval <message>
+  if declare -F guard_on_approval_refused >/dev/null; then
+    guard_on_approval_refused || true
+  fi
+  die "$1"
+}
+
 guard_require_green_ci() { # guard_require_green_ci <head-sha>
   guard_enabled block_approve_on_red_ci || return 0
   local head="${1:-}" state
@@ -353,13 +365,13 @@ guard_require_green_ci() { # guard_require_green_ci <head-sha>
   state="$(guard_ci_state "$head")"
   case "$state" in
     red|pending)
-      die "CI is ${state} at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4). Post the full review as a COMMENT via scripts/post-review.sh, say plainly that no blockers were found and that approval is withheld pending green CI, and set \"approval_withheld\": true in the verdict file."
+      guard_refuse_approval "CI is ${state} at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4). Post the full review as a COMMENT via scripts/post-review.sh, say plainly that no blockers were found and that approval is withheld pending green CI, and set \"approval_withheld\": true in the verdict file."
       ;;
     none)
       # In a CI-running repo, zero checks at the head
       # (conflicted PR, CI not started) is no execution evidence — withhold.
       if [[ "$(cfg guards no_checks_is_red 2>/dev/null || true)" == "true" ]]; then
-        die "no CI has run at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4, no_checks_is_red). Post the full review as a COMMENT via scripts/post-review.sh, say approval is withheld until checks run green, and set \"approval_withheld\": true in the verdict file."
+        guard_refuse_approval "no CI has run at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4, no_checks_is_red). Post the full review as a COMMENT via scripts/post-review.sh, say approval is withheld until checks run green, and set \"approval_withheld\": true in the verdict file."
       fi
       ;;
     *) ;;   # green, unknown: the guard blocks only what it can see
