@@ -1045,9 +1045,19 @@ export function parseEffort(raw: unknown): ReviewEffort {
     .trim()
     .toLowerCase();
   if (v === "") return "";
-  if (v === "low" || v === "high") return v;
-  if (v === "med" || v === "medium") return "medium";
+  const effort = normalizeEffort(v);
+  if (effort !== null) return effort;
   throw new Error(`config.toml [models] effort must be "", "low", "medium" or "high" (got "${v}")`);
+}
+
+/** The nonempty effort vocabulary every effort knob shares — `low`,
+ * `medium` (alias `med`) and `high`, case- and space-insensitive — or null for
+ * anything else. What an empty value means is each knob's own call. */
+export function normalizeEffort(raw: unknown): "low" | "medium" | "high" | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  if (v === "low" || v === "medium" || v === "high") return v;
+  return v === "med" ? "medium" : null;
 }
 
 function parseEffortMax(raw: unknown): ThinkingLevel {
