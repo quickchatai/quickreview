@@ -4,7 +4,7 @@
 // ports are driven against temp dirs, one scratch git repo (the listing is
 // `git ls-files`, so git is the thing under test there) and a fake fetch.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -792,6 +792,47 @@ describe("checkoutReader", () => {
     expect(r.head()).toBeNull();
     expect(r.changeCounts?.()).toBeNull();
     expect(checkoutReader(join(dir, "absent")).listFiles()).toBeNull();
+  });
+});
+
+describe("checkoutReader's edges", () => {
+  it("reads a name that only starts with two dots — a parent COMPONENT is what leaves the root", () => {
+    const repo = join(dir, "dots");
+    tree(repo, { "..fixtures/a.ts": "a\n" });
+    tree(dir, { "secret.txt": "no" });
+    const r = checkoutReader(repo);
+    expect(r.listFiles()).toEqual(["..fixtures/a.ts"]);
+    expect(r.read("..fixtures/a.ts")).toBe("a\n");
+    expect(r.lines("..fixtures/a.ts")).toBe(1);
+    expect(r.read("../secret.txt")).toBeNull();
+    expect(r.read("..")).toBeNull();
+  });
+
+  it("a symlink out of the checkout is not its content, and a directory link is never descended", () => {
+    const repo = join(dir, "links");
+    tree(repo, { "in.ts": "in\n" });
+    tree(dir, { "outside/secret.ts": "no\n" });
+    symlinkSync(join(dir, "outside", "secret.ts"), join(repo, "leak.ts"));
+    symlinkSync(join(repo, "in.ts"), join(repo, "alias.ts"));
+    symlinkSync(".", join(repo, "loop"));
+    symlinkSync(join(dir, "outside"), join(repo, "elsewhere"));
+    const r = checkoutReader(repo);
+    expect(r.listFiles()?.sort()).toEqual(["alias.ts", "in.ts", "leak.ts"]);
+    expect(r.read("leak.ts")).toBeNull();
+    expect(r.read("elsewhere/secret.ts")).toBeNull();
+    expect(r.read("alias.ts")).toBe("in\n");
+  });
+
+  it("a directory it cannot list makes the listing unknown, never a shorter one", () => {
+    if (process.getuid?.() === 0) return; // root lists a 000 directory anyway
+    const repo = join(dir, "locked");
+    tree(repo, { "a.ts": "a\n", "sealed/b.ts": "b\n" });
+    chmodSync(join(repo, "sealed"), 0o000);
+    try {
+      expect(checkoutReader(repo).listFiles()).toBeNull();
+    } finally {
+      chmodSync(join(repo, "sealed"), 0o755);
+    }
   });
 });
 
