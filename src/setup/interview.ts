@@ -42,8 +42,8 @@ export const PRIORITIES = ["critical", "important", "normal", "ignore"] as const
 export type Priority = (typeof PRIORITIES)[number];
 
 /** The keys of `[lenses.<pass>]` the table owns. */
-export type TableSettings = Pick<LensTuning, "enabled" | "min_tier" | "effort" | "max_severity">;
 export const TABLE_KEYS = ["enabled", "min_tier", "effort", "max_severity"] as const;
+export type TableSettings = Pick<LensTuning, (typeof TABLE_KEYS)[number]>;
 
 /**
  * THE table: a priority → the lens settings it means.
@@ -168,7 +168,8 @@ export const CONCERN_NAMES: readonly string[] = CONCERNS.map((c) => c.name);
 
 export type Priorities = Readonly<Record<string, Priority>>;
 
-const RANK: Record<Priority, number> = { critical: 3, important: 2, normal: 1, ignore: 0 };
+/** Higher wins: `PRIORITIES` is highest first. */
+const rankOf = (p: Priority): number => PRIORITIES.length - PRIORITIES.indexOf(p);
 
 /** Read a `{concern: priority}` object the companion sent. Unknown concerns
  * and unknown priorities are refused by name; a missing concern is not an
@@ -226,9 +227,9 @@ export function lensDecisions(priorities: Priorities): LensDecision[] {
     if (p === undefined) continue;
     for (const lens of concern.lenses) {
       const cur = best.get(lens);
-      if (!cur || RANK[p] > RANK[cur.priority])
+      if (!cur || rankOf(p) > rankOf(cur.priority))
         best.set(lens, { priority: p, because: [concern.name] });
-      else if (RANK[p] === RANK[cur.priority]) cur.because.push(concern.name);
+      else if (rankOf(p) === rankOf(cur.priority)) cur.because.push(concern.name);
     }
   }
   return [...best.entries()]

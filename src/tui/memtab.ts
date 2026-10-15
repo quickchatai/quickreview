@@ -23,6 +23,7 @@
 // When the store does not answer, the timeline is replaced by an explicit
 // failure banner: an empty list must never be mistaken for an empty store.
 import { pinnedBudget } from "../memory/store.js";
+import { proposalKey } from "../setup/pins.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import {
@@ -74,8 +75,10 @@ export interface MemoryTabState {
   confirmRetire?: string;
 }
 
+/** The key an entry is addressed by — the one spelling setup's pin
+ * proposals use too (`proposalKey`). */
 export function entryKey(e: MemoryEntry): string {
-  return `${e.ts}|${e.id}#${e.block}`;
+  return proposalKey(e);
 }
 
 /**

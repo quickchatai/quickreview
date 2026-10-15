@@ -28,7 +28,13 @@
 // operator's saved cut, and silently starting fresh over it would lose that.
 import type { MemoryStore } from "../memory/store.js";
 import { isSweepSkipped } from "../heuristics.js";
-import { repoFacts, unitCandidates, vendoredRoots, type RepoFacts } from "./facts.js";
+import {
+  repoFacts,
+  unitCandidates,
+  vendoredRoots,
+  type RepoFacts,
+  type UnitCandidate,
+} from "./facts.js";
 import {
   SurveyRunner,
   type SurveyInputs,
@@ -334,6 +340,15 @@ function cutShapeError(cut: unknown): string | null {
 
 // ---- engine ------------------------------------------------------------------
 
+/** The cut setup offers when none is saved: the candidates as units, the
+ * vendored roots ignored. */
+function candidateCut(candidates: readonly UnitCandidate[], files: readonly string[]): UnitCut {
+  return {
+    units: candidates.map((c) => ({ name: c.name, roots: c.roots, kind: c.kind, note: c.reason })),
+    ignored: vendoredRoots(files),
+  };
+}
+
 export class SetupEngine {
   private readonly budget: CaseBudget;
   private readonly surveyRun: SurveyRunner;
@@ -542,15 +557,7 @@ export class SetupEngine {
     let cut: UnitCut;
     let source: DraftCut["source"];
     if (raw === undefined || raw === null || (typeof raw === "object" && !("units" in raw))) {
-      cut = {
-        units: unitCandidates(files).map((c) => ({
-          name: c.name,
-          roots: c.roots,
-          kind: c.kind,
-          note: c.reason,
-        })),
-        ignored: vendoredRoots(files),
-      };
+      cut = candidateCut(unitCandidates(files), files);
       source = "candidates";
     } else {
       const n = normalizeCut(raw);
@@ -804,15 +811,7 @@ export class SetupEngine {
     const problems: string[] = [];
     const { file, error } = this.load();
     if (error !== null) problems.push(error);
-    const cut: UnitCut = file.saved ?? {
-      units: repo.unit_candidates.map((c) => ({
-        name: c.name,
-        roots: c.roots,
-        kind: c.kind,
-        note: c.reason,
-      })),
-      ignored: vendoredRoots(files),
-    };
+    const cut: UnitCut = file.saved ?? candidateCut(repo.unit_candidates, files);
     const view = this.view(cut, files, this.lineCounter());
     const themes = historyThemesState(this.ports.state);
     if (themes.state === "unreadable") problems.push(themes.error);

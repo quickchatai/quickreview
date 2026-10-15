@@ -33,6 +33,7 @@ import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES } from "../src/passes.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import {
+  casesFor,
   coveredBy,
   Ledger,
   LEDGER_FILE,
@@ -443,6 +444,14 @@ describe("the coverage ledger honours depth", () => {
     expect(measuredRate(rows, key)!.usd_per_kline).toBeCloseTo(2, 9);
     expect(measuredRate(rows, { ...key, depth: "standard" })!.usd_per_kline).toBeCloseTo(1, 9);
     expect(measuredRate(rows, { ...key, depth: "deep" })!.usd_per_kline).toBeCloseTo(3, 9);
+    // The case tally answers the same key the same way.
+    const tally = [
+      row({ cost_usd: 0.1, case: "s" }),
+      row({ path: "b.py", cost_usd: 0.3, depth: "deep", case: "d" }),
+    ];
+    expect(casesFor(tally, key)).toEqual({ cases: 2, priced: 2 });
+    expect(casesFor(tally, { ...key, depth: "standard" })).toEqual({ cases: 1, priced: 1 });
+    expect(casesFor(tally, { ...key, depth: "deep" })).toEqual({ cases: 1, priced: 1 });
   });
 
   it("a stage-2 price stands on its own depth's readings when they price it as well; else it is marked across depth", () => {

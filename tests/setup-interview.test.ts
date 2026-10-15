@@ -45,7 +45,7 @@ import {
   type Priority,
 } from "../src/setup/interview.js";
 import { editLensTables } from "../src/setup/profile.js";
-import { PIN_PROPOSALS_FILE } from "../src/setup/pins.js";
+import { PIN_PROPOSALS_FILE, parsePinProposals } from "../src/setup/pins.js";
 import { INTERVIEW_FILE, type ApplyResult } from "../src/setup/tuning.js";
 
 const sandbox = join(import.meta.dirname, "..");
@@ -758,6 +758,14 @@ describe("pin proposals go to the operator", () => {
       hash: "h-a",
       why: "every view PR trips on this",
     });
+    // What it wrote reads back whole; one proposal short of a field makes the
+    // file unreadable, never a shorter list.
+    const text = readFileSync(join(dir, "state", PIN_PROPOSALS_FILE), "utf8");
+    expect(parsePinProposals(text)).toMatchObject({ state: "ok", file: { entries: file.entries } });
+    const { hash: _dropped, ...hashless } = file.entries[1];
+    expect(
+      parsePinProposals(JSON.stringify({ ...file, entries: [file.entries[0], hashless] })),
+    ).toMatchObject({ state: "unreadable", error: expect.stringMatching(/entries\[1\]/) });
   });
 
   it("refuses an unknown or already-pinned entry, a missing reason, and more than a handful", async () => {

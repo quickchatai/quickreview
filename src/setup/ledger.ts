@@ -233,6 +233,20 @@ export function partialRanges(
   return out;
 }
 
+/** One case's identity across its rows: the run it ran in and its id there. */
+const caseId = (e: LedgerEntry): string => `${e.run}\0${e.case}`;
+
+/** Was `e` written at `key`'s settings — its depth too, when the key names one? */
+function atKey(e: LedgerEntry, key: RateKey): boolean {
+  return (
+    e.lens === key.lens &&
+    e.tier === key.tier &&
+    e.effort === key.effort &&
+    e.validator === key.validator &&
+    (key.depth === undefined || depthOf(e) === key.depth)
+  );
+}
+
 /** Rows written for `key` at all, and how many of their cases were priced —
  * which is how a preview tells "never calibrated" from "calibrated, but the
  * runner reports no cost". */
@@ -242,14 +256,8 @@ export function casesFor(
 ): { cases: number; priced: number } {
   const cases = new Map<string, boolean>();
   for (const e of entries) {
-    if (
-      e.lens !== key.lens ||
-      e.tier !== key.tier ||
-      e.effort !== key.effort ||
-      e.validator !== key.validator
-    )
-      continue;
-    const id = `${e.run}\0${e.case}`;
+    if (!atKey(e, key)) continue;
+    const id = caseId(e);
     cases.set(id, (cases.get(id) ?? false) || e.cost_usd !== null);
   }
   return { cases: cases.size, priced: [...cases.values()].filter(Boolean).length };
@@ -258,15 +266,7 @@ export function casesFor(
 /** The measured price for `key`: every priced row's cost over its lines, or
  * null when no priced case has finished at these settings. */
 export function measuredRate(entries: readonly LedgerEntry[], key: RateKey): ScanRate | null {
-  return rateWhere(
-    entries,
-    (e) =>
-      e.lens === key.lens &&
-      e.tier === key.tier &&
-      e.effort === key.effort &&
-      e.validator === key.validator &&
-      (key.depth === undefined || depthOf(e) === key.depth),
-  );
+  return rateWhere(entries, (e) => atKey(e, key));
 }
 
 /** The measured price over the priced rows `keep` selects (stage 2 borrows
@@ -285,7 +285,7 @@ export function rateWhere(
     // (an `__init__.py`) is 0 here as there; `Math.max(lines, 1)` belongs to
     // splitting a case's cost across its rows, never to the rate's basis.
     lines += e.lines;
-    cases.add(`${e.run}\0${e.case}`);
+    cases.add(caseId(e));
   }
   if (cases.size === 0 || lines === 0) return null;
   return { usd_per_kline: (cost / lines) * 1000, cases: cases.size, lines, cost_usd: cost };
