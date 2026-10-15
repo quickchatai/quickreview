@@ -73,8 +73,18 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
+import {
+  aacrScoreTable,
+  caseWarningsSection,
+  checkMergeBase,
+  harnessProcessTimeoutMs,
+  JUDGE_INPUT_FILES,
+  prepareArmCases,
+  runLifecycle,
+} from "./armrun.js";
 import { apiKeyEnv, authFingerprint, AuthExpiring, benchAuthMode, syncBenchAuth } from "./auth.js";
-import { run } from "./exec.js";
+import { GIT_ISOLATION_ENV, run } from "./exec.js";
+import type { OcrShapedComment } from "./opencode.js";
 import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 import { prTextFor } from "./prtext.js";
 import { roundMetrics } from "./report.js";
@@ -91,7 +101,7 @@ export const PIREVIEW_DEFAULTS = {
 } as const;
 
 export function pireviewProcessTimeoutMs(timeoutMin: number): number {
-  return (timeoutMin * 60 + 60) * 1000;
+  return harnessProcessTimeoutMs(timeoutMin);
 }
 
 /** The natural-language review target: WHAT the attached file is, nothing
@@ -138,7 +148,7 @@ export function pireviewCommand(o: { bin: string; timeoutMin: number; argv: stri
 } {
   return {
     bin: "timeout",
-    args: ["-k", "30s", `${o.timeoutMin * 60 + 60}s`, o.bin, ...o.argv],
+    args: ["-k", "30s", `${pireviewProcessTimeoutMs(o.timeoutMin) / 1000}s`, o.bin, ...o.argv],
   };
 }
 
@@ -170,10 +180,7 @@ export function pireviewEnv(o: {
     PI_SKIP_VERSION_CHECK: "1",
     PI_TELEMETRY: "0",
     PI_REVIEW_META_STDOUT: "1",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_TERMINAL_PROMPT: "0",
+    ...GIT_ISOLATION_ENV,
   };
 }
 
@@ -347,13 +354,7 @@ export function toolCounts(progressLog: string): Record<string, number> {
   return out;
 }
 
-export interface OcrShapedComment {
-  path: string;
-  start_line: number | null;
-  end_line: number | null;
-  content: string;
-  severity?: string;
-}
+export type { OcrShapedComment };
 
 /** A comment on the BASE side (deleted/old lines), kept for the defect judge
  * in the QuickReview `comments.json` shape — the AACR scorer reads only the
@@ -385,7 +386,9 @@ export function normalizeFindingPath(
     if (start > 0 && end >= start) lines = { start, end };
   }
   const t = tree.replace(/\/+$/, "") + "/";
-  if (p.startsWith(t)) p = p.slice(t.length);
+  // A path under the tree is repo-relative once the tree is cut off: an `a/`
+  // left at its front is a real directory, never a diff prefix.
+  if (p.startsWith(t)) return { path: p.slice(t.length), lines };
   p = p.replace(/^\.\//, "");
   if (/^[ab]\//.test(p)) p = p.slice(2);
   return { path: p, lines };
@@ -631,9 +634,7 @@ export async function reviewCasePireview(
   const diffFile = join(scratch, "pr.diff");
   const progressLog = join(caseDir, "pi-events.jsonl");
   mkdirSync(caseDir, { recursive: true });
-  rmSync(progressLog, { force: true });
-  for (const f of reviewerLogs(caseDir)) rmSync(join(caseDir, f), { force: true });
-  clearJudgeInputs(caseDir);
+  clearAttempt(caseDir);
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const summary = emptySummary(c, o.fingerprint);
@@ -653,12 +654,9 @@ export async function reviewCasePireview(
       tmpDir,
       agentDir: o.agentDir,
     });
-    const mb = await exec("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
-    summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
-    if (!summary.merge_base_ok)
-      summary.warnings.push(
-        `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
-      );
+    const mb = await checkMergeBase(exec, tree, c, meta, env);
+    summary.merge_base_ok = mb.ok;
+    if (mb.warning) summary.warnings.push(mb.warning);
     const diff = await exec(
       "git",
       ["-C", tree, "diff", "--no-color", "--no-ext-diff", `${c.base_commit}...${c.head_commit}`],
@@ -786,11 +784,14 @@ function reviewerLogs(caseDir: string): string[] {
     .sort();
 }
 
-/** An earlier attempt's review body and base-side rows must not outlive it:
- * the defect judge reads both whatever this attempt's status. */
-function clearJudgeInputs(caseDir: string): void {
-  rmSync(join(caseDir, "review.md"), { force: true });
-  rmSync(join(caseDir, "comments.json"), { force: true });
+/** An earlier attempt's files must not outlive it: the defect judge reads
+ * the review body and the base-side rows whatever this attempt's status, the
+ * cost reader prices the progress log (src/bench/cost.ts), and pi-review's
+ * meta is what an operator reads the attempt by. */
+function clearAttempt(caseDir: string): void {
+  for (const f of [...JUDGE_INPUT_FILES, "pi-events.jsonl", "pireview-meta.json"])
+    rmSync(join(caseDir, f), { force: true });
+  for (const f of reviewerLogs(caseDir)) rmSync(join(caseDir, f), { force: true });
 }
 
 /** A case with no prefetched store: failed WITH an empty result file, so its
@@ -804,7 +805,7 @@ export function unprefetchedPireviewCase(
   const summary = { ...emptySummary(c, fingerprint), error };
   const caseDir = join(outDir, "cases", safeId(c.instance_id));
   mkdirSync(caseDir, { recursive: true });
-  clearJudgeInputs(caseDir);
+  clearAttempt(caseDir);
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writePireviewResult(
     outDir,
@@ -873,22 +874,17 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
   const previous = existsSync(runFile)
     ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
     : null;
-  // run.json is about to carry THIS configuration, so no case reviewed under
-  // another may stay a result of the run: without --resume every case goes;
-  // with it, every case whose fingerprint differs goes now, not when the loop
-  // reaches it — a stop partway (AuthExpiring) must leave those cases
-  // incomplete, never scored under the new model/thinking label.
-  for (const c of r.cases) {
-    const prior = r.resume ? readPireviewSummary(r.outDir, c) : null;
-    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
-      continue;
-    if (prior)
-      r.log(
-        `pireview: ${c.instance_id} was reviewed by a different pi-review/model/flags — its result is dropped`,
-      );
-    rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-    rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
-  }
+  // run.json is about to carry THIS configuration (prepareArmCases).
+  const prep = prepareArmCases({
+    outDir: r.outDir,
+    cases: r.cases,
+    resume: r.resume,
+    fingerprint,
+    readSummary: readPireviewSummary,
+    log: r.log,
+    arm: "pireview",
+    differs: "a different pi-review/model/flags",
+  });
   const runRecord = {
     reviewer: "pireview",
     set: r.set.name,
@@ -912,15 +908,7 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
     pi_settings: piSettings,
     qcr_commit: r.qcrCommit,
     cases: r.cases.map((c) => c.instance_id),
-    started_at:
-      (r.resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
-      new Date().toISOString(),
-    resumes: [
-      ...(r.resume && Array.isArray(previous?.["resumes"])
-        ? (previous["resumes"] as unknown[])
-        : []),
-      ...(r.resume && previous ? [{ at: new Date().toISOString(), fingerprint }] : []),
-    ],
+    ...runLifecycle(r.resume, previous, fingerprint),
     finished_at: null as string | null,
   };
   writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
@@ -951,6 +939,7 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
       r.log(`pireview: STOPPED — ${err.message}`);
       break;
     }
+    prep.beforeReview();
     let meta: PrefetchMeta;
     try {
       meta = r.readMeta(c);
@@ -991,14 +980,6 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
 
 // ---- the report ------------------------------------------------------------------------
 
-function n(v: number | undefined): string {
-  return v === undefined
-    ? "?"
-    : Number.isInteger(v)
-      ? String(v)
-      : String(Math.round(v * 100) / 100);
-}
-
 export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
   const L: string[] = [];
   const runPath = join(outDir, "run.json");
@@ -1027,14 +1008,7 @@ export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchC
   L.push("");
   L.push("## Scores (the AACR harness, OCR reader over the same comments)");
   L.push("");
-  L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
-  L.push("|---|---|---|---|---|---|---|---|---|");
-  const row = (label: string, s: Record<string, number>): string =>
-    `| ${label} | ${n(s["evaluated_instances"])}/${cases.length} | ${n(s["generated_notes"])} | ${n(s["matched_semantic_notes"])}/${n(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
-  const { rounds, average } = roundMetrics(join(outDir, "results", "all"));
-  if (average) L.push(row("**average**", average));
-  for (const r of rounds) L.push(row(String(r.round), r.summary));
-  if (!average && rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  L.push(...aacrScoreTable(roundMetrics(join(outDir, "results", "all")), cases.length));
   L.push("");
   L.push("## Per case");
   L.push("");
@@ -1042,14 +1016,14 @@ export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchC
     "| Case | Lang | Refs | Status | Verdict | Comments (+base side) | Findings (actionable) | Minutes | Tokens in (cached) / out | Cost | Tools |",
   );
   L.push("|---|---|---|---|---|---|---|---|---|---|---|");
-  const warned: Array<{ c: BenchCase; s: PireviewCaseSummary }> = [];
+  const reviewed: PireviewCaseSummary[] = [];
   for (const c of cases) {
     const s = readPireviewSummary(outDir, c);
     if (!s) {
       L.push(`| ${c.instance_id} | ${c.language} | ${c.references} | not run | | | | | | | |`);
       continue;
     }
-    if (s.warnings.length || s.error || !s.merge_base_ok) warned.push({ c, s });
+    reviewed.push(s);
     const tools = Object.entries(s.tools)
       .sort((x, y) => y[1] - x[1])
       .map(([t, m]) => `${t} ${m}`)
@@ -1059,20 +1033,7 @@ export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchC
       `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status} | ${s.verdict ?? "?"} | ${s.comments}${s.left_side ? ` (+${s.left_side})` : ""} | ${s.findings} (${s.actionable}) | ${(s.duration_seconds / 60).toFixed(1)} | ${u ? `${k(u.input + u.cacheRead)} (${k(u.cacheRead)}) / ${k(u.output)}` : "?"} | ${s.cost_usd !== null ? `$${s.cost_usd.toFixed(2)}` : "?"} | ${tools} |`,
     );
   }
-  if (warned.length) {
-    L.push("");
-    L.push("## Warnings (case errors)");
-    L.push("");
-    for (const { c, s } of warned) {
-      if (!s.merge_base_ok && s.status !== "failed")
-        L.push(`- \`${c.instance_id}\`: merge-base check failed — see case-summary.json`);
-      for (const w of [
-        ...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []),
-        ...s.warnings,
-      ])
-        L.push(`- \`${c.instance_id}\`: ${w}`);
-    }
-  }
+  L.push(...caseWarningsSection(reviewed));
   L.push("");
   L.push(
     "Reading the numbers: the findings carry pi-review's severities (critical…low), not our blocker/nit tags, so only the `all` variant exists for this arm. Every finding pi-review reported is a comment, actionable or not; a finding it placed on the BASE side (deleted lines) is not scored by AACR (which reads the new side) but is shown to the defect judge. Tokens and cost are pi's own count for the child session.",

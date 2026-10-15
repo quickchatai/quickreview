@@ -405,7 +405,6 @@ describe("judge verdicts stay apart", () => {
 
 describe("the Codex CLI arm: the harness's own CODEX_API_KEY route", () => {
   const paths = {
-    python: "/py",
     driver: "/d.py",
     dataset: "/ds.jsonl",
     tree: "/wt/x",

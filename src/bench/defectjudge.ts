@@ -8,6 +8,7 @@
 // (`defect-report`) with no model call at all.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { usageFromEvents } from "./aacr.js";
 import { runJudgeSession } from "./runner.js";
 import {
   judgePrompt,
@@ -35,6 +36,9 @@ export interface JudgePiResult {
   usage: { input: number; output: number; cacheRead: number };
   code: number | null;
   timedOut: boolean;
+  /** Why pi's output or prompt stream failed (runner.ts `runPi`, which then
+   * kills pi): the answer, if any, is not one to trust. */
+  streamError: string | null;
 }
 
 /**
@@ -44,19 +48,25 @@ export interface JudgePiResult {
  */
 export async function runJudgePi(prompt: string, o: JudgePiOptions): Promise<JudgePiResult> {
   const r = await runJudgeSession(prompt, o);
-  return { ...readJudgeEvents(o.eventsPath), code: r.code, timedOut: r.timedOut };
+  return {
+    ...readJudgeEvents(o.eventsPath),
+    code: r.code,
+    timedOut: r.timedOut,
+    streamError: r.streamError,
+  };
 }
 
 /** The last assistant text and the summed usage from a pi `--mode json` stream. */
 export function readJudgeEvents(eventsPath: string): Pick<JudgePiResult, "text" | "usage"> {
   let text = "";
-  const usage = { input: 0, output: 0, cacheRead: 0 };
   const raw = existsSync(eventsPath) ? readFileSync(eventsPath, "utf8") : "";
-  for (const line of raw.split("\n")) {
+  const lines = raw.split("\n");
+  const { input, output, cacheRead } = usageFromEvents(lines);
+  for (const line of lines) {
     if (!line.startsWith("{")) continue;
     let e: {
       type?: string;
-      message?: { role?: string; content?: unknown[]; usage?: Record<string, number> };
+      message?: { role?: string; content?: unknown[] };
     };
     try {
       e = JSON.parse(line) as typeof e;
@@ -64,10 +74,6 @@ export function readJudgeEvents(eventsPath: string): Pick<JudgePiResult, "text" 
       continue;
     }
     if (e.type !== "message_end" || e.message?.role !== "assistant") continue;
-    const u = e.message.usage ?? {};
-    usage.input += u["input"] ?? 0;
-    usage.output += u["output"] ?? 0;
-    usage.cacheRead += u["cacheRead"] ?? 0;
     const t = (e.message.content ?? [])
       .map((p) => {
         const q = p as { type?: string; text?: string };
@@ -76,7 +82,7 @@ export function readJudgeEvents(eventsPath: string): Pick<JudgePiResult, "text" 
       .join("");
     if (t.trim()) text = t;
   }
-  return { text, usage };
+  return { text, usage: { input, output, cacheRead } };
 }
 
 export interface JudgeCaseOptions {
@@ -147,6 +153,7 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
     let j: CaseJudgement;
     try {
       if (r.timedOut) throw new Error("judge timed out");
+      if (r.streamError) throw new Error(`judge output stream failed: ${r.streamError}`);
       j = { ...base, ...parseJudgement(r.text, o.defects, o.review), usage: r.usage };
     } catch (err) {
       j = { ...base, usage: r.usage, error: String(err instanceof Error ? err.message : err) };

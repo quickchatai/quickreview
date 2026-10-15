@@ -77,8 +77,10 @@ import {
   modelForAuth,
   syncBenchAuth,
 } from "./auth.js";
+import { prepareArmCases, runLifecycle } from "./armrun.js";
 import { prefetchCase, storeDir } from "./prefetch.js";
 import {
+  assertArm,
   OCR_HARNESS_DEFAULTS,
   ocrProcessTimeoutMs,
   readOcrSummary,
@@ -99,7 +101,7 @@ import {
 import { prTextEnabled } from "./prtext.js";
 import { PIREVIEW_DEFAULTS, renderPireviewReport, runPireviewReview } from "./pireview.js";
 import { PRAGENT_DEFAULTS, renderPragentReport, runPragentReview } from "./pragent.js";
-import { run as runCmd } from "./exec.js";
+import { GIT_ISOLATION_ENV, run as runCmd } from "./exec.js";
 import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
   buildBenchAgents,
@@ -179,24 +181,32 @@ function readMeta(store: string, c: BenchCase): PrefetchMeta {
   return meta;
 }
 
-/** A command of one arm refuses the other arm's run dir: the QuickReview
- * `review`/`results` rewrite every variant's result files, which would wipe an
- * OCR run's scored input. */
-const ARM_NAMES = {
-  qcr: "a QuickReview",
-  ocr: "an open-code-review",
-  codex: "a Codex CLI",
-  opencode: "an OpenCode",
-  claude: "a Claude Code",
-  pireview: "a pi-review",
-  pragent: "a PR-Agent",
-} as const;
-function assertArm(outDir: string, arm: keyof typeof ARM_NAMES): void {
-  const found = runArmOf(outDir);
-  if (found !== null && found !== arm)
-    throw new Error(
-      `${outDir} is ${ARM_NAMES[found]} run — this command belongs to ${ARM_NAMES[arm]} arm (bench.sh --arm ${found})`,
-    );
+/** The usage text: this file's whole header comment (every command), the
+ * compiled file's own copy of it. */
+function usage(source: string): string {
+  const lines = source.split("\n");
+  const end = lines.findIndex((l) => !l.startsWith("//"));
+  return lines.slice(0, end < 0 ? lines.length : end).join("\n") + "\n";
+}
+
+/** What the loopback Codex bridge serves, from its /health: the model IS what
+ * it reports, never a flag this process could disagree with. */
+async function bridgeHealth(
+  cmd: string,
+  bridgeUrl: string,
+): Promise<{ health: Record<string, unknown>; model: string }> {
+  let health: Record<string, unknown>;
+  try {
+    const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
+    health = (await res.json()) as Record<string, unknown>;
+  } catch (err) {
+    throw new Error(`${cmd}: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`, {
+      cause: err,
+    });
+  }
+  const model = typeof health["model"] === "string" ? health["model"] : "";
+  if (!model) throw new Error(`${cmd}: the bridge reported no model`);
+  return { health, model };
 }
 
 async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Promise<void> {
@@ -500,21 +510,8 @@ async function main(): Promise<number> {
     for (const [k, v] of Object.entries(flagsOcr))
       if (!Number.isInteger(v) || v < 1)
         throw new Error(`ocr-review: ${k} must be a positive integer`);
-    // What the model IS comes from the bridge that serves it, never from a
-    // flag this process could disagree with.
-    let health: Record<string, unknown>;
-    try {
-      const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
-      health = (await res.json()) as Record<string, unknown>;
-    } catch (err) {
-      throw new Error(
-        `ocr-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`,
-        { cause: err },
-      );
-    }
-    const model = typeof health["model"] === "string" ? health["model"] : "";
+    const { health, model } = await bridgeHealth("ocr-review", bridgeUrl);
     const effort = typeof health["effort"] === "string" ? health["effort"] : "";
-    if (!model) throw new Error("ocr-review: the bridge reported no model");
     const version = await runCmd(ocrBin, ["version"], {
       env: { ...process.env, OCR_NO_UPDATE: "1" },
     });
@@ -539,12 +536,17 @@ async function main(): Promise<number> {
       ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
       : null;
     assertArm(outDir, "ocr");
-    if (!resume) {
-      for (const c of cases) {
-        rmSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-        rmSync(join(outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
-      }
-    }
+    // run.json is about to carry THIS configuration (prepareArmCases).
+    const prep = prepareArmCases({
+      outDir,
+      cases,
+      resume,
+      fingerprint,
+      readSummary: readOcrSummary,
+      log,
+      arm: "ocr",
+      differs: "a different OCR/model/flags",
+    });
     const runRecord = {
       reviewer: "ocr",
       set: set.name,
@@ -566,15 +568,7 @@ async function main(): Promise<number> {
       pr_text: prText,
       qcr_commit: fingerprint.qcr_commit,
       cases: cases.map((c) => c.instance_id),
-      started_at:
-        (resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
-        new Date().toISOString(),
-      resumes: [
-        ...(resume && Array.isArray(previous?.["resumes"])
-          ? (previous["resumes"] as unknown[])
-          : []),
-        ...(resume && previous ? [{ at: new Date().toISOString(), fingerprint }] : []),
-      ],
+      ...runLifecycle(resume, previous, fingerprint),
       finished_at: null as string | null,
     };
     writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
@@ -586,16 +580,15 @@ async function main(): Promise<number> {
     // (--concurrency), and the login is shared with the companion.
     for (const c of cases) {
       const prior = readOcrSummary(outDir, c);
-      // Only a clean case is kept on --resume, exactly as the QuickReview arm
-      // keeps only `ok`: `partial` (some files failed, e.g. a 429 at the
-      // bridge) is re-run, so rate-limit damage never persists in one arm only.
+      // (a prior summary here carries this run's fingerprint — the others went
+      // above.) Only a clean case is kept on --resume, exactly as the
+      // QuickReview arm keeps only `ok`: `partial` (some files failed, e.g. a
+      // 429 at the bridge) is re-run, so rate-limit damage never persists in
+      // one arm only.
       if (resume && prior && prior.status === "ok") {
-        if (JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)) {
-          log(`ocr: ${c.instance_id} already done — skipped (--resume)`);
-          summaries.push(prior);
-          continue;
-        }
-        log(`ocr: ${c.instance_id} was reviewed by a different OCR/model/flags — re-running`);
+        log(`ocr: ${c.instance_id} already done — skipped (--resume)`);
+        summaries.push(prior);
+        continue;
       }
       try {
         // The bridge reads this refresh-disabled copy on every call.
@@ -611,6 +604,7 @@ async function main(): Promise<number> {
         log(`ocr: STOPPED — ${err.message}`);
         break;
       }
+      prep.beforeReview();
       let meta: PrefetchMeta;
       try {
         meta = readMeta(store, c);
@@ -691,29 +685,16 @@ async function main(): Promise<number> {
     const variant = f.get("--variant") ?? "medium";
     // What the model IS comes from the bridge that serves it, never a flag —
     // except natively, where OpenCode is told the model and the variant.
-    let health: Record<string, unknown> = {};
-    if (provider === "bridge") {
-      try {
-        const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
-        health = (await res.json()) as Record<string, unknown>;
-      } catch (err) {
-        throw new Error(
-          `opencode-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`,
-          {
-            cause: err,
-          },
-        );
-      }
-    } else {
+    let health: Record<string, unknown>;
+    let model: string;
+    if (provider === "bridge")
+      ({ health, model } = await bridgeHealth("opencode-review", bridgeUrl));
+    else {
       // QCR_OPENCODE_MODEL (bench.sh QCR_BENCH_OPENCODE_MODEL): the Codex model id.
-      health = {
-        model: f.get("--model") ?? (process.env.QCR_OPENCODE_MODEL || "gpt-6-sol"),
-        effort: variant,
-        verbosity: null,
-      };
+      model = f.get("--model") ?? (process.env.QCR_OPENCODE_MODEL || "gpt-6-sol");
+      if (!model) throw new Error("opencode-review: --model must name a model");
+      health = { model, effort: variant, verbosity: null };
     }
-    const model = typeof health["model"] === "string" ? health["model"] : "";
-    if (!model) throw new Error("opencode-review: the bridge reported no model");
     const version = await runCmd(opencodeBin, ["--version"], {
       env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: "1" },
     });
@@ -833,21 +814,7 @@ async function main(): Promise<number> {
     const timeoutMin = Number(f.get("--timeout-min") ?? PRAGENT_DEFAULTS.timeoutMin);
     if (!Number.isInteger(timeoutMin) || timeoutMin < 1)
       throw new Error("pragent-review: --timeout-min must be a positive integer");
-    // What the model IS comes from the bridge that serves it, never a flag.
-    let health: Record<string, unknown>;
-    try {
-      const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
-      health = (await res.json()) as Record<string, unknown>;
-    } catch (err) {
-      throw new Error(
-        `pragent-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`,
-        {
-          cause: err,
-        },
-      );
-    }
-    const model = typeof health["model"] === "string" ? health["model"] : "";
-    if (!model) throw new Error("pragent-review: the bridge reported no model");
+    const { health, model } = await bridgeHealth("pragent-review", bridgeUrl);
     return runPragentReview({
       set,
       cases: selectCases(set, only(f)),
@@ -1070,10 +1037,7 @@ async function main(): Promise<number> {
                   : {}),
                 // An `openai/` judge on the API-key route reads OPENAI_API_KEY.
                 ...(model.startsWith("openai/") ? apiKeyEnv() : {}),
-                GIT_CONFIG_NOSYSTEM: "1",
-                GIT_CONFIG_SYSTEM: "/dev/null",
-                GIT_CONFIG_GLOBAL: "/dev/null",
-                GIT_TERMINAL_PROMPT: "0",
+                ...GIT_ISOLATION_ENV,
               },
             },
           });
@@ -1125,7 +1089,7 @@ async function main(): Promise<number> {
     secs.sort((a, b) => a - b);
     // Dollars the way pi prices them (src/bench/cost.ts): summed per call for
     // our arm, the bridge's tokens at pi's rates for the case's model for the
-    // bridge arms (OCR, OpenCode, PR-Agent).
+    // bridge arms (OCR, OpenCode, PR-Agent); Claude Code's own for its arm.
     let usd = 0,
       priced = 0;
     const sources = new Set<string>();
@@ -1153,9 +1117,12 @@ async function main(): Promise<number> {
             ? {
                 usdPerPr: usd / priced,
                 usdTotal: usd,
-                usdSource: sources.has("priced")
-                  ? `Cost: tokens priced at pi's rates (${rates}) — this arm does not run through pi.`
-                  : "Cost: pi's own per-call prices, summed over the main session and every lens pass.",
+                usdSource: sources.has("claude")
+                  ? "Cost: Claude Code's own total_cost_usd per case (the API-price equivalent) — this arm runs no OpenAI model, so pi has no price for it."
+                  : sources.has("priced")
+                    ? `Cost: tokens priced at pi's rates (${rates}) — this arm does not run through pi.`
+                    : "Cost: pi's own per-call prices, summed over the main session and every lens pass.",
+                ...(sources.has("claude") ? { usdBasis: "Claude Code's own" } : {}),
               }
             : {}),
         }
@@ -1208,13 +1175,7 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  process.stderr.write(
-    readFileSync(new URL(import.meta.url))
-      .toString()
-      .split("\n")
-      .slice(0, 30)
-      .join("\n") + "\n",
-  );
+  process.stderr.write(usage(readFileSync(new URL(import.meta.url), "utf8")));
   return 2;
 }
 

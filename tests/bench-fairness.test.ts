@@ -84,7 +84,6 @@ describe("the equal-inputs switch: the PR text, framed as the quickreviewd arm f
 
   it("Codex: the driver appends the text to the harness's /review instructions only with --pr-text", () => {
     const paths = {
-      python: "/py",
       driver: "/d.py",
       dataset: "/ds",
       tree: "/t",

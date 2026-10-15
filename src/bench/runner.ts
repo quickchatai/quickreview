@@ -1301,6 +1301,9 @@ export function unparseableOutputs(caseDir: string, renderOutputs: boolean): str
   return out;
 }
 
+/** The session's event stream and stderr in a case dir. */
+const PI_RUN_FILES = ["pi-events.jsonl", "pi-stderr.log"] as const;
+
 /** Review one case end to end and write its scored result files. Never throws
  * for a case that fails — a failure is a recorded outcome. */
 export async function reviewCase(
@@ -1319,6 +1322,9 @@ export async function reviewCase(
   mkdirSync(caseDir, { recursive: true });
   for (const f of [...Object.values(CASE_FILES), ...POLICED_ORIGINALS, HEAD_PATCHES_FILE])
     rmSync(join(caseDir, f), { force: true });
+  // Before anything can fail: the cost reader prices the events file
+  // (src/bench/cost.ts) whatever this attempt's outcome.
+  for (const f of PI_RUN_FILES) rmSync(join(caseDir, f), { force: true });
   const started = Date.now();
   const summary: CaseSummary = {
     instance_id: c.instance_id,
@@ -1498,10 +1504,8 @@ export async function reviewCase(
       "json",
     ];
     const piBin = o.piBin ?? "pi";
-    const events = join(caseDir, "pi-events.jsonl");
-    const stderr = join(caseDir, "pi-stderr.log");
-    rmSync(events, { force: true });
-    rmSync(stderr, { force: true });
+    const events = join(caseDir, PI_RUN_FILES[0]);
+    const stderr = join(caseDir, PI_RUN_FILES[1]);
     log(
       `review: ${c.instance_id} — ${files.length} files, lenses ${prompts.plannedLenses.join(" ")}`,
     );
@@ -1852,6 +1856,9 @@ export function recordUnprefetched(
     warnings: [],
   };
   mkdirSync(join(outDir, "cases", safeId(c.instance_id)), { recursive: true });
+  // No session ran: an earlier attempt's event stream is not this one's cost.
+  for (const f of PI_RUN_FILES)
+    rmSync(join(outDir, "cases", safeId(c.instance_id), f), { force: true });
   writeFileSync(
     join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
     JSON.stringify(s, null, 2) + "\n",

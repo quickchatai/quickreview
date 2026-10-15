@@ -4,20 +4,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BenchCase, CaseSet } from "./aacr.js";
-import { readCodexSummary } from "./codex.js";
+import { aacrScoreTable, caseWarningsSection } from "./armrun.js";
+import { readCodexSummary, type CodexCaseSummary } from "./codex.js";
 import { AACR_REPORT_PREAMBLE, roundMetrics } from "./report.js";
 
-function n(v: number | undefined): string {
-  return v === undefined
-    ? "?"
-    : Number.isInteger(v)
-      ? String(v)
-      : String(Math.round(v * 100) / 100);
-}
-
-function scoreRow(label: string, s: Record<string, number>, cases: number): string {
-  return `| ${label} | ${n(s["evaluated_instances"])}/${cases} | ${n(s["generated_notes"])} | ${n(s["matched_semantic_notes"])}/${n(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
-}
+/** A run recorded before run.json carried its endpoint ran on the login. */
+const LEGACY_ENDPOINT = "Codex's native ChatGPT login (the refresh-disabled token copy)";
 
 export function renderCodexReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
   const L: string[] = [];
@@ -40,19 +32,14 @@ export function renderCodexReport(set: CaseSet, outDir: string, cases: BenchCase
     `- Reviewer: Codex CLI ${String(run["codex_version"] ?? "?")}, run by the AACR harness's own reviewers/codex.py: \`codex --sandbox workspace-write exec review --json --skip-git-repo-check "/review <base>...<head> (<report-tool instructions>)"\`, findings through its \`report\` MCP tool, timeout ${String(run["timeout_min"] ?? "?")} min; ${run["pr_text"] === true ? "PR title/description appended to the /review instructions (the equal-inputs switch)" : "no PR title/description (the harness passes none)"}`,
   );
   L.push(
-    `- Model: \`${String(run["model"] ?? "?")}\`, reasoning effort \`${String(run["effort"] ?? "?")}\` — Codex's native ChatGPT login (the refresh-disabled token copy)`,
+    `- Model: \`${String(run["model"] ?? "?")}\`, reasoning effort \`${String(run["effort"] ?? "?")}\` — ${typeof run["endpoint"] === "string" ? run["endpoint"] : LEGACY_ENDPOINT}`,
   );
   L.push(`- Judge: ${judge[0] ?? ""}`);
   for (const w of judge.slice(1)) L.push(`  ${w}`);
   L.push("");
   L.push("## Scores (the AACR harness; Codex reader = OCR reader on this file, checked per case)");
   L.push("");
-  L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
-  L.push("|---|---|---|---|---|---|---|---|---|");
-  const { rounds, average } = roundMetrics(join(outDir, "results", "all"));
-  if (average) L.push(scoreRow("**average**", average, cases.length));
-  for (const r of rounds) L.push(scoreRow(String(r.round), r.summary, cases.length));
-  if (!average && rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  L.push(...aacrScoreTable(roundMetrics(join(outDir, "results", "all")), cases.length));
   L.push("");
   L.push("## Per case");
   L.push("");
@@ -61,24 +48,25 @@ export function renderCodexReport(set: CaseSet, outDir: string, cases: BenchCase
   );
   L.push("|---|---|---|---|---|---|---|---|");
   let secs = 0;
-  let ran = 0;
+  const reviewed: CodexCaseSummary[] = [];
   for (const c of cases) {
     const s = readCodexSummary(outDir, c);
     if (!s) {
       L.push(`| ${c.instance_id} | ${c.language} | ${c.references} | not run | | | | |`);
       continue;
     }
-    ran++;
+    reviewed.push(s);
     secs += s.duration_seconds;
     const t = s.tokens;
     L.push(
       `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status} | ${s.comments} | ${s.review_output_source ?? "?"} | ${(s.duration_seconds / 60).toFixed(1)} | ${t ? `${k(t.input_tokens)} (${k(t.cached_input_tokens)}) / ${k(t.output_tokens)} (${k(t.reasoning_output_tokens)})` : "?"} |`,
     );
   }
-  if (ran)
+  if (reviewed.length)
     L.push(
-      `| **total** | | | | | | ${(secs / 60).toFixed(1)} (avg ${(secs / 60 / ran).toFixed(1)}) | |`,
+      `| **total** | | | | | | ${(secs / 60).toFixed(1)} (avg ${(secs / 60 / reviewed.length).toFixed(1)}) | |`,
     );
+  L.push(...caseWarningsSection(reviewed));
   L.push("");
   L.push(
     "Reading the numbers: Codex findings carry a severity but the harness ignores it, so only the `all` variant exists for this arm — compare it with the QuickReview arm's `all` row. Source `mcp_stream` = the findings came through the harness's `report` MCP tool; `jsonl_fallback` = parsed from Codex's final message (raw text there scores zero comments, as in the harness).",
