@@ -135,6 +135,130 @@ export function resolveMaxConcurrency(
   return n >= 1 && n <= 64 ? n : DEFAULT_MAX_CONCURRENCY;
 }
 
+/** Env var carrying the per-pass deadline in minutes (on the VM, config.toml
+ * [pi] subagent_pass_deadline_min riding the session command line). Absent,
+ * "0" or malformed ⇒ no deadline: the companion and the bench run unchanged
+ * unless they set it. */
+export const PASS_DEADLINE_ENV = "QCR_SUBAGENT_PASS_DEADLINE_MIN";
+
+/** The per-pass deadline in ms, or undefined for none. Minutes may be
+ * fractional; anything but a plain non-negative number up to 240 is a
+ * misconfiguration and means no deadline (never a surprise kill). */
+export function resolvePassDeadlineMs(
+  env: Record<string, string | undefined> = process.env,
+): number | undefined {
+  const raw = (env[PASS_DEADLINE_ENV] ?? "").trim();
+  if (!/^\d{1,3}(?:\.\d{1,6})?$/.test(raw)) return undefined;
+  const minutes = Number(raw);
+  if (!(minutes > 0) || minutes > 240) return undefined;
+  return Math.max(1, Math.round(minutes * 60_000));
+}
+
+/** "8", "0.5" — the deadline as the operator wrote it, for the failure text. */
+function minutesText(ms: number): string {
+  const min = ms / 60_000;
+  return Number.isInteger(min) ? String(min) : String(Number(min.toFixed(3)));
+}
+
+/** The failure text a pass that timed out twice returns in its slot. */
+export function passTimeoutMessage(agent: string, deadlineMs: number): string {
+  return `pass ${agent} timed out after ${minutesText(deadlineMs)} min (retried once)`;
+}
+
+/**
+ * Run one pass under the per-pass deadline: each attempt gets its own
+ * AbortSignal composed of the caller's signal OR a fresh timer, which native
+ * honours by killing its child (SIGTERM, then SIGKILL). An attempt the TIMER
+ * ended is retried once with a fresh deadline; a second timeout answers
+ * "timed_out". The caller's abort always wins and is never retried: it
+ * rethrows exactly as before. A result native returns after the timer fired
+ * (the child finished as it was being killed) is a result, not a timeout.
+ */
+export async function runUnderDeadline<T>(
+  attempt: (signal: AbortSignal) => Promise<T>,
+  callerSignal: AbortSignal | undefined,
+  deadlineMs: number,
+  onTimeout?: (attemptNo: number) => void,
+): Promise<T | "timed_out"> {
+  for (let attemptNo = 1; attemptNo <= 2; attemptNo++) {
+    callerSignal?.throwIfAborted();
+    const timer = new AbortController();
+    const handle = setTimeout(
+      () => timer.abort(new Error(`per-pass deadline of ${minutesText(deadlineMs)} min reached`)),
+      deadlineMs,
+    );
+    const signal = callerSignal ? AbortSignal.any([callerSignal, timer.signal]) : timer.signal;
+    try {
+      return await attempt(signal);
+    } catch (err) {
+      if (callerSignal?.aborted || !timer.signal.aborted) throw err;
+      onTimeout?.(attemptNo);
+    } finally {
+      clearTimeout(handle);
+    }
+  }
+  return "timed_out";
+}
+
+/** The one task a call runs, when it runs exactly one: a single-mode
+ * `{agent, task}` call or a one-element `tasks` array. */
+function soleTask(
+  params: Record<string, unknown>,
+): { agent: string; task: unknown; mode: "single" | "parallel" } | undefined {
+  if (Array.isArray(params.tasks)) {
+    if (params.tasks.length !== 1) return undefined;
+    const t = params.tasks[0];
+    const agent =
+      typeof t === "object" && t !== null ? (t as Record<string, unknown>).agent : undefined;
+    return typeof agent === "string"
+      ? { agent, task: (t as Record<string, unknown>).task, mode: "parallel" }
+      : undefined;
+  }
+  if (params.chain !== undefined) return undefined;
+  return typeof params.agent === "string"
+    ? { agent: params.agent, task: params.task, mode: "single" }
+    : undefined;
+}
+
+/** A pass that timed out twice, in native's own result shape for its mode,
+ * so the combined result, round-progress and the session read it as one
+ * failed pass with the timeout named. */
+export function timedOutResult(
+  sole: { agent: string; task: unknown; mode: "single" | "parallel" },
+  deadlineMs: number,
+): ParallelNativeResult {
+  const message = passTimeoutMessage(sole.agent, deadlineMs);
+  const result = {
+    agent: sole.agent,
+    agentSource: "unknown",
+    task: sole.task,
+    exitCode: 1,
+    messages: [],
+    stderr: "",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0,
+      contextTokens: 0,
+      turns: 0,
+    },
+    stopReason: "error",
+    errorMessage: message,
+    timedOut: true,
+  };
+  const text =
+    sole.mode === "parallel"
+      ? `Parallel: 0/1 succeeded\n\n### [${sole.agent}] failed (timeout)\n\n${message}`
+      : `Agent timeout: ${message}`;
+  return {
+    content: [{ type: "text", text }],
+    details: { mode: sole.mode, agentScope: undefined, projectAgentsDir: null, results: [result] },
+    isError: true,
+  };
+}
+
 /** Drop `cwd` from a task/chain item, leaving the rest untouched. */
 function stripCwd(item: unknown): unknown {
   if (typeof item !== "object" || item === null || Array.isArray(item)) return item;
@@ -264,7 +388,7 @@ export function wrapExecute(
   return async function wrapped(this: unknown, id, params, signal, onUpdate, ctx) {
     const safe = sanitizeParams(params ?? {}, env);
     if (resolveWideFanout(env) && Array.isArray(safe.tasks) && safe.tasks.length > 1) {
-      return await runWide.call(this, execute, semaphore, id, safe, signal, onUpdate, ctx);
+      return await runWide.call(this, execute, semaphore, id, safe, signal, onUpdate, ctx, env);
     }
     const weight = callWeight(safe, semaphore.permits);
     await semaphore.acquire(weight);
@@ -280,6 +404,19 @@ export function wrapExecute(
         semaphore.permits < NATIVE_IN_CALL_CONCURRENCY
           ? semaphore.permits
           : NATIVE_MAX_PARALLEL_TASKS;
+      const deadlineMs = resolvePassDeadlineMs(env);
+      const sole = soleTask(safe);
+      if (deadlineMs !== undefined && sole) {
+        const value = await runUnderDeadline(
+          async (attemptSignal) => await execute.call(this, id, safe, attemptSignal, onUpdate, ctx),
+          signal,
+          deadlineMs,
+          (n) => logPassTimeout(sole.agent, deadlineMs, n),
+        );
+        return value === "timed_out"
+          ? (timedOutResult(sole, deadlineMs) as unknown as Awaited<ReturnType<ToolExecute>>)
+          : value;
+      }
       if (tasks.length <= chunkSize) {
         return await execute.call(this, id, safe, signal, onUpdate, ctx);
       }
@@ -345,6 +482,17 @@ export function wrapExecute(
   };
 }
 
+/** One line on the session's stderr per deadline hit — the retry and the
+ * final failure; the failed slot itself is what round-progress and the
+ * daemon record. */
+function logPassTimeout(agent: string, deadlineMs: number, attemptNo: number): void {
+  console.error(
+    attemptNo === 1
+      ? `subagents: pass ${agent} exceeded its ${minutesText(deadlineMs)} min deadline — aborted, retrying once`
+      : `subagents: ${passTimeoutMessage(agent, deadlineMs)}`,
+  );
+}
+
 /** A not-yet-reported task's slot, in native's own still-running shape. */
 function runningPlaceholder(task: unknown): Record<string, unknown> {
   const fields = typeof task === "object" && task !== null ? (task as Record<string, unknown>) : {};
@@ -369,8 +517,10 @@ async function runWide(
   signal: Parameters<ToolExecute>[2],
   onUpdate: Parameters<ToolExecute>[3],
   ctx: Parameters<ToolExecute>[4],
+  env: Record<string, string | undefined>,
 ): Promise<Awaited<ReturnType<ToolExecute>>> {
   const tasks = safe.tasks as unknown[];
+  const deadlineMs = resolvePassDeadlineMs(env);
   // Every pass's slot stands in the combined update from the start, as the
   // still-running placeholder native itself emits (`exitCode: -1`), so a pass
   // that reports before an earlier one never shifts that earlier one out of
@@ -401,6 +551,7 @@ async function runWide(
         signal,
         passUpdate,
         ctx,
+        deadlineMs,
       );
       partial[index] = value.details.results;
       return value;
@@ -427,9 +578,17 @@ async function runWide(
 
 /**
  * One pass of the wide fan-out: wait for one permit, run the one-task native
- * call, release the permit when it ends however it ends. The unit a per-pass
- * deadline and retry would wrap: `params.tasks` holds exactly one task,
- * and `signal` is the only abort this call sees.
+ * call, release the permit when it ends however it ends. With a per-pass
+ * deadline the call runs under `runUnderDeadline`: a timed-out attempt is
+ * retried once with a fresh deadline, and a second timeout becomes this
+ * pass's failed result — the siblings' results are untouched.
+ *
+ * The permit is KEPT across the retry. The killed child has exited before
+ * native's call rejects (it throws only after the process closed), so the
+ * retry's child takes the slot the dead one held and the process-wide cap
+ * still binds; releasing and re-queueing would put a pass that already cost
+ * a whole deadline behind every waiting pass, lengthening exactly the round
+ * the deadline exists to bound.
  */
 async function runPass(
   this: unknown,
@@ -440,6 +599,7 @@ async function runPass(
   signal: Parameters<ToolExecute>[2],
   onUpdate: ((update: ParallelNativeResult) => void) | undefined,
   ctx: Parameters<ToolExecute>[4],
+  deadlineMs?: number,
 ): Promise<ParallelNativeResult> {
   await semaphore.acquire(1);
   try {
@@ -458,7 +618,21 @@ async function runPass(
           onUpdate(value);
         }
       : undefined;
-    return parallelResult(await execute.call(this, id, params, signal, passUpdate, ctx));
+    const sole = deadlineMs === undefined ? undefined : soleTask(params);
+    if (deadlineMs === undefined || !sole) {
+      return parallelResult(await execute.call(this, id, params, signal, passUpdate, ctx));
+    }
+    const value = await runUnderDeadline(
+      async (attemptSignal) =>
+        parallelResult(await execute.call(this, id, params, attemptSignal, passUpdate, ctx)),
+      signal,
+      deadlineMs,
+      (n) => logPassTimeout(sole.agent, deadlineMs, n),
+    );
+    if (value !== "timed_out") return value;
+    const failed = timedOutResult(sole, deadlineMs);
+    onUpdate?.(failed);
+    return failed;
   } finally {
     semaphore.release(1);
   }
@@ -560,7 +734,9 @@ function resolveTaskDir(
   realRoot: string,
   extras: ReadonlySet<string>,
   pr: string | undefined,
-): { dir: string; phase: "plan" | "sweep" | "optional"; passes: string | undefined } | { error: string } {
+):
+  | { dir: string; phase: "plan" | "sweep" | "optional"; passes: string | undefined }
+  | { error: string } {
   const real = realDir(resolve(realRoot, input));
   if (!real) return { error: `${input}: no such directory` };
   // Resolved too: on the VM `<sandbox>/state` is a SYMLINK to the state volume
@@ -635,7 +811,10 @@ export function planLaunch(
   try {
     const dirs = stringList(params.dirs ?? params.dir);
     if (!dirs || dirs.length === 0)
-      return { ok: false, error: "`dirs` must name the round's task directory (one to three paths)" };
+      return {
+        ok: false,
+        error: "`dirs` must name the round's task directory (one to three paths)",
+      };
     if (dirs.length > 3)
       return {
         ok: false,
@@ -655,8 +834,11 @@ export function planLaunch(
     if (!realRoot) return { ok: false, error: `sandbox root ${root} is not readable` };
     const extras = sanctionedExtras(env);
 
-    const resolved: Array<{ dir: string; phase: "plan" | "sweep" | "optional"; passes: string | undefined }> =
-      [];
+    const resolved: Array<{
+      dir: string;
+      phase: "plan" | "sweep" | "optional";
+      passes: string | undefined;
+    }> = [];
     for (const d of dirs) {
       const r = resolveTaskDir(d, realRoot, extras, env.QCR_PR?.trim() || undefined);
       if ("error" in r) return { ok: false, error: r.error };
@@ -1000,7 +1182,9 @@ export function rewriteLeafSpawn(
   const slot = deps.grouper.next(deps.now(), modelOf(args));
   const pack = deps.leafCacheExt ? packForTask(args, deps.isFile) : undefined;
   const keyed = (dir: string) => ["--session-id", slot.key, "--session-dir", dir];
-  const packEnv = pack ? { ...((options?.env as typeof deps.baseEnv) ?? deps.baseEnv), [LEAF_PACK_ENV]: pack } : undefined;
+  const packEnv = pack
+    ? { ...((options?.env as typeof deps.baseEnv) ?? deps.baseEnv), [LEAF_PACK_ENV]: pack }
+    : undefined;
   const ext = pack ? ["--extension", deps.leafCacheExt as string] : [];
 
   const sessionDir = deps.makeSessionDir();
@@ -1038,7 +1222,10 @@ export function rewriteLeafSpawn(
     next = ["-c", 'sleep "$0"; exec "$@"', (slot.delayMs / 1000).toFixed(2), command, ...next];
     cmd = "/bin/sh";
   }
-  return { child: { command: cmd, args: next, options: opts, sessionDir }, ...(warmup ? { warmup } : {}) };
+  return {
+    child: { command: cmd, args: next, options: opts, sessionDir },
+    ...(warmup ? { warmup } : {}),
+  };
 }
 
 const LEAF_PATCHED = Symbol.for("qcr.leafSpawnPatched");
@@ -1197,7 +1384,8 @@ export default async function activate(pi: Pi): Promise<void> {
             real(launchPlanDefinition(wrapped));
             log(
               `subagents: native subagent tool registered (pi ${version}, scope=${scope}, ` +
-                `max_concurrency=${maxConcurrency}, fanout=${resolveWideFanout() ? "wide" : "native"}; ` +
+                `max_concurrency=${maxConcurrency}, fanout=${resolveWideFanout() ? "wide" : "native"}, ` +
+                `pass_deadline=${resolvePassDeadlineMs() === undefined ? "off" : `${minutesText(resolvePassDeadlineMs()!)} min, one retry`}; ` +
                 `${LAUNCH_PLAN_TOOL} registered; cache groups ` +
                 `${cacheGroups ? `of ${resolveCacheGroup()}, stagger ${resolveCacheStagger()} ms` : "off"})`,
             );

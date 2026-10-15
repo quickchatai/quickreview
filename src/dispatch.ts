@@ -1097,6 +1097,7 @@ export function buildPassPlan(
       tier,
       raisable_to: pinned ? [] : raisableFrom(lens, tier),
       ...(why !== undefined ? { why } : {}),
+      ...(lens === BASELINE_PASS || risk.has(lens) ? { required: true as const } : {}),
     };
   });
   // On a very large change pass-baseline — one row, and the round's

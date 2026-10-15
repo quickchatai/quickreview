@@ -1059,6 +1059,23 @@ export const DEFAULT_PASS_TIERS: Readonly<Record<string, PassTier>> = Object.fre
   "pass-behaviour-delta": "sol-high",
 });
 
+/** `[pi] subagent_pass_deadline_min` when the file does not set it: a
+ * healthy pass takes 20-100 s and the slowest about 4 min, so 8 min only
+ * ever cuts a stalled one. */
+export const DEFAULT_SUBAGENT_PASS_DEADLINE_MIN = 8;
+
+/** Refuse a per-pass deadline that is not a number of minutes in 0..240
+ * (0 = off). A typo must not silently become "no deadline". */
+function parsePiPassDeadline<T extends { subagent_pass_deadline_min: unknown }>(pi: T): T {
+  const v = pi.subagent_pass_deadline_min;
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 240) {
+    throw new Error(
+      `config.toml [pi] subagent_pass_deadline_min must be a number of minutes 0-240 (0 = off; got ${JSON.stringify(v)})`,
+    );
+  }
+  return pi;
+}
+
 /** Defaults for the tiered [models] knobs — older configs keep parsing. */
 export const MODELS_TIER_DEFAULTS: Pick<
   ModelsConfig,
@@ -1889,6 +1906,12 @@ export interface Config {
      * the cache is written before they ask (QCR_SUBAGENT_CACHE_STAGGER_MS;
      * probe: simultaneous requests both missed, one 2 s later hit). */
     subagent_cache_stagger_ms: number;
+    /** Per-pass deadline in minutes for a review session's lens children
+     * (rides the command line as QCR_SUBAGENT_PASS_DEADLINE_MIN). The glue
+     * aborts a pass still running at the deadline, retries it ONCE with a
+     * fresh deadline, and a second timeout returns a failed result for that
+     * pass alone. 0 ⇒ no deadline. */
+    subagent_pass_deadline_min: number;
   };
   openviking: OpenVikingConfig;
   memory: MemoryConfig;
@@ -2571,21 +2594,28 @@ export function parseConfig(toml: string): Config {
     } as Config["eod"],
     caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
     models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
-    pi: {
+    pi: parsePiPassDeadline({
       subagent_max_concurrency: 4,
       subagent_cache_group: 5,
       subagent_cache_stagger_ms: 2500,
+      subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
       ...(req(raw, "pi") as Omit<
         Config["pi"],
-        "subagent_max_concurrency" | "subagent_cache_group" | "subagent_cache_stagger_ms"
+        | "subagent_max_concurrency"
+        | "subagent_cache_group"
+        | "subagent_cache_stagger_ms"
+        | "subagent_pass_deadline_min"
       > &
         Partial<
           Pick<
             Config["pi"],
-            "subagent_max_concurrency" | "subagent_cache_group" | "subagent_cache_stagger_ms"
+            | "subagent_max_concurrency"
+            | "subagent_cache_group"
+            | "subagent_cache_stagger_ms"
+            | "subagent_pass_deadline_min"
           >
         >),
-    },
+    }),
     openviking: parseOpenViking((raw.openviking ?? {}) as Record<string, unknown>),
     memory: parseMemory((raw.memory ?? {}) as Record<string, unknown>),
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
@@ -2701,7 +2731,9 @@ export function parseConfig(toml: string): Config {
     ["[pi] subagent_cache_stagger_ms", cfg.pi.subagent_cache_stagger_ms, 0],
   ] as const) {
     if (!(typeof n === "number" && Number.isInteger(n) && n >= min))
-      throw new Error(`config.toml ${key} must be a whole number >= ${min} (got ${JSON.stringify(n)})`);
+      throw new Error(
+        `config.toml ${key} must be a whole number >= ${min} (got ${JSON.stringify(n)})`,
+      );
   }
   {
     const n = cfg.review.follow_up_small_delta_lines;

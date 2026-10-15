@@ -512,10 +512,13 @@ describe("birth", () => {
         "QCR_SUBAGENT_CACHE_STAGGER_MS",
         // The process-wide subagent fan-out cap for the glue.
         "QCR_SUBAGENT_MAX_CONCURRENCY",
+        // The per-pass deadline for lens children, in minutes.
+        "QCR_SUBAGENT_PASS_DEADLINE_MIN",
         "QCR_SUBAGENT_WIDE_FANOUT",
         "TERM",
       ]);
       expect(env.QCR_SUBAGENT_MAX_CONCURRENCY).toBe("6");
+      expect(env.QCR_SUBAGENT_PASS_DEADLINE_MIN).toBe("8");
       expect(env.QCR_OV_RETIRED_FILE).toBe(
         join(root, "pihome", ".openviking", "retired-uris.json"),
       );

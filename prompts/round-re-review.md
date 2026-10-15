@@ -367,6 +367,11 @@ CI's output — you never run, re-run or cancel any check yourself.
   completed, write NO verdict file: say what failed in the conversation and
   stop — the daemon detects the stalled round and requeues it. Never convert
   an unfinished review into a verdict.
+- if a posting script refuses with `required pass missing` (pass-baseline
+  or a risk lens failed and never completed — a timed-out pass is retried
+  once for you before that), nothing was posted: post nothing else and do
+  not work around it, but still commit your verdict file as decided — the
+  daemon reads the gap, applies no verdict and requeues the round.
 
 <!-- RATIFIED posting-map — do not edit; owner only -->
 Nits and questions never block. Posting map: P0/P1 → `[blocker]`; P2 →

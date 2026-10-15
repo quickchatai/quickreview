@@ -289,6 +289,12 @@ subagent_max_concurrency = 12
 # pack-less group's later children start this many ms after its first.
 # subagent_cache_group = 5
 # subagent_cache_stagger_ms = 2500
+# Per-pass deadline for lens children, in minutes: a pass still running at
+# the deadline is aborted and retried ONCE with a fresh deadline; a second
+# timeout fails that pass alone. A failed pass-baseline or risk lens holds
+# the round's posting and the round is requeued (within max_self_requeues).
+# 0 = no deadline.
+# subagent_pass_deadline_min = 8
 
 [memory]
 # Round seeding — how much memory rides each round prompt and how

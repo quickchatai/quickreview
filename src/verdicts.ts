@@ -91,6 +91,13 @@ import {
 } from "./standing-review.js";
 import { flushHeldWakes } from "./wakes.js";
 import {
+  describeGap,
+  failedPasses,
+  parsePlan,
+  readRoundProgress,
+  requiredPassGap,
+} from "./requiredpasses.js";
+import {
   readSettledJson,
   resolvePartialWritePolicy,
   type PartialWritePolicy,
@@ -107,6 +114,7 @@ type SelfRequeueMode =
   | "needs_human_incomplete"
   | "lost_prompt"
   | "head_moved"
+  | "required_pass_missing"
   | "infrastructure_active"
   | "infrastructure_settled";
 
@@ -176,7 +184,11 @@ function measureModeFor(via: ReceiptSettleVia): MeasureMode {
 /** A self-requeue's measurement mode: the two that come from a verdict file
  * are the sweep's; the rest come from the deadline tick or the supervisor. */
 function measureModeForRequeue(mode: SelfRequeueMode): MeasureMode {
-  return mode === "head_moved" || mode === "needs_human_incomplete" ? "inline" : "background";
+  return mode === "head_moved" ||
+    mode === "needs_human_incomplete" ||
+    mode === "required_pass_missing"
+    ? "inline"
+    : "background";
 }
 
 const SELF_REQUEUE_CAUSE: Record<SelfRequeueMode, CancelCause> = {
@@ -185,6 +197,7 @@ const SELF_REQUEUE_CAUSE: Record<SelfRequeueMode, CancelCause> = {
   needs_human_incomplete: "incomplete_round",
   lost_prompt: "lost_prompt",
   head_moved: "head_moved",
+  required_pass_missing: "incomplete_round",
   infrastructure_active: "infrastructure_failure",
   infrastructure_settled: "infrastructure_failure",
 };
@@ -1740,6 +1753,15 @@ export class VerdictWatcher {
         "overdue",
       );
       return "applied";
+    }
+
+    // A required pass (pass-baseline or a risk lens, marked by the plan
+    // builder) that failed and never completed: the posting route refused to
+    // post, so the round is redone through the capped self-requeue instead
+    // of applying a verdict reached without it.
+    if (round && round.status === "running") {
+      const requeued = await this.requeueOnRequiredPassGap(v, round);
+      if (requeued) return "applied";
     }
 
     // NEEDS_HUMAN is never an escape hatch for an unfinished review. One with
@@ -3498,6 +3520,64 @@ export class VerdictWatcher {
   }
 
   /**
+   * The verdict-time belt for required passes (src/requiredpasses.ts). Every
+   * failed pass of the round is recorded (`round_pass_failures`) — the gap is
+   * internal, never on the PR. When a required pass is missing and nothing
+   * was posted for the round, the round is cancelled and requeued within
+   * `max_self_requeues` (true: the caller returns); past the cap it ends on
+   * the anomaly path, never with a verdict applied over the gap. A gap whose
+   * round already holds a posting receipt is logged and applied as usual —
+   * a requeue would post a second review. Unknown evidence never requeues.
+   */
+  private async requeueOnRequiredPassGap(v: VerdictFile, round: RoundRow): Promise<boolean> {
+    const { cfg, store, adapter } = this.deps;
+    const progress = readRoundProgress(this.deps.root ?? sandboxRoot(), v.pr);
+    const failures = failedPasses(progress, v.round_no);
+    if (failures.length > 0)
+      store.logEvent("round_pass_failures", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        failed: failures,
+      });
+    const gap = requiredPassGap(parsePlan(round.pass_plan), progress, v.round_no);
+    if (gap.state !== "missing") return false;
+    const missing = describeGap(gap.missing);
+    const receipt = readPostingReceipt(this.postingReceiptDir(), v.pr, v.round_no);
+    if (receipt && receipt.status !== "skipped") {
+      store.logEvent("required_pass_missing_after_post", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        receipt: receipt.status,
+        missing,
+      });
+      return false;
+    }
+    store.logEvent("round_required_pass_missing", v.pr, {
+      round_id: round.id,
+      round_no: v.round_no,
+      head_sha: v.head_sha,
+      missing,
+    });
+    if (await this.selfRequeue(round, "required_pass_missing")) {
+      await this.safe(
+        () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
+        `remove ${cfg.github.in_progress_label} on #${v.pr}`,
+      );
+      this.log(
+        `verdicts: #${v.pr} round ${v.round_no} missing required pass(es) ${missing} — requeued, nothing posted`,
+      );
+      return true;
+    }
+    await this.handleAnomaly(
+      v.pr,
+      v.round_no,
+      `round ${v.round_no} is missing required pass(es) ${missing} and could not be self-requeued — cap exhausted or no running round; nothing was posted`,
+      "overdue",
+    );
+    return true;
+  }
+
+  /**
    * Self-requeue a stuck round. Returns true when the round was handled here
    * (cancelled + PR re-queued for a fresh dispatch through the normal pump —
    * same move as the overseer's rerun-round and the startup orphan requeue);
@@ -3540,11 +3620,13 @@ export class VerdictWatcher {
           ? `round ${round.round_no} passed its deadline (${round.deadline_at}) with no verdict; its session was alive but wedged and has been killed for a fresh rebirth`
           : mode === "lost_prompt"
             ? `round ${round.round_no}'s prompt was consumed from the inject dir but the session shows no activity since the round started (${round.started_at}) — the prompt was dropped in delivery; redispatching`
-            : mode === "head_moved"
-              ? `round ${round.round_no} ended head_moved (guard 5): the PR advanced mid-round and the session correctly posted nothing — redispatching against the fresh head; the session is healthy and was not killed`
-              : mode === "infrastructure_active" || mode === "infrastructure_settled"
-                ? `round ${round.round_no} failed a bounded daemon→Pi infrastructure stage before any merits verdict — redispatching through the ordinary pump`
-                : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
+            : mode === "required_pass_missing"
+              ? `round ${round.round_no} ended with a required pass (pass-baseline or a risk lens) failed and never completed — the session posted nothing; redispatching`
+              : mode === "head_moved"
+                ? `round ${round.round_no} ended head_moved (guard 5): the PR advanced mid-round and the session correctly posted nothing — redispatching against the fresh head; the session is healthy and was not killed`
+                : mode === "infrastructure_active" || mode === "infrastructure_settled"
+                  ? `round ${round.round_no} failed a bounded daemon→Pi infrastructure stage before any merits verdict — redispatching through the ordinary pump`
+                  : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
     if (mode === "infrastructure_active" && !this.deps.hooks.killSession) {
       store.logEvent("session_recovery_kill_unavailable", round.pr, {
         round_id: round.id,

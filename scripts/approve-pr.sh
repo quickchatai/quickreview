@@ -219,6 +219,17 @@ do_mutation() { # do_mutation <kind> <method> <path> <body> <note>
 
 urlenc() { python3 -c 'import sys,urllib.parse; sys.stdout.write(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
 
+# A required pass (pass-baseline or a risk lens) that failed and never
+# completed: post NOTHING — checked before the outbox snapshot, so nothing is
+# queued for later delivery either. The daemon requeues the round
+# (scripts/required-passes.py, the mirror of src/requiredpasses.ts).
+if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+  REQUIRED_RC=0
+  REQUIRED_PASSES="$(python3 "$ROOT/scripts/required-passes.py" "${QCR_STATE_DB:-$ROOT/state/state.db}" \
+    "${QCR_ROUND_PROGRESS_DIR:-$ROOT/state/round-progress}" "$PR" "$ROUND_NO")" || REQUIRED_RC=$?
+  [[ "$REQUIRED_RC" != "3" ]] || die "required pass missing for #$PR round $ROUND_NO — ${REQUIRED_PASSES#missing: }. Nothing was posted and nothing may be: do not retry or post another way; commit your verdict file as decided and stop — the daemon requeues the round."
+fi
+
 # Snapshot before any GitHub read, under the same lock as the first POST.
 if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
   [[ -z "$BODY_FILE" || -r "$BODY_FILE" ]] || die "unreadable review body file: $BODY_FILE"

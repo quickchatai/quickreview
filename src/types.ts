@@ -117,6 +117,12 @@ export interface PassPlanEntry {
   /** The files this row's pass covers — set on sweep rows only: one row per
    * group of changed files, several rows calling the same agent. */
   focus?: string[];
+  /** Set on the rows a round may not post without: pass-baseline (every
+   * split row) and the risk passes (`[models] risk_passes`). One of these
+   * failed and never completed is a round that posts nothing and is
+   * requeued (src/requiredpasses.ts). Absent on every other row, and on
+   * plans recorded before the field existed. */
+  required?: true;
 }
 
 /** One prior open finding as a lens's task file carries it. */

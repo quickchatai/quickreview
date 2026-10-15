@@ -29,6 +29,7 @@ import {
   DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S,
   DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
   DEFAULT_SESSION_COMMAND_START_LEASE_S,
+  DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
   githubCloneDir,
   openVikingBaseUrl,
 } from "./config.js";
@@ -511,6 +512,12 @@ export class PiSessionManager implements SessionHooks {
       // round's context pack first rides a child only where the round has one.
       QCR_SUBAGENT_CACHE_GROUP: String(this.cfg.pi.subagent_cache_group ?? 0),
       QCR_SUBAGENT_CACHE_STAGGER_MS: String(this.cfg.pi.subagent_cache_stagger_ms ?? 2500),
+      // The per-pass deadline (config.toml [pi] subagent_pass_deadline_min):
+      // a stalled lens child is aborted and retried once instead of holding
+      // the round. "0" switches it off.
+      QCR_SUBAGENT_PASS_DEADLINE_MIN: String(
+        this.cfg.pi.subagent_pass_deadline_min ?? DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
+      ),
       QCR_LEAF_CACHE_EXT: join(this.root, "extensions", "leaf-cache.ts"),
       // The daemon's own resolved config, so the posting scripts read the
       // file the daemon read. Set by the daemon — the bash guard

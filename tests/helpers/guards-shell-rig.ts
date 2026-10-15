@@ -116,6 +116,9 @@ export function useGuardsShellRig(): GuardsShellRig {
         QCR_DRYRUN_DIR: join(s.dir, "dryrun"),
         // Never the repo's own state.db: the guards read and stamp this file.
         QCR_STATE_DB: s.dbPath,
+        // Never the repo's own round-progress snapshots: the required-pass
+        // check reads this directory.
+        QCR_ROUND_PROGRESS_DIR: join(s.dir, "round-progress"),
         ...extraEnv,
       };
       // The guard reads QCR_EXPECTED_HEAD from the caller's environment: unless
