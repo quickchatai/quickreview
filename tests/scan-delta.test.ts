@@ -353,6 +353,36 @@ describe("a run with nothing to read still reconciles what it owes", () => {
   });
 });
 
+describe("a start still planning keeps its tree", () => {
+  it("a preview at another sha, planned meanwhile, does not prune the starting run's tree", async () => {
+    await fullScan();
+    const p = ports(runner(), { [SHA1]: TREE, [SHA2]: TREE2 });
+    const keeps: Array<{ sha: string; keep: string[] }> = [];
+    const open = p.source.open;
+    p.source = {
+      ...p.source,
+      open: (sha, keep) => {
+        keeps.push({ sha, keep: [...keep] });
+        return open(sha, keep);
+      },
+    };
+    const s = new ScanRunner(p);
+    const first = await s.preview({ sha: SHA2, delta: true });
+    if (!first.ok) throw new Error(first.errors.join("; "));
+    keeps.length = 0;
+    // Issued together, as a model's parallel tool calls are.
+    const [started, other] = await Promise.all([
+      s.start({ key: first.preview.key, sha: SHA2, delta: true }),
+      s.preview({ sha: SHA1 }),
+    ]);
+    expect(started.ok).toBe(true);
+    expect(other.ok).toBe(true);
+    await s.idle();
+    expect(keeps.map((k) => k.sha)).toEqual([SHA2, SHA1]);
+    expect(keeps[1]!.keep).toContain(SHA2);
+  });
+});
+
 describe("exact match first, then the companion, then fixed", () => {
   async function rescan() {
     await fullScan();

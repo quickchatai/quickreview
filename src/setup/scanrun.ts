@@ -76,6 +76,7 @@
 // and its answer (`scan/stop.json`, `scan/stop-result.json` —
 // scanreport.ts, which also owns the run record's name and parser).
 import { posix } from "node:path";
+import { VALIDATE_PASS } from "../include.js";
 import type { LensTuningMap } from "../lenstuning.js";
 import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig, ScanDepth } from "../config.js";
@@ -456,7 +457,7 @@ const EPS = 1e-9;
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 /** The validator's variant at the tier of the lens it judges — never raised:
  * the scan validator is the skeptic, at the same tier. */
-const validatorAgent = (tier: PassTier): string => `pass-validate--${tier}`;
+const validatorAgent = (tier: PassTier): string => `${VALIDATE_PASS}--${tier}`;
 
 /** Why a candidate the skeptic's answer never mentioned is doubtful. */
 export const UNMENTIONED_REASON =
@@ -566,6 +567,9 @@ export class ScanRunner {
   private active: { id: string; sha: string; abort: AbortController; done: Promise<void> } | null =
     null;
   private starting = false;
+  /** The commit a start still planning has opened: its tree is kept, like
+   * the active run's, from a preview or proposal planned meanwhile. */
+  private startingSha: string | null = null;
   private consuming = false;
   private readonly ledger: Ledger;
   private readonly findings: FindingsStore;
@@ -591,10 +595,23 @@ export class ScanRunner {
 
   // -- the plan --
 
-  private async plan(
+  /** What every plan reads first: the settings, the saved cut, the commit
+   * `ref` names (default HEAD), its tree and the ledger. Opening a tree
+   * prunes the others, never the active run's nor a planning start's;
+   * `claim` (a start planning) marks this one as the starting start's. */
+  private prerequisites(
     ref: string | undefined,
-    delta = false,
-  ): Promise<{ ok: true; planned: Planned } | Refusal> {
+    claim: boolean,
+  ):
+    | {
+        ok: true;
+        settings: ScanSettings;
+        cut: UnitCut;
+        sha: string;
+        tree: ScanTree;
+        entries: LedgerEntry[];
+      }
+    | Refusal {
     const s = this.ports.settings();
     if (!s.ok) return s;
     const cut = this.ports.savedCut();
@@ -606,16 +623,29 @@ export class ScanRunner {
         ok: false,
         errors: [`${JSON.stringify(wanted)} names no commit in ${this.ports.source.location}`],
       };
-    const opened = this.ports.source.open(sha, this.active ? [this.active.sha] : []);
+    if (claim) this.startingSha = sha;
+    const keep = [this.active?.sha, this.startingSha].filter(
+      (k): k is string => k !== undefined && k !== null,
+    );
+    const opened = this.ports.source.open(sha, keep);
     if (!opened.ok)
       return {
         ok: false,
         errors: [`cannot read the tree at ${sha.slice(0, 12)}: ${opened.reason}`],
       };
-    const tree = opened.tree;
     const { entries, error } = this.ledger.load();
     if (error !== null) return { ok: false, errors: [error] };
-    const settings = s.settings;
+    return { ok: true, settings: s.settings, cut: cut.cut, sha, tree: opened.tree, entries };
+  }
+
+  private async plan(
+    ref: string | undefined,
+    delta = false,
+    claim = false,
+  ): Promise<{ ok: true; planned: Planned } | Refusal> {
+    const pre = this.prerequisites(ref, claim);
+    if (!pre.ok) return pre;
+    const { sha, tree, entries, settings } = pre;
     const cfg = settings.scan;
     const depth = cfg.depth;
     // A delta compares against the last scan: each file's newest content the
@@ -645,7 +675,7 @@ export class ScanRunner {
       };
     }
     const plan = planStage1({
-      cut: cut.cut,
+      cut: pre.cut,
       files: tree.files,
       linesOf: (p) => tree.lines(p),
       whyUnreadable: (p) => tree.whyUnreadable?.(p) ?? null,
@@ -826,19 +856,8 @@ export class ScanRunner {
     sha?: string;
     delta?: boolean;
   }): Promise<{ ok: true; run: ScanRun } | Refusal> {
-    if (this.active)
-      return {
-        ok: false,
-        errors: [`scan ${this.active.id} is still running — stop it or wait for it`],
-      };
-    // Two starts in parallel (a model may issue tool calls concurrently) must
-    // not both pass the check above while the first is still planning: that
-    // would run — and pay for — the same scan twice.
-    if (this.starting)
-      return {
-        ok: false,
-        errors: ["a scan is already starting — wait for it, then check scan_status"],
-      };
+    const busy = this.refuseBusy();
+    if (busy !== null) return busy;
     if (typeof args.key !== "string" || args.key === "") {
       return {
         ok: false,
@@ -847,11 +866,36 @@ export class ScanRunner {
         ],
       };
     }
+    const key = args.key;
+    return this.holdingStart(() => this.startPlanned(key, args.sha, args.delta === true));
+  }
+
+  /** Why no start may begin now: a run is active, or another start is still
+   * planning. Two starts in parallel (a model may issue tool calls
+   * concurrently) must not both pass the active check while the first is
+   * still planning: that would run — and pay for — the same scan twice. */
+  private refuseBusy(): Refusal | null {
+    if (this.active)
+      return {
+        ok: false,
+        errors: [`scan ${this.active.id} is still running — stop it or wait for it`],
+      };
+    if (this.starting)
+      return {
+        ok: false,
+        errors: ["a scan is already starting — wait for it, then check scan_status"],
+      };
+    return null;
+  }
+
+  /** Hold the starting slot across a start's planning and launch. */
+  private async holdingStart<T>(body: () => Promise<T>): Promise<T> {
     this.starting = true;
     try {
-      return await this.startPlanned(args.key, args.sha, args.delta === true);
+      return await body();
     } finally {
       this.starting = false;
+      this.startingSha = null;
     }
   }
 
@@ -861,7 +905,7 @@ export class ScanRunner {
     delta: boolean,
   ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const args = { key, sha };
-    const p = await this.plan(args.sha, delta);
+    const p = await this.plan(args.sha, delta, true);
     if (!p.ok) return p;
     const { preview, tree, settings } = p.planned;
     if (args.key !== preview.key) {
@@ -1074,34 +1118,18 @@ export class ScanRunner {
     budgetUsd: number | null,
     ref: string | undefined,
     deep: boolean | undefined,
+    claim = false,
   ): Promise<Stage2Planned> {
-    const s = this.ports.settings();
-    if (!s.ok) return s;
-    const cut = this.ports.savedCut();
-    if (!cut.ok) return cut;
-    const wanted = (ref ?? "").trim() || "HEAD";
-    const sha = this.ports.source.resolve(wanted);
-    if (sha === null)
-      return {
-        ok: false,
-        errors: [`${JSON.stringify(wanted)} names no commit in ${this.ports.source.location}`],
-      };
-    const opened = this.ports.source.open(sha, this.active ? [this.active.sha] : []);
-    if (!opened.ok)
-      return {
-        ok: false,
-        errors: [`cannot read the tree at ${sha.slice(0, 12)}: ${opened.reason}`],
-      };
-    const tree = opened.tree;
-    const { entries, error } = this.ledger.load();
-    if (error !== null) return { ok: false, errors: [error] };
+    const pre = this.prerequisites(ref, claim);
+    if (!pre.ok) return pre;
+    const { sha, tree, entries } = pre;
     const depth: ScanDepth =
-      deep === undefined ? s.settings.scan.depth : deep ? "deep" : "standard";
-    const settings: ScanSettings = { ...s.settings, scan: { ...s.settings.scan, depth } };
+      deep === undefined ? pre.settings.scan.depth : deep ? "deep" : "standard";
+    const settings: ScanSettings = { ...pre.settings, scan: { ...pre.settings.scan, depth } };
     const cfg = settings.scan;
     const plan = planStage2({
       rows: request,
-      cut: cut.cut,
+      cut: pre.cut,
       files: tree.files,
       linesOf: (p) => tree.lines(p),
       whyUnreadable: (p) => tree.whyUnreadable?.(p) ?? null,
@@ -1147,7 +1175,7 @@ export class ScanRunner {
       depth,
       floor: plan.floor,
     };
-    return { ok: true, proposal, tree, settings, cut: cut.cut };
+    return { ok: true, proposal, tree, settings, cut: pre.cut };
   }
 
   /**
@@ -1225,16 +1253,8 @@ export class ScanRunner {
     key?: unknown;
     rows?: unknown;
   }): Promise<{ ok: true; run: ScanRun } | Refusal> {
-    if (this.active)
-      return {
-        ok: false,
-        errors: [`scan ${this.active.id} is still running — stop it or wait for it`],
-      };
-    if (this.starting)
-      return {
-        ok: false,
-        errors: ["a scan is already starting — wait for it, then check scan_status"],
-      };
+    const busy = this.refuseBusy();
+    if (busy !== null) return busy;
     if (typeof args.key !== "string" || args.key === "") {
       return {
         ok: false,
@@ -1256,12 +1276,8 @@ export class ScanRunner {
       }
       keep = args.rows;
     }
-    this.starting = true;
-    try {
-      return await this.startStage2Planned(args.key, keep);
-    } finally {
-      this.starting = false;
-    }
+    const key = args.key;
+    return this.holdingStart(() => this.startStage2Planned(key, keep));
   }
 
   private async startStage2Planned(
@@ -1286,6 +1302,7 @@ export class ScanRunner {
       stored.proposal.budget_usd,
       stored.proposal.sha,
       proposalDepth(stored.proposal) === "deep",
+      true,
     );
     if (!p.ok) return p;
     if (p.proposal.key !== key) {
