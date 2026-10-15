@@ -1432,7 +1432,8 @@ export async function cmdMemory(rest: string[]): Promise<number> {
 const MEMORY_USAGE =
   "usage: qcr memory reembed [--user <name>[,<name>…]] | qcr memory relayout [--plan|--apply] [--user <name>]";
 
-/** A plain memory namespace name — the only shape a `--user` may take. */
+/** A plain memory namespace name — the shape `memory relayout` holds its
+ * `--user` (and its default) to. `memory reembed` keeps its names lenient. */
 const NAMESPACE_RE = /^[a-z][a-z0-9_-]*$/;
 
 /**
