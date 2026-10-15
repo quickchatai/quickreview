@@ -292,7 +292,8 @@ export async function resumeLever(
     };
   }
   store.promoteSuccessor(pr);
-  store.logEvent("pr_resumed", pr, { by: issuer });
+  // Only a pause actually lifted is a transition worth a ledger row.
+  if (res.changed) store.logEvent("pr_resumed", pr, { by: issuer });
   await afterResume();
   return { ok: true, resumed: pr };
 }
@@ -310,11 +311,11 @@ export function sweepExpiredLevers(
   const expired = store.expireLevers();
   if (expired.drain) {
     store.logEvent("drain_expired", null, {});
-    log("drain_expired — the session's drain lapsed; dispatch resumes");
+    log("drain_expired — the drain's expiry passed; dispatch resumes");
   }
   for (const pr of expired.pauses) {
     store.logEvent("pr_pause_expired", pr, {});
-    log(`pr_pause_expired — #${pr} is back in the queue`);
+    log(`pr_pause_expired — #${pr}'s pause lapsed; dispatch and re-trigger may act on it again`);
   }
   return expired;
 }

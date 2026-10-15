@@ -71,6 +71,7 @@ import {
   normalizeVerdict,
   type RoundRecoveryDisposition,
   type SessionHooks,
+  type MeritsVerdictFile,
   type VerdictFile,
   type VerdictPassEntry,
 } from "./types.js";
@@ -2119,7 +2120,7 @@ export class VerdictWatcher {
    * line returns before a single fact is read, so a default install makes no
    * extra API call, writes no row and logs no event.
    */
-  private async deliverEscalations(v: VerdictFile): Promise<void> {
+  private async deliverEscalations(v: MeritsVerdictFile): Promise<void> {
     const cfg = this.deps.cfg.escalation;
     if (!cfg.enabled) return;
     const { store, adapter } = this.deps;

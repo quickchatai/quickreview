@@ -12,9 +12,9 @@ export type RoundType = "first" | "re-review" | "staleness";
  * posted, no approval is implied, and the AI keeps driving. Nothing waits for
  * a person.
  */
-export type Verdict = "APPROVE" | "REQUEST_CHANGES" | "NEEDS_HUMAN";
+export const VERDICTS = ["APPROVE", "REQUEST_CHANGES", "NEEDS_HUMAN"] as const;
 
-export const VERDICTS: readonly Verdict[] = ["APPROVE", "REQUEST_CHANGES", "NEEDS_HUMAN"];
+export type Verdict = (typeof VERDICTS)[number];
 
 /**
  * Accept a verdict string, tolerating the legacy `ESCALATE` spelling.
@@ -86,11 +86,12 @@ export function stampRoundPrompt(renderedPrompt: string, pr: number, roundNo: nu
   return stampPrompt(renderedPrompt, roundPromptMarker(pr, roundNo));
 }
 
-/** Pass model tiers, ascending by capability/cost. */
-export type PassTier = "terra-med" | "sol-med" | "sol-high";
+/** The tier ladder, ascending by capability/cost. The one place the tiers
+ * and their order are written down. */
+export const PASS_TIER_ORDER = ["terra-med", "sol-med", "sol-high"] as const;
 
-/** The tier ladder, ascending. The one place the order is written down. */
-export const PASS_TIER_ORDER: readonly PassTier[] = ["terra-med", "sol-med", "sol-high"];
+/** Pass model tiers. */
+export type PassTier = (typeof PASS_TIER_ORDER)[number];
 
 /** The higher of two tiers (equal tiers return that tier). */
 export function higherTier(a: PassTier, b: PassTier): PassTier {
@@ -225,10 +226,12 @@ export interface RoundOrder {
   /**
    * The PR touches first-party agent-directive files (.claude/**,
    * prompts/**, AGENTS.md/CLAUDE.md and kin — `isFirstPartyDirectivePath`).
-   * `files` lists them; `mention` is the deterministically-picked teammate the
-   * ONE escalation comment must @-mention (most recent human author of the
-   * touched directive files at the merge base, falling back to config
-   * `[review] escalation_mention_default`; the pick is logged). Absent when
+   * `files` lists them; `mention` is the deterministically-picked teammate
+   * the one security-attention comment @-mentions (most recent human author
+   * of the touched directive files at the merge base, falling back to config
+   * `[review] escalation_mention_default`; the pick is logged). That comment
+   * is posted only when a malicious or source-to-sink injection finding in
+   * those files survives (`renderDirectiveEscalationNote`). Absent when
    * the PR touches no such file — and on orders built before the field
    * existed.
    */
@@ -430,22 +433,32 @@ export interface VerdictPassEntry {
   phase?: "delta" | "sweep" | null;
 }
 
-/** verdict/pr-<n>-round-<k>.json — written by the PR session at round end. */
-export interface VerdictFile {
+/** verdict/pr-<n>-round-<k>.json — written by the PR session at round end:
+ * a merits verdict, or the guard-5 `head_moved` ending, which carries none. */
+export type VerdictFile = MeritsVerdictFile | HeadMovedVerdictFile;
+
+/**
+ * Guard-5 landing: a session refused at posting time because the PR
+ * advanced mid-round writes `outcome: "head_moved"` INSTEAD of a merits
+ * verdict — a cheap, explicit round ending the daemon maps to an immediate
+ * cancel + capped self-requeue against the fresh head (the same
+ * self-requeue counter; the session is healthy and is NOT killed). The file
+ * carries no `verdict`; `head_sha` is the stale head the round reviewed. It
+ * spares the round idling to its deadline and a healthy session being killed
+ * by the recovery path.
+ */
+export type HeadMovedVerdictFile = Omit<MeritsVerdictFile, "verdict" | "outcome"> & {
+  outcome: "head_moved";
+  verdict?: undefined;
+};
+
+/** A round's decided verdict file. */
+export interface MeritsVerdictFile {
   pr: number;
   round_no: number;
   verdict: Verdict;
-  /**
-   * Guard-5 landing: a session refused at posting time because the PR
-   * advanced mid-round writes `outcome: "head_moved"` INSTEAD of a merits
-   * verdict — a cheap, explicit round ending the daemon maps to an immediate
-   * cancel + capped self-requeue against the fresh head (the same
-   * self-requeue counter; the session is healthy and is NOT killed).
-   * `verdict` is absent/ignored on such a file; `head_sha` is the stale head
-   * the round reviewed. It spares the round idling to its deadline and a
-   * healthy session being killed by the recovery path.
-   */
-  outcome?: "head_moved";
+  /** Only the guard-5 landing carries an outcome (`HeadMovedVerdictFile`). */
+  outcome?: undefined;
   /** Soundness marker on NEEDS_HUMAN: "the PR looks otherwise sound, I just
    * cannot decide". Recorded, never acted on. */
   ai_approved?: boolean;

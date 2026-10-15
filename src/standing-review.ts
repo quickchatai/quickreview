@@ -73,11 +73,13 @@ export function standingVerdict(
   return standing.kind === "decided" ? standing.verdict : null;
 }
 
-/** The lifecycle state a PR returns to when its standing review is all that
- * stands — the same table `transition` applies to a `verdict` event, so a
- * restore can never land somewhere a verdict could not. */
+/** The lifecycle state a verdict leaves a PR in: a REQUEST_CHANGES waits on
+ * the author; anything else — an approval, a legacy NEEDS_HUMAN, nothing
+ * decided — is tracked. The one table `transition` applies to a `verdict`
+ * and a `round_overdue` event and a restore applies to the standing review,
+ * so a restore can never land somewhere a verdict could not. */
 export function standingLifecycleState(
-  verdict: StandingDecidedVerdict | null,
+  verdict: string | null | undefined,
 ): "awaiting_author" | "tracked" {
   return verdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
 }

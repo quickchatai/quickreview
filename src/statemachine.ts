@@ -40,8 +40,10 @@
 // │ reopened        │ tracked   queued   reviewing  aw_author  tracked│
 // └─────────────────┴────────────────────────────────────────────────┘
 // ¹ a trigger arriving mid-round is not lost: the round in flight covers the
-//   current head, and the reconcile poll re-derives the triggered set after it
-//   finishes (GitHub truth wins — spec §3).
+//   head it started on, a newer head is recorded as durable successor work
+//   (`recordSuccessor`, promoted when the round settles), and the reconcile
+//   poll re-derives the triggered set after it finishes (GitHub truth wins —
+//   spec §3).
 // ² closed is terminal for the lifecycle; a reopened PR must first `reopened`.
 // ³ dispatch never runs against a closed PR (dispatch filters on `queued`).
 // ⁴ a blown/malformed round returns the PR to the state its STANDING verdict
@@ -86,6 +88,13 @@ export type SmEvent =
   | { type: "closed" }
   | { type: "reopened" };
 
+/** Who asked for the round a trigger queues: a fresh label / team re-review
+ * request / manual trigger is a HUMAN ask; a reconcile re-derivation, CI-green
+ * retry or staleness detection is SYSTEM. */
+function triggerProvenance(event: SmEvent): TriggerProvenance {
+  return event.type === "trigger" && event.source !== "reconcile" ? "human" : "system";
+}
+
 /** State a PR enters when first adopted (webhook or reconcile). */
 export const INITIAL_STATE: PrLifecycleState = "tracked";
 
@@ -113,14 +122,13 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
     case "verdict":
       // NEEDS_HUMAN is not an outcome; a legacy
       // session emitting it posted its review without an approval — the PR
-      // stays in normal flow and the AI keeps driving. Never a park.
-      if (event.verdict === "NEEDS_HUMAN") return "tracked";
-      return event.verdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
+      // stays in normal flow (tracked) and the AI keeps driving. Never a park.
+      return standingLifecycleState(event.verdict);
 
     case "round_overdue":
       // No park: return to the standing verdict's state. Never an approve
       // path — "tracked" here means "known, no work owed", not approved.
-      return event.standing === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
+      return standingLifecycleState(event.standing);
 
     case "author_reply":
       return current;
@@ -213,15 +221,12 @@ export function applyEvent(
   if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue")
     triggerTs = null;
 
-  // Trigger provenance: who asked for the queued round. A fresh
-  // label / team re-review request / manual trigger is a HUMAN ask; a
-  // reconcile re-derivation, CI-green retry or staleness detection is SYSTEM.
+  // Trigger provenance: who asked for the queued round (`triggerProvenance`).
   // Human sticks while the PR is queued — a system re-trigger never
   // downgrades a pending human ask — and dispatch clears it with the trigger.
   let provenance: TriggerProvenance | null = existing?.trigger_provenance ?? null;
   if ((event.type === "trigger" || event.type === "stale_detected") && to === "queued") {
-    const fresh: TriggerProvenance =
-      event.type === "trigger" && event.source !== "reconcile" ? "human" : "system";
+    const fresh = triggerProvenance(event);
     if (fresh === "human" || !(base === "queued" && provenance === "human")) provenance = fresh;
   }
   // An author reply on a queued PR is a person expecting attention:
@@ -256,7 +261,7 @@ export function applyEvent(
       pr,
       predecessor_round_id: runningRound.id,
       head_sha: advancedHead,
-      provenance: event.type === "trigger" && event.source !== "reconcile" ? "human" : "system",
+      provenance: triggerProvenance(event),
       reason: event.type === "trigger" ? "trigger-on-new-head" : "head-advanced",
     });
   } else if (runningRound && event.type === "trigger") {
@@ -269,7 +274,7 @@ export function applyEvent(
         pr,
         predecessor_round_id: runningRound.id,
         head_sha: successor.head_sha,
-        provenance: event.source === "reconcile" ? "system" : "human",
+        provenance: triggerProvenance(event),
         reason: "trigger-while-reviewing",
       });
     }
