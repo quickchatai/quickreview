@@ -26,6 +26,7 @@ import {
   buildLocalCommandWatcher,
   buildOperatorCommandWatcher,
   daemonOriginWakes,
+  defaultTransport,
   startSlack,
   type SlackRuntime,
 } from "../src/wire.js";
@@ -589,6 +590,29 @@ describe("origin cause, not recency (the belt)", () => {
     expect(fileIssue).toHaveBeenCalledTimes(1);
     expect(fileImprovementPr).toHaveBeenCalledTimes(1);
     await runtime.stop("test");
+  });
+
+  it("the real transport's diagnostics reach the daemon log", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("getaddrinfo ENOTFOUND slack.com");
+      }),
+    );
+    const lines: string[] = [];
+    try {
+      const t = defaultTransport({
+        cfg,
+        botToken: "xoxb-test",
+        appToken: "xapp-test",
+        log: (msg) => void lines.push(msg),
+      });
+      await t.startSocket(() => {});
+      await t.stopSocket();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(lines).toContain("slack: slack.socket.open_threw");
   });
 
   it("a daemon wake's origin is bound to its wake file and lifts the belt only once pi takes it", async () => {

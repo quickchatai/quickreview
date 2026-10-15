@@ -120,6 +120,7 @@ import { OVERSEER_SESSION, PiSessionManager, prSessionName } from "./sessions.js
 import { SlackApiClient } from "./slack/api.js";
 import { makeAnnouncer, type SlackAnnouncer } from "./slack/announce.js";
 import { OriginStore } from "./slack/origin.js";
+import { announcedCap } from "./slack/policy.js";
 import { makeSlackReply } from "./slack/reply.js";
 import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
@@ -250,7 +251,12 @@ export interface SlackWiringOptions {
   /** Test seam: how a token file is read. Default is the shared fs reader. */
   readSecret?: SecretReader;
   /** Test seam: how the transport is built from the two tokens. */
-  makeTransport?: (opts: { cfg: Config; botToken: string; appToken: string }) => SlackTransport;
+  makeTransport?: (opts: {
+    cfg: Config;
+    botToken: string;
+    appToken: string;
+    log: (msg: string, extra?: unknown) => void;
+  }) => SlackTransport;
   /**
    * The origin store, when the caller already owns one. `createProductionDaemon`
    * builds it before the daemon so daemon-originated overseer wakes can stamp a
@@ -274,21 +280,27 @@ export interface SlackRuntime {
 }
 
 /** The real transport: Web API out, Socket Mode in, composed into one object. */
-function defaultTransport(opts: {
+export function defaultTransport(opts: {
   cfg: Config;
   botToken: string;
   appToken: string;
+  log: (msg: string, extra?: unknown) => void;
 }): SlackTransport {
-  const { cfg } = opts;
+  const { cfg, log } = opts;
+  // Both transports log to the daemon log: an auth failure, a reconnect, a
+  // ping timeout or a dropped post is what an operator reads to tell why the
+  // concierge went quiet.
   const api = new SlackApiClient({
     botToken: opts.botToken,
     postMinIntervalMs: cfg.slack.post_min_interval_ms,
     userCacheTtlSec: cfg.slack.name_cache_ttl_s,
+    log: (message, meta) => log(`slack: ${message}`, meta),
   });
   const socket = new SlackSocketClient({
     appToken: opts.appToken,
     backoffMs: cfg.slack.reconnect_backoff_ms,
     serverPingTimeoutMs: cfg.slack.server_ping_timeout_ms,
+    log: (message, meta) => log(`slack: ${message}`, meta),
   });
   return {
     postMessage: (a) => api.postMessage(a),
@@ -321,7 +333,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   if (!botToken || !appToken)
     throw new Error("slack: token files vanished between validation and read");
 
-  const transport = (opts.makeTransport ?? defaultTransport)({ cfg, botToken, appToken });
+  const transport = (opts.makeTransport ?? defaultTransport)({ cfg, botToken, appToken, log });
 
   // Who are we? Resolved once, and required: the router's echo filter is built
   // on this identity, and a bot that cannot recognise its own messages will
@@ -359,11 +371,8 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
     users: transport,
     identity,
     onCapReached: async (decision) => {
-      const cap =
-        decision.cap === "per_user_daily_turns"
-          ? cfg.slack.policy.per_user_daily_turns
-          : cfg.slack.policy.daily_turns;
-      await announcer.capReached(cap);
+      const cap = announcedCap(cfg, decision);
+      if (cap !== null) await announcer.capReached(cap);
     },
     now,
     log: (line) => log(line),
@@ -380,7 +389,9 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   await commands.start();
 
   await transport.startSocket((event) => {
-    void router.handle(event).catch((err) => log("slack: router threw (event dropped)", err));
+    void router
+      .handle(event)
+      .catch((err) => log(`slack: router threw (event ${event.event_id} dropped)`, err));
   });
 
   const timers: Array<ReturnType<typeof setInterval>> = [];
