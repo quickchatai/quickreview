@@ -22,27 +22,29 @@ export function globProblem(glob: unknown): string | null {
   return null;
 }
 
+// A pattern's wildcards as an unanchored RegExp source: `**/` any run of
+// whole leading segments, `**` any run, `*` a run inside one segment, `?` one
+// character inside one; everything else literal. The ONE wildcard grammar —
+// each caller adds its own anchoring around it.
+export function globBody(pattern: string): string {
+  return pattern
+    .split(/(\*\*\/|\*\*|\*|\?)/)
+    .map((part) => {
+      if (part === "**/") return "(?:.*/)?";
+      if (part === "**") return ".*";
+      if (part === "*") return "[^/]*";
+      if (part === "?") return "[^/]";
+      return part.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    })
+    .join("");
+}
+
 /** The RegExp a glob compiles to (see the header). */
 export function globToRegExp(glob: string): RegExp {
   // A trailing slash adds nothing the `(?:/.*)?` tail does not already say.
   const g = glob.trim().replace(/\/+$/, "");
-  const anchored = g.includes("/");
-  let body = "";
-  for (let i = 0; i < g.length; i++) {
-    const c = g[i]!;
-    if (c === "*") {
-      if (g[i + 1] === "*") {
-        i++;
-        if (g[i + 1] === "/") {
-          i++;
-          body += "(?:.*/)?";
-        } else body += ".*";
-      } else body += "[^/]*";
-    } else if (c === "?") body += "[^/]";
-    else body += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  }
-  const lead = anchored ? "^" : "(?:^|/)";
-  return new RegExp(`${lead}${body}(?:/.*)?$`);
+  const lead = g.includes("/") ? "^" : "(?:^|/)";
+  return new RegExp(`${lead}${globBody(g)}(?:/.*)?$`);
 }
 
 /** A predicate over repo-relative paths: true when any glob matches. */
