@@ -27,7 +27,8 @@ function header(body: string, key: string): string {
 export function parseTrackerTicket(body: string, path = ""): TrackerTicket | undefined {
   const title = /^#\s+(.+)$/m.exec(body)?.[1]?.trim();
   const id = header(body, "Id");
-  if (!title || !/^FT-\d{4}$/.test(id)) return undefined;
+  // Four digits or more: the tracker pads ids to four and keeps counting.
+  if (!title || !/^FT-\d{4,}$/.test(id)) return undefined;
   return {
     id,
     title,
@@ -69,7 +70,7 @@ export function readEffortTickets(root: string, effort: string): TrackerTicket[]
   if (!existsSync(dir)) return [];
   const tickets: TrackerTicket[] = [];
   for (const name of readdirSync(dir)) {
-    if (!/^FT-\d{4}-.+\.md$/.test(name)) continue;
+    if (!/^FT-\d{4,}-.+\.md$/.test(name)) continue;
     try {
       const path = join(dir, name);
       const ticket = parseTrackerTicket(readFileSync(path, "utf8"), path);

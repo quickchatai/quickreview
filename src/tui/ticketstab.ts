@@ -93,10 +93,49 @@ export function renderTicketsTab(
       `tickets${effort ? ` · ${effort}` : ""}`,
     ]),
   );
-  const live = ticketsKeys(store, st);
-  const bodyRows = rows - 2 - barHeight("tickets", cols, live.bar);
   const { leftW, rightW } = splitWidths(cols);
+  // The bar depends on how far the body can scroll, which depends on the rows
+  // the bar leaves: lay the body out, recompute the bar from the scroll it
+  // allows, and lay out again while the bar's height moves — so the bar
+  // painted is the bar the keys and the hit-test register.
+  let live = ticketsKeys(store, st);
+  let height: number;
+  let body: ReturnType<typeof ticketsBody>;
+  let pass = 0;
+  do {
+    height = barHeight("tickets", cols, live.bar);
+    body = ticketsBody(read, tickets, sel, selected, st, leftW, rightW, rows - 2 - height);
+    st.scrollMax = body.scrollMax;
+    // Stored and painted offsets agree: a body that now fits (a resize) is
+    // scrolled back to where it is painted, never left above it.
+    st.scroll = Math.min(st.scroll, st.scrollMax);
+    live = ticketsKeys(store, st);
+  } while (barHeight("tickets", cols, live.bar) !== height && ++pass < 3);
+  const { left, leftActions, right, bodyRows } = body;
 
+  paintSplit(frame, { left, leftActions, right, leftW, rightW, top: 1, bodyRows });
+  paintCmdBar(frame, "tickets", cols, rows, live.bar);
+  frame.set(rows - 1, rule(cols, "└", "┘", []));
+  return frame;
+}
+
+/** The two panes at `bodyRows`, and how far the selected body can scroll. */
+function ticketsBody(
+  read: TicketsRead,
+  tickets: TrackerTicket[],
+  sel: number,
+  selected: TrackerTicket | undefined,
+  st: TicketsTabState,
+  leftW: number,
+  rightW: number,
+  bodyRows: number,
+): {
+  left: string[];
+  leftActions: Array<TicketsAction | undefined>;
+  right: Array<ZonedRow<TicketsAction>>;
+  bodyRows: number;
+  scrollMax: number;
+} {
   const left: string[] = [];
   const leftActions: Array<TicketsAction | undefined> = [];
   const total = read.kind === "read" ? read.tickets : undefined;
@@ -146,7 +185,11 @@ export function renderTicketsTab(
   const start = windowStart(sel, tickets.length, visible);
   tickets.slice(start, start + visible).forEach((ticket, offset) => {
     const i = start + offset;
-    const label = truncate(`${ticket.id} [${ticket.status}] ${ticket.title}`, leftW - 3);
+    // Tracker text is foreign to the frame: no control byte reaches the terminal.
+    const label = truncate(
+      sanitizeText(`${ticket.id} [${ticket.status}] ${ticket.title}`),
+      leftW - 3,
+    );
     left.push(i === sel ? selectedLine(label) : label);
     leftActions.push({ t: "ticket", i });
   });
@@ -155,15 +198,18 @@ export function renderTicketsTab(
   const row = (chunks: Array<RowChunk<TicketsAction>>): void => {
     right.push(zonedRow(chunks));
   };
+  let scrollMax = 0;
   if (selected) {
     row([
       {
-        text: `${sectionTitle(selected.id)} ${STRONG}${truncate(selected.title, rightW - selected.id.length - 7)}${RESET}`,
+        text: `${sectionTitle(sanitizeText(selected.id))} ${STRONG}${truncate(sanitizeText(selected.title), rightW - selected.id.length - 7)}${RESET}`,
       },
     ]);
     row([
       {
-        text: `${selected.status} · role ${selected.role} · updated ${selected.updated}`,
+        text: sanitizeText(
+          `${selected.status} · role ${selected.role} · updated ${selected.updated}`,
+        ),
         dim: true,
       },
     ]);
@@ -174,21 +220,15 @@ export function renderTicketsTab(
     // stops the scroll before the body's last lines come into view.
     const room = Math.max(0, bodyRows - right.length);
     const cap = lines.length > room && room > 1 ? room - 1 : room;
-    st.scrollMax = Math.max(0, lines.length - cap);
-    const from = Math.min(st.scroll, st.scrollMax);
+    scrollMax = Math.max(0, lines.length - cap);
+    const from = Math.min(st.scroll, scrollMax);
     for (const line of lines.slice(from, from + cap)) row([{ text: line }]);
     if (from + cap < lines.length)
       row([{ text: `… ${lines.length - from - cap} more lines`, dim: true }]);
-  } else {
-    st.scrollMax = 0;
-    if (read.kind === "read" && read.tickets.length > 0)
-      row([{ text: `${MUTED}no ticket selected${RESET}` }]);
+  } else if (read.kind === "read" && read.tickets.length > 0) {
+    row([{ text: `${MUTED}no ticket selected${RESET}` }]);
   }
-
-  paintSplit(frame, { left, leftActions, right, leftW, rightW, top: 1, bodyRows });
-  paintCmdBar(frame, "tickets", cols, rows, live.bar);
-  frame.set(rows - 1, rule(cols, "└", "┘", []));
-  return frame;
+  return { left, leftActions, right, bodyRows, scrollMax };
 }
 
 /** Install the tickets surface over the shared learning store. */
@@ -204,7 +244,7 @@ export function installTicketsTab(
     st.sel = Math.max(0, Math.min(i, Math.max(0, list.length - 1)));
     st.scroll = 0;
     const ticket = list[st.sel];
-    if (ticket) app.notice(`ticket open → ${ticket.id} ${ticket.title}`);
+    if (ticket) app.notice(sanitizeText(`ticket open → ${ticket.id} ${ticket.title}`));
   };
   store.onLoaded((part) => {
     if (part === "tickets") st.sel = Math.min(st.sel, Math.max(0, visible().length - 1));
