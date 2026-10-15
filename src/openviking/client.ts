@@ -135,9 +135,12 @@ export function isBusyConflict(status: number, error: unknown): boolean {
 
 /** How hard the client retries a busy answer: at most `retries` more
  * attempts, the n-th after a jittered `min(capMs, baseMs·2ⁿ)` wait (half to
- * all of it), and never past `budgetMs` from the first attempt — the bound
- * is ≤10 s in total, so a lock held for longer comes back as a failure the
- * caller can see rather than a request that hangs. */
+ * all of it), and no retry is STARTED once its wait would carry it past
+ * `budgetMs` from the first attempt — so a lock held for longer comes back as
+ * a failure the caller can see rather than a request that hangs. A retry that
+ * does start runs under the request's own timeout, so the whole call can end
+ * up to one timeout past the budget: an attempt cut short mid-write would
+ * leave its outcome unknown, which is worse than the wait. */
 export const BUSY_RETRY_DEFAULTS = Object.freeze({
   retries: 4,
   baseMs: 250,
@@ -600,10 +603,14 @@ export class OpenVikingClient {
    * `OvFailure.message` or `OvGap.message` — the round prompt's unreadable
    * note, the overseer anomaly, the daemon log, the `onGap` sink — receives the
    * scrubbed text; `report()` scrubs its own line again as braces. */
-  private redact(text: string): string {
-    const key = this.key();
-    if (!key || key.length < 8) return text;
-    return text.split(key).join("<redacted>");
+  private redact(text: string, sent?: string | null): string {
+    // The key the request CARRIED, when the caller has it: the source may
+    // have rotated while the request was out, and the echo is of the old one.
+    let out = text;
+    for (const key of new Set([sent, this.key()])) {
+      if (key && key.length >= 8) out = out.split(key).join("<redacted>");
+    }
+    return out;
   }
 
   private report(gap: OvGap): void {
@@ -727,7 +734,12 @@ export class OpenVikingClient {
       });
       raw = await res.text();
     } catch (err) {
-      const gap: OvGap = { op, status: 0, code: "transport", message: this.redact(errText(err)) };
+      const gap: OvGap = {
+        op,
+        status: 0,
+        code: "transport",
+        message: this.redact(errText(err), key),
+      };
       this.report(gap);
       this.observe({
         op,
@@ -784,6 +796,7 @@ export class OpenVikingClient {
       const code = typeof body.error?.code === "string" ? body.error.code : `http_${res.status}`;
       const message = this.redact(
         typeof body.error?.message === "string" ? body.error.message : `HTTP ${res.status}`,
+        key,
       );
       // The directory lock was held: nothing was checked or
       // written. `request()` retries it — not observed or reported here.
@@ -792,18 +805,14 @@ export class OpenVikingClient {
       }
       const outcome = ovFailed(res.status, code, message);
       const auth = isAuthFailure(res.status, code, message);
-      // A 409 is the precondition working as designed; it is an answer, not a
-      // gap, so it is not alerted on.
-      if (!outcome.conflict) this.report({ op, status: res.status, code, message });
+      const absent = !auth && isNotFound(res.status, code);
+      // A 409 is the precondition working as designed, and a NOT_FOUND is an
+      // authenticated answer (the path is not there — the store reads it as
+      // known-empty): both are answers, not gaps, so neither is alerted on.
+      if (!outcome.conflict && !absent) this.report({ op, status: res.status, code, message });
       this.observe({
         op,
-        outcome: outcome.conflict
-          ? "conflict"
-          : auth
-            ? "auth"
-            : isNotFound(res.status, code)
-              ? "absent"
-              : "failed",
+        outcome: outcome.conflict ? "conflict" : auth ? "auth" : absent ? "absent" : "failed",
         status: res.status,
         code,
         ms,
@@ -1094,7 +1103,9 @@ function basename(uri: string): string {
   return cut >= 0 ? cleaned.slice(cut + 1) : cleaned;
 }
 
-function errText(err: unknown): string {
+/** A thrown request error as one line: a timeout or abort is "timeout",
+ * anything else its message. Shared by every OpenViking probe. */
+export function errText(err: unknown): string {
   if (err instanceof Error)
     return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
   return String(err);
