@@ -546,7 +546,7 @@ describe("fences — daemon bookkeeping only", () => {
       const onStop = /async onStop\(reason = "shutdown"\) \{([\s\S]*?)\n {4}\},/.exec(wire);
       expect(onStop).not.toBeNull();
       expect(onStop![1]).toMatch(/archiver\?\.stop\(\);/);
-      const runsOnStop = daemon.indexOf("deps.onStop!()");
+      const runsOnStop = daemon.indexOf("deps.onStop!(reason)");
       const closesStore = daemon.indexOf("store.close();", runsOnStop);
       expect(runsOnStop).toBeGreaterThan(0);
       expect(closesStore).toBeGreaterThan(runsOnStop);

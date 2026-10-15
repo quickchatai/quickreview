@@ -230,7 +230,9 @@ export interface DaemonDeps {
   /** Extra periodic work (EOD timer arm, command watcher, overseer rotation)
    * started after the core loops; wired by src/wire.ts. */
   onStart?: (daemon: Daemon) => Promise<void> | void;
-  onStop?: () => Promise<void> | void;
+  /** Runs first in `stop`, with the reason `stop` was given (the signal, a
+   * failed boot); none when the caller named none. */
+  onStop?: (reason?: string) => Promise<void> | void;
 }
 
 // Sub-poll cadences (seconds). The authoritative reconcile interval is
@@ -246,7 +248,8 @@ export const RECONCILE_OVERDUE_INTERVALS = 3;
 
 export interface Daemon {
   start(): Promise<void>;
-  stop(): Promise<void>;
+  /** `reason` reaches `onStop` — the Slack goodbye says it. */
+  stop(reason?: string): Promise<void>;
   reconcile(): Promise<void>;
   pump(): Promise<void>;
   /** Deterministic review-failure retry tick: claim due debt, then hand it to
@@ -1167,11 +1170,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       await reconcile();
     },
 
-    async stop(): Promise<void> {
+    async stop(reason?: string): Promise<void> {
       if (stopping) return;
       stopping = true;
       log("stopping");
-      if (deps.onStop) await guard("onStop", async () => deps.onStop!());
+      if (deps.onStop) await guard("onStop", async () => deps.onStop!(reason));
       for (const t of timers) clearInterval(t);
       timers.length = 0;
       load.stop();

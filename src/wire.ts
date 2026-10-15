@@ -2104,7 +2104,7 @@ async function main(): Promise<void> {
   const shutdown = (sig: string) => {
     void (async () => {
       console.log(`[quickreviewd] ${sig} — shutting down`);
-      await daemon.stop();
+      await daemon.stop(sig);
       process.exit(0);
     })();
   };
@@ -2117,7 +2117,7 @@ async function main(): Promise<void> {
     // orderly stop, so the container's restart policy retries it rather than
     // leaving a half-assembled daemon serving reviews without its watchers.
     console.error("[quickreviewd] startup failed — exiting", err);
-    await daemon.stop().catch(() => {});
+    await daemon.stop("startup failed").catch(() => {});
     process.exit(1);
   }
 }
