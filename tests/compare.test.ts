@@ -304,6 +304,22 @@ describe("(c) anchor validity", () => {
     ]);
   });
 
+  it("compares the round's own review, never a mechanical COMMENT recorded after it", () => {
+    const review = (purpose: string | undefined, body: string): DryrunRecord => ({
+      kind: "create_review",
+      method: "POST",
+      path: "/repos/o/r/pulls/9/reviews",
+      pr: 9,
+      ...(purpose ? { reviewPurpose: purpose } : {}),
+      body: { event: purpose ? "COMMENT" : "REQUEST_CHANGES", body },
+    });
+    expect(
+      sandboxReviewFrom([review(undefined, "the review"), review("escalation", "a note")], 9)!.body,
+    ).toBe("the review");
+    // A round that only left its migration pre-check has no review to compare.
+    expect(sandboxReviewFrom([review("migration_precheck", "renumber")], 9)).toBeNull();
+  });
+
   it("keeps a recorded comment's side and start line", () => {
     const snap = sandboxReviewFrom(
       [
@@ -522,6 +538,11 @@ describe("report rendering", () => {
     expect(attestDryRun({ gateIsDryRun: null, executedMutations: null }, none).status).toBe(
       "unobserved",
     );
+    // A dry-run gate still executes the app-self-config class: the flag with
+    // no executed count is no proof that nothing was posted.
+    const flagOnly = attestDryRun({ gateIsDryRun: true, executedMutations: null }, none);
+    expect(flagOnly.status).toBe("unobserved");
+    expect(flagOnly.substantiated).toBe(false);
     // forceLive executes even under dry-run (rule 1's sole exception), so a
     // record carrying it disproves "nothing was posted".
     const forced = [

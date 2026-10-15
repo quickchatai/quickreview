@@ -1,8 +1,10 @@
 // `qcr compare <pr...>` — the cutover comparison harness.
 //
-// For each PR: run one dry-run round, collect the would-be review out of
-// state/dryrun/, fetch the old flow's actual review from GitHub (reads only),
-// and assemble a side-by-side report per the cutover rubric:
+// For each PR: hand it to the injected dry-run dispatcher (production
+// `qcr compare` dispatches nothing — it is collect-only, reading what earlier
+// daemon rounds recorded), collect the would-be review out of state/dryrun/,
+// fetch the old flow's actual review from GitHub (reads only), and assemble a
+// side-by-side report per the cutover rubric:
 //
 //   (a) blocker parity      old-flow blockers vs sandbox blockers, matched by
 //                           path + theme; every unmatched row flagged
@@ -16,7 +18,7 @@
 //
 // The harness only assembles evidence. (a)–(d) are mechanical gates; the flip
 // decision, and the flip itself, stay human. Nothing here mutates anything:
-// the dry-run round is injected, GitHub access is read-only through the
+// any dry-run round is injected, GitHub access is read-only through the
 // adapter, and the output is markdown on disk.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -55,6 +57,9 @@ export interface DryrunRecord {
   body?: unknown;
   note?: string;
   pr?: number;
+  /** Set on a mechanically authored COMMENT (a migration pre-check, an
+   * escalation note) — never the round's own review. */
+  reviewPurpose?: string;
   recorded_at?: string;
   /** Source file, for the report. */
   file?: string;
@@ -137,10 +142,15 @@ export function readDryrunDir(dir: string): DryrunRecord[] {
   return out;
 }
 
-/** The would-be review for a PR: the last create_review record it produced. */
+/** The would-be review for a PR: the last substantive create_review record it
+ * produced. A mechanically authored COMMENT (`reviewPurpose`) is not the
+ * round's review, so it is never the one compared. */
 export function sandboxReviewFrom(records: DryrunRecord[], pr: number): ReviewSnapshot | null {
   const reviews = records.filter(
-    (r) => r.kind === "create_review" && (r.pr === pr || r.path.includes(`/pulls/${pr}/`)),
+    (r) =>
+      r.kind === "create_review" &&
+      r.reviewPurpose === undefined &&
+      (r.pr === pr || r.path.includes(`/pulls/${pr}/`)),
   );
   const last = reviews[reviews.length - 1];
   if (!last) return null;
@@ -595,10 +605,20 @@ export function attestDryRun(obs: DryRunObservation, records: DryrunRecord[]): D
         "no gate was observed for this run — the records were collected off disk after the fact, so the harness cannot tell whether the round that produced them posted. Say nothing rather than reassure.",
     };
   }
+  // A dry-run gate still executes the app-self-config class, so the flag
+  // alone never proves that nothing executed: an unknown count is unobserved.
+  if (obs.executedMutations === null) {
+    return {
+      status: "unobserved",
+      substantiated: false,
+      detail:
+        "the gate reported `dry_run = true`, but how many of its mutations executed was not observed — a dry-run gate still executes the app-self-config class, so the flag alone cannot say nothing was posted.",
+    };
+  }
   return {
     status: "observed-dry",
     substantiated: true,
-    detail: `the gate reported \`dry_run = true\`, ${records.length} intent(s) were recorded to \`state/dryrun/\` instead of being executed, ${obs.executedMutations ?? 0} were executed, and no record carries \`forceLive\`.`,
+    detail: `the gate reported \`dry_run = true\`, ${records.length} intent(s) were recorded to \`state/dryrun/\` instead of being executed, ${obs.executedMutations} were executed, and no record carries \`forceLive\`.`,
   };
 }
 
