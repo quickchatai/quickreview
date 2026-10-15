@@ -43,7 +43,7 @@ import {
 } from "./paint.js";
 import { ACCENT, RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
-import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
+import { PANE_ESCAPE, PiMirror, isEndKey, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { parseRoundProgress } from "../round-progress.js";
 import { prUrl } from "./theme.js";
@@ -134,9 +134,6 @@ export interface AppHooks {
    * the one native GCP-passphrase prompt. */
   reconnect?: (app: App) => void;
 }
-
-/** Every encoding of the End key we might see — the pi pane's "back to live". */
-const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
 
 /**
  * Decoded verbs the BOARD owns. `handleInput` refuses them off the board —
@@ -1136,7 +1133,7 @@ export class App {
       }
       // End, while parked in scrollback, is the "back to live" key the header
       // advertises — it snaps the window to the tail instead of travelling.
-      if (END_KEYS.has(buf.toString("utf8")) && this.pi.offsetFor(this.piFocusPr) > 0) {
+      if (isEndKey(buf.toString("utf8")) && this.pi.offsetFor(this.piFocusPr) > 0) {
         this.pi.setOffset(this.piFocusPr!, 0);
         this.syncPiPane();
         this.repaint();
