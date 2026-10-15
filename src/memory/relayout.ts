@@ -48,7 +48,7 @@
 // NEVER A DELETE. A move is a new copy plus a `#retired #moved` stub at the
 // old address; a retirement is the `#retired` tag. Every write is a
 // batch-write with a hash precondition, one per directory.
-import { parseEventTags, parseHashTags } from "./eventtags.js";
+import { EVENT_TAG_RE, parseEventTags, parseHashTags } from "./eventtags.js";
 import {
   EVENTS_AREA,
   PINNED_AREA,
@@ -80,7 +80,15 @@ export type RelayoutAction =
     }
   | { kind: "retire"; id: string; text: string; expect: string; why: string }
   /** Already in its area, its header missing the kind: fixed in place. */
-  | { kind: "rewrite"; id: string; text: string; expect: string; why: string }
+  | {
+      kind: "rewrite";
+      id: string;
+      text: string;
+      expect: string;
+      why: string;
+      /** Said beside the line when it matters to the operator. */
+      note?: string;
+    }
   | { kind: "blocked"; id: string; to: string; why: string };
 
 export interface RelayoutPlan {
@@ -116,6 +124,16 @@ export const RELAYOUT_CURATION: ReadonlyArray<{
   },
 ];
 
+/** The curation entry an entry's header matches, if any. */
+function curationFor(
+  headHash: ReadonlySet<string>,
+  headKv: Readonly<Record<string, string>>,
+): (typeof RELAYOUT_CURATION)[number] | undefined {
+  return RELAYOUT_CURATION.find(
+    (c) => headHash.has(c.hash) && Object.entries(c.kv).every(([k, v]) => headKv[k] === v),
+  );
+}
+
 /** A confinement probe's whole text (scripts/companion-memory-forward.mjs
  * `verify`). */
 const PROBE_RE = /^confinement probe [\w:.-]+$/;
@@ -123,7 +141,6 @@ const PROBE_RE = /^confinement probe [\w:.-]+$/;
 const FEEDBACK_HASH = new Set(["feedback", "feedback-review", "adjudication"]);
 const OPS_HASH = new Set(["bug", "operations", "openviking", "review-ops"]);
 
-const KV_TOKEN = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;
 const HASH_TOKEN = /^#([^\s#]+)$/;
 
 /**
@@ -152,14 +169,14 @@ export function looseTags(text: string): { hash: Set<string>; kv: Record<string,
     const line = raw.trim().replace(/^Tags:\s*/i, "");
     if (line === "") continue;
     const tokens = line.split(/\s+/);
-    if (!tokens.every((t) => HASH_TOKEN.test(t) || KV_TOKEN.test(t))) continue;
+    if (!tokens.every((t) => HASH_TOKEN.test(t) || EVENT_TAG_RE.test(t))) continue;
     for (const t of tokens) {
       const h = HASH_TOKEN.exec(t);
       if (h) {
         hash.add(h[1]!.toLowerCase());
         continue;
       }
-      const m = KV_TOKEN.exec(t);
+      const m = EVENT_TAG_RE.exec(t);
       if (m && !(m[1]! in kv)) kv[m[1]!] = m[2]!;
     }
   }
@@ -185,10 +202,8 @@ function decide(e: MemoryEntry, adjudicated: ReadonlySet<string>): Decision {
   const headKv = parseEventTags(e.text);
 
   if (PROBE_RE.test(e.text.trim())) return { dest: "retire", why: "confinement probe" };
-  for (const c of RELAYOUT_CURATION) {
-    if (headHash.has(c.hash) && Object.entries(c.kv).every(([k, v]) => headKv[k] === v))
-      return { dest: "retire", why: c.why };
-  }
+  const curated = curationFor(headHash, headKv);
+  if (curated) return { dest: "retire", why: curated.why };
   if (
     headHash.has("feedback-review") &&
     headKv["status"] === "needs-attention" &&
@@ -244,11 +259,14 @@ export function planRelayout(input: {
   const byId = new Map<string, MemoryEntry>();
   for (const e of [...input.entries, ...input.retired]) byId.set(e.id, e);
   // Episodes an adjudication answered — what makes a needs-attention note
-  // superseded. Live adjudications only: a retired one answers nothing.
+  // superseded. Live adjudications only: a retired one answers nothing, and
+  // neither does one this plan retires as contradicted.
   const adjudicated = new Set<string>();
   for (const e of input.entries) {
-    if (!parseHashTags(e.text).includes("adjudication")) continue;
+    const hash = new Set(parseHashTags(e.text));
+    if (!hash.has("adjudication")) continue;
     const kv = parseEventTags(e.text);
+    if (curationFor(hash, kv)) continue;
     if (kv["pr"] && kv["episode"]) adjudicated.add(`${kv["pr"]}|${kv["episode"]}`);
   }
   const actions: RelayoutAction[] = [];
@@ -276,7 +294,15 @@ export function planRelayout(input: {
       if (text === e.text.trim()) actions.push({ kind: "stay", id: e.id, why: d.why });
       // Already in its area but its header is missing the kind: rewritten in
       // place (a `move` onto itself would be refused as a self-collision).
-      else actions.push({ kind: "rewrite", id: e.id, text, expect: e.hash, why: d.why });
+      else
+        actions.push({
+          kind: "rewrite",
+          id: e.id,
+          text,
+          expect: e.hash,
+          why: d.why,
+          ...("note" in d && d.note ? { note: d.note } : {}),
+        });
       continue;
     }
     const to = `${d.dest}/${nameOfId(e.id)}`;

@@ -11,7 +11,9 @@
 import { describe, expect, it } from "vitest";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { StateStore } from "../src/state.js";
+import { MEMORY_DEFAULTS } from "../src/config.js";
 import {
+  MEMORY_HEALTH_DEFAULTS,
   MEMORY_WAKE,
   MemoryHealthMonitor,
   disabledMemoryStatus,
@@ -435,7 +437,7 @@ describe("memory health — the daemon's own requests and round seeds", () => {
       code: "CONFLICT",
       ms: 3,
     });
-    h.monitor.recordRoundSeed({ degraded: true, ms: 3000, reasons: ["head: timeout"] });
+    h.monitor.recordRoundSeed({ degraded: true, reasons: ["head: timeout"] });
     expect(h.monitor.recordGap({ op: "read", code: "transport" })).toBe(1);
     expect(h.monitor.recordGap({ op: "read", code: "transport" })).toBe(2);
     const s = h.monitor.status();
@@ -467,8 +469,8 @@ describe("memory health — the daemon's own requests and round seeds", () => {
     // Two failures and nothing else: under the minimum of three.
     const two = harness();
     await two.probeAt(0);
-    two.monitor.recordRoundSeed({ degraded: true, ms: 3000 });
-    two.monitor.recordRoundSeed({ degraded: true, ms: 3000 });
+    two.monitor.recordRoundSeed({ degraded: true });
+    two.monitor.recordRoundSeed({ degraded: true });
     expect(two.monitor.status().state).toBe("healthy");
     // Three failures among four successes: fewer than half.
     const h = harness();
@@ -520,7 +522,7 @@ describe("memory health — the daemon's own requests and round seeds", () => {
   it("too many recent failures read DEGRADED even with a good probe — and recover", async () => {
     const h = harness();
     await h.probeAt(0);
-    for (let i = 0; i < 3; i++) h.monitor.recordRoundSeed({ degraded: true, ms: 3000 });
+    for (let i = 0; i < 3; i++) h.monitor.recordRoundSeed({ degraded: true });
     expect(h.monitor.status().state).toBe("degraded");
     expect(h.wakes).toEqual([]); // degraded is visible, not woken
     // The failures age out of the window.
@@ -801,5 +803,107 @@ describe("memory wakes through the REAL anomaly wake policy", () => {
     expect(w.store.anomalies().filter((a) => a.kind === MEMORY_WAKE.auth)).toHaveLength(2);
     // … and the overseer, already told this exact thing 4 minutes ago, once.
     expect(w.injected).toHaveLength(1);
+  });
+});
+
+describe("memory health — scope, retries and the sessions credential", () => {
+  it("a restart inside a not-serving outage keeps the incident open", async () => {
+    // The not-serving clock restarts with the daemon, so the outage reads
+    // `degraded` for a while — that is not a measured recovery.
+    const since = "2026-10-06T11:00:00.000Z";
+    const h = harness({
+      stored: { kind: "down", since },
+      serving: { ok: false, reason: "the local embedder is not running" },
+    });
+    await h.probeAt(0);
+    expect(h.monitor.currentState()).toBe("degraded");
+    expect(h.stored()).toEqual({ kind: "down", since });
+    expect(h.saved).not.toContain(null);
+    await h.probeAt(10 * MIN);
+    expect(h.monitor.currentState()).toBe("down");
+    expect(h.monitor.status().incident).toEqual({ kind: "down", since });
+  });
+
+  it("an auth wake names what the refused credential costs", async () => {
+    const sessionsOnly = harness({ sessions: AUTH });
+    await sessionsOnly.probeAt(0);
+    const msg = sessionsOnly.wakes.find((w) => w.kind === MEMORY_WAKE.auth)!.message;
+    expect(msg).toMatch(/sessions' ovcli\.conf refused, no session recalls/);
+    expect(msg).not.toMatch(/memory-less/);
+
+    const daemonOnly = harness({ daemon: AUTH });
+    await daemonOnly.probeAt(0);
+    const msg2 = daemonOnly.wakes.find((w) => w.kind === MEMORY_WAKE.auth)!.message;
+    expect(msg2).toMatch(/daemon key refused, rounds get no pinned head .*memory-less/);
+    expect(msg2).not.toMatch(/no session recalls/);
+  });
+
+  it("the wake's repeat interval is the one in force", async () => {
+    const h = harness({ daemon: AUTH });
+    await h.probeAt(0);
+    expect(h.wakes[0]!.message).toContain("Re-raised every 6h00m while it lasts.");
+    const wakes: Array<{ kind: string; message: string }> = [];
+    const custom = new MemoryHealthMonitor({
+      probes: { daemon: async () => AUTH, sessions: async () => OK },
+      wake: (kind, _detail, message) => wakes.push({ kind, message }),
+      now: () => new Date(T0),
+      rewakeMs: 90 * MIN,
+    });
+    await custom.probeNow();
+    expect(wakes[0]!.message).toContain("Re-raised every 1h30m while it lasts.");
+  });
+
+  it("a wake the sink failed to take stays due", async () => {
+    let fail = true;
+    const wakes: string[] = [];
+    let clock = T0;
+    const m = new MemoryHealthMonitor({
+      probes: { daemon: async () => AUTH, sessions: async () => OK },
+      wake: (kind) => {
+        if (fail) throw new Error("database is locked");
+        wakes.push(kind);
+      },
+      now: () => new Date(clock),
+    });
+    await m.probeNow();
+    expect(wakes).toEqual([]);
+    fail = false;
+    clock = T0 + 2 * MIN;
+    await m.probeNow();
+    expect(wakes).toEqual([MEMORY_WAKE.auth]);
+  });
+
+  it("a 409 conflict is an authenticated answer: it restores a refused daemon credential", async () => {
+    const h = harness({ daemon: AUTH });
+    await h.probeAt(0);
+    expect(h.monitor.currentState()).toBe("auth_failed");
+    h.at(MIN);
+    h.monitor.recordRequest({
+      op: "content/batch-write",
+      outcome: "conflict",
+      status: 409,
+      code: "path_busy",
+      ms: 5,
+    });
+    expect(h.monitor.status().credentials.daemon?.result).toBe("ok");
+    expect(h.monitor.currentState()).toBe("healthy");
+  });
+
+  it("a failing sessions probe degrades memory as a failing daemon probe does", async () => {
+    const h = harness({ sessions: DEAD });
+    await h.probeAt(0);
+    expect(h.monitor.currentState()).toBe("degraded");
+    h.set("sessions", OK);
+    await h.probeAt(2 * MIN);
+    expect(h.monitor.currentState()).toBe("healthy");
+  });
+});
+
+describe("memory health — the module's defaults are the config's", () => {
+  it("probe interval, down-after, boot grace and re-wake agree with MEMORY_DEFAULTS", () => {
+    expect(MEMORY_HEALTH_DEFAULTS.intervalMs).toBe(MEMORY_DEFAULTS.probe_interval_s * 1000);
+    expect(MEMORY_HEALTH_DEFAULTS.downAfterMs).toBe(MEMORY_DEFAULTS.down_after_min * MIN);
+    expect(MEMORY_HEALTH_DEFAULTS.bootGraceMs).toBe(MEMORY_DEFAULTS.boot_grace_min * MIN);
+    expect(MEMORY_HEALTH_DEFAULTS.rewakeMs).toBe(MEMORY_DEFAULTS.rewake_h * 60 * MIN);
   });
 });

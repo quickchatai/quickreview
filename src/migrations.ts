@@ -115,6 +115,15 @@ function escapeRe(s: string): string {
  * the next line's `+` prefix. */
 const DIFF_GAP = "(?:[^\\S\\n]|\\n\\+?)*";
 
+/** The patch as the file reads after the change: its removed lines dropped,
+ * so a dependency the PR deletes is never read as one it still holds. */
+function postChange(patch: string): string {
+  return patch
+    .split("\n")
+    .filter((l) => !l.startsWith("-"))
+    .join("\n");
+}
+
 /** Does this file's diff name `(app_label, name)` as a `dependencies` tuple?
  * A cross-app reference must carry the label — a bare `"0001_initial"` in
  * another app is that app's own migration. The tuple may be split across
@@ -128,7 +137,7 @@ function referencesAppMigration(
   const g = DIFF_GAP;
   return new RegExp(
     `\\(${g}["']${escapeRe(appLabel)}["']${g},${g}["']${escapeRe(name)}["']${g}(?:,${g})?\\)`,
-  ).test(patch);
+  ).test(postChange(patch));
 }
 
 /** Same-app follow-up match. A same-app dependency is an `(app_label, name)`
@@ -146,10 +155,12 @@ function referencesOwnMigration(
 ): boolean {
   if (!patch || !name) return false;
   if (referencesAppMigration(patch, ownLabel, name)) return true;
+  const post = postChange(patch);
   const re = new RegExp(`["']${escapeRe(name)}["']`, "g");
-  const tupleHead = /\(\s*["']([^"'\n]*)["']\s*,\s*$/;
-  for (let m = re.exec(patch); m !== null; m = re.exec(patch)) {
-    const head = tupleHead.exec(patch.slice(Math.max(0, m.index - 200), m.index));
+  // The tuple's first half, which may sit on an earlier added line.
+  const tupleHead = new RegExp(`\\(${DIFF_GAP}["']([^"'\\n]*)["']${DIFF_GAP},${DIFF_GAP}$`);
+  for (let m = re.exec(post); m !== null; m = re.exec(post)) {
+    const head = tupleHead.exec(post.slice(Math.max(0, m.index - 200), m.index));
     if (head && head[1] !== ownLabel && knownLabels.has(head[1] as string)) continue;
     return true;
   }
@@ -193,6 +204,19 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
       { ref, ...(f.patch !== undefined ? { patch: f.patch } : {}) },
     ]);
   }
+  // The one deterministic order both passes walk: apps by name, each app's
+  // migrations by number then path (the remedy's order, and its fingerprint's).
+  const orderedByApp = [...prByApp]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(
+      ([app, entries]) =>
+        [
+          app,
+          [...entries].sort(
+            (a, b) => a.ref.number - b.ref.number || (a.ref.path < b.ref.path ? -1 : 1),
+          ),
+        ] as const,
+    );
 
   // Every app label either side holds — what tells a same-app bare-name match
   // apart from another app's identically named migration.
@@ -209,11 +233,8 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     string,
     { app_label: string; renamed: Map<string, { name: string; number: number }> }
   >();
-  for (const [app, entries] of [...prByApp].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+  for (const [app, ordered] of orderedByApp) {
     const base = baseByApp.get(app) ?? new Map<number, MigrationRef>();
-    const ordered = [...entries].sort(
-      (a, b) => a.ref.number - b.ref.number || (a.ref.path < b.ref.path ? -1 : 1),
-    );
     const colliding = ordered.filter(({ ref: r }) => {
       const occupant = base.get(r.number);
       return occupant !== undefined && !basePaths.has(r.path);
@@ -308,10 +329,7 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
   // name a migration the remedy renames. Numbers are per app, so it never
   // renumbers — only its dependency tuple moves.
   if (renamedByApp.size > 0) {
-    for (const [app, entries] of [...prByApp].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-      const ordered = [...entries].sort(
-        (a, b) => a.ref.number - b.ref.number || (a.ref.path < b.ref.path ? -1 : 1),
-      );
+    for (const [app, ordered] of orderedByApp) {
       // Every PR file, including one the same-app pass already remedied: its
       // own-app entry moving says nothing about a stale tuple naming another
       // app. One entry per stale tuple, across every renamed app.

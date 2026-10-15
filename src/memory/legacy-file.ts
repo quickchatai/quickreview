@@ -19,7 +19,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseHashTags } from "./eventtags.js";
-import type { MemoryEntry, MemorySource } from "./store.js";
+import { linksOf, tagsOf, type MemoryEntry, type MemorySource } from "./store.js";
 
 /** Where the archived MEMORY.md sits for a process running beside pi. */
 export function legacyMemoryPath(): string {
@@ -47,8 +47,8 @@ export function parseLegacyMemory(md: string): MemoryEntry[] {
     if (!header || text.length === 0) return;
     // `tags` stays a full-text scan: it feeds the import classifier, where
     // over-inclusion is merely noisy.
-    const tags = [...text.matchAll(/(^|\s)#([\w-]+)/g)].map((m) => m[2]!);
-    const links = [...text.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1]!);
+    const tags = tagsOf(text);
+    const links = linksOf(text);
     entries.push({
       id: header.id,
       ts: header.ts,

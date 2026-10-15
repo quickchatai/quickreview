@@ -149,8 +149,10 @@ export function sessionGitConfigPins(piHome: string): Record<string, string> {
   };
 }
 
+/** The PR's tmux session name — by design the same string as its OpenViking
+ * session id, so the one formatter lives there. */
 export function prSessionName(pr: number): string {
-  return `pr-${pr}`;
+  return ovSessionIdForPr(pr);
 }
 
 export function isSandboxSession(name: string): boolean {
