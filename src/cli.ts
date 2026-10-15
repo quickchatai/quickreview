@@ -1520,7 +1520,8 @@ const SETUP_USAGE = "usage: qcr setup [validate [<profile>] | commit]";
  *   qcr setup validate [profile]  the daemon's own check of a repo profile as
  *                                 it is on disk — for a direct edit
  *   qcr setup commit              carry out the profile commits setup asked
- *                                 for (the TUI does this on its own timer)
+ *                                 for (the TUI does this on its own timer),
+ *                                 retrying any whose git step failed
  */
 export async function cmdSetup(rest: string[]): Promise<number> {
   const sub = rest[0];
