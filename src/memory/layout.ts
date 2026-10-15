@@ -22,7 +22,7 @@
 // edits a move needs. It knows nothing about HTTP or OpenViking — an id here
 // is the store's `<area>/<file>` (see src/openviking/store.ts), and only the
 // store turns it into a URI.
-import { parseEventTags, parseHashTags } from "./eventtags.js";
+import { EVENT_TAG_RE, parseEventTags, parseHashTags } from "./eventtags.js";
 
 /** The guaranteed head. */
 export const PINNED_AREA = "preferences/pinned";
@@ -174,7 +174,6 @@ export const MEMORY_LAYOUT_NOTE = [
 // a bare `#` is a markdown title, not a header: a tag is then not spliced into
 // the title but put on a first line of its own.
 
-const KV_RE = /^[a-z][a-z0-9_-]*=[^\s]+$/;
 const HASH_RE = /^#[^\s#]+$/;
 
 /** Index (into the separator-keeping token array) just past the header run,
@@ -185,7 +184,7 @@ function headerRun(tokens: string[]): { end: number; real: boolean } {
   for (let i = 0; i < tokens.length; i += 2) {
     const t = tokens[i]!;
     if (t === "") continue;
-    const tag = HASH_RE.test(t) || KV_RE.test(t);
+    const tag = HASH_RE.test(t) || EVENT_TAG_RE.test(t);
     // A bare `#` after a real tag is a markdown title on the next line.
     if (!tag && real) break;
     if (tag || t.startsWith("#")) {
@@ -209,7 +208,7 @@ export function withHeaderTags(text: string, tags: Readonly<Record<string, strin
   const trimmed = text.trim();
   const have = parseEventTags(trimmed);
   const add = Object.entries(tags)
-    .filter(([k, v]) => KV_RE.test(`${k}=${v}`) && !(k in have))
+    .filter(([k, v]) => EVENT_TAG_RE.test(`${k}=${v}`) && !(k in have))
     .map(([k, v]) => `${k}=${v}`)
     .join(" ");
   if (add === "") return trimmed;
@@ -230,7 +229,7 @@ export function withoutHeaderTag(text: string, key: string): string {
   const { end } = headerRun(tokens);
   for (let i = 0; i < end; i += 2) {
     const t = tokens[i]!;
-    if (!t.startsWith(`${key}=`) || !KV_RE.test(t)) continue;
+    if (!t.startsWith(`${key}=`) || !EVENT_TAG_RE.test(t)) continue;
     // Take the separator before it when there is one (so `#a k=v\nrest`
     // keeps its line break), else the one after it.
     if (i > 0) tokens.splice(i - 1, 2);

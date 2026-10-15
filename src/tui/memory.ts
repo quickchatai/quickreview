@@ -36,7 +36,7 @@
 import { readFileSync } from "node:fs";
 import { parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import {
-  matchesQuery,
+  searchEntries,
   type MemoryEntry,
   type MemoryOp,
   type MemorySearchOptions,
@@ -454,9 +454,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
   }
 
   async search(query: string, opts?: MemorySearchOptions): Promise<MemoryEntry[]> {
-    const hits = (await this.read()).filter((e) => matchesQuery(e, query, opts));
-    const limit = opts?.limit;
-    return limit !== undefined && limit >= 0 ? hits.slice(0, limit) : hits;
+    return searchEntries(await this.read(), query, opts);
   }
 
   /**

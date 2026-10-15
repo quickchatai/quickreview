@@ -45,9 +45,11 @@
 import { createHash } from "node:crypto";
 import { chmod as nodeChmod, stat as nodeStat } from "node:fs/promises";
 import {
-  matchesQuery,
+  linksOf,
   normalizeTag,
   refOf,
+  searchEntries,
+  tagsOf,
   type MemoryEntry,
   type MemoryOp,
   type MemorySearchOptions,
@@ -55,10 +57,10 @@ import {
   type MemoryStore,
   type MemoryWriteResult,
 } from "./store.js";
+import { IMPORT_TAG } from "./eventtags.js";
 import { EVENTS_AREA, EXPERIENCES_AREA, PREFERENCES_AREA } from "./layout.js";
 
-/** Tag stamped on every imported entry — the TUI's handle on this migration. */
-export const IMPORT_TAG = "imported";
+export { IMPORT_TAG };
 
 /** Marker carrying the identity of the source entry, parsed back on re-run. */
 export const IMPORT_KEY_PREFIX = "import-key:";
@@ -128,9 +130,10 @@ const hasTag = (e: MemoryEntry, want: Set<string>): boolean => e.tags.some((t) =
 const isTagged = (e: MemoryEntry, tag: string): boolean => e.tags.some((t) => normalizeTag(t) === tag);
 
 /**
- * One entry's verdict. Order matters: pinned wins over everything (it decides
- * WHERE the entry lands, not just whether), then standing instructions, then
- * the open threads, then learnings.
+ * One entry's verdict. Order matters: what never crosses goes first (empty
+ * text, session handoffs, CLOSED bug/feedback threads — even a pinned one);
+ * then pinned (it decides WHERE the entry lands, not just whether), then
+ * standing instructions, then the open threads, then learnings.
  */
 export function classify(e: MemoryEntry): Classification {
   const text = e.text.trim();
@@ -274,7 +277,6 @@ export interface ImportOptions {
 }
 
 interface Plan {
-  entry: MemoryEntry;
   category: ImportCategory;
   key: string;
   text: string;
@@ -289,16 +291,21 @@ interface Plan {
  * store that can say what it could not read (`sweep()`, the OpenViking
  * implementation) is asked; one that cannot is taken at its `read()`.
  */
-async function readDestFully(dest: MemoryStore): Promise<MemoryEntry[]> {
+async function readDestFully(dest: MemoryStore, written = 0): Promise<MemoryEntry[]> {
   const sweepable = dest as MemoryStore & {
     sweep?: () => Promise<{ entries: MemoryEntry[]; unread: string[] }>;
   };
   if (typeof sweepable.sweep !== "function") return dest.read();
   const { entries, unread } = await sweepable.sweep();
   if (unread.length > 0) {
+    // Between batches, earlier batches HAVE landed; a rerun recognises them.
+    const sofar =
+      written === 0
+        ? "nothing written this pass"
+        : `stopped after ${written} write(s) this pass (a rerun recognises them)`;
     throw new Error(
       `memory import: could not read the whole destination, so it cannot tell what is already imported — ` +
-        `nothing written this pass; rerun once it reads cleanly (${unread.join("; ")})`,
+        `${sofar}; rerun once it reads cleanly (${unread.join("; ")})`,
     );
   }
   return entries;
@@ -362,7 +369,7 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
       if (verdict.category === "pinned" && !already.pinned) repins.push({ ref, entry: already });
       continue;
     }
-    plans.push({ entry: e, category: verdict.category, key, text: importedText(e, verdict.category, key), ref });
+    plans.push({ category: verdict.category, key, text: importedText(e, verdict.category, key), ref });
   }
 
   report.batches = Math.ceil(plans.length / batchSize);
@@ -376,7 +383,7 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
     // Creation precondition at the seam: re-read right before writing, so an
     // entry another writer (or an interrupted earlier run) has just put there
     // is recognised instead of duplicated.
-    if (i > 0) existing = indexByKey(await readDestFully(opts.dest));
+    if (i > 0) existing = indexByKey(await readDestFully(opts.dest, report.imported.length));
     let ok = 0;
     let bad = 0;
     for (const plan of batch) {
@@ -414,10 +421,10 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
           report.pins.push({ ...plan.ref, ok: false, repaired: false, message: "written entry not found on read-back — pin not applied" });
           continue;
         }
-        // The `pinned` FLAG only says the text carries the tag — an imported
-        // entry inherits it from its own words. Placement in the pinned area
-        // is what the guaranteed head reads, and only the `pin` op does that,
-        // so a freshly written entry is always pinned explicitly.
+        // The written entry's header `#pinned` normally places it in the
+        // pinned area already; the `pin` op follows regardless, so an entry a
+        // destination placed elsewhere still ends up where the guaranteed
+        // head reads — placement, never the tag, is what pins.
         const res = await applyQuietly(opts.dest, { op: "pin", ...refOf(landed) });
         report.pins.push({ ...plan.ref, ok: res.ok, repaired: false, message: res.message });
       }
@@ -584,7 +591,7 @@ export function recordingMemoryStore(seed: MemoryEntry[] = []): RecordingMemoryS
   const make = (text: string): MemoryEntry => {
     counter += 1;
     const stamp = `2026-01-01 00:00:${String(counter % 60).padStart(2, "0")}`;
-    const tags = [...text.matchAll(/(^|\s)#([\w-]+)/g)].map((m) => m[2]!);
+    const tags = tagsOf(text);
     return {
       id: `rec-${counter}`,
       ts: stamp,
@@ -592,7 +599,7 @@ export function recordingMemoryStore(seed: MemoryEntry[] = []): RecordingMemoryS
       block: 0,
       text: text.trim(),
       tags,
-      links: [...text.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1]!),
+      links: linksOf(text),
       pinned: tags.includes("pinned"),
       hash: hash(text.trim()),
     };
@@ -603,9 +610,7 @@ export function recordingMemoryStore(seed: MemoryEntry[] = []): RecordingMemoryS
     entries,
     read: () => Promise.resolve([...entries]),
     search: (query: string, opts?: MemorySearchOptions) => {
-      const hits = entries.filter((e) => matchesQuery(e, query, opts));
-      const limit = opts?.limit;
-      return Promise.resolve(limit !== undefined && limit >= 0 ? hits.slice(0, limit) : hits);
+      return Promise.resolve(searchEntries(entries, query, opts));
     },
     apply: (op: MemoryOp) => {
       ops.push(op);
@@ -628,7 +633,7 @@ export function recordingMemoryStore(seed: MemoryEntry[] = []): RecordingMemoryS
         entries[at] = { ...entry, text, tags: entry.tags.filter((t) => t !== "pinned"), pinned: false, hash: hash(text) };
       }
       if (op.op === "edit") {
-        const tags = [...op.text.matchAll(/(^|\s)#([\w-]+)/g)].map((m) => m[2]!);
+        const tags = tagsOf(op.text);
         entries[at] = { ...entry, text: op.text.trim(), tags, pinned: tags.includes("pinned"), hash: hash(op.text.trim()) };
       }
       return Promise.resolve({ ok: true, message: `ok: ${op.op}` });

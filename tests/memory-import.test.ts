@@ -323,6 +323,28 @@ describe("importMemory — batching", () => {
     expect(inner.entries.filter((e) => e.text.includes("merge base"))).toHaveLength(1);
   });
 
+  it("a sweep that fails BETWEEN batches does not claim nothing was written", async () => {
+    const source = recordingMemoryStore(sourceEntries());
+    const inner = recordingMemoryStore();
+    let sweeps = 0;
+    const sweep = async () => {
+      sweeps += 1;
+      return sweeps === 1
+        ? { entries: [...inner.entries], unread: [] }
+        : { entries: [...inner.entries], unread: ["read x.md: timeout"] };
+    };
+    const flaky: MemoryStore & { sweep: typeof sweep } = {
+      read: async () => [...inner.entries],
+      sweep,
+      search: (q, o) => inner.search(q, o),
+      apply: (op) => inner.apply(op),
+    };
+    const err = await importMemory({ source, dest: flaky, batchSize: 1 }).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/stopped after 1 write\(s\) this pass/);
+    expect((err as Error).message).not.toMatch(/nothing written/);
+  });
+
   it("an entry another writer lands mid-import is not written twice", async () => {
     const { source, dest } = rig();
     let batch = 0;

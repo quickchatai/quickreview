@@ -94,6 +94,15 @@ describe("step + status tools", () => {
     expect(out).toMatch(/✓ uid/);
   });
 
+  it("a disabled step's tool says why it was refused, never 'fix the red checks'", async () => {
+    const step = { ...preflightStep(), enabled: () => false };
+    const engine = new OnboardingEngine([step], fakeAdapters());
+    const out = textOf(await call(toolDefinitions(engine, vi.fn()), "onboard_preflight"));
+    expect(out).toContain('Step "preflight" REFUSED');
+    expect(out).toContain("disabled by the recorded choices");
+    expect(out).not.toContain("red checks");
+  });
+
   it("onboard_status re-verifies and renders the checklist", async () => {
     const { defs } = belt();
     await call(defs, "onboard_preflight");

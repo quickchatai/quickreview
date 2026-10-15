@@ -510,15 +510,19 @@ export function readOvcliKey(
  * non-null key differs from the last one seen — the first sighting only
  * records. wire.ts rewrites the live sessions' `ovcli.conf` from it, so a
  * rotated key reaches the sessions without waiting for a session to be born.
- * Returns whether this call fired. Never logs the key.
+ * An `onChange` that answers `false` (the rewrite failed) leaves the change
+ * owed: the next call fires again. Returns whether this call fired. Never
+ * logs the key.
  */
-export function keyChangeWatcher(onChange: () => void): (key: string | null) => boolean {
+export function keyChangeWatcher(
+  onChange: () => boolean | void,
+): (key: string | null) => boolean {
   let last: string | null | undefined;
   return (key) => {
     const prev = last;
     last = key;
     if (prev === undefined || key === null || key === prev) return false;
-    onChange();
+    if (onChange() === false) last = prev;
     return true;
   };
 }

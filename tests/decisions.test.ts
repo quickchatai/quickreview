@@ -226,6 +226,51 @@ describe("the loosened-test hint", () => {
       "skip-added",
     ]);
   });
+  it("reads a Rust assert_eq! turned into a bound as exact-to-bound", () => {
+    expect(
+      detectLoosenedAssertions([
+        t(
+          "tests/check.rs",
+          "@@ -3 +3 @@\n-    assert_eq!(actual, expected);\n+    assert!(actual >= minimum);\n",
+        ),
+      ]),
+    ).toEqual([{ file: "tests/check.rs", line: 3, kind: "exact-to-bound" }]);
+  });
+  it("an addition paired with one removed assertion does not hide another removed one", () => {
+    expect(
+      detectLoosenedAssertions([
+        t(
+          "src/a.test.ts",
+          "@@ -1,2 +1,1 @@\n-  expect(foo).toBe(1);\n-  expect(bar).toBe(2);\n+  expect(foo).toBe(3);\n",
+        ),
+      ]),
+    ).toEqual([{ file: "src/a.test.ts", line: 2, kind: "assert-removed" }]);
+  });
+  it("a precision argument loosens when LOWERED, not raised", () => {
+    const kinds = (from: string, to: string): string[] =>
+      detectLoosenedAssertions([t("src/a.test.ts", `@@ -1 +1 @@\n-  ${from}\n+  ${to}\n`)]).map(
+        (h) => h.kind,
+      );
+    expect(kinds("expect(x).toBeCloseTo(y, 3);", "expect(x).toBeCloseTo(y, 1);")).toEqual([
+      "tolerance-widened",
+    ]);
+    expect(kinds("expect(x).toBeCloseTo(y, 1);", "expect(x).toBeCloseTo(y, 3);")).toEqual([]);
+    expect(
+      kinds("self.assertAlmostEqual(a, b, places=7)", "self.assertAlmostEqual(a, b, places=2)"),
+    ).toEqual(["tolerance-widened"]);
+    // an absolute tolerance still loosens when RAISED
+    expect(
+      kinds("self.assertAlmostEqual(a, b, delta=0.1)", "self.assertAlmostEqual(a, b, delta=1)"),
+    ).toEqual(["tolerance-widened"]);
+  });
+  it("a removed line that starts with '--' is content, not a file header", () => {
+    // `--count;` removed arrives as `---count;`; it must still advance the line
+    expect(
+      detectLoosenedAssertions([
+        t("src/a.test.ts", "@@ -10,3 +10,1 @@\n---count;\n-expect(count).toBe(1);\n run();\n"),
+      ]),
+    ).toEqual([{ file: "src/a.test.ts", line: 11, kind: "assert-removed" }]);
+  });
   it("ignores production files, tightened checks and unchanged text", () => {
     expect(
       detectLoosenedAssertions([

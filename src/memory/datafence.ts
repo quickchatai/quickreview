@@ -17,7 +17,9 @@
 //     (src/memory/eventtags.ts) stop at the first word of prose — so a quote
 //     reading `#pinned kind=bug` can never mint a tag.
 //
-// A leaf: no imports, nothing engine-specific.
+// A leaf: nothing engine-specific; its one import is the leaf `codespan.ts`.
+
+import { longestBacktickRun } from "../codespan.js";
 
 /** The label a `[feedback]` comment's full text follows in its `events/`
  * entry (src/feedback.ts `memoryEntryFor`) — here, in the leaf, so the TUI's
@@ -33,13 +35,6 @@ export function cleanQuotedText(text: string): string {
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
     .replace(/^\s*\n/, "")
     .replace(/\s+$/, "");
-}
-
-/** The longest run of backticks in `text`. */
-function longestBacktickRun(text: string): number {
-  let best = 0;
-  for (const m of text.matchAll(/`+/g)) best = Math.max(best, m[0].length);
-  return best;
 }
 
 /**

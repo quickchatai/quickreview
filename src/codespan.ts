@@ -5,6 +5,14 @@
  * both render repository paths, and both must keep them literal.
  */
 
+/** The longest run of backticks in `text` (0 when none) — what a fence or a
+ * code span must out-length so nothing inside can close it (CommonMark). */
+export function longestBacktickRun(text: string): number {
+  let best = 0;
+  for (const m of text.matchAll(/`+/g)) best = Math.max(best, m[0].length);
+  return best;
+}
+
 /** Control characters (newlines included) as visible `\\uXXXX` escapes, so
  * author-controlled text can never start a new line of prompt. */
 export function flatControls(text: string): string {
@@ -28,7 +36,7 @@ export function flatControls(text: string): string {
 export function codePath(path: string, opts: { table?: boolean } = {}): string {
   let flat = flatControls(path);
   if (opts.table) flat = flat.replace(/\|/g, "\\|");
-  const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((r) => r.length));
+  const longest = longestBacktickRun(flat);
   if (longest === 0) return `\`${flat}\``;
   const fence = "`".repeat(longest + 1);
   return `${fence} ${flat} ${fence}`;
