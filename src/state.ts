@@ -5233,6 +5233,10 @@ export class StateStore {
       // after this point may delay the pump, but cannot forget what u asked for.
       const row = this.getPr(pr);
       const successor = this.successorFor(pr);
+      // The newest known head owes the review: a successor, else the PR's
+      // own head (a push seen while it sat queued records no successor),
+      // else the failed round's.
+      const targetHead = successor?.head_sha || row?.head_sha || current.head_sha;
       const command = current.command_id ? this.getSessionCommand(current.command_id) : undefined;
       const round =
         current.round_id === null
@@ -5252,7 +5256,6 @@ export class StateStore {
         round.round_no === current.round_no &&
         round.status !== "running"
       ) {
-        const targetHead = successor?.head_sha || row.head_sha || current.head_sha;
         const targetRoundNo =
           ((
             this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr=?").get(pr) as {
@@ -5287,7 +5290,7 @@ export class StateStore {
             WHERE number=? AND state!='closed'`,
           )
           .run(
-            successor?.head_sha ?? current.head_sha,
+            targetHead,
             successor?.requested_at ?? ts,
             successor?.provenance ?? "system",
             ts,

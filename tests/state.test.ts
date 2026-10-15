@@ -1737,6 +1737,29 @@ describe("durable FAILED_LOUD review obligations", () => {
     expect(snap.pipeline).toMatchObject({ healthy: false, failed_loud: 0 });
     expect(snap.pipeline?.causes[0]).toMatchObject({ key: "round-stage-supervisor", pr: null });
   });
+
+  it("operator recovery keeps a head the PR moved to while queued, with no successor recorded", () => {
+    store.upsertPr(prRow(5470, { state: "reviewing", head_sha: "failed-head" }));
+    const roundId = store.startRound(5470, "re-review", ["pass-baseline"], 75);
+    store.openReviewFailure({
+      pr: 5470,
+      command_id: "cmd-5470",
+      round_id: roundId,
+      round_no: 1,
+      head_sha: "failed-head",
+      stage: "running_hard_bound",
+      detail: "fixed bound exhausted",
+      attempts: 2,
+      retry_cap: 2,
+    });
+    // A push reconciled while the PR sits queued moves its head; with no
+    // round running, no successor obligation is recorded.
+    store.upsertPr(prRow(5470, { state: "queued", head_sha: "pushed-head" }));
+    expect(store.successorFor(5470)).toBeUndefined();
+
+    expect(store.recoverReviewFailure(5470, "operator-rerun")?.work_owed).toBe(0);
+    expect(store.getPr(5470)).toMatchObject({ state: "queued", head_sha: "pushed-head" });
+  });
 });
 
 describe("durable fresh-head successor obligation", () => {
