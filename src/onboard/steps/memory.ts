@@ -60,6 +60,7 @@
 // failure it would be on an install that wanted memory, and wakes the overseer,
 // paints the board and files a ticket for a choice. Configuring memory later
 // switches it back on. It never wedges and never crashes.
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -76,11 +77,14 @@ import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { OPENVIKING_DEFAULTS, parseConfig } from "../../config.js";
 import { configHome, locateKeysFile, locateSecrets } from "../../install.js";
+import { tuiMemoryBaseUrl } from "../../tui/memory.js";
 import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
 import { configMountOf } from "./bringup.js";
-import { readTextOrNull, writeAtomic } from "./compose.js";
+import { readTextOrNull, rootOf, writeAtomic } from "./compose.js";
 import { assertNoDryRunEdit, patchToml, type TomlEdit } from "./configfill.js";
 import { readTomlKey } from "./ingress.js";
+import { topologyOf } from "./topology.js";
+import { stackTransportFor } from "./transport.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const MEMORY_STEP_ID = "memory";
@@ -101,6 +105,10 @@ export const REVIEWER_KEY_FILE = OPENVIKING_DEFAULTS.reviewer_key_file;
  * `OPENVIKING_API_KEY` is the companion extension's own identity. */
 export const COMPANION_VARS = ["OPENVIKING_API_KEY", "OPENVIKING_COMPANION_KEY"] as const;
 export const REVIEWER_VAR = "OPENVIKING_REVIEWER_KEY";
+
+/** Where the daemon container mounts the secrets dir, read-only — the same
+ * path on both routes (docker-compose.yml, the playbook's container task). */
+export const CONTAINER_SECRETS_DIR = "/opt/quickreview/secrets";
 
 // ---- the two script modules this step drives (never reimplemented) ----------
 
@@ -156,7 +164,9 @@ export interface MemoryStepOptions {
   /** Operator-side key file (default: the install locator's answer; refused
    * when it would sit inside a dir the container mounts). */
   keysFile?: string;
-  /** OpenViking endpoint: the memory forward's loopback listener. */
+  /** OpenViking endpoint. Default: `$QCR_OV_BASE`, else the endpoint the TUI
+   * reaches memory at (`tuiMemoryBaseUrl` — the memory forward's loopback
+   * listener, `QCR_MEMORY_PORT` honoured). */
   base?: string;
   account?: string;
   env?: NodeJS.ProcessEnv;
@@ -410,18 +420,26 @@ function modeOk(path: string): boolean {
 
 export type { MemoryChoice };
 
-const MEMORY_CHOICE_IDS: readonly MemoryChoice[] = ["configure", "declined"];
+/** The two answers — the tool schema's enum, the guards and the refusal text
+ * all read this one list. */
+const MEMORY_CHOICE_IDS = ["configure", "declined"] as const satisfies readonly MemoryChoice[];
+
+function isMemoryChoice(value: unknown): value is MemoryChoice {
+  return (MEMORY_CHOICE_IDS as readonly unknown[]).includes(value);
+}
 
 /**
  * Read a typed answer as a choice, or `null` when it is neither a yes nor a
  * no. An empty answer is the [Y/n] prompt's default, "configure"; anything
  * unrecognised is null, so the step refuses with the options rather than
- * guessing — a guessed "configure" mints keys and turns memory on.
+ * guessing — a guessed "configure" mints keys and turns memory on, and a
+ * guessed "declined" turns memory off. Each word must be whole: "need more
+ * information" is not a no.
  */
 export function normalizeMemoryChoice(answer: string | undefined): MemoryChoice | null {
   const text = (answer ?? "").trim();
   if (text === "") return "configure";
-  if (/^(n|no|nope|skip|declin|later|without)/i.test(text)) return "declined";
+  if (/^(n|no|nope|skip|declin(e|ed|ing)?|later|without)\b/i.test(text)) return "declined";
   if (/^(y|yes|yep|yeah|sure|ok|okay|configure|set ?up)\b/i.test(text)) return "configure";
   return null;
 }
@@ -452,6 +470,8 @@ export const DECLINED_CHECKS: readonly CheckResult[] = [
 /** The check row that reports the daemon's on/off switch. */
 export const MEMORY_SWITCH_CHECK = "memory-switch";
 
+/** The config.toml the memory switch lives in: the path the interview
+ * recorded writing, else the adapters'. */
 function configPathOf(ctx: StepContext): string {
   const recorded = ctx.choices[CHOICE_KEYS.configPath];
   return typeof recorded === "string" && recorded ? recorded : ctx.adapters.paths.configPath;
@@ -515,6 +535,21 @@ function switchMemory(ctx: StepContext, on: boolean): CheckResult | null {
   };
 }
 
+/** Verify's half of the switch for a configured install: the daemon must not
+ * have been told memory is OFF since. */
+function switchStillOn(ctx: StepContext): CheckResult | null {
+  const path = configPathOf(ctx);
+  const text = readTextOrNull(path);
+  if (text === null || readTomlKey(text, "openviking", "enabled") !== "false") return null;
+  return {
+    name: MEMORY_SWITCH_CHECK,
+    ok: false,
+    detail:
+      `memory is configured, but ${path} says [openviking] enabled = false — the daemon runs memory-less whatever the ` +
+      'keys prove. Run this step again with choice "configure" to switch it back on',
+  };
+}
+
 /** Verify's half of the switch: a declined install must still SAY off. */
 function switchStillOff(ctx: StepContext): CheckResult {
   const path = configPathOf(ctx);
@@ -535,15 +570,10 @@ function switchStillOff(ctx: StepContext): CheckResult {
 
 // ---- the step ---------------------------------------------------------------
 
-function repoRootFrom(stateDir: string): string {
-  return dirname(resolve(stateDir));
-}
-
-function defaultLoaders(stateDir: string): {
+function defaultLoaders(root: string): {
   provision: () => Promise<ProvisionModule>;
   matrix: () => Promise<MatrixModule>;
 } {
-  const root = repoRootFrom(stateDir);
   // Dynamic, by file URL, for the same reason src/tui/memforward.ts does it:
   // both scripts are dependency-free ESM outside tsconfig's include, and a
   // static import would either drag them into the build or fork their logic.
@@ -591,11 +621,10 @@ function resolvePaths(opts: MemoryStepOptions, ctx: StepContext): Resolved {
   const keys = opts.keysFile
     ? keysFileConfinement(resolve(opts.keysFile), secretsDir, env, home, mounted)
     : resolveKeysFile(secretsDir, env, home, mounted);
-  // The endpoint is the memory forward's loopback listener (the VM route) or
-  // the local server (the laptop route) — same address either way, which is
-  // why the forward binds 127.0.0.1 as well as the docker bridge.
-  const base =
-    opts.base ?? ((env.QCR_OV_BASE ?? "").trim() || `http://127.0.0.1:${OPENVIKING_DEFAULTS.port}`);
+  // The endpoint is the memory forward's loopback listener on both routes —
+  // the engine is never published on a host port (docker-compose.yml, the
+  // playbook) — so this step reaches memory exactly where the TUI does.
+  const base = opts.base ?? ((env.QCR_OV_BASE ?? "").trim() || tuiMemoryBaseUrl(env));
   const account = opts.account ?? ((env.QCR_OV_ADMIN_ACCOUNT ?? "").trim() || "default");
   return { secretsDir, keys, base, account, env, home, mounted };
 }
@@ -604,10 +633,78 @@ function resolvePaths(opts: MemoryStepOptions, ctx: StepContext): Resolved {
  * secrets dir and the config home: the live config's directory
  * (`configMountOf`) and the checkout. */
 function daemonMounts(ctx: StepContext): string[] {
-  return [
-    configMountOf(ctx.adapters.paths.configPath).dir,
-    repoRootFrom(ctx.adapters.paths.stateDir),
-  ];
+  return [configMountOf(ctx.adapters.paths.configPath).dir, rootOf(ctx.adapters)];
+}
+
+/** Why nothing answered at `base`, and the one thing that makes it answer: the
+ * memory forward, in the mode this topology needs. The engine listens on the
+ * daemon container's own loopback on both routes and is never published. */
+function serverUnreachableDetail(ctx: StepContext, base: string, why: string): string {
+  const forward =
+    topologyOf(ctx.choices) === "vm"
+      ? "`node scripts/companion-memory-forward.mjs run` (it reaches the server's container over ssh)"
+      : '`node scripts/companion-memory-forward.mjs run --local --container "$(docker compose ps -q daemon)"` ' +
+        "(add --no-sudo when docker runs without sudo here)";
+  return (
+    `no OpenViking answering at ${base} (${why}). The root key is in place, which is what the daemon needs at boot. ` +
+    "The memory engine listens only on the daemon container's own loopback, so this machine reaches it through the memory " +
+    `forward: bring the stack up if it is not, then start the forward in another terminal — ${forward}, or ` +
+    "`node scripts/companion-memory-forward.mjs install` for the systemd unit, or open `qcr tui`, which starts one — and run " +
+    "this step again: the two user keys are minted and placed. Nothing is lost by waiting."
+  );
+}
+
+/**
+ * The server route's daemon reads ITS copy of the reviewer key: the one a
+ * deploy shipped into the VM's secrets dir, and only `rebuild` ships secrets
+ * (`deploy.sh sync` starts past those tasks). The operator copy proven here
+ * says nothing about it, so ask the container for the hash of its copy — a
+ * hash, never the key — and compare. null on the compose route, where the
+ * container mounts this machine's secrets dir itself.
+ */
+async function daemonReviewerCopyCheck(
+  ctx: StepContext,
+  localPath: string,
+): Promise<CheckResult | null> {
+  if (topologyOf(ctx.choices) !== "vm") return null;
+  const name = "reviewer-key-on-server";
+  const remotePath = `${CONTAINER_SECRETS_DIR}/${REVIEWER_KEY_FILE}`;
+  const ship =
+    'run the vm_deploy step with mode "rebuild" (`bash scripts/deploy.sh rebuild`) — only a rebuild copies the ' +
+    "secrets dir to the server; a sync never does — then run this step again";
+  let local: string;
+  try {
+    local = createHash("sha256").update(readFileSync(localPath)).digest("hex");
+  } catch (err) {
+    return { name, ok: false, detail: `cannot read ${localPath} to compare: ${String(err)}` };
+  }
+  const r = await stackTransportFor(ctx).exec(["sha256sum", remotePath]);
+  const remote = /^([0-9a-f]{64})\b/.exec(r.stdout.trim())?.[1];
+  if (r.code === 0 && remote !== undefined) {
+    return remote === local
+      ? {
+          name,
+          ok: true,
+          detail: `the daemon on the server holds the same reviewer key as ${localPath}`,
+        }
+      : {
+          name,
+          ok: false,
+          detail: `the daemon on the server holds a DIFFERENT reviewer key than ${localPath} — it authenticates with a key the matrix never proved. Fix: ${ship}`,
+        };
+  }
+  const said = (r.stderr || r.stdout).trim().slice(0, 200) || `exit ${r.code}`;
+  return /no such file/i.test(said)
+    ? {
+        name,
+        ok: false,
+        detail: `the daemon on the server has no reviewer key yet (${remotePath}), so it runs memory-less. Fix: ${ship}`,
+      }
+    : {
+        name,
+        ok: false,
+        detail: `could not ask the server's daemon container for its reviewer key (${said}) — not proven either way; check the deploy step, then run this step again`,
+      };
 }
 
 /** Placement: root + reviewer daemon-side, both USER keys operator-side, the
@@ -719,10 +816,10 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
     // wizard, which has no prompter, says yes or no, and how an earlier
     // decline is reversed.
     const given = ctx.input.choice;
-    if (given === "declined" || given === "configure") return given;
+    if (isMemoryChoice(given)) return given;
     if (typeof given === "string" && given.trim() !== "") return read(given);
     const recorded = ctx.choices[MEMORY_CHOICE_KEY];
-    if (recorded === "declined" || recorded === "configure") return recorded;
+    if (isMemoryChoice(recorded)) return recorded;
     const prompter = ctx.adapters.prompter;
     if (!prompter) return "configure";
     let answer: string;
@@ -737,7 +834,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
   };
 
   const loaders = (ctx: StepContext) => {
-    const fallback = defaultLoaders(ctx.adapters.paths.stateDir);
+    const fallback = defaultLoaders(rootOf(ctx.adapters));
     return {
       provision: opts.loadProvision ?? fallback.provision,
       matrix: opts.loadMatrix ?? fallback.matrix,
@@ -762,7 +859,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       properties: {
         choice: {
           type: "string",
-          enum: ["configure", "declined"],
+          enum: [...MEMORY_CHOICE_IDS],
           description:
             'The operator\'s answer: "configure" to set memory up, "declined" to run memory-less. Omit to keep the ' +
             "recorded answer (configure when none is recorded).",
@@ -833,9 +930,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
         checks.push({
           name: "memory-server",
           ok: false,
-          detail:
-            `no OpenViking answering at ${base} (${ready.detail}). The root key is in place, which is what the daemon needs at boot — ` +
-            "bring the stack up, then run this step again and the two user keys are minted and placed. Nothing is lost by waiting.",
+          detail: serverUnreachableDetail(ctx, base, ready.detail),
         });
         return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
       }
@@ -880,6 +975,9 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
           opts,
         )),
       );
+      // --- the daemon's own copy, where it is not this machine's file ---
+      const onServer = await daemonReviewerCopyCheck(ctx, join(secretsDir, REVIEWER_KEY_FILE));
+      if (onServer) checks.push(onServer);
       return {
         ok: checks.every((c) => c.ok),
         checks,
@@ -901,11 +999,24 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
         return { ok: declined.every((c) => c.ok), checks: declined };
       }
       const { secretsDir, keys, base, env, home, mounted } = resolvePaths(opts, ctx);
-      const keysPath = typeof ctx.data.keys_file === "string" ? ctx.data.keys_file : keys.path;
+      // The file the TUI, the companion and the forward read NOW is the one
+      // that must hold the keys: a file this step wrote earlier, somewhere the
+      // locator no longer points, serves nobody. That earlier copy is still
+      // checked for confinement below — it holds the companion key.
+      const keysPath = keys.path;
+      const placedPath =
+        typeof ctx.data.keys_file === "string" && resolve(ctx.data.keys_file) !== resolve(keysPath)
+          ? ctx.data.keys_file
+          : null;
       // Confinement against the CURRENT mounts: the layout may have moved
       // since this step placed the file (a new config location, a new pin).
-      const placement = keysFileConfinement(keysPath, secretsDir, env, home, mounted);
+      const placed =
+        placedPath !== null && existsSync(placedPath)
+          ? keysFileConfinement(placedPath, secretsDir, env, home, mounted)
+          : null;
       const checks: CheckResult[] = [];
+      const switched = switchStillOn(ctx);
+      if (switched) checks.push(switched);
 
       const rootPath = join(secretsDir, ROOT_KEY_FILE);
       const reviewerPath = join(secretsDir, REVIEWER_KEY_FILE);
@@ -927,13 +1038,21 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       }
 
       const fileKeys = readKeysFile(keysPath);
-      const companionKey = fileKeys[COMPANION_VARS[1]] ?? fileKeys[COMPANION_VARS[0]] ?? "";
+      // Both companion spellings are written with the same key, and each has a
+      // reader (the companion extension takes OPENVIKING_API_KEY, the TUI the
+      // specific one first): proving one while the other disagrees proves a
+      // key one of them never sends.
+      const companionValues = [...new Set(COMPANION_VARS.map((v) => fileKeys[v] ?? ""))];
+      const companionSplit = companionValues.length > 1;
+      const companionKey = companionSplit ? "" : (companionValues[0] ?? "");
       const reviewerKey = fileKeys[REVIEWER_VAR] ?? "";
       checks.push({
         name: "key-file",
         ok: companionKey !== "" && reviewerKey !== "" && modeOk(keysPath),
-        detail:
-          companionKey === "" || reviewerKey === ""
+        detail: companionSplit
+          ? `${keysPath} defines ${COMPANION_VARS.join(" and ")} with different values (or only one of them) — both must hold ` +
+            "the companion key. Remove the stale line and run this step again to adopt the server's key"
+          : companionKey === "" || reviewerKey === ""
             ? `${keysPath} must define ${COMPANION_VARS.join("/")} and ${REVIEWER_VAR} — run this step to write them`
             : modeOk(keysPath)
               ? `${keysPath} holds both USER keys, 0600`
@@ -958,16 +1077,18 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       }
 
       const leaked = [
-        ...(companionKey ? filesContaining(secretsDir, companionKey) : []),
-        ...(isInside(secretsDir, keysPath) ? [keysPath] : []),
+        ...companionValues.flatMap((v) => (v ? filesContaining(secretsDir, v) : [])),
+        ...[keysPath, ...(placedPath !== null ? [placedPath] : [])].filter((p) =>
+          isInside(secretsDir, p),
+        ),
       ];
-      // The recorded file (its secrets-dir case is already in `leaked`), then
-      // the file the locator names NOW, which is what the TUI and companion read.
+      // The file the locator names now, then an earlier placement still on
+      // disk (their secrets-dir cases are already in `leaked`).
       const misplaced =
-        placement.unsafe && !isInside(secretsDir, keysPath)
-          ? placement
-          : keys.unsafe && resolve(keys.path) !== resolve(keysPath)
-            ? keys
+        keys.unsafe && !isInside(secretsDir, keysPath)
+          ? keys
+          : placed?.unsafe && placedPath !== null && !isInside(secretsDir, placedPath)
+            ? placed
             : undefined;
       checks.push({
         name: "companion-key-confinement",
@@ -998,6 +1119,8 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
           opts,
         )),
       );
+      const onServer = await daemonReviewerCopyCheck(ctx, reviewerPath);
+      if (onServer) checks.push(onServer);
       return { ok: checks.every((c) => c.ok), checks };
     },
   };
