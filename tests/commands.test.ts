@@ -370,7 +370,7 @@ describe("CommandWatcher", () => {
     await w.sweep();
     for (let i = 0; i < 100 && deps.rerunRound.mock.calls.length < 2; i++)
       await new Promise((r) => setTimeout(r, 5));
-    expect(deps.rerunRound.mock.calls.map((c) => c[0])).toEqual([5, 6]);
+    expect(deps.rerunRound.mock.calls.map((c) => (c as unknown[])[0])).toEqual([5, 6]);
     for (let i = 0; i < 100 && existsSync(join(cmdDir(), "c9.json")); i++)
       await new Promise((r) => setTimeout(r, 5));
     expect(JSON.parse(readFileSync(join(cmdDir(), "processed", "c9.json"), "utf8"))).toEqual({
