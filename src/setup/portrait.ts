@@ -217,12 +217,16 @@ function scanShape(s: PortraitScan | null): string[] {
   ];
 }
 
+/** Hex characters of the facts key — written into the narrative's header
+ * and read back by `HEADER_RE`. */
+const FACTS_KEY_HEX = 12;
+
 export function factsKey(f: PortraitFacts): string {
   const lines: Partial<Record<PortraitSection, string[]>> = shapeLines(f);
   // A portrait that never saw a scan keeps the key it had before the scan
   // section existed, so the upgrade alone never stales a narrative.
   if (lines.scan!.length === 0) delete lines.scan;
-  return createHash("sha256").update(JSON.stringify(lines)).digest("hex").slice(0, 12);
+  return createHash("sha256").update(JSON.stringify(lines)).digest("hex").slice(0, FACTS_KEY_HEX);
 }
 
 export interface SectionDiff {
@@ -272,6 +276,13 @@ function factsVersionError(v: unknown, at: string): string | null {
     if (typeof f[s] !== "object" || f[s] === null) return `\`${at}.facts\` has no \`${s}\``;
   }
   if (!Array.isArray(f.problems)) return `\`${at}.facts\` has no \`problems\``;
+  // Every reader walks the sections' lists through `shapeLines`: a version
+  // whose lists it cannot walk is unreadable here, never a crash later.
+  try {
+    shapeLines(f as PortraitFacts);
+  } catch (err) {
+    return `\`${at}.facts\` is not portrait facts (${String(err)})`;
+  }
   return null;
 }
 
@@ -364,8 +375,9 @@ export interface NarrativeDoc {
   body: string;
 }
 
-const HEADER_RE =
-  /^<!-- qcr repo portrait narrative · facts ([0-9a-f]{12}) at (\S+) · written (\S+) -->\n\n?/;
+const HEADER_RE = new RegExp(
+  `^<!-- qcr repo portrait narrative · facts ([0-9a-f]{${FACTS_KEY_HEX}}) at (\\S+) · written (\\S+) -->\\n\\n?`,
+);
 
 /** The file's text: one header line the engine writes, then the prose. */
 export function renderNarrative(
@@ -597,10 +609,14 @@ export function readPortrait(deps: NarrativeDeps, opts: { diff?: boolean } = {})
       facts.state === "ok" && facts.file.previous
         ? factsDiff(facts.file.previous.facts, facts.file.current.facts)
         : [];
+    // Against a kept previous the current must be read to compare; when it
+    // cannot be, the change is UNKNOWN (null), never "the same text".
     narrativeDiff =
       narrative.state === "ok" && previous.state === "ok"
         ? lineDiff(previous.doc.body, narrative.doc.body)
-        : [];
+        : previous.state === "ok"
+          ? null
+          : [];
   }
   return {
     facts,
