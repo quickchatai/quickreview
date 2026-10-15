@@ -525,6 +525,30 @@ describe("a fixed finding's ticket closes with the scan sha", () => {
     expect(sink.closes.map((c) => c.ref)).toEqual(["FT-9001"]);
   });
 
+  it("a findings store unreadable at a re-check is reported, never read as nothing to close", async () => {
+    const sink = new FakeSink();
+    const { findings, triage } = setup({ sink });
+    findings.report([reported(FP("a")), reported(FP("b"), { path: "app/y.py" })], {
+      run: "scan-1",
+      sha: SHA1,
+      at: "t1",
+    });
+    await triage.promote({ fingerprint: FP("a"), effort: "billing" });
+    await triage.promote({ fingerprint: FP("b"), effort: "billing" });
+    findings.reconcile({ rows: [], tree: new Set(), run: { run: "scan-2", sha: SHA2, at: "t2" } });
+    const close = sink.close.bind(sink);
+    sink.close = async (ref, note) => {
+      const r = await close(ref, note);
+      findings.load = () => ({ findings: [], error: "findings.json: unreadable" });
+      return r;
+    };
+    const r = await triage.closeFixed();
+    expect(r.closed.map((c) => c.ref)).toEqual(["FT-9001"]);
+    expect(r.problems).toContainEqual(
+      expect.stringMatching(/^FT-9002 not closed: the findings store could not be re-read/),
+    );
+  });
+
   it("a promoted finding reported again before its ticket closed stays promoted; after the close it is new, on the same ticket", async () => {
     const { findings, sink, triage } = setup();
     findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t1" });

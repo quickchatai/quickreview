@@ -35,7 +35,7 @@
 import { dehash, formatEventTags } from "../memory/eventtags.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { Refusal, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
-import type { FindingsStore, ScanFinding } from "./findings.js";
+import { goneDismissal, settled, type FindingsStore, type ScanFinding } from "./findings.js";
 import { validityOf } from "./scanreport.js";
 
 export const SCAN_TAG = "scan";
@@ -64,11 +64,6 @@ const where = (f: ScanFinding): string =>
   `${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`}`;
 
 // ---- memory spellings -------------------------------------------------------------
-
-/** A dismissed finding a re-scan settled as no longer reported (findings.ts
- * `unreported`): out of play, as a fixed one is, until a scan reports it again. */
-export const goneDismissal = (f: ScanFinding): boolean =>
-  f.state === "dismissed" && f.unreported != null;
 
 /** The dismissal note: what was dismissed and why, for PR rounds to read. */
 export function dismissalMemoryText(f: ScanFinding, reason: string): string {
@@ -379,7 +374,7 @@ export class ScanTriage {
       // episode's ticket again (reopened by hand): its closure is history,
       // or the next fix would never close it.
       const saved = this.ports.findings.update(f.fingerprint, (cur) =>
-        cur.state === "fixed" || goneDismissal(cur)
+        settled(cur)
           ? "it became fixed, or no longer reported, meanwhile"
           : {
               ...cur,
@@ -421,7 +416,7 @@ export class ScanTriage {
       closed: null,
     };
     const saved = this.ports.findings.update(f.fingerprint, (cur) =>
-      cur.state === "fixed" || goneDismissal(cur)
+      settled(cur)
         ? `it became fixed, or no longer reported, meanwhile — ${filed.ref} was filed; close it by hand`
         : { ...cur, state: "promoted", ticket },
     );
@@ -459,8 +454,13 @@ export class ScanTriage {
       const t = f.ticket;
       if (f.state !== "fixed" || f.fixed?.from !== "promoted" || !t || t.closed) continue;
       const now = this.ports.findings.load();
+      if (now.error !== null) {
+        out.problems.push(
+          `${t.ref} not closed: the findings store could not be re-read — ${now.error}`,
+        );
+        continue;
+      }
       if (
-        now.error !== null ||
         !stillFixed(
           now.findings.find((x) => x.fingerprint === f.fingerprint),
           f,
