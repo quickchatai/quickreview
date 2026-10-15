@@ -568,7 +568,7 @@ describe("idempotency against the restart orphan-requeue", () => {
       await watcher(hooks).checkDeadlines(); // self-requeue wins the race
 
       // A restart lands right after: no session adopted for #330.
-      const report = reconcileOrphanedRounds(store, [], { botLogin: "bot[bot]", now: () => clock });
+      const report = reconcileOrphanedRounds(store, [], { now: () => clock });
       expect(report.cancelled).toEqual([]);
       expect(report.requeued).toEqual([]);
       expect(events("orphaned_round_requeued")).toHaveLength(0);
@@ -591,7 +591,7 @@ describe("idempotency against the restart orphan-requeue", () => {
     async () => {
       reviewingRound(331);
       pastDeadline();
-      const report = reconcileOrphanedRounds(store, [], { botLogin: "bot[bot]", now: () => clock });
+      const report = reconcileOrphanedRounds(store, [], { now: () => clock });
       expect(report.requeued).toEqual([331]);
 
       const { hooks } = hooksWith(false);
@@ -1420,7 +1420,7 @@ describe("cancellation causes on the live paths", () => {
 
   it("the boot orphan sweep records `orphan_sweep` and stays SILENT, at any volume", () => {
     for (let pr = 810; pr < 830; pr++) reviewingRound(pr);
-    const { cancelled } = reconcileOrphanedRounds(store, [], { botLogin: "bot", now: () => clock });
+    const { cancelled } = reconcileOrphanedRounds(store, [], { now: () => clock });
 
     expect(cancelled).toHaveLength(20);
     expect(store.cancellationsByCause()).toEqual([

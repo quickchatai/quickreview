@@ -31,7 +31,6 @@ export interface ReconcileSearchItem {
   title: string;
   user: { login: string; type: string };
   updated_at: string;
-  created_at: string;
 }
 
 /** The read-only slice of GitHubAdapter reconcile needs. */
@@ -69,7 +68,9 @@ export const COMMENT_SWEEP_MAX_PRS = 25;
  * rule: a closed PR is swept when it transitioned this pass, or when its row
  * last moved (which for a closed PR is the close itself — nothing writes the
  * row after that) within this window. The watermark below makes the repeat
- * cost of the window one skipped filter check, not three API reads.
+ * cost of the window three API reads an hour per closed PR (a closed PR has
+ * no GitHub timestamp in the open list to say a comment arrived), and one
+ * skipped filter check on every other pass.
  */
 export const COMMENT_SWEEP_CLOSED_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -173,7 +174,6 @@ export function reconcileOrphanedRounds(
   store: StateStore,
   adoptedPrs: Iterable<number>,
   opts: {
-    botLogin: string;
     now?: () => Date;
     log?: (msg: string, extra?: unknown) => void;
     /** Does this round still owe a review posting the outbox delivers on its
@@ -414,6 +414,13 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       // is listed for a pass. Closed is terminal — nothing to queue, nothing
       // to correct.
       if (local?.state === "closed") continue;
+      // A tracked PR the searches list but the open list (read this pass)
+      // does not is closed on GitHub with the search lagging, or the open
+      // list is the one lagging. The closed-sync below settles which, from
+      // the PR itself; triggering it first would overwrite the state that
+      // sync reads (a merge over a standing block) and count a correction
+      // for a PR that owes no review.
+      if (openListed && !ref && local) continue;
       const meta = {
         title: ref?.title ?? group.item.title,
         head_sha: ref?.head_sha ?? local?.head_sha ?? "",
@@ -766,13 +773,20 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       };
       // A failed open-PR list is UNKNOWN remote state, not a change: keep the
       // stored remote half, or every PR would re-sweep on the failing pass
-      // and again on the recovering one.
-      const remoteHalf = (n: number): string =>
-        openListed
-          ? (open.get(n)?.updated_at ?? "")
-          : (store.lastCommentSweep(n)?.split("|")[1] ?? "");
-      const sweepMark = (p: { number: number; updated_at: string }): string =>
-        `${p.updated_at}|${remoteHalf(p.number)}`;
+      // and again on the recovering one. A closed PR has left the open list
+      // and with it GitHub's timestamp, so nothing remote moves when a
+      // comment lands on it after the close: inside the recent-close window
+      // its remote half is the current hour instead, and it is re-swept once
+      // an hour.
+      const nowHour = now().toISOString().slice(0, 13);
+      const remoteHalf = (p: { number: number; state: string }): string => {
+        if (!openListed) return store.lastCommentSweep(p.number)?.split("|")[1] ?? "";
+        const listed = open.get(p.number);
+        if (listed) return listed.updated_at;
+        return p.state === "closed" ? `closed@${nowHour}` : "";
+      };
+      const sweepMark = (p: { number: number; state: string; updated_at: string }): string =>
+        `${p.updated_at}|${remoteHalf(p)}`;
       const candidates = store
         .allPrs()
         .filter(

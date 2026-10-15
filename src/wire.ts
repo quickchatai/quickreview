@@ -1621,7 +1621,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // are phantoms: cancel them, requeue the ones whose work was truly lost.
       // A round whose finished review the outbox still owes GitHub is not one.
       const orphans = reconcileOrphanedRounds(d.store, pre.adoption.prs, {
-        botLogin: cfg.github.bot_login,
         log,
         postingOwed: orphanPostingOwed(
           join(root, "state", "posting-receipts"),

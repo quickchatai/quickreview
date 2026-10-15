@@ -43,7 +43,6 @@ function item(number: number, login = "alice"): ReconcileSearchItem {
     title: `PR ${number}`,
     user: { login, type: login.endsWith("[bot]") ? "Bot" : "User" },
     updated_at: "2026-08-13T09:05:00Z",
-    created_at: "2026-08-13T08:00:00Z",
   };
 }
 
@@ -348,6 +347,31 @@ describe("reconcileOnce", () => {
         .get(),
     ).toEqual({ n: 0 });
     expect(store.getPr(42)!.state).toBe("closed");
+  });
+
+  // A PR merged while the daemon was down, still tracked locally and still
+  // listed by a lagging search: the closed-sync decides it from the PR, so the
+  // search must not queue it first — that would erase the standing block the
+  // merge-over-block signal reads, and count a phantom correction.
+  it("a search-only PR still live locally is left to the closed-sync", async () => {
+    const { hooks } = recordingHooks();
+    seed(44, "awaiting_author");
+    gh.open = [];
+    gh.labelTriggered = [item(44)];
+    gh.closedPrs.set(44, ref(44, { state: "closed", merged: true }));
+    const overBlock: number[] = [];
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks,
+      onMergedOverBlock: async (pr) => {
+        overBlock.push(pr);
+      },
+    });
+    expect(corrections(store).map((c) => c.what)).toEqual(["pr-closed"]);
+    expect(overBlock).toEqual([44]);
+    expect(store.getPr(44)!.state).toBe("closed");
   });
 
   // A pause defers a person's request; it must not acknowledge it away. With
@@ -873,7 +897,7 @@ describe("reconcileOrphanedRounds", () => {
     const lostId = store.startRound(11, "first", ["pass-baseline"], 75);
     const phantomId = store.startRound(12, "first", ["pass-baseline"], 75);
 
-    const res = reconcileOrphanedRounds(store, [10], { botLogin: cfg.github.bot_login });
+    const res = reconcileOrphanedRounds(store, [10], {});
 
     expect(res.cancelled.sort()).toEqual([11, 12]);
     expect(res.requeued).toEqual([11]);
@@ -901,7 +925,7 @@ describe("reconcileOrphanedRounds", () => {
       reason: "push+trigger",
     });
 
-    const res = reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+    const res = reconcileOrphanedRounds(store, [], {});
 
     expect(res.requeued).toEqual([13]);
     expect(store.getPr(13)).toMatchObject({
@@ -920,7 +944,7 @@ describe("reconcileOrphanedRounds", () => {
     const newId = store.startRound(20, "re-review", ["pass-baseline"], 75);
     store.finishRound(newId, "REQUEST_CHANGES", 1.25);
 
-    const res = reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+    const res = reconcileOrphanedRounds(store, [], {});
     expect(res.cancelled).toEqual([20]);
     expect(res.requeued).toEqual([]); // the phantom was superseded — no new round
     expect(
