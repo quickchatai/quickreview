@@ -79,8 +79,9 @@ export type LedgerCheckResult = "fresh" | "nudged" | "already_nudged" | "superse
 /**
  * The enforcement step. Fresh ⇒ nothing. Otherwise: logAnomaly("ledger_stale")
  * every time, plus at most ONE nudge per round (per head on the round-less
- * recheck path). A round-keyed check that a later round has already
- * overtaken is "superseded": the anomaly is still recorded, but no nudge.
+ * recheck path). A check that newer work has already overtaken — a later
+ * round, or (round-less) a newer PR head — is "superseded": the anomaly is
+ * still recorded, but no nudge.
  * Read failures are treated as "missing" — enforcement, not
  * crash — and the caller additionally wraps this in its own safe().
  */
@@ -110,9 +111,18 @@ export async function enforceLedgerFreshness(
   // round may already have started (a fresh-head successor is promoted at
   // verdict time). That round owns the ledger now and has its own check; a
   // rewrite wake for THIS round would be held behind it and delivered after
-  // it, demanding the older head's header over the newer snapshot. Keep the
-  // miss on record (the same quiet anomaly), nudge nothing.
-  if (roundNo !== null && store.roundsFor(pr).some((r) => r.round_no > roundNo)) {
+  // it, demanding the older head's header over the newer snapshot. A
+  // round-less (recheck) check is overtaken the same way once the PR's head
+  // has moved past the one it names. Keep the miss on record (the same quiet
+  // anomaly), nudge nothing.
+  const currentHead = store.getPr(pr)?.head_sha;
+  const superseded =
+    roundNo !== null
+      ? store.roundsFor(pr).some((r) => r.round_no > roundNo)
+      : typeof currentHead === "string" &&
+        currentHead !== "" &&
+        currentHead.toLowerCase() !== headSha.toLowerCase();
+  if (superseded) {
     store.logAnomaly("ledger_stale", pr, roundNo, detail);
     store.logEvent("ledger_check_superseded", pr, {
       round_no: roundNo,
