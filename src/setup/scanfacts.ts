@@ -13,6 +13,7 @@ import type { StateFs } from "./engine.js";
 import { FindingsStore } from "./findings.js";
 import type { PortraitScan, ScanUnitFacts } from "./portrait.js";
 import { SEVERITIES } from "./scan.js";
+import { isOpenFinding } from "./scanreport.js";
 import { finishedRuns } from "./scanrun.js";
 import { readScanMemory } from "./triage.js";
 
@@ -48,8 +49,7 @@ export function scanFacts(state: StateFs): { scan: PortraitScan | null; problems
       by: new Set<string>(),
     };
     units.set(f.unit, u);
-    // Open = still standing: new, or promoted and not yet fixed.
-    const open = f.state === "new" || f.state === "promoted";
+    const open = isOpenFinding(f);
     if (open) {
       u.open++;
       totals.open++;

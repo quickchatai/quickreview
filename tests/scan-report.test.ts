@@ -22,6 +22,7 @@ import {
   SCAN_STOP_RESULT_FILE,
   scanStopOutcome,
 } from "../src/setup/scanreport.js";
+import { STAGE2_RESULT_FILE, stage2ClickOutcome } from "../src/setup/stage2request.js";
 import {
   RUN_FILE as RUNNER_FILE,
   ScanRunner,
@@ -199,5 +200,22 @@ describe("stopping a scan from the TUI", () => {
     expect(s.status().run).toMatchObject({ state: "running" });
     s.stop();
     await s.idle();
+  });
+});
+
+describe("an answer the TUI cannot read is said, never polled for silently", () => {
+  it("an unreadable stop or stage-2 answer file reads as a notice, not as 'not answered yet'", () => {
+    const home = mkdtempSync(join(tmpdir(), "qcr-answer-"));
+    try {
+      expect(scanStopOutcome(home, "r1")).toBeNull();
+      expect(stage2ClickOutcome(home, "r1")).toBeNull();
+      // A directory where the answer file should be: present, unreadable.
+      mkdirSync(join(home, SCAN_STOP_RESULT_FILE), { recursive: true });
+      mkdirSync(join(home, STAGE2_RESULT_FILE), { recursive: true });
+      expect(scanStopOutcome(home, "r1")).toMatch(/stop's answer cannot be read/);
+      expect(stage2ClickOutcome(home, "r1")).toMatch(/stage 2's answer cannot be read/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
