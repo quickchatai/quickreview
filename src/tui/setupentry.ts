@@ -64,11 +64,19 @@ export function writeCompanionAsk(opts: {
   return target;
 }
 
-/** Carry out the commits setup asked for, in this machine's homes. Total: a
- * failure is a result, never a throw. */
-export function commitRequestedProfiles(env: InstallEnv = process.env): CommitResult[] {
+/** Carry out the commits setup asked for, in this machine's homes;
+ * `retryFailed` also re-runs the ones whose git step failed (the operator's
+ * `qcr setup commit`). Total: a failure is a result, never a throw. */
+export function commitRequestedProfiles(
+  env: InstallEnv = process.env,
+  opts: { retryFailed?: boolean } = {},
+): CommitResult[] {
   try {
-    return processProfileCommits({ stateHome: stateHome(env), configHome: configHome(env) });
+    return processProfileCommits({
+      stateHome: stateHome(env),
+      configHome: configHome(env),
+      retryFailed: opts.retryFailed === true,
+    });
   } catch (err) {
     return [{ id: "(all)", at: new Date().toISOString(), state: "failed", detail: String(err) }];
   }

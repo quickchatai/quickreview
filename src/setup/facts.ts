@@ -38,15 +38,19 @@ export interface CiFact {
   name: string | null;
 }
 
-export type UnitKind =
-  | "django-app"
-  | "js-package"
-  | "python-package"
-  | "go-module"
-  | "rust-crate"
-  | "directory"
-  | "rest"
-  | "custom";
+/** Every unit kind — the type and the runtime check (`unitcut.ts`) read this
+ * one list. */
+export const UNIT_KINDS = [
+  "django-app",
+  "js-package",
+  "python-package",
+  "go-module",
+  "rust-crate",
+  "directory",
+  "rest",
+  "custom",
+] as const;
+export type UnitKind = (typeof UNIT_KINDS)[number];
 
 /** One candidate unit: a name, the path prefixes it owns, and why. */
 export interface UnitCandidate {
@@ -266,9 +270,12 @@ function frameworks(files: readonly string[], read: RepoRead): Evidence[] {
     ) {
       const text = read(f);
       if (text === null) continue;
-      // pyproject/setup.py list deps inside quoted arrays; strip the quote so
-      // the line-anchored patterns see `django>=4` either way.
-      const lines = text.replace(/^\s*["']/gm, "");
+      // pyproject/setup.py list deps inside quoted arrays — one per line, or
+      // inline (`dependencies = ["fastapi", "django>=4"]`); strip a leading
+      // quote and put every quoted string on a line of its own, so the
+      // line-anchored patterns see `django>=4` either way.
+      const quoted = [...text.matchAll(/["']([^"'\n]+)["']/g)].map((m) => m[1]!);
+      const lines = [text.replace(/^\s*["']/gm, ""), ...quoted].join("\n");
       for (const [name, re] of PY_FRAMEWORKS) if (re.test(lines)) note(name, f);
     } else if (b === "package.json") {
       const text = read(f);
@@ -424,12 +431,15 @@ export function vendoredRoots(files: readonly string[]): string[] {
 
 // ---- unit candidates ---------------------------------------------------------
 
+/** The longest unit name. */
+const UNIT_NAME_MAX = 64;
+
 /** A unit name: one plain segment (the state files and reports key on it). */
-export const UNIT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const UNIT_NAME_RE = new RegExp(`^[A-Za-z0-9][A-Za-z0-9._-]{0,${UNIT_NAME_MAX - 1}}$`);
 
 function slug(path: string): string {
   const s = path.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+|-+$/g, "");
-  return (s || "root").slice(0, 64);
+  return (s || "root").slice(0, UNIT_NAME_MAX);
 }
 
 /** Directories never offered as units of their own (they ride "rest"). */
@@ -492,9 +502,10 @@ export function unitCandidates(files: readonly string[]): UnitCandidate[] {
   for (const c of out) {
     const root = c.roots[0]!;
     let name = slug(byLast.get(base(root))! > 1 ? root : base(root));
-    // The suffix must fit UNIT_NAME_RE's 64 too, or the whole candidate cut
-    // is refused for one long colliding path.
-    for (let i = 2; taken.has(name); i++) name = `${slug(root).slice(0, 64 - `-${i}`.length)}-${i}`;
+    // The suffix must fit UNIT_NAME_MAX too, or the whole candidate cut is
+    // refused for one long colliding path.
+    for (let i = 2; taken.has(name); i++)
+      name = `${slug(root).slice(0, UNIT_NAME_MAX - `-${i}`.length)}-${i}`;
     taken.add(name);
     c.name = name;
   }

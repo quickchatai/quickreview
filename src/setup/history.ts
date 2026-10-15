@@ -21,8 +21,8 @@
 // `#history` entries and writes the new ones, so a re-run supersedes rather
 // than piles up (the survey's rule); a pinned or `#manual` one is the
 // operator's and is left alone.
-import { parseHashTags } from "../memory/eventtags.js";
-import { refOf, type MemoryStore } from "../memory/store.js";
+import { dehash, parseHashTags } from "../memory/eventtags.js";
+import { normalizeTag, refOf, type MemoryStore } from "../memory/store.js";
 import { parseDigest, type ReviewHistoryDigest } from "../reviewhistory.js";
 import type { StateFs } from "./engine.js";
 
@@ -260,9 +260,11 @@ export function normalizeThemes(raw: unknown): { ok: true; themes: HistoryTheme[
 
 /** The one memory entry text a theme becomes. The header is ours (`#history`
  * then `k=v`), and the fixed word `Theme:` ends it, so nothing the companion
- * wrote can extend the header into a tag (`src/memory/eventtags.ts`). */
+ * wrote can extend the header into a tag (`src/memory/eventtags.ts`); its own
+ * `#word`s are de-hashed, so a theme about "our #manual notes" never reads as
+ * a manual entry to a whole-text tag reader. */
 export function themeEntryText(t: HistoryTheme): string {
-  return `#${HISTORY_TAG} source=${t.source} weight=${t.weight} Theme: ${t.title} — ${t.summary}`;
+  return `#${HISTORY_TAG} source=${t.source} weight=${t.weight} Theme: ${dehash(`${t.title} — ${t.summary}`)}`;
 }
 
 // ---- save & read ----
@@ -355,21 +357,32 @@ export async function saveHistoryThemes(
     return { ok: true, themes: n.themes, memory };
   }
   try {
-    const old = await deps.memory.search("", { tag: HISTORY_TAG });
-    for (const e of old) {
-      // The store's `tags` scan the whole text (search wants a quoted `#tag`),
-      // but only the HEADER says what an entry is: a feedback comment reading
-      // "keep #history out of billing" is not an earlier theme to retire.
-      if (!parseHashTags(e.text).includes(HISTORY_TAG)) continue;
-      if (e.pinned || e.tags.some((t) => t.toLowerCase() === "manual")) continue;
-      const r = await deps.memory.apply({ op: "retire", ...refOf(e) });
-      if (r.ok) memory.retired++;
-      else memory.problems.push(`could not retire an earlier #${HISTORY_TAG} entry: ${r.message}`);
-    }
+    // The store's `tags` scan the whole text (search wants a quoted `#tag`),
+    // but only the HEADER says what an entry is: a feedback comment reading
+    // "keep #history out of billing" is not an earlier theme to retire, and
+    // a theme that mentions "#manual" is not the owner's own entry.
+    const old = (await deps.memory.search("", { tag: HISTORY_TAG })).filter((e) => {
+      const header = parseHashTags(e.text).map(normalizeTag);
+      return header.includes(HISTORY_TAG) && !e.pinned && !header.includes("manual");
+    });
+    // The new themes land BEFORE the old ones go: a write memory refuses (or
+    // a stop between the two) leaves the earlier themes live, never neither.
     for (const t of n.themes) {
       const r = await deps.memory.apply({ op: "note", text: themeEntryText(t) });
       if (r.ok) memory.written++;
       else memory.problems.push(`could not write "${t.title}": ${r.message}`);
+    }
+    if (memory.written < n.themes.length) {
+      memory.problems.push(
+        `the earlier #${HISTORY_TAG} entries are kept — not every new theme was written; the next save replaces them`,
+      );
+    } else {
+      for (const e of old) {
+        const r = await deps.memory.apply({ op: "retire", ...refOf(e) });
+        if (r.ok) memory.retired++;
+        else
+          memory.problems.push(`could not retire an earlier #${HISTORY_TAG} entry: ${r.message}`);
+      }
     }
   } catch (err) {
     memory.problems.push(`memory unreachable: ${String(err)}`);

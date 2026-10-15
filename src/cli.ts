@@ -1500,7 +1500,8 @@ const SETUP_USAGE = "usage: qcr setup [validate [<profile>] | commit]";
  *   qcr setup validate [profile]  the daemon's own check of a repo profile as
  *                                 it is on disk — for a direct edit
  *   qcr setup commit              carry out the profile commits setup asked
- *                                 for (the TUI does this on its own timer)
+ *                                 for (the TUI does this on its own timer),
+ *                                 retrying any whose git step failed
  */
 export async function cmdSetup(rest: string[]): Promise<number> {
   const sub = rest[0];
@@ -1526,7 +1527,8 @@ export async function cmdSetup(rest: string[]): Promise<number> {
   }
   if (sub === "commit") {
     const { commitRequestedProfiles, commitLine } = await import("./tui/setupentry.js");
-    const results = commitRequestedProfiles();
+    // The operator's own run: a commit whose git step failed is tried again.
+    const results = commitRequestedProfiles(process.env, { retryFailed: true });
     if (results.length === 0) console.log("no profile commits waiting");
     for (const r of results) console.log(commitLine(r));
     return results.some((r) => r.state === "failed" || r.state === "refused") ? 1 : 0;

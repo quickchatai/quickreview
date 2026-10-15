@@ -81,6 +81,17 @@ describe("repoFacts", () => {
     expect(names.Vue).toBeUndefined();
   });
 
+  it("reads an INLINE dependency array as well as one per line — still exact names", () => {
+    const text: Record<string, string> = {
+      "pyproject.toml":
+        '[project]\nname = "shop"\ndescription = "A flask-cors demo"\ndependencies = ["fastapi[standard]>=0.110", "flask-cors", \'sqlalchemy\']\n',
+      "setup.py": 'setup(install_requires=["celery>=5"])\n',
+    };
+    const f = repoFacts(Object.keys(text), (p) => text[p] ?? null);
+    const names = f.frameworks.map((x) => x.name).sort();
+    expect(names).toEqual(["Celery", "FastAPI", "SQLAlchemy"]);
+  });
+
   it("finds CI with the workflow's stated name, linters from files and config sections", () => {
     expect(facts.ci).toEqual([
       { system: "GitHub Actions", path: ".github/workflows/ci.yml", name: "Backend CI" },

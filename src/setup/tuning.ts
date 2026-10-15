@@ -36,7 +36,7 @@ import {
   type PinProposalsFile,
 } from "./pins.js";
 import type { Refusal, StateFs } from "./engine.js";
-import { recordBaseline } from "./baselines.js";
+import { BASELINES_KEPT, recordBaseline } from "./baselines.js";
 import {
   commitId,
   requestFile,
@@ -78,8 +78,9 @@ export const GOALS_MAX_CHARS = 2000;
 /** A handful: pins are the head of every round, and the head is small. */
 export const MAX_PIN_PROPOSALS = 8;
 export const PIN_WHY_MAX = 200;
-/** Commit requests the record remembers (newest kept). */
-const COMMITS_KEPT = 10;
+/** Commit requests the record remembers (newest kept) — as deep as the
+ * baselines a replay names them by. */
+const COMMITS_KEPT = BASELINES_KEPT;
 
 export interface TuningDeps {
   state: StateFs;

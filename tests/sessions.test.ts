@@ -825,11 +825,53 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
       const store = new StateStore(":memory:");
       pr(store, 8, "closed");
       const { m, removed } = sweeper(store, ["pr-8"]);
-      const probe = vi.spyOn(m.tmux, "hasSession").mockRejectedValueOnce(new Error("spawn EAGAIN"));
+      const probe = vi
+        .spyOn(m.tmux, "listSessionsKnown")
+        .mockRejectedValueOnce(new Error("spawn EAGAIN"));
       expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: [], deferred: 1 });
       expect(removed).toEqual([]);
       probe.mockRestore();
       expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: ["pr-8"] });
+    });
+
+    it("a tmux socket it may not open is not absence: has-session's nonzero exit holds the raw tier", async () => {
+      const store = new StateStore(":memory:");
+      pr(store, 8, "closed");
+      // Both probes fail the way tmux does on a socket it cannot connect to:
+      // exit 1, `error connecting to … (Permission denied)`. has-session
+      // reads that as "no such session"; the listing knows it could not ask.
+      const denied: ExecFn = async (cmd, args, opts) => {
+        if (cmd === "tmux" && (args[0] === "has-session" || args[0] === "list-sessions"))
+          return {
+            code: 1,
+            stdout: "",
+            stderr: "error connecting to /tmp/tmux-0/default (Permission denied)\n",
+          };
+        return fakeExec(cmd, args, opts);
+      };
+      const removed: string[] = [];
+      const m = new PiSessionManager({
+        cfg: cfg(),
+        root,
+        tmux: new Tmux({ exec: denied }),
+        worktrees: new WorktreeManager({
+          root,
+          repo: "o/n",
+          cloneDir: "example-app",
+          cloneUrl: "/dev/null",
+          run: fakeExec,
+        }),
+        piHome: join(root, "pihome"),
+        commandStore: store,
+        now: () => new Date("2026-10-06T12:00:00Z"),
+        ovSessions: {
+          create: async () => true,
+          remove: async (id: string) => (removed.push(id), true),
+          list: async () => ({ ok: true as const, ids: ["pr-8"] }),
+        },
+      });
+      expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: [], deferred: 1 });
+      expect(removed).toEqual([]);
     });
 
     it("a delete that fails is logged and recorded, and waits an hour before the next try", async () => {
@@ -1149,6 +1191,43 @@ describe("injection", () => {
     );
     expect(kill).toBeGreaterThanOrEqual(0);
     expect(birth).toBeGreaterThan(kill);
+  });
+
+  it("inject() refuses a closed PR even while its session is still alive and ready", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver(() => order.title);
+      store.upsertPr({
+        number: 42,
+        state: "closed",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      markExistingSessionReady(m, "pr-42");
+      await expect(m.inject(42, "author reply")).rejects.toThrow(/PR #42 is closed/);
+      expect(store.activeSessionCommand("pr-42")).toBeUndefined();
+      expect(
+        existsSync(m.injectDir("pr-42"))
+          ? readdirSync(m.injectDir("pr-42")).filter((f) => f.endsWith(".md"))
+          : [],
+      ).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("concurrent overseer wakes share one birth — each writes its wake", async () => {
+    const m = manager();
+    const files = await Promise.all([m.injectOverseerFile("a"), m.injectOverseerFile("b")]);
+    expect(
+      tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === OVERSEER_SESSION),
+    ).toHaveLength(1);
+    expect(new Set(files).size).toBe(2);
   });
 
   it("injectOverseer births the overseer session on demand", async () => {
@@ -1953,6 +2032,54 @@ describe("durable command ownership", () => {
     }
   });
 
+  it("a payload that is not the dispatched bytes says so on the row and in the log — never a bare failure", async () => {
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver(() => order.title);
+      store.upsertPr({
+        number: 42,
+        state: "reviewing",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      store.startRound(42, "first", ["pass-baseline"], 45);
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      const command = store.activeSessionCommand("pr-42")!;
+      writeFileSync(command.payload_path, "NOT THE DISPATCHED BYTES");
+
+      expect(await m.retrySessionCommand(command.id, "expired")).toBe("retry_failed");
+      expect(store.getSessionCommand(command.id)!.failure).toMatch(/hash [0-9a-f]{64} != /);
+      rmSync(command.payload_path);
+      expect(
+        await m.redeliverSessionCommand(command.id, {
+          attempt: command.attempt,
+          redeliveries: command.redeliveries,
+          next_check_at: command.next_check_at,
+        }),
+      ).toBe("redelivery_failed");
+      expect(store.getSessionCommand(command.id)!.failure).toMatch(/unreadable/);
+      const rows = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'session_command_payload_unusable'")
+        .all() as Array<{ payload: string }>;
+      expect(rows.map((r) => (JSON.parse(r.payload) as { detail: string }).detail)).toEqual([
+        expect.stringMatching(/hash/),
+        expect.stringMatching(/unreadable/),
+      ]);
+      // Nothing was killed or replayed for a payload it could not trust.
+      expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(0);
+    } finally {
+      store.close();
+    }
+  });
+
   it("refuses replay when correlated acceptance wins during the kill", async () => {
     const store = new StateStore(
       join(root, "state", "state.db"),
@@ -2183,6 +2310,35 @@ describe("archive and close", () => {
     expect(liveSessions.has("pr-42")).toBe(false);
   });
 
+  it("a close kill that does not take keeps the raw tier for the sweep", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      const m = manager(undefined, store);
+      await m.ensurePrSession(42, "T", "wt/pr-42");
+      keepKilledSession = true;
+      await m.archiveAndClose(42);
+      expect(ovCalls).toEqual(["create pr-42"]);
+      expect(
+        store.db
+          .prepare(
+            "SELECT COUNT(*) AS c FROM events WHERE kind = 'openviking_session_delete_deferred'",
+          )
+          .get(),
+      ).toEqual({ c: 1 });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("a failed worktree removal still kills the closed PR's session, and is still reported", async () => {
+    const m = manager();
+    await m.ensurePrSession(42, "T", "wt/pr-42");
+    vi.spyOn(m.worktrees, "remove").mockRejectedValueOnce(new Error("EACCES"));
+    await expect(m.archiveAndClose(42)).rejects.toThrow(/EACCES/);
+    expect(liveSessions.has("pr-42")).toBe(false);
+    expect(ovCalls).toEqual(["create pr-42", "delete pr-42"]);
+  });
+
   it("archives what exists when the session left no JSONL", async () => {
     const m = manager();
     await m.archiveAndClose(42);
@@ -2229,6 +2385,14 @@ describe("overseer rotation", () => {
     expect(tmuxArgs()).toContainEqual(["kill-session", "-t", "=overseer"]);
     expect(tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === "overseer")).toHaveLength(2);
     expect(liveSessions.has(OVERSEER_SESSION)).toBe(true);
+  });
+
+  it("an overseer that survives the rotation kill is not reported rotated", async () => {
+    const m = manager();
+    await m.ensureOverseerSession();
+    keepKilledSession = true;
+    await expect(m.rotateOverseer()).rejects.toThrow(/survived the rotation kill/);
+    expect(tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === "overseer")).toHaveLength(1);
   });
 
   it("two rotations on the same date no longer overwrite each other", async () => {

@@ -444,3 +444,123 @@ describe("never an over-merge", () => {
     expect(st.load().findings).toHaveLength(2);
   });
 });
+
+describe("a collapsed finding's severity and silence, sighting by sighting", () => {
+  const row = (
+    lens: string,
+    run: string,
+    at: string,
+    over: Record<string, unknown> = {},
+  ): import("../src/setup/ledger.js").LedgerEntry => ({
+    path: A932.path,
+    blob: "b1",
+    lens,
+    tier: "t",
+    effort: "low",
+    validator: false,
+    sha: `sha-${run}`,
+    lines: 2000,
+    cost_usd: 0,
+    run,
+    case: "u",
+    at,
+    ...over,
+  });
+
+  it("an end-of-run fold carries the folded finding at ITS OWN severity, so a later lower report lowers the whole", () => {
+    const st = store();
+    st.report([A932], S("r1", "2026-09-30T10:00:00Z"));
+    // r2: B (P3) is sighted before A932 is, and C (P1) collapses into B.
+    const B = { ...A986, severity: "P3" as const };
+    const C = reported("ac".repeat(32), {
+      start: 990,
+      end: 990,
+      lens: "pass-correctness",
+      severity: "P1",
+      claim:
+        "Operator authority is checked against a pathname rather than the command bytes read, allowing directory replacement.",
+    });
+    st.report([B], S("r2", "2026-09-30T11:00:00Z"));
+    expect(st.report([C], S("r2", "2026-09-30T11:00:01Z"))).toMatchObject({ merged: 1 });
+    st.report([A932], S("r2", "2026-09-30T11:00:05Z"));
+    st.reconcile({
+      rows: [row("pass-security", "r2", "2026-09-30T11:00:06Z")],
+      tree: new Set([A932.path]),
+      run: S("r2", "2026-09-30T11:00:07Z"),
+    });
+    const folded = st.load().findings;
+    expect(folded).toHaveLength(1);
+    expect(folded[0]!.severity).toBe("P1");
+    expect(folded[0]!.merged).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ fingerprint: B.fingerprint, severity: "P3" }),
+        expect.objectContaining({ fingerprint: C.fingerprint, severity: "P1" }),
+      ]),
+    );
+    // r3: C now rates it P3 and B is not re-reported — nothing is left at P1.
+    st.report([A932, { ...C, severity: "P3" }], S("r3", "2026-09-30T12:00:00Z"));
+    expect(st.load().findings[0]!.severity).toBe("P2");
+  });
+
+  it("a match keeps the collapsed sightings' severity in the whole, not the fresh record's alone", () => {
+    const st = store();
+    st.report([A932, A986], S("r1", "2026-09-30T10:00:00Z"));
+    expect(st.load().findings[0]!.severity).toBe("P1");
+    const moved = {
+      ...A932,
+      fingerprint: "cc".repeat(32),
+      blob: "b2",
+      start: 940,
+      end: 940,
+      severity: "P3" as const,
+      claim: "Something else entirely about a moved check.",
+    };
+    st.report([moved], S("r2", "2026-09-30T11:00:00Z"));
+    st.reconcile({
+      rows: [
+        row("pass-security", "r2", "2026-09-30T11:00:01Z", { blob: "b2" }),
+        row("pass-data-safety", "r2", "2026-09-30T11:00:01Z", { blob: "b2", case: "u2" }),
+      ],
+      tree: new Set([A932.path]),
+      run: S("r2", "2026-09-30T11:00:02Z"),
+    });
+    const q = st.question().question!;
+    expect(
+      st.match({ key: q.key, pairs: [{ old: A932.fingerprint, new: moved.fingerprint }] }),
+    ).toMatchObject({ ok: true, matched: 1 });
+    const f = st.load().findings.find((x) => x.fingerprint === moved.fingerprint)!;
+    expect(f).toMatchObject({ severity: "P1", own_severity: "P3" });
+  });
+
+  it("a ranged re-read is silence only for the lens whose OWN sighting it holds", () => {
+    const st = store();
+    st.report([A932, A986], S("r1", "2026-09-30T10:00:00Z"));
+    const range = (start: number, end: number) => ({ range: { start, end, total: 2000 } });
+    // Both lenses re-read lines 900-950: A932's line, but not A986's 986-987.
+    const narrow = [
+      row("pass-security", "r2", "2026-09-30T11:00:00Z", range(900, 950)),
+      row("pass-data-safety", "r2", "2026-09-30T11:00:00Z", { case: "u2", ...range(900, 950) }),
+    ];
+    expect(
+      st.reconcile({
+        rows: narrow,
+        tree: new Set([A932.path]),
+        blobs: new Map([[A932.path, "b1"]]),
+        run: S("r2", "2026-09-30T11:00:01Z"),
+      }),
+    ).toMatchObject({ not_reproduced: 0 });
+    // The data-safety lens re-reads its own lines too: now it is silence.
+    const held = [
+      ...narrow,
+      row("pass-data-safety", "r3", "2026-09-30T12:00:00Z", { case: "u3", ...range(980, 990) }),
+    ];
+    expect(
+      st.reconcile({
+        rows: held,
+        tree: new Set([A932.path]),
+        blobs: new Map([[A932.path, "b1"]]),
+        run: S("r3", "2026-09-30T12:00:01Z"),
+      }),
+    ).toMatchObject({ not_reproduced: 1 });
+  });
+});

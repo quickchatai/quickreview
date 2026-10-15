@@ -139,7 +139,9 @@ export function piInvocation(
  * `ls` list names and read no content, so they are not reads. */
 export const FILE_READ_TOOLS: readonly string[] = ["read", "grep"];
 
-/** The path a `tool_execution_start` event says the model read, or null.
+/** The path a `tool_execution_start` event says the model asked to read, or
+ * null. An attempt, not a read: `piCaseRunner` credits it only once the
+ * call's `tool_execution_end` reports success (`readSucceeded`).
  * VERIFY-ON-PIN (read from 0.99.1's dist: the JSON mode passes agent events
  * through verbatim — `tool_execution_start` carries `toolName` and `args`;
  * `read` and `grep` both take `path`): the event and argument spelling. */
@@ -152,6 +154,21 @@ export function readPathOf(event: {
   if (!FILE_READ_TOOLS.includes(event.toolName)) return null;
   const path = (event.args as { path?: unknown } | null | undefined)?.path;
   return typeof path === "string" && path.trim() !== "" ? path : null;
+}
+
+/** The id of a `tool_execution_end` that finished WITHOUT an error, or null.
+ * A failed read (a missing file, an offset past its end) or a grep that
+ * could not run read nothing, so its start credits no file.
+ * VERIFY-ON-PIN (0.99.1's agent-core `tool_execution_end` carries
+ * `toolCallId` and `isError`; the same pair is in the JSON-mode transcripts
+ * kept by a scan at 1.0.0): the event spelling. */
+export function readSucceeded(event: {
+  type?: string;
+  toolCallId?: unknown;
+  isError?: unknown;
+}): string | null {
+  if (event.type !== "tool_execution_end" || typeof event.toolCallId !== "string") return null;
+  return event.isError === false ? event.toolCallId : null;
 }
 
 /** The file a read of `raw` opened, for a child running in `cwd` — pi's own
@@ -183,6 +200,9 @@ export function resolvedReadPath(raw: string, cwd: string, home: string = homedi
   }
   return posix.resolve(cwd, p);
 }
+
+/** The stderr a failed case's reason is taken from: its last characters. */
+const STDERR_TAIL_CHARS = 4000;
 
 /** Transcript directories kept: the newest by modification time. */
 export const TRANSCRIPT_RUNS_KEPT = 20;
@@ -230,16 +250,18 @@ export function pruneTranscripts(dir: string, keep: number, except: string): voi
  *
  * The answer is the last assistant message's text; the cost is pi's own
  * per-message accounting summed (null when it reported none); `reads` is
- * every path its `read`/`grep` calls named (`readPathOf`), resolved to the
- * file that call opened (`resolvedReadPath`, against `cwd`) — the scan's
- * evidence that the lens opened its files at all. With `transcriptDir`, the
+ * every path its `read`/`grep` calls named (`readPathOf`) whose call then
+ * finished without an error (`readSucceeded`), resolved to the file that
+ * call opened (`resolvedReadPath`, against `cwd`) — the scan's evidence that
+ * the lens opened its files at all. With `transcriptDir`, the
  * child's whole `--mode json` stream is kept at `transcriptFile(spec.id)`
  * under it (`transcript` on the outcome, relative to the dir), so a reading
  * that missed something can be read back rather than inferred; the newest
  * `TRANSCRIPT_RUNS_KEPT` run directories are kept. A transcript that cannot
  * be written is left out, never a failed case. The task string names
  * every file by its absolute tree path for the same reason. An abort kills
- * the child (TERM, then KILL). Every outcome resolves.
+ * the child (TERM, then KILL). Every outcome resolves — a temp directory that
+ * cannot be made is a failed case, never a rejection.
  *
  * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1 and 1.0.0: examples/extensions/subagent byte-identical, CLI flag set identical; read from the published examples/extensions/subagent
  * and dist/cli/args.js): the argv spelling, `--no-extensions`/`--approve`,
@@ -276,10 +298,23 @@ export function piCaseRunner(opts: {
         return { ok: false, reason: `${spec.agent}.md is not an agent file`, cost_usd: 0 };
       if (signal.aborted) return { ok: false, reason: "stopped before it started", cost_usd: 0 };
 
-      const tmp = mkdtempSync(join(tmpdir(), "qcr-case-"));
+      let tmp: string;
+      try {
+        tmp = mkdtempSync(join(tmpdir(), "qcr-case-"));
+      } catch (err) {
+        return { ok: false, reason: `no temp directory for the case: ${String(err)}`, cost_usd: 0 };
+      }
       try {
         const promptFile = join(tmp, `${spec.agent}.md`);
-        writeFileSync(promptFile, agent.systemPrompt, { mode: 0o600 });
+        try {
+          writeFileSync(promptFile, agent.systemPrompt, { mode: 0o600 });
+        } catch (err) {
+          return {
+            ok: false,
+            reason: `the agent's prompt could not be written: ${String(err)}`,
+            cost_usd: 0,
+          };
+        }
         const inv = opts.invocation ?? piInvocation();
         const args = [
           ...inv.prefix,
@@ -332,12 +367,16 @@ export function piCaseRunner(opts: {
           let stderr = "";
           let buffer = "";
           const reads: string[] = [];
+          // Started reads by call id, credited only when the call succeeds.
+          const attempted = new Map<string, string>();
           const onLine = (line: string): void => {
             let event: {
               type?: string;
               message?: Record<string, unknown>;
               toolName?: unknown;
+              toolCallId?: unknown;
               args?: unknown;
+              isError?: unknown;
             };
             try {
               event = JSON.parse(line) as typeof event;
@@ -345,7 +384,13 @@ export function piCaseRunner(opts: {
               return;
             }
             const read = readPathOf(event);
-            if (read !== null) reads.push(resolvedReadPath(read, opts.cwd));
+            if (read !== null && typeof event.toolCallId === "string")
+              attempted.set(event.toolCallId, resolvedReadPath(read, opts.cwd));
+            const done = readSucceeded(event);
+            if (done !== null && attempted.has(done)) {
+              reads.push(attempted.get(done)!);
+              attempted.delete(done);
+            }
             const msg = event.message;
             if (event.type !== "message_end" || !msg || msg.role !== "assistant") return;
             const usage = msg.usage as { cost?: { total?: unknown } } | undefined;
@@ -398,8 +443,9 @@ export function piCaseRunner(opts: {
             buffer = lines.pop() ?? "";
             for (const l of lines) if (l.trim() !== "") onLine(l);
           });
+          // The TAIL is kept: the cause of a failure is what pi printed last.
           child.stderr.on("data", (d: Buffer | string) => {
-            if (stderr.length < 4000) stderr += d.toString();
+            stderr = (stderr + d.toString()).slice(-STDERR_TAIL_CHARS);
           });
           let settled = false;
           const finish = (outcome: CaseOutcome): void => {

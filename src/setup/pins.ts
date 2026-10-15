@@ -29,6 +29,18 @@ export type PinProposalsRead =
   | { state: "ok"; file: PinProposalsFile }
   | { state: "unreadable"; error: string };
 
+function isProposal(e: unknown): e is PinProposal {
+  const p = e as Partial<PinProposal> | null;
+  return (
+    typeof p?.id === "string" &&
+    typeof p.ts === "string" &&
+    typeof p.block === "number" &&
+    typeof p.hash === "string" &&
+    typeof p.excerpt === "string" &&
+    typeof p.why === "string"
+  );
+}
+
 /** Read the proposals file from its text (null = absent). */
 export function parsePinProposals(text: string | null): PinProposalsRead {
   if (text === null) return { state: "absent" };
@@ -36,14 +48,11 @@ export function parsePinProposals(text: string | null): PinProposalsRead {
     const raw = JSON.parse(text) as Partial<PinProposalsFile>;
     if (typeof raw.proposed_at !== "string" || !Array.isArray(raw.entries))
       throw new Error("not {proposed_at, entries}");
-    const entries = raw.entries.filter(
-      (e): e is PinProposal =>
-        typeof e?.id === "string" &&
-        typeof e.ts === "string" &&
-        typeof e.block === "number" &&
-        typeof e.why === "string",
-    );
-    return { state: "ok", file: { proposed_at: raw.proposed_at, entries } };
+    // One malformed proposal makes the file unreadable — never a shorter
+    // list that reads as "fewer proposals".
+    const bad = raw.entries.findIndex((e) => !isProposal(e));
+    if (bad >= 0) throw new Error(`entries[${bad}] is not {id, ts, block, hash, excerpt, why}`);
+    return { state: "ok", file: { proposed_at: raw.proposed_at, entries: raw.entries } };
   } catch (err) {
     return {
       state: "unreadable",

@@ -4,7 +4,7 @@
 // ports are driven against temp dirs, one scratch git repo (the listing is
 // `git ls-files`, so git is the thing under test there) and a fake fetch.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -555,7 +555,7 @@ describe("the pass-survey agent and the case runner", () => {
   });
 
   /** A fake child: emits the given JSON lines, then closes with `code`. */
-  function fakeSpawn(lines: unknown[], code = 0, hold = false) {
+  function fakeSpawn(lines: unknown[], code = 0, hold = false, stderrText = "") {
     const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
     const kills: string[] = [];
     const spawn: SpawnFn = (command, args, o) => {
@@ -574,6 +574,9 @@ describe("the pass-survey agent and the case runner", () => {
       });
       setTimeout(() => {
         for (const l of lines) stdout.write(`${JSON.stringify(l)}\n`);
+        // In chunks, as a pipe delivers it.
+        for (let i = 0; i < stderrText.length; i += 1000)
+          stderr.write(stderrText.slice(i, i + 1000));
         if (!hold) setTimeout(() => child.emit("close", code), 5);
       }, 0);
       return child;
@@ -646,19 +649,22 @@ describe("the pass-survey agent and the case runner", () => {
   });
 
   it("reports the paths its file-read tool calls named — read and grep, in call order; find/ls are not reads", async () => {
-    const tool = (toolName: string, args: Record<string, unknown>) => ({
-      type: "tool_execution_start",
-      toolCallId: `c-${toolName}`,
-      toolName,
-      args,
-    });
+    let n = 0;
+    // Each call starts and then ends — successfully unless told otherwise.
+    const tool = (toolName: string, args: Record<string, unknown>, isError = false) => {
+      const toolCallId = `c-${++n}`;
+      return [
+        { type: "tool_execution_start", toolCallId, toolName, args },
+        { type: "tool_execution_end", toolCallId, toolName, result: {}, isError },
+      ];
+    };
     const f = fakeSpawn([
-      tool("ls", { path: "/tree/api" }),
-      tool("read", { path: "/tree/api/models.py", offset: 1 }),
-      tool("find", { pattern: "*.py", path: "/tree" }),
-      tool("grep", { pattern: "save", path: "/tree/api/views.py" }),
-      tool("grep", { pattern: "x" }),
-      tool("read", { nope: 1 }),
+      ...tool("ls", { path: "/tree/api" }),
+      ...tool("read", { path: "/tree/api/models.py", offset: 1 }),
+      ...tool("find", { pattern: "*.py", path: "/tree" }),
+      ...tool("grep", { pattern: "save", path: "/tree/api/views.py" }),
+      ...tool("grep", { pattern: "x" }),
+      ...tool("read", { nope: 1 }),
       msg("NONE", 0.01),
     ]);
     const runner = piCaseRunner({
@@ -674,6 +680,71 @@ describe("the pass-survey agent and the case runner", () => {
       cost_usd: expect.closeTo(0.01),
       reads: ["/tree/api/models.py", "/tree/api/views.py"],
     });
+  });
+
+  it("credits a read only when its call succeeded — a failed read or grep, or one never finished, opened nothing", async () => {
+    const start = (toolCallId: string, toolName: string, path: string) => ({
+      type: "tool_execution_start",
+      toolCallId,
+      toolName,
+      args: { path },
+    });
+    const end = (toolCallId: string, isError: boolean) => ({
+      type: "tool_execution_end",
+      toolCallId,
+      toolName: "read",
+      result: {},
+      isError,
+    });
+    const f = fakeSpawn([
+      start("a", "read", "/tree/missing.py"),
+      end("a", true),
+      start("b", "grep", "/tree/api/views.py"),
+      end("b", true), // "Failed to run ripgrep: spawn rg EACCES"
+      start("c", "read", "/tree/api/models.py"),
+      start("d", "read", "/tree/api/urls.py"),
+      end("d", false),
+      msg("NONE", 0.01),
+    ]);
+    const out = await piCaseRunner({
+      agentsDir: COMPANION_AGENTS_DIR,
+      cwd: "/w",
+      spawn: f.spawn,
+      invocation: { command: "pi", prefix: [] },
+    }).run(spec, new AbortController().signal);
+    expect(out).toMatchObject({ ok: true, reads: ["/tree/api/urls.py"] });
+  });
+
+  it("names the LAST of a long stderr as the reason a case failed", async () => {
+    const noise = `${"startup chatter\n".repeat(400)}`;
+    const f = fakeSpawn([], 1, false, `${noise}FATAL: the real cause\n`);
+    const out = await piCaseRunner({
+      agentsDir: COMPANION_AGENTS_DIR,
+      cwd: "/w",
+      spawn: f.spawn,
+      invocation: { command: "pi", prefix: [] },
+    }).run(spec, new AbortController().signal);
+    expect(out).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("FATAL: the real cause"),
+    });
+  });
+
+  it("a temp directory it cannot make is a failed case, never a rejection", async () => {
+    const was = process.env.TMPDIR;
+    process.env.TMPDIR = join(dir, "no-such-tmp");
+    try {
+      const out = await piCaseRunner({
+        agentsDir: COMPANION_AGENTS_DIR,
+        cwd: "/w",
+        spawn: fakeSpawn([msg("NONE", 0.01)]).spawn,
+        invocation: { command: "pi", prefix: [] },
+      }).run(spec, new AbortController().signal);
+      expect(out).toMatchObject({ ok: false, reason: expect.stringMatching(/no temp directory/) });
+    } finally {
+      if (was === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = was;
+    }
   });
 
   it("every failure resolves as a refusal — with what it spent: exit code, model error, no answer, unknown agent, abort", async () => {
@@ -792,6 +863,47 @@ describe("checkoutReader", () => {
     expect(r.head()).toBeNull();
     expect(r.changeCounts?.()).toBeNull();
     expect(checkoutReader(join(dir, "absent")).listFiles()).toBeNull();
+  });
+});
+
+describe("checkoutReader's edges", () => {
+  it("reads a name that only starts with two dots — a parent COMPONENT is what leaves the root", () => {
+    const repo = join(dir, "dots");
+    tree(repo, { "..fixtures/a.ts": "a\n" });
+    tree(dir, { "secret.txt": "no" });
+    const r = checkoutReader(repo);
+    expect(r.listFiles()).toEqual(["..fixtures/a.ts"]);
+    expect(r.read("..fixtures/a.ts")).toBe("a\n");
+    expect(r.lines("..fixtures/a.ts")).toBe(1);
+    expect(r.read("../secret.txt")).toBeNull();
+    expect(r.read("..")).toBeNull();
+  });
+
+  it("a symlink out of the checkout is not its content, and a directory link is never descended", () => {
+    const repo = join(dir, "links");
+    tree(repo, { "in.ts": "in\n" });
+    tree(dir, { "outside/secret.ts": "no\n" });
+    symlinkSync(join(dir, "outside", "secret.ts"), join(repo, "leak.ts"));
+    symlinkSync(join(repo, "in.ts"), join(repo, "alias.ts"));
+    symlinkSync(".", join(repo, "loop"));
+    symlinkSync(join(dir, "outside"), join(repo, "elsewhere"));
+    const r = checkoutReader(repo);
+    expect(r.listFiles()?.sort()).toEqual(["alias.ts", "in.ts", "leak.ts"]);
+    expect(r.read("leak.ts")).toBeNull();
+    expect(r.read("elsewhere/secret.ts")).toBeNull();
+    expect(r.read("alias.ts")).toBe("in\n");
+  });
+
+  it("a directory it cannot list makes the listing unknown, never a shorter one", () => {
+    if (process.getuid?.() === 0) return; // root lists a 000 directory anyway
+    const repo = join(dir, "locked");
+    tree(repo, { "a.ts": "a\n", "sealed/b.ts": "b\n" });
+    chmodSync(join(repo, "sealed"), 0o000);
+    try {
+      expect(checkoutReader(repo).listFiles()).toBeNull();
+    } finally {
+      chmodSync(join(repo, "sealed"), 0o755);
+    }
   });
 });
 

@@ -11,11 +11,22 @@
 // here throws into a tool call except the state port's "exists but cannot be
 // read", which the engine turns into a reported, write-refusing problem.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { OV_REVIEWER_USER } from "../memory/ovsession.js";
 import type { MemoryStore } from "../memory/store.js";
 import { OpenVikingClient } from "../openviking/client.js";
 import { openVikingStore } from "../openviking/store.js";
+import { EXPIRES_VAR, TOKEN_VAR } from "../tui/ghread.js";
 import { isBinaryContent } from "./textsniff.js";
 import type { GitHubReader, RepoReader, StateFs, TrackerSink } from "./engine.js";
 
@@ -34,12 +45,17 @@ const WALK_SKIP = new Set([
   "build",
 ]);
 
+/** Is `back` (a `relative()` answer) a path that stays below its base? A
+ * parent COMPONENT leaves it; a name that merely starts with two dots
+ * (`..fixtures/`) does not. */
+function below(back: string): boolean {
+  return back !== "" && back !== ".." && !back.startsWith(`..${sep}`) && !isAbsolute(back);
+}
+
 function inside(root: string, rel: string): string | null {
   if (isAbsolute(rel)) return null;
   const full = normalize(join(root, rel));
-  const back = relative(root, full);
-  if (back === "" || back.startsWith("..") || isAbsolute(back)) return null;
-  return full;
+  return below(relative(root, full)) ? full : null;
 }
 
 /**
@@ -60,40 +76,66 @@ export function checkoutReader(root: string): RepoReader {
       return null;
     }
   };
+  // A directory it cannot list makes the whole listing unknown (null), never
+  // a shorter one that reads as complete. A directory symlink is not
+  // descended (a link back up would list the tree forever, one out of the
+  // root lists another tree); a file symlink is listed like git lists it, and
+  // `read` decides whether its target is inside.
   const walk = (): string[] | null => {
     const out: string[] = [];
-    const visit = (dir: string): void => {
+    const visit = (dir: string): boolean => {
       let names: string[];
       try {
         names = readdirSync(dir);
       } catch {
-        return;
+        return false;
       }
       for (const name of names) {
         if (WALK_SKIP.has(name)) continue;
         const full = join(dir, name);
         let st;
         try {
-          st = statSync(full);
+          const l = lstatSync(full);
+          if (l.isDirectory()) {
+            if (!visit(full)) return false;
+            continue;
+          }
+          st = l.isSymbolicLink() ? statSync(full) : l;
         } catch {
-          continue;
+          continue; // a dangling link names no file
         }
-        if (st.isDirectory()) visit(full);
-        else if (st.isFile()) out.push(relative(root, full).split(sep).join("/"));
+        if (st.isFile()) out.push(relative(root, full).split(sep).join("/"));
       }
+      return true;
     };
     try {
       if (!statSync(root).isDirectory()) return null;
     } catch {
       return null;
     }
-    visit(root);
-    return out;
+    return visit(root) ? out : null;
+  };
+  // The checkout's own resolved path, for the symlink check below; a root
+  // that cannot be resolved reads nothing.
+  let realRoot: string | null | undefined;
+  const resolvedRoot = (): string | null => {
+    if (realRoot === undefined) {
+      try {
+        realRoot = realpathSync(root);
+      } catch {
+        realRoot = null;
+      }
+    }
+    return realRoot;
   };
   const readText = (rel: string): string | null => {
     const full = inside(root, rel);
     if (full === null) return null;
     try {
+      // The lexical check above cannot see a symlink: a tracked link to a
+      // file outside the checkout is not the checkout's content.
+      const top = resolvedRoot();
+      if (top === null || !below(relative(top, realpathSync(full)))) return null;
       const st = statSync(full);
       if (!st.isFile() || st.size > MAX_READ_BYTES) return null;
       const buf = readFileSync(full);
@@ -185,9 +227,6 @@ function homeFs(root: string, what: string): StateFs {
     },
   };
 }
-
-const TOKEN_VAR = "QCR_GITHUB_READ_TOKEN";
-const EXPIRES_VAR = "QCR_GITHUB_READ_EXPIRES_AT";
 
 /**
  * GitHub through the companion's read-only token file (`src/tui/ghread.ts`
@@ -281,7 +320,7 @@ export function reviewerMemoryFromEnv(env: NodeJS.ProcessEnv): MemoryStore | nul
   const baseUrl = env.OPENVIKING_URL?.trim() || env.OPENVIKING_BASE_URL?.trim();
   const key = env.OPENVIKING_REVIEWER_KEY?.trim();
   if (!baseUrl || !key) return null;
-  return openVikingStore(new OpenVikingClient({ baseUrl, apiKey: key, user: "reviewer" }), {
+  return openVikingStore(new OpenVikingClient({ baseUrl, apiKey: key, user: OV_REVIEWER_USER }), {
     cacheTtlMs: 0,
   });
 }

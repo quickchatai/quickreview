@@ -518,6 +518,32 @@ describe("the honest unknowns and the refusals at the disk (review fixes)", () =
     expect(text).not.toMatch(/Narrative: no earlier version kept yet/);
   });
 
+  it("a current narrative that cannot be read beside a readable previous one is an UNKNOWN change, never 'the same text'", () => {
+    const { e } = engine();
+    const key = assembled(e).current.key;
+    e.storePortraitNarrative({ facts_key: key, narrative: "First." });
+    e.storePortraitNarrative({ facts_key: key, narrative: "Second." });
+    rmSync(join(configDir(), NARRATIVE_FILE));
+    mkdirSync(join(configDir(), NARRATIVE_FILE)); // reading it throws EISDIR
+    const v = e.portrait({ diff: true });
+    expect(v.has_previous_narrative).toBe(true);
+    expect(v.narrative_diff).toBeNull();
+    expect(renderPortrait(v)).not.toMatch(/the same text as the one it replaced/);
+  });
+
+  it("facts whose sections hold no lists are unreadable — refused, never a crash in a reader", () => {
+    const { e } = engine();
+    assembled(e);
+    const bad = factsOnDisk();
+    for (const s of ["stack", "units", "conventions", "enforced", "history"] as const)
+      (bad.current.facts as unknown as Record<string, unknown>)[s] = {};
+    stateHomeFs(stateDir()).write(PORTRAIT_FACTS_FILE, JSON.stringify(bad));
+    const v = e.portrait({ diff: true });
+    expect(v.facts.state).toBe("unreadable");
+    expect(() => renderPortrait(v)).not.toThrow();
+    expect(e.portraitAssemble()).toMatchObject({ ok: false });
+  });
+
   it("a config home that cannot be written (portrait/ unmounted or read-only) is a refusal, never a throw", () => {
     const real = configHomeFs(configDir());
     const readOnly: StateFs = {

@@ -16,7 +16,7 @@
 //
 // Pure: the cut is a value, validation and the adjust ops are functions over
 // it and a file listing. The engine persists it (src/setup/engine.ts).
-import { UNIT_NAME_RE, type UnitKind } from "./facts.js";
+import { UNIT_KINDS, UNIT_NAME_RE, type UnitKind } from "./facts.js";
 
 export interface Unit {
   name: string;
@@ -199,21 +199,11 @@ export function normalizeCut(
   return errors.length > 0 ? { ok: false, errors } : { ok: true, cut: { units, ignored } };
 }
 
-/** Every unit kind, as a record so the compiler requires each member. */
-const KIND_TABLE: Record<UnitKind, true> = {
-  "django-app": true,
-  "js-package": true,
-  "python-package": true,
-  "go-module": true,
-  "rust-crate": true,
-  directory: true,
-  rest: true,
-  custom: true,
-};
-
-/** A supplied kind, or `custom` for anything that is not one. */
+/** A supplied kind, or `custom` for anything that is not one of `UNIT_KINDS`. */
 function unitKind(raw: unknown): UnitKind {
-  return typeof raw === "string" && Object.hasOwn(KIND_TABLE, raw) ? (raw as UnitKind) : "custom";
+  return typeof raw === "string" && new Set<string>(UNIT_KINDS).has(raw)
+    ? (raw as UnitKind)
+    : "custom";
 }
 
 function normalizeRoots(raw: readonly string[], owner: string, errors: string[]): string[] {

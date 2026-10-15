@@ -149,6 +149,29 @@ export function sessionGitConfigPins(piHome: string): Record<string, string> {
   };
 }
 
+/** A session command's saved payload, checked against the sha256 recorded at
+ * dispatch — or why it cannot be replayed (unreadable, or not the bytes that
+ * were dispatched). Every recovery route reads its payload through here and
+ * decides its own outcome. */
+function verifiedPayload(command: {
+  payload_path: string;
+  payload_sha256: string;
+}): { ok: true; payload: Buffer } | { ok: false; why: string } {
+  let payload: Buffer;
+  try {
+    payload = readFileSync(command.payload_path);
+  } catch (err) {
+    return { ok: false, why: `payload ${command.payload_path} unreadable: ${String(err)}` };
+  }
+  const hash = createHash("sha256").update(payload).digest("hex");
+  if (hash !== command.payload_sha256)
+    return {
+      ok: false,
+      why: `payload ${command.payload_path} hash ${hash} != ${command.payload_sha256}`,
+    };
+  return { ok: true, payload };
+}
+
 /** The PR's tmux session name — by design the same string as its OpenViking
  * session id, so the one formatter lives there. */
 export function prSessionName(pr: number): string {
@@ -765,8 +788,7 @@ export class PiSessionManager implements SessionHooks {
         session,
         reason: "tmux alive without matching ready generation",
       });
-      await this.tmux.killSession(session);
-      if (await this.tmux.hasSession(session)) {
+      if (!(await this.killConfirmed(session))) {
         throw new Error(`session ${session} survived stale-bridge fence`);
       }
     }
@@ -808,7 +830,24 @@ export class PiSessionManager implements SessionHooks {
     return `\n\n${stripModelDocs(readFileSync(path, "utf8")).trimEnd()}\n`;
   }
 
+  /** Concurrent callers (a Slack burst, an anomaly beside the EOD sweep)
+   * share one has→spawn flight, as PR births do: a second spawn would fail
+   * on tmux's duplicate name before its caller wrote its wake. */
   async ensureOverseerSession(): Promise<string> {
+    const existing = this.overseerBirth;
+    if (existing) return existing;
+    const birth = this.birthOverseer();
+    this.overseerBirth = birth;
+    try {
+      return await birth;
+    } finally {
+      if (this.overseerBirth === birth) this.overseerBirth = undefined;
+    }
+  }
+
+  private overseerBirth?: Promise<string>;
+
+  private async birthOverseer(): Promise<string> {
     if (await this.tmux.hasSession(OVERSEER_SESSION)) return OVERSEER_SESSION;
     const template = readFileSync(join(this.root, "prompts", "overseer-system.md"), "utf8");
     // The seeded overseer prompt is canonical and unmodifiable (CLAUDE.md rule
@@ -816,7 +855,13 @@ export class PiSessionManager implements SessionHooks {
     // EXECUTION_POLICY_ADDENDUM in include.ts. Slack off = byte-identical prompt.
     const body =
       renderOverseerSystemPrompt(template, identityVars(this.cfg)) + this.slackAppendix();
-    await this.spawnSession(OVERSEER_SESSION, body, this.cfg.models.overseer);
+    try {
+      await this.spawnSession(OVERSEER_SESSION, body, this.cfg.models.overseer);
+    } catch (err) {
+      // A creator outside this manager instance may have won after our check.
+      if (await this.tmux.hasSession(OVERSEER_SESSION)) return OVERSEER_SESSION;
+      throw err;
+    }
     return OVERSEER_SESSION;
   }
 
@@ -852,11 +897,9 @@ export class PiSessionManager implements SessionHooks {
     for (const command of store.activeSessionCommands()) {
       if (command.status !== "pending" || existsSync(command.inject_path)) continue;
       try {
-        const payload = readFileSync(command.payload_path);
-        const hash = createHash("sha256").update(payload).digest("hex");
-        if (hash !== command.payload_sha256)
-          throw new Error(`payload hash ${hash} != ${command.payload_sha256}`);
-        this.writeAtomic(command.inject_path, payload);
+        const read = verifiedPayload(command);
+        if (!read.ok) throw new Error(read.why);
+        this.writeAtomic(command.inject_path, read.payload);
         restored.push(command.id);
       } catch (err) {
         const failure = `restart reconstruction failed: ${String(err)}`;
@@ -1198,16 +1241,18 @@ export class PiSessionManager implements SessionHooks {
   async redeliverRound(pr: number, roundNo: number): Promise<boolean> {
     const command = this.commandStore?.sessionCommandForRound(pr, roundNo);
     let stamped: string;
-    try {
-      stamped = command
-        ? readFileSync(command.payload_path, "utf8")
-        : readFileSync(this.roundPromptPath(pr, roundNo), "utf8");
-    } catch {
-      return false;
+    if (command) {
+      const read = verifiedPayload(command);
+      if (!read.ok) return false;
+      stamped = read.payload.toString("utf8");
+    } else {
+      try {
+        stamped = readFileSync(this.roundPromptPath(pr, roundNo), "utf8");
+      } catch {
+        return false;
+      }
     }
     if (stamped.trim().length === 0) return false;
-    const hash = createHash("sha256").update(stamped).digest("hex");
-    if (command && hash !== command.payload_sha256) return false;
     // The session may have died since dispatch; the bridge only delivers to a
     // live one. Rebirth it exactly as `inject` does, so a redelivery into a
     // dead session is not silently swallowed.
@@ -1288,14 +1333,12 @@ export class PiSessionManager implements SessionHooks {
     const session = prSessionName(command.pr);
     if (!(await this.tmux.hasSession(session)) || !this.currentBridgeReady(session))
       return "not_live";
-    let payload: Buffer;
-    try {
-      payload = readFileSync(command.payload_path);
-    } catch {
+    const read = verifiedPayload(command);
+    if (!read.ok) {
+      this.notePayloadUnusable(store, command, read.why);
       return "redelivery_failed";
     }
-    if (createHash("sha256").update(payload).digest("hex") !== command.payload_sha256)
-      return "redelivery_failed";
+    const payload = read.payload;
     if (
       !store.requeueSessionCommandForRedelivery(
         command.id,
@@ -1356,21 +1399,16 @@ export class PiSessionManager implements SessionHooks {
       return "settled";
     }
 
-    let payload: Buffer;
-    try {
-      payload = readFileSync(command.payload_path);
-      if (createHash("sha256").update(payload).digest("hex") !== command.payload_sha256)
-        return "retry_failed";
-    } catch {
+    const read = verifiedPayload(command);
+    if (!read.ok) {
+      this.notePayloadUnusable(store, command, read.why);
       return "retry_failed";
     }
+    const payload = read.payload;
 
     const session = prSessionName(command.pr);
-    if (await this.tmux.hasSession(session)) {
-      await this.tmux.killSession(session);
-      if (await this.tmux.hasSession(session)) {
-        throw new Error(`session ${session} survived command-recovery kill; refusing replay`);
-      }
+    if ((await this.tmux.hasSession(session)) && !(await this.killConfirmed(session))) {
+      throw new Error(`session ${session} survived command-recovery kill; refusing replay`);
     }
 
     // Nothing can consume or settle the old command after the tmux session is
@@ -1459,8 +1497,14 @@ export class PiSessionManager implements SessionHooks {
    * round. So a dead or unready session is respawned here (see
    * ensureSessionForWake): same prompt template, same env, worktree
    * re-ensured best-effort (the wake message cites it). A PR whose title is
-   * unknown (never tracked) or that is closed throws instead. */
+   * unknown (never tracked) throws instead, and a closed PR throws whether or
+   * not its session is still alive. */
   async inject(pr: number, message: string): Promise<void> {
+    // Before the live fast path: a closed PR's session that outlived its
+    // close cleanup takes no new wake either.
+    if (this.prClosed(pr)) {
+      throw new Error(`PR #${pr} is closed — refusing a wake into ${prSessionName(pr)}`);
+    }
     await this.ensureSessionForWake(pr);
     this.queuePrCommand(pr, "wake", message, null);
   }
@@ -1646,10 +1690,47 @@ export class PiSessionManager implements SessionHooks {
   async killSession(pr: number): Promise<void> {
     const session = prSessionName(pr);
     if (!(await this.tmux.hasSession(session))) return;
-    await this.tmux.killSession(session);
-    if (await this.tmux.hasSession(session)) {
+    if (!(await this.killConfirmed(session))) {
       throw new Error(`session ${session} survived kill; recovery must not dispatch beside it`);
     }
+  }
+
+  /** Kill `session` and confirm it gone: `Tmux.killSession` ignores its exit
+   * status, so the follow-up probe is the fence. True when tmux no longer
+   * has it. */
+  private async killConfirmed(session: string): Promise<boolean> {
+    await this.tmux.killSession(session);
+    return !(await this.tmux.hasSession(session));
+  }
+
+  /** Does tmux affirmatively say `session` is gone? `hasSession` reads every
+   * failed probe (a socket it may not open, EAGAIN) as absence; a cleanup
+   * that destroys what a live session still writes to needs the listing tmux
+   * could answer, so "could not ask" is never "gone". */
+  private async sessionProvenGone(session: string): Promise<boolean> {
+    let names: string[] | null;
+    try {
+      names = await this.tmux.listSessionsKnown();
+    } catch {
+      names = null;
+    }
+    return names !== null && !names.includes(session);
+  }
+
+  /** A recovery route found the command's saved payload unusable: say why on
+   * the row (the supervisor reports it in place of the original reason) and
+   * in the event log. */
+  private notePayloadUnusable(
+    store: StateStore,
+    command: { id: string; pr: number },
+    why: string,
+  ): void {
+    store.noteSessionCommandRecoveryFailure(command.id, why);
+    this.recordEvent("session_command_payload_unusable", command.pr, {
+      command_id: command.id,
+      detail: why,
+    });
+    console.log(`[quickreviewd] sessions: command ${command.id} cannot be replayed: ${why}`);
   }
 
   /**
@@ -1724,12 +1805,7 @@ export class PiSessionManager implements SessionHooks {
       // A closed PR whose pi is still running (archiveAndClose failed to kill
       // it) keeps its raw tier until the session is gone. A probe that could
       // not ask tmux proves nothing either way, so it holds like a live one.
-      let alive: boolean;
-      try {
-        alive = await this.tmux.hasSession(prSessionName(pr));
-      } catch {
-        alive = true;
-      }
+      const alive = !(await this.sessionProvenGone(prSessionName(pr)));
       // The plan read the registry once; the probe and earlier deletes have
       // awaited since. A PR reopened and re-triggered in that window is
       // having its `pr-<n>` reused or recreated — re-check right before the
@@ -1756,7 +1832,7 @@ export class PiSessionManager implements SessionHooks {
         console.log(
           `[quickreviewd] sessions: openviking session ${id} of closed PR #${pr} deleted (stale-session sweep)`,
         );
-        this.recordSweepEvent("openviking_session_deleted", pr, { session: id, source: "sweep" });
+        this.recordEvent("openviking_session_deleted", pr, { session: id, source: "sweep" });
       } else {
         stopped = true;
         this.ovSweepFailedAt.set(id, nowMs);
@@ -1764,7 +1840,7 @@ export class PiSessionManager implements SessionHooks {
         console.log(
           `[quickreviewd] sessions: openviking session ${id} of closed PR #${pr} was NOT deleted by the stale-session sweep${error ? ` (${error})` : ""} — retried in an hour`,
         );
-        this.recordSweepEvent("openviking_session_delete_failed", pr, {
+        this.recordEvent("openviking_session_delete_failed", pr, {
           session: id,
           source: "sweep",
           ...(error ? { error } : {}),
@@ -1779,11 +1855,11 @@ export class PiSessionManager implements SessionHooks {
     return report;
   }
 
-  private recordSweepEvent(kind: string, pr: number, payload: Record<string, unknown>): void {
+  private recordEvent(kind: string, pr: number, payload: Record<string, unknown>): void {
     try {
       this.commandStore?.logEvent(kind, pr, payload);
     } catch {
-      /* recording is best-effort; the log line already said it */
+      /* recording is best-effort; the log line says it too */
     }
   }
 
@@ -1844,8 +1920,20 @@ export class PiSessionManager implements SessionHooks {
     // Terminalize outstanding ordinary wakes first, so no recovery sweep can
     // replay one into a session reborn after the kill below.
     this.commandStore?.cancelSessionCommandsForClosedPr(pr);
-    this.archiveSession(session, this.archiveDir(session));
-    await this.worktrees.remove(pr);
+    // The kill never waits on the bookkeeping before it: a record or a
+    // worktree that could not be removed is reported (rethrown below), never
+    // a reason to leave the closed PR's pi running — nothing retries a close.
+    let failed: { err: unknown } | null = null;
+    try {
+      this.archiveSession(session, this.archiveDir(session));
+    } catch (err) {
+      failed ??= { err };
+    }
+    try {
+      await this.worktrees.remove(pr);
+    } catch (err) {
+      failed ??= { err };
+    }
     await this.tmux.killSession(session);
     // A compaction request the killed bridge never took is not
     // a wake and nothing archives it; it would only keep the inject dir alive.
@@ -1855,10 +1943,23 @@ export class PiSessionManager implements SessionHooks {
       /* best-effort */
     }
     // The raw tier dies with the PR: DELETE removes the session's messages AND
-    // its archives. Deliberately after the tmux kill, so nothing is still
-    // syncing turns into it, and deliberately not in
-    // killSession(): a wedged session is respawned and keeps its notes.
-    await this.deleteOvSession(pr);
+    // its archives. Only once tmux proves the session gone, so nothing is
+    // still syncing turns into it — a kill that did not take, or a probe that
+    // could not ask, leaves it to the stale-session sweep, which deletes it
+    // once the session is gone. Deliberately not in killSession(): a wedged
+    // session is respawned and keeps its notes.
+    if (await this.sessionProvenGone(session)) {
+      await this.deleteOvSession(pr);
+    } else {
+      console.log(
+        `[quickreviewd] sessions: ${session} is not proven gone after the close kill — its openviking session is left to the stale-session sweep`,
+      );
+      this.recordEvent("openviking_session_delete_deferred", pr, {
+        session,
+        reason: "session not proven gone after the close kill",
+      });
+    }
+    if (failed !== null) throw failed.err;
   }
 
   // ---- overseer rotation -------------------------------------------------
@@ -1878,7 +1979,11 @@ export class PiSessionManager implements SessionHooks {
     let stamp = day;
     for (let k = 2; existsSync(join(base, stamp)); k++) stamp = `${day}-${k}`;
     this.archiveSession(OVERSEER_SESSION, join(base, stamp));
-    await this.tmux.killSession(OVERSEER_SESSION);
+    // A kill that did not take would let the respawn below adopt the old
+    // overseer and report a rotation that never happened.
+    if (!(await this.killConfirmed(OVERSEER_SESSION))) {
+      throw new Error(`the overseer survived the rotation kill — not rotated (record ${stamp})`);
+    }
     await this.ensureOverseerSession();
     return stamp;
   }

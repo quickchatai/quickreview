@@ -45,7 +45,7 @@ import {
   type Priority,
 } from "../src/setup/interview.js";
 import { editLensTables } from "../src/setup/profile.js";
-import { PIN_PROPOSALS_FILE } from "../src/setup/pins.js";
+import { PIN_PROPOSALS_FILE, parsePinProposals } from "../src/setup/pins.js";
 import { INTERVIEW_FILE, type ApplyResult } from "../src/setup/tuning.js";
 
 const sandbox = join(import.meta.dirname, "..");
@@ -696,6 +696,45 @@ describe("the commit hand-off (processProfileCommits)", () => {
     expect(existsSync(join(commits, ".processing.lock"))).toBe(false);
   });
 
+  it("a commit whose git step failed is not re-run by the timer, and is by the operator's retry", () => {
+    const stateHome = join(dir, "state");
+    const commits = join(stateHome, "setup", "commits");
+    write(
+      join(commits, "a.request.json"),
+      JSON.stringify({ id: "a", message: "m", paths: ["profiles/acme/profile.toml"] }),
+    );
+    mkdirSync(home(), { recursive: true });
+    let locked = true;
+    const flaky: GitRun = (args) => {
+      if (args[0] === "rev-parse" && args[1] === "--show-toplevel")
+        return { code: 0, stdout: home(), stderr: "" };
+      if (args[0] === "add" && locked)
+        return {
+          code: 128,
+          stdout: "",
+          stderr: "fatal: Unable to create 'index.lock': File exists.",
+        };
+      if (args[0] === "diff") return { code: 1, stdout: "", stderr: "" };
+      return { code: 0, stdout: "sha1\n", stderr: "" };
+    };
+    expect(processProfileCommits({ stateHome, configHome: home(), git: flaky })).toEqual([
+      expect.objectContaining({ id: "a", state: "failed" }),
+    ]);
+    locked = false;
+    // The timer's pass leaves a standing failure alone.
+    expect(processProfileCommits({ stateHome, configHome: home(), git: flaky })).toEqual([]);
+    // The operator's pass, once the lock is gone, completes it — and only it.
+    expect(
+      processProfileCommits({ stateHome, configHome: home(), git: flaky, retryFailed: true }),
+    ).toEqual([expect.objectContaining({ id: "a", state: "committed" })]);
+    expect(JSON.parse(readFileSync(join(commits, "a.result.json"), "utf8")).state).toBe(
+      "committed",
+    );
+    expect(
+      processProfileCommits({ stateHome, configHome: home(), git: flaky, retryFailed: true }),
+    ).toEqual([]);
+  });
+
   it("a request naming anything outside profiles/ is refused before git sees it", () => {
     expect(refusePath("profiles/acme/profile.toml")).toBeNull();
     expect(refusePath("secrets/app.pem")).toMatch(/outside profiles/);
@@ -773,6 +812,14 @@ describe("pin proposals go to the operator", () => {
       hash: "h-a",
       why: "every view PR trips on this",
     });
+    // What it wrote reads back whole; one proposal short of a field makes the
+    // file unreadable, never a shorter list.
+    const text = readFileSync(join(dir, "state", PIN_PROPOSALS_FILE), "utf8");
+    expect(parsePinProposals(text)).toMatchObject({ state: "ok", file: { entries: file.entries } });
+    const { hash: _dropped, ...hashless } = file.entries[1];
+    expect(
+      parsePinProposals(JSON.stringify({ ...file, entries: [file.entries[0], hashless] })),
+    ).toMatchObject({ state: "unreadable", error: expect.stringMatching(/entries\[1\]/) });
   });
 
   it("refuses an unknown or already-pinned entry, a missing reason, and more than a handful", async () => {

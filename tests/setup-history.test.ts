@@ -4,7 +4,7 @@
 // reads the raw digest, and ONLY its validated themes go onward — to memory as
 // `#history` entries and to the file the portrait reads. A theme carrying a raw
 // comment or a colleague's login is refused.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -343,6 +343,74 @@ describe("saving themes", () => {
     const f = readHistoryThemes(state)!;
     expect(f.themes).toEqual([GOOD[0]]);
     expect(f.previous?.themes).toEqual(GOOD);
+  });
+
+  it("a theme that MENTIONS #manual is still replaced by the next save — its own #words are de-hashed", async () => {
+    const mem = new MemFake();
+    const { e, put } = engine(mem);
+    put(digest());
+    const mentioning = [
+      { ...GOOD[0]!, summary: "Reviewers respect our #manual notes on payments." },
+    ];
+    await e.saveHistoryThemes(mentioning);
+    expect(mem.entries[0]!.text).not.toMatch(/#manual/);
+    expect(mem.entries[0]!.tags).toEqual(["history"]);
+    const r = await e.saveHistoryThemes([GOOD[1]]);
+    expect(r).toMatchObject({ ok: true, memory: { written: 1, retired: 1, problems: [] } });
+    expect(mem.entries.map((x) => x.text)).toEqual([themeEntryText(GOOD[1] as never)]);
+  });
+
+  it("an earlier theme written with a body #manual (before de-hashing) is replaced too — only the header protects", async () => {
+    const mem = new MemFake();
+    mem.add("#history source=human weight=1 Theme: Notes — keep our #manual notes");
+    const { e, put } = engine(mem);
+    put(digest());
+    const r = await e.saveHistoryThemes([GOOD[0]]);
+    expect(r).toMatchObject({ ok: true, memory: { written: 1, retired: 1 } });
+  });
+
+  it("keeps the earlier themes live when memory refuses a new one — never neither", async () => {
+    const mem = new MemFake();
+    const { e, put } = engine(mem);
+    put(digest());
+    await e.saveHistoryThemes(GOOD);
+    const apply = mem.apply.bind(mem);
+    mem.apply = async (op) =>
+      op.op === "note" && op.text.includes("Edge-case")
+        ? { ok: false, message: "refused" }
+        : apply(op);
+    const r = await e.saveHistoryThemes([GOOD[0], { ...GOOD[1]!, weight: 5 }]);
+    expect(r).toMatchObject({ ok: true, memory: { written: 1, retired: 0 } });
+    expect((r as { memory: { problems: string[] } }).memory.problems.join("\n")).toMatch(
+      /earlier #history entries are kept/,
+    );
+    expect(mem.entries.filter((x) => x.text.includes("Edge-case"))).toHaveLength(1);
+  });
+
+  it("two overlapping saves leave ONE theme set live — the later one, as the file says", async () => {
+    const mem = new MemFake();
+    const search = mem.search.bind(mem);
+    // Every search reads at once and answers a beat later, so two saves in
+    // flight would both read the store as it was before either wrote.
+    mem.search = async (q, opts) => {
+      const found = await search(q, opts);
+      await new Promise((r) => setTimeout(r, 10));
+      return found;
+    };
+    const { e, put, state } = engine(mem);
+    put(digest());
+    await Promise.all([e.saveHistoryThemes(GOOD), e.saveHistoryThemes([GOOD[0]])]);
+    expect(readHistoryThemes(state)!.themes).toEqual([GOOD[0]]);
+    expect(mem.entries.map((x) => x.text)).toEqual([themeEntryText(GOOD[0] as never)]);
+  });
+
+  it("an unreadable saved-themes file is UNKNOWN in the history view, never 'none saved'", () => {
+    const { e, put } = engine(null);
+    put(digest());
+    writeFileSync(join(dir, "state", HISTORY_THEMES_FILE), "garbage");
+    const h = e.history();
+    expect(h.themes).toBeNull();
+    expect(h.themes_error).toMatch(/history-themes|themes/);
   });
 
   it("never retires an entry that only MENTIONS #history in its body — the tag is the header's", async () => {

@@ -93,11 +93,12 @@
 import { createHash } from "node:crypto";
 import type { StateFs } from "./engine.js";
 import { readings, type LedgerEntry, type Reading } from "./ledger.js";
-import type { ScanSeverity } from "./scan.js";
+import { SEVERITIES, type ScanSeverity } from "./scan.js";
 import type { Reachability } from "../severity.js";
 import {
   FINDINGS_FILE,
   FINDINGS_VERSION,
+  VALIDITY_ORDER,
   dismissedLookalike,
   lookalikeRank,
   parseFindingsFile,
@@ -281,16 +282,18 @@ const STOPWORDS = new Set(
 
 /** A claim's content tokens, in order: lower-cased words of 3+ characters,
  * stopwords out, each stemmed to its first five characters (so
- * authorization/authority, read/reads, omit/omits agree). */
+ * authorization/authority, validate/validation, refresh/refreshed agree;
+ * words of five characters or fewer stay whole, so read/reads do not). */
 function claimStems(claim: string): string[] {
   return (claim.toLowerCase().match(/[a-z0-9]+/g) ?? [])
     .filter((w) => w.length >= 3 && !STOPWORDS.has(w))
     .map((w) => w.slice(0, 5));
 }
 
-const SEVERITY_ORDER: readonly ScanSeverity[] = ["P0", "P1", "P2", "P3", "nit"];
+/** Most severe first: `SEVERITIES`' own order. */
+const severityRank = (s: ScanSeverity): number => SEVERITIES.indexOf(s);
 const higher = (a: ScanSeverity, b: ScanSeverity): ScanSeverity =>
-  SEVERITY_ORDER.indexOf(b) < SEVERITY_ORDER.indexOf(a) ? b : a;
+  severityRank(b) < severityRank(a) ? b : a;
 
 /**
  * Are `a` and `b` the same defect reported twice? Same file, same kind,
@@ -344,12 +347,9 @@ function combinedDoubt(a: ReportedFinding | ScanFinding, b: ReportedFinding): Sc
   return a.doubt ?? b.doubt;
 }
 
-const VALIDITY_RANK: Record<ValidityView, number> = {
-  confirmed: 3,
-  likely: 2,
-  doubtful: 1,
-  unknown: 0,
-};
+/** Better supported ranks higher — the display order (confirmed first,
+ * unknown last) read backwards. */
+const validityRank = (v: ValidityView): number => VALIDITY_ORDER.length - VALIDITY_ORDER.indexOf(v);
 
 /** Two sightings of one defect: the best-supported tier wins (a confirmed
  * sighting outranks a doubt, as a clean survivor clears the doubt flag), and
@@ -358,7 +358,7 @@ function combinedValidity(
   a: ReportedFinding | ScanFinding,
   b: ReportedFinding,
 ): Pick<ScanFinding, "validity" | "scenario"> {
-  const best = VALIDITY_RANK[validityOf(b)] > VALIDITY_RANK[validityOf(a)] ? b : a;
+  const best = validityRank(validityOf(b)) > validityRank(validityOf(a)) ? b : a;
   const v = validityOf(best);
   return { validity: v === "unknown" ? null : v, scenario: best.scenario ?? null };
 }
@@ -414,16 +414,21 @@ function collapsible(f: ScanFinding, run: string, held: ReadonlySet<string>): bo
 }
 
 /** Fold stored finding `f` (fresh this run) into `into`, its own collapsed
- * sightings and aliases with it. */
+ * sightings and aliases with it. `f` becomes a sighting at ITS OWN latest
+ * severity — its aggregate already counts the sightings folded into it,
+ * which come along as their own merged entries, so a later re-sighting of
+ * one of them can still lower the whole. */
 function absorbFinding(into: ScanFinding, f: ScanFinding): ScanFinding {
-  const once = absorb(into, f);
+  const once = absorb(into, { ...f, severity: f.own_severity ?? f.severity });
+  const merged = [
+    ...once.merged!,
+    ...(f.merged ?? []).filter((m) => !once.merged!.some((x) => x.fingerprint === m.fingerprint)),
+  ];
   return {
     ...once,
+    severity: aggregateSeverity(once.own_severity!, merged),
     lenses: [...new Set([...once.lenses!, ...(f.lenses ?? [])])],
-    merged: [
-      ...once.merged!,
-      ...(f.merged ?? []).filter((m) => !once.merged!.some((x) => x.fingerprint === m.fingerprint)),
-    ],
+    merged,
     aliases: [...new Set([...once.aliases!, ...(f.aliases ?? [])])],
   };
 }
@@ -682,12 +687,24 @@ function settleQuestion(
   return { question: questionOf(waiting, candidates, at), fixed, dismissed };
 }
 
+/** The lines each lens raised `f` at: its own anchor for its own lens, and
+ * each collapsed sighting's for that sighting's lens. A lens with no sighting
+ * of its own (one a match carried over) answers for the finding's anchor. */
+function sightingsByLens(f: ScanFinding): Array<{ lens: string; start: number; end: number }> {
+  const out = [{ lens: f.lens, start: f.start, end: f.end }];
+  for (const m of f.merged ?? []) out.push({ lens: m.lens, start: m.start, end: m.end });
+  for (const lens of lensesOf(f))
+    if (!out.some((o) => o.lens === lens)) out.push({ lens, start: f.start, end: f.end });
+  return out;
+}
+
 /**
  * The latest reading that re-read `f`'s lines at the very content it was
  * last seen at, by another run since, with EVERY lens that raised it — and
  * did not report it (a reading that did would have moved its last sighting).
  * Null when some lens has no such row. A ranged row counts only when its
- * range holds the finding's lines.
+ * range holds the lines THAT lens raised it at — a collapsed sighting's own
+ * lines, not the finding's anchor.
  */
 function silentReread(
   f: ScanFinding,
@@ -696,12 +713,12 @@ function silentReread(
 ): LedgerEntry | null {
   if (f.blob == null || (current !== undefined && current !== f.blob)) return null;
   let latest: LedgerEntry | null = null;
-  for (const lens of lensesOf(f)) {
+  for (const s of sightingsByLens(f)) {
     let best: LedgerEntry | null = null;
     for (const r of rows) {
-      if (r.lens !== lens || r.path !== f.path || r.blob !== f.blob) continue;
+      if (r.lens !== s.lens || r.path !== f.path || r.blob !== f.blob) continue;
       if (r.run === f.last_seen.run || r.at < f.last_seen.at) continue;
-      if (r.range && (r.range.start > f.start || r.range.end < f.end)) continue;
+      if (r.range && (r.range.start > s.start || r.range.end < s.end)) continue;
       if (best === null || r.at > best.at) best = r;
     }
     if (best === null) return null;
@@ -1072,8 +1089,14 @@ export class FindingsStore {
       // and a fresh one promoted or dismissed while the question waited
       // keeps its own when the old side has none.
       const triaged = o.ticket ? o : n.ticket ? n : o.dismissal ? o : n.dismissal ? n : o;
+      // The sightings each side had collapsed come along, and the severity is
+      // the highest of the fresh finding's own and theirs — the invariant a
+      // report keeps, never the fresh record's alone.
+      const merged = o.merged || n.merged ? [...(o.merged ?? []), ...(n.merged ?? [])] : null;
+      const own = n.own_severity ?? n.severity;
       byFp.set(nfp, {
         ...n,
+        ...(merged ? { own_severity: own, severity: aggregateSeverity(own, merged) } : {}),
         state: triaged.state,
         fixed: null,
         first_seen: o.first_seen,
@@ -1082,7 +1105,7 @@ export class FindingsStore {
         ...(o.lenses || n.lenses
           ? { lenses: [...new Set([...(o.lenses ?? [o.lens]), ...(n.lenses ?? [n.lens])])] }
           : {}),
-        ...(o.merged || n.merged ? { merged: [...(o.merged ?? []), ...(n.merged ?? [])] } : {}),
+        ...(merged ? { merged } : {}),
         dismissal: o.dismissal ?? n.dismissal ?? null,
         ticket: triaged.ticket ?? null,
       });
@@ -1115,7 +1138,7 @@ export class FindingsStore {
    * then by file. */
   list(filter: FindingsFilter = {}): { findings: ScanFinding[]; error: string | null } {
     const { findings, error } = this.load();
-    const rank = (s: ScanSeverity): number => ["P0", "P1", "P2", "P3", "nit"].indexOf(s);
+    const rank = severityRank;
     const kept = findings
       .filter(
         (f) =>
