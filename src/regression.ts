@@ -278,7 +278,7 @@ export interface SelectionReport {
   cases: RegressionCase[];
   /** Why each rejected review was rejected, for auditing the instrument. */
   rejected: Array<{ pr: number; reviewer: string; reason: string }>;
-  /** Findings per reviewer in the selected set. */
+  /** Selected cases per reviewer. */
   perReviewer: Record<string, number>;
 }
 
@@ -501,14 +501,18 @@ function normPath(p: string): string {
     .replace(/\/+/g, "/");
 }
 
-/** The same repo file: equal repo-relative paths, or one a path-segment suffix
- * of the other (a session may write its finding with the scratch-tree prefix).
- * A bare basename is NOT identity — `src/a/index.ts` is not `src/b/index.ts`. */
+/** The same repo file: equal repo-relative paths, or an ABSOLUTE path (a
+ * session may write its finding with the scratch-tree prefix) ending in the
+ * other's relative path. Two relative paths must be equal — `index.ts` is not
+ * `src/index.ts`, and `src/a/index.ts` is not `src/b/index.ts`. */
 function sameFile(a: string, b: string): boolean {
   const x = normPath(a);
   const y = normPath(b);
   if (!x || !y) return false;
-  return x === y || x.endsWith(`/${y}`) || y.endsWith(`/${x}`);
+  if (x === y) return true;
+  const prefixed = (abs: string, rel: string): boolean =>
+    abs.startsWith("/") && !rel.startsWith("/") && abs.endsWith(`/${rel}`);
+  return prefixed(x, y) || prefixed(y, x);
 }
 
 /** Did the sandbox reach this finding? Same file, then either the same place or

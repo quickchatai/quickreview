@@ -397,6 +397,15 @@ describe("one case, end to end", () => {
     ]);
   });
 
+  it("reads a path written under the scratch tree as the repo file it names", async () => {
+    const tree = join(SCRATCH, "run-t1", `pr-${set.cases[0]!.pr}`, "tree");
+    const io = fakeIo({
+      answer: [{ path: `${tree}/app/handler.py`, line: 42, text: "token may be None" }],
+    });
+    const out = await replayer(io, { baseClone: REPO }).replay(c());
+    expect(out.map((f) => f.path)).toEqual(["app/handler.py"]);
+  });
+
   it("returns nothing (and so scores VACUOUS) when the session never answers", async () => {
     const io = fakeIo();
     const out = await replayer(io, { baseClone: REPO }).replay(c());

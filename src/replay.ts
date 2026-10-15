@@ -523,7 +523,13 @@ export class ScratchReplay {
         const raw = io.readFile(findingsPath);
         if (raw === null) continue;
         try {
-          const findings = parseReplayFindings(JSON.parse(raw));
+          // A path written with the scratch tree's own prefix is the repo file
+          // under it: scored repo-relative, as the human's finding is.
+          const findings = parseReplayFindings(JSON.parse(raw)).map((f) =>
+            f.path.startsWith(`${prepared.tree}/`)
+              ? { ...f, path: f.path.slice(prepared.tree.length + 1) }
+              : f,
+          );
           log(`replay: ${c.id} produced ${findings.length} finding(s)`);
           return findings;
         } catch {
