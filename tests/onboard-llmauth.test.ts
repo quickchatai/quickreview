@@ -343,6 +343,16 @@ describe("model-string rewrite", () => {
     const out = rewriteModelPrefixes(withOther, "api");
     expect(out.text).toContain('[somewhere]\ndefault = "openai-codex/other"');
   });
+
+  it("reads and rewrites a literal-string model, keeping its quote style", () => {
+    const literal = EXAMPLE_CONFIG.replace(/^default = "([^"]*)"/m, "default = '$1'");
+    expect(literal).not.toBe(EXAMPLE_CONFIG);
+    const out = rewriteModelPrefixes(literal, "api");
+    expect(out.missing).toEqual([]);
+    expect(out.rewritten).toContain("models.default");
+    expect(out.text).toMatch(/^default = 'openai\//m);
+    expect(rewriteModelPrefixes(out.text, "oauth").text).toBe(literal);
+  });
 });
 
 describe("tolerant config reads", () => {
@@ -350,6 +360,7 @@ describe("tolerant config reads", () => {
     expect(readTomlString(EXAMPLE_CONFIG, "tui", "container")).toBe("quickreview-sandbox");
     expect(readTomlString(EXAMPLE_CONFIG, "companion", "model")).toBeNull(); // commented out
     expect(readTomlString(EXAMPLE_CONFIG, "models", "nope")).toBeNull();
+    expect(readTomlString("[tui]\ncontainer = 'my-box'\n", "tui", "container")).toBe("my-box");
   });
 
   it("resolves the secrets dir: config first, then $QC_SECRETS_DIR, then the install locator", async () => {

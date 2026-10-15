@@ -147,9 +147,15 @@ function hostHome(): string {
 // ---- tolerant TOML reads ----------------------------------------------------
 
 const SECTION_RE = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/;
-// key = "value"   — the key may be bare or quoted (TOML allows both for the
-// dashed tier names). Trailing text (a comment) is preserved verbatim.
-const STRING_KV_RE = /^(\s*)("?)([A-Za-z0-9_.-]+)\2(\s*=\s*)"([^"]*)"(.*)$/;
+// key = "value" or key = 'value' — the key may be bare or quoted (TOML allows
+// both for the dashed tier names); the value is a basic or a literal string,
+// as the loader reads either. Trailing text (a comment) is preserved verbatim.
+const STRING_KV_RE = /^(\s*)("?)([A-Za-z0-9_.-]+)\2(\s*=\s*)(?:"([^"]*)"|'([^']*)')(.*)$/;
+
+/** The string value an STRING_KV_RE match carries, whichever quote it used. */
+function kvValue(kv: RegExpExecArray): string {
+  return kv[5] ?? kv[6]!;
+}
 
 function isComment(line: string): boolean {
   return /^\s*#/.test(line);
@@ -168,7 +174,7 @@ export function readTomlString(text: string, section: string, key: string): stri
     }
     if (isComment(line) || current !== section) continue;
     const kv = STRING_KV_RE.exec(line);
-    if (kv && kv[3] === key) return kv[5]!;
+    if (kv && kv[3] === key) return kvValue(kv);
   }
   return null;
 }
@@ -264,7 +270,7 @@ export function rewriteModelPrefixes(text: string, route: AuthRoute): RewriteRes
     const label = `${current}.${kv[3]!}`;
     if (!wanted.has(label) || seen.has(label)) continue;
     seen.add(label);
-    const value = kv[5]!;
+    const value = kvValue(kv);
     const managed = managedModel(value);
     if (managed === null) {
       custom.push(label);
@@ -275,7 +281,8 @@ export function rewriteModelPrefixes(text: string, route: AuthRoute): RewriteRes
       unchanged.push(label);
       continue;
     }
-    lines[i] = `${kv[1]!}${kv[2]!}${kv[3]!}${kv[2]!}${kv[4]!}"${next}"${kv[6]!}`;
+    const quote = kv[5] === undefined ? "'" : '"';
+    lines[i] = `${kv[1]!}${kv[2]!}${kv[3]!}${kv[2]!}${kv[4]!}${quote}${next}${quote}${kv[7]!}`;
     rewritten.push(label);
   }
 
