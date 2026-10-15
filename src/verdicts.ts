@@ -4389,7 +4389,13 @@ export class VerdictWatcher {
       return await fn();
     } catch (err) {
       this.log(`verdicts: ${what} failed`, err);
-      this.deps.store.logEvent("verdict_action_failed", null, { what, error: String(err) });
+      // A side channel's failure record must not become a failure of its
+      // own: the delayed round tail can outlive the store it writes to.
+      try {
+        this.deps.store.logEvent("verdict_action_failed", null, { what, error: String(err) });
+      } catch (logErr) {
+        this.log(`verdicts: ${what} failure not recorded`, logErr);
+      }
       return undefined;
     }
   }
