@@ -14,9 +14,10 @@
 // a posted comment back to its `round_findings` row. The bench never asks for
 // it, so its outputs carry no marker (the parity test strips the marker and
 // compares the rest).
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, REVIEW_DEFAULTS } from "./config.js";
+import { findingsRecordPath } from "./findingsrecord.js";
 import { applyProfilePosting } from "./postingpolicy.js";
 import { loadProfilePosting } from "./profiles.js";
 import {
@@ -44,7 +45,7 @@ export function renderRound(
       comments: string;
     }
   | { error: string } {
-  const recordPath = join(root, "state", "findings", `pr-${pr}-round-${round}.json`);
+  const recordPath = findingsRecordPath(join(root, "state", "findings"), pr, round);
   let record: unknown;
   try {
     record = JSON.parse(readFileSync(recordPath, "utf8"));
@@ -59,28 +60,46 @@ export function renderRound(
   const comments = join(root, "state", `pr-${pr}-round-${round}-comments.json`);
   writeFileSync(body, out.rendered.body);
   writeFileSync(comments, JSON.stringify(out.rendered.comments, null, 2) + "\n");
-  if (out.record !== record) writeFileSync(recordPath, JSON.stringify(out.record, null, 2) + "\n");
+  if (out.record !== record) {
+    // The record is the round's only copy: replaced whole by a rename, so an
+    // interrupted write leaves the old record, never a truncated one.
+    const tmp = `${recordPath}.render.tmp`;
+    writeFileSync(tmp, JSON.stringify(out.record, null, 2) + "\n");
+    renameSync(tmp, recordPath);
+  }
   return { rendered: out.rendered, merges: out.merges, withheld: out.withheld, body, comments };
 }
 
 /** The install's render config: the live config when it loads, else the
- * shipped defaults (a render must never fail for want of a config). */
-function renderConfig(root: string, botLogin: string | undefined): PostedRenderConfig {
+ * shipped defaults (a render must never fail for want of a config) — and
+ * then `unread` says why, so the CLI can say the policy did not apply. */
+export function renderConfig(
+  root: string,
+  botLogin: string | undefined,
+  load: {
+    config: typeof loadConfig;
+    profilePosting: typeof loadProfilePosting;
+  } = { config: loadConfig, profilePosting: loadProfilePosting },
+): { cfg: PostedRenderConfig; unread?: string } {
   let review: PostedRenderConfig["review"] = { dedup_merge: REVIEW_DEFAULTS.dedup_merge };
   let posting: PostedRenderConfig["posting"];
+  let unread: string | undefined;
   try {
-    const loaded = loadConfig();
+    const loaded = load.config();
     review = { dedup_merge: loaded.review.dedup_merge };
     // The profile's `[posting]` policy, overlaid exactly as the daemon does
     // (wire.ts buildParts) — so this route enforces the cut the bench does.
-    posting = applyProfilePosting(loaded, loadProfilePosting(root, loaded.review.profile)).posting;
-  } catch {
-    // no readable config or profile: the defaults stand (no cut)
+    posting = applyProfilePosting(loaded, load.profilePosting(root, loaded.review.profile)).posting;
+  } catch (err) {
+    unread = err instanceof Error ? err.message : String(err);
   }
   return {
-    review,
-    ...(posting ? { posting } : {}),
-    ...(botLogin ? { github: { bot_login: botLogin } } : {}),
+    cfg: {
+      review,
+      ...(posting ? { posting } : {}),
+      ...(botLogin ? { github: { bot_login: botLogin } } : {}),
+    },
+    ...(unread !== undefined ? { unread } : {}),
   };
 }
 
@@ -90,7 +109,12 @@ function main(argv: string[]): number {
     console.error("usage: render-review <sandbox-root> <pr> <round> [bot-login]");
     return 2;
   }
-  const res = renderRound(root, Number(prRaw), Number(roundRaw), renderConfig(root, botLogin));
+  const config = renderConfig(root, botLogin);
+  if (config.unread !== undefined)
+    console.log(
+      `render-review: config or profile unreadable (${config.unread}) — rendered with the shipped defaults: no posting-policy cut, dedup_merge ${String(config.cfg.review.dedup_merge)}`,
+    );
+  const res = renderRound(root, Number(prRaw), Number(roundRaw), config.cfg);
   if ("error" in res) {
     console.error(`render-review: ${res.error}`);
     return 1;

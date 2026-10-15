@@ -338,7 +338,8 @@ export interface Selection<T> {
  *      ranked by class (question, then marker items, then nits), then
  *      severity, then a changed line before an unknown one before unchanged
  *      code (`changedLine`), then the order the session posted them in (its
- *      own ranking).
+ *      own ranking). A slot is a root cause: the sites sharing a key (kept
+ *      under `repeat_sites = true`) post on one slot.
  * A blocker is never withheld by any rule but a repeat site of itself.
  */
 export function selectPosted<T>(
@@ -398,9 +399,23 @@ export function selectPosted<T>(
         changedRank(a.v.changedLine) - changedRank(b.v.changedLine) ||
         a.i - b.i,
     );
-  const room = Math.max(0, p.max_comments - blockers.length);
-  const chosen = new Set([...blockers, ...rest.slice(0, room)].map((e) => e.i));
-  for (const e of rest.slice(room)) withheld.push({ item: e.item, word: "over-budget" });
+  // The budget counts ROOT CAUSES: under `repeat_sites = true` every site of
+  // a finding (one key) posts on the slot its first site took.
+  const slotted = new Set<string>();
+  let used = 0;
+  const hasSlot = (e: (typeof pass2)[number]): boolean => e.v.key !== "" && slotted.has(e.v.key);
+  const take = (e: (typeof pass2)[number]): void => {
+    if (hasSlot(e)) return;
+    if (e.v.key !== "") slotted.add(e.v.key);
+    used += 1;
+  };
+  const chosen = new Set<number>();
+  for (const e of [...blockers, ...rest]) {
+    if (e.v.cls === "blocker" || hasSlot(e) || used < p.max_comments) {
+      take(e);
+      chosen.add(e.i);
+    } else withheld.push({ item: e.item, word: "over-budget" });
+  }
   return { kept: pass2.filter((e) => chosen.has(e.i)).map((e) => e.item), withheld };
 }
 

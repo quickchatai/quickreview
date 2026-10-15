@@ -17,6 +17,7 @@ import {
   isDefaultPosting,
   selectPosted,
   siteKey,
+  verdictLineFor,
   type PolicyClass,
   type PostingPolicy,
   type WithholdWord,
@@ -42,18 +43,11 @@ import {
   type Severity,
   type Verdict,
 } from "./severity.js";
+import { INLINE_COMMENT_CAP, renderedFooter as reviewFooter } from "./reviewrender.js";
 
-/** GitHub caps a single review at 50 inline comments. */
-export const INLINE_COMMENT_CAP = 50;
-
-/** The review-body footer, naming the configured bot identity
- * (`[github] bot_login` — never a hardcoded login). "" degrades to the role. */
-export function reviewFooter(botLogin?: string): string {
-  return (
-    `_Automated review by \`${botLogin?.trim() || "the review bot"}\` (quickreview sandbox). ` +
-    "Reply to any comment to discuss; ask for a human reviewer if you want this escalated._"
-  );
-}
+// The inline cap and the footer are the live render route's, so the two
+// cannot drift.
+export { INLINE_COMMENT_CAP, reviewFooter };
 
 export interface Finding {
   severity: Severity;
@@ -198,12 +192,7 @@ export function eventForVerdict(v: Verdict): ReviewPayload["event"] {
 function verdictLine(v: Verdict, counts: Record<PostTag, number>): string {
   const label =
     v === "APPROVE" ? "Approved" : v === "REQUEST_CHANGES" ? "Changes requested" : "Needs a human";
-  const parts: string[] = [];
-  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  if (counts.blocker) parts.push(plural(counts.blocker, "blocker"));
-  if (counts.nit) parts.push(plural(counts.nit, "nit"));
-  if (counts.question) parts.push(plural(counts.question, "question"));
-  return `**Verdict: ${label}** — ${parts.length ? parts.join(", ") : "no findings"}.`;
+  return verdictLineFor(label, counts);
 }
 
 /**

@@ -249,7 +249,7 @@ export function policeBenchOutput(args: {
       source: "body",
       path,
       line,
-      cls: postedClassOf(e["posted_as"]),
+      cls: postedClassOf(e),
       severity: str(e["severity"]) || null,
       title: str(e["title"]) || str(e["reason"]).split("\n", 1)[0] || `${path}:${line}`,
       side: "RIGHT",
