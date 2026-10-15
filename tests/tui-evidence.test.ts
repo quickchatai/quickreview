@@ -488,7 +488,10 @@ describe("the store's home", () => {
 
   it("grants the companion no reach — it reads a read-only mount", () => {
     const companion = readFileSync(join(repoRoot, "src/tui/companion.ts"), "utf8");
-    expect(companion).toContain("${this.cfg.evidence_dir}:${CONTAINER.evidence}:ro");
+    // The mount spec runArgv() turns into `--volume <src>:<dest>:<mode>`.
+    expect(companion).toContain(
+      '{ dest: CONTAINER.evidence, source: this.cfg.evidence_dir, mode: "ro" }',
+    );
     // Rule 8 is structural: nothing in the transport hands the container ssh.
     expect(companion).not.toMatch(/evidence[^\n]*ssh/i);
   });
