@@ -646,6 +646,7 @@ describe("the layered verification runs over ssh, unchanged", () => {
       cloudflared?: string;
       health?: ProcessResult;
       ingress?: string;
+      pingStatus?: number;
     } = {},
   ): Layered {
     seedChoices({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: o.ingress ?? "named" });
@@ -680,7 +681,7 @@ describe("the layered verification runs over ssh, unchanged", () => {
               id: 1,
               event: "ping",
               status: "OK",
-              status_code: 200,
+              status_code: o.pingStatus ?? 200,
               delivered_at: "2026-08-30T11:59:00Z",
               redelivery: false,
             },
@@ -690,7 +691,12 @@ describe("the layered verification runs over ssh, unchanged", () => {
       }
       throw new Error(`unexpected fetch ${url}`);
     }) as unknown as typeof fetch;
-    const step = verifyStackStep({ apiBase: API, secretsDir, sleep: async () => undefined });
+    const step = verifyStackStep({
+      apiBase: API,
+      secretsDir,
+      sleep: async () => undefined,
+      redeliver: false,
+    });
     return { engine: new OnboardingEngine([step], baseAdapters(runner, fetchFake)), calls };
   }
 
@@ -760,6 +766,15 @@ describe("the layered verification runs over ssh, unchanged", () => {
     expect(result.checks.find((c) => c.name === "ingress-sidecar")!.detail).toMatch(
       /no cloudflared service is active on review-box/,
     );
+  });
+
+  it("a failed ping on this route points at the cloudflared service's journal, not a compose sidecar", async () => {
+    const h = layered({ pingStatus: 502 });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(false);
+    const said = result.checks.find((c) => c.name === "ping-delivery")!.detail;
+    expect(said).toMatch(/ssh review-box journalctl -u cloudflared/);
+    expect(said).not.toMatch(/docker compose logs/);
   });
 
   it("a health endpoint that answers nothing says where to look, over ssh", async () => {
