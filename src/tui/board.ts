@@ -27,6 +27,7 @@ import {
 } from "./design.js";
 import {
   Frame,
+  charWidth,
   displayWidth,
   fit,
   rule,
@@ -1115,11 +1116,31 @@ function renderEventsOverlay(
 
 // ---- render ----------------------------------------------------------------
 
+/**
+ * The draft as one paintable line of at most `width` cells: control bytes
+ * stripped, each newline shown as `⏎`, and — when it overflows — its END kept
+ * behind a `…`, because the end is where the operator types (the `▁` cursor).
+ */
+function draftLine(text: string, width: number): string {
+  const full = `${sanitizeText(text).replace(/\n/g, "⏎")}▁`;
+  if (displayWidth(full) <= width) return full;
+  const chars = Array.from(full);
+  let tail = "";
+  let w = 0;
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const cw = charWidth(chars[i]!.codePointAt(0) ?? 0);
+    if (w + cw > width - 1) break;
+    tail = chars[i] + tail;
+    w += cw;
+  }
+  return `…${tail}`;
+}
+
 /** The input box's three rows: its target, the text being typed, its keys. */
-function inputBoxLines(box: NonNullable<BoardView["inputBox"]>): string[] {
+function inputBoxLines(box: NonNullable<BoardView["inputBox"]>, width: number): string[] {
   return [
-    ` ${HEADING}MSG → ${box.target}${DRESET}`,
-    ` > ${box.text}▁`,
+    ` ${HEADING}MSG → ${oneLine(box.target)}${DRESET}`,
+    ` > ${draftLine(box.text, Math.max(1, width - 3))}`,
     ` ⏎ send · Esc cancel · Alt-⏎ newline`,
   ];
 }
@@ -1134,7 +1155,7 @@ export function overlayInputBox(frame: Frame, box: NonNullable<BoardView["inputB
   const top = frame.rows - 5;
   if (top < 1) return;
   frame.set(top, `├${"─".repeat(Math.max(0, frame.cols - 2))}┤`);
-  inputBoxLines(box).forEach((text, i) =>
+  inputBoxLines(box, frame.cols - 2).forEach((text, i) =>
     frame.boxRow(top + 1 + i, [{ text, width: frame.cols - 2 }]),
   );
 }
@@ -1249,7 +1270,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     frame.set(piTop, `│${piFocused ? `${FG.accent}${inner}${RESET}` : inner}│`);
   }
   if (view.inputBox) {
-    inputBoxLines(view.inputBox).forEach((text, i) =>
+    inputBoxLines(view.inputBox, cols - 2).forEach((text, i) =>
       frame.boxRow(piTop + 1 + i, [{ text, width: cols - 2 }]),
     );
     for (let i = 4; i <= piLines; i++) frame.boxRow(piTop + i, [{ text: "", width: cols - 2 }]);

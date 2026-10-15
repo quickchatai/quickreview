@@ -8,10 +8,12 @@ import {
   renderBoard,
   topBar,
   detailLines,
+  overlayInputBox,
   type BoardView,
 } from "../src/tui/board.js";
 import { decodeKey, decodeInputKey } from "../src/tui/keys.js";
 import {
+  Frame,
   displayWidth,
   fit,
   rule,
@@ -983,6 +985,37 @@ describe("renderBoard", () => {
     expect(text).toContain("MSG → #5012 (pi session pr-5012)");
     expect(text).toContain("> also check");
     expect(text).toContain("⏎ send · Esc cancel");
+  });
+
+  // A memory edit opens the box on the whole entry: multi-line, longer than
+  // the pane, and not guaranteed free of control bytes. The row the operator
+  // types into must show where they type — the end and its cursor — on one
+  // clean line.
+  // MUTATION: paint `box.text` raw through `fit` — the suffix, the cursor and
+  // the ⏎ markers vanish and the raw newline and ESC reach the row — red.
+  it("paints a long multi-line draft as one clean line ending at the cursor", () => {
+    const text =
+      "#lesson kind=look-for lens=pass-baseline class=x\n\n" +
+      "A long body that runs well past the width of the pane \x1b[31mwith a stray escape\x1b[0m " +
+      "and more words after it to push the end out of sight. AMENDED";
+    const check = (row: string, cols: number): void => {
+      expect(row).toContain("AMENDED▁");
+      expect(row).toContain("…");
+      expect(row).not.toMatch(/[\n\x1b]/);
+      expect(displayWidth(row)).toBe(cols);
+    };
+    const frame = new Frame(60, 20);
+    overlayInputBox(frame, { target: "edit 01a01b03", text });
+    check(
+      frame.lines.find((l) => l.includes("> "))!,
+      60,
+    );
+    const board = renderBoard(view({ inputBox: { target: "#5012", text } }), 60, 24);
+    const row = board.lines.find((l) => stripAnsi(l).includes("│ > "))!;
+    check(stripAnsi(row), 60);
+    const short = new Frame(60, 20);
+    overlayInputBox(short, { target: "t", text: "one\ntwo" });
+    expect(short.lines.find((l) => l.includes("> "))).toContain("> one⏎two▁");
   });
 });
 
