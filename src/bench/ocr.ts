@@ -29,9 +29,11 @@
 //     codex_bridge.py), not a public API key. The result file also carries the
 //     bridge's per-case counters under `bench`, which the scorer ignores.
 //
-// No PR title or description reaches OCR: reviewers/ocr.py passes no
-// `--background`, and in range mode OCR reads no commit message. (The
-// QuickReview arm gets both, as production does — the report says so.)
+// By default no PR title or description reaches OCR: reviewers/ocr.py passes
+// no `--background`, and in range mode OCR reads no commit message. The
+// equal-inputs switch (`prText`, src/bench/prtext.ts) hands OCR the title and
+// body through `--background`; the report says which. (The QuickReview arm
+// gets both, as production does.)
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -272,11 +274,13 @@ function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-/** Status + OCR's own numbers from one finished process. */
+/** Status + OCR's own numbers from one finished process. The case's warnings
+ * so far (the merge-base check's) stay ahead of OCR's own. */
 export function summarizeOcrRun(a: {
   exitCode: number;
   timedOut: boolean;
   review: unknown;
+  warnings?: readonly string[];
 }): Pick<OcrCaseSummary, "status" | "ocr_status" | "files_reviewed" | "ocr_tokens" | "warnings"> {
   const r =
     typeof a.review === "object" && a.review !== null && !Array.isArray(a.review)
@@ -314,7 +318,7 @@ export function summarizeOcrRun(a: {
           total: num(s["total_tokens"]),
         }
       : null,
-    warnings: [...new Set(warnings)].slice(0, 20),
+    warnings: [...(a.warnings ?? []), ...[...new Set(warnings)].slice(0, 20)],
   };
 }
 
@@ -456,7 +460,15 @@ export async function reviewCaseOcr(
     } catch {
       review = null;
     }
-    Object.assign(summary, summarizeOcrRun({ exitCode: r.code, timedOut: r.timedOut, review }));
+    Object.assign(
+      summary,
+      summarizeOcrRun({
+        exitCode: r.code,
+        timedOut: r.timedOut,
+        review,
+        warnings: summary.warnings,
+      }),
+    );
     if (summary.status === "failed" || summary.status === "timeout")
       summary.error = (stderr.trim() || stdout.trim()).slice(-1500);
   } catch (err) {
@@ -527,6 +539,8 @@ export function readOcrSummary(outDir: string, c: BenchCase): OcrCaseSummary | n
   return s.arm === "ocr" ? (s as OcrCaseSummary) : null;
 }
 
+/** Every arm a run dir can hold, as its run.json `reviewer` names it (a
+ * QuickReview run names none). */
 const ARM_NAMES = {
   qcr: "a QuickReview",
   ocr: "an open-code-review",
@@ -537,10 +551,12 @@ const ARM_NAMES = {
   pragent: "a PR-Agent",
 } as const;
 
+export type ArmName = keyof typeof ARM_NAMES;
+
 /** A command of one arm refuses another arm's run dir: the QuickReview
  * `review`/`results` rewrite every variant's result files, which would wipe an
  * OCR run's scored input. A dir with no run.json yet belongs to anyone. */
-export function assertArm(outDir: string, arm: keyof typeof ARM_NAMES): void {
+export function assertArm(outDir: string, arm: ArmName): void {
   const found = runArmOf(outDir);
   if (found !== null && found !== arm)
     throw new Error(
@@ -548,21 +564,16 @@ export function assertArm(outDir: string, arm: keyof typeof ARM_NAMES): void {
     );
 }
 
-/** The arm a run dir holds, from its run.json (`reviewer: "ocr"` / `"codex"` /
- * `"opencode"` / `"claude"` / `"pireview"`; a QuickReview run carries no `reviewer`); `null` when there is
- * no readable run.json yet. */
-export function runArmOf(
-  outDir: string,
-): "qcr" | "ocr" | "codex" | "opencode" | "claude" | "pireview" | "pragent" | null {
+/** The arm a run dir holds, from its run.json's `reviewer` (one of ARM_NAMES;
+ * a QuickReview run carries none, and an unknown one reads as QuickReview);
+ * `null` when there is no readable run.json yet. */
+export function runArmOf(outDir: string): ArmName | null {
   const p = join(outDir, "run.json");
   if (!existsSync(p)) return null;
   try {
     const r = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
-    if (r["reviewer"] === "claude") return "claude";
-    if (r["reviewer"] === "opencode") return "opencode";
-    if (r["reviewer"] === "pireview") return "pireview";
-    if (r["reviewer"] === "pragent") return "pragent";
-    return r["reviewer"] === "ocr" ? "ocr" : r["reviewer"] === "codex" ? "codex" : "qcr";
+    const v = r["reviewer"];
+    return typeof v === "string" && Object.hasOwn(ARM_NAMES, v) ? (v as ArmName) : "qcr";
   } catch {
     return null;
   }

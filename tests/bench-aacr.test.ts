@@ -1200,6 +1200,21 @@ describe("the open-code-review baseline arm", () => {
     );
   });
 
+  it("OCR's own warnings join the case's earlier ones — the merge-base detail survives", () => {
+    const mb = "merge-base(aaaaaaa, head) = x, prefetched y";
+    const s = summarizeOcrRun({
+      exitCode: 0,
+      timedOut: false,
+      review: {
+        status: "success",
+        comments: [],
+        warnings: [{ type: "skip", file: "a.py", message: "too large" }],
+      },
+      warnings: [mb],
+    });
+    expect(s.warnings).toEqual([mb, "skip a.py: too large"]);
+  });
+
   it("a case's traffic is the bridge's after − before, and unknown stays unknown", () => {
     const at = (n: number, s: Record<string, number>): BridgeStats => ({
       requests: n,
