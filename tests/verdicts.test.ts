@@ -3933,6 +3933,35 @@ describe("integration review", () => {
       expect(store.roundsFor(628)[0]).toMatchObject({ status: "cancelled", verdict: null });
       expect(count("verdict_after_cancel_ignored", 628)).toBe(1);
     });
+
+    // MUTATION: drop the later-round re-check at apply's claim — the orphan
+    // round finishes done over the requeued round the pump started meanwhile.
+    it("an orphan-swept round's verdict is not applied over the requeued round that started during its apply", async () => {
+      reviewingRound(629);
+      const { key } = stampPosting(629, 1);
+      writePostingReceipt(629, 1, key, "REQUEST_CHANGES");
+      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      adapter.addLabel = async (n, label) => {
+        adapter.calls.push(`addLabel:${n}:${label}`);
+        // The boot pump dispatches the requeued PR while the label call is out.
+        store.startRound(629, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+        store.setPrState(629, "reviewing");
+        return { executed: false, dryRunFile: "d" };
+      };
+
+      const name = write(629, 1, verdictFile({ pr: 629, verdict: "REQUEST_CHANGES" }));
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.roundsFor(629).map((r) => [r.round_no, r.status, r.verdict])).toEqual([
+        [1, "cancelled", null],
+        [2, "running", null],
+      ]);
+      expect(store.getPr(629)?.state).toBe("reviewing");
+      expect(store.reviewedHead(629)).toBeUndefined();
+      expect(payloads("verdict_after_cancel_ignored", 629)).toEqual([
+        expect.objectContaining({ reason: "a later round started while the verdict was applied" }),
+      ]);
+    });
   });
 
   // MUTATION: drop `pruneStaleStaging` from the sweep — the old staging files stay.

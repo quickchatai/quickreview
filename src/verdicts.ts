@@ -843,13 +843,17 @@ export class VerdictWatcher {
 
   /** A file reaching a cancelled round is not applied over the cancel:
    * recorded, archived by the caller, nothing else touched. */
-  private ignoreAfterCancel(round: RoundRow, name: string, malformed?: string): void {
+  private ignoreAfterCancel(
+    round: RoundRow,
+    name: string,
+    detail: { malformed?: string; reason?: string } = {},
+  ): void {
     this.deps.store.logEvent("verdict_after_cancel_ignored", round.pr, {
       round_id: round.id,
       round_no: round.round_no,
       cancel_cause: round.cancel_cause,
       file: name,
-      ...(malformed !== undefined ? { malformed } : {}),
+      ...detail,
     });
     this.log(
       `verdicts: #${round.pr} round ${round.round_no} was already cancelled (${round.cancel_cause ?? "unknown"}) — ${name} is not applied over it`,
@@ -1033,7 +1037,7 @@ export class VerdictWatcher {
       // reaching it afterwards opens no failure over whatever replaced it (an
       // operator's `u` stays undone by nothing the old session writes).
       if (round.status === "cancelled") {
-        this.ignoreAfterCancel(round, name, message);
+        this.ignoreAfterCancel(round, name, { malformed: message });
         return;
       }
     }
@@ -1982,7 +1986,9 @@ export class VerdictWatcher {
         // An orphan-swept round's verdict that its posting cannot prove is
         // not applied — and opens no incident over the requeue that stands.
         if (round.status === "cancelled") {
-          this.ignoreAfterCancel(round, name, `posting proof failed: ${proof.detail ?? "?"}`);
+          this.ignoreAfterCancel(round, name, {
+            reason: `posting proof failed: ${proof.detail ?? "?"}`,
+          });
           return "applied";
         }
         await this.failPostingProof(round, proof.detail ?? "posting receipt invalid");
@@ -2031,6 +2037,17 @@ export class VerdictWatcher {
     // whatever landed meanwhile — an operator's `u`, a supersession — stands,
     // and nothing below runs. Before the successor record, so a lost claim
     // leaves no obligation behind either.
+    //
+    // An orphan-swept round's claim is `cancelled`, which a cancel landing
+    // meanwhile cannot change — but the requeue the sweep queued can have
+    // started its round while this awaited. Re-asked here, in the claim's own
+    // turn: a later round owns the PR, and the old verdict is not applied over it.
+    if (round && claimedStatus === "cancelled" && store.hasLaterRound(v.pr, v.round_no)) {
+      this.ignoreAfterCancel(round, name, {
+        reason: "a later round started while the verdict was applied",
+      });
+      return "applied";
+    }
     if (round && !store.finishRound(round.id, v.verdict, null, v.summary ?? null, claimedStatus)) {
       const now = this.runningRound(v.pr, v.round_no);
       const nowStatus = now?.id === round.id ? now.status : "missing";
