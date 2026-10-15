@@ -617,6 +617,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // daemon container's loopback engine via plain docker exec.
     local: transportOf(cfg) === "local",
     sudoDocker: cfg.sudo_docker,
+    sshHost: cfg.ssh_host,
+    container: cfg.container,
     log: (line) => app.notice(line),
   });
   const { buildIssueSink, ticketProjection } = await import("./issuesink.js");
@@ -978,6 +980,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       });
       companionContainerStarted = true;
       progress.done("container");
+      // The container's memory network exists now: a forward we started
+      // before it (a cold host) binds the bridge address it could not.
+      await memForward.rebindMissing();
       // Daily rollover — strictly between "container is up" and
       // "pi is spawned": on the first start of a new ops day it archives
       // yesterday, kills the session and queues the opening context, so the
