@@ -125,11 +125,12 @@ export interface ArchivePlan {
   orphans: string[];
   /** Over the candidates. */
   artifacts: Record<ArtifactClass, Tally>;
-  /** `state/ledgers/pr-<n>.md` of the candidates: SNAPSHOTTED into the
-   * bundle, the live file kept (the reopen continuity). */
+  /** `state/ledgers/pr-<n>.md` of the candidates and the empty PRs (the
+   * passes that will run): SNAPSHOTTED into the bundle, the live file kept
+   * (the reopen continuity). */
   ledger_snapshots: Tally;
-  /** `archive/pr-<n>/session.jsonl` of the candidates: the legacy copies
-   * checked as duplicates of an archived transcript (§7.5). */
+  /** `archive/pr-<n>/session.jsonl` of the candidates and the empty PRs: the
+   * legacy copies checked as duplicates of an archived transcript (§7.5). */
   legacy_copies: Tally;
   /** Top-level `state/` entries named for an eligible PR that no §7.2 class
    * claims: KEPT live (never moved on a guess) and reported here, with the
@@ -164,7 +165,8 @@ export interface PlanMemo {
 interface CountMemo {
   watermark: number;
   cutoff: string;
-  /** Every row with id ≤ this was examined and older than `cutoff`. */
+  /** Every row with id ≤ this was examined and is older than `cutoff`, or
+   * undatable (passed over, as the mover passes over it). */
   settledTo: number;
   rows: number;
   byKind: Record<string, number>;
@@ -534,10 +536,20 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
       add(unclassified, o.size);
       if (unclassified.first.length < 20) unclassified.first.push(relative(root, o.path));
     }
+    const tallyKept = (): void => {
+      ledgerSnapshots.files += ledger.files;
+      ledgerSnapshots.bytes += ledger.bytes;
+      legacyCopies.files += legacy.files;
+      legacyCopies.bytes += legacy.bytes;
+    };
     if (planned.files === 0) {
-      // Archived already and nothing live left: not backlog.
+      // Archived already and nothing live left: not backlog. An empty PR's
+      // pass still snapshots its ledger and checks its legacy copy.
       if (archivedRows.get(c.pr) === "archived") counts.archived += 1;
-      else empty.push(c.pr);
+      else {
+        empty.push(c.pr);
+        tallyKept();
+      }
       continue;
     }
     candidates.push(planned);
@@ -548,10 +560,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
         artifacts[cls].bytes += t.bytes;
       }
     }
-    ledgerSnapshots.files += ledger.files;
-    ledgerSnapshots.bytes += ledger.bytes;
-    legacyCopies.files += legacy.files;
-    legacyCopies.bytes += legacy.bytes;
+    tallyKept();
   }
   held.sort((a, b) => a.pr - b.pr);
 
@@ -590,12 +599,14 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
       sessionsRoot: deps.sessionsRoot,
       ...(deps.overseerBornAt ? { bornAt: deps.overseerBornAt } : {}),
       ...(signal ? { signal } : {}),
+      meter,
     }),
     pi_global: deps.piGlobalDir
       ? await measurePiGlobal({
           storeDir: deps.piGlobalDir,
           now: deps.now,
           ...(signal ? { signal } : {}),
+          meter,
         })
       : null,
   };

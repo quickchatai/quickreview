@@ -25,7 +25,7 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import type { FileIdentity } from "./fsutil.js";
 import { identityOrNull } from "./gzfile.js";
-import { walkFiles } from "./prfiles.js";
+import { type SpanMeter, walkFiles } from "./prfiles.js";
 import {
   StoreWriter,
   emptyStoreResult,
@@ -82,9 +82,16 @@ export async function measurePiGlobal(deps: {
   storeDir: string;
   now: () => Date;
   signal?: AbortSignal;
+  /** Measures the listing's synchronous span (the plan's meter). */
+  meter?: SpanMeter;
 }): Promise<StoreTally> {
   try {
-    const { old, young } = await listPiGlobal(deps.storeDir, deps.now().getTime(), deps.signal);
+    const { old, young } = await listPiGlobal(
+      deps.storeDir,
+      deps.now().getTime(),
+      deps.signal,
+      (fn) => (deps.meter ? deps.meter.measure(fn) : fn()),
+    );
     const all = [...old, ...young];
     return {
       state: "measured",
