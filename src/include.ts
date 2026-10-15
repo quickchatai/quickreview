@@ -34,7 +34,7 @@ import type { PassTier } from "./types.js";
 import type { EcosystemName } from "./ecosystem.js";
 import type { LensTuningMap } from "./lenstuning.js";
 
-const INCLUDE_RE = /\{\{include:([^}\r\n]+)\}\}/g;
+const INCLUDE_RE = /\{\{include:([^}\r\n]*)\}\}/g;
 
 // ---- build-time identity variables ----------------------------------------
 //
@@ -2003,6 +2003,9 @@ export function buildAgents(
   for (const src of sources) {
     const file = src.slice(src.lastIndexOf("/") + 1);
     const doc = splitFrontmatter(read(src));
+    // The variant's name, model, thinking and tools live in the frontmatter:
+    // a source without one would build a file that carries none of them.
+    if (!doc.hasFrontmatter) throw new Error(`buildAgents: ${src} has no frontmatter block`);
     const pass = frontmatterName(doc.frontmatter) ?? file.replace(/\.md$/, "");
     // Variables expand AFTER includes (so pass-common.md's variables resolve
     // too) and over the SEED material only — addenda are code-authored and may
