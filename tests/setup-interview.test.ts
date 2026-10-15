@@ -681,6 +681,45 @@ describe("the commit hand-off (processProfileCommits)", () => {
     expect(existsSync(join(commits, ".processing.lock"))).toBe(false);
   });
 
+  it("a commit whose git step failed is not re-run by the timer, and is by the operator's retry", () => {
+    const stateHome = join(dir, "state");
+    const commits = join(stateHome, "setup", "commits");
+    write(
+      join(commits, "a.request.json"),
+      JSON.stringify({ id: "a", message: "m", paths: ["profiles/acme/profile.toml"] }),
+    );
+    mkdirSync(home(), { recursive: true });
+    let locked = true;
+    const flaky: GitRun = (args) => {
+      if (args[0] === "rev-parse" && args[1] === "--show-toplevel")
+        return { code: 0, stdout: home(), stderr: "" };
+      if (args[0] === "add" && locked)
+        return {
+          code: 128,
+          stdout: "",
+          stderr: "fatal: Unable to create 'index.lock': File exists.",
+        };
+      if (args[0] === "diff") return { code: 1, stdout: "", stderr: "" };
+      return { code: 0, stdout: "sha1\n", stderr: "" };
+    };
+    expect(processProfileCommits({ stateHome, configHome: home(), git: flaky })).toEqual([
+      expect.objectContaining({ id: "a", state: "failed" }),
+    ]);
+    locked = false;
+    // The timer's pass leaves a standing failure alone.
+    expect(processProfileCommits({ stateHome, configHome: home(), git: flaky })).toEqual([]);
+    // The operator's pass, once the lock is gone, completes it — and only it.
+    expect(
+      processProfileCommits({ stateHome, configHome: home(), git: flaky, retryFailed: true }),
+    ).toEqual([expect.objectContaining({ id: "a", state: "committed" })]);
+    expect(JSON.parse(readFileSync(join(commits, "a.result.json"), "utf8")).state).toBe(
+      "committed",
+    );
+    expect(
+      processProfileCommits({ stateHome, configHome: home(), git: flaky, retryFailed: true }),
+    ).toEqual([]);
+  });
+
   it("a request naming anything outside profiles/ is refused before git sees it", () => {
     expect(refusePath("profiles/acme/profile.toml")).toBeNull();
     expect(refusePath("secrets/app.pem")).toMatch(/outside profiles/);

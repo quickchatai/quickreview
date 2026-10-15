@@ -178,13 +178,17 @@ function commitOne(
  * Carry out every pending request (one without a result), oldest first, and
  * write each one's result. Host-side only — it needs the config home whole.
  * Total: a missing directory is no requests; a malformed request is answered
- * "refused" and never retried.
+ * "refused" and never retried. A request whose git step FAILED (an index
+ * lock, a signing agent away) is carried out again only with `retryFailed` —
+ * the operator's `qcr setup commit`, run once the cause is cleared — so a
+ * standing failure is not re-run, and re-announced, on every timer tick.
  */
 export function processProfileCommits(opts: {
   stateHome: string;
   configHome: string;
   git?: GitRun;
   clock?: () => Date;
+  retryFailed?: boolean;
 }): CommitResult[] {
   const git = opts.git ?? realGit;
   const clock = opts.clock ?? (() => new Date());
@@ -202,7 +206,15 @@ export function processProfileCommits(opts: {
   const lock = join(dir, PROCESS_LOCK);
   if (!takeLock(lock, clock())) return [];
   try {
-    return processLocked(dir, names, opts.stateHome, opts.configHome, git, clock);
+    return processLocked(
+      dir,
+      names,
+      opts.stateHome,
+      opts.configHome,
+      git,
+      clock,
+      opts.retryFailed === true,
+    );
   } finally {
     rmSync(lock, { force: true });
   }
@@ -230,6 +242,16 @@ function takeLock(path: string, now: Date): boolean {
   return false;
 }
 
+/** The state a written result records, or null when it cannot be read. */
+function answeredState(path: string): CommitState | null {
+  try {
+    const r = JSON.parse(readFileSync(path, "utf8")) as Partial<CommitResult>;
+    return typeof r.state === "string" ? r.state : null;
+  } catch {
+    return null;
+  }
+}
+
 function processLocked(
   dir: string,
   names: string[],
@@ -237,12 +259,15 @@ function processLocked(
   configHome: string,
   git: GitRun,
   clock: () => Date,
+  retryFailed: boolean,
 ): CommitResult[] {
   const done: CommitResult[] = [];
   for (const name of names.filter((n) => n.endsWith(".request.json")).sort()) {
     const id = name.slice(0, -".request.json".length);
     // Re-read, not the listing: a result may have landed since it was taken.
-    if (names.includes(`${id}.result.json`) || existsSync(join(dir, `${id}.result.json`))) continue;
+    if (names.includes(`${id}.result.json`) || existsSync(join(dir, `${id}.result.json`))) {
+      if (!retryFailed || answeredState(join(dir, `${id}.result.json`)) !== "failed") continue;
+    }
     let text: string;
     try {
       text = readFileSync(join(dir, name), "utf8");

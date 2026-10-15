@@ -1546,7 +1546,8 @@ export async function cmdSetup(rest: string[]): Promise<number> {
   }
   if (sub === "commit") {
     const { commitRequestedProfiles, commitLine } = await import("./tui/setupentry.js");
-    const results = commitRequestedProfiles();
+    // The operator's own run: a commit whose git step failed is tried again.
+    const results = commitRequestedProfiles(process.env, { retryFailed: true });
     if (results.length === 0) console.log("no profile commits waiting");
     for (const r of results) console.log(commitLine(r));
     return results.some((r) => r.state === "failed" || r.state === "refused") ? 1 : 0;
