@@ -2463,6 +2463,7 @@ export class StateStore {
     );
     const write = this.db.transaction((rows: readonly RoundFindingInput[]) => {
       for (const f of rows) {
+        const lensIds = canonicalLensIds(f.lens);
         stmt.run({
           pr: round.pr,
           round_id: round.round_id,
@@ -2474,8 +2475,16 @@ export class StateStore {
           lens: f.lens ?? "",
           tier: f.tier ?? null,
           // Unknown-lens entries are never called "unplanned": that would
-          // assert a fact about a lens the record does not name.
-          unplanned: f.lens && plan.size > 0 && !plan.has(f.lens) ? 1 : 0,
+          // assert a fact about a lens the record does not name. A spelling
+          // that names known lenses (`pass-baseline + pass-sweep`,
+          // `pass-sweep:G1`) is judged by those lenses; any other is judged
+          // as written.
+          unplanned:
+            f.lens &&
+            plan.size > 0 &&
+            (lensIds.length > 0 ? lensIds.some((id) => !plan.has(id)) : !plan.has(f.lens))
+              ? 1
+              : 0,
           severity: f.severity ?? null,
           confidence: f.confidence ?? null,
           reachability: f.reachability ?? null,
@@ -2490,7 +2499,7 @@ export class StateStore {
           thread_id: f.thread_id ?? null,
           recorded_at: at,
           title: f.title ?? null,
-          lens_ids: JSON.stringify(canonicalLensIds(f.lens)),
+          lens_ids: JSON.stringify(lensIds),
         });
       }
     });
