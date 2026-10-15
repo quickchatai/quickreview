@@ -1,7 +1,7 @@
 // The escalation onboarding step's config surgery: a re-run rewrites only
 // the rules the interview owns and never eats a hand-written rule — whatever
 // valid TOML spelling that rule's header uses.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -199,5 +199,90 @@ describe("escalation step: a label or check name with spaces stays one name", ()
     expect(rule.failing_checks).toEqual(["CI / test", "lint"]);
     // logins still split on whitespace as well as commas
     expect([...cfg.escalation.targets].sort()).toEqual(["alice", "bob"]);
+  });
+});
+
+describe("escalation step: a path glob with a space stays one glob", () => {
+  it("writes `docs/API changes/**` as one pattern — commas separate, spaces do not", async () => {
+    writeFileSync(configPath, EXAMPLE);
+    const { cfg } = await runStep({
+      enable: "yes",
+      targets: "alice",
+      why: "owns the docs",
+      paths: "docs/API changes/**, db/**",
+    });
+    const rule = cfg.escalation.rules.find((r) => r.name === "onboarding:alice")!;
+    expect(rule.paths).toEqual(["docs/API changes/**", "db/**"]);
+  });
+});
+
+describe("escalation step: every rule survives exactly once, wherever it sits", () => {
+  it("keeps a hand rule written after another table once, not twice", async () => {
+    // [escalation] … then some other table … then the hand rule, at EOF.
+    const text = [
+      EXAMPLE.replace(/\n*$/, "\n"),
+      "[[escalation.rules]]",
+      'name = "hand"',
+      'to = "alice"',
+      'why = "she wrote the billing module"',
+      'paths = ["billing/**"]',
+      "",
+    ].join("\n");
+    parseConfig(text);
+    writeFileSync(configPath, text);
+    const { cfg } = await runStep({
+      enable: "yes",
+      targets: "alice",
+      why: "owns the schema",
+      paths: "db/**",
+    });
+    expect(cfg.escalation.rules.map((r) => r.name).sort()).toEqual(["hand", "onboarding:alice"]);
+  });
+
+  it("recognises its own rule under a literal-string name, so a re-run replaces it", async () => {
+    writeFileSync(
+      configPath,
+      withHandRule(
+        [
+          "[[escalation.rules]]",
+          "name = 'onboarding:alice'",
+          "to = 'alice'",
+          "why = 'the old answer'",
+          "paths = ['old/**']",
+          "",
+        ].join("\n"),
+      ),
+    );
+    const { cfg } = await runStep({
+      enable: "yes",
+      targets: "alice",
+      why: "owns the schema",
+      paths: "db/**",
+    });
+    expect(cfg.escalation.rules.map((r) => r.name)).toEqual(["onboarding:alice"]);
+    expect(cfg.escalation.rules[0]!.paths).toEqual(["db/**"]);
+  });
+
+  it("keeps a hand rule's header comment", async () => {
+    await rerun(
+      [
+        "[[escalation.rules]] # mine, keep it",
+        'name = "hand"',
+        'to = "alice"',
+        'why = "she wrote the billing module"',
+        'paths = ["billing/**"]',
+        "",
+      ].join("\n"),
+    );
+    expect(readFileSync(configPath, "utf8")).toContain("[[escalation.rules]] # mine, keep it");
+  });
+});
+
+describe("escalation step: the write is atomic", () => {
+  it("replaces config.toml by rename, never truncating the file in place", async () => {
+    writeFileSync(configPath, EXAMPLE);
+    const before = statSync(configPath).ino;
+    await runStep({ enable: "no" });
+    expect(statSync(configPath).ino).not.toBe(before);
   });
 });

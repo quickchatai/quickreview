@@ -798,8 +798,9 @@ export const ESCALATION_DEFAULTS: EscalationConfig = {
   rules: [],
 };
 
-const ESCALATION_SEVERITY_FLOORS: readonly string[] = ["P0", "P1", "P2", "P3"];
-const ESCALATION_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+export const ESCALATION_SEVERITY_FLOORS: readonly string[] = ["P0", "P1", "P2", "P3"];
+/** A GitHub login: letters, digits and single inner dashes, at most 39. */
+export const ESCALATION_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 
 /**
  * Parse and VALIDATE `[escalation]`.
