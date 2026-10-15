@@ -324,6 +324,30 @@ describe("every profile write records the profile it replaces", () => {
     });
   });
 
+  it("a profile directory with no profile.toml yet exists: the write records it, and the old side is that profile", () => {
+    const acme = join(configHome(env), "profiles", "acme");
+    write(join(acme, "NOTES.md"), "an addenda-only profile\n");
+    mkdirSync(join(acme, "addenda"), { recursive: true });
+    liveConfig("acme");
+    const r = tune({ security: "critical" });
+    const b = readBaselines(stateHomeFs(stateRoot()));
+    if (b.state !== "ok") throw new Error(b.error);
+    expect(b.baselines[0]).toMatchObject({ id: r.commit!.id, existed: true });
+    const sides = replaySides(
+      {
+        root: sandbox,
+        env,
+        stateRoot: stateRoot(),
+        state: stateHomeFs(stateRoot()),
+        clock: () => now,
+      },
+      { old: null, new_profile: null },
+    );
+    if (!sides.ok) throw new Error(sides.errors.join("; "));
+    expect(sides.sides.old).toMatchObject({ profile: "acme", baseline: r.commit!.id });
+    expect(sides.sides.old.cfg.lenses?.["pass-security"]).toBeUndefined();
+  });
+
   it("an unreadable baselines file is never overwritten, and the write still lands", () => {
     write(join(stateRoot(), PROFILE_BASELINES_FILE), "{not json");
     const r = tune({ security: "critical" });

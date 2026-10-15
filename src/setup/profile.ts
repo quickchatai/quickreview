@@ -476,7 +476,9 @@ export function writeTarget(
         : `profile "${name}" lives at ${found.dir}, outside the config home's ${PROFILES_DIR}/ — edit it there by hand and validate it`,
     };
   }
-  return { ok: true, dir, exists: existsSync(join(dir, PROFILE_FILE)) };
+  // A profile is its directory (the locator's rule): one holding no
+  // profile.toml yet (an addenda pack) exists all the same.
+  return { ok: true, dir, exists: found !== null };
 }
 
 /** Read a profile file's current text ("" when absent). */
