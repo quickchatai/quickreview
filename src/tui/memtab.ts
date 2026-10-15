@@ -42,9 +42,10 @@ import { emptyLine } from "./emptystate.js";
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import type { BoardKey } from "./keys.js";
 import type { LearningStore } from "./learning.js";
-import type { ForwardStatus } from "./memforward.js";
+import { forwardUsable, type ForwardStatus } from "./memforward.js";
 import {
   defectEntries,
+  nsId,
   refOf,
   splitNsId,
   timelineOrder,
@@ -98,7 +99,7 @@ export function findMemoryEntry(
 /** A companion ref as the TUI's own namespaced id (`reviewer:<area>/<file>`). */
 function memoryRefId(ref: string): string {
   const m = /^viking:\/\/user\/([a-z][a-z0-9_-]*)\/memories\/(.+)$/.exec(ref.trim());
-  return m ? `${m[1]}:${m[2]}` : ref.trim();
+  return m ? nsId(m[1]!, m[2]!) : ref.trim();
 }
 
 /**
@@ -117,6 +118,15 @@ export function memoryRefUnread(health: MemoryHealth | undefined, ref: string): 
     .filter((h) => !h.ok || h.unreadable > 0)
     .map((h) => `${h.user}: ${h.reason ?? (h.ok ? "entries unreadable" : "unreachable")}`);
   return gaps.length === 0 ? null : gaps.join(" · ");
+}
+
+/** Narrow the timeline to a tag (null clears): the selection restarts at the
+ * top, since the old ordinal may exceed the narrowed list. The one way the
+ * filter changes from outside the tab (the companion's filter verbs). */
+export function setTimelineFilter(st: MemoryTabState, tag: string | null): void {
+  st.filter = tag;
+  st.sel = 0;
+  st.selKey = undefined;
 }
 
 /** The timeline ordering — render and every verb share it, so x/p/e can
@@ -214,25 +224,24 @@ export function forwardRows(
     { text: `${sectionTitle("MEMORY STORE")} ${dot} ${fwd.state}` },
     { text: truncate(fwd.detail, Math.max(10, width - 26)), dim: true },
   ];
-  const link: Array<RowChunk<MemAction>> =
-    fwd.state === "adopted" || fwd.state === "owned"
-      ? [
-          { text: button("W studio"), action: { t: "url", url: fwd.studioUrl } },
-          {
-            text: truncate(fwd.studioUrl, Math.max(10, width - 16)),
-            action: { t: "url", url: fwd.studioUrl },
-            dim: true,
-          },
-        ]
-      : [
-          {
-            text: truncate(
-              "no web UI while the forward is down — r retries, or install the systemd unit",
-              width - 2,
-            ),
-            dim: true,
-          },
-        ];
+  const link: Array<RowChunk<MemAction>> = forwardUsable(fwd)
+    ? [
+        { text: button("W studio"), action: { t: "url", url: fwd.studioUrl } },
+        {
+          text: truncate(fwd.studioUrl, Math.max(10, width - 16)),
+          action: { t: "url", url: fwd.studioUrl },
+          dim: true,
+        },
+      ]
+    : [
+        {
+          text: truncate(
+            "no web UI while the forward is down — r retries, or install the systemd unit",
+            width - 2,
+          ),
+          dim: true,
+        },
+      ];
   return [head, link];
 }
 
@@ -515,7 +524,7 @@ export function installMemoryTab(app: App, store: LearningStore): MemoryTabState
               // W opens OpenViking's Studio web UI. Same target the
               // [W studio] zone clicks, so mouse and key cannot drift.
               const fwd = store.forward;
-              if (!fwd || (fwd.state !== "adopted" && fwd.state !== "owned")) {
+              if (!fwd || !forwardUsable(fwd)) {
                 store.status =
                   `no web UI — memory forward is ${fwd?.state ?? "starting"}: ${fwd?.detail ?? ""}`.trim();
                 theApp.notice(store.status);

@@ -9,9 +9,16 @@ import type { LearningTabs } from "./learning.js";
 import type { MetricsView } from "./metricstab.js";
 import { ensureSshMaster } from "./connect.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
+import { isFreshHealth } from "./poll.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
 import { storeHealth } from "./memory.js";
-import { findMemoryEntry, memoryOrder, memoryRefUnread } from "./memtab.js";
+import {
+  entryKey,
+  findMemoryEntry,
+  memoryOrder,
+  memoryRefUnread,
+  setTimelineFilter,
+} from "./memtab.js";
 import { refOf } from "../memory/store.js";
 import { isTab } from "./tabs.js";
 import {
@@ -47,7 +54,7 @@ export function parseTarget(
   return { kind: "bad", reason: `unknown target '${arg}' — expected a PR number` };
 }
 
-export const TUI_HELP = `qcr tui — live board for the review daemon (over ssh, read-only)
+export const TUI_HELP = `qcr tui — live board and operator console for the review daemon (over ssh)
 
 usage: qcr tui [<pr>] [--no-companion] [--no-reload]
 
@@ -202,11 +209,7 @@ export function buildTuiDriver(
       prep();
       app.tab = "memory";
       const mem = learning.memory;
-      if (opts.tag !== undefined) {
-        mem.filter = opts.tag;
-        mem.sel = 0; // old ordinal may exceed the narrowed list
-        mem.selKey = undefined;
-      }
+      if (opts.tag !== undefined) setTimelineFilter(mem, opts.tag);
       if (opts.day !== undefined) {
         // The day is a JUMP in the day-grouped timeline: land on its first
         // entry. A day with no entry under the current filter is a failed
@@ -218,7 +221,7 @@ export function buildTuiDriver(
             `no memory entries on ${opts.day}${mem.filter ? ` under #${mem.filter}` : ""}`,
           );
         mem.sel = i;
-        mem.selKey = `${ordered[i]!.ts}|${ordered[i]!.id}#${ordered[i]!.block}`;
+        mem.selKey = entryKey(ordered[i]!);
       }
       app.repaint();
     },
@@ -264,9 +267,7 @@ export function buildTuiDriver(
     setMemoryFilter: (tag) => {
       prep();
       app.tab = "memory";
-      learning.memory.filter = tag;
-      learning.memory.sel = 0;
-      learning.memory.selKey = undefined;
+      setTimelineFilter(learning.memory, tag);
       app.repaint();
     },
     msgSession: (session, text) => app.hooks.sendMessage?.(session, text, app),
@@ -608,7 +609,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // forward that is already listening (the unit, or another qcr tui) and stops
   // only one it started — see memforward.ts for why that split matters.
   // Constructed here, started in the bring-up: `ensure()` probes over HTTP.
-  const { MemoryForward } = await import("./memforward.js");
+  const { MemoryForward, forwardUsable } = await import("./memforward.js");
   const memForward = new MemoryForward({
     baseUrl: tuiMemoryBaseUrl(),
     repoRoot: sandboxRoot(),
@@ -837,50 +838,50 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     full.sink.kind === "wayfinder" && full.sink.root && full.sink.effort && full.sink.parent
       ? { root: full.sink.root, effort: full.sink.effort, parent: full.sink.parent }
       : undefined;
-  let incidentNotice = "";
+  /** One incident filer's notices: a filing, a missing tracker, a failure —
+   * each distinct line once, so a tracker that keeps failing does not repaint
+   * the notice every poll. */
+  const incidentNotifier = (
+    what: string,
+  ): ((a: App, out: ReturnType<typeof maybeFileMemoryIncident>) => void) => {
+    let last = "";
+    return (a, out) => {
+      const line =
+        out.kind === "filed"
+          ? `${what} filed as ${out.ticketId} (${out.file})`
+          : out.kind === "no-tracker" || out.kind === "failed"
+            ? out.line
+            : "";
+      if (line !== "" && line !== last) {
+        last = line;
+        a.notice(line);
+      }
+    };
+  };
+  const incidentNotice = incidentNotifier("memory incident");
   chainOnPoll(app, (a) => {
     const out = maybeFileMemoryIncident(incidentTracker, a.view.snapshot?.memory, {
-      fresh: a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+      fresh: isFreshHealth(a.view.health),
       now: new Date(),
       afterMs: full.memory.incident_ticket_after_min * 60_000,
       memo: incidentMemo,
     });
-    const line =
-      out.kind === "filed"
-        ? `memory incident filed as ${out.ticketId} (${out.file})`
-        : out.kind === "no-tracker" || out.kind === "failed"
-          ? out.line
-          : "";
-    // Each distinct line once: a tracker that keeps failing must not repaint
-    // the notice every poll.
-    if (line !== "" && line !== incidentNotice) {
-      incidentNotice = line;
-      a.notice(line);
-    }
+    incidentNotice(a, out);
   });
   // The learner's EOD curation that did not reach memory (no receipt, or
   // lessons memory does not hold) — the same person path: one
   // ticket per curation incident (its oldest unresolved failure) older than
   // the same threshold, from status.json `memory.curation`.
   const curationMemo = newIncidentFilerMemo();
-  let curationNotice = "";
+  const curationNotice = incidentNotifier("EOD curation incident");
   chainOnPoll(app, (a) => {
     const out = maybeFileCurationIncident(incidentTracker, a.view.snapshot?.memory, {
-      fresh: a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+      fresh: isFreshHealth(a.view.health),
       now: new Date(),
       afterMs: full.memory.incident_ticket_after_min * 60_000,
       memo: curationMemo,
     });
-    const line =
-      out.kind === "filed"
-        ? `EOD curation incident filed as ${out.ticketId} (${out.file})`
-        : out.kind === "no-tracker" || out.kind === "failed"
-          ? out.line
-          : "";
-    if (line !== "" && line !== curationNotice) {
-      curationNotice = line;
-      a.notice(line);
-    }
+    curationNotice(a, out);
   });
 
   // ---- the connection triage ------------------------------------------------
@@ -939,7 +940,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       const fwd = await memForward.ensure();
       if (fwd.state === "failed") progress.fail("memory-forward", fwd.detail);
       else progress.done("memory-forward", fwd.state);
-      if (fwd.state === "adopted" || fwd.state === "owned") {
+      if (forwardUsable(fwd)) {
         progress.begin("memory-namespaces");
         const notes = await memStore.ensureNamespaces();
         for (const note of notes) app.notice(`memory: ${note}`);
@@ -1153,7 +1154,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         maybeWriteMemoryAlert(
           full.companion.alerts_dir,
           a.view.snapshot?.memory,
-          a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+          isFreshHealth(a.view.health),
           memoryAlertMem,
         );
       } catch {
@@ -1170,7 +1171,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         maybeWriteCurationAlert(
           full.companion.alerts_dir,
           a.view.snapshot?.memory,
-          a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+          isFreshHealth(a.view.health),
           curationAlertMem,
         );
       } catch {

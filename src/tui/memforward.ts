@@ -101,6 +101,11 @@ export type ForwardState =
   /** Not started (never called, or explicitly disabled). */
   | "off";
 
+/** The working states — adopted and owned are the same degree of health. */
+export function forwardUsable(status: Pick<ForwardStatus, "state">): boolean {
+  return status.state === "adopted" || status.state === "owned";
+}
+
 export interface ForwardStatus {
   state: ForwardState;
   /** One line, operator-facing: why it is in this state / what to do. */
@@ -216,7 +221,7 @@ export class MemoryForward {
 
   /** True once the forward is usable — adopted or owned. */
   get up(): boolean {
-    return this.status.state === "adopted" || this.status.state === "owned";
+    return forwardUsable(this.status);
   }
 
   /**
