@@ -6533,14 +6533,18 @@ export class StateStore {
 
   // ---- Slack: PR ⇄ thread map -------------------------------------------
 
-  /** Bind a PR to its Slack thread root. Re-binding the same PR (a rebuilt
-   * thread) overwrites channel/root_ts and resets the per-thread counters. */
+  /** Bind a PR to its Slack thread root. Re-binding the same PR to a new
+   * root (a rebuilt thread) overwrites channel/root_ts and resets the
+   * per-thread counters and creation time — they described the old thread;
+   * re-binding the root it already has changes nothing. */
   upsertSlackThread(row: { pr: number; channel: string; root_ts: string }): void {
     this.db
       .prepare(
         `INSERT INTO slack_threads (pr, channel, root_ts, created_at, last_post_at, post_count)
          VALUES (@pr, @channel, @root_ts, @created_at, NULL, 0)
-         ON CONFLICT(pr) DO UPDATE SET channel=@channel, root_ts=@root_ts`,
+         ON CONFLICT(pr) DO UPDATE SET channel=@channel, root_ts=@root_ts,
+           created_at=excluded.created_at, last_post_at=NULL, post_count=0
+         WHERE slack_threads.channel != @channel OR slack_threads.root_ts != @root_ts`,
       )
       .run({ ...row, created_at: this.ts() });
   }
