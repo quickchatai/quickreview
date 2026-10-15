@@ -25,8 +25,8 @@
 //     `post-check`, `merged_into` the lead) and its site is listed in the
 //     lead's body. Nothing is deleted: the record keeps every entry.
 
-import { recordNumber } from "./findingkey.js";
-import { ordinaryPostTag } from "./severity.js";
+import { findingRecordKey, normalizeDisposition, recordNumber, recordSide } from "./findingkey.js";
+import { bareTag, ordinaryPostTag } from "./severity.js";
 import { severityRank } from "./severityrank.js";
 
 /** Anchors this many lines apart (or fewer), in one file, form a group. */
@@ -199,6 +199,15 @@ const PROSE_CAMEL = new Set([
 const BARE_IDENT_RE =
   /\b(?:[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*|[a-z][a-z0-9]*_[a-z0-9_]+|[A-Z][A-Z0-9]*_[A-Z0-9_]+|[A-Za-z_$][A-Za-z0-9_$]*(?=\()|[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+)\b/g;
 
+/** A qualified token and each of its `.` / `::` parts, kept when long enough
+ * and not a stop word — the baseline both the prose and the code-span reading
+ * admit by. */
+function qualifiedParts(tok: string): string[] {
+  return [tok, ...tok.split(/\.|::/)].filter(
+    (part) => part.length >= 3 && !STOP.has(part.toLowerCase()),
+  );
+}
+
 /** The named identifiers a finding's title and body name — in code spans,
  * and bare in the prose. */
 export function identifiersOf(text: string): Set<string> {
@@ -207,9 +216,8 @@ export function identifiersOf(text: string): Set<string> {
   for (const t of prose.matchAll(BARE_IDENT_RE)) {
     const tok = t[0];
     if (FILE_LIKE.test(tok)) continue;
-    for (const part of [tok, ...tok.split(/\.|::/)]) {
-      if (part.length < 3 || STOP.has(part.toLowerCase()) || PROSE_CAMEL.has(part.toLowerCase()))
-        continue;
+    for (const part of qualifiedParts(tok)) {
+      if (PROSE_CAMEL.has(part.toLowerCase())) continue;
       // A plain English word reached only through `word(` or `a.b` (e.g. "i.e") is not an identifier.
       if (/^[a-z]+$/.test(part) && part.length < 4) continue;
       out.add(part);
@@ -221,11 +229,7 @@ export function identifiersOf(text: string): Set<string> {
     for (const t of span.matchAll(
       /[A-Za-z_$][A-Za-z0-9_$]*(?:(?:\.|::)[A-Za-z_$][A-Za-z0-9_$]*)*/g,
     )) {
-      const tok = t[0];
-      for (const part of [tok, ...tok.split(/\.|::/)]) {
-        if (part.length < 3 || STOP.has(part.toLowerCase())) continue;
-        out.add(part);
-      }
+      for (const part of qualifiedParts(t[0])) out.add(part);
     }
   }
   return out;
@@ -351,26 +355,17 @@ const TAG_RANK: Record<string, number> = { blocker: 0, question: 1, nit: 2 };
 function s(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
-function tagOf(e: Record<string, unknown>): string {
-  return s(e.posted_as)
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "");
-}
 /** Ranked by the ORDINARY tag the entry posts under (`ordinaryPostTag`), so
  * an `[ask your human]` or `[deferred]` P1 ranks as the blocker it is. */
 function rank(e: Record<string, unknown>): number {
   const confidence = recordNumber(e.confidence);
   const tag = ordinaryPostTag(
-    tagOf(e),
+    bareTag(s(e.posted_as)),
     s(e.severity) || null,
     confidence,
     s(e.reachability) || null,
   );
   return (TAG_RANK[tag ?? ""] ?? 3) * 10 + (severityRank(s(e.severity)) ?? 5);
-}
-/** The diff side an anchor's line counts on (the renderer's default: RIGHT). */
-function sideOf(e: Record<string, unknown>): "LEFT" | "RIGHT" {
-  return s(e.side).toUpperCase() === "LEFT" ? "LEFT" : "RIGHT";
 }
 
 /** Both findings carry a validator group and the groups differ: the
@@ -411,7 +406,7 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       (x): x is { e: Record<string, unknown>; i: number } =>
         typeof x.e === "object" &&
         x.e !== null &&
-        s((x.e as Record<string, unknown>).disposition) === "posted" &&
+        normalizeDisposition((x.e as Record<string, unknown>).disposition) === "posted" &&
         !s((x.e as Record<string, unknown>).same_as) &&
         !!s((x.e as Record<string, unknown>).path) &&
         recordNumber((x.e as Record<string, unknown>).line) !== null,
@@ -426,6 +421,28 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
   // absorbed follower's — so a chain of merges never fuses two findings the
   // validator judged in one group and kept apart.
   const groupsOf = posted.map((x) => (s(x.e.group) ? [s(x.e.group)] : []));
+  // A record rendered before already holds merged followers: each one's group
+  // stays with the posted entry its `merged_into` chain ends at, so a second
+  // render protects the same splits the first did.
+  const keys = entries.map((e, i) =>
+    typeof e === "object" && e !== null ? findingRecordKey(e as Record<string, unknown>, i) : "",
+  );
+  const postedAt = new Map(posted.map((x, p) => [keys[x.i]!, p]));
+  const byKey = new Map(
+    entries.flatMap((e, i) =>
+      typeof e === "object" && e !== null ? [[keys[i]!, e as Record<string, unknown>]] : [],
+    ),
+  );
+  for (const e of byKey.values()) {
+    if (normalizeDisposition(e.disposition) !== "merged" || !s(e.group)) continue;
+    let into = s(e.merged_into);
+    for (let hops = 0; into && !postedAt.has(into) && hops < entries.length; hops++) {
+      const next = byKey.get(into);
+      into = next && normalizeDisposition(next.disposition) === "merged" ? s(next.merged_into) : "";
+    }
+    const at = postedAt.get(into);
+    if (at !== undefined && !groupsOf[at]!.includes(s(e.group))) groupsOf[at]!.push(s(e.group));
+  }
   const merges: PostCheckMerge[] = [];
   for (let a = 0; a < posted.length; a++) {
     if (gone.has(a)) continue;
@@ -435,7 +452,7 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       const B = posted[b]!.e;
       if (s(A.path) !== s(B.path)) continue;
       // LEFT lines number the base file, RIGHT lines the head: never compared.
-      if (sideOf(A) !== sideOf(B)) continue;
+      if (recordSide(A.side) !== recordSide(B.side)) continue;
       if (Math.abs(recordNumber(A.line)! - recordNumber(B.line)!) > POST_CHECK_LINES) continue;
       if (![...ids[a]!].some((x) => ids[b]!.has(x))) continue;
       // Never undo the validator: two posted findings it judged in one group
@@ -448,8 +465,8 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       const [lead, fol, folIdx] = rank(B) < rank(A) ? [B, A, a] : [A, B, b];
       const leadIdx = folIdx === a ? b : a;
       gone.add(folIdx);
-      const leadId = s(lead.id) || `#${posted[leadIdx]!.i + 1}`;
-      const folId = s(fol.id) || `#${posted[folIdx]!.i + 1}`;
+      const leadId = keys[posted[leadIdx]!.i]!;
+      const folId = keys[posted[folIdx]!.i]!;
       fol.withheld_as = fol.posted_as;
       delete fol.posted_as;
       fol.disposition = "merged";
@@ -463,7 +480,8 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
         if (line === leadLine || sites[leadIdx]!.includes(line)) continue;
         sites[leadIdx]!.push(line);
         const site = `\`${s(fol.path)}:${line}\``;
-        const body = s(lead.body);
+        // The comment's body, or the reason the renderer posts in its place.
+        const body = s(lead.body) || s(lead.reason);
         if (body && !body.includes(site)) lead.body = `${body}\n\nAlso at ${site}.`;
       }
       for (const g of groupsOf[folIdx]!)

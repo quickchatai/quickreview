@@ -1912,6 +1912,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           load: () => d.store.eodDeferredDates(),
           save: (dates) => d.store.recordEodDeferred(dates),
         },
+        onDeferredStoreFailed: (op, dates, err) =>
+          log(
+            `EOD owed-day ${op} failed${dates ? ` (owed: ${dates.join(", ") || "none"})` : ""} — scheduling continues in memory`,
+            err,
+          ),
         onHeld: (date, why) => {
           d.store.logEvent(
             why === "draining" ? "eod_deferred_draining" : "eod_deferred_behind_sweep",

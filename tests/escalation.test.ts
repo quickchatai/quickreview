@@ -853,6 +853,22 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     expect(refusals2).toEqual([["outside", "path-not-in-diff"]]);
   });
 
+  it("a severity rule scopes on the first matching finding the PR admits, not just the first", () => {
+    const c = on({ rules: [{ name: "sev", to: "teammate-one", why: "w", min_severity: "P1" }] });
+    const out = evaluateEscalationRules(
+      c,
+      facts({
+        changed_paths: ["a/b.py"],
+        findings: [
+          { severity: "P1" },
+          { severity: "P0", path: "somewhere/else.py" },
+          { severity: "P1", path: "a/b.py" },
+        ],
+      }),
+    );
+    expect(out.map((e) => e.scope)).toEqual([{ kind: "code", path: "a/b.py" }]);
+  });
+
   it("`why` is a third free-text slot and is belted for SESSION escalations", () => {
     // A narrow question must not ride beside a "why you" that asks for the
     // whole review — `why` is model-written on a session entry.

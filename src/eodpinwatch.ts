@@ -33,8 +33,14 @@
 // stays and the anomaly text names BOTH explanations — a human reading it is
 // told, in the alert itself, that it may be their own edit and to check before
 // acting. Silent-but-wrong would be worse than honest-and-occasionally-noisy.
+//
+// And one false negative: the "before" read is issued ahead of the injection
+// but never awaited by it, so a curator write that lands before that read
+// completes is part of the baseline and goes unseen. Closing it would mean
+// holding the sweep on memory, which the first property forbids.
 
 import { createHash } from "node:crypto";
+import { withinBudget } from "./budget.js";
 import { EOD_PINNED_WATCHDOG_WINDOW_MIN } from "./config.js";
 import { zoneDateString, zonedParts, type TimerHandle } from "./eod.js";
 
@@ -101,6 +107,8 @@ export function pinnedAddress(e: PinnedEntryView): string {
   return `${e.ts} #${e.id} block ${e.block}`;
 }
 
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
  * Reduce the pinned area to a stable digest plus its address→hash map.
  *
@@ -112,14 +120,18 @@ export function pinnedAddress(e: PinnedEntryView): string {
  */
 export function fingerprintPinned(entries: readonly PinnedEntryView[], at = 0): PinnedSnapshot {
   const map = new Map<string, string>();
-  for (const e of entries) {
-    const base = pinnedAddress(e);
+  // Duplicates are numbered in (address, hash) order, never input order.
+  const ordered = entries
+    .map((e) => ({ base: pinnedAddress(e), hash: e.hash }))
+    .sort((a, b) => cmp(a.base, b.base) || cmp(a.hash, b.hash));
+  for (const e of ordered) {
+    const base = e.base;
     let key = base;
     for (let n = 2; map.has(key); n++) key = `${base} (dup ${n})`;
     map.set(key, e.hash);
   }
   const lines = [...map.entries()]
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .sort((a, b) => cmp(a[0], b[0]))
     .map(([k, h]) => `${k}\u0000${h}`);
   return {
     fingerprint: createHash("sha256").update(lines.join("\n")).digest("hex"),
@@ -223,7 +235,7 @@ export function renderPinnedDegradedDetail(
 ): string {
   return (
     `pinned-area watchdog could not read the ${which}-sweep snapshot for ${date} (${reason}) — ` +
-    `the pinned area went UNVERIFIED today; no conclusion either way. The sweep itself was injected normally and is unaffected.`
+    `the pinned area went UNVERIFIED today; no conclusion either way. The watchdog never holds the sweep: whether it was delivered is the EOD timer's to report.`
   );
 }
 
@@ -337,8 +349,6 @@ interface OpenWindow {
   timer: TimerHandle | null;
 }
 
-const TIMED_OUT = Symbol("pinned-read-timeout");
-
 /**
  * Arm the pinned-area watchdog.
  *
@@ -364,9 +374,10 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
    *
    * The reader is invoked SYNCHRONOUSLY (not deferred through
    * `Promise.resolve().then(fn)`), because ordering is the whole point of the
-   * "before" snapshot: the read must be issued before the sweep prompt is
-   * injected, so no curator write can precede it. A sync throw is caught here
-   * and degrades exactly like a rejection. */
+   * "before" snapshot: the read is issued before the sweep prompt is
+   * injected, so it starts ahead of any curator write (the injection never
+   * waits for it to finish). A sync throw is caught here and degrades exactly
+   * like a rejection. */
   const readSnapshot = (): Promise<ReadOutcome> => {
     let started: Promise<readonly PinnedEntryView[]>;
     try {
@@ -374,26 +385,18 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
     } catch (err) {
       return Promise.resolve({ ok: false, reason: `error: ${String(err)}` });
     }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    return Promise.race([
-      started,
-      new Promise<typeof TIMED_OUT>((resolve) => {
-        timer = setTimeout(() => resolve(TIMED_OUT), readTimeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
-      }),
-    ])
-      .then((value): ReadOutcome => {
-        if (value === TIMED_OUT) return { ok: false, reason: `timeout after ${readTimeoutMs}ms` };
+    return withinBudget(started, readTimeoutMs)
+      .then((read): ReadOutcome => {
+        if (read.kind === "budget")
+          return { ok: false, reason: `timeout after ${readTimeoutMs}ms` };
+        const value: unknown = read.value;
         if (!Array.isArray(value)) return { ok: false, reason: "reader returned no entry list" };
         return {
           ok: true,
           snapshot: fingerprintPinned(value as readonly PinnedEntryView[], now().getTime()),
         };
       })
-      .catch((err): ReadOutcome => ({ ok: false, reason: `error: ${String(err)}` }))
-      .finally(() => {
-        if (timer !== undefined) clearTimeout(timer);
-      });
+      .catch((err): ReadOutcome => ({ ok: false, reason: `error: ${String(err)}` }));
   };
 
   const judge = async (w: OpenWindow, closedBy: string): Promise<void> => {
@@ -499,8 +502,10 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
     const w: OpenWindow = {
       date,
       opened: at.getTime(),
-      // Issued HERE, before the caller injects — so no curator write can
-      // precede the read this snapshot is taken from.
+      // Issued HERE, before the caller injects, so the read starts ahead of
+      // the curator. Best effort: the injection does not wait for it, and a
+      // curator write landing before the read completes would sit in the
+      // "before" snapshot and go unseen.
       before: readSnapshot(),
       digestPreexisting,
       timer: null,

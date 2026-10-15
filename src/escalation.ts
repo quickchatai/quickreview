@@ -96,6 +96,7 @@
 // `APP_SELF_CONFIG_KINDS`.
 import type { EscalationConfig, EscalationRule, EscalationSeverityFloor } from "./config.js";
 import { codePath } from "./codespan.js";
+import { globBody } from "./glob.js";
 import { severityRank } from "./severityrank.js";
 import type { GateResult } from "./gate.js";
 
@@ -386,9 +387,11 @@ export function validateEscalationRequest(
   if (scopePath !== undefined && changedPaths !== undefined && !changedPaths.includes(scopePath)) {
     return { ok: false, refusal: "path-not-in-diff" };
   }
-  const question = str(r.question).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_QUESTION);
+  const oneLine = (v: unknown): string =>
+    str(v).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_QUESTION);
+  const question = oneLine(r.question);
   if (!question) return { ok: false, refusal: "no-question" };
-  const why = str(r.why).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_QUESTION);
+  const why = oneLine(r.why);
 
   // ---- the belt, and exactly whose text it guards -------------------------
   //
@@ -457,13 +460,6 @@ export interface EscalationFacts {
   failing_checks: readonly string[];
 }
 
-export const NO_FACTS: EscalationFacts = {
-  changed_paths: [],
-  labels: [],
-  findings: [],
-  failing_checks: [],
-};
-
 /** Is `severity` at or above `floor`? Unknown spellings never satisfy a floor
  * — a rule must not fire on a severity nobody can read. */
 export function severityAtLeast(severity: string, floor: EscalationSeverityFloor): boolean {
@@ -477,17 +473,7 @@ export function severityAtLeast(severity: string, floor: EscalationSeverityFloor
  * grammar fits in the config comment an operator reads.
  */
 export function pathMatches(pattern: string, path: string): boolean {
-  const rx = pattern
-    .split(/(\*\*\/|\*\*|\*|\?)/)
-    .map((part) => {
-      if (part === "**/") return "(?:.*/)?";
-      if (part === "**") return ".*";
-      if (part === "*") return "[^/]*";
-      if (part === "?") return "[^/]";
-      return part.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-    })
-    .join("");
-  return new RegExp(`^${rx}$`).test(path);
+  return new RegExp(`^${globBody(pattern)}$`).test(path);
 }
 
 // One predicate per condition, shared by `ruleFires` (does any fact match?)
@@ -530,6 +516,29 @@ export function ruleFires(rule: EscalationRule, facts: EscalationFacts): boolean
   return declared > 0;
 }
 
+/** The scope one matching finding points at: its anchor, else the decision
+ * its title names (belted), else none. */
+function findingScope(hit: EscalationFacts["findings"][number]): EscalationScope | null {
+  if (hit.path) return { kind: "code", path: hit.path };
+  // The finding's reason is model-written text reaching a rule-built scope,
+  // so it is belted HERE, at the boundary it enters — not in
+  // `validateEscalationRequest`, where a trip would drop the operator's whole
+  // rule instead of just this candidate name. A reason that asks for a whole
+  // review simply yields no scope, and the caller reports
+  // `no-scope-derivable`.
+  //
+  // It is not the only model-written field that gets here: `hit.path` above
+  // comes from the same findings record. That one needs no belt because the
+  // unconditional path-in-diff check in `validateEscalationRequest` sits
+  // OUTSIDE the origin gate and catches it — deliberately, since a path is
+  // checkable against a fact and prose is not.
+  if (hit.title) {
+    const decision = decisionName(hit.title);
+    if (!asksForWholeReview(decision)) return { kind: "decision", decision };
+  }
+  return null;
+}
+
 /**
  * The scope a fired rule points at. A rule names a CLASS of thing, so the
  * scope is derived from the fact that actually matched — the touched file, the
@@ -544,24 +553,15 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
         : { kind: "code", path: hit };
   }
   if (rule.min_severity) {
-    const hit = facts.findings.find((f) => findingHits(rule, f));
-    if (hit?.path) return { kind: "code", path: hit.path };
-    // The finding's reason is model-written text reaching a rule-built scope,
-    // so it is belted HERE, at the boundary it enters — not in
-    // `validateEscalationRequest`, where a trip would drop the operator's whole
-    // rule instead of just this candidate name. A reason that asks for a whole
-    // review simply yields no scope, and the caller reports
-    // `no-scope-derivable`.
-    //
-    // It is not the only model-written field that gets here: `hit.path` above
-    // comes from the same findings record. That one needs no belt because the
-    // unconditional path-in-diff check in `validateEscalationRequest` sits
-    // OUTSIDE the origin gate and catches it — deliberately, since a path is
-    // checkable against a fact and prose is not.
-    if (hit?.title) {
-      const decision = decisionName(hit.title);
-      if (!asksForWholeReview(decision)) return { kind: "decision", decision };
-    }
+    // The first matching finding that yields a scope the PR admits (an anchor
+    // in the diff, or a decision); else the first one's, so its refusal is
+    // what gets reported.
+    const scopes = facts.findings.filter((f) => findingHits(rule, f)).map((f) => findingScope(f));
+    const usable = scopes.find(
+      (sc) => sc && (sc.kind !== "code" || facts.changed_paths.includes(sc.path)),
+    );
+    if (usable) return usable;
+    if (scopes[0]) return scopes[0];
   }
   if (rule.failing_checks.length > 0) {
     const hit = facts.failing_checks.find((c) => checkHits(rule, c));
@@ -582,11 +582,11 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
  * The question a fired rule asks. Narrow by construction — it names the scope
  * and the rule, and asks for a judgement on that one thing.
  *
- * This wording and the label decision above use natural phrasing; if a rule-
- * built string ever needs rewording to dodge `asksForWholeReview`, the belt is
- * wrong, not the string. `tests/escalation.test.ts` pins that every rule-built
- * string passes its own check, so a reword that would silently drop a fired
- * rule fails loudly.
+ * This wording and the label decision above use natural phrasing: the belt
+ * (`asksForWholeReview`) does not run on rule-origin text, so a rule-built
+ * string never needs rewording to dodge it. `tests/escalation.test.ts` pins
+ * that a fired rule is never dropped by its wording, the operator's own
+ * included.
  */
 export function questionForRule(rule: EscalationRule, scope: EscalationScope): string {
   return `Your rule "${rule.name}" fires on this change. Is ${renderScope(scope)} right, in your judgement?`;

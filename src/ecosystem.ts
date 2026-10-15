@@ -218,14 +218,15 @@ export function renderMigrationCollisionsNote(
       ];
   for (const c of collisions) {
     if (c.kind === "renamed-dependency") {
+      const stale = c.stale_dependency ?? "";
       lines.push(
-        `- ${codePath(c.pr_path)} references renamed ${codePath(`"${c.stale_dependency ?? ""}"`)} → dependencies ${codePath(`[${c.dependency}]`)}` +
-          (c.renumber ? `, rename to ${codePath(c.target_path)}` : ""),
+        `- ${codePath(c.pr_path)} references renamed ${codePath(`"${stale}"`)} → in its dependencies replace ${codePath(`("${c.dependency_app_label ?? c.app_label}", "${stale}")`)} with ${codePath(c.dependency)}, keeping every other entry` +
+          (c.renumber ? `; rename to ${codePath(c.target_path)}` : ""),
       );
       continue;
     }
     lines.push(
-      `- ${codePath(c.pr_path)} collides with ${codePath(c.base_path)} → rename to ${codePath(c.target_path)}, dependencies ${codePath(`[${c.dependency}]`)}`,
+      `- ${codePath(c.pr_path)} collides with ${codePath(c.base_path)} → rename to ${codePath(c.target_path)}; in its dependencies point the ${codePath(c.app_label)} entry at ${codePath(c.dependency)}, keeping every other entry`,
     );
   }
   if (undelivered) {

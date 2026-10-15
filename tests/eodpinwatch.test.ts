@@ -93,6 +93,15 @@ describe("fingerprintPinned", () => {
     expect(fingerprintPinned(a).entries.size).toBe(3);
   });
 
+  it("numbers duplicate addresses the same whatever order they arrive in", () => {
+    const one = entry("b1", 0, "h1");
+    const two = entry("b1", 0, "h2");
+    expect(fingerprintPinned([one, two]).fingerprint).toBe(
+      fingerprintPinned([two, one]).fingerprint,
+    );
+    expect(fingerprintPinned([two, one]).entries.size).toBe(2);
+  });
+
   it("changes when any hash, address or membership changes", () => {
     const base = fingerprintPinned([entry("b1", 0, "h1"), entry("b1", 1, "h2")]).fingerprint;
     expect(fingerprintPinned([entry("b1", 0, "h1x"), entry("b1", 1, "h2")]).fingerprint).not.toBe(

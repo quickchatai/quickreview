@@ -461,7 +461,7 @@ describe("migration collision renderers keep author-controlled filenames as data
       }),
     );
     expect(note).toContain(
-      '- `backend/chat/migrations/0042_x.py` collides with `backend/chat/migrations/0042_existing.py` → rename to `backend/chat/migrations/0043_x.py`, dependencies `[("chat", "0042_existing")]`',
+      '- `backend/chat/migrations/0042_x.py` collides with `backend/chat/migrations/0042_existing.py` → rename to `backend/chat/migrations/0043_x.py`; in its dependencies point the `chat` entry at `("chat", "0042_existing")`, keeping every other entry',
     );
   });
 });
