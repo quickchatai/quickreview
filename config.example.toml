@@ -575,7 +575,7 @@ local_embedder_threads = 1
 #                                 # means <sandbox root>/evidence (gitignored).
 # feed_dir = ""                   # → /feed;    empty = state/companion/feed
 # alerts_dir = ""                 # → /alerts;  empty = state/companion/alerts
-# ssh_dir = "~/.ssh"              # mounted read-only (VM reads + inject)
+# ssh_dir = "~/.ssh"              # accepted, unused: ~/.ssh is never mounted
 # overdue_grace_min = 30          # watcher knobs
 # stale_alert_s = 300
 # awaiting_age_h = 24
@@ -956,7 +956,7 @@ name_cache_ttl_s = 86400
 daily_turns = 80                  # channel-wide model turns per policy day
 per_user_daily_turns = 20         # per person, same window
 thread_replies_per_day = 6        # daemon posts into any one thread
-soft_exchange_limit = 3           # author ping-pong before the bot goes quiet
+soft_exchange_limit = 3           # accepted, unused (no reader enforces it)
 announcements_per_hour = 20       # rolling hour; announcements bypass turn caps
 default_cooldown_min = 60         # for causes absent from [slack.policy.causes]
 # The day boundary for every cap (DST-correct). Defaults from [ops] timezone;
@@ -967,7 +967,7 @@ downtime_notice_min = 5
 heartbeat_interval_min = 5
 storm_corrections = 5
 awaiting_author_stale_h = 48
-broadcast_verdicts = "never"      # verdicts stay in-thread — no reply_broadcast
+broadcast_verdicts = "never"      # accepted, unused: verdicts always stay in-thread
 
 [slack.policy.causes]
 # Per-cause switch + cooldown. Keys are per-PR at runtime ("round.overdue:5263")

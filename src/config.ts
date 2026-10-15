@@ -129,7 +129,8 @@ export interface CompanionConfig {
   feed_dir: string;
   /** Host dir the companion writes alert files into → /alerts. */
   alerts_dir: string;
-  /** Host ssh config dir mounted read-only (VM reads + inject). */
+  /** Accepted so an older config still loads, and read by nothing: the
+   * companion never mounts `~/.ssh` (no ssh config, no agent socket). */
   ssh_dir: string;
   /** Docker build context for the companion image (auto-built when missing). */
   build_context: string;
@@ -185,7 +186,8 @@ export interface SlackPolicyConfig {
   per_user_daily_turns: number;
   /** Daemon posts into any ONE thread per policy day. */
   thread_replies_per_day: number;
-  /** Author ping-pong courtesy limit before the bot goes quiet in-thread. */
+  /** Accepted so an older config still loads, and read by nothing: the
+   * policy's turn caps are the daily and per-person ones above. */
   soft_exchange_limit: number;
   /** Rolling-hour ceiling on announcements (they bypass turn caps, not this). */
   announcements_per_hour: number;
@@ -198,7 +200,9 @@ export interface SlackPolicyConfig {
   heartbeat_interval_min: number;
   storm_corrections: number;
   awaiting_author_stale_h: number;
-  /** "never" (the default): verdicts stay in-thread, never reply_broadcast. */
+  /** Accepted so an older config still loads, and read by nothing: a
+   * verdict always stays in-thread, never `reply_broadcast`, whatever this
+   * says — the announcer has no broadcast parameter. */
   broadcast_verdicts: "never" | "always";
   causes: Record<string, SlackCausePolicy>;
 }
