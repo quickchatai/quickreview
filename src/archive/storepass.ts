@@ -44,6 +44,7 @@ import {
   indexEntries,
   manifestText,
   parseManifestText,
+  placedArchive,
   type DuplicateEntry,
   type FileEntry,
   type Manifest,
@@ -346,9 +347,10 @@ export class StoreWriter {
 
   private absorb(entries: readonly ManifestEntry[]): void {
     indexEntries(this.index, entries, this.total);
-    for (const e of entries)
-      if (e.kind === "transcript" || e.kind === "file" || e.kind === "bundle")
-        this.refs.add(e.archive);
+    for (const e of entries) {
+      const a = placedArchive(e);
+      if (a !== null) this.refs.add(a);
+    }
     this.total += entries.length;
   }
 
