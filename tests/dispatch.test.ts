@@ -314,6 +314,38 @@ describe("a PR closed while its own round is prepared", () => {
   );
 });
 
+describe("a PR that leaves the queue while its round is prepared", () => {
+  // MUTATION: drop the queued re-read before startRound — a round row is
+  // written and handed off for a PR an older round's late verdict settled.
+  it(
+    "starts no round: no row, no order, the settled state stands",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(211, "2026-08-13T09:00:00Z");
+      class Settling extends FakeAdapter {
+        override async listPrFiles(n: number): Promise<PrFileEntry[]> {
+          // A late verdict on the orphan-swept older round lands meanwhile.
+          store.setPrState(n, "awaiting_author");
+          return super.listPrFiles(n);
+        }
+      }
+      const settling = new Settling();
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter: settling, hooks });
+
+      expect(orders).toEqual([]);
+      expect(store.roundsFor(211)).toEqual([]);
+      expect(store.getPr(211)?.state).toBe("awaiting_author");
+      expect(
+        settling.calls.filter(
+          (c) => c.fn === "removeLabel" && c.arg === baseCfg.github.in_progress_label,
+        ),
+      ).toHaveLength(1);
+    },
+  );
+});
+
 describe("roundTypeFor", () => {
   it("first → staleness → re-review", () => {
     const row = { stale_recheck: 0 } as any;

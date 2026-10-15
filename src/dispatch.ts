@@ -2237,6 +2237,28 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       let passPolicy = followUp ? followUp.plan : fullPlan;
       let { plannedPasses, lenses, addablePasses, validateTier } = recordedPlan(cfg, passPolicy);
 
+      // The PR must still be queued when its round row is written — read in
+      // the same turn as `startRound`. Preparation awaited GitHub and git, and
+      // a verdict settling an older round (a late, orphan-swept one), a close
+      // or the operator may have moved the row meanwhile; then this round is
+      // nobody's work and no row is written. The in-progress label the
+      // trigger consumption put on comes off again (best effort).
+      const live = store.getPr(row.number);
+      if (live?.state !== "queued") {
+        log(
+          `dispatch: #${row.number} left the queue (${live?.state ?? "gone"}) while its round was prepared — no round started`,
+        );
+        store.logEvent("dispatch_abandoned", row.number, {
+          state: live?.state ?? null,
+          head_sha: preparedHead,
+        });
+        try {
+          await deps.adapter.removeLabel(row.number, cfg.github.in_progress_label);
+        } catch (err) {
+          log(`dispatch: #${row.number} in-progress label not removed`, err);
+        }
+        continue;
+      }
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
       // here because the `dispatched` transition clears it moments later.
