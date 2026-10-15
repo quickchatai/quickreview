@@ -200,6 +200,15 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
 // improvement channel unable to push without saying so.
 const gitRun = gitRunner(nodeExec);
 
+/** The status.json a previous run left, or undefined (first boot, unreadable). */
+function readPreviousStatus(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 /** package.json version for the `daemon.up` line; never worth failing a boot. */
 function packageVersion(root: string): string | undefined {
   try {
@@ -250,8 +259,18 @@ export interface SlackWiringOptions {
   now?: () => Date;
   /** Test seam: how a token file is read. Default is the shared fs reader. */
   readSecret?: SecretReader;
-  /** Test seam: how the transport is built from the two tokens. */
-  makeTransport?: (opts: { cfg: Config; botToken: string; appToken: string }) => SlackTransport;
+  /** Test seam: how the transport is built from the two tokens. `log` is the
+   * wiring's own sink, so the socket's connection diagnostics reach it. */
+  makeTransport?: (opts: {
+    cfg: Config;
+    botToken: string;
+    appToken: string;
+    log: (msg: string, extra?: unknown) => void;
+  }) => SlackTransport;
+  /** The previous run's `state/status.json`, read before this boot wrote its
+   * own first snapshot — the downtime `daemon.up` reports is measured from
+   * its heartbeat. Absent ⇒ the file is read at announce time. */
+  previousStatus?: string;
   /**
    * The origin store, when the caller already owns one. `createProductionDaemon`
    * builds it before the daemon so daemon-originated overseer wakes can stamp a
@@ -279,17 +298,21 @@ function defaultTransport(opts: {
   cfg: Config;
   botToken: string;
   appToken: string;
+  log: (msg: string, extra?: unknown) => void;
 }): SlackTransport {
   const { cfg } = opts;
+  const log = (message: string, meta?: Record<string, unknown>): void => opts.log(message, meta);
   const api = new SlackApiClient({
     botToken: opts.botToken,
     postMinIntervalMs: cfg.slack.post_min_interval_ms,
     userCacheTtlSec: cfg.slack.name_cache_ttl_s,
+    log,
   });
   const socket = new SlackSocketClient({
     appToken: opts.appToken,
     backoffMs: cfg.slack.reconnect_backoff_ms,
     serverPingTimeoutMs: cfg.slack.server_ping_timeout_ms,
+    log,
   });
   return {
     postMessage: (a) => api.postMessage(a),
@@ -322,7 +345,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   if (!botToken || !appToken)
     throw new Error("slack: token files vanished between validation and read");
 
-  const transport = (opts.makeTransport ?? defaultTransport)({ cfg, botToken, appToken });
+  const transport = (opts.makeTransport ?? defaultTransport)({ cfg, botToken, appToken, log });
 
   // Who are we? Resolved once, and required: the router's echo filter is built
   // on this identity, and a bot that cannot recognise its own messages will
@@ -344,6 +367,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
     log,
     version: opts.version,
     statusPath: join(root, "state", "status.json"),
+    ...(opts.previousStatus !== undefined ? { readStatus: () => opts.previousStatus } : {}),
     onAnomalySignal: (message) => {
       // Durable anomaly record beside the overseer wake.
       store.logAnomaly("slack_connections", null, null, message);
@@ -654,6 +678,9 @@ export function orphanPostingOwed(
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
   const { cfg, root, gate, adapter, sessions } = parts;
   const log = (msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? "");
+  // The last run's heartbeat, read before start() writes this boot's first
+  // status.json over it: the Slack `daemon.up` downtime is measured from it.
+  const previousStatus = readPreviousStatus(join(root, "state", "status.json"));
 
   // The daemon's one memory store, built in onStart once secrets are readable.
   // Everything that needs it is late-bound through this holder: the round
@@ -1701,6 +1728,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           origins,
           log,
           version: packageVersion(root),
+          ...(previousStatus !== undefined ? { previousStatus } : {}),
         })) ?? null;
       if (slack) log("slack: concierge live (socket mode; commands/slack tier-checked)");
 
