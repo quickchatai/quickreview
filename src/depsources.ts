@@ -2100,9 +2100,10 @@ export function planDependencyRequests(
   // lock one package at different versions, and each importer must be shown the
   // sources it actually runs against. An unresolved (null) sighting joins the
   // package's first registry entry whose range it shares (`*` or no range
-  // shares any), and a later resolution fills in a null one of a shared
-  // range — so an importer is never credited with a version its own declared
-  // range was not resolved against. A sighting preparation SKIPS (a git / URL / private-registry source)
+  // shares any; an unresolved `*` entry a specific range joins narrows to that
+  // range, whichever was seen first), and a later resolution fills in a null
+  // one of a shared range — so an importer is never credited with a version
+  // its own declared range was not resolved against. A sighting preparation SKIPS (a git / URL / private-registry source)
   // stays apart from every registry entry and joins only one of the same
   // source, so its importers are never credited with the registry's release
   // and a registry pin never turns it into a fetch.
@@ -2142,8 +2143,18 @@ export function planDependencyRequests(
       if (r.range !== undefined) a.range = r.range;
       same.push(a);
       accs.set(key, same);
-    } else if (a.version === null && r.version !== null) {
-      a.version = r.version;
+    } else {
+      // A `*` or range-less entry a specific range joins is narrowed to that
+      // range, so a `*` seen first never bridges two incompatible ranges.
+      if (
+        a.version === null &&
+        r.version === null &&
+        r.range !== undefined &&
+        r.range !== "*" &&
+        (a.range === undefined || a.range === "*")
+      )
+        a.range = r.range;
+      if (a.version === null && r.version !== null) a.version = r.version;
     }
     if (why.manifest && !a.manifestWhys.includes(why.manifest)) a.manifestWhys.push(why.manifest);
     if (why.importer && !a.importers.includes(why.importer)) a.importers.push(why.importer);
@@ -2606,12 +2617,13 @@ export function unpackEntries(
   return { files, bytes, dirs: dirs.size, rejected };
 }
 
-/** A file/dir name clash inside one archive — the only filesystem failure an
- * unpack shrugs off. Anything else (no space, no permission, an I/O error)
- * fails the unpack, so a partial copy is never marked complete. */
+/** A file/dir name clash, or a name too long for the filesystem, inside one
+ * archive — the only filesystem failures an unpack shrugs off (that one entry
+ * is lost). Anything else (no space, no permission, an I/O error) fails the
+ * unpack, so a partial copy is never marked complete. */
 function isNameClash(err: unknown): boolean {
   const code = (err as { code?: unknown } | null)?.code;
-  return code === "EEXIST" || code === "ENOTDIR" || code === "EISDIR";
+  return code === "EEXIST" || code === "ENOTDIR" || code === "EISDIR" || code === "ENAMETOOLONG";
 }
 
 function gunzipCapped(buf: Buffer): Buffer {

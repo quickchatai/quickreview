@@ -1086,6 +1086,18 @@ describe("planDependencyRequests", () => {
       ["^1.0.0", "imported by a/x.js, c/z.js"],
       ["^2.0.0", "imported by b/y.js"],
     ]);
+    // A `*` seen first narrows to the first specific range that joins it, so
+    // it never bridges `^1` and `^2` into one resolution.
+    expect(
+      planDependencyRequests(root, [
+        { filename: "c/z.js", status: "modified" },
+        { filename: "a/x.js", status: "modified" },
+        { filename: "b/y.js", status: "modified" },
+      ]).map((r) => [r.range, r.why]),
+    ).toEqual([
+      ["^1.0.0", "imported by c/z.js, a/x.js"],
+      ["^2.0.0", "imported by b/y.js"],
+    ]);
   });
 
   it("names at most three importing files, then +N more", () => {
