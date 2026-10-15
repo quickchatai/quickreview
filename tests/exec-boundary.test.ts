@@ -51,6 +51,7 @@ import {
   type AuditedReview,
 } from "../src/execboundary.js";
 import { auditExecViolationDetails } from "../src/usage.js";
+import { profileSearchDirs } from "../src/install.js";
 import { sessionGitConfigPins } from "../src/sessions.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -968,7 +969,7 @@ describe("the post-hoc audit is not blind to the corpus", () => {
 });
 
 describe("the write class that no command string can show", () => {
-  const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+  const sha = (s: string | Uint8Array): string => createHash("sha256").update(s).digest("hex");
 
   it("the guard cannot see the indirection chain, and that is not a bug to patch", () => {
     // Asserted as a PROPERTY, not tolerated as a gap: if someone later makes
@@ -1007,6 +1008,20 @@ describe("the write class that no command string can show", () => {
     const changes = integrityChanges(before, after);
     expect(changes.map((c) => c.path)).toEqual(["/clone/.git/config"]);
     expect(gitConfigChangeMessage(42, changes)).toContain("/clone/.git/config");
+  });
+
+  // The fingerprint proves a change, not its author: neither message may
+  // claim the session did it, and the policy one names the other writers.
+  it("the alert names the session as the cause to rule out, never as established", () => {
+    const change = [{ path: "/sb/config.toml", before: "sha256:a", after: "sha256:b" }];
+    const git = gitConfigChangeMessage(42, change);
+    const policy = policySurfaceChangeMessage(42, change);
+    for (const m of [git, policy]) {
+      expect(m).not.toMatch(/so this is a session write/);
+      expect(m).toMatch(/rule out first/i);
+    }
+    expect(policy).toMatch(/deploy/);
+    expect(policy).toContain("tsc --watch");
   });
 
   // The same check, one level out — the policy surface. A fake
@@ -1120,6 +1135,20 @@ describe("the write class that no command string can show", () => {
       // Never the secrets or the portrait narrative: not policy, and the
       // secrets are none of this check's business.
       for (const p of locatedPolicyWatchPaths(vmEnv)) expect(p).not.toMatch(/secrets|portrait/);
+    });
+
+    it("watches every place the profile locator reads outside the checkout — the locator's own list", () => {
+      for (const env of [
+        vmEnv,
+        { XDG_CONFIG_HOME: "/x", QCR_INSTALL: "work", HOME: "/h" },
+        { QCR_CONFIG: "/sb/config.toml", HOME: "/h" },
+      ]) {
+        const external = profileSearchDirs({ root: "/sb", env }).filter(
+          (d) => d !== "/sb/profiles" || env.QCR_CONFIG === "/sb/config.toml",
+        );
+        expect(external.length).toBeGreaterThan(0);
+        for (const d of external) expect(locatedPolicyWatchPaths(env)).toContain(d);
+      }
     });
 
     it("a rewrite of the located config is a POLICY change, whatever its basename", async () => {
@@ -1399,35 +1428,37 @@ describe("the write class that no command string can show", () => {
 // every file, and its value must equal the synchronous hash bit for bit: a
 // baseline taken before a deploy is compared with a re-check taken after it.
 describe("the integrity fingerprint, off the event loop", () => {
-  // The synchronous reference hash, verbatim (src/execboundary.ts at
-  // 75c9aa50), over a synchronous fs.
+  // The synchronous reference hash (src/execboundary.ts at 75c9aa50), over a
+  // synchronous fs — verbatim but for `bytes`: that revision hashed a file's
+  // DECODED text, this one hashes its bytes. With `bytes: false` it is the
+  // old value exactly, for the deploy-compatibility case below.
   const oldErrno = (err: unknown): string | undefined => {
     const code = (err as { code?: unknown } | null)?.code;
     return typeof code === "string" ? code : undefined;
   };
   const oldMissing = (code: string | undefined): boolean =>
     code === undefined || code === "ENOENT" || code === "ENOTDIR";
-  const oldSha = (s: string): string => createHash("sha256").update(s).digest("hex");
-  function oldHashPath(path: string, depth: number): string {
+  const oldSha = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex");
+  function oldHashPath(path: string, depth: number, bytes = true): string {
     try {
       const raw = readFileSync(path) as Buffer | string;
-      return `sha256:${oldSha(typeof raw === "string" ? raw : raw.toString("utf8"))}`;
+      return `sha256:${oldSha(bytes || typeof raw === "string" ? raw : raw.toString("utf8"))}`;
     } catch (fileErr) {
       const fileCode = oldErrno(fileErr);
       if (!oldMissing(fileCode) && fileCode !== "EISDIR") return `unreadable:${fileCode}`;
       try {
         const names = readdirSync(path).sort();
         if (depth <= 0) return `dir:${oldSha(names.join("\n"))}`;
-        return `dir:${oldSha(names.map((n) => `${n}=${oldHashPath(`${path}/${n}`, depth - 1)}`).join("\n"))}`;
+        return `dir:${oldSha(names.map((n) => `${n}=${oldHashPath(`${path}/${n}`, depth - 1, bytes)}`).join("\n"))}`;
       } catch (dirErr) {
         const dirCode = oldErrno(dirErr);
         return oldMissing(dirCode) ? "absent" : `unreadable:${dirCode}`;
       }
     }
   }
-  function oldIntegrityFingerprint(paths: readonly string[]) {
+  function oldIntegrityFingerprint(paths: readonly string[], bytes = true) {
     const files: Record<string, string> = {};
-    for (const path of [...paths].sort()) files[path] = oldHashPath(path, 16);
+    for (const path of [...paths].sort()) files[path] = oldHashPath(path, 16, bytes);
     return {
       digest: oldSha(
         Object.entries(files)
@@ -1492,8 +1523,35 @@ describe("the integrity fingerprint, off the event loop", () => {
       expect(values.some((v) => v.startsWith("sha256:"))).toBe(true);
       expect(values).toContain("absent");
       expect(await fingerprintRoundIntegrity(opts)).toEqual(want);
+      // Against the revision that hashed DECODED text: every path holding
+      // only valid UTF-8 keeps its value, so a baseline taken before the
+      // deploy still compares clean; only the tree with the non-UTF-8 file
+      // moves.
+      const decoded = oldIntegrityFingerprint(paths, false);
+      for (const [path, value] of Object.entries(want.files)) {
+        if (path === join(sb, "dist")) expect(value).not.toBe(decoded.files[path]);
+        else expect(value).toBe(decoded.files[path]);
+      }
     } finally {
       chmodSync(join(top, "sb", "scripts", "locked.sh"), 0o600);
+      rmSync(top, { recursive: true, force: true });
+    }
+  });
+
+  // MUTATION: hash `raw.toString("utf8")` again in `hashPath` — this goes red.
+  it("hashes a file's BYTES: a binary hook rewritten only in bytes that decode alike is a change", async () => {
+    const top = mkdtempSync(join(tmpdir(), "qcr-integrity-bytes-"));
+    try {
+      const clone = join(top, "clone");
+      const hook = join(clone, ".git", "hooks", "pre-commit");
+      mkdirSync(dirname(hook), { recursive: true });
+      // 0x80 and 0x81 are both invalid UTF-8: decoded, both are U+FFFD.
+      writeFileSync(hook, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x80, 0x0a]));
+      const before = await fingerprintRoundIntegrity({ clonePath: clone });
+      writeFileSync(hook, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x81, 0x0a]));
+      const after = await fingerprintRoundIntegrity({ clonePath: clone });
+      expect(integrityChanges(before, after).map((c) => c.path)).toEqual([`${clone}/.git/hooks`]);
+    } finally {
       rmSync(top, { recursive: true, force: true });
     }
   });
@@ -1512,7 +1570,7 @@ describe("the integrity fingerprint, off the event loop", () => {
         if (p !== "/sb/dist") throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
         return [...disk.keys()].map((k) => k.slice("/sb/dist/".length));
       },
-      sha256: (s: string) => createHash("sha256").update(s).digest("hex"),
+      sha256: (s: string | Uint8Array) => createHash("sha256").update(s).digest("hex"),
     };
     let turns = 0;
     let ticking = true;

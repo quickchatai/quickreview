@@ -361,15 +361,30 @@ function profileSearchPlaces(opts: {
   root: string;
   env?: InstallEnv;
 }): { dir: string; source: ProfileSource }[] {
-  const env = opts.env ?? process.env;
+  const places: { dir: string; source: ProfileSource }[] = [
+    ...homeProfilePlaces(opts.env ?? process.env),
+    { dir: join(opts.root, PROFILES_DIR), source: "checkout" },
+  ];
+  return places.filter((p, i) => places.findIndex((q) => q.dir === p.dir) === i);
+}
+
+/** Search places 1 and 2: the profile directories the install's homes
+ * provide, before the checkout's generic examples. */
+function homeProfilePlaces(env: InstallEnv): { dir: string; source: ProfileSource }[] {
   const places: { dir: string; source: ProfileSource }[] = [
     { dir: join(configHome(env), PROFILES_DIR), source: "home" },
   ];
   const override = (env.QCR_CONFIG ?? "").trim();
   if (override !== "")
     places.push({ dir: join(dirname(resolve(override)), PROFILES_DIR), source: "override" });
-  places.push({ dir: join(opts.root, PROFILES_DIR), source: "checkout" });
-  return places.filter((p, i) => places.findIndex((q) => q.dir === p.dir) === i);
+  return places;
+}
+
+/** The directories of search places 1 and 2 — every place a profile is read
+ * from outside the checkout. The exec boundary's integrity check watches
+ * exactly these (`locatedPolicyWatchPaths`). */
+export function homeProfileDirs(env: InstallEnv = process.env): string[] {
+  return homeProfilePlaces(env).map((p) => p.dir);
 }
 
 /** The directories of `profileSearchPlaces`, for a not-found to name. */

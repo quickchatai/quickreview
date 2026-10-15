@@ -40,9 +40,8 @@
 
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import { POLICY_SURFACE_DIRS, POLICY_SURFACE_FILES } from "../extensions/bash-guard.js";
-import { configHome, locateConfig, PROFILES_DIR, type InstallEnv } from "./install.js";
+import { homeProfileDirs, locateConfig, type InstallEnv } from "./install.js";
 import { yieldToLoop } from "./yieldloop.js";
 
 // ---- git-config integrity ---------------------------------------------------
@@ -112,7 +111,8 @@ export interface IntegrityFingerprint {
 export interface FingerprintFs {
   readFile: (path: string) => Buffer | string | Promise<Buffer | string>;
   readDir: (path: string) => string[] | Promise<string[]>;
-  sha256: (data: string) => string;
+  /** Over a file's BYTES as read (a string is hashed as its UTF-8 bytes). */
+  sha256: (data: string | Uint8Array) => string;
 }
 
 /**
@@ -173,8 +173,8 @@ export function policySurfaceWatchPaths(sandboxRoot: string): string[] {
  * shipped config home, whose basename is the operator's
  * choice — else `<config home>/config.toml`), and the profile directories the
  * loader reads from the homes (`<config home>/profiles`, and `profiles/`
- * beside `$QCR_CONFIG` — the same two places `locateProfile` searches before
- * the checkout). A profile's `profile.toml` and `addenda/` change what every
+ * beside `$QCR_CONFIG` — the locator's own list, `homeProfileDirs`, so a new
+ * place `locateProfile` searches is watched too). A profile's `profile.toml` and `addenda/` change what every
  * pass does, so they are policy exactly as `config.toml` is.
  *
  * Deliberately NOT the rest of the config home: `secrets/` is credentials (not
@@ -187,10 +187,7 @@ export function policySurfaceWatchPaths(sandboxRoot: string): string[] {
  * verdicts' re-check — same process, same env — watch the same set.
  */
 export function locatedPolicyWatchPaths(env: InstallEnv = process.env): string[] {
-  const located = locateConfig({ env });
-  const paths = [located.path, join(configHome(env), PROFILES_DIR)];
-  if (located.source === "override") paths.push(join(dirname(located.path), PROFILES_DIR));
-  return [...new Set(paths)];
+  return [...new Set([locateConfig({ env }).path, ...homeProfileDirs(env)])];
 }
 
 /** The whole policy half of a round's watch set: the sandbox's own surface and
@@ -213,11 +210,15 @@ const MAX_HASH_DEPTH = 16;
  * surface is the whole of dist/, scripts/, extensions/ and the seeds —
  * hundreds of files, ~14 MB — and hashing it synchronously would hold the
  * daemon's loop. The value equals a synchronous hash byte for byte: the same
- * reads, the same sorted names, the same strings hashed. */
+ * reads, the same sorted names, the same bytes hashed.
+ *
+ * A file is hashed as its bytes, never as decoded text: decoding folds every
+ * invalid UTF-8 sequence onto U+FFFD, so two binaries differing only there
+ * would hash alike and a rewritten binary hook would read as no change. A
+ * file of valid UTF-8 hashes exactly as its decoded text does. */
 async function hashPath(path: string, fs: FingerprintFs, depth: number): Promise<string> {
   try {
-    const raw = await fs.readFile(path);
-    const hashed = `sha256:${fs.sha256(typeof raw === "string" ? raw : raw.toString("utf8"))}`;
+    const hashed = `sha256:${fs.sha256(await fs.readFile(path))}`;
     await yieldToLoop();
     return hashed;
   } catch (fileErr) {
@@ -371,11 +372,14 @@ export function splitIntegrityChanges(
 }
 
 /** The operator-facing line. Names what a change MEANS, because the reader's
- * first question is "is this an attack or did the daemon do it?" */
+ * first question is "is this an attack or did the daemon do it?" The
+ * fingerprint proves the content changed, not who changed it, so the message
+ * names the session as the cause to rule out first, never as established. */
 export function gitConfigChangeMessage(pr: number, changes: readonly IntegrityChange[]): string {
   return [
     `EXEC BOUNDARY — PR #${pr}: git's configuration changed DURING a round: ${changes.map((c) => c.path).join(", ")}.`,
-    "Nothing the daemon does rewrites these files mid-round, so this is a session write. Config-supplied shell",
+    "Nothing the daemon does rewrites these files mid-round, so a session write is the cause to rule out first;",
+    "the only other writer is a person or process editing the clone by hand. Config-supplied shell",
     "(alias.*, core.pager, diff.external, *.textconv, filter.*.clean, credential.helper, core.sshCommand) turns an",
     "ordinary `git diff` into arbitrary execution, so treat this round's output as untrusted until the file is read.",
     "Restore the file from the daemon's own provisioning, then read the session transcript for the write.",
@@ -394,8 +398,10 @@ export function policySurfaceChangeMessage(
 ): string {
   return [
     `EXEC BOUNDARY — PR #${pr}: this system's OWN policy surface changed DURING a round: ${changes.map((c) => c.path).join(", ")}.`,
-    "Nothing the daemon does rewrites these mid-round, so this is a session write that got past the write veto",
-    "(a variable-indirected redirection, most likely). config.toml carries dry_run and every posting-guard knob,",
+    "Nothing the daemon does rewrites these mid-round. Rule out first a session write that got past the write veto",
+    "(a variable-indirected redirection, most likely); the other writers are a deploy or an operator's edit made",
+    "while the round ran, and a local `tsc --watch` rebuilding dist/ under a local daemon — the check cannot tell",
+    "them apart. config.toml carries dry_run and every posting-guard knob,",
     "scripts/ is the mutation gate's shell mirror and dist/ is the compiled guard itself — so treat this round's",
     "output as untrusted AND assume every later round in this container runs under a rewritten boundary.",
     "Restore the tree from the deployed revision (`git status` / `git diff` in the sandbox names the file;",
