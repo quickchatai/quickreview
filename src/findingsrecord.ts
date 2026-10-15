@@ -20,7 +20,7 @@
 // a wedged PR (rule 9).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { findingRecordKey } from "./findingkey.js";
+import { findingRecordKey, recordNumber, recordString } from "./findingkey.js";
 import { WITHHOLD_WORDS } from "./postingpolicy.js";
 import { isSanctionedTag } from "./severity.js";
 import type { StateStore } from "./state.js";
@@ -130,9 +130,8 @@ function normalizeAxis(raw: unknown): FindingAxis {
  * refuse the record.
  */
 export const KILL_WORDS: readonly string[] = [
-  "refuted",
-  "unverifiable",
-  "bad-anchor",
+  // The validity vetoes are kill words too (folded onto `doubted` at parse).
+  ...DOUBT_WORDS,
   "duplicate",
   "out-of-scope",
   "nit-out-of-delta",
@@ -187,7 +186,8 @@ export function isKnownVocabularyWord(word: string): boolean {
 /** One candidate finding and why it ended where it did. */
 export interface FindingsRecordEntry {
   /** The session's own handle for the candidate (`f1`, …). Falls back to
-   * `<lens>@<path>:<line>` so every entry has a stable per-round identity. */
+   * `<lens>@<path>:<line>#<index>` (`findingRecordKey`) so every entry has a
+   * stable per-round identity. */
   key: string;
   path: string | null;
   line: number | null;
@@ -417,17 +417,8 @@ export interface ParsedFindingsRecord {
   conformance?: RecordConformance;
 }
 
-function num(val: unknown): number | null {
-  if (typeof val === "number" && Number.isFinite(val)) return val;
-  if (typeof val === "string" && /^-?\d+(\.\d+)?$/.test(val.trim())) return Number(val.trim());
-  return null;
-}
-
-function str(val: unknown): string | null {
-  if (typeof val !== "string") return null;
-  const t = val.trim();
-  return t.length > 0 ? t : null;
-}
+const num = recordNumber;
+const str = recordString;
 
 /** Cap on free prose the session writes, per field. The record is evidence,
  * not a transcript — an unbounded `evidence` blob would put a whole pass
