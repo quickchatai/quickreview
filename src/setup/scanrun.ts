@@ -418,7 +418,8 @@ export interface ScanPreview {
   rate_across_depth: boolean;
   /** Priced cases the rate stands on, and how many calibration wants. */
   calibration: { measured: number; wanted: number };
-  /** Stage-1 cases left after this run (all of them, for a calibration). */
+  /** Stage-1 cases a calibration run leaves for the next one (0 for any
+   * other run, which reads every case it plans). */
   remaining_cases: number;
   excluded: Record<ExclusionReason, number>;
   covered: number;

@@ -620,7 +620,7 @@ export class ReplayRunner {
         })),
         shared: planned.jobs.filter((j) => j.state.sides.length === 2).length,
         estimate_usd: planned.estimate,
-        cap_usd: usd(planned.estimate * REPLAY_CAP_FACTOR),
+        cap_usd: capOf(planned.estimate),
         rate_bases: planned.bases,
         concurrency: this.concurrency,
       },
@@ -693,7 +693,7 @@ export class ReplayRunner {
       finished_at: null,
       state: "running",
       estimate_usd: planned.estimate,
-      cap_usd: usd(planned.estimate * REPLAY_CAP_FACTOR),
+      cap_usd: capOf(planned.estimate),
       spent_usd: 0,
       unpriced_cases: 0,
       sides: sideViews(planned.sides),
@@ -962,6 +962,9 @@ export class ReplayRunner {
     }
   }
 }
+
+/** The hard stop a replay estimate gets — the preview's and the run's. */
+const capOf = (estimate: number): number => usd(estimate * REPLAY_CAP_FACTOR);
 
 function sideViews(sides: Record<SideName, ReplaySide>): Record<SideName, ReplaySideView> {
   const v = (s: ReplaySide): ReplaySideView => ({
