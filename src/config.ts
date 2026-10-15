@@ -1489,6 +1489,11 @@ export function parseMemory(raw: Record<string, unknown>): MemoryConfig {
   return m;
 }
 
+/** The quota a round's context search gives each area it searches when
+ * `[memory] context_quotas` names none (the round context assembler reads
+ * this same constant). */
+export const DEFAULT_ROUND_QUOTA = 24;
+
 export const MEMORY_DEFAULTS: MemoryConfig = {
   context_tokens: 2000,
   context_timeout_ms: 9000,
@@ -1511,7 +1516,7 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
   lessons_recurrence_days: 90,
   lessons_digest_backfill_from: "2026-08-31",
   lessons_digest_backfill_to: "2026-10-02",
-  context_quotas: { experiences: 24 },
+  context_quotas: { experiences: DEFAULT_ROUND_QUOTA },
   delivery: "shadow",
   delivery_budget_ms: LESSON_PREFETCH_MAX_MS,
   shadow_budget_ms: LESSON_SHADOW_PREFETCH_DEFAULT_MS,
