@@ -379,6 +379,11 @@ export interface RoundLessonSelectorDeps {
   log?: (msg: string, extra?: unknown) => void;
 }
 
+/** The PR's changed paths a selection matches lessons against. */
+function changedPaths(files: ReadonlyArray<{ filename: string }>): string[] {
+  return files.map((f) => f.filename).filter((f) => typeof f === "string" && f !== "");
+}
+
 /** A round's state from what its finds did. */
 function roundState(finds: number, answered: number, timeouts: number): LessonRoundState {
   if (finds === 0 || answered === finds) return "selected";
@@ -476,7 +481,7 @@ export class RoundLessonSelector implements RoundLessonHook {
         );
         return;
       }
-      const prFiles = files.map((f) => f.filename).filter((f) => typeof f === "string" && f !== "");
+      const prFiles = changedPaths(files);
       const run: Promise<void> = this.run(order, prFiles, mode).then(
         () => undefined,
         (err: unknown) => {
@@ -512,7 +517,7 @@ export class RoundLessonSelector implements RoundLessonHook {
     try {
       const mode = this.deps.mode();
       if (mode === "off") return null;
-      const prFiles = files.map((f) => f.filename).filter((f) => typeof f === "string" && f !== "");
+      const prFiles = changedPaths(files);
       const texts = new Map<string, string>();
       const run = this.run(order, prFiles, mode, {
         texts,

@@ -209,11 +209,10 @@ export function markRound(
   pr: number,
   roundNo: number,
 ): ShadowMark[] | null {
-  const round = ledger.roundFor(pr, roundNo);
-  if (!round || round.state === "lessons_off") return null;
-  const findings = store.findingsForRound(pr, roundNo);
-  const marks = matchShadow(ledger.selections(round.round_id), findings);
-  ledger.replaceMarks(pr, roundNo, round.round_id, marks);
+  const matched = ledger.matchRound(pr, roundNo);
+  if (!matched) return null;
+  const { marks } = matched;
+  ledger.replaceMarks(pr, roundNo, matched.round.round_id, marks);
   if (marks.length > 0)
     store.logEvent("lesson_shadow_marked", pr, {
       round_no: roundNo,
