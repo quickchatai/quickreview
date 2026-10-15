@@ -103,6 +103,7 @@ import type {
   PassPlanEntry,
   PassTier,
   PriorAssignment,
+  RecordedAddablePass,
   RoundDelta,
   RoundOrder,
   RoundRecoveryContext,
@@ -279,6 +280,13 @@ export interface DispatchDeps {
   heuristics?: HeuristicsExtension;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
+}
+
+/** A plan's lens names, each once, in plan order — the compatibility list
+ * the rounds table, the event log and every order carry (a lens with several
+ * rows, the sweep, once). */
+export function lensesOf(plan: readonly PassPlanEntry[]): string[] {
+  return [...new Set(plan.map((p) => p.lens))];
 }
 
 export function defaultWorktree(pr: number): string {
@@ -1681,7 +1689,7 @@ export function optionalOrderOf(order: RoundOrder, optionalPlan: PassPlanEntry[]
   return {
     ...rest,
     pass_plan: optionalPlan,
-    lenses: [...new Set(optionalPlan.map((p) => p.lens))],
+    lenses: lensesOf(optionalPlan),
   };
 }
 
@@ -1706,7 +1714,7 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
   return {
     ...whole,
     pass_plan: sweepPlan,
-    lenses: [...new Set(sweepPlan.map((p) => p.lens))],
+    lenses: lensesOf(sweepPlan),
     ...(order.sweep_plan_unswept && order.sweep_plan_unswept.length > 0
       ? { sweep_unswept: order.sweep_plan_unswept }
       : {}),
@@ -1813,7 +1821,7 @@ export function buildRoundOrder(args: {
     // Kept for compatibility with the rounds table / event log: always the
     // pass_plan's lens names in plan order (a lens with several rows — the
     // sweep — once).
-    lenses: [...new Set(pass_plan.map((p) => p.lens))],
+    lenses: lensesOf(pass_plan),
     pass_plan,
     addable_lenses,
     ...(Object.keys(addable_tiers).length > 0 ? { addable_tiers } : {}),
@@ -1912,21 +1920,36 @@ export function buildRoundOrder(args: {
 
 /** What the round row records of a plan — the same projection on the
  * normal path and on the patch-write fallback, so the stored round and the
- * order always describe one plan. */
+ * order always describe one plan. A follow-up round's optional rows ride
+ * the addable record, so the executed-pass telemetry reads a run one as
+ * offered work rather than an unknown addition. */
 function recordedPlan(
   cfg: Config,
   plan: PassPlan,
+  optionalPlan: readonly PassPlanEntry[] = [],
 ): {
   plannedPasses: PassPlanEntry[];
   lenses: string[];
-  addablePasses: Array<{ lens: string; tier: PassTier }>;
+  addablePasses: RecordedAddablePass[];
   validateTier: PassTier | null;
 } {
   const plannedPasses = plan.pass_plan;
+  const optional = new Map<string, RecordedAddablePass>();
+  for (const p of optionalPlan)
+    if (!optional.has(p.lens))
+      optional.set(p.lens, {
+        lens: p.lens,
+        tier: p.tier,
+        optional: true,
+        raisable_to: p.raisable_to,
+      });
   return {
     plannedPasses,
-    lenses: [...new Set(plannedPasses.map((p) => p.lens))],
-    addablePasses: plan.addable_lenses.map((lens) => ({ lens, tier: addTierOf(cfg, lens) })),
+    lenses: lensesOf(plannedPasses),
+    addablePasses: [
+      ...plan.addable_lenses.map((lens) => ({ lens, tier: addTierOf(cfg, lens) })),
+      ...optional.values(),
+    ],
     // Null when the profile switched the validator off: the round had no
     // validator, and recording the configured tier would say it did.
     validateTier: plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null,
@@ -2320,7 +2343,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           };
       }
       let passPolicy = followUp ? followUp.plan : fullPlan;
-      let { plannedPasses, lenses, addablePasses, validateTier } = recordedPlan(cfg, passPolicy);
+      let { plannedPasses, lenses, addablePasses, validateTier } = recordedPlan(
+        cfg,
+        passPolicy,
+        followUp?.optionalPlan,
+      );
 
       // The PR must still be queued when its round row is written — read in
       // the same turn as `startRound`. Preparation awaited GitHub and git, and

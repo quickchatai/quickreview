@@ -4268,6 +4268,52 @@ describe("follow-up rounds: sweep telemetry", () => {
     expect(anomalyKinds()).not.toContain("followup_sweep_skipped");
   });
 
+  // MUTATION: drop the optional branch from comparePlan — a run optional
+  // row (no reason owed) reads as a missing-reason addition.
+  it("an offered optional row the session ran is conformant without a reason; at a tier it may not use, it is not", async () => {
+    for (const [pr, tier, mismatches] of [
+      [208, "terra-med", 0],
+      [209, "sol-xhigh", 1],
+    ] as const) {
+      const id = policyRound(pr);
+      store.setRoundMeta(id, {
+        addable_passes: [
+          { lens: "pass-concurrency", tier: "sol-med" },
+          {
+            lens: "pass-maintainability",
+            tier: "terra-med",
+            optional: true,
+            raisable_to: ["pass-maintainability--sol-med"],
+          } as { lens: string; tier: string },
+        ],
+      });
+      await watcher().handleFile(
+        write(
+          pr,
+          1,
+          verdictFile({
+            pr,
+            passes: [
+              { name: "pass-baseline", tier: "sol-med", findings: 0 },
+              { name: "pass-maintainability", tier, findings: 0 },
+              { name: "pass-validate", tier: "sol-high", findings: 0 },
+            ],
+          }),
+        ),
+      );
+      const rows = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'pass_plan_mismatch' AND pr = ?")
+        .all(pr) as Array<{ payload: string }>;
+      expect(rows.length, `${pr}`).toBe(mismatches);
+      if (mismatches)
+        expect(JSON.parse(rows[0]!.payload)).toMatchObject({
+          wrong_tier: ["pass-maintainability"],
+          missing_reason: [],
+          unknown_additions: [],
+        });
+    }
+  });
+
   it("a verdict settled from the posting receipt records the sweep UNKNOWN — never a full look", async () => {
     const id = followUpRound(706, { sweepOwed: true });
     const { key } = stampPosting(706, 1);

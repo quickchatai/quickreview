@@ -270,6 +270,35 @@ describe("follow-up rounds: the delta scope", () => {
     },
   );
 
+  // MUTATION: record only the addable lenses (drop the optional rows from
+  // recordedPlan) — a run optional row reads as an unknown addition.
+  it(
+    "the round row records the offered optional rows beside the addable lenses",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(13);
+      reviewed(13);
+      adapter.files.set(13, PR_FILES);
+      const { d, orders } = deps({ delta: okDelta([deltaFile("app/api/views.py")]) });
+      await dispatchOnce(d);
+      const o = orders[0]!;
+      expect(o.optional_plan?.length ?? 0).toBeGreaterThan(0);
+      const recorded = JSON.parse(lastRound(13).addable_passes!) as Array<{
+        lens: string;
+        tier: string;
+        optional?: boolean;
+      }>;
+      for (const lens of new Set(o.optional_plan!.map((p) => p.lens))) {
+        const row = o.optional_plan!.find((p) => p.lens === lens)!;
+        expect(recorded).toContainEqual(
+          expect.objectContaining({ lens, tier: row.tier, optional: true }),
+        );
+      }
+      for (const lens of o.addable_lenses)
+        expect(recorded.find((r) => r.lens === lens)?.optional).toBeUndefined();
+    },
+  );
+
   it(
     "an empty delta still runs — pass-baseline verifies the prior findings",
     { timeout: HEAVY_TIMEOUT_MS },

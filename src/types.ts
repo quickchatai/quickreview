@@ -546,6 +546,18 @@ export interface SessionCompactionReport {
   outcome?: "compacted" | "failed" | "stale";
   source?: "request" | "event";
 }
+/** A lens a round may run beyond its plan, as the round row records it
+ * (`addable_passes`): an addable lens at its add tier, which the session runs
+ * with a reason — or one of a follow-up round's OPTIONAL rows (`optional`),
+ * which it runs at the row's tier or a rung it may raise to, and needs no
+ * reason for: the order offered it. */
+export interface RecordedAddablePass {
+  lens: string;
+  tier: string;
+  optional?: true;
+  raisable_to?: string[];
+}
+
 /** What the round-stage supervisor's failure callback did with a stage limit.
  * `posted_wait`: the round's review is already on GitHub (or
  * was refused by guard 2), so the limit is NOT a failure — the session's tail

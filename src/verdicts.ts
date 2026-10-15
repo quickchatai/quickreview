@@ -74,6 +74,7 @@ import {
 } from "./findingsrecord.js";
 import {
   normalizeVerdict,
+  type RecordedAddablePass,
   type RoundRecoveryDisposition,
   type SessionHooks,
   type MeritsVerdictFile,
@@ -434,7 +435,7 @@ type PlanRow = { lens: string; tier: string; raisable_to?: string[] };
 function comparePlan(
   passes: VerdictPassEntry[],
   plan: PlanRow[] | null,
-  addable: Array<{ lens: string; tier: string }> | null,
+  addable: RecordedAddablePass[] | null,
   legacyPlanned: string[],
   checkMissing: boolean,
 ): PlanComparison {
@@ -465,6 +466,22 @@ function comparePlan(
       const policy = byAddable.get(pass.name);
       if (!policy) {
         out.unknownAdditions.push(pass.name);
+        continue;
+      }
+      if (policy.optional) {
+        // An optional row the order offered: its tier or a rung it may raise
+        // to, and no reason owed.
+        const tiers = [
+          policy.tier,
+          ...(policy.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!),
+        ];
+        if (pass.tier && tiers.includes(pass.tier))
+          out.allowedAdditions.push({
+            name: pass.name,
+            tier: pass.tier,
+            reason: pass.reason ?? "optional row",
+          });
+        else out.wrongTier.push(pass.name);
         continue;
       }
       if (!pass.tier || pass.tier !== policy.tier) out.wrongTier.push(pass.name);
@@ -2719,7 +2736,7 @@ export class VerdictWatcher {
       const legacyPlanned = round.lenses ? round.lenses.split(",").filter(Boolean) : [];
       const plan = round.pass_plan ? (JSON.parse(round.pass_plan) as PlanRow[]) : null;
       const addable = round.addable_passes
-        ? (JSON.parse(round.addable_passes) as Array<{ lens: string; tier: string }>)
+        ? (JSON.parse(round.addable_passes) as RecordedAddablePass[])
         : null;
       // A follow-up round runs two stages. The delta stage's passes (phase
       // "delta", or none) answer to `pass_plan`; the sweep's (phase "sweep")
