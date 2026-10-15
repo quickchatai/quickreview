@@ -1009,6 +1009,32 @@ describe("metrics tab wiring", () => {
     await run;
   });
 
+  it("a refresh pressed while a timeline read is out is never overwritten by the older read", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const answers: Array<(r: { payload: never }) => void> = [];
+    const view = installMetricsHooks(app, {
+      overall: async () => ({ payload: payload as never }),
+      timeline: () => new Promise((res) => answers.push(res)),
+    });
+    const run = app.run();
+    streams.type("6");
+    await new Promise((r) => setTimeout(r, 0));
+    for (const ch of "#5265\r") streams.type(ch);
+    await new Promise((r) => setTimeout(r, 0));
+    streams.type("r"); // the first read is still out
+    await new Promise((r) => setTimeout(r, 0));
+    expect(answers).toHaveLength(2);
+    const fresh = { ...timeline, fresh: true };
+    answers[1]!({ payload: fresh as never });
+    await new Promise((r) => setTimeout(r, 0));
+    answers[0]!({ payload: timeline as never }); // the older read lands last
+    await new Promise((r) => setTimeout(r, 0));
+    expect(view.drill?.payload).toBe(fresh);
+    app.quit();
+    await run;
+  });
+
   it("clicking a window button switches the window", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
