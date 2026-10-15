@@ -278,7 +278,7 @@ export function renderSurveyPreview(p: SurveyPreview): string {
   out.push(
     p.existing_entries === null
       ? "Existing #survey memory: UNKNOWN (memory could not be read)."
-      : `Existing #survey memory: ${p.existing_entries} live entries — a completed survey supersedes them.`,
+      : `Existing #survey memory: ${p.existing_entries} live survey-written entries — a completed survey supersedes them (pinned and #manual entries stay).`,
   );
   if (p.last_complete) {
     out.push(
@@ -323,6 +323,7 @@ export function renderSurveyStatus(s: SurveyStatus): string {
         c.none ? "NONE" : "",
         c.notes_failed ? `${c.notes_failed} notes refused by memory` : "",
         c.notes_dropped ? `${c.notes_dropped} over the cap` : "",
+        c.notes_truncated ? `${c.notes_truncated} cut at the length cap` : "",
         c.error ?? "",
       ].filter(Boolean);
       out.push(

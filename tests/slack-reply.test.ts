@@ -166,6 +166,16 @@ describe("slack_reply execution", () => {
     expect(posts[0]?.text.endsWith(TRUNCATION_SUFFIX)).toBe(true);
   });
 
+  it("reports truncation by what was cut, not by how the text ends", async () => {
+    seenInbound();
+    cfg.slack.max_reply_chars = 40;
+    const whole = await reply()({ thread: THREAD, text: `done ${TRUNCATION_SUFFIX}`, file: "c-1" });
+    expect(whole).toMatchObject({ ok: true, truncated: false });
+    cfg.slack.max_reply_chars = 5;
+    const cut = await reply()({ thread: THREAD, text: "x".repeat(50), file: "c-2" });
+    expect(cut).toMatchObject({ ok: true, truncated: true });
+  });
+
   it("escapes model-produced text so a pasted mention cannot ping anyone", async () => {
     seenInbound();
     await reply()({ thread: THREAD, text: "ping <@U0OWNER> & <!channel> now", file: "cmd-1" });

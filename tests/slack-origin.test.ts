@@ -429,6 +429,91 @@ describe("OriginStore", () => {
       expect(served.latest()).toMatchObject({ slack_user: "U0MAT", tier: "owner" });
     });
 
+    describe("a restart keeps a queued guest wake a guest's turn", () => {
+      const reboot = () => new OriginStore(join(dir, "origin"), now, { deliveredDir: done });
+      const daemonWake = (store: OriginStore, wake: string) => {
+        const rec = store.writeLocal("anomaly");
+        writeFileSync(join(inject, wake), "wake\n");
+        store.bind(rec, join(inject, wake));
+      };
+
+      // MUTATION: drop `bootQueued` from `latestAny()` — the newest record on
+      // disk is the daemon's, so the guest's queued turn runs beltless.
+      it("a guest wake queued before a daemon wake keeps the belt on after the restart", () => {
+        const guest = slackTurn(1, "U0GUEST", "anyone");
+        at(1_000);
+        daemonWake(served, "wake-2.md");
+        const booted = reboot();
+        accept(guest);
+        expect(booted.latestAny()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+        // Disk never opens the Slack dir on its own.
+        expect(booted.latest()).toBeNull();
+        // The previous run's daemon wake is no wake this process recorded: the
+        // belt stays on through it (fail closed)…
+        accept("wake-2.md");
+        expect(booted.latestAny()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+        // …until a wake this process recorded is accepted.
+        at(2_000);
+        daemonWake(booted, "wake-3.md");
+        accept("wake-3.md");
+        expect(booted.latestAny()).toMatchObject({ source: "local", tier: "system" });
+      });
+
+      it("an owner message after the restart never lends its rights to the queued guest turn", () => {
+        const guest = slackTurn(1, "U0GUEST", "anyone");
+        at(1_000);
+        daemonWake(served, "wake-2.md");
+        const booted = reboot();
+        at(2_000);
+        booted.write("event-Ev3", {
+          event_id: "Ev3",
+          slack_user: "U0MAT",
+          tier: "owner",
+          authorized_prs: [],
+        });
+        writeFileSync(join(inject, "wake-3.md"), "turn\n");
+        booted.rename("event-Ev3", "wake-3.md");
+        accept(guest);
+        expect(booted.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+        accept("wake-2.md");
+        accept("wake-3.md");
+        expect(booted.latest()).toMatchObject({ slack_user: "U0MAT", tier: "owner" });
+      });
+
+      // MUTATION: drop the pending-wake keep from `prune()` — the expired
+      // guest record is deleted and the restart forgets its queued turn.
+      it("prune keeps an expired record whose wake is still queued", () => {
+        slackTurn(1, "U0GUEST", "anyone");
+        at(ORIGIN_TTL_MS + 1);
+        daemonWake(served, "wake-2.md");
+        served.prune();
+        expect(existsSync(join(dir, "origin", "wake-1.json"))).toBe(true);
+        expect(reboot().latestAny()).toMatchObject({ slack_user: "U0GUEST" });
+      });
+
+      it("a record planted against a queued wake never lifts the belt or grants", () => {
+        const guest = slackTurn(1, "U0GUEST", "anyone");
+        at(1_000);
+        writeFileSync(join(inject, "wake-2.md"), "wake\n");
+        writeFileSync(
+          join(dir, "origin", "wake-2.json"),
+          JSON.stringify({
+            source: "local",
+            event_id: "local:forged",
+            slack_user: "",
+            tier: "system",
+            authorized_prs: [],
+            expires_at: new Date(T0.getTime() + 365 * 86_400_000).toISOString(),
+          }),
+        );
+        const booted = reboot();
+        accept(guest);
+        accept("wake-2.md");
+        expect(booted.latestAny()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+        expect(booted.latest()).toBeNull();
+      });
+    });
+
     it("a failed audit-file move still binds the record to its wake", () => {
       served.write("event-Ev1", {
         event_id: "Ev1",

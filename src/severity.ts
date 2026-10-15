@@ -443,7 +443,7 @@ export function stripUngrammaticalTag(title: string): { title: string; stripped:
   if (isSanctionedTag(inner)) {
     // A sanctioned MARKER stays (it is a routing prefix); a duplicated POSTING
     // tag goes, because inlineBody is about to mint the authoritative one.
-    const bare = inner.toLowerCase().replace(/\s+/g, " ");
+    const bare = bareTag(inner);
     if (!POSTING_TAG_WORDS.includes(bare as PostTag)) return { title, stripped: null };
     return { title: title.slice(m[0].length), stripped: null };
   }

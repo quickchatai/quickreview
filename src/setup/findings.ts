@@ -600,10 +600,15 @@ function returnedState(f: ScanFinding): FindingState {
   return "new";
 }
 
-/** Is `f` already settled — fixed, or dismissed and stamped unreported? A
- * settled finding is out of play until a scan reports it again. */
-export const settled = (f: ScanFinding): boolean =>
-  f.state === "fixed" || (f.state === "dismissed" && f.unreported != null);
+/** A dismissed finding a re-scan settled as no longer reported
+ * (`settleUnreported`): out of play, as a fixed one is, until a scan reports
+ * it again. */
+export const goneDismissal = (f: ScanFinding): boolean =>
+  f.state === "dismissed" && f.unreported != null;
+
+/** Is `f` already settled — fixed, or a gone dismissal? A settled finding is
+ * out of play until a scan reports it again. */
+export const settled = (f: ScanFinding): boolean => f.state === "fixed" || goneDismissal(f);
 
 /**
  * Settle a finding a re-scan no longer reports — the ONE place every path

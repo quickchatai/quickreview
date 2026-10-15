@@ -207,8 +207,10 @@ export function supersededMessage(m: {
 
 // ---- unprompted causes ----------------------------------------------------
 
-/** Every cause the announcer can speak for. v1 ships the first six ON; the
- * rest are config-disabled but fully templated, so flipping the flag works. */
+/** Every cause the announcer has a message for. The first six ship ON; the
+ * rest are config-disabled and templated only — nothing in the daemon raises
+ * them yet, so turning their flag on announces nothing until a producer
+ * calls the announcer for them. */
 export type CauseMessageInput =
   | { cause: "round.overdue"; pr: number; round_no: number; deadline_min: number }
   | { cause: "round.malformed_verdict"; pr: number; round_no: number }

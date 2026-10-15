@@ -626,7 +626,14 @@ describe("pinned heartbeat", () => {
       at("2026-08-17T09:05:00.000Z");
       await a.heartbeat();
       expect(corrections(ts)).toHaveLength(0);
-      expect(logs.some((m) => m.includes("failure recovery update failed"))).toBe(true);
+      expect(
+        logs.some(
+          (m) =>
+            m.includes("failure recovery update failed") &&
+            m.includes("review-failure:cmd-5410") &&
+            m.includes(ts),
+        ),
+      ).toBe(true);
       at("2026-08-17T09:30:00.000Z"); // well past the old 10-minute window
       await a.heartbeat();
       expect(corrections(ts)).toHaveLength(1);
@@ -652,6 +659,18 @@ describe("pinned heartbeat", () => {
         attempts: 2,
         retry_cap: 2,
       });
+      await a.anomaly({
+        pr: 5410,
+        round_no: 1,
+        kind: "failed_loud",
+        deadline_min: 75,
+        incident_id: "review-failure:cmd-5410",
+      });
+      // The reopened incident's message no longer claims recovery.
+      expect(slack.updates.filter((u) => u.ts === ts).at(-1)!.text).toMatch(
+        /^⛔ #5410 round 1 exhausted automatic recovery/,
+      );
+      expect(slack.posts.filter((p) => p.text.startsWith("⛔"))).toHaveLength(1);
       at("2026-08-17T09:03:00.000Z");
       store.recoverReviewFailure(5410, "operator-unwedge");
       at("2026-08-17T09:05:00.000Z");

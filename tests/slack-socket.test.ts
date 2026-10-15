@@ -3,6 +3,7 @@ import diagnosticsChannel from "node:diagnostics_channel";
 import {
   SlackSocketClient,
   bridgeNativeWebSocketPings,
+  bridgedSocketCount,
   trackBridgedSocket,
   type SlackWebSocketLike,
 } from "../src/slack/socket.js";
@@ -40,7 +41,7 @@ class FakeWs implements SlackWebSocketLike {
   }
 }
 
-function harness(opts: { pingTimeoutMs?: number } = {}) {
+function harness(opts: { pingTimeoutMs?: number; onSocket?: (ws: FakeWs) => void } = {}) {
   const sockets: FakeWs[] = [];
   const openCalls: string[] = [];
   const fetchFn = (async (url: string | URL) => {
@@ -60,6 +61,7 @@ function harness(opts: { pingTimeoutMs?: number } = {}) {
     webSocketFactory: (url) => {
       const ws = new FakeWs(url);
       sockets.push(ws);
+      opts.onSocket?.(ws);
       return ws;
     },
     backoffMs: [1000, 2000],
@@ -356,6 +358,25 @@ describe("server-ping watchdog — protocol-level pings (selfscan 3dc7955f)", ()
     wsB.onping = null; // torn down
     ch.publish({ payload: Buffer.alloc(0) });
     expect(b).toBe(1);
+  });
+
+  it("a socket leaves the bridge when torn down or closed, with no ping needed", async () => {
+    const before = bridgedSocketCount();
+    const h = harness({
+      pingTimeoutMs: 5000,
+      onSocket: (ws: FakeWs) => trackBridgedSocket(ws),
+    });
+    await h.client.startSocket(() => {});
+    h.sockets[0]!.onopen?.({});
+    expect(bridgedSocketCount()).toBe(before + 1);
+    await vi.advanceTimersByTimeAsync(5001); // the watchdog tears it down
+    expect(bridgedSocketCount()).toBe(before);
+    await vi.advanceTimersByTimeAsync(2000); // the reconnect builds the next
+    expect(h.sockets).toHaveLength(2);
+    expect(bridgedSocketCount()).toBe(before + 1);
+    h.sockets[1]!.onclose?.({}); // the server closes it
+    expect(bridgedSocketCount()).toBe(before);
+    await h.client.stopSocket();
   });
 });
 

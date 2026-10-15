@@ -90,6 +90,13 @@ function dirOf(path: string): string {
   return i < 0 ? "" : path.slice(0, i);
 }
 
+/** Migration files, whatever the stack calls their directory. */
+const MIGRATION_RE = /(^|\/)(migrations?|alembic\/versions|db\/migrate)\//i;
+
+export function isMigrationFile(path: string): boolean {
+  return MIGRATION_RE.test(path);
+}
+
 /** Vendored trees are someone else's repo: never evidence about this one. */
 export function isVendored(path: string): boolean {
   return path
@@ -432,7 +439,7 @@ export function vendoredRoots(files: readonly string[]): string[] {
 // ---- unit candidates ---------------------------------------------------------
 
 /** The longest unit name. */
-const UNIT_NAME_MAX = 64;
+export const UNIT_NAME_MAX = 64;
 
 /** A unit name: one plain segment (the state files and reports key on it). */
 export const UNIT_NAME_RE = new RegExp(`^[A-Za-z0-9][A-Za-z0-9._-]{0,${UNIT_NAME_MAX - 1}}$`);

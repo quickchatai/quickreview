@@ -61,9 +61,15 @@ export function bridgeNativeWebSocketPings(): void {
   });
 }
 
-/** Register a natively-built socket with the ping bridge (see above). */
+/** Register a natively-built socket with the ping bridge (see above). It
+ * leaves the bridge when the client tears it down or it closes. */
 export function trackBridgedSocket(ws: SlackWebSocketLike): void {
   bridgedSockets.add(ws);
+}
+
+/** How many sockets the ping bridge holds (a diagnostics and test view). */
+export function bridgedSocketCount(): number {
+  return bridgedSockets.size;
 }
 
 export type SlackWebSocketFactory = (url: string) => SlackWebSocketLike;
@@ -226,6 +232,7 @@ export class SlackSocketClient implements SlackSocket {
     ws.onerror = (err) => this.log("slack.socket.error", { error: String(err) });
     ws.onclose = () => {
       ws.onping = null; // closed: no ping may count as liveness any more
+      bridgedSockets.delete(ws);
       if (this.ws !== ws) return; // a stale socket we already replaced
       this.ws = null;
       this.clearTimer("watchdogTimer");
@@ -243,6 +250,7 @@ export class SlackSocketClient implements SlackSocket {
     ws.onclose = null;
     ws.onerror = null;
     ws.onping = null;
+    bridgedSockets.delete(ws);
     try {
       ws.close();
     } catch {

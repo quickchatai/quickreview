@@ -16,12 +16,18 @@
 // seal is its own memory. The files are the AUDIT trail — forensically joined
 // to the inject they sit beside, read back by `onDisk()` — and grant nothing.
 // Across a restart the memory is empty: the Slack dir fails closed (no live
-// origin), and the legacy belt is seeded from disk only when that can RESTRICT
-// (`bootCause`): a planted Slack record can switch the belt on. What disk
-// cannot do is grant — a planted local/owner record reads as "no boot cause",
-// which is exactly what an empty directory reads as (it can mask an older real
-// Slack record at boot, but no Slack turn survives a restart for the belt to
-// hold anyway: the container restart takes the overseer's turn with it).
+// origin), and disk seeds only what can RESTRICT. Two kinds of record are read
+// back: the newest one (`bootCause`, the turn that ran at shutdown) and every
+// one bound to a wake still pending in the inject dir (`bootQueued`) — pending
+// wakes survive a restart and the bridge serves them first, so a guest's
+// queued message is a guest's turn after the restart too. Either is kept only
+// when it is a Slack record from a non-owner, so a planted record can switch
+// the belt on, or narrow the rights of a turn this process recorded, and
+// nothing more. What disk cannot do is grant: a planted local/owner record
+// reads as no record, and a disk record alone never opens the Slack dir. Both
+// kinds stop counting only when a wake THIS process recorded is accepted after
+// them; a wake from the previous run never lifts them, so its turn stays under
+// the belt (fail closed).
 //
 // Attribution follows the turn being SERVED, never the newest record. The
 // overseer runs one wake at a time: the inject bridge offers a wake only
@@ -43,7 +49,10 @@
 // inject dir, which the bash guard refuses every session's write to, and a
 // session has no program that removes or moves a file. Built without the
 // delivery directory, the store sees no acceptance and the newest record is
-// in force at once.
+// in force at once. A command file names no wake, so a command is judged by
+// the turn being served when the watcher reads it: one written at the very
+// end of a turn and read after the next wake is accepted gets that turn's
+// rights.
 //
 // A command in `commands/slack/` is attributed to an UNEXPIRED origin. The
 // window is short by design — an origin is a "a human is mid-conversation
@@ -172,6 +181,15 @@ const TIER_RANK: Record<SlackTier, number> = {
  * `cands` comes latest first; the audit fields are those of the lowest-tier
  * record nearest the running turn.
  */
+/**
+ * The legacy `commands/` belt's question about a turn's origin: a Slack turn
+ * from anyone but the owner restricts it. The same predicate decides which
+ * records are read back off disk at boot, since those may only restrict.
+ */
+export function beltRestricts(rec: OriginRecord): boolean {
+  return rec.source === "slack" && rec.tier !== "owner";
+}
+
 function mostRestrictive(cands: readonly OriginRecord[]): OriginRecord | null {
   if (cands.length === 0) return null;
   const low = Math.min(...cands.map((c) => TIER_RANK[c.tier]));
@@ -212,6 +230,12 @@ export class OriginStore {
    * already what "no record" means, so it is never trusted from disk.
    */
   private readonly bootCause: OriginRecord | null;
+  /**
+   * The restricting records a previous run left bound to a wake still pending
+   * at boot: turns the bridge has yet to serve. Each counts until a wake this
+   * process recorded, named after its own, is accepted.
+   */
+  private readonly bootQueued: Array<{ rec: OriginRecord; stem: string }>;
 
   constructor(
     private readonly dir: string,
@@ -220,8 +244,19 @@ export class OriginStore {
   ) {
     this.deliveredDir = opts.deliveredDir ?? null;
     this.pendingDir = this.deliveredDir === null ? null : dirname(this.deliveredDir);
-    const newest = this.onDisk()[0] ?? null;
-    this.bootCause = newest && newest.source === "slack" && newest.tier !== "owner" ? newest : null;
+    const onDisk = this.scan();
+    const newest = onDisk[0]?.rec ?? null;
+    this.bootCause = newest && beltRestricts(newest) ? newest : null;
+    this.bootQueued = [];
+    for (const { rec, name } of onDisk) {
+      const stem = name.replace(/\.json$/, "");
+      if (beltRestricts(rec) && this.isPending(stem)) this.bootQueued.push({ rec, stem });
+    }
+  }
+
+  /** A wake named `<stem>.md` is still in the bridge's pending queue. */
+  private isPending(stem: string): boolean {
+    return this.pendingDir !== null && existsSync(join(this.pendingDir, `${stem}.md`));
   }
 
   /** Absolute path of the record for an inject basename. */
@@ -351,7 +386,10 @@ export class OriginStore {
    */
   latest(): OriginRecord | null {
     const now = this.now().getTime();
-    const cands = this.serving().map((h) => h.rec);
+    const serving = this.serving();
+    // A record read off disk only narrows a turn this process recorded.
+    if (serving.length === 0) return null;
+    const cands = [...serving.map((h) => h.rec), ...this.bootQueuedLive(serving)];
     if (cands.some((rec) => Date.parse(rec.expires_at) <= now)) return null;
     return mostRestrictive(cands);
   }
@@ -362,13 +400,27 @@ export class OriginStore {
    * be an escalation, so an old Slack origin keeps the belt on until a daemon
    * wake (a `local` record) pi has accepted supersedes it. Before this process
    * has seen any wake accepted, the restricting record a previous run left
-   * (`bootCause`) is a candidate too.
+   * (`bootCause`) is a candidate too, and so is every restricting record of
+   * the previous run whose wake is still to be served (`bootQueued`).
    */
   latestAny(): OriginRecord | null {
     const serving = this.serving();
     const cands = serving.map((h) => h.rec);
     if (this.bootCause && !serving.some((h) => this.isAccepted(h))) cands.push(this.bootCause);
+    cands.push(...this.bootQueuedLive(serving));
     return mostRestrictive(cands);
+  }
+
+  /**
+   * The previous run's queued restricting records whose turn may still be
+   * served: no wake this process recorded and named after theirs is accepted
+   * yet. The bridge takes wakes in name order, so once one is, theirs is over.
+   */
+  private bootQueuedLive(serving: readonly Held[]): OriginRecord[] {
+    if (this.bootQueued.length === 0) return [];
+    const running = serving.find((h) => this.isAccepted(h));
+    const over = (stem: string) => running !== undefined && running.stem! > stem;
+    return this.bootQueued.filter((b) => !over(b.stem)).map((b) => b.rec);
   }
 
   /**
@@ -497,6 +549,9 @@ export class OriginStore {
         }
         if (!entry.name.endsWith(".json")) continue;
         if (entry.name === keep) continue;
+        // A record bound to a wake still pending describes a turn to come,
+        // which a restart before it is served must still find.
+        if (this.isPending(entry.name.replace(/\.json$/, ""))) continue;
         const rec = parseOriginRecord(JSON.parse(readFileSync(path, "utf8")) as unknown);
         if (!rec || Date.parse(rec.expires_at) <= now) rmSync(path, { force: true });
       } catch {

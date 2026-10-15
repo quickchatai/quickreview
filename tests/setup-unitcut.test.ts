@@ -187,6 +187,10 @@ describe("splitUnit — an oversized unit split to fit, its name kept", () => {
     ]);
   });
 
+  it("a unit with no files to read has no case (the status view never shows a phantom one)", () => {
+    expect(splitUnit("i18n", [], lines(10))).toEqual([]);
+  });
+
   it("splits by subdirectory first, then by file chunks, every case named for the unit", () => {
     const files = [
       "app/api/a.py",

@@ -80,8 +80,9 @@ export interface SurveyCaseState {
   notes_written: number;
   /** Notes the store refused — a unit with any keeps its older entries. */
   notes_failed: number;
-  /** Notes past the per-case cap, or cut at the length cap. */
+  /** Notes past the per-case cap. */
   notes_dropped: number;
+  /** Notes cut at the length cap. */
   notes_truncated: number;
   /** The lens answered NONE. */
   none: boolean;
@@ -141,8 +142,9 @@ export interface SurveyPreview {
   estimate_usd: number;
   rate: SurveyRate;
   concurrency: number;
-  /** Live `#survey` entries a completed run would supersede; null when
-   * memory could not be read (or there is none). */
+  /** Live `#survey` entries a completed run would supersede — a survey
+   * run's, never a pinned or `#manual` one; null when memory could not be
+   * read (or there is none). */
   existing_entries: number | null;
   last_complete: CompletedSurvey | null;
   /** A survey already completed — a start must say `resurvey`. */
@@ -178,6 +180,21 @@ interface LiveSurveyEntry {
 }
 
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** A case that finished, opened every file and kept every note: what lets a
+ * unit's earlier notes go, and what a complete run is made of. */
+function caseComplete(c: SurveyCaseState): boolean {
+  return c.status === "done" && c.notes_failed === 0 && !c.unopened?.length;
+}
+
+/** An earlier entry a survey may retire: one a survey RUN wrote (an
+ * engine-written header with a `run=`), never one a person made their own —
+ * pinned or `#manual` stays, exactly as the EOD curator leaves it. */
+function supersedable(e: LiveSurveyEntry): boolean {
+  return (
+    e.run !== null && !e.entry.pinned && !e.entry.tags.some((t) => normalizeTag(t) === "manual")
+  );
+}
 
 export class SurveyRunner {
   private active: { id: string; abort: AbortController; done: Promise<void> } | null = null;
@@ -312,7 +329,7 @@ export class SurveyRunner {
         estimate_usd: planEstimate(p.plan, rate),
         rate,
         concurrency: this.concurrency,
-        existing_entries: existing === null ? null : existing.length,
+        existing_entries: existing === null ? null : existing.filter(supersedable).length,
         last_complete: file.last_complete,
         needs_resurvey: file.last_complete !== null,
         blockers,
@@ -504,12 +521,18 @@ export class SurveyRunner {
     const unitCases = plan.cases.filter((c) => c.stage === "unit");
     const repoNotes: string[] = [];
     let repoFinished = true;
+    let repoPartial = false;
     await this.pool(repoCases, async (c) => {
       const notes = await this.runCase(ctx, c, null);
       if (notes === null) repoFinished = false;
-      else repoNotes.push(...notes);
+      else {
+        repoNotes.push(...notes);
+        if (!caseComplete(run.cases.find((x) => x.id === c.id)!)) repoPartial = true;
+      }
     });
-    await this.pool(unitCases, (c) => this.runCase(ctx, c, repoFinished ? repoNotes : null));
+    await this.pool(unitCases, (c) =>
+      this.runCase(ctx, c, repoFinished ? repoNotes : null, repoPartial),
+    );
 
     if (signal.aborted) {
       for (const c of run.cases) if (c.status === "pending") c.status = "stopped";
@@ -522,9 +545,7 @@ export class SurveyRunner {
     // Likewise a retire memory refused: the old generation is still live
     // beside the new one, so the run is partial, never "complete". And a
     // case that left files unopened read its unit only in part.
-    let complete =
-      earlier !== null &&
-      run.cases.every((c) => c.status === "done" && c.notes_failed === 0 && !c.unopened?.length);
+    let complete = earlier !== null && run.cases.every(caseComplete);
     if (complete) {
       // Whatever earlier survey memory is still live belongs to a unit this
       // cut no longer has (or to @repo parts that no longer exist).
@@ -567,6 +588,7 @@ export class SurveyRunner {
     },
     plan: SurveyCasePlan,
     repoNotes: string[] | null,
+    repoPartial = false,
   ): Promise<string[] | null> {
     const { file, run, signal } = ctx;
     const c = run.cases.find((x) => x.id === plan.id)!;
@@ -587,7 +609,12 @@ export class SurveyRunner {
           unit: plan.unit,
           agent: SURVEY_AGENT,
           files: plan.files.map((f) => f.path),
-          prompt: surveyPrompt(plan, { repoRoot: this.opts.repoRoot, head: run.head, repoNotes }),
+          prompt: surveyPrompt(plan, {
+            repoRoot: this.opts.repoRoot,
+            head: run.head,
+            repoNotes,
+            repoPartial,
+          }),
         },
         signal,
       );
@@ -654,7 +681,7 @@ export class SurveyRunner {
     // Supersede the unit's earlier entries once all of its cases are in,
     // every file was opened and every note landed; a partial read keeps them.
     const mine = run.cases.filter((x) => x.unit === plan.unit);
-    if (mine.every((x) => x.status === "done" && x.notes_failed === 0 && !x.unopened?.length)) {
+    if (mine.every(caseComplete)) {
       if (!(await this.supersede(run, ctx.earlier, (unit) => unit === plan.unit)))
         ctx.retireFailed = true;
       this.store(file);
@@ -680,11 +707,8 @@ export class SurveyRunner {
   ): Promise<boolean> {
     let ok = true;
     for (const e of [...earlier]) {
-      // Only what a survey RUN wrote (engine-written header with a `run=`),
-      // never this run's own, and never an entry a person made their own —
-      // pinned or #manual stays, exactly as the EOD curator leaves it.
-      if (e.run === null || e.run === run.id || !which(e.unit)) continue;
-      if (e.entry.pinned || e.entry.tags.some((t) => normalizeTag(t) === "manual")) continue;
+      // Never this run's own.
+      if (!supersedable(e) || e.run === run.id || !which(e.unit)) continue;
       earlier.splice(earlier.indexOf(e), 1);
       let r: { ok: boolean; message: string };
       try {

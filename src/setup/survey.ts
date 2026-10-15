@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import { CODE_FILE_RE, isSweepSkipped, isTestFile } from "../heuristics.js";
 import { dehash, formatEventTags, parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import { normalizeTag, type MemoryEntry } from "../memory/store.js";
-import { isVendored } from "./facts.js";
+import { isMigrationFile, isVendored } from "./facts.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
 /** The lens. Named `pass-*` like every lens, and deliberately NOT `survey`:
@@ -106,8 +106,6 @@ export interface PlanInput {
   sample?: SampleLimits;
 }
 
-const MIGRATION_RE = /(^|\/)migrations\//;
-
 /** Code a sample may read: first-party source, not tests, migrations,
  * generated or vendored output, prose or config. */
 export function isSampleable(path: string): boolean {
@@ -116,7 +114,7 @@ export function isSampleable(path: string): boolean {
     !isVendored(path) &&
     !isSweepSkipped(path) &&
     !isTestFile(path) &&
-    !MIGRATION_RE.test(path)
+    !isMigrationFile(path)
   );
 }
 
@@ -263,7 +261,7 @@ export function planKey(plan: SurveyPlan, head: string | null, rate: SurveyRate)
   const shape = plan.cases.map((c) => [c.id, c.files.map((f) => [f.path, f.lines])]);
   const price = [rate.usd_per_case, rate.usd_per_kline];
   return createHash("sha256")
-    .update(JSON.stringify([head, shape, plan.unassigned, price]))
+    .update(JSON.stringify([head, shape, plan.unsampled, plan.unassigned, price]))
     .digest("hex")
     .slice(0, 12);
 }
@@ -319,6 +317,10 @@ export interface PromptContext {
   /** Stage 1's notes, for a unit case. Empty when stage 1 wrote none; null
    * when it did not finish (the prompt says so rather than implying "none"). */
   repoNotes: string[] | null;
+  /** Stage 1 finished but read only part of what it was given (a file not
+   * opened, a note memory refused): its notes stand, and the prompt says the
+   * read was partial. */
+  repoPartial?: boolean;
 }
 
 export function surveyPrompt(c: SurveyCasePlan, ctx: PromptContext): string {
@@ -334,12 +336,19 @@ export function surveyPrompt(c: SurveyCasePlan, ctx: PromptContext): string {
     ].join("\n\n");
   }
   const roots = c.roots.map((r) => (r === "" ? "(the repo root)" : r)).join(", ");
+  const partial = ctx.repoPartial === true;
   const notes =
     ctx.repoNotes === null
       ? "The repo-wide read did not finish; read the sample on its own terms."
       : ctx.repoNotes.length === 0
-        ? "The repo-wide read wrote no notes."
-        : `What the repo-wide read already established (do NOT restate these):\n${ctx.repoNotes.map((n) => `- ${n}`).join("\n")}`;
+        ? partial
+          ? "The repo-wide read was only partial and wrote no notes; read the sample on its own terms."
+          : "The repo-wide read wrote no notes."
+        : `${
+            partial
+              ? "The repo-wide read was only partial (not every file was opened, or not every note was kept); what it did establish (do NOT restate these):"
+              : "What the repo-wide read already established (do NOT restate these):"
+          }\n${ctx.repoNotes.map((n) => `- ${n}`).join("\n")}`;
   return [
     `SURVEY — stage 2, unit \`${c.unit}\` (${c.kind}; owns ${roots}) of the repository at ${ctx.repoRoot}${at}.`,
     notes,
@@ -366,7 +375,7 @@ export interface ParsedNotes {
   truncated: number;
 }
 
-const NOTE_START_RE = /^\s*(?:[-*]\s*)?\[(convention|architecture)\]\s*(.*)$/i;
+const NOTE_START_RE = new RegExp(`^\\s*(?:[-*]\\s*)?\\[(${NOTE_KINDS.join("|")})\\]\\s*(.*)$`, "i");
 
 /**
  * The lens's answer, by its grammar: each note opens with `[convention]` or

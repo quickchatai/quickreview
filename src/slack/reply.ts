@@ -193,7 +193,9 @@ export function makeSlackReply(
       thread,
       ts: result.ts,
       chars: text.length,
-      truncated: text.endsWith(TRUNCATION_SUFFIX),
+      // Whether content was cut, never whether the text ends like the marker
+      // (a reply may end so naturally; a tiny limit cuts with no marker).
+      truncated: text !== escapeMrkdwn(input.text),
     };
   };
 }
