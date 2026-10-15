@@ -58,7 +58,7 @@ import type {
   StepContext,
   StepReport,
 } from "../engine.js";
-import { writeAtomic } from "./compose.js";
+import { DAEMON_SERVICE, composeArgs, rootOf, writeAtomic } from "./compose.js";
 import { readTomlKey } from "./ingress.js";
 import { sshArgv } from "./ssh.js";
 import { topologyOf } from "./topology.js";
@@ -491,6 +491,29 @@ export function daemonContainerName(configText: string): string {
   return readTomlString(configText, "tui", "container")?.trim() || TUI_DEFAULTS.container;
 }
 
+/**
+ * The daemon container on this machine. The shipped compose file sets no
+ * `container_name`, so compose names it after the project
+ * (`<project>-daemon-1`), never the `[tui] container` the VM uses: ask compose
+ * first; when it names none (no compose stack here, or no daemon container
+ * yet) the configured name is probed.
+ */
+async function localDaemonContainer(
+  runner: ProcessRunner,
+  root: string,
+  configText: string,
+): Promise<string> {
+  const ps = await runner.run(
+    "docker",
+    composeArgs(root, ["ps", "--all", "--format", "{{.Name}}", DAEMON_SERVICE]),
+  );
+  if (ps.code === 0) {
+    const name = ps.stdout.split("\n").map((l) => l.trim()).find((l) => l !== "");
+    if (name) return name;
+  }
+  return daemonContainerName(configText);
+}
+
 export function companionContainerName(configText: string): string {
   return (
     readTomlString(configText, "companion", "container_name")?.trim() ||
@@ -733,10 +756,11 @@ async function oauthLoginChecks(
   // on the review host, so the probe goes there over ssh (the transport's own
   // facts: alias, container, sudo). The companion is always this machine's.
   // The repair command names the same host and container the probe reached.
-  let daemon = daemonContainerName(configText);
+  const vm = topologyOf(ctx.choices) === "vm";
+  let daemon = vm ? "" : await localDaemonContainer(runner, rootOf(ctx.adapters), configText);
   let daemonRunner: ProcessRunner = runner;
   let daemonAttach = localAttach(daemon, DAEMON_LOGIN_SESSION);
-  if (topologyOf(ctx.choices) === "vm") {
+  if (vm) {
     const facts = remoteFactsFor(ctx.adapters, ctx.choices);
     daemon = facts.container;
     const prefix = facts.sudo ? ["sudo"] : [];

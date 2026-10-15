@@ -142,6 +142,9 @@ interface World {
   remote?: { alias: string; containers: Record<string, FakeContainer> };
   /** docker itself unavailable. */
   noDocker?: boolean;
+  /** The name `docker compose ps` reports for the daemon service on this
+   * machine; unset = compose answers as if there were no stack here. */
+  composeDaemon?: string;
 }
 
 const CODEX_LOGIN = JSON.stringify({
@@ -199,6 +202,8 @@ function fakeAdapters(
         if (world.noDocker) return { code: 127, stdout: "", stderr: "docker: command not found" };
         if (cmd !== "docker") return { code: 127, stdout: "", stderr: `${cmd}: not found` };
         const name = args[args.length - 1] ?? "";
+        if (args[0] === "compose" && args.includes("ps") && world.composeDaemon !== undefined)
+          return { code: 0, stdout: `${world.composeDaemon}\n`, stderr: "" };
         if (args[0] === "inspect" && args[1] === "--format" && args[2] === "{{json .Mounts}}") {
           const c = containers[name];
           if (!c) return { code: 1, stdout: "", stderr: `Error: No such object: ${name}` };
@@ -503,6 +508,26 @@ describe("OAuth route", () => {
       configText().replace("[companion]\n", '[companion]\nsession = "buddy"\n'),
     );
     expect(await detail()).toContain("tmux attach -t buddy");
+  });
+
+  it("verify: on this machine the daemon is the container compose names, not the VM's configured name", async () => {
+    hostLogin();
+    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
+    // The compose project names its daemon `quickreview-daemon-1`; nothing is
+    // called `quickreview-sandbox` here, so probing that name would pass as
+    // "no container yet" while the real daemon has no login.
+    const world = {
+      composeDaemon: "quickreview-daemon-1",
+      containers: {
+        "quickreview-daemon-1": { piHome: "/home/review/.pi", auth: false },
+        "qcr-companion": { piHome: "/home/companion/.pi", auth: true },
+      },
+    };
+    const report = await engine(world).verifyAll();
+    expect(report.ok).toBe(false);
+    const failures = report.results[0]?.failures.join(" ") ?? "";
+    expect(failures).toMatch(/daemon container: no auth\.json/);
+    expect(failures).toContain("docker exec -it quickreview-daemon-1 tmux attach");
   });
 
   it("verify: a stopped container and an undetectable docker are notes, not failures", async () => {
