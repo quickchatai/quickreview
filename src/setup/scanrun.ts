@@ -1737,9 +1737,18 @@ export class ScanRunner {
       addCost(v);
       if (v.transcript !== undefined) c.validator_transcript = v.transcript;
       if (!v.ok && signal.aborted) return finish("stopped", v.reason);
-      const read = v.ok ? parseValidatorAnswer(v.output, tree.root) : null;
+      // A skeptic that opened none of the files its candidates name judged
+      // nothing from the code: its tiers are not taken — unknown, not guessed.
+      const candPaths = [...new Set(anchored.map((a) => a.cand.path))];
+      const skepticOpened = v.ok ? openedFocus(v.reads, candPaths, tree.root) : null;
+      const skepticUnread = skepticOpened !== null && skepticOpened.size === 0;
+      const read = v.ok && !skepticUnread ? parseValidatorAnswer(v.output, tree.root) : null;
       if (read === null || !read.answered) {
-        const why = v.ok ? "it answered with no survivor, NONE, DOUBTED or KILLED" : v.reason;
+        const why = !v.ok
+          ? v.reason
+          : skepticUnread
+            ? `it opened none of the ${candPaths.length} file(s) its candidates name`
+            : "it answered with no survivor, NONE, DOUBTED or KILLED";
         run.problems.push(
           `case ${plan.id}: the validator failed (${why}) — its findings are kept unvalidated`,
         );

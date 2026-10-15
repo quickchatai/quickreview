@@ -804,6 +804,41 @@ describe("the validator — a survivor it also doubts", () => {
   });
 });
 
+describe("a skeptic that opened none of its candidates' files judged nothing", () => {
+  const ROOT = `/state/scan/tree/${SHA1}`;
+  const upheld = (spec: CaseSpec): string =>
+    spec.agent.startsWith("pass-validate")
+      ? scanAnswer(spec)
+          .split("SUGGEST")[0]!
+          .replace("FINDINGS pass-scan", "FINDINGS pass-validate")
+          .replace(
+            "  claim:",
+            "  validity: confirmed\n  scenario: a caller passes None → crash\n  claim:",
+          )
+      : scanAnswer(spec);
+
+  it("its tiers are not taken: the findings stay unvalidated (unknown), and the run says why", async () => {
+    // Every lens opened its files; the skeptic opened nothing.
+    const reads = (spec: CaseSpec): string[] =>
+      spec.agent.startsWith("pass-validate") ? [] : spec.files.map((f) => `${ROOT}/${f}`);
+    const { run } = await runToEnd(
+      new ScanRunner(ports(runner({ answer: upheld, reads }), { validator: true })),
+    );
+    const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.every((f) => f.validated === false && f.validity === null)).toBe(true);
+    expect(run.problems.some((p) => /validator failed \(it opened none of the/.test(p))).toBe(true);
+  });
+
+  it("one that opened a candidate's file is taken as it answered", async () => {
+    const reads = (spec: CaseSpec): string[] => spec.files.map((f) => `${ROOT}/${f}`);
+    await runToEnd(new ScanRunner(ports(runner({ answer: upheld, reads }), { validator: true })));
+    const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.every((f) => f.validated === true && f.validity === "likely")).toBe(true);
+  });
+});
+
 describe("reading the lens's answer", () => {
   it("strips an absolute tree prefix, reads ranges, and keeps NONE apart from junk", () => {
     const a = parseScanAnswer(
