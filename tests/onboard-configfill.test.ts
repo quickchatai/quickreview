@@ -35,6 +35,7 @@ import {
   CHOICE_KEYS,
   CONFIG_FILL_STEP_ID,
   DERIVABLES,
+  assertNoDryRunEdit,
   MAX_ATTEMPTS,
   QUESTIONS,
   buildEdits,
@@ -259,6 +260,34 @@ describe("the full interview", () => {
     expect(cfg.server.hostname).toBe("");
   });
 
+  it("points the TUI at the recorded topology: local Docker on this machine, ssh on the VM", async () => {
+    const local = await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
+    expect(failed(local.report)).toBe("");
+    expect(producedConfig().tui.target).toBe("local");
+
+    const vm = await runStep({
+      choices: { [CHOICE_KEYS.topology]: "vm", [CHOICE_KEYS.ingress]: "named" },
+    });
+    expect(failed(vm.report)).toBe("");
+    expect(producedConfig().tui.target).toBe("ssh");
+  });
+
+  it("verify is red when [tui] target disagrees with the recorded topology", async () => {
+    await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
+    const path = join(root, "config.toml");
+    writeFileSync(path, readFileSync(path, "utf8").replace('target = "local"', 'target = "ssh"'));
+    const ctx: StepContext = {
+      adapters: adapters(),
+      input: {},
+      choices: { [CHOICE_KEYS.topology]: "local" },
+      data: {},
+      recordChoice: () => {},
+    };
+    const report = await configFillStep().verify(ctx);
+    expect(report.ok).toBe(false);
+    expect(failed(report)).toMatch(/\[tui\] target/);
+  });
+
   it("takes an answer a sibling step already recorded instead of asking again", async () => {
     const { log, report } = await runStep({
       choices: { [CHOICE_KEYS.appSlug]: "from-manifest-step" },
@@ -294,6 +323,7 @@ describe("derivables", () => {
       "slack_policy_timezone",
       "backfill_identity",
       "sink_kind",
+      "tui_target",
       "tui_ssh_host",
       "server_hostname",
       "companion_repo_dir",
@@ -383,6 +413,8 @@ describe("dry_run (rule 1)", () => {
 
   it("refuses an edit list that names dry_run, however it is spelled", () => {
     expect(() => patchAll([{ section: "", key: "dry_run", value: "false" }])).toThrow(/rule 1/);
+    expect(() => patchAll([{ section: "x", key: '"dry_run"', value: "false" }])).toThrow(/rule 1/);
+    expect(() => patchAll([{ section: "dry_run", key: "x", value: "false" }])).toThrow(/rule 1/);
   });
 
   it.skipIf(process.getuid?.() === 0)(
@@ -437,18 +469,11 @@ function patchAll(edits: Array<{ section: string; key: string; value: string }>)
   return patchToml(TEMPLATE, buildEditsGuard(edits));
 }
 
-/** buildEdits' guard is the structural half; call it directly on a raw list. */
+/** The production guard over buildEdits' own list plus the injected edits. */
 function buildEditsGuard(edits: Array<{ section: string; key: string; value: string }>) {
-  const facts = fullFacts();
-  const built = buildEdits(facts, {}, true);
-  return [...built, ...edits].map((e) => {
-    if (/(^|[^0-9A-Za-z_])dry_run([^0-9A-Za-z_]|$)/.test(e.key)) {
-      throw new Error(
-        "onboarding config fill: refused an edit touching dry_run — rule 1: the flag is the owner's alone",
-      );
-    }
-    return e;
-  });
+  const all = [...buildEdits(fullFacts(), {}, true), ...edits];
+  assertNoDryRunEdit(all);
+  return all;
 }
 
 // ---- comment preservation ----------------------------------------------------
