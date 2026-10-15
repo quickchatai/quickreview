@@ -691,7 +691,7 @@ export async function enforceFindingsRecord(
   const parsed = readFindingsRecord(path, pr, roundNo);
 
   if (parsed.status === "ok" && parsed.record) {
-    ingestFindingsRecord(deps, target, parsed);
+    ingestFindingsRecord(deps, target, parsed, parsed.record);
     return "recorded";
   }
 
@@ -789,6 +789,7 @@ export function ingestRepairedFindingsRecords(
         planned,
       },
       parsed,
+      parsed.record,
     );
     deps.log?.(`findings: #${n.pr} round ${roundNo} record arrived after its nudge — stored`);
     stored++;
@@ -802,34 +803,30 @@ export function ingestRepairedFindingsRecords(
 function ingestFindingsRecord(
   deps: Pick<FindingsCheckDeps, "store" | "log" | "onRecorded">,
   target: FindingsCheckTarget,
-  parsed: ParsedFindingsRecord & { record: FindingsRecordFile },
+  parsed: ParsedFindingsRecord,
+  record: FindingsRecordFile,
 ): void {
   const { store, log } = deps;
   const { pr, roundNo, roundId, headSha, planned } = target;
   const stored = store.recordRoundFindings(
-    { pr, round_id: roundId, round_no: roundNo, head_sha: parsed.record.head_sha ?? headSha },
-    parsed.record.findings,
+    { pr, round_id: roundId, round_no: roundNo, head_sha: record.head_sha ?? headSha },
+    record.findings,
     planned,
   );
-  if (parsed.record.comments_posted !== null && roundId !== null)
-    store.recordRoundComments(roundId, parsed.record.comments_posted);
+  if (record.comments_posted !== null && roundId !== null)
+    store.recordRoundComments(roundId, record.comments_posted);
   // The statuses this round reported for prior findings. Stored
   // beside the listing the daemon made at order build; the next round's
   // list drops what a later report resolved.
   const priorReported =
-    parsed.record.prior.length > 0
-      ? store.recordPriorReports(
-          pr,
-          roundNo,
-          parsed.record.head_sha ?? headSha,
-          parsed.record.prior,
-        )
+    record.prior.length > 0
+      ? store.recordPriorReports(pr, roundNo, record.head_sha ?? headSha, record.prior)
       : 0;
   store.logEvent("findings_recorded", pr, {
     round_id: roundId,
     round_no: roundNo,
     entries: stored,
-    comments_posted: parsed.record.comments_posted,
+    comments_posted: record.comments_posted,
     ...(priorReported > 0 ? { prior_reported: priorReported } : {}),
     ...(parsed.note ? { note: parsed.note } : {}),
   });
