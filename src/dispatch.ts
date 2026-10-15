@@ -800,7 +800,9 @@ async function classifySystemRetrigger(
 
 /** Consume both triggers at dispatch: the label and the team review request.
  * Both go through the adapter (and therefore the dry-run gate); failures are
- * logged, never fatal — the reconcile poll re-derives the truth. */
+ * logged, never fatal — the reconcile poll re-derives the truth. Returns the
+ * triggers really consumed: one the gate recorded instead of executing (dry
+ * run) or a guard refused is still on GitHub, and is logged as such. */
 async function consumeTriggers(
   deps: DispatchDeps,
   pr: number,
@@ -810,14 +812,23 @@ async function consumeTriggers(
 ): Promise<string[]> {
   const consumed: string[] = [];
   const log = deps.log ?? (() => {});
-  /** One trigger: consumed, already gone (consumed too), or failed — logged. */
+  /** One trigger: consumed, already gone (consumed too), not executed, or
+   * failed — logged. */
   const consume = async (
     which: "label" | "team_request",
     what: string,
-    op: () => Promise<unknown>,
+    op: () => Promise<GateResult | undefined>,
   ): Promise<void> => {
     try {
-      await op();
+      const result = await op();
+      if (result?.executed === false) {
+        deps.store.logEvent("trigger_consume_not_executed", pr, {
+          which,
+          ...(result.dryRunFile ? { dry_run: true } : {}),
+          ...(result.blocked ? { blocked: result.blocked } : {}),
+        });
+        return;
+      }
       consumed.push(which);
     } catch (err) {
       if (alreadyConsumed(err)) {
@@ -1970,6 +1981,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
     let endMemoryWindow: () => void = () => {};
     // Spends the withheld-approval mark this round inherits (set below).
     let spendWithholding: () => void = () => {};
+    // Whether this dispatch painted the PR "in progress" (trigger consumption
+    // for a round, below): a failure before any round owns the review takes
+    // the label off again.
+    let markedInProgress = false;
     try {
       // Backfilled (imported) rounds are excluded: a historical review must
       // never flip a still-open PR's next live round to "re-review", whose
@@ -2155,6 +2170,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
       }
 
+      markedInProgress = true;
       const consumed = await consumeTriggers(deps, row.number);
 
       // The branch this PR targets (base freshness) and its body
@@ -3006,6 +3022,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         `dispatch: #${row.number} failed${retainedCommand ? " after durable handoff — round retained" : ""}`,
         err,
       );
+      // No round owns the review: the PR stays queued for the next pump,
+      // which paints it again when its round really starts.
+      if (!retainedCommand && markedInProgress) {
+        try {
+          await deps.adapter.removeLabel(row.number, cfg.github.in_progress_label);
+        } catch (labelError) {
+          log(`dispatch: #${row.number} in-progress label not removed`, labelError);
+        }
+      }
       try {
         store.logEvent("dispatch_failed", row.number, {
           round_id: provisionalRoundId ?? null,

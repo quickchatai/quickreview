@@ -1104,6 +1104,57 @@ describe("dispatchOnce", () => {
     },
   );
 
+  // MUTATION: push every trigger whose call resolved, whatever the gate
+  // answered — round_dispatched claims a dry run consumed both triggers.
+  it(
+    "reports as consumed only the triggers the gate really removed",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(24, "2026-08-13T09:00:00Z");
+      queue(25, "2026-08-13T09:00:01Z");
+      class Live extends FakeAdapter {
+        override async removeLabel(n: number, label: string): Promise<GateResult> {
+          await super.removeLabel(n, label);
+          return { executed: true };
+        }
+        override async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+          await super.deleteTeamReviewRequest(n);
+          return { executed: true };
+        }
+      }
+      const { hooks } = recordingHooks();
+      // The fake's dry-run gate records every mutation instead of executing it.
+      await dispatchOnce({
+        cfg: { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 1 } },
+        store,
+        adapter,
+        hooks,
+      });
+      await dispatchOnce({ cfg: baseCfg, store, adapter: new Live(), hooks });
+
+      const consumed = (
+        store.db
+          .prepare("SELECT pr, payload FROM events WHERE kind = 'round_dispatched' ORDER BY pr")
+          .all() as Array<{ pr: number; payload: string }>
+      ).map((r) => [r.pr, JSON.parse(r.payload).triggers_consumed]);
+      expect(consumed).toEqual([
+        [24, []],
+        [25, ["label", "team_request"]],
+      ]);
+      const notExecuted = (
+        store.db
+          .prepare(
+            "SELECT payload FROM events WHERE kind = 'trigger_consume_not_executed' AND pr = 24",
+          )
+          .all() as Array<{ payload: string }>
+      ).map((r) => JSON.parse(r.payload));
+      expect(notExecuted).toEqual([
+        { which: "label", dry_run: true },
+        { which: "team_request", dry_run: true },
+      ]);
+    },
+  );
+
   it(
     "never dispatches a PR that already has a running round (one worktree, one round)",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -1580,6 +1631,61 @@ describe("dispatchOnce", () => {
         .prepare("SELECT payload FROM events WHERE kind='dispatch_failed' AND pr=63")
         .get() as { payload: string };
       expect(JSON.parse(failure.payload)).toMatchObject({ retained_command: true });
+    },
+  );
+
+  // MUTATION: drop the label removal from dispatch's catch — the failed PR
+  // keeps advertising a review in progress that no round owns.
+  it(
+    "a preparation that fails before any round owns the review takes its in-progress label off; a retained round keeps it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(64, "2026-08-13T09:00:00Z");
+      const failing = new (class extends FakeAdapter {
+        override async listPrFiles(): Promise<PrFileEntry[]> {
+          throw new Error("files API 502");
+        }
+      })();
+      expect(
+        await dispatchOnce({
+          cfg: baseCfg,
+          store,
+          adapter: failing,
+          hooks: recordingHooks().hooks,
+        }),
+      ).toEqual([]);
+      const labels = (a: FakeAdapter, pr: number): string[] =>
+        a.calls
+          .filter((c) => c.pr === pr && (c.fn === "addLabel" || c.fn === "removeLabel"))
+          .map((c) => `${c.fn}:${c.arg}`);
+      expect(labels(failing, 64)).toEqual([
+        `removeLabel:${baseCfg.github.trigger_label}`,
+        `addLabel:${baseCfg.github.in_progress_label}`,
+        `removeLabel:${baseCfg.github.in_progress_label}`,
+      ]);
+
+      store.setPrState(64, "tracked");
+      queue(65, "2026-08-13T09:00:00Z");
+      const hooks = recordingHooks().hooks;
+      hooks.dispatchRound = async (order) => {
+        store.createSessionCommand({
+          id: "cmd-retained-65",
+          pr: order.pr,
+          session: `pr-${order.pr}`,
+          kind: "round",
+          round_no: order.round_no,
+          payload_sha256: "a".repeat(64),
+          payload_path: "/state/cmd-retained-65.md",
+          inject_path: "/inject/pr-65/cmd-retained-65.md",
+          next_check_at: "2026-08-13T09:02:00Z",
+        });
+        throw new Error("post-handoff bookkeeping failed");
+      };
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(labels(adapter, 65)).toEqual([
+        `removeLabel:${baseCfg.github.trigger_label}`,
+        `addLabel:${baseCfg.github.in_progress_label}`,
+      ]);
     },
   );
 
