@@ -255,6 +255,20 @@ describe("the sample", () => {
     for (const p of all) expect(p).not.toMatch(/tests\/|migrations\/|\.md$|node_modules/);
   });
 
+  it("never samples a migration, whatever the stack calls its directory", () => {
+    const s = pickSample(
+      [
+        "alembic/versions/001_init.py",
+        "db/migrate/20260101_add_users.rb",
+        "app/Migration/0002_more.py",
+        "app/main.py",
+      ],
+      () => 10,
+      null,
+    );
+    expect(s.map((f) => f.path)).toEqual(["app/main.py"]);
+  });
+
   it("stays inside the line cap unless one file is all there is", () => {
     const s = pickSample(["web/src/big.ts", "web/src/api.ts"], linesOf, null, {
       perCategory: 2,
@@ -357,6 +371,10 @@ describe("the plan", () => {
       planKey(plan, "a", { ...R, usd_per_kline: R.usd_per_kline * 2 }),
     );
     expect(planKey(plan, "a", R)).not.toBe(planKey(plan, "a", { ...R, usd_per_case: 0 }));
+    // A unit newly left unsampled is a coverage gap the operator must see.
+    expect(planKey(plan, "a", R)).not.toBe(
+      planKey({ ...plan, unsampled: [...plan.unsampled, "docs-2"] }, "a", R),
+    );
   });
 });
 
@@ -769,6 +787,10 @@ describe("a survey run", () => {
     );
     const { engine } = await started({ cases: fake, memory: mem });
     await engine.surveyIdle();
+    // The units hear the partial read's notes, and that it was partial.
+    const unit = fake.specs.find((s) => s.unit === "web")!.prompt;
+    expect(unit).toMatch(/repo-wide read was only partial/);
+    expect(unit).toContain("- [convention] repo v2");
     const live = mem.live().map((e) => e.text.split(" — ")[1]);
     expect(live).toContain("repo v1");
     expect(live).toContain("repo v2");
@@ -933,6 +955,9 @@ describe("a survey run", () => {
       "#manual #survey — the owner's own survey note",
       "#survey — hand-tagged, no run",
     ]);
+    // The preview counts only what a completed survey would supersede.
+    const p = await setup({ memory: mem }).engine.surveyPreview();
+    expect(p.ok && p.preview.existing_entries).toBe(1);
     const fake = new FakeCases((spec) => answer(`[convention] ${spec.unit} v2`));
     const { engine } = await started({ cases: fake, memory: mem });
     await engine.surveyIdle();

@@ -35,6 +35,7 @@ import {
 } from "../include.js";
 import { SCAN_DEEP_LENSES } from "../passes.js";
 import { REACHABILITY_VALUES, reachabilityCappedSeverity, type Reachability } from "../severity.js";
+import { isMigrationFile } from "./facts.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
 /** The stage-1 lens (agents/scan/pass-scan.md). */
@@ -44,12 +45,7 @@ export { SCAN_PASS };
  * stage 1 may point stage 2 at. */
 export { DIFF_ONLY_LENSES, SCAN_DEEP_LENSES } from "../passes.js";
 
-/** Migration files, whatever the stack calls their directory. */
-const MIGRATION_RE = /(^|\/)(migrations?|alembic\/versions|db\/migrate)\//i;
-
-export function isMigrationFile(path: string): boolean {
-  return MIGRATION_RE.test(path);
-}
+export { isMigrationFile };
 
 export type ExclusionReason = "test" | "migration" | "unreadable-kind" | "excluded-glob";
 

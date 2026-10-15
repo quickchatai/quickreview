@@ -506,6 +506,15 @@ describe("the survey tools", () => {
       active: false,
     });
     expect(all).toMatch(/spent \$0\.25 of/);
+    // A note cut at the length cap is counted where the operator reads it.
+    const cut = renderSurveyStatus({
+      ok: true,
+      problems: [],
+      run: { ...run, cases: [{ ...c("a", 0.25), notes_truncated: 2 }] },
+      last_complete: null,
+      active: false,
+    });
+    expect(cut).toMatch(/2 cut at the length cap/);
   });
 
   it("the belt's engine reads the REVIEWER key only, and no memory without it", async () => {

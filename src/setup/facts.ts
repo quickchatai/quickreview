@@ -90,6 +90,13 @@ function dirOf(path: string): string {
   return i < 0 ? "" : path.slice(0, i);
 }
 
+/** Migration files, whatever the stack calls their directory. */
+const MIGRATION_RE = /(^|\/)(migrations?|alembic\/versions|db\/migrate)\//i;
+
+export function isMigrationFile(path: string): boolean {
+  return MIGRATION_RE.test(path);
+}
+
 /** Vendored trees are someone else's repo: never evidence about this one. */
 export function isVendored(path: string): boolean {
   return path
