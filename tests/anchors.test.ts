@@ -107,6 +107,25 @@ describe("checkAnchor", () => {
     });
   });
 
+  it("rejects a path that names an Object property, rather than throwing", () => {
+    for (const path of ["constructor", "toString", "__proto__", "hasOwnProperty"])
+      expect(checkAnchor(runs, { path, side: "RIGHT", line: 1 })).toEqual({
+        ok: false,
+        reason: "unknown-path",
+      });
+  });
+
+  it("anchors in a file named like an Object property", () => {
+    const named = runsByPath(
+      Object.fromEntries([
+        ["__proto__", PATCH],
+        ["constructor", PATCH],
+      ]) as Record<string, string>,
+    );
+    expect(checkAnchor(named, { path: "constructor", side: "RIGHT", line: 12 }).ok).toBe(true);
+    expect(checkAnchor(named, { path: "__proto__", side: "RIGHT", line: 12 }).ok).toBe(true);
+  });
+
   it("rejects a file with no changed lines", () => {
     expect(
       checkAnchor(runsByPath({ "b.py": "" }), { path: "b.py", side: "RIGHT", line: 1 }),

@@ -22,7 +22,7 @@
 // its own gzip, kind `file`).
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile } from "node:fs/promises";
 import { dirname, relative } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -41,6 +41,7 @@ import {
 } from "./fsutil.js";
 import type { StepFn } from "./gzfile.js";
 import type { BundleCommand, BundleFile } from "./manifest.js";
+import type { PayloadCommand, SmallClass } from "./prfiles.js";
 
 /** The largest file a bundle carries as a record; a bigger one is archived as
  * its own gzip (so no record's JSON is a long synchronous span). */
@@ -49,16 +50,11 @@ export const BUNDLE_RECORD_MAX_BYTES = 1024 * 1024;
 export interface BundleSource {
   /** Absolute live path. */
   path: string;
-  cls: string;
+  /** The inventory's class; `ledger` for the snapshot of the PR's ledger. */
+  cls: SmallClass | "ledger";
   identity: FileIdentity;
   snapshot?: boolean;
-  command?: {
-    id: string;
-    kind: string;
-    round_no: number | null;
-    status: string;
-    payload_sha256: string;
-  };
+  command?: PayloadCommand;
 }
 
 /** One record as it sits in the bundle. */
@@ -82,14 +78,18 @@ export type WriteBundleResult =
       bytes: number;
       gzBytes: number;
       files: BundleFile[];
-      /** Sources whose bytes did not match their identity when read (they
-       * changed under us): left out, kept live, picked up next pass. */
+      /** Sources gone when read, or whose length no longer matched the
+       * identity listed (they changed under us): left out, kept live, picked
+       * up next pass. A same-length rewrite is not caught here — the identity
+       * re-check before each unlink keeps that source live. */
       skipped: string[];
     }
   | { kind: "verify_failed"; detail: string }
   | { kind: "empty"; skipped: string[] };
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true });
+// `ignoreBOM` keeps a leading byte-order mark in the text, so the record's
+// content re-encodes to exactly the bytes its length and sha256 were taken of.
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** The bytes as a record encodes them. */
 function encode(buf: Buffer): { enc: "utf8" | "base64"; content: string } {
@@ -152,7 +152,8 @@ export async function writeBundle(
             payload_sha256_ok: s.command.payload_sha256 === sha256,
           }
         : undefined;
-      const record: BundleRecord = {
+      // What the record and the manifest's entry both say of the source.
+      const facts = {
         path: rel,
         bytes: buf.length,
         mtime_ms: s.identity.mtimeMs,
@@ -161,6 +162,7 @@ export async function writeBundle(
         ...(s.snapshot ? { snapshot: true as const } : {}),
         ...(command ? { session_command: command } : {}),
       };
+      const record: BundleRecord = { ...facts };
       const twin = firstBySha.get(sha256);
       if (twin !== undefined) record.same_as = twin;
       else {
@@ -169,20 +171,12 @@ export async function writeBundle(
       }
       shaOf.set(rel, sha256);
       bytes += buf.length;
-      files.push({
-        path: rel,
-        bytes: buf.length,
-        mtime_ms: s.identity.mtimeMs,
-        dev: s.identity.dev,
-        ino: s.identity.ino,
-        sha256,
-        class: s.cls,
-        ...(s.snapshot ? { snapshot: true as const } : {}),
-        ...(command ? { session_command: command } : {}),
-      });
+      files.push({ ...facts, dev: s.identity.dev, ino: s.identity.ino });
       yield `${JSON.stringify(record)}\n`;
     }
   }
+  // The PR's archive dir may not exist yet (a pass with no transcript).
+  await mkdir(dirname(dest), { recursive: true });
   await pipeline(
     Readable.from(lines()),
     new RateLimit(opts.bytesPerS, opts.signal),

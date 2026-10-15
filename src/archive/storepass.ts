@@ -44,6 +44,7 @@ import {
   indexEntries,
   manifestText,
   parseManifestText,
+  placedArchive,
   type DuplicateEntry,
   type FileEntry,
   type Manifest,
@@ -75,6 +76,9 @@ export interface StorePassDeps {
    * archiver folds it into `max_sync_span_ms`). */
   meter?: SpanMeter;
   step?: StepFn;
+  /** With nothing to move, still open the manifest and stamp the removals a
+   * crash left unstamped (`settleStore`) — the archiver asks once per start. */
+  settle?: boolean;
 }
 
 /** One live file a store pass archives. */
@@ -183,6 +187,18 @@ export async function archiveFileSize(dir: string, rel: string): Promise<number 
   } catch {
     return null;
   }
+}
+
+/** A pass with nothing to move: when `deps.settle` asks, the manifest is
+ * opened and every entry whose source is gone stamped (a crash between the
+ * last unlink and its stamp leaves one, and no later pass may come). Returns
+ * the pass's result: `none`, or `held` when the manifest cannot be read. */
+export async function settleStore(deps: StorePassDeps): Promise<StorePassResult> {
+  if (!deps.settle) return emptyStoreResult("none");
+  const writer = await StoreWriter.open(deps);
+  if (!writer) return emptyStoreResult("held", "manifest_unreadable");
+  await writer.finish(new Set(), []);
+  return emptyStoreResult("none");
 }
 
 /** The stops an unlink obeys, out of the pass's `stopReason`: the archiver
@@ -331,9 +347,10 @@ export class StoreWriter {
 
   private absorb(entries: readonly ManifestEntry[]): void {
     indexEntries(this.index, entries, this.total);
-    for (const e of entries)
-      if (e.kind === "transcript" || e.kind === "file" || e.kind === "bundle")
-        this.refs.add(e.archive);
+    for (const e of entries) {
+      const a = placedArchive(e);
+      if (a !== null) this.refs.add(a);
+    }
     this.total += entries.length;
   }
 
@@ -538,21 +555,31 @@ export class StoreWriter {
         incomplete = true;
         continue;
       }
-      await this.append(
-        entryOf(out.dest, {
-          ...toFields(f.identity),
-          sha256: out.ok.sha256,
-          gz_bytes: out.ok.gzBytes,
-        }),
-      );
-      await this.deps.step?.("manifest_appended", { store: this.deps.subject, source: f.source });
-      this.result.archived += 1;
-      this.result.bytesIn += out.ok.bytes;
-      this.result.bytesOut += out.ok.gzBytes;
-      unlinks.push({ path: f.path, source: f.source, identity: toFields(f.identity) });
-      await yieldToLoop();
+      unlinks.push(await this.recordArchived(f, entryOf, out));
     }
     return { unlinks, stop, incomplete };
+  }
+
+  /** A file `archiveOne` placed: its entry appended (durable), the pass's
+   * counts updated; returns the unlink the caller may make. */
+  async recordArchived(
+    f: StoreFile,
+    entryOf: (archive: string, p: Packed) => FileEntry,
+    out: { ok: ArchiveFileOk; dest: string },
+  ): Promise<StoreUnlink> {
+    await this.append(
+      entryOf(out.dest, {
+        ...toFields(f.identity),
+        sha256: out.ok.sha256,
+        gz_bytes: out.ok.gzBytes,
+      }),
+    );
+    await this.deps.step?.("manifest_appended", { store: this.deps.subject, source: f.source });
+    this.result.archived += 1;
+    this.result.bytesIn += out.ok.bytes;
+    this.result.bytesOut += out.ok.gzBytes;
+    await yieldToLoop();
+    return { path: f.path, source: f.source, identity: toFields(f.identity) };
   }
 
   /**

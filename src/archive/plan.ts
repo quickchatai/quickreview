@@ -27,8 +27,13 @@ import { performance } from "node:perf_hooks";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "../yieldloop.js";
 import { prEligibility, type IneligibleReason } from "./eligibility.js";
-import { rowAge } from "./dbmove.js";
-import { ARCHIVE_EVENT_KINDS } from "./kinds.js";
+import {
+  DELIVERIES_TABLE,
+  EVENTS_TABLE,
+  classifyRow,
+  readWatermark,
+  type MoveTable,
+} from "./dbmove.js";
 import { measureOverseer } from "./overseer.js";
 import { measurePiGlobal } from "./piglobal.js";
 import type { StoreTally } from "./storepass.js";
@@ -125,11 +130,12 @@ export interface ArchivePlan {
   orphans: string[];
   /** Over the candidates. */
   artifacts: Record<ArtifactClass, Tally>;
-  /** `state/ledgers/pr-<n>.md` of the candidates: SNAPSHOTTED into the
-   * bundle, the live file kept (the reopen continuity). */
+  /** `state/ledgers/pr-<n>.md` of the candidates and the empty PRs (the
+   * passes that will run): SNAPSHOTTED into the bundle, the live file kept
+   * (the reopen continuity). */
   ledger_snapshots: Tally;
-  /** `archive/pr-<n>/session.jsonl` of the candidates: the legacy copies
-   * checked as duplicates of an archived transcript (§7.5). */
+  /** `archive/pr-<n>/session.jsonl` of the candidates and the empty PRs: the
+   * legacy copies checked as duplicates of an archived transcript (§7.5). */
   legacy_copies: Tally;
   /** Top-level `state/` entries named for an eligible PR that no §7.2 class
    * claims: KEPT live (never moved on a guess) and reported here, with the
@@ -164,7 +170,8 @@ export interface PlanMemo {
 interface CountMemo {
   watermark: number;
   cutoff: string;
-  /** Every row with id ≤ this was examined and older than `cutoff`. */
+  /** Every row with id ≤ this was examined and is older than `cutoff`, or
+   * undatable (passed over, as the mover passes over it). */
   settledTo: number;
   rows: number;
   byKind: Record<string, number>;
@@ -261,47 +268,50 @@ async function deviceOf(path: string): Promise<number | null> {
 }
 
 /**
- * Count the rows of `table` past the watermark that are older than `cutoff`
- * (and pass `keep`), in rowid windows; stop at the first window holding a
- * younger row. `memo` resumes after the prefix a previous count settled.
+ * Count the rows of the mover's `table` past its watermark that the mover
+ * would move at `cutoff` (`classifyRow`, the mover's own rule), in rowid
+ * windows; stop after the first window holding a younger row. `memo` resumes
+ * after the prefix a previous count settled.
  */
 async function countRows(
   store: StateStore,
   meter: SpanMeter,
+  table: MoveTable,
   opts: {
+    /** The window read: `(rowid, timestamp, kind or NULL)` after a rowid. A
+     * literal at the call site, so the archive-events fence reads it. */
     sql: string;
-    watermark: number;
     cutoff: string;
-    kinds: boolean;
     memo: CountMemo | undefined;
-    /** The row holding the table's highest rowid never moves (deliveries). */
-    keepNewest?: boolean;
-    maxSql?: string;
     signal?: AbortSignal;
   },
 ): Promise<{ backlog: RowBacklog; memo: CountMemo }> {
+  const kinds = table.kindCol !== null;
+  const watermark = readWatermark(store, table.mark);
   const cutoffMs = Date.parse(opts.cutoff);
   const reuse =
     opts.memo &&
-    opts.memo.watermark === opts.watermark &&
+    opts.memo.watermark === watermark &&
     Date.parse(opts.memo.cutoff) <= cutoffMs &&
-    opts.memo.settledTo >= opts.watermark;
-  let from = reuse ? opts.memo!.settledTo : opts.watermark;
+    opts.memo.settledTo >= watermark;
+  let from = reuse ? opts.memo!.settledTo : watermark;
   let rows = reuse ? opts.memo!.rows : 0;
   const byKind: Record<string, number> = reuse ? { ...opts.memo!.byKind } : {};
   let settled: CountMemo = {
-    watermark: opts.watermark,
+    watermark,
     cutoff: opts.cutoff,
     settledTo: from,
     rows,
     byKind: { ...byKind },
   };
   const stmt = store.db.prepare(opts.sql).raw(true);
-  const newest = opts.keepNewest
+  const newest = table.keepNewest
     ? meter.measure(
         () =>
-          (store.db.prepare(opts.maxSql!).get() as { m: number | null } | undefined)?.m ??
-          Number.POSITIVE_INFINITY,
+          (
+            store.db.prepare(`SELECT MAX(rowid) AS m FROM ${table.table}`).get() as
+              { m: number | null } | undefined
+          )?.m ?? Number.POSITIVE_INFINITY,
       )
     : Number.POSITIVE_INFINITY;
   let examined = 0;
@@ -313,27 +323,23 @@ async function countRows(
       if (batch.length === 0) return true;
       windows += 1;
       examined += batch.length;
-      // The mover's own rule (dbmove.ts): old rows of an archivable kind count
-      // wherever they sit in the window; the count stops after the first window
-      // holding a row younger than the cut-off (or, with `keepNewest`, the
-      // table's highest rowid, which never moves); an undatable row is passed
-      // over — never archived, never read as old, never a stop.
+      // The mover's own rule (`classifyRow`): old rows of an archivable kind
+      // count wherever they sit in the window; the count stops after the first
+      // window holding a row younger than the cut-off (or, with `keepNewest`,
+      // the table's highest rowid, which never moves); an undatable row is
+      // passed over — never archived, never read as old, never a stop.
       let allOld = true;
-      for (const [id, ts, kind] of batch) {
-        const age = id >= newest ? "young" : rowAge(ts, cutoffMs);
-        if (age === "young") {
-          allOld = false;
-          continue;
-        }
-        if (age === "undatable") continue;
-        if (opts.kinds && !(kind !== null && ARCHIVE_EVENT_KINDS.has(kind))) continue;
+      for (const [rowid, ts, kind] of batch) {
+        const what = classifyRow({ rowid, newest, ts, cutoffMs, byKind: kinds, kind });
+        if (what === "young") allOld = false;
+        if (what !== "move") continue;
         rows += 1;
-        if (opts.kinds) byKind[kind!] = (byKind[kind!] ?? 0) + 1;
+        if (kinds) byKind[kind!] = (byKind[kind!] ?? 0) + 1;
       }
       from = batch[batch.length - 1]![0];
       if (!allOld) return true;
       settled = {
-        watermark: opts.watermark,
+        watermark,
         cutoff: opts.cutoff,
         settledTo: from,
         rows,
@@ -347,23 +353,14 @@ async function countRows(
   return {
     backlog: {
       rows,
-      ...(opts.kinds ? { by_kind: byKind } : {}),
+      ...(kinds ? { by_kind: byKind } : {}),
       cutoff: opts.cutoff,
-      from_id: opts.watermark,
+      from_id: watermark,
       examined,
       windows,
     },
     memo: settled,
   };
-}
-
-/** A mover watermark from `archive_marks` (0 when absent or unreadable as a
- * number). */
-function watermark(store: StateStore, name: string): number {
-  const row = store.db.prepare("SELECT value FROM archive_marks WHERE name = ?").get(name) as
-    { value: unknown } | undefined;
-  const n = Number(row?.value ?? 0);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
 /** Compute the plan. Reads only; throws when a live directory cannot be
@@ -534,10 +531,20 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
       add(unclassified, o.size);
       if (unclassified.first.length < 20) unclassified.first.push(relative(root, o.path));
     }
+    const tallyKept = (): void => {
+      ledgerSnapshots.files += ledger.files;
+      ledgerSnapshots.bytes += ledger.bytes;
+      legacyCopies.files += legacy.files;
+      legacyCopies.bytes += legacy.bytes;
+    };
     if (planned.files === 0) {
-      // Archived already and nothing live left: not backlog.
+      // Archived already and nothing live left: not backlog. An empty PR's
+      // pass still snapshots its ledger and checks its legacy copy.
       if (archivedRows.get(c.pr) === "archived") counts.archived += 1;
-      else empty.push(c.pr);
+      else {
+        empty.push(c.pr);
+        tallyKept();
+      }
       continue;
     }
     candidates.push(planned);
@@ -548,31 +555,22 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
         artifacts[cls].bytes += t.bytes;
       }
     }
-    ledgerSnapshots.files += ledger.files;
-    ledgerSnapshots.bytes += ledger.bytes;
-    legacyCopies.files += legacy.files;
-    legacyCopies.bytes += legacy.bytes;
+    tallyKept();
   }
   held.sort((a, b) => a.pr - b.pr);
 
   // ---- rows: the reader-less events, and the webhook deliveries -------------
-  const events = await countRows(store, meter, {
+  const events = await countRows(store, meter, EVENTS_TABLE, {
     sql: "SELECT id, ts, kind FROM events WHERE id > ? ORDER BY id LIMIT ?",
-    watermark: watermark(store, "events.last_id"),
     cutoff: eventsCutoff,
-    kinds: true,
     memo: deps.memo?.events,
-    signal,
+    ...(signal ? { signal } : {}),
   });
-  const deliveries = await countRows(store, meter, {
+  const deliveries = await countRows(store, meter, DELIVERIES_TABLE, {
     sql: "SELECT rowid, received_at, NULL FROM deliveries WHERE rowid > ? ORDER BY rowid LIMIT ?",
-    watermark: watermark(store, "deliveries.last_rowid"),
     cutoff: filesCutoff,
-    kinds: false,
-    keepNewest: true,
-    maxSql: "SELECT MAX(rowid) AS m FROM deliveries",
     memo: deps.memo?.deliveries,
-    signal,
+    ...(signal ? { signal } : {}),
   });
   if (deps.memo) {
     deps.memo.events = events.memo;
@@ -590,12 +588,14 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
       sessionsRoot: deps.sessionsRoot,
       ...(deps.overseerBornAt ? { bornAt: deps.overseerBornAt } : {}),
       ...(signal ? { signal } : {}),
+      meter,
     }),
     pi_global: deps.piGlobalDir
       ? await measurePiGlobal({
           storeDir: deps.piGlobalDir,
           now: deps.now,
           ...(signal ? { signal } : {}),
+          meter,
         })
       : null,
   };

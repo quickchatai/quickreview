@@ -24,6 +24,7 @@
 // Pure over the store and the facts the caller gathered outside it (tmux,
 // births, the inject listing): synchronous, a handful of indexed point reads.
 import type { StateStore } from "../state.js";
+import { TERMINAL_COMMAND_STATUSES } from "./prfiles.js";
 
 export const INELIGIBLE_REASONS = [
   "unknown_pr",
@@ -72,7 +73,9 @@ export interface Eligibility {
 }
 
 const DAY_MS = 86_400_000;
-const TERMINAL_COMMAND = new Set(["acked", "cancelled", "failed"]);
+/** A wake whose command reached one of these is stale — the same terminal
+ * statuses whose payloads the inventory lets leave. */
+const TERMINAL_COMMAND: ReadonlySet<string> = new Set(TERMINAL_COMMAND_STATUSES);
 
 /** When the PR closed, as far as the store says: the newest `pr_closed`
  * event, else the registry row's `updated_at`. */

@@ -347,6 +347,13 @@ export class Archiver {
   /** The archive databases — opened lazily, only in mode `on`. */
   private adb: ArchiveDb | null = null;
   private mover: DbMover | null = null;
+  /** The disk reason that stopped this tick's DB phase between batches. */
+  private dbRoomHold: "disk_low" | "disk_unknown" | null = null;
+  /** The stores whose manifest a pass has settled since this start (a crash's
+   * unstamped removals are stamped once, even with nothing to move). */
+  private readonly storesSettled = new Set<"overseer" | "pi_global">();
+  /** The disk reason a month's gzip found no room under this tick. */
+  private sealRoomHold: "disk_low" | "disk_unknown" | null = null;
   private sealsRecovered = false;
   private db: ArchiveDbStatus | null = null;
   /** When each incident's anomaly was last raised (key → ms). */
@@ -483,11 +490,16 @@ export class Archiver {
     return this.plan;
   }
 
-  private hold(reason: ArchiveHoldReason, until: string | null = null): ArchiveTick {
+  /** End the tick held. `planned` says whether this tick computed a plan
+   * before the hold came up. */
+  private hold(
+    reason: ArchiveHoldReason,
+    opts: { until?: string | null; planned?: boolean } = {},
+  ): ArchiveTick {
     this.state = "held";
     this.heldReason = reason;
-    this.heldUntil = until;
-    return { state: "held", held_reason: reason, planned: false };
+    this.heldUntil = opts.until ?? null;
+    return { state: "held", held_reason: reason, planned: opts.planned ?? false };
   }
 
   private async runTick(): Promise<ArchiveTick> {
@@ -503,7 +515,8 @@ export class Archiver {
       const healthy = this.deps.firstHealthyReconcileAt();
       if (!healthy) return this.hold("awaiting_reconcile");
       const opens = healthy.getTime() + this.policy.startDelayMs;
-      if (at.getTime() < opens) return this.hold("start_delay", new Date(opens).toISOString());
+      if (at.getTime() < opens)
+        return this.hold("start_delay", { until: new Date(opens).toISOString() });
       const on = this.policy.mode === "on";
       // Mode on: crash recovery (once per start), then the restores of reopened
       // PRs — before the tick's holds, because a drain never holds a restore
@@ -528,8 +541,9 @@ export class Archiver {
         this.state = "running";
         this.runningSince ??= at.toISOString();
         failure = await this.dbPhase();
-        // A hold that came up during it (the mover stops on one) ends the tick.
-        const midway = failure === null ? this.loadReason() : null;
+        // A hold that came up during it (the mover stops on one, the disk
+        // included) ends the tick.
+        const midway = failure === null ? (this.loadReason() ?? this.dbRoomHold) : null;
         if (midway) return this.hold(midway);
         if (this.mutex.priorityWaiting()) return this.yieldToRestore(at);
       }
@@ -550,7 +564,7 @@ export class Archiver {
         this.filesSincePlan = { prs: 0, bytes: 0 };
         this.doneSincePlan = new Set();
         this.fileHeld.clear();
-        this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, plan.max_sync_span_ms);
+        this.foldSpan(plan.max_sync_span_ms);
         this.dbCache = null;
         planned = true;
         this.log(
@@ -565,12 +579,12 @@ export class Archiver {
         if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
         const files = await this.filePhase(at);
         if (files.failure) failure = files.failure;
-        else if (files.hold) return this.hold(files.hold);
+        else if (files.hold) return this.hold(files.hold, { planned });
         if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
         // The stores that belong to no PR: after the PRs (§10).
         if (failure === null) {
           const hold = await this.storesPhase(at);
-          if (hold) return this.hold(hold);
+          if (hold) return this.hold(hold, { planned });
           if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
         }
       }
@@ -579,10 +593,18 @@ export class Archiver {
       // the tick budget is spent.
       if (on && failure === null) {
         const before = this.loadReason() ?? (await this.checkDisk());
-        if (before) return this.hold(before);
+        if (before) return this.hold(before, { planned });
         if (this.now().getTime() - at.getTime() >= this.policy.tickBudgetMs)
           this.log("archive: sealing waits for the next tick — the tick budget is spent");
-        else failure = await this.sealPhase();
+        else {
+          failure = await this.sealPhase();
+          // No room for a month's gzip: a mount short of the headroom (or a
+          // failed reading) holds the tick; one month too large for the
+          // archive mount only waits, as one large PR file does.
+          const room = failure === null ? this.sealRoomHold : null;
+          if (room && !(room === "disk_low" && this.headroomHolds()))
+            return this.hold(room, { planned });
+        }
       }
       if (failure !== null) {
         this.state = "failed";
@@ -805,17 +827,21 @@ export class Archiver {
     return last === undefined || this.now().getTime() - last >= RESTORE_RETRY_MS;
   }
 
+  /** The daemon's load reading; a reader that throws is UNKNOWN (undefined),
+   * never a hold by itself. */
+  private readLoad(): DaemonLoadStatus | undefined {
+    try {
+      return this.deps.load?.();
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The load holds a tick's restores obey: every one but the drain (§10). */
   private restoreLoadHold(): ArchiveHoldReason | null {
-    let load: DaemonLoadStatus | undefined;
-    try {
-      load = this.deps.load?.();
-    } catch {
-      load = undefined;
-    }
     return loadHold({
       draining: false,
-      load,
+      load: this.readLoad(),
       starvedRatio: this.deps.starvedRatio ?? DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO,
     });
   }
@@ -1197,7 +1223,7 @@ export class Archiver {
       }
       await yieldToLoop();
     }
-    this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, Math.round(meter.max * 10) / 10);
+    this.foldSpan(meter.max);
     this.files = run;
     if (run.prs_started > 0) this.dbCache = null;
     if (run.removed + run.transcripts + run.state_files + run.duplicates_removed > 0)
@@ -1238,12 +1264,7 @@ export class Archiver {
   /** The rate the file work runs at: an UNKNOWN load reading runs at the
    * minimum — one PR, half the MB/s (§10). */
   private fileRate(): { maxPrs: number; bytesPerS: number } {
-    let load: DaemonLoadStatus | undefined;
-    try {
-      load = this.deps.load?.();
-    } catch {
-      load = undefined;
-    }
+    const load = this.readLoad();
     const unknown = !load || load.event_loop?.state !== "ok" || load.cpu?.state !== "measured";
     return unknown
       ? { maxPrs: 1, bytesPerS: Math.max(1, Math.floor(this.policy.maxBytesPerS / 2)) }
@@ -1283,8 +1304,7 @@ export class Archiver {
       });
     const meter = new SpanMeter();
     const fold = (): void => {
-      if (meter.max > 0)
-        this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, Math.round(meter.max * 10) / 10);
+      if (meter.max > 0) this.foldSpan(meter.max);
     };
     for (const p of passes) {
       const stop = this.fileStop(at);
@@ -1305,6 +1325,7 @@ export class Archiver {
         // Every synchronous span over the store's manifest (its shards'
         // parses, the index, each write's copy, check and stringify).
         meter,
+        settle: !this.storesSettled.has(p.key),
         ...(this.deps.step ? { step: this.deps.step } : {}),
       };
       let r: StorePassResult;
@@ -1315,6 +1336,7 @@ export class Archiver {
         this.log(`archive: the ${p.key} store's pass failed`, err);
         r = emptyStoreResult("failed", (err as Error).message);
       }
+      if (r.outcome !== "held" && r.outcome !== "failed") this.storesSettled.add(p.key);
       if (r.duplicatesRemoved > 0)
         bumpMark(this.deps.store, "duplicates.removed", r.duplicatesRemoved);
       this.stores[p.key] = {
@@ -1381,15 +1403,9 @@ export class Archiver {
 
   /** The load half of the holds, as it reads now. */
   private loadReason(): ArchiveHoldReason | null {
-    let load: DaemonLoadStatus | undefined;
-    try {
-      load = this.deps.load?.();
-    } catch {
-      load = undefined;
-    }
     return loadHold({
       draining: this.deps.store.drainState().draining,
-      load,
+      load: this.readLoad(),
       starvedRatio: this.deps.starvedRatio ?? DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO,
     });
   }
@@ -1401,16 +1417,28 @@ export class Archiver {
     return this.loadReason();
   }
 
+  /** Is incident `key` to be raised now — its first time, or ANOMALY_REPEAT_MS
+   * after the last? Admitting it starts that window. */
+  private admitIncident(key: string): boolean {
+    const nowMs = this.now().getTime();
+    const last = this.raised.get(key);
+    if (last !== undefined && nowMs - last < ANOMALY_REPEAT_MS) return false;
+    this.raised.set(key, nowMs);
+    return true;
+  }
+
+  /** Fold a measured synchronous span (ms) into the longest seen, to 0.1 ms. */
+  private foldSpan(ms: number): void {
+    this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, Math.round(ms * 10) / 10);
+  }
+
   /** The quiet `archive_verify_failed` anomaly, once per incident (`key`) and
    * again only after ANOMALY_REPEAT_MS; a repeat inside it is logged only. */
   private raiseQuiet(key: string, detail: string): void {
-    const nowMs = this.now().getTime();
-    const last = this.raised.get(key);
-    if (last !== undefined && nowMs - last < ANOMALY_REPEAT_MS) {
+    if (!this.admitIncident(key)) {
       this.log(`archive: ${detail} (archive_verify_failed already raised for ${key})`);
       return;
     }
-    this.raised.set(key, nowMs);
     this.deps.store.logAnomaly("archive_verify_failed", null, null, detail);
     this.dbCache = null;
   }
@@ -1423,6 +1451,7 @@ export class Archiver {
    */
   private async dbPhase(): Promise<string | null> {
     const startedAt = this.now().toISOString();
+    this.dbRoomHold = null;
     let adb: ArchiveDb;
     try {
       adb = await this.archiveDb();
@@ -1457,6 +1486,7 @@ export class Archiver {
       wallBudgetMs: this.policy.tickBudgetMs,
       signal: this.abort.signal,
       hold: () => this.batchHold(),
+      room: async () => (this.dbRoomHold = await this.checkDisk()),
       ...(this.deps.sleep ? { sleep: this.deps.sleep } : {}),
       ...(this.deps.clock ? { clock: this.deps.clock } : {}),
       log: this.log,
@@ -1483,7 +1513,7 @@ export class Archiver {
       months_open: counts.open,
       months_sealed: counts.sealed,
     };
-    this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, r.max_span_ms);
+    this.foldSpan(r.max_span_ms);
     this.movedSincePlan.events += r.events.moved;
     this.movedSincePlan.deliveries += r.deliveries.moved;
     if (r.events.moved + r.deliveries.moved > 0) this.dbCache = null;
@@ -1531,6 +1561,7 @@ export class Archiver {
    * or a check refuses is reported and retried later; only an unexpected
    * failure fails the tick. */
   private async sealPhase(): Promise<string | null> {
+    this.sealRoomHold = null;
     const adb = this.adb;
     if (!adb) return null;
     let results: SealResult[];
@@ -1545,6 +1576,7 @@ export class Archiver {
         maxBytesPerS: this.policy.maxBytesPerS,
         signal: this.abort.signal,
         hold: () => this.batchHold(),
+        roomFor: async (bytes) => (this.sealRoomHold = await this.checkDisk(bytes)),
         log: this.log,
       });
     } catch (err) {
@@ -1565,7 +1597,10 @@ export class Archiver {
         });
         continue;
       }
-      this.log(`archive: ${r.file} not sealed (${r.outcome}): ${r.detail ?? ""}`);
+      const line = `archive: ${r.file} not sealed (${r.outcome}): ${r.detail ?? ""}`;
+      // A month waiting for room says so once, not every tick.
+      if (r.outcome === "held") this.logTickLine(`seal:${r.file}`, line, false, line);
+      else this.log(line);
       if (SEAL_PROBLEMS.has(r.outcome))
         this.raiseQuiet(
           `${r.outcome}:${r.file}`,
@@ -1667,13 +1702,10 @@ export class Archiver {
   /** A WAKE kind, once per incident (`key`) and again only after
    * ANOMALY_REPEAT_MS. */
   private raiseWake(kind: string, pr: number | null, key: string, detail: string): void {
-    const nowMs = this.now().getTime();
-    const last = this.raised.get(key);
-    if (last !== undefined && nowMs - last < ANOMALY_REPEAT_MS) {
+    if (!this.admitIncident(key)) {
       this.log(`archive: ${detail} (${kind} already raised for ${key})`);
       return;
     }
-    this.raised.set(key, nowMs);
     try {
       this.deps.store.logAnomaly(kind, pr, null, detail);
     } catch (err) {

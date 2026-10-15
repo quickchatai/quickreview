@@ -1,8 +1,9 @@
 // The archiver's file primitives (docs/archiving.md §6, §9.3, §9.5):
-// every one async and off the event loop's thread — fsync through
-// `fs.promises` (the libuv threadpool), streamed hashing and gzip on
-// node:zlib's async streams, a token-bucket rate cap, and the atomic
-// tmp + fsync + rename + directory-fsync write the manifests use.
+// every one async — file I/O and fsync through `fs.promises` (the libuv
+// threadpool), gzip on node:zlib's async streams (also the threadpool), a
+// token-bucket rate cap, and the atomic tmp + fsync + rename +
+// directory-fsync write the manifests use. Hashing runs on the event loop's
+// thread, one stream chunk at a time.
 //
 // A temporary name always ends in `.partial` (never `.jsonl`), so crash
 // recovery can delete strays by suffix and neither the receipt scan nor

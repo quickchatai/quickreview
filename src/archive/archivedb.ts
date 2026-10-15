@@ -40,30 +40,42 @@ export const DB_MANIFEST = "manifest.json";
 export const CHECKPOINT_WAL_BYTES = 16 * 1024 * 1024;
 
 const DAY_MS = 86_400_000;
-const FILE_RE = /^state-(\d{4}-\d{2})(?:-(\d+))?\.sqlite$/;
+/** A month file's name: `state-YYYY-MM.sqlite`, or `state-YYYY-MM-<seq>.sqlite`
+ * (groups: the month, the seq when written). `monthFile` writes it. */
+const FILE_NAME = String.raw`state-(\d{4}-\d{2})(?:-(\d+))?\.sqlite`;
+const FILE_RE = new RegExp(`^${FILE_NAME}$`);
 /** Every name a month file leaves on disk: the database, its WAL and shared
  * memory, its sealed gzip and a gzip in progress. A new file takes a seq none
  * of these has used. */
-const ANY_FILE_RE = /^state-(\d{4}-\d{2})(?:-(\d+))?\.sqlite(?:-wal|-shm|\.gz|\.gz\.partial)?$/;
-const GZ_RE = /^(state-\d{4}-\d{2}(?:-\d+)?\.sqlite)\.gz$/;
+const ANY_FILE_RE = new RegExp(`^${FILE_NAME}(?:-wal|-shm|\\.gz|\\.gz\\.partial)?$`);
+/** A sealed gzip (group 1: the database file it seals). */
+const GZ_RE = new RegExp(`^(${FILE_NAME})\\.gz$`);
+
+/** The seq a name's match carries: written, else 1. */
+const seqOf = (m: RegExpExecArray): number => (m[2] ? Number(m[2]) : 1);
 
 /** `<root>/archive/db`. */
 export const archiveDbDir = (root: string): string => join(root, "archive", ARCHIVE_DB_DIR);
 
-/** The UTC month (`YYYY-MM`) of a timestamp; null when it cannot be dated. */
-export function monthOf(ts: unknown): string | null {
+/** A row timestamp in ms; null when it cannot be dated (not a string, or no
+ * date `Date.parse` reads). The one admission rule the mover, its rollup and
+ * the planner share. */
+export function tsMs(ts: unknown): number | null {
   if (typeof ts !== "string") return null;
   const t = Date.parse(ts);
-  if (!Number.isFinite(t)) return null;
-  return new Date(t).toISOString().slice(0, 7);
+  return Number.isFinite(t) ? t : null;
+}
+
+/** The UTC month (`YYYY-MM`) of a timestamp; null when it cannot be dated. */
+export function monthOf(ts: unknown): string | null {
+  const t = tsMs(ts);
+  return t === null ? null : new Date(t).toISOString().slice(0, 7);
 }
 
 /** The UTC day (`YYYY-MM-DD`) of a timestamp; null when it cannot be dated. */
 export function dayOf(ts: unknown): string | null {
-  if (typeof ts !== "string") return null;
-  const t = Date.parse(ts);
-  if (!Number.isFinite(t)) return null;
-  return new Date(t).toISOString().slice(0, 10);
+  const t = tsMs(ts);
+  return t === null ? null : new Date(t).toISOString().slice(0, 10);
 }
 
 /** The first instant AFTER a month (UTC), in ms. */
@@ -115,6 +127,9 @@ export class ManifestUnreadable extends Error {}
  * the rows its running totals count are somewhere a person must look. */
 export class ArchiveFileMissing extends Error {}
 
+/** A SQLite identifier, double-quoted (an embedded `"` doubled). */
+export const quoteIdent = (name: string): string => `"${name.replace(/"/g, '""')}"`;
+
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -144,6 +159,9 @@ export async function readDbManifest(dir: string): Promise<DbManifest> {
       typeof f.file !== "string" ||
       !FILE_RE.test(f.file) ||
       typeof f.month !== "string" ||
+      typeof f.seq !== "number" ||
+      !Number.isInteger(f.seq) ||
+      f.seq < 1 ||
       (f.state !== "open" && f.state !== "sealed")
     )
       throw new ManifestUnreadable(`archive/db/${DB_MANIFEST} has an unreadable file entry`);
@@ -269,7 +287,7 @@ export class ArchiveConn {
       const c = defs.get(name);
       if (!c) throw new Error(`archive db: the live ${table} has no column ${name}`);
       this.db.exec(
-        `ALTER TABLE ${table} ADD COLUMN "${c.name.replace(/"/g, '""')}"` +
+        `ALTER TABLE ${table} ADD COLUMN ${quoteIdent(c.name)}` +
           (c.type ? ` ${c.type}` : "") +
           (c.notnull ? " NOT NULL" : "") +
           (c.dflt_value !== null ? ` DEFAULT ${c.dflt_value}` : ""),
@@ -346,9 +364,10 @@ export class ArchiveDb {
    * manifest writes, and adopt any `state-*.sqlite` the manifest does not
    * list (a crash after a file's creation, before its entry was written). A
    * `.sqlite.gz` of a listed file that is still open is left for seal
-   * recovery. Throws `ManifestUnreadable` when the manifest cannot be read —
-   * or is absent, or does not list a `.sqlite.gz` on disk: a sealed month the
-   * manifest lost is unknown, never "no files". */
+   * recovery. Throws `ManifestUnreadable` when the manifest cannot be read,
+   * or does not list a `.sqlite.gz` on disk (an absent manifest beside one
+   * included): a sealed month the manifest lost is unknown, never "no files".
+   * An absent manifest with no gzip beside it is a fresh directory. */
   async open(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     const manifest = await readDbManifest(this.dir);
@@ -372,7 +391,7 @@ export class ArchiveDb {
       adopt.push({
         file: name,
         month: m[1]!,
-        seq: m[2] ? Number(m[2]) : 1,
+        seq: seqOf(m),
         state: "open",
         created_at: this.opts.now().toISOString(),
       });
@@ -453,7 +472,7 @@ export class ArchiveDb {
     let seq = ofMonth.reduce((n, f) => Math.max(n, f.seq), 0);
     for (const name of await readdir(this.dir)) {
       const x = ANY_FILE_RE.exec(name);
-      if (x && x[1] === month) seq = Math.max(seq, x[2] ? Number(x[2]) : 1);
+      if (x && x[1] === month) seq = Math.max(seq, seqOf(x));
     }
     seq += 1;
     const file = monthFile(month, seq);

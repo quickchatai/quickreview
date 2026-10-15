@@ -283,6 +283,9 @@ export class AnomalyWakePolicy {
         signal.detail,
       ].join("\n");
     this.deps.injectOverseer(message).catch((err) => {
+      // The wake never arrived, so it holds no dedup window: the next
+      // identical signal injects again (the row is written either way).
+      if (this.lastInject.get(key) === nowMs) this.lastInject.delete(key);
       this.log(`anomaly wake inject failed (${key}) — row is written, wake lost`, err);
     });
   }
@@ -319,7 +322,16 @@ export interface HeartbeatDeps {
   clearTimer?: (handle: unknown) => void;
   log?: (msg: string, extra?: unknown) => void;
   onError?: (err: unknown) => void;
+  /** The waits before each RETRY of a failed inject on the same day — its
+   * length is the retry count. Defaults to `HEARTBEAT_RETRY_BACKOFF_MS`. */
+  retryBackoffMs?: readonly number[];
 }
+
+/** A failed heartbeat inject is retried after these waits, the same day's
+ * check-in each time; past the last one the next day's slot is armed. */
+export const HEARTBEAT_RETRY_BACKOFF_MS: readonly number[] = Object.freeze([
+  60_000, 300_000, 900_000,
+]);
 
 export interface HeartbeatTimer {
   nextFire(): Date;
@@ -345,41 +357,68 @@ export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
   const onError = deps.onError ?? ((err: unknown) => log("heartbeat inject failed", err));
   const { hour, minute } = parseHHMM(deps.timeHHMM);
 
+  const backoff = deps.retryBackoffMs ?? HEARTBEAT_RETRY_BACKOFF_MS;
+
   let stopped = false;
   let handle: unknown = null;
   let target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
+  /** The day a failed inject is being retried for, and the retries spent. */
+  let retry: { date: string; attempt: number } | null = null;
 
-  const fire = async (date: string): Promise<void> => {
+  /** Inject one day's check-in. True when it is delivered (or was already). */
+  const fire = async (date: string): Promise<boolean> => {
     const last = deps.lastFired();
-    if (last === date) return; // already fired this local day (restart, race)
+    if (last === date) return true; // already fired this local day (restart, race)
     try {
       await deps.injectOverseer(renderHeartbeatMessage(date, last));
       deps.recordFired(date);
       log(`heartbeat injected for ${date}`);
+      return true;
     } catch (err) {
       onError(err);
+      return false;
     }
   };
 
   const arm = (): void => {
     if (stopped) return;
+    if (handle !== null) clearT(handle);
     const delay = Math.max(0, target.getTime() - now().getTime());
     handle = setT(tick, Math.min(delay, MAX_TIMEOUT_MS));
   };
 
+  /** After a fire: a failed one is retried the same day while retries
+   * remain, else the next day's slot is armed. */
+  const settle = (date: string, delivered: boolean): void => {
+    if (stopped) return;
+    const attempt = retry?.date === date ? retry.attempt : 0;
+    if (!delivered && attempt < backoff.length) {
+      retry = { date, attempt: attempt + 1 };
+      target = new Date(now().getTime() + backoff[attempt]!);
+      log(`heartbeat for ${date} will be retried at ${target.toISOString()}`);
+    } else {
+      if (!delivered) log(`heartbeat for ${date} not delivered after ${attempt} retries`);
+      retry = null;
+      target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
+    }
+    arm();
+  };
+
   const tick = (): void => {
+    handle = null;
     if (stopped) return;
     if (now().getTime() < target.getTime()) {
       arm(); // chunked wait — not yet due
       return;
     }
-    const date = zoneDateString(target, deps.timeZone);
-    void fire(date).finally(() => {
-      if (!stopped) {
-        target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
-        arm();
-      }
-    });
+    const date = retry?.date ?? zoneDateString(target, deps.timeZone);
+    void fire(date).then(
+      (delivered) => settle(date, delivered),
+      (err: unknown) => {
+        onError(err);
+        settle(date, false);
+      },
+    );
   };
 
   // Boot catch-up: if today's slot already passed and today never fired, fire
@@ -400,7 +439,7 @@ export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
       const date = zoneDateString(slot, deps.timeZone);
       if (deps.lastFired() !== date) {
         log(`heartbeat boot catch-up for ${date} (daemon was down at ${deps.timeHHMM})`);
-        await fire(date);
+        if (!(await fire(date))) settle(date, false);
       }
     }
   })().catch(onError);

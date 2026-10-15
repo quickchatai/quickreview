@@ -210,6 +210,13 @@ export async function fileDigestWithPrefix(
   return { bytes: tap.bytes, sha256: tap.digest(), prefixSha256: prefix?.digest() ?? null };
 }
 
+/** Is `err` zlib refusing the stream (a `Z_*` code: bad header, bad data, a
+ * truncated end) — as opposed to the file not being readable? */
+function isZlibError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" && code.startsWith("Z_");
+}
+
 /** What an orphan gzip turned out to be (`adoptOrphan`). */
 export type OrphanResult =
   /** It decompresses to exactly the live source's bytes: adopted as is. */
@@ -218,7 +225,7 @@ export type OrphanResult =
    * source, verified before it was placed. Left in place for the caller to
    * keep under its own entry (or remove as a proven duplicate). */
   | { kind: "stale"; bytes: number; sha256: string; gzBytes: number; mtimeMs: number }
-  /** It does not decompress at all: removed (nothing readable is lost). */
+  /** zlib refuses its bytes: removed (nothing readable is lost). */
   | { kind: "corrupt"; detail: string }
   /** The source changed while it was read: nothing decided, left as found. */
   | { kind: "changed"; detail: string };
@@ -230,8 +237,9 @@ export type OrphanResult =
  * adopted (the caller writes the entry, nothing is recompressed). A gzip that
  * decompresses cleanly to OTHER bytes is never deleted here: it was verified
  * against its source before its rename, so it holds an earlier version of
- * that source that may exist nowhere else (`stale`). Only one that does not
- * decompress at all is removed, for the caller to redo.
+ * that source that may exist nowhere else (`stale`). Only one zlib refuses
+ * is removed, for the caller to redo; one that cannot be READ (a permission
+ * or I/O error) is left as found and the error thrown.
  */
 export async function adoptOrphan(
   src: string,
@@ -246,6 +254,10 @@ export async function adoptOrphan(
     }),
     gunzipDigest(gz, { bytesPerS: opts.bytesPerS, signal: opts.signal }).catch((err: Error) => {
       if (opts.signal?.aborted) throw err;
+      // Only zlib saying the bytes do not decompress proves corruption; a
+      // read that failed (EACCES, EIO) proves nothing, and the gzip may hold
+      // the only copy of an earlier version: it stays, the pass fails.
+      if (!isZlibError(err)) throw err;
       return err;
     }),
   ]);

@@ -17,13 +17,15 @@
 // live trees `state/`, the pi sessions root, `inject/` and `archive/`, and its
 // code), inside any of those trees wherever a symlink puts them, or one that
 // would CONTAIN any of them (`/`, the root's parent). Symlinks are resolved
-// first. Nothing is ever overwritten: a file already there with the same
-// bytes is left (a re-run is idempotent); one with other bytes is reported,
-// never replaced.
+// first. Below `--to`, no symlink is ever followed: every directory an
+// extraction writes in is a plain directory under it, and a leftover at a
+// partial's name is removed, never written through. Nothing is ever
+// overwritten: a file already there with the same bytes is left (a re-run is
+// idempotent); one with other bytes is reported, never replaced.
 //
 // This runs in the CLI process, never in the daemon; it takes no lock (the
 // archiver only appends to a manifest and never rewrites a placed gzip).
-import { createReadStream, createWriteStream } from "node:fs";
+import { constants, createReadStream, createWriteStream } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, realpath, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
@@ -138,6 +140,28 @@ function safeUnder(to: string, rel: string): string | null {
   return inside(target, resolve(to)) && target !== resolve(to) ? target : null;
 }
 
+/**
+ * The partial `target` is written through, made safe to create: every
+ * directory from `to` down to the target's is created or found as a PLAIN
+ * directory (a symlink there is refused, so a write never leaves `--to`), and
+ * a leftover at the partial's name is removed rather than written through.
+ */
+async function preparePartial(to: string, target: string): Promise<void> {
+  const rel = relative(to, dirname(target));
+  let cur = to;
+  for (const seg of rel === "" ? [] : rel.split(sep)) {
+    cur = join(cur, seg);
+    try {
+      await mkdir(cur);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+    if (!(await lstat(cur)).isDirectory())
+      throw new Error(`${cur} is not a plain directory — an extraction never follows a link`);
+  }
+  await unlinkIfPresent(`${target}${EXTRACT_PARTIAL_SUFFIX}`);
+}
+
 /** Place `partial` at `target` without replacing anything: a target already
  * holding the same bytes is `present`; one holding others is an error. */
 async function place(
@@ -202,15 +226,17 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
       continue;
     }
     const partial = `${target}${EXTRACT_PARTIAL_SUFFIX}`;
+    let prepared = false;
     try {
-      await mkdir(dirname(target), { recursive: true });
+      await preparePartial(to, target);
+      prepared = true;
       const tap = new HashTap();
       await pipeline(
         createReadStream(join(dir, archive), { highWaterMark: CHUNK_BYTES }),
         new RateLimit(bytesPerS, signal),
         createGunzip(),
         tap,
-        createWriteStream(partial),
+        createWriteStream(partial, { flags: "wx" }),
         { signal },
       );
       const got = { bytes: tap.bytes, sha256: tap.digest() };
@@ -225,7 +251,8 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
       const outcome = await place(partial, target, got, expect.mtime_ms, bytesPerS, signal);
       files.push({ path: relative(to, target), from: archive, ...got, outcome });
     } catch (err) {
-      await unlinkIfPresent(partial).catch(() => false);
+      // Never through a directory that was refused.
+      if (prepared) await unlinkIfPresent(partial).catch(() => false);
       if (signal?.aborted) throw err;
       errors.push({ path: rel, error: (err as Error).message });
     }
@@ -269,14 +296,17 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
         continue;
       }
       const partial = `${target}${EXTRACT_PARTIAL_SUFFIX}`;
+      let prepared = false;
       try {
-        await mkdir(dirname(target), { recursive: true });
-        await writeFile(partial, rec.data);
+        await preparePartial(to, target);
+        prepared = true;
+        await writeFile(partial, rec.data, { flag: "wx" });
         const got = { bytes: rec.data.length, sha256: sha };
         const outcome = await place(partial, target, got, f.mtime_ms, bytesPerS, signal);
         files.push({ path: relative(to, target), from: e.archive, ...got, outcome });
       } catch (err) {
-        await unlinkIfPresent(partial).catch(() => false);
+        // Never through a directory that was refused.
+        if (prepared) await unlinkIfPresent(partial).catch(() => false);
         if (signal?.aborted) throw err;
         errors.push({ path: relative(to, target), error: (err as Error).message });
       }
@@ -294,13 +324,17 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
     }
     const target = join(to, name);
     const partial = `${target}${EXTRACT_PARTIAL_SUFFIX}`;
+    let prepared = false;
     try {
-      await copyFile(src, partial);
+      await preparePartial(to, target);
+      prepared = true;
+      await copyFile(src, partial, constants.COPYFILE_EXCL);
       const got = await fileDigest(partial, { bytesPerS, ...(signal ? { signal } : {}) });
       await place(partial, target, got, null, bytesPerS, signal);
       copied.push(name);
     } catch (err) {
-      await unlinkIfPresent(partial).catch(() => false);
+      // Never through a directory that was refused.
+      if (prepared) await unlinkIfPresent(partial).catch(() => false);
       if (signal?.aborted) throw err;
       errors.push({ path: name, error: (err as Error).message });
     }

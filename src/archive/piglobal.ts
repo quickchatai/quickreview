@@ -25,10 +25,11 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import type { FileIdentity } from "./fsutil.js";
 import { identityOrNull } from "./gzfile.js";
-import { walkFiles } from "./prfiles.js";
+import { type SpanMeter, walkFiles } from "./prfiles.js";
 import {
   StoreWriter,
   emptyStoreResult,
+  settleStore,
   type StoreFile,
   type StorePassDeps,
   type StorePassResult,
@@ -81,9 +82,16 @@ export async function measurePiGlobal(deps: {
   storeDir: string;
   now: () => Date;
   signal?: AbortSignal;
+  /** Measures the listing's synchronous span (the plan's meter). */
+  meter?: SpanMeter;
 }): Promise<StoreTally> {
   try {
-    const { old, young } = await listPiGlobal(deps.storeDir, deps.now().getTime(), deps.signal);
+    const { old, young } = await listPiGlobal(
+      deps.storeDir,
+      deps.now().getTime(),
+      deps.signal,
+      (fn) => (deps.meter ? deps.meter.measure(fn) : fn()),
+    );
     const all = [...old, ...young];
     return {
       state: "measured",
@@ -118,17 +126,18 @@ export async function archivePiGlobal(deps: PiGlobalPassDeps): Promise<StorePass
     deps.meter ? deps.meter.measure(fn) : fn(),
   );
   const young = youngFiles.length;
-  if (old.length === 0) {
-    const r = emptyStoreResult("none");
-    r.keptLive = young;
-    return r;
-  }
-  const writer = await StoreWriter.open({
+  const storeDeps = {
     ...deps,
     dir: join(deps.root, "archive", PI_GLOBAL_STORE),
     subject: PI_GLOBAL_STORE,
-    liveOf: (source) => join(storeDir, source),
-  });
+    liveOf: (source: string) => join(storeDir, source),
+  };
+  if (old.length === 0) {
+    const r = await settleStore(storeDeps);
+    r.keptLive = young;
+    return r;
+  }
+  const writer = await StoreWriter.open(storeDeps);
   if (!writer) return emptyStoreResult("held", "manifest_unreadable");
   const res = writer.result;
   res.keptLive = young;

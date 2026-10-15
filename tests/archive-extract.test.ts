@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -22,7 +23,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { extractPr, liveTreeRefusal } from "../src/archive/extract.js";
@@ -260,6 +261,47 @@ describe("never into a live tree (acceptance 2)", () => {
     expect(
       await liveTreeRefusal(join(d, "fine"), f.root, join(f.root, "state", "pi-sessions")),
     ).toBeNull();
+  });
+});
+
+describe("below --to, no link is followed", () => {
+  it(
+    "a symlinked subdirectory of --to is refused per file: nothing written through it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = await archivedFixture();
+      const to = scratchDir();
+      const elsewhere = mkdtempSync(join(tmpdir(), "qcr-extract-elsewhere-"));
+      scratch.push(elsewhere);
+      mkdirSync(to, { recursive: true });
+      symlinkSync(elsewhere, join(to, "transcripts"));
+      const r = await extractPr(opts(f, to));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(readdirSync(elsewhere)).toEqual([]);
+      const refused = r.errors.filter((e) => e.path.startsWith("transcripts/"));
+      expect(refused.length).toBeGreaterThan(0);
+      for (const e of refused) expect(e.error).toMatch(/not a plain directory/);
+      // Everything not under the link still extracts.
+      expect(r.files.some((x) => x.path.startsWith("state-"))).toBe(true);
+      expect(r.copied).toContain("manifest.json");
+    },
+  );
+
+  it("a leftover link at a partial's name is removed, never written through", async () => {
+    const f = await archivedFixture();
+    const to = scratchDir();
+    const victim = join(mkdtempSync(join(tmpdir(), "qcr-extract-victim-")), "keep.txt");
+    scratch.push(dirname(victim));
+    writeFileSync(victim, "precious\n");
+    mkdirSync(to, { recursive: true });
+    symlinkSync(victim, join(to, "manifest.json.extract-partial"));
+    const r = await extractPr(opts(f, to));
+    expect(r).toMatchObject({ ok: true });
+    if (!r.ok) return;
+    expect(readFileSync(victim, "utf8")).toBe("precious\n");
+    expect(r.copied).toContain("manifest.json");
+    expect(existsSync(join(to, "manifest.json.extract-partial"))).toBe(false);
   });
 });
 
