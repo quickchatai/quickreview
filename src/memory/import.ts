@@ -57,10 +57,10 @@ import {
   type MemoryStore,
   type MemoryWriteResult,
 } from "./store.js";
+import { IMPORT_TAG } from "./eventtags.js";
 import { EVENTS_AREA, EXPERIENCES_AREA, PREFERENCES_AREA } from "./layout.js";
 
-/** Tag stamped on every imported entry — the TUI's handle on this migration. */
-export const IMPORT_TAG = "imported";
+export { IMPORT_TAG };
 
 /** Marker carrying the identity of the source entry, parsed back on re-run. */
 export const IMPORT_KEY_PREFIX = "import-key:";

@@ -39,8 +39,7 @@
 // A leaf: the tag parsers and the lens vocabulary, nothing engine-specific.
 import { canonicalLensIds } from "../lensids.js";
 import { ALL_PASSES } from "../passes.js";
-import { parseEventTags, parseHashTags } from "./eventtags.js";
-import { IMPORT_TAG } from "./import.js";
+import { IMPORT_TAG, parseEventTags, parseHashTags } from "./eventtags.js";
 
 /** The hash tag a typed lesson's header opens with. */
 export const LESSON_TAG = "lesson";
