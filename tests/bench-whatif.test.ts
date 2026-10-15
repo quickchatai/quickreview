@@ -34,6 +34,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -505,7 +506,12 @@ describe("reading the scored metrics back", () => {
     } as const;
     const rows = refOutcomes(rounds);
     expect(rows).toHaveLength(2);
-    expect(rows[1]!.matched["posted+killed"]).toEqual({ rounds: 2, of: 2, notes: ["K"] });
+    expect(rows[1]!.matched["posted+killed"]).toEqual({
+      rounds: 2,
+      of: 2,
+      notes: ["K"],
+      note_rounds: new Map([["K", 2]]),
+    });
     const k = deltaVsControl(rows, "posted+killed");
     expect(k.gained.map((r) => r.ref)).toEqual([0, 1]); // ref 0: 2/2 vs the control's 1/2
     expect(k.lost).toEqual([]);
@@ -641,6 +647,8 @@ describe("bench.sh whatif: the copy follows nothing, and every container is hard
     symlinkSync(secret, join(src, "cases", COMFY, "outcome.json"));
     symlinkSync(secret, join(src, "results", "all", "planted@0000000.json"));
     mkdirSync(join(src, "cases", "not-an-instance"));
+    // The head patches the control's reader re-anchors deleted-line comments by.
+    writeFileSync(join(src, "cases", COMFY, "head-patches.json"), "{}\n");
     const r = spawnSync(
       "bash",
       [join(here, "bench.sh"), "whatif", "--run", "t1", "--from", src, "--judge", "mock"],
@@ -651,6 +659,7 @@ describe("bench.sh whatif: the copy follows nothing, and every container is hard
     expect(r.stderr).toContain("no what-if variants");
     const dst = join(here, "whatif", "t1", "source");
     expect(existsSync(join(dst, "cases", COMFY, "pi-events.jsonl"))).toBe(true);
+    expect(existsSync(join(dst, "cases", COMFY, "head-patches.json"))).toBe(true);
     expect(existsSync(join(dst, "cases", COMFY, "outcome.json"))).toBe(false);
     expect(existsSync(join(dst, "results", "all", "planted@0000000.json"))).toBe(false);
     expect(existsSync(join(dst, "cases", "not-an-instance"))).toBe(false);
@@ -669,5 +678,84 @@ describe("bench.sh whatif: the copy follows nothing, and every container is hard
     );
     expect(again.status).not.toBe(0);
     expect(again.stderr).toContain("exists");
+  });
+});
+
+describe("the record reader agrees with the production findings-record reader", () => {
+  it("reads a `candidates` array, the key field and every disposition alias", () => {
+    const rows = parseFindingsRecord({
+      candidates: [
+        { key: "K1", lens: "baseline", path: "a.py", line: 3, disposition: "vetoed" },
+        { lens: "baseline", path: "a.py", line: 4, disposition: "Fold" },
+        { id: "I3", lens: "baseline", path: "a.py", line: 5, disposition: "whatever" },
+      ],
+    });
+    expect(rows.map((r) => r.id)).toEqual(["K1", "baseline@a.py:4#1", "I3"]);
+    expect(rows.map((r) => r.disposition)).toEqual(["killed", "folded", "whatever"]);
+  });
+
+  it("a vetoed row is added by posted+killed like a killed one", () => {
+    const cand: RawCandidate = {
+      ...WHO,
+      index: 0,
+      path: "a.py",
+      line: 3,
+      side: "RIGHT",
+      severity: "P2",
+      claim: "the lens's claim",
+    } as RawCandidate;
+    const rec = parseFindingsRecord({
+      findings: [{ lens: "baseline", path: "a.py", line: 3, disposition: "vetoed" }],
+    });
+    const extras = recordExtras(linkRecord(rec, [cand]), [cand], ["killed", "doubted"]);
+    expect(extras.map((x) => x.content)).toEqual(["the lens's claim"]);
+  });
+});
+
+describe("the report on control comments and missing inputs", () => {
+  it("says how often the judge took EACH control comment, not the reference's total", () => {
+    const out = mkdtempSync(join(tmpdir(), "whatif-per-note-"));
+    cpSync(FIX, join(out, "source"), { recursive: true });
+    writeWhatifRun(out, CASES);
+    const a = "Control comment A at the reference.";
+    const b = "Control comment B at the reference.";
+    const posted = join(out, "results", "posted", `${COMFY}.json`);
+    const file = JSON.parse(readFileSync(posted, "utf8")) as {
+      review: { comments: Array<Record<string, unknown>> };
+    };
+    file.review.comments.push(
+      { path: "p.py", start_line: 1, end_line: 2, content: a },
+      { path: "p.py", start_line: 1, end_line: 2, content: b },
+    );
+    writeFileSync(posted, JSON.stringify(file));
+    // The control matched A in round 1 and B in round 2; the variant in all three.
+    for (const v of WHATIF_VARIANTS)
+      for (const r of [1, 2, 3]) {
+        const note = v === "posted" ? (r === 1 ? a : r === 2 ? b : "") : a;
+        writeFileSync(
+          join(out, "results", v, `metrics_ocr_2026_round_${r}.json`),
+          JSON.stringify(metrics([{ id: COMFY, refs: [[note !== "", note]] }], note ? 1 : 0)),
+        );
+      }
+    const md = renderWhatifReport(SET, out, CASES).markdown;
+    expect(md).toContain(`the judge accepted it in 1/3 control rounds): ${a}`);
+    expect(md).toContain(`the judge accepted it in 1/3 control rounds): ${b}`);
+    expect(md).not.toContain("accepted it in 2/3");
+  });
+
+  it("names a case whose zero counts come from a missing event stream or record", () => {
+    const out = mkdtempSync(join(tmpdir(), "whatif-inputs-"));
+    cpSync(FIX, join(out, "source"), { recursive: true });
+    rmSync(join(out, "source", "cases", COMFY, "pi-events.jsonl"));
+    writeFileSync(join(out, "source", "cases", COMFY, "findings-record.json"), "{not json");
+    const summaries = writeWhatifRun(out, CASES);
+    expect(summaries.find((x) => x.instance_id === COMFY)!.inputs).toEqual({
+      events: false,
+      record: "unreadable",
+    });
+    const md = renderWhatifReport(SET, out, CASES).markdown;
+    expect(md).toContain(
+      `- \`${COMFY}\`: no pi-events.jsonl — no raw candidates; findings-record.json unreadable — no record rows`,
+    );
   });
 });
