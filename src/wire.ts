@@ -1604,7 +1604,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               store: d.store,
               pump: () => d.pump(),
               killSession: async (pr) => {
-                const name = `pr-${pr}`;
+                const name = prSessionName(pr);
                 if (await sessions.tmux.hasSession(name)) await sessions.tmux.killSession(name);
                 if (await sessions.tmux.hasSession(name)) {
                   throw new Error(
