@@ -55,6 +55,7 @@ import {
   type InstallEnv,
 } from "./install.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
+import { transportOf } from "./tui/remote.js";
 import { MutationGate } from "./gate.js";
 import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
@@ -1075,9 +1076,11 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
 // container or against a local dev daemon) — sealed only if that dir is
 // root-owned; otherwise the daemon bounds it like a session's drain.
 
-/** The documented manual fallback: the exact ssh one-liner that writes the
- * same command file by hand when the runner path fails. */
-export function drainManualSshCommand(tui: TuiConfig, on: boolean, now: Date): string {
+/** The documented manual fallback: the exact one-liner that writes the same
+ * command file by hand when the runner path fails — over ssh, or straight
+ * into local docker when `[tui] target = "local"`, the transport the runner
+ * path itself used. */
+export function drainManualCommand(tui: TuiConfig, on: boolean, now: Date): string {
   // Same root-owned operator directory the runner path writes: a
   // fallback that wrote into the session dir would be a bounded session drain.
   const docker = `${tui.sudo_docker ? "sudo " : ""}docker exec -i -u 0 ${tui.container}`;
@@ -1087,16 +1090,15 @@ export function drainManualSshCommand(tui: TuiConfig, on: boolean, now: Date): s
   // a re-used name (an operator editing an old line) still executes — the
   // fresh name is what keeps its result readable.
   const name = `${now.toISOString().replace(/[:.]/g, "-")}-manual-drain.json`;
-  // Single quotes for the remote `sh -c`, then backslash, dollar, double quote
-  // and backtick for the LOCAL double-quoted ssh argument, which would
-  // otherwise expand them on the operator's machine.
-  const script = operatorCommandWriteScript(tui, name)
-    .replace(/'/g, "'\\''")
-    .replace(/[\\$"`]/g, "\\$&");
-  return (
-    `printf '%s' '${JSON.stringify({ command: "drain", on })}' | ` +
-    `ssh ${tui.ssh_host} "${docker} sh -c '${script}'"`
-  );
+  const payload = `printf '%s' '${JSON.stringify({ command: "drain", on })}' | `;
+  // Single quotes for the container's `sh -c`.
+  const script = operatorCommandWriteScript(tui, name).replace(/'/g, "'\\''");
+  if (transportOf(tui) === "local") return `${payload}${docker} sh -c '${script}'`;
+  // Over ssh, also backslash, dollar, double quote and backtick for the LOCAL
+  // double-quoted ssh argument, which would otherwise expand them on the
+  // operator's machine.
+  const remote = script.replace(/[\\$"`]/g, "\\$&");
+  return `${payload}ssh ${tui.ssh_host} "${docker} sh -c '${remote}'"`;
 }
 
 export interface DrainRunDeps {
@@ -1107,12 +1109,13 @@ export interface DrainRunDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** Write the drain command over ssh and wait for the daemon's verdict.
- * Returns a process exit code; every failure path prints the manual ssh
- * fallback so the operator is never stuck behind this wrapper. */
+/** Write the drain command through the configured transport and wait for the
+ * daemon's verdict. Returns a process exit code; every failure path prints
+ * the manual fallback so the operator is never stuck behind this wrapper. */
 export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number> {
   const tui = deps.cfg.tui;
-  deps.log(`drain ${on ? "on" : "off"} → ${tui.ssh_host}:${tui.remote_sandbox_root}/commands/`);
+  const where = transportOf(tui) === "local" ? `local docker ${tui.container}` : tui.ssh_host;
+  deps.log(`drain ${on ? "on" : "off"} → ${where}:${tui.remote_sandbox_root}/commands/`);
   const sender = new CommandDrainSender(tui, deps.ssh, deps.now, deps.sleep);
   const result = await sender.set(on);
   if (result.ok) {
@@ -1143,7 +1146,7 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
   }
   deps.log(`✖ drain refused: ${result.reason ?? "no reason given"}`);
   deps.log("manual fallback — run:");
-  deps.log(`  ${drainManualSshCommand(tui, on, (deps.now ?? (() => new Date()))())}`);
+  deps.log(`  ${drainManualCommand(tui, on, (deps.now ?? (() => new Date()))())}`);
   return 1;
 }
 

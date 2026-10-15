@@ -33,7 +33,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { drainManualSshCommand, renderStatus, runDrain } from "../src/cli.js";
+import { drainManualCommand, renderStatus, runDrain } from "../src/cli.js";
 import {
   CommandWatcher,
   executeCommand,
@@ -1231,7 +1231,7 @@ describe("qcr drain — the operator channel", () => {
       `cd -P '${cfg.tui.remote_sandbox_root}/commands/operator'`,
     );
     expect(lines.join("\n")).not.toContain("NOT an operator drain");
-    const manual = drainManualSshCommand(cfg.tui, true, new Date("2026-08-31T12:00:00Z"));
+    const manual = drainManualCommand(cfg.tui, true, new Date("2026-08-31T12:00:00Z"));
     expect(manual).toContain("docker exec -i -u 0");
     expect(manual).toContain("2026-08-31T12-00-00-000Z-manual-drain.json");
     expect(manual).toContain("/commands/operator'");
@@ -1438,7 +1438,7 @@ describe("operatorCommandWriteScript under sh", () => {
     chmodSync(join(fakebin, "ssh"), 0o755);
     chmodSync(join(fakebin, "docker"), 0o755);
     const tui = { ...cfg.tui, sudo_docker: false, remote_sandbox_root: root };
-    const manual = drainManualSshCommand(tui, true, new Date("2026-08-31T12:00:00Z"));
+    const manual = drainManualCommand(tui, true, new Date("2026-08-31T12:00:00Z"));
     const res = spawnSync("sh", ["-c", manual], {
       encoding: "utf8",
       env: {
@@ -1452,6 +1452,40 @@ describe("operatorCommandWriteScript under sh", () => {
     expect(res.status).toBe(0);
     const file = join(root, "commands", "operator", "2026-08-31T12-00-00-000Z-manual-drain.json");
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ command: "drain", on: true });
+  });
+
+  it("under [tui] target = local the printed fallback writes through local docker, never ssh", () => {
+    const root = join(tmp, "sandbox");
+    mkdirSync(join(root, "commands"), { recursive: true });
+    // An ssh on PATH that fails loudly: the local fallback must not reach it.
+    writeFileSync(join(fakebin, "ssh"), "#!/bin/sh\necho 'ssh was called' >&2\nexit 99\n");
+    writeFileSync(
+      join(fakebin, "docker"),
+      '#!/bin/sh\nwhile [ "$1" != sh ]; do shift; done\nexec "$@"\n',
+    );
+    chmodSync(join(fakebin, "ssh"), 0o755);
+    chmodSync(join(fakebin, "docker"), 0o755);
+    const tui = {
+      ...cfg.tui,
+      target: "local" as const,
+      sudo_docker: false,
+      remote_sandbox_root: root,
+    };
+    const manual = drainManualCommand(tui, false, new Date("2026-08-31T12:00:00Z"));
+    expect(manual).not.toContain("ssh ");
+    const res = spawnSync("sh", ["-c", manual], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakebin}:${process.env["PATH"] ?? ""}`,
+        CHOWN_LOG: join(fakebin, "chown.log"),
+        CHOWN_HOOK: "",
+      },
+    });
+    expect(res.stderr).toBe("");
+    expect(res.status).toBe(0);
+    const file = join(root, "commands", "operator", "2026-08-31T12-00-00-000Z-manual-drain.json");
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ command: "drain", on: false });
   });
 });
 
