@@ -2239,7 +2239,10 @@ export interface ArchiveEntry {
   path: string;
   kind: "file" | "dir" | "symlink" | "hardlink" | "other";
   size: number;
-  /** The entry's bytes (lazy for zip, so filtered-out entries are never inflated). */
+  /** The entry's bytes (lazy for zip, so filtered-out entries are never inflated).
+   * Read each entry once: every zip read charges its compressed size to the
+   * archive's one overlap budget, so a second read of a large entry can make a
+   * sound archive read as overlapping. */
   read: () => Buffer;
 }
 
