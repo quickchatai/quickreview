@@ -9,9 +9,14 @@
 //     must land on that container's named pi-home volume or a recreate
 //     silently costs it — this step verifies exactly that,
 //     per surface, at the moment the surface exists.
-//   API key — one paste covers all three immediately (the entrypoints export
-//     the secrets-dir file as OPENAI_API_KEY for every pi process), and every
-//     model string must move from the OAuth provider prefix to the API one.
+//   API key — one paste covers the daemon and its review sessions at once (the
+//     daemon container's entrypoint exports the secrets-dir file as
+//     OPENAI_API_KEY for every pi process in it), and every model string must
+//     move from the OAuth provider prefix to the API one. The key file reaches
+//     no other process: the companion container is never handed it, so the
+//     companion keeps its own login (its model is on the OAuth provider by
+//     default), and this host's own pi reads OPENAI_API_KEY only from its own
+//     environment.
 //     The wizard does that rewrite itself: six values, comment-preserving,
 //     idempotent, and reversible, so switching routes later re-runs cleanly in
 //     either direction.
@@ -42,8 +47,9 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { COMPANION_DEFAULTS, TUI_DEFAULTS } from "../../config.js";
 import { locateSecrets } from "../../install.js";
-import { CHOICE_KEYS, type AuthRoute } from "../choices.js";
+import { CHOICE_KEYS, authRouteOf, type AuthRoute } from "../choices.js";
 import type {
   CheckResult,
   OnboardAdapters,
@@ -52,6 +58,8 @@ import type {
   StepContext,
   StepReport,
 } from "../engine.js";
+import { writeAtomic } from "./compose.js";
+import { readTomlKey } from "./ingress.js";
 import { sshArgv } from "./ssh.js";
 import { topologyOf } from "./topology.js";
 import { remoteFactsFor } from "./transport.js";
@@ -168,10 +176,12 @@ export function readTomlString(text: string, section: string, key: string): stri
 /** Where the secrets live: `[github] secrets_dir` wins (it is what the daemon
  * and the compose mount actually use), then $QC_SECRETS_DIR, then the install
  * locator's answer — `<config home>/secrets`: the same answer the
- * daemon's loader reaches. */
+ * daemon's loader reaches. The value is read the way every other onboarding
+ * step reads it (`readTomlKey`: basic or literal string), so a single-quoted
+ * secrets_dir names the same directory here as in memory and bring-up. */
 export function resolveSecretsDir(configText: string, home: string, envDir?: string): string {
   return locateSecrets({
-    configured: readTomlString(configText, "github", "secrets_dir"),
+    configured: readTomlKey(configText, "github", "secrets_dir"),
     override: envDir,
     env: { ...process.env, HOME: home },
   }).path;
@@ -188,15 +198,24 @@ export interface ModelAudit {
   kind: AuthRoute | "custom" | "missing";
 }
 
+/** Which managed route a model string is on, and the model after the prefix;
+ * null for any other provider (not ours to touch). The one classification the
+ * audit and the rewrite share. */
+export function managedModel(value: string): { route: AuthRoute; rest: string } | null {
+  for (const route of ["oauth", "api"] as const) {
+    const prefix = prefixFor(route);
+    if (value.startsWith(prefix)) return { route, rest: value.slice(prefix.length) };
+  }
+  return null;
+}
+
 /** What the six locations currently say. Read-only; the basis of verify(). */
 export function auditModelStrings(text: string): ModelAudit[] {
   return MODEL_LOCATIONS.map(({ section, key }) => {
     const label = `${section}.${key}`;
     const value = readTomlString(text, section, key);
     if (value === null) return { label, value: "", kind: "missing" as const };
-    if (value.startsWith(OAUTH_PREFIX)) return { label, value, kind: "oauth" as const };
-    if (value.startsWith(API_PREFIX)) return { label, value, kind: "api" as const };
-    return { label, value, kind: "custom" as const };
+    return { label, value, kind: managedModel(value)?.route ?? ("custom" as const) };
   });
 }
 
@@ -246,14 +265,12 @@ export function rewriteModelPrefixes(text: string, route: AuthRoute): RewriteRes
     if (!wanted.has(label) || seen.has(label)) continue;
     seen.add(label);
     const value = kv[5]!;
-    let rest: string;
-    if (value.startsWith(OAUTH_PREFIX)) rest = value.slice(OAUTH_PREFIX.length);
-    else if (value.startsWith(API_PREFIX)) rest = value.slice(API_PREFIX.length);
-    else {
+    const managed = managedModel(value);
+    if (managed === null) {
       custom.push(label);
       continue;
     }
-    const next = `${target}${rest}`;
+    const next = `${target}${managed.rest}`;
     if (next === value) {
       unchanged.push(label);
       continue;
@@ -460,18 +477,30 @@ function loginCheck(
   }
 }
 
-/** The command that attaches to a container's overseer pane on this machine. */
-function localAttach(container: string): string {
-  return `docker exec -it ${container} tmux attach -t overseer`;
+/** The command that attaches to a tmux session in a container on this machine. */
+function localAttach(container: string, session: string): string {
+  return `docker exec -it ${container} tmux attach -t ${session}`;
 }
 
-/** Container names to probe, config first so a renamed deployment still works. */
+/** The daemon container's pi session a login lands in. */
+const DAEMON_LOGIN_SESSION = "overseer";
+
+/** Container names to probe, config first so a renamed deployment still works;
+ * the fallbacks are the loader's own defaults. */
 export function daemonContainerName(configText: string): string {
-  return readTomlString(configText, "tui", "container")?.trim() || "quickreview-sandbox";
+  return readTomlString(configText, "tui", "container")?.trim() || TUI_DEFAULTS.container;
 }
 
 export function companionContainerName(configText: string): string {
-  return readTomlString(configText, "companion", "container_name")?.trim() || "qcr-companion";
+  return (
+    readTomlString(configText, "companion", "container_name")?.trim() ||
+    COMPANION_DEFAULTS.container_name
+  );
+}
+
+/** The companion's tmux session — where its pi, and so its /login, runs. */
+export function companionSessionName(configText: string): string {
+  return readTomlString(configText, "companion", "session")?.trim() || COMPANION_DEFAULTS.session;
 }
 
 // ---- the operator-facing text ----------------------------------------------
@@ -482,8 +511,9 @@ export const ROUTE_QUESTION =
   "     pi home of whichever process logged in and DO NOT transfer between this host and the containers, so\n" +
   "     expect up to three separate browser logins — this wizard's pi session, the daemon container, and the\n" +
   "     companion container. Each is guided when its surface first needs it.\n" +
-  "  2) api — one OpenAI API key. One paste covers all three immediately (the container entrypoints export the\n" +
-  "     key file as OPENAI_API_KEY), metered per token, and the wizard rewrites all six model strings for you.\n" +
+  "  2) api — one OpenAI API key, metered per token. One paste covers the daemon and its review sessions (the daemon\n" +
+  "     container's entrypoint exports the key file as OPENAI_API_KEY), and the wizard rewrites all six model strings\n" +
+  "     for you. The companion container is not handed the key: it keeps its own login.\n" +
   "Answer 1/oauth or 2/api:";
 
 export const KEY_QUESTION = `paste the OpenAI API key (it is written straight to the ${OPENAI_KEY_FILE} secrets file, 0600, never to a command line):`;
@@ -499,7 +529,8 @@ export const STEP_EXPLAIN =
   "OAuth (a ChatGPT subscription) is flat-cost but costs up to three separate browser logins — this wizard's pi " +
   "session, the daemon container and the companion container — because pi's tokens do not transfer between the host " +
   "and a container; each login is guided where it happens and verified to have landed on that container's persistent " +
-  "pi-home volume, so a recreate never silently costs it. An API key is one paste that covers all three immediately, " +
+  "pi-home volume, so a recreate never silently costs it. An API key is one paste that covers the daemon and its review " +
+  "sessions (the companion container is not handed the key and keeps its own login), " +
   "and the wizard then rewrites all six model strings in config.toml from the openai-codex/ provider prefix to " +
   "openai/ (comment-preserving and reversible — switching routes later just re-runs this step). Neither route has " +
   "anything to do with memory embeddings: those run locally by default, and pi's key is never used for them.";
@@ -513,12 +544,12 @@ export function parseRouteAnswer(answer: string): AuthRoute | null {
   return null;
 }
 
+/** The recorded route: the shared choice reader first, then this step's own
+ * record (an older checklist), read through the same reader. */
 function recordedRoute(ctx: StepContext): AuthRoute | null {
-  const fromChoice = ctx.choices[AUTH_ROUTE_CHOICE_KEY];
-  if (fromChoice === "oauth" || fromChoice === "api") return fromChoice;
-  const fromData = ctx.data.route;
-  if (fromData === "oauth" || fromData === "api") return fromData;
-  return null;
+  return (
+    authRouteOf(ctx.choices) ?? authRouteOf({ [AUTH_ROUTE_CHOICE_KEY]: ctx.data.route })
+  );
 }
 
 interface RouteDecision {
@@ -653,12 +684,24 @@ function modelsCheck(audit: ModelAudit[], route: AuthRoute, note: string): Check
   };
 }
 
+/**
+ * What the route means for the companion. Its container is never handed the
+ * API key file, so on the api route an `openai/` companion model has no
+ * credential, and the shipped `openai-codex/` one keeps needing the
+ * companion's own login.
+ */
 function companionModelNote(configText: string, route: AuthRoute): string {
-  const model = readTomlString(configText, "companion", "model");
-  if (!model) return "";
-  const wanted = prefixFor(route);
-  if (model.startsWith(wanted)) return "";
-  return `[companion] model is set to "${model}" — the companion is yours to point where you like, but on the ${route} route it usually wants the ${wanted} prefix too`;
+  const model = readTomlString(configText, "companion", "model") ?? COMPANION_DEFAULTS.model;
+  if (route === "oauth") {
+    return model.startsWith(OAUTH_PREFIX)
+      ? ""
+      : `[companion] model is set to "${model}" — the companion is yours to point where you like, but on the oauth route it usually wants the ${OAUTH_PREFIX} prefix too`;
+  }
+  return model.startsWith(API_PREFIX)
+    ? `[companion] model is "${model}", but the companion container is never handed ${OPENAI_KEY_FILE}, so that model has no ` +
+        `credential there — point it at ${OAUTH_PREFIX} and log the companion in, or pass OPENAI_API_KEY to its container yourself`
+    : `the companion (model "${model}") is not covered by ${OPENAI_KEY_FILE} — its container is never handed the key, so it keeps ` +
+        "its own login (/login in its pi)";
 }
 
 async function oauthLoginChecks(
@@ -692,12 +735,12 @@ async function oauthLoginChecks(
   // The repair command names the same host and container the probe reached.
   let daemon = daemonContainerName(configText);
   let daemonRunner: ProcessRunner = runner;
-  let daemonAttach = localAttach(daemon);
+  let daemonAttach = localAttach(daemon, DAEMON_LOGIN_SESSION);
   if (topologyOf(ctx.choices) === "vm") {
     const facts = remoteFactsFor(ctx.adapters, ctx.choices);
     daemon = facts.container;
     const prefix = facts.sudo ? ["sudo"] : [];
-    daemonAttach = `ssh -t ${facts.alias || "<vm>"} ${facts.sudo ? "sudo " : ""}${localAttach(daemon)}`;
+    daemonAttach = `ssh -t ${facts.alias || "<vm>"} ${facts.sudo ? "sudo " : ""}${localAttach(daemon, DAEMON_LOGIN_SESSION)}`;
     daemonRunner =
       facts.alias === ""
         ? { run: async () => ({ code: 1, stdout: "", stderr: "no ssh alias recorded" }) }
@@ -717,7 +760,7 @@ async function oauthLoginChecks(
     loginCheck(
       "companion_login",
       "companion container",
-      localAttach(companion),
+      localAttach(companion, companionSessionName(configText)),
       await probeContainerLogin(runner, companion),
     ),
   );
@@ -791,7 +834,9 @@ export function llmAuthStep(): OnboardingStep {
               checks.push({
                 name: "credential",
                 ok: true,
-                detail: `saved to ${keyFile.path} (0600, dir 0700) — the entrypoints export it as OPENAI_API_KEY, so wizard, daemon and companion are all covered`,
+                detail:
+                  `saved to ${keyFile.path} (0600, dir 0700) — the daemon container's entrypoint exports it as OPENAI_API_KEY ` +
+                  "for every review session; the companion container is never handed it (see the models note)",
               });
             }
           } else {
@@ -808,7 +853,7 @@ export function llmAuthStep(): OnboardingStep {
           checks.push({
             name: "credential",
             ok: true,
-            detail: `${OPENAI_KEY_FILE} present in ${secretsDir} — covers the wizard, the daemon and the companion at once`,
+            detail: `${OPENAI_KEY_FILE} present in ${secretsDir} — the daemon container's entrypoint exports it for every review session`,
           });
         }
       }
@@ -817,7 +862,7 @@ export function llmAuthStep(): OnboardingStep {
       const rewrite = rewriteModelPrefixes(cfg.text, route);
       if (rewrite.text !== cfg.text) {
         try {
-          writeFileSync(cfg.path, rewrite.text);
+          writeAtomic(cfg.path, rewrite.text);
         } catch (err) {
           checks.push({
             name: "models",
