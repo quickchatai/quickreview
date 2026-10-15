@@ -386,6 +386,23 @@ describe("computeMetrics", () => {
     expect(all.n).toBe(5); // the imported rounds still count in ttfv itself
   });
 
+  it("gives an imported round with no reconstructed trigger no ttfv sample", () => {
+    // The import sets started_at = finished_at when no trigger was found.
+    insertRound(store, {
+      pr: 300,
+      round_no: 0,
+      round_type: "backfill",
+      lenses: "",
+      verdict: "APPROVE",
+      started_at: "2026-08-02T10:00:00.000Z",
+      finished_at: "2026-08-02T10:00:00.000Z",
+      backfilled: 1,
+      trigger_ts: null,
+    });
+    const before = computeMetrics(store, { now }).windows.all.ttfv;
+    expect(before.n).toBe(3); // #300 adds no sample, least of all a 0 s one
+  });
+
   it("counts a time-in-state interval entered before the window", () => {
     // #102 has been awaiting its author for 8 days; #103 left review before
     // the 7-day window opened.

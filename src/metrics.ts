@@ -304,7 +304,9 @@ function isBackfilled(r: RoundRow): boolean {
 }
 
 /** Time-to-first-verdict per PR: trigger (or, absent a recorded trigger, the
- * round start) -> the first finished round. The first round is picked from
+ * round start) -> the first finished round. An imported round with no
+ * reconstructed trigger has no measured start (its start IS its verdict), so
+ * its PR has no sample rather than a fabricated zero. The first round is picked from
  * the PR's whole history and only then windowed on its own landing: picking
  * it from the windowed rounds would report a later round as the "first".
  * Only a `done` round delivered a verdict: a cancelled, overdue or expired
@@ -320,7 +322,9 @@ function ttfvByPr(allRounds: RoundRow[], since: string | null): Map<number, numb
   const out = new Map<number, number>();
   for (const [pr, r] of first) {
     if (!within(roundAnchor(r), since)) continue;
-    const value = seconds(r.trigger_ts ?? r.started_at, r.finished_at!);
+    const start = isBackfilled(r) ? r.trigger_ts : (r.trigger_ts ?? r.started_at);
+    if (start === null) continue;
+    const value = seconds(start, r.finished_at!);
     if (Number.isFinite(value) && value >= 0) out.set(pr, value);
   }
   return out;
