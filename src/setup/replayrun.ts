@@ -787,10 +787,10 @@ export class ReplayRunner {
         while (next < list.length && !signal.aborted) {
           const job = list[next]!;
           const est = job.state.estimate_usd;
-          if (!within(est)) {
-            capHit = true;
-            return;
-          }
+          // Not beside what is in flight: this lane stops, and another may
+          // still take the case once those reservations settle. Only a case
+          // no lane could take is a cap hit (below).
+          if (!within(est)) return;
           next++;
           reserved += est;
           live.set(job.state.id, 0);
@@ -810,6 +810,7 @@ export class ReplayRunner {
         }
       };
       await drainLanes(Math.max(1, Math.min(this.concurrency, list.length)), lane, abort);
+      if (!signal.aborted && list.some((j) => j.state.status === "pending")) capHit = true;
     };
     await phase(jobs.filter((j) => j.state.kind === "lens"));
     if (!signal.aborted && !capHit) await phase(jobs.filter((j) => j.state.kind === "validate"));

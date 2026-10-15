@@ -718,6 +718,52 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(c!.complete).toEqual({ old: false, new: false });
   });
 
+  it("a case refused only while another's reservation is in flight is run once it settles — and the validators still run", async () => {
+    // Cap $0.06; each lens and validator is estimated at ~$0.0056. The first
+    // case costs $0.05 while the second is still in flight: the third does not
+    // fit beside the second's reservation, but fits once it settles cheaply.
+    const calls: Call[] = [];
+    const base = fakeRunner(calls, () => 0.0001);
+    let n = 0;
+    const rr = new ReplayRunner({
+      state: stateHomeFs(stateRoot()),
+      clock: () => now,
+      source: {
+        pr: async (k) => ({ ok: true, pr: pr(k) }),
+        open: () => ({ ok: true, tree: tree() }),
+      },
+      sides: (req) =>
+        replaySides(
+          {
+            root: sandbox,
+            env,
+            stateRoot: stateRoot(),
+            state: stateHomeFs(stateRoot()),
+            clock: () => now,
+          },
+          req,
+        ),
+      cases: (agentsDir) => ({
+        run: async (spec, signal, onCost) => {
+          const k = ++n;
+          if (k === 2) await new Promise((r) => setTimeout(r, 30));
+          const out = await base(agentsDir).run(spec, signal, onCost);
+          return k === 1 ? { ...out, cost_usd: 0.05 } : out;
+        },
+      }),
+      styleGuide: () => [],
+      concurrency: 2,
+    });
+    const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    expect(p.cap_usd).toBeCloseTo(0.06, 6);
+    const run = await ran(rr, p.key);
+    expect(run.cases.filter((c) => c.kind === "validate").map((c) => c.status)).toEqual([
+      "done",
+      "done",
+    ]);
+    expect(run.state).toBe("complete");
+  });
+
   it("stops HARD at the cap: what is in flight is aborted, the rest never starts", async () => {
     const calls: Call[] = [];
     const rr = runner(calls, () => 100); // every case costs far past any estimate
