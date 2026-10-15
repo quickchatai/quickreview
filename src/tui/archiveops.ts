@@ -186,7 +186,7 @@ export function renderArchiveOp(cmd: ArchiveOpCommand, out: ArchiveOpOutcome): s
   const differs = Array.isArray(r["live_differs"]) ? r["live_differs"].length : 0;
   lines.push(
     `✓ pr-${cmd.command === "archive-restore" ? cmd.pr : "?"} restored — ${restored ?? "?"} file(s) back, ${present ?? "?"} already present` +
-      (differs > 0 ? `, ${differs} left as the newer live file` : ""),
+      (differs > 0 ? `, ${differs} differing live file(s) left as found` : ""),
   );
   return lines;
 }

@@ -67,10 +67,13 @@ export interface ArchiveDbStatus {
   last_run_at: string;
   /** `caught_up` | `budget` | `held` | `aborted` | `skipped` | `failed`. */
   outcome: string;
-  /** Why the run's first refused batch deleted nothing: `archive_busy`,
-   * `live_busy`, `verify_mismatch`, `live_changed`, `wal_sync_failed`. A
-   * refusal confined to one table (`archive_busy`, `verify_mismatch`,
-   * `live_changed`) lets the other table's rows move in the same run. */
+  /** Why the run's first refused step stopped it: a batch that deleted
+   * nothing (`archive_busy`, `live_busy`, `verify_mismatch`, `live_changed`,
+   * `wal_sync_failed`), the live checkpoint's worker not starting
+   * (`checkpoint_unavailable`), or `checkpoint_failed` — the live checkpoint
+   * after a batch that had already deleted its rows. A refusal confined to one table
+   * (`archive_busy`, `verify_mismatch`, `live_changed`) lets the other
+   * table's rows move in the same run. */
   skipped_reason: string | null;
   events_moved: number;
   deliveries_moved: number;
@@ -475,7 +478,7 @@ export function fmtCount(n: number): string {
   return String(n);
 }
 
-const HOLD_WORDS: Record<string, string> = {
+const HOLD_WORDS: Record<ArchiveHoldReason, string> = {
   awaiting_reconcile: "waiting for the daemon's first healthy reconcile",
   start_delay: "start delay after the first healthy reconcile",
   draining: "draining",
@@ -628,6 +631,7 @@ export function archiveStatusLine(v: unknown): string {
     case "unknown":
       return `archive: ${mode} — UNKNOWN, not ticked yet; ${backlogPhrase(s)}${tail}`;
     case "held": {
+      // A value an older or newer daemon wrote may have no words: shown raw.
       const why = s.held_reason ? (HOLD_WORDS[s.held_reason] ?? s.held_reason) : "reason unknown";
       const until = s.held_until ? ` until ${s.held_until}` : "";
       return `archive: ${mode} — HELD (${why})${until}; ${backlogPhrase(s)}${tail}`;

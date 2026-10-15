@@ -30,12 +30,15 @@
 import { postedSeverityTag, RENDER_RECORD_FIELDS } from "../reviewrender.js";
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, POSTING_TAG_WORDS } from "../severity.js";
 import type { PrFileEntry } from "../github.js";
+import { parseHunkHeader } from "../hunkheader.js";
 
 // ---- the case set -------------------------------------------------------------
 
 /** One AACR-Bench PR, as `bench/aacr/select_cases.py` writes it. */
 export interface BenchCase {
-  /** The harness converter's id: `owner__name@<head[:7]>`. */
+  /** The harness converter's id: `owner__name@<head[:7]>`; a case fetched
+   * from a fork is `owner__name-<pr>@<head[:7]>` and a follow-up case
+   * `owner__name-<pr>-r<round>@<head[:7]>` (`caseOf` checks the shape). */
   instance_id: string;
   repo: string;
   pr: number;
@@ -827,15 +830,15 @@ export interface BenchComment {
  * deletion sat (an unchanged context line that exists at head); a file the PR
  * deletes outright has no head side at all, so the comment goes to line 1
  * (`how: "file"`, a file-level anchor). `null` when the patch has no such old
- * line (a stale or truncated patch) — the caller keeps the comment out rather
- * than guess.
+ * line (a stale or truncated patch, or a line past a deleted file's end) —
+ * the caller keeps the comment out rather than guess.
  */
 export function reanchorLeftLine(
   patch: string,
   oldLine: number,
 ): { line: number; how: "hunk" | "file" } | null {
-  if (/^\+\+\+ \/dev\/null$/m.test(patch) || /^@@ -\d+(?:,\d+)? \+0,0 @@/m.test(patch))
-    return { line: 1, how: "file" };
+  // A file the PR deletes outright: its old lines exist only in the patch.
+  const gone = /^\+\+\+ \/dev\/null$/m.test(patch) || /^@@ -\d+(?:,\d+)? \+0,0 @@/m.test(patch);
   let oldN = 0;
   let newN = 0;
   let inHunk = false;
@@ -843,8 +846,9 @@ export function reanchorLeftLine(
   /** The hunk's last head-side line (null: the hunk has none of its own). */
   let hunkEnd: number | null = null;
   let at: number | null = null;
-  const pick = (): { line: number; how: "hunk" } | null => {
+  const pick = (): { line: number; how: "hunk" | "file" } | null => {
     if (at === null) return null;
+    if (gone) return { line: 1, how: "file" };
     // A deletion at the end of the file sits past the head's last line: the
     // context line before it is the one that exists.
     if (hunkAdds.length === 0)
@@ -857,16 +861,15 @@ export function reanchorLeftLine(
     if (raw.startsWith("@@")) {
       const done = pick();
       if (done) return done;
-      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(raw);
-      if (!m) {
+      const h = parseHunkHeader(raw);
+      if (!h) {
         inHunk = false;
         continue;
       }
-      oldN = Number(m[1]);
-      newN = Number(m[2]);
+      oldN = h.old_start;
+      newN = h.new_start;
       // `+N,0` names the line BEFORE an all-deleted hunk, which exists.
-      const newCount = m[3] === undefined ? 1 : Number(m[3]);
-      hunkEnd = newCount === 0 ? null : newN + newCount - 1;
+      hunkEnd = h.new_count === 0 ? null : newN + h.new_count - 1;
       inHunk = true;
       hunkAdds = [];
       continue;
@@ -978,7 +981,7 @@ export function parseSessionComments(raw: unknown): { comments: BenchComment[]; 
       ...(start !== undefined && start <= line ? { start_line: start } : {}),
       side,
       body: body.trim(),
-      ...tagOf(body),
+      ...tagOf(body.trim()),
     });
   }
   return { comments, dropped };
@@ -1047,8 +1050,12 @@ export function recordTag(r: Record<string, unknown>): PostTag {
 }
 
 /** Where one posted record entry went: the inline comment that carries it,
- * the review body, or folded into a neighbouring comment (`merged`). */
-export type PostedPlace = { at: "inline"; comment: number } | { at: "body" } | { at: "merged" };
+ * the review body, or folded (`merged`) into the neighbours `into` names —
+ * inline comments by index, earlier body entries by their index in `posted`. */
+export type PostedPlace =
+  | { at: "inline"; comment: number }
+  | { at: "body" }
+  | { at: "merged"; into: Array<{ comment: number } | { posted: number }> };
 
 /** The bullets of `review.md` that name `` `path:line` ``: their indices. */
 function bulletsNaming(lines: readonly string[], path: string, line: number): number[] {
@@ -1085,7 +1092,7 @@ export function placePosted(
     sites.map((x, i) => (posted[i]!["inline"] === false ? null : x)),
     inline,
   );
-  const inBody: BenchSite[] = [];
+  const inBody: Array<{ site: BenchSite; posted: number }> = [];
   const near = (site: BenchSite, x: BenchSite): boolean =>
     x.path === site.path &&
     site.line >= Math.min(x.start_line ?? x.line, x.line) - NEAR_LINES &&
@@ -1094,12 +1101,16 @@ export function placePosted(
     if (!site) return null;
     const c = pairs[i];
     if (c !== null && c !== undefined) return { at: "inline", comment: c };
+    const into: Array<{ comment: number } | { posted: number }> = [
+      ...inline.flatMap((x, k) => (near(site, x) ? [{ comment: k }] : [])),
+      ...inBody.flatMap((b) => (near(site, b.site) ? [{ posted: b.posted }] : [])),
+    ];
     const body =
       posted[i]!["inline"] === false ||
       bulletsNaming(lines, site.path, site.line).length > 0 ||
-      ![...inline, ...inBody].some((x) => near(site, x));
-    if (!body) return { at: "merged" };
-    inBody.push(site);
+      into.length === 0;
+    if (!body) return { at: "merged", into };
+    inBody.push({ site, posted: i });
     return { at: "body" };
   });
 }
@@ -1208,7 +1219,8 @@ export function bodyPostedFindings(
  * ways from the same review.
  */
 export const VARIANTS = {
-  /** Everything that would have been posted inline. The honest default. */
+  /** Everything that would have been posted: the inline comments and the
+   * body-posted findings (`bodyPostedFindings`). The honest default. */
   all: (_c: BenchComment) => true,
   /** Blockers and questions — what a reader must engage with. */
   "no-nits": (c: BenchComment) => c.tag !== "nit",
@@ -1298,6 +1310,14 @@ function addUsage(into: Usage, x: unknown): void {
   into.cacheRead += n("cacheRead");
 }
 
+/** The child results a `tool_execution_end` event of the native subagent
+ * tool carries (`result.details.results`); [] for any other shape. */
+function childResults(e: Record<string, unknown>): unknown[] {
+  const res = e["result"] as Record<string, unknown> | undefined;
+  const details = res?.["details"] as Record<string, unknown> | undefined;
+  return Array.isArray(details?.["results"]) ? (details["results"] as unknown[]) : [];
+}
+
 /**
  * Sum model usage from pi `--mode json` stdout lines. The parent's own turns
  * carry `usage` on every assistant `message_end`; lens passes run as child
@@ -1321,10 +1341,7 @@ export function usageFromEvents(lines: Iterable<string>): Usage & { children: nu
       if (m?.["role"] === "assistant") add(m["usage"]);
     }
     if (e["type"] === "tool_execution_end") {
-      const res = e["result"] as Record<string, unknown> | undefined;
-      const details = res?.["details"] as Record<string, unknown> | undefined;
-      const results = Array.isArray(details?.["results"]) ? (details["results"] as unknown[]) : [];
-      for (const r of results) {
+      for (const r of childResults(e)) {
         const usage = (r as Record<string, unknown> | null)?.["usage"];
         if (usage) {
           add(usage);
@@ -1457,9 +1474,7 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
       const call = id !== null ? open.get(id) : undefined;
       if (!call) continue;
       open.delete(id!);
-      const res = e["result"] as Record<string, unknown> | undefined;
-      const details = res?.["details"] as Record<string, unknown> | undefined;
-      const results = Array.isArray(details?.["results"]) ? (details["results"] as unknown[]) : [];
+      const results = childResults(e);
       // A launch_plan call named no agent at start: its results do.
       if (call.agents.length === 0)
         call.agents = results

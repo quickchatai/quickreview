@@ -4,7 +4,7 @@
 // the transcript. Once that transcript is archived and verified, a copy equal
 // to it, or to a prefix of it, is a PROVEN duplicate: removed, with a
 // `duplicate_removed` manifest entry. Anything else is gzipped and kept.
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
@@ -240,4 +240,57 @@ describe("legacy session.jsonl (acceptance 7)", () => {
         expect(archiveRow(f.store, f.pr)?.state).toBe("archived");
       },
     );
+
+  it(
+    "a copy that moves after its record is not unlinked and not counted",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = withLegacy((x) => x.bytes.get(x.transcripts[1]!)!);
+      const a = onArchiver(
+        f,
+        {},
+        {
+          step: (name) => {
+            if (name === "duplicate_recorded") appendFileSync(legacyPath(f), "more\n");
+          },
+        },
+      );
+      try {
+        await a.tick();
+      } finally {
+        a.stop();
+      }
+      expect(existsSync(legacyPath(f))).toBe(true);
+      expect(marks(f)).toBe(0);
+      expect(archiveRow(f.store, f.pr)?.state).toBe("archiving");
+    },
+  );
+
+  it(
+    "a stop that comes while the record is written: no unlink this pass; the next pass unlinks it and counts it once",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = withLegacy((x) => x.bytes.get(x.transcripts[1]!)!);
+      let first: ReturnType<typeof onArchiver> | null = null;
+      first = onArchiver(
+        f,
+        {},
+        {
+          step: (name) => {
+            if (name === "duplicate_recorded") first!.stop();
+          },
+        },
+      );
+      await first.tick().catch(() => undefined);
+      first.stop();
+      expect(existsSync(legacyPath(f))).toBe(true);
+      expect(manifestOf(f).entries.filter((e) => e.kind === "duplicate_removed")).toHaveLength(1);
+      expect(marks(f)).toBe(0);
+      await tick(f);
+      expect(existsSync(legacyPath(f))).toBe(false);
+      expect(manifestOf(f).entries.filter((e) => e.kind === "duplicate_removed")).toHaveLength(1);
+      expect(marks(f)).toBe(1);
+      expect(archiveRow(f.store, f.pr)?.state).toBe("archived");
+    },
+  );
 });

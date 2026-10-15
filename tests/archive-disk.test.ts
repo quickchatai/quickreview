@@ -280,4 +280,28 @@ describe("the disk guard (acceptance 8)", () => {
       a.stop();
     }
   });
+
+  it(
+    "a later file refused for the disk: the transcript already verified is still unlinked (its space comes back)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = fixture();
+      const size = (rel: string): number => f.bytes.get(rel)!.length;
+      const [first, second] = f.transcripts as [string, string];
+      expect(size(first)).toBeLessThan(size(second));
+      // Room for the first transcript, not for the second.
+      const free = HEADROOM + size(first) + 1;
+      const a = onArchiver(f, {}, { statfs: async () => ({ bavail: free, bsize: 1 }) });
+      try {
+        await a.tick();
+        const gz = `archive/pr-${f.pr}/transcripts/${first.slice(`state/pi-sessions/pr-${f.pr}/`.length)}.gz`;
+        expect(existsSync(join(f.root, gz))).toBe(true);
+        expect(existsSync(join(f.root, first))).toBe(false);
+        expect(existsSync(join(f.root, second))).toBe(true);
+        expect(archiveRow(f.store, f.pr)?.state).toBe("archiving");
+      } finally {
+        a.stop();
+      }
+    },
+  );
 });

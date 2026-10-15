@@ -26,12 +26,13 @@ import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { yieldToLoop } from "../yieldloop.js";
 import {
-  archiveFileSize,
   archiveStamp,
+  freshPassId,
+  heldAsRecorded,
   identityFields,
+  packedOf,
   placeArchive,
   bytesHeld,
-  sameRecorded,
   type Packed,
 } from "./archivewrite.js";
 import { sameIdentity, writeTextAtomic, type FileIdentity } from "./fsutil.js";
@@ -281,9 +282,7 @@ export class StoreWriter {
     this.meter = meter;
     const base = archiveStamp(deps.now());
     const taken = meter.measure(() => new Set(shards.flatMap((s) => s.m.passes.map((p) => p.id))));
-    let id = base;
-    for (let k = 2; taken.has(id); k++) id = `${base}-${k}`;
-    this.passId = id;
+    this.passId = freshPassId(base, (id) => taken.has(id));
   }
 
   /** Open the store's manifest (after sweeping stray `.partial`s — only the
@@ -376,12 +375,7 @@ export class StoreWriter {
   /** Is `f` archived already with exactly its identity (unlink only)? */
   async alreadyHeld(f: StoreFile): Promise<SettledRecord | null> {
     const rec = this.index.get(f.source);
-    if (
-      sameRecorded(rec, f.identity) &&
-      (await archiveFileSize(this.deps.dir, rec!.archive)) !== null
-    )
-      return rec!;
-    return null;
+    return (await heldAsRecorded(this.deps.dir, rec, f.identity)) ? rec! : null;
   }
 
   /**
@@ -487,13 +481,7 @@ export class StoreWriter {
     entryOf: (archive: string, p: Packed) => FileEntry,
     out: { ok: ArchiveFileOk; dest: string },
   ): Promise<StoreUnlink> {
-    await this.append(
-      entryOf(out.dest, {
-        ...identityFields(f.identity),
-        sha256: out.ok.sha256,
-        gz_bytes: out.ok.gzBytes,
-      }),
-    );
+    await this.append(entryOf(out.dest, packedOf(out.ok, f.identity)));
     await this.deps.step?.("manifest_appended", { store: this.deps.subject, source: f.source });
     this.result.archived += 1;
     this.result.bytesIn += out.ok.bytes;

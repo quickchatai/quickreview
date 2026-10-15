@@ -3,11 +3,11 @@
 // configuration, the run record's lifecycle fields, the harness's time
 // budget, the prepared tree's merge-base check and the AACR score table.
 
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
 import type { ExecOptions, ExecResult } from "./exec.js";
-import type { roundMetrics } from "./report.js";
+import { dropMetricsFiles, type roundMetrics } from "./report.js";
 
 /** pipeline.py `apply_defaults`: `--timeout-minutes` None → 30 — the review
  * budget the harness gives every reviewer it runs, which the arms run in the
@@ -32,11 +32,7 @@ export function dropStaleMetrics(
   who: string,
   what: string,
 ): number {
-  if (!existsSync(resultsDir)) return 0;
-  const stale = readdirSync(resultsDir).filter(
-    (n) => n.startsWith("metrics_") && n.endsWith(".json"),
-  );
-  for (const f of stale) rmSync(join(resultsDir, f), { force: true });
+  const stale = dropMetricsFiles(resultsDir);
   if (stale.length)
     log(
       `${who}: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score ${what}`,

@@ -4,7 +4,10 @@
 // set of rules, so a change to a rule reaches every writer at once.
 //
 //   - the pass stamp and the identity fields a manifest entry records;
-//   - whether a manifest record holds exactly a live identity;
+//   - a fresh pass id;
+//   - whether a manifest record holds exactly a live identity (and its
+//     archive file is still there);
+//   - the entry facts for a verified gzip (`packedOf`);
 //   - the archive name for a source (its base name, else the first `.v<k>`
 //     no entry references) and a pass's bundle name;
 //   - placing one file: an orphan gzip a crash left at the name is adopted,
@@ -82,6 +85,14 @@ export const sameRecorded = (
   id: FileIdentity | null,
 ): boolean => sameRecordedIdentity(rec, id);
 
+/** `base`, else the first `base-<k>` (k ≥ 2) `taken` refuses: a fresh pass
+ * id. */
+export function freshPassId(base: string, taken: (id: string) => boolean): string {
+  let id = base;
+  for (let k = 2; taken(id); k++) id = `${base}-${k}`;
+  return id;
+}
+
 /** Is `rel` (relative to `dir`) an existing regular file? Its size, or null. */
 export async function archiveFileSize(dir: string, rel: string): Promise<number | null> {
   try {
@@ -90,6 +101,17 @@ export async function archiveFileSize(dir: string, rel: string): Promise<number 
   } catch {
     return null;
   }
+}
+
+/** Is the live source archived already with exactly this identity, its
+ * archive file still on disk under `dir` (unlink only)? */
+export async function heldAsRecorded(
+  dir: string,
+  rec:
+    (Pick<SettledRecord, "dev" | "ino" | "bytes" | "mtime_ms"> & { archive: string }) | undefined,
+  id: FileIdentity | null,
+): Promise<boolean> {
+  return sameRecorded(rec, id) && (await archiveFileSize(dir, rec!.archive)) !== null;
 }
 
 /** Does some transcript or file entry already hold these exact bytes (sha256
@@ -145,6 +167,16 @@ export interface Packed {
   gz_bytes: number;
   adopted?: true;
 }
+
+/** The entry facts for a source whose verified gzip holds `ok`. */
+export const packedOf = (
+  ok: Pick<ArchiveFileOk, "sha256" | "gzBytes">,
+  id: FileIdentity,
+): Packed => ({
+  ...identityFields(id),
+  sha256: ok.sha256,
+  gz_bytes: ok.gzBytes,
+});
 
 export type PlaceResult =
   | { kind: "ok"; ok: ArchiveFileOk; dest: string }

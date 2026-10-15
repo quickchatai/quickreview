@@ -131,7 +131,7 @@ import {
   type PrefetchMeta,
   type Variant,
 } from "./aacr.js";
-import { must, run } from "./exec.js";
+import { GIT_ISOLATION_ENV, must, run } from "./exec.js";
 import { dropMetricsFiles } from "./report.js";
 import {
   apiKeyEnv,
@@ -395,14 +395,7 @@ export function boundBody(body: string | null, maxBytes = 20_000): string | null
 
 /** Git reads no system or global configuration and never prompts — for the
  * harness's own git calls and the reviewer's alike. */
-const GIT_ISOLATION = {
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-} as const;
-
-const GIT_ENV = { ...process.env, ...GIT_ISOLATION };
+const GIT_ENV = { ...process.env, ...GIT_ISOLATION_ENV };
 
 async function git(tree: string, args: string[]): Promise<string> {
   return must("git", ["-C", tree, ...args], { env: GIT_ENV, timeoutMs: 10 * 60_000 });
@@ -1471,7 +1464,7 @@ export async function reviewCase(
       QCR_WORKTREE: tree,
       QCR_LEDGER_FILE: join(caseDir, "ledger.md"),
       QCR_PI_VERSION: ctx.cfg.pi.version,
-      ...GIT_ISOLATION,
+      ...GIT_ISOLATION_ENV,
       // An `anthropic/` model arm: pi's anthropic provider reads this key. bench.sh
       // passes it by --env-file only when --config names an anthropic/ model.
       ...(process.env.ANTHROPIC_API_KEY
