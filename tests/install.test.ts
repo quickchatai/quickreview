@@ -9,6 +9,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readlinkSync,
+  realpathSync,
   readFileSync,
   rmSync,
   statSync,
@@ -564,6 +566,40 @@ describe("migrateProfiles", () => {
     ]);
     expect(readFileSync(join(home, "house", "addenda", "10-rule.md"), "utf8")).toBe("real\n");
     expect(readFileSync(join(home, "house-real", "addenda", "10-rule.md"), "utf8")).toBe("real\n");
+  });
+
+  it("links inside a moved profile keep their referents, inside it, in a moved sibling or left behind", () => {
+    const from = join(root, "profiles");
+    putProfile(root, "house", "own\n");
+    put(join(from, "house", "shared", "rule.md"), "inner\n");
+    putProfile(root, "other", "sib\n");
+    put(join(root, "shared", "outside.md"), "outside\n");
+    for (const example of EXAMPLE_PROFILES) putProfile(root, example);
+    put(join(from, EXAMPLE_PROFILES[0]!, "profile.toml"), "base = 1\n");
+    const links: [string, string, string][] = [
+      // [link under house/, target as written, the bytes it must still read]
+      ["addenda/abs-inner.md", join(from, "house", "shared", "rule.md"), "inner\n"],
+      ["addenda/rel-inner.md", "../shared/rule.md", "inner\n"],
+      ["addenda/rel-outside.md", "../../../shared/outside.md", "outside\n"],
+      ["addenda/abs-sibling.md", join(from, "other", "addenda", "10-rule.md"), "sib\n"],
+      ["addenda/rel-sibling.md", "../../other/addenda/10-rule.md", "sib\n"],
+      ["profile.toml", `../${EXAMPLE_PROFILES[0]!}/profile.toml`, "base = 1\n"],
+    ];
+    for (const [at, target] of links) symlinkSync(target, join(from, "house", at));
+    expect(migrateProfiles({ root, env }).map((o) => [o.kind, o.name])).toEqual([
+      ["moved", "house"],
+      ["moved", "other"],
+    ]);
+    const home = join(configHome(env), "profiles", "house");
+    for (const [at, , bytes] of links) expect(readFileSync(join(home, at), "utf8"), at).toBe(bytes);
+    // A link into a tree that moved points at the home's copy, never back into the checkout.
+    expect(readlinkSync(join(home, "addenda", "abs-inner.md"))).toBe(
+      join(home, "shared", "rule.md"),
+    );
+    expect(readlinkSync(join(home, "addenda", "rel-inner.md"))).toBe("../shared/rule.md");
+    expect(realpathSync(join(home, "addenda", "abs-sibling.md"))).toBe(
+      realpathSync(join(configHome(env), "profiles", "other", "addenda", "10-rule.md")),
+    );
   });
 
   it("moves nothing while QCR_CONFIG names the config — compose mounts THAT file's dir, not the home", () => {

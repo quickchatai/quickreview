@@ -56,7 +56,7 @@ import {
 } from "node:fs";
 import { constants as fsConstants } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** The slice of the environment the locator reads — nothing else. */
 export interface InstallEnv {
@@ -673,7 +673,43 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     }
     outcomes.push({ kind: "moved", name, from, to });
   }
+  // Links inside a moved profile keep their referents: one whose target moved
+  // with this run follows it, one whose target stayed points there absolutely.
+  const moved = new Set(outcomes.filter((o) => o.kind === "moved").map((o) => o.name));
+  const whereNow = (was: string): string => {
+    for (const base of [fromBase, realBase]) {
+      if (!within(base, was) || was === base) continue;
+      const rel = relative(base, was);
+      if (moved.has(rel.split(sep)[0] ?? "")) return join(toBase, rel);
+    }
+    return was;
+  };
+  for (const name of moved)
+    if (!linkTargets.has(name)) rebaseLinks(join(fromBase, name), join(toBase, name), whereNow);
   return outcomes.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/** Re-point every link under `newRoot` (the tree that was `oldRoot`) whose
+ * target no longer resolves to where it did: `whereNow` maps the referent's
+ * old path to its current one. A linked directory is re-pointed, not walked. */
+function rebaseLinks(oldRoot: string, newRoot: string, whereNow: (was: string) => string): void {
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(newRoot, rel), { withFileTypes: true })) {
+      const path = rel === "" ? entry.name : join(rel, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+        continue;
+      }
+      if (!entry.isSymbolicLink()) continue;
+      const at = join(newRoot, path);
+      const target = readlinkSync(at);
+      const now = whereNow(resolve(dirname(join(oldRoot, path)), target));
+      if (resolve(dirname(at), target) === now) continue;
+      unlinkSync(at);
+      symlinkSync(now, at);
+    }
+  };
+  walk("");
 }
 
 /** What the profile half of `qcr install migrate` prints; a conflict fails. */
