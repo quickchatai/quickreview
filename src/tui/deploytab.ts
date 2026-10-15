@@ -31,7 +31,7 @@ import {
   sectionTitle,
 } from "./design.js";
 import { Frame, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
-import { transportOf, type RemoteResult, type SshRunner } from "./remote.js";
+import { dockerShArgv, transportOf, type RemoteResult, type SshRunner } from "./remote.js";
 import { CommandDrainSender, type DeployDrainSender } from "./deploy-drain.js";
 import { chainOnPoll } from "./poll-hooks.js";
 import {
@@ -51,24 +51,12 @@ import {
 } from "./confighome.js";
 import { FG, RESET } from "./theme.js";
 
-function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [
-    ...(cfg.sudo_docker ? ["sudo"] : []),
-    "docker",
-    "exec",
-    cfg.container,
-    "sh",
-    "-c",
-    script,
-  ];
-}
-
 /** BUILD_SHA rides the deploy rsync into the sandbox root on the VM. A
  * missing file answers empty (no marker); a file that exists but cannot be
  * read fails the exec, so it stays an unanswered read rather than "absent". */
 export function buildShaArgv(cfg: TuiConfig): string[] {
   const file = `${cfg.remote_sandbox_root}/BUILD_SHA`;
-  return dockerSh(cfg, `if [ -e '${file}' ]; then cat '${file}'; fi`);
+  return dockerShArgv(cfg, `if [ -e '${file}' ]; then cat '${file}'; fi`);
 }
 
 /** The config home the last sync shipped, fingerprinted inside the
@@ -79,7 +67,7 @@ export function buildShaArgv(cfg: TuiConfig): string[] {
 export function configFingerprintArgv(cfg: TuiConfig): string[] {
   const root = cfg.remote_sandbox_root;
   const script = `${root}/scripts/config-fingerprint.sh`;
-  return dockerSh(
+  return dockerShArgv(
     cfg,
     `if [ -f '${script}' ]; then bash '${script}' --located '${root}'; else echo none; fi`,
   );

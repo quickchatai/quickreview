@@ -46,7 +46,7 @@ import { dirname, join, resolve } from "node:path";
 import type { TuiConfig } from "../config.js";
 import type { StatusSnapshot } from "../state.js";
 import { settledIndex, type Manifest, type SettledRecord } from "../archive/manifest.js";
-import { whyArgv, type RemoteResult, type SshRunner } from "./remote.js";
+import { dockerShArgv, whyArgv, type RemoteResult, type SshRunner } from "./remote.js";
 
 /** Roles a round bundle can carry, in copy order. `transcript` carries the pass
  * output too: lens passes run as subagent children inside the PR's one
@@ -137,18 +137,6 @@ export interface RoundManifest {
 
 export const MANIFEST_NAME = "manifest.json";
 
-function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [
-    ...(cfg.sudo_docker ? ["sudo"] : []),
-    "docker",
-    "exec",
-    cfg.container,
-    "sh",
-    "-c",
-    script,
-  ];
-}
-
 /**
  * Locate a round's artefacts on the VM in ONE call, printing `role<space>path`
  * for each that exists.
@@ -186,7 +174,7 @@ export function manifestArgv(
     `[ -f "$r/archive/pr-${pr}/manifest.json" ] && echo "${ARCHIVE_MANIFEST_LINE} $r/archive/pr-${pr}/manifest.json"`,
     `exit 0`,
   ].join("\n");
-  return dockerSh(cfg, script);
+  return dockerShArgv(cfg, script);
 }
 
 /** The listing line naming the PR's archive manifest. */
@@ -242,8 +230,11 @@ export function parseManifest(stdout: string, root: string): EvidenceFile[] {
  * file that looks complete — then `zcat | head -c <cap>`. */
 export function fetchArgv(cfg: TuiConfig, remotePath: string, maxBytes = MAX_FILE_BYTES): string[] {
   if (isArchivedGzip(remotePath, cfg.remote_sandbox_root))
-    return dockerSh(cfg, `zcat -t '${remotePath}' && zcat '${remotePath}' | head -c ${maxBytes}`);
-  return dockerSh(cfg, `head -c ${maxBytes} '${remotePath}'`);
+    return dockerShArgv(
+      cfg,
+      `zcat -t '${remotePath}' && zcat '${remotePath}' | head -c ${maxBytes}`,
+    );
+  return dockerShArgv(cfg, `head -c ${maxBytes} '${remotePath}'`);
 }
 
 /** An archive manifest (`archive/pr-<n>/manifest.json`) as fetched, or null

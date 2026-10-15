@@ -15,29 +15,17 @@ import { emptyLine } from "./emptystate.js";
 import type { BoardKey } from "./keys.js";
 import type { LearningStore } from "./learning.js";
 import { Frame, rule } from "./paint.js";
-import type { SshRunner } from "./remote.js";
-
-function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [
-    ...(cfg.sudo_docker ? ["sudo"] : []),
-    "docker",
-    "exec",
-    cfg.container,
-    "sh",
-    "-c",
-    script,
-  ];
-}
+import { dockerShArgv, type SshRunner } from "./remote.js";
 
 export function digestListArgv(cfg: TuiConfig): string[] {
   // `ls` of a directory that does not exist yet is an EMPTY digest, not a
   // failed read — the sweep creates it with the first file. A failed ssh is
   // what the fetcher reports as undefined.
-  return dockerSh(cfg, `ls '${cfg.remote_sandbox_root}/digest' 2>/dev/null || true`);
+  return dockerShArgv(cfg, `ls '${cfg.remote_sandbox_root}/digest' 2>/dev/null || true`);
 }
 
 export function digestCatArgv(cfg: TuiConfig, file: string): string[] {
-  return dockerSh(cfg, `cat '${cfg.remote_sandbox_root}/digest/${file}'`);
+  return dockerShArgv(cfg, `cat '${cfg.remote_sandbox_root}/digest/${file}'`);
 }
 
 /** Digest file names are `<YYYY-MM-DD>.md`; anything else is ignored. */
