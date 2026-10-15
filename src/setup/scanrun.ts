@@ -82,6 +82,7 @@ import type { ScanConfig, ScanDepth } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import {
   FindingsStore,
+  settled,
   type FindingDoubt,
   type ReconcileResult,
   type ReportedFinding,
@@ -430,6 +431,9 @@ export interface ScanPreview {
    * (a deep delta only): how many of those a complete standard reading covers
    * at this content — owed only because no deep reading does. */
   delta: { since: string; owed: number; owed_shallow?: number } | null;
+  /** Set when there is nothing to read but the findings still owe a
+   * reconcile: why. The run reads no case and only settles them. */
+  reconcile_only?: string;
   /** Why a start would be refused whatever the key. */
   blockers: string[];
 }
@@ -716,15 +720,17 @@ export class ScanRunner {
       estimate = null;
       cap = cfg.calibration_max_usd;
     }
-    if (cases.length === 0 && delta) {
+    // Nothing to read, but the findings still owe a reconcile — a reported
+    // file deleted since, or a run that ended before its own reconcile: the
+    // run reads nothing and only settles them, so emptiness is no blocker.
+    const reconcileOnly = cases.length === 0 ? this.reconcileOwed(tree) : null;
+    if (cases.length === 0 && reconcileOnly === null) {
       blockers.push(
-        `nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)}), and the ledger covers every other file at its content`,
-      );
-    } else if (cases.length === 0) {
-      blockers.push(
-        plan.covered > 0
-          ? `nothing left to read at ${sha.slice(0, 12)}: the ledger already covers every stage-1 file at this content`
-          : "nothing to read: no unit of the saved cut owns a readable, non-excluded file",
+        delta
+          ? `nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)}), and the ledger covers every other file at its content`
+          : plan.covered > 0
+            ? `nothing left to read at ${sha.slice(0, 12)}: the ledger already covers every stage-1 file at this content`
+            : "nothing to read: no unit of the saved cut owns a readable, non-excluded file",
       );
     }
     // A deep delta owes an unchanged file a standard reading already covers
@@ -777,9 +783,30 @@ export class ScanRunner {
       skipped: plan.skipped,
       settings: { ...runSettings, exclude: cfg.exclude, concurrency: cfg.concurrency },
       delta: basis ? { since: basis.since, owed: plan.owed, ...owedShallow(basis) } : null,
+      ...(reconcileOnly !== null ? { reconcile_only: reconcileOnly } : {}),
       blockers,
     };
     return { ok: true, planned: { preview, tree, settings } };
+  }
+
+  /** Why a run that reads nothing must still run, or null: an open finding
+   * on a file the tree no longer holds (outside the pending match question,
+   * which waits for the companion's answer), or a last run that ended before
+   * its own reconcile (interrupted, or its reconcile failed). */
+  private reconcileOwed(tree: ScanTree): string | null {
+    const last = this.load().file.current;
+    if (last !== null && last.id !== this.active?.id && last.matching == null)
+      return `the last run (${last.id}) ended before its findings were reconciled`;
+    const { findings, error } = this.findings.load();
+    if (error !== null) return null;
+    const asked = new Set(
+      (this.findings.question().question?.unreported ?? []).map((f) => f.fingerprint),
+    );
+    const paths = new Set(tree.files.map((f) => f.path));
+    const gone = findings.filter(
+      (f) => !settled(f) && !asked.has(f.fingerprint) && !paths.has(f.path),
+    ).length;
+    return gone > 0 ? `${gone} open finding(s) on file(s) no longer in the tree` : null;
   }
 
   // -- the four verbs --

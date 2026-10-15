@@ -602,7 +602,7 @@ function returnedState(f: ScanFinding): FindingState {
 
 /** Is `f` already settled — fixed, or dismissed and stamped unreported? A
  * settled finding is out of play until a scan reports it again. */
-const settled = (f: ScanFinding): boolean =>
+export const settled = (f: ScanFinding): boolean =>
   f.state === "fixed" || (f.state === "dismissed" && f.unreported != null);
 
 /**

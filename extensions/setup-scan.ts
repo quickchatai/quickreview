@@ -178,6 +178,11 @@ export function renderPreview(p: ScanPreview): string {
       `! ${p.unassigned.length} file(s) no unit owns at this sha (e.g. ${p.unassigned.slice(0, 3).join(", ")}) — the unit cut may need adjusting; they are not read.`,
     );
   }
+  if (p.reconcile_only) {
+    out.push(
+      `Nothing to read, but ${p.reconcile_only}: the run reads no case and only reconciles the findings (no cost).`,
+    );
+  }
   for (const b of p.blockers) out.push(`✗ ${b}`);
   if (p.blockers.length === 0) {
     out.push(
