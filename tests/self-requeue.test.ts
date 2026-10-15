@@ -654,6 +654,37 @@ describe("live-but-stuck recovery", () => {
     expect(events("round_overdue")).toHaveLength(0);
   });
 
+  // MUTATION: keep the post-kill verdict check infrastructure-only — the
+  // round is cancelled and requeued under a verdict that won the race.
+  it("a verdict committed while the wedged session is being stopped wins: no requeue, no anomaly", async () => {
+    const roundId = reviewingRound(313);
+    pastDeadline();
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {
+      writeFileSync(
+        join(dir, "pr-313-round-1.json"),
+        JSON.stringify({
+          pr: 313,
+          round_no: 1,
+          verdict: "REQUEST_CHANGES",
+          head_sha: "abc123",
+          finished_at: clock.toISOString(),
+          passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }],
+        }),
+      );
+    };
+    const w = watcher(hooks);
+
+    expect(await w.checkDeadlines()).toEqual([]);
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+    expect(events("round_overdue")).toHaveLength(0);
+    expect(events("round_stage_verdict_won")[0]!.payload).toMatchObject({ mode: "alive_stuck" });
+
+    await w.sweep();
+    expect(roundStatus(roundId)).toBe("done");
+  });
+
   it("a live session with a pending verdict file is left to the sweep, never killed", async () => {
     reviewingRound(311);
     pastDeadline();

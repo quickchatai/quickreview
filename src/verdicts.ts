@@ -437,7 +437,6 @@ function comparePlan(
   };
   if (plan && addable) {
     out.planned = plan.map((p) => p.lens);
-    if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
     const byAddable = new Map(addable.map((p) => [p.lens, p]));
     const byPlan = new Map(plan.map((p) => [p.lens, p]));
     for (const pass of passes) {
@@ -464,9 +463,9 @@ function comparePlan(
   } else {
     // Rows with no structured plan (in flight across a migration) compare
     // by lens name only.
-    if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
     out.unknownAdditions = [...new Set(executed.filter((lens) => !out.planned.includes(lens)))];
   }
+  if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
   return out;
 }
 
@@ -600,15 +599,23 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   // the round and self-requeues instead of applying a verdict.
   const outcome = typeof v.outcome === "string" ? v.outcome.trim().toLowerCase() : "";
   const verdictSpelled = typeof v.verdict === "string" ? v.verdict.trim().toUpperCase() : "";
-  if (outcome === "head_moved" || verdictSpelled === "HEAD_MOVED") {
-    v.outcome = "head_moved";
-    delete v.verdict;
+  // The envelope every outcome carries: the head the round reviewed and when
+  // it finished. spend_usd is a legacy self-reported field — accepted in any
+  // shape and IGNORED (models copy the template's example figure; real usage
+  // is measured from the session JSONLs) — deleted so no consumer can store
+  // it.
+  const badEnvelope = (): ParsedVerdict | null => {
     if (typeof v.head_sha !== "string" || v.head_sha.length === 0)
       return bad("head_sha must be a non-empty string");
     if (typeof v.finished_at !== "string" || v.finished_at.length === 0)
       return bad("finished_at must be a non-empty string");
     delete v.spend_usd;
-    return { ok: true, verdict: raw as unknown as VerdictFile };
+    return null;
+  };
+  if (outcome === "head_moved" || verdictSpelled === "HEAD_MOVED") {
+    v.outcome = "head_moved";
+    delete v.verdict;
+    return badEnvelope() ?? { ok: true, verdict: raw as unknown as VerdictFile };
   }
   if (outcome) return bad(`bad outcome: ${String(v.outcome)}`);
   // normalizeVerdict also folds the retired "ESCALATE" spelling into
@@ -616,14 +623,8 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   const verdict = normalizeVerdict(v.verdict);
   if (verdict === null) return bad(`bad verdict: ${String(v.verdict)}`);
   v.verdict = verdict;
-  if (typeof v.head_sha !== "string" || v.head_sha.length === 0)
-    return bad("head_sha must be a non-empty string");
-  if (typeof v.finished_at !== "string" || v.finished_at.length === 0)
-    return bad("finished_at must be a non-empty string");
-  // spend_usd: legacy self-reported field — accepted in any shape and IGNORED
-  // (models copy the template's example figure; real usage is measured from
-  // the session JSONLs). Deleted so no consumer can store it.
-  delete v.spend_usd;
+  const envelope = badEnvelope();
+  if (envelope) return envelope;
   if (v.ai_approved !== undefined && typeof v.ai_approved !== "boolean")
     return bad("ai_approved must be a boolean");
   // LLM-written booleans arrive as strings often enough to coerce the
@@ -2682,8 +2683,8 @@ export class VerdictWatcher {
   private async checkRoundIntegrity(pr: number, roundId: number): Promise<void> {
     const { cfg, store } = this.deps;
     try {
-      const before = store.roundGitConfig(roundId) as IntegrityFingerprint | undefined;
-      if (!before || typeof before.digest !== "string") return; // no baseline — never judged
+      const before = this.integrityBaseline(roundId);
+      if (!before) return; // no baseline — never judged
       const root = this.deps.root ?? sandboxRoot();
       const budgetMs = Math.max(0, this.deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
       const rehash = await withinBudget(
@@ -2969,12 +2970,18 @@ export class VerdictWatcher {
     );
   }
 
+  /** The round's integrity baseline, when dispatch took one that can be
+   * judged against; undefined otherwise — such a round is never judged. */
+  private integrityBaseline(roundId: number): IntegrityFingerprint | undefined {
+    const before = this.deps.store.roundGitConfig(roundId) as IntegrityFingerprint | undefined;
+    return before && typeof before.digest === "string" ? before : undefined;
+  }
+
   /** The round-end integrity re-check did not run for this round because a
    * restart cut its measurement short — recorded, never read as "unchanged".
    * Only a round with a baseline could have been judged at all. */
   private integrityInterrupted(pr: number, roundId: number): void {
-    const before = this.deps.store.roundGitConfig(roundId) as IntegrityFingerprint | undefined;
-    if (!before || typeof before.digest !== "string") return;
+    if (!this.integrityBaseline(roundId)) return;
     this.deps.store.logEvent("round_integrity_unchecked", pr, {
       round_id: roundId,
       stage: "round_end",
@@ -3234,8 +3241,7 @@ export class VerdictWatcher {
     } catch {
       return "not_stuck";
     }
-    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`)))
-      return "verdict_pending";
+    if (this.verdictFilePresent(round.pr, round.round_no)) return "verdict_pending";
     if (dead) return "dead";
     // A live session that never received the order is not wedged — it is
     // idle, waiting for work that was lost in transit. Killing it destroys a
@@ -3307,7 +3313,7 @@ export class VerdictWatcher {
       }
       // The old parent is now fenced (or had already settled), so this read is
       // definitive. A verdict that won before the fence stays the sweep's.
-      if (existsSync(join(this.deps.verdictDir, `pr-${pr}-round-${roundNo}.json`))) {
+      if (this.verdictFilePresent(pr, roundNo)) {
         this.deps.store.logEvent("round_stage_verdict_won", pr, {
           round_id: round.id,
           round_no: roundNo,
@@ -3777,12 +3783,24 @@ export class VerdictWatcher {
         return false;
       }
     }
+    if (mode === "alive_stuck" && this.verdictFilePresent(round.pr, round.round_no)) {
+      // The wedged session committed its verdict while it was being stopped:
+      // that verdict wins, exactly as on the infrastructure path below. The
+      // round stays running for the sweep to consume — handled here, so the
+      // deadline path neither requeues nor fails it.
+      store.logEvent("round_stage_verdict_won", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        mode,
+      });
+      return true;
+    }
     if (infrastructure) {
       // For active failures the strict kill above makes this check definitive:
       // no new verdict can appear after the session is gone. For a settled
       // parent, all writes are already over. A verdict that won this race is
       // left to the 10s sweep, never cancelled/quarantined here.
-      if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) {
+      if (this.verdictFilePresent(round.pr, round.round_no)) {
         store.logEvent("round_stage_verdict_won", round.pr, {
           round_id: round.id,
           round_no: round.round_no,
@@ -3903,8 +3921,7 @@ export class VerdictWatcher {
     const startedMs = Date.parse(round.started_at);
     if (!Number.isFinite(startedMs) || nowMs - startedMs < graceMs) return;
     if (store.hasLaterRound(round.pr, round.round_no)) return; // superseded — the deadline sweep owns that case
-    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`)))
-      return;
+    if (this.verdictFilePresent(round.pr, round.round_no)) return;
     const clearSilent = (): void => {
       if (round.silent_since) store.clearRoundSilent(round.id);
     };
@@ -4015,10 +4032,7 @@ export class VerdictWatcher {
         this.log(`verdicts: #${round.pr} round ${round.round_no} cancelled (superseded)`);
         continue;
       }
-      if (
-        round.posting_key &&
-        !existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))
-      ) {
+      if (round.posting_key && !this.verdictFilePresent(round.pr, round.round_no)) {
         const proof = await this.postingProof(round);
         if (proof.kind === "waiting") continue;
         // The deadline honours the posted-tail grace the stage limits give:
