@@ -998,17 +998,11 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
     await import("./replay.js");
   const root = sandboxRoot();
   // The replay plans rounds with `buildPassPlan`, so it must see the
-  // profile's per-lens tuning exactly as the daemon does (wire.ts buildParts)
-  // — otherwise a lens the profile switched off would be replayed.
-  const { applyProfileTuning } = await import("./lenstuning.js");
-  const { loadProfileLensTuning } = await import("./profiles.js");
-  const loaded = loadConfig();
-  const { loadProfilePosting } = await import("./profiles.js");
-  const { applyProfilePosting } = await import("./postingpolicy.js");
-  const cfg = applyProfilePosting(
-    applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile)),
-    loadProfilePosting(root, loaded.review.profile),
-  );
+  // profile's overlays exactly as the daemon does (wire.ts buildParts, the
+  // same function) — otherwise a lens the profile switched off would be
+  // replayed.
+  const { applyProfileOverlays } = await import("./profiles.js");
+  const cfg = applyProfileOverlays(root, loadConfig());
   const args = parseRegressionArgs(rest, json);
   const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr regression");
   const scratchRoot = join(stateDir(), "regression");

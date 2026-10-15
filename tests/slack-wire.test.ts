@@ -232,6 +232,39 @@ describe("slack on — boot", () => {
     expect(seen).toContain(join(cfg.github.secrets_dir, "slack_app_token"));
     await runtime!.stop("test");
   });
+
+  it("hands the transport the wiring's log, so socket connection failures reach the daemon log", async () => {
+    const lines: string[] = [];
+    let transportLog: ((msg: string, extra?: unknown) => void) | undefined;
+    const runtime = await startSlack(
+      wiring({
+        log: (msg) => lines.push(msg),
+        makeTransport: (o) => {
+          transportLog = o.log;
+          return fakeTransport();
+        },
+      }),
+    );
+    transportLog!("slack.socket.open_failed", { error: "invalid_auth" });
+    expect(lines).toContain("slack.socket.open_failed");
+    await runtime!.stop("test");
+  });
+
+  it("measures the daemon.up downtime from the PREVIOUS run's heartbeat, not the snapshot this boot already wrote", async () => {
+    // This boot's first status write lands before onStart starts Slack: the
+    // file on disk is fresh, the previous run's heartbeat is an hour old.
+    writeFileSync(
+      join(dir, "state", "status.json"),
+      JSON.stringify({ heartbeat: clock.toISOString() }),
+    );
+    const previousStatus = JSON.stringify({
+      heartbeat: new Date(clock.getTime() - 60 * 60_000).toISOString(),
+    });
+    const transport = fakeTransport();
+    const runtime = await startSlack(wiring({ makeTransport: () => transport, previousStatus }));
+    expect(transport.posts.some((p) => /review daemon up/.test(p.text))).toBe(true);
+    await runtime!.stop("test");
+  });
 });
 
 describe("slack on — the two command watchers", () => {

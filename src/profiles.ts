@@ -68,7 +68,12 @@ import type { EcosystemName } from "./ecosystem.js";
 import { ALL_PASSES } from "./dispatch.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
-import { LESSON_VALIDATE_ADDENDUM_ID, PASS_ADDENDA, SCAN_PASS, splitFrontmatter } from "./include.js";
+import {
+  LESSON_VALIDATE_ADDENDUM_ID,
+  PASS_ADDENDA,
+  SCAN_PASS,
+  splitFrontmatter,
+} from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
 import {
   locateProfile,
@@ -76,8 +81,14 @@ import {
   strandedCheckoutProfile,
   type InstallEnv,
 } from "./install.js";
-import { parsePostingTable, POSTING_ADDENDUM_IDS, type PostingPolicy } from "./postingpolicy.js";
 import {
+  applyProfilePosting,
+  parsePostingTable,
+  POSTING_ADDENDUM_IDS,
+  type PostingPolicy,
+} from "./postingpolicy.js";
+import {
+  applyProfileTuning,
   LENS_TUNING_ID_PREFIXES,
   mergeLensTuning,
   parseLensTable,
@@ -539,6 +550,27 @@ export function loadProfilePosting(
     };
   }
   return merged;
+}
+
+/**
+ * A parsed config with its profile's overlays applied — the per-lens tuning,
+ * then the `[posting]` policy — so `cfg.lenses` and `cfg.posting` are the one
+ * resolved answer (the profile wins over config.toml, the preset and the
+ * defaults). The daemon's assembly and the regression replay resolve through
+ * this one function, so a replay plans rounds exactly as the daemon does.
+ */
+export function applyProfileOverlays<
+  C extends {
+    review: { profile: string };
+    lenses?: Record<string, LensTuning>;
+    posting?: PostingPolicy;
+  },
+>(root: string, cfg: C, lookup: ProfileLookup = {}): C {
+  const profile = cfg.review.profile;
+  return applyProfilePosting(
+    applyProfileTuning(cfg, loadProfileLensTuning(root, profile, lookup)),
+    loadProfilePosting(root, profile, lookup),
+  );
 }
 
 /** The config with the profile's `[scan]` overrides applied — the profile

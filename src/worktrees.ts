@@ -15,6 +15,8 @@ import {
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExecFn, ExecResult } from "./tmux.js";
 import { nodeExec, runOrThrow } from "./tmux.js";
+import { parseHunkHeader } from "./hunkheader.js";
+import { repoCloneDirName } from "./clonedir.js";
 
 export interface WorktreeManagerOptions {
   /** Sandbox root — the clone lives at <root>/<cloneDir>, worktrees at <root>/wt. */
@@ -26,7 +28,7 @@ export interface WorktreeManagerOptions {
   run?: ExecFn;
   /** Directory name of the base clone. Production wires `[github] clone_dir`
    * via `githubCloneDir` (src/config.ts); absent ⇒ derived here
-   * from `repo`'s basename the same way ("owner/name" ⇒ "name"). */
+   * from `repo` by the same rule, `repoCloneDirName` ("owner/name" ⇒ "name"). */
   cloneDir?: string;
 }
 
@@ -41,8 +43,10 @@ export interface DiffHunk {
  * headers are read). */
 export function parseDiffHunks(diff: string): DiffHunk[] {
   const out: DiffHunk[] = [];
-  for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/gm))
-    out.push({ old_start: Number(m[1]), old_count: m[2] === undefined ? 1 : Number(m[2]) });
+  for (const line of diff.split("\n")) {
+    const h = parseHunkHeader(line);
+    if (h) out.push({ old_start: h.old_start, old_count: h.old_count });
+  }
   return out;
 }
 
@@ -68,8 +72,11 @@ export function hunksTouchLine(
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 
 /** One file's zero-context hunks, keyed by the file's OLD path (the side a
- * blame of the parent reads); a file the diff creates has no old side and is
- * left out. A `--- ` line is a file header only in a file section's header
+ * blame of the parent reads) as the repository spells it — git's quoting of a
+ * special or non-ASCII path undone, the tab it appends to a path with a space
+ * dropped; a file the diff creates has no old side and is left out, and a
+ * header this reader cannot decode leaves its section out rather than misread
+ * it. A `--- ` line is a file header only in a file section's header
  * (after its `diff --git`, before its first `@@`): inside a hunk it is a
  * REMOVED line whose text starts `-- ` (an SQL, Lua or Haskell comment), and
  * reading it as a header would drop the rest of the file's hunks. */
@@ -84,17 +91,15 @@ export function parseDiffHunksByFile(diff: string): Map<string, DiffHunk[]> {
       continue;
     }
     if (inHeader && line.startsWith("--- ")) {
-      // A quoted path (git's spelling of one with special characters) is
-      // left out rather than misread.
-      current = /^--- a\/(.*)$/.exec(line)?.[1] ?? null;
+      current = line === "--- /dev/null" ? null : sectionPath(line.slice(4), "a/");
       continue;
     }
     if (line.startsWith("@@")) inHeader = false;
     if (current === null) continue;
-    const h = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/.exec(line);
+    const h = parseHunkHeader(line);
     if (!h) continue;
     const list = out.get(current) ?? [];
-    list.push({ old_start: Number(h[1]), old_count: h[2] === undefined ? 1 : Number(h[2]) });
+    list.push({ old_start: h.old_start, old_count: h.old_count });
     out.set(current, list);
   }
   return out;
@@ -151,14 +156,13 @@ export function parseNewSideRanges(hunks: string): NewSideParse {
     const inHunk = oldLeft > 0 || newLeft > 0;
     if (!inHunk) {
       flush();
-      const h = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      const h = parseHunkHeader(line);
       if (!h) continue;
       sawHunk = true;
-      oldLeft = h[1] === undefined ? 1 : Number(h[1]);
-      const c = Number(h[2]);
-      newLeft = h[3] === undefined ? 1 : Number(h[3]);
+      oldLeft = h.old_count;
+      newLeft = h.new_count;
       // An empty new side names the line BEFORE the hunk.
-      newLine = newLeft === 0 ? c + 1 : c;
+      newLine = newLeft === 0 ? h.new_start + 1 : h.new_start;
       continue;
     }
     const ch = line[0];
@@ -463,11 +467,19 @@ export type PrOwnedDelta =
     }
   | { ok: false; reason: PrOwnedDeltaUnavailable; detail?: string };
 
-/** The ref that pins a reviewed head against gc. Its own
- * namespace: `refs/qcr/pr-<n>` is a ref already, so `refs/qcr/pr-<n>/…`
- * could not be created. */
+/** Where reviewed-head pins live. Their own namespace: `refs/qcr/pr-<n>` is a
+ * ref already, so `refs/qcr/pr-<n>/…` could not be created. */
+const REVIEWED_HEAD_NAMESPACE = "refs/qcr/reviewed/";
+
+/** Every pin of PR `pr` starts with this — what creation writes and the
+ * PR's removal lists. */
+function reviewedHeadPrefix(pr: number): string {
+  return `${REVIEWED_HEAD_NAMESPACE}pr-${pr}-`;
+}
+
+/** The ref that pins a reviewed head against gc. */
 export function reviewedHeadRef(pr: number, sha: string): string {
-  return `refs/qcr/reviewed/pr-${pr}-${sha.slice(0, 12).toLowerCase()}`;
+  return `${reviewedHeadPrefix(pr)}${sha.slice(0, 12).toLowerCase()}`;
 }
 
 /** Join name-status entries with their patch sections into delta files.
@@ -626,19 +638,6 @@ export function cloneUrlFor(repo: string): string {
     : `https://github.com/${repo}.git`;
 }
 
-/** Fallback clone-dir derivation when the caller passes none: the repo's
- * basename, `.git` stripped — the same rule as `githubCloneDir`
- * (src/config.ts), duplicated here only so this module keeps zero config
- * imports. */
-function repoBasename(repo: string): string {
-  const tail = repo
-    .replace(/\.git$/, "")
-    .replace(/\/+$/, "")
-    .split("/")
-    .pop();
-  return tail || "repo";
-}
-
 /** The info/exclude file of the git repository whose work tree is exactly
  * `root`, or null when `root` is not a work-tree root (the VM's sandbox: the
  * rsync ships no `.git`). Pure filesystem — no `git` process, so a checkout
@@ -703,7 +702,7 @@ export class WorktreeManager {
 
   constructor(opts: WorktreeManagerOptions) {
     this.root = opts.root;
-    this.basePath = join(opts.root, opts.cloneDir ?? repoBasename(opts.repo));
+    this.basePath = join(opts.root, opts.cloneDir ?? repoCloneDirName(opts.repo));
     this.wtRoot = join(opts.root, "wt");
     this.cloneUrl = opts.cloneUrl ?? cloneUrlFor(opts.repo);
     this.run = opts.run ?? nodeExec;
@@ -809,13 +808,11 @@ export class WorktreeManager {
     // make the pre-check silently find nothing — and the migration pre-check
     // may get more reliable, never quieter. The caller
     // catches it and logs `migration_precheck_failed`.
-    if (!/^[0-9a-f]{7,40}$/i.test(sha))
-      throw new Error(`listMigrationFiles: not a commit sha: ${sha}`);
-    const res = await this.git(["ls-tree", "-r", "--name-only", sha]);
-    return res.stdout
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => /(^|\/)migrations\/[^/]+\.py$/.test(l));
+    if (!SHA_RE.test(sha)) throw new Error(`listMigrationFiles: not a commit sha: ${sha}`);
+    // NUL-separated: the names as the repository spells them, never git's
+    // quoted display of a non-ASCII or special path.
+    const res = await this.git(["ls-tree", "-r", "-z", "--name-only", sha]);
+    return res.stdout.split("\0").filter((l) => /(^|\/)migrations\/[^/]+\.py$/.test(l));
   }
 
   /**
@@ -831,45 +828,30 @@ export class WorktreeManager {
    * commit's real tree names exactly the hand-resolved paths.
    *
    * `degraded: true` means the answer is unknown (old git, missing objects) —
-   * the caller decides what that costs; this reader never guesses.
+   * the caller decides what that costs; this reader never guesses. `reason`
+   * says why, for the caller's log (the failed git command and its stderr
+   * when one failed).
    */
   async resolvedFilesInMerges(
     from: string,
     to: string,
     pr?: number,
-  ): Promise<{ files: string[]; degraded: boolean }> {
-    if (!/^[0-9a-f]{7,40}$/i.test(from) || !/^[0-9a-f]{7,40}$/i.test(to))
-      return { files: [], degraded: true };
+  ): Promise<{ files: string[]; degraded: boolean; reason?: string }> {
+    if (!SHA_RE.test(from) || !SHA_RE.test(to))
+      return { files: [], degraded: true, reason: "not a commit sha" };
     try {
       // A recheck classifies a push minutes after it lands — usually before
       // any round has fetched the new objects into the base clone, so without
-      // a fetch every live recheck would degrade. Fetch on miss: by sha first (GitHub serves reachable want-shas), then the PR
-      // ref as the reliable route for PR-branch heads.
-      const missing = async () => {
-        const out: string[] = [];
-        for (const sha of [from, to]) if (!(await this.hasCommit(sha))) out.push(sha);
-        return out;
-      };
-      let gone = await missing();
-      if (gone.length) {
-        await this.run("git", ["fetch", "--force", "origin", ...gone], { cwd: this.basePath });
-        gone = await missing();
-      }
-      if (gone.length && pr !== undefined) {
-        await this.run(
-          "git",
-          ["fetch", "--force", "origin", `+refs/pull/${pr}/head:${this.prRef(pr)}`],
-          { cwd: this.basePath },
-        );
-        gone = await missing();
-      }
-      if (gone.length) return { files: [], degraded: true };
+      // a fetch every live recheck would degrade.
+      const gone = await this.fetchMissing([from, to], pr);
+      if (gone.length)
+        return { files: [], degraded: true, reason: `not in the clone: ${gone.join(", ")}` };
       const merges = (await this.git(["rev-list", "--merges", `${from}..${to}`])).stdout
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean);
       const files = new Set<string>();
-      let unverified = false;
+      const unverified: string[] = [];
       for (const m of merges) {
         const parents = (await this.git(["rev-list", "--parents", "-n", "1", m])).stdout
           .trim()
@@ -879,7 +861,7 @@ export class WorktreeManager {
         // compare against: the files it resolved are unknown, so the answer is
         // degraded — the other merges' files still count.
         if (parents.length !== 2) {
-          unverified = true;
+          unverified.push(m);
           continue;
         }
         // merge-tree exits 1 on conflicts while still printing the tree oid —
@@ -888,18 +870,58 @@ export class WorktreeManager {
           cwd: this.basePath,
         });
         const tree = (mt.stdout.split("\n")[0] ?? "").trim();
-        if (!/^[0-9a-f]{40,64}$/.test(tree)) return { files: [...files], degraded: true };
-        const diff = await this.git(["diff", "--name-only", tree, `${m}^{tree}`]);
-        for (const f of diff.stdout
-          .split("\n")
-          .map((l) => l.trim())
-          .filter(Boolean))
-          files.add(f);
+        if (!/^[0-9a-f]{40,64}$/.test(tree))
+          return {
+            files: [...files],
+            degraded: true,
+            reason: `merge-tree gave no tree for ${m} (exit ${mt.code}): ${mt.stderr.trim().slice(0, 200)}`,
+          };
+        // NUL-separated: the names GitHub reports, never git's quoted display.
+        const diff = await this.git(["diff", "-z", "--name-only", tree, `${m}^{tree}`]);
+        for (const f of diff.stdout.split("\0").filter(Boolean)) files.add(f);
       }
-      return { files: [...files], degraded: unverified };
-    } catch {
-      return { files: [], degraded: true };
+      return unverified.length
+        ? {
+            files: [...files],
+            degraded: true,
+            reason: `merge(s) with other than two parents not verified: ${unverified.join(", ")}`,
+          }
+        : { files: [...files], degraded: false };
+    } catch (err) {
+      return {
+        files: [],
+        degraded: true,
+        reason: (err instanceof Error ? err.message : String(err)).slice(0, 300),
+      };
     }
+  }
+
+  /**
+   * The commits of `shas` the clone still lacks after fetching them on miss:
+   * by sha first (GitHub serves a reachable want-sha), then PR `pr`'s head
+   * ref, the reliable route for PR-branch heads. A fetch that fails is no
+   * throw — the answer is what is still missing.
+   */
+  private async fetchMissing(shas: readonly string[], pr?: number): Promise<string[]> {
+    const missing = async () => {
+      const out: string[] = [];
+      for (const sha of shas) if (!(await this.hasCommit(sha))) out.push(sha);
+      return out;
+    };
+    let gone = await missing();
+    if (gone.length) {
+      await this.run("git", ["fetch", "--force", "origin", ...gone], { cwd: this.basePath });
+      gone = await missing();
+    }
+    if (gone.length && pr !== undefined && Number.isInteger(pr) && pr > 0) {
+      await this.run(
+        "git",
+        ["fetch", "--force", "origin", `+refs/pull/${pr}/head:${this.prRef(pr)}`],
+        { cwd: this.basePath },
+      );
+      gone = await missing();
+    }
+    return gone;
   }
 
   /**
@@ -920,9 +942,16 @@ export class WorktreeManager {
     paths: string[],
     opts: { botLogins?: string[] } = {},
   ): Promise<{ login: string | null; name: string; email: string } | null> {
-    if (!/^[0-9a-f]{7,40}$/i.test(sha) || paths.length === 0) return null;
+    if (!SHA_RE.test(sha) || paths.length === 0) return null;
     const bots = new Set((opts.botLogins ?? []).map((b) => b.toLowerCase()));
-    const res = await this.git(["log", "--format=%ae%x09%an", sha, "--", ...paths]);
+    const res = await this.git([
+      "--literal-pathspecs",
+      "log",
+      "--format=%ae%x09%an",
+      sha,
+      "--",
+      ...paths,
+    ]);
     for (const line of res.stdout.split("\n")) {
       const [email = "", name = ""] = line.split("\t");
       if (!email && !name) continue;
@@ -977,7 +1006,10 @@ export class WorktreeManager {
         if (!(await this.pathAt(from, path))) return null;
         if (from === to) hunks = [];
         else {
+          // A literal pathspec: `app/[id].tsx` must not also match
+          // `app/i.tsx`, whose hunks would read as this anchor's.
           const res = await this.git([
+            "--literal-pathspecs",
             "diff",
             "--no-color",
             "--no-ext-diff",
@@ -1104,19 +1136,21 @@ export class WorktreeManager {
         if (list.length > POST_MERGE_LIMITS.prCommits) truncated = true;
         for (const c of list.slice(0, POST_MERGE_LIMITS.prCommits)) prCommits.add(c);
       }
+      // NUL-separated names, and literal pathspecs below: the files as the
+      // repository spells them, each matching only itself.
       let files = (
         await this.git([
           "diff",
           "--no-color",
           "--no-ext-diff",
           "--no-renames",
+          "-z",
           "--name-only",
           m.parents[0]!,
           m.sha,
         ])
       ).stdout
-        .split("\n")
-        .map((l) => l.trim())
+        .split("\0")
         .filter(Boolean);
       if (files.length > POST_MERGE_LIMITS.files) {
         truncated = true;
@@ -1138,6 +1172,7 @@ export class WorktreeManager {
       // commits touching these files) bounds the listing.
       const oldestFirst = (
         await this.git([
+          "--literal-pathspecs",
           "log",
           "--first-parent",
           "--no-renames",
@@ -1160,6 +1195,7 @@ export class WorktreeManager {
       )) {
         scan.checked += 1;
         const diff = await this.git([
+          "--literal-pathspecs",
           "diff",
           "--no-color",
           "--no-ext-diff",
@@ -1251,7 +1287,7 @@ export class WorktreeManager {
 
   /** True when `sha` is present in the base clone (no fetch needed). */
   async hasCommit(sha: string): Promise<boolean> {
-    if (!/^[0-9a-f]{7,40}$/i.test(sha)) return false;
+    if (!SHA_RE.test(sha)) return false;
     const res = await this.run("git", ["cat-file", "-e", `${sha}^{commit}`], {
       cwd: this.basePath,
     });
@@ -1309,18 +1345,8 @@ export class WorktreeManager {
     try {
       for (const sha of [q.to, q.mergeBase])
         if (!(await this.hasCommit(sha))) return fail("diff-failed", `${sha} not in the clone`);
-      if (!(await this.hasCommit(q.from))) {
-        // Fetch on miss, as resolvedFilesInMerges: by sha (GitHub serves a
-        // reachable want-sha), then the PR ref.
-        await this.run("git", ["fetch", "--force", "origin", q.from], { cwd: this.basePath });
-        if (!(await this.hasCommit(q.from)) && Number.isInteger(q.pr) && q.pr > 0)
-          await this.run(
-            "git",
-            ["fetch", "--force", "origin", `+refs/pull/${q.pr}/head:${this.prRef(q.pr)}`],
-            { cwd: this.basePath },
-          );
-        if (!(await this.hasCommit(q.from))) return fail("old-head-missing");
-      }
+      // Fetch on miss, as resolvedFilesInMerges.
+      if ((await this.fetchMissing([q.from], q.pr)).length) return fail("old-head-missing");
 
       // 1. The base may only have moved forward between the two reviews.
       const anchor =
@@ -1450,10 +1476,10 @@ export class WorktreeManager {
 
   /** The PR's pinned reviewed-head refs. */
   async reviewedHeadRefs(pr: number): Promise<string[]> {
-    const prefix = `refs/qcr/reviewed/pr-${pr}-`;
+    const prefix = reviewedHeadPrefix(pr);
     const res = await this.run(
       "git",
-      ["for-each-ref", "--format=%(refname)", "refs/qcr/reviewed/"],
+      ["for-each-ref", "--format=%(refname)", REVIEWED_HEAD_NAMESPACE],
       {
         cwd: this.basePath,
       },
