@@ -63,15 +63,14 @@ import {
   sweepLightVariants,
 } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
-import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "./lenstuning.js";
+import { lensModelOverrides, lensTuningAddenda } from "./lenstuning.js";
 import {
+  applyProfileOverlays,
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
-  loadProfileLensTuning,
-  loadProfilePosting,
 } from "./profiles.js";
-import { applyProfilePosting, postingPolicyAddenda } from "./postingpolicy.js";
+import { postingPolicyAddenda } from "./postingpolicy.js";
 import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
 import { fileImprovementPr, fileIssue, gitRunner, type FileOutcome } from "./improvements.js";
 import {
@@ -157,10 +156,7 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   // config.toml, the preset and the defaults. A malformed `[lenses]` table
   // fails the boot loudly, like every other profile loader.
   // The profile's `[posting]` policy rides the same overlay (src/postingpolicy.ts).
-  const cfg = applyProfilePosting(
-    applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile)),
-    loadProfilePosting(root, loaded.review.profile),
-  );
+  const cfg = applyProfileOverlays(root, loaded);
   const minter = new TokenMinter(cfg.github.secrets_dir);
   const gate: MutationGate = new MutationGate(
     cfg.dry_run,
