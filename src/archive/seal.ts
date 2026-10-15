@@ -51,7 +51,7 @@ import {
   type DbFileEntry,
   type DbFileTable,
 } from "./archivedb.js";
-import { fileRowsMark, MOVE_TABLES } from "./dbmove.js";
+import { DELIVERIES_TABLE, EVENTS_TABLE, fileRowsMark, MOVE_TABLES } from "./dbmove.js";
 import {
   PARTIAL_SUFFIX,
   fileDigest,
@@ -63,6 +63,7 @@ import {
   sameIdentity,
   unlinkIfPresent,
 } from "./fsutil.js";
+import { identityOrNull } from "./gzfile.js";
 
 const DAY_MS = 86_400_000;
 
@@ -219,12 +220,12 @@ function blockerInput(deps: SealDeps, entry: DbFileEntry) {
     eventsAfterDays: deps.eventsAfterDays,
     afterDays: deps.afterDays,
     caughtUp: {
-      events: markTime(deps.store, "events.caught_up_to"),
-      deliveries: markTime(deps.store, "deliveries.caught_up_to"),
+      events: markTime(deps.store, EVENTS_TABLE.caughtUpMark),
+      deliveries: markTime(deps.store, DELIVERIES_TABLE.caughtUpMark),
     },
     watermarks: {
-      events: markNumber(deps.store, "events.last_id"),
-      deliveries: markNumber(deps.store, "deliveries.last_rowid"),
+      events: markNumber(deps.store, EVENTS_TABLE.mark),
+      deliveries: markNumber(deps.store, DELIVERIES_TABLE.mark),
     },
   };
 }
@@ -415,15 +416,6 @@ export async function sealFile(deps: SealDeps, entry: DbFileEntry): Promise<Seal
   return { file: entry.file, outcome: "sealed", gz_file: gzFile, tables };
 }
 
-async function identityOrNull(path: string) {
-  try {
-    return await identityOf(path);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
-  }
-}
-
 /**
  * Seal what is due: every open file the rule allows, oldest month first, at
  * most `max` per call. Files the rule does not allow yet are left alone, and
@@ -564,8 +556,21 @@ export async function recoverSeals(
     const before = await identityOrNull(path);
     const [file, back] = await Promise.all([
       fileDigest(path, rate),
-      gunzipDigest(gzPath, rate).catch(() => null),
+      // A gzip that does not decompress is a crash's leftover (null); one
+      // that cannot be READ is not known to be anything (the error).
+      gunzipDigest(gzPath, rate).catch((err: NodeJS.ErrnoException) => {
+        if (deps.signal?.aborted) throw err;
+        return typeof err.code === "string" && err.code.startsWith("Z_") ? null : err;
+      }),
     ]);
+    if (back instanceof Error) {
+      problem(
+        entry.file,
+        "gz_unreadable",
+        `${gzName} could not be read (${back.message}) — left as found`,
+      );
+      continue;
+    }
     if (back && back.bytes === file.bytes && back.sha256 === file.sha256) {
       const gz = await identityOf(gzPath);
       // The counts a normal seal records, read from the file before it goes.
