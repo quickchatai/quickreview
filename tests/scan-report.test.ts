@@ -22,7 +22,11 @@ import {
   SCAN_STOP_RESULT_FILE,
   scanStopOutcome,
 } from "../src/setup/scanreport.js";
-import { STAGE2_RESULT_FILE, stage2ClickOutcome } from "../src/setup/stage2request.js";
+import {
+  parseStage2File,
+  STAGE2_RESULT_FILE,
+  stage2ClickOutcome,
+} from "../src/setup/stage2request.js";
 import {
   RUN_FILE as RUNNER_FILE,
   ScanRunner,
@@ -217,5 +221,18 @@ describe("an answer the TUI cannot read is said, never polled for silently", () 
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("a stage-2 proposal missing what the plan pane reads is unreadable, never half-shown", () => {
+  it("refuses a proposal without its sha or cap", () => {
+    const file = (proposal: unknown) => JSON.stringify({ version: 1, proposal });
+    expect(() => parseStage2File(file({ key: "k", rows: [], request: [] }))).toThrow(
+      /not a stage 2 proposal/,
+    );
+    expect(
+      parseStage2File(file({ key: "k", sha: "a".repeat(40), cap_usd: 0, rows: [], request: [] }))
+        .proposal?.key,
+    ).toBe("k");
   });
 });

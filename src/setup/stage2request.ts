@@ -107,6 +107,8 @@ export function parseStage2File(text: string): Stage2File {
     p !== null &&
     (typeof p !== "object" ||
       typeof p.key !== "string" ||
+      typeof p.sha !== "string" ||
+      typeof p.cap_usd !== "number" ||
       !Array.isArray(p.rows) ||
       !Array.isArray(p.request))
   ) {
