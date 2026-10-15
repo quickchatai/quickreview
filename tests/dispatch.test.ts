@@ -162,6 +162,98 @@ describe("queue ordering and capacity", () => {
   });
 });
 
+describe("the pump spends a slot only on a round that went running", () => {
+  const oneSlot: Config = {
+    ...baseCfg,
+    daemon: { ...baseCfg.daemon, max_concurrent_rounds: 1 },
+  };
+  class FailingFiles extends FakeAdapter {
+    failFilesOn = new Set<number>();
+    onFiles: ((n: number) => void) | undefined;
+    override async listPrFiles(n: number): Promise<PrFileEntry[]> {
+      this.onFiles?.(n);
+      if (this.failFilesOn.has(n)) throw new Error("files API 502");
+      return super.listPrFiles(n);
+    }
+  }
+
+  // MUTATION: slice the queue to `slots` before processing — the failing
+  // oldest PR takes the only slot on every tick and the next never runs.
+  it(
+    "a PR that fails before its handoff does not starve the next one",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(201, "2026-08-13T09:00:00Z");
+      queue(202, "2026-08-13T10:00:00Z");
+      const failing = new FailingFiles();
+      failing.failFilesOn.add(201);
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: oneSlot, store, adapter: failing, hooks });
+
+      expect(orders.map((o) => o.order.pr)).toEqual([202]);
+      expect(store.getPr(201)?.state).toBe("queued");
+    },
+  );
+
+  // MUTATION: skip running PRs after the slice — the running one takes the
+  // free slot and the PR behind it waits for its round to end.
+  it(
+    "a queued PR whose round is still running takes no slot from the PR behind it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const twoSlots: Config = {
+        ...baseCfg,
+        daemon: { ...baseCfg.daemon, max_concurrent_rounds: 2 },
+      };
+      queue(203, "2026-08-13T09:00:00Z");
+      store.startRound(203, "first", ["pass-baseline"], 45);
+      queue(204, "2026-08-13T10:00:00Z");
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: twoSlots, store, adapter, hooks });
+
+      expect(orders.map((o) => o.order.pr)).toEqual([204]);
+    },
+  );
+
+  // MUTATION: drop the per-PR re-read — a drain engaged, or a PR closed,
+  // while the pump prepared the PR before it still gets a round.
+  it(
+    "eligibility is read again when each PR's work starts: a drain or a close stops what comes after",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const threeSlots: Config = {
+        ...baseCfg,
+        daemon: { ...baseCfg.daemon, max_concurrent_rounds: 3 },
+      };
+      queue(205, "2026-08-13T09:00:00Z");
+      queue(206, "2026-08-13T10:00:00Z");
+      queue(207, "2026-08-13T11:00:00Z");
+      const racing = new FailingFiles();
+      racing.onFiles = (n) => {
+        if (n === 205) store.setPrState(206, "closed");
+      };
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: threeSlots, store, adapter: racing, hooks });
+      expect(orders.map((o) => o.order.pr)).toEqual([205, 207]);
+      expect(store.getPr(206)?.state).toBe("closed");
+
+      for (const r of store.runningRounds()) store.finishRound(r.id, "APPROVE", null);
+      queue(208, "2026-08-13T12:00:00Z");
+      queue(209, "2026-08-13T13:00:00Z");
+      racing.onFiles = (n) => {
+        if (n === 208) store.engageDrain({ issuer: "operator", expires_at: null });
+      };
+      orders.length = 0;
+      await dispatchOnce({ cfg: threeSlots, store, adapter: racing, hooks });
+      expect(orders.map((o) => o.order.pr)).toEqual([208]);
+      expect(store.getPr(209)?.state).toBe("queued");
+    },
+  );
+});
+
 describe("roundTypeFor", () => {
   it("first → staleness → re-review", () => {
     const row = { stale_recheck: 0 } as any;

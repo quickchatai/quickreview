@@ -7,7 +7,9 @@
 // statemachine.applyEvent) is run through the recheck delta classifier; an
 // empty/trivial delta since the reviewed head consumes the trigger and upholds
 // the standing verdict instead of dispatching. A human ask (fresh label, fresh
-// team re-review request, author reply) always gets its round.
+// team re-review request, author reply) is never short-circuited — but like
+// every trigger it runs no round at a head already reviewed with no author
+// reply since (guard 2's daemon half): it settles on the standing verdict.
 //
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
 // prompt renderer (src/templates.ts) is injected so this module has no content
@@ -1866,34 +1868,51 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   if (slots <= 0) return [];
 
   const dispatched: RoundOrder[] = [];
-  const running = new Set(store.runningRounds().map((r) => r.pr));
-  const commandEligible = queuedInOrder(store).filter((row) => {
+  /** Why this queued PR may not dispatch now, or null. */
+  const heldBack = (row: PrStateRow): string | null => {
+    // One PR = one worktree = at most one round in flight. A queued row with a
+    // round still running (requeue raced the verdict) waits for the next pump —
+    // two rounds sharing wt/pr-<n> fight over the git index.
+    if (store.hasRunningRound(row.number)) return "skipped — a round is already running";
     const failure = store.openReviewFailure(row.number);
     if (failure) {
       const action =
         failure.next_action === "retry_wait" && failure.next_retry_at
           ? `automatic retry at ${failure.next_retry_at}`
           : "operator u required";
-      log(`dispatch: #${row.number} held FAILED_LOUD (${failure.incident_id}); ${action}`);
-      return false;
+      return `held FAILED_LOUD (${failure.incident_id}); ${action}`;
     }
     const active = store.blockingSessionCommand(`pr-${row.number}`);
-    if (active) {
-      log(`dispatch: #${row.number} skipped — session command ${active.id} is ${active.status}`);
-      return false;
-    }
-    if (store.hasHeldWakes(row.number)) {
-      log(`dispatch: #${row.number} skipped — held conversational wakes must drain first`);
-      return false;
-    }
-    return true;
+    if (active) return `skipped — session command ${active.id} is ${active.status}`;
+    if (store.hasHeldWakes(row.number))
+      return "skipped — held conversational wakes must drain first";
+    return null;
+  };
+  const eligible = queuedInOrder(store).filter((row) => {
+    const why = heldBack(row);
+    if (why) log(`dispatch: #${row.number} ${why}`);
+    return why === null;
   });
-  for (const row of commandEligible.slice(0, slots)) {
-    // One PR = one worktree = at most one round in flight. A queued row with a
-    // round still running (requeue raced the verdict) waits for the next pump —
-    // two rounds sharing wt/pr-<n> fight over the git index.
-    if (running.has(row.number)) {
-      log(`dispatch: #${row.number} skipped — a round is already running`);
+  // A slot is spent by a round that went running — handed off, or retained
+  // behind its durable command — never by a PR this pump skipped, settled or
+  // failed to prepare: one PR failing every tick must not starve the queue
+  // behind it.
+  let started = 0;
+  for (const queued of eligible) {
+    if (started >= slots) break;
+    // Eligibility holds when the work starts, not only when the pump listed
+    // the queue: every PR before this one awaited GitHub, and a drain, a
+    // close, a pause or a fresh hold may have landed meanwhile. The row is
+    // read again, so the round is decided from what it says now.
+    if (store.drainState().draining) break;
+    const row = store.getPr(queued.number);
+    if (!row || row.state !== "queued" || row.paused) {
+      log(`dispatch: #${queued.number} skipped — no longer queued (${row?.state ?? "gone"})`);
+      continue;
+    }
+    const why = heldBack(row);
+    if (why) {
+      log(`dispatch: #${row.number} ${why}`);
       continue;
     }
     let provisionalRoundId: number | undefined;
@@ -2843,6 +2862,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       }
       provisionalRoundId = undefined;
       dispatched.push(order);
+      started++;
     } catch (err) {
       // One bad PR must never stall the pump. Before the session handoff, the
       // provisional round is disposable. AFTER dispatchRound persisted a
@@ -2858,6 +2878,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           : undefined;
         if (command) {
           retainedCommand = true;
+          started++;
           // The retained round owns the review now: the withholding it
           // inherited is spent, exactly as on a clean handoff.
           try {
