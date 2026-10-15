@@ -29,6 +29,7 @@ import { walkFiles } from "./prfiles.js";
 import {
   StoreWriter,
   emptyStoreResult,
+  settleStore,
   type StoreFile,
   type StorePassDeps,
   type StorePassResult,
@@ -118,17 +119,18 @@ export async function archivePiGlobal(deps: PiGlobalPassDeps): Promise<StorePass
     deps.meter ? deps.meter.measure(fn) : fn(),
   );
   const young = youngFiles.length;
-  if (old.length === 0) {
-    const r = emptyStoreResult("none");
-    r.keptLive = young;
-    return r;
-  }
-  const writer = await StoreWriter.open({
+  const storeDeps = {
     ...deps,
     dir: join(deps.root, "archive", PI_GLOBAL_STORE),
     subject: PI_GLOBAL_STORE,
-    liveOf: (source) => join(storeDir, source),
-  });
+    liveOf: (source: string) => join(storeDir, source),
+  };
+  if (old.length === 0) {
+    const r = await settleStore(storeDeps);
+    r.keptLive = young;
+    return r;
+  }
+  const writer = await StoreWriter.open(storeDeps);
   if (!writer) return emptyStoreResult("held", "manifest_unreadable");
   const res = writer.result;
   res.keptLive = young;

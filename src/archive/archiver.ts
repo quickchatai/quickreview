@@ -349,6 +349,9 @@ export class Archiver {
   private mover: DbMover | null = null;
   /** The disk reason that stopped this tick's DB phase between batches. */
   private dbRoomHold: "disk_low" | "disk_unknown" | null = null;
+  /** The stores whose manifest a pass has settled since this start (a crash's
+   * unstamped removals are stamped once, even with nothing to move). */
+  private readonly storesSettled = new Set<"overseer" | "pi_global">();
   /** The disk reason a month's gzip found no room under this tick. */
   private sealRoomHold: "disk_low" | "disk_unknown" | null = null;
   private sealsRecovered = false;
@@ -1324,6 +1327,7 @@ export class Archiver {
         // Every synchronous span over the store's manifest (its shards'
         // parses, the index, each write's copy, check and stringify).
         meter,
+        settle: !this.storesSettled.has(p.key),
         ...(this.deps.step ? { step: this.deps.step } : {}),
       };
       let r: StorePassResult;
@@ -1334,6 +1338,7 @@ export class Archiver {
         this.log(`archive: the ${p.key} store's pass failed`, err);
         r = emptyStoreResult("failed", (err as Error).message);
       }
+      if (r.outcome !== "held" && r.outcome !== "failed") this.storesSettled.add(p.key);
       if (r.duplicatesRemoved > 0)
         bumpMark(this.deps.store, "duplicates.removed", r.duplicatesRemoved);
       this.stores[p.key] = {

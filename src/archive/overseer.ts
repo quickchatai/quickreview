@@ -34,6 +34,7 @@ import {
   StoreWriter,
   archiveFileSize,
   emptyStoreResult,
+  settleStore,
   type StoreFile,
   type StorePassDeps,
   type StorePassResult,
@@ -172,18 +173,19 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
   // The legacy rotation copies.
   const legacy = await legacyCopies(dir);
 
+  const storeDeps = {
+    ...deps,
+    dir,
+    subject: OVERSEER_STORE,
+    liveOf: (source: string) => join(root, source),
+  };
   if (candidates.length === 0 && legacy.length === 0) {
-    const r = emptyStoreResult("none");
+    const r = await settleStore(storeDeps);
     r.keptLive = live.length;
     return r;
   }
 
-  const writer = await StoreWriter.open({
-    ...deps,
-    dir,
-    subject: OVERSEER_STORE,
-    liveOf: (source) => join(root, source),
-  });
+  const writer = await StoreWriter.open(storeDeps);
   if (!writer) return emptyStoreResult("held", "manifest_unreadable");
   const res = writer.result;
   res.keptLive = live.length - candidates.length;
@@ -264,16 +266,7 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
       incomplete = true;
       continue;
     }
-    await writer.append(
-      entryOf(out.dest, {
-        ...identityFields(id),
-        sha256: out.ok.sha256,
-        gz_bytes: out.ok.gzBytes,
-      }),
-    );
-    res.bytesIn += out.ok.bytes;
-    res.bytesOut += out.ok.gzBytes;
-    unlinks.push({ path: l.path, source, identity: identityFields(id) });
+    unlinks.push(await writer.recordArchived(f, entryOf, out));
   }
 
   // The unlinks — each only while the birth is still readable (a file that
@@ -287,15 +280,17 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
   };
   const { removed, stop: unlinkStop } = await writer.unlinkAll(unlinks, allowed);
   const removedDuplicates: Array<Omit<DuplicateEntry, "pass" | "removed_at">> = [];
+  let duplicateStop: string | null = null;
   if (!unlinkStop)
     for (const d of duplicates) {
-      if (allowed()) break;
+      duplicateStop = allowed();
+      if (duplicateStop) break;
       if (await writer.removeDuplicate(d.path, d.id)) removedDuplicates.push(d.entry);
       else incomplete = true;
     }
   await writer.finish(removed, removedDuplicates);
 
-  stop = stop ?? unlinkStop;
+  stop = stop ?? unlinkStop ?? duplicateStop;
   if (unlinks.some((u) => !removed.has(u.source))) incomplete = true;
   if (removedDuplicates.length < duplicates.length) incomplete = true;
   res.outcome = stop || incomplete || waits > 0 ? "partial" : "done";
