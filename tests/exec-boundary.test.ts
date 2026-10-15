@@ -1741,6 +1741,11 @@ describe("the audit does not fire on the reads that ARE the job", () => {
       "sed -es/.*/id/e f",
       "sed 'e' f",
       "sed -n '1e' f",
+      "sed 'p;e' f",
+      "sed -e'w out' f",
+      "echo id | sed e",
+      "sed -n /x/e",
+      `sed "s'.*'id'e" f`,
     ])
       expect(kindOf(c), c).toBe("reader_write_or_exec");
     // An env prefix in front of a reader is its environment, not a pattern.
@@ -1758,6 +1763,17 @@ describe("the audit does not fire on the reads that ARE the job", () => {
     expect(kindOf("sed -n 's|e|w|p' f")).toBeUndefined();
     expect(kindOf("sed -n 's/x\\/e/y/p' f")).toBeUndefined();
     expect(kindOf("sed -E 's/(a)(b)/\\2\\1/g' f")).toBeUndefined();
+    // A quoted `'w'`/`"w"`/`'e'` inside a pattern is no command position, and
+    // a last FILE operand named `e` is no script.
+    for (const c of [
+      `sed -n "/name = 'e'/p" f`,
+      `sed -n '/mode="w"/p' f`,
+      `sed -n "s/'w'/'a'/p" f`,
+      `sed -n "/open(path, 'w')/p" src/io.py`,
+      "sed -n '/x/p' /tmp/e",
+      "sed -n 1,5p some.file e",
+    ])
+      expect(kindOf(c), c).toBeUndefined();
     expect(kindOf("sort -k1,1 -t: names")).toBeUndefined();
   });
 });

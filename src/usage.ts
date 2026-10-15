@@ -686,12 +686,16 @@ const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
   // `o` is unambiguous in sort's short options, so a cluster carrying it —
   // its value attached (`-o/tmp/out`) or not — is an output redirect.
   sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o)/,
-  // -i/-f; a w/W/e command at a command position (`sed 'e' f`, `1e`); and an
+  // -i/-f; a w/W/e command at a command position (`sed 'e' f`, `1e`, `p;e`) —
+  // a quote counts only where it OPENS a word and a closing quote only before a
+  // word boundary, so a quoted `'w'` inside a pattern is no command, and an
+  // unquoted word ending the segment counts only as sed's first operand, so a
+  // last FILE operand named `e` or `/tmp/e` is none either; and an
   // s-command whose flag cluster carries `e` anywhere (it runs the pattern
   // space: `s/x/y/e`, `/ep`, `/eg`, `/eI`) or ends in `w` (writes a file),
   // with ANY delimiter (`s|..|..|e`, `s#..#..#e` — the backreference) and a
   // script glued to its flag (`--expression=s/…/e`, `-es/…/e`).
-  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|['"\s;{](?:[0-9$,]|\/[^/]*\/)*\s*[wWe](?=['"\s;}]|$)|(?:['"\s;{=]|(?:^|\s)-[nEsuzr]*e)(?:[0-9$,]|\/[^/]*\/)*\s*s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiImMnN0-9]*(?:e[gpiImMnN0-9e]*w?|w)(?=['"\s;}]|$)/,
+  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|(?:(?:^|\s)(?:--expression=|-[a-zA-Z]*e)?['"]|[;{]|\s(?=\S*\s))(?:[0-9$,]|\/[^/]*\/)*\s*[wWe](?=\s|[;}]|['"](?:\s|$)|$)|(?:^|\s)sed(?:\s+-\S+)*\s+(?:[0-9$,]|\/[^/]*\/)*[wWe]\s*$|(?:['"\s;{=]|(?:^|\s)-[nEsuzr]*e)(?:[0-9$,]|\/[^/]*\/)*\s*s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiImMnN0-9]*(?:e[gpiImMnN0-9e]*w?|w)(?=['"\s;}]|$)/,
   // The diff options' `--output=<file>` on any verb, and
   // `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O<cmd>` (any unique
   // abbreviation of the long form; `-O` ending a short cluster).
@@ -768,6 +772,34 @@ function opensAnsiOrLocaleQuote(segment: string): boolean {
   return false;
 }
 
+/** `segment` with every quote character that sits INSIDE the other kind of
+ * quote (`"…'w'…"`, `'…"w"…'`) replaced by U+0001 — a literal, not a quote, so
+ * the sed rule never reads it as one. Matters where the guard's splitter cuts
+ * a quoted pattern at `(`/`)` and leaves `'w'` at a segment's end. U+0001 is
+ * neither a word nor a space character, so an s-command delimited by it still
+ * reads as one. */
+function maskNestedQuotes(segment: string): string {
+  let out = "";
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < segment.length; i++) {
+    const c = segment[i]!;
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      out += c === '"' ? "\u0001" : c;
+    } else if (c === "\\") {
+      out += segment.slice(i, i + 2);
+      i++;
+    } else if (quote === '"') {
+      if (c === '"') quote = null;
+      out += c === "'" ? "\u0001" : c;
+    } else {
+      if (c === "'" || c === '"') quote = c;
+      out += c;
+    }
+  }
+  return out;
+}
+
 /** Which rule, if any, this ONE segment trips. */
 function segmentViolationKind(segment: string): ExecViolationKind | null {
   // The redirection/`sed -i` surface rules run on every segment, reader or not:
@@ -796,9 +828,10 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
     // Checked BEFORE the reader skip below: these programs are readers by
     // default and writers on a flag, and the flag is the whole point. git's
     // rule reads the DEQUOTED segment, as git receives its options
-    // (`--out"put"=…` is `--output=…`).
-    if (READER_MODE_AUDIT[prog]?.test(prog === "git" ? bare : segment))
-      return "reader_write_or_exec";
+    // (`--out"put"=…` is `--output=…`); sed's reads it with a quote nested in
+    // the other kind masked (`maskNestedQuotes`).
+    const subject = prog === "git" ? bare : prog === "sed" ? maskNestedQuotes(segment) : segment;
+    if (READER_MODE_AUDIT[prog]?.test(subject)) return "reader_write_or_exec";
     // A reader's ARGUMENTS are patterns, but an assignment PREFIX in front
     // of it is the environment it runs in — `LD_PRELOAD=… cat f` loads code
     // whatever cat then reads.
