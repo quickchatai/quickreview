@@ -165,11 +165,9 @@ export function postTag(
   // first-party location cannot soften it. `ctx` remains part of the
   // interface for telemetry/callers and the deterministic mention route.
   void ctx;
-  const reach = normalizeReachability(reachability);
-  // Reachability gate — never blocks something the base mapping wouldn't.
-  if (reach === "contrived") return severity === "nit" ? "nit" : "question";
-  if (reach === "plausible" && severity === "P2") return "question";
-  switch (severity) {
+  // Reachability gate first — never blocks something the base mapping
+  // wouldn't: the one capping rule the scan's severities use too.
+  switch (reachabilityCappedSeverity(severity, reachability)) {
     case "P0":
     case "P1":
       return "blocker";
@@ -237,7 +235,19 @@ export function deriveVerdict(v: VerdictInput): VerdictType {
  * or another human can clear it.
  */
 export const CHECK_THIS_TAG = "[check this]";
-export const CHECK_THIS_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[check this\]/i;
+
+/**
+ * A marker's recognizer, built from its tag: the tag at the start of a line,
+ * after any run of markdown wrappers (emphasis, code, quote, a link or image
+ * opener). One prefix grammar for all three markers, and each recognizer
+ * matches exactly the tag it is built from.
+ */
+function markerRe(tag: string): RegExp {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^\\s*(?:[*_\`~>]|\\[?!?\\[)*\\s*${escaped}`, "i");
+}
+
+export const CHECK_THIS_RE = markerRe(CHECK_THIS_TAG);
 
 // ---- the "[ask your human]" grammar --------------------------------------
 //
@@ -264,7 +274,7 @@ export const CHECK_THIS_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[check this\]/i;
 // it. Rule 2 is untouched either way — resolving one's OWN finding thread after
 // an answer is not dismissing a review, and no review-dismissal path exists.
 export const ASK_HUMAN_TAG = "[ask your human]";
-export const ASK_HUMAN_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[ask your human\]/i;
+export const ASK_HUMAN_RE = markerRe(ASK_HUMAN_TAG);
 
 /** The lens that mints the tag (dispatch.ts ALL_PASSES; agents/pass-ask-human.md). */
 export const ASK_HUMAN_LENS = "pass-ask-human";
@@ -323,7 +333,7 @@ export function isAskHumanFinding(kind?: string | null, lens?: string | null): b
 // fix; it only stops a deferral being free. The failure mode to watch for is a
 // backlog nobody works.
 export const DEFERRED_TAG = "[deferred]";
-export const DEFERRED_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[deferred\]/i;
+export const DEFERRED_RE = markerRe(DEFERRED_TAG);
 
 /** Is this finding a conscious deferral? Keyed on an explicit `kind`, the one
  * signal a session sets deliberately — there is no lens that mints deferrals
