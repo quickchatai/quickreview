@@ -891,7 +891,7 @@ export class VerdictWatcher {
       ...detail,
     });
     this.log(
-      `verdicts: #${round.pr} round ${round.round_no} was already cancelled (${round.cancel_cause ?? "unknown"}) — ${name} is not applied over it`,
+      `verdicts: #${round.pr} round ${round.round_no} was already ${round.status}${round.cancel_cause ? ` (${round.cancel_cause})` : ""} — ${name} is not applied over it`,
     );
   }
 
@@ -914,9 +914,10 @@ export class VerdictWatcher {
   /** A done round's interrupted apply that a later round of its PR has
    * overtaken: nothing more of the old verdict lands — no transition, no
    * reviewed-head or withheld mark, no successor settled — and it is recorded
-   * settled, so it is not resumed again. Its usage is left unmeasured: a
-   * window closed now would take in the later round's transcript. */
-  private settleSupersededResume(round: RoundRow, name: string): void {
+   * settled, so it is not resumed again. Its usage is owed over its own
+   * window, which ended at its claim (`finished_at`), never now — the later
+   * round's transcript is not this one's. The caller awaits the reads. */
+  private settleSupersededResume(round: RoundRow, name: string): OwedMeasurement {
     this.deps.store.logEvent("verdict_resume_superseded", round.pr, {
       round_id: round.id,
       round_no: round.round_no,
@@ -930,6 +931,7 @@ export class VerdictWatcher {
     this.log(
       `verdicts: #${round.pr} round ${round.round_no}'s interrupted apply is overtaken by a later round — ${name} lands nothing more`,
     );
+    return this.oweMeasurement(round, round.finished_at);
   }
 
   /** A verdict file names a round this PR does not have: archived inert,
@@ -1791,16 +1793,27 @@ export class VerdictWatcher {
    * caller has awaited GitHub (the posting proof) since it read the round, and
    * a round some other path ended meanwhile (an operator's `u`, a verdict, a
    * receipt settlement) owes nothing here: false, and nothing is touched.
+   *
+   * `resumed`: the caller is a done round's interrupted apply whose resumed
+   * posting proof failed. That round is done but never settled, its PR left
+   * where the interrupted apply stopped, and nothing else will repair it — so
+   * it stays loud: the incident opens, with nothing to cancel.
    */
   private async failPostingProof(
     round: RoundRow,
     detail: string,
     stage = "posting_receipt",
     measure: MeasureMode = "inline",
+    resumed = false,
   ): Promise<boolean> {
     const { store, cfg, adapter } = this.deps;
-    if (!this.stillRunning(round)) {
-      const fresh = this.runningRound(round.pr, round.round_no);
+    const fresh = this.runningRound(round.pr, round.round_no);
+    const resumedDone =
+      resumed &&
+      fresh?.id === round.id &&
+      fresh.status === "done" &&
+      !this.verdictSettled(round.pr, round.id);
+    if (!resumedDone && !this.stillRunning(round)) {
       store.logEvent("posting_failure_round_ended", round.pr, {
         round_id: round.id,
         round_no: round.round_no,
@@ -1813,11 +1826,12 @@ export class VerdictWatcher {
       );
       return false;
     }
-    store.markRoundCancelled(
-      round.id,
-      `posting receipt failure — ${detail}`,
-      "infrastructure_failure",
-    );
+    if (!resumedDone)
+      store.markRoundCancelled(
+        round.id,
+        `posting receipt failure — ${detail}`,
+        "infrastructure_failure",
+      );
     // This round ran a full review and burned its tokens — the receipt is
     // what failed, not the work. It stays in `SUM(est_usd) FROM rounds` like
     // every other row, so it must be measured here too. Its window closes now
@@ -1947,7 +1961,7 @@ export class VerdictWatcher {
       !this.verdictSettled(v.pr, round.id) &&
       store.hasLaterRound(v.pr, v.round_no)
     ) {
-      this.settleSupersededResume(round, name);
+      await this.closeMeasurement(this.settleSupersededResume(round, name), measure);
       return "applied";
     }
 
@@ -2101,7 +2115,13 @@ export class VerdictWatcher {
         }
         // A round ended while the proof awaited GitHub (an operator's `u`)
         // owes nothing here: the claim inside refuses it.
-        return (await this.failPostingProof(round, proof.detail ?? "posting receipt invalid"))
+        return (await this.failPostingProof(
+          round,
+          proof.detail ?? "posting receipt invalid",
+          "posting_receipt",
+          "inline",
+          claimedStatus === "done",
+        ))
           ? "failed"
           : "applied";
       }
@@ -2155,7 +2175,8 @@ export class VerdictWatcher {
     // sweep queued, a promoted successor). Re-asked here, in the claim's own
     // turn: a later round owns the PR, and the old verdict is not applied over it.
     if (round && claimedStatus !== "running" && store.hasLaterRound(v.pr, v.round_no)) {
-      if (claimedStatus === "done") this.settleSupersededResume(round, name);
+      if (claimedStatus === "done")
+        await this.closeMeasurement(this.settleSupersededResume(round, name), measure);
       else
         this.ignoreAfterCancel(round, name, {
           reason: "a later round started while the verdict was applied",

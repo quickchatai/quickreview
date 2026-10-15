@@ -4603,3 +4603,82 @@ describe("a verdict's usage window ends at its claim", () => {
     expect(tokensIn(roundId)).toBe(10);
   });
 });
+
+describe("review rework: loud where nothing repairs, measured where the window is known", () => {
+  const countOf = (kind: string, pr: number): number =>
+    (
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = ? AND pr = ?")
+        .get(kind, pr) as { c: number }
+    ).c;
+
+  // MUTATION: drop `resumed` from failPostingProof's claim — a done round
+  // whose resumed apply cannot prove its posting is archived quietly, its PR
+  // left where the interrupted apply stopped.
+  it("a done round's resumed apply whose posting proof fails stays loud", async () => {
+    reviewingRound(720);
+    stampPosting(720, 1);
+    const round = store.roundsFor(720)[0]!;
+    // Killed right after the claim: done, never settled, no receipt to prove.
+    store.finishRound(round.id, "REQUEST_CHANGES", null, null);
+
+    expect(
+      await watcher({ postingReceiptGraceS: 0 }).handleFile(
+        write(720, 1, verdictFile({ pr: 720 })),
+      ),
+    ).toBe(true);
+
+    expect(store.openReviewFailure(720)).toMatchObject({
+      stage: "posting_receipt",
+      work_owed: 1,
+    });
+    expect(store.roundsFor(720)[0]?.status).toBe("done");
+  });
+
+  // MUTATION: leave the superseded resume unmeasured — its tokens read NULL.
+  it("a superseded resume measures its own usage, up to its claim", async () => {
+    const roundId = reviewingRound(721);
+    const { key } = stampPosting(721, 1);
+    writePostingReceipt(721, 1, key, "REQUEST_CHANGES");
+    const sessionDir = join(dir, cfg.pi.session_dir, "pr-721");
+    mkdirSync(sessionDir, { recursive: true });
+    const line = (offsetMin: number, input: number): string =>
+      JSON.stringify({
+        type: "message",
+        timestamp: new Date(Date.now() + offsetMin * 60_000).toISOString(),
+        message: { role: "assistant", usage: { input, output: 0 } },
+      });
+    // Round 1's turn, then (after its claim) round 2's.
+    writeFileSync(join(sessionDir, "session.jsonl"), [line(-1, 10), line(30, 1000)].join("\n"));
+    store.db
+      .prepare("UPDATE rounds SET started_at = ? WHERE id = ?")
+      .run(new Date(Date.now() - 2 * 60_000).toISOString(), roundId);
+    store.finishRound(roundId, "REQUEST_CHANGES", null, null);
+    store.startRound(721, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    store.setPrState(721, "reviewing");
+
+    expect(
+      await watcher({ now: () => new Date(Date.now() + 60 * 60_000) }).handleFile(
+        write(721, 1, verdictFile({ pr: 721 })),
+      ),
+    ).toBe(true);
+
+    expect(countOf("verdict_resume_superseded", 721)).toBe(1);
+    expect(tokensIn(roundId)).toBe(10);
+  });
+
+  // MUTATION: drop the not-running return at the top of handleAnomaly — the
+  // old session's late malformed file re-holds the PR the operator released.
+  it("a malformed file reaching an overdue round after the operator's u opens nothing", async () => {
+    const roundId = reviewingRound(722);
+    store.markRoundOverdue(roundId);
+    // `u`: the incident resolved, the PR queued again.
+    store.setPrState(722, "queued");
+
+    expect(await watcher().handleFile(write(722, 1, "{broken"))).toBe(true);
+
+    expect(store.openReviewFailure(722)).toBeUndefined();
+    expect(store.getPr(722)?.state).toBe("queued");
+    expect(countOf("anomaly_round_ended", 722)).toBe(1);
+  });
+});
