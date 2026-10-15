@@ -2083,8 +2083,10 @@ export function planDependencyRequests(
   // Keyed by package, one Acc per distinct resolved VERSION: two workspaces can
   // lock one package at different versions, and each importer must be shown the
   // sources it actually runs against. An unresolved (null) sighting joins the
-  // package's first registry entry, and a later resolution fills a null one
-  // in. A sighting preparation SKIPS (a git / URL / private-registry source)
+  // package's first registry entry whose range it shares (`*` or no range
+  // shares any), and a later resolution fills in a null one of a shared
+  // range — so an importer is never credited with a version its own declared
+  // range was not resolved against. A sighting preparation SKIPS (a git / URL / private-registry source)
   // stays apart from every registry entry and joins only one of the same
   // source, so its importers are never credited with the registry's release
   // and a registry pin never turns it into a fetch.
@@ -2100,12 +2102,18 @@ export function planDependencyRequests(
     const key = `${eco}:${r.name}`;
     const same = accs.get(key) ?? [];
     const registry = same.filter((x) => !unfetchable(x));
+    const shared = (x: { range?: string }): boolean =>
+      x.range === undefined ||
+      r.range === undefined ||
+      x.range === "*" ||
+      r.range === "*" ||
+      x.range === r.range;
     let a = unfetchable(r)
       ? same.find((x) => unfetchable(x) && x.range === r.range)
       : r.version === null
-        ? registry[0]
+        ? registry.find(shared)
         : (registry.find((x) => x.version === r.version) ??
-          registry.find((x) => x.version === null));
+          registry.find((x) => x.version === null && shared(x)));
     if (!a) {
       a = {
         ecosystem: eco,

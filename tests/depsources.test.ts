@@ -1065,6 +1065,27 @@ describe("planDependencyRequests", () => {
     ]);
   });
 
+  it("unlocked workspaces declaring incompatible ranges stay two requests, each with its own importer", () => {
+    const root = tree({
+      "a/package.json": JSON.stringify({ dependencies: { lodash: "^1.0.0" } }),
+      "b/package.json": JSON.stringify({ dependencies: { lodash: "^2.0.0" } }),
+      "c/package.json": JSON.stringify({ dependencies: { lodash: "*" } }),
+      "a/x.js": "import _ from 'lodash';",
+      "b/y.js": "import _ from 'lodash';",
+      "c/z.js": "import _ from 'lodash';",
+    });
+    expect(
+      planDependencyRequests(root, [
+        { filename: "a/x.js", status: "modified" },
+        { filename: "b/y.js", status: "modified" },
+        { filename: "c/z.js", status: "modified" },
+      ]).map((r) => [r.range, r.why]),
+    ).toEqual([
+      ["^1.0.0", "imported by a/x.js, c/z.js"],
+      ["^2.0.0", "imported by b/y.js"],
+    ]);
+  });
+
   it("names at most three importing files, then +N more", () => {
     const files: Record<string, string> = {
       "package.json": JSON.stringify({ dependencies: { lodash: "^4" } }),
