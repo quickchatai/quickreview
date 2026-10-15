@@ -1324,11 +1324,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // The sessions' own recall (vendored openviking-pi patch 0007) excludes
         // retired entries by this list, published beside their ovcli.conf
         // whenever the store's sweep sees it change.
-        onRetired: (uris) => {
+        onRetired: (uris) =>
           writeRetiredUris(sessions.ovRetiredPath(), uris, {
             log: (msg) => log(msg),
-          });
-        },
+          }),
         // …starting from the list the last daemon published, so a first sweep
         // that cannot read everything (the server still warming up) adds to
         // the sessions' exclusions and never wipes them.

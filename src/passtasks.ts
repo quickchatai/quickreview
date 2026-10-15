@@ -66,7 +66,7 @@ function focusLines(worktree: string, p: PassPlanEntry, followUp = false): strin
     return [
       "**Where you start** — this round's pass-baseline is split into several rows by file group, because the change is too large for one reading. Yours starts from these changed files:",
       "",
-      ...p.focus!.map((f) => `- \`${join(worktree, f)}\``),
+      ...p.focus!.map((f) => `- ${codePath(join(worktree, f))}`),
       "",
       `The whole ${followUp ? "change since the last review, and the whole PR as its context," : "PR"} is still yours: follow these files' callers, callees and cross-file effects wherever they lead in the PR, and report every finding you meet there. The other baseline rows start from the change's other files; a finding two rows both meet is merged later, so never leave one out because another row might raise it.`,
       ...(p.why !== undefined ? ["", `> ${flatControls(p.why)}`] : []),
@@ -75,7 +75,7 @@ function focusLines(worktree: string, p: PassPlanEntry, followUp = false): strin
     return [
       "**Your files this round** — this pass covers exactly these changed files:",
       "",
-      ...p.focus.map((f) => `- \`${join(worktree, f)}\``),
+      ...p.focus.map((f) => `- ${codePath(join(worktree, f))}`),
     ];
   if (p.why !== undefined)
     return [

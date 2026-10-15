@@ -33,7 +33,7 @@ import {
   type FindingsRecordEntry,
   type PriorStatus,
 } from "./findingsrecord.js";
-import { canonicalLensIds } from "./lensids.js";
+import { canonicalLensIds, storedLensIds } from "./lensids.js";
 import { fenceAsData } from "./memory/datafence.js";
 import { predecessorOf } from "./outcomes.js";
 import { priorFindingFields } from "./priortasks.js";
@@ -105,15 +105,7 @@ export interface PriorFindingsList {
 const rkey = (round: number, key: string): string => `${round}:${key}`;
 
 function idsOf(row: RoundFindingRow): string[] {
-  if (row.lens_ids) {
-    try {
-      const parsed = JSON.parse(row.lens_ids) as unknown;
-      if (Array.isArray(parsed)) return parsed.filter((x): x is string => typeof x === "string");
-    } catch {
-      /* fall through */
-    }
-  }
-  return canonicalLensIds(row.lens);
+  return storedLensIds(row.lens_ids) ?? canonicalLensIds(row.lens);
 }
 
 /** Was this row posted on the PR? `posted` with a tag — a downgraded, killed,

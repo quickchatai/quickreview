@@ -40,6 +40,7 @@
 // record.
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { severityRank } from "./severityrank.js";
+import { SANCTIONED_TAGS } from "./severity.js";
 
 export type NitsPolicy = "post" | "off";
 export type QuestionsPolicy = "post" | "blocking" | "off";
@@ -310,11 +311,17 @@ function sevRank(s: string | null): number {
   return severityRank(s) ?? 5;
 }
 
+/** Any sanctioned tag, posting or marker (`SANCTIONED_TAGS`), in any case. */
+const SANCTIONED_TAG_RE = new RegExp(
+  SANCTIONED_TAGS.map((t) => t.replace(/[[\]]/g, "\\$&")).join("|"),
+  "gi",
+);
+
 /** Normalise a finding title into a repeat-site key: no tags, no markers, no
  * code spans' backticks, lowercase, collapsed whitespace. */
 export function siteKey(title: string): string {
   return title
-    .replace(/\[(blocker|question|nit|check this|ask your human|deferred)\]/gi, "")
+    .replace(SANCTIONED_TAG_RE, "")
     .replace(/`/g, "")
     .replace(/\s+/g, " ")
     .trim()

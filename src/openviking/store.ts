@@ -62,12 +62,16 @@
 import { createHash } from "node:crypto";
 import { formatEventTags, parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import {
+  EXPERIENCES_AREA,
   FROM_TAG,
+  MOVED_TAG,
   PINNED_AREA,
   PREFERENCES_AREA,
+  RETIRED_TAG,
   SWEEP_EXCLUDED_AREAS,
   areaForNewEntry,
   areaOfId,
+  isMovedStub,
   isPinnedId,
   nameOfId,
   pinnedIdFor,
@@ -89,22 +93,32 @@ import {
   type MemoryStore,
   type MemoryWriteResult,
 } from "../memory/store.js";
-import { batchWriteLanded, type OpenVikingClient } from "./client.js";
+import {
+  batchWriteLanded,
+  type BatchWriteOperation,
+  type BatchWritePrecondition,
+  type OpenVikingClient,
+} from "./client.js";
 
 /** Tag applied to `add` — an entry the owner typed himself. `note` (a machine
  * writer) is stored verbatim, so the two can never masquerade as each other. */
 export const MANUAL_TAG = "manual";
 export const PINNED_TAG = "pinned";
-export const RETIRED_TAG = "retired";
 
 /** Where a new entry lands. `experiences` is a real server quota bucket, which
  * is what lets a context search size it. */
-export const DEFAULT_CATEGORY = "experiences";
+export const DEFAULT_CATEGORY = EXPERIENCES_AREA;
 
 /** `sha256:<lowercase-hex>` over the exact stored bytes — batch-write's
  * `base_hash` shape. */
 export function sha256Prefixed(body: string): string {
   return `sha256:${createHash("sha256").update(Buffer.from(body, "utf8")).digest("hex")}`;
+}
+
+/** Is this a concurrency token `sha256Prefixed` could have produced? Every
+ * write entry point checks a caller's `expect` with it before sending. */
+export function isHashToken(token: string): boolean {
+  return /^sha256:[0-9a-f]{64}$/.test(token);
 }
 
 /** An id is a relative path of one to three safe segments ending in a text
@@ -120,18 +134,10 @@ export function validEntryId(id: string): boolean {
 
 /** The `#moved` stub a move leaves at the old address: retired (so every
  * reader hides it and no recall returns it), naming where the entry went. */
-export const MOVED_TAG = "moved";
 export const MOVED_TO_TAG = "moved-to";
 
 export function movedStub(to: string): string {
   return `#${RETIRED_TAG} #${MOVED_TAG} ${MOVED_TO_TAG}=${to}\nThis entry moved to ${to}.\n`;
-}
-
-/** Is this stored text a move's stub (header `#retired #moved`)? Only such a
- * stub may be written over by a later move into its address. */
-export function isMovedStub(text: string): boolean {
-  const tags = parseHashTags(text);
-  return tags.includes(RETIRED_TAG) && tags.includes(MOVED_TAG);
 }
 
 /** `20260820T153000-a1b2c3d4.md` → `2026-08-20 15:30:00`. Null when the name
@@ -155,7 +161,7 @@ export function stampOf(ts: string): string {
   return `${ts.slice(0, 10).replace(/-/g, "")}T${ts.slice(11).replace(/:/g, "")}`;
 }
 
-export { tagsOf };
+export { tagsOf, isMovedStub, MOVED_TAG, RETIRED_TAG };
 
 /**
  * The stored body for an entry: `#tags` first, then the text, then exactly one
@@ -171,9 +177,7 @@ export function renderEntryBody(text: string, addTags: readonly string[] = []): 
   // Header-only, like `pinned`: a tag quoted in the body is prose, so it
   // must not stop the real one landing in the header where readers look.
   const have = new Set(parseHashTags(trimmed));
-  const missing = addTags
-    .map(normalizeTag)
-    .filter((t) => t !== "" && !have.has(t));
+  const missing = addTags.map(normalizeTag).filter((t) => t !== "" && !have.has(t));
   const head = missing.map((t) => `#${t}`).join(" ");
   return `${head === "" ? trimmed : `${head} ${trimmed}`}\n`;
 }
@@ -183,26 +187,40 @@ export function withTag(text: string, tag: string): string {
   return renderEntryBody(text, [tag]);
 }
 
-/** Remove every occurrence of a tag token. Idempotent, never touches other
- * tags — the same spelling `import.ts` uses to unpin.
+/** Remove a tag from the entry's header — the leading run of `#tag` tokens
+ * `parseHashTags` reads, and where `withTag` puts one. Idempotent, never
+ * touches other tags; a `#tag` quoted in the body is prose and stays.
  *
  * Only the gap the token leaves is closed (the token takes its trailing
  * spaces with it): the rest of the body — code indentation, aligned columns —
  * is the owner's bytes, and an unpin must hand them back as `withTag` found
  * them. */
 export function withoutTag(text: string, tag: string): string {
-  const token = new RegExp(
-    `(?<=^|\\s)#${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\S)[ \t]*`,
-    "gi",
-  );
-  return `${text.replace(token, "").trim()}\n`;
+  const want = `#${normalizeTag(tag)}`;
+  const tokens = text.trim().split(/(\s+)/);
+  let i = 0;
+  while (i < tokens.length && tokens[i]!.startsWith("#")) {
+    if (tokens[i]!.toLowerCase() !== want) {
+      i += 2;
+      continue;
+    }
+    const gap = (tokens[i + 1] ?? "").replace(/^[ \t]+/, "");
+    if (gap === "") {
+      tokens.splice(i, 2);
+    } else {
+      // A line break after the token stays; the header goes on past it.
+      tokens.splice(i, 2, "", gap);
+      i += 2;
+    }
+  }
+  return `${tokens.join("").trim()}\n`;
 }
 
 /** Parse one stored file into an entry. Total: a file we cannot date still
  * becomes an entry (with the server's modTime), because dropping a memory
  * because its NAME is odd would be the worse failure. */
 export function entryFrom(id: string, text: string, modTime: string): MemoryEntry {
-  const name = id.slice(id.lastIndexOf("/") + 1);
+  const name = nameOfId(id);
   const ts = tsFromName(name) ?? tsFromModTime(modTime);
   const trimmed = text.trim();
   const tags = tagsOf(trimmed);
@@ -344,10 +362,13 @@ export interface OpenVikingStoreOptions {
   /** Parallel `content/read` calls during a sweep. 8 matches the server's own
    * read concurrency; the point is to bound the burst, not to go fast. */
   readConcurrency?: number;
-  /** How long a `read()` sweep is reused. A sweep is one `fs/ls` per category
-   * plus one `content/read` per entry, and the round path asks for the pinned
-   * head EVERY round — without a cache that is the memory engine's largest
-   * recurring cost, and CPU is the resource to watch on the 2-core quota. */
+  /** How long a `read()` sweep, and the pinned area's own read
+   * (`pinnedSweep`), is reused. A sweep lists every area and re-reads each
+   * file whose size or modTime moved (every file at the full re-read); the
+   * pinned read lists and reads `preferences/pinned/` alone, and the round
+   * path asks for it EVERY round — without a cache that is the memory
+   * engine's largest recurring cost, and CPU is the resource to watch on the
+   * 2-core quota. */
   cacheTtlMs?: number;
   /** How often a sweep re-reads every file. In between, a sweep still lists
    * every category but reads only the files whose size or modification time
@@ -356,11 +377,13 @@ export interface OpenVikingStoreOptions {
    * refresh is the belt for a change the listing did not show. `0` makes
    * every sweep full. */
   fullRefreshMs?: number;
-  /** Called with the retired URIs whenever that list changes (and once, at
-   * the first completed sweep). The daemon publishes it beside the sessions'
-   * ovcli.conf so the vendored extension's recall can exclude retired entries
-   * (PATCH 7). Must not throw; a throw is swallowed. */
-  onRetired?: (uris: readonly string[]) => void;
+  /** Called with the retired URIs whenever that list differs from the last
+   * one it published (and once, at the first completed sweep). The daemon
+   * publishes it beside the sessions' ovcli.conf so the vendored extension's
+   * recall can exclude retired entries (PATCH 7). Returning `false` (or
+   * throwing — a throw is swallowed) says the list was NOT published, and the
+   * next sweep offers it again. */
+  onRetired?: (uris: readonly string[]) => boolean | void;
   /** The retired list a previous process last published (what `onRetired`
    * wrote — `readRetiredUrisFile`), or null when there is none. It is the
    * list this store starts from: a sweep that cannot read everything only
@@ -390,7 +413,7 @@ export class OpenVikingStore implements MemoryStore {
   private readonly concurrency: number;
   private readonly cacheTtlMs: number;
   private readonly fullRefreshMs: number;
-  private readonly onRetired: ((uris: readonly string[]) => void) | undefined;
+  private readonly onRetired: ((uris: readonly string[]) => boolean | void) | undefined;
   /** The per-file cache behind the incremental sweep, keyed by
    * entry id. Survives `invalidate()` on purpose: invalidating means "list
    * again", and the listing says which files moved. */
@@ -426,6 +449,10 @@ export class OpenVikingStore implements MemoryStore {
    * `retiredUris`. Null until one sweep has finished (or `initialRetired`
    * seeded it). Only a sweep that read EVERYTHING may shrink it. */
   private knownRetired: string[] | null = null;
+  /** The list `onRetired` last accepted (the seed counts: it is the file a
+   * previous process published). Kept apart from `knownRetired`, so a failed
+   * publication is retried rather than taken for done. */
+  private publishedRetired: string[] | null = null;
   /** `initialRetired`, not yet taken (see `takeRetiredSeed`). */
   private retiredSeed: (() => readonly string[] | null) | null;
 
@@ -457,7 +484,10 @@ export class OpenVikingStore implements MemoryStore {
     } catch {
       uris = null;
     }
-    if (uris) this.knownRetired = [...new Set(uris)].sort();
+    if (uris) {
+      this.knownRetired = [...new Set(uris)].sort();
+      this.publishedRetired = this.knownRetired;
+    }
   }
 
   /** What the last COMPLETED sweep cost, or null before the first. */
@@ -481,7 +511,8 @@ export class OpenVikingStore implements MemoryStore {
     if (SWEEP_EXCLUDED_AREAS.includes(dir.split("/")[0]!)) return null;
     const known = this.listedByArea.counts.get(dir);
     if (known !== undefined) return known;
-    for (const u of this.listedByArea.unknown) if (dir === u || dir.startsWith(`${u}/`)) return null;
+    for (const u of this.listedByArea.unknown)
+      if (dir === u || dir.startsWith(`${u}/`)) return null;
     return 0;
   }
 
@@ -530,6 +561,19 @@ export class OpenVikingStore implements MemoryStore {
       return { ok: true, message: `${uri} ready` };
     }
     return { ok: false, message: `could not create the memory root ${uri}` };
+  }
+
+  /** A write that answered NOT_FOUND on `dir`: make the area, once per store
+   * instance, and say whether the caller may retry. A fresh server holds only
+   * `viking://user/default`, and batch-write 404s on a missing area rather than
+   * creating it. Recorded only on success, so a transient mkdir failure leaves
+   * the next write free to try again; each caller keeps its own retry budget. */
+  private async madeMissingArea(code: string, dir: string): Promise<boolean> {
+    if (code !== "NOT_FOUND" || this.ensuredRoots.has(dir)) return false;
+    if (!(await this.client.mkdir(dir))) return false;
+    this.ensuredRoots.add(dir);
+    this.log(`openviking: created the memory root ${dir}`);
+    return true;
   }
 
   /**
@@ -679,11 +723,8 @@ export class OpenVikingStore implements MemoryStore {
     // a head built on it could be missing every standing instruction, so it
     // is unread rather than an exact, empty answer. (Only a sweep that READ
     // every listed file can say that; the hourly full refresh is one.)
-    if (files.length > 0 && reread === files.length && vanished === files.length) {
-      unread.push(
-        `read ${this.root}: all ${files.length} listed files answered NOT_FOUND — the listing and the content disagree`,
-      );
-    }
+    const contradiction = listingContradiction(this.root, files.length, reread, vanished);
+    if (contradiction !== null) unread.push(contradiction);
     entries.sort(byTsThenId);
     retiredEntries.sort(byTsThenId);
     // A sweep that could not read everything never SHRINKS the retired list:
@@ -747,15 +788,15 @@ export class OpenVikingStore implements MemoryStore {
     return run;
   }
 
-  /** Record the retired list, telling `onRetired` when it changed (and the
-   * first time it is known at all). */
+  /** Record the retired list, telling `onRetired` when it differs from the
+   * last list it published (and the first time it is known at all). */
   private setKnownRetired(next: string[]): void {
-    const prev = this.knownRetired;
     this.knownRetired = next;
     if (this.onRetired === undefined) return;
+    const prev = this.publishedRetired;
     if (prev !== null && prev.length === next.length && prev.every((u, i) => u === next[i])) return;
     try {
-      this.onRetired([...next]);
+      if (this.onRetired([...next]) !== false) this.publishedRetired = next;
     } catch {
       /* the publication is best-effort; the store never throws */
     }
@@ -882,10 +923,8 @@ export class OpenVikingStore implements MemoryStore {
       });
       // Every listed file gone: the listing and the content disagree, and an
       // empty head built on that could be missing every standing instruction.
-      if (files.length > 0 && vanished === files.length)
-        unread.push(
-          `read ${dir}: all ${files.length} listed files answered NOT_FOUND — the listing and the content disagree`,
-        );
+      const contradiction = listingContradiction(dir, files.length, files.length, vanished);
+      if (contradiction !== null) unread.push(contradiction);
       entries.sort(byTsThenId);
       return { entries, unread };
     } catch (err) {
@@ -937,7 +976,7 @@ export class OpenVikingStore implements MemoryStore {
           ok: false,
           message: `refused: '${op.id}' is not a memory address this store can spell`,
         };
-      if (!/^sha256:[0-9a-f]{64}$/.test(op.expect)) {
+      if (!isHashToken(op.expect)) {
         return {
           ok: false,
           message:
@@ -988,11 +1027,9 @@ export class OpenVikingStore implements MemoryStore {
           message: "refused: an edit may not empty an entry — retire it instead",
         };
       const res = await this.replace(op.id, next, op.expect);
-      if (res.ok && op.op === "retire" && this.knownRetired !== null) {
-        const uri = this.uriOf(op.id);
-        if (!this.knownRetired.includes(uri))
-          this.setKnownRetired([...this.knownRetired, uri].sort());
-      }
+      // A retire, or an edit whose new header says `#retired`: the content
+      // decides, as it does for every other writer of retired bytes.
+      if (res.ok && parseHashTags(next).includes(RETIRED_TAG)) this.noteRetired(this.uriOf(op.id));
       return res;
     } catch (err) {
       // The client is total, but a caller-supplied seam is not, and a write
@@ -1076,21 +1113,13 @@ export class OpenVikingStore implements MemoryStore {
           ok: false,
           message: `memory write failed: the server accepted the batch without writing ${id}`,
         };
-      // A fresh server holds only `viking://user/default`: our category root
-      // does not exist until something makes it, and batch-write 404s rather
-      // than creating it. Make it once, here, and let the loop retry — the
+      // A missing area is made here, once, and the loop retries — the
       // alternative is a bootstrap step that a restart or a new category
-      // silently outlives.
-      if (res.code === "NOT_FOUND" && !this.ensuredRoots.has(dir) && !mkdirTried) {
+      // silently outlives. One attempt per call: a failed mkdir falls through
+      // to the refusal below.
+      if (!mkdirTried && res.code === "NOT_FOUND") {
         mkdirTried = true;
-        // Recorded only on success: a transient mkdir failure must leave the
-        // next write (and ensureWritable) free to try again. One attempt per
-        // call still holds — a failed mkdir falls through to the refusal below.
-        if (await this.client.mkdir(dir)) {
-          this.ensuredRoots.add(dir);
-          this.log(`openviking: created the memory root ${dir}`);
-          continue;
-        }
+        if (await this.madeMissingArea(res.code, dir)) continue;
       }
       if (!res.conflict) return { ok: false, message: `memory write failed: ${res.message}` };
       if (name !== undefined) {
@@ -1269,10 +1298,7 @@ export class OpenVikingStore implements MemoryStore {
     content: string,
   ): Promise<{ ok: true } | { ok: false; message: string }> {
     const dir = parentOf(uri);
-    let precondition:
-      { kind: "create_if_absent" } | { kind: "replace_if_hash"; base_hash: string } = {
-      kind: "create_if_absent",
-    };
+    let precondition: BatchWritePrecondition = { kind: "create_if_absent" };
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const res = await this.client.batchWrite({
         root_uri: dir,
@@ -1282,15 +1308,10 @@ export class OpenVikingStore implements MemoryStore {
       if (res.ok && batchWriteLanded(res.result, uri)) return { ok: true };
       if (
         !res.ok &&
-        res.code === "NOT_FOUND" &&
         precondition.kind === "create_if_absent" &&
-        !this.ensuredRoots.has(dir)
-      ) {
-        if (await this.client.mkdir(dir)) {
-          this.ensuredRoots.add(dir);
-          continue;
-        }
-      }
+        (await this.madeMissingArea(res.code, dir))
+      )
+        continue;
       if (!res.ok && res.conflict && precondition.kind === "create_if_absent") {
         const there = await this.client.readContent(uri);
         if (there.ok && isMovedStub(there.result)) {
@@ -1383,8 +1404,15 @@ export class OpenVikingStore implements MemoryStore {
     for (const it of items) {
       if (!validEntryId(it.id) || (it.to !== undefined && !validEntryId(it.to)))
         fail(it, "refused: not a memory address this store can spell");
-      else if (!/^sha256:[0-9a-f]{64}$/.test(it.expect))
-        fail(it, "refused: no usable concurrency token — re-plan");
+      // The server takes no batch rooted at the memories root itself, so an
+      // entry sitting there can be neither stubbed nor rewritten: refused
+      // before its copy is written, never written and then undone.
+      else if (areaOfId(it.id) === "" || (it.to !== undefined && areaOfId(it.to) === ""))
+        fail(
+          it,
+          "refused: the entry sits directly in the memories root, where the server writes nothing — move it by hand",
+        );
+      else if (!isHashToken(it.expect)) fail(it, "refused: no usable concurrency token — re-plan");
       else if (renderEntryBody(it.text) === "") fail(it, "refused: an entry may not be emptied");
       else if (seen.has(it.id) || (it.to !== undefined && seen.has(it.to)))
         fail(it, "refused: the plan names this address twice");
@@ -1579,7 +1607,7 @@ export class OpenVikingStore implements MemoryStore {
       };
       if (!validArea(doc.area) || !validEntryId(id))
         refuse(`refused: '${id}' is not a memory address this store can spell`);
-      else if (doc.expect !== null && !/^sha256:[0-9a-f]{64}$/.test(doc.expect))
+      else if (doc.expect !== null && !isHashToken(doc.expect))
         refuse("refused: no usable concurrency token for the replace");
       else if (content === "") refuse("refused: an empty document");
       else if (seen.has(id)) refuse("refused: one call names this document twice");
@@ -1714,11 +1742,7 @@ export class OpenVikingStore implements MemoryStore {
    * committed after its answer was lost — and the caller reads back. */
   private async batchWithArea(
     root: string,
-    operations: Array<{
-      uri: string;
-      content: string;
-      precondition: { kind: "create_if_absent" } | { kind: "replace_if_hash"; base_hash: string };
-    }>,
+    operations: BatchWriteOperation[],
   ): Promise<{
     ok: boolean;
     refused: boolean;
@@ -1742,12 +1766,7 @@ export class OpenVikingStore implements MemoryStore {
           landed,
         };
       }
-      if (res.code === "NOT_FOUND" && attempt === 0 && !this.ensuredRoots.has(root)) {
-        if (await this.client.mkdir(root)) {
-          this.ensuredRoots.add(root);
-          continue;
-        }
-      }
+      if (attempt === 0 && (await this.madeMissingArea(res.code, root))) continue;
       return {
         ok: false,
         refused: provenUnwritten(res),
@@ -1806,16 +1825,31 @@ export class OpenVikingStore implements MemoryStore {
 // ---- helpers ----------------------------------------------------------------
 
 /** Does a failed batch-write PROVE that nothing was written? Yes when the
- * server answered and refused — any 4xx: a precondition (checked before the
- * first write), a busy lock, a missing root, a bad request, auth. No answer
- * at all (status 0: a timeout, a lost connection) and a 5xx prove nothing:
- * the batch may have committed after its answer was lost. */
+ * server answered and refused — a 4xx other than 408: a precondition
+ * (checked before the first write), a busy lock, a missing root, a bad
+ * request, auth. No answer at all (status 0: a timeout, a lost connection), a
+ * 408 (a timeout the server reports) and a 5xx prove nothing: the batch may
+ * have committed after its answer was lost. */
 export function provenUnwritten(res: {
   status: number;
   conflict: boolean;
   busy: boolean;
 }): boolean {
   return res.conflict || res.busy || (res.status >= 400 && res.status < 500 && res.status !== 408);
+}
+
+/** The `unread` line for a listing whose every file answered NOT_FOUND when
+ * read — the listing and the content disagree, which is no race — or null.
+ * Only a read of EVERY listed file can say so: `read` is how many were read
+ * now (an incremental sweep reuses the unchanged ones). */
+function listingContradiction(
+  where: string,
+  listed: number,
+  read: number,
+  vanished: number,
+): string | null {
+  if (listed === 0 || read !== listed || vanished !== listed) return null;
+  return `read ${where}: all ${listed} listed files answered NOT_FOUND — the listing and the content disagree`;
 }
 
 /** Oldest first; the id breaks a tie so the order never depends on listing

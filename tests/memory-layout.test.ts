@@ -1093,7 +1093,9 @@ describe("the round context block searches experiences/ only", () => {
       client,
       now: () => NOW,
       cacheTtlMs: 0,
-      onRetired: (uris) => published.push([...uris]),
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
     });
     const assembler = new OpenVikingContextAssembler({ client, store });
     await assembler.contextBlock("q", { maxTokens: 500 });
@@ -1434,6 +1436,21 @@ describe("qcr memory relayout --apply", () => {
     const out = await runRelayout(store, { apply: true, log: (l) => log.push(l) });
     expect(out.ok).toBe(false);
     expect(out.refused).toMatch(/could not be read whole/);
+    expect(server.batches()).toHaveLength(0);
+  });
+
+  it("an entry directly in the memories root is refused before anything is written", async () => {
+    const server = new OvServer();
+    seed(server, [["loose.md", "#manual a standing instruction"]]);
+    const { store } = wire(server);
+    const sweep = await store.sweep();
+    const plan = planRelayout({ entries: sweep.entries, retired: sweep.retired });
+    const items = relocateItemsOf(plan);
+    expect(items.map((it) => it.id)).toEqual(["loose.md"]);
+    const report = await store.relocate(items);
+    expect(report.results).toHaveLength(1);
+    expect(report.results[0]!.ok).toBe(false);
+    expect(report.results[0]!.message).toMatch(/directly in the memories root/);
     expect(server.batches()).toHaveLength(0);
   });
 

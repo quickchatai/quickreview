@@ -478,6 +478,55 @@ describe("OpenVikingSupervisor", () => {
     expect(h.sup.status().not_ready_polls).toBe(0);
   });
 
+  it("a spawn error stops being last_error once the respawned server answers", async () => {
+    let ready = false;
+    const h = harness(
+      { restart_backoff_ms: [1000] },
+      {
+        spawnFails: (n) => n === 1,
+        fetchFn: async (url) =>
+          url.endsWith("/health")
+            ? jsonRes(200, { version: "0.4.15" })
+            : jsonRes(ready ? 200 : 503, {}),
+      },
+    );
+    h.sup.start();
+    h.children[0]!.exit(1, null);
+    h.clock.fireLast(); // respawn → spawn 1 fails asynchronously
+    h.children[1]!.emit("error", Object.assign(new Error("spawn ov ENOENT"), { code: "ENOENT" }));
+    h.children[1]!.emit("close", -2, null);
+    expect(h.sup.status().last_error).toContain("ENOENT");
+    h.clock.fireLast(); // spawn 2 comes up
+    await h.sup.poll();
+    // The server answers but /ready fails: THAT is the current error.
+    expect(h.sup.status().last_error).not.toContain("ENOENT");
+    expect(h.sup.status().last_error).toBeTruthy();
+    ready = true;
+    await h.sup.poll();
+    expect(h.sup.status().last_error).toBeUndefined();
+  });
+
+  it("a probe that completes after its child exited is discarded — no ready dead server, no onReady", async () => {
+    let fired = 0;
+    const h: Harness = harness(
+      {},
+      {
+        fetchFn: async (url) => {
+          // The child dies while the probe is in flight.
+          if (url.endsWith("/ready")) h.children[0]!.exit(1, null);
+          return url.endsWith("/health") ? jsonRes(200, { version: "0.4.15" }) : jsonRes(200, {});
+        },
+        onReady: () => {
+          fired += 1;
+        },
+      },
+    );
+    h.sup.start();
+    await h.sup.poll();
+    expect(fired).toBe(0);
+    expect(h.sup.status()).toMatchObject({ running: false, ready: false, reachable: false });
+  });
+
   it("flags version drift against the triple-mirrored pin", async () => {
     const h = harness(
       {},

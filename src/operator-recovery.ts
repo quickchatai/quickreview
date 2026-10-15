@@ -171,6 +171,7 @@ export async function recoverPrForOperator(
     for (const { quarantinePath } of quarantined) rmSync(quarantinePath, { force: true });
   }
 
+  const current = deps.store.getPr(pr) ?? row;
   const migrationMarkRepaired =
     failure?.stage === "posting_receipt"
       ? deps.store.repairMigrationPrecheckReviewedHead(pr)
@@ -180,12 +181,14 @@ export async function recoverPrForOperator(
   const successor = deps.store.successorFor(pr);
   if (successor) deps.store.promoteSuccessor(pr);
   // A human may explicitly retrigger the unchanged head while old receipt debt
-  // waits for recovery. It is already queued; replacing its timestamp and
-  // provenance with an operator-system trigger would erase that new request.
+  // waits for recovery — or while restart-session awaited the kill. It is
+  // already queued; replacing its timestamp and provenance with an
+  // operator-system trigger would erase that new request. Read the row as it
+  // is now, not as it was before the kill.
   else if (!(
-    row.state === "queued" &&
-    row.trigger_ts !== null &&
-    row.trigger_provenance === "human"
+    current.state === "queued" &&
+    current.trigger_ts !== null &&
+    current.trigger_provenance === "human"
   )) {
     deps.store.queuePrForOperatorRecovery(pr, (deps.now ?? (() => new Date()))().toISOString());
   }

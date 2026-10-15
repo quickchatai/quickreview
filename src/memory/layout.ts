@@ -35,6 +35,19 @@ export const EVENTS_AREA = "events";
 /** Finding cases. */
 export const CASES_AREA = "finding-cases";
 
+/** The header tag every reader hides an entry by. */
+export const RETIRED_TAG = "retired";
+/** The tag a move's stub carries beside `#retired`. */
+export const MOVED_TAG = "moved";
+
+/** Is this stored text a move's stub (header `#retired #moved`)? Only such a
+ * stub may be written over by a later move into its address — the store's
+ * move and the relayout plan read it with this one rule. */
+export function isMovedStub(text: string): boolean {
+  const tags = parseHashTags(text);
+  return tags.includes(RETIRED_TAG) && tags.includes(MOVED_TAG);
+}
+
 /** Every area of the layout, most specific first. */
 export const MEMORY_AREAS: readonly string[] = [
   PINNED_AREA,

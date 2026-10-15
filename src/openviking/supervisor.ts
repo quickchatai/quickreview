@@ -47,8 +47,63 @@ export type SpawnFn = (
  * drive restarts and health polls without real clocks. */
 export type Schedule = (fn: () => void, ms: number) => () => void;
 
-/** How long a SIGTERM'd server gets before SIGKILL on daemon shutdown. */
+/** How long a SIGTERM'd child gets before SIGKILL on daemon shutdown. */
 const STOP_GRACE_MS = 5_000;
+
+/** A supervised child's stdout and stderr, line-buffered: each complete,
+ * non-blank line (trailing whitespace trimmed) goes to `onLine`; a partial
+ * chunk waits for the rest of its line. */
+export function foldChildLines(child: SupervisedChild, onLine: (line: string) => void): void {
+  for (const stream of [child.stdout, child.stderr]) {
+    if (!stream) continue;
+    let buffer = "";
+    stream.on("data", (chunk: unknown) => {
+      buffer += String(chunk);
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) if (line.trim()) onLine(line.trimEnd());
+    });
+  }
+}
+
+/** The capped restart ladder: the delay before restart number `attempt + 1`
+ * (the last rung repeats; an empty ladder is 5 s). */
+export function restartDelayMs(ladder: readonly number[], attempt: number): number {
+  const rungs = ladder.length > 0 ? ladder : [5000];
+  return rungs[Math.min(attempt, rungs.length - 1)]!;
+}
+
+/** Stop a child: SIGTERM, then SIGKILL after `STOP_GRACE_MS`; resolves at its
+ * exit, at the kill, or at once when the signal cannot be sent (already
+ * gone). Never rejects. */
+export function terminateChild(child: SupervisedChild, schedule: Schedule): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const cancelKill = schedule(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+      finish();
+    }, STOP_GRACE_MS);
+    child.on("exit", () => {
+      cancelKill();
+      finish();
+    });
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      cancelKill();
+      finish();
+    }
+  });
+}
 
 export interface SupervisorDeps {
   cfg: OpenVikingConfig;
@@ -244,18 +299,7 @@ export class OpenVikingSupervisor {
   /** Line-buffered stdout/stderr into the daemon log — one place to read when
    * something goes wrong, which is the whole point of supervising it here. */
   private foldLogs(child: SupervisedChild): void {
-    for (const stream of [child.stdout, child.stderr]) {
-      if (!stream) continue;
-      let buffer = "";
-      stream.on("data", (chunk: unknown) => {
-        buffer += String(chunk);
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (line.trim()) this.log(`openviking: ${line.trimEnd()}`);
-        }
-      });
-    }
+    foldChildLines(child, (line) => this.log(`openviking: ${line}`));
   }
 
   private onExit(code: number | null, signal: NodeJS.Signals | null): void {
@@ -279,8 +323,7 @@ export class OpenVikingSupervisor {
 
   private scheduleRestart(): void {
     if (this.stopping) return;
-    const ladder = this.cfg.restart_backoff_ms.length > 0 ? this.cfg.restart_backoff_ms : [5000];
-    const delay = ladder[Math.min(this.attempt, ladder.length - 1)]!;
+    const delay = restartDelayMs(this.cfg.restart_backoff_ms, this.attempt);
     this.attempt += 1;
     this.restarts += 1;
     this.log(`openviking: restarting in ${delay}ms (attempt ${this.attempt})`);
@@ -299,8 +342,10 @@ export class OpenVikingSupervisor {
   /** One health + resource sample into the cache. Never rejects. */
   async poll(): Promise<void> {
     const wasReady = this.health?.ready ?? false;
+    const child = this.child;
+    let health: OpenVikingHealth;
     try {
-      this.health = await probeHealth({
+      health = await probeHealth({
         baseUrl: openVikingBaseUrl(this.cfg),
         timeoutMs: this.cfg.health_timeout_ms,
         ...(this.fetchFn ? { fetchFn: this.fetchFn } : {}),
@@ -308,13 +353,22 @@ export class OpenVikingSupervisor {
       });
     } catch (err) {
       // probeHealth is total, but a caller-supplied fetch seam is not.
-      this.health = {
+      health = {
         reachable: false,
         ready: false,
         error: err instanceof Error ? err.message : String(err),
         at: this.now().toISOString(),
       };
     }
+    // A probe that raced an exit or a respawn describes a process that is no
+    // longer the tracked one: the exit already cleared the cache, and the next
+    // poll reads the new child. Installing it would report a dead server ready
+    // and fire onReady for it.
+    if (this.child !== child) return;
+    this.health = health;
+    // The server answered, so a spawn failure from before it came up is
+    // history: the probe's own error (if any) is the current one.
+    if (health.reachable) this.lastError = undefined;
     this.notReadyPolls = this.health.reachable && !this.health.ready ? this.notReadyPolls + 1 : 0;
     this.proc = this.childPid !== undefined ? this.sampler.sample(this.childPid) : undefined;
     if (this.health.ready && !wasReady) {
@@ -383,32 +437,7 @@ export class OpenVikingSupervisor {
     this.waitingSince = null;
     const child = this.child;
     if (!child) return;
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = (): void => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      const cancelKill = this.schedule(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          /* already gone */
-        }
-        finish();
-      }, STOP_GRACE_MS);
-      child.on("exit", () => {
-        cancelKill();
-        finish();
-      });
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        cancelKill();
-        finish();
-      }
-    });
+    await terminateChild(child, this.schedule);
     this.child = null;
     this.childPid = undefined;
     this.log("openviking: server stopped");

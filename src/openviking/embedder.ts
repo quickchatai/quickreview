@@ -34,7 +34,14 @@ import { LOCAL_EMBEDDING, localEmbedderBaseUrl, type OpenVikingConfig } from "..
 import type { ServingAnswer } from "../memory/health.js";
 import type { FetchLike } from "./health.js";
 import { ProcSampler } from "./proc.js";
-import type { Schedule, SpawnFn, SupervisedChild } from "./supervisor.js";
+import {
+  foldChildLines,
+  restartDelayMs,
+  terminateChild,
+  type Schedule,
+  type SpawnFn,
+  type SupervisedChild,
+} from "./supervisor.js";
 import type { LocalEmbedderStatus, OpenVikingStatus, ProcSample } from "./types.js";
 
 /** What the service is started with. The boot's provisioning step builds the
@@ -193,7 +200,6 @@ export const EMBEDDER_FAST_POLL_MS = 500;
 /** How long the server's first start waits for the embedder before starting
  * anyway (the model loads in about a second; the sha256 check in a fraction). */
 export const EMBEDDER_GATE_MAX_WAIT_MS = 120_000;
-const STOP_GRACE_MS = 5_000;
 
 export interface LocalEmbedderDeps {
   cfg: OpenVikingConfig;
@@ -364,16 +370,7 @@ export class LocalEmbedderSupervisor {
   /** Its stdout/stderr, line by line, into the daemon log — the service's own
    * lines already carry the `openviking-embedder:` prefix. */
   private foldLogs(child: SupervisedChild): void {
-    for (const stream of [child.stdout, child.stderr]) {
-      if (!stream) continue;
-      let buffer = "";
-      stream.on("data", (chunk: unknown) => {
-        buffer += String(chunk);
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) if (line.trim()) this.log(line.trimEnd());
-      });
-    }
+    foldChildLines(child, (line) => this.log(line));
   }
 
   private onExit(child: SupervisedChild, code: number | null, signal: NodeJS.Signals | null): void {
@@ -393,8 +390,7 @@ export class LocalEmbedderSupervisor {
 
   private scheduleRestart(): void {
     if (this.stopping) return;
-    const ladder = this.cfg.restart_backoff_ms.length > 0 ? this.cfg.restart_backoff_ms : [5000];
-    const delay = ladder[Math.min(this.attempt, ladder.length - 1)]!;
+    const delay = restartDelayMs(this.cfg.restart_backoff_ms, this.attempt);
     this.attempt += 1;
     this.restarts += 1;
     this.log(`openviking: local embedder restarting in ${delay}ms (attempt ${this.attempt})`);
@@ -496,32 +492,7 @@ export class LocalEmbedderSupervisor {
     this.cancelHealth = null;
     const child = this.child;
     if (!child) return;
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = (): void => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      const cancelKill = this.schedule(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          /* already gone */
-        }
-        finish();
-      }, STOP_GRACE_MS);
-      child.on("exit", () => {
-        cancelKill();
-        finish();
-      });
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        cancelKill();
-        finish();
-      }
-    });
+    await terminateChild(child, this.schedule);
     this.clearChild();
     this.log("openviking: local embedder stopped");
   }

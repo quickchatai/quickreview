@@ -226,9 +226,9 @@ describe("tui/index.ts: memory failures reach the operator", () => {
 });
 
 describe("wire.ts: bounded sessions, shed load", () => {
-  it("the daemon's store publishes the retired list where the sessions' recall reads it", () => {
+  it("the daemon's store publishes the retired list where the sessions' recall reads it, returning the write's result so a failed one is retried", () => {
     expect(wire).toMatch(
-      /openVikingStore\(memoryClient, \{[\s\S]*?onRetired: \(uris\) => \{\s*writeRetiredUris\(sessions\.ovRetiredPath\(\), uris,/,
+      /openVikingStore\(memoryClient, \{[\s\S]*?onRetired: \(uris\) =>\s*writeRetiredUris\(sessions\.ovRetiredPath\(\), uris,/,
     );
   });
 

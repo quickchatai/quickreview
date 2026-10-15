@@ -1470,6 +1470,16 @@ describe("entry naming and tag helpers", () => {
       "code:\n    y = 1\n",
     );
   });
+
+  it("unpins the header only — a #pinned quoted in the body is the owner's prose", () => {
+    const body = "#pinned #manual example:\nUse #pinned here, or\n  #pinned\nin a list";
+    expect(withoutTag(body, "pinned")).toBe(
+      "#manual example:\nUse #pinned here, or\n  #pinned\nin a list\n",
+    );
+    expect(withoutTag("#manual note: #pinned", "pinned")).toBe("#manual note: #pinned\n");
+    // A header split over lines is still the header.
+    expect(withoutTag("#pinned\n#PINNED #manual x", "pinned")).toBe("#manual x\n");
+  });
 });
 
 // ---- untrusted text cannot pin itself (prompt-injection guard) --------------
@@ -2065,7 +2075,9 @@ describe("the incremental sweep", () => {
       }),
       now: () => NOW,
       cacheTtlMs: 0,
-      onRetired: (uris) => published.push([...uris]),
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
     });
     const [live] = await store.read();
     expect(published).toEqual([[`${ROOT_EXP}/20260801T000000-a.md`]]);
@@ -2091,6 +2103,59 @@ describe("the incremental sweep", () => {
       },
     });
     await expect(throwing.read()).resolves.toEqual([]);
+  });
+
+  it("a publication that failed is offered again by the next sweep, even with the list unchanged", async () => {
+    const server = new FakeOpenViking();
+    const A = `${ROOT_EXP}/20260801T000000-a.md`;
+    server.files.set(A, "#retired old lesson\n");
+    let failing = true;
+    const offered: string[][] = [];
+    const store = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: server.fetch,
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+      onRetired: (uris) => {
+        offered.push([...uris]);
+        return !failing;
+      },
+    });
+    await store.read();
+    expect(offered).toEqual([[A]]);
+    failing = false;
+    await store.read();
+    expect(offered).toEqual([[A], [A]]); // retried, and now published
+    await store.read();
+    expect(offered).toHaveLength(2); // published and unchanged ⇒ quiet
+  });
+
+  it("an edit that writes a #retired header joins the published list at once, like a retire", async () => {
+    const server = new FakeOpenViking();
+    server.files.set(`${ROOT_EXP}/20260802T000000-b.md`, "live lesson\n");
+    const published: string[][] = [];
+    const store = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: server.fetch,
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
+    });
+    const [live] = await store.read();
+    expect(published).toEqual([[]]);
+    const edited = await store.apply({ op: "edit", ...refOf(live!), text: "#retired live lesson" });
+    expect(edited.ok).toBe(true);
+    expect(published.at(-1)).toEqual([`${ROOT_EXP}/20260802T000000-b.md`]);
   });
 
   // The published list is what every session's recall excludes,
@@ -2125,7 +2190,9 @@ describe("the incremental sweep", () => {
       cacheTtlMs: 0,
       // Every sweep re-reads every file, so the failed read really is A's.
       fullRefreshMs: 0,
-      onRetired: (uris) => published.push([...uris]),
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
     });
     await store.read();
     expect(published).toEqual([[A]]);
@@ -2161,7 +2228,9 @@ describe("the incremental sweep", () => {
       }),
       now: () => NOW,
       cacheTtlMs: 0,
-      onRetired: (uris) => published.push([...uris]),
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
       initialRetired: [A, `${ROOT_EXP}/20260709T000000-z.md`],
     });
     // Before any sweep, the seed answers the round's exclusion list.

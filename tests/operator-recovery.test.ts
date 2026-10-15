@@ -548,6 +548,25 @@ describe("operator PR recovery", () => {
     expect(pump).toHaveBeenCalledOnce();
   });
 
+  it("restart-session preserves a human retrigger that arrived while it awaited the kill", async () => {
+    const { store, dir, pr } = setup();
+    command(store, dir, pr);
+    const humanTs = "2026-08-31T08:05:00.000Z";
+    const killSession = vi.fn(async () => {
+      store.db
+        .prepare(
+          "UPDATE pr_state SET state='queued', trigger_ts=?, trigger_provenance='human' WHERE number=?",
+        )
+        .run(humanTs, pr);
+    });
+    const pump = vi.fn(async () => {});
+
+    await recoverPrForOperator({ store, pump, killSession }, pr, "restart-session");
+
+    expect(killSession).toHaveBeenCalledWith(pr);
+    expect(store.getPr(pr)).toMatchObject({ trigger_ts: humanTs, trigger_provenance: "human" });
+  });
+
   it("preserves a held wake by falling through to ordinary recovery", async () => {
     const { store, dir, pr } = setup();
     postingReceiptFailure(store, dir, pr);
