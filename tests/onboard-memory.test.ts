@@ -1075,7 +1075,11 @@ describe("reaching the server", () => {
       expect(detail).toContain(
         `node scripts/companion-memory-forward.mjs ${sub} --ssh-host review-box --container my-reviewer --no-sudo`,
       );
-    expect(detail).not.toMatch(/my-vm/);
+    // No other host is ever named — the script's own default included.
+    expect(detail.match(/--ssh-host \S+/g)).toEqual([
+      "--ssh-host review-box",
+      "--ssh-host review-box",
+    ]);
   });
 });
 
