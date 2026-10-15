@@ -97,7 +97,12 @@ export function stalenessSimulation(
       });
     },
     runStalenessReconcile: async () => {
-      await reconcileOnce({ cfg, store, adapter, hooks, log: () => {} });
+      // reconcileOnce contains a failed step in its report rather than
+      // throwing; a step that failed did not exercise the push, so "no round
+      // issued" would be a pass for the wrong reason.
+      const report = await reconcileOnce({ cfg, store, adapter, hooks, log: () => {} });
+      if (report.errors.length > 0)
+        throw new Error(`reconcile failed in the simulation: ${report.errors.join("; ")}`);
       await dispatchOnce({ cfg, store, adapter, hooks, log: () => {} });
     },
     issuedOrders: () => issued.map((o) => ({ pr: o.pr, round_type: o.round_type })),
