@@ -32,7 +32,11 @@ import {
 import { derivedQueueOf, manualQueueOf, stalenessSimulation } from "../src/cliops.js";
 import { parseConfig } from "../src/config.js";
 import type { PrRef } from "../src/github.js";
-import { reconcileOnce, type ReconcileAdapter } from "../src/reconcile.js";
+import {
+  reconcileOnce,
+  type ReconcileAdapter,
+  type ReconcileSearchItem,
+} from "../src/reconcile.js";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -310,8 +314,14 @@ const checklistCfg = parseConfig(
   readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
 );
 
-function hit(number: number, login = "alice") {
-  return { number, user: { login, type: login.endsWith("[bot]") ? "Bot" : "User" } };
+function hit(number: number, login = "alice"): ReconcileSearchItem {
+  return {
+    number,
+    title: `PR ${number}`,
+    user: { login, type: login.endsWith("[bot]") ? "Bot" : "User" },
+    updated_at: "2026-08-13T09:05:00Z",
+    created_at: "2026-08-13T08:00:00Z",
+  };
 }
 
 function openRef(number: number, head_sha: string, state: "open" | "closed" = "open"): PrRef {
