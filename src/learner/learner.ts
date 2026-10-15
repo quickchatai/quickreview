@@ -517,16 +517,16 @@ export class Learner {
     // conclusion, so a candidate only, gated on a standing APPROVE and one per
     // (PR, head) (miner.ts header).
     run("recheck reversals", () => mineRecheckFlips(this.store, since));
+    // Post-merge recall stores its candidates as it records each read.
+    let recallAdded = 0;
     if (this.deps.git) {
       try {
         const r = await minePostMerge(this.store, {
-          sinceIso: since,
-          now,
-          windowDays: this.cfg.lessons_recall_window_days,
-          baseBranch: this.deps.baseBranch,
-          git: this.deps.git,
-          log: this.log,
+          ...this.recallScope(now, this.deps.git),
           maxPrs: RECALL_SCAN_LIMITS.prsPerMine,
+          persist: (d) => {
+            recallAdded += this.insert(d).recall ?? 0;
+          },
         });
         drafts.push(...r.drafts);
         report.recall = { scanned: r.scanned, unknown: r.unknown };
@@ -536,6 +536,8 @@ export class Learner {
     }
     for (const d of drafts) report.seen[d.source] = (report.seen[d.source] ?? 0) + 1;
     report.added_by_source = this.insert(drafts);
+    if (recallAdded > 0)
+      report.added_by_source.recall = (report.added_by_source.recall ?? 0) + recallAdded;
     try {
       report.relinked = this.relink(drafts);
     } catch (err) {
@@ -622,6 +624,19 @@ export class Learner {
     return n;
   }
 
+  /** What post-merge recall reads — the same for the day's mine and the
+   * ticks between mines, which differ only in their budgets. */
+  private recallScope(now: Date, git: RecallGit) {
+    return {
+      sinceIso: new Date(now.getTime() - this.cfg.lessons_mine_days * DAY_MS).toISOString(),
+      now,
+      windowDays: this.cfg.lessons_recall_window_days,
+      baseBranch: this.deps.baseBranch,
+      git,
+      log: this.log,
+    };
+  }
+
   /**
    * Post-merge recall between mines (`RECALL_SCAN_LIMITS.prsPerTick` PRs and
    * `budgetMs` a tick): the day's mine alone reads too few merged PRs to keep
@@ -629,21 +644,18 @@ export class Learner {
    * finds is inserted at once and offered by the next packet. Never throws.
    */
   private async recallStep(): Promise<void> {
-    if (!this.deps.git) return;
-    const now = this.now();
-    const since = new Date(now.getTime() - this.cfg.lessons_mine_days * DAY_MS).toISOString();
+    const git = this.deps.git;
+    if (!git) return;
+    let added = 0;
     try {
       const r = await minePostMerge(this.store, {
-        sinceIso: since,
-        now,
-        windowDays: this.cfg.lessons_recall_window_days,
-        baseBranch: this.deps.baseBranch,
-        git: this.deps.git,
-        log: this.log,
+        ...this.recallScope(this.now(), git),
         maxPrs: RECALL_SCAN_LIMITS.prsPerTick,
         budgetMs: RECALL_SCAN_LIMITS.budgetMs,
+        persist: (d) => {
+          added += this.insert(d).recall ?? 0;
+        },
       });
-      const added = this.insert(r.drafts).recall ?? 0;
       if (r.scanned > 0 || added > 0)
         this.log(
           `learner: post-merge recall read ${r.scanned} merged PR(s), ${added} new candidate(s)${r.unknown ? `, ${r.unknown} unknown` : ""}`,

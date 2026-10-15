@@ -1860,6 +1860,50 @@ describe("the miner — recall bounds", () => {
     expect(row()).toEqual({ done: 1, attempts: 4, outcome: "unknown: gave up" });
   });
 
+  it("a closed window is marked done only together with its candidates — a failed store re-reads it", async () => {
+    const git: RecallGit = {
+      postMergeTouches: async () => ({
+        merge: "m".repeat(40),
+        shape: "squash",
+        checked: 1,
+        truncated: false,
+        tip_at: "2026-10-30T00:00:00Z",
+        touches: [
+          {
+            commit: "f".repeat(40),
+            subject: "Fix the tenant check (#45)",
+            committed_at: "2026-10-08T09:00:00Z",
+            path: "backend/api/orders.py",
+            start: 40,
+            end: 44,
+          },
+        ],
+      }),
+    };
+    const h = harness({ git });
+    h.pr(44);
+    h.verdict(44, "APPROVE");
+    h.addMinutes(1);
+    h.store.logEvent("pr_closed", 44, { merged: true, source: "webhook" });
+    h.setNow("2026-10-25T10:00:00.000Z"); // the window has passed
+    // the candidate cannot be stored (what a process dying before the
+    // insert would leave): the read must not be recorded as done either
+    h.store.db.exec(
+      "CREATE TRIGGER no_recall BEFORE INSERT ON lesson_candidates WHEN NEW.source = 'recall' BEGIN SELECT RAISE(ABORT, 'store gone'); END",
+    );
+    await h.learner.mine().catch(() => undefined);
+    const row = () =>
+      h.store.db.prepare("SELECT done FROM learner_recall_scans WHERE pr = 44").get() as {
+        done: number;
+      };
+    expect(row().done).toBe(0);
+    h.store.db.exec("DROP TRIGGER no_recall");
+    const r = await h.learner.mine();
+    expect(r.added_by_source.recall).toBe(1);
+    expect(row().done).toBe(1);
+    expect(h.learner.allCandidates().map((c) => c.kind)).toEqual(["post_merge_change"]);
+  });
+
   it("a window the clone has not been fetched past stays pending — never read as 'nothing more touched'", async () => {
     let tip = "2026-10-08T00:00:00Z";
     const git: RecallGit = {

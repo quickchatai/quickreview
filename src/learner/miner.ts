@@ -1019,6 +1019,10 @@ function postMergeDraft(
  * re-reads; the stale backlog — closed windows never read, the most recent
  * first — and closed PRs still owed come last. A PR is re-read at most once
  * per `rescanMs`.
+ *
+ * `persist` stores a read PR's drafts in the same transaction that records
+ * the read: a scan marked done whose candidates never landed would be lost
+ * for good (done PRs are never read again).
  */
 export async function minePostMerge(
   store: StateStore,
@@ -1035,6 +1039,8 @@ export async function minePostMerge(
     budgetMs?: number;
     /** The wall clock the budget is measured on (tests inject one). */
     clock?: () => number;
+    /** Store one PR's drafts; runs inside the transaction recording its read. */
+    persist?: (drafts: CandidateDraft[]) => void;
   },
 ): Promise<{ drafts: CandidateDraft[]; scanned: number; unknown: number }> {
   const merges = store.db
@@ -1140,8 +1146,9 @@ export async function minePostMerge(
     }
     const byCommit = new Map<string, PostMergeScan["touches"]>();
     for (const t of scan.touches) byCommit.set(t.commit, [...(byCommit.get(t.commit) ?? []), t]);
-    for (const [commit, touches] of byCommit)
-      drafts.push(postMergeDraft(row, commit, touches, nowIso));
+    const prDrafts = [...byCommit].map(([commit, touches]) =>
+      postMergeDraft(row, commit, touches, nowIso),
+    );
     // Done only once the window has passed AND the clone holds it: the
     // learner never fetches, and a clone whose base tip predates the window's
     // end has not seen its last commits — reading that as "nothing more
@@ -1160,24 +1167,28 @@ export async function minePostMerge(
         nowMs - windowEnd >= RECALL_SCAN_LIMITS.attempts * RECALL_SCAN_LIMITS.rescanMs
       );
     const done = closed && fetchedPast && !unreadRetry;
-    finish.run(
-      row.attempts + 1,
-      nowIso,
-      scan.merge,
-      scan.touches.length,
-      baseRef,
-      done ? 1 : 0,
-      `${scan.shape}${scan.truncated ? " (partial)" : ""}${
-        closed && !fetchedPast ? " (the clone is not fetched past the window yet)" : ""
-      }${
-        closed && fetchedPast && scan.unread === true
-          ? unreadRetry
-            ? " (a read failed: retried)"
-            : " (a read failed: gave up)"
-          : ""
-      }`,
-      row.pr,
-    );
+    store.db.transaction(() => {
+      if (prDrafts.length > 0) opts.persist?.(prDrafts);
+      finish.run(
+        row.attempts + 1,
+        nowIso,
+        scan.merge,
+        scan.touches.length,
+        baseRef,
+        done ? 1 : 0,
+        `${scan.shape}${scan.truncated ? " (partial)" : ""}${
+          closed && !fetchedPast ? " (the clone is not fetched past the window yet)" : ""
+        }${
+          closed && fetchedPast && scan.unread === true
+            ? unreadRetry
+              ? " (a read failed: retried)"
+              : " (a read failed: gave up)"
+            : ""
+        }`,
+        row.pr,
+      );
+    })();
+    drafts.push(...prDrafts);
   }
   return { drafts, scanned, unknown };
 }
