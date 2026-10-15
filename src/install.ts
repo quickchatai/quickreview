@@ -54,6 +54,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -262,20 +263,10 @@ export function migrateConfig(opts: { root: string; env?: InstallEnv }): Migrate
   // A symlinked config (often relative, `-> ./operator.toml`) would be renamed
   // as a link and resolve against the config home, where its target is not:
   // copy the bytes it points at instead, then drop the link.
-  const copyThenRemove = (): void => {
+  if (lstatSync(from).isSymbolicLink()) {
     copyFileSync(from, to);
     unlinkSync(from);
-  };
-  if (lstatSync(from).isSymbolicLink()) copyThenRemove();
-  else {
-    try {
-      renameSync(from, to);
-    } catch (err) {
-      // A checkout and ~/.config on different filesystems: copy, then remove.
-      if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
-      copyThenRemove();
-    }
-  }
+  } else moveFile(from, to);
   return { kind: "moved", from, to };
 }
 
@@ -896,6 +887,13 @@ export function locateKeysFile(
 export type SecretFileOutcome =
   /** Moved, mode bits intact (0600 stays 0600). */
   | "moved"
+  /** Copied, mode bits intact, and the legacy copy kept: the legacy dir
+   * cannot be emptied this run (`SecretsMigration.held`), so it stays whole. */
+  | "copied"
+  /** Copied from the home BACK into a legacy dir that is kept whole but
+   * lacked it (a run that moved it out before the dir could be kept whole):
+   * `to` is the legacy path. */
+  | "restored"
   /** The destination already held the same bytes: the legacy copy is removed. */
   | "deduplicated"
   /** The destination holds different bytes: both are left for the operator. */
@@ -921,6 +919,11 @@ export type SecretsMigration =
       from: string;
       to: string;
       files: SecretFileResult[];
+      /** The entries that stay in the legacy dir with no stand-in in the home
+       * (a conflict, a non-file the home lacks): while any is there, every
+       * other secret is copied rather than moved, so the legacy dir still
+       * holds a complete set for a compose stack that mounts it. */
+      held: string[];
       /** What is still in the legacy dir afterwards; empty ⇒ it was removed. */
       remaining: string[];
     };
@@ -932,11 +935,16 @@ function moveFile(from: string, to: string): void {
     // ~/.config and XDG_CONFIG_HOME on different filesystems: copy, keep the
     // mode (copyFileSync does not promise it), then remove.
     if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
-    const mode = statSync(from).mode & 0o7777;
-    copyFileSync(from, to);
-    chmodSync(to, mode);
+    copyKeepingMode(from, to);
     unlinkSync(from);
   }
+}
+
+/** Copy `from` to a `to` that must not exist yet, with `from`'s mode bits. */
+function copyKeepingMode(from: string, to: string): void {
+  const mode = statSync(from).mode & 0o7777;
+  copyFileSync(from, to, fsConstants.COPYFILE_EXCL);
+  chmodSync(to, mode);
 }
 
 function ensurePrivateDir(dir: string): void {
@@ -945,12 +953,48 @@ function ensurePrivateDir(dir: string): void {
   chmodSync(dir, 0o700);
 }
 
+function listDir(dir: string): string[] {
+  try {
+    return readdirSync(dir).sort();
+  } catch {
+    return [];
+  }
+}
+
+function entryExists(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isRegularFile(p: string): boolean {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
+type SecretPlan =
+  | { name: string; src: string; dest: string; isKeys: boolean; act: "skip"; why: string }
+  | { name: string; src: string; dest: string; isKeys: boolean; act: "conflict" | "same" | "move" };
+
 /**
  * Move every file in `~/.config/quickreview-bot/` into `<config home>/secrets/`
  * — except the companion key file, which goes to the operator home (it must
  * never sit where a container can read it). A rename, so mode bits travel
  * with the file; the destination dirs are created 0700. Idempotent, and it
  * never overwrites a secret it did not move: a differing pair is a conflict.
+ *
+ * The legacy dir may be what a compose stack mounts (`repointComposeSecrets`
+ * re-points that mount only onto a home that can stand in for it), so it is
+ * emptied whole or not at all: when an entry has to stay there with no
+ * stand-in in the home, the other secrets are COPIED into the home and the
+ * legacy dir keeps the complete set. Once the operator settles that entry, a
+ * re-run moves the rest.
  */
 export function migrateSecrets(
   opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?: string } } = {},
@@ -967,51 +1011,84 @@ export function migrateSecrets(
   if (st.isSymbolicLink()) return { kind: "symlink", from, to };
   if (!st.isDirectory()) return { kind: "nothing", from, to };
   const keysPinned = (env.QCR_OPENVIKING_KEYS ?? "").trim() !== "";
-  const files: SecretFileResult[] = [];
-  for (const name of readdirSync(from).sort()) {
-    const src = join(from, name);
-    const isKeys = name === KEYS_FILE;
-    const dest = isKeys ? join(operatorHome(env), KEYS_FILE) : join(to, name);
-    if (!lstatSync(src).isFile()) {
-      files.push({ name, to: dest, outcome: "skipped", why: "not a regular file" });
-      continue;
-    }
-    if (isKeys && keysPinned) {
-      files.push({
-        name,
-        to: dest,
-        outcome: "skipped",
-        why: "QCR_OPENVIKING_KEYS is set — that variable names the key file",
-      });
-      continue;
-    }
-    if (existsSync(dest)) {
+  const keysHome = locateKeysFile({ env }).home;
+  const plan: SecretPlan[] = readdirSync(from)
+    .sort()
+    .map((name): SecretPlan => {
+      const src = join(from, name);
+      const isKeys = name === KEYS_FILE;
+      const dest = isKeys ? keysHome : join(to, name);
+      const base = { name, src, dest, isKeys };
+      if (!lstatSync(src).isFile()) return { ...base, act: "skip", why: "not a regular file" };
+      if (isKeys && keysPinned)
+        return {
+          ...base,
+          act: "skip",
+          why: "QCR_OPENVIKING_KEYS is set — that variable names the key file",
+        };
+      if (!existsSync(dest)) return { ...base, act: "move" };
       // A home dir linked to the legacy one reads the SAME file here: the byte
       // compare would pass and the unlink below would delete the only copy.
-      if (samePath(src, dest)) {
-        files.push({
-          name,
-          to: dest,
-          outcome: "skipped",
-          why: `${dest} is the same file (a link) — nothing to move`,
-        });
-        continue;
-      }
-      if (!readFileSync(src).equals(readFileSync(dest))) {
-        files.push({ name, to: dest, outcome: "conflict" });
-        continue;
-      }
-      unlinkSync(src);
-      files.push({ name, to: dest, outcome: "deduplicated" });
-      continue;
+      if (samePath(src, dest))
+        return { ...base, act: "skip", why: `${dest} is the same file (a link) — nothing to move` };
+      return { ...base, act: readFileSync(src).equals(readFileSync(dest)) ? "same" : "conflict" };
+    });
+  // What stays behind and leaves the home unable to stand in for the legacy
+  // dir as a mount — the rule `repointComposeSecrets` holds a mount by. The
+  // key file never rides the mount.
+  const held = plan
+    .filter((f) => !f.isKeys && (f.act === "skip" || f.act === "conflict"))
+    .filter((f) => !standsIn(f.src, join(to, f.name)))
+    .map((f) => f.name);
+  const keepWhole = held.length > 0;
+  const kept = `kept in ${from} too: ${held.join(", ")} stays there, so it keeps a complete set`;
+  const files: SecretFileResult[] = [];
+  for (const f of plan) {
+    const { name, dest: fileTo } = f;
+    switch (f.act) {
+      case "skip":
+        files.push({ name, to: fileTo, outcome: "skipped", why: f.why });
+        break;
+      case "conflict":
+        files.push({ name, to: fileTo, outcome: "conflict" });
+        break;
+      case "same":
+        if (keepWhole && !f.isKeys) {
+          files.push({
+            name,
+            to: fileTo,
+            outcome: "skipped",
+            why: `${fileTo} holds the same bytes; ${kept}`,
+          });
+          break;
+        }
+        unlinkSync(f.src);
+        files.push({ name, to: fileTo, outcome: "deduplicated" });
+        break;
+      case "move":
+        ensurePrivateDir(dirname(fileTo));
+        if (keepWhole && !f.isKeys) {
+          copyKeepingMode(f.src, fileTo);
+          files.push({ name, to: fileTo, outcome: "copied", why: kept });
+          break;
+        }
+        moveFile(f.src, fileTo);
+        files.push({ name, to: fileTo, outcome: "moved" });
+        break;
     }
-    ensurePrivateDir(dirname(dest));
-    moveFile(src, dest);
-    files.push({ name, to: dest, outcome: "moved" });
   }
+  // A dir kept whole holds every secret the home does — what an earlier run
+  // moved out comes back as a copy, never over a file already there.
+  if (keepWhole)
+    for (const name of listDir(to)) {
+      const back = join(from, name);
+      if (name === KEYS_FILE || entryExists(back) || !isRegularFile(join(to, name))) continue;
+      copyKeepingMode(join(to, name), back);
+      files.push({ name, to: back, outcome: "restored", why: `${from} is kept whole` });
+    }
   const remaining = readdirSync(from).sort();
   if (remaining.length === 0) rmdirSync(from);
-  return { kind: "done", from, to, files, remaining };
+  return { kind: "done", from, to, files, held, remaining };
 }
 
 /** What the secrets half of `qcr install migrate` prints, and its exit code.
@@ -1036,6 +1113,14 @@ export function secretsMigrateReport(m: SecretsMigration): { code: number; lines
       case "moved":
         lines.push(`secrets: moved ${f.name} → ${f.to}`);
         break;
+      case "copied":
+        lines.push(`secrets: copied ${f.name} → ${f.to} (${f.why})`);
+        break;
+      case "restored":
+        lines.push(
+          `secrets: copied ${f.name} back to ${f.to} from ${m.to} (${f.why}, so a compose stack that mounts it finds every secret)`,
+        );
+        break;
       case "deduplicated":
         lines.push(`secrets: ${f.to} already held the same bytes — removed the legacy ${f.name}`);
         break;
@@ -1054,7 +1139,9 @@ export function secretsMigrateReport(m: SecretsMigration): { code: number; lines
   lines.push(
     m.remaining.length === 0
       ? `secrets: removed the now-empty ${m.from}; every reader finds them in ${m.to} (restart a running daemon, TUI or companion)`
-      : `secrets: ${m.from} still holds ${m.remaining.join(", ")} — resolve those by hand; nothing reads them there, every reader reads ${m.to}`,
+      : m.held.length > 0
+        ? `secrets: ${m.from} still holds ${m.remaining.join(", ")} — settle ${m.held.join(", ")} by hand and re-run; the locator's readers read ${m.to}, and a compose stack that mounts ${m.from} still finds every secret there`
+        : `secrets: ${m.from} still holds ${m.remaining.join(", ")} — resolve those by hand and re-run; the locator's readers read ${m.to}`,
   );
   return { code, lines };
 }
@@ -1107,7 +1194,7 @@ export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }):
   const mounted = legacyNames.filter((n) => n !== KEYS_FILE).sort();
   const missing = mounted.filter((n) => !existsSync(join(to, n)));
   const differ = mounted.filter(
-    (n) => existsSync(join(to, n)) && !sameBytes(join(legacyDir, n), join(to, n)),
+    (n) => existsSync(join(to, n)) && !standsIn(join(legacyDir, n), join(to, n)),
   );
   if (missing.length > 0 || differ.length > 0)
     return { kind: "held", file, from: value, to, missing, differ };
@@ -1120,10 +1207,12 @@ export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }):
   return { kind: "repointed", file, from: value, to };
 }
 
-/** Whether the home's entry can stand in for the mounted one: two regular
- * files must hold identical bytes; two non-files (migrate skips those) pass;
- * a file against a non-file, or anything unreadable, does not. */
-function sameBytes(a: string, b: string): boolean {
+/** Whether the home's entry `b` can stand in for the mounted one `a`: two
+ * regular files must hold identical bytes; two non-files (migrate skips
+ * those) pass; a file against a non-file, a missing `b`, or anything
+ * unreadable, does not. The one rule both `migrateSecrets` (what keeps the
+ * legacy dir whole) and `repointComposeSecrets` (what holds the mount) use. */
+function standsIn(a: string, b: string): boolean {
   try {
     const aFile = statSync(a).isFile();
     const bFile = statSync(b).isFile();

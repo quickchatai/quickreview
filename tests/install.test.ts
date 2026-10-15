@@ -868,24 +868,106 @@ describe("migrateSecrets", () => {
     migrateSecrets({ env });
     expect(migrateSecrets({ env }).kind).toBe("nothing");
 
-    put600("app_id", "123\n"); // same bytes → the legacy copy goes
+    put600("app_id", "123\n"); // same bytes, but the dir cannot be emptied → kept
     put600("webhook_secret", "s3cret-old\n");
     mkdirSync(secretsHome(env), { recursive: true });
     writeFileSync(join(secretsHome(env), "webhook_secret"), "s3cret-new\n");
     const m = migrateSecrets({ env });
     if (m.kind !== "done") throw new Error(m.kind);
     expect(Object.fromEntries(m.files.map((f) => [f.name, f.outcome]))).toEqual({
-      app_id: "deduplicated",
+      app_id: "skipped",
       webhook_secret: "conflict",
     });
+    expect(m.held).toEqual(["webhook_secret"]);
     expect(readFileSync(join(secretsHome(env), "webhook_secret"), "utf8")).toBe("s3cret-new\n");
     expect(readFileSync(join(legacy(), "webhook_secret"), "utf8")).toBe("s3cret-old\n");
-    expect(m.remaining).toEqual(["webhook_secret"]);
+    expect(m.remaining).toEqual(["app_id", "webhook_secret"]);
     const report = secretsMigrateReport(m);
     expect(report.code).toBe(1);
     expect(report.lines.join("\n")).toMatch(/differ/);
     // Names only — never a value.
     expect(report.lines.join("\n")).not.toContain("s3cret");
+
+    // Settled by hand (the legacy copy dropped): the re-run empties the dir.
+    rmSync(join(legacy(), "webhook_secret"));
+    const settled = migrateSecrets({ env });
+    if (settled.kind !== "done") throw new Error(settled.kind);
+    expect(settled.files.map((f) => f.outcome)).toEqual(["deduplicated"]);
+    expect(existsSync(legacy())).toBe(false);
+  });
+
+  it("a conflict keeps the legacy dir whole: the other secrets are copied, never moved out of a mount", () => {
+    put600("app.pem", "RUNNING-PEM\n");
+    put600("app_id", "123\n");
+    put600("webhook_secret", "s\n", 0o640);
+    mkdirSync(secretsHome(env), { recursive: true });
+    writeFileSync(join(secretsHome(env), "app.pem"), "OTHER-PEM\n");
+    const m = migrateSecrets({ env });
+    if (m.kind !== "done") throw new Error(m.kind);
+    expect(Object.fromEntries(m.files.map((f) => [f.name, f.outcome]))).toEqual({
+      "app.pem": "conflict",
+      app_id: "copied",
+      webhook_secret: "copied",
+    });
+    expect(m.held).toEqual(["app.pem"]);
+    // The legacy dir still holds the complete, original set ...
+    expect(readFileSync(join(legacy(), "app.pem"), "utf8")).toBe("RUNNING-PEM\n");
+    expect(readFileSync(join(legacy(), "app_id"), "utf8")).toBe("123\n");
+    expect(readFileSync(join(legacy(), "webhook_secret"), "utf8")).toBe("s\n");
+    // ... the home gains copies with their modes, and keeps its own PEM.
+    expect(readFileSync(join(secretsHome(env), "app.pem"), "utf8")).toBe("OTHER-PEM\n");
+    expect(mode(join(secretsHome(env), "app_id"))).toBe(0o600);
+    expect(mode(join(secretsHome(env), "webhook_secret"))).toBe(0o640);
+    const report = secretsMigrateReport(m);
+    expect(report.code).toBe(1);
+    expect(report.lines.join("\n")).toMatch(/compose stack that mounts/);
+    expect(report.lines.join("\n")).not.toMatch(/nothing reads them there/);
+
+    // Idempotent: the re-run changes nothing on either side.
+    const again = migrateSecrets({ env });
+    if (again.kind !== "done") throw new Error(again.kind);
+    expect(again.files.map((f) => f.outcome)).toEqual(["conflict", "skipped", "skipped"]);
+    expect(readdirSync(legacy()).sort()).toEqual(["app.pem", "app_id", "webhook_secret"]);
+  });
+
+  it("a dir kept whole gets back what an earlier run moved out, never over a file", () => {
+    // The state an earlier migrate left: the conflicting PEM behind, the rest moved.
+    put600("app.pem", "RUNNING-PEM\n");
+    mkdirSync(secretsHome(env), { recursive: true });
+    writeFileSync(join(secretsHome(env), "app.pem"), "OTHER-PEM\n");
+    writeFileSync(join(secretsHome(env), "app_id"), "123\n", { mode: 0o600 });
+    writeFileSync(join(secretsHome(env), "webhook_secret"), "s\n", { mode: 0o600 });
+    const m = migrateSecrets({ env });
+    if (m.kind !== "done") throw new Error(m.kind);
+    expect(m.files.filter((f) => f.outcome === "restored").map((f) => f.name)).toEqual([
+      "app_id",
+      "webhook_secret",
+    ]);
+    expect(readFileSync(join(legacy(), "app.pem"), "utf8")).toBe("RUNNING-PEM\n");
+    expect(readFileSync(join(legacy(), "app_id"), "utf8")).toBe("123\n");
+    expect(mode(join(legacy(), "webhook_secret"))).toBe(0o600);
+    expect(secretsMigrateReport(m).lines.join("\n")).toMatch(/back to/);
+    // Nothing is restored twice.
+    const again = migrateSecrets({ env });
+    if (again.kind !== "done") throw new Error(again.kind);
+    expect(again.files.some((f) => f.outcome === "restored")).toBe(false);
+  });
+
+  it("a non-file the home lacks keeps the dir whole too; one the home has does not", () => {
+    put600("app_id", "123\n");
+    mkdirSync(join(legacy(), "extra"));
+    const m = migrateSecrets({ env });
+    if (m.kind !== "done") throw new Error(m.kind);
+    expect(m.held).toEqual(["extra"]);
+    expect(m.files.find((f) => f.name === "app_id")?.outcome).toBe("copied");
+    expect(existsSync(join(legacy(), "app_id"))).toBe(true);
+
+    mkdirSync(join(secretsHome(env), "extra"));
+    const next = migrateSecrets({ env });
+    if (next.kind !== "done") throw new Error(next.kind);
+    expect(next.held).toEqual([]);
+    expect(next.files.find((f) => f.name === "app_id")?.outcome).toBe("deduplicated");
+    expect(existsSync(join(legacy(), "app_id"))).toBe(false);
   });
 
   it("leaves a pinned key file, and a symlinked legacy dir, alone", () => {
@@ -1013,6 +1095,39 @@ describe("migrate repoints the compose .env", () => {
     });
     expect(out.join("\n")).not.toMatch(/docker compose up -d/);
     expect(out.join("\n")).toMatch(/app\.pem/);
+  });
+
+  it("a partly conflicting migrate leaves the mount it holds complete, and converges once settled", async () => {
+    const { cmdInstall } = await import("../src/cli.js");
+    mkdirSync(legacy(), { recursive: true });
+    for (const [name, text] of [
+      ["app.pem", "RUNNING-PEM\n"],
+      ["app_id", "123\n"],
+      ["webhook_secret", "s\n"],
+    ])
+      writeFileSync(join(legacy(), name), text, { mode: 0o600 });
+    mkdirSync(secretsHome(env), { recursive: true });
+    writeFileSync(join(secretsHome(env), "app.pem"), "OTHER-PEM\n", { mode: 0o600 });
+    const envFile = join(root, ".env");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(envFile, `QCR_SECRETS_DIR=${legacy()}\n`);
+    for (let run = 0; run < 2; run++) {
+      const out: string[] = [];
+      expect(cmdInstall(["migrate"], { root, env, log: (l) => out.push(l) })).toBe(1);
+      // The mount is held on the legacy dir — and it still holds every credential.
+      expect(readFileSync(envFile, "utf8")).toBe(`QCR_SECRETS_DIR=${legacy()}\n`);
+      expect(readdirSync(legacy()).sort()).toEqual(["app.pem", "app_id", "webhook_secret"]);
+      expect(readFileSync(join(legacy(), "app.pem"), "utf8")).toBe("RUNNING-PEM\n");
+      expect(out.join("\n")).not.toMatch(/docker compose up -d/);
+    }
+    // The operator keeps the running PEM: the re-run moves it all and re-points.
+    rmSync(join(secretsHome(env), "app.pem"));
+    const out: string[] = [];
+    expect(cmdInstall(["migrate"], { root, env, log: (l) => out.push(l) })).toBe(0);
+    expect(existsSync(legacy())).toBe(false);
+    expect(readdirSync(secretsHome(env)).sort()).toEqual(["app.pem", "app_id", "webhook_secret"]);
+    expect(readFileSync(join(secretsHome(env), "app.pem"), "utf8")).toBe("RUNNING-PEM\n");
+    expect(readFileSync(envFile, "utf8")).toBe(`QCR_SECRETS_DIR=${secretsHome(env)}\n`);
   });
 
   it("leaves the line while the home does not exist yet (nothing was moved)", () => {
