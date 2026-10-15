@@ -1498,6 +1498,59 @@ describe("a missing receipt wakes a person", () => {
     expect(h.wakes).toEqual([]);
     expect(h.learner.status().state).toBe("nothing");
   });
+
+  it("newer empty packets never crowd an older owed receipt out of the check", async () => {
+    const h = harness();
+    h.pr(80);
+    h.store.recordFeedbackSignal({
+      kind: "feedback_comment",
+      pr: 80,
+      comment_id: 8,
+      scope: "issue_comment",
+      author: "p",
+      body: "[feedback] x",
+      day: "2026-10-01",
+    });
+    await h.learner.mine();
+    await h.learner.buildPacket("2026-10-01");
+    h.learner.eodFired("2026-10-01");
+    const at = new Date().toISOString();
+    for (let d = 2; d <= 9; d++)
+      h.store.db
+        .prepare(
+          "INSERT INTO eod_curations (day, packet_at, offered, fired_at, updated_at) VALUES (?, ?, '[]', ?, ?)",
+        )
+        .run(`2026-10-0${d}`, at, at, at);
+    h.addMinutes(181);
+    h.learner.checkMissing();
+    expect(h.wakes.map((w) => [w.kind, w.detail.slice(0, 14)])).toEqual([
+      [LEARNER_WAKE.missing, "EOD 2026-10-01"],
+    ]);
+  });
+
+  it("wakes no missing receipt for a day a later day's receipt already made good", async () => {
+    const h = harness();
+    h.pr(80);
+    h.store.recordFeedbackSignal({
+      kind: "feedback_comment",
+      pr: 80,
+      comment_id: 8,
+      scope: "issue_comment",
+      author: "p",
+      body: "[feedback] x",
+      day: "2026-10-07",
+    });
+    await h.learner.mine();
+    await h.learner.buildPacket("2026-10-07");
+    h.learner.eodFired("2026-10-07");
+    await h.learner.buildPacket("2026-10-08");
+    h.learner.eodFired("2026-10-08");
+    expect(h.learner.applyReceipt({ day: "2026-10-08", decisions: [] }).ok).toBe(true);
+    h.addMinutes(181);
+    h.learner.checkMissing();
+    expect(h.wakes).toEqual([]);
+    expect(h.learner.status().unresolved ?? []).toEqual([]);
+  });
 });
 
 describe("the schedule and the status block", () => {

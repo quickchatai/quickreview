@@ -1264,14 +1264,19 @@ export class Learner {
   }
 
   /** Wake `eod_curation_missing` once per day whose delivered sweep offered
-   * candidates and drew no receipt within the wait. */
+   * candidates and drew no receipt within the wait — never for a day a later
+   * day's receipt already made good (`unresolved`'s rule: its candidates rode
+   * that later packet), and an empty packet, which owes no receipt, never
+   * takes one of the checked days' places. */
   checkMissing(): void {
     const now = this.now().getTime();
     const waitMs = this.cfg.lessons_receipt_wait_min * 60_000;
     const rows = this.store.db
       .prepare(
         `SELECT * FROM eod_curations WHERE fired_at IS NOT NULL AND receipt_at IS NULL
-           AND missing_woken_at IS NULL ORDER BY day DESC LIMIT 7`,
+           AND missing_woken_at IS NULL AND offered <> '[]'
+           AND day > COALESCE((SELECT MAX(day) FROM eod_curations WHERE receipt_at IS NOT NULL), '')
+         ORDER BY day DESC LIMIT 7`,
       )
       .all() as CurationRow[];
     for (const r of rows) {
