@@ -393,6 +393,10 @@ describe("what the session wrote → what the scorer reads", () => {
     });
     expect(tagOf("no tag here")).toEqual({ tag: "other" });
     expect(tagOf("body\n[nit] on line two only")).toEqual({ tag: "other" });
+    // A body is classified as it is emitted: trimmed.
+    expect(
+      parseSessionComments([{ path: "a", line: 1, body: "\n[blocker] x" }]).comments[0],
+    ).toEqual({ path: "a", line: 1, side: "RIGHT", body: "[blocker] x", tag: "blocker" });
   });
 
   it("parses tolerant shapes, drops what cannot anchor, never repairs", () => {
@@ -1470,6 +1474,13 @@ describe("reanchorLeftLine / reanchorLeftComments", () => {
       how: "file",
     });
     expect(reanchorLeftLine(patch, 99)).toBeNull();
+  });
+
+  it("refuses a line past a deleted file's end, as it does any line the patch lacks", () => {
+    const deleted = "--- a/f\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b";
+    expect(reanchorLeftLine(deleted, 99)).toBeNull();
+    expect(reanchorLeftLine("@@ -1,2 +0,0 @@\n-a\n-b", 3)).toBeNull();
+    expect(reanchorLeftLine("@@ -1,2 +0,0 @@\n-a\n-b", 1)).toEqual({ line: 1, how: "file" });
   });
 
   it("moves LEFT comments, keeps the body, and leaves an unknown path LEFT", () => {

@@ -80,6 +80,8 @@ interface Item {
   title: string;
   /** The side its line counts on (inline rows may say LEFT; body items RIGHT). */
   side: "LEFT" | "RIGHT";
+  /** An inline comment's span start, when it spans lines. */
+  start_line?: number;
   /** inline: the session's raw row, written back verbatim when kept. */
   row?: unknown;
   /** The record entry it states (a body item's always; an inline comment's
@@ -108,16 +110,39 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-/** Remove each bullet naming `` `path:line` `` (and its indented
- * continuation) from a markdown body. */
-function dropBullets(md: string, refs: ReadonlySet<string>): string {
-  if (refs.size === 0) return md;
+/** Where a finding's body bullet points: `` `path:line` ``. */
+const refOf = (it: Pick<Item, "path" | "line">): string => `\`${it.path}:${it.line}\``;
+
+/**
+ * Remove the bullets of the withheld findings (and their indented
+ * continuations) from a markdown body. A bullet is a withheld finding's when
+ * it names the finding's `` `path:line` `` — and, where a KEPT finding names
+ * the same `path:line`, only when it carries the withheld finding's title and
+ * not the kept one's: a bullet that cannot be told apart stays, so a kept
+ * finding never loses its text.
+ */
+function dropBullets(
+  md: string,
+  withheld: ReadonlyArray<Pick<Item, "path" | "line" | "title">>,
+  kept: ReadonlyArray<Pick<Item, "path" | "line" | "title">>,
+): string {
+  if (withheld.length === 0) return md;
+  const keptTitles = new Map<string, string[]>();
+  for (const k of kept) keptTitles.set(refOf(k), [...(keptTitles.get(refOf(k)) ?? []), k.title]);
+  const has = (l: string, t: string): boolean => t !== "" && l.includes(t);
+  const isWithheld = (l: string): boolean =>
+    withheld.some((w) => {
+      const ref = refOf(w);
+      if (!l.includes(ref)) return false;
+      const shared = keptTitles.get(ref);
+      return !shared || (has(l, w.title) && !shared.some((t) => has(l, t)));
+    });
   const lines = md.split("\n");
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i] as string;
     const isBullet = /^\s*[-*] /.test(l);
-    if (isBullet && [...refs].some((r) => l.includes(r))) {
+    if (isBullet && isWithheld(l)) {
       // skip its continuation: indented lines and blank lines followed by indent
       while (i + 1 < lines.length) {
         const nx = lines[i + 1] as string;
@@ -222,6 +247,7 @@ export function policeBenchOutput(args: {
       severity: null,
       title: firstLineTitle(parsed.body),
       side: parsed.side === "LEFT" ? "LEFT" : "RIGHT",
+      ...(parsed.start_line !== undefined ? { start_line: parsed.start_line } : {}),
       row,
     });
     bodies.push(parsed.body);
@@ -263,15 +289,39 @@ export function policeBenchOutput(args: {
       cls: it.cls,
       severity: it.severity,
       key: siteKey(it.title),
+      // The whole anchor, span included, as production ranks it.
       ...(runs
-        ? { changedLine: checkAnchor(runs, { path: it.path, side: it.side, line: it.line }).ok }
+        ? {
+            changedLine: checkAnchor(runs, {
+              path: it.path,
+              side: it.side,
+              line: it.line,
+              ...(it.start_line !== undefined ? { start_line: it.start_line } : {}),
+            }).ok,
+          }
         : {}),
     }),
     policy,
   );
   const kept = new Set(sel.kept);
 
-  // The record: every cut finding is `withheld`, with its word.
+  // The record: every cut finding is `withheld`, with its word — and so is
+  // an entry folded into neighbours (`merged`) that were ALL cut: nothing
+  // that still posts carries it, so it is cut with them.
+  const wordOf = new Map<Item, WithholdWord>(sel.withheld.map(({ item, word }) => [item, word]));
+  const bodyItemOf = new Map<number, Item>();
+  items.forEach((it) => {
+    if (it.source === "body" && it.entry) bodyItemOf.set(posted.indexOf(it.entry), it);
+  });
+  places.forEach((place, i) => {
+    if (place?.at !== "merged") return;
+    const words = place.into.map((c) => {
+      const carrier = "comment" in c ? items[c.comment] : bodyItemOf.get(c.posted);
+      return carrier ? wordOf.get(carrier) : undefined;
+    });
+    if (words.length > 0 && words.every((w) => w !== undefined))
+      markWithheld(posted[i]!, words[0]!);
+  });
   for (const { item, word } of sel.withheld) {
     if (item.entry) markWithheld(item.entry, word);
     else if (record) {
@@ -306,8 +356,11 @@ export function policeBenchOutput(args: {
       lines.push("", ...bodyKept.map((i) => `- \`${i.path}:${i.line}\` — ${i.title}`));
     reviewMd = `${lines.join("\n")}\n`;
   } else {
-    const refs = new Set(sel.withheld.map(({ item }) => `\`${item.path}:${item.line}\``));
-    reviewMd = dropBullets(args.reviewMd, refs);
+    reviewMd = dropBullets(
+      args.reviewMd,
+      sel.withheld.map(({ item }) => item),
+      sel.kept,
+    );
     if (sel.withheld.length > 0)
       reviewMd = reviewMd.replace(VERDICT_RE, verdictLineFor(label, counts));
   }

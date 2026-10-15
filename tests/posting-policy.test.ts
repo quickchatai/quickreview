@@ -33,6 +33,7 @@ import {
   loadProfilePosting,
   reservedAddendumIds,
 } from "../src/profiles.js";
+import { bodyPostedFindings, parseSessionComments } from "../src/bench/aacr.js";
 import { enforceBenchPosting, policeBenchOutput } from "../src/bench/benchposting.js";
 import { collectComments, runFingerprint } from "../src/bench/runner.js";
 import type { PrStateRow } from "../src/state.js";
@@ -677,6 +678,62 @@ describe("benchmark export: a cut comment marks ITS record entry, never a neighb
     ]);
   });
 
+  it("an entry folded into a cut comment is cut with it; one folded into a kept comment stays posted", () => {
+    for (const nit of [true, false]) {
+      const body = nit ? `[nit] N\n\nx.${tail("nit")}` : `[blocker] B\n\nx.${tail("P1")}`;
+      const out = policeBenchOutput({
+        comments: [{ path: "src/a.ts", line: 10, side: "RIGHT", body }],
+        reviewMd: "",
+        record: {
+          findings: [
+            entry("c", 10, nit ? "nit" : "blocker", nit ? "nit" : "P1"),
+            entry("folded", 11, "nit", "nit"),
+          ],
+        },
+        outcome: { verdict: "REQUEST_CHANGES", summary: "s" },
+        policy: SNAPPY,
+      });
+      const folded = findingsOf(out.record).find((e) => e["id"] === "folded")!;
+      expect(folded["disposition"]).toBe(nit ? "withheld" : "posted");
+      if (nit) expect(folded["word"]).toBe("nits-off");
+      // The scorer reads no body finding back: the folded entry is cut with
+      // its comment, or still folded into the comment that posts.
+      const inline = parseSessionComments(out.comments).comments;
+      expect(bodyPostedFindings(out.record, out.reviewMd, inline)).toEqual([]);
+    }
+  });
+
+  it("body = full: a withheld finding's bullet goes, a kept finding at the SAME path:line keeps its own", () => {
+    const out = policeBenchOutput({
+      comments: [],
+      reviewMd: [
+        "**Verdict: Changes requested** — 1 blocker, 1 nit.",
+        "",
+        "### Blockers",
+        "- `src/c.ts:7` — Lock is never released",
+        "  The handle leaks on the error path.",
+        "",
+        "### Nits",
+        "- `src/c.ts:7` — Rename lockVar",
+        "  Rename it.",
+        "",
+      ].join("\n"),
+      record: {
+        findings: [
+          { ...entry("b", 7, "blocker", "P1"), path: "src/c.ts", title: "Lock is never released" },
+          { ...entry("n", 7, "nit", "nit"), path: "src/c.ts", title: "Rename lockVar" },
+        ],
+      },
+      outcome: { verdict: "REQUEST_CHANGES", summary: "s" },
+      policy: { ...SNAPPY, body: "full" },
+    });
+    expect(out.report.withheld.map((w) => w.title)).toEqual(["Rename lockVar"]);
+    expect(out.reviewMd).toContain("- `src/c.ts:7` — Lock is never released");
+    expect(out.reviewMd).toContain("The handle leaks on the error path.");
+    expect(out.reviewMd).not.toContain("Rename lockVar");
+    expect(out.reviewMd).not.toContain("### Nits");
+  });
+
   it("a comments file that does not parse is left as written — never policed into an empty review", () => {
     const d = caseDir(SESSION);
     writeFileSync(join(d, "comments.json"), '[{"path": "src/a.ts", "line": 3,');
@@ -788,5 +845,33 @@ describe("the budget: one root cause, the changed line first", () => {
     expect(run()).toEqual([9]);
     // with it: the question on a changed line takes the slot
     expect(run({ "src/a.ts": PATCH })).toEqual([60]);
+  });
+
+  it("benchmark export: a span that starts outside the changed lines is not on a changed line", () => {
+    // Lines 2 and 3 are added; 1 and 4 are context.
+    const patch = "@@ -1,2 +1,4 @@\n a\n+b\n+c\n d\n";
+    const out = policeBenchOutput({
+      comments: [
+        {
+          path: "src/a.ts",
+          start_line: 1,
+          line: 2,
+          side: "RIGHT",
+          body: `[question] Spans context?\n\nx.${tail("P2")}`,
+        },
+        {
+          path: "src/a.ts",
+          line: 3,
+          side: "RIGHT",
+          body: `[question] Changed?\n\nx.${tail("P2")}`,
+        },
+      ],
+      reviewMd: "",
+      record: { findings: [] },
+      outcome: { verdict: "APPROVE", summary: "s" },
+      policy: { ...SNAPPY, questions: "post", max_comments: 1 },
+      patches: { "src/a.ts": patch },
+    });
+    expect(out.report.withheld.map((w) => w.title)).toEqual(["Spans context?"]);
   });
 });
