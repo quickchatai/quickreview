@@ -7,7 +7,7 @@
 // the network: the tree at the PR's head is materialised into
 // `<state home>/replay/tree/<sha>/` (scantree.ts, its own directory so a
 // replay and a scan never prune each other's trees) and the diff against the
-// merge base is written beside it, in `replay/diff/`, for the lenses to read
+// merge base is written beside it, in `replay/diff/<sha>-<base>.diff`, for the lenses to read
 // in place of `git diff` (they have no shell). A PR whose head the checkout
 // does not hold (a squash-merged branch long deleted) is read at the commit
 // GitHub merged it as, diffed against that commit's first parent — the change
@@ -165,11 +165,14 @@ export function gitReplaySource(opts: {
         };
       const opened = trees.open(sha, keep);
       if (!opened.ok) return opened;
-      const diffPath = join(diffsDir, `${sha}.diff`);
+      // The tree depends on the sha alone, the diff on the base too: two PRs
+      // from one head into different bases each read their own diff.
+      const diffName = `${sha}-${base}.diff`;
+      const diffPath = join(diffsDir, diffName);
       try {
         mkdirSync(diffsDir, { recursive: true });
         for (const other of readdirSync(diffsDir)) {
-          if (other !== `${sha}.diff` && !keep.some((k) => other === `${k}.diff`))
+          if (other !== diffName && !keep.some((k) => other.startsWith(`${k}-`)))
             rmSync(join(diffsDir, other), { force: true });
         }
         writeFileSync(diffPath, diff);

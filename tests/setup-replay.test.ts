@@ -1156,6 +1156,36 @@ describe("gitReplaySource (a scratch git repo — git is the thing under test)",
     expect(t.lines("app/a.py")).toBe(3);
   });
 
+  it("two PRs from one head into different bases each keep their own diff", () => {
+    const main = git("rev-parse", "HEAD");
+    git("checkout", "-qb", "feature");
+    write(join(repo, "app/a.py"), "one\ntwo\nfirst\n");
+    git("commit", "-qam", "feature 1");
+    const f1 = git("rev-parse", "HEAD");
+    write(join(repo, "app/a.py"), "one\ntwo\nfirst\nsecond\n");
+    git("commit", "-qam", "feature 2");
+    const head = git("rev-parse", "HEAD");
+    // A second base that already holds the first feature commit.
+    git("checkout", "-qb", "release", f1);
+    write(join(repo, "app/r.py"), "release\n");
+    git("add", "-A");
+    git("commit", "-qm", "release");
+    const release = git("rev-parse", "HEAD");
+    const src = gitReplaySource({
+      github: github({}),
+      repo: "acme/app",
+      repoRoot: repo,
+      stateRoot: stateRoot(),
+    });
+    const a = src.open({ ...pr(), number: 1, head_sha: head, base_sha: main }, [head]);
+    const b = src.open({ ...pr(), number: 2, head_sha: head, base_sha: release }, [head]);
+    if (!a.ok || !b.ok) throw new Error("not opened");
+    expect(a.tree.diffPath).not.toBe(b.tree.diffPath);
+    expect(readFileSync(a.tree.diffPath, "utf8")).toContain("+first");
+    expect(readFileSync(b.tree.diffPath, "utf8")).not.toContain("+first");
+    expect(readFileSync(b.tree.diffPath, "utf8")).toContain("+second");
+  });
+
   it("falls back to the merge commit when the head is gone, and refuses when neither is here", () => {
     write(join(repo, "app/a.py"), "squashed\n");
     git("commit", "-qam", "squash-merged PR");
