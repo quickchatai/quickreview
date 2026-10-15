@@ -11,6 +11,7 @@ import {
   normalizeThreadOutcome,
   PingPongLedger,
   postReply,
+  replyMarker,
   ThreadDecisionWatcher,
   threadIdOf,
   validateThreadDecision,
@@ -104,7 +105,7 @@ describe("the thread decision's outcome field", () => {
     ]);
   });
   it("drops anything else — 'conceded' included, which means fixed and refuted alike — and never rejects", () => {
-    for (const outcome of ["conceded", "unknown", "maybe", 3, null]) {
+    for (const outcome of ["conceded", "unknown", "maybe", 3, null, "constructor", "toString"]) {
       const r = validateThreadDecision({ ...base, outcome });
       expect(r.ok).toBe(true);
       expect(r.ok && "outcome" in r.value).toBe(false);
@@ -283,18 +284,40 @@ describe("structured thread decision", () => {
     expect(h.resolveOwnReviewThread).toHaveBeenCalledTimes(1);
   });
 
-  it("archives a genuinely malformed body after an unchanged settled read", async () => {
-    const h = harness();
-    const name = "pr-77-thread-4000-comment-5001.json";
-    writeFileSync(join(root, name), '{"pr":77');
-
-    expect(await h.watcher.handleFile(name)).toBe(false);
-    expect(await h.watcher.handleFile(name)).toBe(true);
-    expect(h.store.logEvent).toHaveBeenCalledWith(
-      "pingpong_decision_malformed",
-      77,
-      expect.objectContaining({ file: name }),
-    );
+  it("archives a genuinely malformed body only once it sat unchanged for the settle window", async () => {
+    let now = new Date("2026-08-26T09:00:00Z");
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread: vi.fn() },
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
+      malformedSettleMs: 250,
+    });
+    for (const [name, body] of [
+      ["pr-77-thread-4000-comment-5001.json", '{"pr":77'],
+      ["pr-77-thread-4000-comment-5002.json", '{"pr":77}'], // parses, wrong shape
+    ] as const) {
+      writeFileSync(join(root, name), body);
+      expect(await watcher.handleFile(name)).toBe(false);
+      // The same partial bytes seen again inside the window are still provisional.
+      now = new Date(now.getTime() + 100);
+      expect(await watcher.handleFile(name)).toBe(false);
+      expect(store.logEvent).not.toHaveBeenCalledWith(
+        "pingpong_decision_malformed",
+        77,
+        expect.objectContaining({ file: name }),
+      );
+      now = new Date(now.getTime() + 150);
+      expect(await watcher.handleFile(name)).toBe(true);
+      expect(store.logEvent).toHaveBeenCalledWith(
+        "pingpong_decision_malformed",
+        77,
+        expect.objectContaining({ file: name }),
+      );
+      watcher.stop();
+    }
   });
 
   // The decision file's optional `outcome` is the session's own
@@ -368,7 +391,7 @@ describe("structured thread decision", () => {
     expect(h.createReviewCommentReply).toHaveBeenCalledWith(
       77,
       4000,
-      "Agreed — the guard covers this case.",
+      `Agreed — the guard covers this case.\n\n${replyMarker(5001)}`,
     );
     expect(h.resolveOwnReviewThread).toHaveBeenCalledWith(77, 4000);
     expect(h.store.logEvent).toHaveBeenCalledWith(
@@ -500,6 +523,85 @@ describe("structured thread decision", () => {
     expect(listRecentReviewComments).toHaveBeenCalledTimes(1);
     expect(createReviewCommentReply).toHaveBeenCalledTimes(2);
     expect(ledger.discipline(4000).exchanges).toBe(1);
+  });
+
+  const recovering = (listRecentReviewComments: ReturnType<typeof vi.fn>) => {
+    const createReviewCommentReply = vi
+      .fn()
+      .mockResolvedValue({ executed: true, response: { id: 6009 } });
+    const resolveOwnReviewThread = vi.fn().mockResolvedValue({ skipped: null });
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply, resolveOwnReviewThread, listRecentReviewComments },
+      botLogin: "qc-bot[bot]",
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => new Date("2026-08-26T09:00:00Z"),
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "keep_open",
+        reply: "That addresses it.",
+      }),
+    );
+    return { watcher, name, createReviewCommentReply, store };
+  };
+
+  it("a process that died mid-POST is reconciled at restart — no caught failure needed", async () => {
+    ledger.claimAuthorMessage(event);
+    // The previous process started the POST, GitHub took it, the process died.
+    ledger.markDecisionStep(5001, "reply_attempted");
+    const list = vi.fn().mockResolvedValue([
+      {
+        id: 6001,
+        user: "qc-bot[bot]",
+        body: `That addresses it.\n\n${replyMarker(5001)}`,
+        in_reply_to_id: 4000,
+      },
+    ]);
+    const h = recovering(list);
+    expect(await h.watcher.handleFile(h.name)).toBe(true);
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(h.createReviewCommentReply).not.toHaveBeenCalled();
+    expect(ledger.decisionProgress(5001)).toMatchObject({ reply_posted: true });
+  });
+
+  it("a reconcile read that fails is delivery unknown — the reply is not posted again", async () => {
+    ledger.claimAuthorMessage(event);
+    ledger.markDecisionStep(5001, "reply_attempted");
+    const h = recovering(vi.fn().mockRejectedValue(new Error("HTTP 502")));
+    expect(await h.watcher.handleFile(h.name)).toBe(false);
+    expect(h.createReviewCommentReply).not.toHaveBeenCalled();
+    expect(ledger.retry(5001).attempts).toBe(1);
+    expect(ledger.decisionProgress(5001).reply_posted).toBe(false);
+  });
+
+  it("another decision's reply with the same words is not this decision's", async () => {
+    ledger.claimAuthorMessage(event);
+    ledger.claimAuthorMessage({ ...event, comment_id: 5002 });
+    ledger.markDecisionStep(5001, "reply_attempted");
+    const h = recovering(
+      vi.fn().mockResolvedValue([
+        {
+          id: 6003,
+          user: "qc-bot[bot]",
+          body: `That addresses it.\n\n${replyMarker(5002)}`,
+          in_reply_to_id: 4000,
+        },
+      ]),
+    );
+    expect(await h.watcher.handleFile(h.name)).toBe(true);
+    expect(h.createReviewCommentReply).toHaveBeenCalledWith(
+      77,
+      4000,
+      `That addresses it.\n\n${replyMarker(5001)}`,
+    );
   });
 
   it("does not duplicate the reply when thread resolution retries", async () => {

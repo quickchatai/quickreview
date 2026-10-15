@@ -112,6 +112,14 @@ export class PingPongLedger {
     } catch {
       /* column already present */
     }
+    // Additive column: a reply POST was started for this decision.
+    try {
+      this.db.exec(
+        "ALTER TABLE pingpong_decisions ADD COLUMN reply_attempted INTEGER NOT NULL DEFAULT 0",
+      );
+    } catch {
+      /* column already present */
+    }
   }
 
   private ts(): string {
@@ -146,26 +154,40 @@ export class PingPongLedger {
     );
   }
 
-  decisionProgress(commentId: number): { reply_posted: boolean; thread_resolved: boolean } {
+  /** A decision's progress. `reply_attempted`: a reply POST was started (it
+   * may have landed although no answer came back); `reply_posted`: the reply
+   * step is done; `thread_resolved`: the resolve step is done — GitHub may have
+   * answered a human-only skip, which the `pingpong_thread_resolved` event's
+   * `skipped` records. */
+  decisionProgress(commentId: number): {
+    reply_attempted: boolean;
+    reply_posted: boolean;
+    thread_resolved: boolean;
+  } {
     const row = this.db
-      .prepare("SELECT reply_posted, thread_resolved FROM pingpong_decisions WHERE comment_id = ?")
-      .get(commentId) as { reply_posted: number; thread_resolved: number } | undefined;
-    return { reply_posted: row?.reply_posted === 1, thread_resolved: row?.thread_resolved === 1 };
+      .prepare(
+        "SELECT reply_attempted, reply_posted, thread_resolved FROM pingpong_decisions WHERE comment_id = ?",
+      )
+      .get(commentId) as
+      { reply_attempted: number; reply_posted: number; thread_resolved: number } | undefined;
+    return {
+      reply_attempted: row?.reply_attempted === 1,
+      reply_posted: row?.reply_posted === 1,
+      thread_resolved: row?.thread_resolved === 1,
+    };
   }
 
-  markDecisionStep(commentId: number, step: "reply_posted" | "thread_resolved"): void {
+  markDecisionStep(
+    commentId: number,
+    step: "reply_attempted" | "reply_posted" | "thread_resolved",
+  ): void {
     this.db
       .prepare(
-        `INSERT INTO pingpong_decisions (comment_id, reply_posted, thread_resolved, updated_at)
-       VALUES (?, ?, ?, ?)
+        `INSERT INTO pingpong_decisions (comment_id, ${step}, updated_at)
+       VALUES (?, 1, ?)
        ON CONFLICT(comment_id) DO UPDATE SET ${step} = 1, updated_at = excluded.updated_at`,
       )
-      .run(
-        commentId,
-        step === "reply_posted" ? 1 : 0,
-        step === "thread_resolved" ? 1 : 0,
-        this.ts(),
-      );
+      .run(commentId, this.ts());
   }
 
   breaker(): {
@@ -502,6 +524,14 @@ export async function postReply(
 
 export const THREAD_DECISION_RE = /^pr-(\d+)-thread-(\d+)-comment-(\d+)\.json$/;
 
+/** The hidden line a decision's reply carries: the author message it answers.
+ * A retry finds its own landed reply by it — never another decision's reply
+ * that happens to say the same words. */
+export function replyMarker(commentId: number): string {
+  return `<!-- qcr:reply=${commentId} -->`;
+}
+const REPLY_MARKER_RE = /<!-- qcr:reply=\d+ -->/;
+
 /**
  * What became of the finding, in the session's judgement at the time of the
  * reply, read by the outcome capture: `fixed` — the code at the head now
@@ -531,12 +561,11 @@ const THREAD_OUTCOME_ALIASES: Readonly<Record<string, ThreadOutcome>> = {
  * reason to refuse the decision, whose reply must still be posted. */
 export function normalizeThreadOutcome(raw: unknown): ThreadOutcome | undefined {
   if (typeof raw !== "string") return undefined;
-  return THREAD_OUTCOME_ALIASES[
-    raw
-      .trim()
-      .toLowerCase()
-      .replace(/[\s-]+/g, "_")
-  ];
+  const word = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return Object.hasOwn(THREAD_OUTCOME_ALIASES, word) ? THREAD_OUTCOME_ALIASES[word] : undefined;
 }
 
 export interface ThreadDecision {
@@ -597,8 +626,9 @@ export interface ThreadDecisionDeps extends ReplyDeps {
   adapter: Pick<GitHubAdapter, "createReviewCommentReply" | "resolveOwnReviewThread"> &
     Partial<Pick<GitHubAdapter, "listRecentReviewComments">>;
   /** The App's own comment login (`[github] bot_login`). With the read above
-   * it lets a RETRY learn whether the previous attempt's reply landed on
-   * GitHub although its response was lost; without either, a retry posts. */
+   * it lets a decision whose earlier POST may have landed (a caught failure,
+   * or a process that died mid-POST) learn whether its reply is on GitHub
+   * although no answer came back; without either, it posts. */
   botLogin?: string;
   store: ReplyDeps["store"] & Partial<Pick<StateStore, "logAnomaly">>;
   verdictDir: string;
@@ -619,7 +649,9 @@ export interface ThreadDecisionDeps extends ReplyDeps {
 export class ThreadDecisionWatcher {
   private watcher: FSWatcher | null = null;
   private readonly inFlight = new Set<string>();
-  private readonly invalidReads = new Map<string, string>();
+  /** An unusable read of a decision file: its bytes and when they were first
+   * seen unchanged. */
+  private readonly invalidReads = new Map<string, { body: string; since: number }>();
   private readonly retryTimers = new Map<string, NodeJS.Timeout>();
   private readonly processedDir: string;
   private readonly failedDir: string;
@@ -683,16 +715,10 @@ export class ThreadDecisionWatcher {
           refused += 1;
           continue;
         }
-        const destination = join(this.deps.verdictDir, name);
-        if (existsSync(destination)) {
+        if (!this.restoreFailed(name, commentId)) {
           refused += 1;
           continue;
         }
-        // Same crash-recoverable ordering as explicit replay: terminal metadata
-        // remains until after the move, so startup can put an interrupted move
-        // back under failed/ rather than processing it ambiguously.
-        renameSync(join(this.failedDir, name), destination);
-        this.deps.ledger.resetRetry(commentId);
         this.deps.store.logEvent("pingpong_owner_alias_failure_restored", pr, {
           file: name,
           thread_id: threadId,
@@ -714,6 +740,19 @@ export class ThreadDecisionWatcher {
       this.requestSweep();
     }
     return { restored, refused };
+  }
+
+  /** Move a failed decision back to pending and clear its retry state —
+   * false when a pending file of that name is already there. File first,
+   * metadata second: if the process dies between them, the startup sweep sees
+   * terminal metadata beside a pending file and moves it back to failed/, so
+   * the replay can safely be asked for again. */
+  private restoreFailed(name: string, commentId: number): boolean {
+    const destination = join(this.deps.verdictDir, name);
+    if (existsSync(destination)) return false;
+    renameSync(join(this.failedDir, name), destination);
+    this.deps.ledger.resetRetry(commentId);
+    return true;
   }
 
   retryFailed(commentId: number): { ok: boolean; reason?: string; file?: string } {
@@ -743,14 +782,8 @@ export class ThreadDecisionWatcher {
       ) {
         return { ok: false, reason: `failed decision ${name} does not match terminal retry state` };
       }
-      const destination = join(this.deps.verdictDir, name);
-      if (existsSync(destination))
+      if (!this.restoreFailed(name, commentId))
         return { ok: false, reason: `pending destination already exists for ${name}` };
-      // File first, metadata second. If the process dies between them, the
-      // startup sweep sees terminal metadata beside a pending file and moves it
-      // back to failed; the operator can safely request replay again.
-      renameSync(join(this.failedDir, name), destination);
-      this.deps.ledger.resetRetry(commentId);
       this.deps.store.logEvent("pingpong_decision_retry_requested", parsed.value.pr, {
         file: name,
         comment_id: commentId,
@@ -897,6 +930,23 @@ export class ThreadDecisionWatcher {
     }
   }
 
+  /** A decision file that does not parse or does not validate. fs.watch
+   * commonly fires before a writer's last byte, so a read is provisional until
+   * the same bytes have sat unchanged for the settle window under our own
+   * observation; only then is the file malformed and archived. */
+  private malformedRead(name: string, pr: number, body: string, error: string, now: Date): boolean {
+    const seen = this.invalidReads.get(name);
+    const settleMs = this.deps.malformedSettleMs ?? 250;
+    if (seen?.body !== body || now.getTime() - seen.since < settleMs) {
+      if (seen?.body !== body) this.invalidReads.set(name, { body, since: now.getTime() });
+      this.retryAfterSettle(name);
+      return false;
+    }
+    this.deps.store.logEvent("pingpong_decision_malformed", pr, { file: name, error });
+    this.archive(name);
+    return true;
+  }
+
   private retryAfterSettle(name: string): void {
     if (this.retryTimers.has(name)) return;
     const timer = setTimeout(() => {
@@ -952,40 +1002,13 @@ export class ThreadDecisionWatcher {
       const path = join(this.deps.verdictDir, name);
       if (!existsSync(path)) return false;
       const body = readFileSync(path, "utf8");
-      let decoded: unknown;
+      let parsed: ReturnType<typeof validateThreadDecision>;
       try {
-        decoded = JSON.parse(body);
+        parsed = validateThreadDecision(JSON.parse(body));
       } catch (err) {
-        // fs.watch commonly reports creation before a writer has flushed the
-        // body. One invalid read is provisional; only an unchanged second read
-        // after the settle window is a genuinely malformed decision.
-        if (this.invalidReads.get(name) !== body) {
-          this.invalidReads.set(name, body);
-          this.retryAfterSettle(name);
-          return false;
-        }
-        const error = `unparseable: ${String(err)}`;
-        this.deps.store.logEvent("pingpong_decision_malformed", Number(match[1]), {
-          file: name,
-          error,
-        });
-        this.archive(name);
-        return true;
+        parsed = { ok: false, error: `unparseable: ${String(err)}` };
       }
-      const parsed = validateThreadDecision(decoded);
-      if (!parsed.ok) {
-        if (this.invalidReads.get(name) !== body) {
-          this.invalidReads.set(name, body);
-          this.retryAfterSettle(name);
-          return false;
-        }
-        this.deps.store.logEvent("pingpong_decision_malformed", Number(match[1]), {
-          file: name,
-          error: parsed.error,
-        });
-        this.archive(name);
-        return true;
-      }
+      if (!parsed.ok) return this.malformedRead(name, Number(match[1]), body, parsed.error, now);
       this.clearInvalid(name);
       const d = parsed.value;
       if (
@@ -1005,8 +1028,10 @@ export class ThreadDecisionWatcher {
       const progress = this.deps.ledger.decisionProgress(d.comment_id);
       if (!progress.reply_posted) {
         if (this.deps.isDraining?.()) return false;
+        // A POST started before — a caught failure, or a process that died
+        // before it could record the answer — may have landed: look first.
         const landed =
-          d.reply.trim() && retry.attempts > 0
+          d.reply.trim() && (retry.attempts > 0 || progress.reply_attempted)
             ? await this.findLandedReply(d.pr, d.thread_id, d.comment_id, d.reply.trim())
             : undefined;
         if (landed !== undefined) {
@@ -1024,10 +1049,11 @@ export class ThreadDecisionWatcher {
           });
         } else if (d.reply.trim()) {
           this.lastGitHubStart = now.getTime();
+          this.deps.ledger.markDecisionStep(d.comment_id, "reply_attempted");
           const out = await postReply(this.deps, {
             pr: d.pr,
             thread_id: d.thread_id,
-            body: d.reply.trim(),
+            body: `${d.reply.trim()}\n\n${replyMarker(d.comment_id)}`,
           });
           // An unverifiable PR state is transient: fail this attempt so the
           // bounded retry schedule below posts the reply later. A merged or
@@ -1128,10 +1154,13 @@ export class ThreadDecisionWatcher {
     }
   }
 
-  /** On a retry: the id of this decision's reply if an earlier attempt
-   * already posted it (same thread, the bot's login, the exact body, newer
-   * than the author message it answers — GitHub ids are monotonic), else
-   * undefined. A failed or unavailable read answers undefined and the retry
+  /** After a POST that may have landed: the id of this decision's reply if it
+   * is on the thread (the bot's, newer than the author message it answers —
+   * GitHub ids are monotonic — and carrying this decision's `replyMarker`; a
+   * reply without any marker counts by its exact body), else undefined. A
+   * read that fails THROWS: the delivery is unknown, so the bounded retry
+   * schedule asks again rather than posting a second copy. Without the
+   * adapter's read or the bot's login nothing can be checked, and the retry
    * posts. */
   private async findLandedReply(
     pr: number,
@@ -1141,22 +1170,25 @@ export class ThreadDecisionWatcher {
   ): Promise<number | undefined> {
     const list = this.deps.adapter.listRecentReviewComments;
     if (!list || !this.deps.botLogin) return undefined;
+    let comments: Awaited<ReturnType<typeof list>>;
     try {
-      const comments = await list.call(this.deps.adapter, pr);
-      return comments.find(
-        (c) =>
-          c.in_reply_to_id === threadId &&
-          c.user === this.deps.botLogin &&
-          c.id > commentId &&
-          c.body.trim() === body,
-      )?.id;
+      comments = await list.call(this.deps.adapter, pr);
     } catch (err) {
+      // Rethrown as it came, so a rate limit still opens the breaker.
       this.deps.log?.(
-        `pingpong: could not check #${pr} thread ${threadId} for a landed reply`,
+        `pingpong: could not check #${pr} thread ${threadId} for a landed reply — delivery unknown`,
         err,
       );
-      return undefined;
+      throw err;
     }
+    const marker = replyMarker(commentId);
+    return comments.find(
+      (c) =>
+        c.in_reply_to_id === threadId &&
+        c.user === this.deps.botLogin &&
+        c.id > commentId &&
+        (c.body.includes(marker) || (!REPLY_MARKER_RE.test(c.body) && c.body.trim() === body)),
+    )?.id;
   }
 
   private quarantineTerminal(
