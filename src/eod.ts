@@ -234,25 +234,33 @@ export interface EodDayContext {
 }
 
 /** Wait for `dayContext`, total: a throw, a rejection or a timeout is "no
- * context" — the sweep itself must still fire. */
+ * context" — the sweep itself must still fire — and is reported to
+ * `onMissing` (a throw from which is swallowed). */
 async function resolveDayContext(
   fn: EodTimerDeps["dayContext"],
   date: string,
   timeoutMs: number,
+  onMissing?: EodTimerDeps["onContextMissing"],
 ): Promise<EodDayContext> {
   if (!fn) return { lines: "" };
+  const TIMED_OUT = Symbol("timed out");
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const answer = await Promise.race([
       Promise.resolve().then(() => fn(date)),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), timeoutMs);
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
         timer.unref?.();
       }),
     ]);
+    if (answer === TIMED_OUT) {
+      safely(() => onMissing?.(date, `no answer within ${timeoutMs} ms`));
+      return { lines: "" };
+    }
     if (answer === null || answer === undefined) return { lines: "" };
     return typeof answer === "string" ? { lines: answer } : answer;
-  } catch {
+  } catch (err) {
+    safely(() => onMissing?.(date, err));
     return { lines: "" };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -296,6 +304,9 @@ export interface EodTimerDeps {
   dayContext?: (date: string) => string | EodDayContext | Promise<string | EodDayContext>;
   /** How long the sweep waits for `dayContext` (default 90 s). */
   dayContextTimeoutMs?: number;
+  /** `dayContext` threw, rejected or missed `dayContextTimeoutMs`: the sweep
+   * goes out without it; this says why (the error, or the timeout). */
+  onContextMissing?: (date: string, why: unknown) => void;
   /** The `## Outcomes to curate` section for a sweep whose
    * `dayContext` brought no curation — no learner, a packet that failed, or a
    * context that did not answer in time. The seed starts §1 from
@@ -323,12 +334,14 @@ export interface EodTimerDeps {
   /** A day was deferred: `draining` (the drain), or `sweep_in_flight` (an
    * earlier day's sweep is still open or still retrying its inject). */
   onHeld?: (date: string, why: EodHoldReason) => void;
-  /** Where the deferred days survive a restart (wire.ts: state.db). Without
-   * it they live as long as this timer. */
+  /** Where the owed days — deferred, or firing and not yet settled — survive
+   * a restart (wire.ts: state.db). Without it they live as long as this
+   * timer. */
   deferred?: { load(): string[]; save(dates: string[]): void };
   /** How often a deferred sweep re-checks the drain. */
   deferPollMs?: number;
-  /** Called when a deferred day finally fires, before its injection. */
+  /** Called when an owed day fires from the set — deferred, or loaded at boot
+   * after a restart interrupted its fire — before its injection. */
   onDeferredFire?: (date: string) => void;
   /** SessionHooks.injectOverseer. `date` is the day the prompt sweeps — a
    * deferred day's, not today's — so a wrapper (the pin watch) can name the
@@ -362,7 +375,7 @@ export const EOD_DEFAULTS = Object.freeze({
 export interface EodTimer {
   /** The instant the currently-armed timer is aiming at. */
   nextFire(): Date;
-  /** The days a drain deferred that have not fired yet. */
+  /** The days still owed a sweep: deferred, or firing and not yet settled. */
   deferredDates(): string[];
   stop(): void;
 }
@@ -395,8 +408,9 @@ function safely(fn: () => void): void {
  * fire is in flight or `sweepInFlight` says the last sweep is still being
  * worked, and a day whose hour comes up then is deferred behind it. And an injection
  * that fails is retried (`retryBackoffMs`) before `onInjectFailed` says the
- * day's curation did not happen; a deferred day leaves the set only once its
- * fire has finished, so a restart mid-retry fires it again rather than never.
+ * day's curation did not happen; every firing day — its own hour's or a
+ * deferred one — sits in the persisted set until its fire has finished, so a
+ * restart mid-retry fires it again rather than never.
  */
 export function startEodTimer(deps: EodTimerDeps): EodTimer {
   const now = deps.now ?? (() => new Date());
@@ -473,6 +487,7 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
         deps.dayContext,
         date,
         deps.dayContextTimeoutMs ?? EOD_DEFAULTS.dayContextTimeoutMs,
+        deps.onContextMissing,
       ),
       deps.noCuration,
       date,
@@ -556,9 +571,21 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
       arm();
       return;
     }
+    // The day is OWED until its fire settles: it rides the persisted set
+    // with the deferred days, so a restart while its context is built or its
+    // inject retries fires it again rather than never.
+    if (!deferred.includes(date)) {
+      deferred = [...deferred, date].sort();
+      persist();
+    }
     firing = true;
-    void fire(date).finally(() => {
+    void fire(date).then((outcome) => {
       firing = false;
+      if (outcome !== "stopped") {
+        deferred = deferred.filter((d) => d !== date);
+        persist();
+        armPoll();
+      }
       if (!stopped) {
         target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
         arm();

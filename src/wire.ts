@@ -1744,6 +1744,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             return cancelled;
           }
         },
+        onContextMissing: (date, why) =>
+          log(`EOD sweep for ${date}: its day context is missing — it goes out without it`, why),
         // The curator learns the memory layout here — the seed is frozen and
         // names only some areas.
         ...(cfg.openviking.enabled ? { memoryLayout: MEMORY_LAYOUT_NOTE } : {}),
@@ -1779,7 +1781,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         },
         onDeferredFire: (date) => {
           d.store.logEvent("eod_deferred_fired", null, { date });
-          log(`EOD sweep for ${date} firing — the drain that deferred it has lifted`);
+          log(`EOD sweep for ${date} firing — owed from a deferral or an interrupted fire`);
         },
         injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
         onFire: (date) => {
