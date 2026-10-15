@@ -113,9 +113,9 @@ def money_range(lo, hi):
 
 
 AACR = "AACR-Bench · 185 real PRs · 235 high- and medium-severity defects"
-SOURCE_READ = ("Reading cost: words ÷ {wpm} a minute, plus {tri} s to triage each comment, at ${hr} an engineer-hour "
-               "(data/value.json). QuickReview's reader skips its [nit]s, which carry none of its serious finds. Model "
-               "spend at list prices.")
+SOURCE_READ = ("Reading cost: words ÷ {wpm} a minute, plus {tri} s to triage each comment, at ${hr} an engineer-hour. "
+               "QuickReview's reader skips its [nit]s, which carry none of its serious finds. Model spend at list "
+               "prices.")  # v4's words without its "(data/value.json)": a file name means nothing in a shared image
 
 
 def field(X):
@@ -322,7 +322,7 @@ def fig_value_ladder(B, V, T):
     if not X.a["ladder"]["source_line"].endswith(ours):
         sys.exit("value-ladder: data/value.json's ladder source_line no longer ends with the words v5 replaces")
     src = small(X.a["ladder"]["source_line"][:-len(ours)] + f"\nOurs: {judged(X)} {X.V.aacr_models(tuned=False)}")
-    x1, top, bottom = p.w - 90, 160, p.h - 112 - lines_over(src, 3)
+    x1, top, bottom = p.w - 90, 160, p.h - 112 - lines_over(src, 2)  # v4's small print here was two lines
     lo_e, hi_e = 0, 7  # $1 .. $10M
     Xl = lambda v: x0 + (x1 - x0) * (math.log10(max(v, 1)) - lo_e) / (hi_e - lo_e)  # noqa: E731
     for e in range(lo_e, hi_e + 1):
@@ -332,19 +332,19 @@ def fig_value_ladder(B, V, T):
                color=T["muted"], ha="center")
     pitch = (bottom - top) / len(rungs)
     h = min(24, pitch * 0.55)
-    for i, (label, lo, hi, ours, src) in enumerate(rungs):
+    for i, (label, lo, hi, mine, rung_src) in enumerate(rungs):  # not `src`: that is the small print, drawn below
         y = top + pitch * (i + 0.5)
-        col = T["qr"] if ours else T["other"]
+        col = T["qr"] if mine else T["other"]
         if hi > lo:
             bar(p.c, Xl(lo), Xl(hi), y, h, col, zorder=3, r=h / 2)
         else:
             dot(p, Xl(lo), y, h / 2, col)
         val = money_range(lo, hi)
-        p.text(Xl(hi) + 12 + (h / 2 if hi == lo else 0), y, val, size=12.5, color=T["ink"] if ours else T["ink2"],
-               weight="bold" if ours else "normal")
-        p.text(x0 - 16, y - 7, label, ha="right", size=13, color=T["ink"] if ours else T["ink2"],
-               weight="bold" if ours else "normal")
-        p.text(x0 - 16, y + 11, src, ha="right", size=10, color=T["muted"])
+        p.text(Xl(hi) + 12 + (h / 2 if hi == lo else 0), y, val, size=12.5, color=T["ink"] if mine else T["ink2"],
+               weight="bold" if mine else "normal")
+        p.text(x0 - 16, y - 7, label, ha="right", size=13, color=T["ink"] if mine else T["ink2"],
+               weight="bold" if mine else "normal")
+        p.text(x0 - 16, y + 11, rung_src, ha="right", size=10, color=T["muted"])
     p.source(src)
     return p
 
@@ -369,14 +369,15 @@ def numbers(B, V):
     head = ["Reviewer", f"Serious found (of {X.serious_total})", "Missed per 100 PRs", "Model $/PR", "Comments read/PR",
             "Words read/PR", "Reading $/PR", "All-in $/PR", "QuickReview's $ per extra serious catch"]
     import make_charts_v5 as M
-    return ("## What a found bug is worth (value-*)\n\n" + source_read(X).replace("\n", " ") + "\n\n" +
-            M.md_table(head, rows))
+    return ("## What a found bug is worth (value-*)\n\nAssumptions: data/value.json. " +
+            source_read(X).replace("\n", " ") + "\n\n" + M.md_table(head, rows))
 
 
 # ---------------------------------------------------------------- the mini report
-def report(B, V):
+def report(B, V, page=False):
     """out/v5/BUG-VALUE.md: the mini report, every number in it computed here (make_charts_v5.py writes it, and a
-    self-contained bug-value.html, beside the charts)."""
+    self-contained bug-value.html, beside the charts). page=True: the words for the page to share, without the notes
+    that point a maintainer at files in the repo."""
     X = Value(B, V)
     riv = sorted(X.rivals(), key=X.missed_per_100)
     miss_lo, miss_hi = X.missed_per_100(riv[0]), X.missed_per_100(riv[-1])
@@ -415,14 +416,18 @@ def report(B, V):
              f"{V.our_model('aacr', QR)} on every model call, at {V.reasoning('aacr', QR)} reasoning by lens; its fast "
              f"option ({', '.join(V.builds('aacr', FAST))}, the same build with a fast profile) runs "
              f"{'the same model' if fast == V.our_model('aacr', QR) else fast} at {V.reasoning('aacr', FAST)} reasoning. "
-             f"The other reviewers ran {field(X)}. One judge ({V.judge_words('aacr')}) graded every AACR-Bench number. "
+             f"The other reviewers: {field(X)}. One judge ({V.judge_words('aacr')}) graded every AACR-Bench number. "
              f"The Martian and Qodo precision figures are our judge's ({V.judge_words('qodo')}); Martian's other "
              f"tools are at its own {V.m['judges'][M.MARTIAN_JUDGE]['label']} judge's scores.")
+    intro = (f"Every number comes from AACR-Bench's {X.prs} pull requests and the published figures cited below."
+             if page else
+             f"Generated by\n`make_charts_v5.py` from AACR-Bench's {X.prs} pull requests and the published figures in "
+             "`data/value.json`; do not\nedit by hand. Change an assumption there and every number below moves with "
+             "it.")
+    settle = "" if page else "\n  (MISSING-DATA.md §1 and §3)"
     return f"""# What a found bug is worth
 
-*A mini report on recall-first code review: what it costs to catch more, and what a miss costs later. Generated by
-`make_charts_v5.py` from AACR-Bench's {X.prs} pull requests and the published figures in `data/value.json`; do not
-edit by hand. Change an assumption there and every number below moves with it.*
+*A mini report on recall-first code review: what it costs to catch more, and what a miss costs later. {intro}*
 
 *Which model: {which}*
 
@@ -544,8 +549,7 @@ The scenario below assumes {sc['label']} missed serious defects reach production
     - The defect key was built by AI agents and no person has checked it yet.
     - QuickReview was tuned on misses from 121 of these PRs.
     - There is one run per reviewer.
-- **What would settle it:** QuickReview's blocks followed into production, and reading time measured on real PRs
-  (MISSING-DATA.md §1 and §3).
+- **What would settle it:** QuickReview's blocks followed into production, and reading time measured on real PRs{settle}.
 
 ## Sources
 

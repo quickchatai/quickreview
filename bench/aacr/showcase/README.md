@@ -6,8 +6,8 @@ title claim updates. Prototypes for a landing page, a launch post or slides; the
 figures stay in `../charts/`.
 
 **Which model.** QuickReview's results in this folder are its frozen build (e32f0cf) on GPT-6.1 Sol
-unless a line says otherwise. The newest set, `out/v5/`, names the model on every image; runs of
-QuickReview on other models are in MISSING-DATA.md §19.
+unless a line says otherwise. The newest set, `out/v5/`, names the model beside every result it shows;
+runs of QuickReview on other models are in MISSING-DATA.md §19.
 
 ```sh
 # 1. rebuild the generated data from the archived runs (AACR judge files, Qodo scores)
@@ -239,7 +239,7 @@ The infographics' code is `infographics_v4.py` (the conventions, two exemplars) 
 `info_system_v4.py` and `info_platform_v4.py`, all built from the parts in `diagram_v4.py`. Every label was
 checked against the code and the bench docs; the counts on them come from the same data files as the charts.
 
-**To share:** v5's pages (below) supersede these, since they name the model on every image.
+**To share:** v5's pages (below) supersede these, since they name the model beside every result.
 `out/v4/index.html` (the whole library, about 6 MB) and `out/v4/bug-value.html` (the report) are
 each one self-contained file. Every image is embedded as lossless WebP, in light and dark. Each page follows the
 viewer's theme or a switch, and enlarges an image on click. Send either file as it is; nothing else is needed.
@@ -280,7 +280,8 @@ with the model named wherever QuickReview's results appear:
   reasoning)" and "Reviewers: all on GPT-6.1 Sol except Claude Code (Claude Opus 5.5)". It also says which build
   QuickReview's numbers are.
 - The same names appear in the Model column of AACR-Bench's own-score table, the infographics that name a
-  model or count from a run, the bug-value report and both pages (beside every image, and in each image's alt text).
+  model or count from a run, the bug-value report and both pages: under, and in the alt text of, every image that
+  shows a result or names a model (the system infographics and how-scoring show neither).
 - `out/v5/NUMBERS.md` opens with every drawn run: its model, reasoning effort and build, and how many model records
   its event logs hold.
 
@@ -289,8 +290,11 @@ The models, as the runs record them:
   option (745f956: the frozen build plus a `fast` profile) at low, and the Oct 1 build behind AACR-Bench's own
   score.
 - One QuickReview count comes from another model: how-key's "334 of the first 379" are comments of the run that
-  seeded the key, build 1ad710b on GPT-6 Sol. The image says so.
+  seeded the key, QuickReview's default run, build 1ad710b on GPT-6 Sol. The image says so.
 - The other tools we ran are on GPT-6.1 Sol, except Claude Code (Claude Opus 5.5).
+- Two infographics count from earlier runs on GPT-6 Sol, and say so: how-key's candidates (every reviewer comment
+  the key's builders checked came from runs on GPT-6 Sol, Claude Code's from Claude Opus 5.5) and how-fair's
+  best-shot lift (the `fair-*` selection runs).
 - The judges:
   - GPT-6 Sol at high reasoning for the AACR key;
   - GPT-6 Sol at low reasoning, averaged over 3 rounds, for AACR-Bench's own score;
@@ -301,26 +305,43 @@ The models, as the runs record them:
 - a QuickReview run's configured models (run.json `models`, the model overrides, each case's per-lens pins), then
   every model its event logs record, which must match;
 - a third-party tool's `model` and effort, and Claude Code's per-case `models`;
-- each judge's JUDGE.txt, judge.txt or judge directory.
+- each judge's JUDGE.txt, judge.txt or judge directory;
+- the AACR key's sources (the seed and every reviewer run whose comments the builders checked, from
+  FULL-BENCHMARK.md's tables) and the best-shot selection runs (`fair-*`).
 
-It stops in three cases: an arm's runs disagree, an effort is unknown, or a model has no display name in
-`data/models.json`. `make_charts_v5.py` stops if `data/v5.json` no longer describes the runs whose numbers are drawn.
-Two names come from elsewhere: Martian's judge from Martian's own dashboard (`data/v4.json`), and the key
-builders' (Claude Code subagents on Claude Opus 5.5) from the bench docs.
+It stops whenever a run cannot be traced: among other cases, when an arm's runs disagree on the model, an effort is
+unknown, a run calls a model it is not configured for, a judge file does not parse, or a model has no display name
+in `data/models.json`. `make_charts_v5.py` stops if `data/v5.json` no longer describes the runs whose numbers are
+drawn. Three names come from documents, since no run records them: Martian's judge from Martian's own dashboard
+(`data/v4.json`), the key builders' (Claude Code subagents on Claude Opus 5.5) from the bench docs, and the golden
+audit's investigators' (Claude Opus 5.5) from `GOLDEN-AUDIT-FULL.md`.
 
-The numbers, titles and ranks are v4's, with one correction: review-round's lens pill now prints the frozen
-build's median of 11 lenses per PR, where v4 printed 15. v5 also:
-- widens a name column wherever a label with its model needs the room, and sets the cost and time scatters'
-  QuickReview labels on two lines, so they stay clear of the frontier;
-- wraps the small print to the measured width (3–4 lines where the models need them), with the chart above making
-  room, and prints it a shade darker on the light theme (4.75:1 contrast, from 3.5:1);
+The numbers and ranks are v4's, with two corrections:
+- review-round prints and draws the frozen build's median of 11 lenses per PR, where v4 printed and drew 15;
+- martian-leaderboard is titled "Martian's F2 ranking", not "default ranking": Martian's default view uses its
+  Opus 4.5 judge, and this board is at its GPT-5.2 judge's scores.
+
+v5 also:
+- widens a name column wherever a label with its model needs the room, and sets QuickReview's label on the cost
+  and time scatters on two lines, clear of the frontier (its fast option's stays on one, which keeps it off the
+  frontier too);
+- wraps the small print to the measured width (3–4 lines where the models need them), never splitting a model's
+  name or ending a paragraph on a stub of a line, with the chart above making room; and prints it a shade darker on
+  the light theme (4.75:1 contrast, from 3.5:1);
+- gives how-key a third line of small print (the key's sources), moving its "No human check yet" banner 12 px up;
+- drops v4's "(data/value.json)" from the reading-cost small print, since a file name means nothing in a shared
+  image (NUMBERS.md keeps it);
 - calls the ladder's and the report's reading-time estimate an "estimate", so it is not read as an AI model;
 - adds layout checks: nothing left of the text margin, nothing running into the small print, no two texts covering
   each other.
 
 **To share:** `out/v5/index.html` (the whole library, about 6.5 MB) and `out/v5/bug-value.html` (the report)
-are each one self-contained file, like v4's. On a phone, a tapped image now opens at full size and scrolls, and the
-report's tables scroll sideways instead of the page. v4's own pages and `BUG-VALUE.md` stay as they were.
+are each one self-contained file, like v4's. Where a window is too small to enlarge an image whole (a phone,
+upright or sideways, or a tablet), a tapped image opens at full size from its top-left corner and scrolls. The
+report's tables scroll sideways instead of the page, with a shadow at the edge that has more; scrollbars follow the
+dark theme. bug-value.html also links its sources, carries the model line under each figure, and leaves out
+`BUG-VALUE.md`'s notes for maintainers (which script writes it, the MISSING-DATA pointer). v4's own pages and
+`BUG-VALUE.md` stay as they were.
 
 **Open models.** GLM-5.3 Flash's full run is scored but not drawn; MISSING-DATA.md §19 says why and what it
 needs. Its model already has a name in `data/models.json`, as do DeepSeek V4.1 Flash, Gemma 4 31B and Gemini 4

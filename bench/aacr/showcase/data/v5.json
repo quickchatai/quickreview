@@ -1,5 +1,123 @@
 {
  "aacr": {
+  "best_shot": {
+   "fair-codex-high-rest145": {
+    "efforts": [
+     "high"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "tool": "codex-cli"
+   },
+   "fair-codex-prtext-rest145": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "tool": "codex-cli"
+   },
+   "fair-ocr-high-rest145": {
+    "efforts": [
+     "high"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "tool": "open-code-review"
+   },
+   "fair-ocr-prtext-rest145": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "tool": "open-code-review"
+   },
+   "fair-opencode-native-rest145": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "tool": "opencode"
+   },
+   "fair-opencode-prtext-rest145": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "tool": "opencode"
+   },
+   "fair-pireview-high-rest145": {
+    "efforts": [
+     "high"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "tool": "pi-review"
+   },
+   "fair-pireview-panel-rest145": {
+    "efforts": [
+     "high"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "tool": "pi-review"
+   },
+   "fair-pireview-prtext-rest145": {
+    "efforts": [
+     "high"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "tool": "pi-review"
+   },
+   "fair-pragent-g61-rest145": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [],
+    "tool": "pr-agent"
+   },
+   "fair-pragent-sol-rest145": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "tool": "pr-agent"
+   }
+  },
   "judge": {
    "effort": "high",
    "from": [
@@ -27,6 +145,123 @@
    "runs": [
     "all-default-rest145"
    ]
+  },
+  "key_sources": {
+   "claude-code": {
+    "efforts": [],
+    "models": [
+     "claude-opus-5-5"
+    ],
+    "providers": [],
+    "runs": [
+     "all-claude-c1-rest145",
+     "all-claude-c2-rest145",
+     "all-claude-c3-rest145",
+     "all-claude-c4-rest145"
+    ]
+   },
+   "codex-cli": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "all-codex-rest145",
+     "all-codex-c1-rest145",
+     "all-codex-c2-rest145",
+     "all-codex-c3-rest145",
+     "all-codex-c4-rest145"
+    ]
+   },
+   "open-code-review": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "all-ocr-rest145"
+    ]
+   },
+   "opencode": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "all-opencode-rest145",
+     "all-opencode-c1-rest145",
+     "all-opencode-c2-rest145",
+     "all-opencode-c3-rest145",
+     "all-opencode-c4-rest145"
+    ]
+   },
+   "pi-review": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "runs": [
+     "all-pireview-c1-rest145",
+     "all-pireview-c2-rest145",
+     "all-pireview-c3-rest145",
+     "all-pireview-c4-rest145"
+    ]
+   },
+   "quickreview": {
+    "builds": [
+     "1ad710b"
+    ],
+    "calls": {
+     "gpt-6-sol": 61897
+    },
+    "efforts": [
+     "medium",
+     "high"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "runs": [
+     "all-default-rest145"
+    ]
+   },
+   "quickreview low": {
+    "builds": [
+     "1ad710b"
+    ],
+    "calls": {
+     "gpt-6-sol": 44776
+    },
+    "efforts": [
+     "low"
+    ],
+    "models": [
+     "gpt-6-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "runs": [
+     "all-low-rest145"
+    ]
+   }
   },
   "official_judge": {
    "effort": "low",

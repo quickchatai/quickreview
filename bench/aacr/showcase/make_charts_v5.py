@@ -46,11 +46,13 @@ from theme_v4 import Page4, axis_frame, bar_rows, save, table  # noqa: E402
 OUT = os.path.join(HERE, "out", "v5")
 EFFORTS = ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max"]  # refresh_v5.py's list, lowest first
 BENCHES = {"aacr": "AACR-Bench", "martian": "Martian", "qodo": "Qodo"}
-TUNED = "tuned on misses from 121 of these PRs"  # bench docs: QuickReview's lenses were mined from 121 AACR PRs
+TUNED_PRS = "121 of these PRs"  # bench docs: QuickReview's lenses were mined from 121 AACR PRs
+TUNED = f"tuned on misses from {TUNED_PRS}"
 FAST_PROFILE = "its fast profile (fewer lenses, shorter comments)"  # profiles/fast on the frozen build (RESULTS.md)
 SMALL_INK = {"light": "#73716c"}  # the small print, 4.75:1 on the light surface (v4's muted is 3.5:1); dark keeps 4.85:1
 WIDTH = 1072  # the text column: the canvas minus v4's 64 px side margins
 SMALL = 10.5  # Page4.source's size
+STUB = 0.3  # a paragraph's last line shorter than this share of the width takes words from the line above
 
 
 def cap(s):
@@ -62,15 +64,38 @@ def and_join(xs):
     return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
 
 
-_measure = []
+_measure, _whole = [], []
+
+
+def keep_whole(text):
+    """text with no-break spaces inside the phrases a line break must not split: every model's display name
+    (data/models.json) and the tuning count. diagram_v4.lines breaks only at a plain space."""
+    if not _whole:
+        names = json.load(open(os.path.join(HERE, "data", "models.json")))["models"]
+        _whole.extend(sorted({m["name"] for m in names.values()} | {TUNED_PRS}, key=len, reverse=True))
+    for phrase in _whole:
+        text = text.replace(phrase, phrase.replace(" ", "\u00a0"))
+    return text
 
 
 def wrap(text, size=SMALL, width=WIDTH):
-    """text in lines that fit `width` px at `size` pt, measured by the renderer; explicit newlines kept. Called while
-    drawing, so the theme's fonts are set (both themes use the same ones)."""
+    """text in lines that fit `width` px at `size` pt, measured by the renderer; explicit newlines kept, no model's
+    name split, and no paragraph ending on a stub (a last line under STUB of the width takes words from the line
+    above, the paragraph keeping its number of lines). Called while drawing, so the theme's fonts are set (both
+    themes use the same ones)."""
     if not _measure:
         _measure.append(Page4(theme_v2.THEMES["light"], w=100, h=100))
-    return "\n".join(lines(_measure[0], text, width, size))
+    p, out = _measure[0], []
+    for para in keep_whole(text).split("\n"):
+        best, w = lines(p, para, width, size), width
+        while len(best) > 1 and measure(p, best[-1], size) < STUB * width and w > width / 2:
+            w -= 16
+            narrower = lines(p, para, w, size)
+            if len(narrower) > len(best):
+                break
+            best = narrower
+        out += best
+    return "\n".join(out)
 
 
 def extra(src):
@@ -153,6 +178,21 @@ class V5(v4.V4):
         k = self.runs["aacr"]["key_seed"]
         return " + ".join(self.model_name(m) for m in k["models"]), "/".join(k["builds"])
 
+    def key_sources(self):
+        """The runs whose comments the key's builders checked, as reviewers() words it: "all on GPT-6 Sol except
+        Claude Code (Claude Opus 5.5)"."""
+        src = self.runs["aacr"]["key_sources"]
+        return self.grouped([(self.run_name(who), " + ".join(self.model_name(m) for m in r["models"]))
+                             for who, r in src.items()], "the key's sources")
+
+    def best_shot(self, tools):
+        """The model every best-shot selection run of these tools (refresh_v5 ids) used, by name; stops if they
+        differ."""
+        ms = {m for r in self.runs["aacr"]["best_shot"].values() if r["tool"] in tools for m in r["models"]}
+        if len(ms) != 1:
+            sys.exit(f"best-shot runs of {sorted(tools)}: {sorted(ms) or 'none'}, not one model")
+        return self.model_name(ms.pop())
+
     def tagged(self, name, bench, t):
         """A QuickReview label with its model: "QuickReview (GPT-6.1 Sol)"."""
         return f"{name} ({self.our_model(bench, t)})"
@@ -160,11 +200,16 @@ class V5(v4.V4):
     def reviewers(self, bench, tools):
         """What the reviewers we ran used, as one phrase: "all on GPT-6.1 Sol except Claude Code (Claude Opus 5.5)",
         or, with no clear majority, "A and B on GPT-6.1 Sol; C on Claude Opus 5.5"."""
+        return self.grouped([(self.base_name(t), self.our_model(bench, t)) for t in tools], bench)
+
+    @staticmethod
+    def grouped(named, what):
+        """[(reviewer, model)] as reviewers() words it."""
         by = {}
-        for t in tools:
-            by.setdefault(self.our_model(bench, t), []).append(self.base_name(t))
+        for n, m in named:
+            by.setdefault(m, []).append(n)
         if not by:
-            sys.exit(f"{bench}: no reviewers to name")
+            sys.exit(f"{what}: no reviewers to name")
         ranked = sorted(by.items(), key=lambda kv: -len(kv[1]))
         if len(ranked) == 1 or len(ranked[0][1]) > sum(len(v) for _, v in ranked[1:]):
             main, rest = ranked[0][0], [f"{n} ({m})" for m, ns in ranked[1:] for n in ns]
@@ -189,6 +234,14 @@ class V5(v4.V4):
     def base_name(self, t):
         return super().name(t)
 
+    def run_name(self, t):
+        """The name of a run that is not a drawn arm (the key's sources, the best-shot variants): data/tools.json
+        names pi-review by its drawn configuration, "pi-review panel", and refresh_v5 labels QuickReview's two key
+        sources by their preset."""
+        plain = {"pi-review": "pi-review", "quickreview": "QuickReview (default)",
+                 "quickreview low": "QuickReview (low preset)"}
+        return plain.get(t) or (self.base_name(t) if t in self.B.tools else t)
+
     # ---- QuickReview's labels carry the model (v4's chart functions read every name through these)
     def name(self, t):  # AACR-Bench, and the bug-value charts
         n = super().name(t)
@@ -203,21 +256,19 @@ class V5(v4.V4):
     # ---- the small print
     def martian_source(self):
         jl = self.m["judges"][MARTIAN_JUDGE]["label"]
-        ours, effort = self.judge("martian")
         gap = max(self.calibration_gap() * 100, 1)
-        return wrap(f"Others: Martian's published runs and scores (Core profile, {jl} judge); the vendors do not "
-                    f"publish their models.\nQuickReview: frozen build on {self.our_model('martian', QR)}, scored by "
-                    f"our judge ({ours}, {effort}). On the 3 tools both judges graded, they agree on recall within "
-                    f"{gap:.0f} point.")
+        return wrap(f"Others: Martian's published runs and scores (Core profile, {jl} judge); Martian lists no model for "
+                    f"them.\nQuickReview: frozen build on {self.our_model('martian', QR)}, the same pipeline with our "
+                    f"judge ({self.judge_words('martian')}), within {gap:.0f} point of {jl}'s recall on "
+                    f"{len(self.m['calibration'])} tools.")
 
     def qodo_source(self):
         g = sorted(self.qodo_gaps().values())
         close = sum(1 for v in g if v <= 1.5)
         rows = self.qodo_rows()
         ran = [t for t, _, _ in rows if self.model("qodo", t)]
-        ours, effort = self.judge("qodo")
-        return wrap(f"All {len(rows)} graded by our judge ({ours}, {effort}), matching issues by meaning; on Qodo's "
-                    f"{len(g)} vendor runs it lands within {g[-1]:.1f} points of Qodo's own F1 ({close} within 1.5).\n"
+        return wrap(f"All {len(rows)} graded by our judge ({self.judge_words('qodo')}), matching issues by meaning; on "
+                    f"Qodo's {len(g)} vendor runs, within {g[-1]:.1f} points of Qodo's F1 ({close} within 1.5).\n"
                     f"Vendors: their own runs, models not published. "
                     f"{self.ran_by_us('qodo', [QR] + [t for t in ran if t != QR])}.")
 
@@ -394,8 +445,9 @@ def fig_aacr_severity(B, V, T):
 def tradeoff(B, V, T, key, unit, title_unit, xr, xticks, xfmt, worse):
     ts = aacr_order(B, V)
     rivals = [t for t in ts if t not in (QR, FAST)]
-    # QuickReview's two labels on two lines, so they sit right of their dots, clear of the frontier, as in v4
-    label = lambda t: f"{V.base_name(t)}\n({V.our_model('aacr', t)})" if t in (QR, FAST) else V.name(t)  # noqa: E731
+    # QuickReview's label on two lines, so it sits right of its dot near the right edge, clear of the frontier as in
+    # v4; the fast option's stays on one, since a second line would rise into the frontier's first segment
+    label = lambda t: f"{V.base_name(t)}\n({V.our_model('aacr', t)})" if t == QR else V.name(t)  # noqa: E731
     pts = [(t, label(t), V.mean(t, key), V.recall(t)) for t in ts]
     lo = min(V.mean(QR, key) / V.mean(t, key) for t in rivals)
     hi = max(V.mean(QR, key) / V.mean(t, key) for t in rivals)
@@ -457,9 +509,23 @@ def fig_aacr_leaderboard(B, V, T):
                     for i, (t, r) in enumerate(rows)], top=160, row_h=58, size=14)
     jn, je, rounds = V.official_judge()
     p.source(wrap(f"AACR-Bench's own matching: a comment on the same file within a line, which a judge ({jn}, {je} "
-                  f"reasoning, {rounds} rounds averaged) calls the same concern; references are mostly AI-written.\n"
-                  "QuickReview: the Oct 1 build (the frozen build was not scored this way). Time: mean wall clock; cost: "
-                  "mean model spend at list prices."))
+                  f"reasoning, {rounds} rounds averaged) calls the same concern.\nReferences are mostly AI-written. "
+                  "QuickReview: the Oct 1 build (the frozen build was not scored this way).\nTime: mean wall clock; "
+                  "cost: mean model spend at list prices."))
+    return p
+
+
+def fig_martian_leaderboard(B, V, T):
+    """v4's, titled by its sort key. v4's "Martian's default ranking" meant Martian's default sort (F2), but the
+    site's default view also uses its Opus 4.5 judge, and this board is at the GPT-5.2 judge's scores, which the v5
+    small print names: so "Martian's F2 ranking"."""
+    p = v4.fig_martian_leaderboard(B, V, T)
+    old, new = "on Martian's default ranking", "on Martian's F2 ranking"
+    hits = [t for t in p.c.texts if t.get_text() == p.title_text]
+    if old not in p.title_text or len(hits) != 1:
+        sys.exit(f"martian-leaderboard: v4's title no longer says {old!r}")
+    p.title_text = p.title_text.replace(old, new)
+    hits[0].set_text(p.title_text)
     return p
 
 
@@ -487,15 +553,16 @@ def fig_standings(B, V, T):
                   "is not measured on it (comments are graded instead).\n"
                   f"Martian: 50 PRs, its own scorer; others at its published {jl}-judge scores, QuickReview scored by our "
                   f"judge ({V.judge_words('martian')}).\n"
-                  f"Qodo: 100 PRs, all 13 graded by our judge ({V.judge_words('qodo')}). QuickReview: its frozen build "
-                  f"everywhere. The other tools we ran: {V.reviewers('aacr', [t for t in B.aacr_tools() if t != QR])}."))
+                  f"Qodo: 100 PRs, all 13 graded by our judge ({V.judge_words('qodo')}).\n"
+                  "QuickReview: its frozen build everywhere. The other tools we ran: "
+                  f"{V.reviewers('aacr', [t for t in B.aacr_tools() if t != QR])}."))
     return p
 
 
 CHARTS = {
     "martian-recall": fig_martian_recall,
     "martian-scatter": v4.fig_martian_scatter,  # v4's, as it is: QuickReview's label and the small print come from V5
-    "martian-leaderboard": v4.fig_martian_leaderboard,  # likewise
+    "martian-leaderboard": fig_martian_leaderboard,  # v4's, retitled
     "qodo-f1": fig_qodo_f1,
     "qodo-functional": fig_qodo_functional,
     "qodo-scatter": v4.fig_qodo_scatter,  # likewise
@@ -524,7 +591,7 @@ def models_section(V):
            "- a third-party tool: run.json `model` and effort; Claude Code: each case's `models`;\n"
            "- a judge: its JUDGE.txt, judge.txt or judge directory.\n\n"
            "Display names: data/models.json. Martian's other tools and Qodo's vendor rows are the vendors' own runs, "
-           "with no published model. A build marked `-dirty` ran with uncommitted changes.\n\n"]
+           "and neither benchmark's data names their models. A build marked `-dirty` ran with uncommitted changes.\n\n"]
     rows = []
     jn, je, rounds = V.official_judge()
     j = V.runs["aacr"]["official_judge"]
@@ -536,10 +603,21 @@ def models_section(V):
     rows.append(["AACR-Bench", "QuickReview, the key's seed (how-key's comments)",
                  " + ".join(f"{V.model_name(m)} (`{m}`)" for m in k["models"]), "/".join(k["efforts"]),
                  " ".join(k["builds"]), ", ".join(f"{n:,}" for n in k["calls"].values()), ", ".join(k["runs"])])
+    for who, r in V.runs["aacr"]["key_sources"].items():
+        rows.append(["AACR-Bench", f"the key's candidate comments: {V.run_name(who)}",
+                     " + ".join(f"{V.model_name(m)} (`{m}`)" for m in r["models"]), "/".join(r["efforts"]) or
+                     "the tool's default", " ".join(r.get("builds", [])),
+                     ", ".join(f"{n:,}" for n in r.get("calls", {}).values()), ", ".join(r["runs"])])
+    for run, r in V.runs["aacr"]["best_shot"].items():
+        rows.append(["AACR-Bench", f"best-shot selection: {V.run_name(r['tool'])} (how-fair)",
+                     " + ".join(f"{V.model_name(m)} (`{m}`)" for m in r["models"]), "/".join(r["efforts"]), "", "",
+                     run])
+    graded = {"martian": f"QuickReview's row; {len(V.m['calibration'])} published tools re-graded to calibrate it",
+              "qodo": "every row, the vendors' runs included"}
     for b, label in BENCHES.items():
         if b != "aacr":
             jb = V.runs[b]["judge"]
-            rows.append([label, "**judge** (QuickReview's row and every tool we ran)",
+            rows.append([label, f"**judge** ({graded[b]})",
                          f"{V.model_name(jb['model'])} (`{jb['model']}`)", jb["effort"], "", "", ""])
         for t, r in V.runs[b]["reviewers"].items():
             rows.append([label, V.base_name(t), " + ".join(f"{V.model_name(m)} (`{m}`)" for m in r["models"]),
@@ -562,7 +640,7 @@ def numbers(B, V):
     sev_list = ", ".join(f"{k} {by_sev[k]}" for k in MARTIAN_SEVS)
     out.append(f"## Martian Code Review Bench (martian-recall, martian-scatter, martian-leaderboard)\n\n"
                f"{V.m['prs']} PRs, {V.m['goldens']} Core golden comments ({sev_list}). Others: Martian's published "
-               f"runs (models not published) and scores, its {jl} judge. QuickReview: its frozen build on "
+               f"runs and scores, its {jl} judge; Martian lists no model for them. QuickReview: its frozen build on "
                f"{V.our_model('martian', QR)}, scored by our judge ({V.judge_words('martian')}).\n")
     rows = sorted(V.martian_rows(), key=lambda r: -r[2]["f2"])
     out.append(md_table(["#", "Tool", "F2", "Precision", "Recall", "F1", "Matched", "Unmatched comments"] +
@@ -622,15 +700,28 @@ def numbers(B, V):
                "every benchmark.\n\n")
     out.append(md_table(["Benchmark", "Measure", "QuickReview", "Place", "Best other tool"],
                         [[b, m_, pct(v), f"{k} of {n}", f"{o} {pct(ov)}"] for b, m_, v, k, n, o, ov in standings(B, V)]))
+    import infographics_v5 as I
     seed_model, seed_build = V.key_seed()
-    lenses = statistics.median(p["lenses"] for p in V.v3["ideas"]["idea-funnel"]["prs"].values())
+    jl = V.m["judges"][MARTIAN_JUDGE]["label"]
+    audit = V.model_name(I.AUDITORS)
     out.append("\n## The infographics' counts that come from runs\n\n"
                f"- **review-round:** QuickReview's frozen build on {V.qr_model()}, mean per PR over AACR-Bench's 185 "
-               f"PRs (data/v3.json idea-funnel); \"judged correct\" is our judge's grade ({V.judge_words('aacr')}). "
-               f"Lenses run per PR: median {lenses:g}.\n"
-               f"- **how-key:** \"QuickReview's earlier comments raised 334 of the first 379 defects\" counts the "
-               f"comments of the run that seeded the key, build {seed_build} on {seed_model} "
-               "(FULL-BENCHMARK.md, the key's sources). The key's builders were Claude Code subagents (bench docs).\n"
+               f"PRs (data/v3.json idea-funnel); \"judged correct\" is the benchmark judge's grade "
+               f"({V.judge_words('aacr')}). Lenses run per PR: median {I.median_lenses(V):g}, drawn as that many "
+               "chips.\n"
+               f"- **how-key:** \"334 of the first 379 defects\" counts the comments of the run that seeded the key, "
+               f"QuickReview's default run, build {seed_build} on {seed_model} (FULL-BENCHMARK.md, the key's sources). "
+               f"Every reviewer comment the builders checked came from earlier runs, {V.key_sources()} (the table "
+               f"above). The builders were Claude Code subagents on {audit} (bench docs).\n"
+               f"- **how-fair:** \"lifted 3 rivals 12–17 pts\" compares each rival's best-shot variant with its "
+               f"published run on 40 PRs, all on {V.best_shot(I.LIFTED)}, graded by {V.judge_words('aacr')} "
+               "(FULL-BENCHMARK.md §3; the selection runs are in the table above).\n"
+               f"- **how-martian:** the golden audit (\"Our audit: {B.martian['real_goldens']} of 173 real\") was done "
+               f"by AI investigators on {audit} (GOLDEN-AUDIT-FULL.md); its calibration (\"Recall within … of {jl}\") "
+               f"is our judge ({V.judge_words('martian')}) against Martian's {jl} judge on the same "
+               f"{len(V.m['calibration'])} tools.\n"
+               f"- **how-qodo:** its calibration (\"Within … pts of Qodo's F1\") is our judge "
+               f"({V.judge_words('qodo')}) against Qodo's published F1 on its {len(V.qodo_gaps())} vendor runs.\n"
                "- The other infographics print no measured result.\n")
     return "\n".join(out)
 
@@ -653,23 +744,35 @@ def section_notes(V):
 
 def caption_model(V, n):
     """The model line under an image on the page: whose numbers, on which model, graded by which judge."""
+    import infographics_v5 as I
     qr, frozen = V.qr_model(), "QuickReview: frozen build on "
-    if n.startswith("martian"):
-        return f"{frozen}{qr}; scored by our judge ({V.judge_words('martian')})"
-    if n.startswith("qodo"):
-        return f"{frozen}{qr}; every row graded by our judge ({V.judge_words('qodo')})"
+    aacr = f"reviewers: {V.reviewers('aacr', V.B.aacr_tools())}; judge: {V.judge_words('aacr')}"
+    ran = [t for t, _, _ in V.qodo_rows() if V.model("qodo", t)]
+    if n.startswith("martian") or n == "how-martian":
+        return (f"{frozen}{qr}, scored by our judge ({V.judge_words('martian')}); the other tools at Martian's "
+                f"{V.m['judges'][MARTIAN_JUDGE]['label']}-judge scores"
+                + (f"; golden audit by {V.model_name(I.AUDITORS)} investigators" if n == "how-martian" else ""))
+    if n.startswith("qodo") or n == "how-qodo":
+        return (f"{V.ran_by_us('qodo', [QR] + [t for t in ran if t != QR])}; every row graded by our judge "
+                f"({V.judge_words('qodo')})")
     if n == "aacr-leaderboard":
         jn, je, rounds = V.official_judge()
-        return f"QuickReview: the Oct 1 build on {V.our_model('aacr', OCT1)}; matched by {jn} ({je}, {rounds} rounds)"
+        return (f"QuickReview: the Oct 1 build on {V.our_model('aacr', OCT1)}; matched by {jn} ({je} reasoning, "
+                f"{rounds} rounds averaged)")
     if n.startswith("aacr") or n.startswith("value"):
-        return f"{frozen}{qr}; judge: {V.judge_words('aacr')}; reviewers {V.reviewers('aacr', V.B.aacr_tools())}"
+        return f"{frozen}{qr}; {aacr}"
+    if n == "how-aacr":
+        return cap(aacr)
+    if n == "how-fair":
+        return f"{cap(aacr)}; best-shot selection runs on {V.best_shot(I.LIFTED)}"
     if n == "standings":
         return f"{frozen}{qr} on every benchmark"
     if n == "review-round":
-        return f"Counts: QuickReview's frozen build on {qr}"
+        return f"Counts: QuickReview's frozen build on {qr}; judge: {V.judge_words('aacr')}"
     if n == "how-key":
         seed_model, seed_build = V.key_seed()
-        return f"The key's seed comments: QuickReview build {seed_build} on {seed_model}"
+        return (f"Candidate comments from earlier runs, {V.key_sources()}; the seed: QuickReview build {seed_build} "
+                f"on {seed_model}; built by Claude Code subagents on {V.model_name(I.AUDITORS)}")
     return ""
 
 
@@ -684,24 +787,35 @@ def qr_note(V):
             f"the frozen build with a fast profile) runs {same(fast)} at {V.reasoning('aacr', FAST)} reasoning. "
             f"AACR-Bench's own score shows the Oct 1 build, on {same(oct1)}, and how-key counts the comments of an "
             f"earlier build ({seed_build}, on {seed_model}). The other tools we ran are "
-            f"{V.reviewers('aacr', [t for t in V.B.aacr_tools() if t != QR])}. Judges: {V.judge_words('aacr')} for "
+            f"{V.reviewers('aacr', [t for t in V.B.aacr_tools() if t != QR])}. Judges: {V.judge_words('aacr')}, for "
             f"AACR-Bench; {jn}, {je} reasoning, for AACR-Bench's own score; ours, {V.judge_words('qodo')}, for Qodo and "
             f"QuickReview's Martian row; Martian's {V.m['judges'][MARTIAN_JUDGE]['label']} for its other rows.")
 
 
 SHARE_CSS5 = SHARE_CSS + """
+:root{color-scheme:light dark;--shade:rgba(0,0,0,.18)}:root[data-theme=light]{color-scheme:light}
+:root[data-theme=dark]{color-scheme:dark;--shade:rgba(255,255,255,.2)}
+@media (prefers-color-scheme: dark){:root:not([data-theme=light]){--shade:rgba(255,255,255,.2)}}
 figcaption i{display:block;color:var(--ink2);font-style:normal;font-size:12.5px;margin:-4px 0 8px}
-@media (max-width:700px){#zoom{overflow:auto;align-items:flex-start;justify-content:flex-start}
-#zoom img{max-width:none;max-height:none;width:1200px;border-radius:0}}
+#zoom{overscroll-behavior:contain}#zoom.big{overflow:auto;align-items:flex-start;justify-content:flex-start}
+#zoom.big img{max-width:none;max-height:none;width:1200px;border-radius:0}
 """
+# v4's script, opening an image at its full 1200 px (the overlay scrolls) whenever fitting it to the window would
+# not make it clearly larger than on the page (a phone, a sideways phone, a tablet), and always at its top-left corner
+_OPEN = "zimg.src=vis.src;zimg.alt=vis.alt;zoom.style.display='flex';}));"
+if SHARE_JS.count(_OPEN) != 1:
+    sys.exit("make_charts_v4.SHARE_JS no longer opens an image the way v5 extends")
+SHARE_JS5 = SHARE_JS.replace(_OPEN, "const fit=Math.min(innerWidth-32,(innerHeight-32)*vis.naturalWidth/vis.naturalHeight);\n"
+                             "zoom.classList.toggle('big',fit<1.25*vis.getBoundingClientRect().width);\n"
+                             "zimg.src=vis.src;zimg.alt=vis.alt;zoom.style.display='flex';zoom.scrollTo(0,0);}));")
 
 
 def write_index(out, pages, V):
     """out/v5/index.html: the whole library as ONE self-contained page to share.
 
     Every image is embedded, light and dark, and the page follows the viewer's theme or a switch. Click an image to
-    enlarge it (on a phone the enlarged image scrolls). There are no links to other files, no scripts from
-    elsewhere and no web fonts. Under each image, the model its numbers ran on.
+    enlarge it (where the window is too small to enlarge it whole, it opens at full size and scrolls). There are no
+    links to other files, no scripts from elsewhere and no web fonts. Under each image, the model its numbers ran on.
     """
     import html
     notes = section_notes(V)
@@ -742,37 +856,45 @@ def write_index(out, pages, V):
            "<div class=bar><span>Theme</span><button data-t=auto aria-pressed=true>auto</button>"
            "<button data-t=light aria-pressed=false>light</button><button data-t=dark aria-pressed=false>dark"
            "</button></div>\n" + "\n".join(body) +
-           "\n</main><div id=zoom><img alt=\"\"></div>" + f"<script>{SHARE_JS}</script></body></html>\n")
+           "\n</main><div id=zoom><img alt=\"\"></div>" + f"<script>{SHARE_JS5}</script></body></html>\n")
     with open(os.path.join(out, "index.html"), "w") as fh:
         fh.write(doc)
 
 
-def write_report_html(md_path, html_path, title, out=OUT):
-    """A Markdown report as ONE self-contained HTML page to share. Every image it shows from its own directory is
-    embedded, light and dark; the page follows the viewer's theme or a switch, and its tables scroll sideways on a
-    narrow screen instead of the page."""
+def write_report_html(text, html_path, title, V, out=OUT):
+    """A Markdown report (its page version) as ONE self-contained HTML page to share. Every image it shows from its
+    own directory is embedded, light and dark, with the model line the gallery gives it; the page follows the
+    viewer's theme or a switch; its sources' addresses are links; and its tables scroll sideways on a narrow screen
+    instead of the page, a shadow at the edge showing there is more."""
     import html as H
     import re
     import markdown
-    text = open(md_path).read()
+    text = re.sub(r"(?<![<(])\bhttps?://[^\s<>()]*[^\s<>().,;:]", lambda m: f"<{m.group(0)}>", text)
     body = markdown.markdown(text, extensions=["tables", "sane_lists"])
 
     def figure(m):
-        """An <img> of a chart beside the report, as its light and dark images embedded."""
+        """An <img> of a chart beside the report, as its light and dark images embedded, and its model line."""
         attrs = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
         src = attrs.get("src", "")
         if "/" in src or not src.endswith(".png"):
             return m.group(0)
         stem = os.path.splitext(src)[0]
-        alt = H.escape(H.unescape(attrs.get("alt", "")))
+        model = caption_model(V, stem)
+        alt = H.escape(H.unescape(attrs.get("alt", "")) + (f" ({model})" if model else ""))
         lt, dk = (embed(os.path.join(out, f"{stem}{sfx}.png")) for sfx in ("", "-dark"))
-        return f'<figure><img class=lt src="{lt}" alt="{alt}"><img class=dk src="{dk}" alt="{alt}"></figure>'
+        return (f'<figure><img class=lt src="{lt}" alt="{alt}"><img class=dk src="{dk}" alt="{alt}">'
+                + (f"<figcaption><i>{H.escape(model)}</i></figcaption>" if model else "") + "</figure>")
 
     body = re.sub(r"<img ([^>]*?)\s*/?>", figure, body)
     body = re.sub(r"<p>(<figure>.*?</figure>)</p>", r"\1", body)  # a figure may not sit inside a paragraph
     body = body.replace("<table>", "<div class=scroll><table>").replace("</table>", "</table></div>")
     css = SHARE_CSS5 + ("article{max-width:900px;margin:0 auto}article p,article li{color:var(--ink);max-width:none;"
-                        "overflow-wrap:anywhere}article figure{margin:18px 0;cursor:zoom-in}.scroll{overflow-x:auto}"
+                        "overflow-wrap:anywhere}article figure{margin:18px 0;cursor:zoom-in}article figcaption{padding:"
+                        "10px 14px 6px}.scroll{overflow-x:auto;background:linear-gradient(to right,var(--bg) 30%,"
+                        "transparent) left center/40px 100% no-repeat local,linear-gradient(to left,var(--bg) 30%,"
+                        "transparent) right center/40px 100% no-repeat local,radial-gradient(farthest-side at 0 50%,"
+                        "var(--shade),transparent) left center/14px 100% no-repeat scroll,radial-gradient(farthest-side"
+                        " at 100% 50%,var(--shade),transparent) right center/14px 100% no-repeat scroll}"
                         "table{border-collapse:collapse;margin:12px 0;font-size:14px}th,td{border-bottom:1px solid "
                         "var(--line);padding:6px 10px;text-align:left}th{color:var(--muted);font-weight:600}"
                         "a{color:var(--accent)}")
@@ -782,7 +904,7 @@ def write_report_html(md_path, html_path, title, out=OUT):
            "<div class=bar><span>Theme</span><button data-t=auto aria-pressed=true>auto</button>"
            "<button data-t=light aria-pressed=false>light</button><button data-t=dark aria-pressed=false>dark"
            "</button></div>\n" + body + "\n</article></main><div id=zoom><img alt=\"\"></div>"
-           f"<script>{SHARE_JS}</script></body></html>\n")
+           f"<script>{SHARE_JS5}</script></body></html>\n")
     with open(html_path, "w") as fh:
         fh.write(doc)
 
@@ -812,10 +934,10 @@ def render(figs, names, out=OUT, full=False):
         with open(os.path.join(out, "NUMBERS.md"), "w") as fh:
             fh.write(numbers(B, V))
         import value_v5
-        md = os.path.join(out, "BUG-VALUE.md")
-        with open(md, "w") as fh:
+        with open(os.path.join(out, "BUG-VALUE.md"), "w") as fh:
             fh.write(value_v5.report(B, V))
-        write_report_html(md, os.path.join(out, "bug-value.html"), "What a found bug is worth", out)
+        write_report_html(value_v5.report(B, V, page=True), os.path.join(out, "bug-value.html"),
+                          "What a found bug is worth", V, out)
         write_index(out, pages, V)
     return bad
 

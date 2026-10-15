@@ -19,18 +19,22 @@ used. This file reads all of them from the runs themselves:
       - the defect key's: data/aacr.json `judge`, checked against every drawn run's judge directory;
       - AACR-Bench's own score's: each scored run's judge.txt;
       - Martian's and Qodo's: each scored directory's judge/JUDGE.txt;
-  - the key seed: the run whose comments seeded the AACR key (how-key's "334 of the first 379").
-    FULL-BENCHMARK.md's table of the key's sources names it: QuickReview's default arm, all-default-rest145.
-Only the runs whose numbers the v5 images draw are read:
+  - the AACR key's sources (how-key):
+      - the seed: the run whose comments seeded the key ("334 of the first 379"). FULL-BENCHMARK.md's table of the
+        key's sources names it: QuickReview's default arm, all-default-rest145;
+      - every reviewer run whose comments the key's builders checked: QuickReview's default and low arms and
+        open-code-review (the first build), then Codex CLI, OpenCode, pi-review and Claude Code (its extension).
+        FULL-BENCHMARK.md's run table names their rest145 runs;
+  - the best-shot selection (how-fair's "lifted 3 rivals"): every fair-* run, the variants FULL-BENCHMARK.md §3
+    picked each rival's configuration from.
+Besides those, only the runs whose numbers the v5 images draw are read:
   - AACR-Bench: aacr-arms.txt and aacr-arms-v3.txt;
   - Martian: refresh_v4's Martian run, since the Martian charts draw Martian's own board plus QuickReview;
   - Qodo: the qodo-sources.txt rows that are our own reviews.
-Three checks stop this run:
-  - the runs an arm lists must agree on the model;
-  - every effort must be a known level;
-  - every model id needs a name in data/models.json.
-So no image names a model it cannot trace to a run. The vendors' own reviews carry no model here: the vendors do
-not publish one.
+It stops whenever a run cannot be traced: among other cases, when the runs an arm lists disagree on the model, an
+effort is not a known level, a run calls a model it is not configured for, a judge file does not parse, or a model
+id has no name in data/models.json. So no image names a model it cannot trace to a run. The vendors' own reviews
+carry no model here: their published runs record none.
 
 The runs directory is only read. Nothing here calls a model.
 """
@@ -43,6 +47,15 @@ from refresh_v4 import MARTIAN_RUN  # noqa: E402  (the scored Martian run the v4
 
 AACR_ARMS = ["aacr-arms.txt", "aacr-arms-v3.txt"]
 KEY_SEED = "all-default-rest145"  # FULL-BENCHMARK.md, the v1 key's sources: "default's comments | 334"
+# FULL-BENCHMARK.md: the reviewers whose comments the key's builders checked (v1: "quickreviewd default, quickreviewd low
+# and OCR"; the v2 extension: "the four new reviewers"), with their rest145 runs from its run table
+KEY_SOURCES = [("quickreview", [KEY_SEED]), ("quickreview low", ["all-low-rest145"]),
+               ("open-code-review", ["all-ocr-rest145"]),
+               ("codex-cli", ["all-codex-rest145"] + [f"all-codex-c{i}-rest145" for i in range(1, 5)]),
+               ("opencode", ["all-opencode-rest145"] + [f"all-opencode-c{i}-rest145" for i in range(1, 5)]),
+               ("pi-review", [f"all-pireview-c{i}-rest145" for i in range(1, 5)]),
+               ("claude-code", [f"all-claude-c{i}-rest145" for i in range(1, 5)])]
+BEST_SHOT = "fair-*-rest145"  # FULL-BENCHMARK.md §3: "Every variant ran once on those 40 PRs ... (runs `fair-*`)"
 TOOL = {"codex": "codex-cli", "claude": "claude-code", "ocr": "open-code-review", "opencode": "opencode",
         "pragent": "pr-agent", "pireview": "pi-review"}  # run.json `reviewer` -> the showcase's tool id
 EFFORTS = ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max"]  # pi's levels, and OpenAI's "none"
@@ -174,9 +187,14 @@ def aacr(runs_dir):
                     sys.exit(f"aacr {tool}: {run}/judge.txt names no judge")
                 _, jm, je = spec(m.group(1))
                 harness[run] = {"model": jm, "effort": je, "rounds": int(m.group(2))}
+    fair = sorted(os.path.basename(d) for d in glob.glob(os.path.join(runs_dir, BEST_SHOT)) if os.path.isdir(d))
+    if not fair:
+        sys.exit(f"aacr: no {BEST_SHOT} run for the best-shot selection")
     return {"judge": {"model": model, "effort": effort, "from": ["data/aacr.json judge; every drawn run's judge dir"]},
             "official_judge": one("AACR-Bench's own score judge", harness),
             "key_seed": arm(runs_dir, "key seed", [KEY_SEED]),
+            "key_sources": {who: arm(runs_dir, who, runs) for who, runs in KEY_SOURCES},
+            "best_shot": {run: run_models(runs_dir, run) for run in fair},
             "reviewers": {tool: arm(runs_dir, tool, runs) for tool, runs in arms}}
 
 
@@ -211,6 +229,7 @@ def main():
            "qodo": qodo(a.runs_dir)}
     names = json.load(open(os.path.join(HERE, "data", "models.json")))["models"]
     used = {out["aacr"]["official_judge"]["model"]} | set(out["aacr"]["key_seed"]["models"])
+    used |= {m for r in [*out["aacr"]["key_sources"].values(), *out["aacr"]["best_shot"].values()] for m in r["models"]}
     for b in ("aacr", "martian", "qodo"):
         used |= {out[b]["judge"]["model"]} | {m for r in out[b]["reviewers"].values() for m in r["models"]}
     missing = sorted(used - set(names))
@@ -226,6 +245,8 @@ def main():
             o = out[b]["official_judge"]
             print(f"{'':9s}own-score judge {o['model']} ({o['effort']}, {o['rounds']} rounds)")
             rows["(key seed)"] = out[b]["key_seed"]
+            rows.update({f"(key source) {k}": v for k, v in out[b]["key_sources"].items()})
+            rows.update({f"(best shot) {k}": v for k, v in out[b]["best_shot"].items()})
         for t, r in rows.items():
             calls = " ".join(f"{m}×{n}" for m, n in r.get("calls", {}).items())
             print(f"{'':9s}{t:20s} {', '.join(r['models']):18s} {'/'.join(r['efforts']):12s} "
