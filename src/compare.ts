@@ -23,7 +23,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkAnchor, runsByPath, type Side } from "./anchors.js";
-import type { MutationKind } from "./gate.js";
+import { MUTATION_KINDS, type MutationKind } from "./gate.js";
 
 // ---- shapes ------------------------------------------------------------------
 
@@ -84,9 +84,9 @@ export interface Finding {
 
 /** Every mutation kind the sandbox is allowed to intend. The invariant scan is
  * an allowlist check, not a keyword hunt: any record whose kind is not on this
- * list is a violation by construction. It is every gate.ts kind but the two in
- * `NOT_ALLOWED_MUTATION_KINDS`, so a record of a kind gate.ts does not have
- * could only come from code that must not exist. */
+ * list is a violation by construction — a kind gate.ts does not have, or one
+ * of the gate kinds left off it (`NOT_ALLOWED_MUTATION_KINDS`), could only
+ * come from code that must not exist. */
 export const ALLOWED_MUTATION_KINDS = [
   "add_label",
   "remove_label",
@@ -107,16 +107,15 @@ export const ALLOWED_MUTATION_KINDS = [
   "request_reviewer",
 ] as const satisfies readonly MutationKind[];
 
-/** The gate kinds a dry-run record must never carry. `supersede_own_review`
- * has no adapter method and no caller, so a record of it is code that must
- * not exist; `update_own_webhook_url` is the app-self-config class, which the
- * gate executes rather than records. */
-export const NOT_ALLOWED_MUTATION_KINDS = [
-  "supersede_own_review",
-  "update_own_webhook_url",
-] as const satisfies readonly MutationKind[];
-
 const ALLOWED = new Set<string>(ALLOWED_MUTATION_KINDS);
+
+/** The gate kinds a dry-run record must never carry: the review-superseding
+ * kind, which has no adapter method and no caller, and the app-self-config
+ * class, which the gate executes rather than records
+ * (tests/compare.test.ts pins exactly those two). */
+export const NOT_ALLOWED_MUTATION_KINDS: readonly MutationKind[] = MUTATION_KINDS.filter(
+  (k) => !ALLOWED.has(k),
+);
 
 // ---- dry-run collection ------------------------------------------------------
 
