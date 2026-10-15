@@ -182,10 +182,7 @@ export function normalizeCut(
     units.push({
       name: unit.name.trim(),
       roots,
-      kind:
-        typeof unit.kind === "string" && KINDS.has(unit.kind as UnitKind)
-          ? (unit.kind as UnitKind)
-          : "custom",
+      kind: unitKind(unit.kind),
       note: typeof unit.note === "string" ? unit.note.trim() : "",
     });
   }
@@ -202,16 +199,22 @@ export function normalizeCut(
   return errors.length > 0 ? { ok: false, errors } : { ok: true, cut: { units, ignored } };
 }
 
-const KINDS = new Set<UnitKind>([
-  "django-app",
-  "js-package",
-  "python-package",
-  "go-module",
-  "rust-crate",
-  "directory",
-  "rest",
-  "custom",
-]);
+/** Every unit kind, as a record so the compiler requires each member. */
+const KIND_TABLE: Record<UnitKind, true> = {
+  "django-app": true,
+  "js-package": true,
+  "python-package": true,
+  "go-module": true,
+  "rust-crate": true,
+  directory: true,
+  rest: true,
+  custom: true,
+};
+
+/** A supplied kind, or `custom` for anything that is not one. */
+function unitKind(raw: unknown): UnitKind {
+  return typeof raw === "string" && Object.hasOwn(KIND_TABLE, raw) ? (raw as UnitKind) : "custom";
+}
 
 function normalizeRoots(raw: readonly string[], owner: string, errors: string[]): string[] {
   const out: string[] = [];
@@ -311,10 +314,7 @@ export function applyOps(
           next.units.push({
             name: o.name.trim(),
             roots,
-            kind:
-              typeof o.kind === "string" && KINDS.has(o.kind as UnitKind)
-                ? (o.kind as UnitKind)
-                : "custom",
+            kind: unitKind(o.kind),
             note: typeof o.note === "string" ? o.note.trim() : "added by the operator",
           });
         }
