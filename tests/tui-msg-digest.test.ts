@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
 import {
+  deliverMessage,
   InjectSender,
   injectFileName,
   injectProbeArgv,
@@ -138,6 +139,38 @@ describe("InjectSender", () => {
 });
 
 // ---- the input box flow through the App ------------------------------------
+
+// The action channel's message verbs read the sender's LAST word: delivered
+// resolves, undelivered (or a throwing sender) rejects with its label.
+describe("deliverMessage — the outcome the action result carries", () => {
+  it("resolves on delivered, rejects on undelivered or a sender that throws", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let final: DeliveryState = "delivered";
+    installMessageHooks(app, {
+      send: async (session, _text, onState) => {
+        onState("pending", `→ msg ${session} pending…`);
+        if (final === ("pending" as DeliveryState)) throw new Error("ssh died");
+        onState(
+          final,
+          final === "delivered"
+            ? `✓ msg ${session} delivered`
+            : `✖ msg ${session} undelivered (session down?)`,
+        );
+      },
+    });
+    await expect(deliverMessage(app, "pr-7", "hi")).resolves.toBe("✓ msg pr-7 delivered");
+    final = "undelivered";
+    await expect(deliverMessage(app, "overseer", "hi")).rejects.toThrow(
+      /overseer undelivered \(session down/,
+    );
+    final = "pending";
+    await expect(deliverMessage(app, "pr-7", "hi")).rejects.toThrow(/undelivered \(ssh died\)/);
+    expect(app.view.noticeLine).toContain("ssh died");
+    app.hooks.sendMessage = undefined;
+    await expect(deliverMessage(app, "pr-7", "hi")).rejects.toThrow(/not wired/);
+  });
+});
 
 describe("quick-message input box", () => {
   it("m opens the box, typing edits, ⏎ hands the verbatim text to the sender", async () => {

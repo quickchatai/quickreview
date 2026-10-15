@@ -37,8 +37,14 @@ function mockDriver(overrides: Partial<TuiDriver> = {}): {
     memoryView: (opts) => calls.push(["memoryView", opts]),
     setBoardFilter: (f) => calls.push(["setBoardFilter", f]),
     setMemoryFilter: (tag) => calls.push(["setMemoryFilter", tag]),
-    msgSession: (session, text) => calls.push(["msgSession", session, text]),
-    overseerInject: (text) => calls.push(["overseerInject", text]),
+    msgSession: (session, text) => {
+      calls.push(["msgSession", session, text]);
+      return Promise.resolve(`✓ msg ${session} delivered`);
+    },
+    overseerInject: (text) => {
+      calls.push(["overseerInject", text]);
+      return Promise.resolve("✓ msg overseer delivered");
+    },
     deployTab: (action) => calls.push(["deployTab", action]),
     memoryPin: (entry, pin) => {
       calls.push(["memoryPin", entry, pin]);
@@ -258,9 +264,9 @@ describe("parseTuiAction — refusals, never a throw", () => {
 });
 
 describe("executeTuiAction — driver dispatch + traces", () => {
-  it("routes every verb to the right driver method and returns a one-line trace", () => {
+  it("routes every verb to the right driver method and returns a one-line trace", async () => {
     const { calls, driver } = mockDriver();
-    const traces = [
+    const traces = await Promise.all([
       executeTuiAction({ verb: "switch_tab", tab: "metrics" }, driver),
       executeTuiAction({ verb: "switch_tab", tab: "feedback" }, driver),
       executeTuiAction({ verb: "select_pr", pr: 5312 }, driver),
@@ -275,7 +281,7 @@ describe("executeTuiAction — driver dispatch + traces", () => {
       executeTuiAction({ verb: "msg_session", session: "pr-5312", text: "hello" }, driver),
       executeTuiAction({ verb: "overseer_inject", text: "look" }, driver),
       executeTuiAction({ verb: "deploy_tab", action: "stop" }, driver),
-    ];
+    ]);
     expect(calls).toEqual([
       ["switchTab", "metrics"],
       ["switchTab", "feedback"],
@@ -304,8 +310,8 @@ describe("executeTuiAction — driver dispatch + traces", () => {
       "companion ▸ board filter cleared",
       "companion ▸ memory filter → #bug",
       "companion ▸ memory filter cleared",
-      "companion ▸ msg pr-5312 (5 chars)",
-      "companion ▸ overseer inject (4 chars)",
+      "companion ▸ msg pr-5312 (5 chars) → ✓ msg pr-5312 delivered",
+      "companion ▸ overseer inject (4 chars) → ✓ msg overseer delivered",
       "companion ▸ deploy tab → stop",
     ]);
   });
@@ -421,6 +427,37 @@ describe("memory_pin — pin/unpin through the TUI's one store", () => {
         readFileSync(join(dir, "2026-10-07T10-00-00-pin.result.json"), "utf8"),
       );
       expect(result.ok).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// A message's result says what became of it: the sender's last word, not
+// that it was handed over. MUTATION: fire-and-forget the send and return the
+// trace at once — red (the undelivered message reads ok).
+describe("msg_session / overseer_inject — the result waits for delivery", () => {
+  it("an undelivered message is a failed result, a delivered one carries its label", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tui-actions-msg-"));
+    try {
+      writeFileSync(
+        join(dir, "2026-10-07T10-00-00-msg.json"),
+        JSON.stringify({ verb: "msg_session", params: { session: "pr-7", text: "hi" } }),
+      );
+      writeFileSync(
+        join(dir, "2026-10-07T10-00-01-ov.json"),
+        JSON.stringify({ verb: "overseer_inject", params: { text: "look" } }),
+      );
+      const { driver } = mockDriver({
+        msgSession: () => Promise.reject(new Error("✖ msg pr-7 undelivered (session down?)")),
+      });
+      const [msg, ov] = await processTuiActions(dir, driver);
+      expect(msg).toMatchObject({ ok: false, message: expect.stringContaining("undelivered") });
+      const result = JSON.parse(
+        readFileSync(join(dir, "2026-10-07T10-00-00-msg.result.json"), "utf8"),
+      );
+      expect(result.ok).toBe(false);
+      expect(ov).toMatchObject({ ok: true, message: expect.stringContaining("delivered") });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -108,10 +108,45 @@ export class InjectSender implements MessageSender {
   }
 }
 
+/** How a sent quick-message ended: the sender's last word on it. */
+export interface MessageOutcome {
+  delivered: boolean;
+  label: string;
+}
+
 export function installMessageHooks(app: App, sender?: MessageSender): void {
   const s = sender ?? new InjectSender(app.cfg, app.ssh);
   app.hooks.message = (session, theApp) => theApp.openMessageBox(session);
-  app.hooks.sendMessage = (session, text, theApp) => {
-    void s.send(session, text, (_state, label) => theApp.notice(label));
+  app.hooks.sendMessage = async (session, text, theApp) => {
+    let last: MessageOutcome = { delivered: false, label: `✖ msg ${session} undelivered` };
+    try {
+      await s.send(session, text, (state, label) => {
+        theApp.notice(label);
+        if (state !== "pending") last = { delivered: state === "delivered", label };
+      });
+    } catch (err) {
+      last = {
+        delivered: false,
+        label: `✖ msg ${session} undelivered (${err instanceof Error ? err.message : String(err)})`,
+      };
+      theApp.notice(last.label);
+    }
+    return last;
   };
+}
+
+/**
+ * A quick-message sent on the companion's behalf (the action channel's
+ * `msg_session` / `overseer_inject`): resolves with the delivered label once
+ * the inject bridge consumed it, REJECTS with the undelivered one — so the
+ * action's result file says what became of the message, never just that it
+ * was handed to the sender.
+ */
+export async function deliverMessage(app: App, session: string, text: string): Promise<string> {
+  const send = app.hooks.sendMessage;
+  if (!send) throw new Error(`✖ msg ${session} undelivered (sender not wired)`);
+  const outcome = await send(session, text, app);
+  if (!outcome) throw new Error(`msg ${session} sent, delivery unconfirmed`);
+  if (!outcome.delivered) throw new Error(outcome.label);
+  return outcome.label;
 }

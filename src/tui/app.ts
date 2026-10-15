@@ -10,6 +10,7 @@
 import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
 import type { AlertBadge } from "./alerts.js";
+import type { MessageOutcome } from "./msg.js";
 import {
   boardBarHeight,
   boardKeys,
@@ -91,8 +92,9 @@ export interface AppHooks {
   // pane and the companion column are the only terminals, both embedded.
   /** Open the quick-message box for the given session. */
   message?: (session: string, app: App) => void;
-  /** Deliver a submitted quick-message (inject write + confirmation). */
-  sendMessage?: (session: string, text: string, app: App) => void;
+  /** Deliver a submitted quick-message (inject write + confirmation);
+   * resolves with how the delivery ended. */
+  sendMessage?: (session: string, text: string, app: App) => void | Promise<MessageOutcome>;
   /** Cancel the PR's running round and re-queue it, via the daemon's
    * `commands/` dir. The board's one write action beyond wakes — see
    * src/tui/unwedge.ts for why it exists and what bounds it. */
@@ -760,7 +762,7 @@ export class App {
         }
         this.msgDraft = "";
         if (text.length > 0 && session) {
-          if (this.hooks.sendMessage) this.hooks.sendMessage(session, text, this);
+          if (this.hooks.sendMessage) void this.hooks.sendMessage(session, text, this);
           else this.notice(`✖ msg ${session} undelivered (sender not wired)`);
         }
         break;

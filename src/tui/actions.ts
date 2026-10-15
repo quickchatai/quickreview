@@ -68,8 +68,11 @@ export interface TuiDriver {
   memoryPin(entry: string, pin: boolean): Promise<string>;
   setBoardFilter(f: BoardFilter | null): void;
   setMemoryFilter(tag: string | null): void;
-  msgSession(session: string, text: string): void;
-  overseerInject(text: string): void;
+  /** A quick-message to `session` (`overseerInject`: to the overseer).
+   * Resolves with the delivered label once the inject bridge consumed it;
+   * REJECTS when it went undelivered, so the result file says it failed. */
+  msgSession(session: string, text: string): Promise<string>;
+  overseerInject(text: string): Promise<string>;
   deployTab(action: "deploy" | "stop" | "start" | "abort"): void;
 }
 
@@ -320,11 +323,13 @@ export function executeTuiAction(a: TuiAction, driver: TuiDriver): string | Prom
         .memoryPin(a.entry, a.pin)
         .then((message) => `companion ▸ memory ${a.pin ? "pin" : "unpin"} → ${message}`);
     case "msg_session":
-      driver.msgSession(a.session, a.text);
-      return `companion ▸ msg ${a.session} (${a.text.length} chars)`;
+      return driver
+        .msgSession(a.session, a.text)
+        .then((label) => `companion ▸ msg ${a.session} (${a.text.length} chars) → ${label}`);
     case "overseer_inject":
-      driver.overseerInject(a.text);
-      return `companion ▸ overseer inject (${a.text.length} chars)`;
+      return driver
+        .overseerInject(a.text)
+        .then((label) => `companion ▸ overseer inject (${a.text.length} chars) → ${label}`);
     case "deploy_tab":
       driver.deployTab(a.action);
       return `companion ▸ deploy tab → ${a.action}`;

@@ -24,6 +24,7 @@ import {
 } from "./reload.js";
 import { killInFlightSsh, runnerFor, transportOf } from "./remote.js";
 import { chainOnPoll } from "./poll-hooks.js";
+import { deliverMessage } from "./msg.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
 
 export { chainOnPoll } from "./poll-hooks.js";
@@ -264,8 +265,8 @@ export function buildTuiDriver(
       learning.memory.selKey = undefined;
       app.repaint();
     },
-    msgSession: (session, text) => app.hooks.sendMessage?.(session, text, app),
-    overseerInject: (text) => app.hooks.sendMessage?.("overseer", text, app),
+    msgSession: (session, text) => deliverMessage(app, session, text),
+    overseerInject: (text) => deliverMessage(app, "overseer", text),
     deployTab: (action) => {
       prep();
       app.tab = "deploy";
