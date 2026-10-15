@@ -53,7 +53,15 @@ import { authFingerprint, AuthExpiring, benchAuthMode, syncBenchAuth } from "./a
 import { run } from "./exec.js";
 import { bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
 import type { OcrShapedComment } from "./opencode.js";
-import { roundMetrics } from "./report.js";
+import {
+  datasetLine,
+  dropMetricsFiles,
+  kTokens,
+  reportPreamble,
+  roundMetrics,
+  SCORE_TABLE_HEAD,
+  scoreRow,
+} from "./report.js";
 import { prepareTree } from "./runner.js";
 
 /** The harness's CLI-runner budget (reviewers/codex.py: 30 min + 60 s), per
@@ -484,6 +492,30 @@ function writeResult(outDir: string, c: BenchCase, payload: Record<string, unkno
   );
 }
 
+/** What an attempt keeps of PR-Agent's own output in the case dir: its
+ * captures and rendered markdown (archived name ← the driver's file). */
+const ARCHIVED_CAPTURES = [
+  ["pragent-describe.json", "describe.json"],
+  ["pragent-description.md", "description.md"],
+  ["pragent-review.json", "review.json"],
+  ["pragent-improve.json", "improve.json"],
+  ["pragent-review.md", "review.md"],
+  ["pragent-improve.md", "improve.md"],
+] as const;
+
+/** Every file an attempt writes into the case dir from PR-Agent's run — its
+ * captures, the argv and each command's log. An attempt starts by removing
+ * them, so a file this attempt did not produce is never an earlier one's
+ * read as this one's. */
+function clearAttemptFiles(caseDir: string): void {
+  for (const name of [
+    ...ARCHIVED_CAPTURES.map(([archived]) => archived),
+    "pragent-argv.json",
+    ...PRAGENT_COMMANDS.map((command) => `pragent-${command}.log`),
+  ])
+    rmSync(join(caseDir, name), { force: true });
+}
+
 export function readPragentSummary(outDir: string, c: BenchCase): PragentCaseSummary | null {
   const p = join(outDir, "cases", safeId(c.instance_id), "case-summary.json");
   if (!existsSync(p)) return null;
@@ -509,6 +541,7 @@ export async function reviewCasePragent(
   const tmpDir = join(scratch, "tmp");
   const out = join(scratch, "out");
   mkdirSync(caseDir, { recursive: true });
+  clearAttemptFiles(caseDir);
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const summary = emptySummary(c, o.fingerprint);
@@ -617,14 +650,7 @@ export async function reviewCasePragent(
         ? "timeout"
         : "failed";
     if (summary.status !== "ok") summary.error = summary.warnings.join(" | ").slice(0, 1500);
-    for (const [name, file] of [
-      ["pragent-describe.json", "describe.json"],
-      ["pragent-description.md", "description.md"],
-      ["pragent-review.json", "review.json"],
-      ["pragent-improve.json", "improve.json"],
-      ["pragent-review.md", "review.md"],
-      ["pragent-improve.md", "improve.md"],
-    ] as const)
+    for (const [name, file] of ARCHIVED_CAPTURES)
       if (existsSync(join(out, file)))
         writeFileSync(join(caseDir, name), readFileSync(join(out, file)));
   } catch (err) {
@@ -656,7 +682,6 @@ export async function reviewCasePragent(
   // removes the one an earlier attempt left.
   if (body) writeFileSync(join(caseDir, "review.md"), body + "\n");
   else rmSync(join(caseDir, "review.md"), { force: true });
-  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writeResult(
     o.outDir,
     c,
@@ -672,6 +697,9 @@ export async function reviewCasePragent(
       bench: { status: summary.status, bridge: b, fingerprint: o.fingerprint, unlocated },
     }),
   );
+  // The summary is the case's completion mark (`--resume` skips an ok one),
+  // so it is written after the result file it vouches for.
+  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   log(
     `pragent: ${c.instance_id} ${summary.status} — ${summary.comments} comment(s) (review ${review.length}, improve ${improve.length}, unlocated ${unlocated.length}), ${summary.duration_seconds}s` +
       (b
@@ -693,7 +721,7 @@ export function unprefetchedPragentCase(
   const caseDir = join(outDir, "cases", safeId(c.instance_id));
   mkdirSync(caseDir, { recursive: true });
   rmSync(join(caseDir, "review.md"), { force: true });
-  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
+  clearAttemptFiles(caseDir);
   writeResult(
     outDir,
     c,
@@ -709,6 +737,7 @@ export function unprefetchedPragentCase(
       bench: { status: "failed", bridge: null, fingerprint, error },
     }),
   );
+  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   return summary;
 }
 
@@ -759,6 +788,19 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
   const previous = existsSync(runFile)
     ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
     : null;
+  // Every result file this run removes or rewrites was scored by the run's
+  // metrics, so they go before the first one changes; a resume that skips
+  // every case keeps them.
+  let metricsDropped = false;
+  const dropMetricsOnce = (): void => {
+    if (metricsDropped) return;
+    metricsDropped = true;
+    const gone = dropMetricsFiles(join(r.outDir, "results", "all"));
+    if (gone.length)
+      r.log(
+        `pragent: ${gone.length} metrics file(s) scored the old results — removed; re-run eval to score the new reviews`,
+      );
+  };
   // run.json is about to carry THIS configuration: a case reviewed under
   // another goes now (not when the loop reaches it), so a stop partway can
   // never leave it scored under this run's label.
@@ -770,8 +812,10 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
       r.log(
         `pragent: ${c.instance_id} was reviewed by a different PR-Agent/model/verbosity/flags — its result is dropped`,
       );
+    const result = join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`);
+    if (existsSync(result)) dropMetricsOnce();
     rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-    rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
+    rmSync(result, { force: true });
   }
   const runRecord = {
     reviewer: "pragent",
@@ -827,6 +871,8 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
       r.log(`pragent: STOPPED — ${err.message}`);
       break;
     }
+    // This case's result is about to be rewritten.
+    dropMetricsOnce();
     let meta: PrefetchMeta;
     try {
       meta = r.readMeta(c);
@@ -867,14 +913,6 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
 
 // ---- the report ----------------------------------------------------------------------
 
-function n(v: number | undefined): string {
-  return v === undefined
-    ? "?"
-    : Number.isInteger(v)
-      ? String(v)
-      : String(Math.round(v * 100) / 100);
-}
-
 /** The PR-Agent arm's report: the harness's numbers, then per case what each
  * command did and what it cost at the bridge. */
 export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
@@ -888,12 +926,12 @@ export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCa
   const judge = existsSync(judgeFile)
     ? readFileSync(judgeFile, "utf8").trim().split("\n")
     : ["not run"];
-  const k = (x: number): string => `${Math.round(x / 1000)}k`;
+  const k = kTokens;
   L.push(`# AACR-Bench run — ${set.name} — PR-Agent`);
   L.push("");
-  L.push(
-    `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
-  );
+  L.push(reportPreamble(set));
+  L.push("");
+  L.push(datasetLine(set, cases));
   L.push(
     `- Reviewer: PR-Agent ${String(run["pragent_version"] ?? "?")} — its CLI \`describe\`, \`review\`, \`improve\` (the GitHub App's default pr_commands) on the local git provider (base...head), PR title/description ${run["pr_text"] === false ? "withheld (--no-pr-text)" : "as the GitHub provider supplies them"}, PR-Agent's default configuration; timeout ${String((run["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s) per command`,
   );
@@ -905,10 +943,9 @@ export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCa
   L.push("");
   L.push("## Scores (the AACR harness, OCR reader)");
   L.push("");
-  L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
-  L.push("|---|---|---|---|---|---|---|---|---|");
+  L.push(...SCORE_TABLE_HEAD);
   const row = (label: string, s: Record<string, number>): string =>
-    `| ${label} | ${n(s["evaluated_instances"])}/${cases.length} | ${n(s["generated_notes"])} | ${n(s["matched_semantic_notes"])}/${n(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
+    scoreRow(label, s, cases.length);
   const { rounds, average } = roundMetrics(join(outDir, "results", "all"));
   if (average) L.push(row("**average**", average));
   for (const r of rounds) L.push(row(String(r.round), r.summary));

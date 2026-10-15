@@ -216,6 +216,11 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
       adoptExistingSessions: async () => (await p.sessions.adopt()).adopted,
     },
     bot_login: cfg.github.bot_login,
+    labels: {
+      trigger: cfg.github.trigger_label,
+      in_progress: cfg.github.in_progress_label,
+      reviewed: cfg.github.reviewed_label,
+    },
   };
   try {
     const run = await runChecklist(deps);

@@ -427,7 +427,6 @@ async function main(): Promise<number> {
           store,
           outDir,
           agentDir,
-          profile,
           timeoutMs,
           keepTree: f.has("--keep-tree"),
           log,

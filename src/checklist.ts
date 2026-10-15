@@ -333,11 +333,28 @@ export async function probeRestartRecovery(deps: RestartProbeDeps): Promise<Prob
 
 // ---- ③ ⑥ guided-manual -------------------------------------------------------
 
+/** The PR labels the reviewer reads and writes (`[github] trigger_label`,
+ * `in_progress_label`, `reviewed_label`). */
+export interface ChecklistLabels {
+  trigger: string;
+  in_progress: string;
+  reviewed: string;
+}
+
+/** The labels config.example.toml ships, for a checklist given none. */
+export const DEFAULT_CHECKLIST_LABELS: ChecklistLabels = {
+  trigger: "AI review requested",
+  in_progress: "AI review in progress",
+  reviewed: "Automatic Review",
+};
+
 /** The two live test-PR items. Never automated: they are the only steps that
  * run with `dry_run` off, and running them is the operator's act on the VM.
- * The bot identity renders from config, never from a hardcoded login. */
+ * The bot identity and the labels render from config, never from a
+ * hardcoded login or label. */
 export function manualItems(
   botLogin = "the review App bot",
+  labels: ChecklistLabels = DEFAULT_CHECKLIST_LABELS,
 ): Array<{ item: string; name: string; instructions: string[] }> {
   return [
     {
@@ -345,12 +362,14 @@ export function manualItems(
       name: "live test PR — full pipeline (dry_run OFF)",
       instructions: [
         "Open a trivial doc-change PR on the reviewed repo and add the",
-        '"AI review requested" label. Then, with dry_run set to false FOR THIS ITEM ONLY:',
+        `"${labels.trigger}" label. Then, with dry_run set to false FOR THIS ITEM ONLY:`,
         "  - the trigger is consumed and verified gone (label removed / team request cleared)",
-        '  - "AI review in progress" cycles, then "Automatic Review" lands',
+        `  - "${labels.in_progress}" cycles, then "${labels.reviewed}" lands`,
         `  - the review is posted as ${botLogin}`,
-        "  - the per-PR worktree is created and removed again",
+        "  - the per-PR worktree is created (it stays while the PR is open: the",
+        "    PR's session is sticky)",
         "  - verdict/pr-<n>-round-1.json is written and valid",
+        "  - close the test PR: its worktree is removed and its session archived",
         "Restore dry_run = true afterwards. The cutover flip is a separate, later act.",
       ],
     },
@@ -372,12 +391,12 @@ export function manualItems(
   ];
 }
 
-export function renderManualItems(botLogin?: string): string {
+export function renderManualItems(botLogin?: string, labels?: ChecklistLabels): string {
   const lines: string[] = [
     "Guided-manual items (never automated — run these by hand on the VM):",
     "",
   ];
-  for (const m of manualItems(botLogin)) {
+  for (const m of manualItems(botLogin, labels)) {
     lines.push(`${m.item} ${m.name}`);
     for (const l of m.instructions) lines.push(`   ${l}`);
     lines.push("");
@@ -398,6 +417,9 @@ export interface ChecklistDeps {
   /** `[github] bot_login`, rendered into the guided-manual prose.
    * Absent ⇒ the role wording ("the review App bot"). */
   bot_login?: string;
+  /** The configured PR labels, rendered into the guided-manual prose.
+   * Absent ⇒ the shipped defaults. */
+  labels?: ChecklistLabels;
 }
 
 export function renderTable(results: ProbeResult[]): string {
@@ -456,7 +478,7 @@ export async function runChecklist(
     "",
     renderTable(results),
     "",
-    renderManualItems(deps.bot_login),
+    renderManualItems(deps.bot_login, deps.labels),
   ].join("\n");
   print(report);
   return { results, report, exitCode: exitCodeFor(results) };

@@ -1026,7 +1026,7 @@ export function applyReviewEffort(models: ModelsConfig): ModelsConfig {
   };
 }
 
-function parseEffort(raw: unknown): ReviewEffort {
+export function parseEffort(raw: unknown): ReviewEffort {
   const v = String(raw ?? "")
     .trim()
     .toLowerCase();

@@ -11,8 +11,9 @@
 //     part of webhook.ts's `Interpretation` union, and nothing here can alter
 //     which kind an event interprets as. A `[feedback]`-prefixed comment still
 //     diverts to the feedback sink before author_reply; an untagged reply in a
-//     bot thread still reaches ping-pong; a top-level comment is still
-//     `ignored` for routing purposes — and is recorded all the same.
+//     bot thread still reaches ping-pong; a top-level comment routes only as
+//     webhook.ts decides (a blocked PR's author's reply, else `ignored`) —
+//     and is recorded all the same.
 //     Mistaking a genuine reply for feedback silently ignores the author,
 //     which is worse than losing a signal; broad capture is what makes erring
 //     toward the reply cost no evidence.
@@ -124,12 +125,24 @@ export function captureFromEvent(
   }
 }
 
-function admit(pr: number, user: any, body: string, deps: CaptureDeps): string | null {
-  if (!Number.isInteger(pr) || pr <= 0) return "no PR number";
-  if (isBotIdentity(user?.login, user?.type, deps.botLogin)) return "bot author";
-  if (body.trim() === "") return "empty body";
-  if (!deps.isTrackedPr(pr)) return "PR not tracked";
+function admit(c: CapturedComment, deps: CaptureDeps): string | null {
+  if (!Number.isInteger(c.pr) || c.pr <= 0) return "no PR number";
+  const no = notHuman(c, deps.botLogin);
+  if (no) return no;
+  if (!deps.isTrackedPr(c.pr)) return "PR not tracked";
   return null;
+}
+
+/** An outcome for a built record: captured, or skipped with the reason. */
+function admitted(c: CapturedComment, deps: CaptureDeps): CaptureOutcome {
+  const no = admit(c, deps);
+  return no ? { skipped: no, pr: c.pr } : { captured: c };
+}
+
+/** A webhook payload's user as the REST rows carry one: the login, and the
+ * account type ("User" when the payload carries none). */
+function userOf(u: any): { user: string; user_type: string } {
+  return { user: str(u?.login), user_type: str(u?.type) || "User" };
 }
 
 function captureReviewCommentEvent(
@@ -141,27 +154,20 @@ function captureReviewCommentEvent(
   const c = payload?.comment;
   const pr: number = payload?.pull_request?.number ?? 0;
   if (!c) return { skipped: "review comment payload without comment", pr };
-  const body = str(c.body);
-  const no = admit(pr, c.user, body, deps);
-  if (no) return { skipped: no, pr };
-  const inReplyTo = num(c.in_reply_to_id);
-  return {
-    captured: {
-      pr,
-      source: "review_comment",
-      comment_id: Number(c.id),
-      in_reply_to_id: inReplyTo,
-      thread_id: inReplyTo ?? Number(c.id),
-      review_id: num(c.pull_request_review_id),
-      author: str(c.user?.login),
-      author_type: str(c.user?.type) || "User",
-      tagged: isFeedbackBody(body),
-      path: typeof c.path === "string" ? c.path : null,
+  return admitted(
+    capturedFromReviewComment(pr, {
+      id: Number(c.id),
+      ...userOf(c.user),
+      body: str(c.body),
+      path: str(c.path),
+      // An outdated comment's `line` is null; where it was posted still is not.
       line: num(c.line) ?? num(c.original_line),
-      body,
+      pull_request_review_id: num(c.pull_request_review_id),
+      in_reply_to_id: num(c.in_reply_to_id),
       created_at: typeof c.created_at === "string" ? c.created_at : null,
-    },
-  };
+    }),
+    deps,
+  );
 }
 
 function captureIssueCommentEvent(
@@ -177,26 +183,15 @@ function captureIssueCommentEvent(
   const c = payload?.comment;
   const pr: number = issue.number ?? 0;
   if (!c) return { skipped: "issue comment payload without comment", pr };
-  const body = str(c.body);
-  const no = admit(pr, c.user, body, deps);
-  if (no) return { skipped: no, pr };
-  return {
-    captured: {
-      pr,
-      source: "issue_comment",
-      comment_id: Number(c.id),
-      in_reply_to_id: null,
-      thread_id: null,
-      review_id: null,
-      author: str(c.user?.login),
-      author_type: str(c.user?.type) || "User",
-      tagged: isFeedbackBody(body),
-      path: null,
-      line: null,
-      body,
+  return admitted(
+    capturedFromIssueComment(pr, {
+      id: Number(c.id),
+      ...userOf(c.user),
+      body: str(c.body),
       created_at: typeof c.created_at === "string" ? c.created_at : null,
-    },
-  };
+    }),
+    deps,
+  );
 }
 
 function captureReviewEvent(
@@ -208,27 +203,17 @@ function captureReviewEvent(
   const r = payload?.review;
   const pr: number = payload?.pull_request?.number ?? 0;
   if (!r) return { skipped: "review payload without review", pr };
-  const body = str(r.body);
-  const no = admit(pr, r.user, body, deps);
-  if (no) return { skipped: no, pr };
-  return {
-    captured: {
-      pr,
-      source: "review",
-      comment_id: Number(r.id),
-      in_reply_to_id: null,
-      thread_id: Number(r.id),
-      review_id: Number(r.id),
-      author: str(r.user?.login),
-      author_type: str(r.user?.type) || "User",
-      tagged: isFeedbackBody(body),
-      path: null,
-      line: null,
-      body,
-      created_at: typeof r.submitted_at === "string" ? r.submitted_at : null,
-      review_state: reviewStateOf(r.state),
-    },
-  };
+  return admitted(
+    capturedFromReview(pr, {
+      id: Number(r.id),
+      ...userOf(r.user),
+      state: str(r.state),
+      body: str(r.body),
+      commit_id: str(r.commit_id),
+      submitted_at: typeof r.submitted_at === "string" ? r.submitted_at : null,
+    }),
+    deps,
+  );
 }
 
 /** GitHub's review state, lowercased (`CHANGES_REQUESTED` on the REST list,
@@ -239,9 +224,10 @@ export function reviewStateOf(v: unknown): string | null {
 
 // ---- the sweep side ----------------------------------------------------------
 //
-// The same record, built from the REST list rows the reconcile sweep reads.
-// Kept here so the webhook and the backstop can never disagree about what a
-// captured comment is; the caller filters bots with `isBotIdentity`.
+// The one builder of each record, from the REST list rows the reconcile sweep
+// reads — the webhook side shapes its payload into the same rows first — so
+// the webhook and the backstop can never disagree about what a captured
+// comment is; the sweep's caller filters with `isHumanCapture`.
 
 export function capturedFromReviewComment(pr: number, c: ReviewCommentFull): CapturedComment {
   return {
@@ -298,11 +284,18 @@ export function capturedFromReview(pr: number, r: ReviewFull): CapturedComment {
   };
 }
 
-/** A row is worth recording when a human wrote something. Shared by both
- * paths so "bot comments are not human comments" is decided once. */
+/** Why a record is not a human's words — a bot wrote it, or nothing was
+ * written — or null when it is. Shared by both paths so "bot comments are not
+ * human comments" is decided once. */
+function notHuman(c: CapturedComment, botLogin: string): "bot author" | "empty body" | null {
+  if (isBotIdentity(c.author, c.author_type, botLogin)) return "bot author";
+  if (c.body.trim() === "") return "empty body";
+  return null;
+}
+
+/** A row is worth recording when a human wrote something. */
 export function isHumanCapture(c: CapturedComment, botLogin: string): boolean {
-  if (isBotIdentity(c.author, c.author_type, botLogin)) return false;
-  return c.body.trim() !== "";
+  return notHuman(c, botLogin) === null;
 }
 
 /** Record one captured comment and its `comment_captured` audit row — the one

@@ -45,6 +45,7 @@ import {
   applyReviewEffort,
   loadConfig,
   parseConfig,
+  parseEffort,
   parsePreset,
   validateLensKnobs,
   type Config,
@@ -133,6 +134,7 @@ import {
   type Variant,
 } from "./aacr.js";
 import { must, run } from "./exec.js";
+import { dropMetricsFiles } from "./report.js";
 import {
   apiKeyEnv,
   authFingerprint,
@@ -152,7 +154,6 @@ export interface RunnerOptions {
   /** pi's agent dir for this run: a PRIVATE tmpfs dir holding a copy of the
    * shared login with its refresh token disabled (src/bench/auth.ts). */
   agentDir: string;
-  profile: string;
   timeoutMs: number;
   piBin?: string;
   keepTree?: boolean;
@@ -284,6 +285,24 @@ export interface RunFingerprint {
   /** The profile's `[posting]` policy. Absent at the default posting, so a run
    * without one keeps its fingerprint. */
   posting?: PostingPolicy;
+  /** sha256 of the whole effective `[review]` table and the subagent
+   * settings the case's pi runs under: a setting none of the named fields
+   * above records (task files, rendered outputs, the context pack, a lever
+   * added later) still tells two configurations apart. */
+  settings_sha256?: string;
+}
+
+/** The settings `settings_sha256` covers. */
+function reviewSettingsDigest(cfg: Config): string {
+  const settings = {
+    review: cfg.review,
+    subagents: {
+      max_concurrency: cfg.pi.subagent_max_concurrency,
+      cache_group: cfg.pi.subagent_cache_group ?? 0,
+      cache_stagger_ms: cfg.pi.subagent_cache_stagger_ms ?? 2500,
+    },
+  };
+  return createHash("sha256").update(JSON.stringify(settings)).digest("hex");
 }
 
 type FingerprintLensTuning = Omit<LensTuning, "guide"> & {
@@ -361,6 +380,7 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
     ...(isDefaultPosting(cfg.posting) ? {} : { posting: { ...cfg.posting! } }),
+    settings_sha256: reviewSettingsDigest(cfg),
   };
 }
 
@@ -375,13 +395,16 @@ export function boundBody(body: string | null, maxBytes = 20_000): string | null
   return `${cut}\n…(truncated for the benchmark)`;
 }
 
-const GIT_ENV = {
-  ...process.env,
+/** Git reads no system or global configuration and never prompts — for the
+ * harness's own git calls and the reviewer's alike. */
+const GIT_ISOLATION = {
   GIT_TERMINAL_PROMPT: "0",
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_SYSTEM: "/dev/null",
   GIT_CONFIG_GLOBAL: "/dev/null",
-};
+} as const;
+
+const GIT_ENV = { ...process.env, ...GIT_ISOLATION };
 
 async function git(tree: string, args: string[]): Promise<string> {
   return must("git", ["-C", tree, ...args], { env: GIT_ENV, timeoutMs: 10 * 60_000 });
@@ -419,9 +442,9 @@ export const OPEN_MAP_KEYS: ReadonlySet<string> = new Set([
  * section already names one, inserted under the section header otherwise. */
 export function withPresetInToml(toml: string, preset: ReviewPreset): string {
   const lines = toml.split("\n");
-  const head = lines.findIndex((l) => /^\[review\]\s*$/.test(l));
+  const head = lines.findIndex((l) => /^\s*\[review\]\s*(#.*)?$/.test(l));
   if (head < 0) return `${toml}\n[review]\npreset = "${preset}"\n`;
-  let end = lines.findIndex((l, i) => i > head && /^\[/.test(l));
+  let end = lines.findIndex((l, i) => i > head && /^\s*\[/.test(l));
   if (end < 0) end = lines.length;
   for (let i = head + 1; i < end; i++)
     if (/^\s*preset\s*=/.test(lines[i] as string)) {
@@ -510,18 +533,16 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
   }
   const next = out as unknown as Config;
   if (rest.some((p) => p.startsWith("models.effort"))) {
-    const effort = next.models.effort;
     // Re-parse through the same validation the config file gets.
-    next.models = applyReviewEffort({
-      ...next.models,
-      effort: (["", "low", "medium", "high"] as const).includes(effort)
-        ? effort
-        : effort === ("med" as string)
-          ? "medium"
-          : (() => {
-              throw new Error(`--config: models.effort must be low|medium|high (got ${effort})`);
-            })(),
-    });
+    let effort: ReturnType<typeof parseEffort>;
+    try {
+      effort = parseEffort(next.models.effort);
+    } catch (err) {
+      throw new Error(`--config: ${err instanceof Error ? err.message : String(err)}`, {
+        cause: err,
+      });
+    }
+    next.models = applyReviewEffort({ ...next.models, effort });
   }
   validateLensKnobs(next);
   return next;
@@ -593,7 +614,9 @@ export async function prepareTree(store: string, tree: string, meta: PrefetchMet
   ]);
 }
 
-async function changedFiles(tree: string, meta: PrefetchMeta): Promise<PrFileEntry[]> {
+/** The PR's changed files between the merge-base and the head, with each
+ * file's hunks (as GitHub's `patch`) for the first 300. */
+export async function changedFiles(tree: string, meta: PrefetchMeta): Promise<PrFileEntry[]> {
   const range = [meta.merge_base, meta.head_commit];
   const nameStatus = await git(tree, ["diff", "-z", "--name-status", "-M", ...range]);
   const numstat = await git(tree, ["diff", "-z", "--numstat", "-M", ...range]);
@@ -602,7 +625,10 @@ async function changedFiles(tree: string, meta: PrefetchMeta): Promise<PrFileEnt
   // Per-file hunks for the lens probes, bounded: past 300 files a PR's patch
   // content stops changing which lenses fire.
   for (const f of first.slice(0, 300)) {
-    const d = await run("git", ["-C", tree, "diff", ...range, "--", f.filename], {
+    // A renamed file's diff needs its old path too: restricted to the new one
+    // alone, git sees no rename and reports every line as added.
+    const paths = f.previous_filename ? [f.previous_filename, f.filename] : [f.filename];
+    const d = await run("git", ["-C", tree, "diff", "-M", ...range, "--", ...paths], {
       env: GIT_ENV,
       maxBytes: 400_000,
     });
@@ -610,6 +636,13 @@ async function changedFiles(tree: string, meta: PrefetchMeta): Promise<PrFileEnt
     if (p !== undefined) patches.set(f.filename, p);
   }
   return filesFromGitDiff(nameStatus, numstat, patches);
+}
+
+/** The PR's first-party agent-directive files (src/severity.ts), which the
+ * round order names — the same for a first round and a follow-up. */
+function directiveFilesOf(cfg: Config, files: readonly PrFileEntry[]): string[] {
+  const vocab = directiveVocabulary(cfg.review.directives);
+  return files.filter((f) => isFirstPartyDirectivePath(f.filename, vocab)).map((f) => f.filename);
 }
 
 /** `[review] context_pack = "pack-first"`, as dispatch writes it:
@@ -665,10 +698,7 @@ export function renderCasePrompts(args: {
   const identity = { ...identityVars(cfg), repo: c.repo };
   const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
   const body = boundBody(meta.body);
-  const vocab = directiveVocabulary(cfg.review.directives);
-  const directiveFiles = args.files
-    .filter((f) => isFirstPartyDirectivePath(f.filename, vocab))
-    .map((f) => f.filename);
+  const directiveFiles = directiveFilesOf(cfg, args.files);
   const row = {
     number: c.pr,
     state: "reviewing",
@@ -882,10 +912,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
   const identity = { ...identityVars(cfg), repo: c.repo };
   const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
   const body = boundBody(meta.body);
-  const vocab = directiveVocabulary(cfg.review.directives);
-  const directiveFiles = args.files
-    .filter((f) => isFirstPartyDirectivePath(f.filename, vocab))
-    .map((f) => f.filename);
+  const directiveFiles = directiveFilesOf(cfg, args.files);
   const row = {
     number: c.pr,
     state: "reviewing",
@@ -1290,9 +1317,12 @@ export function jsonProblem(path: string): string | undefined {
 
 /** The BENCHMARK MODE files the session wrote that do not parse — the ones a
  * scorer reads as JSON (the outcome always; the findings record when the bench
- * renders the posted review from it). A missing file is not listed here. */
+ * renders the posted review from it, else the session's own comments). A
+ * missing file is not listed here. */
 export function unparseableOutputs(caseDir: string, renderOutputs: boolean): string[] {
-  const names = renderOutputs ? [CASE_FILES.findings, CASE_FILES.outcome] : [CASE_FILES.outcome];
+  const names = renderOutputs
+    ? [CASE_FILES.findings, CASE_FILES.outcome]
+    : [CASE_FILES.comments, CASE_FILES.outcome];
   const out: string[] = [];
   for (const n of names) {
     const p = jsonProblem(join(caseDir, n));
@@ -1327,23 +1357,13 @@ export async function reviewCase(
   for (const f of PI_RUN_FILES) rmSync(join(caseDir, f), { force: true });
   const started = Date.now();
   const summary: CaseSummary = {
-    instance_id: c.instance_id,
-    status: "failed",
-    fingerprint: ctx.fingerprint,
-    verdict: null,
-    duration_seconds: 0,
-    usage: { input: 0, output: 0, cacheRead: 0, children: 0 },
-    planned_lenses: [],
-    executed_passes: [],
-    comments: { total: 0, by_tag: {}, left_side: 0, unparseable: 0, body: 0 },
+    ...emptyCaseSummary(c, ctx.fingerprint),
     pr_meta: {
       title: meta.title !== null,
       body: meta.body !== null,
       base_ref_source: meta.base_ref_source,
     },
     diff: meta.diff,
-    continued: false,
-    warnings: [],
   };
   let comments: BenchComment[] = [];
   try {
@@ -1465,10 +1485,7 @@ export async function reviewCase(
       QCR_WORKTREE: tree,
       QCR_LEDGER_FILE: join(caseDir, "ledger.md"),
       QCR_PI_VERSION: ctx.cfg.pi.version,
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_SYSTEM: "/dev/null",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_TERMINAL_PROMPT: "0",
+      ...GIT_ISOLATION,
       // An `anthropic/` model arm: pi's anthropic provider reads this key. bench.sh
       // passes it by --env-file only when --config names an anthropic/ model.
       ...(process.env.ANTHROPIC_API_KEY
@@ -1659,9 +1676,7 @@ export async function reviewCase(
         `review: ${c.instance_id} — posting policy kept ${renderedPosting.kept} of ${renderedPosting.kept + renderedPosting.withheld.length} (${renderedPosting.withheld.map((w) => w.word).join(", ") || "nothing withheld"})`,
       );
     } else if (!isDefaultPosting(ctx.cfg.posting) && outcome !== undefined) {
-      const patches: Record<string, string> = {};
-      for (const f of files) if (f.patch !== undefined) patches[f.filename] = f.patch;
-      const policed = enforceBenchPosting(caseDir, ctx.cfg.posting!, patches);
+      const policed = enforceBenchPosting(caseDir, ctx.cfg.posting!, headPatches);
       if (policed) {
         summary.posting = policed;
         log(
@@ -1706,12 +1721,11 @@ export async function reviewCase(
     if (!o.keepTree) rmSync(tree, { recursive: true, force: true });
   }
   summary.duration_seconds = Math.round((Date.now() - started) / 1000);
-  summary.comments.total = comments.length;
-  summary.comments.left_side = comments.filter((x) => x.side === "LEFT").length;
-  for (const x of comments)
-    summary.comments.by_tag[x.tag] = (summary.comments.by_tag[x.tag] ?? 0) + 1;
+  summary.comments = { ...summary.comments, ...commentTally(comments) };
+  logDroppedMetrics(writeResults(o.outDir, c, comments, summary), log, `review: ${c.instance_id}`);
+  // The summary is the case's completion mark (`--resume` skips an ok one),
+  // so it is written after the result files it vouches for.
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
-  writeResults(o.outDir, c, comments, summary);
   const me = summary.model_errors;
   const errs =
     me && me.rate_limited + me.overloaded + (me.usage_limit ?? 0) + me.other > 0
@@ -1780,6 +1794,36 @@ function caseFiles(outDir: string, c: BenchCase): [string, ...string[]] {
   ];
 }
 
+/** Remove one case's summary and result files. A variant whose result file
+ * was there loses its metrics with it (they scored that file). Returns the
+ * metrics files removed per variant. */
+function removeCaseFiles(outDir: string, c: BenchCase): MetricsDropped {
+  const dropped: MetricsDropped = [];
+  rmSync(caseFiles(outDir, c)[0], { force: true });
+  for (const v of Object.keys(VARIANTS) as Variant[]) {
+    const file = join(outDir, "results", v, `${safeId(c.instance_id)}.json`);
+    if (!existsSync(file)) continue;
+    dropped.push({ variant: v, metrics: dropMetricsFiles(join(outDir, "results", v)).length });
+    rmSync(file, { force: true });
+  }
+  return dropped;
+}
+
+/** Per variant whose scorer input changed, how many metrics files went. */
+type MetricsDropped = Array<{ variant: Variant; metrics: number }>;
+
+function logDroppedMetrics(
+  dropped: MetricsDropped,
+  log: (line: string) => void,
+  who: string,
+): void {
+  for (const d of dropped)
+    if (d.metrics > 0)
+      log(
+        `${who}: ${d.variant}: ${d.metrics} metrics file(s) scored the old results — removed; re-run eval to score the new ones`,
+      );
+}
+
 /** Every case whose summary records another fingerprint (or none, or cannot
  * be read) loses its summary and every variant's result file. A case with no
  * summary is left as it is: nothing claims it for any configuration. Returns
@@ -1804,7 +1848,7 @@ export function dropForeignCases(
     log(
       `review: ${c.instance_id} was reviewed by a different build/profile — its result is dropped`,
     );
-    for (const f of files) rmSync(f, { force: true });
+    logDroppedMetrics(removeCaseFiles(outDir, c), log, "review");
     dropped.push(c.instance_id);
   }
   return dropped;
@@ -1824,7 +1868,7 @@ export function prepareReviewCases(
   log: (line: string) => void,
 ): string[] {
   if (opts.resume) return dropForeignCases(outDir, cases, opts.fingerprint, log);
-  for (const c of cases) for (const f of caseFiles(outDir, c)) rmSync(f, { force: true });
+  for (const c of cases) logDroppedMetrics(removeCaseFiles(outDir, c), log, "review");
   return [];
 }
 
@@ -1839,10 +1883,25 @@ export function recordUnprefetched(
   error: string,
   fingerprint: RunFingerprint,
 ): CaseSummary {
-  const s: CaseSummary = {
+  const s: CaseSummary = { ...emptyCaseSummary(c, fingerprint), error };
+  mkdirSync(join(outDir, "cases", safeId(c.instance_id)), { recursive: true });
+  // No session ran: an earlier attempt's event stream is not this one's cost.
+  for (const f of PI_RUN_FILES)
+    rmSync(join(outDir, "cases", safeId(c.instance_id), f), { force: true });
+  writeResults(outDir, c, [], s);
+  writeFileSync(
+    join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
+    JSON.stringify(s, null, 2) + "\n",
+  );
+  return s;
+}
+
+/** A failed case's summary before anything is known of it — every count
+ * zero, no verdict. Each route adds what it knows. */
+function emptyCaseSummary(c: BenchCase, fingerprint: RunFingerprint): CaseSummary {
+  return {
     instance_id: c.instance_id,
     status: "failed",
-    error,
     fingerprint,
     verdict: null,
     duration_seconds: 0,
@@ -1855,27 +1914,34 @@ export function recordUnprefetched(
     continued: false,
     warnings: [],
   };
-  mkdirSync(join(outDir, "cases", safeId(c.instance_id)), { recursive: true });
-  // No session ran: an earlier attempt's event stream is not this one's cost.
-  for (const f of PI_RUN_FILES)
-    rmSync(join(outDir, "cases", safeId(c.instance_id), f), { force: true });
-  writeFileSync(
-    join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
-    JSON.stringify(s, null, 2) + "\n",
-  );
-  writeResults(outDir, c, [], s);
-  return s;
 }
 
-/** Write the scorer's input for every variant; returns the variants whose
- * file for this case now holds different bytes than before. */
+/** The scored comments' counts: how many, how many stayed on the old side,
+ * and how many per posting tag. One rule for a live run and a rebuild. */
+function commentTally(
+  comments: readonly BenchComment[],
+): Pick<CaseSummary["comments"], "total" | "left_side" | "by_tag"> {
+  const by_tag: Record<string, number> = {};
+  for (const x of comments) by_tag[x.tag] = (by_tag[x.tag] ?? 0) + 1;
+  return {
+    total: comments.length,
+    left_side: comments.filter((x) => x.side === "LEFT").length,
+    by_tag,
+  };
+}
+
+/** Write the scorer's input for every variant. A variant whose file for this
+ * case is about to hold different bytes first loses its metrics (they scored
+ * the old bytes) — before the write, so no interruption can leave new input
+ * beside an old score. Returns those variants, with the metrics files each
+ * lost. */
 export function writeResults(
   outDir: string,
   c: BenchCase,
   comments: readonly BenchComment[],
   summary: CaseSummary,
-): Variant[] {
-  const changed: Variant[] = [];
+): MetricsDropped {
+  const changed: MetricsDropped = [];
   for (const variant of Object.keys(VARIANTS) as Variant[]) {
     const dir = join(outDir, "results", variant);
     mkdirSync(dir, { recursive: true });
@@ -1900,7 +1966,7 @@ export function writeResults(
     } catch {
       // no earlier result for this case
     }
-    if (before !== text) changed.push(variant);
+    if (before !== text) changed.push({ variant, metrics: dropMetricsFiles(dir).length });
     writeFileSync(file, text);
   }
   return changed;
@@ -1908,16 +1974,15 @@ export function writeResults(
 
 /** `cli results`: rebuild every finished case's summary counts and scorer
  * inputs from its case dir. The harness scored the result files as they
- * were, so a variant whose file for any case changed has every metrics file
- * beside it removed (as the eval step's own `rm -f metrics_*.json` does): a
- * report before the next eval shows no score rather than a stale one. A
- * variant whose files all came out byte-identical keeps its metrics. */
+ * were, so a variant whose file for any case changes has every metrics file
+ * beside it removed (writeResults) — a report before the next eval shows no
+ * score rather than a stale one. A variant whose files all come out
+ * byte-identical keeps its metrics. */
 export function rebuildResults(
   outDir: string,
   cases: readonly BenchCase[],
   log: (line: string) => void,
 ): void {
-  const changed = new Set<Variant>();
   for (const c of cases) {
     const dir = join(outDir, "cases", safeId(c.instance_id));
     const sPath = join(dir, "case-summary.json");
@@ -1927,26 +1992,13 @@ export function rebuildResults(
     // Refresh the per-case counts too, so the report describes exactly
     // what the rebuilt result files score.
     s.comments = {
-      total: collected.comments.length,
-      by_tag: {},
-      left_side: collected.comments.filter((x) => x.side === "LEFT").length,
+      ...commentTally(collected.comments),
       unparseable: collected.dropped,
       body: collected.body,
       reanchored: collected.reanchored,
     };
-    for (const x of collected.comments)
-      s.comments.by_tag[x.tag] = (s.comments.by_tag[x.tag] ?? 0) + 1;
     writeFileSync(sPath, JSON.stringify(s, null, 2) + "\n");
-    for (const v of writeResults(outDir, c, collected.comments, s)) changed.add(v);
-  }
-  for (const variant of changed) {
-    const dir = join(outDir, "results", variant);
-    const stale = readdirSync(dir).filter((n) => n.startsWith("metrics_") && n.endsWith(".json"));
-    for (const f of stale) rmSync(join(dir, f), { force: true });
-    if (stale.length)
-      log(
-        `results: ${variant}: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score the rebuilt ones`,
-      );
+    logDroppedMetrics(writeResults(outDir, c, collected.comments, s), log, "results");
   }
 }
 
