@@ -287,14 +287,17 @@ with the model named wherever QuickReview's results appear:
 
 The models, as the runs record them:
 - Every drawn QuickReview result is on GPT-6.1 Sol: the frozen build at medium or high reasoning by lens, its fast
-  option (745f956: the frozen build plus a `fast` profile) at low, and the Oct 1 build behind AACR-Bench's own
-  score.
-- One QuickReview count comes from another model: how-key's "334 of the first 379" are comments of the run that
-  seeded the key, QuickReview's default run, build 1ad710b on GPT-6 Sol. The image says so.
+  option (745f956: the frozen build plus a `fast` profile) at low, and the Sep 29 build (b2ce03a; v4 called it the
+  Oct 1 build, after its report) behind AACR-Bench's own score.
+- One QuickReview count comes from another model: how-key's "334 of the first 379" defects were raised by the
+  comments of QuickReview's default run, build 1ad710b on GPT-6 Sol. The image says so.
 - The other tools we ran are on GPT-6.1 Sol, except Claude Code (Claude Opus 5.5).
-- Two infographics count from earlier runs on GPT-6 Sol, and say so: how-key's candidates (every reviewer comment
-  the key's builders checked came from runs on GPT-6 Sol, Claude Code's from Claude Opus 5.5) and how-fair's
-  best-shot lift (the `fair-*` selection runs).
+- Two infographics count from earlier runs on GPT-6 Sol, and say so:
+  - how-key's 2,216 reviewer comments and 1,527 candidates came from runs on GPT-6 Sol, Claude Code's on Claude
+    Opus 5.5. (The first 40 PRs' keys were built earlier, from pools that also held QuickReview's earliest runs, on
+    GPT-5.6 Sol; how-key draws no count from those pools.)
+  - how-fair's "lifted 3 rivals" compares Codex CLI's, OpenCode's and pi-review's best-shot runs (`fair-*`) with
+    their published runs, all on GPT-6 Sol. PR-Agent's selection also tried GPT-6.1 Sol, and picked it.
 - The judges:
   - GPT-6 Sol at high reasoning for the AACR key;
   - GPT-6 Sol at low reasoning, averaged over 3 rounds, for AACR-Bench's own score;
@@ -303,23 +306,26 @@ The models, as the runs record them:
 
 `refresh_v5.py` reads all of this from the runs:
 - a QuickReview run's configured models (run.json `models`, the model overrides, each case's per-lens pins), then
-  every model its event logs record, which must match;
+  every model its event logs record, each of which must be among them;
 - a third-party tool's `model` and effort, and Claude Code's per-case `models`;
 - each judge's JUDGE.txt, judge.txt or judge directory;
-- the AACR key's sources (the seed and every reviewer run whose comments the builders checked, from
-  FULL-BENCHMARK.md's tables) and the best-shot selection runs (`fair-*`).
+- how-key's sources (the run behind "334 of the first 379", and the runs behind its 2,216 reviewer comments and
+  1,527 candidates, from FULL-BENCHMARK.md's tables) and the best-shot selection runs (`fair-*`).
 
 It stops whenever a run cannot be traced: among other cases, when an arm's runs disagree on the model, an effort is
 unknown, a run calls a model it is not configured for, a judge file does not parse, or a model has no display name
 in `data/models.json`. `make_charts_v5.py` stops if `data/v5.json` no longer describes the runs whose numbers are
 drawn. Three names come from documents, since no run records them: Martian's judge from Martian's own dashboard
 (`data/v4.json`), the key builders' (Claude Code subagents on Claude Opus 5.5) from the bench docs, and the golden
-audit's investigators' (Claude Opus 5.5) from `GOLDEN-AUDIT-FULL.md`.
+audit's investigators' from its docs (Claude Opus 5.5 for 164 of the 173 goldens, `GOLDEN-AUDIT-FULL.md`; one
+Claude investigator each for the 9 before them, `GOLDEN-AUDIT.md`).
 
-The numbers and ranks are v4's, with two corrections:
+The numbers and ranks are v4's, with three corrections:
 - review-round prints and draws the frozen build's median of 11 lenses per PR, where v4 printed and drew 15;
-- martian-leaderboard is titled "Martian's F2 ranking", not "default ranking": Martian's default view uses its
-  Opus 4.5 judge, and this board is at its GPT-5.2 judge's scores.
+- martian-leaderboard is titled "Martian's F2 ranking", and standings' Martian row reads "F2, its ranking", not
+  "default ranking": Martian's default view uses its Opus 4.5 judge, and these are its GPT-5.2 judge's scores;
+- how-key's AACR references read 1,107, the references the 145-PR build checked beside its 235 drafts and 2,216
+  comments; v4 drew the 185 PRs' 1,418 there.
 
 v5 also:
 - widens a name column wherever a label with its model needs the room, and sets QuickReview's label on the cost
@@ -328,7 +334,8 @@ v5 also:
 - wraps the small print to the measured width (3–4 lines where the models need them), never splitting a model's
   name or ending a paragraph on a stub of a line, with the chart above making room; and prints it a shade darker on
   the light theme (4.75:1 contrast, from 3.5:1);
-- gives how-key a third line of small print (the key's sources), moving its "No human check yet" banner 12 px up;
+- gives how-key a third line of small print (the model of its comments' runs), moving its "No human check yet"
+  banner 12 px up;
 - drops v4's "(data/value.json)" from the reading-cost small print, since a file name means nothing in a shared
   image (NUMBERS.md keeps it);
 - calls the ladder's and the report's reading-time estimate an "estimate", so it is not read as an AI model;
@@ -336,10 +343,11 @@ v5 also:
   each other.
 
 **To share:** `out/v5/index.html` (the whole library, about 6.5 MB) and `out/v5/bug-value.html` (the report)
-are each one self-contained file, like v4's. Where a window is too small to enlarge an image whole (a phone,
-upright or sideways, or a tablet), a tapped image opens at full size from its top-left corner and scrolls. The
-report's tables scroll sideways instead of the page, with a shadow at the edge that has more; scrollbars follow the
-dark theme. bug-value.html also links its sources, carries the model line under each figure, and leaves out
+are each one self-contained file, like v4's. Where the window is narrower than an image's full 1200 px and fitting
+the image to it would not enlarge it clearly (a phone, upright or sideways, or a tablet), a tapped image opens at
+full size from its top-left corner and scrolls; a wider window fits it whole, as v4 did. The open image no longer
+scrolls the page behind it. The report's tables scroll sideways instead of the page, at a readable width, with a
+shadow at the edge that has more; scrollbars follow the dark theme. bug-value.html also links its sources, carries the model line under each figure, and leaves out
 `BUG-VALUE.md`'s notes for maintainers (which script writes it, the MISSING-DATA pointer). v4's own pages and
 `BUG-VALUE.md` stay as they were.
 

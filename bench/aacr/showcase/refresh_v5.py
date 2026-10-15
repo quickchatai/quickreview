@@ -20,11 +20,13 @@ used. This file reads all of them from the runs themselves:
       - AACR-Bench's own score's: each scored run's judge.txt;
       - Martian's and Qodo's: each scored directory's judge/JUDGE.txt;
   - the AACR key's sources (how-key):
-      - the seed: the run whose comments seeded the key ("334 of the first 379"). FULL-BENCHMARK.md's table of the
-        key's sources names it: QuickReview's default arm, all-default-rest145;
-      - every reviewer run whose comments the key's builders checked: QuickReview's default and low arms and
-        open-code-review (the first build), then Codex CLI, OpenCode, pi-review and Claude Code (its extension).
-        FULL-BENCHMARK.md's run table names their rest145 runs;
+      - the run whose comments raised "334 of the first 379" defects. FULL-BENCHMARK.md's table of the key's sources
+        names it: QuickReview's default arm, all-default-rest145;
+      - the runs behind how-key's "2,216 reviewer comments" and "1,527 candidates": the 145-PR build checked the
+        comments of QuickReview's default and low arms and open-code-review on those PRs, and its extension every
+        comment of Codex CLI, OpenCode, pi-review and Claude Code on all 185 PRs. FULL-BENCHMARK.md's run table names
+        the runs. (The first 40 PRs' keys were built earlier, from pools of comments that included QuickReview's
+        earliest runs on GPT-5.6 Sol; how-key draws no count from those pools, and they are not read here.)
   - the best-shot selection (how-fair's "lifted 3 rivals"): every fair-* run, the variants FULL-BENCHMARK.md §3
     picked each rival's configuration from.
 Besides those, only the runs whose numbers the v5 images draw are read:
@@ -33,7 +35,9 @@ Besides those, only the runs whose numbers the v5 images draw are read:
   - Qodo: the qodo-sources.txt rows that are our own reviews.
 It stops whenever a run cannot be traced: among other cases, when the runs an arm lists disagree on the model, an
 effort is not a known level, a run calls a model it is not configured for, a judge file does not parse, or a model
-id has no name in data/models.json. So no image names a model it cannot trace to a run. The vendors' own reviews
+id has no name in data/models.json. So every model an image takes from data/v5.json traces to a run. Three names
+come from documents instead, since no run records them: Martian's judge (its dashboard, data/v4.json), the AACR key's
+builders and the Martian golden audit's investigators (the bench docs, in infographics_v5.py). The vendors' own reviews
 carry no model here: their published runs record none.
 
 The runs directory is only read. Nothing here calls a model.
@@ -49,12 +53,15 @@ AACR_ARMS = ["aacr-arms.txt", "aacr-arms-v3.txt"]
 KEY_SEED = "all-default-rest145"  # FULL-BENCHMARK.md, the v1 key's sources: "default's comments | 334"
 # FULL-BENCHMARK.md: the reviewers whose comments the key's builders checked (v1: "quickreviewd default, quickreviewd low
 # and OCR"; the v2 extension: "the four new reviewers"), with their rest145 runs from its run table
+FIRST40 = ["smoke10", "dev10", "holdout10", "fresh10"]  # the extension checked the four tools' comments on all 185 PRs
 KEY_SOURCES = [("quickreview", [KEY_SEED]), ("quickreview low", ["all-low-rest145"]),
                ("open-code-review", ["all-ocr-rest145"]),
-               ("codex-cli", ["all-codex-rest145"] + [f"all-codex-c{i}-rest145" for i in range(1, 5)]),
-               ("opencode", ["all-opencode-rest145"] + [f"all-opencode-c{i}-rest145" for i in range(1, 5)]),
-               ("pi-review", [f"all-pireview-c{i}-rest145" for i in range(1, 5)]),
-               ("claude-code", [f"all-claude-c{i}-rest145" for i in range(1, 5)])]
+               ("codex-cli", [f"all-codex-{s}" for s in FIRST40] + ["all-codex-rest145"]
+                + [f"all-codex-c{i}-rest145" for i in range(1, 5)]),
+               ("opencode", [f"all-opencode-{s}" for s in FIRST40] + ["all-opencode-rest145"]
+                + [f"all-opencode-c{i}-rest145" for i in range(1, 5)]),
+               ("pi-review", [f"all-pireview-{s}" for s in FIRST40] + [f"all-pireview-c{i}-rest145" for i in range(1, 5)]),
+               ("claude-code", [f"all-claude-{s}" for s in FIRST40] + [f"all-claude-c{i}-rest145" for i in range(1, 5)])]
 BEST_SHOT = "fair-*-rest145"  # FULL-BENCHMARK.md §3: "Every variant ran once on those 40 PRs ... (runs `fair-*`)"
 TOOL = {"codex": "codex-cli", "claude": "claude-code", "ocr": "open-code-review", "opencode": "opencode",
         "pragent": "pr-agent", "pireview": "pi-review"}  # run.json `reviewer` -> the showcase's tool id

@@ -19,7 +19,8 @@ Every model an image names comes from a data file:
 - data/v5.json, which refresh_v5.py reads from the runs, down to the models their event logs record;
 - the display names in data/models.json;
 - Martian's judge from Martian's own dashboard (data/v4.json).
-The one exception is the AACR key's builders, which no run records; how-key names them from the bench docs.
+Two exceptions, which no run records: the AACR key's builders (how-key) and the Martian golden audit's investigators
+(how-martian), both named from the bench docs (infographics_v5.AUDITORS).
 
 v1-v4 are untouched. v4's chart functions are reused where only a name changes, since they read every name through
 V, and a V5 names the models. The rest are redrawn here: name columns sized to the longest label, small print
@@ -53,6 +54,8 @@ SMALL_INK = {"light": "#73716c"}  # the small print, 4.75:1 on the light surface
 WIDTH = 1072  # the text column: the canvas minus v4's 64 px side margins
 SMALL = 10.5  # Page4.source's size
 STUB = 0.3  # a paragraph's last line shorter than this share of the width takes words from the line above
+SEP29 = "Sep 29 build"  # OCT1's run (b2ce03a, committed Sep 29, run Sep 29/30): v4 called it by its report's date, Oct 1
+F2_V4, F2_V5 = "F2, its default ranking", "F2, its ranking"  # standings' Martian row (see fig_martian_leaderboard)
 
 
 def cap(s):
@@ -69,10 +72,14 @@ _measure, _whole = [], []
 
 def keep_whole(text):
     """text with no-break spaces inside the phrases a line break must not split: every model's display name
-    (data/models.json) and the tuning count. diagram_v4.lines breaks only at a plain space."""
+    (data/models.json), a tool with its model in brackets ("Claude Code (Claude Opus 5.5)") and the tuning count.
+    diagram_v4.lines breaks only at a plain space. Only the drawn small print gets them: wrap() is its one caller."""
     if not _whole:
-        names = json.load(open(os.path.join(HERE, "data", "models.json")))["models"]
-        _whole.extend(sorted({m["name"] for m in names.values()} | {TUNED_PRS}, key=len, reverse=True))
+        models = {m["name"] for m in json.load(open(os.path.join(HERE, "data", "models.json")))["models"].values()}
+        tools = {t["name"] for t in json.load(open(os.path.join(HERE, "data", "tools.json")))["tools"].values()}
+        tools |= {"QuickReview fast"}
+        _whole.extend(sorted(models | {f"{t} ({m})" for t in tools for m in models} | {TUNED_PRS}, key=len,
+                             reverse=True))
     for phrase in _whole:
         text = text.replace(phrase, phrase.replace(" ", "\u00a0"))
     return text
@@ -259,8 +266,8 @@ class V5(v4.V4):
         gap = max(self.calibration_gap() * 100, 1)
         return wrap(f"Others: Martian's published runs and scores (Core profile, {jl} judge); Martian lists no model for "
                     f"them.\nQuickReview: frozen build on {self.our_model('martian', QR)}, the same pipeline with our "
-                    f"judge ({self.judge_words('martian')}), within {gap:.0f} point of {jl}'s recall on "
-                    f"{len(self.m['calibration'])} tools.")
+                    f"judge ({self.judge_words('martian')}), within {gap:.0f} point{'s' if round(gap) != 1 else ''} of "
+                    f"{jl}'s recall on {len(self.m['calibration'])} tools.")
 
     def qodo_source(self):
         g = sorted(self.qodo_gaps().values())
@@ -496,7 +503,7 @@ def fig_aacr_leaderboard(B, V, T):
     p.title(f"{ordinal(k)} of {n} on AACR-Bench's own score" if k > 1 else f"Top F1 of {n} on AACR-Bench's own score")
     p.metric(f"How closely a review reproduces the dataset's {refs:,} reference comments · 185 PRs · sorted by F1")
     best = {key: max(r[key] for _, r in rows) for key in ("f1", "precision", "recall")}
-    name = lambda t: "QuickReview (Oct 1 build)" if t == OCT1 else B.name(t)  # noqa: E731
+    name = lambda t: f"QuickReview ({SEP29})" if t == OCT1 else B.name(t)  # noqa: E731
     cols = [("#", 84, "right"), ("Reviewer", 110, "left"), ("Model", 430, "left"), ("F1", 650, "right"),
             ("Precision", 790, "right"), ("Recall", 930, "right"), ("Time / PR", 1040, "right"),
             ("Cost / PR", 1150, "right")]
@@ -510,7 +517,7 @@ def fig_aacr_leaderboard(B, V, T):
     jn, je, rounds = V.official_judge()
     p.source(wrap(f"AACR-Bench's own matching: a comment on the same file within a line, which a judge ({jn}, {je} "
                   f"reasoning, {rounds} rounds averaged) calls the same concern.\nReferences are mostly AI-written. "
-                  "QuickReview: the Oct 1 build (the frozen build was not scored this way).\nTime: mean wall clock; "
+                  f"QuickReview: the {SEP29} (the frozen build was not scored this way).\nTime: mean wall clock; "
                   "cost: mean model spend at list prices."))
     return p
 
@@ -530,8 +537,17 @@ def fig_martian_leaderboard(B, V, T):
 
 
 # ---------------------------------------------------------------- one table: where QuickReview stands
-def fig_standings(B, V, T):
+def standings5(B, V):
+    """v4's standings rows, the Martian F2 row's measure relabelled: v4's "its default ranking" is the same claim
+    fig_martian_leaderboard's retitle drops (Martian's default view uses another judge than these scores)."""
     rows = standings(B, V)
+    if sum(1 for r in rows if r[1] == F2_V4) != 1:
+        sys.exit(f"standings: v4's rows no longer hold one {F2_V4!r}")
+    return [(r[0], F2_V5, *r[2:]) if r[1] == F2_V4 else r for r in rows]
+
+
+def fig_standings(B, V, T):
+    rows = standings5(B, V)
     recall_rows = [r for r in rows if (r[0], r[1]) in (("AACR-Bench", "Defects found"), ("Martian", "Recall"),
                                                        ("Qodo", "Functional bugs found"))]
     prec_rows = [r for r in rows if r[1] == "Precision"]
@@ -587,7 +603,7 @@ def models_section(V):
     out = ["## Which model each result ran on\n\n"
            f"Read from each run's own files by refresh_v5.py (data/v5.json, built {V.runs['generated']}):\n"
            "- a QuickReview run: its configured models (run.json `models`, the model overrides, each case's per-lens "
-           "pins), then every model its event logs (pi-events.jsonl) record, which must be the same;\n"
+           "pins), then every model its event logs (pi-events.jsonl) record, each of which must be among them;\n"
            "- a third-party tool: run.json `model` and effort; Claude Code: each case's `models`;\n"
            "- a judge: its JUDGE.txt, judge.txt or judge directory.\n\n"
            "Display names: data/models.json. Martian's other tools and Qodo's vendor rows are the vendors' own runs, "
@@ -600,11 +616,11 @@ def models_section(V):
     rows.append(["AACR-Bench", f"**judge**, AACR-Bench's own score (aacr-leaderboard; {rounds} rounds averaged)",
                  f"{jn} (`{j['model']}`)", je, "", "", ""])
     k = V.runs["aacr"]["key_seed"]
-    rows.append(["AACR-Bench", "QuickReview, the key's seed (how-key's comments)",
+    rows.append(["AACR-Bench", "QuickReview, the run whose comments raised 334 of the key's first 379 defects (how-key)",
                  " + ".join(f"{V.model_name(m)} (`{m}`)" for m in k["models"]), "/".join(k["efforts"]),
                  " ".join(k["builds"]), ", ".join(f"{n:,}" for n in k["calls"].values()), ", ".join(k["runs"])])
     for who, r in V.runs["aacr"]["key_sources"].items():
-        rows.append(["AACR-Bench", f"the key's candidate comments: {V.run_name(who)}",
+        rows.append(["AACR-Bench", f"how-key's reviewer comments and candidates: {V.run_name(who)}",
                      " + ".join(f"{V.model_name(m)} (`{m}`)" for m in r["models"]), "/".join(r["efforts"]) or
                      "the tool's default", " ".join(r.get("builds", [])),
                      ", ".join(f"{n:,}" for n in r.get("calls", {}).values()), ", ".join(r["runs"])])
@@ -625,6 +641,10 @@ def models_section(V):
                          ", ".join(f"{n:,}" for n in r.get("calls", {}).values()), ", ".join(r["runs"])])
     out.append(md_table(["Benchmark", "Reviewer or judge", "Model", "Reasoning", "QuickReview build",
                          "Model records in its event logs", "Runs"], rows))
+    out.append("\nhow-key's reviewer comments and candidates: the runs behind its 2,216 reviewer comments (the 145-PR "
+               "build) and 1,527 candidates (the extension, on all 185 PRs). The first 40 PRs' keys were built earlier, "
+               "from pools of comments that included QuickReview's earliest runs on GPT-5.6 Sol; how-key draws no count "
+               "from those pools, and they are not traced here.\n")
     return "".join(out)
 
 
@@ -688,10 +708,10 @@ def numbers(B, V):
     jn, je, rounds = V.official_judge()
     out.append("\n## AACR-Bench's own score (aacr-leaderboard)\n\nThe dataset's reference comments, matched by "
                f"AACR-Bench's harness with its judge prompt on {jn} ({je} reasoning, {rounds} rounds averaged). "
-               f"QuickReview: the Oct 1 build ({', '.join(V.builds('aacr', OCT1))}), on {V.our_model('aacr', OCT1)}; "
+               f"QuickReview: the {SEP29} ({', '.join(V.builds('aacr', OCT1))}), on {V.our_model('aacr', OCT1)}; "
                "its frozen build and fast option were not scored this way.\n\n")
     out.append(md_table(["Reviewer", "Model", "F1", "Precision", "Recall", "Matched", "Comments", "References"],
-                        [[("QuickReview (Oct 1 build)" if t == OCT1 else B.name(t)), V.our_model("aacr", t),
+                        [[(f"QuickReview ({SEP29})" if t == OCT1 else B.name(t)), V.our_model("aacr", t),
                           pct1(r["f1"]), pct1(r["precision"]), pct1(r["recall"]), f"{r['found']:.1f}", r["comments"],
                           r["references"]]
                          for t, r in sorted(((t, r) for t, r in off.items() if r), key=lambda kv: -kv[1]["f1"])]))
@@ -699,7 +719,7 @@ def numbers(B, V):
     out.append(f"\n## Where QuickReview stands (standings)\n\nQuickReview: its frozen build, on {V.qr_model()}, on "
                "every benchmark.\n\n")
     out.append(md_table(["Benchmark", "Measure", "QuickReview", "Place", "Best other tool"],
-                        [[b, m_, pct(v), f"{k} of {n}", f"{o} {pct(ov)}"] for b, m_, v, k, n, o, ov in standings(B, V)]))
+                        [[b, m_, pct(v), f"{k} of {n}", f"{o} {pct(ov)}"] for b, m_, v, k, n, o, ov in standings5(B, V)]))
     import infographics_v5 as I
     seed_model, seed_build = V.key_seed()
     jl = V.m["judges"][MARTIAN_JUDGE]["label"]
@@ -709,15 +729,18 @@ def numbers(B, V):
                f"PRs (data/v3.json idea-funnel); \"judged correct\" is the benchmark judge's grade "
                f"({V.judge_words('aacr')}). Lenses run per PR: median {I.median_lenses(V):g}, drawn as that many "
                "chips.\n"
-               f"- **how-key:** \"334 of the first 379 defects\" counts the comments of the run that seeded the key, "
-               f"QuickReview's default run, build {seed_build} on {seed_model} (FULL-BENCHMARK.md, the key's sources). "
-               f"Every reviewer comment the builders checked came from earlier runs, {V.key_sources()} (the table "
-               f"above). The builders were Claude Code subagents on {audit} (bench docs).\n"
+               f"- **how-key:** \"334 of the first 379 defects\" were raised by the comments of QuickReview's default "
+               f"run, build {seed_build} on {seed_model} (FULL-BENCHMARK.md, the key's sources). Its 2,216 reviewer "
+               f"comments and 1,527 candidates came from runs {V.key_sources()} (the table above). Its 1,107 AACR "
+               "references are the ones the 145-PR build checked (v4 drew the 185 PRs' 1,418). The builders were Claude "
+               f"Code subagents on {audit} (bench docs).\n"
                f"- **how-fair:** \"lifted 3 rivals 12–17 pts\" compares each rival's best-shot variant with its "
                f"published run on 40 PRs, all on {V.best_shot(I.LIFTED)}, graded by {V.judge_words('aacr')} "
                "(FULL-BENCHMARK.md §3; the selection runs are in the table above).\n"
-               f"- **how-martian:** the golden audit (\"Our audit: {B.martian['real_goldens']} of 173 real\") was done "
-               f"by AI investigators on {audit} (GOLDEN-AUDIT-FULL.md); its calibration (\"Recall within … of {jl}\") "
+               f"- **how-martian:** the golden audit (\"Our audit: {B.martian['real_goldens']} of 173 real\"): 164 "
+               f"goldens by investigators on {audit}, a second on every non-real verdict (GOLDEN-AUDIT-FULL.md); the 9 "
+               "audited before them by one Claude investigator each (GOLDEN-AUDIT.md). Its calibration (\"Recall "
+               f"within … of {jl}\") "
                f"is our judge ({V.judge_words('martian')}) against Martian's {jl} judge on the same "
                f"{len(V.m['calibration'])} tools.\n"
                f"- **how-qodo:** its calibration (\"Within … pts of Qodo's F1\") is our judge "
@@ -751,28 +774,30 @@ def caption_model(V, n):
     if n.startswith("martian") or n == "how-martian":
         return (f"{frozen}{qr}, scored by our judge ({V.judge_words('martian')}); the other tools at Martian's "
                 f"{V.m['judges'][MARTIAN_JUDGE]['label']}-judge scores"
-                + (f"; golden audit by {V.model_name(I.AUDITORS)} investigators" if n == "how-martian" else ""))
+                + (f"; golden audit: Claude investigators, {V.model_name(I.AUDITORS)} for 164 of the 173" if n ==
+                   "how-martian" else ""))
     if n.startswith("qodo") or n == "how-qodo":
         return (f"{V.ran_by_us('qodo', [QR] + [t for t in ran if t != QR])}; every row graded by our judge "
                 f"({V.judge_words('qodo')})")
     if n == "aacr-leaderboard":
         jn, je, rounds = V.official_judge()
-        return (f"QuickReview: the Oct 1 build on {V.our_model('aacr', OCT1)}; matched by {jn} ({je} reasoning, "
+        return (f"QuickReview: the {SEP29} on {V.our_model('aacr', OCT1)}; matched by {jn} ({je} reasoning, "
                 f"{rounds} rounds averaged)")
     if n.startswith("aacr") or n.startswith("value"):
         return f"{frozen}{qr}; {aacr}"
     if n == "how-aacr":
         return cap(aacr)
     if n == "how-fair":
-        return f"{cap(aacr)}; best-shot selection runs on {V.best_shot(I.LIFTED)}"
+        return f"{cap(aacr)}; the 3 lifted rivals' best-shot runs on {V.best_shot(I.LIFTED)}"
     if n == "standings":
         return f"{frozen}{qr} on every benchmark"
     if n == "review-round":
         return f"Counts: QuickReview's frozen build on {qr}; judge: {V.judge_words('aacr')}"
     if n == "how-key":
         seed_model, seed_build = V.key_seed()
-        return (f"Candidate comments from earlier runs, {V.key_sources()}; the seed: QuickReview build {seed_build} "
-                f"on {seed_model}; built by Claude Code subagents on {V.model_name(I.AUDITORS)}")
+        return (f"The {I.KEY_COUNTS[0]} reviewer comments and {I.KEY_COUNTS[1]} from runs {V.key_sources()}; the 334: "
+                f"QuickReview build {seed_build} on {seed_model}; the key built by Claude Code subagents on "
+                f"{V.model_name(I.AUDITORS)}")
     return ""
 
 
@@ -785,8 +810,8 @@ def qr_note(V):
     return (f"QuickReview's results come from its frozen build ({', '.join(V.builds('aacr'))}) with {qr} on every "
             f"model call, at {V.reasoning('aacr', QR)} reasoning by lens. Its fast option ({', '.join(V.builds('aacr', FAST))}, "
             f"the frozen build with a fast profile) runs {same(fast)} at {V.reasoning('aacr', FAST)} reasoning. "
-            f"AACR-Bench's own score shows the Oct 1 build, on {same(oct1)}, and how-key counts the comments of an "
-            f"earlier build ({seed_build}, on {seed_model}). The other tools we ran are "
+            f"AACR-Bench's own score shows the {SEP29}, on {same(oct1)}, and the figure on how the key was built "
+            f"counts the comments of an earlier build ({seed_build}, on {seed_model}). The other tools we ran are "
             f"{V.reviewers('aacr', [t for t in V.B.aacr_tools() if t != QR])}. Judges: {V.judge_words('aacr')}, for "
             f"AACR-Bench; {jn}, {je} reasoning, for AACR-Bench's own score; ours, {V.judge_words('qodo')}, for Qodo and "
             f"QuickReview's Martian row; Martian's {V.m['judges'][MARTIAN_JUDGE]['label']} for its other rows.")
@@ -797,16 +822,18 @@ SHARE_CSS5 = SHARE_CSS + """
 :root[data-theme=dark]{color-scheme:dark;--shade:rgba(255,255,255,.2)}
 @media (prefers-color-scheme: dark){:root:not([data-theme=light]){--shade:rgba(255,255,255,.2)}}
 figcaption i{display:block;color:var(--ink2);font-style:normal;font-size:12.5px;margin:-4px 0 8px}
-#zoom{overscroll-behavior:contain}#zoom.big{overflow:auto;align-items:flex-start;justify-content:flex-start}
+#zoom{overflow:auto;overscroll-behavior:contain;color-scheme:dark}
+#zoom.big{align-items:flex-start;justify-content:flex-start}
 #zoom.big img{max-width:none;max-height:none;width:1200px;border-radius:0}
 """
-# v4's script, opening an image at its full 1200 px (the overlay scrolls) whenever fitting it to the window would
-# not make it clearly larger than on the page (a phone, a sideways phone, a tablet), and always at its top-left corner
+# v4's script, opening an image at its full 1200 px (the overlay scrolls) when the window is narrower than that and
+# fitting the image to it would not make it clearly larger than on the page (a phone, upright or sideways, a tablet),
+# and always at its top-left corner. A wider window fits the image whole, as v4 did.
 _OPEN = "zimg.src=vis.src;zimg.alt=vis.alt;zoom.style.display='flex';}));"
 if SHARE_JS.count(_OPEN) != 1:
     sys.exit("make_charts_v4.SHARE_JS no longer opens an image the way v5 extends")
 SHARE_JS5 = SHARE_JS.replace(_OPEN, "const fit=Math.min(innerWidth-32,(innerHeight-32)*vis.naturalWidth/vis.naturalHeight);\n"
-                             "zoom.classList.toggle('big',fit<1.25*vis.getBoundingClientRect().width);\n"
+                             "zoom.classList.toggle('big',innerWidth-32<1200&&fit<1.25*vis.getBoundingClientRect().width);\n"
                              "zimg.src=vis.src;zimg.alt=vis.alt;zoom.style.display='flex';zoom.scrollTo(0,0);}));")
 
 
@@ -869,8 +896,22 @@ def write_report_html(text, html_path, title, V, out=OUT):
     import html as H
     import re
     import markdown
-    text = re.sub(r"(?<![<(])\bhttps?://[^\s<>()]*[^\s<>().,;:]", lambda m: f"<{m.group(0)}>", text)
     body = markdown.markdown(text, extensions=["tables", "sane_lists"])
+
+    def links(html_text):
+        """Every bare address in the text a link: outside tags, and outside <a>, <code> and <pre>."""
+        out, inside = [], 0
+        for part in re.split(r"(<[^>]+>)", html_text):
+            tag = re.match(r"<(/?)(a|code|pre)\b", part)
+            if tag:
+                inside += -1 if tag.group(1) else 1
+            elif not part.startswith("<") and not inside:
+                part = re.sub(r"https?://[^\s<>\"'()]*[^\s<>\"'().,;:*_\]]",
+                              lambda m: f'<a href="{m.group(0)}">{m.group(0)}</a>', part)
+            out.append(part)
+        return "".join(out)
+
+    body = links(body)
 
     def figure(m):
         """An <img> of a chart beside the report, as its light and dark images embedded, and its model line."""
@@ -889,12 +930,13 @@ def write_report_html(text, html_path, title, V, out=OUT):
     body = re.sub(r"<p>(<figure>.*?</figure>)</p>", r"\1", body)  # a figure may not sit inside a paragraph
     body = body.replace("<table>", "<div class=scroll><table>").replace("</table>", "</table></div>")
     css = SHARE_CSS5 + ("article{max-width:900px;margin:0 auto}article p,article li{color:var(--ink);max-width:none;"
-                        "overflow-wrap:anywhere}article figure{margin:18px 0;cursor:zoom-in}article figcaption{padding:"
+                        "overflow-wrap:anywhere}article figure{margin:18px 0}article figcaption{padding:"
                         "10px 14px 6px}.scroll{overflow-x:auto;background:linear-gradient(to right,var(--bg) 30%,"
                         "transparent) left center/40px 100% no-repeat local,linear-gradient(to left,var(--bg) 30%,"
                         "transparent) right center/40px 100% no-repeat local,radial-gradient(farthest-side at 0 50%,"
                         "var(--shade),transparent) left center/14px 100% no-repeat scroll,radial-gradient(farthest-side"
                         " at 100% 50%,var(--shade),transparent) right center/14px 100% no-repeat scroll}"
+                        ".scroll table{min-width:640px}"
                         "table{border-collapse:collapse;margin:12px 0;font-size:14px}th,td{border-bottom:1px solid "
                         "var(--line);padding:6px 10px;text-align:left}th{color:var(--muted);font-weight:600}"
                         "a{color:var(--accent)}")

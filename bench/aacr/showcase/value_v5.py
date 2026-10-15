@@ -119,8 +119,8 @@ SOURCE_READ = ("Reading cost: words ÷ {wpm} a minute, plus {tri} s to triage ea
 
 
 def field(X):
-    """'all on GPT-6.1 Sol except Claude Code (Claude Opus 5.5)': every reviewer here, read from the runs."""
-    return X.V.reviewers("aacr", X.tools)
+    """'all on GPT-6.1 Sol except Claude Code (Claude Opus 5.5)': the six other reviewers, read from the runs."""
+    return X.V.reviewers("aacr", X.rivals())
 
 
 def judged(X):
@@ -185,7 +185,7 @@ def fig_value_review_cost(B, V, T):
     p.title("A review's real cost is reading time, not tokens" if reading_wins else "What a review costs per PR")
     p.metric("All-in cost per PR: model spend plus the time a person spends reading what the reviewer posted")
     src = source_read(X)
-    x0, x1, top, bottom = name_x(p, X, order), p.w - 130, 150, p.h - 92 - lines_over(src, 3)
+    x0, x1, top, bottom = name_x(p, X, order), p.w - 130, 150, p.h - 92 - lines_over(src, 2)  # v4's: two lines
     vmax = max(X.all_in(t, nits=True) for t in X.tools) * 1.08
     pitch = (bottom - top) / len(order)
     h = min(26, pitch * 0.6)
@@ -270,7 +270,7 @@ def fig_value_total(B, V, T):
                 f"{f['post_release'] - f['coding']:g} extra engineer-hours (NIST 2002); the rest cost nothing more.\n"
                 f"QuickReview costs less than every reviewer here once 1 in {1 / need:.0f} misses reaches production. "
                 f"{judged(X)} {X.V.aacr_models()}")
-    x0, x1, top, bottom = name_x(p, X, order), p.w - 150, 160, p.h - 92 - lines_over(src, 3)
+    x0, x1, top, bottom = name_x(p, X, order), p.w - 150, 160, p.h - 92 - lines_over(src, 2)  # v4's: two lines
     vmax = max(sum(v) for v in total.values()) * 1.04
     pitch = (bottom - top) / len(order)
     h = min(26, pitch * 0.6)
@@ -321,7 +321,13 @@ def fig_value_ladder(B, V, T):
     ours = " Ours: AACR-Bench, see value-price."
     if not X.a["ladder"]["source_line"].endswith(ours):
         sys.exit("value-ladder: data/value.json's ladder source_line no longer ends with the words v5 replaces")
-    src = small(X.a["ladder"]["source_line"][:-len(ours)] + f"\nOurs: {judged(X)} {X.V.aacr_models(tuned=False)}")
+    # v4's sources, then ours: the judge and every reviewer's model; QuickReview's build, and how its two rungs are
+    # computed (v4 pointed to value-price for that)
+    src = small(X.a["ladder"]["source_line"][:-len(ours)]
+                + f"\nOurs: {judged(X)} Reviewers: {X.V.reviewers('aacr', X.V.B.aacr_tools())}."
+                + f"\nQuickReview: frozen build, {X.V.reasoning('aacr', QR)} reasoning. Reading: words ÷ "
+                  f"{X.a['reading_words_per_minute']['value']} a minute plus {X.a['triage_seconds_per_comment']['value']} s "
+                  "a comment. A catch: extra all-in cost ÷ extra serious finds.")
     x1, top, bottom = p.w - 90, 160, p.h - 112 - lines_over(src, 2)  # v4's small print here was two lines
     lo_e, hi_e = 0, 7  # $1 .. $10M
     Xl = lambda v: x0 + (x1 - x0) * (math.log10(max(v, 1)) - lo_e) / (hi_e - lo_e)  # noqa: E731
@@ -344,7 +350,9 @@ def fig_value_ladder(B, V, T):
                weight="bold" if mine else "normal")
         p.text(x0 - 16, y - 7, label, ha="right", size=13, color=T["ink"] if mine else T["ink2"],
                weight="bold" if mine else "normal")
-        p.text(x0 - 16, y + 11, rung_src, ha="right", size=10, color=T["muted"])
+        # the rungs' sources, two of which name QuickReview's model: the small print's darker grey on light
+        p.text(x0 - 16, y + 11, rung_src, ha="right", size=10,
+               color=M.SMALL_INK["light"] if T["surface"] == "#fcfcfb" else T["muted"])
     p.source(src)
     return p
 
@@ -370,7 +378,7 @@ def numbers(B, V):
             "Words read/PR", "Reading $/PR", "All-in $/PR", "QuickReview's $ per extra serious catch"]
     import make_charts_v5 as M
     return ("## What a found bug is worth (value-*)\n\nAssumptions: data/value.json. " +
-            source_read(X).replace("\n", " ") + "\n\n" + M.md_table(head, rows))
+            source_read(X).replace("\n", " ").replace("\u00a0", " ") + "\n\n" + M.md_table(head, rows))
 
 
 # ---------------------------------------------------------------- the mini report

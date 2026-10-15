@@ -154,6 +154,10 @@
     ],
     "providers": [],
     "runs": [
+     "all-claude-smoke10",
+     "all-claude-dev10",
+     "all-claude-holdout10",
+     "all-claude-fresh10",
      "all-claude-c1-rest145",
      "all-claude-c2-rest145",
      "all-claude-c3-rest145",
@@ -169,6 +173,10 @@
     ],
     "providers": [],
     "runs": [
+     "all-codex-smoke10",
+     "all-codex-dev10",
+     "all-codex-holdout10",
+     "all-codex-fresh10",
      "all-codex-rest145",
      "all-codex-c1-rest145",
      "all-codex-c2-rest145",
@@ -197,6 +205,10 @@
     ],
     "providers": [],
     "runs": [
+     "all-opencode-smoke10",
+     "all-opencode-dev10",
+     "all-opencode-holdout10",
+     "all-opencode-fresh10",
      "all-opencode-rest145",
      "all-opencode-c1-rest145",
      "all-opencode-c2-rest145",
@@ -215,6 +227,10 @@
      "openai-codex"
     ],
     "runs": [
+     "all-pireview-smoke10",
+     "all-pireview-dev10",
+     "all-pireview-holdout10",
+     "all-pireview-fresh10",
      "all-pireview-c1-rest145",
      "all-pireview-c2-rest145",
      "all-pireview-c3-rest145",

@@ -3,10 +3,11 @@
 The drawings are v4's (infographics_v4.py and the three info_*_v4.py files), reused as they are. v5 changes the
 words on the images that name a model or show a count from a run, and one drawing:
 - how-aacr, how-fair, how-martian, how-qodo: every reviewer's and judge's model by its display name
-  (data/models.json), read from data/v5.json. how-fair also names the model of the best-shot selection runs behind
-  its "lifted 3 rivals", and how-martian the model of the golden audit's investigators (from the audit's own doc);
-- how-key: which run seeded the key (QuickReview's default run, its build and model), the model of every reviewer
-  run whose comments the key's builders checked (a third line of small print), and the builders' model;
+  (data/models.json), read from data/v5.json. how-fair also names the model of the best-shot runs behind its
+  "lifted 3 rivals", and how-martian the golden audit's investigators (from the audit's own docs);
+- how-key: which run raised "334 of the first 379" (QuickReview's default run, its build and model), the model of the
+  runs behind its 2,216 reviewer comments and 1,527 candidates (a third line of small print), the builders' model,
+  and the 1,107 AACR references the 145-PR build checked (v4 drew the 185 PRs' 1,418 beside that build's counts);
 - review-round: whose counts these are (QuickReview's frozen build and its model), which judge graded them, and the
   median number of lenses that build ran per PR. v4 printed 15 and drew 15 lens chips; the build's own runs say 11,
   so v5 draws 11.
@@ -28,7 +29,10 @@ from diagram_v4 import icon
 QR = "quickreview"
 LIFTED = {"codex-cli", "opencode", "pi-review"}  # how-fair's "lifted 3 rivals": 44->56, 52->68, 43->60 (bench docs)
 AUDITORS = "claude-opus-5-5"  # GOLDEN-AUDIT-FULL.md: "One independent investigator per golden comment (Claude Opus 5.5
-# subagents ...)"; the key's builders likewise (paper/benchmark.tex). No run records either.
+# subagents ...)" for 164 of the 173 goldens (the 9 before them: "one Claude investigator each", GOLDEN-AUDIT.md); the
+# key's builders likewise (paper/benchmark.tex). No run records either.
+FIRST_BUILD_REFS = "1,107"  # FULL-BENCHMARK.md, the 145-PR build: "all 1,107 references and all 2,216 reviewer comments"
+KEY_COUNTS = ("2,216", "1,527 candidates")  # how-key's two boxes of reviewer comments (v4's drawing, the bench docs)
 
 
 def retext(fn, swaps, after=None):
@@ -78,9 +82,11 @@ def how_fair(B, V):
 
 def how_key(B, V):
     seed_model, seed_build = V.key_seed()
+    refs = next(r for r in V.v3["official"]["aacr"].values() if r)["references"]  # what v4 drew: the 185 PRs' total
     return [("(Claude Code subagents on Opus 5.5)", f"(Claude Code subagents on {V.model_name(AUDITORS)})"),
             ("QuickReview's earlier comments raised",
-             f"An earlier QuickReview run (default, build {seed_build} on {seed_model}) raised")]
+             f"An earlier QuickReview run (default, build {seed_build} on {seed_model}) raised"),
+            (f"{refs:,}", FIRST_BUILD_REFS)]
 
 
 def raise_banner(p, claim, dy):
@@ -110,15 +116,20 @@ def raise_banner(p, claim, dy):
 
 
 def key_sources(p, B, V, T):
+    for c in KEY_COUNTS:
+        if sum(1 for t in p.c.texts if t.get_text() == c) != 1:
+            sys.exit(f"how-key: v4's drawing no longer shows {c!r} once; reword its third line of small print")
     raise_banner(p, "No human check yet", 12)  # the room the third line of small print takes under it
-    one_more_line(p, f"Every reviewer comment checked came from earlier runs: {V.key_sources()}.")
+    one_more_line(p, f"The {KEY_COUNTS[0]} reviewer comments and {KEY_COUNTS[1]} came from runs {V.key_sources()}.")
 
 
 def how_martian(B, V):
     name, effort = V.judge("martian")
     return [("QuickReview: frozen build, judged by gpt-6.1-sol at low reasoning.",
              f"QuickReview: frozen build on {V.our_model('martian', QR)}; our judge: {name}, {effort} reasoning."),
-            ("one AI investigator per golden", f"one AI investigator ({V.model_name(AUDITORS)}) per golden")]
+            ("one AI investigator per golden, reading only the code; a second on every non-real verdict.",
+             f"one Claude investigator per golden, from the code (for 164: {V.model_name(AUDITORS)}, a second on each "
+             "non-real verdict).")]
 
 
 def how_qodo(B, V):
@@ -152,11 +163,11 @@ def review_round(B, V):
 
 
 def lens_chips(p, B, V, T):
-    """The lens grid redrawn with the median's chips: v4 drew 15 (3 rows of 5) for its 'median 15'. The chips keep
-    v4's three rows, as many columns as that takes, centred where v4's grid was; the coverage check's two dashed
-    chips and their word move onto the new columns."""
+    """The lens grid redrawn with the median's chips: v4 drew 15 (3 rows of 5) for its 'median 15'. The new grid keeps
+    v4's chip size, pitch and centre, read from v4's drawing, in at most its three rows and as many columns as that
+    takes; the coverage check's two dashed chips and their word move onto the new columns."""
     n = math.floor(median_lenses(V))
-    s, g = 22, 7  # v4's chip and gap
+    s = 22  # v4's chip (info_system_v4.fig_review_round): the only 22 px square patches it draws
     chips = [a for a in p.c.patches if isinstance(a, FancyBboxPatch) and (a.get_width(), a.get_height()) == (s, s)]
     solid = [a for a in chips if a.get_facecolor()[3] > 0]
     dashed = [a for a in chips if a.get_facecolor()[3] == 0]
@@ -165,23 +176,27 @@ def lens_chips(p, B, V, T):
     glass = [a for a in p.c.patches if isinstance(a, Circle) and inside(*a.center)]
     handle = [ln for ln in p.c.lines if isinstance(ln, Line2D) and all(inside(x, y) for x, y in ln.get_xydata())]
     word = [t for t in p.c.texts if t.get_text() == "coverage"]
-    if (len(solid), len(dashed), len(glass), len(handle), len(word)) != (15, 2, 15, 15, 1):
-        sys.exit("review-round: v4's lens grid is no longer 15 chips with their icons over 2 dashed ones")
+    xs, ys = sorted({b[0] for b in boxes}), sorted({b[1] for b in boxes})
+    pitches = {round(b - a, 6) for c in (xs, ys) for a, b in zip(c, c[1:])}
+    if (len(solid), len(dashed), len(glass), len(handle), len(word), len(xs), len(ys), len(pitches)) != \
+            (15, 2, 15, 15, 1, 5, 3, 1):
+        sys.exit("review-round: v4's lens grid is no longer 3 rows of 5 chips at one pitch, with their icons, over 2 "
+                 "dashed ones")
     if not 1 <= n <= 15:
         sys.exit(f"review-round: a median of {n} lenses does not fit v4's grid (at most 15)")
     for a in solid + glass + handle:
         a.remove()
-    x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
-    cols = math.ceil(n / 3)
-    nx0 = x0 + (5 * s + 4 * g) / 2 - (cols * s + (cols - 1) * g) / 2  # the same centre as v4's 5 columns
+    pitch, rows = pitches.pop(), min(3, n)
+    cols = math.ceil(n / rows)
+    x0 = (xs[0] + xs[-1] + s) / 2 - ((cols - 1) * pitch + s) / 2  # centred where v4's grid was
     for i in range(n):
-        x, y = nx0 + (i % cols) * (s + g), y0 + (i // cols) * (s + g)
+        x, y = x0 + (i % cols) * pitch, ys[0] + (i // cols) * pitch
         info_system_v4.chip(p, x, y, s, s)
         icon(p, "search", x + s / 2, y + s / 2, 12, color=T["qr"], lw=1.3)
     for a in dashed:
-        a.set_x(a.get_x() + nx0 - x0)
+        a.set_x(a.get_x() + x0 - xs[0])
     x, y = word[0].get_position()
-    word[0].set_position((x + nx0 - x0, y))
+    word[0].set_position((x + x0 - xs[0], y))
 
 
 V4 = infographics_v4.FIGURES
