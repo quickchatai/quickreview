@@ -883,6 +883,13 @@ export class ReplayRunner {
           `${c.id}: ${c.lens} — ${r.pr.length === 0 ? `read none of PR #${c.pr}'s files: ` : ""}${n} file read${n === 1 ? "" : "s"} opened outside PR #${c.pr}'s worktree (${shown}) — not the PR's code`,
         );
       }
+      // A lens that opened nothing of the PR did not review it, whatever it
+      // answered: never a finished review, never a price sample.
+      if (c.kind === "lens" && r.pr.length === 0) {
+        c.status = "failed";
+        c.error = `the lens opened none of PR #${c.pr}'s files (${outcome.reads.length} file-read call${outcome.reads.length === 1 ? "" : "s"} in all)`;
+        return spent;
+      }
     }
     if (c.kind === "lens") {
       const answer = parseScanAnswer(outcome.output, { root: job.root, deepLenses: [] });

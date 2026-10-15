@@ -801,6 +801,11 @@ describe("replay: cost first, subagents, side by side", () => {
     const run = await ran(rr, previewOf(await rr.preview({ prs: [7], old: "none" })).key);
     const baseline = run.cases.find((c) => c.agent.startsWith("pass-baseline--"))!;
     expect(baseline.reads).toEqual({ pr: 0, elsewhere: 1 });
+    // It read none of the PR: not a finished review, whatever it answered.
+    expect(baseline).toMatchObject({
+      status: "failed",
+      error: expect.stringMatching(/opened none of PR #7's files/),
+    });
     const other = run.cases.find(
       (c) => c.kind === "lens" && !c.agent.startsWith("pass-baseline--"),
     )!;
@@ -810,6 +815,51 @@ describe("replay: cost first, subagents, side by side", () => {
         /pass-baseline — read none of PR #7's files: 1 file read opened outside PR #7's worktree \(\/workspace\/svc\/auth\/token\.py\)/,
       ),
     ]);
+  });
+
+  it("a lens that made no file read at all is no finished review: its side reads incomplete", async () => {
+    const calls: Call[] = [];
+    const base = fakeRunner(calls);
+    const rr = new ReplayRunner({
+      state: stateHomeFs(stateRoot()),
+      clock: () => now,
+      source: {
+        pr: async (n) => ({ ok: true, pr: pr(n) }),
+        open: () => ({ ok: true, tree: tree() }),
+      },
+      sides: (req) =>
+        replaySides(
+          {
+            root: sandbox,
+            env,
+            stateRoot: stateRoot(),
+            state: stateHomeFs(stateRoot()),
+            clock: () => now,
+          },
+          req,
+        ),
+      cases: (agentsDir) => ({
+        run: async (spec, signal, onCost) => {
+          const out = await base(agentsDir).run(spec, signal, onCost);
+          if (!out.ok) return out;
+          return {
+            ...out,
+            reads: spec.agent.startsWith("pass-baseline--") ? [] : [join(dir, "tree", FILE)],
+          };
+        },
+      }),
+      styleGuide: () => [],
+      concurrency: 2,
+    });
+    const run = await ran(rr, previewOf(await rr.preview({ prs: [7], old: "none" })).key);
+    const baseline = run.cases.filter((c) => c.agent.startsWith("pass-baseline--"));
+    expect(baseline.length).toBeGreaterThan(0);
+    for (const c of baseline)
+      expect(c).toMatchObject({
+        status: "failed",
+        error: expect.stringMatching(/opened none of PR #7's files \(0 file-read calls/),
+      });
+    expect(compareRun(run)[0]!.complete).toEqual({ old: false, new: false });
   });
 
   it("a finished replay prices the next preview from what it measured", async () => {
