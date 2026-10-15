@@ -1330,8 +1330,12 @@ export class App {
   }
 
   /** Give the column the keyboard. */
+  /** Give the companion column the keyboard — taking it from the PR pane
+   * first: one keyboard owner, whoever asked (a retry that heals can land
+   * here after the operator focused a pane). */
   focusCompanion(): void {
     if (!this.sidebar) return;
+    if (this.view.piFocus) this.blurPiPane();
     this.sidebar.focus();
     this.repaint();
   }

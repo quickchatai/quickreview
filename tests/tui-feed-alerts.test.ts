@@ -715,6 +715,19 @@ describe("companion tab", () => {
     await h.close();
   });
 
+  // A companion that heals on retry focuses the column after the operator
+  // may have focused a PR pane: the pane must let go, or its keys keep going
+  // to the PR session under an accented column. MUTATION: focus the column
+  // without blurring the pane — red.
+  it("focusing the column takes the keyboard from a focused PR pane", async () => {
+    const h = harness();
+    h.app.view.piFocus = true;
+    h.app.focusCompanion();
+    expect(h.app.sidebar?.focused).toBe(true);
+    expect(h.app.piFocused()).toBe(false);
+    await h.close();
+  });
+
   it("the companion tab keys are retired: 5 is deploy now, c is no tab at all", async () => {
     const h = harness();
     h.s.type("5");
