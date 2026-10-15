@@ -51,6 +51,7 @@ import {
   classifyCi,
   withholdApproval,
   type CheckSummary,
+  type CiReviewBody,
   type CiState,
 } from "./cigate.js";
 import { standingReview } from "./standing-review.js";
@@ -99,13 +100,9 @@ export interface GuardDeps {
   log?: (msg: string, extra?: unknown) => void;
 }
 
-/** The review payload as it appears inside a `create_review` intent. */
-interface ReviewBody {
-  commit_id?: string;
-  event?: string;
-  body?: string;
-  comments?: unknown[];
-}
+/** The review payload as it appears inside a `create_review` intent — the
+ * one shape both softenings (guard 1 here, guard 4 in cigate.ts) rewrite. */
+type ReviewBody = CiReviewBody;
 
 // ---- guard 1: a human already approved this head --------------------------
 
