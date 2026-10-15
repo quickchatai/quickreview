@@ -574,7 +574,6 @@ export function scanValidatorPrompt(
 export const SEVERITIES = ["P0", "P1", "P2", "P3", "nit"] as const;
 export type ScanSeverity = (typeof SEVERITIES)[number];
 
-/** A stage-1 candidate as read back, anchored or not yet checked. */
 /** A finding's place: its file, its line range and its kind. */
 interface Placed {
   path: string;
@@ -605,6 +604,7 @@ export function survivorSource<T extends Placed>(
   return open.find((c) => c.kind === survivor.kind) ?? open[0];
 }
 
+/** A stage-1 candidate as read back, anchored or not yet checked. */
 export interface ScanCandidate {
   path: string;
   start: number;
