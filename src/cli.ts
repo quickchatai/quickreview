@@ -26,7 +26,6 @@ import {
   StateStore,
   tallyCancellations,
   type CancellationTally,
-  type RoundRow,
   type StatusSnapshot,
 } from "./state.js";
 import {
@@ -692,14 +691,6 @@ export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promi
   }
 }
 
-/** Every round of PR `n`, oldest first — the history both `why` renderings
- * print. */
-function roundHistory(store: StateStore, n: number): RoundRow[] {
-  return store.db
-    .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
-    .all(n) as RoundRow[];
-}
-
 /** A kept-not-posted finding (doubted or withheld) as `why --json` carries it. */
 function keptFinding(f: DoubtedFinding): DoubtedFinding {
   return {
@@ -715,7 +706,7 @@ function keptFinding(f: DoubtedFinding): DoubtedFinding {
 
 export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPayload {
   const pr = store.getPr(n);
-  const rounds = roundHistory(store, n);
+  const rounds = store.roundsFor(n);
   const threadTotal = store.db
     .prepare("SELECT COUNT(*) AS c FROM bot_comments WHERE pr = ?")
     .get(n) as { c: number };
@@ -818,7 +809,7 @@ function cmdWhy(n: number): void {
   try {
     const pr = store.getPr(n);
     if (pr) console.log(whyHeaderLine(n, pr));
-    const rounds = roundHistory(store, n);
+    const rounds = store.roundsFor(n);
     for (const r of rounds)
       console.log(
         `round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} started=${r.started_at}`,
