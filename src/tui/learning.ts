@@ -20,6 +20,7 @@ import type { IssueSink } from "./issuesink.js";
 import type { ForwardStatus } from "./memforward.js";
 import {
   defectEntries,
+  splitNsId,
   storeHealth,
   tuiMemoryStore,
   type MemoryEntry,
@@ -206,7 +207,12 @@ export class LearningStore {
   // ---- memory --------------------------------------------------------------
 
   /** Match setup's pin proposals to the entries just read: a proposal whose
-   * entry is gone, already pinned, or edited since is not shown. */
+   * entry is gone, already pinned, or edited since is not shown. Setup
+   * proposes against the REVIEWER's store, by its own ids; the TUI's merged
+   * store prefixes every id with its user (`reviewer:<id>`), so a proposal
+   * matches the reviewer's entry of that id — or, from a store that does not
+   * namespace, the entry of the bare id. Keyed by the entry as the tab
+   * addresses it (`entryKey`). */
   private loadPinProposals(): void {
     this.pinProposals = new Map();
     this.pinProposalsError = undefined;
@@ -217,8 +223,14 @@ export class LearningStore {
       return;
     }
     for (const p of read.file.entries) {
-      const e = this.entries.find((x) => proposalKey(x) === proposalKey(p));
-      if (e && !e.pinned && e.hash === p.hash) this.pinProposals.set(proposalKey(p), p.why);
+      const e = this.entries.find((x) => {
+        const { user, id } = splitNsId(x.id);
+        return (
+          (user === "" || user === "reviewer") &&
+          proposalKey({ id, ts: x.ts, block: x.block }) === proposalKey(p)
+        );
+      });
+      if (e && !e.pinned && e.hash === p.hash) this.pinProposals.set(proposalKey(e), p.why);
     }
   }
 

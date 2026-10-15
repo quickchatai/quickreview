@@ -145,6 +145,45 @@ describe("the reading pane", () => {
     expect(screenOf(rig)).toContain("⚠ pinned");
   });
 
+  it("marks setup's pin proposal on the TUI's namespaced entry — reviewer ids only", async () => {
+    // Setup proposes against the reviewer's store by its bare ids; the TUI's
+    // merged store prefixes every id with its user.
+    class Namespaced extends FakeMemory {
+      override read(): Promise<MemoryEntry[]> {
+        return super
+          .read()
+          .then((es) => [
+            ...es.map((e) => ({ ...e, id: `reviewer:${e.id}` })),
+            ...es.map((e) => ({ ...e, id: `companion:${e.id}`, ts: `${e.ts}x` })),
+          ]);
+      }
+    }
+    const raw = parseMemory(SAMPLE).find((e) => e.text.includes("stale recheck"))!;
+    const rig = await loaded({
+      mem: new Namespaced(),
+      readPinProposals: () => ({
+        state: "ok",
+        file: {
+          proposed_at: "2026-08-21T00:00:00Z",
+          entries: [
+            {
+              id: raw.id,
+              ts: raw.ts,
+              block: raw.block,
+              hash: raw.hash,
+              excerpt: "x",
+              why: "a standing rule",
+            },
+          ],
+        },
+      }),
+    });
+    expect([...rig.learning.store.pinProposals.keys()]).toEqual([
+      `${raw.ts}|reviewer:${raw.id}#${raw.block}`,
+    ]);
+    expect(screenOf(rig, 140, 40)).toContain("☆ 1 proposed pin");
+  });
+
   it("tags are not printed twice in the list line", async () => {
     const rig = await loaded();
     expect(screenOf(rig, 140, 40)).not.toMatch(/#bug #operations #bug #operations/);
