@@ -607,7 +607,8 @@ describe("wakeOrHold / flushHeldWakes", () => {
       await wakeOrHold(deps(), 7, "older reply", "author_reply");
       store.finishRound(id, "APPROVE", null, null);
       // The round is over, the backlog not yet flushed; a newer reply arrives.
-      await wakeOrHold(deps(), 7, "newer reply", "author_reply");
+      // It goes out with the backlog, and says so.
+      expect(await wakeOrHold(deps(), 7, "newer reply", "author_reply")).toBe("injected");
 
       // Both go out oldest-first as one burst — never the newer one alone.
       expect(injected).toHaveLength(1);
