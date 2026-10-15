@@ -42,11 +42,12 @@ import { join } from "node:path";
 import type { Config } from "./config.js";
 import { readFindingsRecord } from "./findingsrecord.js";
 import type { PrFileEntry } from "./github.js";
+import { isMigrationPath } from "./heuristics.js";
 import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
 import { standingVerdict } from "./standing-review.js";
-import { wakeOrHold } from "./wakes.js";
+import { wakeOrHold, withRepoFacts } from "./wakes.js";
 import {
   readSettledJson,
   resolvePartialWritePolicy,
@@ -123,10 +124,6 @@ function baseName(path: string): string {
   return path.split("/").pop() ?? path;
 }
 
-function isMigration(path: string): boolean {
-  return /(^|\/)migrations\//.test(path);
-}
-
 /**
  * Split a migration filename into its number and the rest: `0042_add_foo.py`
  * → `{ num: "0042", rest: "add_foo.py" }`. Null when the file is not a
@@ -134,7 +131,7 @@ function isMigration(path: string): boolean {
  */
 export function migrationName(path: string): { num: string; rest: string } | null {
   const m = /^(\d+)[_-](.+)$/.exec(baseName(path));
-  if (!m || !isMigration(path)) return null;
+  if (!m || !isMigrationPath(path)) return null;
   return { num: m[1] as string, rest: m[2] as string };
 }
 
@@ -145,21 +142,71 @@ export function isMigrationRenumber(from: string, to: string): boolean {
   return a !== null && b !== null && a.rest === b.rest && a.num !== b.num;
 }
 
-interface PatchLines {
+/** One hunk of a unified diff: the text git prints after its `@@ … @@`
+ * header (often the enclosing function or table) and its lines in order. */
+interface Hunk {
+  section: string;
+  lines: Array<{ kind: " " | "+" | "-"; text: string }>;
+}
+
+/**
+ * The hunks of a unified diff. File headers (`---`/`+++`) are recognised only
+ * before the first hunk — inside one, `--- x` is a removed line that reads
+ * `-- x`. A patch with no `@@` line is one hunk.
+ */
+function parseHunks(patch: string): Hunk[] {
+  const hunks: Hunk[] = [];
+  let cur: Hunk | null = null;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) {
+      cur = { section: /^@@[^@]*@@ ?(.*)$/.exec(line)?.[1] ?? "", lines: [] };
+      hunks.push(cur);
+      continue;
+    }
+    if (cur === null && (line.startsWith("+++") || line.startsWith("---"))) continue;
+    const kind = line.charAt(0);
+    if (kind !== " " && kind !== "+" && kind !== "-") continue;
+    if (cur === null) {
+      cur = { section: "", lines: [] };
+      hunks.push(cur);
+    }
+    cur.lines.push({ kind, text: line.slice(1) });
+  }
+  return hunks;
+}
+
+/** One change block: a maximal run of added/removed lines between context
+ * lines. A line that moved across unchanged code lands in two blocks, so
+ * comparing block by block keeps a reordering around unchanged statements
+ * from reading as formatting. */
+interface ChangeBlock {
   added: string[];
   removed: string[];
 }
 
-/** Added/removed lines of a unified diff, headers excluded. */
-export function patchLines(patch: string): PatchLines {
-  const added: string[] = [];
-  const removed: string[] = [];
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
-    if (line.startsWith("+")) added.push(line.slice(1));
-    else if (line.startsWith("-")) removed.push(line.slice(1));
+function changeBlocks(hunk: Hunk): ChangeBlock[] {
+  const blocks: ChangeBlock[] = [];
+  let cur: ChangeBlock | null = null;
+  for (const line of hunk.lines) {
+    if (line.kind === " ") {
+      cur = null;
+      continue;
+    }
+    if (cur === null) {
+      cur = { added: [], removed: [] };
+      blocks.push(cur);
+    }
+    (line.kind === "+" ? cur.added : cur.removed).push(line.text);
   }
-  return { added, removed };
+  return blocks;
+}
+
+/** Every line of one kind in a patch, prefix kept — a whole added or removed
+ * file's text. */
+function changedLines(patch: string, kind: "+" | "-"): string[] {
+  return parseHunks(patch).flatMap((h) =>
+    h.lines.filter((l) => l.kind === kind).map((l) => `${kind}${l.text}`),
+  );
 }
 
 /** A quoted literal on one line. Whitespace inside one is content, never
@@ -302,19 +349,67 @@ function tokenSeams(lines: string[]): string {
   return out;
 }
 
+/** Style sheets: whitespace between two selector tokens is a combinator
+ * (`a .child` is a descendant, `a.child` a compound), so no whitespace that
+ * separates two tokens there may vanish or appear, whatever their classes. */
+function selectorWhitespace(path: string | undefined): boolean {
+  return path !== undefined && /\.(css|scss|sass|less|styl)$/i.test(baseName(path));
+}
+
+/** Every whitespace run inside a line collapsed to one space and the lines
+ * joined by one: a re-indent and a re-flow compare equal, a gap that opens or
+ * closes between two tokens does not. */
+function collapsed(lines: string[]): string {
+  return lines
+    .map((l) => l.trim().replace(/\s+/g, " "))
+    .filter((l) => l !== "")
+    .join(" ");
+}
+
+/** A heredoc opener: `<<EOF`, `<<-'EOF'`, `<< "EOF"` (shell) and `<<~SQL`
+ * (Ruby, no space — `a << b` appends). */
+const SHELL_HEREDOC = /<<-?\s*(['"]?)[A-Za-z_]\w*\1/;
+const RUBY_HEREDOC = /<<[-~]?(['"]?)[A-Za-z_]\w*\1/;
+/** A YAML block scalar indicator closing its line (`key: |`, `- >-`). */
+const YAML_BLOCK_SCALAR = /(?:^|:|-)\s*[|>][-+1-9]{0,2}\s*(?:#.*)?$/;
+
 /**
- * Whitespace-only change: the added and removed text are identical once
- * insignificant whitespace is dropped (see `squash` — never inside a quoted
- * literal, never leading indentation of a whitespace-significant language),
- * and no line's whitespace changed between its first and last `/` (see
- * `slashSpans` — a regex literal's whitespace is content), and no whitespace
- * that separates two tokens appeared or vanished (see `tokenSeams`).
- * Concatenation (not a per-line set) is the comparison, so a re-indent or a
- * re-flow passes while a reordering of real lines does not.
+ * May this hunk's changed lines sit inside a literal that spans lines — a
+ * template literal, a triple-quoted string, a heredoc, a YAML block scalar?
+ * Whitespace inside one is content, and the per-line `QUOTED` rule cannot see
+ * a literal that opens or closes on another line. Judged from what the hunk
+ * shows (its section text, its context and its changed lines): an unbalanced
+ * backtick, any triple quote, or the language's own opener. A literal whose
+ * delimiters both lie outside the hunk is beyond what the patch shows.
  */
-export function formattingOnly(patch: string, path?: string): boolean {
-  const { added, removed } = patchLines(patch);
-  if (added.length === 0 && removed.length === 0) return false;
+function mayTouchMultilineLiteral(hunk: Hunk, path: string | undefined): boolean {
+  const base = path === undefined ? "" : baseName(path);
+  const shell = /\.(sh|bash|zsh|ksh)$/i.test(base) || base === "Dockerfile";
+  const ruby = /\.rb$/i.test(base) || base === "Gemfile";
+  const yaml = /\.ya?ml$/i.test(base);
+  return [hunk.section, ...hunk.lines.map((l) => l.text)].some(
+    (text) =>
+      text.includes('"""') ||
+      text.includes("'''") ||
+      (text.replace(/\\./g, "").split("`").length - 1) % 2 === 1 ||
+      (shell && SHELL_HEREDOC.test(text)) ||
+      (ruby && RUBY_HEREDOC.test(text)) ||
+      (yaml && YAML_BLOCK_SCALAR.test(text)),
+  );
+}
+
+/**
+ * One change block is whitespace-only: the added and removed text are
+ * identical once insignificant whitespace is dropped (see `squash` — never
+ * inside a quoted literal, never leading indentation of a
+ * whitespace-significant language), and no line's whitespace changed between
+ * its first and last `/` (see `slashSpans` — a regex literal's whitespace is
+ * content), and no whitespace that separates two tokens appeared or vanished
+ * (see `tokenSeams`; in a style sheet, `collapsed`).
+ */
+function sameModuloFormatting(block: ChangeBlock, path: string | undefined): boolean {
+  const { added, removed } = block;
+  if (selectorWhitespace(path) && collapsed(added) !== collapsed(removed)) return false;
   return (
     squash(added, path) === squash(removed, path) &&
     slashSpans(added) === slashSpans(removed) &&
@@ -322,22 +417,47 @@ export function formattingOnly(patch: string, path?: string): boolean {
   );
 }
 
+/**
+ * Whitespace-only change, judged change block by change block (see
+ * `changeBlocks`): within a block, concatenation (not a per-line set) is the
+ * comparison, so a re-indent or a re-flow passes while a reordering of real
+ * lines does not — and a line moved across unchanged code is two blocks that
+ * each differ. A hunk that may touch a multi-line literal is never
+ * formatting.
+ */
+export function formattingOnly(patch: string, path?: string): boolean {
+  const hunks = parseHunks(patch);
+  const blocks = hunks.flatMap(changeBlocks);
+  if (blocks.length === 0) return false;
+  if (hunks.some((h) => mayTouchMultilineLiteral(h, path))) return false;
+  return blocks.every((b) => sameModuloFormatting(b, path));
+}
+
+/** A migration number: a digit run that starts a token and is followed by `_`
+ * and a letter — the `NNNN_name` shape a migration filename or `dependencies`
+ * entry carries. `1_000` (a numeric literal) is not one. */
+const MIGRATION_NUMBER = /(?<![A-Za-z0-9_])\d+(?=_[A-Za-z])/g;
+
 /** Same text once every MIGRATION-NUMBER run is masked — the renumber's
  * content edit (`dependencies = [("app", "0042_x")]` → `"0043_x"`) and nothing
- * else. Only a digit run immediately followed by `_` (the `NNNN_name` shape a
- * migration filename or `dependencies` entry carries) is masked: a semantic
- * numeric change inside a renamed migration — a batch size, a timeout, a
- * default — does NOT mask away, so it classifies significant. */
+ * else. Only the migration-number shape is masked (`MIGRATION_NUMBER`): a
+ * semantic numeric change inside a renamed migration — a batch size, a
+ * timeout, a default, `1_000` → `2_000` — does NOT mask away, so it
+ * classifies significant. Judged block by block like `formattingOnly`; in a
+ * hunk that may touch a multi-line literal the raw lines are compared, so only
+ * the numbers may differ there. */
 export function digitsOnly(patch: string, path?: string): boolean {
-  const { added, removed } = patchLines(patch);
-  const mask = (lines: string[]): string => squash(lines, path).replace(/\d+(?=_)/g, "#");
-  const maskSpans = (lines: string[]): string => slashSpans(lines).replace(/\d+(?=_)/g, "#");
-  const maskSeams = (lines: string[]): string => tokenSeams(lines).replace(/\d+(?=_)/g, "#");
-  return (
-    mask(added) === mask(removed) &&
-    maskSpans(added) === maskSpans(removed) &&
-    maskSeams(added) === maskSeams(removed)
-  );
+  const masked = (text: string): string => text.replace(MIGRATION_NUMBER, "#");
+  return parseHunks(patch).every((hunk) => {
+    const literal = mayTouchMultilineLiteral(hunk, path);
+    return changeBlocks(hunk).every(({ added, removed }) =>
+      literal
+        ? masked(added.join("\n")) === masked(removed.join("\n"))
+        : masked(squash(added, path)) === masked(squash(removed, path)) &&
+          masked(slashSpans(added)) === masked(slashSpans(removed)) &&
+          masked(tokenSeams(added)) === masked(tokenSeams(removed)),
+    );
+  });
 }
 
 /** One release-version line and nothing else on it: `"version": "1.2.3",`
@@ -349,13 +469,39 @@ export function digitsOnly(patch: string, path?: string): boolean {
 const RELEASE_VERSION_LINE =
   /^\s*(?:"version"\s*:\s*"v?\d[^"\s]*"\s*,?|version\s*=\s*(?:"v?\d[^"\s]*"|'v?\d[^'\s]*'))\s*$/i;
 
+/** A TOML table header line, its name with surrounding space dropped:
+ * `[package]` → `package`; an array table (`[[bin]]`) keeps its brackets. */
+const TOML_TABLE = /^\s*(\[?\[[^\]]+\]\]?)\s*(?:#.*)?$/;
+
+/** The TOML tables whose `version` key is the package's own release. */
+const RELEASE_TABLES = new Set(["package", "workspace.package", "project", "tool.poetry"]);
+
+function tomlTable(text: string): string | null {
+  const m = TOML_TABLE.exec(text);
+  if (!m) return null;
+  const header = m[1] as string;
+  return header.startsWith("[[") ? header : header.slice(1, -1).replace(/\s+/g, "");
+}
+
 /** Every changed line is the release-version key itself — the release-bump
- * shape. */
-export function versionOnly(patch: string): boolean {
-  const { added, removed } = patchLines(patch);
-  const lines = [...added, ...removed];
-  if (lines.length === 0) return false;
-  return lines.every((l) => RELEASE_VERSION_LINE.test(l));
+ * shape. In a TOML manifest the key must also sit in a release table
+ * (`RELEASE_TABLES`) that the hunk shows: `version = "2"` under
+ * `[dependencies.serde]` is a dependency requirement, and a line whose table
+ * the patch does not show is not proven to be the release. */
+export function versionOnly(patch: string, path?: string): boolean {
+  const toml = path !== undefined && /\.toml$/i.test(path);
+  let changed = 0;
+  for (const hunk of parseHunks(patch)) {
+    let table = tomlTable(hunk.section);
+    for (const line of hunk.lines) {
+      table = tomlTable(line.text) ?? table;
+      if (line.kind === " ") continue;
+      changed++;
+      if (!RELEASE_VERSION_LINE.test(line.text)) return false;
+      if (toml && (table === null || !RELEASE_TABLES.has(table))) return false;
+    }
+  }
+  return changed > 0;
 }
 
 export interface ClassifyOpts {
@@ -417,7 +563,7 @@ export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClas
   if (file.previous_filename && churn === 0) return trivial("pure-rename");
 
   if (LOCKFILES.has(baseName(name))) return trivial("version-bump");
-  if (VERSION_MANIFESTS.has(baseName(name)) && patch && versionOnly(patch))
+  if (VERSION_MANIFESTS.has(baseName(name)) && patch && versionOnly(patch, name))
     return trivial("version-bump");
 
   if (patch && formattingOnly(patch, name)) return trivial("formatting");
@@ -452,10 +598,10 @@ export function classifyDelta(files: DeltaList, opts: ClassifyOpts = {}): DeltaC
     // file's text differ by migration numbers alone. A missing patch (GitHub
     // omits it on large files) proves nothing, so it is not a renumber.
     if (!f.patch || !partner.patch) continue;
-    const gone = patchLines(partner.patch).removed.map((l) => `-${l}`);
-    const came = patchLines(f.patch).added.map((l) => `+${l}`);
+    const gone = changedLines(partner.patch, "-");
+    const came = changedLines(f.patch, "+");
     if (gone.length === 0 && came.length === 0) continue;
-    if (!digitsOnly([...gone, ...came].join("\n"), f.filename)) continue;
+    if (!digitsOnly(["@@", ...gone, ...came].join("\n"), f.filename)) continue;
     renumbered.add(f.filename);
     renumbered.add(partner.filename);
   }
@@ -503,7 +649,9 @@ export type NoopReason =
   | "no-delta-source"
   | "delivery-failed"
   /** Deploy-window drain: no nudge is generated while draining. */
-  | "draining";
+  | "draining"
+  /** The PR is paused (`pause-pr`): no review work for it, a nudge included. */
+  | "paused";
 
 export interface RecheckPlanInput {
   trigger: RecheckTrigger;
@@ -531,6 +679,22 @@ const CI_BENIGN = new Set(["success", "neutral", "skipped", "cancelled", "stale"
 export function ciIsAdverse(conclusion: string | null | undefined): boolean {
   if (!conclusion) return false;
   return !CI_BENIGN.has(conclusion.toLowerCase());
+}
+
+/**
+ * Guard 2's rule as the recheck reads it, off the same mark: an unchanged head
+ * with nothing new is a no-op. A base advance is exempt because its delta is on
+ * the base side, and an adverse CI conclusion IS the new evidence. The runner's
+ * free early refusal and the plan both ask this one predicate.
+ */
+export function unchangedHeadNoop(
+  trigger: RecheckTrigger,
+  headSha: string,
+  lastReviewedSha: string,
+  ci: { conclusion?: string | null } | null | undefined,
+): boolean {
+  const adverseCi = trigger === "ci" && ciIsAdverse(ci?.conclusion);
+  return trigger !== "base_advance" && headSha === lastReviewedSha && !adverseCi;
 }
 
 /** Move a withheld-approval mark to a newer head after an uphold. This is NOT
@@ -602,12 +766,9 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
   // a route: the ordinary trigger → round path.
   if (normalizeVerdict(input.standing) !== "APPROVE") return noop("no-standing-approval");
 
-  const adverseCi = input.trigger === "ci" && ciIsAdverse(input.ci?.conclusion);
-  // Guard 2's rule, read off the same mark: same head, nothing new ⇒ nothing
-  // to do. A base advance is exempt because its delta is on the base side, and
-  // an adverse CI conclusion IS the new evidence.
-  if (input.trigger !== "base_advance" && input.head_sha === input.last_reviewed_sha && !adverseCi)
+  if (unchangedHeadNoop(input.trigger, input.head_sha, input.last_reviewed_sha, input.ci))
     return noop("unchanged-head");
+  const adverseCi = input.trigger === "ci" && ciIsAdverse(input.ci?.conclusion);
 
   const classification = classifyDelta(input.delta, {
     ...(input.prFiles ? { prFiles: new Set(input.prFiles) } : {}),
@@ -655,7 +816,8 @@ export interface RecheckOrder {
   issued_at: string;
 }
 
-/** `verdict/pr-<n>-recheck-<head12>.json`. */
+/** `pr-<n>-recheck-<head12>.json` — the decision file's name under `verdict/`,
+ * and the findings record's under `state/findings/`. */
 export function recheckDecisionFile(pr: number, headSha: string): string {
   return `pr-${pr}-recheck-${headSha.slice(0, 12).toLowerCase()}.json`;
 }
@@ -822,13 +984,24 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   const row = store.getPr(req.pr);
   if (!row || row.state === "closed")
     return done({ action: "noop", reason: "pr-not-open", class: "empty" });
+  // A pause stops this PR's review work, a nudge included — it defers the
+  // question, never loses it. A push question is asked again by the reconcile
+  // backstop once the pause lifts; a CI or base-advance question has no such
+  // sweep, so it goes on to its claim and its nudge is held until the resume
+  // (`deferWhilePaused` below).
+  if (row.paused && req.trigger === "push")
+    return done({ action: "noop", reason: "paused", class: "empty" });
 
   const head = req.head_sha || row.head_sha;
   const lastReviewed = mark!.head_sha;
-  const adverseCi = req.trigger === "ci" && ciIsAdverse(req.ci?.conclusion);
   // Refuse before spending a single API call on a head we already decided.
-  if (req.trigger !== "base_advance" && head === lastReviewed && !adverseCi)
+  if (unchangedHeadNoop(req.trigger, head, lastReviewed, req.ci))
     return done({ action: "noop", reason: "unchanged-head", class: "empty" });
+  // The range the delta is read over — and the one its merges are checked in.
+  const range =
+    req.trigger === "base_advance" && req.base
+      ? { from: req.base.before, to: req.base.after }
+      : { from: lastReviewed, to: head };
 
   if (!deps.adapter.compareFiles || !deps.adapter.listPrFiles)
     return done({ action: "noop", reason: "no-delta-source", class: "empty" });
@@ -836,10 +1009,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   let delta: DeltaList;
   let prFiles: Set<string> | undefined;
   try {
-    delta =
-      req.trigger === "base_advance" && req.base
-        ? await deps.adapter.compareFiles(req.base.before, req.base.after)
-        : await deps.adapter.compareFiles(lastReviewed, head);
+    delta = await deps.adapter.compareFiles(range.from, range.to);
     prFiles = ownershipSet(await deps.adapter.listPrFiles(req.pr));
     // Ownership is the union of the reviewed head's and the current head's —
     // see reviewedOwnership. A base advance leaves the
@@ -869,8 +1039,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   // the ownership rule alone, but is LOGGED — never silently quieter.
   let resolvedFiles: string[] = [];
   if (deps.resolvedFilesInMerges) {
-    const from = req.trigger === "base_advance" && req.base ? req.base.before : lastReviewed;
-    const to = req.trigger === "base_advance" && req.base ? req.base.after : head;
+    const { from, to } = range;
     const res = await deps.resolvedFilesInMerges(from, to, req.pr);
     resolvedFiles = res.files;
     if (res.degraded) {
@@ -941,6 +1110,19 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       classification: plan.classification,
     });
 
+  // A same-head question (an adverse CI conclusion, a base advance) is new
+  // evidence at a head already reviewed. Recorded on the mark the posting
+  // guard reads, so the change request it may lead to is not refused as a
+  // duplicate of the review that stands (guard 2).
+  if (head === lastReviewed) {
+    store.noteNewEvidence(req.pr, now().toISOString());
+    store.logEvent("recheck_evidence_noted", req.pr, {
+      trigger: req.trigger,
+      head_sha: head,
+      evidence: plan.evidence,
+    });
+  }
+
   const order: RecheckOrder = {
     pr: req.pr,
     title: row.title,
@@ -990,11 +1172,13 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       // out and released only on a synchronous throw — which a bridge-level
       // drop is not — so the receipt is what lets the reconcile sweep release
       // the claim of a nudge that never arrived.
-      stampPrompt(
-        facts ? `${render(order).replace(/\s+$/, "")}${facts}` : render(order),
-        recheckPromptMarker(req.pr, fingerprint),
-      ),
+      stampPrompt(withRepoFacts(render(order), facts), recheckPromptMarker(req.pr, fingerprint)),
       `recheck:${req.trigger}`,
+      // A push question the reconcile backstop asks again; a CI or base-advance
+      // question has no such sweep, so its claim stays and the wake is held
+      // for the flush paths rather than released on a failed injection — and
+      // held, not delivered, while the PR is paused.
+      { holdOnFailure: req.trigger !== "push", deferWhilePaused: req.trigger !== "push" },
     );
   } catch (err) {
     // A claim must not outlive a nudge that never reached the session — the
@@ -1177,11 +1361,13 @@ export interface RecheckWatcherDeps {
  * session has already posted the review through the gated scripts — the daemon
  * only moves the lifecycle state.
  *
- * Neither outcome moves the reviewed-head mark. The mark records what was
- * really REVIEWED and posted; an upheld recheck posted nothing, and stamping
- * it would make the no-new-evidence guard swallow a genuine review
- * re-request at that head. The recheck's own runaway guard is the `rechecks`
- * claim table instead.
+ * Neither outcome moves the reviewed-head mark to a new head. The mark
+ * records what was really REVIEWED and posted; an upheld recheck posted
+ * nothing, and stamping it would make the no-new-evidence guard swallow a
+ * genuine review re-request at that head. A change request the session posted
+ * was stamped by the posting route itself; the watcher only writes its
+ * decided verdict onto that stamp (`settleChangeRequest`). The recheck's own
+ * runaway guard is the `rechecks` claim table.
  */
 export class RecheckWatcher {
   private watcher: FSWatcher | null = null;
@@ -1249,7 +1435,7 @@ export class RecheckWatcher {
     if (!dir) return;
     try {
       const head12 = headSha.slice(0, 12).toLowerCase();
-      const path = join(dir, `pr-${pr}-recheck-${head12}.json`);
+      const path = join(dir, recheckDecisionFile(pr, headSha));
       const store = this.deps.store;
       const roundNo =
         store.reviewedHead(pr)?.round_no ??
@@ -1281,6 +1467,52 @@ export class RecheckWatcher {
     } catch (err) {
       this.deps.log?.(`recheck: #${pr} findings record read failed`, err);
     }
+  }
+
+  /**
+   * The lifecycle half of a change request the session posted. The review on
+   * GitHub is the standing decision at its head: when the shell stamped it at
+   * the head the mark already held, the mark keeps the verdict it had, so the
+   * decided verdict is written here. The lifecycle moves to awaiting_author
+   * unless newer work owns the PR — a round running, or a person's queued
+   * re-review request — which this answer must not settle or erase; that
+   * work's own verdict decides. The PR's head is GitHub's and is never
+   * rewound to the decision's.
+   */
+  private settleChangeRequest(pr: number, headSha: string, file: string): void {
+    const { store } = this.deps;
+    const mark = store.reviewedHead(pr);
+    if (
+      mark &&
+      mark.head_sha.toLowerCase() === headSha.toLowerCase() &&
+      mark.posted_event === "REQUEST_CHANGES" &&
+      standingVerdict(mark) !== "REQUEST_CHANGES"
+    )
+      store.recordReviewedVerdict(pr, mark.head_sha, "REQUEST_CHANGES");
+    const row = store.getPr(pr);
+    if (
+      row?.state === "reviewing" ||
+      (row?.state === "queued" && row.trigger_provenance === "human")
+    ) {
+      store.logEvent("recheck_lifecycle_deferred", pr, {
+        file,
+        head_sha: headSha,
+        state: row.state,
+        trigger_provenance: row.trigger_provenance ?? null,
+      });
+      return;
+    }
+    applyEvent(
+      store,
+      pr,
+      { type: "verdict", verdict: "REQUEST_CHANGES" },
+      {},
+      {
+        botLogin: this.deps.cfg.github.bot_login,
+        ...(this.deps.now ? { now: this.deps.now } : {}),
+        reason: "recheck:request-changes",
+      },
+    );
   }
 
   async handleFile(name: string): Promise<boolean> {
@@ -1344,17 +1576,7 @@ export class RecheckWatcher {
         // a later green CI re-queue "for the withheld approval" of a PR whose
         // standing verdict this very decision just flipped.
         this.deps.store.clearApprovalWithheld(pr);
-        applyEvent(
-          this.deps.store,
-          pr,
-          { type: "verdict", verdict: "REQUEST_CHANGES" },
-          { head_sha: d.head_sha },
-          {
-            botLogin: this.deps.cfg.github.bot_login,
-            ...(this.deps.now ? { now: this.deps.now } : {}),
-            reason: "recheck:request-changes",
-          },
-        );
+        this.settleChangeRequest(pr, d.head_sha, name);
       }
       if (d.outcome === "uphold") {
         // Session-examined significant delta, verdict upheld: the withheld

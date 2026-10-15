@@ -71,6 +71,7 @@ import {
   normalizeVerdict,
   type RoundRecoveryDisposition,
   type SessionHooks,
+  type MeritsVerdictFile,
   type VerdictFile,
   type VerdictPassEntry,
 } from "./types.js";
@@ -89,7 +90,7 @@ import {
   standingVerdict,
   type StandingDecidedVerdict,
 } from "./standing-review.js";
-import { flushHeldWakes } from "./wakes.js";
+import { flushHeldWakes, pauseDefersAllHeldWakes } from "./wakes.js";
 import {
   describeGap,
   failedPasses,
@@ -2119,7 +2120,7 @@ export class VerdictWatcher {
    * line returns before a single fact is read, so a default install makes no
    * extra API call, writes no row and logs no event.
    */
-  private async deliverEscalations(v: VerdictFile): Promise<void> {
+  private async deliverEscalations(v: MeritsVerdictFile): Promise<void> {
     const cfg = this.deps.cfg.escalation;
     if (!cfg.enabled) return;
     const { store, adapter } = this.deps;
@@ -3071,6 +3072,9 @@ export class VerdictWatcher {
         if (dropped > 0) store.logEvent("wakes_dropped_closed", pr, { dropped });
         continue;
       }
+      // A paused PR holding only deferred rechecks waits for the resume,
+      // quietly: the next tick after the pause lifts delivers them.
+      if (pauseDefersAllHeldWakes(store, pr)) continue;
       store.logEvent("wakes_stranded", pr, { held: store.heldWakes(pr).length });
       this.log(`verdicts: #${pr} held wakes with no round running — flushing`);
       await this.flushWakes(pr);

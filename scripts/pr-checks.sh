@@ -169,13 +169,15 @@ for s in statuses:
         failed += 1
 print(f"SUMMARY: {passed} passed / {failed} failed / {pending} pending (latest run per check only)")
 # The one line the Decide step reads. Same table as the daemon gate + guards.sh:
-# check-runs (latest per name) and commit statuses (each its own check).
+# check-runs (latest per name) and commit statuses (each its own check). A
+# failure decides red even while another check still runs — src/cigate.ts
+# classifyCi and guards.sh's jq both put red first.
 if not latest and not statuses:
     print("CLASSIFIED: none")
-elif pending:
-    print("CLASSIFIED: pending")
 elif failed:
     print("CLASSIFIED: red")
+elif pending:
+    print("CLASSIFIED: pending")
 else:
     succeeded = any((c.get("conclusion") == "success") for c in latest) or any(
         (s.get("state") == "success") for s in statuses

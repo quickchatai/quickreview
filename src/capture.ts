@@ -30,6 +30,7 @@
 //     added (CLAUDE.md rule 1).
 import { isFeedbackBody } from "./feedback.js";
 import type { IssueCommentFull, ReviewCommentFull, ReviewFull } from "./github.js";
+import type { StateStore } from "./state.js";
 
 /** Where a captured comment sat. `review` is a submitted review's own body. */
 export type CommentSource = "review_comment" | "issue_comment" | "review";
@@ -302,4 +303,24 @@ export function capturedFromReview(pr: number, r: ReviewFull): CapturedComment {
 export function isHumanCapture(c: CapturedComment, botLogin: string): boolean {
   if (isBotIdentity(c.author, c.author_type, botLogin)) return false;
   return c.body.trim() !== "";
+}
+
+/** Record one captured comment and its `comment_captured` audit row — the one
+ * persistence step the webhook and the reconcile sweep share, so a comment
+ * recovered by the poll is recorded exactly as one the webhook saw. True when
+ * the comment was new. */
+export function recordCapturedComment(
+  store: StateStore,
+  c: CapturedComment,
+  via: "webhook" | "reconcile",
+): boolean {
+  if (!store.recordPrComment({ ...c, captured_via: via })) return false;
+  store.logEvent("comment_captured", c.pr, {
+    source: c.source,
+    comment_id: c.comment_id,
+    author: c.author,
+    tagged: c.tagged,
+    via,
+  });
+  return true;
 }

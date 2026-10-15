@@ -240,7 +240,6 @@ describe("an evicted recheck is asked again by the reconcile backstop (#5362 ④
       getPr: async () => open,
       listChecks: async () => [],
       listBotReviewComments: async () => [],
-      getRequestedReviewers: async () => ({ users: [], teams: [] }),
     };
   };
   const hooks: SessionHooks = {

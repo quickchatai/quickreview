@@ -608,8 +608,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS session_commands_one_active
 CREATE UNIQUE INDEX IF NOT EXISTS session_commands_inject_path ON session_commands(inject_path);
 CREATE INDEX IF NOT EXISTS session_commands_pr_created ON session_commands(pr, created_at);`;
 
+/** The prefix of every held-wake reason operator recovery writes
+ * (`operator_recovered:<kind>:<id>`): owed work the per-PR cap never evicts
+ * and the flush delivers first within its instant. */
+export const OPERATOR_RECOVERED_WAKE_PREFIX = "operator_recovered:";
+
 const PENDING_WAKE_ORDER_SQL = `held_at,
-  CASE WHEN reason GLOB 'operator_recovered:*' THEN 0 ELSE 1 END,
+  CASE WHEN reason GLOB '${OPERATOR_RECOVERED_WAKE_PREFIX}*' THEN 0 ELSE 1 END,
   id`;
 
 const BLOCKING_SESSION_COMMAND_SQL = `(
@@ -2887,7 +2892,7 @@ export class StateStore {
             throw new Error(`operator recovery payload missing for ${row.id}`);
           const inserted = this.db
             .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
-            .run(pr, payload, `operator_recovered:${row.kind}:${row.id}`, row.created_at);
+            .run(pr, payload, `${OPERATOR_RECOVERED_WAKE_PREFIX}${row.kind}:${row.id}`, row.created_at);
           wakeIds.push(Number(inserted.lastInsertRowid));
         }
         const changed = this.db
@@ -3376,7 +3381,7 @@ export class StateStore {
         .prepare(
           `SELECT COUNT(*) AS c FROM pending_wakes
         WHERE pr=@pr AND reason != @author
-          AND (reason GLOB 'operator_recovered:*' OR claim_token IS NOT NULL)`,
+          AND (reason GLOB '${OPERATOR_RECOVERED_WAKE_PREFIX}*' OR claim_token IS NOT NULL)`,
         )
         .get({ pr, author: AUTHOR_REPLY_WAKE_REASON }) as { c: number }
     ).c;
@@ -3388,7 +3393,7 @@ export class StateStore {
       .prepare(
         `SELECT id, reason, payload FROM pending_wakes
         WHERE pr=@pr AND reason != @author
-          AND reason NOT GLOB 'operator_recovered:*' AND claim_token IS NULL
+          AND reason NOT GLOB '${OPERATOR_RECOVERED_WAKE_PREFIX}*' AND claim_token IS NULL
         ORDER BY CASE WHEN reason = @backstopped THEN 1 ELSE 0 END,
           held_at DESC, id DESC
         LIMIT -1 OFFSET @keep`,
@@ -3472,21 +3477,34 @@ export class StateStore {
   /** Lease an oldest-first prefix as one delivery unit. A live lease anywhere
    * in that prefix blocks the claim, so concurrent flushers cannot split or
    * reorder an author-message burst. */
+  /** Lease the oldest `count` held wakes for one delivery, or null when they
+   * are not all free. Wakes whose reason starts with `skipReasonPrefix` are
+   * passed over (a paused PR's deferred rechecks). */
   claimHeldWakeBatch(
     pr: number,
     token: string,
     leaseBefore: string,
     count: number,
+    skipReasonPrefix?: string,
   ): PendingWakeRow[] | null {
     if (!Number.isSafeInteger(count) || count < 1)
       throw new Error(`invalid held-wake batch size ${count}`);
     const claim = this.db.transaction((n: number): PendingWakeRow[] | null => {
-      const rows = this.db
-        .prepare(
-          `SELECT * FROM pending_wakes WHERE pr = ?
+      const rows = (
+        skipReasonPrefix === undefined
+          ? this.db
+              .prepare(
+                `SELECT * FROM pending_wakes WHERE pr = ?
         ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`,
-        )
-        .all(n, count) as PendingWakeRow[];
+              )
+              .all(n, count)
+          : this.db
+              .prepare(
+                `SELECT * FROM pending_wakes WHERE pr = ? AND substr(reason, 1, ?) != ?
+        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`,
+              )
+              .all(n, skipReasonPrefix.length, skipReasonPrefix, count)
+      ) as PendingWakeRow[];
       if (rows.length !== count) return null;
       if (rows.some((row) => row.claim_token && row.claimed_at && row.claimed_at > leaseBefore))
         return null;
@@ -3905,6 +3923,21 @@ export class StateStore {
       });
   }
 
+  /**
+   * Record the decided verdict on the mark at `headSha`, leaving every other
+   * field — `reviewed_at`, the reply stamp — as it is. For a decision that
+   * reaches the daemon after its review was stamped at that head (the
+   * post-approval recheck's change request). No mark at that head: nothing
+   * written.
+   */
+  recordReviewedVerdict(pr: number, headSha: string, verdict: string): boolean {
+    return (
+      this.db
+        .prepare("UPDATE reviewed_heads SET verdict = ? WHERE pr = ? AND lower(head_sha) = lower(?)")
+        .run(verdict, pr, headSha).changes === 1
+    );
+  }
+
   reviewedHead(pr: number): ReviewedHeadRow | undefined {
     return this.db.prepare("SELECT * FROM reviewed_heads WHERE pr = ?").get(pr) as
       ReviewedHeadRow | undefined;
@@ -3961,6 +3994,14 @@ export class StateStore {
    * evidence". Only ever moves the stamp forward; a PR with no mark has nothing
    * to skip, so the reply is simply not recorded. */
   noteAuthorReply(pr: number, atIso?: string): void {
+    this.noteNewEvidence(pr, atIso);
+  }
+
+  /** Record new evidence at the PR's reviewed head — an author reply, or a
+   * question the post-approval recheck asked at that head (an adverse CI
+   * conclusion, a base advance). Guard 2 and dispatch's no-new-evidence skip
+   * read it as the mark's reply stamp. Only ever moves the stamp forward. */
+  noteNewEvidence(pr: number, atIso?: string): void {
     const at = atIso ?? this.ts();
     this.db
       .prepare(

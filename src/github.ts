@@ -3,7 +3,7 @@
 // (dry-run writes it to state/dryrun/ instead of executing). There is no
 // review-dismissal function in this adapter, by design — never add one.
 import type { CheckSummary } from "./cigate.js";
-import type { Config } from "./config.js";
+import { reviewTeamSlug, type Config } from "./config.js";
 import { CHECK_THIS_RE, DEFERRED_RE } from "./severity.js";
 import {
   APP_SELF_CONFIG_KINDS,
@@ -1013,7 +1013,7 @@ export class GitHubAdapter {
 
   /** Consume the team trigger: DELETE with the JSON body, then verify. */
   async deleteTeamReviewRequest(n: number): Promise<GateResult> {
-    const teamSlug = this.cfg.github.review_team.split("/")[1] ?? this.cfg.github.review_team;
+    const teamSlug = reviewTeamSlug(this.cfg.github.review_team);
     const result = await this.gate.execute({
       kind: "delete_team_review_request",
       method: "DELETE",

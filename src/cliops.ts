@@ -63,7 +63,6 @@ export function stalenessSimulation(
       },
     ],
     listBotReviewComments: async () => [],
-    getRequestedReviewers: async () => ({ users: [], teams: [] }),
     listPrFiles: async () => [
       { filename: "src/x.ts", additions: 1, deletions: 0, status: "modified" },
     ],
