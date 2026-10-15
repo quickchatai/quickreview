@@ -118,6 +118,22 @@ describe("InjectSender", () => {
     await sender.send("pr-5012", "x", record);
     expect(states.map(([s]) => s)).toEqual(["pending", "undelivered"]);
     expect(states[1]![1]).toContain("write failed");
+    expect(states[1]![1]).toContain("exit 1"); // no stderr: the exit code
+  });
+
+  it("names the failed write's cause, one line, control bytes stripped", async () => {
+    const { sender, states, record } = senderWith([
+      {
+        ok: false,
+        stdout: "",
+        stderr: "Error: No such container\u001b[2J\nquickreview-sandbox",
+        code: 1,
+      },
+    ]);
+    await sender.send("pr-5012", "x", record);
+    expect(states[1]![1]).toBe(
+      "✖ msg pr-5012 undelivered (write failed: Error: No such container[2J quickreview-sandbox)",
+    );
   });
 
   it("times out to undelivered (session down?) — never silent", async () => {
@@ -451,6 +467,45 @@ describe("digest tab", () => {
     const screen = stripAnsi(tab.screen(rig.app, 100, 24).render());
     expect(screen).toContain("fresh body of 2026-08-19");
     expect(screen).not.toContain("could not read");
+  });
+
+  it("a refresh that finds a newer day never shows the old day's text under its heading", async () => {
+    let files = ["2026-08-19.md"];
+    const pending = new Map<string, (text: string) => void>();
+    const rig = learningRig({
+      digestFetcher: {
+        list: async () => files,
+        read: (f) => new Promise((res) => pending.set(f, res)),
+      },
+    });
+    rig.app.tab = "digest";
+    const tab = rig.app.hooks.tabs.digest!;
+    tab.screen(rig.app, 100, 24);
+    await settle();
+    pending.get("2026-08-19.md")!("# body of 2026-08-19");
+    await settle();
+    files = ["2026-08-19.md", "2026-08-20.md"]; // today's digest lands
+    tab.key(rig.app, { kind: "refresh" });
+    await settle(); // listed; today's read still in flight
+    const screen = stripAnsi(tab.screen(rig.app, 100, 24).render());
+    expect(screen).toContain("digest 2026-08-20");
+    expect(screen).not.toContain("body of 2026-08-19");
+    expect(screen).toContain("loading 2026-08-20.md");
+  });
+
+  it("the paint that asks for the listing is written before the listing starts", async () => {
+    let lists = 0;
+    const rig = learningRig({
+      digestFetcher: {
+        list: async () => ((lists += 1), ["2026-08-20.md"]),
+        read: async () => "# d",
+      },
+    });
+    rig.app.tab = "digest";
+    rig.app.hooks.tabs.digest!.screen(rig.app, 100, 24);
+    expect(lists).toBe(0); // nothing external inside the paint
+    await settle();
+    expect(lists).toBe(1);
   });
 
   it("a failed listing on the installed tab says so and r asks again", async () => {

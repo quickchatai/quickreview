@@ -70,15 +70,23 @@ export function paintSplit<A>(frame: Frame, pane: SplitPane<A>): void {
     const la = pane.leftActions[r];
     if (la !== undefined)
       frame.zones.push({ x1: 2, y1: row + 1, x2: pane.leftW + 1, y2: row + 1, action: la });
-    if (rr)
-      for (const z of rr.zones)
-        frame.zones.push({
-          x1: rightX0 + z.x1,
-          y1: row + 1,
-          x2: rightX0 + z.x2,
-          y2: row + 1,
-          action: z.action,
-        });
+    if (!rr) continue;
+    // A row cut to the pane ends in `…` at the cell's last column: a zone
+    // reaches only the text still on screen, never the ellipsis, the border
+    // or the column beyond it.
+    const cut = displayWidth(` ${rr.text}`) > pane.rightW;
+    const lastX = cut ? rightX0 + pane.rightW - 3 : Number.POSITIVE_INFINITY;
+    for (const z of rr.zones) {
+      const x1 = rightX0 + z.x1;
+      if (x1 > lastX) continue;
+      frame.zones.push({
+        x1,
+        y1: row + 1,
+        x2: Math.min(rightX0 + z.x2, lastX),
+        y2: row + 1,
+        action: z.action,
+      });
+    }
   }
 }
 

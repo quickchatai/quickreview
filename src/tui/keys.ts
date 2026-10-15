@@ -29,32 +29,58 @@ export type BoardKey =
   | { kind: "char"; ch: string }
   | { kind: "other"; raw: Buffer };
 
+/** The board verbs typed as one printable — ONE table, read both ways:
+ * `decodeKey` maps the letter to the verb, `keyChar` folds the verb back to
+ * the letter. (`q` also answers to Ctrl-c; `j`/`k` move and are not here.) */
+const PRINTABLE_VERBS = [
+  ["a", "attach"], // ⏎'s twin: focus the board's embedded pi pane
+  ["q", "quit"],
+  ["?", "help"],
+  ["m", "message"],
+  ["u", "unwedge"],
+  ["g", "github"],
+  ["e", "events"],
+  ["r", "refresh"],
+  ["s", "reconnect"],
+  ["[", "older"],
+  ["]", "newer"],
+] as const;
+
+type PrintableVerb = (typeof PRINTABLE_VERBS)[number][1];
+
+const VERB_OF = new Map<string, PrintableVerb>(PRINTABLE_VERBS.map(([ch, kind]) => [ch, kind]));
+const CHAR_OF = new Map<string, string>(PRINTABLE_VERBS.map(([ch, kind]) => [kind, ch]));
+
+/** The control keys both decoders share: ⏎, Alt-⏎, Esc, Backspace. */
+function decodeControl(s: string): BoardKey | undefined {
+  if (s === "\r" || s === "\n") return { kind: "enter" };
+  if (s === "\x1b\r" || s === "\x1b\n") return { kind: "alt-enter" };
+  if (s === "\x1b") return { kind: "escape" };
+  if (s === "\x7f" || s === "\b") return { kind: "backspace" };
+  return undefined;
+}
+
+/** Typed text: one or more printables, no escape. */
+function isText(s: string): boolean {
+  return s.length > 0 && !s.includes("\x1b") && s >= " ";
+}
+
 /** One stdin chunk → one key. Chunks are decoded whole: interactive typing
  * delivers one key per chunk; paste lands as a single `char` run. */
 export function decodeKey(buf: Buffer): BoardKey {
   const s = buf.toString("utf8");
   if (s === "\x1b[A") return { kind: "up", arrow: true };
   if (s === "\x1b[B") return { kind: "down", arrow: true };
-  if (s === "\r" || s === "\n") return { kind: "enter" };
-  if (s === "\x1b\r" || s === "\x1b\n") return { kind: "alt-enter" };
-  if (s === "\x1b") return { kind: "escape" };
-  if (s === "\x7f" || s === "\b") return { kind: "backspace" };
-  if (s === "a") return { kind: "attach" }; // ⏎'s twin: focus the board's embedded pi pane
+  const control = decodeControl(s);
+  if (control) return control;
   if (s === "j") return { kind: "down" };
   if (s === "k") return { kind: "up" };
   const tab = tabForDigit(s);
   if (tab !== undefined) return { kind: "tab", tab };
-  if (s === "q" || s === "\x03") return { kind: "quit" };
-  if (s === "?") return { kind: "help" };
-  if (s === "m") return { kind: "message" };
-  if (s === "u") return { kind: "unwedge" };
-  if (s === "g") return { kind: "github" };
-  if (s === "e") return { kind: "events" };
-  if (s === "r") return { kind: "refresh" };
-  if (s === "s") return { kind: "reconnect" };
-  if (s === "[") return { kind: "older" };
-  if (s === "]") return { kind: "newer" };
-  if (s.length > 0 && !s.includes("\x1b") && s >= " ") return { kind: "char", ch: s };
+  if (s === "\x03") return { kind: "quit" };
+  const verb = VERB_OF.get(s);
+  if (verb !== undefined) return { kind: verb };
+  if (isText(s)) return { kind: "char", ch: s };
   return { kind: "other", raw: buf };
 }
 
@@ -65,36 +91,9 @@ export function decodeKey(buf: Buffer): BoardKey {
  * tab handler sees them — and the feedback tab's armed revert reads its `y`.
  */
 export function keyChar(key: BoardKey): string | undefined {
-  switch (key.kind) {
-    case "char":
-      return key.ch;
-    case "attach":
-      return "a";
-    case "tab":
-      return tabDigit(key.tab);
-    case "quit":
-      return "q";
-    case "help":
-      return "?";
-    case "message":
-      return "m";
-    case "unwedge":
-      return "u";
-    case "github":
-      return "g";
-    case "events":
-      return "e";
-    case "refresh":
-      return "r";
-    case "reconnect":
-      return "s";
-    case "older":
-      return "[";
-    case "newer":
-      return "]";
-    default:
-      return undefined;
-  }
+  if (key.kind === "char") return key.ch;
+  if (key.kind === "tab") return tabDigit(key.tab);
+  return CHAR_OF.get(key.kind);
 }
 
 /** Msg-box decoding reuses decodeKey but must keep letters as text — the
@@ -102,11 +101,9 @@ export function keyChar(key: BoardKey): string | undefined {
  * backspace act; everything printable is text. */
 export function decodeInputKey(buf: Buffer): BoardKey {
   const s = buf.toString("utf8");
-  if (s === "\r" || s === "\n") return { kind: "enter" };
-  if (s === "\x1b\r" || s === "\x1b\n") return { kind: "alt-enter" };
-  if (s === "\x1b") return { kind: "escape" };
-  if (s === "\x7f" || s === "\b") return { kind: "backspace" };
+  const control = decodeControl(s);
+  if (control) return control;
   if (s === "\x03") return { kind: "quit" };
-  if (s.length > 0 && !s.includes("\x1b") && s >= " ") return { kind: "char", ch: s };
+  if (isText(s)) return { kind: "char", ch: s };
   return { kind: "other", raw: buf };
 }

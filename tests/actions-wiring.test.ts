@@ -308,6 +308,19 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(metricsView.drill?.pr).toBe(5012);
   });
 
+  it("metrics pr opens the requested timeline when another one is already open", async () => {
+    const { metricsView, metrics, driver } = makeRig();
+    driver.metricsPr(5012);
+    await settle();
+    const dir = actionDir();
+    drop(dir, "p.json", { verb: "metrics", params: { pr: 5049 } });
+    const [r] = await processTuiActions(dir, driver);
+    await settle();
+    expect(r!.ok).toBe(true);
+    expect(metrics.timelineCalls).toEqual([5012, 5049]);
+    expect(metricsView.drill?.pr).toBe(5049);
+  });
+
   it("deploy_tab stop/start refuses a request mismatching the observed container state — as a FAILED result", async () => {
     const { deployState, driver } = makeRig();
     deployState.containerStatus = "Exited (0) 2 hours ago";
@@ -318,6 +331,27 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(r!.message).toContain("deploy_tab stop refused");
     expect(deployState.run).toBeUndefined();
     expect(deployState.armedKind).toBeUndefined();
+  });
+
+  it("deploy_tab deploy with a previous result on screen is a FAILED result, not keystrokes for the companion", async () => {
+    const { deployState, driver } = makeRig();
+    deployState.run = { kind: "deploy", lines: ["done"], partial: "", running: false };
+    const dir = actionDir();
+    drop(dir, "d.json", { verb: "deploy_tab", params: { action: "deploy" } });
+    const [r] = await processTuiActions(dir, driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("previous result is still on screen");
+    expect(deployState.armedKind).toBeUndefined();
+  });
+
+  it("deploy_tab deploy the tab refuses (target not loaded) is a FAILED result naming why", async () => {
+    const { deployState, driver } = makeRig();
+    const dir = actionDir();
+    drop(dir, "d.json", { verb: "deploy_tab", params: { action: "deploy" } });
+    const [r] = await processTuiActions(dir, driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("deploy target is still loading");
+    expect(deployState.run).toBeUndefined();
   });
 
   it("deploy_tab abort with no run in flight is a FAILED result, not a stray x", async () => {

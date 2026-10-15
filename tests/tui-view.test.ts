@@ -390,6 +390,16 @@ describe("FeedWriter.writeView", () => {
   });
 });
 
+describe("runTui's publishView", () => {
+  it("measures the view's screen metadata from the same frame it writes beside it", () => {
+    const src = readFileSync(join(process.cwd(), "src", "tui", "index.ts"), "utf8");
+    const body = /const publishView = \(\): void => \{([\s\S]*?)\n {4}\};/.exec(src)?.[1] ?? "";
+    expect(body, "publishView must exist").not.toBe("");
+    expect(body.match(/app\.screenText\(\)/g)).toHaveLength(1);
+    expect(body).toMatch(/buildTuiView\(\{[\s\S]*?\bscreen,[\s\S]*?\}\),\s*screen,/);
+  });
+});
+
 describe("App.screenText / afterRepaint", () => {
   function harness(cols = 80, rows = 12) {
     const out = new EventEmitter() as unknown as NodeJS.WriteStream;

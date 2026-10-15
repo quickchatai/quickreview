@@ -12,4 +12,11 @@ describe("openUrlDetached", () => {
     expect(reported).toContain("qcr-no-such-launcher-xyz");
     expect(reported).toContain("ENOENT");
   });
+
+  it("reports a launcher that starts and exits non-zero (no handler for the URL)", async () => {
+    const reported = await new Promise<string>((resolve) => {
+      openUrlDetached("https://example.invalid/", resolve, "false");
+    });
+    expect(reported).toContain("exited with code 1");
+  });
 });

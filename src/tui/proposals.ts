@@ -84,18 +84,26 @@ export function rubricDir(repoRoot: string): string {
   return join(repoRoot, "state", "rubric");
 }
 
+/** The proposal slugs under state/rubric/. No directory yet is no proposals
+ * (a fresh checkout); any other listing failure throws — a directory that
+ * could not be read is not an empty one. */
 export function listRubricProposals(repoRoot: string): string[] {
   let names: string[];
   try {
     names = readdirSync(rubricDir(repoRoot));
-  } catch {
-    return []; // no dir yet = no proposals; never a throw on a fresh checkout
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
   }
   return names.filter(validSlug).sort();
 }
 
-/** Read one proposal file (capped — PROPOSAL.md is a pitch, not a book).
- * null = missing/unreadable. */
+/** PROPOSAL.md is a pitch, not a book: it is read capped. */
+const PROPOSAL_READ_CAP = 65536;
+
+/** Read one proposal file. null = missing/unreadable. PROPOSAL.md is capped;
+ * changes.patch is read whole — the patch accepted is the patch proposed,
+ * never a prefix of it. */
 export function readRubricFile(
   repoRoot: string,
   slug: string,
@@ -103,7 +111,8 @@ export function readRubricFile(
 ): string | null {
   if (!validSlug(slug)) throw new Error(`bad rubric slug '${slug}'`);
   try {
-    return readFileSync(join(rubricDir(repoRoot), slug, file), "utf8").slice(0, 65536);
+    const text = readFileSync(join(rubricDir(repoRoot), slug, file), "utf8");
+    return file === "PROPOSAL.md" ? text.slice(0, PROPOSAL_READ_CAP) : text;
   } catch {
     return null;
   }
@@ -500,14 +509,29 @@ export function patchFenceViolation(
  * departure from the original seed lineage. The note is role-worded
  * ("owner": the accept click is the owner's ratification); older notes that
  * name a person stay valid — history is never rewritten. */
+/** The seed manifest and the ratified-divergence registry an accepted reseed
+ * re-pins — written by `recordRatification`, guarded and committed by the
+ * accept. */
+const SEED_MANIFEST = "tests/fixtures/seed-manifest.json";
+const RATIFIED_DIVERGENCE = "tests/fixtures/ratified-divergence.json";
+
+/** A seeded file's canonical copy, which an accepted reseed refreshes. */
+const seedCopy = (rel: string): string => `seeds/${rel}`;
+
+/** Every path a ratification of `files` writes: each file's canonical copy,
+ * then the two registries. */
+function ratificationPaths(files: string[]): string[] {
+  return [...files.map(seedCopy), SEED_MANIFEST, RATIFIED_DIVERGENCE];
+}
+
 export function recordRatification(
   repoRoot: string,
   files: string[],
   slug: string,
   today: string,
 ): string[] {
-  const manifestPath = join(repoRoot, "tests/fixtures/seed-manifest.json");
-  const divergencePath = join(repoRoot, "tests/fixtures/ratified-divergence.json");
+  const manifestPath = join(repoRoot, SEED_MANIFEST);
+  const divergencePath = join(repoRoot, RATIFIED_DIVERGENCE);
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
     files: Record<string, string>;
   };
@@ -519,7 +543,7 @@ export function recordRatification(
     if (!(rel in manifest.files)) continue; // non-seeded (e.g. pass-intent.md) needs no exemption
     const content = readFileSync(join(repoRoot, rel));
     manifest.files[rel] = createHash("sha256").update(content).digest("hex");
-    const canonical = join(repoRoot, "seeds", rel);
+    const canonical = join(repoRoot, seedCopy(rel));
     mkdirSync(dirname(canonical), { recursive: true });
     writeFileSync(canonical, content);
     const notes = divergence.files[rel] ?? (divergence.files[rel] = []);
@@ -588,9 +612,9 @@ export async function acceptProposal(
     let seeded: Record<string, string>;
     try {
       seeded = (
-        JSON.parse(
-          readFileSync(join(deps.repoRoot, "tests/fixtures/seed-manifest.json"), "utf8"),
-        ) as { files: Record<string, string> }
+        JSON.parse(readFileSync(join(deps.repoRoot, SEED_MANIFEST), "utf8")) as {
+          files: Record<string, string>;
+        }
       ).files;
     } catch (err) {
       return {
@@ -673,16 +697,7 @@ export async function acceptProposal(
   // The shared checkout is the companion's desk (rule 11): a target, or a
   // bookkeeping file, with uncommitted edits would have those edits folded
   // into this commit — and, for a seed, hashed into the ratification.
-  const touches = [
-    ...files,
-    ...(kind === "rubric"
-      ? [
-          ...files.map((rel) => `seeds/${rel}`),
-          "tests/fixtures/seed-manifest.json",
-          "tests/fixtures/ratified-divergence.json",
-        ]
-      : []),
-  ];
+  const touches = [...files, ...(kind === "rubric" ? ratificationPaths(files) : [])];
   try {
     const dirty = (
       await deps.git.run("git", [
@@ -712,13 +727,7 @@ export async function acceptProposal(
     // keeps the config path from ever reading the seed fixtures).
     const ratified =
       kind === "rubric" ? recordRatification(deps.repoRoot, files, slug, deps.today()) : [];
-    const toAdd = [
-      ...files,
-      ...ratified.map((rel) => `seeds/${rel}`),
-      ...(ratified.length > 0
-        ? ["tests/fixtures/seed-manifest.json", "tests/fixtures/ratified-divergence.json"]
-        : []),
-    ];
+    const toAdd = [...files, ...(ratified.length > 0 ? ratificationPaths(ratified) : [])];
     await deps.git.run("git", ["add", "--", ...toAdd]);
     const subject =
       kind === "config"

@@ -24,6 +24,7 @@
 // scans ticket `Memory-key:` lines, github leans on the daemon's title dedup
 // (the re-filed duplicate is refused, not doubled).
 import { validateCommand } from "../commands.js";
+import { EVENT_TAG_RE } from "../memory/eventtags.js";
 import type { Config, IssueSinkKind, TuiConfig } from "../config.js";
 import { sinkTicketsEffort } from "../config.js";
 import {
@@ -90,11 +91,7 @@ export function issueTitleFor(e: MemoryEntry): string {
   const prose = e.text
     .split(/\s+/)
     .filter(
-      (t) =>
-        t !== "" &&
-        !t.startsWith("#") &&
-        !/^[a-z][a-z0-9_-]*=[^\s]+$/.test(t) &&
-        !/^\[\[[^\]]*\]\]$/.test(t),
+      (t) => t !== "" && !t.startsWith("#") && !EVENT_TAG_RE.test(t) && !/^\[\[[^\]]*\]\]$/.test(t),
     )
     .join(" ");
   const head = (prose || "memory defect").slice(0, 90).trim();
@@ -182,7 +179,11 @@ export class GithubIssueSink implements IssueSink {
     const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), {
       stdin: `${JSON.stringify(payload, null, 2)}\n`,
     });
-    if (!write.ok) return { ok: false, reason: "command write failed (ssh unreachable?)" };
+    if (!write.ok)
+      return {
+        ok: false,
+        reason: `command write failed (${resultReason(write.stderr, `exit ${write.code}`).slice(0, 200)})`,
+      };
     // Read the daemon's verdict, not the write's: a cap or dedup refusal is a
     // real answer, and only a receipt may stamp the entry as filed.
     const deadline = this.now().getTime() + this.cfg.msg_timeout_s * 1000;

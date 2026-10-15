@@ -13,6 +13,7 @@ import {
   sliceDisplay,
   spliceDisplay,
   stripAnsi,
+  truncate,
 } from "../src/tui/paint.js";
 
 const COLS = 20;
@@ -229,6 +230,26 @@ describe("spliceDisplay", () => {
 
   it("pads when the overlay starts past the end of the line", () => {
     expect(stripAnsi(spliceDisplay("ab", 5, "X"))).toBe("ab   X");
+  });
+
+  it("an OSC-8 hyperlink is zero-width — the overlay lands on the cells the operator sees", () => {
+    const link = `\x1b]8;;https://github.com/o/r/pull/5012\x1b\\#5012\x1b]8;;\x1b\\`;
+    const out = spliceDisplay(`ab ${link} tail`, 3, "XX");
+    expect(stripAnsi(out)).toBe("ab XX012 tail");
+    expect(displayWidth(out)).toBe(displayWidth(`ab ${link} tail`));
+  });
+});
+
+describe("colon-form SGR (kept by the mirror sanitizer) is zero-width everywhere", () => {
+  const curly = "\x1b[4:3mwavy\x1b[0m";
+  it("is measured and stripped as an escape", () => {
+    expect(displayWidth(curly)).toBe(4);
+    expect(stripAnsi(curly)).toBe("wavy");
+  });
+  it("is never cut in half by truncate", () => {
+    const out = truncate(`${curly}${"x".repeat(20)}`, 6);
+    expect(stripAnsi(out)).toBe("wavyx…");
+    expect(out.startsWith("\x1b[4:3m")).toBe(true);
   });
 });
 

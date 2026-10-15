@@ -7,6 +7,7 @@
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { SshRunner } from "./remote.js";
+import { resultReason } from "./unwedge.js";
 
 /** The only session names the TUI will ever build a remote path from. */
 export function isValidSessionName(name: string): boolean {
@@ -88,7 +89,8 @@ export class InjectSender implements MessageSender {
       stdin: text,
     });
     if (!write.ok) {
-      onState("undelivered", `✖ msg ${session} undelivered (write failed)`);
+      const why = resultReason(write.stderr, `exit ${write.code}`).slice(0, 160);
+      onState("undelivered", `✖ msg ${session} undelivered (write failed: ${why})`);
       return;
     }
     const deadline = this.now().getTime() + this.cfg.msg_timeout_s * 1000;
