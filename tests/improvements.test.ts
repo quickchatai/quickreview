@@ -928,6 +928,43 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     expect(store.filedSince("issue", today)).toBe(0);
   });
 
+  it("the slot is charged while the create request is in flight — a daemon dying there still has it spent", async () => {
+    let inFlight: { pr: number; issue: number } | null = null;
+    gate = new MutationGate(false, join(dir, "dryrun"), async (i) => {
+      if (i.kind === "create_pull" || i.kind === "create_issue")
+        inFlight = {
+          pr: store.filedSince("improvement_pr", today),
+          issue: store.filedSince("issue", today),
+        };
+      return { number: 4242 };
+    });
+    adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
+      throw new Error("no direct fetch expected");
+    }) as unknown as typeof fetch);
+    vi.spyOn(adapter, "listOpenBotIssues").mockResolvedValue([]);
+    const { run } = liveRunner();
+    const pr = await fileImprovementPr(
+      {
+        branch: "wip/docs",
+        title: "Docs: clarify retry",
+        body: "rationale",
+        slug: "clarify-retry",
+      },
+      ctx(run),
+    );
+    expect(pr).toMatchObject({ ok: true, pr: 4242 });
+    expect(inFlight).toEqual({ pr: 1, issue: 0 });
+    const issue = await fileIssue(
+      { title: "Retry loop misses jitter", body: "e" },
+      { cfg, adapter, gate, store },
+    );
+    expect(issue.ok).toBe(true);
+    expect(inFlight).toEqual({ pr: 1, issue: 1 });
+    // one slot each, settled with what GitHub created — never a second row
+    expect(store.filedSince("improvement_pr", today)).toBe(1);
+    expect(store.filedSince("issue", today)).toBe(1);
+  });
+
   it("a guard refusal stops the push AND the PR — no branch, no pull", async () => {
     const { run, calls } = liveRunner();
     gate.setGuard({
