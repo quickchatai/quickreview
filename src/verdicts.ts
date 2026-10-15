@@ -1840,19 +1840,25 @@ export class VerdictWatcher {
     // verdict applies below like any other — the cap guarantees this can
     // never loop. No reviewed-head mark is recorded on
     // this path, so the redo round can dispatch and post at the same head.
+    // A round whose review already went out — a posting receipt other than a
+    // guard-2 refusal, confirmed or still owned by the daemon's delivery — is
+    // not redone (a redo would post again): it applies below through its
+    // posting proof, as the required-pass gap does.
     if (
       v.verdict === "NEEDS_HUMAN" &&
-      round &&
       round.status === "running" &&
       (!v.passes || v.passes.length === 0)
     ) {
+      const receipt = readPostingReceipt(this.postingReceiptDir(), v.pr, v.round_no);
+      const posting = receipt !== undefined && receipt.status !== "skipped";
       store.logEvent("needs_human_incomplete", v.pr, {
         round_id: round.id,
         round_no: v.round_no,
         head_sha: v.head_sha,
         passes_reported: v.passes ? 0 : null,
+        ...(posting ? { posting_receipt: receipt.status } : {}),
       });
-      if (await this.selfRequeue(round, "needs_human_incomplete")) {
+      if (!posting && (await this.selfRequeue(round, "needs_human_incomplete"))) {
         await this.safe(
           () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
           `remove ${cfg.github.in_progress_label} on #${v.pr}`,

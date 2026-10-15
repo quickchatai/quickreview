@@ -4,7 +4,7 @@
 // `overdue` through the overdue-anomaly path. Failed/self-requeued
 // rounds never age the PR (verdicted-only priorRoundCount discipline), and the
 // restart orphan-requeue path and this one can never double-dispatch a round.
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
@@ -16,6 +16,7 @@ import type { PrFileEntry } from "../src/github.js";
 import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
 import { roundPromptMarker } from "../src/types.js";
+import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
@@ -722,6 +723,47 @@ describe("NEEDS_HUMAN requires a finished review", () => {
     // The in-progress label came off; the reviewed label was NOT applied.
     expect(adapter.calls.some((c) => c.startsWith("removeLabel:320"))).toBe(true);
     expect(adapter.calls.some((c) => c.startsWith("addLabel:320"))).toBe(false);
+  });
+
+  // MUTATION: requeue before looking at the posting receipt — the round whose
+  // COMMENT is already on GitHub is redone and posts a second review.
+  it("no executed passes but its review already posted ⇒ applied through the receipt, never redone", async () => {
+    const roundId = reviewingRound(323);
+    const key = roundPostingKey(323, 1, "abc123");
+    store.stampPostingKey(roundId, key);
+    const receiptDir = join(dir, "state", "posting-receipts");
+    mkdirSync(receiptDir, { recursive: true });
+    writeFileSync(
+      join(receiptDir, "pr-323-round-1.json"),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        marker: postingMarker(key),
+        pr: 323,
+        round_no: 1,
+        head_sha: "abc123",
+        intended_event: "COMMENT",
+        actual_event: "COMMENT",
+        status: "confirmed",
+        payload_sha256: "a".repeat(64),
+        prepared_at: clock.toISOString(),
+        confirmed_at: clock.toISOString(),
+        gh_review_id: 991,
+        gh_commit_id: "abc123",
+        gh_state: "COMMENTED",
+      }),
+    );
+    const { hooks } = hooksWith();
+    needsHumanFile(323, 1);
+
+    await watcher(hooks).sweep();
+
+    expect(events("round_self_requeued")).toHaveLength(0);
+    expect(events("needs_human_incomplete")[0]!.payload).toMatchObject({
+      posting_receipt: "confirmed",
+    });
+    expect(roundStatus(roundId)).toBe("done");
+    expect(store.getPr(323)!.state).toBe("tracked");
   });
 
   it("with executed passes a legacy NEEDS_HUMAN lands tracked (park retired), not requeued", async () => {
