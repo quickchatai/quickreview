@@ -619,6 +619,20 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     const from = join(fromBase, name);
     const to = join(toBase, name);
     if (existsSync(to)) {
+      // A dangling checkout link (its sibling already moved) has no tree to
+      // compare: it is a duplicate only when the home's entry IS where it now
+      // points — an earlier run re-pointed it and stopped before removing
+      // this one — and a conflict otherwise.
+      if (!isDirectory(from)) {
+        const moved = linkTargets.get(name);
+        if (moved !== undefined && samePath(to, moved)) {
+          unlinkSync(from);
+          outcomes.push({ kind: "deduplicated", name, from, to });
+        } else {
+          outcomes.push({ kind: "conflict", name, from, to });
+        }
+        continue;
+      }
       // Per-name identity: the base-dir check does not see a home profile
       // linked to the checkout's, and "deduplicating" that deletes the only copy.
       if (samePath(from, to) || (isDirectory(to) && linksInto(to, from))) {

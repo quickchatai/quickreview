@@ -266,7 +266,9 @@ describe("qcr install", () => {
     expect(moved.code).toBe(0);
     expect(moved.lines.join("\n")).toContain(to);
     // deploy.sh sync|rebuild ships the config home from there.
-    expect(moved.lines.join("\n")).toMatch(/deploy\.sh sync\|rebuild ships the config home to the VM from there/);
+    expect(moved.lines.join("\n")).toMatch(
+      /deploy\.sh sync\|rebuild ships the config home to the VM from there/,
+    );
     expect(migrateReport({ kind: "already", to }).code).toBe(0);
     expect(migrateReport({ kind: "deduplicated", from, to }).code).toBe(0);
     expect(migrateReport({ kind: "nothing", to }).code).toBe(0);
@@ -508,6 +510,33 @@ describe("migrateProfiles", () => {
     expect(locateProfile({ root, profile: "house", env })).toMatchObject({ source: "home" });
   });
 
+  it("a run stopped after re-pointing a sibling link but before removing the checkout's converges on the re-run", () => {
+    // the state a run stopped between symlinkSync(home/house) and unlinkSync(checkout/house)
+    const home = join(configHome(env), "profiles");
+    put(join(home, "house-real", "addenda", "10-rule.md"), "real\n");
+    symlinkSync(join(home, "house-real"), join(home, "house"));
+    mkdirSync(join(root, "profiles"), { recursive: true });
+    symlinkSync("house-real", join(root, "profiles", "house"));
+    const out = migrateProfiles({ root, env });
+    expect(out.map((o) => [o.kind, o.name])).toEqual([["deduplicated", "house"]]);
+    expect(lstatSync(join(root, "profiles", "house"), { throwIfNoEntry: false })).toBeUndefined();
+    expect(readFileSync(join(home, "house", "addenda", "10-rule.md"), "utf8")).toBe("real\n");
+    expect(migrateProfiles({ root, env })).toEqual([]);
+  });
+
+  it("a dangling checkout sibling link whose name the home holds as its own profile is a conflict, never a throw", () => {
+    const home = join(configHome(env), "profiles");
+    put(join(home, "house-real", "addenda", "10-rule.md"), "real\n");
+    put(join(home, "house", "addenda", "10-rule.md"), "own\n");
+    mkdirSync(join(root, "profiles"), { recursive: true });
+    symlinkSync("house-real", join(root, "profiles", "house"));
+    const out = migrateProfiles({ root, env });
+    expect(out.map((o) => [o.kind, o.name])).toEqual([["conflict", "house"]]);
+    expect(lstatSync(join(root, "profiles", "house")).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(home, "house", "addenda", "10-rule.md"), "utf8")).toBe("own\n");
+    expect(profileMigrateReport(out).code).toBe(1);
+  });
+
   it("a checkout profile that is a symlink to an external pack migrates too (selfscan)", () => {
     const pack = join(dir, "packs", "house");
     put(join(pack, "addenda", "10-rule.md"), "pack\n");
@@ -552,7 +581,9 @@ describe("migrateProfiles", () => {
     expect(profileMigrateReport([]).code).toBe(0);
     const moved = profileMigrateReport([{ kind: "moved", name: "q", from: "/a", to: "/b" }]);
     expect(moved.code).toBe(0);
-    expect(moved.lines.join("\n")).toMatch(/deploy\.sh sync\|rebuild ships the config home's profiles\/ to the VM with the config\./);
+    expect(moved.lines.join("\n")).toMatch(
+      /deploy\.sh sync\|rebuild ships the config home's profiles\/ to the VM with the config\./,
+    );
     expect(profileMigrateReport([{ kind: "conflict", name: "q", from: "/a", to: "/b" }]).code).toBe(
       1,
     );
