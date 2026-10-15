@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ALLOWED_MUTATION_KINDS,
+  NOT_ALLOWED_MUTATION_KINDS,
   addedLineNumbers,
   attestDryRun,
   blockerParity,
@@ -27,6 +28,7 @@ import {
   type DryrunRecord,
   type ReviewSnapshot,
 } from "../src/compare.js";
+import { MUTATION_KINDS } from "../src/gate.js";
 
 const tmpDirs: string[] = [];
 function scratch(): string {
@@ -219,7 +221,34 @@ describe("(b) invariant scan", () => {
     expect(ALLOWED_MUTATION_KINDS).toContain("create_review");
     // An escalation review request is a legitimate intent.
     expect(ALLOWED_MUTATION_KINDS).toContain("request_reviewer");
-    expect(ALLOWED_MUTATION_KINDS).toHaveLength(10);
+    expect(ALLOWED_MUTATION_KINDS).toHaveLength(11);
+    // Every gate kind is either allowed or deliberately refused — a new kind
+    // must be placed on one side.
+    expect([...ALLOWED_MUTATION_KINDS, ...NOT_ALLOWED_MUTATION_KINDS].sort()).toEqual(
+      [...MUTATION_KINDS].sort(),
+    );
+  });
+
+  it("does NOT flag ping-pong's resolution of the bot's own finding thread", () => {
+    const resolve: DryrunRecord = {
+      kind: "resolve_own_review_thread",
+      method: "POST",
+      path: "/graphql",
+      pr: 501,
+      file: "t.json",
+    };
+    expect(invariantScan([...sandboxRecords, resolve], 501)).toEqual([]);
+  });
+
+  it("flags a supersede_own_review record — the kind has no caller", () => {
+    const v = invariantScan(
+      [
+        ...sandboxRecords,
+        { kind: "supersede_own_review", method: "PUT", path: "/x", pr: 501, file: "u.json" },
+      ],
+      501,
+    );
+    expect(v.map((x) => x.rule)).toContain("mutation-kind allowlist");
   });
 
   it("does NOT flag a request_reviewer record — it is an ordinary kind again", () => {

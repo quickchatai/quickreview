@@ -74,9 +74,9 @@ export interface Finding {
 
 /** Every mutation kind the sandbox is allowed to intend. The invariant scan is
  * an allowlist check, not a keyword hunt: any record whose kind is not on this
- * list is a violation by construction — which is exactly how the structural
- * review invariants are enforced: no kind outside this set exists in gate.ts,
- * so a record carrying one could only come from code that must not exist. */
+ * list is a violation by construction. It is every gate.ts kind but the two in
+ * `NOT_ALLOWED_MUTATION_KINDS`, so a record of a kind gate.ts does not have
+ * could only come from code that must not exist. */
 export const ALLOWED_MUTATION_KINDS = [
   "add_label",
   "remove_label",
@@ -84,6 +84,9 @@ export const ALLOWED_MUTATION_KINDS = [
   "create_review",
   "create_review_comment_reply",
   "create_issue_comment",
+  // Ping-pong resolves the bot's own finding thread once the author's reply
+  // settles it — an ordinary gated intent, never a review dismissal.
+  "resolve_own_review_thread",
   "create_issue",
   "create_pull",
   "push_branch",
@@ -92,6 +95,15 @@ export const ALLOWED_MUTATION_KINDS = [
   // such record can appear). A configured, gated mutation must not read as a
   // structural violation.
   "request_reviewer",
+] as const satisfies readonly MutationKind[];
+
+/** The gate kinds a dry-run record must never carry. `supersede_own_review`
+ * has no adapter method and no caller, so a record of it is code that must
+ * not exist; `update_own_webhook_url` is the app-self-config class, which the
+ * gate executes rather than records. */
+export const NOT_ALLOWED_MUTATION_KINDS = [
+  "supersede_own_review",
+  "update_own_webhook_url",
 ] as const satisfies readonly MutationKind[];
 
 const ALLOWED = new Set<string>(ALLOWED_MUTATION_KINDS);
