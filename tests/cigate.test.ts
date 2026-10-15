@@ -853,6 +853,41 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
     },
   );
 
+  // MUTATION: spend the mark before the handoff (right after the trigger
+  // consumption) — the failed pump drops it and the next pump skips the head.
+  it(
+    "keeps the withholding when the dispatch fails before its handoff, so the next pump still retries",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      tracked(5180, HEAD);
+      store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
+      store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+      await retryWithheldApproval(
+        { cfg, store, adapter: new CiFake() },
+        { pr: 5180, head_sha: HEAD },
+      );
+      const failing = new DispatchFake();
+      failing.listPrFiles = async () => {
+        throw new Error("files API 502");
+      };
+      const h = hooks();
+
+      expect(await dispatchOnce({ cfg, store, adapter: failing, hooks: h.hooks })).toEqual([]);
+      expect(store.approvalWithheld(5180)).toMatchObject({ head_sha: HEAD });
+      expect(store.getPr(5180)?.state).toBe("queued");
+
+      const orders = await dispatchOnce({
+        cfg,
+        store,
+        adapter: new DispatchFake(),
+        hooks: h.hooks,
+      });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.head_sha).toBe(HEAD);
+      expect(store.approvalWithheld(5180)).toBeUndefined();
+    },
+  );
+
   it(
     "still skips an unchanged head with no withholding standing",
     { timeout: HEAVY_TIMEOUT_MS },

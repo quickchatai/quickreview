@@ -1896,6 +1896,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
     let provisionalRoundId: number | undefined;
     // The round's memory window (opened before the seed, below).
     let endMemoryWindow: () => void = () => {};
+    // Spends the withheld-approval mark this round inherits (set below).
+    let spendWithholding: () => void = () => {};
     try {
       // Backfilled (imported) rounds are excluded: a historical review must
       // never flip a still-open PR's next live round to "re-review", whose
@@ -1929,6 +1931,28 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // create.
       const withheld = store.approvalWithheld(row.number);
       const withheldHere = withheld?.head_sha === row.head_sha;
+      // The round about to run re-decides the verdict from scratch, so the
+      // withholding it inherits is spent — once the round has a durable owner
+      // (the session handoff), never before: a failure before the handoff
+      // leaves the mark standing, so the next pump still owes the approval
+      // retry and the reconcile backstop still sees it. Only the mark read
+      // here is spent; a new one is recorded if this round's approval is
+      // withheld again (guards.ts guard 4, or the verdict's
+      // `approval_withheld`).
+      let withholdingSpent = false;
+      spendWithholding = () => {
+        if (!withheld || withholdingSpent) return;
+        withholdingSpent = true;
+        const current = store.approvalWithheld(row.number);
+        if (
+          current &&
+          current.head_sha === withheld.head_sha &&
+          current.created_at === withheld.created_at
+        )
+          store.clearApprovalWithheld(row.number);
+        if (withheldHere)
+          store.logEvent("approval_retry_dispatched", row.number, { head_sha: row.head_sha });
+      };
       if (cfg.guards.skip_unchanged_head && !withheldHere && !hasNewEvidence(mark, row.head_sha)) {
         // Captured BEFORE the transition below clears them: current PR state
         // is not historical evidence (a later failure overwrites the
@@ -2051,15 +2075,6 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
 
       const consumed = await consumeTriggers(deps, row.number);
 
-      // The round about to run re-decides the verdict from scratch, so the
-      // withholding it might have inherited is spent. A new one is recorded if
-      // this round's approval is withheld again (guards.ts guard 4).
-      if (withheld) {
-        store.clearApprovalWithheld(row.number);
-        if (withheldHere)
-          store.logEvent("approval_retry_dispatched", row.number, { head_sha: row.head_sha });
-      }
-
       // The branch this PR targets (base freshness) and its body
       // (pass-intent's artifact + substance bar) come off one getPr read. A
       // failed read degrades to "no base facts, no intent lens", never a
@@ -2132,7 +2147,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           files,
           fullPlan,
           standing,
-          // Captured before this dispatch cleared it: a withheld approval is
+          // Read before this dispatch spends it: a withheld approval is
           // one GitHub never saw, so the sweep stays owed behind it.
           approvalWithheld: withheld !== undefined,
           ecosystem: eco,
@@ -2721,6 +2736,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // asserts that a prompt bearing it was written, and a dispatch that
       // threw wrote nothing.
       store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
+      spendWithholding();
       // The head this round reviews is the next follow-up round's
       // baseline — pin it against gc so a force-push cannot take it away.
       // Best-effort: an unpinned head is re-fetched, or the round runs in full.
@@ -2839,6 +2855,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           : undefined;
         if (command) {
           retainedCommand = true;
+          // The retained round owns the review now: the withholding it
+          // inherited is spent, exactly as on a clean handoff.
+          try {
+            spendWithholding();
+          } catch (spendError) {
+            log(`dispatch: #${row.number} withheld-approval mark not spent`, spendError);
+          }
           try {
             applyEvent(
               store,
