@@ -71,8 +71,11 @@ export function hunksTouchLine(
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 
 /** One file's zero-context hunks, keyed by the file's OLD path (the side a
- * blame of the parent reads); a file the diff creates has no old side and is
- * left out. A `--- ` line is a file header only in a file section's header
+ * blame of the parent reads) as the repository spells it — git's quoting of a
+ * special or non-ASCII path undone, the tab it appends to a path with a space
+ * dropped; a file the diff creates has no old side and is left out, and a
+ * header this reader cannot decode leaves its section out rather than misread
+ * it. A `--- ` line is a file header only in a file section's header
  * (after its `diff --git`, before its first `@@`): inside a hunk it is a
  * REMOVED line whose text starts `-- ` (an SQL, Lua or Haskell comment), and
  * reading it as a header would drop the rest of the file's hunks. */
@@ -87,9 +90,7 @@ export function parseDiffHunksByFile(diff: string): Map<string, DiffHunk[]> {
       continue;
     }
     if (inHeader && line.startsWith("--- ")) {
-      // A quoted path (git's spelling of one with special characters) is
-      // left out rather than misread.
-      current = /^--- a\/(.*)$/.exec(line)?.[1] ?? null;
+      current = line === "--- /dev/null" ? null : sectionPath(line.slice(4), "a/");
       continue;
     }
     if (line.startsWith("@@")) inHeader = false;
@@ -811,13 +812,11 @@ export class WorktreeManager {
     // make the pre-check silently find nothing — and the migration pre-check
     // may get more reliable, never quieter. The caller
     // catches it and logs `migration_precheck_failed`.
-    if (!/^[0-9a-f]{7,40}$/i.test(sha))
-      throw new Error(`listMigrationFiles: not a commit sha: ${sha}`);
-    const res = await this.git(["ls-tree", "-r", "--name-only", sha]);
-    return res.stdout
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => /(^|\/)migrations\/[^/]+\.py$/.test(l));
+    if (!SHA_RE.test(sha)) throw new Error(`listMigrationFiles: not a commit sha: ${sha}`);
+    // NUL-separated: the names as the repository spells them, never git's
+    // quoted display of a non-ASCII or special path.
+    const res = await this.git(["ls-tree", "-r", "-z", "--name-only", sha]);
+    return res.stdout.split("\0").filter((l) => /(^|\/)migrations\/[^/]+\.py$/.test(l));
   }
 
   /**
@@ -891,12 +890,9 @@ export class WorktreeManager {
         });
         const tree = (mt.stdout.split("\n")[0] ?? "").trim();
         if (!/^[0-9a-f]{40,64}$/.test(tree)) return { files: [...files], degraded: true };
-        const diff = await this.git(["diff", "--name-only", tree, `${m}^{tree}`]);
-        for (const f of diff.stdout
-          .split("\n")
-          .map((l) => l.trim())
-          .filter(Boolean))
-          files.add(f);
+        // NUL-separated: the names GitHub reports, never git's quoted display.
+        const diff = await this.git(["diff", "-z", "--name-only", tree, `${m}^{tree}`]);
+        for (const f of diff.stdout.split("\0").filter(Boolean)) files.add(f);
       }
       return { files: [...files], degraded: unverified };
     } catch {
@@ -924,7 +920,14 @@ export class WorktreeManager {
   ): Promise<{ login: string | null; name: string; email: string } | null> {
     if (!/^[0-9a-f]{7,40}$/i.test(sha) || paths.length === 0) return null;
     const bots = new Set((opts.botLogins ?? []).map((b) => b.toLowerCase()));
-    const res = await this.git(["log", "--format=%ae%x09%an", sha, "--", ...paths]);
+    const res = await this.git([
+      "--literal-pathspecs",
+      "log",
+      "--format=%ae%x09%an",
+      sha,
+      "--",
+      ...paths,
+    ]);
     for (const line of res.stdout.split("\n")) {
       const [email = "", name = ""] = line.split("\t");
       if (!email && !name) continue;
@@ -979,7 +982,10 @@ export class WorktreeManager {
         if (!(await this.pathAt(from, path))) return null;
         if (from === to) hunks = [];
         else {
+          // A literal pathspec: `app/[id].tsx` must not also match
+          // `app/i.tsx`, whose hunks would read as this anchor's.
           const res = await this.git([
+            "--literal-pathspecs",
             "diff",
             "--no-color",
             "--no-ext-diff",
@@ -1106,19 +1112,21 @@ export class WorktreeManager {
         if (list.length > POST_MERGE_LIMITS.prCommits) truncated = true;
         for (const c of list.slice(0, POST_MERGE_LIMITS.prCommits)) prCommits.add(c);
       }
+      // NUL-separated names, and literal pathspecs below: the files as the
+      // repository spells them, each matching only itself.
       let files = (
         await this.git([
           "diff",
           "--no-color",
           "--no-ext-diff",
           "--no-renames",
+          "-z",
           "--name-only",
           m.parents[0]!,
           m.sha,
         ])
       ).stdout
-        .split("\n")
-        .map((l) => l.trim())
+        .split("\0")
         .filter(Boolean);
       if (files.length > POST_MERGE_LIMITS.files) {
         truncated = true;
@@ -1140,6 +1148,7 @@ export class WorktreeManager {
       // commits touching these files) bounds the listing.
       const oldestFirst = (
         await this.git([
+          "--literal-pathspecs",
           "log",
           "--first-parent",
           "--no-renames",
@@ -1162,6 +1171,7 @@ export class WorktreeManager {
       )) {
         scan.checked += 1;
         const diff = await this.git([
+          "--literal-pathspecs",
           "diff",
           "--no-color",
           "--no-ext-diff",
