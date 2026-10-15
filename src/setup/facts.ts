@@ -439,7 +439,7 @@ export function vendoredRoots(files: readonly string[]): string[] {
 // ---- unit candidates ---------------------------------------------------------
 
 /** The longest unit name. */
-const UNIT_NAME_MAX = 64;
+export const UNIT_NAME_MAX = 64;
 
 /** A unit name: one plain segment (the state files and reports key on it). */
 export const UNIT_NAME_RE = new RegExp(`^[A-Za-z0-9][A-Za-z0-9._-]{0,${UNIT_NAME_MAX - 1}}$`);

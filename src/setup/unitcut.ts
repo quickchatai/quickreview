@@ -16,7 +16,7 @@
 //
 // Pure: the cut is a value, validation and the adjust ops are functions over
 // it and a file listing. The engine persists it (src/setup/engine.ts).
-import { UNIT_KINDS, UNIT_NAME_RE, type UnitKind } from "./facts.js";
+import { UNIT_KINDS, UNIT_NAME_MAX, UNIT_NAME_RE, type UnitKind } from "./facts.js";
 
 export interface Unit {
   name: string;
@@ -93,6 +93,9 @@ export interface CutProblems {
 
 const SAMPLE = 8;
 
+/** Refused both when a proposal is read and when a cut is checked. */
+const ROOT_IGNORED = "the repo root cannot be ignored — that would leave nothing to review";
+
 function sample(paths: readonly string[]): string {
   const head = paths.slice(0, SAMPLE).join(", ");
   return paths.length > SAMPLE ? `${head}, … (+${paths.length - SAMPLE} more)` : head;
@@ -113,7 +116,7 @@ export function checkCut(cut: UnitCut, files: readonly string[]): CutProblems {
   for (const u of cut.units) {
     if (!UNIT_NAME_RE.test(u.name) || u.name.includes("..")) {
       errors.push(
-        `unit name ${JSON.stringify(u.name)} is not a plain name — letters, digits, '.', '_' and '-', at most 64`,
+        `unit name ${JSON.stringify(u.name)} is not a plain name — letters, digits, '.', '_' and '-', at most ${UNIT_NAME_MAX}`,
       );
     }
     if (names.has(u.name)) errors.push(`unit name "${u.name}" is used twice`);
@@ -127,8 +130,7 @@ export function checkCut(cut: UnitCut, files: readonly string[]): CutProblems {
     }
   }
   for (const r of cut.ignored) {
-    if (r === "")
-      errors.push("the repo root cannot be ignored — that would leave nothing to review");
+    if (r === "") errors.push(ROOT_IGNORED);
     const owner = roots.get(r);
     if (owner !== undefined) errors.push(`root "${r}" is both ignored and owned by "${owner}"`);
     roots.set(r, "(ignored)");
@@ -192,8 +194,7 @@ export function normalizeCut(
       errors.push("`ignored` must be an array of repo-relative paths");
     } else {
       ignored = normalizeRoots(obj.ignored as string[], "ignored", errors);
-      if (ignored.includes(""))
-        errors.push("the repo root cannot be ignored — that would leave nothing to review");
+      if (ignored.includes("")) errors.push(ROOT_IGNORED);
     }
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, cut: { units, ignored } };

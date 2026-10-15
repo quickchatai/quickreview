@@ -489,27 +489,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * round-less anomaly has nothing to say and stays silent. */
   async anomaly(a: AnomalyAnnouncement): Promise<void> {
     if (a.round_no === null || !this.enabled) return;
-    const cause =
-      a.kind === "overdue"
-        ? "round.overdue"
-        : a.kind === "failed_loud"
-          ? "review.failed_loud"
-          : "round.malformed_verdict";
-    const text =
-      a.kind === "overdue"
-        ? causeMessage(this.deps.cfg, {
-            cause: "round.overdue",
-            pr: a.pr,
-            round_no: a.round_no,
-            deadline_min: a.deadline_min,
-          })
-        : a.kind === "failed_loud"
-          ? `⛔ #${a.pr} round ${a.round_no} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`
-          : causeMessage(this.deps.cfg, {
-              cause: "round.malformed_verdict",
-              pr: a.pr,
-              round_no: a.round_no,
-            });
+    const { cause, text } = this.anomalyMessage({ ...a, round_no: a.round_no });
     // An incident already announced is announced again when it reopens (or
     // fails again before it recovered): its one message — which a recovery
     // corrected to "recovered" — is edited to say work is owed again, where a
@@ -530,6 +510,40 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       pr: a.pr,
       text,
     });
+  }
+
+  /** An anomaly's policy cause and its message, chosen once by its kind. */
+  private anomalyMessage(a: AnomalyAnnouncement & { round_no: number }): {
+    cause: string;
+    text: string;
+  } {
+    const { cfg } = this.deps;
+    switch (a.kind) {
+      case "overdue":
+        return {
+          cause: "round.overdue",
+          text: causeMessage(cfg, {
+            cause: "round.overdue",
+            pr: a.pr,
+            round_no: a.round_no,
+            deadline_min: a.deadline_min,
+          }),
+        };
+      case "failed_loud":
+        return {
+          cause: "review.failed_loud",
+          text: `⛔ #${a.pr} round ${a.round_no} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`,
+        };
+      case "malformed":
+        return {
+          cause: "round.malformed_verdict",
+          text: causeMessage(cfg, {
+            cause: "round.malformed_verdict",
+            pr: a.pr,
+            round_no: a.round_no,
+          }),
+        };
+    }
   }
 
   /** Edit an incident's message; true when Slack accepted the edit. A refusal
