@@ -587,13 +587,16 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
       log: () => {},
     };
     const env = { PATH: process.env.PATH, CLAUDE_CODE_OAUTH_TOKEN: "tok-123" };
-    expect(await claudeReviewRun({ ...opts, env: { ...env, ANTHROPIC_MODEL: "claude-opus-5-5" } })).toBe(0);
+    const pinned = { ...env, ANTHROPIC_MODEL: "claude-opus-5-5", CLAUDE_CODE_MAX_RETRIES: "7" };
+    expect(await claudeReviewRun({ ...opts, env: pinned })).toBe(0);
     const caseDir = join(out, "cases", c.instance_id);
     const seen = JSON.parse(readFileSync(join(caseDir, "env-seen.json"), "utf8")) as Record<
       string,
       string
     >;
     expect(seen["ANTHROPIC_MODEL"]).toBe("claude-opus-5-5");
+    // The retries come from the command's environment too, never the ambient one.
+    expect(seen["CLAUDE_CODE_MAX_RETRIES"]).toBe("7");
     expect(readClaudeSummary(out, c)!.fingerprint).toMatchObject({ model: "claude-opus-5-5" });
     const run = JSON.parse(readFileSync(join(out, "run.json"), "utf8")) as Record<string, unknown>;
     expect(run["pinned_model"]).toBe("claude-opus-5-5");

@@ -560,6 +560,8 @@ export interface ClaudeRunnerOptions {
   credential: Record<string, string>;
   /** ANTHROPIC_MODEL for `claude`; absent = Claude Code's default. */
   model?: string;
+  /** CLAUDE_CODE_MAX_RETRIES for `claude`, from the command's environment. */
+  maxRetries?: string;
   timeoutMin: number;
   fingerprint: ClaudeFingerprint;
   keepTree?: boolean;
@@ -639,7 +641,7 @@ export async function reviewCaseClaude(
       home,
       tmpDir,
       credential: o.credential,
-      maxRetries: process.env.CLAUDE_CODE_MAX_RETRIES,
+      maxRetries: o.maxRetries,
       model: o.model,
     });
     const mb = await run("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
@@ -1017,6 +1019,7 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
       homeRoot: o.homeRoot,
       credential: cred.vars,
       model,
+      maxRetries: o.env["CLAUDE_CODE_MAX_RETRIES"],
       timeoutMin: o.timeoutMin,
       fingerprint,
       keepTree: o.keepTree,
