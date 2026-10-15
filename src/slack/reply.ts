@@ -8,7 +8,8 @@
 //                    no channel field, so a wrong channel is unrepresentable.
 //   thread known     the thread must be one we opened or one we were spoken to
 //                    in — the bot cannot cold-start a conversation.
-//   cap + cooldown   slack/policy.decideReply, same ledger as every other post.
+//   caps             slack/policy.decideReply: the channel's daily posts and
+//                    the thread's daily replies, same ledger as every other post.
 //   length           truncated at cfg.slack.max_reply_chars.
 //   idempotence      one post per command file, claimed before the API call.
 //
@@ -74,15 +75,18 @@ export function truncateReply(text: string, max: number): string {
 
 /**
  * Has the daemon ever seen this thread? Either it opened the thread for a PR,
- * or somebody spoke to it there (the message's own ts, or the parent it replied
- * under). `slack_events` has no by-ts accessor on StateStore — this is a
- * read-only probe over the table the router owns.
+ * or a PERSON spoke to it there (the message's own ts, or the parent it
+ * replied under). A bot's message or a user-less one (`dropped_echo`) is no
+ * person speaking, so it never makes a thread known. `slack_events` has no
+ * by-ts accessor on StateStore — this is a read-only probe over the table the
+ * router owns.
  */
 export function threadIsKnown(store: StateStore, channel: string, threadTs: string): boolean {
   if (store.slackThreadByRoot(channel, threadTs)) return true;
   const row = store.db
     .prepare(
-      "SELECT 1 AS hit FROM slack_events WHERE channel = ? AND (ts = ? OR thread_ts = ?) LIMIT 1",
+      "SELECT 1 AS hit FROM slack_events WHERE channel = ? AND (ts = ? OR thread_ts = ?) " +
+        "AND disposition != 'dropped_echo' LIMIT 1",
     )
     .get(channel, threadTs, threadTs) as { hit: number } | undefined;
   return row !== undefined;

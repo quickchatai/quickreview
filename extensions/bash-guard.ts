@@ -22,9 +22,10 @@
 //     where a plain `git diff` executes a program named by
 //     `<clone>/.git/config` with no suspicious token in the command at all),
 //     this system's own policy surface (`isPolicySurface` — config.toml, the
-//     sanctioned scripts, the compiled guard, the seeds), and the memory-scope
+//     sanctioned scripts, the compiled guard, the seeds), the memory-scope
 //     files a session's own recall reads (`isMemoryScopeSurface` — the recall
-//     hint and the retired list);
+//     hint and the retired list), and the wake-delivery files
+//     (`isDeliverySurface` — the inject dirs and the bridge's `.done/`);
 //   · the global/XDG/system scopes are closed OUTSIDE this file, by
 //     `sessionGitConfigPins` in src/sessions.ts, which pins where git looks for
 //     configuration at spawn. The guard's job there is only to stop a caller
@@ -1795,13 +1796,62 @@ export function isMemoryScopeSurface(path: string): boolean {
   return MEMORY_SCOPE_SURFACE_RE.some((re) => re.test(p));
 }
 
+/**
+ * The WAKE-DELIVERY files — the daemon's inject dirs
+ * (`<root>/inject/<session>/`, `PiSessionManager.injectDir`) and the inject
+ * bridge's record of what pi accepted. The bridge takes pending wakes in name
+ * order and moves each one pi accepts into `.done/`; the daemon reads that
+ * move as "this turn is now running" — above all for the overseer, whose
+ * Slack command rights are the served turn's (`src/slack/origin.ts`). One
+ * planted `.done/<queued wake>.md`, or a queued wake emptied in place (the
+ * bridge moves an empty file to `.done/` without serving it), would hand a
+ * running turn the rights of one still queued; a file dropped into another
+ * session's inject dir is a prompt in that session.
+ *
+ * A session never writes any of them; the daemon writes the wakes and the
+ * bridge moves them. Matched as a SHAPE: the `inject` dir and anything in it
+ * under any prefix, a `.done` dir and anything in it (a `cd` into the inject
+ * dir drops the `inject/` part), and the wake file's own name
+ * (`<ISO stamp>-<seq>[--cmd-<id>].md`, its atomic-write temp included — a `cd`
+ * into the session's dir drops every directory). Not watched by layer 4: the
+ * daemon and the bridge rewrite these dirs all the time, so a round-boundary
+ * hash would report their own work. The write veto is the protection, and a
+ * session has no program that moves or removes a file.
+ */
+export const DELIVERY_SURFACE = ["inject/", ".done/", "<wake file>.md"] as const;
+const DELIVERY_SURFACE_RE = [
+  /(^|\/)inject(\/|$)/, // every session's inject dir, any file in it
+  /(^|\/)\.done(\/|$)/, // the bridge's accepted wakes
+  /(^|\/)\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-\d{4,}(--cmd-[^/]*)?\.md(\.tmp-[^/]*)?$/, // a wake file
+];
+
+/** Is this path one of the wake-delivery files? Exported so both write
+ * boundaries ask ONE question. */
+export function isDeliverySurface(path: string): boolean {
+  const p = path.replace(/^['"]+|['"]+$/g, "").replace(/\/+$/, "");
+  if (p.length === 0) return false;
+  return DELIVERY_SURFACE_RE.some((re) => re.test(p));
+}
+
 /** The full set a session may not write, from ONE definition: git's own config
- * and hook surface, this system's policy surface and the memory-scope files
- * its own recall reads. Both the write/edit tool veto (`checkWritePath`) and
- * the shell-redirection / sed scan (`checkProtectedWrites`) refuse exactly
- * this, so they cannot drift. */
+ * and hook surface, this system's policy surface, the memory-scope files its
+ * own recall reads and the wake-delivery files. Both the write/edit tool veto
+ * (`checkWritePath`) and the shell-redirection / sed scan
+ * (`checkProtectedWrites`) refuse exactly this, so they cannot drift. */
 export function isProtectedWriteTarget(path: string): boolean {
-  return isGitConfigSurface(path) || isPolicySurface(path) || isMemoryScopeSurface(path);
+  return (
+    isGitConfigSurface(path) ||
+    isPolicySurface(path) ||
+    isMemoryScopeSurface(path) ||
+    isDeliverySurface(path)
+  );
+}
+
+/** Veto reason for a wake-delivery write target. */
+function deliverySurfaceWriteBlock(path: string): BashCheck {
+  return block(
+    `exec policy: '${path}' is a wake-delivery file (an inject dir, the bridge's .done/ or a wake file) — the daemon writes wakes there and reads their delivery to decide whose turn is running. A session never writes them.`,
+  );
 }
 
 /** Veto reason for a memory-scope write target. */
@@ -1823,6 +1873,7 @@ function policySurfaceWriteBlock(path: string): BashCheck {
 function protectedWriteBlock(path: string): BashCheck {
   if (isGitConfigSurface(path)) return gitConfigWriteBlock(path);
   if (isMemoryScopeSurface(path)) return memoryScopeWriteBlock(path);
+  if (isDeliverySurface(path)) return deliverySurfaceWriteBlock(path);
   return policySurfaceWriteBlock(path);
 }
 
@@ -1842,15 +1893,15 @@ function gitConfigWriteBlock(path: string): BashCheck {
  * carrying either syntax is judged by every protected NAME it could expand
  * onto: each brace group is widened to `*`, each pattern component is replaced
  * by each protected component name it matches (`globToRegex`), and every
- * resulting path is put to the same `isProtectedWriteTarget` — for all three
- * sets, git's config surface (`.gi?/config`) and the policy surface
+ * resulting path is put to the same `isProtectedWriteTarget` — for every
+ * set, git's config surface (`.gi?/config`) and the policy surface
  * (`config.tom?`) included. A pattern no protected name can satisfy
  * (`> /tmp/out-*.txt`) is left alone.
  */
 const BRACE_GROUP_RE = /\{[^{}]*(?:,|\.\.)[^{}]*\}/g;
 /** The component names the protected sets are spelled with: what a pattern
  * component is tried against. One representative temp name stands for the
- * retired list's `.tmp-<pid>`. */
+ * retired list's `.tmp-<pid>`, and one wake file name for every wake. */
 const PROTECTED_COMPONENT_NAMES: readonly string[] = [
   ".git",
   ".gitconfig",
@@ -1862,6 +1913,9 @@ const PROTECTED_COMPONENT_NAMES: readonly string[] = [
   "recall-hints",
   "retired-uris.json",
   "retired-uris.json.tmp-1",
+  "inject",
+  ".done",
+  "2026-01-01T00-00-00-000Z-0000.md",
 ];
 /** Past this many candidate paths a pattern is refused without enumerating
  * the rest — a target that broad is no reviewer's write. */

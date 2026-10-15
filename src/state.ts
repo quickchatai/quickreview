@@ -537,6 +537,7 @@ export type SlackDisposition =
   | "injected"
   | "dropped_echo"
   | "dropped_stale"
+  | "dropped_delivery_failed"
   | "dropped_cap"
   | "dropped_subtype"
   | "dropped_dupe"
@@ -6637,6 +6638,31 @@ export class StateStore {
         posted_at: this.ts(),
         ok: row.ok === false ? 0 : 1,
         error: row.error ?? null,
+      });
+    return info.changes === 1;
+  }
+
+  /**
+   * Claim a FAILED post again for a retry: the row becomes a fresh claim
+   * (ok = 1, no ts, stamped now), so the rolling-hour ceiling counts the new
+   * attempt exactly as it counts a first one. False when the row is not a
+   * failure — delivered, or claimed and not yet settled.
+   */
+  reclaimSlackPost(
+    idemKey: string,
+    row: { thread_ts?: string | null; chars?: number } = {},
+  ): boolean {
+    const info = this.db
+      .prepare(
+        `UPDATE slack_posts SET ok = 1, ts = NULL, error = NULL, posted_at = @posted_at,
+           thread_ts = @thread_ts, chars = @chars
+         WHERE idem_key = @idem_key AND ok = 0`,
+      )
+      .run({
+        idem_key: idemKey,
+        posted_at: this.ts(),
+        thread_ts: row.thread_ts ?? null,
+        chars: row.chars ?? 0,
       });
     return info.changes === 1;
   }

@@ -317,6 +317,13 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
             "999902 — but it does write into the REAL inject/ tree, so it is a writer and is recorded as one.",
         },
         {
+          file: "src/usage.ts",
+          why:
+            "the exec-policy audit NAMES the `inject` dir as one of the protected path components a pattern write " +
+            "target is tried against, so a session's write onto a wake-delivery file is flagged after the fact. " +
+            "It reads transcripts only and never builds a path into the inject tree.",
+        },
+        {
           file: "src/archive/prfiles.ts",
           why:
             "the closed-PR archiver's inventory (shared by the plan and the archive pass) LISTS " +

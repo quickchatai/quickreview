@@ -317,6 +317,10 @@ export type ExecViolationKind =
    * (`retired-uris.json`) a session's own memory recall reads.
    * Writing either widens what that recall may reach. */
   | "memory_scope_write"
+  /** A write landing on a WAKE-DELIVERY file — an inject dir, the inject
+   * bridge's `.done/`, or a wake file by its name. The daemon reads a wake's
+   * move into `.done/` as "this turn is running". */
+  | "delivery_surface_write"
   /** A session env-prefix that relocates this system's policy inputs
    * (`QCR_CONFIG=` and kin), at the top level or laundered inside a
    * `bash -c '…'` payload. */
@@ -460,6 +464,33 @@ const MEMORY_SCOPE_WRITE_RE = new RegExp(
 const MEMORY_SCOPE_PATH_RE = /(?:^|\/)(?:recall-hints(?:\/|$)|retired-uris\.json(?:\.tmp-[^/]*)?$)/;
 
 /**
+ * A write landing on a WAKE-DELIVERY file — the same SHAPE once more: a
+ * redirection or a `sed -i` whose target is under an `inject` dir or a
+ * `.done` dir, or is named like a wake file (`<ISO stamp>-<seq>….md`), at any
+ * prefix. Mirrors `isDeliverySurface` in the guard, kept an independent
+ * implementation on purpose.
+ */
+const WAKE_FILE_NAME = String.raw`\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-\d{4,}(?:--cmd-[^/\s]*)?\.md(?:\.tmp-[^/\s]*)?`;
+const DELIVERY_TARGET =
+  String.raw`(?:\S*\/)?(?:inject(?:\/\S*)?|\.done(?:\/\S*)?|` +
+  WAKE_FILE_NAME +
+  String.raw`)(?=[\s;&|()<>]|$)`;
+const DELIVERY_WRITE_RE = new RegExp(
+  String.raw`(?:` +
+    WRITE_OPERATOR +
+    DELIVERY_TARGET +
+    String.raw`|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+` +
+    DELIVERY_TARGET +
+    String.raw`)`,
+);
+
+/** The same wake-delivery files as a WRITE-TOOL target path — the guard's
+ * shapes. */
+const DELIVERY_PATH_RE = new RegExp(
+  String.raw`(?:^|\/)(?:inject(?:\/|$)|\.done(?:\/|$)|` + WAKE_FILE_NAME + String.raw`$)`,
+);
+
+/**
  * A write target spelled as a PATTERN: bash expands a
  * redirection target before it opens the file, so `> retired-uri[s].json`,
  * `> recall-hint?/pr-1.json`, `> config.tom?` and `> recall-hint{s..s}/…`
@@ -492,6 +523,9 @@ const SURFACE_COMPONENT_NAMES: readonly string[] = [
   "recall-hints",
   "retired-uris.json",
   "retired-uris.json.tmp-1",
+  "inject",
+  ".done",
+  "2026-01-01T00-00-00-000Z-0000.md",
 ];
 
 /** A shell pattern component as an anchored regex: `*`, `?`, `[…]`/`[!…]`. */
@@ -519,6 +553,7 @@ function componentPatternRe(c: string): RegExp {
 function surfacePathKind(path: string): ExecViolationKind | null {
   if (GIT_CONFIG_SURFACE_PATH_RE.test(path)) return "git_config_surface_write";
   if (MEMORY_SCOPE_PATH_RE.test(path)) return "memory_scope_write";
+  if (DELIVERY_PATH_RE.test(path)) return "delivery_surface_write";
   if (POLICY_SURFACE_PATH_RE.test(path)) return "policy_surface_write";
   return null;
 }
@@ -704,6 +739,7 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
   const bare = segment.replace(/["'\\]/g, "");
   if (GIT_CONFIG_SURFACE_WRITE_RE.test(bare)) return "git_config_surface_write";
   if (MEMORY_SCOPE_WRITE_RE.test(bare)) return "memory_scope_write";
+  if (DELIVERY_WRITE_RE.test(bare)) return "delivery_surface_write";
   if (POLICY_SURFACE_WRITE_RE.test(bare)) return "policy_surface_write";
   // The same surfaces once more, over the writes bash would actually perform:
   // every unquoted redirection's target with its

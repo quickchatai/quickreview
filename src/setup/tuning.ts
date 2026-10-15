@@ -168,6 +168,21 @@ export interface ProfileStatus {
   commits: Array<{ id: string; requested_at: string; result: CommitResult | null | "unreadable" }>;
 }
 
+/** The bytes a drafted style guide is written as: exactly one trailing
+ * newline. A re-tune compares against these to tell a change from none. */
+export function draftedGuideBytes(guide: string): string {
+  return guide.replace(/\n*$/, "\n");
+}
+
+/**
+ * The profile setup works on: the one the interview record names, else the
+ * one the live config names — "" when neither does. Status, validation and
+ * application all target it, so what is shown, checked and written agree.
+ */
+function setupProfile(recorded: string | undefined, named: string | null): string {
+  return recorded || named || "";
+}
+
 export function profileStatus(deps: TuningDeps): ProfileStatus | Refusal {
   if (!deps.profiles)
     return { ok: false, errors: ["this assembly has no config home to read profiles from"] };
@@ -175,7 +190,7 @@ export function profileStatus(deps: TuningDeps): ProfileStatus | Refusal {
   const interview = readRecord(deps.state);
   const record = interview.state === "ok" ? interview.record : null;
   const named = target.state === "ok" ? target.named : "";
-  const profile = record?.profile ?? (named !== "" ? named : null);
+  const profile = setupProfile(record?.profile, named) || null;
   const check = profile ? checkProfile(deps.profiles, profile) : null;
   let why: string | null = null;
   let owed: boolean | null = null;
@@ -216,7 +231,10 @@ export function profileValidate(
   if (profile === "") {
     const r = readRecord(deps.state);
     const t = readProfileTarget(deps.profiles);
-    profile = (r.state === "ok" ? r.record.profile : "") || (t.state === "ok" ? t.named : "");
+    profile = setupProfile(
+      r.state === "ok" ? r.record.profile : undefined,
+      t.state === "ok" ? t.named : null,
+    );
   }
   if (profile === "")
     return {
@@ -312,7 +330,7 @@ export function profileApply(
   const named = target.state === "ok" ? target.named : null;
 
   const asked = typeof input.profile === "string" ? input.profile.trim() : "";
-  const profile = asked || record?.profile || (named ?? "");
+  const profile = asked || setupProfile(record?.profile, named);
   if (profile === "") {
     return {
       ok: false,
@@ -393,7 +411,7 @@ export function profileApply(
   const files: ProfileFiles = {};
   if (typeof guide === "string") {
     (changes[STYLE_LENS] ??= {}).guide = DRAFTED_GUIDE_FILE;
-    files[DRAFTED_GUIDE_FILE] = guide.replace(/\n*$/, "\n");
+    files[DRAFTED_GUIDE_FILE] = draftedGuideBytes(guide);
   } else if (guide === null) {
     (changes[STYLE_LENS] ??= {}).guide = null;
   }
@@ -442,16 +460,26 @@ export function profileApply(
       // What the write is about to replace, kept for the replay's
       // "old" side — BEFORE the files change, so a crash in between leaves a
       // baseline of the profile still on disk, never a missing one.
-      const id = commitId(now, profile, (candidate) => {
-        try {
-          return (
+      // An id is taken when a request or result already carries it. A lookup
+      // that cannot be read refuses the write: it would fail the same way for
+      // every candidate, and nothing is on disk yet.
+      let id: string;
+      try {
+        id = commitId(
+          now,
+          profile,
+          (candidate) =>
             deps.state.read(requestFile(candidate)) !== null ||
-            deps.state.read(resultFile(candidate)) !== null
-          );
-        } catch {
-          return true; // unreadable: it exists, so it is taken
-        }
-      });
+            deps.state.read(resultFile(candidate)) !== null,
+        );
+      } catch (err) {
+        return {
+          ok: false,
+          errors: [
+            `the commit requests in the state home cannot be read (${String(err)}) — nothing was written`,
+          ],
+        };
+      }
       try {
         recordBaseline(deps.state, {
           id,

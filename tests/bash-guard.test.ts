@@ -10,6 +10,8 @@ import activate, {
   checkSecretPaths,
   checkWritePath,
   defaultSecretPathContext,
+  DELIVERY_SURFACE,
+  isDeliverySurface,
   isMemoryScopeSurface,
   MEMORY_SCOPE_SURFACE,
   protectedPatternHit,
@@ -1028,6 +1030,76 @@ describe("checkWritePath / the memory-scope files a session's recall reads", () 
       block: true,
     });
     expect(handler!({ toolName: "read", input: { path: HINT } })).toBeUndefined();
+  });
+});
+
+// ---- a session cannot forge a wake's delivery ------------------------------
+//
+// The daemon drops every session's wakes into `<root>/inject/<session>/`, and
+// the inject bridge moves the one pi accepts into `.done/`. The daemon reads
+// that move as "this turn is running" — the overseer's Slack command rights
+// are the served turn's (src/slack/origin.ts). A planted `.done/<queued>.md`,
+// or a queued wake emptied in place (the bridge moves an empty file straight
+// to `.done/`), would hand the running turn a queued turn's rights.
+describe("checkWritePath / the wake-delivery files", () => {
+  const INJECT = "/opt/quickreview/sandbox/inject/overseer";
+  const WAKE = "2026-08-17T09-00-00-000Z-0007.md";
+  const writeBlocked = (p: string): void => {
+    const res = checkWritePath(p);
+    expect(res.allowed, `${p} should be refused`).toBe(false);
+    expect(res.reason).toContain("wake-delivery file");
+  };
+  const writeOk = (p: string): void => {
+    const res = checkWritePath(p);
+    expect(res.allowed, `${p} → ${res.reason ?? ""}`).toBe(true);
+  };
+
+  // MUTATION: drop any entry of DELIVERY_SURFACE_RE in
+  // extensions/bash-guard.ts (or `isDeliverySurface` from
+  // `isProtectedWriteTarget`) — the matching lines here fail.
+  it("refuses the inject dirs, the bridge's .done/ and a wake file, through the write tool", () => {
+    writeBlocked(`${INJECT}/.done/${WAKE}`);
+    writeBlocked(`${INJECT}/${WAKE}`);
+    writeBlocked(`${INJECT}/anything.md`);
+    writeBlocked("/opt/quickreview/sandbox/inject/pr-5249/x.md");
+    writeBlocked("inject/overseer");
+    // From inside the inject dir a `cd` drops `inject/`; from inside the
+    // session's dir it drops every directory — the names are the shape.
+    writeBlocked(`overseer/.done/${WAKE}`);
+    writeBlocked(`.done/${WAKE}`);
+    writeBlocked("overseer/.done/x.md");
+    writeBlocked(".done");
+    writeBlocked(WAKE);
+    writeBlocked(`./${WAKE}`);
+    writeBlocked("2026-08-17T09-00-00-000Z-0012--cmd-abc.md");
+    writeBlocked(`${WAKE}.tmp-123-4`);
+    expect([...DELIVERY_SURFACE]).toEqual(["inject/", ".done/", "<wake file>.md"]);
+  });
+
+  it("closes the same files through a redirection, sed -i and a pattern", () => {
+    block(`printf forged > ${INJECT}/.done/${WAKE}`, "wake-delivery");
+    block(`cd ${INJECT} && printf '' > ${WAKE}`, "wake-delivery");
+    block(`printf x>.done/${WAKE}`, "wake-delivery");
+    block("printf x > .done/x.md", "wake-delivery");
+    block(`cat /tmp/x &> ${INJECT}/${WAKE}`, "wake-delivery");
+    block(`sed -i 's/a//' ${WAKE}`, "wake-delivery");
+    block(`printf x > ../overseer/.don?/${WAKE}`, "wake-delivery");
+    block(`printf x > inj*/overseer/x.md`, "wake-delivery");
+    block("printf '' > 2026-*.md", "wake-delivery");
+    block(`bash -c 'git status; printf x > .done/${WAKE}'`, "wake-delivery");
+  });
+
+  it("still allows reading them, and names that only resemble them", () => {
+    allow(`cat ${INJECT}/.done/${WAKE}`);
+    allow(`ls ${INJECT}/.done`);
+    allow("rg -n inject src/");
+    allow("printf x > /tmp/review-*.md");
+    writeOk("docs/injection.md");
+    writeOk("src/inject-bridge.ts.notes");
+    writeOk("/tmp/done/notes.md");
+    writeOk("/tmp/2026-08-17-notes.md");
+    expect(isDeliverySurface("src/slack/origin.ts")).toBe(false);
+    expect(isDeliverySurface("")).toBe(false);
   });
 });
 

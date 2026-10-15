@@ -7,7 +7,7 @@
 //     across re-scans, findings.ts) and an UNPINNED `#scan kind=dismissal`
 //     note goes to reviewer memory, so PR rounds stop raising it. A note that
 //     could not be written is recorded on the finding and retried by the next
-//     dismiss of it — the dismissal itself never waits on memory.
+//     dismiss of it — a note memory refused never blocks the dismissal.
 //   * PROMOTE: one ticket per finding, filed through the tracker sink
 //     (trackersink.ts — the issue tracker in the effort the companion picked,
 //     or a markdown file without one), stamped with the fingerprint. NEVER
@@ -32,7 +32,7 @@
 // (eventtags.ts), and its own `#word`s are de-hashed — so nothing it writes
 // can pin itself or forge a tag. Never `#pinned`: the scan writes no pinned
 // memory (spec, out of scope).
-import { formatEventTags } from "../memory/eventtags.js";
+import { dehash, formatEventTags } from "../memory/eventtags.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { Refusal, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
 import type { FindingsStore, ScanFinding } from "./findings.js";
@@ -42,10 +42,9 @@ export const SCAN_TAG = "scan";
 export const SCAN_MEMORY_FILE = "scan/memory.json";
 export const SCAN_MEMORY_VERSION = 1;
 
-/** Patterns one scan (the runs at one sha) may write. */
+/** Patterns one scan (the runs at one sha) may write. One scan writes one
+ * hotspot per unit: the cap record holds one per unit name. */
 export const MAX_PATTERNS_PER_SCAN = 20;
-/** Hotspots one scan may write per unit. */
-export const MAX_HOTSPOTS_PER_UNIT = 1;
 
 export const MEMORY_TEXT_MAX = 400;
 export const REASON_MAX = 500;
@@ -58,9 +57,6 @@ const clean = (err: unknown): string => (err instanceof Error ? err.message : St
 
 /** One `k=v` value: no whitespace (it would end the header). */
 const tagValue = (v: string): string => v.trim().replace(/\s+/g, "_") || "-";
-
-/** `#word` → `word`: the store reads tags off the whole text. */
-const dehash = (text: string): string => text.replace(/(^|\s)#+(?=[\w-])/g, "$1");
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
@@ -636,7 +632,7 @@ export class ScanTriage {
       if (units === null) errors.push(`hotspots[${i}]: no saved unit cut to name a unit from`);
       else if (!units.includes(unit))
         errors.push(`hotspots[${i}].unit ${JSON.stringify(unit)} is not a unit of the saved cut`);
-      else if (seenUnits.has(unit) || rec.hotspots[unit])
+      else if (seenUnits.has(unit) || Object.hasOwn(rec.hotspots, unit))
         errors.push(`hotspots[${i}]: ${unit} already has its one hotspot for this scan`);
       seenUnits.add(unit);
       hotspots.push({ unit, text });
@@ -654,11 +650,24 @@ export class ScanTriage {
     const problems: string[] = [];
     const written = { patterns: 0, hotspots: 0 };
     const now = (): string => this.ports.clock().toISOString();
+    // The cap record is saved after EVERY note memory took, so an interrupted
+    // call leaves each landed note counted and a retry cannot exceed the caps.
+    file.scans[run.sha] = rec;
+    let unsaved = null as string | null; // set by save(), read after the loops
+    const save = (): void => {
+      try {
+        this.ports.state.write(SCAN_MEMORY_FILE, `${JSON.stringify(file, null, 1)}\n`);
+        unsaved = null;
+      } catch (err) {
+        unsaved = clean(err);
+      }
+    };
     for (const p of patterns) {
       const r = await this.note(patternMemoryText(p, run.sha));
       if (r === "written") {
         rec.patterns.push({ ...p, at: now() });
         written.patterns++;
+        save();
       } else problems.push(`pattern "${p.text.slice(0, 60)}" not written: ${r.problem}`);
     }
     for (const h of hotspots) {
@@ -666,14 +675,12 @@ export class ScanTriage {
       if (r === "written") {
         rec.hotspots[h.unit] = { text: h.text, at: now() };
         written.hotspots++;
+        save();
       } else problems.push(`hotspot for ${h.unit} not written: ${r.problem}`);
     }
-    file.scans[run.sha] = rec;
-    try {
-      this.ports.state.write(SCAN_MEMORY_FILE, `${JSON.stringify(file, null, 1)}\n`);
-    } catch (err) {
+    if (unsaved !== null) {
       problems.push(
-        `the cap record was not saved (${clean(err)}) — memory was written, but the cap will not count these`,
+        `the cap record was not saved (${unsaved}) — memory was written, but the cap will not count these`,
       );
     }
     return {
@@ -684,7 +691,7 @@ export class ScanTriage {
       problems,
       left: {
         patterns: MAX_PATTERNS_PER_SCAN - rec.patterns.length,
-        units_without_hotspot: (units ?? []).filter((u) => !rec.hotspots[u]),
+        units_without_hotspot: (units ?? []).filter((u) => !Object.hasOwn(rec.hotspots, u)),
       },
     };
   }

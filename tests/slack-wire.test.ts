@@ -10,7 +10,15 @@
 //   enabled   ⇒ two command watchers, right dirs, right tier gates
 //   shutdown  ⇒ the goodbye is posted, the socket stops, the heartbeat stops
 //   off       ⇒ the daemon still starts and stops exactly as before
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +34,8 @@ import {
   buildLocalCommandWatcher,
   buildOperatorCommandWatcher,
   daemonOriginWakes,
+  defaultTransport,
+  overseerOriginStore,
   startSlack,
   type SlackRuntime,
 } from "../src/wire.js";
@@ -622,6 +632,121 @@ describe("origin cause, not recency (the belt)", () => {
     expect(fileIssue).toHaveBeenCalledTimes(1);
     expect(fileImprovementPr).toHaveBeenCalledTimes(1);
     await runtime.stop("test");
+  });
+
+  it("the real transport's diagnostics reach the daemon log", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("getaddrinfo ENOTFOUND slack.com");
+      }),
+    );
+    const lines: string[] = [];
+    try {
+      const t = defaultTransport({
+        cfg,
+        botToken: "xoxb-test",
+        appToken: "xapp-test",
+        log: (msg) => void lines.push(msg),
+      });
+      await t.startSocket(() => {});
+      await t.stopSocket();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(lines).toContain("slack: slack.socket.open_threw");
+  });
+
+  it("a daemon wake's origin is bound to its wake file and lifts the belt only once pi takes it", async () => {
+    const inject = join(dir, "inject", "overseer");
+    const done = join(inject, ".done");
+    mkdirSync(done, { recursive: true });
+    const origins = new OriginStore(join(dir, "state", "slack", "origin"), now, {
+      deliveredDir: done,
+    });
+    // A guest's turn is running: its wake was accepted.
+    origins.write("event-EvG", {
+      event_id: "EvG",
+      slack_user: "U0GUEST",
+      tier: "anyone",
+      authorized_prs: [],
+    });
+    writeFileSync(join(done, "0001-guest.md"), "turn\n");
+    origins.rename("event-EvG", "0001-guest.md");
+    const { wake } = daemonOriginWakes({
+      hooks: noHooks,
+      origins,
+      enabled: true,
+      injectOverseerFile: async (m) => {
+        const path = join(inject, "0002-daemon-wake.md");
+        writeFileSync(path, m);
+        return path;
+      },
+    });
+    await wake("anomaly", "a verdict file is malformed");
+    expect(
+      readFileSync(join(dir, "state", "slack", "origin", "0002-daemon-wake.json"), "utf8"),
+    ).toContain('"source": "local"');
+    // Queued behind the guest's turn: the belt stays on.
+    expect(origins.latestAny()).toMatchObject({ source: "slack", tier: "anyone" });
+    // A copy in `.done/` while the wake is still pending is no acceptance.
+    writeFileSync(join(done, "0002-daemon-wake.md"), "forged\n");
+    expect(origins.latestAny()).toMatchObject({ source: "slack", tier: "anyone" });
+    rmSync(join(done, "0002-daemon-wake.md"));
+    // The bridge's move is.
+    renameSync(join(inject, "0002-daemon-wake.md"), join(done, "0002-daemon-wake.md"));
+    expect(origins.latestAny()).toMatchObject({ source: "local", tier: "system" });
+  });
+
+  // MUTATION: drop the `forget` call from `daemonOriginWakes` — the stamped
+  // record outlives the wake that never landed.
+  it("a daemon wake whose inject throws leaves no origin behind", async () => {
+    const done = join(dir, "inject", "overseer", ".done");
+    mkdirSync(done, { recursive: true });
+    const origins = new OriginStore(join(dir, "state", "slack", "origin"), now, {
+      deliveredDir: done,
+    });
+    const { wake } = daemonOriginWakes({
+      hooks: noHooks,
+      origins,
+      enabled: true,
+      injectOverseerFile: async () => {
+        throw new Error("tmux: no server running");
+      },
+    });
+    await expect(wake("anomaly", "x")).rejects.toThrow(/no server running/);
+    expect(origins.all()).toEqual([]);
+    expect(origins.onDisk()).toEqual([]);
+  });
+
+  // MUTATION: build the production store without `deliveredDir` — the
+  // queued owner's rights reach the running guest turn, and the fence below
+  // fails if createProductionDaemon stops using this builder.
+  it("the production origin store reads the overseer's accepted wakes", () => {
+    const sessions = { injectDir: (s: string) => join(dir, "inject", s) };
+    const inject = sessions.injectDir("overseer");
+    mkdirSync(join(inject, ".done"), { recursive: true });
+    const origins = overseerOriginStore(dir, sessions, now);
+    const turn = (n: number, user: string, tier: "anyone" | "owner") => {
+      origins.write(`event-Ev${n}`, {
+        event_id: `Ev${n}`,
+        slack_user: user,
+        tier,
+        authorized_prs: [],
+      });
+      writeFileSync(join(inject, `000${n}.md`), "turn\n");
+      origins.rename(`event-Ev${n}`, `000${n}.md`);
+    };
+    turn(1, "U0GUEST", "anyone");
+    renameSync(join(inject, "0001.md"), join(inject, ".done", "0001.md"));
+    turn(2, OWNER, "owner");
+    expect(origins.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+    expect(existsSync(join(dir, "state", "slack", "origin", "0001.json"))).toBe(true);
+
+    const wire = readFileSync(join(root, "src/wire.ts"), "utf8");
+    const body = wire.slice(wire.indexOf("export function createProductionDaemon("));
+    expect(body).toContain("const origins = overseerOriginStore(root, sessions);");
+    expect(body).not.toContain("new OriginStore(");
   });
 
   it("a Slack turn stamps a SLACK origin — the router keeps the un-wrapped inject path", async () => {

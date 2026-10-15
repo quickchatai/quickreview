@@ -10,6 +10,9 @@
 /** fetch stand-in, injected so tests can script HTTP responses. */
 export type SlackFetchFn = typeof fetch;
 
+/** The Slack Web API base both transports call (each overridable in tests). */
+export const SLACK_API_BASE = "https://slack.com/api";
+
 /** A normalized inbound Slack message, as everything above the seam sees it. */
 export interface SlackInboundEvent {
   /** Slack's per-delivery id (`envelope.payload.event_id`) — the dedupe key. */

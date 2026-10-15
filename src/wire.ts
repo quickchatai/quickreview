@@ -124,6 +124,7 @@ import { OVERSEER_SESSION, PiSessionManager, prSessionName } from "./sessions.js
 import { SlackApiClient } from "./slack/api.js";
 import { makeAnnouncer, type SlackAnnouncer } from "./slack/announce.js";
 import { OriginStore } from "./slack/origin.js";
+import { announcedCap } from "./slack/policy.js";
 import { makeSlackReply } from "./slack/reply.js";
 import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
@@ -295,25 +296,27 @@ export interface SlackRuntime {
 }
 
 /** The real transport: Web API out, Socket Mode in, composed into one object. */
-function defaultTransport(opts: {
+export function defaultTransport(opts: {
   cfg: Config;
   botToken: string;
   appToken: string;
   log: (msg: string, extra?: unknown) => void;
 }): SlackTransport {
-  const { cfg } = opts;
-  const log = (message: string, meta?: Record<string, unknown>): void => opts.log(message, meta);
+  const { cfg, log } = opts;
+  // Both transports log to the daemon log: an auth failure, a reconnect, a
+  // ping timeout or a dropped post is what an operator reads to tell why the
+  // concierge went quiet.
   const api = new SlackApiClient({
     botToken: opts.botToken,
     postMinIntervalMs: cfg.slack.post_min_interval_ms,
     userCacheTtlSec: cfg.slack.name_cache_ttl_s,
-    log,
+    log: (message, meta) => log(`slack: ${message}`, meta),
   });
   const socket = new SlackSocketClient({
     appToken: opts.appToken,
     backoffMs: cfg.slack.reconnect_backoff_ms,
     serverPingTimeoutMs: cfg.slack.server_ping_timeout_ms,
-    log,
+    log: (message, meta) => log(`slack: ${message}`, meta),
   });
   return {
     postMessage: (a) => api.postMessage(a),
@@ -385,11 +388,8 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
     users: transport,
     identity,
     onCapReached: async (decision) => {
-      const cap =
-        decision.cap === "per_user_daily_turns"
-          ? cfg.slack.policy.per_user_daily_turns
-          : cfg.slack.policy.daily_turns;
-      await announcer.capReached(cap);
+      const cap = announcedCap(cfg, decision);
+      if (cap !== null) await announcer.capReached(cap);
     },
     now,
     log: (line) => log(line),
@@ -406,7 +406,9 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   await commands.start();
 
   await transport.startSocket((event) => {
-    void router.handle(event).catch((err) => log("slack: router threw (event dropped)", err));
+    void router
+      .handle(event)
+      .catch((err) => log(`slack: router threw (event ${event.event_id} dropped)`, err));
   });
 
   const timers: Array<ReturnType<typeof setInterval>> = [];
@@ -477,7 +479,7 @@ function localSlackBelt(slack: SlackRuntime | null): Pick<CommandWatcherOptions,
  * The gate reads `latestAny()`, not `latest()`: the belt must not lift merely
  * because a turn ran past the 15-minute TTL (text in the channel can ask for
  * exactly that — "take your time"). Only a daemon wake, which stamps a `local`
- * origin, supersedes a Slack origin here.
+ * origin, supersedes a Slack origin here — once pi has accepted that wake.
  */
 export function buildLocalCommandWatcher(opts: {
   root: string;
@@ -548,18 +550,47 @@ export function daemonOriginWakes(opts: {
   origins: OriginStore;
   enabled: boolean;
   log?: (msg: string, extra?: unknown) => void;
+  /** The wake path that names the file it wrote, so the stamped record is
+   * bound to its wake (an accepted wake is what supersedes a Slack origin). */
+  injectOverseerFile?: (message: string) => Promise<string>;
 }): { hooks: SessionHooks; wake: (reason: string, message: string) => Promise<void> } {
   const { hooks, origins, enabled } = opts;
   const log = opts.log ?? (() => {});
   const wake = async (reason: string, message: string): Promise<void> => {
+    let stamped: ReturnType<OriginStore["writeLocal"]> | null = null;
     if (enabled) {
       try {
-        origins.writeLocal(reason);
+        stamped = origins.writeLocal(reason);
       } catch (err) {
         log("slack: could not stamp a local origin for a daemon wake", err);
       }
     }
-    await hooks.injectOverseer(message);
+    if (!opts.injectOverseerFile) {
+      await hooks.injectOverseer(message);
+      return;
+    }
+    let path: string;
+    try {
+      path = await opts.injectOverseerFile(message);
+    } catch (err) {
+      // No wake landed, so no turn will be the stamped record's: drop it, as
+      // the router drops a Slack record whose inject failed.
+      if (stamped) {
+        try {
+          origins.forget(stamped);
+        } catch (e) {
+          log("slack: could not drop the local origin of a failed wake", e);
+        }
+      }
+      throw err;
+    }
+    if (stamped) {
+      try {
+        origins.bind(stamped, path);
+      } catch (err) {
+        log("slack: could not bind a local origin to its wake", err);
+      }
+    }
   };
   return {
     wake,
@@ -684,6 +715,22 @@ export function orphanPostingOwed(
     !dryRun &&
     round.posting_key !== null &&
     deliverablePosting(receiptDir, round.pr, round.round_no, round.posting_key, repo);
+}
+
+/**
+ * The daemon's origin store: it reads the overseer's accepted wakes (the
+ * inject bridge's `.done/` beside the overseer's pending queue), so a
+ * command's rights are those of the turn being served. A store built without
+ * that view puts the newest record in force at once.
+ */
+export function overseerOriginStore(
+  root: string,
+  sessions: Pick<PiSessionManager, "injectDir">,
+  now?: () => Date,
+): OriginStore {
+  return new OriginStore(join(root, "state", "slack", "origin"), now, {
+    deliveredDir: join(sessions.injectDir(OVERSEER_SESSION), ".done"),
+  });
 }
 
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
@@ -839,16 +886,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // The origin store is built here, before the daemon, because both halves of
   // "who caused this turn" write to it: the router (Slack turns) and every
   // daemon-originated overseer wake below (local turns).
-  const origins = new OriginStore(join(root, "state", "slack", "origin"));
+  const origins = overseerOriginStore(root, sessions);
 
   // The daemon sees a wrapped SessionHooks (see `daemonOriginWakes`): every
-  // autonomous overseer wake stamps a `local` origin, so the legacy-dir belt
-  // knows the turn is the daemon's own.
+  // autonomous overseer wake stamps a `local` origin, bound to its wake file,
+  // so the legacy-dir belt knows the turn is the daemon's own once pi takes it.
   const { hooks, wake: wakeOverseerAsDaemon } = daemonOriginWakes({
     hooks: sessions,
     origins,
     enabled: cfg.slack.enabled,
     log,
+    injectOverseerFile: (m) => sessions.injectOverseerFile(m),
   });
 
   // The profile's lens-heuristics extension, loaded once here so a

@@ -5,16 +5,21 @@
 //      so we never trip Slack's per-channel rate limit.
 //   2. Slack delivery NEVER blocks a verdict, a label or a round: a failing
 //      post is retried twice, then logged and dropped. Nothing throws into
-//      callers — failures come back as `{ ok: false, error }`.
+//      callers — failures come back as `{ ok: false, error }`. A NEW message
+//      is retried only after a definite refusal: when Slack may have taken it
+//      (a timeout, a reset, an unreadable 2xx answer) a resend could post it
+//      twice, so it is dropped instead — the caller's ledger records the
+//      failure, as it does for any other.
 //
 // This class reads no config and no files: tokens and intervals arrive as
 // plain options (the caller owns config).
-import type {
-  SlackFetchFn,
-  SlackIdentity,
-  SlackPostResult,
-  SlackUserInfo,
-  SlackWebApi,
+import {
+  SLACK_API_BASE,
+  type SlackFetchFn,
+  type SlackIdentity,
+  type SlackPostResult,
+  type SlackUserInfo,
+  type SlackWebApi,
 } from "./types.js";
 
 export interface SlackApiOptions {
@@ -34,7 +39,8 @@ export interface SlackApiOptions {
    * attempt is aborted and handled like any other failure, so it can never
    * hold the serialized post queue for longer than this. */
   requestTimeoutMs?: number;
-  /** Timer seam. */
+  /** Timer seam for the waits between posts and retries. The per-attempt
+   * deadline (`requestTimeoutMs`) runs on the global timer. */
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   /** Structured log sink. */
   log?: (message: string, meta?: Record<string, unknown>) => void;
@@ -47,6 +53,24 @@ const RETRIES = 2;
 /** Cap on an honored Retry-After, so a hostile header cannot wedge the queue. */
 const MAX_RETRY_AFTER_MS = 60_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+
+/** Methods that create something: resending one Slack may already have
+ * taken would create it twice. */
+const CREATES = new Set(["chat.postMessage"]);
+
+/** Transport failures that happen before the request leaves this host. */
+const NEVER_SENT_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+function neverSent(err: unknown): boolean {
+  const e = err as { code?: unknown; cause?: { code?: unknown } } | null;
+  const code = e?.cause?.code ?? e?.code;
+  return typeof code === "string" && NEVER_SENT_CODES.has(code);
+}
 
 interface SlackApiResponse {
   ok?: boolean;
@@ -77,7 +101,7 @@ export class SlackApiClient implements SlackWebApi {
     this.postMinIntervalMs = opts.postMinIntervalMs ?? DEFAULT_POST_MIN_INTERVAL_MS;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.userCacheTtlMs = (opts.userCacheTtlSec ?? DEFAULT_USER_CACHE_TTL_SEC) * 1000;
-    this.apiBase = opts.apiBase ?? "https://slack.com/api";
+    this.apiBase = opts.apiBase ?? SLACK_API_BASE;
     this.now = opts.now ?? Date.now;
     this.setTimeoutFn = opts.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
     this.log = opts.log ?? (() => {});
@@ -185,6 +209,10 @@ export class SlackApiClient implements SlackWebApi {
       last = await this.callOnce(method, body);
       if (last.ok) return { ok: true, ...(last.ts ? { ts: last.ts } : {}) };
       if (attempt === RETRIES) break;
+      if (last.ambiguous && CREATES.has(method)) {
+        this.log("slack.api.not_retried", { method, error: last.error });
+        break;
+      }
       const wait = last.retryAfterMs ?? this.postMinIntervalMs;
       this.log("slack.api.retry", {
         method,
@@ -225,7 +253,8 @@ export class SlackApiClient implements SlackWebApi {
       try {
         payload = (await res.json()) as SlackApiResponse;
       } catch {
-        return { ok: false, error: `bad_json_${res.status}` };
+        // A 2xx Slack answered but we cannot read: it may have done the work.
+        return { ok: false, error: `bad_json_${res.status}`, ambiguous: res.ok };
       }
       if (!res.ok || payload?.ok !== true) {
         return { ok: false, error: payload?.error ?? `http_${res.status}` };
@@ -234,7 +263,7 @@ export class SlackApiClient implements SlackWebApi {
       const ts = typeof payload.ts === "string" ? payload.ts : undefined;
       return { ok: true, ...(ts ? { ts } : {}), raw: payload };
     } catch (err) {
-      return { ok: false, error: String(err) };
+      return { ok: false, error: String(err), ambiguous: !neverSent(err) };
     } finally {
       clearTimeout(timer);
     }
@@ -252,6 +281,8 @@ interface CallOutcome {
   ok: boolean;
   ts?: string;
   error?: string;
+  /** The request may have reached Slack and been acted on. */
+  ambiguous?: boolean;
   retryAfterMs?: number;
   raw?: SlackApiResponse;
 }

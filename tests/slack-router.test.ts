@@ -364,7 +364,7 @@ describe("SlackRouter dispositions", () => {
     await expect(r).rejects.toThrow(/tmux is gone/);
     // An origin with no turn would authorise a command nobody asked for.
     expect(origins.latestAny()).toBeNull();
-    expect(disposition("EvBoom")).toBe("dropped_stale"); // fail closed
+    expect(disposition("EvBoom")).toBe("dropped_delivery_failed"); // fail closed, and why
   });
 
   it("survives a failing name lookup (the turn is not blocked on cosmetics)", async () => {
