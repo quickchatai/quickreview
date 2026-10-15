@@ -30,10 +30,14 @@
 // Total and quiet: every resolve is its own try, every outcome an event
 // (`prior_thread_resolved` / `prior_thread_resolve_skipped` /
 // `prior_thread_resolve_failed`), and nothing here wakes anyone or holds a
-// round. It never unresolves anything and never touches another identity's
+// round. A resolve that fails for a reason other than the adapter's own
+// refusal (a GitHub 5xx, a dropped connection) is tried again twice, a few
+// seconds apart, before it is recorded failed: this runs once per round, and
+// nothing later re-raises a fixed finding's thread. It never unresolves anything and never touches another identity's
 // thread.
 
 import { readFileSync } from "node:fs";
+import { parsePriorRef } from "./findingsrecord.js";
 import type { GitHubAdapter } from "./github.js";
 import type { StateStore } from "./state.js";
 
@@ -80,12 +84,18 @@ function commentIdsOf(
 }
 
 /** The earlier postings of each listed finding, from the round's prior-list
- * sidecar (`{findings:[{ref, earlier_refs}]}`); empty when unreadable. */
-export function earlierRefsFromSidecar(text: string | undefined): Map<string, string[]> {
+ * sidecar (`{findings:[{ref, earlier_refs}]}`); empty when unreadable, with
+ * the parse error handed to `onMalformed`. */
+export function earlierRefsFromSidecar(
+  text: string | undefined,
+  onMalformed?: (err: unknown) => void,
+): Map<string, string[]> {
   const out = new Map<string, string[]>();
   if (!text) return out;
   try {
-    const parsed = JSON.parse(text) as { findings?: Array<{ ref?: unknown; earlier_refs?: unknown }> };
+    const parsed = JSON.parse(text) as {
+      findings?: Array<{ ref?: unknown; earlier_refs?: unknown }>;
+    };
     for (const f of parsed.findings ?? []) {
       if (typeof f.ref !== "string" || !Array.isArray(f.earlier_refs)) continue;
       out.set(
@@ -93,18 +103,12 @@ export function earlierRefsFromSidecar(text: string | undefined): Map<string, st
         f.earlier_refs.filter((r): r is string => typeof r === "string"),
       );
     }
-  } catch {
-    /* an unreadable sidecar resolves the latest posting's thread only */
+  } catch (err) {
+    // An unreadable sidecar resolves the latest posting's thread only.
+    onMalformed?.(err);
   }
   return out;
 }
-
-const parseRef = (ref: string): { round_no: number; finding_key: string } | null => {
-  const at = ref.indexOf(":");
-  if (at <= 0) return null;
-  const round = Number.parseInt(ref.slice(0, at), 10);
-  return Number.isInteger(round) ? { round_no: round, finding_key: ref.slice(at + 1) } : null;
-};
 
 /**
  * The threads to resolve for round `checkedRound` of `pr`: every prior finding
@@ -126,7 +130,9 @@ export function priorThreadsToResolve(
     const ref = `${c.round_no}:${c.finding_key}`;
     const postings = [
       { round_no: c.round_no, finding_key: c.finding_key },
-      ...(earlier.get(ref) ?? []).map(parseRef).filter((p): p is NonNullable<typeof p> => p !== null),
+      ...(earlier.get(ref) ?? [])
+        .map(parsePriorRef)
+        .filter((p): p is NonNullable<typeof p> => p !== null),
     ];
     let linked = false;
     for (const p of postings) {
@@ -154,10 +160,40 @@ export interface PriorResolveDeps {
    * earlier postings of carried findings. */
   sidecarPath?: (pr: number, roundNo: number) => string;
   log?: (msg: string, extra?: unknown) => void;
+  /** The waits before each retry of a failed resolve; default 2 s then 8 s. */
+  retryDelaysMs?: readonly number[];
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const RETRY_DELAYS_MS: readonly number[] = [2_000, 8_000];
+
+/** The adapter's own refusals (`resolveOwnReviewThread`): not this bot's
+ * thread, or no thread at all. A retry cannot change either answer. */
+function isRefusal(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /^refusing\b|is not a review-thread root/.test(msg);
 }
 
 /** Resolve the bot's own threads of every prior finding `roundNo` verified
  * fixed or obsolete. Total: never throws; each thread's outcome is an event. */
+async function resolveWithRetry(
+  deps: PriorResolveDeps,
+  pr: number,
+  commentId: number,
+): ReturnType<PriorResolveDeps["adapter"]["resolveOwnReviewThread"]> {
+  const delays = deps.retryDelaysMs ?? RETRY_DELAYS_MS;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await deps.adapter.resolveOwnReviewThread(pr, commentId);
+    } catch (err) {
+      if (attempt >= delays.length || isRefusal(err)) throw err;
+      deps.log?.(`priorresolve: #${pr} thread ${commentId} resolve failed, retrying`, err);
+      await sleep(delays[attempt]!);
+    }
+  }
+}
+
 export async function resolveVerifiedPriorThreads(
   deps: PriorResolveDeps,
   pr: number,
@@ -166,13 +202,26 @@ export async function resolveVerifiedPriorThreads(
   const tally = { resolved: 0, skipped: 0, failed: 0, unlinked: 0 };
   let earlier = new Map<string, string[]>();
   if (deps.sidecarPath) {
+    const path = deps.sidecarPath(pr, roundNo);
     let text: string | undefined;
     try {
-      text = readFileSync(deps.sidecarPath(pr, roundNo), "utf8");
-    } catch {
+      text = readFileSync(path, "utf8");
+    } catch (err) {
+      // A round with no prior list (a full round) has no sidecar: that is
+      // ordinary. Any other failure costs the earlier postings' threads.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT")
+        deps.log?.(
+          `priorresolve: #${pr} round ${roundNo} sidecar ${path} unreadable — earlier postings' threads not resolved`,
+          err,
+        );
       text = undefined;
     }
-    earlier = earlierRefsFromSidecar(text);
+    earlier = earlierRefsFromSidecar(text, (err) =>
+      deps.log?.(
+        `priorresolve: #${pr} round ${roundNo} sidecar ${path} malformed — earlier postings' threads not resolved`,
+        err,
+      ),
+    );
   }
   let plan: ReturnType<typeof priorThreadsToResolve>;
   try {
@@ -196,14 +245,17 @@ export async function resolveVerifiedPriorThreads(
       status: t.status,
     };
     try {
-      const r = await deps.adapter.resolveOwnReviewThread(pr, t.comment_id);
+      const r = await resolveWithRetry(deps, pr, t.comment_id);
       if (r.skipped) {
         tally.skipped += 1;
         deps.store.logEvent("prior_thread_resolve_skipped", pr, { ...base, reason: r.skipped });
       } else if (r.result && r.result.executed === false) {
         // Dry-run, or a guard refused it: the gate's own record says which.
         tally.skipped += 1;
-        deps.store.logEvent("prior_thread_resolve_skipped", pr, { ...base, reason: "not-executed" });
+        deps.store.logEvent("prior_thread_resolve_skipped", pr, {
+          ...base,
+          reason: "not-executed",
+        });
       } else {
         tally.resolved += 1;
         deps.store.logEvent("prior_thread_resolved", pr, base);

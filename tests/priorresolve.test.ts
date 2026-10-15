@@ -9,6 +9,9 @@
 // the sidecar), only that round's reports, and that every outcome — resolved,
 // skipped by the adapter, not executed (dry-run), failed, no known comment — is
 // an event and never a throw.
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   earlierRefsFromSidecar,
@@ -79,9 +82,7 @@ describe("which threads a round resolves", () => {
     store.db.exec(
       "CREATE TABLE finding_comments (comment_id INTEGER PRIMARY KEY, pr INTEGER, round_no INTEGER, finding_key TEXT)",
     );
-    store.db
-      .prepare("INSERT INTO finding_comments VALUES (?, ?, ?, ?)")
-      .run(201, 7, 1, "fixed1");
+    store.db.prepare("INSERT INTO finding_comments VALUES (?, ?, ?, ?)").run(201, 7, 1, "fixed1");
     store.recordRoundFindings({ pr: 7, round_id: null, round_no: 0, head_sha: HEAD }, [
       finding("older", 99),
     ]);
@@ -142,6 +143,64 @@ describe("resolving them", () => {
     expect(tally.resolved).toBe(0);
     expect(tally.skipped).toBe(3);
     expect(events(store, "prior_thread_resolved")).toEqual([]);
+  });
+
+  it("a transient failure is tried again before it is recorded failed; a refusal is not", async () => {
+    const store = setup();
+    const calls: number[] = [];
+    const waits: number[] = [];
+    let flaky = 2;
+    const adapter = {
+      resolveOwnReviewThread: async (_n: number, id: number) => {
+        calls.push(id);
+        if (id === 101 && flaky-- > 0) throw new Error("graphql → 502");
+        if (id === 102) throw new Error("graphql → 503");
+        if (id === 104)
+          throw new Error("refusing to resolve thread 104 on #7: root author is someone-else");
+        return { skipped: null, result: { executed: true } };
+      },
+    };
+    const tally = await resolveVerifiedPriorThreads(
+      { store, adapter, sleep: async (ms) => void waits.push(ms) },
+      7,
+      3,
+    );
+    expect(calls).toEqual([101, 101, 101, 102, 102, 102, 104]);
+    expect(waits).toEqual([2_000, 8_000, 2_000, 8_000]);
+    expect(tally).toMatchObject({ resolved: 1, failed: 2 });
+    expect(events(store, "prior_thread_resolve_failed").map((e) => e.comment_id)).toEqual([
+      102, 104,
+    ]);
+  });
+
+  it("says when a sidecar that is there cannot be read or parsed; an absent one is ordinary", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-priorresolve-"));
+    try {
+      const store = setup();
+      const adapter = { resolveOwnReviewThread: async () => ({ skipped: null }) };
+      const logged: string[] = [];
+      const log = (msg: string) => void logged.push(msg);
+      const at = (name: string) => () => join(dir, name);
+      await resolveVerifiedPriorThreads(
+        { store, adapter, log, sidecarPath: at("absent.json") },
+        7,
+        3,
+      );
+      expect(logged.filter((m) => m.includes("sidecar"))).toEqual([]);
+      writeFileSync(join(dir, "broken.json"), "{not json");
+      await resolveVerifiedPriorThreads(
+        { store, adapter, log, sidecarPath: at("broken.json") },
+        7,
+        3,
+      );
+      expect(logged.filter((m) => m.includes("sidecar"))).toEqual([
+        expect.stringContaining("malformed"),
+      ]);
+      await resolveVerifiedPriorThreads({ store, adapter, log, sidecarPath: () => dir }, 7, 3);
+      expect(logged.filter((m) => m.includes("unreadable"))).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("a round with nothing fixed calls nothing", async () => {
