@@ -2020,7 +2020,7 @@ export class VerdictWatcher {
     // post, so the round is redone through the capped self-requeue instead
     // of applying a verdict reached without it.
     if (round && round.status === "running") {
-      const requeued = await this.requeueOnRequiredPassGap(v, round);
+      const requeued = await this.requeueOnRequiredPassGap(v, round, proven !== undefined);
       if (requeued) return "applied";
     }
 
@@ -2040,14 +2040,13 @@ export class VerdictWatcher {
       round.status === "running" &&
       (!v.passes || v.passes.length === 0)
     ) {
-      const receipt = readPostingReceipt(this.postingReceiptDir(), v.pr, v.round_no);
-      const posting = receipt !== undefined && receipt.status !== "skipped";
+      const posting = this.reviewWentOut(v.pr, v.round_no, proven !== undefined);
       store.logEvent("needs_human_incomplete", v.pr, {
         round_id: round.id,
         round_no: v.round_no,
         head_sha: v.head_sha,
         passes_reported: v.passes ? 0 : null,
-        ...(posting ? { posting_receipt: receipt.status } : {}),
+        ...(posting ? { posting_receipt: posting } : {}),
       });
       if (!posting && (await this.selfRequeue(round, "needs_human_incomplete"))) {
         await this.safe(
@@ -3508,6 +3507,10 @@ export class VerdictWatcher {
     if (round.posting_key) {
       const answered = await this.receiptAwareStage(round, stage, detail);
       if (answered) return answered;
+      // The posting proof awaited GitHub: a round an operator or a verdict
+      // ended meanwhile is not recovered — and its session, which may now be
+      // the replacement round's, is not killed.
+      if (!this.stillRunning(round)) return "requeued";
     }
     this.deps.store.logEvent("round_infrastructure_failure", pr, {
       round_id: round.id,
@@ -3521,29 +3524,9 @@ export class VerdictWatcher {
       const mode =
         stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active";
       if (mode === "infrastructure_active" && !this.deps.hooks.killSession) return "retryable";
-      if (mode === "infrastructure_active") {
-        try {
-          await this.deps.hooks.killSession!.call(this.deps.hooks, pr);
-        } catch (error) {
-          this.deps.store.logEvent("session_recovery_kill_failed", pr, {
-            round_id: round.id,
-            round_no: roundNo,
-            mode,
-            error: String(error),
-          });
-          return "retryable";
-        }
-      }
-      // The old parent is now fenced (or had already settled), so this read is
-      // definitive. A verdict that won before the fence stays the sweep's.
-      if (this.verdictFilePresent(pr, roundNo)) {
-        this.deps.store.logEvent("round_stage_verdict_won", pr, {
-          round_id: round.id,
-          round_no: roundNo,
-          mode,
-        });
-        return "retryable";
-      }
+      // A session that could not be stopped, or a verdict that won before the
+      // fence, leaves the round to the next check and the sweep.
+      if ((await this.fenceForRecovery(round, mode)) !== "fenced") return "retryable";
       const command = this.deps.store.sessionCommandForRound(pr, roundNo);
       if (!command) return "retryable";
       const successor = this.deps.store.successorFor(pr);
@@ -3596,6 +3579,12 @@ export class VerdictWatcher {
             ? `automatic retry scheduled for ${failure.next_retry_at} (u retries immediately)`
             : "press u to recover"
         }`,
+      );
+      // No round owns the review any more: the in-progress label comes off,
+      // as on every other terminal path.
+      await this.safe(
+        () => this.deps.adapter.removeLabel(pr, this.deps.cfg.github.in_progress_label),
+        `remove ${this.deps.cfg.github.in_progress_label} on #${pr}`,
       );
       await this.closeMeasurement(owed, "background");
       await this.announceSafe((a) =>
@@ -3867,16 +3856,34 @@ export class VerdictWatcher {
   }
 
   /**
+   * Whether this round's review already went out: a posting the caller proved
+   * from GitHub (`proven`), or a posting receipt other than a guard-2 refusal
+   * — confirmed, or still owned by the daemon's delivery. A round whose
+   * review went out is never redone, whatever else is wrong with it: a redo
+   * would post a second review. The evidence's name (`proven` or the
+   * receipt's status), or undefined when nothing went out.
+   */
+  private reviewWentOut(pr: number, roundNo: number, proven: boolean): string | undefined {
+    if (proven) return "proven";
+    const receipt = readPostingReceipt(this.postingReceiptDir(), pr, roundNo);
+    return receipt !== undefined && receipt.status !== "skipped" ? receipt.status : undefined;
+  }
+
+  /**
    * The verdict-time belt for required passes (src/requiredpasses.ts). Every
    * failed pass of the round is recorded (`round_pass_failures`) — the gap is
    * internal, never on the PR. When a required pass is missing and nothing
    * was posted for the round, the round is cancelled and requeued within
    * `max_self_requeues` (true: the caller returns); past the cap it ends on
    * the anomaly path, never with a verdict applied over the gap. A gap whose
-   * round already holds a posting receipt is logged and applied as usual —
-   * a requeue would post a second review. Unknown evidence never requeues.
+   * review already went out (`reviewWentOut`) is logged and applied as
+   * usual — a requeue would post a second review. Unknown evidence never requeues.
    */
-  private async requeueOnRequiredPassGap(v: VerdictFile, round: RoundRow): Promise<boolean> {
+  private async requeueOnRequiredPassGap(
+    v: VerdictFile,
+    round: RoundRow,
+    proven: boolean,
+  ): Promise<boolean> {
     const { cfg, store, adapter } = this.deps;
     const progress = readRoundProgress(this.deps.root ?? sandboxRoot(), v.pr);
     const failures = failedPasses(progress, v.round_no);
@@ -3889,12 +3896,12 @@ export class VerdictWatcher {
     const gap = requiredPassGap(parsePlan(round.pass_plan), progress, v.round_no);
     if (gap.state !== "missing") return false;
     const missing = describeGap(gap.missing);
-    const receipt = readPostingReceipt(this.postingReceiptDir(), v.pr, v.round_no);
-    if (receipt && receipt.status !== "skipped") {
+    const posted = this.reviewWentOut(v.pr, v.round_no, proven);
+    if (posted) {
       store.logEvent("required_pass_missing_after_post", v.pr, {
         round_id: round.id,
         round_no: v.round_no,
-        receipt: receipt.status,
+        receipt: posted,
         missing,
       });
       return false;
@@ -3922,6 +3929,53 @@ export class VerdictWatcher {
       "overdue",
     );
     return true;
+  }
+
+  /**
+   * Stop a round's session before recovering it, then look for a verdict
+   * that won while it was being stopped — the one fencing protocol the
+   * self-requeue and the exhausted infrastructure recovery share. A wedged
+   * (`alive_stuck`) or active-infrastructure session is killed; any other
+   * has nothing left to stop. After a kill the read is definitive: no verdict
+   * can appear once the session is gone; a settled parent's writes are over.
+   *   - `kill_failed`: the session could not be stopped (logged) — nothing
+   *     may be recovered over a session that may still write;
+   *   - `verdict_won`: a verdict file is on disk (logged) — it is the sweep's;
+   *   - `fenced`: recover.
+   */
+  private async fenceForRecovery(
+    round: RoundRow,
+    mode: SelfRequeueMode,
+  ): Promise<"kill_failed" | "verdict_won" | "fenced"> {
+    const { store } = this.deps;
+    const kill = this.deps.hooks.killSession;
+    if ((mode === "alive_stuck" || mode === "infrastructure_active") && kill) {
+      try {
+        await kill.call(this.deps.hooks, round.pr);
+      } catch (error) {
+        store.logEvent("session_recovery_kill_failed", round.pr, {
+          round_id: round.id,
+          round_no: round.round_no,
+          mode,
+          error: String(error),
+        });
+        return "kill_failed";
+      }
+    }
+    const fencedModes: SelfRequeueMode[] = [
+      "alive_stuck",
+      "infrastructure_active",
+      "infrastructure_settled",
+    ];
+    if (fencedModes.includes(mode) && this.verdictFilePresent(round.pr, round.round_no)) {
+      store.logEvent("round_stage_verdict_won", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        mode,
+      });
+      return "verdict_won";
+    }
+    return "fenced";
   }
 
   /**
@@ -3982,53 +4036,20 @@ export class VerdictWatcher {
       });
       return false;
     }
-    if (
-      (mode === "alive_stuck" || mode === "infrastructure_active") &&
-      this.deps.hooks.killSession
-    ) {
-      try {
-        await this.deps.hooks.killSession.call(this.deps.hooks, round.pr);
-      } catch (error) {
-        store.logEvent("session_recovery_kill_failed", round.pr, {
-          round_id: round.id,
-          round_no: round.round_no,
-          mode,
-          error: String(error),
-        });
-        this.log(
-          `verdicts: refusing ${mode} requeue for #${round.pr}; old session could not be stopped`,
-          error,
-        );
-        return false;
-      }
+    const fence = await this.fenceForRecovery(round, mode);
+    if (fence === "kill_failed") {
+      this.log(
+        `verdicts: refusing ${mode} requeue for #${round.pr}; old session could not be stopped`,
+      );
+      return false;
     }
-    if (mode === "alive_stuck" && this.verdictFilePresent(round.pr, round.round_no)) {
-      // The wedged session committed its verdict while it was being stopped:
-      // that verdict wins, exactly as on the infrastructure path below. The
-      // round stays running for the sweep to consume — handled here, so the
-      // deadline path neither requeues nor fails it.
-      store.logEvent("round_stage_verdict_won", round.pr, {
-        round_id: round.id,
-        round_no: round.round_no,
-        mode,
-      });
+    // The verdict that won the fence is the 10s sweep's, never cancelled or
+    // quarantined here. A wedged session's (`alive_stuck`) is handled — the
+    // deadline path neither requeues nor fails the round; an infrastructure
+    // stage's is not, and the stage is checked again.
+    if (fence === "verdict_won") return mode === "alive_stuck";
+    if (infrastructure && this.runningRound(round.pr, round.round_no)?.status !== "running")
       return true;
-    }
-    if (infrastructure) {
-      // For active failures the strict kill above makes this check definitive:
-      // no new verdict can appear after the session is gone. For a settled
-      // parent, all writes are already over. A verdict that won this race is
-      // left to the 10s sweep, never cancelled/quarantined here.
-      if (this.verdictFilePresent(round.pr, round.round_no)) {
-        store.logEvent("round_stage_verdict_won", round.pr, {
-          round_id: round.id,
-          round_no: round.round_no,
-          mode,
-        });
-        return false;
-      }
-      if (this.runningRound(round.pr, round.round_no)?.status !== "running") return true;
-    }
     const cause = SELF_REQUEUE_CAUSE[mode];
     const publication = store.cancelRoundAndQueueRecovery({
       pr: round.pr,

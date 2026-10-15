@@ -28,6 +28,7 @@ import { requiredPassGap, requiredRows } from "../src/requiredpasses.js";
 import { StateStore } from "../src/state.js";
 import type { PassPlanEntry, SessionHooks } from "../src/types.js";
 import { roundPromptMarker } from "../src/types.js";
+import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import { HEAD, useGuardsShellRig } from "./helpers/guards-shell-rig.js";
 
@@ -449,6 +450,43 @@ describe("the verdict path requeues instead of applying", () => {
     await watcher().sweep();
     expect(events("round_required_pass_missing")).toHaveLength(0);
     expect(store.reviewedHead(701)).toBeDefined();
+  });
+
+  // MUTATION: ignore `proven` in apply's required-pass check — the review a
+  // marker reconcile proved posted is cancelled and requeued, to post again.
+  it("a review proven posted from GitHub is never redone over a required-pass gap", async () => {
+    const id = round(704, withPr(704, missing));
+    const key = roundPostingKey(704, 1, "abc123");
+    store.stampPostingKey(id, key);
+    // The verdict file is malformed: only the posting proof can settle it.
+    writeFileSync(join(dir, "verdict", "pr-704-round-1.json"), "{broken");
+    (adapter as FakeAdapter & VerdictAdapter).listReviewsFull = async () => [
+      {
+        id: 991,
+        user: baseCfg.github.bot_login,
+        user_type: "Bot",
+        state: "CHANGES_REQUESTED",
+        body: `review\n\n${postingMarker(key)}`,
+        commit_id: "abc123",
+        submitted_at: clock.toISOString(),
+      },
+    ];
+    await new VerdictWatcher({
+      cfg: { ...baseCfg, dry_run: false },
+      store,
+      adapter,
+      hooks,
+      verdictDir: join(dir, "verdict"),
+      root: dir,
+      usage: { globalStoreDir: null },
+      partialWrite: { windowMs: 0 },
+      postingReceiptGraceS: 0,
+      now: () => clock,
+    }).sweep();
+
+    expect(status(id)).toBe("done");
+    expect(events("round_self_requeued")).toHaveLength(0);
+    expect(events("required_pass_missing_after_post")[0]).toMatchObject({ receipt: "proven" });
   });
 
   it("past max_self_requeues it ends on the anomaly path, never applying the verdict", async () => {
