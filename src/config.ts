@@ -2811,7 +2811,9 @@ export function parseConfig(toml: string): Config {
   const running =
     cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN;
   const finalize = cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN;
+  const stageBounds = [firstPass, passes, running, finalize] as unknown[];
   if (!(
+    stageBounds.every((v) => typeof v === "number" && Number.isFinite(v)) &&
     firstPass > 0 &&
     firstPass < passes &&
     passes < running &&
@@ -2819,7 +2821,7 @@ export function parseConfig(toml: string): Config {
     finalize < running
   )) {
     throw new Error(
-      "config.toml: require 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
+      "config.toml: require finite numbers 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
     );
   }
   const postedTail = cfg.daemon.round_posted_tail_grace_min ?? DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN;

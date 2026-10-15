@@ -74,6 +74,19 @@ describe("parseConfig", () => {
     expect(() => parseConfig(invalid)).toThrow(/round_first_pass_max_min/);
   });
 
+  it("refuses a non-finite or non-numeric stage bound, which the ordering alone would pass", () => {
+    const shipped = readFileSync(configPath, "utf8");
+    for (const [from, to] of [
+      ["session_command_running_max_min = 45", "session_command_running_max_min = inf"],
+      ["session_command_running_max_min = 45", 'session_command_running_max_min = "60"'],
+      ["round_finalize_grace_min = 5", 'round_finalize_grace_min = "5"'],
+    ] as const) {
+      const bad = shipped.replace(from, to);
+      expect(bad, to).not.toBe(shipped);
+      expect(() => parseConfig(bad), to).toThrow(/require finite numbers/);
+    }
+  });
+
   it("the posted-tail grace defaults to 15 minutes and must be positive", () => {
     expect(cfg.daemon.round_posted_tail_grace_min).toBe(15);
     const set = (line: string) =>
