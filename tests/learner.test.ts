@@ -410,6 +410,12 @@ describe("the miner — the feedback ledger and drained [feedback] comments", ()
       ["feedback-comment:review_comment:9100", "tagged_comment"],
     ]);
     expect(rows[1]!.summary).toContain("dropped during a drain");
+    // the ledger's draft keeps precedence on every later mine too: the relink
+    // never rewrites it with the tagged route's drain wording
+    expect(rows[0]!.summary).not.toContain("dropped during a drain");
+    const again = await h.learner.mine();
+    expect(again.relinked).toBe(0);
+    expect(h.learner.allCandidates()[0]!.summary).not.toContain("dropped during a drain");
   });
 });
 

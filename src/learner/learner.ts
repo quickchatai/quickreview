@@ -569,7 +569,9 @@ export class Learner {
    * may make only after the candidate was mined, and `INSERT OR IGNORE` never
    * revisits a row, so it would stay `feedback.general` with no lens for good.
    * Every mine re-derives them from today's drafts, as `reviseFates` does for
-   * fates. Decided candidates are history.
+   * fates. Decided candidates are history. A ref two routes both drafted
+   * takes its FIRST draft, as the insert does: the ledger's before the
+   * tagged comment's.
    */
   private relink(drafts: readonly CandidateDraft[]): number {
     const stmt = this.store.db.prepare(
@@ -581,9 +583,12 @@ export class Learner {
     );
     const at = this.ts();
     let n = 0;
+    const seen = new Set<string>();
     this.store.db.transaction(() => {
       for (const d of drafts) {
         if (d.source !== "feedback" && d.source !== "tagged-comment") continue;
+        if (seen.has(d.ref)) continue;
+        seen.add(d.ref);
         const lens = JSON.stringify(d.lens_ids);
         n += stmt.run(
           d.class,
