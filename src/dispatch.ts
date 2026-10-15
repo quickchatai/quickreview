@@ -111,7 +111,12 @@ import type {
 } from "./types.js";
 import { preparePriorFindings, type PriorFindingsList } from "./priorfindings.js";
 import { assignPriorFindings } from "./priortasks.js";
-import { deltaAsPrFiles, type PrOwnedDelta, type PrOwnedDeltaFile } from "./worktrees.js";
+import {
+  deltaAsPrFiles,
+  type PrOwnedDelta,
+  type PrOwnedDeltaFile,
+  type WorktreeFacts,
+} from "./worktrees.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
@@ -197,10 +202,7 @@ export interface DispatchDeps {
    * stub-wired daemon core and unit tests have no git, and fall back to the PR
    * row's sha with no base facts.
    */
-  prepareWorktree?: (
-    pr: number,
-    baseRef: string,
-  ) => Promise<{ head_sha: string; base_ref: string; base_sha: string; merge_base: string }>;
+  prepareWorktree?: (pr: number, baseRef: string) => Promise<PreparedTree>;
   /**
    * Every migration file present on the base branch at a commit. Read-only
    * git in the base clone, which the worktree preparation has just
@@ -921,6 +923,10 @@ export function addTierOf(cfg: Config, lens: string): PassTier {
 }
 
 /** What `buildPassPlan` returns. */
+/** The facts a prepared worktree hands the round — the tree's own, less
+ * where it lives. */
+export type PreparedTree = Omit<WorktreeFacts, "path">;
+
 export interface PassPlan {
   pass_plan: PassPlanEntry[];
   addable_lenses: string[];
@@ -1665,7 +1671,7 @@ export function buildRoundOrder(args: {
   /** Facts established by preparing the worktree. Absent only for callers with
    * no worktree seam (the stub-wired daemon core and unit tests), which fall
    * back to the PR row's sha and an unknown base. */
-  tree?: { head_sha: string; base_ref: string; base_sha: string; merge_base: string };
+  tree?: PreparedTree;
   /** Collisions the pre-check found — delivered as a COMMENT unless
    * `migrationCollisionsUndelivered` says the COMMENT did not reach the PR. */
   migrationCollisions?: MigrationCollision[];
