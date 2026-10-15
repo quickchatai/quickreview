@@ -1723,6 +1723,9 @@ export interface OpsConfig {
   timezone: string;
 }
 
+/** `[eod] pinned_watchdog_window_min`'s default, and the watchdog's own. */
+export const EOD_PINNED_WATCHDOG_WINDOW_MIN = 90;
+
 /** Neutral default — a config that never names a zone runs on UTC days. */
 export const OPS_DEFAULTS: OpsConfig = { timezone: "UTC" };
 
@@ -2617,7 +2620,7 @@ export function parseConfig(toml: string): Config {
       {
         heartbeat_time: "09:00",
         pinned_watchdog: true,
-        pinned_watchdog_window_min: 90,
+        pinned_watchdog_window_min: EOD_PINNED_WATCHDOG_WINDOW_MIN,
         timezone: ops.timezone,
         ...(req(raw, "eod") as Partial<Config["eod"]>),
       } as Config["eod"],
