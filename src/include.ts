@@ -1110,17 +1110,69 @@ export const SCAN_DEEP_SUGGEST_ADDENDUM =
   "Every row still names one lens from your task string's list and one line on what to chase. Your findings block is unchanged: report what is plainly wrong, and leave the digging to the lenses you name.\n";
 
 // A deep scan's deep lenses dig: the defects a first look misses sit between
-// functions — one branch of a dispatch that owes what its siblings do, an
-// early exit after the edge that triggered it was already recorded. Every
-// lens a scan may run, in a deep scan build only (`depth: "deep"`).
+// functions — one branch of a dispatch that owes what its siblings do, a
+// terminal state that runs the live states' work, an early exit after the
+// edge that triggered it was already recorded, an argument that drops the
+// value its caller holds. Every lens a scan may run, in a deep scan build only
+// (`depth: "deep"`).
 export const SCAN_DEEP_DIG_ADDENDUM =
   "\n## Deep scan — dig past your row's files (sandbox rule)\n" +
   "This is a DEEP scan: you run on these files to find what a first look over one unit misses, and that lives between functions. The focus files are where you start, not where your reading stops.\n\n" +
   "- **Follow the code across files.** For every function in the focus files your lens has a question about, read its callers, its callees and its siblings — the other handlers of the same event, the other arms of the same dispatch, the other implementations of the same interface — wherever they live under the tree root.\n" +
-  "- **Write down the state × obligation table**, in your reasoning. For code that branches on a state, kind or source — a switch, an if/else chain, a loop whose body ends early for some inputs — list every state, the terminal ones too (closed, paused, failed, unknown), against what each sibling branch does: applies the event, upgrades or clears a field, records or logs it, schedules work, skips. Report the cell that differs from its siblings with no reason in the code — no comment, guard, test or recorded decision that says why.\n" +
-  '- **Every early exit names what it drops.** For each early `continue`, `return` or `break` in such code, name the input it drops and what delivers it again later. Check whether the triggering edge or level was RECORDED before the skip — a "last seen" stamped, a flag set, a key written, a request consumed: then nothing later sees that edge again, and the drop is permanent.\n' +
-  "- **Two sources, one loop.** When two sources of truth feed one loop (a webhook and a poll, a cache and its table, a local record and a remote API), ask what each branch does while one lags the other.\n\n" +
-  "A finding names the one cell or exit that is wrong, anchored where the defect happens — a focus file's lines when it is there, the sibling's when that is where the differing branch lives — and cites the siblings it was compared with (`path:line` each) in `evidence`.\n";
+  "- **Write down the state × obligation table**, in your reasoning. For code that branches on a state, kind or source — a switch, an if/else chain, a loop whose body ends early for some inputs — list every state, the terminal ones too (closed, paused, failed, unknown), against what each sibling branch does: applies the event, upgrades or clears a field, records or logs it, schedules work, skips. Two kinds of cell are findings: the cell that DIFFERS from its siblings with no reason in the code — no comment, guard, test or recorded decision that says why — and the cell treated the SAME as its siblings when its state means it should differ: a terminal or inactive state (closed, merged, deleted, paused, failed) that falls through to the live states' work — a correction or event logged, a transition recorded, a metric counted, a job or notification queued for an input that no longer applies.\n" +
+  '- **A reason covers what it says.** A comment, guard or state-machine rule that justifies a state\'s OUTCOME ("closed stays closed", "a trigger on a closed PR is absorbed") does not justify the side effects written on the way to it: an X→X transition recorded, a correction logged, a count taken. Those are findings of their own, however small.\n' +
+  '- **Every early exit names what it drops; every state without one names what it falls through to.** For each early `continue`, `return` or `break` in such code, name the input it drops and what delivers it again later. Check whether the triggering edge or level was RECORDED before the skip — a "last seen" stamped, a flag set, a key written, a request consumed: then nothing later sees that edge again, and the drop is permanent. For each state the code does NOT exit early on, name the work it then reaches, and ask whether that state should reach it.\n' +
+  "- **Two sources, one loop.** When two sources of truth feed one loop (a webhook and a poll, a cache and its table, a local record and a remote API, a search index and the list endpoint of the same service — a search for open items lags the list of them), ask what each branch does while one lags the other: an item one source still shows after the other has moved on.\n" +
+  '- **Every argument against the value in hand.** Where a focus function calls a callback, hook, injected port or deps object, compare each argument with what the caller holds at that line and what the parameter\'s name and type promise: a literal `null`, `undefined`, `0` or `""`, or a placeholder, passed where the type promises a value the caller has already parsed is a finding — the next reader trusts the type.\n\n' +
+  "A finding names the one cell, exit or argument that is wrong, anchored where the defect happens — a focus file's lines when it is there, the sibling's when that is where the differing branch lives — and cites the siblings it was compared with (`path:line` each) in `evidence`.\n";
+
+// A deep scan's lenses stop at "the main issues" unless told otherwise, leave
+// out what costs little today, and hand what another lens owns to a lens that
+// may never run on these files. And the read-batching rule's first turn
+// fetches a diff a scan does not have. Every lens a scan may run, in a deep
+// scan build only.
+export const SCAN_DEEP_RECALL_ADDENDUM =
+  "\n## Deep scan — recall over every focus file (sandbox rule; supersedes any wording above that drops a small finding or hands one to another lens)\n" +
+  "A deep scan exists to find what a quick pass leaves out. So:\n\n" +
+  "- **There is no diff to fetch.** Where the read-batching rule above says your first turn fetches the diff, read: your first turn opens every focus file in full, all of them in parallel, with any caller or sibling you already know you will need.\n" +
+  "- **Read every focus file to its end.** Ask your lens's questions of every function, type and handler of every focus file. A finding near the top of a file is no reason to stop before its bottom, and two findings are no reason to stop at all. In your reasoning, list each focus file's sections as you go through them, so none is skipped.\n" +
+  '- **Small is not silent.** A real defect whose cost today is small is still reported, at `P3` or `nit`, with that cost named: noise (a spurious log line, correction row, event or metric count), drift (two copies of one rule that have not diverged yet — the cost is the day one changes), or a trap (a type, name or field that promises what the code does not deliver). "No harm today" lowers the severity; it never removes the finding.\n' +
+  "- **Report what another lens owns.** In a scan the lens that owns a concern may never run on these files. A real defect outside your lens is still reported by you — as the one `P3` question your lens's text describes, or at the severity its failure earns where your lens's rules allow that — never left out because another lens would own it.\n" +
+  "- **One finding per defect.** Two defects of one class in two places are two findings, unless they are copies of one rule (then one finding naming every site). The first instance of a class does not end the search for the next.\n";
+
+// pass-consistency's two directions need no diff: alike members within the
+// focus files, and the focus files against their siblings. The lens text
+// speaks of "the change", so a deep scan build recasts it onto the code as it
+// stands. Deep scan only; the seed is untouched.
+export const SCAN_DEEP_CONSISTENCY_ADDENDUM =
+  "\n## Scan mode — consistency in this code (sandbox rule; supersedes the lens's change-shaped wording above)\n" +
+  "In a scan nothing changed: wherever the lens above speaks of the change, read the focus files as they stand at the scan sha. Its two directions bind, recast:\n\n" +
+  "1. **Within the focus files.** List every set of alike members they hold — the handlers of one event's kinds, the arms of one switch, the branches of one loop over a state, the writers of one field, the implementations of one interface, the parallel entries of one table. Read every member of each set and compare what each does. The member that does differently is the finding; so is the member that does the same as the rest when its case means it should not.\n" +
+  "2. **Against the code around them.** For each unit of the focus files, read its nearest siblings elsewhere in the tree and how they do the same job, exactly as the lens above says.\n\n" +
+  "Severity stays the lens's own: an outlier that breaks is judged on its failure at full severity; one that only costs a reader is `P3` or `nit` — and still reported.\n";
+
+// pass-duplication's shapes need no diff either, but finding a duplicate in a
+// whole file is an inventory, not a skim: list every piece of knowledge, grep
+// each, report each. The PR-only repeated-copy rule, recast. Deep scan only.
+export const SCAN_DEEP_DUPLICATION_ADDENDUM =
+  "\n## Scan mode — every piece of knowledge in these files, and where else it lives (sandbox rule; supersedes the lens's change-shaped wording above)\n" +
+  'In a scan nothing changed: read "the change" as the focus files as they stand, and "the repo" as the rest of the tree. Work it as an inventory, not a skim:\n\n' +
+  "1. **List the knowledge.** Go through every focus file and list, in your reasoning, each piece of knowledge it writes down: a value derived from inputs (a slug, a key, an id, a path, a normalised or lower-cased name, a URL), a condition (a guard, an admission or permission check, a filter predicate, a classification), a mapping or table, a literal list, regex, threshold or default.\n" +
+  "2. **Find every other home.** Grep the tree for what each one DOES — the field it reads, the call chain it builds, the regex, the literal — inside the focus files (two branches of one handler count) and across the tree from its root.\n" +
+  "3. **Report each duplicated one.** Every piece of knowledge with a second home is its own finding, citing every site (`path:line` each) and what drifts when one changes without the other. One duplicate found is no reason to stop: the next item on your list gets the same grep. Copies that have not diverged are `P3` (the drift is the cost); copies that already behave differently are `P2`, or the lens's one `P3` question when the difference is a correctness defect.\n" +
+  "4. **Three or more copies are one finding.** When three or more near-identical copies of one rule exist, report ONE finding naming every site and the shared shape a single helper, table or constant would hold, anchored at the first copy in the focus files.\n";
+
+// pass-maintainability's "dead weight the change leaves behind" and "words the
+// change made wrong" read, in a scan, as what the code carries now. Two of its
+// checks are mechanical — every declared field's writers and readers, every
+// callback argument against the value in hand — so they are done for every
+// item, not a sample. Deep scan only.
+export const SCAN_DEEP_MAINTAINABILITY_ADDENDUM =
+  "\n## Scan mode — what these files cost the next reader (sandbox rule; supersedes the lens's change-shaped wording above)\n" +
+  'In a scan nothing changed: the lens\'s checks apply to the focus files as they stand. "Dead weight the change leaves behind" reads: dead weight in these files; "words the change made wrong": words that contradict the code now. Two checks are mechanical, so do them for every item, not a sample:\n\n' +
+  "- **Every declared field: who fills it, who reads it.** For each interface, type, record, deps or options object the focus files declare, take each field and grep the tree for its writers and its readers. A field nothing reads is dead weight; a field whose type promises a value that a writer fills with a literal `null`, `undefined`, an empty value or a placeholder while the real value is in hand is a trap — the next reader trusts the type.\n" +
+  "- **Every callback argument against the value in hand.** For each call the focus files make to a callback, hook or injected port, compare each argument with what the caller holds at that line: a parsed value it has and does not pass, a constant where the parameter's name or type says the value.\n\n" +
+  "Then walk the rest of the lens's list — names, undecodable values, weak types, hidden coupling, diagnosability, stale words — over every function of every focus file, to the end of each file.\n";
 
 // The scan's precision checklist. Scan findings refuted by an adversarial
 // skeptic fall into ten recurring classes (the analysis, with counts and
@@ -1441,6 +1493,45 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     mode: "scan",
     depth: "deep",
     text: SCAN_DEEP_DIG_ADDENDUM,
+  },
+  // …the quality lenses' change-shaped wording recast onto the code as it
+  // stands…
+  {
+    id: "scan-deep-consistency",
+    scope: ["pass-consistency"],
+    mode: "scan",
+    depth: "deep",
+    text: SCAN_DEEP_CONSISTENCY_ADDENDUM,
+  },
+  {
+    id: "scan-deep-duplication",
+    scope: ["pass-duplication"],
+    mode: "scan",
+    depth: "deep",
+    text: SCAN_DEEP_DUPLICATION_ADDENDUM,
+  },
+  {
+    id: "scan-deep-maintainability",
+    scope: ["pass-maintainability"],
+    mode: "scan",
+    depth: "deep",
+    text: SCAN_DEEP_MAINTAINABILITY_ADDENDUM,
+  },
+  // …and every lens reads every focus file to its end, reports what is
+  // small, and has no budget (the PR-only `no-budget` rule, the same words).
+  {
+    id: "scan-deep-recall",
+    scope: SCAN_DEEP_LENSES,
+    mode: "scan",
+    depth: "deep",
+    text: SCAN_DEEP_RECALL_ADDENDUM,
+  },
+  {
+    id: "scan-deep-no-budget",
+    scope: SCAN_DEEP_LENSES,
+    mode: "scan",
+    depth: "deep",
+    text: NO_BUDGET_ADDENDUM,
   },
   { id: "ask-human-trigger", scope: [ASK_HUMAN_PASS], text: ASK_HUMAN_TRIGGER_ADDENDUM },
   {

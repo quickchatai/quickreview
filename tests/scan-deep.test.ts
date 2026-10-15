@@ -13,9 +13,14 @@ import type { PiToolDefinition } from "@earendil-works/pi-coding-agent";
 import { renderPreview, renderStatus, scanToolDefinitions } from "../extensions/setup-scan.js";
 import { parseConfig, SCAN_DEFAULTS, type Config, type ScanConfig } from "../src/config.js";
 import {
+  NO_BUDGET_ADDENDUM,
   PASS_ADDENDA,
+  SCAN_DEEP_CONSISTENCY_ADDENDUM,
   SCAN_DEEP_DIG_ADDENDUM,
+  SCAN_DEEP_DUPLICATION_ADDENDUM,
+  SCAN_DEEP_MAINTAINABILITY_ADDENDUM,
   SCAN_DEEP_MAX_SUGGESTIONS,
+  SCAN_DEEP_RECALL_ADDENDUM,
   SCAN_DEEP_SUGGEST_ADDENDUM,
   SCAN_DELIVERY_ADDENDUM,
   addendaForPass,
@@ -188,22 +193,40 @@ function scanBuild(out: string, depth: "standard" | "deep", addenda?: readonly P
   return built(join(dir, out));
 }
 
-const DEEP_IDS = ["scan-deep-suggest", "scan-deep-dig"];
+const LENS_RECASTS: Record<string, string> = {
+  "pass-consistency": "scan-deep-consistency",
+  "pass-duplication": "scan-deep-duplication",
+  "pass-maintainability": "scan-deep-maintainability",
+};
+const DEEP_IDS = [
+  "scan-deep-suggest",
+  "scan-deep-dig",
+  ...Object.values(LENS_RECASTS),
+  "scan-deep-recall",
+  "scan-deep-no-budget",
+];
 const NEW_IDS = ["scan-delivery", ...DEEP_IDS];
 const lensOf = (variant: string): string => variant.replace(/--.*$/, "");
 
 describe("the deep addenda compose into a deep scan build alone", () => {
-  it("only scan-mode entries carry a depth, and exactly two are deep", () => {
+  it("only scan-mode entries carry a depth, and these are the deep ones", () => {
     for (const a of PASS_ADDENDA) if (a.depth !== undefined) expect(a.mode, a.id).toBe("scan");
     expect(
       PASS_ADDENDA.filter((a) => a.depth === "deep").map((a) => [a.id, a.scope, a.mode]),
     ).toEqual([
       ["scan-deep-suggest", [SCAN_PASS], "scan"],
       ["scan-deep-dig", SCAN_DEEP_LENSES, "scan"],
+      ["scan-deep-consistency", ["pass-consistency"], "scan"],
+      ["scan-deep-duplication", ["pass-duplication"], "scan"],
+      ["scan-deep-maintainability", ["pass-maintainability"], "scan"],
+      ["scan-deep-recall", SCAN_DEEP_LENSES, "scan"],
+      ["scan-deep-no-budget", SCAN_DEEP_LENSES, "scan"],
     ]);
+    // The PR rule's own words: a deep scan lens is told what a PR lens is.
+    expect(PASS_ADDENDA.find((a) => a.id === "scan-deep-no-budget")!.text).toBe(NO_BUDGET_ADDENDUM);
   });
 
-  it("deep adds exactly the suggest rule to pass-scan and the dig rule to every lens a scan runs — nothing to the validator", () => {
+  it("deep adds exactly the suggest rule to pass-scan, and the dig, recall and no-budget rules (and its own recast) to every lens a scan runs — nothing to the validator", () => {
     for (const pass of [SCAN_PASS, ...ALL_PASSES]) {
       const at = (depth: "standard" | "deep") =>
         addendaForPass(pass, PASS_ADDENDA, "django", "scan", depth).map((a) => a.id);
@@ -212,7 +235,12 @@ describe("the deep addenda compose into a deep scan build alone", () => {
         pass === SCAN_PASS
           ? ["scan-deep-suggest"]
           : SCAN_DEEP_LENSES.includes(pass)
-            ? ["scan-deep-dig"]
+            ? [
+                "scan-deep-dig",
+                ...(LENS_RECASTS[pass] ? [LENS_RECASTS[pass]!] : []),
+                "scan-deep-recall",
+                "scan-deep-no-budget",
+              ]
             : [];
       expect(added, pass).toEqual(want);
       // A deep build only ever ADDS: every standard entry stays, in order.
@@ -313,6 +341,28 @@ describe("the deep addenda compose into a deep scan build alone", () => {
     expect(SCAN_DEEP_DIG_ADDENDUM).toContain("the terminal ones too (closed, paused");
     expect(SCAN_DEEP_DIG_ADDENDUM).toContain("RECORDED before the skip");
     expect(SCAN_DEEP_DIG_ADDENDUM).toContain("ask what each branch does while one lags the other");
+    // The other direction of the table, a reason's reach, the fall-through,
+    // a lagging search index, and the argument against the value in hand.
+    expect(SCAN_DEEP_DIG_ADDENDUM).toContain("the cell treated the SAME as its siblings");
+    expect(SCAN_DEEP_DIG_ADDENDUM).toContain("does not justify the side effects");
+    expect(SCAN_DEEP_DIG_ADDENDUM).toContain("name the work it then reaches");
+    expect(SCAN_DEEP_DIG_ADDENDUM).toContain("a search index and the list endpoint");
+    expect(SCAN_DEEP_DIG_ADDENDUM).toContain("Every argument against the value in hand");
+    expect(SCAN_DEEP_RECALL_ADDENDUM).toContain("There is no diff to fetch");
+    expect(SCAN_DEEP_RECALL_ADDENDUM).toContain("Read every focus file to its end");
+    expect(SCAN_DEEP_RECALL_ADDENDUM).toContain("Small is not silent");
+    expect(SCAN_DEEP_RECALL_ADDENDUM).toContain("Report what another lens owns");
+    expect(SCAN_DEEP_CONSISTENCY_ADDENDUM).toContain(
+      "the member that does the same as the rest when its case means it should not",
+    );
+    expect(SCAN_DEEP_DUPLICATION_ADDENDUM).toContain("List the knowledge");
+    expect(SCAN_DEEP_DUPLICATION_ADDENDUM).toContain("Three or more copies are one finding");
+    expect(SCAN_DEEP_MAINTAINABILITY_ADDENDUM).toContain(
+      "Every declared field: who fills it, who reads it",
+    );
+    expect(SCAN_DEEP_MAINTAINABILITY_ADDENDUM).toContain(
+      "Every callback argument against the value in hand",
+    );
   });
 });
 
@@ -699,7 +749,14 @@ interface Rig {
   settings: Partial<ScanConfig>;
 }
 
-function rig(opts: { suggest?: number; settings?: Partial<ScanConfig> } = {}): Rig {
+function rig(
+  opts: {
+    suggest?: number;
+    settings?: Partial<ScanConfig>;
+    /** Reshape the fake runner's outcome (reads, a transcript). */
+    outcome?: (spec: CaseSpec, base: CaseOutcome & { ok: true }) => CaseOutcome;
+  } = {},
+): Rig {
   const specs: CaseSpec[] = [];
   const builds: ScanSettings[] = [];
   const settings: Partial<ScanConfig> = { ...opts.settings };
@@ -712,11 +769,12 @@ function rig(opts: { suggest?: number; settings?: Partial<ScanConfig> } = {}): R
     cases: {
       run: async (spec): Promise<CaseOutcome> => {
         specs.push(spec);
-        return {
-          ok: true,
+        const base = {
+          ok: true as const,
           output: answer(spec, opts.suggest ?? 0),
           cost_usd: 0.01 * spec.files.length,
         };
+        return opts.outcome ? opts.outcome(spec, base) : base;
       },
     },
     source: fakeSource(TREE),
@@ -796,7 +854,9 @@ describe("a deep stage 1", () => {
     if (!p.ok) throw new Error(p.errors.join("; "));
     expect(p.preview.delta).toEqual({ since: SHA, owed: 6, owed_shallow: 6 });
     const text = renderPreview(p.preview);
-    expect(text).toContain("; 6 of the files are unchanged but not yet read at deep depth — read first");
+    expect(text).toContain(
+      "; 6 of the files are unchanged but not yet read at deep depth — read first",
+    );
     expect(text).not.toMatch(/no reading covers them yet/);
     // Owed for both reasons: each named with its own count.
     const mixed = renderPreview({ ...p.preview, delta: { since: SHA, owed: 6, owed_shallow: 2 } });
@@ -971,5 +1031,81 @@ describe("the propose tool", () => {
     expect(await call(defs, { rows: [], deep: "yes" })).toMatch(
       /^Stage 2 proposal refused:\n✗ `deep` must be true or false/,
     );
+  });
+});
+
+describe("a deep stage 2 hands each case what stage 1 saw, and credits only what the lens opened", () => {
+  it("carries stage 1's suggestions for the row's lens and files into the case prompt", async () => {
+    const r = rig({ suggest: 1 });
+    await scanAll(r.scan);
+    const suggested = r.specs
+      .filter((x) => x.agent.startsWith(`${SCAN_PASS}--`))
+      .map((x) => x.files[0]!);
+    expect(suggested.length).toBeGreaterThan(0);
+    const p = await r.scan.proposeStage2({ rows: [], deep: true });
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    r.specs.length = 0;
+    expect((await r.scan.startStage2({ key: p.proposal.key })).ok).toBe(true);
+    await r.scan.idle();
+    const led = r.specs.filter((x) =>
+      x.prompt.includes("What the first look pointed this lens at"),
+    );
+    expect(led.length).toBeGreaterThan(0);
+    for (const x of led) {
+      expect(x.agent, x.id).toMatch(/^pass-consistency--/);
+      expect(x.prompt, x.id).toContain(": sibling 1 differs");
+      expect(
+        x.files.some((f) => suggested.includes(f)),
+        x.id,
+      ).toBe(true);
+    }
+    // Another lens over the same files carries none: the suggestion named
+    // pass-consistency.
+    for (const x of r.specs.filter((y) => !y.agent.startsWith("pass-consistency--")))
+      expect(x.prompt, x.id).not.toContain("What the first look pointed this lens at");
+  });
+
+  it("writes ledger rows only for the focus files the lens opened, says which it did not, and keeps the transcript names", async () => {
+    const r = rig({
+      outcome: (spec, base) => {
+        const root = `/state/scan/tree/${SHA}`;
+        const firstOnly = spec.files.length > 1 && !spec.id.endsWith("/validate");
+        return {
+          ...base,
+          reads: (firstOnly ? spec.files.slice(0, 1) : spec.files).map((f) => `${root}/${f}`),
+          transcript: `${spec.id.split("/")[0]}/${spec.id.split("/").slice(1).join(".")}.jsonl`,
+        };
+      },
+    });
+    const p = await r.scan.preview();
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    expect((await r.scan.start({ key: p.preview.key })).ok).toBe(true);
+    await r.scan.idle();
+    const run = r.scan.status().run!;
+    const multi = run.cases.filter((c) => c.files.length > 1);
+    expect(multi.length).toBeGreaterThan(0);
+    const rows = ledgerRows();
+    for (const c of run.cases) {
+      expect(c.status, c.id).toBe("done");
+      expect(c.reads, c.id).toBe(c.files.length > 1 ? 1 : c.files.length);
+      expect(c.transcript, c.id).toMatch(/\.jsonl$/);
+      const recorded = rows.filter((e) => e.case === c.id).map((e) => e.path);
+      if (c.files.length > 1) {
+        expect(recorded, c.id).toEqual([c.files[0]]);
+        expect(c.unopened, c.id).toEqual(c.files.slice(1));
+        expect(run.problems.join("\n"), c.id).toContain(
+          `case ${c.id}: ${SCAN_PASS} opened 1 of its ${c.files.length} focus files — not opened: ${c.files.slice(1).join(", ")}`,
+        );
+      } else {
+        expect(recorded, c.id).toEqual(c.files);
+        expect(c.unopened, c.id).toBeUndefined();
+      }
+    }
+    // What was not opened is still to read.
+    const again = await r.scan.preview();
+    if (!again.ok) throw new Error(again.errors.join("; "));
+    const unopened = multi.flatMap((c) => c.files.slice(1));
+    const planned = again.preview.cases.flatMap((c) => c.files.map((f) => f.path));
+    for (const f of unopened) expect(planned, f).toContain(f);
   });
 });
