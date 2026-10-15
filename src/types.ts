@@ -192,6 +192,9 @@ export interface RoundOrder {
   /** Changed files past the sweep's per-round cap — named in the plan so a
    * capped sweep never reads as full coverage. */
   sweep_unswept?: string[];
+  /** Files the behaviour-delta lens's group cap left uncompared — named in
+   * the plan for the same reason. */
+  behaviour_unread?: string[];
   /** The rendered third-party-sources block (src/depsources.ts), carried
    * into every pass's task string. Absent or "" ⇒ nothing was unpacked. */
   dependency_note?: string;
@@ -541,6 +544,18 @@ export interface SessionCommandObservation {
  * returns it: the `compaction` block of the bridge's ready receipt, as
  * `src/session-bridge.ts` declares it. */
 export type SessionCompactionReport = SessionBridgeCompaction;
+/** A lens a round may run beyond its plan, as the round row records it
+ * (`addable_passes`): an addable lens at its add tier, which the session runs
+ * with a reason — or one of a follow-up round's OPTIONAL rows (`optional`),
+ * which it runs at the row's tier or a rung it may raise to, and needs no
+ * reason for: the order offered it. */
+export interface RecordedAddablePass {
+  lens: string;
+  tier: string;
+  optional?: true;
+  raisable_to?: string[];
+}
+
 /** What the round-stage supervisor's failure callback did with a stage limit.
  * `posted_wait`: the round's review is already on GitHub (or
  * was refused by guard 2), so the limit is NOT a failure — the session's tail

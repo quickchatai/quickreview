@@ -45,6 +45,7 @@ import {
   fingerprintRoundIntegrity,
   gitConfigChangeMessage,
   INTEGRITY_BUDGET_MS,
+  roundIntegrityOpts,
   integrityChanges,
   policySurfaceChangeMessage,
   splitIntegrityChanges,
@@ -58,13 +59,7 @@ import { piGlobalSessionsDir } from "./archive/piglobal.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
-import {
-  isLoudCancelCause,
-  type CancelCause,
-  type RoundRow,
-  type SelfRequeueSpend,
-  type StateStore,
-} from "./state.js";
+import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import {
   enforceFindingsRecord,
@@ -74,6 +69,7 @@ import {
 } from "./findingsrecord.js";
 import {
   normalizeVerdict,
+  type RecordedAddablePass,
   type RoundRecoveryDisposition,
   type SessionHooks,
   type MeritsVerdictFile,
@@ -185,6 +181,13 @@ interface OwedMeasurement {
  * round-stage supervisor. */
 function measureModeFor(via: ReceiptSettleVia): MeasureMode {
   return via === "verdict" || via === "malformed_verdict" ? "inline" : "background";
+}
+
+/** A round-stage limit's answer for a posting failure the stage tried to
+ * open: a verdict that owns the round is the sweep's (retry the limit later),
+ * a round that ended is settled, a failure opened is loud. */
+function stageFailure(outcome: "verdict" | "ended" | "failed"): RoundRecoveryDisposition {
+  return outcome === "verdict" ? "retryable" : outcome === "ended" ? "settled" : "failed_loud";
 }
 
 /** A self-requeue's measurement mode: the two that come from a verdict file
@@ -414,7 +417,6 @@ export function tailPlannedLenses(
  * plan, or a follow-up round's pre-approval sweep. Pure. */
 interface PlanComparison {
   planned: string[];
-  executed: string[];
   missing: string[];
   unknownAdditions: string[];
   missingReason: string[];
@@ -427,14 +429,13 @@ type PlanRow = { lens: string; tier: string; raisable_to?: string[] };
 function comparePlan(
   passes: VerdictPassEntry[],
   plan: PlanRow[] | null,
-  addable: Array<{ lens: string; tier: string }> | null,
+  addable: RecordedAddablePass[] | null,
   legacyPlanned: string[],
   checkMissing: boolean,
 ): PlanComparison {
   const executed = passes.map((p) => p.name);
   const out: PlanComparison = {
     planned: legacyPlanned,
-    executed,
     missing: [],
     unknownAdditions: [],
     missingReason: [],
@@ -460,6 +461,22 @@ function comparePlan(
         out.unknownAdditions.push(pass.name);
         continue;
       }
+      if (policy.optional) {
+        // An optional row the order offered: its tier or a rung it may raise
+        // to, and no reason owed.
+        const tiers = [
+          policy.tier,
+          ...(policy.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!),
+        ];
+        if (pass.tier && tiers.includes(pass.tier))
+          out.allowedAdditions.push({
+            name: pass.name,
+            tier: pass.tier,
+            reason: pass.reason ?? "optional row",
+          });
+        else out.wrongTier.push(pass.name);
+        continue;
+      }
       if (!pass.tier || pass.tier !== policy.tier) out.wrongTier.push(pass.name);
       if (!pass.reason) out.missingReason.push(pass.name);
       if (pass.tier === policy.tier && pass.reason) {
@@ -476,6 +493,12 @@ function comparePlan(
 }
 
 export const VERDICT_FILE_RE = /^pr-(\d+)-round-(\d+)\.json$/;
+
+/** A round's verdict file name — the one spelling VERDICT_FILE_RE reads,
+ * the watcher's slot key and every presence check use. */
+export function verdictFileName(pr: number, roundNo: number): string {
+  return `pr-${pr}-round-${roundNo}.json`;
+}
 
 export interface ParsedVerdict {
   ok: boolean;
@@ -684,17 +707,6 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   };
 }
 
-/**
- * How much of a PR's self-requeue budget is gone. A row whose head cannot be
- * read still records a requeue that happened, so it counts — the budget can
- * be tightened by a corrupt payload, never widened by one. Exhausting it this
- * way ends in FAILED_LOUD and `u`, which is the recoverable direction; the
- * other direction is a loop past the cap.
- */
-function selfRequeuesSpent(spend: SelfRequeueSpend): number {
-  return spend.at_head + spend.unattributed;
-}
-
 export class VerdictWatcher {
   private watcher: FSWatcher | null = null;
   private readonly inFlight = new Set<string>();
@@ -863,7 +875,13 @@ export class VerdictWatcher {
   private ignoreAfterCancel(
     round: RoundRow,
     name: string,
-    detail: { malformed?: string; reason?: string } = {},
+    detail: {
+      malformed?: string;
+      reason?: string;
+      head_sha?: string;
+      outcome?: string | null;
+      verdict?: string | null;
+    } = {},
   ): void {
     this.deps.store.logEvent("verdict_after_cancel_ignored", round.pr, {
       round_id: round.id,
@@ -873,7 +891,7 @@ export class VerdictWatcher {
       ...detail,
     });
     this.log(
-      `verdicts: #${round.pr} round ${round.round_no} was already cancelled (${round.cancel_cause ?? "unknown"}) — ${name} is not applied over it`,
+      `verdicts: #${round.pr} round ${round.round_no} was already ${round.status}${round.cancel_cause ? ` (${round.cancel_cause})` : ""} — ${name} is not applied over it`,
     );
   }
 
@@ -891,6 +909,29 @@ export class VerdictWatcher {
       round.cancel_cause === "orphan_sweep" &&
       !this.deps.store.hasLaterRound(round.pr, round.round_no)
     );
+  }
+
+  /** A done round's interrupted apply that a later round of its PR has
+   * overtaken: nothing more of the old verdict lands — no transition, no
+   * reviewed-head or withheld mark, no successor settled — and it is recorded
+   * settled, so it is not resumed again. Its usage is owed over its own
+   * window, which ended at its claim (`finished_at`), never now — the later
+   * round's transcript is not this one's. The caller awaits the reads. */
+  private settleSupersededResume(round: RoundRow, name: string): OwedMeasurement {
+    this.deps.store.logEvent("verdict_resume_superseded", round.pr, {
+      round_id: round.id,
+      round_no: round.round_no,
+      file: name,
+    });
+    this.deps.store.logEvent("verdict_settled", round.pr, {
+      round_id: round.id,
+      round_no: round.round_no,
+      superseded: true,
+    });
+    this.log(
+      `verdicts: #${round.pr} round ${round.round_no}'s interrupted apply is overtaken by a later round — ${name} lands nothing more`,
+    );
+    return this.oweMeasurement(round, round.finished_at);
   }
 
   /** A verdict file names a round this PR does not have: archived inert,
@@ -1111,7 +1152,7 @@ export class VerdictWatcher {
     roundNo: number,
     fn: () => Promise<T>,
   ): Promise<T | undefined> {
-    const name = `pr-${pr}-round-${roundNo}.json`;
+    const name = verdictFileName(pr, roundNo);
     if (this.inFlight.has(name)) return undefined;
     this.inFlight.add(name);
     try {
@@ -1122,7 +1163,7 @@ export class VerdictWatcher {
   }
 
   private verdictFilePresent(pr: number, roundNo: number): boolean {
-    return existsSync(join(this.deps.verdictDir, `pr-${pr}-round-${roundNo}.json`));
+    return existsSync(join(this.deps.verdictDir, verdictFileName(pr, roundNo)));
   }
 
   /**
@@ -1212,7 +1253,7 @@ export class VerdictWatcher {
     this.log(
       `verdicts: #${round.pr} round ${round.round_no} settled from its posting receipt (${posted}) as ${decision.verdict}${decision.approval_withheld ? " (approval withheld)" : ""} — ${plain}`,
     );
-    await this.apply(v, `pr-${round.pr}-round-${round.round_no}.json`, { via, gh_review_id: ghId });
+    await this.apply(v, verdictFileName(round.pr, round.round_no), { via, gh_review_id: ghId });
     return "applied";
   }
 
@@ -1271,7 +1312,7 @@ export class VerdictWatcher {
     this.log(
       `verdicts: #${round.pr} round ${round.round_no} — resuming its interrupted receipt settlement (${started.via})`,
     );
-    await this.apply(started.verdict, `pr-${round.pr}-round-${round.round_no}.json`, {
+    await this.apply(started.verdict, verdictFileName(round.pr, round.round_no), {
       via: started.via,
       gh_review_id: started.gh_review_id,
     });
@@ -1745,31 +1786,61 @@ export class VerdictWatcher {
     return "settled";
   }
 
+  /**
+   * A round whose posting cannot be proven: cancelled, and its review owed as
+   * a FAILED_LOUD incident. The claim is a fresh read that the round is still
+   * running, followed synchronously by the cancel and the incident — every
+   * caller has awaited GitHub (the posting proof) since it read the round, and
+   * a round some other path ended meanwhile (an operator's `u`, a verdict, a
+   * receipt settlement) owes nothing here: false, and nothing is touched.
+   *
+   * `resumed`: the caller is a done round's interrupted apply whose resumed
+   * posting proof failed. That round is done but never settled, its PR left
+   * where the interrupted apply stopped, and nothing else will repair it — so
+   * it stays loud: the incident opens, with nothing to cancel.
+   */
   private async failPostingProof(
     round: RoundRow,
     detail: string,
     stage = "posting_receipt",
     measure: MeasureMode = "inline",
-  ): Promise<void> {
+    resumed = false,
+  ): Promise<boolean> {
     const { store, cfg, adapter } = this.deps;
-    store.markRoundCancelled(
-      round.id,
-      `posting receipt failure — ${detail}`,
-      "infrastructure_failure",
-    );
+    const fresh = this.runningRound(round.pr, round.round_no);
+    const resumedDone =
+      resumed &&
+      fresh?.id === round.id &&
+      fresh.status === "done" &&
+      !this.verdictSettled(round.pr, round.id);
+    if (!resumedDone && !this.stillRunning(round)) {
+      store.logEvent("posting_failure_round_ended", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        round_status: fresh?.id === round.id ? fresh.status : "missing",
+        stage,
+        detail,
+      });
+      this.log(
+        `verdicts: #${round.pr} round ${round.round_no} ended while its posting was proven — ${stage} opens no failure over it`,
+      );
+      return false;
+    }
+    if (!resumedDone)
+      store.markRoundCancelled(
+        round.id,
+        `posting receipt failure — ${detail}`,
+        "infrastructure_failure",
+      );
     // This round ran a full review and burned its tokens — the receipt is
     // what failed, not the work. It stays in `SUM(est_usd) FROM rounds` like
     // every other row, so it must be measured here too. Its window closes now
-    // and no successor is running, so nothing double-counts. The reads
-    // (async) run last, after the FAILED_LOUD incident and its anomaly — a
-    // restart while they run must not leave a cancelled round with no loud
-    // failure behind it — and are owed durably from here, so a restart while
-    // they run resumes them.
+    // and no successor is running, so nothing double-counts. The cancel and
+    // the FAILED_LOUD incident land in one turn — a restart inside any await
+    // below must not leave a cancelled round with no loud failure behind it —
+    // and the label call and the reads (async) run after them, the reads
+    // owed durably from here, so a restart while they run resumes them.
     const owed = this.oweMeasurement(round);
-    await this.safe(
-      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
-      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
-    );
     const command = store.sessionCommandForRound(round.pr, round.round_no);
     const successor = store.successorFor(round.pr);
     const failure = store.openReviewFailure({
@@ -1789,6 +1860,10 @@ export class VerdictWatcher {
       round.round_no,
       `posting receipt: ${detail}; work remains owed as ${failure.incident_id}`,
     );
+    await this.safe(
+      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
+      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
+    );
     await this.announceSafe((a) =>
       a.anomaly({
         pr: round.pr,
@@ -1799,6 +1874,30 @@ export class VerdictWatcher {
       }),
     );
     await this.closeMeasurement(owed, measure);
+    return true;
+  }
+
+  /**
+   * `failPostingProof` for the sweeps that are not the verdict's own path —
+   * the round deadline and the round-stage limits — after their posting
+   * proof awaited GitHub. Inside the verdict-file slot, so a verdict that
+   * arrived meanwhile wins: one on disk, or one the watcher is applying (the
+   * slot busy), is left to the watcher and nothing is failed under it.
+   * `verdict`: a verdict owns the round; `ended`: the round ended; `failed`:
+   * FAILED_LOUD.
+   */
+  private async failPostingProofUnlessVerdict(
+    round: RoundRow,
+    detail: string,
+    stage: string,
+  ): Promise<"verdict" | "ended" | "failed"> {
+    const outcome = await this.withVerdictSlot(round.pr, round.round_no, async () => {
+      if (this.verdictFilePresent(round.pr, round.round_no)) return "verdict" as const;
+      return (await this.failPostingProof(round, detail, stage, "background"))
+        ? ("failed" as const)
+        : ("ended" as const);
+    });
+    return outcome ?? "verdict";
   }
 
   /** The handoff: posting receipt, labels, round record, transition.
@@ -1845,18 +1944,24 @@ export class VerdictWatcher {
       round.cancel_cause !== "no_new_evidence" &&
       !this.orphanVerdictOwed(round)
     ) {
-      store.logEvent("verdict_after_cancel_ignored", v.pr, {
-        round_id: round.id,
-        round_no: v.round_no,
-        cancel_cause: round.cancel_cause,
+      this.ignoreAfterCancel(round, name, {
         head_sha: v.head_sha,
         outcome: v.outcome ?? null,
         verdict: v.verdict ?? null,
-        file: name,
       });
-      this.log(
-        `verdicts: #${v.pr} round ${v.round_no} was already cancelled (${round.cancel_cause ?? "unknown"}) — ${name} is not applied over it`,
-      );
+      return "applied";
+    }
+
+    // A done round whose apply a restart cut short resumes below — unless a
+    // later round of the PR has started since: that round owns the lifecycle,
+    // the marks and the successor now, and the old verdict is not applied
+    // over it.
+    if (
+      round.status === "done" &&
+      !this.verdictSettled(v.pr, round.id) &&
+      store.hasLaterRound(v.pr, v.round_no)
+    ) {
+      await this.closeMeasurement(this.settleSupersededResume(round, name), measure);
       return "applied";
     }
 
@@ -1870,14 +1975,9 @@ export class VerdictWatcher {
     // is stamped (nothing was reviewed-and-decided at the live head). Past
     // the cap the anomaly path terminalizes — never an approve.
     if (v.outcome === "head_moved") {
-      store.logEvent("head_moved_reported", v.pr, {
-        round_id: round?.id ?? null,
-        round_no: v.round_no,
-        reviewed_head: v.head_sha,
-        file: name,
-      });
       // The round already ended — this file is a replay of a report that was
-      // handled (or of a round some other path closed). Nothing is owed.
+      // handled (or of a round some other path closed). Nothing is owed, and
+      // nothing is reported again.
       if (round.status !== "running") {
         store.logEvent("verdict_replay_ignored", v.pr, {
           round_id: round.id,
@@ -1888,6 +1988,12 @@ export class VerdictWatcher {
         });
         return "applied";
       }
+      store.logEvent("head_moved_reported", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        reviewed_head: v.head_sha,
+        file: name,
+      });
       if (await this.selfRequeue(round, "head_moved")) {
         await this.safe(
           () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
@@ -1912,7 +2018,7 @@ export class VerdictWatcher {
     // post, so the round is redone through the capped self-requeue instead
     // of applying a verdict reached without it.
     if (round && round.status === "running") {
-      const requeued = await this.requeueOnRequiredPassGap(v, round);
+      const requeued = await this.requeueOnRequiredPassGap(v, round, proven !== undefined);
       if (requeued) return "applied";
     }
 
@@ -1932,14 +2038,13 @@ export class VerdictWatcher {
       round.status === "running" &&
       (!v.passes || v.passes.length === 0)
     ) {
-      const receipt = readPostingReceipt(this.postingReceiptDir(), v.pr, v.round_no);
-      const posting = receipt !== undefined && receipt.status !== "skipped";
+      const posting = this.reviewWentOut(v.pr, v.round_no, proven !== undefined);
       store.logEvent("needs_human_incomplete", v.pr, {
         round_id: round.id,
         round_no: v.round_no,
         head_sha: v.head_sha,
         passes_reported: v.passes ? 0 : null,
-        ...(posting ? { posting_receipt: receipt.status } : {}),
+        ...(posting ? { posting_receipt: posting } : {}),
       });
       if (!posting && (await this.selfRequeue(round, "needs_human_incomplete"))) {
         await this.safe(
@@ -2008,8 +2113,17 @@ export class VerdictWatcher {
           });
           return "applied";
         }
-        await this.failPostingProof(round, proof.detail ?? "posting receipt invalid");
-        return "failed";
+        // A round ended while the proof awaited GitHub (an operator's `u`)
+        // owes nothing here: the claim inside refuses it.
+        return (await this.failPostingProof(
+          round,
+          proof.detail ?? "posting receipt invalid",
+          "posting_receipt",
+          "inline",
+          claimedStatus === "done",
+        ))
+          ? "failed"
+          : "applied";
       }
       // The daemon's retry delivered this round's APPROVE after the
       // session finished, and guard 4 softened it to a COMMENT on the gate.
@@ -2055,14 +2169,18 @@ export class VerdictWatcher {
     // and nothing below runs. Before the successor record, so a lost claim
     // leaves no obligation behind either.
     //
-    // An orphan-swept round's claim is `cancelled`, which a cancel landing
-    // meanwhile cannot change — but the requeue the sweep queued can have
-    // started its round while this awaited. Re-asked here, in the claim's own
+    // An orphan-swept round's claim is `cancelled`, and a resumed apply's is
+    // `done` — neither of which a cancel landing meanwhile can change — but a
+    // round of the PR can have started while this awaited (the requeue the
+    // sweep queued, a promoted successor). Re-asked here, in the claim's own
     // turn: a later round owns the PR, and the old verdict is not applied over it.
-    if (round && claimedStatus === "cancelled" && store.hasLaterRound(v.pr, v.round_no)) {
-      this.ignoreAfterCancel(round, name, {
-        reason: "a later round started while the verdict was applied",
-      });
+    if (round && claimedStatus !== "running" && store.hasLaterRound(v.pr, v.round_no)) {
+      if (claimedStatus === "done")
+        await this.closeMeasurement(this.settleSupersededResume(round, name), measure);
+      else
+        this.ignoreAfterCancel(round, name, {
+          reason: "a later round started while the verdict was applied",
+        });
       return "applied";
     }
     if (round && !store.finishRound(round.id, v.verdict, null, v.summary ?? null, claimedStatus)) {
@@ -2200,9 +2318,9 @@ export class VerdictWatcher {
     // Every durable step of the apply has landed: from here a replay of this
     // file is inert (the done-round guard above reads this).
     //
-    // The round's usage window closes here, and its measurement is owed from
-    // here — in the same synchronous turn as `verdict_settled`, so no restart
-    // can land between the two. Its reads (async — seconds, at most the usage
+    // The round's usage window closed at its claim (`finished_at`), and its
+    // measurement is owed from here — in the same synchronous turn as
+    // `verdict_settled`, so no restart can land between the two. Its reads (async — seconds, at most the usage
     // budget) run at the very end of the apply, after the compaction request
     // and the held-wake flush: a round dispatched while they run must never
     // receive this round's held wakes (rule 9), and nothing in between reads
@@ -2211,7 +2329,10 @@ export class VerdictWatcher {
     let owed: OwedMeasurement | undefined;
     if (round) {
       store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
-      owed = this.oweMeasurement(round);
+      // The window ends where the round did — its claim — not here: the
+      // awaits since (CI read, Slack) can outlast a successor's dispatch, and
+      // its transcript must not count twice.
+      owed = this.oweMeasurement(round, finished?.finished_at);
     }
     // Escalation — off unless the operator switched it on, and it runs here,
     // after the verdict has been applied, the label moved and the
@@ -2363,9 +2484,10 @@ export class VerdictWatcher {
         // waving it through — the safe direction, same as every other fact.
         changed_paths: facts.changed_paths,
         // Whether the round's own review actually reached GitHub, from the
-        // posting receipt. The note must not claim a posting that a guard
-        // refused — and the escalation note is precisely the one that still
-        // goes out in that case.
+        // posting receipt: the note must not claim a posting no confirmed
+        // receipt shows (a dry run, a legacy round, a review the marker
+        // reconcile proved without a local receipt). A guard-2 refusal never
+        // gets here — it settles as a guarded no-op, with no escalation.
         review_posted: this.roundReviewConfirmed(v.pr, v.round_no, v.head_sha),
         ruleRequests,
         sessionCandidates,
@@ -2622,7 +2744,7 @@ export class VerdictWatcher {
       const legacyPlanned = round.lenses ? round.lenses.split(",").filter(Boolean) : [];
       const plan = round.pass_plan ? (JSON.parse(round.pass_plan) as PlanRow[]) : null;
       const addable = round.addable_passes
-        ? (JSON.parse(round.addable_passes) as Array<{ lens: string; tier: string }>)
+        ? (JSON.parse(round.addable_passes) as RecordedAddablePass[])
         : null;
       // A follow-up round runs two stages. The delta stage's passes (phase
       // "delta", or none) answer to `pass_plan`; the sweep's (phase "sweep")
@@ -2773,12 +2895,9 @@ export class VerdictWatcher {
       const root = this.deps.root ?? sandboxRoot();
       const budgetMs = Math.max(0, this.deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
       const rehash = await withinBudget(
-        (this.deps.integrityFingerprint ?? fingerprintRoundIntegrity)({
-          clonePath: githubCloneDir(cfg.github),
-          worktreePath: resolve(root, `wt/pr-${pr}`),
-          piHome: join(root, "pihome"),
-          sandboxRoot: root,
-        }),
+        (this.deps.integrityFingerprint ?? fingerprintRoundIntegrity)(
+          roundIntegrityOpts(githubCloneDir(cfg.github), root, `wt/pr-${pr}`),
+        ),
         budgetMs,
       );
       if (rehash.kind === "budget") {
@@ -2919,8 +3038,12 @@ export class VerdictWatcher {
    */
   private oweMeasurement(
     round: Pick<RoundRow, "id" | "pr" | "round_no" | "started_at">,
+    /** The window's end when it is not now: the round's terminal write
+     * landed turns earlier (a verdict's apply stamps `finished_at` at its
+     * claim and owes the measurement only once every durable step landed). */
+    endedAt?: string | null,
   ): OwedMeasurement {
-    const measuredTo = this.now().toISOString();
+    const measuredTo = endedAt ?? this.now().toISOString();
     this.measuring.add(round.id);
     try {
       this.deps.store.oweRoundMeasurement(round.id, measuredTo);
@@ -3085,7 +3208,14 @@ export class VerdictWatcher {
    * PR's lifecycle returned to its standing-verdict state (never an approve,
    * never a park), and the review still OWED as a FAILED_LOUD incident
    * (`openReviewFailure`) that holds the PR out of the pump — and its held
-   * wakes behind it — until the operator presses `u`. */
+   * wakes behind it — until the operator presses `u`.
+   *
+   * Only a round still running owes that: every caller awaited something
+   * since it read the round (a liveness probe, a posting proof, a requeue
+   * that lost its cancel), and a round a verdict, a receipt settlement or an
+   * operator ended meanwhile is left as it stands — no transition, no
+   * incident over whatever replaced it. The read, the mark, the transition
+   * and the incident land in one turn, before the first await. */
   private async handleAnomaly(
     pr: number,
     roundNo: number | null,
@@ -3094,8 +3224,21 @@ export class VerdictWatcher {
   ): Promise<void> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(pr, roundNo ?? undefined);
+    if (round && round.status !== "running") {
+      store.logEvent("anomaly_round_ended", pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        round_status: round.status,
+        kind,
+        message,
+      });
+      this.log(
+        `verdicts: #${pr} round ${round.round_no} is already ${round.status} — the ${kind} anomaly opens nothing over it`,
+      );
+      return;
+    }
     let owed: OwedMeasurement | null = null;
-    if (round && round.status === "running") {
+    if (round) {
       store.markRoundOverdue(round.id);
       // Measure the round's tokens on this path too, not only on the verdict
       // path: `markRoundOverdue` deliberately keeps the row in spend, and the
@@ -3111,13 +3254,6 @@ export class VerdictWatcher {
       // tick's included, because that inject reads what it finds.
       owed = this.oweMeasurement(round);
     }
-
-    // The in-progress label must not stick, but the "Automatic Review" label is
-    // deliberately not applied — no review was soundly produced.
-    await this.safe(
-      () => adapter.removeLabel(pr, cfg.github.in_progress_label),
-      `remove ${cfg.github.in_progress_label} on #${pr}`,
-    );
 
     const standing = standingVerdict(store.reviewedHead(pr));
     applyEvent(
@@ -3145,6 +3281,12 @@ export class VerdictWatcher {
       round_no: roundNo,
       message,
     });
+    // The in-progress label must not stick, but the "Automatic Review" label is
+    // deliberately not applied — no review was soundly produced.
+    await this.safe(
+      () => adapter.removeLabel(pr, cfg.github.in_progress_label),
+      `remove ${cfg.github.in_progress_label} on #${pr}`,
+    );
     if (owed) await this.closeMeasurement(owed, "inline");
     // Piggyback pending exec-policy findings on a wake that happens anyway;
     // violations by themselves never trigger an inject (no spam).
@@ -3375,6 +3517,10 @@ export class VerdictWatcher {
     if (round.posting_key) {
       const answered = await this.receiptAwareStage(round, stage, detail);
       if (answered) return answered;
+      // The posting proof awaited GitHub: a round an operator or a verdict
+      // ended meanwhile is not recovered — and its session, which may now be
+      // the replacement round's, is not killed.
+      if (!this.stillRunning(round)) return "requeued";
     }
     this.deps.store.logEvent("round_infrastructure_failure", pr, {
       round_id: round.id,
@@ -3384,33 +3530,13 @@ export class VerdictWatcher {
     });
     const head = this.deps.store.getPr(pr)?.head_sha ?? "";
     const cap = this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
-    if (selfRequeuesSpent(this.deps.store.selfRequeueSpend(pr, head)) >= cap) {
+    if (this.deps.store.selfRequeueCount(pr, head) >= cap) {
       const mode =
         stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active";
       if (mode === "infrastructure_active" && !this.deps.hooks.killSession) return "retryable";
-      if (mode === "infrastructure_active") {
-        try {
-          await this.deps.hooks.killSession!.call(this.deps.hooks, pr);
-        } catch (error) {
-          this.deps.store.logEvent("session_recovery_kill_failed", pr, {
-            round_id: round.id,
-            round_no: roundNo,
-            mode,
-            error: String(error),
-          });
-          return "retryable";
-        }
-      }
-      // The old parent is now fenced (or had already settled), so this read is
-      // definitive. A verdict that won before the fence stays the sweep's.
-      if (this.verdictFilePresent(pr, roundNo)) {
-        this.deps.store.logEvent("round_stage_verdict_won", pr, {
-          round_id: round.id,
-          round_no: roundNo,
-          mode,
-        });
-        return "retryable";
-      }
+      // A session that could not be stopped, or a verdict that won before the
+      // fence, leaves the round to the next check and the sweep.
+      if ((await this.fenceForRecovery(round, mode)) !== "fenced") return "retryable";
       const command = this.deps.store.sessionCommandForRound(pr, roundNo);
       if (!command) return "retryable";
       const successor = this.deps.store.successorFor(pr);
@@ -3463,6 +3589,12 @@ export class VerdictWatcher {
             ? `automatic retry scheduled for ${failure.next_retry_at} (u retries immediately)`
             : "press u to recover"
         }`,
+      );
+      // No round owns the review any more: the in-progress label comes off,
+      // as on every other terminal path.
+      await this.safe(
+        () => this.deps.adapter.removeLabel(pr, this.deps.cfg.github.in_progress_label),
+        `remove ${this.deps.cfg.github.in_progress_label} on #${pr}`,
       );
       await this.closeMeasurement(owed, "background");
       await this.announceSafe((a) =>
@@ -3530,7 +3662,7 @@ export class VerdictWatcher {
     // sweep's, whatever the receipt says.
     if (
       this.verdictFilePresent(round.pr, round.round_no) ||
-      this.inFlight.has(`pr-${round.pr}-round-${round.round_no}.json`)
+      this.inFlight.has(verdictFileName(round.pr, round.round_no))
     )
       return "retryable";
     const proof = await this.postingProof(round);
@@ -3585,16 +3717,13 @@ export class VerdictWatcher {
       // fails loud — never a requeue that could post a second time.
       if (proof.kind === "waiting") return "retryable";
       if (proof.kind === "failed") {
-        // The proof awaited GitHub: a verdict or an operator's `u` may have
-        // ended the round meanwhile, and its incident must not be reopened.
-        if (!this.stillRunning(round)) return "settled";
-        await this.failPostingProof(
-          round,
-          proof.detail ?? "settled without a posting receipt",
-          "posting_receipt",
-          "background",
+        return stageFailure(
+          await this.failPostingProofUnlessVerdict(
+            round,
+            proof.detail ?? "settled without a posting receipt",
+            "posting_receipt",
+          ),
         );
-        return "failed_loud";
       }
       return null;
     }
@@ -3642,14 +3771,13 @@ export class VerdictWatcher {
       // Evidence of a posting that disagrees with the round (conflicting
       // linkage, several matching reviews): a requeue could only add another.
       // Loud, as the verdict and deadline paths are on the same evidence.
-      if (!this.stillRunning(round)) return "settled";
-      await this.failPostingProof(
-        round,
-        proof.detail ?? "posting receipt contradicted",
-        "posting_receipt",
-        "background",
+      return stageFailure(
+        await this.failPostingProofUnlessVerdict(
+          round,
+          proof.detail ?? "posting receipt contradicted",
+          "posting_receipt",
+        ),
       );
-      return "failed_loud";
     }
     // Nothing says a review went out (no receipt, or GitHub read and no
     // marker): the caller's own path.
@@ -3738,16 +3866,34 @@ export class VerdictWatcher {
   }
 
   /**
+   * Whether this round's review already went out: a posting the caller proved
+   * from GitHub (`proven`), or a posting receipt other than a guard-2 refusal
+   * — confirmed, or still owned by the daemon's delivery. A round whose
+   * review went out is never redone, whatever else is wrong with it: a redo
+   * would post a second review. The evidence's name (`proven` or the
+   * receipt's status), or undefined when nothing went out.
+   */
+  private reviewWentOut(pr: number, roundNo: number, proven: boolean): string | undefined {
+    if (proven) return "proven";
+    const receipt = readPostingReceipt(this.postingReceiptDir(), pr, roundNo);
+    return receipt !== undefined && receipt.status !== "skipped" ? receipt.status : undefined;
+  }
+
+  /**
    * The verdict-time belt for required passes (src/requiredpasses.ts). Every
    * failed pass of the round is recorded (`round_pass_failures`) — the gap is
    * internal, never on the PR. When a required pass is missing and nothing
    * was posted for the round, the round is cancelled and requeued within
    * `max_self_requeues` (true: the caller returns); past the cap it ends on
    * the anomaly path, never with a verdict applied over the gap. A gap whose
-   * round already holds a posting receipt is logged and applied as usual —
-   * a requeue would post a second review. Unknown evidence never requeues.
+   * review already went out (`reviewWentOut`) is logged and applied as
+   * usual — a requeue would post a second review. Unknown evidence never requeues.
    */
-  private async requeueOnRequiredPassGap(v: VerdictFile, round: RoundRow): Promise<boolean> {
+  private async requeueOnRequiredPassGap(
+    v: VerdictFile,
+    round: RoundRow,
+    proven: boolean,
+  ): Promise<boolean> {
     const { cfg, store, adapter } = this.deps;
     const progress = readRoundProgress(this.deps.root ?? sandboxRoot(), v.pr);
     const failures = failedPasses(progress, v.round_no);
@@ -3760,12 +3906,12 @@ export class VerdictWatcher {
     const gap = requiredPassGap(parsePlan(round.pass_plan), progress, v.round_no);
     if (gap.state !== "missing") return false;
     const missing = describeGap(gap.missing);
-    const receipt = readPostingReceipt(this.postingReceiptDir(), v.pr, v.round_no);
-    if (receipt && receipt.status !== "skipped") {
+    const posted = this.reviewWentOut(v.pr, v.round_no, proven);
+    if (posted) {
       store.logEvent("required_pass_missing_after_post", v.pr, {
         round_id: round.id,
         round_no: v.round_no,
-        receipt: receipt.status,
+        receipt: posted,
         missing,
       });
       return false;
@@ -3796,6 +3942,53 @@ export class VerdictWatcher {
   }
 
   /**
+   * Stop a round's session before recovering it, then look for a verdict
+   * that won while it was being stopped — the one fencing protocol the
+   * self-requeue and the exhausted infrastructure recovery share. A wedged
+   * (`alive_stuck`) or active-infrastructure session is killed; any other
+   * has nothing left to stop. After a kill the read is definitive: no verdict
+   * can appear once the session is gone; a settled parent's writes are over.
+   *   - `kill_failed`: the session could not be stopped (logged) — nothing
+   *     may be recovered over a session that may still write;
+   *   - `verdict_won`: a verdict file is on disk (logged) — it is the sweep's;
+   *   - `fenced`: recover.
+   */
+  private async fenceForRecovery(
+    round: RoundRow,
+    mode: SelfRequeueMode,
+  ): Promise<"kill_failed" | "verdict_won" | "fenced"> {
+    const { store } = this.deps;
+    const kill = this.deps.hooks.killSession;
+    if ((mode === "alive_stuck" || mode === "infrastructure_active") && kill) {
+      try {
+        await kill.call(this.deps.hooks, round.pr);
+      } catch (error) {
+        store.logEvent("session_recovery_kill_failed", round.pr, {
+          round_id: round.id,
+          round_no: round.round_no,
+          mode,
+          error: String(error),
+        });
+        return "kill_failed";
+      }
+    }
+    const fencedModes: SelfRequeueMode[] = [
+      "alive_stuck",
+      "infrastructure_active",
+      "infrastructure_settled",
+    ];
+    if (fencedModes.includes(mode) && this.verdictFilePresent(round.pr, round.round_no)) {
+      store.logEvent("round_stage_verdict_won", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        mode,
+      });
+      return "verdict_won";
+    }
+    return "fenced";
+  }
+
+  /**
    * Self-requeue a stuck round. Returns true when the round was handled here
    * (cancelled + PR re-queued for a fresh dispatch through the normal pump —
    * same move as the overseer's rerun-round and the startup orphan requeue);
@@ -3817,7 +4010,7 @@ export class VerdictWatcher {
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
     const cap = cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
-    const attempt = selfRequeuesSpent(store.selfRequeueSpend(round.pr, head)) + 1;
+    const attempt = store.selfRequeueCount(round.pr, head) + 1;
     const exhausted = attempt > cap;
     const infrastructure = mode === "infrastructure_active" || mode === "infrastructure_settled";
     if (exhausted) {
@@ -3853,53 +4046,20 @@ export class VerdictWatcher {
       });
       return false;
     }
-    if (
-      (mode === "alive_stuck" || mode === "infrastructure_active") &&
-      this.deps.hooks.killSession
-    ) {
-      try {
-        await this.deps.hooks.killSession.call(this.deps.hooks, round.pr);
-      } catch (error) {
-        store.logEvent("session_recovery_kill_failed", round.pr, {
-          round_id: round.id,
-          round_no: round.round_no,
-          mode,
-          error: String(error),
-        });
-        this.log(
-          `verdicts: refusing ${mode} requeue for #${round.pr}; old session could not be stopped`,
-          error,
-        );
-        return false;
-      }
+    const fence = await this.fenceForRecovery(round, mode);
+    if (fence === "kill_failed") {
+      this.log(
+        `verdicts: refusing ${mode} requeue for #${round.pr}; old session could not be stopped`,
+      );
+      return false;
     }
-    if (mode === "alive_stuck" && this.verdictFilePresent(round.pr, round.round_no)) {
-      // The wedged session committed its verdict while it was being stopped:
-      // that verdict wins, exactly as on the infrastructure path below. The
-      // round stays running for the sweep to consume — handled here, so the
-      // deadline path neither requeues nor fails it.
-      store.logEvent("round_stage_verdict_won", round.pr, {
-        round_id: round.id,
-        round_no: round.round_no,
-        mode,
-      });
+    // The verdict that won the fence is the 10s sweep's, never cancelled or
+    // quarantined here. A wedged session's (`alive_stuck`) is handled — the
+    // deadline path neither requeues nor fails the round; an infrastructure
+    // stage's is not, and the stage is checked again.
+    if (fence === "verdict_won") return mode === "alive_stuck";
+    if (infrastructure && this.runningRound(round.pr, round.round_no)?.status !== "running")
       return true;
-    }
-    if (infrastructure) {
-      // For active failures the strict kill above makes this check definitive:
-      // no new verdict can appear after the session is gone. For a settled
-      // parent, all writes are already over. A verdict that won this race is
-      // left to the 10s sweep, never cancelled/quarantined here.
-      if (this.verdictFilePresent(round.pr, round.round_no)) {
-        store.logEvent("round_stage_verdict_won", round.pr, {
-          round_id: round.id,
-          round_no: round.round_no,
-          mode,
-        });
-        return false;
-      }
-      if (this.runningRound(round.pr, round.round_no)?.status !== "running") return true;
-    }
     const cause = SELF_REQUEUE_CAUSE[mode];
     const publication = store.cancelRoundAndQueueRecovery({
       pr: round.pr,
@@ -3972,8 +4132,8 @@ export class VerdictWatcher {
           [
             `SELF-REQUEUE (recovery) — PR #${round.pr} round ${round.round_no}, attempt ${attempt}/${cap}`,
             reason,
-            "The daemon cancelled the dead round and re-queued the PR for a fresh dispatch through the normal path; the session is reborn at dispatch. No GitHub state was touched.",
-            "This is a recovery path, not a normal one — if it recurs on the same PR, investigate why its sessions die mid-round.",
+            "The daemon cancelled the round and re-queued the PR for a fresh dispatch through the normal path. No GitHub state was touched.",
+            "This is a recovery path, not a normal one — if it recurs on the same PR, investigate the cause the line above names.",
           ].join("\n"),
         ),
       "inject overseer self-requeue",
@@ -4154,14 +4314,10 @@ export class VerdictWatcher {
           const receipt = proof.receipt;
           const decision = decidedVerdictFromReceipt(receipt);
           if (!decision) {
-            // The posting proof awaited GitHub: an operator's `u` may have
-            // ended the round meanwhile, and its incident must not be doubled.
-            if (!this.stillRunning(round)) continue;
-            await this.failPostingProof(
+            await this.failPostingProofUnlessVerdict(
               round,
               `GitHub review ${receipt.gh_review_id ?? "confirmed"} was posted (${receipt.actual_event}) but no verdict file arrived before the round deadline, and the posting receipt does not say what was decided`,
               "posted_without_verdict",
-              "background",
             );
             continue;
           }
@@ -4178,12 +4334,10 @@ export class VerdictWatcher {
           continue;
         }
         if (proof.kind === "failed") {
-          if (!this.stillRunning(round)) continue;
-          await this.failPostingProof(
+          await this.failPostingProofUnlessVerdict(
             round,
             proof.detail ?? "round ended without posting confirmation",
             "posting_receipt",
-            "background",
           );
           continue;
         }
@@ -4235,7 +4389,13 @@ export class VerdictWatcher {
       return await fn();
     } catch (err) {
       this.log(`verdicts: ${what} failed`, err);
-      this.deps.store.logEvent("verdict_action_failed", null, { what, error: String(err) });
+      // A side channel's failure record must not become a failure of its
+      // own: the delayed round tail can outlive the store it writes to.
+      try {
+        this.deps.store.logEvent("verdict_action_failed", null, { what, error: String(err) });
+      } catch (logErr) {
+        this.log(`verdicts: ${what} failure not recorded`, logErr);
+      }
       return undefined;
     }
   }

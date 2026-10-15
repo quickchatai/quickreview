@@ -322,6 +322,54 @@ describe("bounded infrastructure-stage recovery", () => {
   });
 });
 
+describe("infrastructure recovery acts only for the round it read, and leaves no stale label", () => {
+  // MUTATION: drop the still-running check after receiptAwareStage — the
+  // replacement round's session is killed over a round the operator ended.
+  it("a round an operator ended during the posting proof is not recovered and its session is not killed", async () => {
+    const roundId = reviewingRound(296);
+    store.stampPostingKey(roundId, roundPostingKey(296, 1, "abc123"));
+    const { hooks } = hooksWith(true);
+    const killed: number[] = [];
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+    };
+    (adapter as FakeVerdictAdapter & VerdictAdapter).listReviewsFull = async () => {
+      store.cancelRunningRounds(296, "rerun-round");
+      store.startRound(296, "first", ["pass-baseline"], baseCfg.daemon.round_deadline_min);
+      return [];
+    };
+    const v = watcher(hooks, { ...baseCfg, dry_run: false });
+
+    expect(
+      await v.recoverInfrastructureFailure(296, 1, "running_hard_bound", "fixed bound exhausted"),
+    ).toBe("requeued");
+    expect(killed).toEqual([]);
+    expect(store.roundsFor(296).map((r) => r.status)).toEqual(["cancelled", "running"]);
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  // MUTATION: drop the label removal from the exhausted path — the PR keeps
+  // advertising a review in progress that FAILED_LOUD ended.
+  it("exhausted recovery takes the in-progress label off", async () => {
+    reviewingRound(297);
+    commandForRound(297, 1);
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++)
+      store.logEvent("round_self_requeued", 297, { head_sha: "abc123" });
+
+    expect(
+      await watcher(hooks).recoverInfrastructureFailure(
+        297,
+        1,
+        "running_hard_bound",
+        "fixed bound exhausted",
+      ),
+    ).toBe("exhausted");
+    expect(adapter.calls).toEqual([`removeLabel:297:${baseCfg.github.in_progress_label}`]);
+  });
+});
+
 describe("stuck-round detection + self-requeue", () => {
   it("requeues an overdue round with no verdict and a dead session — no restart needed", async () => {
     const roundId = reviewingRound(300);
@@ -1233,6 +1281,30 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     expect(store.openReviewFailure(343)).toBeUndefined();
     expect(events("round_overdue")).toHaveLength(0);
     expect(events("round_self_requeued")).toHaveLength(1);
+  });
+
+  // MUTATION: restore the "investigate why its sessions die mid-round" line
+  // — a healthy head_moved requeue sends the overseer after dying sessions.
+  it("the overseer's note names the requeue's own cause, never dying sessions, for a healthy session", async () => {
+    reviewingRound(344, "fresh-head");
+    const { hooks, overseer } = hooksWith(true);
+    headMovedFile(344, 1);
+    await watcher(hooks).sweep();
+    const note = overseer.find((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #344"))!;
+    expect(note).toContain("the session is healthy and was not killed");
+    expect(note).not.toMatch(/die mid-round|dead round|reborn/);
+  });
+
+  // MUTATION: log head_moved_reported before the not-running check — a
+  // replay on a round that ended reports a movement nobody handled.
+  it("a head_moved file reaching a round that already ended reports nothing new", async () => {
+    const roundId = reviewingRound(345, "fresh-head");
+    store.finishRound(roundId, "APPROVE", null);
+    const { hooks } = hooksWith(true);
+    headMovedFile(345, 1);
+    await watcher(hooks).sweep();
+    expect(events("head_moved_reported")).toHaveLength(0);
+    expect(events("verdict_replay_ignored")).toHaveLength(1);
   });
 
   it("respects the self-requeue cap: past it the round terminalizes through the anomaly path, never loops", async () => {

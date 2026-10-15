@@ -14,13 +14,14 @@
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
 // prompt renderer (src/templates.ts) is injected so this module has no content
 // dependency.
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
 import { githubCloneDir, REVIEW_DEFAULTS, sandboxRoot } from "./config.js";
 import {
   fingerprintRoundIntegrity,
   INTEGRITY_BUDGET_MS,
+  roundIntegrityOpts,
   type IntegrityFingerprint,
   type RoundIntegrityOpts,
 } from "./execboundary.js";
@@ -75,7 +76,7 @@ import {
   type DeltaClass,
   type DeltaList,
 } from "./recheck.js";
-import { roundPostingKey } from "./posting-receipt.js";
+import { postingReceiptPath, readPostingReceipt, roundPostingKey } from "./posting-receipt.js";
 import type { RoundLessonHook, RoundSelectionResult } from "./lessonselect.js";
 import {
   buildRoundDelivery,
@@ -93,7 +94,7 @@ import { renderGateNotes } from "./templates.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
-import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
+import type { ApprovalWithheldRow, PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
 import { PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
 import { ALL_PASSES } from "./passes.js";
@@ -104,6 +105,7 @@ import type {
   PassPlanEntry,
   PassTier,
   PriorAssignment,
+  RecordedAddablePass,
   RoundDelta,
   RoundOrder,
   RoundRecoveryContext,
@@ -256,6 +258,10 @@ export interface DispatchDeps {
    * the follow-up round's prior-findings list. Default: under the
    * sandbox root's state dir. */
   findingsDir?: string;
+  /** `<root>/state/posting-receipts` — read to prove an interrupted
+   * approval retry posted nothing before its withheld mark is restored.
+   * Default: under the sandbox root's state dir. */
+  postingReceiptDir?: string;
   /** The round's integrity baseline, taken before the session hears about
    * the round. Default: `fingerprintRoundIntegrity` — real, async reads of the
    * clone, worktree, pi home and sandbox policy surface. Injected only by a
@@ -280,6 +286,23 @@ export interface DispatchDeps {
   heuristics?: HeuristicsExtension;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
+}
+
+/** A plan's lens names, each once, in plan order — the compatibility list
+ * the rounds table, the event log and every order carry (a lens with several
+ * rows, the sweep, once). */
+export function lensesOf(plan: readonly PassPlanEntry[]): string[] {
+  return [...new Set(plan.map((p) => p.lens))];
+}
+
+/** The head a round reviews: the prepared tree's, else the PR row's (a
+ * caller with no worktree seam). The one rule the round row, the posting key
+ * and the prompt all name their head by. */
+export function reviewedHeadOf(
+  tree: Pick<PreparedTree, "head_sha"> | undefined,
+  row: Pick<PrStateRow, "head_sha">,
+): string {
+  return tree?.head_sha || row.head_sha;
 }
 
 export function defaultWorktree(pr: number): string {
@@ -793,7 +816,9 @@ async function classifySystemRetrigger(
 
 /** Consume both triggers at dispatch: the label and the team review request.
  * Both go through the adapter (and therefore the dry-run gate); failures are
- * logged, never fatal — the reconcile poll re-derives the truth. */
+ * logged, never fatal — the reconcile poll re-derives the truth. Returns the
+ * triggers really consumed: one the gate recorded instead of executing (dry
+ * run) or a guard refused is still on GitHub, and is logged as such. */
 async function consumeTriggers(
   deps: DispatchDeps,
   pr: number,
@@ -803,14 +828,23 @@ async function consumeTriggers(
 ): Promise<string[]> {
   const consumed: string[] = [];
   const log = deps.log ?? (() => {});
-  /** One trigger: consumed, already gone (consumed too), or failed — logged. */
+  /** One trigger: consumed, already gone (consumed too), not executed, or
+   * failed — logged. */
   const consume = async (
     which: "label" | "team_request",
     what: string,
-    op: () => Promise<unknown>,
+    op: () => Promise<GateResult | undefined>,
   ): Promise<void> => {
     try {
-      await op();
+      const result = await op();
+      if (result?.executed === false) {
+        deps.store.logEvent("trigger_consume_not_executed", pr, {
+          which,
+          ...(result.dryRunFile ? { dry_run: true } : {}),
+          ...(result.blocked ? { blocked: result.blocked } : {}),
+        });
+        return;
+      }
       consumed.push(which);
     } catch (err) {
       if (alreadyConsumed(err)) {
@@ -839,6 +873,70 @@ async function consumeTriggers(
 }
 
 /**
+ * A withheld approval's retry round that ended without deciding anything —
+ * cancelled by a restart's orphan sweep, a self-requeue or an operator, or
+ * held FAILED_LOUD until the operator's `u` — still owes the approval:
+ * dispatch spent the mark at that round's handoff, and the round that would
+ * have re-decided it never did. The mark is re-recorded here from the spend's
+ * own record (`approval_retry_dispatched`), so the round that replaces it
+ * runs instead of being skipped as no new evidence. A round that decided (a
+ * verdict, a guard-2 no-op) or is still running owes nothing; neither does a
+ * spend at another head or one a later round has overtaken.
+ *
+ * Only a round that PROVABLY posted nothing is restored: a restored mark
+ * takes the replacement round past guard 2's daemon half, and the approval
+ * route has no guard 2 of its own, so a round whose APPROVE went out would
+ * post a second one. So the round has no posting receipt but a guard-2
+ * refusal (a `prepared` or `deferred` one is unknown, never "not posted"), its
+ * row records no posting, and the reviewed-head mark has not been stamped
+ * since it started.
+ */
+function restoreInterruptedApprovalRetry(
+  store: DispatchDeps["store"],
+  row: Pick<PrStateRow, "number" | "head_sha">,
+  postingReceiptDir: string,
+): ApprovalWithheldRow | undefined {
+  const spent = store.db
+    .prepare(
+      "SELECT payload FROM events WHERE pr = ? AND kind = 'approval_retry_dispatched' ORDER BY id DESC LIMIT 1",
+    )
+    .get(row.number) as { payload: string } | undefined;
+  if (!spent) return undefined;
+  let record: { head_sha?: unknown; round_id?: unknown; ci_state?: unknown; reason?: unknown };
+  try {
+    record = JSON.parse(spent.payload) as typeof record;
+  } catch {
+    return undefined;
+  }
+  if (record.head_sha !== row.head_sha || typeof record.round_id !== "number") return undefined;
+  const round = store.roundsFor(row.number).find((r) => r.id === record.round_id);
+  if (!round || round.status === "running" || round.status === "done") return undefined;
+  if (round.status === "cancelled" && round.cancel_cause === "no_new_evidence") return undefined;
+  if (store.hasLaterRound(row.number, round.round_no)) return undefined;
+  // A receipt file that cannot be read is unknown too.
+  if (existsSync(postingReceiptPath(postingReceiptDir, row.number, round.round_no))) {
+    const receipt = readPostingReceipt(postingReceiptDir, row.number, round.round_no);
+    if (receipt?.status !== "skipped") return undefined;
+  }
+  if (round.posted_event || round.gh_review_id !== null) return undefined;
+  const mark = store.reviewedHead(row.number);
+  if (mark && mark.reviewed_at >= round.started_at) return undefined;
+  store.recordApprovalWithheld(row.number, {
+    head_sha: row.head_sha,
+    ci_state: typeof record.ci_state === "string" ? record.ci_state : null,
+    reason: typeof record.reason === "string" ? record.reason : "red-ci",
+  });
+  store.logEvent("approval_retry_restored", row.number, {
+    head_sha: row.head_sha,
+    round_id: round.id,
+    round_no: round.round_no,
+    round_status: round.status,
+    cancel_cause: round.cancel_cause ?? null,
+  });
+  return store.approvalWithheld(row.number);
+}
+
+/**
  * Did a webhook move this PR while dispatch awaited GitHub? The skip paths
  * decide from the row they read, then await trigger consumption (two GitHub
  * round-trips) before settling the PR back onto its standing verdict. A push
@@ -846,8 +944,10 @@ async function consumeTriggers(
  * nothing records a successor for a row that is not `reviewing` — and
  * settling it would erase that newer review debt: the stale standing verdict
  * replayed, the new trigger cleared. So a moved row is left queued for the
- * next pump, which decides again from what it now says. Returns the reason,
- * or null when the row still says what the decision read.
+ * next pump, which decides again from what it now says. A row that left the
+ * queue (a close, the operator) is not settled either: it is no longer this
+ * dispatch's to decide. Returns the reason, or null when the row still says
+ * what the decision read.
  */
 function movedDuringConsume(
   store: DispatchDeps["store"],
@@ -855,6 +955,7 @@ function movedDuringConsume(
 ): string | null {
   const now = store.getPr(row.number);
   if (!now) return null;
+  if (now.state !== "queued") return "left_queue";
   if (now.head_sha !== row.head_sha) return "head_moved";
   // A person's ask on a queued row keeps its trigger time and upgrades only
   // the provenance — a re-request the system short-circuit must not settle.
@@ -1613,7 +1714,7 @@ export function optionalOrderOf(order: RoundOrder, optionalPlan: PassPlanEntry[]
   return {
     ...rest,
     pass_plan: optionalPlan,
-    lenses: [...new Set(optionalPlan.map((p) => p.lens))],
+    lenses: lensesOf(optionalPlan),
   };
 }
 
@@ -1638,7 +1739,7 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
   return {
     ...whole,
     pass_plan: sweepPlan,
-    lenses: [...new Set(sweepPlan.map((p) => p.lens))],
+    lenses: lensesOf(sweepPlan),
     ...(order.sweep_plan_unswept && order.sweep_plan_unswept.length > 0
       ? { sweep_unswept: order.sweep_plan_unswept }
       : {}),
@@ -1714,7 +1815,7 @@ export function buildRoundOrder(args: {
   };
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
-  const { pass_plan, addable_lenses, sweep_unswept } =
+  const { pass_plan, addable_lenses, sweep_unswept, behaviour_unread } =
     args.plan ??
     buildPassPlan(
       args.cfg,
@@ -1725,7 +1826,7 @@ export function buildRoundOrder(args: {
       args.styleGuide ?? [],
       args.ciLinters ?? [],
     );
-  const headSha = args.tree?.head_sha || args.row.head_sha;
+  const headSha = reviewedHeadOf(args.tree, args.row);
   // An addable lens the profile floors above the add rule's own
   // variant is named with its variant in the prompt.
   const addable_tiers = Object.fromEntries(
@@ -1745,11 +1846,12 @@ export function buildRoundOrder(args: {
     // Kept for compatibility with the rounds table / event log: always the
     // pass_plan's lens names in plan order (a lens with several rows — the
     // sweep — once).
-    lenses: [...new Set(pass_plan.map((p) => p.lens))],
+    lenses: lensesOf(pass_plan),
     pass_plan,
     addable_lenses,
     ...(Object.keys(addable_tiers).length > 0 ? { addable_tiers } : {}),
     ...(sweep_unswept.length > 0 ? { sweep_unswept } : {}),
+    ...(behaviour_unread && behaviour_unread.length > 0 ? { behaviour_unread } : {}),
     ...(args.dependencyNote ? { dependency_note: args.dependencyNote } : {}),
     ...(args.cfg.review.nits === "open" ? { nit_policy: "open" as const } : {}),
     ...(isDefaultPosting(args.cfg.posting) ? {} : { posting_policy: args.cfg.posting }),
@@ -1843,21 +1945,36 @@ export function buildRoundOrder(args: {
 
 /** What the round row records of a plan — the same projection on the
  * normal path and on the patch-write fallback, so the stored round and the
- * order always describe one plan. */
+ * order always describe one plan. A follow-up round's optional rows ride
+ * the addable record, so the executed-pass telemetry reads a run one as
+ * offered work rather than an unknown addition. */
 function recordedPlan(
   cfg: Config,
   plan: PassPlan,
+  optionalPlan: readonly PassPlanEntry[] = [],
 ): {
   plannedPasses: PassPlanEntry[];
   lenses: string[];
-  addablePasses: Array<{ lens: string; tier: PassTier }>;
+  addablePasses: RecordedAddablePass[];
   validateTier: PassTier | null;
 } {
   const plannedPasses = plan.pass_plan;
+  const optional = new Map<string, RecordedAddablePass>();
+  for (const p of optionalPlan)
+    if (!optional.has(p.lens))
+      optional.set(p.lens, {
+        lens: p.lens,
+        tier: p.tier,
+        optional: true,
+        raisable_to: p.raisable_to,
+      });
   return {
     plannedPasses,
-    lenses: [...new Set(plannedPasses.map((p) => p.lens))],
-    addablePasses: plan.addable_lenses.map((lens) => ({ lens, tier: addTierOf(cfg, lens) })),
+    lenses: lensesOf(plannedPasses),
+    addablePasses: [
+      ...plan.addable_lenses.map((lens) => ({ lens, tier: addTierOf(cfg, lens) })),
+      ...optional.values(),
+    ],
     // Null when the profile switched the validator off: the round had no
     // validator, and recording the configured tier would say it did.
     validateTier: plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null,
@@ -1959,7 +2076,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
     // The round's memory window (opened before the seed, below).
     let endMemoryWindow: () => void = () => {};
     // Spends the withheld-approval mark this round inherits (set below).
-    let spendWithholding: () => void = () => {};
+    let spendWithholding: (roundId: number) => void = () => {};
+    // Whether this dispatch painted the PR "in progress" (trigger consumption
+    // for a round, below): a failure before any round owns the review takes
+    // the label off again.
+    let markedInProgress = false;
     try {
       // Backfilled (imported) rounds are excluded: a historical review must
       // never flip a still-open PR's next live round to "re-review", whose
@@ -1991,7 +2112,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // person. Skipping here would leave that PR waiting for a verdict that is
       // never re-attempted, which is the stuck-PR failure the gate must not
       // create.
-      const withheld = store.approvalWithheld(row.number);
+      const withheld =
+        store.approvalWithheld(row.number) ??
+        restoreInterruptedApprovalRetry(
+          store,
+          row,
+          deps.postingReceiptDir ?? join(sandboxRoot(), "state", "posting-receipts"),
+        );
       const withheldHere = withheld?.head_sha === row.head_sha;
       // The round about to run re-decides the verdict from scratch, so the
       // withholding it inherits is spent — once the round has a durable owner
@@ -2002,7 +2129,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // withheld again (guards.ts guard 4, or the verdict's
       // `approval_withheld`).
       let withholdingSpent = false;
-      spendWithholding = () => {
+      spendWithholding = (roundId) => {
         if (!withheld || withholdingSpent) return;
         withholdingSpent = true;
         const current = store.approvalWithheld(row.number);
@@ -2012,8 +2139,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           current.created_at === withheld.created_at
         )
           store.clearApprovalWithheld(row.number);
+        // The spend's own record: what `restoreInterruptedApprovalRetry`
+        // re-records should this round end without deciding.
         if (withheldHere)
-          store.logEvent("approval_retry_dispatched", row.number, { head_sha: row.head_sha });
+          store.logEvent("approval_retry_dispatched", row.number, {
+            head_sha: row.head_sha,
+            round_id: roundId,
+            ci_state: withheld.ci_state,
+            reason: withheld.reason,
+          });
       };
       if (cfg.guards.skip_unchanged_head && !withheldHere && !hasNewEvidence(mark, row.head_sha)) {
         // Captured BEFORE the transition below clears them: current PR state
@@ -2032,12 +2166,19 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           mark: snapshotMark(mark!),
         };
         await consumeTriggers(deps, row.number, { markInProgress: false });
-        const movedSkip = movedDuringConsume(store, row);
+        // An author reply landing during the consumption is new evidence the
+        // skip did not see: the next pump runs the round it now owes.
+        const movedSkip =
+          movedDuringConsume(store, row) ??
+          (hasNewEvidence(store.reviewedHead(row.number), row.head_sha) ? "new_evidence" : null);
         if (movedSkip) {
           logSupersededSettlement(deps, row, "no-new-evidence skip", movedSkip);
           continue;
         }
         store.logEvent("round_skipped_no_new_evidence", row.number, decision);
+        // The head this skip settles is reviewed already: a successor owed at
+        // it is answered, and is not promoted again on every reconcile pass.
+        store.settleSuccessor(row.number, row.head_sha);
         if (standingInfo.kind === "unknown") {
           store.logAnomaly(
             "standing_review_unknown",
@@ -2109,6 +2250,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               );
             }
           }
+          // The trivial delta answers this head: a successor owed at it is
+          // settled, so reconcile does not promote it again on every pass.
+          store.settleSuccessor(row.number, row.head_sha);
           log(
             `dispatch: #${row.number} short-circuited (${sc.reason}) — system re-trigger, standing ${standing}`,
           );
@@ -2135,6 +2279,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
       }
 
+      markedInProgress = true;
       const consumed = await consumeTriggers(deps, row.number);
 
       // The branch this PR targets (base freshness) and its body
@@ -2169,7 +2314,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // The head this round reviews — the prepared tree's, else the row's —
       // decided once, so the round row, the prior findings, the pre-check,
       // the recovery identity and the order all name the same one.
-      const preparedHead = tree?.head_sha || row.head_sha;
+      const preparedHead = reviewedHeadOf(tree, row);
 
       const files = await deps.adapter.listPrFiles(row.number);
       const gate = eco.migrationGate(files);
@@ -2228,7 +2373,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           };
       }
       let passPolicy = followUp ? followUp.plan : fullPlan;
-      let { plannedPasses, lenses, addablePasses, validateTier } = recordedPlan(cfg, passPolicy);
+      let { plannedPasses, lenses, addablePasses, validateTier } = recordedPlan(
+        cfg,
+        passPolicy,
+        followUp?.optionalPlan,
+      );
 
       // The PR must still be queued when its round row is written — read in
       // the same turn as `startRound`. Preparation awaited GitHub and git, and
@@ -2395,12 +2544,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       try {
         const budgetMs = Math.max(0, deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
         const baseline = await withinBudget(
-          (deps.integrityFingerprint ?? fingerprintRoundIntegrity)({
-            clonePath: githubCloneDir(cfg.github),
-            worktreePath: resolve(sandboxRoot(), worktreeFor(row.number)),
-            piHome: join(sandboxRoot(), "pihome"),
-            sandboxRoot: sandboxRoot(),
-          }),
+          (deps.integrityFingerprint ?? fingerprintRoundIntegrity)(
+            roundIntegrityOpts(githubCloneDir(cfg.github), sandboxRoot(), worktreeFor(row.number)),
+          ),
           budgetMs,
         );
         if (baseline.kind === "done") {
@@ -2674,7 +2820,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             mergeBase: built.merge_base,
             files,
             ...(followUp ? { deltaPatch: renderDeltaPatch(followUp.delta.files) } : {}),
-            readFile: (p) => readWorktreeFileForPack(built.worktree, p),
+            readFile: (p) => readWorktreeFileForPack(resolve(sandboxRoot(), built.worktree), p),
             maxTokens: cfg.review.context_pack_max_tokens,
           });
           mkdirSync(passesDir, { recursive: true });
@@ -2810,9 +2956,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // recovery paths can tell "delivered" from "never arrived" instead of
       // inferring it. Stamped only AFTER dispatchRound resolved: the marker
       // asserts that a prompt bearing it was written, and a dispatch that
-      // threw wrote nothing.
+      // threw may not have written it (one that persisted its durable
+      // command first is retained by the catch below, unstamped).
       store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
-      spendWithholding();
+      spendWithholding(roundId);
       // The head this round reviews is the next follow-up round's
       // baseline — pin it against gc so a force-push cannot take it away.
       // Best-effort: an unpinned head is re-fetched, or the round runs in full.
@@ -2936,7 +3083,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           // The retained round owns the review now: the withholding it
           // inherited is spent, exactly as on a clean handoff.
           try {
-            spendWithholding();
+            spendWithholding(provisionalRoundId);
           } catch (spendError) {
             log(`dispatch: #${row.number} withheld-approval mark not spent`, spendError);
           }
@@ -2986,6 +3133,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         `dispatch: #${row.number} failed${retainedCommand ? " after durable handoff — round retained" : ""}`,
         err,
       );
+      // No round owns the review: the PR stays queued for the next pump,
+      // which paints it again when its round really starts.
+      if (!retainedCommand && markedInProgress) {
+        try {
+          await deps.adapter.removeLabel(row.number, cfg.github.in_progress_label);
+        } catch (labelError) {
+          log(`dispatch: #${row.number} in-progress label not removed`, labelError);
+        }
+      }
       try {
         store.logEvent("dispatch_failed", row.number, {
           round_id: provisionalRoundId ?? null,

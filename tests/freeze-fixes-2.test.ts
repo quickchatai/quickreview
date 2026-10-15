@@ -33,7 +33,9 @@ describe("exhaust the site", () => {
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
-import { buildPassPlan } from "../src/dispatch.js";
+import { buildPassPlan, buildRoundOrder } from "../src/dispatch.js";
+import type { PrStateRow } from "../src/state.js";
+import { renderPassPlan, renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import { behaviourDeltaGroups, BEHAVIOUR_DELTA_PASS } from "../src/heuristics.js";
 import type { PrFileEntry } from "../src/github.js";
 
@@ -96,6 +98,36 @@ describe("pass-behaviour-delta", () => {
     const files = [f("src/a.py", 10, 4), f("src/big.ts", 300, 300)];
     expect(buildPassPlan(c, files).behaviour_unread).toEqual(["src/big.ts"]);
     expect("behaviour_unread" in buildPassPlan(c, [f("src/a.py", 10, 4)])).toBe(false);
+  });
+
+  // MUTATION: drop `behaviour_unread` from buildRoundOrder (or its line from
+  // renderPassPlan) — the session reads the capped lens as full coverage.
+  it("the round order and its rendered plan name the files the group cap left uncompared", () => {
+    const c = cfg();
+    c.review = { ...c.review, behaviour_delta_max_groups: 1, sweep_group_lines: 500 };
+    const files = [f("src/a.py", 10, 4), f("src/big.ts", 300, 300)];
+    const order = buildRoundOrder({
+      cfg: c,
+      row: { number: 7, title: "t", head_sha: "abc" } as unknown as PrStateRow,
+      files,
+      roundId: 1,
+      roundNo: 1,
+      roundType: "first",
+      worktree: "/wt",
+      settledDigest: "",
+      issuedAt: "2026-10-09T00:00:00Z",
+    });
+    expect(order.behaviour_unread).toEqual(["src/big.ts"]);
+    expect(
+      renderPassPlan(order.pass_plan, [], { behaviourUnread: order.behaviour_unread }),
+    ).toMatch(
+      /Base behaviour not compared \(over the behaviour-delta group cap\): `src\/big\.ts`\./,
+    );
+    expect(renderPassPlan(order.pass_plan)).not.toMatch(/Base behaviour not compared/);
+    const tpl = readFileSync(resolve("prompts", roundTemplateFile("first")), "utf8");
+    expect(renderRoundPrompt(tpl, order)).toContain(
+      "Base behaviour not compared (over the behaviour-delta group cap)",
+    );
   });
 
   it("its brief enumerates every modifying hunk, covers removed guards, defaults to a question, names no benchmark", () => {

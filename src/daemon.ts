@@ -870,6 +870,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         ...(deps.prOwnedDelta ? { prOwnedDelta: deps.prOwnedDelta } : {}),
         ...(deps.pinReviewedHead ? { pinReviewedHead: deps.pinReviewedHead } : {}),
         findingsDir: join(root, "state", "findings"),
+        postingReceiptDir: join(root, "state", "posting-receipts"),
         listBaseMigrations: deps.listBaseMigrations,
         ...(deps.dependencySources ? { dependencySources: deps.dependencySources } : {}),
         directiveAuthor: deps.directiveAuthor,

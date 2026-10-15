@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, sandboxRoot, type Config } from "../src/config.js";
@@ -284,6 +285,49 @@ describe("the round's context pack", () => {
         expect(existsSync(packPath)).toBe(false);
       } finally {
         rmSync(passesDir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("the context pack reads the worktree the round reviews", () => {
+  // MUTATION: hand readWorktreeFileForPack the worktree as configured
+  // (relative) — read against the process's cwd, every file is missing and
+  // the pack carries none of their text.
+  it(
+    "resolves a relative worktree against the sandbox root, not the process's cwd",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg: Config = {
+        ...baseCfg,
+        review: { ...baseCfg.review, task_files: true, context_pack: "pack-first" },
+        pi: { ...baseCfg.pi, subagent_cache_group: 1 },
+      };
+      const rel = "state/test-wt-pr-9302";
+      const tree = join(sandboxRoot(), rel);
+      const passesDir = join(sandboxRoot(), "state", "pr-9302-round-1-passes");
+      const elsewhere = mkdtempSync(join(tmpdir(), "qcr-cwd-"));
+      const cwd = process.cwd();
+      try {
+        mkdirSync(tree, { recursive: true });
+        writeFileSync(join(tree, "a.py"), "PACK_MARKER_9302 = 1\n");
+        queue(9302, "2026-08-13T09:00:00Z");
+        adapter.files.set(9302, [file("a.py", 1, 0)]);
+        const { hooks, orders } = recordingHooks();
+        process.chdir(elsewhere);
+
+        await dispatchOnce({ cfg, store, adapter, hooks, worktreeFor: () => rel });
+
+        process.chdir(cwd);
+        expect(orders).toHaveLength(1);
+        const pack = orders[0]!.order.context_pack_file;
+        expect(pack).toBeDefined();
+        expect(readFileSync(pack!, "utf8")).toContain("PACK_MARKER_9302");
+      } finally {
+        process.chdir(cwd);
+        rmSync(tree, { recursive: true, force: true });
+        rmSync(passesDir, { recursive: true, force: true });
+        rmSync(elsewhere, { recursive: true, force: true });
       }
     },
   );
@@ -1104,6 +1148,57 @@ describe("dispatchOnce", () => {
     },
   );
 
+  // MUTATION: push every trigger whose call resolved, whatever the gate
+  // answered — round_dispatched claims a dry run consumed both triggers.
+  it(
+    "reports as consumed only the triggers the gate really removed",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(24, "2026-08-13T09:00:00Z");
+      queue(25, "2026-08-13T09:00:01Z");
+      class Live extends FakeAdapter {
+        override async removeLabel(n: number, label: string): Promise<GateResult> {
+          await super.removeLabel(n, label);
+          return { executed: true };
+        }
+        override async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+          await super.deleteTeamReviewRequest(n);
+          return { executed: true };
+        }
+      }
+      const { hooks } = recordingHooks();
+      // The fake's dry-run gate records every mutation instead of executing it.
+      await dispatchOnce({
+        cfg: { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 1 } },
+        store,
+        adapter,
+        hooks,
+      });
+      await dispatchOnce({ cfg: baseCfg, store, adapter: new Live(), hooks });
+
+      const consumed = (
+        store.db
+          .prepare("SELECT pr, payload FROM events WHERE kind = 'round_dispatched' ORDER BY pr")
+          .all() as Array<{ pr: number; payload: string }>
+      ).map((r) => [r.pr, JSON.parse(r.payload).triggers_consumed]);
+      expect(consumed).toEqual([
+        [24, []],
+        [25, ["label", "team_request"]],
+      ]);
+      const notExecuted = (
+        store.db
+          .prepare(
+            "SELECT payload FROM events WHERE kind = 'trigger_consume_not_executed' AND pr = 24",
+          )
+          .all() as Array<{ payload: string }>
+      ).map((r) => JSON.parse(r.payload));
+      expect(notExecuted).toEqual([
+        { which: "label", dry_run: true },
+        { which: "team_request", dry_run: true },
+      ]);
+    },
+  );
+
   it(
     "never dispatches a PR that already has a running round (one worktree, one round)",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -1580,6 +1675,61 @@ describe("dispatchOnce", () => {
         .prepare("SELECT payload FROM events WHERE kind='dispatch_failed' AND pr=63")
         .get() as { payload: string };
       expect(JSON.parse(failure.payload)).toMatchObject({ retained_command: true });
+    },
+  );
+
+  // MUTATION: drop the label removal from dispatch's catch — the failed PR
+  // keeps advertising a review in progress that no round owns.
+  it(
+    "a preparation that fails before any round owns the review takes its in-progress label off; a retained round keeps it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(64, "2026-08-13T09:00:00Z");
+      const failing = new (class extends FakeAdapter {
+        override async listPrFiles(): Promise<PrFileEntry[]> {
+          throw new Error("files API 502");
+        }
+      })();
+      expect(
+        await dispatchOnce({
+          cfg: baseCfg,
+          store,
+          adapter: failing,
+          hooks: recordingHooks().hooks,
+        }),
+      ).toEqual([]);
+      const labels = (a: FakeAdapter, pr: number): string[] =>
+        a.calls
+          .filter((c) => c.pr === pr && (c.fn === "addLabel" || c.fn === "removeLabel"))
+          .map((c) => `${c.fn}:${c.arg}`);
+      expect(labels(failing, 64)).toEqual([
+        `removeLabel:${baseCfg.github.trigger_label}`,
+        `addLabel:${baseCfg.github.in_progress_label}`,
+        `removeLabel:${baseCfg.github.in_progress_label}`,
+      ]);
+
+      store.setPrState(64, "tracked");
+      queue(65, "2026-08-13T09:00:00Z");
+      const hooks = recordingHooks().hooks;
+      hooks.dispatchRound = async (order) => {
+        store.createSessionCommand({
+          id: "cmd-retained-65",
+          pr: order.pr,
+          session: `pr-${order.pr}`,
+          kind: "round",
+          round_no: order.round_no,
+          payload_sha256: "a".repeat(64),
+          payload_path: "/state/cmd-retained-65.md",
+          inject_path: "/inject/pr-65/cmd-retained-65.md",
+          next_check_at: "2026-08-13T09:02:00Z",
+        });
+        throw new Error("post-handoff bookkeeping failed");
+      };
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(labels(adapter, 65)).toEqual([
+        `removeLabel:${baseCfg.github.trigger_label}`,
+        `addLabel:${baseCfg.github.in_progress_label}`,
+      ]);
     },
   );
 
@@ -2692,6 +2842,126 @@ describe("a person's re-request that only upgrades the provenance during consump
       await dispatchOnce({ cfg, store, adapter: racing, hooks });
       expect(orders).toHaveLength(1);
       expect(orders[0]!.order.head_sha).toBe("h1");
+    },
+  );
+});
+
+describe("a settlement without a round answers its head, and only while the row is still its to decide", () => {
+  const OLD = "aaa1111111111111111111111111111111111111";
+  const NEW = "bbb2222222222222222222222222222222222222";
+  const owe = (pr: number, head: string): void => {
+    const id = store.roundsFor(pr)[0]!.id;
+    store.recordSuccessor({
+      pr,
+      predecessor_round_id: id,
+      head_sha: head,
+      provenance: "system",
+      reason: "test",
+    });
+  };
+  const events = (kind: string, pr: number): Array<Record<string, unknown>> =>
+    (
+      store.db
+        .prepare("SELECT payload FROM events WHERE pr = ? AND kind = ?")
+        .all(pr, kind) as Array<{ payload: string }>
+    ).map((r) => JSON.parse(r.payload) as Record<string, unknown>);
+
+  // MUTATION: drop settleSuccessor from the short-circuit — the obligation
+  // stands and reconcile promotes the same head again on its next pass.
+  it(
+    "the system short-circuit settles the successor owed at the head it answers",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(140, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      const id = store.startRound(140, "first", ["pass-baseline"], 60);
+      store.finishRound(id, "APPROVE", null);
+      store.recordReviewedHead(140, { head_sha: OLD, verdict: "APPROVE", round_no: 1 });
+      owe(140, NEW);
+      adapter.files.set(140, [file("mine.ts")]);
+      adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4)]);
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+      expect(orders).toEqual([]);
+      expect(store.getPr(140)!.state).toBe("tracked");
+      expect(store.successorFor(140)).toBeUndefined();
+      expect(store.promoteSuccessor(140)).toBe(false);
+    },
+  );
+
+  // MUTATION: drop settleSuccessor from the no-new-evidence skip.
+  it(
+    "the no-new-evidence skip settles the successor owed at its head",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(141, "2026-08-19T10:00:00Z", { head: "h1" });
+      const id = store.startRound(141, "first", ["pass-baseline"], 60);
+      store.finishRound(id, "REQUEST_CHANGES", null);
+      store.recordReviewedHead(141, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
+      owe(141, "h1");
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+      expect(orders).toEqual([]);
+      expect(store.getPr(141)!.state).toBe("awaiting_author");
+      expect(store.successorFor(141)).toBeUndefined();
+    },
+  );
+
+  // MUTATION: drop the queued-state check from movedDuringConsume — the skip
+  // records a decision for a PR that closed meanwhile.
+  it(
+    "a PR closed during the consumption is not settled by the skip",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(142, "2026-08-19T10:00:00Z", { head: "h1" });
+      store.recordReviewedHead(142, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
+      class Closing extends FakeAdapter {
+        override async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+          store.setPrState(142, "closed");
+          return super.deleteTeamReviewRequest(n);
+        }
+      }
+      const { hooks } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter: new Closing(), hooks });
+
+      expect(store.getPr(142)!.state).toBe("closed");
+      expect(events("round_skipped_no_new_evidence", 142)).toEqual([]);
+      expect(events("dispatch_settlement_superseded", 142)).toEqual([
+        expect.objectContaining({ reason: "left_queue" }),
+      ]);
+    },
+  );
+
+  // MUTATION: drop the evidence re-read after the skip's consumption — the
+  // author's reply is settled away and the PR returns to awaiting_author.
+  it(
+    "an author reply during the skip's consumption leaves the PR queued for the round it now owes",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(143, "2026-08-19T10:00:00Z", { head: "h1", provenance: "human" });
+      const id = store.startRound(143, "first", ["pass-baseline"], 60);
+      store.finishRound(id, "REQUEST_CHANGES", null);
+      store.recordReviewedHead(143, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
+      class Replying extends FakeAdapter {
+        override async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+          store.noteAuthorReply(143, "2099-01-01T00:00:00.000Z");
+          return super.deleteTeamReviewRequest(n);
+        }
+      }
+      const racing = new Replying();
+      racing.files.set(143, [file("a.py")]);
+      const { hooks, orders } = recordingHooks();
+
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter: racing, hooks })).toEqual([]);
+      expect(store.getPr(143)!.state).toBe("queued");
+      expect(events("round_skipped_no_new_evidence", 143)).toEqual([]);
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter: racing, hooks });
+      expect(orders).toHaveLength(1);
     },
   );
 });
