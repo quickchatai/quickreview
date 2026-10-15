@@ -154,9 +154,9 @@ export function buildTuiDriver(
     },
     selectPr: (pr) => {
       prep();
-      app.tab = "board";
-      // public App API — selects + refreshes detail
+      // public App API — selects + refreshes detail; a refusal leaves the tab
       if (!app.selectPr(pr)) throw new Error(`#${pr} is not on the board`);
+      app.tab = "board";
       app.repaint();
     },
     metricsWindow: (w) => {

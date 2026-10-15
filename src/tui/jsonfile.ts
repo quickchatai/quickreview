@@ -2,8 +2,7 @@
 // three answers kept apart, written whole. Shared by the stores whose history
 // a merge-then-save could otherwise destroy (the survey candidates, the change
 // register); each keeps its own schema check and its own recovery policy.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readTextIfPresent, writeAtomic } from "../channelfs.js";
 
 export function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -21,14 +20,14 @@ export type JsonFileRead =
   | { state: "unreadable"; reason: string };
 
 export function readJsonFile(path: string): JsonFileRead {
-  let raw: string;
+  let raw: string | null;
   try {
-    raw = readFileSync(path, "utf8");
+    raw = readTextIfPresent(path);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException | undefined)?.code;
-    if (code === "ENOENT") return { state: "absent" };
     return { state: "unreadable", reason: code ?? errText(err) };
   }
+  if (raw === null) return { state: "absent" };
   try {
     return { state: "parsed", value: JSON.parse(raw) as unknown };
   } catch (err) {
@@ -39,8 +38,5 @@ export function readJsonFile(path: string): JsonFileRead {
 /** `value` as pretty JSON, written beside `path` and renamed over it, so a
  * reader never sees half a file. */
 export function writeJsonFile(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  renameSync(tmp, path);
+  writeAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
 }

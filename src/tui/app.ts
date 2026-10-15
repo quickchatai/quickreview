@@ -314,8 +314,11 @@ export class App {
           }
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         this.paneSendDropped = true;
+        this.notice(
+          `✖ pr-${pr}: keys not delivered (${err instanceof Error ? err.message : String(err)}) — input after them dropped`,
+        );
       })
       .finally(() => {
         this.paneSendsQueued--;
@@ -1326,7 +1329,6 @@ export class App {
     this.notice("companion unavailable (started with --no-companion?)");
   }
 
-  /** Give the column the keyboard. */
   /** Give the companion column the keyboard — taking it from the PR pane
    * first: one keyboard owner, whoever asked (a retry that heals can land
    * here after the operator focused a pane). */
