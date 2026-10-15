@@ -840,6 +840,18 @@ describe("a skeptic that opened none of its candidates' files judged nothing", (
 });
 
 describe("reading the lens's answer", () => {
+  it("a nit's `request:` is its fix when no `fix:` is written; a written `fix:` wins", () => {
+    const item = (extra: string): string =>
+      `FINDINGS pass-scan SCAN x @y\n- path: src/a.py\n  line: 7\n  severity: nit\n  claim: c\n${extra}\nSUGGEST NONE\n`;
+    expect(
+      parseScanAnswer(item("  request: rename it to total"), { root: "/t" }).candidates[0]!.fix,
+    ).toBe("rename it to total");
+    expect(
+      parseScanAnswer(item("  request: rename it\n  fix: drop it"), { root: "/t" }).candidates[0]!
+        .fix,
+    ).toBe("drop it");
+  });
+
   it("strips an absolute tree prefix, reads ranges, and keeps NONE apart from junk", () => {
     const a = parseScanAnswer(
       "FINDINGS pass-scan SCAN x @y\n- path: /t/root/src/a.py\n  line: 7\n  kind: data loss\n  severity: p2\n  claim: c\n\nSUGGEST NONE\n",

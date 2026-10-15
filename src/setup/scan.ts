@@ -716,7 +716,9 @@ function readFindingItems(
       capped_from: severity === said ? null : said,
       claim,
       evidence: opt("evidence"),
-      fix: opt("fix"),
+      // A nit's remedy rides `request:` (the findings contract); it is the
+      // candidate's fix when no `fix:` is written.
+      fix: opt("fix") ?? opt("request"),
       detail: opt("detail"),
     };
     read.push({ candidate, fields: f });
