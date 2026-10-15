@@ -9,6 +9,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
 } from "node:fs";
@@ -69,7 +70,17 @@ export function hunksTouchLine(
   });
 }
 
+/** A PR's worktree, relative to the sandbox root: the one spelling of the
+ * `wt/pr-<n>` layout every reader of it uses. */
+export function prWorktreeRel(pr: number): string {
+  return `wt/pr-${pr}`;
+}
+
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
+
+/** A file diff git renders without text hunks although the content changed:
+ * a binary file, or a file deleted while empty. */
+const WHOLE_FILE_CHANGE = /^(Binary files .* differ|deleted file mode )/m;
 
 /** One file's zero-context hunks, keyed by the file's OLD path (the side a
  * blame of the parent reads) as the repository spells it — git's quoting of a
@@ -693,6 +704,16 @@ export function ensureLocallyIgnored(root: string, dirName: string): boolean {
   }
 }
 
+/** Do two paths name the same directory? Both resolved through symlinks; one
+ * that does not resolve names nothing. */
+function samePath(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
+}
+
 export class WorktreeManager {
   readonly root: string;
   readonly basePath: string;
@@ -713,7 +734,7 @@ export class WorktreeManager {
   }
 
   worktreePath(pr: number): string {
-    return join(this.wtRoot, `pr-${pr}`);
+    return join(this.root, prWorktreeRel(pr));
   }
 
   /** Clone the base repo if it is not there yet. Idempotent. */
@@ -785,13 +806,35 @@ export class WorktreeManager {
     await this.ensureBaseClone();
     mkdirSync(this.wtRoot, { recursive: true });
     const path = this.worktreePath(pr);
-    if (existsSync(path)) {
+    if (existsSync(path) && (await this.isOwnWorktree(path))) {
       await this.git(["reset", "--hard", sha], path);
       await this.git(["clean", "-fdx"], path);
+    } else if (existsSync(path)) {
+      // Not this clone's registered worktree — an interrupted `worktree add`,
+      // a lost gitfile, a stray directory. Git run inside it would discover
+      // whatever repository encloses the sandbox, so it is rebuilt instead.
+      // `--force` twice re-adds a path still registered (even locked, as an
+      // interrupted add leaves it) whose checkout is gone.
+      rmSync(path, { recursive: true, force: true });
+      await this.git(["worktree", "add", "--force", "--force", "--detach", path, sha]);
     } else {
       await this.git(["worktree", "add", "--detach", path, sha]);
     }
     return path;
+  }
+
+  /** Is `path` a linked worktree of the base clone — its own top level, its
+   * common git dir the clone's? Anything else, or a git that cannot say, is
+   * not. */
+  private async isOwnWorktree(path: string): Promise<boolean> {
+    if (!existsSync(join(path, ".git"))) return false;
+    const res = await this.run("git", ["rev-parse", "--show-toplevel", "--git-common-dir"], {
+      cwd: path,
+    });
+    if (res.code !== 0) return false;
+    const [top, common] = res.stdout.trim().split("\n");
+    if (!top || !common) return false;
+    return samePath(top, path) && samePath(resolve(path, common), join(this.basePath, ".git"));
   }
 
   /**
@@ -839,6 +882,9 @@ export class WorktreeManager {
   ): Promise<{ files: string[]; degraded: boolean; reason?: string }> {
     if (!SHA_RE.test(from) || !SHA_RE.test(to))
       return { files: [], degraded: true, reason: "not a commit sha" };
+    // Every degraded answer keeps the files already verified: a later merge
+    // that cannot be read makes the set incomplete, not wrong.
+    const files = new Set<string>();
     try {
       // A recheck classifies a push minutes after it lands — usually before
       // any round has fetched the new objects into the base clone, so without
@@ -850,7 +896,6 @@ export class WorktreeManager {
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean);
-      const files = new Set<string>();
       const unverified: string[] = [];
       for (const m of merges) {
         const parents = (await this.git(["rev-list", "--parents", "-n", "1", m])).stdout
@@ -889,7 +934,7 @@ export class WorktreeManager {
         : { files: [...files], degraded: false };
     } catch (err) {
       return {
-        files: [],
+        files: [...files],
         degraded: true,
         reason: (err instanceof Error ? err.message : String(err)).slice(0, 300),
       };
@@ -969,8 +1014,9 @@ export class WorktreeManager {
     return null;
   }
 
-  /** Memo for `anchorTouched`: a diff between two commits never changes. */
-  private readonly hunkMemo = new Map<string, DiffHunk[]>();
+  /** Memo for `anchorTouched`: a diff between two commits never changes.
+   * `"whole"` is a change git shows without text hunks. */
+  private readonly hunkMemo = new Map<string, DiffHunk[] | "whole">();
   /** Commits `anchorTouched` has seen in the clone (only a present one is
    * remembered: a missing one may be fetched by the next round). */
   private readonly presentCommits = new Set<string>();
@@ -987,8 +1033,9 @@ export class WorktreeManager {
    * a guess — and so does a `path` that `from` does not hold (a left-side
    * anchor on a file the PR deletes, an imprecise body-only path): an empty
    * diff of a file that is not there proves nothing about an anchor in it.
-   * A file `to` deletes is touched. Answers are memoised — commits are
-   * immutable.
+   * A file `to` deletes is touched, and so is one changed with no text hunks
+   * to read (a binary edit, an empty file deleted): the whole file changed.
+   * Answers are memoised — commits are immutable.
    */
   async anchorTouched(
     path: string,
@@ -1020,7 +1067,8 @@ export class WorktreeManager {
             "--",
             path,
           ]);
-          hunks = parseDiffHunks(res.stdout);
+          const parsed = parseDiffHunks(res.stdout);
+          hunks = parsed.length === 0 && WHOLE_FILE_CHANGE.test(res.stdout) ? "whole" : parsed;
         }
       } catch {
         return null;
@@ -1028,7 +1076,7 @@ export class WorktreeManager {
       if (this.hunkMemo.size >= 5000) this.hunkMemo.clear();
       this.hunkMemo.set(key, hunks);
     }
-    return hunksTouchLine(hunks, line, window);
+    return hunks === "whole" || hunksTouchLine(hunks, line, window);
   }
 
   /**

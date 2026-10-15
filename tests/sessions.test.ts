@@ -578,6 +578,22 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
     expect(newSession.join(" ")).not.toContain("ov-reviewer-key");
   });
 
+  it("acts as the configured [openviking] user, on argv and in ovcli.conf alike", async () => {
+    const base = cfg();
+    const config = {
+      ...base,
+      openviking: { ...base.openviking, user: "alice" },
+    } as unknown as Config;
+    writeFileSync(join(secrets, "openviking_reviewer_key"), "ov-reviewer-key\n");
+    const m = manager(undefined, undefined, config);
+    await m.ensurePrSession(42, "T", "wt/pr-42");
+
+    const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
+    expect(newSession).toContain("OPENVIKING_USER=alice");
+    expect(newSession).not.toContain("OPENVIKING_USER=reviewer");
+    expect(JSON.parse(readFileSync(m.ovcliConfPath(), "utf8")).user).toBe("alice");
+  });
+
   it("the overseer gets the identity but owns no raw tier", async () => {
     const m = manager();
     await m.ensureOverseerSession();
@@ -2431,5 +2447,81 @@ describe("overseer rotation", () => {
 
   it("reports not-due when no birth record exists (adopted session)", () => {
     expect(manager().overseerRotationDue()).toBe(false);
+  });
+});
+
+describe("killSession — the fence needs tmux's affirmative answer", () => {
+  /** A manager whose tmux answers `has-session` / `list-sessions` through
+   * `probe` (undefined = the shared fake), everything else through the fake. */
+  function fencedManager(
+    probe: (args: string[]) => { code: number; stdout: string; stderr: string } | undefined,
+  ): PiSessionManager {
+    const exec: ExecFn = async (cmd, args, opts) => {
+      if (cmd === "tmux") {
+        const answer = probe(args);
+        if (answer) {
+          calls.push({ cmd, args, env: opts?.env });
+          return answer;
+        }
+      }
+      return fakeExec(cmd, args, opts);
+    };
+    return new PiSessionManager({
+      cfg: cfg(),
+      root,
+      tmux: new Tmux({ exec }),
+      worktrees: new WorktreeManager({
+        root,
+        repo: "o/n",
+        cloneDir: "example-app",
+        cloneUrl: "/dev/null",
+        run: fakeExec,
+      }),
+      piHome: join(root, "pihome"),
+      ovSessions,
+    });
+  }
+
+  const denied = {
+    code: 1,
+    stdout: "",
+    stderr: "error connecting to /tmp/tmux-0/default (Permission denied)\n",
+  };
+
+  it("a tmux socket it may not open is never read as the session gone: the kill throws", async () => {
+    liveSessions.add("pr-42");
+    const m = fencedManager((args) =>
+      args[0] === "has-session" || args[0] === "list-sessions" ? denied : undefined,
+    );
+    await expect(m.killSession(42)).rejects.toThrow(/pr-42 not proven gone after kill/);
+    expect(tmuxArgs()).toContainEqual(["kill-session", "-t", "=pr-42"]);
+  });
+
+  it("a has-session that fails while tmux still lists the session kills it rather than skipping", async () => {
+    liveSessions.add("pr-42");
+    const m = fencedManager((args) =>
+      args[0] === "has-session"
+        ? {
+            code: 1,
+            stdout: "",
+            stderr: "error connecting to /tmp/tmux-0/default (Resource temporarily unavailable)\n",
+          }
+        : undefined,
+    );
+    await m.killSession(42);
+    expect(tmuxArgs()).toContainEqual(["kill-session", "-t", "=pr-42"]);
+    expect(liveSessions.has("pr-42")).toBe(false);
+  });
+
+  it("a session tmux answers is absent needs no kill", async () => {
+    const m = manager();
+    await m.killSession(42);
+    expect(tmuxArgs().some((a) => a[0] === "kill-session")).toBe(false);
+  });
+
+  it("a session that outlives the kill throws", async () => {
+    liveSessions.add("pr-42");
+    keepKilledSession = true;
+    await expect(manager().killSession(42)).rejects.toThrow(/pr-42 not proven gone after kill/);
   });
 });

@@ -179,9 +179,11 @@ cannot stall the daemon (failures land in `report.errors`):
 `reconcileOrphanedRounds()` runs at startup: a round whose tmux session did not
 survive a restart is cancelled with the quiet `orphan_sweep` cause and the PR is
 requeued (or its recorded successor head promoted). A round whose review
-posting the outbox still owes (a pending `posting-receipts/*.outbox.json` job)
-is kept running instead (`orphaned_round_posting_owed`): the outbox delivers it
-without a session, and it settles from its receipt.
+posting the outbox still owes (a pending `posting-receipts/*.outbox.json` job),
+or whose review is already posted (a `confirmed` receipt for its posting key)
+with no verdict applied, is kept running instead (`orphaned_round_posting_owed`):
+the outbox delivers it without a session, and it settles from its receipt at
+its stage limit — never a second round for a review already on GitHub.
 
 ## 4. Dispatch: FIFO, and the round order
 

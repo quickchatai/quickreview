@@ -280,6 +280,24 @@ describe("daemon wiring", () => {
     }
   });
 
+  it("stop(reason) hands its reason to onStop — the Slack goodbye names the signal", async () => {
+    const reasons: Array<string | undefined> = [];
+    const daemon = createDaemon({
+      cfg: { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
+      root,
+      store,
+      adapter: fakeAdapter([], join(root, "state", "dryrun")),
+      listen: false,
+      log: () => {},
+      onStop: (reason) => {
+        reasons.push(reason);
+      },
+    });
+    await daemon.stop("SIGTERM");
+    await daemon.stop("again");
+    expect(reasons).toEqual(["SIGTERM"]);
+  });
+
   // A throw in onStart (Slack auth.test refusing, a malformed profile pack,
   // tmux preflight) fails start(): if it were swallowed, reconcile and the
   // pump would run on while the command watchers and the EOD timer — built

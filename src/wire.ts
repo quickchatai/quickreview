@@ -129,6 +129,7 @@ import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
 import type { RoundRow, StateStore } from "./state.js";
 import { deliverablePosting } from "./posting-outbox.js";
+import { readPostingReceipt } from "./posting-receipt.js";
 import type { RecheckOrder } from "./recheck.js";
 import {
   RECHECK_TEMPLATE_FILE,
@@ -175,11 +176,8 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   const memoryRequests: NonNullable<ProductionParts["memoryRequests"]> = { sink: null };
   const ovSessions = openVikingSessionLifecycle(
     new OpenVikingClient({
-      baseUrl: openVikingBaseUrl(cfg.openviking),
+      ...ovConnection(cfg.openviking),
       apiKey: keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET)),
-      user: cfg.openviking.user,
-      account: cfg.openviking.account,
-      timeoutMs: cfg.openviking.request_timeout_ms,
       // Counted with the daemon's other requests.
       onRequest: (r) => memoryRequests.sink?.(r),
     }),
@@ -460,11 +458,20 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
  * The local Slack belt both daemon-side watchers install (`commands/` and
  * `commands/operator/`): with Slack live, a file is refused while the turn
  * being served was caused by a non-owner Slack message — read through
- * `latestAny()`, which only a daemon wake's `local` origin supersedes. Slack
- * off ⇒ no tier gate at all.
+ * `latestAny()`, which only a daemon wake's `local` origin supersedes, and
+ * `slack_reply` is executable there. Slack off ⇒ no tier gate at all and the
+ * handlers as given.
  */
-function localSlackBelt(slack: SlackRuntime | null): Pick<CommandWatcherOptions, "tier"> {
-  return slack ? { tier: { dir: "local", currentOrigin: () => slack.origins.latestAny() } } : {};
+function localSlackBelt(
+  slack: SlackRuntime | null,
+  deps: CommandDeps,
+): Pick<CommandWatcherOptions, "tier" | "deps"> {
+  return slack
+    ? {
+        tier: { dir: "local", currentOrigin: () => slack.origins.latestAny() },
+        deps: { ...deps, slackReply: slack.slackReply },
+      }
+    : { deps };
 }
 
 /**
@@ -490,8 +497,7 @@ export function buildLocalCommandWatcher(opts: {
   const { slack } = opts;
   return new CommandWatcher({
     dir: join(opts.root, "commands"),
-    ...localSlackBelt(slack),
-    deps: slack ? { ...opts.deps, slackReply: slack.slackReply } : opts.deps,
+    ...localSlackBelt(slack, opts.deps),
     store: opts.store,
     log: opts.log,
   });
@@ -500,8 +506,9 @@ export function buildLocalCommandWatcher(opts: {
 /**
  * The operator's command watcher: `commands/operator/`, the directory
  * `qcr drain`, the board's `u` and the deploy tab write as root.
- * Same vocabulary, same handlers; the difference is the issuer the watcher
- * stamps, and only the real process seal decides it. The same local Slack
+ * Same vocabulary, same handlers (`slack_reply` included while Slack is
+ * live); the difference is the issuer the watcher stamps, and only the real
+ * process seal decides it. The same local Slack
  * belt as `commands/` is installed, and binds only files the seal does not
  * vouch for: the overseer cannot write into a sealed directory, but the
  * parent is the daemon's, so it can make or swap in an unsealed one — and a
@@ -520,8 +527,7 @@ export function buildOperatorCommandWatcher(opts: {
   return new CommandWatcher({
     dir: join(opts.root, "commands", "operator"),
     operator: processOperatorSeal(),
-    ...localSlackBelt(slack),
-    deps: opts.deps,
+    ...localSlackBelt(slack, opts.deps),
     store: opts.store,
     log: opts.log,
   });
@@ -697,23 +703,53 @@ export function roundMemorySeed(
   return enabled ? { memory: seed } : {};
 }
 
+/** Where and as whom every daemon-side OpenViking client connects — the
+ * credential, the observers and the client instance stay each caller's own. */
+function ovConnection(ov: Config["openviking"]): {
+  baseUrl: string;
+  user: string;
+  account: string;
+  timeoutMs: number;
+} {
+  return {
+    baseUrl: openVikingBaseUrl(ov),
+    user: ov.user,
+    account: ov.account,
+    timeoutMs: ov.request_timeout_ms,
+  };
+}
+
 /**
- * The startup orphan sweep's posting debt: a round whose outbox job is still
- * pending owes its review, and the outbox delivers it with no session. Only a
- * job the outbox will actually process counts — live mode, this repo
- * (`outboxProcesses`): a pending dry-run snapshot left over a flip to live is
- * never delivered, so keeping its round would hold it until the operator's
- * `u`. A dry run never owes one.
+ * The startup orphan sweep's posting debt. Two rounds are no phantom:
+ *   - one whose outbox job is still pending owes its review, and the outbox
+ *     delivers it with no session. Only a job the outbox will actually process
+ *     counts — live mode, this repo (`outboxProcesses`): a pending dry-run
+ *     snapshot left over a flip to live is never delivered, so keeping its
+ *     round would hold it until the operator's `u`. A dry run never owes one;
+ *   - one whose review is already on GitHub (a `confirmed` receipt for exactly
+ *     this round and posting key) but whose verdict never landed: its stage
+ *     limit settles it from the receipt, where a cancel and requeue would run
+ *     the lenses again for a review already posted.
  */
 export function orphanPostingOwed(
   receiptDir: string,
   dryRun: boolean,
   repo: string,
 ): (round: Pick<RoundRow, "pr" | "round_no" | "posting_key">) => boolean {
-  return (round) =>
-    !dryRun &&
-    round.posting_key !== null &&
-    deliverablePosting(receiptDir, round.pr, round.round_no, round.posting_key, repo);
+  return (round) => {
+    if (round.posting_key === null) return false;
+    const receipt = readPostingReceipt(receiptDir, round.pr, round.round_no);
+    if (
+      receipt?.status === "confirmed" &&
+      receipt.posting_key === round.posting_key &&
+      receipt.pr === round.pr &&
+      receipt.round_no === round.round_no
+    )
+      return true;
+    return (
+      !dryRun && deliverablePosting(receiptDir, round.pr, round.round_no, round.posting_key, repo)
+    );
+  };
 }
 
 /**
@@ -1300,11 +1336,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         log,
       });
       const memoryClient = new OpenVikingClient({
-        baseUrl: openVikingBaseUrl(cfg.openviking),
+        ...ovConnection(cfg.openviking),
         apiKey: reviewerKey,
-        user: cfg.openviking.user,
-        account: cfg.openviking.account,
-        timeoutMs: cfg.openviking.request_timeout_ms,
         log,
         onGap: countedGap,
         onRequest: (r) => memoryHealth?.recordRequest(r),
@@ -1375,11 +1408,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // degraded and pause the case writer, the pump and the learner).
         const lessonEngine = openVikingLessonEngine(
           lessonFindClient({
-            baseUrl: openVikingBaseUrl(cfg.openviking),
+            ...ovConnection(cfg.openviking),
             apiKey: reviewerKey,
-            user: cfg.openviking.user,
-            account: cfg.openviking.account,
-            timeoutMs: cfg.openviking.request_timeout_ms,
             log,
           }),
           memory,
@@ -1440,10 +1470,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           return res.written;
         });
         const probeBase = {
-          baseUrl: openVikingBaseUrl(cfg.openviking),
-          user: cfg.openviking.user,
-          account: cfg.openviking.account,
-          timeoutMs: cfg.openviking.request_timeout_ms,
+          ...ovConnection(cfg.openviking),
         };
         memoryHealth = new MemoryHealthMonitor({
           probes: {
@@ -1663,15 +1690,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             {
               store: d.store,
               pump: () => d.pump(),
-              killSession: async (pr) => {
-                const name = prSessionName(pr);
-                if (await sessions.tmux.hasSession(name)) await sessions.tmux.killSession(name);
-                if (await sessions.tmux.hasSession(name)) {
-                  throw new Error(
-                    `session ${name} survived operator restart; refusing ownership reset`,
-                  );
-                }
-              },
+              // Returns only once tmux lists the session as gone; a tmux it
+              // could not ask throws, which leaves ownership unchanged.
+              killSession: (pr) => sessions.killSession(pr),
             },
             target,
             "restart-session",
@@ -2092,7 +2113,7 @@ async function main(): Promise<void> {
   const shutdown = (sig: string) => {
     void (async () => {
       console.log(`[quickreviewd] ${sig} — shutting down`);
-      await daemon.stop();
+      await daemon.stop(sig);
       process.exit(0);
     })();
   };
@@ -2105,7 +2126,7 @@ async function main(): Promise<void> {
     // orderly stop, so the container's restart policy retries it rather than
     // leaving a half-assembled daemon serving reviews without its watchers.
     console.error("[quickreviewd] startup failed — exiting", err);
-    await daemon.stop().catch(() => {});
+    await daemon.stop("startup failed").catch(() => {});
     process.exit(1);
   }
 }

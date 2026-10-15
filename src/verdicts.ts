@@ -98,6 +98,7 @@ import {
   type StandingDecidedVerdict,
 } from "./standing-review.js";
 import { flushHeldWakes, pauseDefersAllHeldWakes } from "./wakes.js";
+import { prWorktreeRel } from "./worktrees.js";
 import {
   describeGap,
   failedPasses,
@@ -2879,7 +2880,7 @@ export class VerdictWatcher {
       const budgetMs = Math.max(0, this.deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
       const rehash = await withinBudget(
         (this.deps.integrityFingerprint ?? fingerprintRoundIntegrity)(
-          roundIntegrityOpts(githubCloneDir(cfg.github), root, `wt/pr-${pr}`),
+          roundIntegrityOpts(githubCloneDir(cfg.github), root, prWorktreeRel(pr)),
         ),
         budgetMs,
       );

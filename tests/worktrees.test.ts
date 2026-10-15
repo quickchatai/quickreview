@@ -199,6 +199,35 @@ describe("WorktreeManager", () => {
     expect(await m.headSha(7)).toBe(first);
   });
 
+  it("a wt/pr-<n> directory that is not the registered worktree is rebuilt, never reset in the enclosing checkout", async () => {
+    // The sandbox root is itself a checkout (the dev box), so git run inside
+    // a directory with no `.git` of its own discovers THAT repository.
+    git(root, "init", "-q", "-b", "master");
+    writeFileSync(join(root, "app.txt"), "sandbox\n");
+    git(root, "add", "app.txt");
+    git(root, "commit", "-q", "-m", "sandbox");
+    const sandboxHead = git(root, "rev-parse", "HEAD").trim();
+
+    const sha = commit("feature.txt", "v1\n");
+    publishPullHead(7, sha);
+    const m = mgr();
+    // An interrupted `worktree add`: the directory exists, its gitfile not.
+    mkdirSync(join(root, "wt", "pr-7"), { recursive: true });
+    writeFileSync(join(root, "wt", "pr-7", "partial.txt"), "x\n");
+
+    const facts = await m.ensureWorktree(7);
+    expect(readFileSync(join(facts.path, "feature.txt"), "utf8")).toBe("v1\n");
+    expect(existsSync(join(facts.path, "partial.txt"))).toBe(false);
+    expect(await m.headSha(7)).toBe(sha);
+    expect(git(root, "rev-parse", "HEAD").trim()).toBe(sandboxHead);
+
+    // A registered worktree whose gitfile was lost is rebuilt the same way.
+    rmSync(join(facts.path, ".git"));
+    await m.checkoutAt(7, sha);
+    expect(await m.headSha(7)).toBe(sha);
+    expect(git(root, "rev-parse", "HEAD").trim()).toBe(sandboxHead);
+  });
+
   it("hasCommit distinguishes a fetched sha from an unknown one", async () => {
     const sha = commit("a.txt", "x\n");
     publishPullHead(7, sha);
@@ -386,6 +415,38 @@ describe("resolvedFilesInMerges", () => {
     expect(res).toEqual({ files: ["café.txt"], degraded: false });
   });
 
+  it("a git failure partway keeps the files already verified — degraded, never emptied", async () => {
+    const { from } = mergeScenario({ conflicting: false });
+    // A second merge, newer, that resolves shared.txt by hand.
+    git(origin, "checkout", "-q", "master");
+    writeFileSync(join(origin, "shared.txt"), "line1 MASTER2\nline2\nline3\n");
+    git(origin, "commit", "-q", "-am", "master edit 2");
+    git(origin, "checkout", "-q", "side");
+    writeFileSync(join(origin, "shared.txt"), "line1 SIDE2\nline2\nline3\n");
+    git(origin, "commit", "-q", "-am", "side edit 2");
+    try {
+      git(origin, "merge", "-q", "master");
+    } catch {
+      writeFileSync(join(origin, "shared.txt"), "line1 SIDE2\nline2\nline3\n");
+      git(origin, "add", "-A");
+      git(origin, "commit", "-q", "-m", "resolve 2");
+    }
+    const to = git(origin, "rev-parse", "HEAD").trim();
+    // The second merge's parent read (the older, clean merge) fails.
+    let parentReads = 0;
+    const run: ExecFn = async (cmd, args, opts) => {
+      if (args[0] === "rev-list" && args[1] === "--parents" && ++parentReads === 2)
+        return { code: 128, stdout: "", stderr: "fatal: unable to read" };
+      return nodeExec(cmd, args, opts);
+    };
+    const m = new WorktreeManager({ root, repo: "exampleorg/example-app", cloneUrl: origin, run });
+    await m.ensureBaseClone();
+    git(join(root, "example-app"), "fetch", "-q", "origin", "side", "master");
+    const res = await m.resolvedFilesInMerges(from, to);
+    expect(res.degraded).toBe(true);
+    expect(res.files).toEqual(["shared.txt"]);
+  });
+
   it("fetches missing objects on demand instead of degrading", async () => {
     const m = mgr();
     await m.ensureBaseClone(); // clone BEFORE the merge exists — the live recheck timing
@@ -565,6 +626,21 @@ describe("anchorTouched", () => {
     expect(await m.anchorTouched("gone.py", 4, base, deleted)).toBe(true);
     // Present and untouched is still a definite no.
     expect(await m.anchorTouched("gone.py", 4, base, base)).toBe(false);
+  });
+  it("a change with no text hunks — a binary edit, an empty file deleted — touches the file", async () => {
+    const png = commit("logo.png", "\x89PNG\0\x01\x02");
+    const png2 = commit("logo.png", "\x89PNG\0\x03\x04");
+    const empty = commit("empty.py", "");
+    git(origin, "rm", "-q", "empty.py");
+    git(origin, "commit", "-q", "-m", "delete empty.py");
+    const gone = git(origin, "rev-parse", "HEAD").trim();
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.anchorTouched("logo.png", null, png, png2)).toBe(true);
+    expect(await m.anchorTouched("logo.png", 1, png, png2)).toBe(true);
+    expect(await m.anchorTouched("empty.py", null, empty, gone)).toBe(true);
+    // Unchanged is still a definite no.
+    expect(await m.anchorTouched("logo.png", null, png2, gone)).toBe(false);
   });
 });
 
