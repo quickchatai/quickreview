@@ -1021,10 +1021,16 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 /** `[models] effort` — `""` leaves every spec as written. */
 export type ReviewEffort = "" | "low" | "medium" | "high";
 
+/** "provider/model:thinking" → its model and its pi thinking level, or a
+ * null level when the spec carries no suffix. */
+export function splitModelSpec(spec: string): { model: string; thinking: string | null } {
+  const m = new RegExp(`^(.+):(${THINKING_LEVELS.join("|")})$`).exec(spec);
+  return m ? { model: m[1] as string, thinking: m[2] as string } : { model: spec, thinking: null };
+}
+
 /** Replace (or add) the `:thinking` suffix of one model spec. */
 export function withThinking(spec: string, level: ThinkingLevel): string {
-  const m = new RegExp(`^(.+):(${THINKING_LEVELS.join("|")})$`).exec(spec);
-  return `${m ? (m[1] as string) : spec}:${level}`;
+  return `${splitModelSpec(spec).model}:${level}`;
 }
 
 /** Apply `[models] effort` to every spec the review runs on. Pure. */
