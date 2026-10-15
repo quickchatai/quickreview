@@ -20,8 +20,10 @@
 // delivered in chunks of at most MAX_AUTHOR_REPLIES_PER_DELIVERY, so the
 // never-evicted backlog cannot grow one prompt without bound.
 import { randomUUID } from "node:crypto";
+import { AUTHOR_REPLY_WAKE_HEADING } from "./pingpong.js";
 import {
   AUTHOR_REPLY_WAKE_REASON,
+  OPERATOR_RECOVERED_WAKE_PREFIX,
   type EvictedWake,
   type PendingWakeRow,
   type StateStore,
@@ -50,11 +52,13 @@ export async function wakeOrHold(
   message: string,
   reason: string,
   opts: {
-    /** Hold the wake when injection fails, instead of rethrowing. For a
-     * caller that has already claimed the obligation durably (the author-reply
-     * path claims the message before waking), a rethrow loses it: the claim
-     * refuses every redelivery. The held wake is retried by the flush paths.
-     * Callers that release their own claim on failure leave this off. */
+    /** For a caller that has already claimed the obligation durably (the
+     * author-reply path claims the message before waking): the wake is
+     * persisted as held BEFORE anything is awaited, then flushed. A rethrow,
+     * or a process exit while the injection waits on a session rebirth, would
+     * otherwise lose it — the claim refuses every redelivery. A failed
+     * injection leaves the wake held for the flush paths. Callers that
+     * release their own claim on failure leave this off. */
     holdOnFailure?: boolean;
   } = {},
 ): Promise<WakeDisposition> {
@@ -67,6 +71,16 @@ export async function wakeOrHold(
     if (store.hasHeldWakes(pr)) {
       hold(deps, pr, message, reason);
       await flushHeldWakes(deps, pr);
+      return "held";
+    }
+    // A claimed obligation is durable before the first await: held, then
+    // delivered through the same lease → inject → ack the flush paths use.
+    if (opts.holdOnFailure) {
+      hold(deps, pr, message, reason);
+      await flushHeldWakes(deps, pr);
+      if (!store.heldWakes(pr).some((wake) => wake.payload === message)) return "injected";
+      store.logEvent("wake_inject_failed_held", pr, { reason });
+      log(`wakes: #${pr} ${reason} wake not delivered — held for retry`);
       return "held";
     }
     try {
@@ -83,9 +97,6 @@ export async function wakeOrHold(
           active_command: raced.id,
           error: String(err),
         });
-      } else if (opts.holdOnFailure) {
-        log(`wakes: #${pr} ${reason} wake failed to inject — held for retry`, err);
-        store.logEvent("wake_inject_failed_held", pr, { reason, error: String(err) });
       } else {
         throw err;
       }
@@ -158,16 +169,24 @@ export const AUTHOR_REPLY_DROPPED_KIND = "author_reply_wake_dropped";
 export const RECHECK_WAKE_DROPPED_KIND = "recheck_wake_dropped";
 
 function isOwedWakeReason(wake: EvictedWake): boolean {
-  return wake.reason === AUTHOR_REPLY_WAKE_REASON || wake.reason.startsWith("operator_recovered:");
+  return (
+    wake.reason === AUTHOR_REPLY_WAKE_REASON ||
+    wake.reason.startsWith(OPERATOR_RECOVERED_WAKE_PREFIX)
+  );
 }
-
-const AUTHOR_REPLY_HEADING = "# Author reply — PR #";
 
 function isAuthorReplyWake(wake: PendingWakeRow): boolean {
   if (wake.reason === AUTHOR_REPLY_WAKE_REASON) return true;
   return (
-    wake.reason.startsWith("operator_recovered:") && wake.payload.startsWith(AUTHOR_REPLY_HEADING)
+    wake.reason.startsWith(OPERATOR_RECOVERED_WAKE_PREFIX) &&
+    wake.payload.startsWith(AUTHOR_REPLY_WAKE_HEADING)
   );
+}
+
+/** A wake with its repo facts appended — the wake itself, byte for byte,
+ * when there are none. Shared by the ping-pong wake and the recheck nudge. */
+export function withRepoFacts(wake: string, facts: string): string {
+  return facts ? `${wake.replace(/\s+$/, "")}${facts}` : wake;
 }
 
 function leadingDeliveryCount(wakes: PendingWakeRow[]): number {

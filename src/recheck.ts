@@ -47,7 +47,7 @@ import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
 import { standingVerdict } from "./standing-review.js";
-import { wakeOrHold } from "./wakes.js";
+import { wakeOrHold, withRepoFacts } from "./wakes.js";
 import {
   readSettledJson,
   resolvePartialWritePolicy,
@@ -1137,7 +1137,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       // drop is not — so the receipt is what lets the reconcile sweep release
       // the claim of a nudge that never arrived.
       stampPrompt(
-        facts ? `${render(order).replace(/\s+$/, "")}${facts}` : render(order),
+        withRepoFacts(render(order), facts),
         recheckPromptMarker(req.pr, fingerprint),
       ),
       `recheck:${req.trigger}`,

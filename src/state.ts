@@ -608,8 +608,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS session_commands_one_active
 CREATE UNIQUE INDEX IF NOT EXISTS session_commands_inject_path ON session_commands(inject_path);
 CREATE INDEX IF NOT EXISTS session_commands_pr_created ON session_commands(pr, created_at);`;
 
+/** The prefix of every held-wake reason operator recovery writes
+ * (`operator_recovered:<kind>:<id>`): owed work the per-PR cap never evicts
+ * and the flush delivers first within its instant. */
+export const OPERATOR_RECOVERED_WAKE_PREFIX = "operator_recovered:";
+
 const PENDING_WAKE_ORDER_SQL = `held_at,
-  CASE WHEN reason GLOB 'operator_recovered:*' THEN 0 ELSE 1 END,
+  CASE WHEN reason GLOB '${OPERATOR_RECOVERED_WAKE_PREFIX}*' THEN 0 ELSE 1 END,
   id`;
 
 const BLOCKING_SESSION_COMMAND_SQL = `(
@@ -2887,7 +2892,7 @@ export class StateStore {
             throw new Error(`operator recovery payload missing for ${row.id}`);
           const inserted = this.db
             .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
-            .run(pr, payload, `operator_recovered:${row.kind}:${row.id}`, row.created_at);
+            .run(pr, payload, `${OPERATOR_RECOVERED_WAKE_PREFIX}${row.kind}:${row.id}`, row.created_at);
           wakeIds.push(Number(inserted.lastInsertRowid));
         }
         const changed = this.db
@@ -3376,7 +3381,7 @@ export class StateStore {
         .prepare(
           `SELECT COUNT(*) AS c FROM pending_wakes
         WHERE pr=@pr AND reason != @author
-          AND (reason GLOB 'operator_recovered:*' OR claim_token IS NOT NULL)`,
+          AND (reason GLOB '${OPERATOR_RECOVERED_WAKE_PREFIX}*' OR claim_token IS NOT NULL)`,
         )
         .get({ pr, author: AUTHOR_REPLY_WAKE_REASON }) as { c: number }
     ).c;
@@ -3388,7 +3393,7 @@ export class StateStore {
       .prepare(
         `SELECT id, reason, payload FROM pending_wakes
         WHERE pr=@pr AND reason != @author
-          AND reason NOT GLOB 'operator_recovered:*' AND claim_token IS NULL
+          AND reason NOT GLOB '${OPERATOR_RECOVERED_WAKE_PREFIX}*' AND claim_token IS NULL
         ORDER BY CASE WHEN reason = @backstopped THEN 1 ELSE 0 END,
           held_at DESC, id DESC
         LIMIT -1 OFFSET @keep`,

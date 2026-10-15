@@ -656,6 +656,30 @@ describe("wakeOrHold / flushHeldWakes", () => {
     await expect(wakeOrHold(failing, 8, "x", "recheck")).rejects.toThrow(/failed to spawn/);
   });
 
+  // The claim is taken before the wake, and the injection can wait on a
+  // session rebirth: a process exit inside that wait must leave a held row
+  // for the stranded-wake sweep, never a claim with nothing behind it.
+  it("holdOnFailure persists the wake before the injection is awaited", async () => {
+    let release!: () => void;
+    const slow = {
+      store,
+      inject: (pr: number, message: string) =>
+        new Promise<void>((resolve) => {
+          release = () => {
+            injected.push({ pr, message });
+            resolve();
+          };
+        }),
+    };
+    const pending = wakeOrHold(slow, 7, "answer me", "author_reply", { holdOnFailure: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["answer me"]);
+    release();
+    expect(await pending).toBe("injected");
+    expect(injected).toEqual([{ pr: 7, message: "answer me" }]);
+    expect(store.heldWakes(7)).toHaveLength(0);
+  });
+
   it("does not hold a wake for a different PR's round", async () => {
     store.upsertPr({
       number: 8,
