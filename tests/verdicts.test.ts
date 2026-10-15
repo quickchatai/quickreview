@@ -4346,3 +4346,179 @@ describe("follow-up rounds: sweep telemetry", () => {
     ]);
   });
 });
+
+// ---- a failure is opened only by the round's owner, before any await -------
+
+describe("ownership after awaits: a round some other path ended owes nothing", () => {
+  const countOf = (kind: string, pr: number): number =>
+    (
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = ? AND pr = ?")
+        .get(kind, pr) as { c: number }
+    ).c;
+  const later = (): Date => new Date(Date.now() + (cfg.daemon.round_deadline_min + 5) * 60_000);
+
+  // MUTATION: in failPostingProof, take the in-progress label off before
+  // openReviewFailure — a restart inside that call leaves a cancelled round
+  // with no incident, and the label call here sees none.
+  it("a posting failure owes its FAILED_LOUD incident before its label call", async () => {
+    reviewingRound(700);
+    stampPosting(700, 1);
+    let owedAtLabel: number | undefined;
+    adapter.removeLabel = async (n, label) => {
+      adapter.calls.push(`removeLabel:${n}:${label}`);
+      owedAtLabel = store.openReviewFailure(700)?.work_owed;
+      return { executed: false, dryRunFile: "d" };
+    };
+
+    expect(
+      await watcher({ postingReceiptGraceS: 0 }).handleFile(
+        write(700, 1, verdictFile({ pr: 700 })),
+      ),
+    ).toBe(true);
+
+    expect(owedAtLabel).toBe(1);
+    expect(store.roundsFor(700)[0]).toMatchObject({ cancel_cause: "infrastructure_failure" });
+  });
+
+  // MUTATION: in handleAnomaly, take the label off before the transition and
+  // the incident — the label call sees the PR still reviewing, nothing owed.
+  it("an anomaly owes its incident and leaves reviewing before its label call", async () => {
+    reviewingRound(701);
+    let atLabel: { owed?: number; state?: string } = {};
+    adapter.removeLabel = async (n, label) => {
+      adapter.calls.push(`removeLabel:${n}:${label}`);
+      atLabel = { owed: store.openReviewFailure(701)?.work_owed, state: store.getPr(701)?.state };
+      return { executed: false, dryRunFile: "d" };
+    };
+
+    expect(await watcher().handleFile(write(701, 1, "{broken"))).toBe(true);
+
+    expect(atLabel.owed).toBe(1);
+    expect(atLabel.state).not.toBe("reviewing");
+  });
+
+  // MUTATION: drop the claim at the top of failPostingProof — the operator's
+  // `u` landing during the marker read is overwritten by a FAILED_LOUD hold.
+  it("an operator's u during the posting proof's GitHub read is not undone by a failure", async () => {
+    reviewingRound(702);
+    stampPosting(702, 1);
+    adapter.listReviewsFull = async () => {
+      store.cancelRunningRounds(702, "rerun-round");
+      store.setPrState(702, "queued");
+      return [];
+    };
+
+    expect(
+      await watcher({ cfg: { ...cfg, dry_run: false }, postingReceiptGraceS: 0 }).handleFile(
+        write(702, 1, verdictFile({ pr: 702 })),
+      ),
+    ).toBe(true);
+
+    expect(store.openReviewFailure(702)).toBeUndefined();
+    expect(store.getPr(702)?.state).toBe("queued");
+    expect(store.roundsFor(702)[0]).toMatchObject({ cancel_cause: "operator" });
+    expect(countOf("posting_failure_round_ended", 702)).toBe(1);
+  });
+
+  // MUTATION: call failPostingProof directly from the deadline's failed-proof
+  // branch — the verdict the session committed during the marker read is
+  // failed under it.
+  it("the deadline leaves a verdict that arrived during its posting proof to the sweep", async () => {
+    reviewingRound(703);
+    const { key } = stampPosting(703, 1);
+    const live = { ...cfg, dry_run: false };
+    adapter.listReviewsFull = async () => {
+      // The session posts, records its receipt and commits its verdict
+      // while the deadline's marker read is out.
+      writePostingReceipt(703, 1, key, "REQUEST_CHANGES");
+      write(703, 1, verdictFile({ pr: 703 }));
+      return [];
+    };
+    const w = watcher({ cfg: live, now: later, postingReceiptGraceS: 0 });
+
+    await w.checkDeadlines();
+
+    expect(store.openReviewFailure(703)).toBeUndefined();
+    expect(store.roundsFor(703)[0]?.status).toBe("running");
+    adapter.listReviewsFull = undefined;
+    expect(await w.handleFile("pr-703-round-1.json")).toBe(true);
+    expect(store.roundsFor(703)[0]).toMatchObject({ status: "done", verdict: "REQUEST_CHANGES" });
+    expect(store.openReviewFailure(703)).toBeUndefined();
+  });
+
+  // MUTATION: drop the not-running return at the top of handleAnomaly — the
+  // round a verdict settled during the liveness probe gets a FAILED_LOUD hold.
+  it("the deadline opens no anomaly for a round settled while its liveness probe was out", async () => {
+    const roundId = reviewingRound(704);
+    const h = recordingHooks();
+    h.hooks.sessionAlive = async () => {
+      store.finishRound(roundId, "APPROVE", null, null);
+      store.setPrState(704, "tracked");
+      return false;
+    };
+    const w = watcher(
+      { cfg: { ...cfg, daemon: { ...cfg.daemon, max_self_requeues: 0 } }, now: later },
+      h.hooks,
+    );
+
+    expect(await w.checkDeadlines()).toEqual([704]);
+
+    expect(store.openReviewFailure(704)).toBeUndefined();
+    expect(store.getPr(704)?.state).toBe("tracked");
+    expect(store.roundsFor(704)[0]?.status).toBe("done");
+    expect(countOf("anomaly_round_ended", 704)).toBe(1);
+  });
+
+  // MUTATION: drop the later-round check at the top of apply — the resumed
+  // apply of round 1 moves the PR out from under running round 2.
+  it("an interrupted apply resumed after a later round started lands nothing over it", async () => {
+    reviewingRound(705);
+    const { key } = stampPosting(705, 1);
+    writePostingReceipt(705, 1, key, "REQUEST_CHANGES");
+    const round = store.roundsFor(705)[0]!;
+    store.finishRound(round.id, "REQUEST_CHANGES", null, null);
+    // Restart: the successor was promoted and its round dispatched first.
+    store.startRound(705, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    store.setPrState(705, "reviewing");
+
+    expect(await watcher().handleFile(write(705, 1, verdictFile({ pr: 705 })))).toBe(true);
+
+    expect(store.getPr(705)?.state).toBe("reviewing");
+    expect(store.reviewedHead(705)).toBeUndefined();
+    expect(adapter.calls).toEqual([]);
+    expect(countOf("verdict_resume_superseded", 705)).toBe(1);
+    // Settled: a second sweep does not resume it again.
+    expect(await watcher().handleFile(write(705, 1, verdictFile({ pr: 705 })))).toBe(true);
+    expect(countOf("verdict_resume_superseded", 705)).toBe(1);
+    expect(countOf("verdict_replay_ignored", 705)).toBe(1);
+  });
+
+  // MUTATION: restrict the claim's later-round check to `cancelled` claims —
+  // the resumed done round reapplies its verdict over the round started
+  // during its label calls.
+  it("an interrupted apply is not finished over a round that started during its label calls", async () => {
+    reviewingRound(706);
+    const { key } = stampPosting(706, 1);
+    writePostingReceipt(706, 1, key, "REQUEST_CHANGES");
+    const round = store.roundsFor(706)[0]!;
+    store.finishRound(round.id, "REQUEST_CHANGES", null, null);
+    store.setPrState(706, "awaiting_author");
+    adapter.addLabel = async (n, label) => {
+      adapter.calls.push(`addLabel:${n}:${label}`);
+      store.startRound(706, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+      store.setPrState(706, "reviewing");
+      return { executed: false, dryRunFile: "d" };
+    };
+
+    expect(await watcher().handleFile(write(706, 1, verdictFile({ pr: 706 })))).toBe(true);
+
+    expect(store.getPr(706)?.state).toBe("reviewing");
+    expect(store.reviewedHead(706)).toBeUndefined();
+    expect(countOf("verdict_resume_superseded", 706)).toBe(1);
+    expect(store.roundsFor(706).map((r) => [r.round_no, r.status])).toEqual([
+      [1, "done"],
+      [2, "running"],
+    ]);
+  });
+});
