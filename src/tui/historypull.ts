@@ -13,11 +13,12 @@
 // companion action: the companion holds no VM credentials, and the TUI does
 // not fetch on its behalf (rule 8; `prompts/companion.md` "They read; they
 // never fetch"). It asks the operator to run this, then reads the file.
-import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TuiConfig } from "../config.js";
 import { parseDigest, type ReviewHistoryDigest } from "../reviewhistory.js";
 import { HISTORY_DIGEST_FILE } from "../setup/history.js";
+import { writePrivateAtomic } from "./ghread.js";
 import { historyDigestArgv, type SshRunner } from "./remote.js";
 
 /** The VM reads one GraphQL query per merged PR at the backfill's gentle
@@ -71,10 +72,7 @@ export async function pullReviewHistory(deps: HistoryPullDeps): Promise<HistoryP
   const path = join(deps.stateHome, HISTORY_DIGEST_FILE);
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    const tmp = join(dirname(path), ".review-history.json.tmp");
-    writeFileSync(tmp, `${JSON.stringify(parsed.digest, null, 2)}\n`, { mode: 0o600 });
-    chmodSync(tmp, 0o600); // an old tmp keeps its mode through writeFileSync
-    renameSync(tmp, path);
+    writePrivateAtomic(path, `${JSON.stringify(parsed.digest, null, 2)}\n`);
   } catch (err) {
     return { ok: false, reason: `could not write ${path}: ${String(err)}` };
   }
