@@ -298,6 +298,8 @@ describe("the overseer's legacy rotation copies (§7.5)", () => {
       }
       expect(Number(mark(f, "duplicates.removed"))).toBe(2);
       expect(a.status().stores?.overseer).toMatchObject({
+        // o1, o2 and the unmatched copy's gzip.
+        archived: 3,
         duplicates_removed: 2,
         outcome: "partial",
         reason: "legacy_copy_waits",
@@ -319,6 +321,36 @@ describe("the overseer's legacy rotation copies (§7.5)", () => {
     const kept = m.entries.find((e) => e.legacy === true)!;
     expect(gz(f, `archive/overseer/${kept.archive as string}`).toString()).toBe("edited by hand\n");
     expect(existsSync(differs)).toBe(false);
+    // Both gzips are counted: the transcript and the kept copy.
+    expect(a.status().stores?.overseer).toMatchObject({ archived: 2, outcome: "done" });
+  });
+
+  it("a birth gone unknown before the duplicate removals says so — not a bare 'incomplete'", async () => {
+    const f = root();
+    const o1 = put(f.root, `${OV}/o1.jsonl`, line("one").repeat(50), BORN - 3 * DAY);
+    put(f.root, `${OV}/cur.jsonl`, line("now"), BORN + 60_000);
+    put(f.root, `archive/overseer/2026-10-01/meta.json`, JSON.stringify({ session_file: o1 }));
+    const copy = put(f.root, `archive/overseer/2026-10-01/session.jsonl`, readFileSync(o1));
+    let birth: Date | null = new Date(BORN);
+    const a = archiver(
+      f,
+      {},
+      {
+        overseerBornAt: () => birth,
+        step: (name, info) => {
+          // The transcript's own unlink done; the birth reads unknown after it.
+          if (name === "unlinked" && info.path === o1) birth = null;
+        },
+      },
+    );
+    await a.tick();
+    expect(existsSync(o1)).toBe(false);
+    expect(existsSync(copy)).toBe(true);
+    expect(a.status().stores?.overseer).toMatchObject({
+      outcome: "partial",
+      reason: "birth_unknown",
+      duplicates_removed: 0,
+    });
   });
 });
 
@@ -460,6 +492,33 @@ describe("pi's global session store", () => {
       expect(sha(readFileSync(young))).toBe(sha(line("y")));
     },
   );
+
+  it("a crash after the last unlink, before its stamp: the next start stamps it with nothing left to move", async () => {
+    const f = root();
+    const storeDir = join(f.root, "pihome", ".pi", "agent", "sessions");
+    const old = put(f.root, "pihome/.pi/agent/sessions/d/old.jsonl", line("o"), T0 - 2 * DAY);
+    const crashing = archiver(
+      f,
+      {},
+      {
+        piGlobalDir: storeDir,
+        overseerBornAt: undefined,
+        step: (name) => {
+          if (name === "unlinked") throw new Error("crash");
+        },
+      },
+    );
+    await crashing.tick();
+    crashing.stop();
+    expect(existsSync(old)).toBe(false);
+    const entry = () => manifest(f, "pi-global").entries.find((e) => e.kind === "transcript")!;
+    expect(entry().source_removed_at).toBeUndefined();
+    // A fresh start: nothing is old enough to move, the stamp is still made.
+    const next = archiver(f, {}, { piGlobalDir: storeDir, overseerBornAt: undefined });
+    await next.tick();
+    expect(entry().source_removed_at).toEqual(expect.any(String));
+    expect(next.status().stores?.pi_global).toMatchObject({ outcome: "none", archived: 0 });
+  });
 
   it("an absent store is nothing to move", async () => {
     const f = root();

@@ -23,7 +23,7 @@ import { OVERSEER_SESSION, PiSessionManager, isSandboxSession } from "../src/ses
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
-import { flushHeldWakes, wakeOrHold } from "../src/wakes.js";
+import { flushHeldWakes, pauseDefersAllHeldWakes, wakeOrHold } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -654,6 +654,53 @@ describe("wakeOrHold / flushHeldWakes", () => {
     // Without the option the error still propagates (callers that release
     // their own claim on failure depend on it).
     await expect(wakeOrHold(failing, 8, "x", "recheck")).rejects.toThrow(/failed to spawn/);
+  });
+
+  // The claim is taken before the wake, and the injection can wait on a
+  // session rebirth: a process exit inside that wait must leave a held row
+  // for the stranded-wake sweep, never a claim with nothing behind it.
+  it("holdOnFailure persists the wake before the injection is awaited", async () => {
+    let release!: () => void;
+    const slow = {
+      store,
+      inject: (pr: number, message: string) =>
+        new Promise<void>((resolve) => {
+          release = () => {
+            injected.push({ pr, message });
+            resolve();
+          };
+        }),
+    };
+    const pending = wakeOrHold(slow, 7, "answer me", "author_reply", { holdOnFailure: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["answer me"]);
+    release();
+    expect(await pending).toBe("injected");
+    expect(injected).toEqual([{ pr: 7, message: "answer me" }]);
+    expect(store.heldWakes(7)).toHaveLength(0);
+  });
+
+  // A pause stops a PR's review work, so it defers a recheck nudge; it stops
+  // no other wake. An author reply arriving behind a deferred recheck is
+  // delivered while the pause stands; the recheck goes after the resume.
+  it("a pause defers only the recheck: an author reply behind it is delivered while paused", async () => {
+    store.pausePr(7, { issuer: "operator", expires_at: null }, "hold");
+    expect(
+      await wakeOrHold(deps(), 7, "ci question", "recheck:ci", { deferWhilePaused: true }),
+    ).toBe("held");
+    expect(injected).toHaveLength(0);
+    await wakeOrHold(deps(), 7, "author reply", "author_reply", { holdOnFailure: true });
+    expect(injected.map((w) => w.message)).toEqual(["author reply"]);
+    expect(store.heldWakes(7).map((w) => w.reason)).toEqual(["recheck:ci"]);
+    // Still paused: a flush leaves the recheck where it is, and the
+    // stranded-wake sweep has nothing to deliver.
+    expect(await flushHeldWakes(deps(), 7)).toBe(0);
+    expect(pauseDefersAllHeldWakes(store, 7)).toBe(true);
+    store.resumePr(7, "operator");
+    expect(pauseDefersAllHeldWakes(store, 7)).toBe(false);
+    expect(await flushHeldWakes(deps(), 7)).toBe(1);
+    expect(injected.map((w) => w.message)).toEqual(["author reply", "ci question"]);
+    expect(store.heldWakes(7)).toHaveLength(0);
   });
 
   it("does not hold a wake for a different PR's round", async () => {

@@ -1026,7 +1026,7 @@ export function applyReviewEffort(models: ModelsConfig): ModelsConfig {
   };
 }
 
-function parseEffort(raw: unknown): ReviewEffort {
+export function parseEffort(raw: unknown): ReviewEffort {
   const v = String(raw ?? "")
     .trim()
     .toLowerCase();
@@ -2268,6 +2268,13 @@ export function parseArchive(raw: Record<string, unknown>): ArchiveConfig {
   return out;
 }
 
+/** The team slug a configured `org/team` review team is requested as — the
+ * one rule the webhook's trigger and withdrawal, the trigger consumption and
+ * the backfill all match on. A bare slug is its own slug. */
+export function reviewTeamSlug(reviewTeam: string): string {
+  return reviewTeam.split("/")[1] ?? reviewTeam;
+}
+
 /** Defaults for [backfill], derived from the already-parsed [github] block. */
 export function backfillDefaults(github: GithubConfig): BackfillConfig {
   return {
@@ -2276,7 +2283,7 @@ export function backfillDefaults(github: GithubConfig): BackfillConfig {
     reviewed_label: github.reviewed_label,
     trigger_label: github.trigger_label,
     in_progress_label: github.in_progress_label,
-    review_team_slug: github.review_team.split("/")[1] ?? github.review_team,
+    review_team_slug: reviewTeamSlug(github.review_team),
     concurrency: 2,
     max_search_pages: 10,
   };

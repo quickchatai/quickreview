@@ -102,7 +102,7 @@ def usd_and_minutes(case_dir):
             e = json.loads(line)
             if e.get("type") == "message_end" and (e.get("message") or {}).get("role") == "assistant":
                 usd += ((e["message"].get("usage") or {}).get("cost") or {}).get("total") or 0
-            elif e.get("type") == "tool_execution_end" and e.get("toolName") == "subagent":
+            elif e.get("type") == "tool_execution_end" and e.get("toolName") in ("subagent", "launch_plan"):
                 for r in ((e.get("result") or {}).get("details") or {}).get("results") or []:
                     c = (r.get("usage") or {}).get("cost")
                     usd += (c.get("total") if isinstance(c, dict) else c) or 0

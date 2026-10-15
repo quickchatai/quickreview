@@ -66,7 +66,7 @@ import { stubSessionHooks } from "./stubs.js";
 import type { SessionHooks } from "./types.js";
 import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
 import { applyInterpretation, createWebhookServer, type Interpretation } from "./webhook.js";
-import { wakeOrHold } from "./wakes.js";
+import { wakeOrHold, withRepoFacts } from "./wakes.js";
 import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
 import {
   PostingOutbox,
@@ -74,6 +74,10 @@ import {
   type PostingDeliveryAdapter,
   type PostingJob,
 } from "./posting-outbox.js";
+
+/** The ping-pong wake's repo-fact appender lives with the wakes; re-exported
+ * for the callers that know it from here. */
+export { withRepoFacts };
 
 // Partial<RecheckAdapter>: the recheck's two extra reads (compare, files) are a
 // seam, not a requirement — a daemon wired without them simply never rechecks.
@@ -283,12 +287,6 @@ function buildGitHubAdapter(cfg: Config, stateDir: string): GitHubAdapter {
   return github;
 }
 
-/** A wake with its repo facts appended — the wake itself, byte for byte,
- * when there are none. */
-export function withRepoFacts(wake: string, facts: string): string {
-  return facts ? `${wake.replace(/\s+$/, "")}${facts}` : wake;
-}
-
 /** What serving an author's reply in a bot thread needs (ping-pong). */
 export interface AuthorReplyDeps {
   store: StateStore;
@@ -334,8 +332,8 @@ export async function serveAuthorReply(
   // `[memory] delivery = "on"`, so the wake is otherwise byte-identical.
   // The path rides the interpretation only, never the event: the wake's
   // own text does not change. Read before the claim, so the claim is
-  // still followed at once by its wake — a claimed message has no sweep
-  // to recover it.
+  // followed at once by its held wake — the claim refuses every
+  // redelivery, and the held row is what the stranded-wake sweep recovers.
   let facts = "";
   if (deps.repoFacts && reply.path) {
     const before = store.getPr(reply.pr);
@@ -373,8 +371,9 @@ export async function serveAuthorReply(
       facts,
     ),
     "author_reply",
-    // The message is already claimed: a failed injection must hold
-    // the wake, or no redelivery can ever answer it.
+    // The message is already claimed: the wake is held before the
+    // injection is awaited and stays held if it fails, or no redelivery
+    // can ever answer it.
     { holdOnFailure: true },
   );
   if (disposition === "held")

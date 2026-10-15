@@ -10,6 +10,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { classifyCi } from "../src/cigate.js";
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -204,6 +205,39 @@ describe("pr-checks.sh --why", () => {
     expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: green");
     statusRows = [];
     expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: none");
+  });
+
+  // One table on every route: a failed check beside one still running is
+  // red for the daemon gate and guards.sh, so it is red here too — and the
+  // session's red-only `--why` step runs on it.
+  it("a failure beside a check still running classifies red, as the gate does", async () => {
+    pagedRuns = [
+      {
+        id: 1,
+        name: "unit",
+        status: "completed",
+        conclusion: "failure",
+        started_at: "2026-09-27T10:00:00Z",
+        html_url: "h1",
+      },
+      {
+        id: 2,
+        name: "integration",
+        status: "in_progress",
+        conclusion: null,
+        started_at: "2026-09-27T10:00:00Z",
+        html_url: "h2",
+      },
+    ];
+    const { stdout } = await checks();
+    expect(stdout).toContain("SUMMARY: 0 passed / 1 failed / 1 pending");
+    expect(stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
+    expect(
+      classifyCi([
+        { name: "unit", source: "check_run", status: "completed", conclusion: "failure" },
+        { name: "integration", source: "check_run", status: "in_progress", conclusion: null },
+      ]),
+    ).toBe("red");
   });
 
   it("an unreadable log is said, not fatal", async () => {

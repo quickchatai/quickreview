@@ -367,7 +367,7 @@ copy_source() {
     id="$(basename "$c")"
     [[ "$id" =~ ^[A-Za-z0-9_.-]+__[A-Za-z0-9_.-]+@[0-9a-f]{7}$ && -d "$c" && ! -L "$c" ]] || continue
     mkdir -p "$dst/cases/$id"
-    for f in pi-events.jsonl findings-record.json comments.json review.md case-summary.json outcome.json; do
+    for f in pi-events.jsonl findings-record.json comments.json review.md head-patches.json case-summary.json outcome.json; do
       if [[ -f "$c/$f" && ! -L "$c/$f" ]]; then cp -P -- "$c/$f" "$dst/cases/$id/$f"; fi
     done
   done

@@ -4,6 +4,15 @@
 
 import { spawn } from "node:child_process";
 
+/** Git without any system or global config and never prompting: every
+ * environment the bench hands a reviewer or a git call carries it. */
+export const GIT_ISOLATION_ENV = {
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_TERMINAL_PROMPT: "0",
+} as const;
+
 export interface ExecResult {
   code: number;
   stdout: string;

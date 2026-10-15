@@ -98,11 +98,12 @@ export function changedRuns(patch: string): ChangedRun[] {
   );
 }
 
-/** All changed runs of a PR, keyed by file path. */
+/** All changed runs of a PR, keyed by file path (own properties only, so a
+ * file named `__proto__` is a key like any other). */
 export function runsByPath(patches: Record<string, string>): Record<string, ChangedRun[]> {
-  const out: Record<string, ChangedRun[]> = {};
-  for (const [path, patch] of Object.entries(patches)) out[path] = changedRuns(patch);
-  return out;
+  return Object.fromEntries(
+    Object.entries(patches).map(([path, patch]) => [path, changedRuns(patch)]),
+  );
 }
 
 export interface AnchorCheck {
@@ -113,7 +114,8 @@ export interface AnchorCheck {
 
 /** Validate one anchor against the runs of its claimed path. */
 export function checkAnchor(runs: Record<string, ChangedRun[]>, req: AnchorRequest): AnchorCheck {
-  const fileRuns = runs[req.path];
+  // Own keys only: a path such as `constructor` names no file of the diff.
+  const fileRuns = Object.hasOwn(runs, req.path) ? runs[req.path] : undefined;
   if (!fileRuns) return { ok: false, reason: "unknown-path" };
   if (fileRuns.length === 0) return { ok: false, reason: "no-runs" };
   const end = req.line;

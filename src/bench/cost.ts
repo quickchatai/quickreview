@@ -6,8 +6,10 @@
 // lens pass — together they are exactly the case's recorded tokens. The OCR
 // arm does not run through pi, so its tokens (the Codex bridge's counts) are
 // priced at pi's own rates for the model the bridge served (per model: the
-// PR-Agent arm runs gpt-6.1-sol), so all arms are in one currency. Neither
-// is a bill: the runs go through a ChatGPT login.
+// PR-Agent arm runs gpt-6.1-sol), so all those arms are in one currency.
+// Neither is a bill: the runs go through a ChatGPT login. The Claude Code arm
+// runs no OpenAI model; its cost is Claude Code's own `total_cost_usd` (the
+// API-price equivalent), as bench/aacr/compare.py reads it — labelled apart.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -35,12 +37,23 @@ export function ratesFor(
   return Object.hasOwn(CODEX_USD_PER_MTOK, m) ? CODEX_USD_PER_MTOK[m as PricedModel] : null;
 }
 
+/** OpenAI-style counts (input INCLUDING its cached part) as pi-style usage:
+ * input without cache reads, the cached part — capped at the input — apart. */
+export function piUsageFromInclusive(
+  input: number,
+  cached: number,
+  output: number,
+): { input: number; cacheRead: number; output: number } {
+  const cacheRead = Math.min(cached, input);
+  return { input: input - cacheRead, cacheRead, output };
+}
+
 export interface CaseCost {
   usd: number;
   /** "pi": summed from pi's own per-call costs; "priced": the bridge's tokens
    * priced at CODEX_USD_PER_MTOK for the case's model (the OCR, OpenCode and
-   * PR-Agent arms). */
-  source: "pi" | "priced";
+   * PR-Agent arms); "claude": Claude Code's own total_cost_usd. */
+  source: "pi" | "priced" | "claude";
   /** The model the tokens were priced as ("priced" only). */
   model?: string;
 }
@@ -83,20 +96,27 @@ export function caseCostUsd(caseDir: string): CaseCost | null {
   const summary = join(caseDir, "case-summary.json");
   if (!existsSync(summary)) return null;
   const s = JSON.parse(readFileSync(summary, "utf8")) as {
+    arm?: unknown;
+    cost_usd?: unknown;
     model?: unknown;
     fingerprint?: { model?: unknown };
     bridge?: { input_tokens?: unknown; cached_tokens?: unknown; output_tokens?: unknown };
   };
+  if (s.arm === "claude")
+    return typeof s.cost_usd === "number" && Number.isFinite(s.cost_usd)
+      ? { usd: s.cost_usd, source: "claude" }
+      : null;
   if (!s.bridge) return null;
   const named = typeof s.model === "string" ? s.model : s.fingerprint?.model;
   const model = typeof named === "string" ? named : "gpt-6-sol";
   const r = ratesFor(model);
   if (!r) return null;
-  const input = num(s.bridge.input_tokens);
-  const cached = Math.min(num(s.bridge.cached_tokens), input);
-  const usd =
-    ((input - cached) * r.input + cached * r.cacheRead + num(s.bridge.output_tokens) * r.output) /
-    1e6;
+  const u = piUsageFromInclusive(
+    num(s.bridge.input_tokens),
+    num(s.bridge.cached_tokens),
+    num(s.bridge.output_tokens),
+  );
+  const usd = (u.input * r.input + u.cacheRead * r.cacheRead + u.output * r.output) / 1e6;
   return { usd, source: "priced", model };
 }
 

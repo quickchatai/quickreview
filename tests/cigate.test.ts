@@ -714,6 +714,66 @@ describe("retryWithheldApproval — the promise the withheld note makes", () => 
     });
   });
 
+  // Reconcile asks with the mark's own head; the PR may have moved past it.
+  // Green CI at the withheld head is no evidence for the head under review
+  // now — the recheck carries the mark there when it upholds.
+  it("does nothing when the PR's current head is not the withheld head", async () => {
+    tracked(5180, HEAD);
+    store.recordApprovalWithheld(5180, { head_sha: OLD, ci_state: "red" });
+    const outcome = await retryWithheldApproval(
+      { cfg, store, adapter: new CiFake() },
+      { pr: 5180, head_sha: OLD },
+    );
+    expect(outcome).toMatchObject({ action: "noop", reason: "head-moved" });
+    expect(store.getPr(5180)?.state).toBe("tracked");
+  });
+
+  it("re-checks the PR after the checks read — a push landing meanwhile requeues nothing", async () => {
+    tracked(5180, HEAD);
+    store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
+    const adapter = {
+      listChecks: async (): Promise<CheckSummary[]> => {
+        tracked(5180, OLD);
+        return [done("success")];
+      },
+    };
+    const outcome = await retryWithheldApproval(
+      { cfg, store, adapter },
+      { pr: 5180, head_sha: HEAD },
+    );
+    expect(outcome).toMatchObject({ action: "noop", reason: "head-moved" });
+    expect(store.getPr(5180)?.state).toBe("tracked");
+  });
+
+  // A round already queued or running decides the PR: no second requeue, and
+  // no requeue reported (reconcile counts each report as a correction).
+  it("reports no requeue for a PR whose round is already queued or running", async () => {
+    for (const state of ["queued", "reviewing"] as const) {
+      store.upsertPr({
+        number: 5180,
+        state,
+        head_sha: HEAD,
+        title: "PR 5180",
+        author: "alice",
+        trigger_ts: "2026-10-01T10:00:00.000Z",
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
+      const outcome = await retryWithheldApproval(
+        { cfg, store, adapter: new CiFake() },
+        { pr: 5180, head_sha: HEAD },
+      );
+      expect(outcome).toMatchObject({ action: "noop", reason: "review-pending" });
+      expect(store.getPr(5180)?.state).toBe(state);
+    }
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_queued'")
+        .get(),
+    ).toEqual({ c: 0 });
+  });
+
   it("never touches a closed PR", async () => {
     tracked(5180, HEAD, "closed");
     store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });

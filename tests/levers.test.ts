@@ -577,6 +577,15 @@ describe("pauseLever / resumeLever", () => {
     });
     expect(pumped).toEqual(["o"]);
     expect(store.getPr(12)!.paused).toBe(0);
+    expect(eventsOf(store, "pr_resumed")).toEqual([{ by: "operator" }]);
+    // Resuming a PR that is not paused lifts nothing and records nothing,
+    // though it still pumps.
+    expect(await resumeLever(d, 12, "operator", async () => void pumped.push("again"))).toEqual({
+      ok: true,
+      resumed: 12,
+    });
+    expect(pumped).toEqual(["o", "again"]);
+    expect(eventsOf(store, "pr_resumed")).toHaveLength(1);
     store.close();
   });
 });

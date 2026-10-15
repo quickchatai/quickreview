@@ -156,7 +156,6 @@ describe("the undelivered-recheck sweep at the live data's shape", () => {
         listOpenPrs: async () => open,
         getPr: async (n) => ref(n),
         listBotReviewComments: async () => [],
-        getRequestedReviewers: async () => ({ users: [], teams: [] }),
       };
       const total = OPEN * (PER_OPEN + NOOP_PER_OPEN) + CLOSED * PER_CLOSED;
       expect(store.db.prepare("SELECT COUNT(*) AS n FROM rechecks").get()).toEqual({ n: total });

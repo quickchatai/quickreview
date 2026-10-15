@@ -15,9 +15,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Archiver, archivePolicy } from "../src/archive/archiver.js";
 import { renderArchiveReport } from "../src/archive/report.js";
+import { SpanMeter } from "../src/archive/prfiles.js";
 import {
   COUNT_WINDOW_ROWS,
   askLiveSessions,
@@ -267,6 +268,43 @@ describe("the plan — what a pass would move (§7.2)", () => {
       }
     },
   );
+
+  it("an empty PR's ledger and legacy copy are tallied: its pass snapshots and checks them", async () => {
+    const f = fixture();
+    try {
+      put(f.root, "state/ledgers/pr-1000.md", 33);
+      put(f.root, "archive/pr-1000/session.jsonl", 400);
+      const p = await plan(f);
+      expect(p.empty).toEqual([1000]);
+      expect(p.ledger_snapshots).toEqual({ files: 2, bytes: 95 + 33 });
+      expect(p.legacy_copies).toEqual({ files: 2, bytes: 900 + 400 });
+      // Still not backlog bytes: nothing of it leaves the live tree as a file.
+      expect(p.backlog.prs).toBe(2);
+    } finally {
+      f.store.close();
+    }
+  });
+
+  it("the store listings' sorts are inside the plan's measured spans", async () => {
+    const f = fixture();
+    const measured: string[] = [];
+    const spy = vi.spyOn(SpanMeter.prototype, "measure").mockImplementation(function <T>(
+      this: SpanMeter,
+      fn: () => T,
+    ): T {
+      measured.push(new Error().stack ?? "");
+      return fn();
+    });
+    try {
+      put(f.root, "pihome/sessions/d/old.jsonl", 10);
+      await plan(f, { piGlobalDir: join(f.root, "pihome", "sessions") });
+      expect(measured.some((st) => st.includes("listOverseer"))).toBe(true);
+      expect(measured.some((st) => st.includes("listPiGlobal"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+      f.store.close();
+    }
+  });
 
   it(
     "any per-round state/ entry a session wrote is a round file; a state/pr-<n>-* entry no class claims is REPORTED and kept (rehearsal 2026-10-08)",

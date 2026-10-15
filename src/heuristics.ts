@@ -47,8 +47,17 @@ export function prodStats(files: PrFile[]): ProdStats {
 // another name (CLAUDE.md rule 10): the tier ladder below keys on size and the
 // migration gate alone.
 
+/** A path under a `migrations/` directory — the one spelling of "this file is
+ * a migration" shared by the migration gate, lens selection and the recheck's
+ * renumber classifier. */
+export const MIGRATION_DIR_RE = /(^|\/)migrations\//;
+
+export function isMigrationPath(path: string): boolean {
+  return MIGRATION_DIR_RE.test(path);
+}
+
 export function migrationGate(files: PrFile[]): boolean {
-  return files.some((f) => /(^|\/)migrations\//.test(f.filename));
+  return files.some((f) => isMigrationPath(f.filename));
 }
 
 /** Pass model tier for a round: small quiet diffs start at terra-med; a
@@ -282,7 +291,7 @@ export function selectLenses(
   // every models/ touch. Framework-specific command dirs (Django's
   // management/commands/) come from the profile.
   if (
-    any(/(^|\/)migrations\//) ||
+    any(MIGRATION_DIR_RE) ||
     any(/\.sql$/) ||
     any(/(^|\/)backfills?\//) ||
     extHit("pass-data-safety")
@@ -429,7 +438,7 @@ export function selectLenses(
       /(^|\/)(serializers?|schemas?|apis?|views?|endpoints?|routes?|controllers?|handlers?)\//,
     ) ||
     any(/\.(proto|graphql)$/) ||
-    any(/(^|\/)migrations\//) ||
+    any(MIGRATION_DIR_RE) ||
     codeIn(/(^|\/)(tasks|jobs|workers?|consumers?|queues?)\//) ||
     added(/^\+.*(feature.?flag|launch.?darkly|unleash)/im) ||
     publicSurface() ||

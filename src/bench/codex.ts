@@ -31,8 +31,10 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
+import { checkMergeBase, harnessProcessTimeoutMs } from "./armrun.js";
+import { piUsageFromInclusive } from "./cost.js";
 import { benchAuthMode, DISABLED_REFRESH, type BenchAuthMode } from "./auth.js";
-import { run } from "./exec.js";
+import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import { prTextFor } from "./prtext.js";
 import { prepareTree } from "./runner.js";
 
@@ -41,7 +43,14 @@ import { prepareTree } from "./runner.js";
 export const CODEX_HARNESS_DEFAULTS = { timeoutMin: 30 } as const;
 
 export function codexProcessTimeoutMs(timeoutMin: number): number {
-  return (timeoutMin * 60 + 60) * 1000;
+  return harnessProcessTimeoutMs(timeoutMin);
+}
+
+/** The driver's outer bound: the harness bounds codex itself
+ * (codexProcessTimeoutMs); this only catches a driver that hangs around it.
+ * The login a case is admitted with must outlive it. */
+export function codexDriverTimeoutMs(timeoutMin: number): number {
+  return codexProcessTimeoutMs(timeoutMin) + 5 * 60_000;
 }
 
 /** Where any refresh attempt would go: a closed loopback port (codex's own
@@ -70,26 +79,40 @@ export function jwtAccount(token: string): string | null {
 }
 
 /**
- * Codex's `auth.json` from the sandbox's refresh-disabled pi copy. Refuses a
- * source whose Codex refresh token is anything but the disabled sentinel — so
- * it can never be pointed at the companion's real login — and never copies a
- * refresh token: the output's is the sentinel, whatever the input held.
- * `id_token` is the access token (a JWT with the same account/plan claims
- * Codex reads from an id token; Codex never verifies its signature).
+ * The ChatGPT login in the sandbox's refresh-disabled pi copy, admitted for a
+ * third-party reviewer (`consumer`, for the refusal). Refuses a source whose
+ * refresh token is anything but the disabled sentinel — so it can never be
+ * pointed at the companion's real login. The account id is the login's own,
+ * else the access token's claim.
  */
-export function codexAuthFrom(benchAuthRaw: string, now: Date = new Date()): string {
+export function sandboxChatgptLogin(
+  benchAuthRaw: string,
+  consumer: string,
+): { cred: Record<string, unknown>; access: string; account: string } {
   const parsed = JSON.parse(benchAuthRaw) as Record<string, unknown>;
   const cred = parsed["openai-codex"] as Record<string, unknown> | undefined;
   if (!cred || cred["type"] !== "oauth" || typeof cred["access"] !== "string" || !cred["access"])
     throw new Error("no openai-codex OAuth login in the sandbox's token copy");
   if (cred["refresh"] !== DISABLED_REFRESH)
     throw new Error(
-      "refusing a pi login whose refresh token is not the disabled sentinel — only the sandbox's refresh-disabled copy (src/bench/auth.ts) may feed Codex",
+      `refusing a pi login whose refresh token is not the disabled sentinel — only the sandbox's refresh-disabled copy (src/bench/auth.ts) may feed ${consumer}`,
     );
   const access = cred["access"];
   const account =
     (typeof cred["accountId"] === "string" && cred["accountId"]) || jwtAccount(access);
   if (!account) throw new Error("the pi login carries no ChatGPT account id");
+  return { cred, access, account };
+}
+
+/**
+ * Codex's `auth.json` from the sandbox's refresh-disabled pi copy
+ * (sandboxChatgptLogin), never copying a refresh token: the output's is the
+ * sentinel, whatever the input held. `id_token` is the access token (a JWT
+ * with the same account/plan claims Codex reads from an id token; Codex never
+ * verifies its signature).
+ */
+export function codexAuthFrom(benchAuthRaw: string, now: Date = new Date()): string {
+  const { access, account } = sandboxChatgptLogin(benchAuthRaw, "Codex");
   return (
     JSON.stringify(
       {
@@ -131,15 +154,11 @@ export function codexDriverEnv(o: {
     PYTHONDONTWRITEBYTECODE: "1",
     CODEX_REFRESH_TOKEN_URL_OVERRIDE: REFRESH_BLACKHOLE,
     JUDGE_USE_MOCK: "true",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_TERMINAL_PROMPT: "0",
+    ...GIT_ISOLATION_ENV,
   };
 }
 
 export interface CodexDriverPaths {
-  python: string;
   driver: string;
   dataset: string;
   tree: string;
@@ -197,6 +216,13 @@ function strip(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+/** evaluate.py `build_target_comments_from_codex`'s note for one finding:
+ * `summary + "\n" + description`, each trimmed, an empty one left out; ""
+ * when both are (the finding is then skipped). */
+export function codexFindingNote(r: Record<string, unknown>): string {
+  return [strip(r["summary"]), strip(r["description"])].filter(Boolean).join("\n").trim();
+}
+
 /** evaluate.py `build_target_comments_from_codex`, as OCR-reader input: one
  * comment per dict finding with a non-empty `summary + "\n" + description`,
  * `file` → path, start/end lines passed through as they are (both readers
@@ -208,7 +234,7 @@ export function codexCommentsAsOcr(reviewOutput: unknown): OcrShapedComment[] {
   for (const f of reviewOutput) {
     if (typeof f !== "object" || f === null || Array.isArray(f)) continue;
     const r = f as Record<string, unknown>;
-    const note = [strip(r["summary"]), strip(r["description"])].filter(Boolean).join("\n").trim();
+    const note = codexFindingNote(r);
     if (!note) continue;
     out.push({
       path: "file" in r ? r["file"] : "",
@@ -351,7 +377,12 @@ export function summarizeCodexRun(a: {
   const r = a.result;
   const codexExit = r && typeof r["codex_exit_code"] === "number" ? r["codex_exit_code"] : null;
   const stderr = r && typeof r["stderr"] === "string" ? r["stderr"] : "";
-  const tokens = r ? codexTokens(r) : null;
+  // A result that records no usage has unknown tokens, never zero.
+  const recorded = r?.["token_usage"];
+  const tokens =
+    r && typeof recorded === "object" && recorded !== null && !Array.isArray(recorded)
+      ? codexTokens(r)
+      : null;
   const status: CodexStatus =
     a.timedOut || /Process timed out after/.test(stderr)
       ? "timeout"
@@ -360,23 +391,24 @@ export function summarizeCodexRun(a: {
         : a.exitCode !== 0 || codexExit !== 0
           ? "failed"
           : "ok";
-  const cached = tokens ? Math.min(tokens.cached_input_tokens, tokens.input_tokens) : 0;
+  const usage = tokens
+    ? piUsageFromInclusive(tokens.input_tokens, tokens.cached_input_tokens, tokens.output_tokens)
+    : null;
   return {
     status,
     review_output_source:
       r && typeof r["review_output_source"] === "string" ? r["review_output_source"] : null,
     tokens,
-    usage: tokens
-      ? { input: tokens.input_tokens - cached, cacheRead: cached, output: tokens.output_tokens }
-      : null,
-    bridge: tokens
-      ? {
-          input_tokens: tokens.input_tokens,
-          cached_tokens: cached,
-          output_tokens: tokens.output_tokens,
-          reasoning_tokens: tokens.reasoning_output_tokens,
-        }
-      : null,
+    usage,
+    bridge:
+      tokens && usage
+        ? {
+            input_tokens: tokens.input_tokens,
+            cached_tokens: usage.cacheRead,
+            output_tokens: tokens.output_tokens,
+            reasoning_tokens: tokens.reasoning_output_tokens,
+          }
+        : null,
   };
 }
 
@@ -471,12 +503,9 @@ export async function reviewCaseCodex(
       tmpDir,
       ...(apiKey ? { apiKey } : {}),
     });
-    const mb = await run("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
-    summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
-    if (!summary.merge_base_ok)
-      summary.warnings.push(
-        `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
-      );
+    const mb = await checkMergeBase(run, tree, c, meta, env);
+    summary.merge_base_ok = mb.ok;
+    if (mb.warning) summary.warnings.push(mb.warning);
     // The harness's result file is written by the driver; a stale one from an
     // earlier attempt must never be read as this attempt's.
     rmSync(resultPath(o.outDir, c), { force: true });
@@ -487,7 +516,6 @@ export async function reviewCaseCodex(
     const argv = codexDriverArgv(
       c,
       {
-        python: o.python,
         driver: o.driver,
         dataset: o.dataset,
         tree,
@@ -501,12 +529,10 @@ export async function reviewCaseCodex(
     log(
       `codex: ${c.instance_id} — ${meta.diff.files} files, codex exec review via reviewers/codex.py …`,
     );
-    // The harness bounds codex itself (timeout×60+60 s); this outer bound only
-    // catches a driver that hangs around it.
     const r = await run(o.python, argv, {
       cwd: tree,
       env,
-      timeoutMs: codexProcessTimeoutMs(o.timeoutMin) + 5 * 60_000,
+      timeoutMs: codexDriverTimeoutMs(o.timeoutMin),
     });
     writeFileSync(
       join(caseDir, "codex-driver.log"),

@@ -106,7 +106,9 @@ function deps(r: Rig, over: Partial<SealDeps> = {}): SealDeps {
 }
 
 const sha = (b: Buffer): string => createHash("sha256").update(b).digest("hex");
-const partials = (r: Rig): string[] => readdirSync(r.dir).filter((n) => n.endsWith(".partial"));
+const partialsIn = (dir: string): string[] =>
+  readdirSync(dir).filter((n) => n.endsWith(".partial"));
+const partials = (r: Rig): string[] => partialsIn(r.dir);
 
 describe("when a month may be sealed", () => {
   const base = {
@@ -181,6 +183,33 @@ describe("when a month may be sealed", () => {
       [AUG, "sealed"],
       [SEP, "open"],
     ]);
+  });
+});
+
+describe("sealing and the disk", () => {
+  it("no room for a month's gzip: nothing gzipped, the file kept open, sealing stops", async () => {
+    const r = await moved();
+    const asked: number[] = [];
+    const out = await sealDue(
+      deps(r, {
+        roomFor: async (bytes) => {
+          asked.push(bytes);
+          return "disk_low";
+        },
+      }),
+      5,
+    );
+    expect(out.map((x) => [x.file, x.outcome, x.detail])).toEqual([[AUG, "held", "disk_low"]]);
+    // Asked for the file's own size, the one it would gzip.
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toBeGreaterThan(0);
+    expect(existsSync(join(r.dir, AUG))).toBe(true);
+    expect(existsSync(join(r.dir, `${AUG}.gz`))).toBe(false);
+    expect(partials(r)).toEqual([]);
+    expect(r.adb.files().find((f) => f.file === AUG)?.state).toBe("open");
+    // With room, the same month seals.
+    const again = await sealDue(deps(r, { roomFor: async () => null }), 5);
+    expect(again.map((x) => [x.file, x.outcome])).toEqual([[AUG, "sealed"]]);
   });
 });
 
@@ -556,6 +585,21 @@ describe("the manifest", () => {
     await expect(b.open()).rejects.toBeInstanceOf(ManifestUnreadable);
   });
 
+  it("an entry without a positive integer seq is unreadable, never a NaN file name", async () => {
+    const r = await moved();
+    r.adb.close();
+    const m = JSON.parse(readFileSync(join(r.dir, "manifest.json"), "utf8")) as {
+      files: Array<Record<string, unknown>>;
+    };
+    for (const seq of [undefined, 0, 1.5, "2"]) {
+      const files = m.files.map((f) => ({ ...f }));
+      if (seq === undefined) delete files[0]!.seq;
+      else files[0]!.seq = seq;
+      writeFileSync(join(r.dir, "manifest.json"), JSON.stringify({ format: 1, files }));
+      await expect(readDbManifest(r.dir), String(seq)).rejects.toBeInstanceOf(ManifestUnreadable);
+    }
+  });
+
   it("a new file takes a seq no name on disk has used (a stray -wal included)", async () => {
     const r = await rig();
     rigs.push(r);
@@ -697,6 +741,66 @@ describe("sealing through the archiver (mode on)", () => {
     }
   });
 
+  it("the disk is re-read between DB batches: no reading ends the tick held, nothing planned or sealed", async () => {
+    const r = await rig();
+    rigs.push(r);
+    seedAugSep(r);
+    r.adb.close();
+    const manifest = join(r.dir, "manifest.json");
+    expect(existsSync(manifest)).toBe(false);
+    let plans = 0;
+    const a = archiver(r, {
+      // statfs answers until the first batch has written the archive's manifest.
+      statfs: async () => {
+        if (existsSync(manifest)) throw new Error("EIO");
+        return { bavail: 1e12, bsize: 1 };
+      },
+      plan: async () => {
+        plans += 1;
+        return fakePlan();
+      },
+    });
+    try {
+      expect(await a.tick()).toMatchObject({
+        state: "held",
+        held_reason: "disk_unknown",
+        planned: false,
+      });
+      expect(a.status().db).toMatchObject({ outcome: "held", events_moved: 500 });
+      expect(plans).toBe(0);
+      expect(readdirSync(r.dir).filter((n) => n.endsWith(".gz"))).toEqual([]);
+    } finally {
+      a.stop();
+    }
+  });
+
+  it("no room on the archive mount for a month's gzip: the month waits, the tick goes on, ONE wake", async () => {
+    const r = await moved();
+    r.adb.close();
+    const headroom = ARCHIVE_DEFAULTS.disk_headroom_gb * 1024 ** 3;
+    let now = T0;
+    const logs: string[] = [];
+    const a = archiver(r, {
+      // The headroom and a few bytes: never room for a month's file.
+      statfs: async () => ({ bavail: headroom + 10, bsize: 1 }),
+      now: () => new Date(now),
+      log: (m) => logs.push(m),
+    });
+    try {
+      expect(await a.tick()).toMatchObject({ state: "idle", held_reason: null });
+      now += 60_000;
+      expect((await a.tick()).state).toBe("idle");
+      expect(existsSync(join(r.dir, AUG))).toBe(true);
+      expect(existsSync(join(r.dir, `${AUG}.gz`))).toBe(false);
+      expect(partialsIn(r.dir)).toEqual([]);
+      expect((await readDbManifest(r.dir)).files.find((f) => f.file === AUG)?.state).toBe("open");
+      expect(r.store.anomalies().map((x) => x.kind)).toEqual(["archive_disk_low"]);
+      expect(logs.filter((l) => l.includes(`${AUG} not sealed (held)`))).toHaveLength(1);
+    } finally {
+      a.stop();
+    }
+  });
+
   it("a hold before sealing, or a spent tick budget, starts no seal", async () => {
     // Held: the load reads stalled once the DB phase is done.
     const r = await moved();
@@ -710,7 +814,12 @@ describe("sealing through the archiver (mode on)", () => {
       },
     });
     try {
-      expect(await a.tick()).toMatchObject({ state: "held", held_reason: "loop_stalled" });
+      // The plan was computed before the hold came up: the tick says so.
+      expect(await a.tick()).toMatchObject({
+        state: "held",
+        held_reason: "loop_stalled",
+        planned: true,
+      });
       expect(existsSync(join(r.dir, `${AUG}.gz`))).toBe(false);
     } finally {
       a.stop();

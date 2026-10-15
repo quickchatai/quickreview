@@ -259,6 +259,9 @@ export type RetryNoopReason =
   | "no-withheld-approval"
   | "head-moved"
   | "pr-not-open"
+  /** A round is already queued or running for the PR: it decides, and the
+   * retry has nothing to requeue. */
+  | "review-pending"
   | "ci-not-green"
   | "ci-unreadable";
 
@@ -297,11 +300,26 @@ export async function retryWithheldApproval(
   const mark = store.approvalWithheld(req.pr);
   if (!mark) return noop("no-withheld-approval");
   // A moved head is not this path's business: a push re-reviews through its own
-  // route, and the mark is replaced when the next review is withheld.
+  // route (the recheck carries the mark to the new head when it upholds), and
+  // the mark is replaced when the next review is withheld. Green CI at the
+  // withheld head says nothing about the PR's current head, so the mark must
+  // still describe the PR — the completion's head AND the row's.
   if (req.head_sha && mark.head_sha !== req.head_sha) return noop("head-moved");
 
-  const row = store.getPr(req.pr);
-  if (!row || row.state === "closed") return noop("pr-not-open");
+  /** The PR as the retry may act on it, or why it may not. Asked before the
+   * checks read and again after it: the read is asynchronous, and a push, a
+   * close or a dispatch may land meanwhile. */
+  const admissible = (): RetryNoopReason | null => {
+    const row = store.getPr(req.pr);
+    if (!row || row.state === "closed") return "pr-not-open";
+    const current = store.approvalWithheld(req.pr);
+    if (!current || current.head_sha !== mark.head_sha) return "head-moved";
+    if (row.head_sha && row.head_sha !== mark.head_sha) return "head-moved";
+    if (row.state === "queued" || row.state === "reviewing") return "review-pending";
+    return null;
+  };
+  const before = admissible();
+  if (before) return noop(before);
 
   let state: CiState;
   if (deps.adapter.listChecks) {
@@ -321,6 +339,8 @@ export async function retryWithheldApproval(
     state = (req.conclusion ?? "").toLowerCase() === "success" ? "green" : "red";
   }
   if (state !== "green") return noop("ci-not-green", state);
+  const after = admissible();
+  if (after) return noop(after, state);
 
   applyEvent(
     store,

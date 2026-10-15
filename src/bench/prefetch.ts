@@ -266,6 +266,10 @@ async function prFromApi(c: BenchCase, o: PrefetchOptions): Promise<PrApi | "rat
   return null;
 }
 
+/** The branch names a store's metadata takes as `base_ref` (prepareTree
+ * installs it as `origin/<base_ref>`). */
+export const BASE_REF_RE = /^[A-Za-z0-9._/-]+$/;
+
 /** The PR text a set carries (no API call), or undefined when it carries none. */
 function setText(c: BenchCase): PrApi | undefined {
   if (c.title === undefined && c.body === undefined && c.base_ref === undefined) return undefined;
@@ -355,8 +359,6 @@ async function prefetchLeakproof(
       const has = await run("git", ["-C", tmp, "cat-file", "-e", real], { env: GIT_ENV });
       if (has.code === 0) throw new Error(`${c.instance_id}: leak-proof store still holds ${real}`);
     }
-    await git(tmp, ["update-ref", "refs/bench/base", c.base_commit]);
-    await git(tmp, ["update-ref", "refs/bench/head", c.head_commit]);
     return { mb: c.base_commit, depth: 1, via };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -379,6 +381,8 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
       meta.base_commit === c.base_commit &&
       // A follow-up case's store must hold the SAME previous head.
       (meta.prev_head ?? null) === (c.followup?.prev_head ?? null) &&
+      // The set's own merge-base assertion holds for a cached store too.
+      (c.expect_merge_base === undefined || c.expect_merge_base === meta.merge_base) &&
       (await caseMergeBases(dir, c).then(
         (m) =>
           m !== null &&
@@ -401,7 +405,7 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
             ...meta,
             title: api.title,
             body: api.body,
-            ...(api.base_ref && /^[A-Za-z0-9._/-]+$/.test(api.base_ref)
+            ...(api.base_ref && BASE_REF_RE.test(api.base_ref)
               ? { base_ref: api.base_ref, base_ref_source: "github-api" as const }
               : {}),
           };
@@ -461,10 +465,11 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
       }
       mb = found.mb;
       prevMb = found.prevMb;
-      await git(tmp, ["update-ref", "refs/bench/base", c.base_commit]);
-      await git(tmp, ["update-ref", "refs/bench/head", c.head_commit]);
       if (c.followup) await git(tmp, ["update-ref", "refs/bench/prev-head", c.followup.prev_head]);
     }
+    // Every store, leak-proof or not, names the case's base and head alike.
+    await git(tmp, ["update-ref", "refs/bench/base", c.base_commit]);
+    await git(tmp, ["update-ref", "refs/bench/head", c.head_commit]);
     if (c.expect_merge_base && c.expect_merge_base !== mb)
       throw new Error(
         `${c.instance_id}: merge-base ${mb} differs from the set's ${c.expect_merge_base}`,
@@ -489,7 +494,7 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
     base_commit: c.base_commit,
     head_commit: c.head_commit,
     merge_base: mb,
-    base_ref: /^[A-Za-z0-9._/-]+$/.test(baseRef) ? baseRef : "main",
+    base_ref: BASE_REF_RE.test(baseRef) ? baseRef : "main",
     base_ref_source:
       c.base_ref !== undefined ? "set" : fromApi?.base_ref ? "github-api" : "default-branch",
     title: fromApi?.title ?? null,

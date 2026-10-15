@@ -42,6 +42,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/archive-evidence-shell.test.ts",
   "tests/bench-apikey.test.ts",
   "tests/bench-arm-compare.test.ts",
+  "tests/bench-armrun.test.ts",
   "tests/bench-case-identity.test.ts",
   "tests/bench-claude.test.ts",
   "tests/bench-codex.test.ts",

@@ -297,10 +297,7 @@ export function summarizeManifest(m: Manifest): ManifestSummary {
         out.records += e.records;
         out.bytes += e.bytes;
         out.gz_bytes += e.gz_bytes;
-        if (e.sources_removed_at !== undefined) {
-          const kept = new Set(e.kept ?? []);
-          out.sources_removed += e.files.filter((f) => !f.snapshot && !kept.has(f.path)).length;
-        }
+        out.sources_removed += stampedBundleSources(e).size;
         break;
       }
       case "sources_removed":
@@ -450,7 +447,7 @@ export function indexEntries(
         removed: e.source_removed_at !== undefined,
       });
     } else if (e.kind === "bundle") {
-      const kept = new Set(e.kept ?? []);
+      const stamped = stampedBundleSources(e);
       for (const f of e.files)
         out.set(f.path, {
           source: f.path,
@@ -464,7 +461,7 @@ export function indexEntries(
           ino: f.ino,
           class: f.class,
           entry: i,
-          removed: e.sources_removed_at !== undefined && !kept.has(f.path) && !f.snapshot,
+          removed: stamped.has(f.path),
         });
     } else if (e.kind === "sources_removed") {
       for (const p of e.paths) {
@@ -493,11 +490,29 @@ export function indexEntries(
   });
 }
 
+/** The sources a bundle entry's own removal stamp records as gone: none
+ * until it is stamped, then every record but a snapshot (a copy of a file
+ * that stays live) and the paths it `kept`. A later `sources_removed` entry
+ * adds to them. */
+export function stampedBundleSources(e: BundleEntry): Set<string> {
+  if (e.sources_removed_at === undefined) return new Set();
+  const kept = new Set(e.kept ?? []);
+  return new Set(e.files.filter((f) => !f.snapshot && !kept.has(f.path)).map((f) => f.path));
+}
+
+/** The archive file an entry placed (relative to the dir); null for an entry
+ * that places none (a reuse, a removal, a restore). */
+export function placedArchive(e: ManifestEntry): string | null {
+  return e.kind === "transcript" || e.kind === "file" || e.kind === "bundle" ? e.archive : null;
+}
+
 /** Every archive file name the manifest references (relative to the dir). */
 export function referencedArchives(m: Manifest): Set<string> {
   const out = new Set<string>();
-  for (const e of m.entries)
-    if (e.kind === "transcript" || e.kind === "file" || e.kind === "bundle") out.add(e.archive);
+  for (const e of m.entries) {
+    const a = placedArchive(e);
+    if (a !== null) out.add(a);
+  }
   return out;
 }
 

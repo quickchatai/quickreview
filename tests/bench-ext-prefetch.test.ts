@@ -269,6 +269,22 @@ describe("fork + mirror prefetch (Martian)", () => {
     ).rejects.toThrow(/differs from the set/);
   });
 
+  it("a cached store answers to the set's merge-base assertion too", async () => {
+    const store = join(tmp, "store-fork-cached-mb");
+    const opts = {
+      store,
+      remoteFor: () => NOT_THERE,
+      mirrors: new Map([["bench-org/proj__PR1234", mirror]]),
+      fetchImpl: (async () => new Response("{}", { status: 404 })) as unknown as typeof fetch,
+    };
+    const meta = await prefetchCase(forkCase(), opts);
+    expect(meta.merge_base).toBe(B0);
+    // The set now asserts another merge-base: the cached store is no answer.
+    await expect(prefetchCase({ ...forkCase(), expect_merge_base: B1 }, opts)).rejects.toThrow(
+      /differs from the set/,
+    );
+  });
+
   it("falls back to the network remote when the mirror lacks the commits", async () => {
     const c = forkCase();
     const empty = join(tmp, "empty.git");

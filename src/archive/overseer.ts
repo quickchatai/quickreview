@@ -29,11 +29,12 @@ import { basename, join, relative } from "node:path";
 import { fileDigestWithPrefix, identityOrNull } from "./gzfile.js";
 import type { FileIdentity } from "./fsutil.js";
 import type { DuplicateEntry } from "./manifest.js";
-import { listDir, walkFiles } from "./prfiles.js";
+import { type SpanMeter, listDir, walkFiles } from "./prfiles.js";
 import {
   StoreWriter,
   archiveFileSize,
   emptyStoreResult,
+  settleStore,
   type StoreFile,
   type StorePassDeps,
   type StorePassResult,
@@ -90,6 +91,7 @@ const validBirth = (d: Date | null): d is Date => d !== null && Number.isFinite(
 async function listOverseer(
   sessionsRoot: string,
   signal?: AbortSignal,
+  meter?: SpanMeter,
 ): Promise<Array<{ path: string; id: FileIdentity }>> {
   const paths: string[] = [];
   await walkFiles(join(sessionsRoot, OVERSEER_STORE), paths, signal);
@@ -99,7 +101,12 @@ async function listOverseer(
     const id = await identityOrNull(p);
     if (id) live.push({ path: p, id });
   }
-  live.sort((a, b) => a.id.mtimeMs - b.id.mtimeMs || a.path.localeCompare(b.path));
+  // One synchronous span that grows with the store: measured.
+  const sort = (): void => {
+    live.sort((a, b) => a.id.mtimeMs - b.id.mtimeMs || a.path.localeCompare(b.path));
+  };
+  if (meter) meter.measure(sort);
+  else sort();
   return live;
 }
 
@@ -134,9 +141,11 @@ export async function measureOverseer(deps: {
   sessionsRoot: string;
   bornAt?: () => Date | null;
   signal?: AbortSignal;
+  /** Measures the listing's synchronous span (the plan's meter). */
+  meter?: SpanMeter;
 }): Promise<StoreTally> {
   try {
-    const live = await listOverseer(deps.sessionsRoot, deps.signal);
+    const live = await listOverseer(deps.sessionsRoot, deps.signal, deps.meter);
     const legacy = await legacyCopies(join(deps.root, "archive", OVERSEER_STORE));
     const born = deps.bornAt?.() ?? null;
     const movable = validBirth(born) ? overseerMovable(live, born) : null;
@@ -166,24 +175,25 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
 
   // The live transcripts, oldest first; the newest and the current birth's
   // stay.
-  const live = await listOverseer(deps.sessionsRoot, deps.signal);
+  const live = await listOverseer(deps.sessionsRoot, deps.signal, deps.meter);
   const candidates = overseerMovable(live, born);
 
   // The legacy rotation copies.
   const legacy = await legacyCopies(dir);
 
+  const storeDeps = {
+    ...deps,
+    dir,
+    subject: OVERSEER_STORE,
+    liveOf: (source: string) => join(root, source),
+  };
   if (candidates.length === 0 && legacy.length === 0) {
-    const r = emptyStoreResult("none");
+    const r = await settleStore(storeDeps);
     r.keptLive = live.length;
     return r;
   }
 
-  const writer = await StoreWriter.open({
-    ...deps,
-    dir,
-    subject: OVERSEER_STORE,
-    liveOf: (source) => join(root, source),
-  });
+  const writer = await StoreWriter.open(storeDeps);
   if (!writer) return emptyStoreResult("held", "manifest_unreadable");
   const res = writer.result;
   res.keptLive = live.length - candidates.length;
@@ -264,16 +274,7 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
       incomplete = true;
       continue;
     }
-    await writer.append(
-      entryOf(out.dest, {
-        ...identityFields(id),
-        sha256: out.ok.sha256,
-        gz_bytes: out.ok.gzBytes,
-      }),
-    );
-    res.bytesIn += out.ok.bytes;
-    res.bytesOut += out.ok.gzBytes;
-    unlinks.push({ path: l.path, source, identity: identityFields(id) });
+    unlinks.push(await writer.recordArchived(f, entryOf, out));
   }
 
   // The unlinks — each only while the birth is still readable (a file that
@@ -287,15 +288,17 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
   };
   const { removed, stop: unlinkStop } = await writer.unlinkAll(unlinks, allowed);
   const removedDuplicates: Array<Omit<DuplicateEntry, "pass" | "removed_at">> = [];
+  let duplicateStop: string | null = null;
   if (!unlinkStop)
     for (const d of duplicates) {
-      if (allowed()) break;
+      duplicateStop = allowed();
+      if (duplicateStop) break;
       if (await writer.removeDuplicate(d.path, d.id)) removedDuplicates.push(d.entry);
       else incomplete = true;
     }
   await writer.finish(removed, removedDuplicates);
 
-  stop = stop ?? unlinkStop;
+  stop = stop ?? unlinkStop ?? duplicateStop;
   if (unlinks.some((u) => !removed.has(u.source))) incomplete = true;
   if (removedDuplicates.length < duplicates.length) incomplete = true;
   res.outcome = stop || incomplete || waits > 0 ? "partial" : "done";

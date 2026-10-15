@@ -342,6 +342,10 @@ const OUTCOME_FIELD_NOTE =
   "addresses it), `refuted` (you accept the author's argument — it was wrong or does " +
   "not apply) or `held` (you keep it open). Leave it out when you cannot tell.";
 
+/** How an author-reply wake begins: the heading plus the PR number. The
+ * held-wake coalescer recognises a recovered author reply by it. */
+export const AUTHOR_REPLY_WAKE_HEADING = "# Author reply — PR #";
+
 /**
  * The inject payload that wakes the PR session for one author reply. The
  * daemon writes it through the session hooks (`inject(pr, message)`); the
@@ -359,7 +363,7 @@ export function buildWakeMessage(
     .map((l) => `> ${l}`)
     .join("\n");
   const lines: string[] = [
-    `# Author reply — PR #${event.pr}`,
+    `${AUTHOR_REPLY_WAKE_HEADING}${event.pr}`,
     "",
     `**Thread**: \`${threadIdOf(event)}\`${ctx.finding_id ? ` (ledger ${ctx.finding_id})` : ""}` +
       `${event.path ? ` · \`${event.path}\`` : ""}`,

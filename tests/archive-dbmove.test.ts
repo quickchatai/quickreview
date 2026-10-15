@@ -508,6 +508,31 @@ describe("every batch is its own bounded span (acceptance 5)", () => {
     expect(liveEvents(r.store).length + archived(SEPT(r), "events").length).toBe(1500);
   });
 
+  it("the disk is re-read before every batch: no room ends the run held", async () => {
+    const r = await make();
+    const rows: Array<[string, string, number | null, unknown]> = [];
+    for (let i = 0; i < 1500; i++) rows.push([iso(OLD + i * 10), "ci_completed", null, null]);
+    seedEvents(r.store, rows);
+    let room: string | null = null;
+    let asked = 0;
+    const res = await r
+      .mover({
+        room: async () => {
+          asked += 1;
+          return room;
+        },
+        onBatch: () => {
+          room = "disk_low";
+        },
+      })
+      .run();
+    expect(res).toMatchObject({ outcome: "held", events: { moved: 500, batches: 1 } });
+    expect(asked).toBe(2);
+    // The settled watermark was kept on the way out, as for any hold.
+    expect(Number(mark(r.store, "events.last_id"))).toBe(500);
+    expect(liveEvents(r.store).length + archived(SEPT(r), "events").length).toBe(1500);
+  });
+
   it("a stop between the read-back and the live delete deletes nothing", async () => {
     const r = await make();
     seedEvents(r.store, [

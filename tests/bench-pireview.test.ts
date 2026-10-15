@@ -238,6 +238,16 @@ describe("output → findings: pi-review's PI_REVIEW_META_JSON line", () => {
     });
     expect(normalizeFindingPath("./src/a.ts", t)).toEqual({ path: "src/a.ts", lines: null });
     expect(normalizeFindingPath("b/src/a.ts", t)).toEqual({ path: "src/a.ts", lines: null });
+    // Under the tree the path is already repo-relative: a top-level `a/` or
+    // `b/` there is a directory, never a diff prefix.
+    expect(normalizeFindingPath("/work/wt/x/a/module.ts", t)).toEqual({
+      path: "a/module.ts",
+      lines: null,
+    });
+    expect(normalizeFindingPath("/work/wt/x/b/m.ts:4", t)).toEqual({
+      path: "b/m.ts",
+      lines: { start: 4, end: 4 },
+    });
     expect(normalizeFindingPath("`src/a.ts:12-14`", t)).toEqual({
       path: "src/a.ts",
       lines: { start: 12, end: 14 },
@@ -664,6 +674,10 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
       };
       seed(CASE, fpA);
       seed(SAME, fpB);
+      // The run had been evaluated, and model A's review left judge inputs.
+      writeFileSync(join(out, "results", "all", "metrics_ocr_round_1.json"), "{}");
+      writeFileSync(join(out, "cases", CASE.instance_id, "comments.json"), "[]");
+      writeFileSync(join(out, "cases", CASE.instance_id, "review.md"), "model A\n");
       const src = join(tmp, "src");
       mkdirSync(src);
       writeFileSync(
@@ -706,9 +720,46 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
       // Model A's result is gone, not left to be scored under the model-B label…
       expect(existsSync(join(out, "results", "all", `${CASE.instance_id}.json`))).toBe(false);
       expect(existsSync(join(out, "cases", CASE.instance_id, "case-summary.json"))).toBe(false);
+      // …with the review the defect judge would read…
+      expect(existsSync(join(out, "cases", CASE.instance_id, "comments.json"))).toBe(false);
+      expect(existsSync(join(out, "cases", CASE.instance_id, "review.md"))).toBe(false);
+      // …and the scores of the old results, so a report shows none rather than a stale one…
+      expect(existsSync(join(out, "results", "all", "metrics_ocr_round_1.json"))).toBe(false);
       // …while the matching one is kept.
       expect(existsSync(join(out, "results", "all", `${SAME.instance_id}.json`))).toBe(true);
       expect(existsSync(join(out, "cases", SAME.instance_id, "case-summary.json"))).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a replacement attempt", () => {
+  it("an unprefetched case leaves no earlier attempt's progress log, meta or judge inputs behind", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pireview-unpref-"));
+    try {
+      const caseDir = join(tmp, "cases", CASE.instance_id);
+      mkdirSync(caseDir, { recursive: true });
+      for (const f of [
+        "pi-events.jsonl",
+        "pi-events.r1.jsonl",
+        "pireview-meta.json",
+        "review.md",
+        "comments.json",
+      ])
+        writeFileSync(join(caseDir, f), "earlier attempt\n");
+      const s = unprefetchedPireviewCase(tmp, CASE, FP, "not prefetched");
+      expect(s.status).toBe("failed");
+      // The cost reader prices pi-events.jsonl first: an old one would charge
+      // this attempt, which ran no model, with the earlier one's spend.
+      for (const f of [
+        "pi-events.jsonl",
+        "pi-events.r1.jsonl",
+        "pireview-meta.json",
+        "review.md",
+        "comments.json",
+      ])
+        expect(existsSync(join(caseDir, f)), f).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

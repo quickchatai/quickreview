@@ -38,6 +38,9 @@
 // matches reachable exactly as before: any match the control makes and a
 // posted+ variant loses is judge noise, and the report says so.
 
+import { findingRecordKey } from "../findingkey.js";
+import { normalizeDisposition } from "../findingsrecord.js";
+
 // ---- the lens outputs in pi's JSON event stream -------------------------------
 
 /** One lens (or validator) pass, as the `subagent` tool reported it. */
@@ -309,8 +312,12 @@ export function rawCandidatesFromEvents(lines: Iterable<string>): {
 // ---- the findings record, linked back onto the raw candidates -----------------
 
 export interface RecordFinding {
+  /** The row's key by the findings record's own rule (src/findingkey.ts):
+   * its `id`, else its `key`, else `<lens>@<path>:<line>#<index>`. */
   id: string;
-  /** Lower-cased; `posted`, `merged`, `folded`, `killed`, `downgraded`, `withheld`, … */
+  /** The record reader's closed set (`posted`, `merged`, `folded`, `killed`,
+   * `doubted`, `downgraded`, `withheld`, `conceded`), its aliases folded in;
+   * a spelling it does not know stays as written, lower-cased. */
   disposition: string;
   lenses: string[];
   path: string;
@@ -327,15 +334,21 @@ function recInt(v: unknown): number | undefined {
   return undefined;
 }
 
-/** The session's findings record — tolerant in shape, like every reader here. */
+/** The session's findings record — tolerant in shape, like every reader
+ * here, and accepting what the production reader accepts: a `findings` or a
+ * `candidates` array (or a bare one), and every disposition spelling. */
 export function parseFindingsRecord(raw: unknown): RecordFinding[] {
+  const o = (typeof raw === "object" && raw !== null ? raw : {}) as {
+    findings?: unknown;
+    candidates?: unknown;
+  };
   const rows = Array.isArray(raw)
     ? raw
-    : typeof raw === "object" &&
-        raw !== null &&
-        Array.isArray((raw as { findings?: unknown }).findings)
-      ? (raw as { findings: unknown[] }).findings
-      : [];
+    : Array.isArray(o.findings)
+      ? o.findings
+      : Array.isArray(o.candidates)
+        ? o.candidates
+        : [];
   const out: RecordFinding[] = [];
   rows.forEach((row, i) => {
     const r = (typeof row === "object" && row !== null ? row : {}) as Record<string, unknown>;
@@ -350,9 +363,11 @@ export function parseFindingsRecord(raw: unknown): RecordFinding[] {
     const evidence = str("evidence");
     const reason = str("reason");
     const kind = str("kind");
+    const written = (str("disposition") ?? "").toLowerCase();
+    const disposition = normalizeDisposition(written);
     out.push({
-      id: str("id") ?? `#${i}`,
-      disposition: (str("disposition") ?? "").toLowerCase(),
+      id: findingRecordKey(r, i),
+      disposition: disposition === "unknown" ? written : disposition,
       lenses: lensRaw
         .split(/[,\s/+&]+/)
         .map(normalizeLens)
@@ -542,6 +557,23 @@ export interface OcrComment {
   qcr_whatif?: ExtraProvenance | { origin: "posted" };
 }
 
+/** The line the session's record gave a finding, when it is in the same file
+ * as the lens candidate linked to it — where the finding would have been
+ * posted. */
+function recordLineFor(link: RecordLink, c: RawCandidate): number | undefined {
+  return link.record.line !== undefined && link.record.path === c.path
+    ? link.record.line
+    : undefined;
+}
+
+/** A lens that gave no line takes the record's line for the same finding,
+ * flagged `anchor: "record"`; one that gave a line keeps its own. */
+function borrowRecordLine(x: ExtraCandidate, line: number | undefined): void {
+  if (x.line !== undefined || line === undefined) return;
+  x.line = line;
+  x.prov.anchor = "record";
+}
+
 function candidateExtra(
   c: RawCandidate,
   origin: ExtraOrigin,
@@ -582,12 +614,7 @@ export function recordExtras(
     if (l.candidate !== null) {
       const c = candidates[l.candidate]!;
       const x = candidateExtra(c, origin, l.record, l.how);
-      // A lens that gave no line: the session's own anchor for the same
-      // finding in the same file is the one it would have posted at.
-      if (x.line === undefined && l.record.line !== undefined && l.record.path === c.path) {
-        x.line = l.record.line;
-        x.prov.anchor = "record";
-      }
+      borrowRecordLine(x, recordLineFor(l, c));
       out.push(x);
       continue;
     }
@@ -623,19 +650,16 @@ export function allCandidateExtras(
 ): ExtraCandidate[] {
   const recordLine = new Map<number, number>();
   for (const l of links) {
-    if (l.candidate === null || l.record.line === undefined) continue;
-    if (candidates[l.candidate]?.path === l.record.path) recordLine.set(l.candidate, l.record.line);
+    if (l.candidate === null) continue;
+    const line = recordLineFor(l, candidates[l.candidate]!);
+    if (line !== undefined) recordLine.set(l.candidate, line);
   }
   const seen = new Map<string, number>();
   const out: ExtraCandidate[] = [];
   candidates.forEach((c, i) => {
     const key = `${c.path}\0${c.line ?? ""}\0${c.claim}`;
     const x = candidateExtra(c, "candidate");
-    const fromRecord = x.line === undefined ? recordLine.get(i) : undefined;
-    if (fromRecord !== undefined) {
-      x.line = fromRecord;
-      x.prov.anchor = "record";
-    }
+    borrowRecordLine(x, recordLine.get(i));
     const at = seen.get(key);
     // A duplicate is dropped — unless it carries the record anchor the kept
     // one lacks: the lineless copy would be excluded, losing the finding.
@@ -746,8 +770,14 @@ export interface RefOutcome {
   path: string;
   from_line: number | null;
   to_line: number | null;
-  /** Per variant: in how many rounds the judge matched it, and to what. */
-  matched: Partial<Record<WhatifVariant, { rounds: number; of: number; notes: string[] }>>;
+  /** Per variant: in how many rounds the judge matched it, and to what —
+   * `note_rounds` saying in how many rounds each matched note was the match. */
+  matched: Partial<
+    Record<
+      WhatifVariant,
+      { rounds: number; of: number; notes: string[]; note_rounds: Map<string, number> }
+    >
+  >;
 }
 
 /** Fold every variant's per-round metrics into one row per reference. The
@@ -776,10 +806,18 @@ export function refOutcomes(
             };
             byKey.set(key, row);
           }
-          const m = (row.matched[v] ??= { rounds: 0, of: rs.length, notes: [] });
+          const m = (row.matched[v] ??= {
+            rounds: 0,
+            of: rs.length,
+            notes: [] as string[],
+            note_rounds: new Map<string, number>(),
+          });
           if (c.semantic_match) {
             m.rounds++;
-            if (c.matched_note && !m.notes.includes(c.matched_note)) m.notes.push(c.matched_note);
+            if (c.matched_note) {
+              if (!m.notes.includes(c.matched_note)) m.notes.push(c.matched_note);
+              m.note_rounds.set(c.matched_note, (m.note_rounds.get(c.matched_note) ?? 0) + 1);
+            }
           }
         });
       }

@@ -11,10 +11,10 @@
 //   whatif/<id>/whatif-cases.json  per-case counts
 //   whatif/<id>/report.md          the numbers + what each variant newly matched
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet } from "./aacr.js";
-import { latestMetrics } from "./report.js";
+import { latestMetrics, metricsFiles } from "./report.js";
 import { collectComments } from "./runner.js";
 import {
   ADDED_DISPOSITIONS,
@@ -57,6 +57,10 @@ function readJson(path: string): unknown {
 export interface WhatifCaseSummary {
   instance_id: string;
   source_status: string | null;
+  /** Whether the copied case had the inputs the raw and record counts come
+   * from: zero candidates from an event stream that is not there is no
+   * evidence the lenses found nothing. Absent on older summaries. */
+  inputs?: { events: boolean; record: "read" | "missing" | "unreadable" };
   raw: { candidates: number; dropped: number; passes: number };
   record: {
     rows: number;
@@ -108,10 +112,15 @@ export function buildWhatifCase(
     );
   }
   const eventsPath = join(caseDir, "pi-events.jsonl");
-  const raw = existsSync(eventsPath)
+  const events = existsSync(eventsPath);
+  const raw = events
     ? rawCandidatesFromEvents(readFileSync(eventsPath, "utf8").split("\n"))
     : { candidates: [], passes: [], dropped: 0 };
-  const record = parseFindingsRecord(readJson(join(caseDir, "findings-record.json")));
+  const recordPath = join(caseDir, "findings-record.json");
+  const recordRaw = readJson(recordPath);
+  const recordInput: "read" | "missing" | "unreadable" =
+    recordRaw !== undefined ? "read" : existsSync(recordPath) ? "unreadable" : "missing";
+  const record = parseFindingsRecord(recordRaw);
   const links = linkRecord(record, raw.candidates);
 
   const extras: Record<WhatifVariant, ExtraCandidate[]> = {
@@ -155,6 +164,7 @@ export function buildWhatifCase(
     summary: {
       instance_id: c.instance_id,
       source_status: typeof status === "string" ? status : null,
+      inputs: { events, record: recordInput },
       raw: {
         candidates: raw.candidates.length,
         dropped: raw.dropped,
@@ -218,12 +228,9 @@ export function writeWhatifRun(outDir: string, cases: readonly BenchCase[]): Wha
 /** The per-round metrics files of one variant dir, first round first. A
  * single-round eval writes one file with no `_round_N` label; it is round 1. */
 export function roundMetrics(dir: string): MetricsRound[] {
-  if (!existsSync(dir)) return [];
-  const roundNo = (n: string): number => Number(/_round_(\d+)\.json$/.exec(n)?.[1] ?? 0);
-  return readdirSync(dir)
-    .filter((n) => /^metrics_ocr_.*\.json$/.test(n) && !n.includes("average"))
-    .sort((a, b) => roundNo(a) - roundNo(b) || a.localeCompare(b))
-    .map((n) => JSON.parse(readFileSync(join(dir, n), "utf8")) as MetricsRound);
+  return metricsFiles(dir).rounds.map(
+    (r) => JSON.parse(readFileSync(r.file, "utf8")) as MetricsRound,
+  );
 }
 
 function num(v: number | undefined, digits = 2): string {
@@ -406,6 +413,22 @@ export function renderWhatifReport(
     );
   }
   L.push("");
+  // A zero above can mean the input was never there: say which.
+  const lacking = cs.flatMap((s) => {
+    const why = [
+      ...(s.inputs && !s.inputs.events ? ["no pi-events.jsonl — no raw candidates"] : []),
+      ...(s.inputs && s.inputs.record !== "read"
+        ? [`findings-record.json ${s.inputs.record} — no record rows`]
+        : []),
+    ];
+    return why.length ? [`- \`${s.instance_id}\`: ${why.join("; ")}`] : [];
+  });
+  if (lacking.length) {
+    L.push("Cases whose counts above are zero for want of their input, not for want of findings:");
+    L.push("");
+    L.push(...lacking);
+    L.push("");
+  }
 
   const deltas: Record<string, unknown> = {};
   for (const v of WHATIF_VARIANTS) {
@@ -454,8 +477,8 @@ export function renderWhatifReport(
       for (const t of there)
         L.push(
           `  - The control already posted here (${
-            c?.notes.includes(t)
-              ? `the judge accepted it in ${c.rounds}/${c.of} control rounds`
+            c?.note_rounds.has(t)
+              ? `the judge accepted it in ${c.note_rounds.get(t)}/${c.of} control rounds`
               : c?.rounds
                 ? "the judge matched a different control comment"
                 : "the judge did not accept it"

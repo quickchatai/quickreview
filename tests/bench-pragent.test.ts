@@ -31,6 +31,7 @@ import {
   reviewFindings,
   runPragentReview,
   splitFindings,
+  unprefetchedPragentCase,
   PRAGENT_COMMANDS,
   type PragentCapture,
   type PragentFingerprint,
@@ -860,6 +861,165 @@ describe("the sandbox wiring", () => {
       const i = cli.indexOf(`if (f.cmd === "${cmd}")`);
       expect(i, cmd).toBeGreaterThan(0);
       expect(cli.slice(i, i + 600), cmd).toContain('assertArm(outDir, "pragent")');
+    }
+  });
+});
+
+describe("what an attempt and a run leave behind", () => {
+  const authSrc = (tmp: string): string => {
+    const src = join(tmp, "src-auth");
+    mkdirSync(src);
+    const jwtPayload = Buffer.from(
+      JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acc" } }),
+    ).toString("base64url");
+    writeFileSync(
+      join(src, "auth.json"),
+      JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: `h.${jwtPayload}.s`,
+          refresh: "R",
+          expires: Date.now() + 5 * 86_400_000,
+        },
+      }),
+    );
+    return src;
+  };
+  const runBase = (tmp: string, out: string) => ({
+    set: SET,
+    cases: [CASE],
+    outDir: out,
+    root: join(tmp, "root"),
+    store: join(tmp, "store"),
+    authSrc: authSrc(tmp),
+    agentDir: join(tmp, "agent"),
+    python: "py",
+    driver: "d",
+    pragentVersion: "0.46.0",
+    bridgeUrl: "http://127.0.0.1:1",
+    model: "gpt-6.1-sol",
+    effort: "medium",
+    verbosity: "medium",
+    timeoutMin: 30,
+    prText: true,
+    qcrCommit: "c",
+    keepTree: false,
+    readMeta: (): PrefetchMeta => {
+      throw new Error("not prefetched");
+    },
+    log: () => {},
+  });
+
+  it("a failed attempt keeps none of an earlier attempt's PR-Agent captures", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-captures-"));
+    try {
+      const { c, meta, store } = scratchCase(tmp);
+      const root = join(tmp, "root");
+      const outDir = join(tmp, "out");
+      mkdirSync(join(root, "wt"), { recursive: true });
+      const caseDir = join(outDir, "cases", c.instance_id);
+      mkdirSync(caseDir, { recursive: true });
+      for (const f of ["pragent-review.json", "pragent-improve.md", "pragent-argv.json"])
+        writeFileSync(join(caseDir, f), "an earlier attempt's\n");
+      const runImpl: typeof run = async (bin, args, opts = {}) => {
+        if (bin !== "py") return run(bin, args, opts);
+        return { code: 1, stdout: "", stderr: "boom", timedOut: false };
+      };
+      await reviewCasePragent(
+        c,
+        { ...meta, title: null, body: null },
+        {
+          root,
+          store,
+          outDir,
+          python: "py",
+          driver: "d",
+          bridgeUrl: "http://127.0.0.1:1",
+          model: "gpt-6.1-sol",
+          timeoutMin: 30,
+          prText: false,
+          fingerprint: { ...FP, pr_text: false },
+          runImpl,
+          log: () => {},
+        },
+      );
+      const left = readdirSync(caseDir);
+      expect(left).not.toContain("pragent-review.json");
+      expect(left).not.toContain("pragent-improve.md");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("a run that rewrites results drops the metrics that scored them; a resume that skips every case keeps them", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-metrics-"));
+    try {
+      const out = join(tmp, "out");
+      const all = join(out, "results", "all");
+      const base = runBase(tmp, out);
+      const metrics = join(all, "metrics_ocr_round_1.json");
+      // A finished, scored run at this configuration: a resume skips the case.
+      mkdirSync(join(out, "cases", CASE.instance_id), { recursive: true });
+      mkdirSync(all, { recursive: true });
+      writeFileSync(
+        join(out, "cases", CASE.instance_id, "case-summary.json"),
+        JSON.stringify({
+          arm: "pragent",
+          status: "ok",
+          fingerprint: {
+            ...FP,
+            qcr_commit: "c",
+            effort: "medium",
+            verbosity: "medium",
+            pr_text: true,
+            timeout_min: 30,
+          },
+        }),
+      );
+      writeFileSync(join(all, `${CASE.instance_id}.json`), "{}\n");
+      writeFileSync(metrics, "{}\n");
+      await runPragentReview({ ...base, resume: true });
+      expect(readdirSync(all)).toContain("metrics_ocr_round_1.json");
+      // Run again without --resume: the case is reviewed again, the score goes.
+      await runPragentReview({ ...base, resume: false });
+      expect(readdirSync(all).filter((n) => n.startsWith("metrics_"))).toEqual([]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("the report opens with what the score measures", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-preamble-"));
+    try {
+      expect(renderPragentReport(SET, tmp, [])).toContain("_What this measures:");
+      const aacr = {
+        ...SET,
+        dataset: {
+          ...SET.dataset,
+          commit: "ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f",
+          sha256: "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9",
+        },
+      };
+      const md = renderPragentReport(aacr, tmp, []);
+      expect(md).toContain("AACR-Bench's reference comments (74% AI-written");
+      expect(md).toContain("- Dataset: AACR-Bench v1.0 (1,505 references)");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the completion mark", () => {
+  it("a case's summary is written only after its result file", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-order-"));
+    try {
+      mkdirSync(join(tmp, "results"), { recursive: true });
+      // A result dir that cannot be made: the write of the scorer input fails.
+      writeFileSync(join(tmp, "results", "all"), "not a dir");
+      expect(() => unprefetchedPragentCase(tmp, CASE, FP, "no store")).toThrow();
+      expect(readdirSync(join(tmp, "cases", CASE.instance_id))).not.toContain("case-summary.json");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
   });
 });

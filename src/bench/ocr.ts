@@ -36,7 +36,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
-import { run } from "./exec.js";
+import { checkMergeBase } from "./armrun.js";
+import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import { prTextFor } from "./prtext.js";
 import { prepareTree } from "./runner.js";
 
@@ -105,10 +106,7 @@ export function ocrEnv(o: {
     OCR_LLM_MODEL: o.model,
     OCR_USE_ANTHROPIC: "false",
     OCR_NO_UPDATE: "1",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_TERMINAL_PROMPT: "0",
+    ...GIT_ISOLATION_ENV,
   };
 }
 
@@ -338,8 +336,11 @@ export interface OcrRunnerOptions {
   prText?: boolean;
 }
 
-async function bridgeCall(
-  o: OcrRunnerOptions,
+/** One call to the loopback Codex bridge (`/label`, `/stats`): GET without a
+ * body, POST with one; any failure — refused, timed out, non-2xx — is null,
+ * never a throw. */
+export async function bridgeCall(
+  o: Pick<OcrRunnerOptions, "bridgeUrl" | "fetchImpl">,
   path: string,
   body?: unknown,
 ): Promise<Record<string, unknown> | null> {
@@ -354,6 +355,25 @@ async function bridgeCall(
   } catch {
     return null;
   }
+}
+
+/** A case's summary before anything is known: failed, nothing measured. */
+function blankOcrSummary(c: BenchCase, fingerprint: OcrFingerprint): OcrCaseSummary {
+  return {
+    instance_id: c.instance_id,
+    arm: "ocr",
+    status: "failed",
+    fingerprint,
+    ocr_status: null,
+    exit_code: null,
+    duration_seconds: 0,
+    comments: 0,
+    files_reviewed: null,
+    ocr_tokens: null,
+    bridge: null,
+    merge_base_ok: false,
+    warnings: [],
+  };
 }
 
 export function writeOcrResult(
@@ -384,21 +404,7 @@ export async function reviewCaseOcr(
   mkdirSync(caseDir, { recursive: true });
   const startedAt = new Date().toISOString();
   const started = Date.now();
-  const summary: OcrCaseSummary = {
-    instance_id: c.instance_id,
-    arm: "ocr",
-    status: "failed",
-    fingerprint: o.fingerprint,
-    ocr_status: null,
-    exit_code: null,
-    duration_seconds: 0,
-    comments: 0,
-    files_reviewed: null,
-    ocr_tokens: null,
-    bridge: null,
-    merge_base_ok: false,
-    warnings: [],
-  };
+  const summary = blankOcrSummary(c, o.fingerprint);
   let stdout = "";
   let stderr = "";
   try {
@@ -412,12 +418,9 @@ export async function reviewCaseOcr(
       bridgeUrl: o.bridgeUrl,
       model: o.model,
     });
-    const mb = await run("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
-    summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
-    if (!summary.merge_base_ok)
-      summary.warnings.push(
-        `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
-      );
+    const mb = await checkMergeBase(run, tree, c, meta, env);
+    summary.merge_base_ok = mb.ok;
+    if (mb.warning) summary.warnings.push(mb.warning);
     const background = prTextFor(meta, o.prText === true);
     if (o.prText) summary.pr_text = background !== null;
     const argv = ocrReviewArgv({
@@ -497,22 +500,7 @@ export function unprefetchedOcrCase(
   fingerprint: OcrFingerprint,
   error: string,
 ): OcrCaseSummary {
-  const summary: OcrCaseSummary = {
-    instance_id: c.instance_id,
-    arm: "ocr",
-    status: "failed",
-    error,
-    fingerprint,
-    ocr_status: null,
-    exit_code: null,
-    duration_seconds: 0,
-    comments: 0,
-    files_reviewed: null,
-    ocr_tokens: null,
-    bridge: null,
-    merge_base_ok: false,
-    warnings: [],
-  };
+  const summary: OcrCaseSummary = { ...blankOcrSummary(c, fingerprint), error };
   const caseDir = join(outDir, "cases", safeId(c.instance_id));
   mkdirSync(caseDir, { recursive: true });
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
@@ -537,6 +525,27 @@ export function readOcrSummary(outDir: string, c: BenchCase): OcrCaseSummary | n
   if (!existsSync(p)) return null;
   const s = JSON.parse(readFileSync(p, "utf8")) as Partial<OcrCaseSummary>;
   return s.arm === "ocr" ? (s as OcrCaseSummary) : null;
+}
+
+const ARM_NAMES = {
+  qcr: "a QuickReview",
+  ocr: "an open-code-review",
+  codex: "a Codex CLI",
+  opencode: "an OpenCode",
+  claude: "a Claude Code",
+  pireview: "a pi-review",
+  pragent: "a PR-Agent",
+} as const;
+
+/** A command of one arm refuses another arm's run dir: the QuickReview
+ * `review`/`results` rewrite every variant's result files, which would wipe an
+ * OCR run's scored input. A dir with no run.json yet belongs to anyone. */
+export function assertArm(outDir: string, arm: keyof typeof ARM_NAMES): void {
+  const found = runArmOf(outDir);
+  if (found !== null && found !== arm)
+    throw new Error(
+      `${outDir} is ${ARM_NAMES[found]} run — this command belongs to ${ARM_NAMES[arm]} arm (bench.sh --arm ${found})`,
+    );
 }
 
 /** The arm a run dir holds, from its run.json (`reviewer: "ocr"` / `"codex"` /
