@@ -585,3 +585,48 @@ describe("registration", () => {
     expect(readTomlKey(configText(), "ingress", "shape")).toBe("none");
   });
 });
+
+describe("the secrets dir is the one every step resolves", () => {
+  it("honours $QC_SECRETS_DIR when config.toml leaves secrets_dir to the locator", async () => {
+    writeFileSync(
+      join(root, "config.toml"),
+      setTomlKey(exampleConfig, "github", "secrets_dir", "")!,
+    );
+    writeFileSync(join(secretsDir, "ngrok_authtoken"), "2abc_token\n");
+    const before = process.env.QC_SECRETS_DIR;
+    process.env.QC_SECRETS_DIR = secretsDir;
+    try {
+      const result = await fake().engine.runStep(INGRESS_STEP_ID, { choice: "ngrok" });
+      expect(result.ok, result.failures.join("; ")).toBe(true);
+      expect(result.checks.find((c) => c.name === "credential")!.detail).toContain(secretsDir);
+    } finally {
+      if (before === undefined) delete process.env.QC_SECRETS_DIR;
+      else process.env.QC_SECRETS_DIR = before;
+    }
+  });
+});
+
+describe("a hostname belongs to the shape it was given for", () => {
+  it("ignores a hostname argument for the quick tunnel, as the schema says", async () => {
+    const before = readTomlKey(configText(), "server", "hostname");
+    const result = await fake().engine.runStep(INGRESS_STEP_ID, {
+      choice: "quick",
+      hostname: "review.example.com",
+    });
+    expect(result.ok).toBe(true);
+    expect(readTomlKey(configText(), "server", "hostname")).toBe(before);
+    expect(result.checks.some((c) => c.name === "server-hostname")).toBe(false);
+  });
+
+  it("does not hand a named tunnel's domain to ngrok as its reserved domain", async () => {
+    writeFileSync(join(secretsDir, "tunnel_token"), "connector-token\n");
+    writeFileSync(join(secretsDir, "ngrok_authtoken"), "2abc_token\n");
+    const f = fake();
+    await f.engine.runStep(INGRESS_STEP_ID, { choice: "named", hostname: "review.example.com" });
+    const switched = await f.engine.runStep(INGRESS_STEP_ID, { choice: "ngrok" });
+    expect(switched.ok).toBe(true);
+    expect(readEnvKey(envText(), "QCR_NGROK_DOMAIN")).toBeNull();
+    const report = await fake().engine.reconcile();
+    expect(report.demoted.map((d) => d.failures.join(" ")).join(" ")).not.toMatch(/ngrok-domain/);
+  });
+});

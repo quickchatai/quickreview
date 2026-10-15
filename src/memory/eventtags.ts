@@ -9,8 +9,14 @@
 // The seam carries TEXT, not a tag map (see `store.ts`), so tags ride inside
 // the entry as a leading, machine-parseable run: `#hash #tags k=v k=v prose…`.
 
-/** One `k=v` token: bare (no `#`), value without whitespace. */
-const EVENT_TAG_RE = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;
+/** The tag the one-time import's provenance line opens with — the TUI's
+ * handle on that migration, and how the lesson reader knows the source
+ * entry's own header follows on the next line. */
+export const IMPORT_TAG = "imported";
+
+/** One `k=v` token: bare (no `#`), value without whitespace — the ONE
+ * grammar every header reader and editor (layout.ts, relayout.ts) uses. */
+export const EVENT_TAG_RE = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;
 
 /**
  * `#word` → `word` in text that follows an engine-written header: the store

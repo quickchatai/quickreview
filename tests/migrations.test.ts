@@ -226,6 +226,42 @@ describe("detectMigrationCollisions", () => {
     expect(out.filter((c) => c.kind === "renamed-dependency")).toHaveLength(0);
   });
 
+  it("does not read a complete REMOVED dependency tuple as one the file still holds", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        added("backend/chat/migrations/0042_a.py"),
+        {
+          filename: "backend/billing/migrations/0008_link.py",
+          status: "modified",
+          patch: '@@\n     dependencies = [\n-        ("chat", "0042_a"),\n+        ("chat", "0041_other"),\n     ]',
+        },
+        {
+          filename: "backend/chat/migrations/0043_b.py",
+          status: "modified",
+          patch: '@@\n-    dependencies = [("chat", "0042_a")]\n+    dependencies = [("chat", "0042_add_widget_flag")]',
+        },
+      ],
+      baseFiles: BASE,
+    });
+    expect(out.filter((c) => c.kind === "renamed-dependency")).toEqual([]);
+  });
+
+  it("a same-app bare-name match skips another app's tuple split across added lines", () => {
+    // `("billing",` then `+    "0042_a")` is billing's 0042_a, not chat's.
+    const out = detectMigrationCollisions({
+      files: [
+        added("backend/chat/migrations/0042_a.py"),
+        {
+          filename: "backend/chat/migrations/0043_b.py",
+          status: "added",
+          patch: '@@\n+    dependencies = [\n+        ("billing",\n+        "0042_a"),\n+    ]',
+        },
+      ],
+      baseFiles: [...BASE, "backend/billing/migrations/0042_a.py"],
+    });
+    expect(out.filter((c) => c.kind === "renamed-dependency")).toEqual([]);
+  });
+
   it("cascades: a follow-up depending on a renumbered follow-up renumbers too", () => {
     const out = detectMigrationCollisions({
       files: [

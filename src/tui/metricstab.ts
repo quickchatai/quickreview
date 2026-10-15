@@ -421,7 +421,8 @@ export function opsLines(
   } else {
     // No snapshot at all means we cannot claim a mode — "LIVE" is the one
     // label that must never be guessed.
-    const mode = ops.heartbeat === null ? dim("mode unknown") : modeBadge(ops.dry_run);
+    const mode =
+      ops.heartbeat === null || ops.dry_run === null ? dim("mode unknown") : modeBadge(ops.dry_run);
     const beatS = ops.heartbeat
       ? Math.max(0, Math.floor((now.getTime() - new Date(ops.heartbeat).getTime()) / 1000))
       : null;
@@ -429,7 +430,7 @@ export function opsLines(
       ops.heartbeat === null
         ? `${FG.anomaly}no heartbeat${RESET}`
         : `${beatS !== null && beatS > HEARTBEAT_STALE_S ? BAD : OK}♥${DRESET} ${fmtAge(ops.heartbeat, now)} ago`;
-    const rounds = `${STRONG}${ops.running_rounds}${DRESET}/${ops.max_concurrent_rounds} rounds running`;
+    const rounds = `${STRONG}${ops.running_rounds}${DRESET}/${ops.max_concurrent_rounds ?? "?"} rounds running`;
     lines.push(`${mode}  ${beat} ${SEP} ${rounds}`);
 
     const b = ops.build;
@@ -524,7 +525,7 @@ export function metricsCards(
   const chartH = activityChartHeight(rows);
   const now = extra.now ?? new Date();
   const opsSubtitle = extra.ops
-    ? `${extra.ops.heartbeat === null ? "mode unknown" : extra.ops.dry_run ? "dry-run" : "live"} · ${extra.ops.build ? extra.ops.build.sha : "build unknown"}`
+    ? `${extra.ops.heartbeat === null || extra.ops.dry_run === null ? "mode unknown" : extra.ops.dry_run ? "dry-run" : "live"} · ${extra.ops.build ? extra.ops.build.sha : "build unknown"}`
     : "daemon health · version · event traffic";
   return [
     {

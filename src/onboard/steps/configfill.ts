@@ -34,22 +34,41 @@
 // secrets dir. This step only reports which of that wizard's required files
 // exist yet, reading the `deploy_shape` marker the wizard itself writes.
 //
-// I/O: answers come through the engine's `prompter` adapter (or from choices a
-// sibling step already recorded); config reads/writes are plain files under the
+// I/O: answers come as the tool's arguments (`ctx.input`, one string per
+// question id — the pi-driven wizard has no prompter), through the engine's
+// `prompter` adapter (the non-LLM fallback entry), or from choices a sibling
+// step already recorded; config reads/writes are plain files under the
 // sandbox root derived from `adapters.paths.stateDir`. Tests point stateDir at
 // a temp dir and fake the prompter — no network, no docker, no real repo write.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
+  ESCALATION_LOGIN_RE as LOGIN_RE,
   assertIanaTimeZone,
   expandHome,
   githubCloneDir,
   loadConfig,
   type Config,
 } from "../../config.js";
-import { locateSecrets } from "../../install.js";
-import { CHOICE_KEYS, ingressChoiceOf, type IngressChoice } from "../choices.js";
-import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import {
+  CHOICE_KEYS,
+  CHOICE_WRITERS,
+  REPO_SLUG_RE,
+  type ChoiceName,
+  botLoginFor,
+  ingressChoiceOf,
+  type IngressChoice,
+} from "../choices.js";
+import {
+  readTextOrNull,
+  sandboxRoot,
+  writeAtomic,
+  type CheckResult,
+  type OnboardingStep,
+  type StepContext,
+  type StepReport,
+} from "../engine.js";
+import { readTomlKey, secretsDirFor } from "./ingress.js";
 
 export const CONFIG_FILL_STEP_ID = "config_fill";
 
@@ -228,7 +247,6 @@ export interface Question {
 }
 
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
-const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 
 function oneLine(v: string): string | null {
   return /[\r\n]/.test(v) ? "that must be a single line" : null;
@@ -261,7 +279,7 @@ export const QUESTIONS: readonly Question[] = [
     from: [CHOICE_KEYS.repo],
     read: (cfg) => cfg.github.repo,
     validate: (v) =>
-      /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v)
+      REPO_SLUG_RE.test(v)
         ? null
         : 'a repository is "owner/name" — e.g. "acme/web-app" (no URL, no trailing .git)',
   },
@@ -480,31 +498,30 @@ export const DERIVABLES: readonly Derivable[] = [
     write: (f) => ({
       section: "github",
       key: "bot_login",
-      value: tomlString(`${f.app_slug}[bot]`),
+      value: tomlString(botLoginFor(f.app_slug)),
     }),
     stable: true,
     holds: (cfg) =>
-      cfg.github.bot_login === `${cfg.github.app_slug}[bot]`
+      cfg.github.bot_login === botLoginFor(cfg.github.app_slug)
         ? null
-        : `[github] bot_login is "${cfg.github.bot_login}" but the App slug "${cfg.github.app_slug}" implies "${cfg.github.app_slug}[bot]"`,
+        : `[github] bot_login is "${cfg.github.bot_login}" but the App slug "${cfg.github.app_slug}" implies "${botLoginFor(cfg.github.app_slug)}"`,
   },
   {
     id: "clone_dir",
     path: "[github] clone_dir",
     explain:
-      'left empty so the base clone directory derives from the repo slug ("owner/name" ⇒ "name")',
+      'left empty so the base clone directory derives from the repo slug ("owner/name" ⇒ "name"); a clone_dir you ' +
+      "set yourself (deploy.sh asks for one when the repo's name collides with a sandbox directory) is kept",
     write: (_f, fresh) =>
       fresh ? { section: "github", key: "clone_dir", value: tomlString("") } : null,
     stable: true,
+    // The loader's own resolution (an explicit clone_dir wins, else the repo's
+    // basename) must name ONE plain directory — the same test deploy.sh applies.
     holds: (cfg) => {
-      const expected =
-        cfg.github.repo
-          .replace(/\.git$/, "")
-          .split("/")
-          .pop() || "repo";
-      return githubCloneDir(cfg.github) === expected
+      const dir = githubCloneDir(cfg.github);
+      return /^[A-Za-z0-9._-]+$/.test(dir) && dir !== "." && dir !== ".."
         ? null
-        : `the clone dir resolves to "${githubCloneDir(cfg.github)}", not the repo's "${expected}"`;
+        : `the clone dir resolves to "${dir}", which is not one plain directory name — set [github] clone_dir to one`;
     },
   },
   {
@@ -580,10 +597,9 @@ export const DERIVABLES: readonly Derivable[] = [
     write: (_f, fresh) =>
       fresh ? { section: "sink", key: "kind", value: tomlString("github") } : null,
     stable: false,
-    holds: (cfg) =>
-      ["github", "wayfinder", "none"].includes(cfg.sink.kind)
-        ? null
-        : `[sink] kind "${cfg.sink.kind}" is not a known sink`,
+    // The loader's parseSink refuses an unknown kind before any derivation is
+    // checked, so a parsed config always holds this.
+    holds: () => null,
   },
   {
     id: "tui_ssh_host",
@@ -647,7 +663,7 @@ export const DERIVABLES: readonly Derivable[] = [
 // ---- fill ------------------------------------------------------------------
 
 export function rootFromStateDir(stateDir: string): string {
-  return resolve(stateDir, "..");
+  return sandboxRoot({ stateDir });
 }
 
 export function templatePathFor(root: string): string {
@@ -663,22 +679,7 @@ export const DEFAULT_SECRETS_DIR = "";
 export const REQUIRED_SECRETS: readonly string[] = ["app_id", "app.pem", "webhook_secret"];
 export const TUNNEL_SHAPE_SECRET = "tunnel_token";
 
-function writeAtomic(path: string, content: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = join(dirname(path), `.${path.split("/").at(-1)}.tmp`);
-  writeFileSync(tmp, content);
-  renameSync(tmp, path);
-}
-
-function readIfPresent(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-}
-
-/** Like `readIfPresent`, but only ABSENCE is null: a file that exists and
+/** Unlike `readTextOrNull`, only ABSENCE is null: a file that exists and
  * cannot be read is an error, never "no config" — the template must not be
  * renamed over an operator's file (and its dry_run) we could not even see. */
 function readExisting(path: string): { text: string | null; error: string | null } {
@@ -705,12 +706,39 @@ function currentConfig(path: string): Config | null {
 
 export interface CollectResult {
   facts: FillFacts;
-  /** Questions with no answer at all (no prompter, nothing recorded). */
+  /** Questions with no answer at all (no argument, no prompter, nothing
+   * recorded or configured). */
   missing: Array<{ id: AnswerKey; title: string; guidance: string }>;
-  /** Answers rejected by validation until the attempt budget ran out. */
+  /** Answers rejected by validation (an argument, a kept value, or a prompted
+   * answer once the attempt budget ran out). */
   rejected: Array<{ id: AnswerKey; guidance: string }>;
   /** Questions that were actually put to the operator this run. */
   asked: AnswerKey[];
+  /** Arguments that were not used — a sibling step's recorded value settles
+   * the question, or the recorded shape does not ask it — said out loud,
+   * never dropped silently. */
+  ignored: Array<{ id: AnswerKey; detail: string }>;
+}
+
+/** Choice keys this step alone writes. A value recorded under one is this
+ * step's OWN earlier answer — never a sibling's word — so it ranks with the
+ * previous answers a fresh argument overrides, not above them. */
+const OWN_ANSWER_KEYS: ReadonlySet<string> = new Set(
+  (Object.keys(CHOICE_WRITERS) as ChoiceName[])
+    .filter((n) => CHOICE_WRITERS[n].length === 1 && CHOICE_WRITERS[n][0] === CONFIG_FILL_STEP_ID)
+    .map((n) => CHOICE_KEYS[n]),
+);
+
+/** The tool argument for one question: a string the operator gave, or null
+ * when the call did not carry one. */
+function inputAnswer(ctx: StepContext, id: AnswerKey): string | null {
+  const v = ctx.input[id];
+  return typeof v === "string" ? v.trim() : null;
+}
+
+/** How an unanswered question is answered on the pi-driven route. */
+function argumentHint(q: Question): string {
+  return `${q.prompt} — pass the answer as the \`${q.id}\` argument`;
 }
 
 /** How many times one question may be re-asked before the step fails with the
@@ -719,16 +747,22 @@ export interface CollectResult {
 export const MAX_ATTEMPTS = 3;
 
 /**
- * Run the interview. Precedence per question: a value a sibling step already
- * recorded in the checklist > this step's own previous answer / the current
- * config value (offered as the default, Enter keeps it) > a fresh answer. With
- * no prompter the recorded/current values stand alone and anything genuinely
- * unanswered is reported — never guessed.
+ * Run the interview. Precedence per question: a value a SIBLING step recorded
+ * in the checklist (a key some other step writes) > a fresh answer (the tool
+ * argument, else the prompter's) > the default a blank answer keeps: the
+ * current config value when the config parses (the file wins, as verify says),
+ * else this step's own previous answer. With neither an argument nor a
+ * prompter the recorded/current values stand alone, and anything genuinely
+ * unanswered is reported — never guessed. Every value that lands, whatever
+ * its source, passes the question's validator.
  */
 export async function collectAnswers(
   ctx: StepContext,
   cfg: Config | null,
   previous: Partial<Record<AnswerKey, string>>,
+  /** The text `cfg` was parsed from: a kept value is read as the FILE spells
+   * it, so a portable `~/…` is never replaced by the loader's expansion. */
+  configText: string | null = null,
 ): Promise<CollectResult> {
   const choices = ctx.choices;
   const prompter = ctx.adapters.prompter;
@@ -736,19 +770,54 @@ export async function collectAnswers(
   const missing: CollectResult["missing"] = [];
   const rejected: CollectResult["rejected"] = [];
   const asked: AnswerKey[] = [];
+  const ignored: CollectResult["ignored"] = [];
 
   for (const q of QUESTIONS) {
-    if (!questionAsked(q, choices)) continue;
-    const recorded = (q.from ?? []).map((k) => str(choices, k)).find((v) => v.length > 0) ?? "";
-    if (recorded && q.validate(recorded) === null) {
-      answers[q.id] = recorded;
+    const given = inputAnswer(ctx, q.id);
+    if (!questionAsked(q, choices)) {
+      if (given)
+        ignored.push({
+          id: q.id,
+          detail: `the argument "${given}" was not used — the recorded topology/ingress does not ask this question`,
+        });
       continue;
     }
-    const fallback = previous[q.id] ?? (cfg ? q.read(cfg) : "") ?? "";
-    if (!prompter) {
-      if (fallback) answers[q.id] = fallback;
-      else if (q.optional) answers[q.id] = "";
-      else missing.push({ id: q.id, title: q.title, guidance: q.prompt });
+    const from = q.from ?? [];
+    const recorded =
+      from
+        .filter((k) => !OWN_ANSWER_KEYS.has(k))
+        .map((k) => str(choices, k))
+        .find((v) => v.length > 0) ?? "";
+    if (recorded && q.validate(recorded) === null) {
+      answers[q.id] = recorded;
+      if (given && given !== recorded)
+        ignored.push({
+          id: q.id,
+          detail: `kept "${recorded}", which an earlier step recorded — the argument "${given}" was not used (re-run the step that owns it to change it)`,
+        });
+      continue;
+    }
+    const ownRecorded = from
+      .filter((k) => OWN_ANSWER_KEYS.has(k))
+      .map((k) => str(choices, k))
+      .find((v) => v.length > 0);
+    const fallback = cfg
+      ? ((configText !== null ? readTomlKey(configText, q.section, q.key) : null) ?? q.read(cfg))
+      : (previous[q.id] ?? ownRecorded ?? "");
+    if (given !== null || !prompter) {
+      const value = given || fallback;
+      if (!value) {
+        if (q.optional) answers[q.id] = "";
+        else missing.push({ id: q.id, title: q.title, guidance: argumentHint(q) });
+        continue;
+      }
+      const reason = q.validate(value);
+      if (reason === null) answers[q.id] = value;
+      else
+        rejected.push({
+          id: q.id,
+          guidance: `${given ? "" : `the kept value "${value}" no longer holds: `}${reason} — pass a corrected \`${q.id}\` argument`,
+        });
       continue;
     }
     let settled = false;
@@ -798,7 +867,7 @@ export async function collectAnswers(
     topology: str(choices, CHOICE_KEYS.topology),
     ingress: str(choices, CHOICE_KEYS.ingress),
   };
-  return { facts, missing, rejected, asked };
+  return { facts, missing, rejected, asked, ignored };
 }
 
 /** Every edit the fill would make — answers first, then the derivations. The
@@ -846,11 +915,8 @@ export function changedEdits(text: string, edits: readonly TomlEdit[]): TomlEdit
   });
 }
 
-function secretsReport(secretsDir: string): CheckResult {
-  const dir = locateSecrets({
-    configured: secretsDir,
-    override: process.env.QC_SECRETS_DIR,
-  }).path;
+/** What the secrets dir holds, at the one resolution every step uses. */
+function secretsReport(dir: string): CheckResult {
   if (!existsSync(dir)) {
     return {
       name: "secrets",
@@ -858,7 +924,7 @@ function secretsReport(secretsDir: string): CheckResult {
       detail: `${dir} does not exist yet — the App credential lands there (the manifest step writes it, or run \`bash deploy/collect-secrets.sh\`)`,
     };
   }
-  const shape = (readIfPresent(join(dir, "deploy_shape")) ?? "").trim();
+  const shape = (readTextOrNull(join(dir, "deploy_shape")) ?? "").trim();
   const required = [...REQUIRED_SECRETS, ...(shape === "tunnel" ? [TUNNEL_SHAPE_SECRET] : [])];
   const missing = required.filter((f) => !existsSync(join(dir, f)));
   return {
@@ -906,6 +972,19 @@ function previousAnswers(ctx: StepContext): Partial<Record<AnswerKey, string>> {
   return out;
 }
 
+/** The tool's argument schema: one optional string per interview question,
+ * described by its title, prompt and the concept it teaches. */
+function configFillParameters(): unknown {
+  const properties: Record<string, { type: "string"; description: string }> = {};
+  for (const q of QUESTIONS) {
+    properties[q.id] = {
+      type: "string",
+      description: `${q.title}. ${q.prompt}${q.optional ? " Optional." : ""} ${q.teach}`,
+    };
+  }
+  return { type: "object", properties };
+}
+
 export function configFillStep(): OnboardingStep {
   return {
     id: CONFIG_FILL_STEP_ID,
@@ -915,8 +994,12 @@ export function configFillStep(): OnboardingStep {
       "who you are, your timezone, the default branch — and computes everything else (the bot login, the clone " +
       "directory, the timezone cascade, the defect sink). It patches the shipped template in place, so every comment " +
       "in your config survives, and it re-runs as targeted edits over your own file rather than a rewrite. The review " +
-      "flag `dry_run` stays TRUE: nothing here can go live, that is a separate, explicit act later.",
+      "flag `dry_run` is never written here: a fresh config ships the template's true, an existing one keeps exactly " +
+      "the value it has, and going live is a separate, explicit act later. Pass the operator's answers as the " +
+      "arguments (one per question; an omitted or blank one keeps the current value); a run that still lacks a " +
+      "required answer names it and writes nothing.",
     order: 35,
+    parameters: configFillParameters(),
     async run(ctx): Promise<StepReport> {
       const root = rootFromStateDir(ctx.adapters.paths.stateDir);
       const configPath = ctx.adapters.paths.configPath;
@@ -937,7 +1020,7 @@ export function configFillStep(): OnboardingStep {
         };
       }
       const existing = current.text;
-      const source = existing ?? readIfPresent(templatePath);
+      const source = existing ?? readTextOrNull(templatePath);
       if (source === null) {
         return {
           ok: false,
@@ -952,8 +1035,12 @@ export function configFillStep(): OnboardingStep {
       }
 
       const cfg = currentConfig(configPath);
-      const collected = await collectAnswers(ctx, cfg, previousAnswers(ctx));
-      const checks: CheckResult[] = [];
+      const collected = await collectAnswers(ctx, cfg, previousAnswers(ctx), existing);
+      const checks: CheckResult[] = collected.ignored.map((i) => ({
+        name: `answer:${i.id}`,
+        ok: true,
+        detail: i.detail,
+      }));
       if (collected.missing.length || collected.rejected.length) {
         for (const m of collected.missing) {
           checks.push({
@@ -1054,7 +1141,8 @@ export function configFillStep(): OnboardingStep {
           `ingress ${facts.ingress || "(unrecorded — filled for an ingress that assigns its own hostname, so [server] hostname stays empty)"}` +
           `${str(ctx.choices, CHOICE_KEYS.authRoute) ? `, auth route ${str(ctx.choices, CHOICE_KEYS.authRoute)}` : ""}`,
       });
-      checks.push(secretsReport(facts.secrets_dir));
+      // Read after the write, so the dir is the one the written config names.
+      checks.push(secretsReport(secretsDirFor(ctx.adapters, ctx.choices)));
 
       const ok = checks.every((c) => c.ok);
       if (ok) recordChoices(ctx, facts, configPath, parsed);

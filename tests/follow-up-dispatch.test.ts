@@ -585,6 +585,26 @@ describe("the lean follow-up plan (small deltas)", () => {
         );
   });
 
+  // MUTATION: move every quality/style row by lens name — the configured risk
+  // pass leaves a small-delta follow-up as a mere offer.
+  it("keeps a quality or style row the plan marks required (a configured risk pass) planned", () => {
+    const cfg: Config = {
+      ...baseCfg,
+      models: {
+        ...baseCfg.models,
+        risk_passes: [...(baseCfg.models.risk_passes ?? []), "pass-style"],
+      },
+    };
+    const full = buildPassPlan(cfg, BIG, undefined, DJANGO_ECOSYSTEM, undefined, ["STYLE.md"]);
+    expect(full.pass_plan.find((p) => p.lens === "pass-style")).toMatchObject({ required: true });
+    const lean = leanFollowUpPlan(full);
+    expect(lean.pass_plan.find((p) => p.lens === "pass-style")).toMatchObject({ required: true });
+    expect(lean.addable_lenses).not.toContain("pass-style");
+    // The unrequired quality lenses still move.
+    for (const l of full.pass_plan.map((p) => p.lens).filter((l) => l !== "pass-style"))
+      if (LEAN_ADDABLE_PASSES.includes(l)) expect(lean.addable_lenses).toContain(l);
+  });
+
   it(
     "applies at or under follow_up_small_delta_lines; above it, or at 0, the delta's plan is untouched",
     { timeout: HEAVY_TIMEOUT_MS },

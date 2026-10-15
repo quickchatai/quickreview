@@ -311,15 +311,19 @@ that the code — not an operator — sequences:
    and the loopback `api_base` is not part of the record (the daemon checks
    it separately, below). On a match, or on a fresh install with no
    collection yet, it is a no-op in milliseconds — every boot.
-   On a mismatch it **moves the collection aside** to
-   `context.pre-reembed-<timestamp>` (kept — that directory is the rollback)
-   and writes the journal `reembed.json` beside `ov.conf`: the reviewer's
-   namespace as `pending`, every other provisioned namespace (the companion's)
-   as `operator`. It refuses — never guesses — when the metadata is unreadable,
-   when a server is answering on the port, when the journal is unreadable, or
-   when a reset for this same embedder already happened and the collection
-   still disagrees (a loop guard; a journal from an earlier migration to a
-   different embedder does not trip it).
+   On a mismatch it writes the journal `reembed.json` beside `ov.conf` — the
+   reviewer's namespace as `pending`, every other provisioned namespace (the
+   companion's) as `operator` — and only then **moves the collection aside**
+   to `context.pre-reembed-<timestamp>` (kept — that directory is the
+   rollback). The journal goes first so an interrupted prepare never leaves a
+   moved collection with no rebuild on record; a move that fails puts the
+   journal back as it was, and a journal whose `moved_to` does not exist is
+   read as a reset interrupted before its move, which the next prepare
+   finishes. It refuses — never guesses — when the metadata is unreadable,
+   when a server is answering on the port, when the journal is unreadable or
+   cannot be written, or when a reset for this same embedder already happened
+   and the collection still disagrees (a loop guard; a journal from an earlier
+   migration to a different embedder does not trip it).
 2. **`resume` — HTTP, server up.** The daemon (`src/openviking/reembed.ts`)
    runs it once `/ready` passes, with the **reviewer user key** — the same key
    every review session holds, which the server confines to

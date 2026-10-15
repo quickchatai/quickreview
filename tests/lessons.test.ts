@@ -111,6 +111,41 @@ describe("the tolerant reader — the live store's legacy shapes", () => {
     });
   });
 
+  it("an imported tag-only lesson keeps the type its source header named", () => {
+    // The source `#false-positive #eod-learning …` parses as dont-raise; the
+    // import's provenance line in front of it must not lose that.
+    const source =
+      "#false-positive #eod-learning [[pr-5308]] compare transforms with the merge base.";
+    expect(parseLesson(source)?.kind).toBe("dont-raise");
+    const p = parseLesson(
+      `#imported #learning import-key:sha1:aaaaaaaaaaaaaaaa — from pi-memory 2026-08-19 [01a#1]\n${source}`,
+    );
+    expect(p).toMatchObject({ kind: "dont-raise", legacyType: "false-positive" });
+    // a hash tag in the source's BODY is still not a header
+    expect(
+      parseLesson(
+        "#imported #learning import-key:sha1:bbbbbbbbbbbbbbbb — from pi-memory 2026-08-19 [01a#2]\nnote about #refuted things",
+      )?.kind,
+    ).toBeNull();
+  });
+
+  it("the `# type=… lens=…` header shape", () => {
+    const p = parseLesson(
+      "# type=false-positive date=2026-08-28 lens=security,data-safety\n\nLesson: prove each sink.",
+    );
+    expect(p).toMatchObject({
+      kind: "dont-raise",
+      legacyType: "false-positive",
+      lens: ["pass-security", "pass-data-safety"],
+    });
+  });
+
+  it("an inherited property name is never a legacy type", () => {
+    expect(parseLesson("#constructor some note")).toBeNull();
+    expect(parseLesson("# Note\n\ntype: constructor")).toBeNull();
+    expect(parseLesson("# type=toString lens=security")).toBeNull();
+  });
+
   it("October's headerless shape: type and lens lines", () => {
     const p = parseLesson(
       "# Trace None-producing held replies\n\ntype: missed-finding\nlens: pass-baseline, pass-delivery\ndate: 2026-10-05\nLesson: Independently optional text…",

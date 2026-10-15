@@ -11,8 +11,9 @@
 //     so the wizard structurally cannot point the script at a different
 //     inventory, a different config or a different sandbox than the operator's
 //     own `scripts/deploy.sh` would use. The defaults it computes are exactly
-//     the ones the manual path gets: config.toml and deploy/ansible/
-//     inventory.ini next to the checkout.
+//     the ones the manual path gets: the install locator's config
+//     (`$QCR_CONFIG`, else the config home's config.toml — never the
+//     checkout's) and deploy/ansible/inventory.ini in the checkout.
 //
 // Every refusal therefore lands unchanged on the guided route: a dirty working
 // tree, a pi/OpenViking pin mismatch (all five mirrors), the "PIN-ME"
@@ -30,7 +31,7 @@ export function deployScriptPath(root: string): string {
   return join(root, "scripts", "deploy.sh");
 }
 
-/** `bash <root>/scripts/deploy.sh [--dry-run] <mode>`. */
+/** `<root>/scripts/deploy.sh [--dry-run] <mode>`. */
 export function deployArgv(
   root: string,
   mode: DeployMode,

@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { parseConfig, type Config } from "../src/config.js";
+import { parseConfig, sandboxRoot, type Config } from "../src/config.js";
 import {
   ALL_PASSES,
   buildPassPlan,
@@ -160,6 +160,190 @@ describe("queue ordering and capacity", () => {
     for (let i = 0; i < cap; i++) store.startRound(100 + i, "first", ["pass-baseline"], 45);
     expect(capacity(store, baseCfg)).toBe(0);
   });
+});
+
+describe("the pump spends a slot only on a round that went running", () => {
+  const oneSlot: Config = {
+    ...baseCfg,
+    daemon: { ...baseCfg.daemon, max_concurrent_rounds: 1 },
+  };
+  class FailingFiles extends FakeAdapter {
+    failFilesOn = new Set<number>();
+    onFiles: ((n: number) => void) | undefined;
+    override async listPrFiles(n: number): Promise<PrFileEntry[]> {
+      this.onFiles?.(n);
+      if (this.failFilesOn.has(n)) throw new Error("files API 502");
+      return super.listPrFiles(n);
+    }
+  }
+
+  // MUTATION: slice the queue to `slots` before processing — the failing
+  // oldest PR takes the only slot on every tick and the next never runs.
+  it(
+    "a PR that fails before its handoff does not starve the next one",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(201, "2026-08-13T09:00:00Z");
+      queue(202, "2026-08-13T10:00:00Z");
+      const failing = new FailingFiles();
+      failing.failFilesOn.add(201);
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: oneSlot, store, adapter: failing, hooks });
+
+      expect(orders.map((o) => o.order.pr)).toEqual([202]);
+      expect(store.getPr(201)?.state).toBe("queued");
+    },
+  );
+
+  // MUTATION: skip running PRs after the slice — the running one takes the
+  // free slot and the PR behind it waits for its round to end.
+  it(
+    "a queued PR whose round is still running takes no slot from the PR behind it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const twoSlots: Config = {
+        ...baseCfg,
+        daemon: { ...baseCfg.daemon, max_concurrent_rounds: 2 },
+      };
+      queue(203, "2026-08-13T09:00:00Z");
+      store.startRound(203, "first", ["pass-baseline"], 45);
+      queue(204, "2026-08-13T10:00:00Z");
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: twoSlots, store, adapter, hooks });
+
+      expect(orders.map((o) => o.order.pr)).toEqual([204]);
+    },
+  );
+
+  // MUTATION: drop the per-PR re-read — a drain engaged, or a PR closed,
+  // while the pump prepared the PR before it still gets a round.
+  it(
+    "eligibility is read again when each PR's work starts: a drain or a close stops what comes after",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const threeSlots: Config = {
+        ...baseCfg,
+        daemon: { ...baseCfg.daemon, max_concurrent_rounds: 3 },
+      };
+      queue(205, "2026-08-13T09:00:00Z");
+      queue(206, "2026-08-13T10:00:00Z");
+      queue(207, "2026-08-13T11:00:00Z");
+      const racing = new FailingFiles();
+      racing.onFiles = (n) => {
+        if (n === 205) store.setPrState(206, "closed");
+      };
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: threeSlots, store, adapter: racing, hooks });
+      expect(orders.map((o) => o.order.pr)).toEqual([205, 207]);
+      expect(store.getPr(206)?.state).toBe("closed");
+
+      for (const r of store.runningRounds()) store.finishRound(r.id, "APPROVE", null);
+      queue(208, "2026-08-13T12:00:00Z");
+      queue(209, "2026-08-13T13:00:00Z");
+      racing.onFiles = (n) => {
+        if (n === 208) store.engageDrain({ issuer: "operator", expires_at: null });
+      };
+      orders.length = 0;
+      await dispatchOnce({ cfg: threeSlots, store, adapter: racing, hooks });
+      expect(orders.map((o) => o.order.pr)).toEqual([208]);
+      expect(store.getPr(209)?.state).toBe("queued");
+    },
+  );
+});
+
+describe("the round's context pack", () => {
+  // MUTATION: only log when the pack write fails — the earlier attempt's pack
+  // stays beside the task files, and every child reads it as this round's.
+  it(
+    "a pack that cannot be written leaves no earlier attempt's pack behind",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg: Config = {
+        ...baseCfg,
+        review: { ...baseCfg.review, task_files: true, context_pack: "pack-first" },
+        pi: { ...baseCfg.pi, subagent_cache_group: 1 },
+      };
+      const passesDir = join(sandboxRoot(), "state", "pr-9301-round-1-passes");
+      const packPath = join(passesDir, "context-pack.md");
+      try {
+        mkdirSync(passesDir, { recursive: true });
+        writeFileSync(packPath, "STALE PACK from an earlier attempt");
+        // The write's temp path is taken: the pack cannot be written.
+        mkdirSync(`${packPath}.tmp`, { recursive: true });
+        queue(9301, "2026-08-13T09:00:00Z");
+        adapter.files.set(9301, [file("a.py")]);
+        const { hooks, orders } = recordingHooks();
+
+        await dispatchOnce({ cfg, store, adapter, hooks });
+
+        expect(orders).toHaveLength(1);
+        expect(orders[0]!.order.context_pack_file).toBeUndefined();
+        expect(existsSync(packPath)).toBe(false);
+      } finally {
+        rmSync(passesDir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("a PR closed while its own round is prepared", () => {
+  // MUTATION: drop the closed check before the handoff — the closed PR gets a
+  // session, a prompt and a running round.
+  it(
+    "is never handed off: no order, no running round, still closed",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(210, "2026-08-13T09:00:00Z");
+      class Closing extends FakeAdapter {
+        override async listPrFiles(n: number): Promise<PrFileEntry[]> {
+          store.setPrState(n, "closed");
+          return super.listPrFiles(n);
+        }
+      }
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter: new Closing(), hooks });
+
+      expect(orders).toEqual([]);
+      expect(store.runningRounds()).toEqual([]);
+      expect(store.getPr(210)?.state).toBe("closed");
+    },
+  );
+});
+
+describe("a PR that leaves the queue while its round is prepared", () => {
+  // MUTATION: drop the queued re-read before startRound — a round row is
+  // written and handed off for a PR an older round's late verdict settled.
+  it(
+    "starts no round: no row, no order, the settled state stands",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(211, "2026-08-13T09:00:00Z");
+      class Settling extends FakeAdapter {
+        override async listPrFiles(n: number): Promise<PrFileEntry[]> {
+          // A late verdict on the orphan-swept older round lands meanwhile.
+          store.setPrState(n, "awaiting_author");
+          return super.listPrFiles(n);
+        }
+      }
+      const settling = new Settling();
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter: settling, hooks });
+
+      expect(orders).toEqual([]);
+      expect(store.roundsFor(211)).toEqual([]);
+      expect(store.getPr(211)?.state).toBe("awaiting_author");
+      expect(
+        settling.calls.filter(
+          (c) => c.fn === "removeLabel" && c.arg === baseCfg.github.in_progress_label,
+        ),
+      ).toHaveLength(1);
+    },
+  );
 });
 
 describe("roundTypeFor", () => {
@@ -2470,6 +2654,44 @@ describe("a newer push/re-request during trigger consumption is never settled aw
       expect(row.state).toBe("queued");
       expect(row.head_sha).toBe("h2");
       expect(row.trigger_ts).toBe("2026-09-30T09:00:05Z");
+    },
+  );
+});
+
+describe("a person's re-request that only upgrades the provenance during consumption", () => {
+  // MUTATION: drop the provenance comparison from movedDuringConsume — the
+  // short-circuit settles the PR and the person's ask never gets its round.
+  it(
+    "is never settled away by the system short-circuit: the next pump runs the round",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg: Config = { ...baseCfg, guards: { ...baseCfg.guards, skip_unchanged_head: false } };
+      queue(94, "2026-09-30T09:00:00Z", { head: "h1", provenance: "system" });
+      const id = store.startRound(94, "first", ["pass-baseline"], 60);
+      store.finishRound(id, "APPROVE", null);
+      store.recordReviewedHead(94, { head_sha: "h1", verdict: "APPROVE", round_no: 1 });
+      // The statemachine keeps a queued row's trigger time and upgrades only
+      // its provenance when a person asks.
+      class Upgrading extends FakeAdapter {
+        upgraded = false;
+        override async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+          if (!this.upgraded) {
+            this.upgraded = true;
+            store.upsertPr({ ...store.getPr(94)!, trigger_provenance: "human" });
+          }
+          return super.deleteTeamReviewRequest(n);
+        }
+      }
+      const racing = new Upgrading();
+      racing.files.set(94, [file("a.py")]);
+      const { hooks, orders } = recordingHooks();
+
+      expect(await dispatchOnce({ cfg, store, adapter: racing, hooks })).toEqual([]);
+      expect(store.getPr(94)).toMatchObject({ state: "queued", trigger_provenance: "human" });
+
+      await dispatchOnce({ cfg, store, adapter: racing, hooks });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.order.head_sha).toBe("h1");
     },
   );
 });

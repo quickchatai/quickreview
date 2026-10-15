@@ -20,7 +20,7 @@
 // ({"completed_at": "<iso>"}) exactly once — the contract the companion's
 // first-run greeting consumes. Keep the path and shape stable.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 // ---- adapters ---------------------------------------------------------------
 
@@ -196,16 +196,40 @@ export function readChecklist(stateDir: string): ChecklistFile | null {
  * re-verification, so "the file says so" is a verified claim). */
 export function checklistComplete(stateDir: string): boolean {
   const file = readChecklist(stateDir);
-  return typeof file?.completed_at === "string" && !file.reopened_at;
+  return file !== null && completeNow(file);
 }
 
-/** tmp+rename atomic write, the same convention as the CLI's command files and
- * the shell posting receipts: a reader never sees a half-written file. */
-function writeAtomic(path: string, content: string): void {
+/** Is onboarding complete NOW: finished once, and not reopened since. The one
+ * reading of the two fields, for the file on disk and the engine's copy. */
+function completeNow(file: Pick<ChecklistFile, "completed_at" | "reopened_at">): boolean {
+  return typeof file.completed_at === "string" && !file.reopened_at;
+}
+
+/** `<sandbox root>` — the parent of `paths.stateDir`, by the adapters'
+ * contract (stateDir = `<sandbox root>/state`). The one place that says so. */
+export function sandboxRoot(paths: { readonly stateDir: string }): string {
+  return resolve(paths.stateDir, "..");
+}
+
+/** tmp+rename atomic write — the one writer every onboarding file write goes
+ * through (the checklist, config.toml, .env, the inventory): a reader, the
+ * daemon's own loader one bind mount away included, never sees a half-written
+ * file, and an interrupted write leaves the previous file whole. */
+export function writeAtomic(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = join(dirname(path), `.${path.split("/").at(-1)}.tmp`);
+  const tmp = join(dirname(path), `.${basename(path)}.onboard.tmp`);
   writeFileSync(tmp, content);
   renameSync(tmp, path);
+}
+
+/** A file's text, or null when it cannot be read for any reason. For a read
+ * where only ABSENCE may be null, read it yourself. */
+export function readTextOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 // ---- engine -----------------------------------------------------------------
@@ -319,7 +343,7 @@ export class OnboardingEngine {
   }
 
   isComplete(): boolean {
-    return this.checklist.completed_at !== null && !this.checklist.reopened_at;
+    return completeNow(this.checklist);
   }
 
   /** A completed checklist no longer verifies: withdraw the current-completion

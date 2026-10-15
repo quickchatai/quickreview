@@ -355,7 +355,10 @@ because they can fail on different days. And the daemon's own requests (the
 client's `onRequest`) and round seeds (dispatch's `onSeeded`, the only place a
 seed that timed out is seen). A `NOT_FOUND` answer to a real request is
 `absent` — authenticated, counted on its own, and never a failure, exactly as
-the probe and the store read it.
+the probe and the store read it. A 409 that is not a busy give-up (a
+precondition conflict, or a busy answer still being retried) is an
+authenticated answer too: it proves the key as a success does and restores a
+refused daemon credential.
 
 Only memory switched off (`[openviking] enabled = false`, which declining memory
 in onboarding writes) is "not monitored". Memory configured ON whose server

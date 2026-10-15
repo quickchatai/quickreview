@@ -26,17 +26,21 @@
 //
 // The step is deliberately self-contained: it owns the `[ingress]` section of
 // config.toml, the project `.env`'s COMPOSE_PROFILES line, and nothing else.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { INGRESS_DEFAULTS } from "../../config.js";
 import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, type IngressChoice } from "../choices.js";
 import { topologyOf } from "./topology.js";
-import type {
-  CheckResult,
-  OnboardAdapters,
-  OnboardingStep,
-  StepContext,
-  StepReport,
+import {
+  readTextOrNull,
+  sandboxRoot,
+  writeAtomic,
+  type CheckResult,
+  type OnboardAdapters,
+  type OnboardingStep,
+  type StepContext,
+  type StepReport,
 } from "../engine.js";
 
 export const INGRESS_STEP_ID = "ingress";
@@ -141,7 +145,7 @@ export function renderOptions(): string {
 
 /** `<sandbox root>` — the engine's contract is stateDir = `<root>/state`. */
 export function sandboxRootOf(adapters: OnboardAdapters): string {
-  return dirname(adapters.paths.stateDir);
+  return sandboxRoot(adapters.paths);
 }
 
 /** Where the [ingress] block goes when the file has none yet: just before
@@ -167,28 +171,35 @@ export function ingressBlock(option: IngressOption): string {
     "# URL when it changes (the one mutation class that executes in dry-run).",
     'shape = "tunnel-file"',
     'hostname_file = ""',
-    "debounce_ms = 3000",
-    "sweep_interval_s = 300",
+    `debounce_ms = ${INGRESS_DEFAULTS.debounce_ms}`,
+    `sweep_interval_s = ${INGRESS_DEFAULTS.sweep_interval_s}`,
     "",
   ].join("\n");
+}
+
+/** Where `[section]` sits in a document: its header line's start, its body's
+ * start (after the header line) and its end (the next table header, or EOF).
+ * Indentation is valid TOML before a header, and the loader (smol-toml)
+ * accepts it — so this does too: a missed `  [ingress]` would be appended a
+ * second time (a duplicate table the loader rejects), and a missed `  [next]`
+ * boundary would be overwritten. null when the table is not there. */
+function sectionSpan(
+  toml: string,
+  section: string,
+): { header: number; body: number; end: number } | null {
+  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
+  if (header?.index === undefined) return null;
+  const body = header.index + header[0].length;
+  const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(toml.slice(body));
+  return { header: header.index, body, end: body + (nextTable?.index ?? toml.length - body) };
 }
 
 /** Replace `[section]`…(next top-level table) with `body`; insert before the
  * anchor (or append) when the section does not exist. Commented-out template
  * blocks (`#[ingress]`) are left exactly as they are — they are documentation. */
 export function patchTomlSection(toml: string, section: string, body: string): string {
-  // Indented headers are found the way readTomlKey finds them: a missed
-  // `  [ingress]` would be appended a second time (a duplicate table the
-  // loader rejects), and a missed `  [next]` boundary would be overwritten.
-  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m");
-  const start = header.exec(toml);
-  if (start?.index !== undefined) {
-    const from = start.index;
-    const rest = toml.slice(from + start[0].length);
-    const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(rest);
-    const to = from + start[0].length + (nextTable?.index ?? rest.length);
-    return `${toml.slice(0, from)}${body}${toml.slice(to)}`;
-  }
+  const span = sectionSpan(toml, section);
+  if (span !== null) return `${toml.slice(0, span.header)}${body}${toml.slice(span.end)}`;
   const anchor = INGRESS_ANCHOR.exec(toml);
   if (anchor?.index !== undefined)
     return `${toml.slice(0, anchor.index)}${body}\n${toml.slice(anchor.index)}`;
@@ -200,11 +211,9 @@ export function patchTomlSection(toml: string, section: string, body: string): s
  * (smol-toml) accepts it — so this does too, or a reader here disagrees with
  * the daemon about the same file. */
 export function readTomlKey(toml: string, section: string, key: string): string | null {
-  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
-  if (header?.index === undefined) return null;
-  const rest = toml.slice(header.index + header[0].length);
-  const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(rest);
-  const body = rest.slice(0, nextTable?.index ?? rest.length);
+  const span = sectionSpan(toml, section);
+  if (span === null) return null;
+  const body = toml.slice(span.body, span.end);
   const line = new RegExp(`^[ \\t]*${key}\\s*=\\s*(.+)$`, "m").exec(body);
   if (!line?.[1]) return null;
   return tomlScalarText(line[1]);
@@ -256,8 +265,9 @@ function tomlScalarText(value: string): string {
   return v.replace(/\s*#.*$/, "").trim();
 }
 
-/** Set `key = "value"` inside an existing table, preserving everything else.
- * Returns null when the table (or the key) is not there to patch — the caller
+/** Set `key = "value"` inside an existing table, preserving everything else:
+ * an existing assignment is replaced in place, a missing key is inserted at
+ * the top of the table. Returns null when the TABLE is not there — the caller
  * turns that into a plain red check rather than inventing structure. */
 export function setTomlKey(
   toml: string,
@@ -267,12 +277,9 @@ export function setTomlKey(
 ): string | null {
   // Indentation is accepted exactly as readTomlKey accepts it: a key this
   // misses would be written a second time, and the loader rejects duplicates.
-  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
-  if (header?.index === undefined) return null;
-  const bodyStart = header.index + header[0].length;
-  const rest = toml.slice(bodyStart);
-  const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(rest);
-  const bodyEnd = bodyStart + (nextTable?.index ?? rest.length);
+  const span = sectionSpan(toml, section);
+  if (span === null) return null;
+  const { body: bodyStart, end: bodyEnd } = span;
   const body = toml.slice(bodyStart, bodyEnd);
   const line = new RegExp(`^([ \\t]*)${key}\\s*=\\s*[^\\n]*$`, "m");
   const replacement = `${key} = ${JSON.stringify(value)}`;
@@ -298,26 +305,29 @@ export function readEnvKey(text: string, key: string): string | null {
   return m ? (m[1] ?? "").trim() : null;
 }
 
-function writeAtomic(path: string, content: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = join(dirname(path), `.${path.split("/").at(-1)}.onboard.tmp`);
-  writeFileSync(tmp, content);
-  renameSync(tmp, path);
-}
-
-function readFileOrNull(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-}
-
-/** The operator's secrets dir: config.toml's value when it has one, else the
- * install locator's answer. */
-export function secretsDirOf(configToml: string | null): string {
-  const configured = configToml ? readTomlKey(configToml, "github", "secrets_dir") : null;
-  return locateSecrets({ configured }).path;
+/**
+ * The daemon-side secrets dir — the ONE resolution every onboarding step uses.
+ * config.toml is the truth once the config step has run (it is what the daemon
+ * itself reads); a recorded choice and `$QC_SECRETS_DIR` cover the earlier
+ * states, and the install locator has the last word: `<config home>/secrets` —
+ * the same answer the daemon's loader reaches. A relative answer is resolved
+ * against the sandbox root, never the wizard's cwd.
+ */
+export function secretsDirFor(
+  adapters: OnboardAdapters,
+  choices: Readonly<Record<string, unknown>>,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configText = readTextOrNull(adapters.paths.configPath);
+  const fromConfig = (configText ? readTomlKey(configText, "github", "secrets_dir") : null)?.trim();
+  const raw = choices[CHOICE_KEYS.secretsDir];
+  const choice = typeof raw === "string" ? raw.trim() : "";
+  const located = locateSecrets({
+    configured: fromConfig || choice,
+    override: env.QC_SECRETS_DIR,
+    env,
+  });
+  return isAbsolute(located.path) ? located.path : join(sandboxRoot(adapters.paths), located.path);
 }
 
 /** A hostname the operator typed: bare, lowercase, no scheme or path. */
@@ -372,13 +382,17 @@ export function parseComposePs(stdout: string): RunningService[] {
   }
 }
 
-function isUp(row: RunningService | undefined): boolean {
+/** Does a `docker compose ps` row say the service is up? */
+export function isUp(row: RunningService | undefined): boolean {
   return row !== undefined && /running|up/i.test(row.state);
 }
 
 // ---- the step ---------------------------------------------------------------
 
 const CHOICE_IDS = INGRESS_OPTIONS.map((o) => o.id);
+
+/** The shapes whose hostname the operator supplies. */
+const OPERATOR_HOSTNAME_SHAPES: ReadonlySet<IngressChoice> = new Set(["named", "ngrok"]);
 
 function chosen(ctx: StepContext): IngressChoice | null {
   const raw = ctx.input.choice ?? ctx.choices[INGRESS_CHOICE_KEY];
@@ -463,8 +477,19 @@ export function ingressStep(): OnboardingStep {
         { name: "trade-offs", ok: true, detail: option.tradeoffs.map((t) => `• ${t}`).join("\n") },
       ];
 
-      // 1. the hostname, where the shape has one the operator must supply.
-      const hostname = normalizeHostname(ctx.input.hostname ?? ctx.choices[INGRESS_HOSTNAME_KEY]);
+      // 1. the hostname, where the shape has one the operator supplies (named,
+      // and ngrok's optional reserved domain — the others assign or need none,
+      // so an argument there is ignored, as the schema says). A hostname
+      // recorded earlier is carried only for the SAME shape: a named tunnel's
+      // domain is not an ngrok account's reserved domain.
+      const hostname = OPERATOR_HOSTNAME_SHAPES.has(choice)
+        ? normalizeHostname(
+            ctx.input.hostname ??
+              (ctx.choices[INGRESS_CHOICE_KEY] === choice
+                ? ctx.choices[INGRESS_HOSTNAME_KEY]
+                : undefined),
+          )
+        : null;
       if (choice === "named" && hostname === null) {
         checks.push({
           name: "hostname",
@@ -478,8 +503,8 @@ export function ingressStep(): OnboardingStep {
       // 2. the credential, where the shape needs one. Read from the secrets
       // dir, never from an argument: the wizard must not carry a token.
       const configPath = ctx.adapters.paths.configPath;
-      const configToml = readFileOrNull(configPath);
-      const secretsDir = secretsDirOf(configToml);
+      const configToml = readTextOrNull(configPath);
+      const secretsDir = secretsDirFor(ctx.adapters, ctx.choices);
       if (option.secret) {
         const file = join(secretsDir, option.secret);
         const present = existsSync(file) && readFileSync(file, "utf8").trim() !== "";
@@ -534,7 +559,7 @@ export function ingressStep(): OnboardingStep {
 
       // 4. the compose profile — which sidecar (if any) comes up with the stack.
       const envPath = join(root, ".env");
-      const envText = readFileOrNull(envPath) ?? "";
+      const envText = readTextOrNull(envPath) ?? "";
       let nextEnv = setEnvKey(envText, "COMPOSE_PROFILES", option.profile);
       // ngrok's reserved domain: the sidecar passes --domain only from
       // QCR_NGROK_DOMAIN (docker-compose.yml → QCR_TUNNEL_DOMAIN), and the
@@ -617,7 +642,7 @@ export function ingressStep(): OnboardingStep {
       ];
 
       // Reality, not the record: what does config.toml actually say?
-      const configToml = readFileOrNull(ctx.adapters.paths.configPath);
+      const configToml = readTextOrNull(ctx.adapters.paths.configPath);
       const shape =
         configToml === null ? null : (readTomlKey(configToml, "ingress", "shape") ?? "none");
       checks.push(
@@ -637,7 +662,7 @@ export function ingressStep(): OnboardingStep {
       );
 
       if (option.secret) {
-        const file = join(secretsDirOf(configToml), option.secret);
+        const file = join(secretsDirFor(ctx.adapters, ctx.choices), option.secret);
         const present = existsSync(file) && readFileSync(file, "utf8").trim() !== "";
         checks.push({
           name: "credential",
@@ -648,7 +673,11 @@ export function ingressStep(): OnboardingStep {
         });
       }
 
-      const hostname = normalizeHostname(ctx.data.hostname ?? ctx.choices[INGRESS_HOSTNAME_KEY]);
+      // The last run's own hostname (null when it had none) — a hostname
+      // recorded for an earlier shape is not this one's.
+      const hostname = normalizeHostname(
+        "hostname" in ctx.data ? ctx.data.hostname : ctx.choices[INGRESS_HOSTNAME_KEY],
+      );
       if (option.id === "named") {
         const configured =
           configToml === null
@@ -673,7 +702,7 @@ export function ingressStep(): OnboardingStep {
           detail: "VM topology — ingress runs on the server, not as a compose sidecar",
         });
       } else {
-        const envText = readFileOrNull(join(root, ".env")) ?? "";
+        const envText = readTextOrNull(join(root, ".env")) ?? "";
         const profile = readEnvKey(envText, "COMPOSE_PROFILES") ?? "";
         checks.push(
           profile === option.profile

@@ -342,6 +342,34 @@ describe("the OpenViking assembler: the search never outlives the seed's time le
     expect(sent.map((s) => s.timeoutMs)).toEqual([8000, 3000, 8000, 1, 8000]);
   });
 
+  it("the time the retired list took comes off the search's budget, and none left sends nothing", async () => {
+    const sent: Array<{ timeoutMs?: number }> = [];
+    let wait = 0;
+    const a = new OpenVikingContextAssembler({
+      client: {
+        searchContext: (_q: string, opts: { timeoutMs?: number }) => {
+          sent.push(opts);
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            result: { rendered: "", entries: [], stats: {} },
+          });
+        },
+      } as never,
+      store: {
+        pinnedSweep: async () => ({ entries: [], unread: [] }),
+        retiredUris: () => new Promise<string[]>((r) => setTimeout(() => r([]), wait)),
+      } as never,
+    });
+    wait = 60;
+    const late = await a.contextBlock("q", { maxTokens: 10, timeoutMs: 40 });
+    expect(late.status).toBe("unreadable");
+    expect(sent).toEqual([]);
+    wait = 30;
+    await a.contextBlock("q", { maxTokens: 10, timeoutMs: 5000 });
+    expect(sent[0]!.timeoutMs).toBeLessThanOrEqual(5000 - 25);
+  });
+
   it("its default mirrors [openviking] search_timeout_ms's", async () => {
     expect(DEFAULT_SEARCH_TIMEOUT_MS).toBe(OPENVIKING_DEFAULTS.search_timeout_ms);
     const { a, sent } = assemblerWith();
@@ -626,6 +654,7 @@ describe("the memory budgets: longer, bounded, named in config.example.toml", ()
     expect(OPENVIKING_DEFAULTS.search_timeout_ms).toBe(8000);
     expect(OPENVIKING_DEFAULTS.health_timeout_ms).toBe(6000);
     expect(ROUND_CONTEXT_DEFAULTS.timeoutMs).toBe(MEMORY_DEFAULTS.context_timeout_ms);
+    expect(ROUND_CONTEXT_DEFAULTS.maxTokens).toBe(MEMORY_DEFAULTS.context_tokens);
     expect(DEFAULT_SEARCH_TIMEOUT_MS).toBe(OPENVIKING_DEFAULTS.search_timeout_ms);
     expect(CASE_DEFAULTS.embedTailMsPerCase).toBe(MEMORY_DEFAULTS.case_embed_tail_ms);
     // The search fits inside the seed, and the seed keeps its search reserve.

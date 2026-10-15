@@ -11,6 +11,7 @@
 // every outcome — connection refused, timeout, 503, garbage body — and never
 // rejects. A memory engine must never be able to take a round, or the
 // heartbeat, down with it.
+import { errText } from "./client.js";
 import type { OpenVikingHealth } from "./types.js";
 
 export type FetchLike = (
@@ -27,12 +28,6 @@ export interface ProbeOptions {
   timeoutMs: number;
   fetchFn?: FetchLike;
   now?: () => Date;
-}
-
-function message(err: unknown): string {
-  if (err instanceof Error)
-    return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
-  return String(err);
 }
 
 /**
@@ -62,7 +57,7 @@ export async function probeHealth(opts: ProbeOptions): Promise<OpenVikingHealth>
       version = undefined;
     }
   } catch (err) {
-    return { reachable: false, ready: false, error: message(err), at };
+    return { reachable: false, ready: false, error: errText(err), at };
   }
 
   try {
@@ -81,7 +76,7 @@ export async function probeHealth(opts: ProbeOptions): Promise<OpenVikingHealth>
       reachable: true,
       ready: false,
       ...(version ? { version } : {}),
-      error: message(err),
+      error: errText(err),
       at,
     };
   }

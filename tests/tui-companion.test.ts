@@ -844,6 +844,18 @@ describe("companion status when docker cannot be asked (selfscan)", () => {
     expect(companionStateWord(await lifecycle([inspect(true)]).lc.status())).toBe("running");
     expect(companionStateWord(await lifecycle([inspect(false)]).lc.status())).toBe("stopped");
   });
+
+  it("a stop when docker cannot be asked fails rather than reporting a stop that never happened", async () => {
+    const denied = (argv: string[]) =>
+      argv[0] === "inspect"
+        ? { ok: false, stdout: "", stderr: "permission denied", code: 1 }
+        : undefined;
+    const { lc, calls } = lifecycle([denied]);
+    await expect(lc.gracefulStop()).rejects.toThrow(
+      /cannot tell .*permission denied.*nothing was stopped/,
+    );
+    expect(calls.some((c) => c[0] === "stop")).toBe(false);
+  });
 });
 
 describe("qcr tui args", () => {

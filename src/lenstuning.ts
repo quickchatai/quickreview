@@ -58,7 +58,7 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { ModelsConfig, ReviewEffort, ThinkingLevel } from "./config.js";
-import { withThinking } from "./config.js";
+import { normalizeEffort, withThinking } from "./config.js";
 import { VALIDATE_PASS as VALIDATE, type PassAddendum } from "./include.js";
 import type { Severity } from "./severity.js";
 import { higherTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
@@ -184,10 +184,9 @@ export function parseLensTable(
           t.min_tier = value as PassTier;
           break;
         case "effort": {
-          const v = typeof value === "string" ? value.trim().toLowerCase() : value;
-          if (v === "low" || v === "high" || v === "medium") t.effort = v;
-          else if (v === "med") t.effort = "medium";
-          else throw new Error(`${at} effort must be "low", "medium" or "high"`);
+          const effort = normalizeEffort(value);
+          if (effort === null) throw new Error(`${at} effort must be "low", "medium" or "high"`);
+          t.effort = effort;
           break;
         }
         case "enabled":

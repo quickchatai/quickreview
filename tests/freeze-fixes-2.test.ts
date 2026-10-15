@@ -88,6 +88,16 @@ describe("pass-behaviour-delta", () => {
     ).toBe(false);
   });
 
+  // MUTATION: drop `unread` from the plan — the capped files vanish and the
+  // lens reads as covering the change.
+  it("the plan carries the files the group cap left unread, and only when it cut some", () => {
+    const c = cfg();
+    c.review = { ...c.review, behaviour_delta_max_groups: 1, sweep_group_lines: 500 };
+    const files = [f("src/a.py", 10, 4), f("src/big.ts", 300, 300)];
+    expect(buildPassPlan(c, files).behaviour_unread).toEqual(["src/big.ts"]);
+    expect("behaviour_unread" in buildPassPlan(c, [f("src/a.py", 10, 4)])).toBe(false);
+  });
+
   it("its brief enumerates every modifying hunk, covers removed guards, defaults to a question, names no benchmark", () => {
     const body = readFileSync(resolve("agents/pass-behaviour-delta.md"), "utf8");
     expect(body).toMatch(/Enumerate\. Write ONE line in your notes for EVERY hunk/);

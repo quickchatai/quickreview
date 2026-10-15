@@ -10,6 +10,7 @@ import {
   type MutationGate,
   type MutationIntent,
   type GateResult,
+  type ReviewPurpose,
 } from "./gate.js";
 import { type TokenMinter, type FetchFn } from "./githubAuth.js";
 import type { PrReviews } from "./reviewhistory.js";
@@ -1070,7 +1071,7 @@ export class GitHubAdapter {
       body: string;
       comments?: unknown[];
     },
-    options?: { purpose?: "migration_precheck" | "escalation"; postingRetry?: string },
+    options?: { purpose?: ReviewPurpose; postingRetry?: string },
   ): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_review",

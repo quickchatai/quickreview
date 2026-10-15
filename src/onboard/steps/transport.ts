@@ -28,6 +28,7 @@
 //     restart, with every one of its preflights intact. Never a hand-rolled
 //     `ssh … docker restart` that would leave the box running a config nobody
 //     shipped.
+import { TUI_DEFAULTS } from "../../config.js";
 import type { CheckResult, OnboardAdapters, ProcessResult, StepContext } from "../engine.js";
 import {
   DAEMON_SERVICE,
@@ -183,18 +184,33 @@ export function remoteFactsFor(
   const port = (text ? readTomlKey(text, "server", "port") : null)?.trim();
   return {
     alias: sshAliasOf(choices),
-    container: container && container !== "" ? container : "quickreview-sandbox",
+    container: container && container !== "" ? container : TUI_DEFAULTS.container,
     // The playbook's Docker socket is root-owned; sudo is the shipped default
     // and only an explicit `false` turns it off.
-    sudo: sudo !== "false",
+    sudo: sudo === undefined || sudo === "" ? TUI_DEFAULTS.sudo_docker : sudo !== "false",
     port: port && /^[0-9]{1,5}$/.test(port) ? Number(port) : 8787,
   };
+}
+
+/** The container names a `docker ps --format '{{.Names}}…'` listing shows,
+ * one per row. Docker's `name=` filter matches substrings, so a caller picks
+ * its container out of these by EXACT name — never by prefix. */
+function psRows(stdout: string): Array<{ name: string; rest: string }> {
+  return stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "")
+    .map((l) => {
+      const cut = l.search(/\s/);
+      return cut < 0 ? { name: l, rest: "" } : { name: l.slice(0, cut), rest: l.slice(cut).trim() };
+    });
 }
 
 function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport {
   const root = rootOf(ctx.adapters);
   const facts = remoteFactsFor(ctx.adapters, ctx.choices);
   const stream = opts.stream ?? nodeStreamRunner;
+  const healthTimeoutS = Math.max(1, Math.ceil((opts.healthTimeoutMs ?? 10_000) / 1000));
   const dockerPrefix = facts.sudo ? ["sudo", "docker"] : ["docker"];
   const remote = (argv: readonly string[]): Promise<ProcessResult> =>
     ctx.adapters.runner.run("ssh", sshArgv(facts.alias, argv));
@@ -216,7 +232,9 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
         detail: (ps.stderr || ps.stdout).trim().slice(0, 200) || `exit ${ps.code}`,
       };
     }
-    return { state: ps.stdout.includes(facts.container) ? "running" : "stopped" };
+    return {
+      state: psRows(ps.stdout).some((r) => r.name === facts.container) ? "running" : "stopped",
+    };
   };
   const logsCommand = (tail: number): string =>
     sshCommandLine(facts.alias || "<vm>", [
@@ -266,11 +284,7 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
           },
         ];
       }
-      const row = ps.stdout
-        .split("\n")
-        .map((l) => l.trim())
-        .find((l) => l.startsWith(facts.container));
-      const state = row ? row.slice(facts.container.length).trim() : "";
+      const state = psRows(ps.stdout).find((r) => r.name === facts.container)?.rest ?? "";
       const checks: CheckResult[] = [
         state !== "" && /running|up/i.test(state)
           ? {
@@ -368,7 +382,7 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
         "curl",
         "-sS",
         "-m",
-        "10",
+        String(healthTimeoutS),
         "-o",
         "-",
         "-w",
@@ -396,13 +410,7 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
             "started but cannot serve is nearly always a config.toml the loader rejected; the log line says which key",
         };
       }
-      let ok = false;
-      try {
-        ok = (JSON.parse(body) as { ok?: unknown }).ok === true;
-      } catch {
-        ok = false;
-      }
-      return ok
+      return healthPayloadOk(body)
         ? {
             name: "health",
             ok: true,
@@ -419,11 +427,43 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
 
     async restart(log, running) {
       if (!running) {
-        return {
+        // A server that was never deployed to gets this config with its first
+        // deploy. A STOPPED container that was deployed is different: it
+        // holds the config last shipped, and starting it brings that back —
+        // so the change is still owed, not delivered.
+        const nothingDeployed: CheckResult = {
           name: "daemon-restart",
           ok: true,
           detail:
             "nothing is deployed on the server yet, so there is nothing to restart — the deploy step ships this config when you run it",
+        };
+        if (facts.alias === "") return nothingDeployed;
+        const ps = await remote([
+          ...dockerPrefix,
+          "ps",
+          "--all",
+          "--filter",
+          `name=${facts.container}`,
+          "--format",
+          "{{.Names}}",
+        ]);
+        if (ps.code !== 0) {
+          return {
+            name: "daemon-restart",
+            ok: false,
+            detail:
+              `could not ask Docker on ${facts.alias} whether ${facts.container} exists (${(ps.stderr || ps.stdout).trim().slice(0, 200) || `exit ${ps.code}`}) — ` +
+              `the changed config is NOT known to be on the server. Fix: \`${deployCommandLine("sync")}\` ships it`,
+          };
+        }
+        if (!psRows(ps.stdout).some((r) => r.name === facts.container)) return nothingDeployed;
+        return {
+          name: "daemon-restart",
+          ok: false,
+          detail:
+            `the ${facts.container} container on ${facts.alias} exists but is not running — it holds the config last shipped, ` +
+            `not this one, and starting it as it is would bring the old value back. Fix: \`${deployCommandLine("sync")}\` ` +
+            "ships the change and recreates the container",
         };
       }
       // The deploy ships to whatever the inventory names; everything above
@@ -466,6 +506,16 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
 
 // ---- shared -----------------------------------------------------------------
 
+/** Is this a 200 body the daemon's own `/health` answers — `{"ok": true}`?
+ * The one acceptance rule both transports apply after reading the body. */
+export function healthPayloadOk(body: string): boolean {
+  try {
+    return (JSON.parse(body) as { ok?: unknown } | null)?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 /** The compose route's health probe: a plain fetch at the published port. */
 async function probeHealthOverHttp(
   adapters: OnboardAdapters,
@@ -483,13 +533,7 @@ async function probeHealthOverHttp(
         detail: `${url} answered HTTP ${res.status} — ${fixes.badStatus}`,
       };
     }
-    let ok = false;
-    try {
-      ok = (JSON.parse(text) as { ok?: unknown }).ok === true;
-    } catch {
-      ok = false;
-    }
-    return ok
+    return healthPayloadOk(text)
       ? {
           name: "health",
           ok: true,

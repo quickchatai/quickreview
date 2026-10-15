@@ -5,6 +5,14 @@
  * both render repository paths, and both must keep them literal.
  */
 
+/** The longest run of backticks in `text` (0 when none) — what a fence or a
+ * code span must out-length so nothing inside can close it (CommonMark). */
+export function longestBacktickRun(text: string): number {
+  let best = 0;
+  for (const m of text.matchAll(/`+/g)) best = Math.max(best, m[0].length);
+  return best;
+}
+
 /** Control characters (newlines included) as visible `\\uXXXX` escapes, so
  * author-controlled text can never start a new line of prompt. */
 export function flatControls(text: string): string {
@@ -20,7 +28,8 @@ export function flatControls(text: string): string {
  * they could close the span, split a plan-table row, or open a new line of
  * daemon-authored prompt text. Control characters are shown as `\uXXXX`,
  * and the fence is one backtick longer than any run inside the name
- * (CommonMark), so the name reads back exactly otherwise. Pipes are escaped
+ * (CommonMark), padded with a space when CommonMark would otherwise strip one
+ * of the name's own, so the name reads back exactly otherwise. Pipes are escaped
  * only for a TABLE cell (`table`): GFM un-escapes `\|` there, even inside a
  * code span, but everywhere else the backslash would read back as part of
  * the path.
@@ -28,8 +37,11 @@ export function flatControls(text: string): string {
 export function codePath(path: string, opts: { table?: boolean } = {}): string {
   let flat = flatControls(path);
   if (opts.table) flat = flat.replace(/\|/g, "\\|");
-  const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((r) => r.length));
-  if (longest === 0) return `\`${flat}\``;
+  const longest = longestBacktickRun(flat);
+  // CommonMark strips one space from each end of a span whose content starts
+  // AND ends with one, so such a name is padded like a backtick one is.
+  const strippable = /^ [^]* $/.test(flat) && /[^ ]/.test(flat);
+  if (longest === 0 && !strippable) return `\`${flat}\``;
   const fence = "`".repeat(longest + 1);
   return `${fence} ${flat} ${fence}`;
 }
