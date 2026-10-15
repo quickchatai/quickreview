@@ -2696,6 +2696,126 @@ describe("a person's re-request that only upgrades the provenance during consump
   );
 });
 
+describe("a settlement without a round answers its head, and only while the row is still its to decide", () => {
+  const OLD = "aaa1111111111111111111111111111111111111";
+  const NEW = "bbb2222222222222222222222222222222222222";
+  const owe = (pr: number, head: string): void => {
+    const id = store.roundsFor(pr)[0]!.id;
+    store.recordSuccessor({
+      pr,
+      predecessor_round_id: id,
+      head_sha: head,
+      provenance: "system",
+      reason: "test",
+    });
+  };
+  const events = (kind: string, pr: number): Array<Record<string, unknown>> =>
+    (
+      store.db
+        .prepare("SELECT payload FROM events WHERE pr = ? AND kind = ?")
+        .all(pr, kind) as Array<{ payload: string }>
+    ).map((r) => JSON.parse(r.payload) as Record<string, unknown>);
+
+  // MUTATION: drop settleSuccessor from the short-circuit — the obligation
+  // stands and reconcile promotes the same head again on its next pass.
+  it(
+    "the system short-circuit settles the successor owed at the head it answers",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(140, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      const id = store.startRound(140, "first", ["pass-baseline"], 60);
+      store.finishRound(id, "APPROVE", null);
+      store.recordReviewedHead(140, { head_sha: OLD, verdict: "APPROVE", round_no: 1 });
+      owe(140, NEW);
+      adapter.files.set(140, [file("mine.ts")]);
+      adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4)]);
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+      expect(orders).toEqual([]);
+      expect(store.getPr(140)!.state).toBe("tracked");
+      expect(store.successorFor(140)).toBeUndefined();
+      expect(store.promoteSuccessor(140)).toBe(false);
+    },
+  );
+
+  // MUTATION: drop settleSuccessor from the no-new-evidence skip.
+  it(
+    "the no-new-evidence skip settles the successor owed at its head",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(141, "2026-08-19T10:00:00Z", { head: "h1" });
+      const id = store.startRound(141, "first", ["pass-baseline"], 60);
+      store.finishRound(id, "REQUEST_CHANGES", null);
+      store.recordReviewedHead(141, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
+      owe(141, "h1");
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+      expect(orders).toEqual([]);
+      expect(store.getPr(141)!.state).toBe("awaiting_author");
+      expect(store.successorFor(141)).toBeUndefined();
+    },
+  );
+
+  // MUTATION: drop the queued-state check from movedDuringConsume — the skip
+  // records a decision for a PR that closed meanwhile.
+  it(
+    "a PR closed during the consumption is not settled by the skip",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(142, "2026-08-19T10:00:00Z", { head: "h1" });
+      store.recordReviewedHead(142, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
+      class Closing extends FakeAdapter {
+        override async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+          store.setPrState(142, "closed");
+          return super.deleteTeamReviewRequest(n);
+        }
+      }
+      const { hooks } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter: new Closing(), hooks });
+
+      expect(store.getPr(142)!.state).toBe("closed");
+      expect(events("round_skipped_no_new_evidence", 142)).toEqual([]);
+      expect(events("dispatch_settlement_superseded", 142)).toEqual([
+        expect.objectContaining({ reason: "left_queue" }),
+      ]);
+    },
+  );
+
+  // MUTATION: drop the evidence re-read after the skip's consumption — the
+  // author's reply is settled away and the PR returns to awaiting_author.
+  it(
+    "an author reply during the skip's consumption leaves the PR queued for the round it now owes",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(143, "2026-08-19T10:00:00Z", { head: "h1", provenance: "human" });
+      const id = store.startRound(143, "first", ["pass-baseline"], 60);
+      store.finishRound(id, "REQUEST_CHANGES", null);
+      store.recordReviewedHead(143, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
+      class Replying extends FakeAdapter {
+        override async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+          store.noteAuthorReply(143, "2099-01-01T00:00:00.000Z");
+          return super.deleteTeamReviewRequest(n);
+        }
+      }
+      const racing = new Replying();
+      racing.files.set(143, [file("a.py")]);
+      const { hooks, orders } = recordingHooks();
+
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter: racing, hooks })).toEqual([]);
+      expect(store.getPr(143)!.state).toBe("queued");
+      expect(events("round_skipped_no_new_evidence", 143)).toEqual([]);
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter: racing, hooks });
+      expect(orders).toHaveLength(1);
+    },
+  );
+});
+
 describe("a later round with no git seam is today's full re-review, said out loud", () => {
   it(
     "logs followup_full_round {reason: no-adapter}, stamps scope full, and the order carries no follow-up field",

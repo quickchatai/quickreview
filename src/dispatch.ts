@@ -853,8 +853,10 @@ async function consumeTriggers(
  * nothing records a successor for a row that is not `reviewing` — and
  * settling it would erase that newer review debt: the stale standing verdict
  * replayed, the new trigger cleared. So a moved row is left queued for the
- * next pump, which decides again from what it now says. Returns the reason,
- * or null when the row still says what the decision read.
+ * next pump, which decides again from what it now says. A row that left the
+ * queue (a close, the operator) is not settled either: it is no longer this
+ * dispatch's to decide. Returns the reason, or null when the row still says
+ * what the decision read.
  */
 function movedDuringConsume(
   store: DispatchDeps["store"],
@@ -862,6 +864,7 @@ function movedDuringConsume(
 ): string | null {
   const now = store.getPr(row.number);
   if (!now) return null;
+  if (now.state !== "queued") return "left_queue";
   if (now.head_sha !== row.head_sha) return "head_moved";
   // A person's ask on a queued row keeps its trigger time and upgrades only
   // the provenance — a re-request the system short-circuit must not settle.
@@ -2039,12 +2042,19 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           mark: snapshotMark(mark!),
         };
         await consumeTriggers(deps, row.number, { markInProgress: false });
-        const movedSkip = movedDuringConsume(store, row);
+        // An author reply landing during the consumption is new evidence the
+        // skip did not see: the next pump runs the round it now owes.
+        const movedSkip =
+          movedDuringConsume(store, row) ??
+          (hasNewEvidence(store.reviewedHead(row.number), row.head_sha) ? "new_evidence" : null);
         if (movedSkip) {
           logSupersededSettlement(deps, row, "no-new-evidence skip", movedSkip);
           continue;
         }
         store.logEvent("round_skipped_no_new_evidence", row.number, decision);
+        // The head this skip settles is reviewed already: a successor owed at
+        // it is answered, and is not promoted again on every reconcile pass.
+        store.settleSuccessor(row.number, row.head_sha);
         if (standingInfo.kind === "unknown") {
           store.logAnomaly(
             "standing_review_unknown",
@@ -2116,6 +2126,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               );
             }
           }
+          // The trivial delta answers this head: a successor owed at it is
+          // settled, so reconcile does not promote it again on every pass.
+          store.settleSuccessor(row.number, row.head_sha);
           log(
             `dispatch: #${row.number} short-circuited (${sc.reason}) — system re-trigger, standing ${standing}`,
           );
