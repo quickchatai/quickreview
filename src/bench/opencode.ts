@@ -102,7 +102,7 @@ import { piUsageFromInclusive } from "./cost.js";
 import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import { bridgeCall, bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
 import { prTextFor } from "./prtext.js";
-import { roundMetrics } from "./report.js";
+import { datasetLine, kTokens, roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
 
 // ---- the harness's codex runner, mirrored -----------------------------------------
@@ -1248,12 +1248,10 @@ export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchC
   const judge = existsSync(judgeFile)
     ? readFileSync(judgeFile, "utf8").trim().split("\n")
     : ["not run"];
-  const k = (x: number): string => `${Math.round(x / 1000)}k`;
+  const k = kTokens;
   L.push(`# AACR-Bench run — ${set.name} — OpenCode`);
   L.push("");
-  L.push(
-    `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
-  );
+  L.push(datasetLine(set, cases));
   L.push(
     `- Reviewer: OpenCode ${String(run["opencode_version"] ?? "?")}, run in the shape of the AACR harness's reviewers/codex.py: \`opencode run --command review "<base>...<head> (<findings fragment>)"\` (OpenCode's built-in /review), findings through the harness's codex MCP findings server, timeout ${String((run["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s); ${run["pr_text"] === true ? "PR title/description appended to the review arguments (the equal-inputs switch)" : "no PR title/description"}`,
   );

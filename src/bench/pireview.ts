@@ -87,7 +87,7 @@ import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import type { OcrShapedComment } from "./opencode.js";
 import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 import { prTextFor } from "./prtext.js";
-import { roundMetrics } from "./report.js";
+import { datasetLine, kTokens, roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
 
 // ---- how pi-review is invoked --------------------------------------------------------
@@ -368,7 +368,8 @@ export interface LeftSideComment {
 
 /**
  * The path as the scorer compares it: repo-relative. Strips the tree's
- * absolute prefix, `./`, and git's `a/`/`b/` diff prefixes, and splits a
+ * absolute prefix, `./`, and git's `a/`/`b/` diff prefixes (a path the tree
+ * has keeps its real `a/` or `b/` directory), and splits a
  * trailing `:42` / `:42-58` off a Path the model wrote with its line in it
  * (only used when pi-review parsed no `Lines`).
  */
@@ -390,7 +391,8 @@ export function normalizeFindingPath(
   // left at its front is a real directory, never a diff prefix.
   if (p.startsWith(t)) return { path: p.slice(t.length), lines };
   p = p.replace(/^\.\//, "");
-  if (/^[ab]\//.test(p)) p = p.slice(2);
+  // A leading `a/` or `b/` is a diff prefix unless the tree has that path.
+  if (/^[ab]\//.test(p) && !existsSync(join(t, p))) p = p.slice(2);
   return { path: p, lines };
 }
 
@@ -776,6 +778,16 @@ export async function reviewCasePireview(
   return summary;
 }
 
+/** The files one pi-review attempt writes into its case dir (besides the
+ * judge inputs and a panel's per-reviewer logs). */
+const ATTEMPT_FILES = [
+  "pi-events.jsonl",
+  "pireview-meta.json",
+  "pireview-argv.json",
+  "pireview-stdout.txt",
+  "pireview-stderr.log",
+] as const;
+
 /** A panel's per-reviewer progress logs in a case dir (pi-events.r<id>.jsonl). */
 function reviewerLogs(caseDir: string): string[] {
   if (!existsSync(caseDir)) return [];
@@ -787,9 +799,9 @@ function reviewerLogs(caseDir: string): string[] {
 /** An earlier attempt's files must not outlive it: the defect judge reads
  * the review body and the base-side rows whatever this attempt's status, the
  * cost reader prices the progress log (src/bench/cost.ts), and pi-review's
- * meta is what an operator reads the attempt by. */
+ * meta, argv and output are what an operator reads the attempt by. */
 function clearAttempt(caseDir: string): void {
-  for (const f of [...JUDGE_INPUT_FILES, "pi-events.jsonl", "pireview-meta.json"])
+  for (const f of [...JUDGE_INPUT_FILES, ...ATTEMPT_FILES])
     rmSync(join(caseDir, f), { force: true });
   for (const f of reviewerLogs(caseDir)) rmSync(join(caseDir, f), { force: true });
 }
@@ -991,12 +1003,10 @@ export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchC
   const judge = existsSync(judgeFile)
     ? readFileSync(judgeFile, "utf8").trim().split("\n")
     : ["not run"];
-  const k = (x: number): string => `${Math.round(x / 1000)}k`;
+  const k = kTokens;
   L.push(`# AACR-Bench run — ${set.name} — pi-review`);
   L.push("");
-  L.push(
-    `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
-  );
+  L.push(datasetLine(set, cases));
   L.push(
     `- Reviewer: @zephyrdeng/pi-review ${String(runRec["pireview_version"] ?? "?")} on pi ${String(runRec["pi_version"] ?? "?")} — ${typeof runRec["panel"] === "string" ? `panel \`${runRec["panel"]}\` (every cluster scored, confirmed and advisory)` : "single reviewer"}, mode \`code\`, its own prompts; the diff \`git diff <base>...<head>\` attached with \`@file\`, the tree checked out at head; findings from its \`PI_REVIEW_META_JSON\` line; timeout ${String((runRec["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s); ${runRec["pr_text"] === true ? "PR title/description in the target" : "no PR title/description"}`,
   );

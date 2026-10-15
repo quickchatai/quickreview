@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { BenchCase, CaseSet } from "./aacr.js";
 import { aacrScoreTable, caseWarningsSection } from "./armrun.js";
 import { readCodexSummary, type CodexCaseSummary } from "./codex.js";
-import { AACR_REPORT_PREAMBLE, roundMetrics } from "./report.js";
+import { datasetLine, kTokens, reportPreamble, roundMetrics } from "./report.js";
 
 /** A run recorded before run.json carried its endpoint ran on the login. */
 const LEGACY_ENDPOINT = "Codex's native ChatGPT login (the refresh-disabled token copy)";
@@ -20,14 +20,12 @@ export function renderCodexReport(set: CaseSet, outDir: string, cases: BenchCase
   const judge = existsSync(judgeFile)
     ? readFileSync(judgeFile, "utf8").trim().split("\n")
     : ["not run"];
-  const k = (x: number): string => `${Math.round(x / 1000)}k`;
+  const k = kTokens;
   L.push(`# AACR-Bench run — ${set.name} — Codex CLI`);
   L.push("");
-  L.push(AACR_REPORT_PREAMBLE);
+  L.push(reportPreamble(set));
   L.push("");
-  L.push(
-    `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
-  );
+  L.push(datasetLine(set, cases));
   L.push(
     `- Reviewer: Codex CLI ${String(run["codex_version"] ?? "?")}, run by the AACR harness's own reviewers/codex.py: \`codex --sandbox workspace-write exec review --json --skip-git-repo-check "/review <base>...<head> (<report-tool instructions>)"\`, findings through its \`report\` MCP tool, timeout ${String(run["timeout_min"] ?? "?")} min; ${run["pr_text"] === true ? "PR title/description appended to the /review instructions (the equal-inputs switch)" : "no PR title/description (the harness passes none)"}`,
   );
