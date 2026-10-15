@@ -90,6 +90,9 @@ export const DOWNGRADE_WORDS: readonly string[] = [
   // The third unreasoned shape is a correction, not a kill: the tag is put back
   // inside the closed grammar and the finding survives.
   "tag-outside-grammar",
+  // An ask-your-human candidate at P0–P2 that names no concrete failure,
+  // capped to P3 (the ask-human addendum in src/include.ts).
+  "ask-human-unnamed-defect",
   // The mechanism is real, the claimed consequence was wrong — posted with
   // the true consequence instead of killed.
   "restated",
@@ -588,8 +591,9 @@ export type FindingsCheckResult = "recorded" | "nudged" | "already_nudged";
 
 /**
  * The enforcement step. Parsed ⇒ rows are written and the per-round comment
- * count lands on the round. Otherwise: `logAnomaly("findings_record_missing")`
- * EVERY time (the durable audit trail), plus at most ONE nudge per round.
+ * count lands on the round. Otherwise an anomaly EVERY time (the durable
+ * audit trail) — `findings_record_missing` until the round's one nudge has
+ * gone out, `findings_record_unresolved` after it — plus at most ONE nudge.
  *
  * The once-mark is stamped BEFORE the inject, so no failure mode — a throwing
  * inject, a crash between the two, a second sweep of the same round — can ever

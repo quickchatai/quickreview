@@ -69,7 +69,10 @@ function buildStatus(status: number, payload: unknown) {
   return buildStatusSequence([{ status, payload }]).adapter;
 }
 
-function buildStatusSequence(responses: Array<{ status: number; payload: unknown }>) {
+function buildStatusSequence(
+  responses: Array<{ status: number; payload: unknown }>,
+  dryRun = true,
+) {
   const calls: string[] = [];
   let index = 0;
   const fetchFn = (async (url: string | URL) => {
@@ -83,7 +86,7 @@ function buildStatusSequence(responses: Array<{ status: number; payload: unknown
     } as Response;
   }) as unknown as FetchFn;
   let adapter!: GitHubAdapter;
-  const gate = new MutationGate(true, dryrunDir, (intent) => adapter.executeMutation(intent));
+  const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
   adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com");
   return { adapter, calls };
 }
@@ -364,10 +367,10 @@ describe("mutations in dry-run", () => {
   // Removing an already-absent label 404s — that is idempotent success, not
   // an error to log.
   it("treats a 404 on remove_label as already-removed (live mode)", async () => {
-    const { adapter } = build(() => {
-      const err = new Error('DELETE .../labels/x → 404: {"message":"Label does not exist"}');
-      throw err;
-    }, false);
+    const { adapter } = buildStatusSequence(
+      [{ status: 404, payload: { message: "Label does not exist" } }],
+      false,
+    );
     const out = await adapter.removeLabel(3, "AI review in progress");
     expect(out.executed).toBe(false);
     expect(out.response).toMatchObject({ already_absent: "AI review in progress" });
@@ -378,6 +381,11 @@ describe("mutations in dry-run", () => {
       throw new Error("DELETE .../labels/x → 500: upstream broke");
     }, false);
     await expect(adapter.removeLabel(3, "AI review in progress")).rejects.toThrow("500");
+  });
+
+  it("a 500 on PR #404 is a failure, not an absent label: the status decides, not the path", async () => {
+    const { adapter } = buildStatusSequence([{ status: 500, payload: { message: "boom" } }], false);
+    await expect(adapter.removeLabel(404, "AI review in progress")).rejects.toThrow("500");
   });
 
   it("URL-encodes the label in the remove-label path", async () => {
@@ -772,6 +780,35 @@ describe("list reads are paginated", () => {
     const { adapter } = build((url) => ({ items: page(url, 130, (i) => ({ number: i + 1 })) }));
     expect(await adapter.searchLabelTriggered()).toHaveLength(130);
     expect(await adapter.searchTeamTriggered()).toHaveLength(130);
+  });
+
+  it("the triggered-set search fails rather than answer a partial set", async () => {
+    const incomplete = build(() => ({ incomplete_results: true, items: [{ number: 1 }] })).adapter;
+    await expect(incomplete.searchLabelTriggered()).rejects.toThrow(/incomplete/);
+    const capped = build((url) => ({ items: page(url, 5_000, (i) => ({ number: i + 1 })) })).adapter;
+    await expect(capped.searchTeamTriggered()).rejects.toThrow(/exceeded 10 pages/);
+  });
+
+  it("listOpenPrs fails rather than answer a list its page bound cut short", async () => {
+    const { adapter } = build((url) =>
+      page(url, 5_000, (i) => ({
+        number: i + 1,
+        title: "t",
+        user: { login: "alice" },
+        head: { sha: `sha${i}` },
+        state: "open",
+      })),
+    );
+    await expect(adapter.listOpenPrs()).rejects.toThrow(/pagination bound/);
+  });
+
+  it("the registry backfill reads newest first, so the page bound drops the oldest", async () => {
+    const { adapter, calls } = build((url) =>
+      page(url, 5_000, (i) => ({ id: 5_000 - i, user: { login: "example-review[bot]" } })),
+    );
+    const ids = await adapter.listBotReviewComments(7);
+    expect(ids[0]).toBe(5_000);
+    expect(new URL(calls[0]!.url).searchParams.get("direction")).toBe("desc");
   });
 
   it("listOpenPrs reads every open PR, not only the newest 100 (c9663a36)", async () => {

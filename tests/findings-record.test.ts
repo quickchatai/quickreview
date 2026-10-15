@@ -196,6 +196,8 @@ describe("parseFindingsRecord", () => {
     expect(parsed.note).toContain("closed vocabulary");
     expect(isKnownVocabularyWord("settled:12345")).toBe(true);
     expect(isKnownVocabularyWord("design-over-cap")).toBe(true);
+    // The ask-human addendum licenses this downgrade word in the validator prompt.
+    expect(isKnownVocabularyWord("ask-human-unnamed-defect")).toBe(true);
     expect(isKnownVocabularyWord("brand-new-word")).toBe(false);
   });
 
