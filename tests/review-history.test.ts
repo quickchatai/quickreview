@@ -308,6 +308,19 @@ describe("collectReviewHistory", () => {
     expect(d.human.prs_missing).toBe(1);
     expect(d.problems.join("\n")).toMatch(/#11: .*graphql → 500/);
 
+    // A read that answers with no pull request is a problem too, not a quiet count.
+    const absent = await collectReviewHistory(
+      {
+        searchIssuesPaged: h.adapter.searchIssuesPaged.bind(h.adapter),
+        prReviews: async () => null,
+      },
+      s,
+      cfg,
+      { now: () => NOW },
+    );
+    expect(absent.human.prs_missing).toBe(absent.human.prs_enumerated);
+    expect(absent.problems.join("\n")).toMatch(/#11: GitHub returned no pull request/);
+
     const failed = await collectReviewHistory(harness(PRS, { searchFails: true }).adapter, s, cfg, {
       now: () => NOW,
     });
