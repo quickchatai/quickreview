@@ -107,6 +107,8 @@ export function pinnedAddress(e: PinnedEntryView): string {
   return `${e.ts} #${e.id} block ${e.block}`;
 }
 
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
  * Reduce the pinned area to a stable digest plus its address→hash map.
  *
@@ -118,14 +120,18 @@ export function pinnedAddress(e: PinnedEntryView): string {
  */
 export function fingerprintPinned(entries: readonly PinnedEntryView[], at = 0): PinnedSnapshot {
   const map = new Map<string, string>();
-  for (const e of entries) {
-    const base = pinnedAddress(e);
+  // Duplicates are numbered in (address, hash) order, never input order.
+  const ordered = entries
+    .map((e) => ({ base: pinnedAddress(e), hash: e.hash }))
+    .sort((a, b) => cmp(a.base, b.base) || cmp(a.hash, b.hash));
+  for (const e of ordered) {
+    const base = e.base;
     let key = base;
     for (let n = 2; map.has(key); n++) key = `${base} (dup ${n})`;
     map.set(key, e.hash);
   }
   const lines = [...map.entries()]
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .sort((a, b) => cmp(a[0], b[0]))
     .map(([k, h]) => `${k}\u0000${h}`);
   return {
     fingerprint: createHash("sha256").update(lines.join("\n")).digest("hex"),
