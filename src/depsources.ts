@@ -174,7 +174,7 @@ const USER_AGENT = "quickreviewd-depsources";
 const NPM_REGISTRY = "https://registry.npmjs.org/";
 const NPM_ABBREVIATED = "application/vnd.npm.install-v1+json";
 const PYPI_ORIGIN = "https://pypi.org/";
-const PYPI_API = "https://pypi.org/pypi/";
+const PYPI_API = `${PYPI_ORIGIN}pypi/`;
 const PYPI_FILES = "https://files.pythonhosted.org/";
 
 // ---------------------------------------------------------------------------
@@ -650,10 +650,34 @@ export interface NpmLock {
   entries: Map<string, LockEntry[]>;
   /** Workspace / link / file packages — first-party, never downloaded. */
   links: Set<string>;
+  /** Links that hold only inside one workspace (package-lock: under that
+   * workspace's own node_modules; pnpm: the importer that resolves the name
+   * to a local path): name → the workspace dirs, relative to the lock. A file
+   * outside them resolves the name like any other package. */
+  scopedLinks: Map<string, string[]>;
 }
 
 function emptyLock(): NpmLock {
-  return { entries: new Map(), links: new Set() };
+  return { entries: new Map(), links: new Set(), scopedLinks: new Map() };
+}
+
+/** Record a link: global at the lock's root, else held by `scope`. */
+function addLink(lock: NpmLock, name: string, scope: string): void {
+  if (!scope || scope === ".") {
+    lock.links.add(name);
+    return;
+  }
+  const scopes = lock.scopedLinks.get(name) ?? [];
+  if (!scopes.includes(scope)) scopes.push(scope);
+  lock.scopedLinks.set(name, scopes);
+}
+
+/** Does `name` resolve to a local package for a file at `relInLockDir`? */
+function isLinked(lock: NpmLock, name: string, relInLockDir: string): boolean {
+  if (lock.links.has(name)) return true;
+  return (lock.scopedLinks.get(name) ?? []).some(
+    (scope) => relInLockDir === scope || relInLockDir.startsWith(`${scope}/`),
+  );
 }
 
 /** Per lock: `(name, version, scope, foreign)` → its entry plus the spec set,
@@ -729,7 +753,8 @@ export function parsePackageLock(text: string): NpmLock | null {
       const name = key.slice(idx + "node_modules/".length);
       const prefix = key.slice(0, idx);
       if (val.link === true) {
-        lock.links.add(name);
+        // A workspace's own nested link holds for that workspace's files only.
+        if (!prefix.includes("node_modules/")) addLink(lock, name, prefix.replace(/\/$/, ""));
         continue;
       }
       const version = str(val.version);
@@ -965,12 +990,18 @@ export function parsePnpmLock(text: string): NpmLock {
   for (const [imp, deps] of pins) {
     for (const [name, p] of deps) {
       // `1.2.0(react@18)` (v6+) / `1.2.0_react@18` (v5): the peer suffix is not the version.
+      const scope = imp.replace(/^\.\//, "").replace(/\/$/, "");
+      // A semver specifier pnpm resolved to a workspace path (`link:../shared`)
+      // is that importer's local package, not the registry's same-named one.
+      if (isLocalRange(p.version ?? "")) {
+        addLink(lock, name, scope);
+        continue;
+      }
       const version = (p.version ?? "").replace(/[(_].*$/, "");
       if (!VERSION_LIKE.test(version)) continue;
       const entry: LockEntry = { version };
       if (p.spec) entry.specs = [p.spec];
       if (foreignPkgs.has(`${name}@${version}`)) entry.foreign = true;
-      const scope = imp.replace(/^\.\//, "").replace(/\/$/, "");
       if (scope && scope !== ".") entry.scope = scope;
       addLock(lock, name, entry);
     }
@@ -1285,6 +1316,13 @@ function isLocalRange(range: string): boolean {
  */
 function isNonRegistryRange(range: string): boolean {
   return /[:/@#]/.test(range);
+}
+
+/** An unresolved sighting or request whose declared range names a source the
+ * registry cannot resolve: planning keeps it apart from every registry entry
+ * and preparation skips it, by this one test. */
+function isUnfetchable(x: { version: string | null; range?: string }): boolean {
+  return x.version === null && x.range !== undefined && isNonRegistryRange(x.range);
 }
 
 // ---------------------------------------------------------------------------
@@ -1924,7 +1962,7 @@ class Resolver {
     const reqDir = posix.join(rel, "requirements");
     if (this.io.isDir(reqDir))
       for (const f of this.io.list(reqDir))
-        if (/\.(txt|in)$/i.test(f)) reqFiles.add(`requirements/${f}`);
+        if (isRequirementsFile(`requirements/${f}`)) reqFiles.add(`requirements/${f}`);
     for (const f of [...reqFiles].sort()) {
       const t = read(f);
       if (t === null) continue;
@@ -1964,7 +2002,7 @@ class Resolver {
       }
       for (const l of info.npmLocks) {
         anyManifest = true;
-        if (l.links.has(name)) return "first-party";
+        if (isLinked(l, name, d ? posix.relative(d, relFile) : relFile)) return "first-party";
         const e = l.entries.get(name);
         if (!locked && e?.length) locked = { entries: e, dir: d };
       }
@@ -2070,6 +2108,11 @@ interface Acc {
   seq: number;
 }
 
+/** Why a manifest edit puts a package on the list. */
+function editWhy(e: ManifestEdit, rel: string): string {
+  return `${e.kind === "bumped" ? "bumped in" : "added to"} ${rel}`;
+}
+
 function renderWhy(a: Acc): string {
   const parts = a.manifestWhys.slice(0, 3);
   if (a.importers.length) {
@@ -2085,7 +2128,8 @@ function renderWhy(a: Acc): string {
  * Which third-party packages matter for THIS PR, most important first:
  * dependencies the diff adds to a manifest, then packages imported by the
  * changed files (by how many import them). Pure over the tree; `readFile`
- * (absolute path → text or null) replaces the filesystem for tests. Not
+ * (absolute path → text or null) replaces file READS for tests — directory
+ * listings (a `requirements/` dir) still come from the filesystem. Not
  * truncated — the per-PR cap is applied at prepare time so the overflow is
  * visible as `skipped`.
  */
@@ -2112,8 +2156,6 @@ export function planDependencyRequests(
   // and a registry pin never turns it into a fetch.
   const accs = new Map<string, Acc[]>();
   let seq = 0;
-  const unfetchable = (x: { version: string | null; range?: string }): boolean =>
-    x.version === null && x.range !== undefined && isNonRegistryRange(x.range);
   const note = (
     eco: DepEcosystem,
     r: Resolved,
@@ -2121,7 +2163,7 @@ export function planDependencyRequests(
   ): void => {
     const key = `${eco}:${r.name}`;
     const same = accs.get(key) ?? [];
-    const registry = same.filter((x) => !unfetchable(x));
+    const registry = same.filter((x) => !isUnfetchable(x));
     const anyRange = (range: string | undefined): boolean => range === undefined || range === "*";
     const shared = (x: { range?: string }): boolean =>
       anyRange(x.range) || anyRange(r.range) || x.range === r.range;
@@ -2135,8 +2177,8 @@ export function planDependencyRequests(
         ? shared(x)
         : x.range === r.range ||
           (x.version === null ? admits(x.range, r.version!) : admits(r.range, x.version));
-    let a = unfetchable(r)
-      ? same.find((x) => unfetchable(x) && x.range === r.range)
+    let a = isUnfetchable(r)
+      ? same.find((x) => isUnfetchable(x) && x.range === r.range)
       : r.version === null
         ? registry.find(compatible)
         : (registry.find((x) => x.version === r.version) ??
@@ -2176,7 +2218,7 @@ export function planDependencyRequests(
     const base = posix.basename(f.rel);
     if (base === "package.json") {
       for (const e of npmManifestEdits(f.patch, io.read(f.rel, MAX_MANIFEST_BYTES))) {
-        const why = `${e.kind === "bumped" ? "bumped in" : "added to"} ${f.rel}`;
+        const why = editWhy(e, f.rel);
         if (e.range !== null && isLocalRange(e.range)) continue;
         const r = resolver.npm(e.name, f.rel);
         if (r === "first-party") continue;
@@ -2186,7 +2228,7 @@ export function planDependencyRequests(
       }
     } else if (base === "pyproject.toml" || isRequirementsFile(f.rel)) {
       for (const e of pythonManifestEdits(f.rel, f.patch, io.read(f.rel, MAX_MANIFEST_BYTES))) {
-        const why = `${e.kind === "bumped" ? "bumped in" : "added to"} ${f.rel}`;
+        const why = editWhy(e, f.rel);
         const r = resolver.pyDist(e.name, f.rel);
         if (r === "first-party" || (e.range !== null && isLocalRange(e.range))) continue;
         note("pypi", r ?? { name: e.name, version: null, range: e.range ?? "*" }, {
@@ -2577,9 +2619,11 @@ export function unpackEntries(
   const maxFiles = opts.maxFiles ?? MAX_KEPT_FILES;
   const maxDirs = opts.maxDirs ?? MAX_KEPT_FILES;
   const maxInflated = opts.maxInflatedBytes ?? MAX_EXPANDED_ARCHIVE_BYTES;
-  // Every directory a kept path implies is an inode too: counted (and capped)
-  // so a few files under deep, distinct chains cannot spend them unseen.
+  // Every directory a kept path implies is an inode too: capped BEFORE it is
+  // created, so a few files under deep, distinct chains cannot spend them
+  // unseen; reported (and charged to the cache) only once it exists.
   const dirs = new Set<string>();
+  const created = new Set<string>();
   for (const [rel, e] of chosen) {
     if (files >= maxFiles) throw new SkipError(`archive holds more than ${maxFiles} files`);
     const dest = resolve(target, rel);
@@ -2600,6 +2644,8 @@ export function unpackEntries(
       if (!isNameClash(err)) throw err;
       continue; // a file/dir name clash inside the archive: that one entry is lost
     }
+    for (let d = posix.dirname(rel); d !== "." && !created.has(d); d = posix.dirname(d))
+      created.add(d);
     const data = e.read();
     // Charged whether or not the write lands: a failed write must not make
     // the decompression free.
@@ -2618,7 +2664,7 @@ export function unpackEntries(
       if (!isNameClash(err)) throw err;
     }
   }
-  return { files, bytes, dirs: dirs.size, rejected };
+  return { files, bytes, dirs: created.size, rejected };
 }
 
 /** A file/dir name clash, or a name too long for the filesystem, inside one
@@ -2657,7 +2703,8 @@ interface CacheMarker {
   dirs: number;
 }
 
-const SAFE_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+_-]*$/;
+/** A version safe as a path component: PEP 440's epoch `!` (`1!2.0`) included. */
+const SAFE_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+_!-]*$/;
 
 /** `<root>/<eco>/<name, scope slash → +>@<version>`, or null when either part is unsafe as a path.
  * `+` is in neither npm's nor PyPI's name alphabet, so the mapping is
@@ -2675,7 +2722,12 @@ function cacheDirFor(
   const flat = name.replace("/", "+");
   if (!/^@?[A-Za-z0-9][A-Za-z0-9._~-]*(?:\+[A-Za-z0-9._~-]+)?$/.test(flat) || flat.includes(".."))
     return null;
-  return join(root, eco, `${flat}@${version}`);
+  return join(root, eco, cacheEntryName(name, version));
+}
+
+/** A cache entry's directory name. */
+function cacheEntryName(name: string, version: string): string {
+  return `${name.replace("/", "+")}@${version}`;
 }
 
 function readMarker(dir: string): CacheMarker | null {
@@ -2711,8 +2763,11 @@ function sweepStaleTmp(parent: string, owner?: string): void {
       if (owner !== undefined && !f.startsWith(`${owner}.tmp-`)) continue;
       try {
         const p = join(parent, f);
-        // A complete entry (a version that merely ends like a tmp name) stays.
-        if (readMarker(p)) continue;
+        // A complete entry (a version that merely ends like a tmp name) stays;
+        // a marked dir under any other name is an install that crashed between
+        // its marker and its rename.
+        const m = readMarker(p);
+        if (m && f === cacheEntryName(m.name, m.version)) continue;
         if (Date.now() - statSync(p).mtimeMs > STALE_TMP_MS)
           rmSync(p, { recursive: true, force: true });
       } catch {
@@ -2979,9 +3034,7 @@ function encodeNpmName(name: string): string {
 async function prepareNpm(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
   const name = req.name;
   if (!NPM_NAME_RE.test(name)) throw new SkipError("not a valid npm package name");
-  if (req.version === null && req.range !== undefined && isNonRegistryRange(req.range)) {
-    throw new SkipError(`not a registry version (${clip(req.range, 40)})`);
-  }
+  if (isUnfetchable(req)) throw new SkipError(`not a registry version (${clip(req.range!, 40)})`);
   let version = req.version;
   let resolvedFrom: string | undefined;
   if (version !== null) {
@@ -3074,13 +3127,7 @@ function choosePyFile(files: PyFile[]): PyFile | null {
 async function preparePypi(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
   const name = normPy(req.name);
   if (!/^[a-z0-9][a-z0-9.-]*$/.test(name)) throw new SkipError("not a valid PyPI project name");
-  if (
-    req.version === null &&
-    req.range !== undefined &&
-    (req.range.startsWith("@") || isNonRegistryRange(req.range))
-  ) {
-    throw new SkipError(`not a registry version (${clip(req.range, 40)})`);
-  }
+  if (isUnfetchable(req)) throw new SkipError(`not a registry version (${clip(req.range!, 40)})`);
   let version = req.version;
   let resolvedFrom: string | undefined;
   let files: PyFile[];
@@ -3098,12 +3145,14 @@ async function preparePypi(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
     const doc = await getJson(ctx, `${PYPI_API}${encodeURIComponent(name)}/json`, PYPI_ORIGIN);
     const latest = isObj(doc.info) ? str(doc.info.version) : undefined;
     const releases = isObj(doc.releases) ? doc.releases : {};
-    if (latest && pyVersionMatches(latest, range)) {
+    // A release whose every file is yanked is withdrawn: a range never picks
+    // it (only an explicit pin may still fetch a yanked file) — the latest
+    // release included.
+    const latestFiles = pyFiles(doc.urls);
+    if (latest && pyVersionMatches(latest, range) && latestFiles.some((f) => !f.yanked)) {
       version = latest;
-      files = pyFiles(doc.urls);
+      files = latestFiles;
     } else {
-      // A release whose every file is yanked is withdrawn: a range never picks
-      // it (only an explicit pin may still fetch a yanked file).
       const usable = Object.keys(releases).filter((k) =>
         pyFiles(releases[k]).some((f) => !f.yanked),
       );
@@ -3146,19 +3195,23 @@ async function preparePypi(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
 }
 
 async function prepareOne(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
+  let out: Outcome;
   try {
-    const out = req.ecosystem === "npm" ? await prepareNpm(req, ctx) : await preparePypi(req, ctx);
-    if (out.ok)
-      ctx.log(
-        `depsources: ${req.ecosystem} ${out.source.name}@${out.source.version} ready (${out.source.files} files)`,
-      );
-    else ctx.log(`depsources: ${req.ecosystem} ${req.name} skipped: ${out.skip.reason}`);
-    return out;
+    out = req.ecosystem === "npm" ? await prepareNpm(req, ctx) : await preparePypi(req, ctx);
   } catch (e) {
     const reason = e instanceof SkipError ? e.message : `unpack failed: ${short(e)}`;
-    ctx.log(`depsources: ${req.ecosystem} ${req.name} skipped: ${reason}`);
-    return { ok: false, skip: { ecosystem: req.ecosystem, name: req.name, reason } };
+    out = { ok: false, skip: { ecosystem: req.ecosystem, name: req.name, reason } };
   }
+  if (out.ok)
+    ctx.log(
+      `depsources: ${req.ecosystem} ${out.source.name}@${out.source.version} ready (${out.source.files} files)`,
+    );
+  else {
+    // Which request: two workspaces can ask for one package at two versions.
+    const which = req.version !== null ? `@${req.version}` : req.range ? ` ${req.range}` : "";
+    ctx.log(`depsources: ${req.ecosystem} ${req.name}${which} skipped: ${out.skip.reason}`);
+  }
+  return out;
 }
 
 /**
@@ -3166,8 +3219,9 @@ async function prepareOne(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
  * NEVER throws, and its network phase never runs past `timeoutMs` (plus one
  * in-flight request settling) — the cache sweep and the planning before it
  * are local, synchronous and outside that budget. Every failure is a
- * `skipped` entry, and a cached package is served without touching the
- * network at all.
+ * `skipped` entry, and a locked package already cached is served without
+ * touching the network at all (an unlocked range still asks the registry
+ * which release it resolves to).
  */
 export async function prepareDependencySources(
   tree: string,

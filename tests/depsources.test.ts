@@ -855,6 +855,60 @@ describe("planDependencyRequests", () => {
     });
   });
 
+  it("a link a workspace holds is first-party for that workspace's files only", () => {
+    // package-lock: a public hoisted copy, and a workspace whose own
+    // node_modules links the name to a local package.
+    const npm = {
+      "package.json": JSON.stringify({ dependencies: { x: "^1.0.0" } }),
+      "packages/web/package.json": JSON.stringify({ name: "web", dependencies: { x: "^2.0.0" } }),
+      "package-lock.json": JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/x": { version: "1.0.0" },
+          "packages/web/node_modules/x": { resolved: "packages/x", link: true },
+        },
+      }),
+      "src/a.js": "import x from 'x';\n",
+      "packages/web/src/b.js": "import x from 'x';\n",
+    };
+    expect(planDependencyRequests(tree(npm), [{ filename: "src/a.js" }])).toMatchObject([
+      { name: "x", version: "1.0.0" },
+    ]);
+    expect(planDependencyRequests(tree(npm), [{ filename: "packages/web/src/b.js" }])).toEqual([]);
+    // pnpm: a semver specifier the lock resolved to a workspace path.
+    const pnpm = {
+      "package.json": JSON.stringify({ dependencies: { x: "^1.0.0" } }),
+      "packages/web/package.json": JSON.stringify({ name: "web", dependencies: { x: "^2.0.0" } }),
+      "pnpm-lock.yaml": [
+        "lockfileVersion: '6.0'",
+        "",
+        "importers:",
+        "  .:",
+        "    dependencies:",
+        "      x:",
+        "        specifier: ^1.0.0",
+        "        version: 1.0.0",
+        "  packages/web:",
+        "    dependencies:",
+        "      x:",
+        "        specifier: ^2.0.0",
+        "        version: link:../x",
+        "",
+        "packages:",
+        "",
+        "  /x@1.0.0:",
+        "    resolution: {integrity: sha512-x}",
+      ].join("\n"),
+      "src/a.js": "import x from 'x';\n",
+      "packages/web/src/b.js": "import x from 'x';\n",
+    };
+    expect(planDependencyRequests(tree(pnpm), [{ filename: "src/a.js" }])).toMatchObject([
+      { name: "x", version: "1.0.0" },
+    ]);
+    expect(planDependencyRequests(tree(pnpm), [{ filename: "packages/web/src/b.js" }])).toEqual([]);
+  });
+
   it("npm monorepo: two importers that lock different versions get one request each", () => {
     const files = {
       "package.json": JSON.stringify({ dependencies: { a: "^1.0.0" } }),
@@ -1529,6 +1583,20 @@ describe("prepareDependencySources", () => {
     expect(existsSync(join(cacheDir, "npm", "left-pad@1.3.0"))).toBe(false);
   });
 
+  it("a skip's log line names the version it was for", async () => {
+    const tgz = npmTgz();
+    const { fetch } = fakeFetch(
+      leftPadRoutes(tgz, { integrity: sri(Buffer.from("something else")) }),
+    );
+    const lines: string[] = [];
+    await prepareDependencySources(npmTree(), CHANGED, {
+      cacheDir: tmp(),
+      fetch,
+      log: (l) => lines.push(l),
+    });
+    expect(lines).toContain("depsources: npm left-pad@1.3.0 skipped: integrity mismatch");
+  });
+
   it("a throwing fetch is a skip, never a throw", async () => {
     const fetch = (async () => {
       throw new TypeError("getaddrinfo ENOTFOUND registry.npmjs.org");
@@ -1683,6 +1751,34 @@ describe("prepareDependencySources", () => {
     expect(existsSync(join(cacheDir, "pypi", "chardet@5.2.0", "chardet", "link.py"))).toBe(false);
     expect(existsSync(join(cacheDir, "pypi", "evil.py"))).toBe(false);
     expect(calls.map((c) => c.url)).toEqual(["https://pypi.org/pypi/chardet/5.2.0/json", whlUrl]);
+  });
+
+  it("pypi: a pin with an epoch (`1!2.0`) is fetched and cached like any other", async () => {
+    const whl = zip([{ name: "somepkg/__init__.py", data: "x = 1\n" }]);
+    const whlUrl = "https://files.pythonhosted.org/packages/aa/somepkg-1!2.0-py3-none-any.whl";
+    const { fetch } = fakeFetch({
+      "https://pypi.org/pypi/somepkg/1!2.0/json": () =>
+        json({
+          info: { version: "1!2.0" },
+          urls: [
+            {
+              filename: "somepkg-1!2.0-py3-none-any.whl",
+              url: whlUrl,
+              digests: { sha256: sha256(whl) },
+              size: whl.length,
+            },
+          ],
+        }),
+      [whlUrl]: () => bytes(whl),
+    });
+    const cacheDir = tmp();
+    const root = tree({ "requirements.txt": "somepkg==1!2.0\n", "app/x.py": "import somepkg\n" });
+    const m = await prepareDependencySources(root, [{ filename: "app/x.py" }], { cacheDir, fetch });
+    expect(m.skipped).toEqual([]);
+    expect(m.sources[0]).toMatchObject({
+      version: "1!2.0",
+      path: join(cacheDir, "pypi", "somepkg@1!2.0"),
+    });
   });
 
   it("pypi: a range picks the newest final release that matches and strips the sdist's top dir", async () => {
@@ -1852,7 +1948,13 @@ describe("sweepStaleInstallDirs — a crashed unpack's leftovers, whatever packa
       const old = join(root, "npm", "left@1.0.0.tmp-0a1b2c3d4e5f");
       const fresh = join(root, "pypi", "busy@2.0.0.tmp-ffeeddccbbaa");
       const complete = join(root, "npm", "odd@1.0.0.tmp-abc");
-      for (const d of [old, fresh, complete]) mkdirSync(d, { recursive: true });
+      // Marked, never renamed into place: a crash between the two.
+      const unpublished = join(root, "npm", "done@1.0.0.tmp-0f0f0f0f0f0f");
+      for (const d of [old, fresh, complete, unpublished]) mkdirSync(d, { recursive: true });
+      writeFileSync(
+        join(unpublished, ".qcr-complete"),
+        JSON.stringify({ name: "done", version: "1.0.0", url: "", sha256: "", files: 0, bytes: 0 }),
+      );
       writeFileSync(
         join(complete, ".qcr-complete"),
         JSON.stringify({
@@ -1867,8 +1969,10 @@ describe("sweepStaleInstallDirs — a crashed unpack's leftovers, whatever packa
       const twoHours = new Date(Date.now() - 2 * 3_600_000);
       utimesSync(old, twoHours, twoHours);
       utimesSync(complete, twoHours, twoHours);
+      utimesSync(unpublished, twoHours, twoHours);
       sweepStaleInstallDirs(root);
       expect(existsSync(old)).toBe(false);
+      expect(existsSync(unpublished)).toBe(false);
       expect(existsSync(fresh)).toBe(true);
       expect(existsSync(complete)).toBe(true);
     } finally {
@@ -2523,6 +2627,37 @@ describe("selfscan2: the version a file actually runs against", () => {
     expect(m.sources[0]).toMatchObject({ name: "somepkg", version: "1.8" });
   });
 
+  it("pypi: an unpinned range never takes the latest release when all its files are yanked", async () => {
+    const sdist = gzipSync(tarball(tarEntry("somepkg-1.8/somepkg/__init__.py", "V = '1.8'\n")));
+    const live = "https://files.pythonhosted.org/packages/aa/somepkg-1.8.tar.gz";
+    const yanked = {
+      filename: "somepkg-1.9.tar.gz",
+      url: "https://files.pythonhosted.org/packages/bb/somepkg-1.9.tar.gz",
+      yanked: true,
+    };
+    const { fetch } = fakeFetch({
+      "https://pypi.org/pypi/somepkg/json": () =>
+        json({
+          info: { version: "1.9" },
+          urls: [yanked],
+          releases: {
+            "1.8": [
+              { filename: "somepkg-1.8.tar.gz", url: live, digests: { sha256: sha256(sdist) } },
+            ],
+            "1.9": [yanked],
+          },
+        }),
+      [live]: () => bytes(sdist),
+    });
+    const root = tree({ "requirements.in": "somepkg>=1,<2\n", "tool.py": "import somepkg\n" });
+    const m = await prepareDependencySources(root, [{ filename: "tool.py" }], {
+      cacheDir: tmp(),
+      fetch,
+    });
+    expect(m.skipped).toEqual([]);
+    expect(m.sources[0]).toMatchObject({ name: "somepkg", version: "1.8" });
+  });
+
   it("the cache path is unique per scoped name: @a/b__c and @a__b/c never share a directory", async () => {
     const pkg = (name: string, body: string) => {
       const tgz = gzipSync(tarball(tarEntry("package/index.js", body)));
@@ -2622,6 +2757,8 @@ describe("selfscan4: hostile lockfiles and archives are linear work", () => {
     const r = unpackEntries(entries, tmp(), { strip: "none", maxUnpackedBytes: 1 << 20 });
     expect(r.files).toBe(1);
     expect(reads).toBe(1);
+    // `a.py/` was never created, so it is never reported or charged.
+    expect(r.dirs).toBe(0);
   });
 
   it.skipIf(process.getuid?.() === 0)(
