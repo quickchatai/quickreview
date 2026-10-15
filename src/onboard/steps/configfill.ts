@@ -489,6 +489,11 @@ export interface Derivable {
   holds(cfg: Config, facts: FillFacts): string | null;
 }
 
+/** The TUI transport a recorded topology implies; null while it is unrecorded. */
+function tuiTargetFor(topology: string): "local" | "ssh" | null {
+  return topology === "local" ? "local" : topology === "vm" ? "ssh" : null;
+}
+
 export const DERIVABLES: readonly Derivable[] = [
   {
     id: "bot_login",
@@ -600,6 +605,25 @@ export const DERIVABLES: readonly Derivable[] = [
     // The loader's parseSink refuses an unknown kind before any derivation is
     // checked, so a parsed config always holds this.
     holds: () => null,
+  },
+  {
+    id: "tui_target",
+    path: "[tui] target",
+    explain:
+      'follows the recorded topology: "local" when the daemon runs on this machine (the TUI talks to local Docker), "ssh" on the VM route',
+    write: (f) => {
+      const target = tuiTargetFor(f.topology);
+      return target ? { section: "tui", key: "target", value: tomlString(target) } : null;
+    },
+    stable: true,
+    holds: (cfg, f) => {
+      const want = tuiTargetFor(f.topology);
+      return want && cfg.tui.target !== want
+        ? `[tui] target = "${cfg.tui.target}", but the recorded topology is ${f.topology} — the TUI would ` +
+            `${want === "local" ? "look for the daemon over ssh" : "look for the daemon in local Docker"}. ` +
+            `Fix: run this step again (it writes target = "${want}")`
+        : null;
+    },
   },
   {
     id: "tui_ssh_host",
