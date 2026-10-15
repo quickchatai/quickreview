@@ -723,8 +723,7 @@ export interface SelectRoundInput {
 
 /**
  * The round's selection, one record per role: every discovery row's lessons,
- * the validator's (the dont-raise lessons any discovery row or addable lens
- * found eligible,
+ * the validator's (the dont-raise lessons any discovery row found eligible,
  * and every lesson naming `pass-validate` its row's find returned), every
  * lens the session may add (filtered per lens like a row over the PR's
  * files), and the main session's cases. Under `planFinds` the rows, the
@@ -741,13 +740,14 @@ export function selectRound(input: SelectRoundInput): RoleSelection[] {
   const query = (key: string | undefined | null): string | null =>
     key ? (input.plan.finds.find((f) => f.key === key)?.query ?? null) : null;
   const base = { retired: input.retired, suppressed: input.suppressed, asOf: input.asOf ?? null, root: input.root };
-  // Every dont-raise lesson some discovery role (a planned row or an
-  // addable lens) found eligible — the validator's candidates beside its own
-  // find's.
+  // Every dont-raise lesson some planned discovery row found eligible — the
+  // validator's candidates beside its own find's. An addable lens's do not
+  // join: an added lens may never run.
   const dontRaise = new Map<string, LessonCandidate>();
   let validatorRow: SelectionRow | null = null;
   /** A discovery role's selection from its find's hits — planned rows and
-   * addable lenses alike: filtered for its lens and files, ranked, capped. */
+   * addable lenses alike: filtered for its lens and files, ranked, capped. A
+   * planned row's dont-raise lessons also feed the validator's pool. */
   const selectDiscovery = (
     rec: RoleSelection,
     hits: readonly FindHit[],
@@ -755,8 +755,9 @@ export function selectRound(input: SelectRoundInput): RoleSelection[] {
   ): void => {
     const { eligible, dropped } = filterLessonHits(hits, { ...base, lens: rec.lens, files });
     rec.dropped = dropped;
-    for (const c of eligible)
-      if (c.lesson.kind === "dont-raise" && !dontRaise.has(c.uri)) dontRaise.set(c.uri, c);
+    if (rec.role === "row")
+      for (const c of eligible)
+        if (c.lesson.kind === "dont-raise" && !dontRaise.has(c.uri)) dontRaise.set(c.uri, c);
     const { selected, cuts } = capSelection(rankLessons(eligible, rec.lens), caps.row);
     rec.lessons = selected.map(asSelected);
     selected.forEach(keepText);
@@ -793,42 +794,6 @@ export function selectRound(input: SelectRoundInput): RoleSelection[] {
       continue;
     }
     selectDiscovery(rec, o.hits, r.focus && r.focus.length > 0 ? r.focus : input.prFiles);
-  }
-
-  // The lenses the session may add: each filtered over the PR's files
-  // from the one shared find, ranked and capped like a row. Selected before
-  // the validator, whose pool takes their dont-raise lessons too; recorded
-  // after it.
-  const addableRecs: RoleSelection[] = [];
-  const addable = [...new Set(input.addable ?? [])];
-  if (addable.length > 0) {
-    const key = input.plan.addableKey ?? null;
-    const o: FindOutcome | null = key ? (input.outcomes.get(key) ?? { status: "timeout" }) : null;
-    addable.forEach((lens, i) => {
-      const rec: RoleSelection = {
-        role: "addable",
-        row: i,
-        lens,
-        agent: null,
-        query: query(key),
-        status: "ok",
-        lessons: [],
-        cases: [],
-        cuts: [],
-        dropped: {},
-      };
-      addableRecs.push(rec);
-      if (!o) {
-        rec.status = "find_cap";
-        return;
-      }
-      if (o.status !== "ok") {
-        rec.status = o.status;
-        if (o.status === "unreadable") rec.reason = o.reason;
-        return;
-      }
-      selectDiscovery(rec, o.hits, input.prFiles);
-    });
   }
 
   if (validatorRow) {
@@ -880,7 +845,39 @@ export function selectRound(input: SelectRoundInput): RoleSelection[] {
     rec.cuts = cuts;
     out.push(rec);
   }
-  out.push(...addableRecs);
+
+  // The lenses the session may add: each filtered over the PR's files
+  // from the one shared find, ranked and capped like a row.
+  const addable = [...new Set(input.addable ?? [])];
+  if (addable.length > 0) {
+    const key = input.plan.addableKey ?? null;
+    const o: FindOutcome | null = key ? (input.outcomes.get(key) ?? { status: "timeout" }) : null;
+    addable.forEach((lens, i) => {
+      const rec: RoleSelection = {
+        role: "addable",
+        row: i,
+        lens,
+        agent: null,
+        query: query(key),
+        status: "ok",
+        lessons: [],
+        cases: [],
+        cuts: [],
+        dropped: {},
+      };
+      out.push(rec);
+      if (!o) {
+        rec.status = "find_cap";
+        return;
+      }
+      if (o.status !== "ok") {
+        rec.status = o.status;
+        if (o.status === "unreadable") rec.reason = o.reason;
+        return;
+      }
+      selectDiscovery(rec, o.hits, input.prFiles);
+    });
+  }
 
   const casesKey = input.plan.casesKey;
   const casesRec: RoleSelection = {

@@ -591,10 +591,11 @@ describe("selectRound", () => {
     });
   });
 
-  it("the validator also gets the dont-raise lessons of a lens the session may ADD", () => {
+  it("an addable lens's dont-raise lessons stay out of the validator's pool", () => {
     // Planned: baseline + the validator; pass-security is only addable. A
-    // security-only dont-raise lesson reaches the added lens AND the
-    // validator, the one role that may act on it.
+    // security-only dont-raise lesson reaches the addable lens's file, never
+    // the validator: an added lens may never run, and its lessons must not
+    // crowd planned rows' out of the validator's cap.
     const planned: SelectionRow[] = [rows[0]!, { ...rows[2]!, row: 1 }];
     const plan = planFinds({ title: "T", rows: planned, prFiles, addable: ["pass-security"] });
     const outcomes = new Map<string, FindOutcome>(
@@ -625,7 +626,7 @@ describe("selectRound", () => {
     ]);
     const dr2 = `${EXP}/20261001T000000-dr2.md`;
     expect(sel[2]!.lessons.map((l) => l.uri)).toContain(dr2);
-    expect(sel[1]!.lessons.map((l) => l.uri)).toContain(dr2);
+    expect(sel[1]!.lessons.map((l) => l.uri)).not.toContain(dr2);
   });
 
   it("a timed-out find delivers nothing for its row; the validator still gets the rows' dont-raise", () => {
