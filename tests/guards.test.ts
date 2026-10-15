@@ -464,8 +464,6 @@ describe("the reviewed-head mark (state)", () => {
         in_reply_to_id: 10,
         author: "alice",
         body: "fixed",
-        via: "thread_reply",
-        scope: "review_comment",
       },
     );
 

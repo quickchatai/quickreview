@@ -20,7 +20,12 @@ import {
   type LeverIssuer,
   type LeverKind,
 } from "./levers.js";
-import { parseRecheckPromptMarker, type PassPlanEntry, type VerdictPassEntry } from "./types.js";
+import {
+  parseRecheckPromptMarker,
+  type PassPlanEntry,
+  type SessionCommandObservation,
+  type VerdictPassEntry,
+} from "./types.js";
 import {
   standingLifecycleState,
   standingVerdict as standingReviewVerdict,
@@ -1500,12 +1505,25 @@ export interface PendingWakeRow {
  * altogether (`AUTHOR_REPLY_WAKE_REASON`): never evicted and never counted. */
 export const MAX_HELD_WAKES = 5;
 
+/** The reason prefix of every recheck nudge (`recheck:<trigger>`). The
+ * held-wake cap releases the claim of an evicted one. While its PR is paused,
+ * a held recheck is deferred (`wakes.ts`): a pause stops the PR's review work,
+ * and a recheck is review work — held until the resume, never dropped. A
+ * pause stops no other wake: the flush skips the deferred rechecks and
+ * delivers everything else in arrival order. */
+export const RECHECK_WAKE_PREFIX = "recheck:";
+
+/** The held-wake reason of a recheck nudge for one trigger. */
+export function recheckWakeReason(trigger: string): string {
+  return `${RECHECK_WAKE_PREFIX}${trigger}`;
+}
+
 /** The one held-wake reason a sweep raises again — the
  * reconcile push backstop (`reconcile.ts`) re-asks an APPROVE-standing PR's
  * delta at its current head whenever that push question is unclaimed. A
  * `recheck:ci` or `recheck:base_advance` nudge has no such sweep: once
  * evicted, only an identical webhook can ask it again. */
-export const RECHECK_WITH_BACKSTOP_WAKE_REASON = "recheck:push";
+export const RECHECK_WITH_BACKSTOP_WAKE_REASON = recheckWakeReason("push");
 
 /** The held-wake reason of an author reply in a bot thread. Each one is a
  * claimed obligation (`pingpong_handled` refuses every redelivery, and the
@@ -3318,7 +3336,7 @@ export class StateStore {
    */
   requeueSessionCommandForRedelivery(
     id: string,
-    expected: { attempt: number; redeliveries: number; next_check_at: string },
+    expected: SessionCommandObservation,
     nextCheckAt: string,
   ): boolean {
     const ts = this.ts();
@@ -3516,7 +3534,7 @@ export class StateStore {
     for (const row of overflow) {
       this.db.prepare("DELETE FROM pending_wakes WHERE id = ?").run(row.id);
       let released: string | null = null;
-      if (row.reason.startsWith("recheck:")) {
+      if (row.reason.startsWith(RECHECK_WAKE_PREFIX)) {
         const marker = parseRecheckPromptMarker(row.payload);
         if (marker && marker.pr === pr) {
           this.releaseRecheck(pr, marker.fingerprint);

@@ -3901,7 +3901,7 @@ describe("integration review", () => {
       const roundId = reviewingRound(627);
       const { key } = stampPosting(627, 1);
       writePostingReceipt(627, 1, key, "COMMENT", { intended_event: "APPROVE" });
-      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      reconcileOrphanedRounds(store, [], {});
       expect(store.roundsFor(627)[0]).toMatchObject({
         status: "cancelled",
         cancel_cause: "orphan_sweep",
@@ -3926,7 +3926,7 @@ describe("integration review", () => {
 
       // With a later round already started, the same late file is inert.
       reviewingRound(628);
-      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      reconcileOrphanedRounds(store, [], {});
       store.startRound(628, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
       const late = write(628, 1, verdictFile({ pr: 628, verdict: "APPROVE" }));
       expect(await watcher().handleFile(late)).toBe(true);
@@ -3940,7 +3940,7 @@ describe("integration review", () => {
       reviewingRound(629);
       const { key } = stampPosting(629, 1);
       writePostingReceipt(629, 1, key, "REQUEST_CHANGES");
-      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      reconcileOrphanedRounds(store, [], {});
       adapter.addLabel = async (n, label) => {
         adapter.calls.push(`addLabel:${n}:${label}`);
         // The boot pump dispatches the requeued PR while the label call is out.

@@ -59,7 +59,7 @@ import { applyEvent } from "./statemachine.js";
 import { buildPipelineStatus, buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
 import { PiAuthWatch } from "./authwatch.js";
 import { SessionCommandSupervisor } from "./session-command-supervisor.js";
-import { parseRoundProgress } from "./round-progress.js";
+import { readRoundProgress } from "./requiredpasses.js";
 import { SingleFlight } from "./singleflight.js";
 import { yieldToLoop } from "./yieldloop.js";
 import { stubSessionHooks } from "./stubs.js";
@@ -70,6 +70,7 @@ import { wakeOrHold, withRepoFacts } from "./wakes.js";
 import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
 import {
   PostingOutbox,
+  outboxProcesses,
   readPostingJob,
   type PostingDeliveryAdapter,
   type PostingJob,
@@ -518,15 +519,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     store,
     hooks,
     verdictDir,
-    progress: (pr) => {
-      try {
-        return parseRoundProgress(
-          readFileSync(join(stateDir, "round-progress", `pr-${pr}.json`), "utf8"),
-        );
-      } catch {
-        return undefined;
-      }
-    },
+    progress: (pr) => readRoundProgress(root, pr),
     onRoundFailure: (pr, roundNo, stage, detail) =>
       verdicts.recoverInfrastructureFailure(pr, roundNo, stage, detail),
     ...(deps.now ? { now: deps.now } : {}),
@@ -989,7 +982,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
               `pr-${pr.number}-round-${pr.current_round.round_no}.outbox.json`,
             ),
           );
-          if (job?.status === "pending" && job.mode === "live" && job.repo === cfg.github.repo)
+          if (job && outboxProcesses(job, cfg.github.repo))
             pr.current_round.posting_delivery = {
               attempts: job.attempts,
               next_attempt_at: job.next_attempt_at,

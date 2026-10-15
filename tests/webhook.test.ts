@@ -8,7 +8,6 @@ import {
   applyInterpretation,
   handleDelivery,
   interpretEvent,
-  mentionsBot,
   signBody,
   verifySignature,
   type Interpretation,
@@ -390,7 +389,6 @@ describe("interpretEvent — review comments", () => {
       kind: "author_reply",
       pr: 4242,
       in_reply_to_id: 800001,
-      via: "thread_reply",
       author: "alice",
       // The replied thread's file — the path the repo-fact lessons match on.
       path: "workers/ingest.py",
@@ -570,15 +568,6 @@ describe("interpretEvent — issue comments", () => {
       kind: "bot_comment",
       scope: "issue_comment",
     });
-  });
-});
-
-describe("mentionsBot", () => {
-  it("matches the handle with and without the [bot] suffix", () => {
-    expect(mentionsBot("ping @example-review here", BOT)).toBe(true);
-    expect(mentionsBot("ping @example-review[bot] here", BOT)).toBe(true);
-    expect(mentionsBot("ping @example-reviewer here", BOT)).toBe(false); // a different handle, not the bot
-    expect(mentionsBot("no mention at all", BOT)).toBe(false);
   });
 });
 

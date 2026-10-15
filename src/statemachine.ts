@@ -15,7 +15,10 @@
 // the AI decides on the merits and keeps driving, attaching a "for a human to
 // double-check" list where it is unsure. Nothing here can produce such a state.
 // `stale_recheck` remains as legacy state for old rows/rounds; ordinary pushes
-// never set it or queue work. Only an explicit review re-request starts a round.
+// never set it. A push to an idle PR queues no work — only an explicit review
+// re-request starts a round — but a push while a round is running is recorded
+// as durable successor work (`recordSuccessor`), queued once that round
+// settles.
 // `stale_recheck` + `trigger_ts` are cleared on dispatch AND on verdict/
 // round_overdue: a settled PR carries no trigger residue, and the
 // reconcile poll sweeps any legacy residue (a tracked/awaiting_author PR with
@@ -57,6 +60,9 @@ import type { PrLifecycleState, StateStore, TriggerProvenance } from "./state.js
 import { standingLifecycleState, type StandingDecidedVerdict } from "./standing-review.js";
 import type { Verdict } from "./types.js";
 
+/** Every event name. `applyEvent` types the name it logs as this union, so an
+ * `SmEvent` member it does not list fails to compile, and the fences that read
+ * this union see the vocabulary `transition` consumes. */
 export type SmEventType =
   | "track"
   | "trigger"
@@ -205,21 +211,26 @@ export function applyEvent(
       ? meta.head_sha
       : undefined;
 
+  // The events that consume the trigger: `dispatched` starts its round, and a
+  // `verdict` or `round_overdue` settles one — or settles a trigger that never
+  // dispatched (the no-new-evidence skip). Each clears `stale_recheck`,
+  // `trigger_ts` and the provenance together. A settled PR carries no trigger
+  // residue: a stale_recheck flag or trigger_ts surviving in
+  // tracked/awaiting_author would misclassify the NEXT explicit re-review as a
+  // staleness round (dispatch roundTypeFor) and let it jump the FIFO, and a
+  // "human" provenance would read to the exact-head retirement as a fresh ask.
+  const consumesTrigger =
+    event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue";
+
   let staleRecheck = existing?.stale_recheck ?? 0;
   if (event.type === "stale_detected") staleRecheck = 1;
-  if (event.type === "dispatched") staleRecheck = 0;
-  // A settled round leaves no trigger residue: a verdict or blown
-  // round lands the PR in tracked/awaiting_author, and a stale_recheck flag or
-  // trigger_ts surviving there would misclassify the NEXT explicit re-review
-  // as a staleness round (dispatch roundTypeFor) and let it jump the FIFO.
-  if (event.type === "verdict" || event.type === "round_overdue") staleRecheck = 0;
+  if (consumesTrigger) staleRecheck = 0;
 
   let triggerTs = meta.trigger_ts !== undefined ? meta.trigger_ts : (existing?.trigger_ts ?? null);
   if (event.type === "trigger" || event.type === "stale_detected" || event.type === "synchronize") {
     if (to === "queued" && !triggerTs) triggerTs = now().toISOString();
   }
-  if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue")
-    triggerTs = null;
+  if (consumesTrigger) triggerTs = null;
 
   // Trigger provenance: who asked for the queued round (`triggerProvenance`).
   // Human sticks while the PR is queued — a system re-trigger never
@@ -232,13 +243,7 @@ export function applyEvent(
   // An author reply on a queued PR is a person expecting attention:
   // the queued round dispatches in full whoever queued it first.
   if (event.type === "author_reply" && base === "queued") provenance = "human";
-  // Cleared with the trigger it described. `dispatched` is the usual path;
-  // `verdict`/`round_overdue` cover the settlements that never dispatched —
-  // the no-new-evidence skip — which would otherwise leave a "human" residue
-  // on an awaiting_author row for the exact-head retirement to misread as a
-  // fresh ask (same rule as trigger_ts).
-  if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue")
-    provenance = null;
+  if (consumesTrigger) provenance = null;
 
   store.upsertPr({
     number: pr,
@@ -285,11 +290,16 @@ export function applyEvent(
   }
 
   const changed = from !== to;
-  if (changed || event.type === "trigger" || event.type === "stale_detected") {
+  const name: SmEventType = event.type;
+  // A trigger is logged even when it changes nothing (metrics count it as a
+  // request) — but not one a closed PR absorbed: closed is terminal, and that
+  // trigger asked for nothing.
+  const trigger = name === "trigger" || name === "stale_detected";
+  if (changed || (trigger && base !== "closed")) {
     store.logEvent("pr_transition", pr, {
       from,
       to,
-      event: event.type,
+      event: name,
       reason: opts.reason ?? null,
     });
   }
@@ -304,20 +314,19 @@ export function applyEvent(
  * so this can never reach a state a verdict could not. No decided verdict
  * (a COMMENT-only mark) lands `tracked` via `round_overdue` with a null
  * standing: known, nothing owed, never an approval. The caller owns the
- * anomaly that explains WHY nothing stands; this only moves the row.
+ * anomaly that explains WHY nothing stands; this only moves the row. Returns
+ * the state the row is in afterwards — `closed` stays closed.
  */
 export function restoreStandingLifecycle(
   store: StateStore,
   pr: number,
   standing: StandingDecidedVerdict | null,
   opts: { botLogin?: string; now?: () => Date; reason: string },
-): "awaiting_author" | "tracked" {
-  if (standing) {
-    applyEvent(store, pr, { type: "verdict", verdict: standing }, {}, opts);
-  } else {
-    applyEvent(store, pr, { type: "round_overdue", standing: null }, {}, opts);
-  }
-  return standingLifecycleState(standing);
+): PrLifecycleState {
+  const event: SmEvent = standing
+    ? { type: "verdict", verdict: standing }
+    : { type: "round_overdue", standing: null };
+  return applyEvent(store, pr, event, {}, opts).to;
 }
 
 /** Persist the dispatch-time migration gate on the PR row (used by dispatch). */

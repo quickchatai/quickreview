@@ -594,6 +594,47 @@ describe("the reconcile capture sweep", () => {
     store.close();
   });
 
+  // A closed PR is gone from the open list, so GitHub's timestamp cannot say a
+  // comment landed on it after the close: within the recent-close window it
+  // is re-read once an hour.
+  it("re-sweeps a recently closed PR hourly, catching a comment posted after the close", async () => {
+    const closedAt = new Date("2026-08-25T10:00:00Z");
+    const store = new StateStore(":memory:", () => closedAt);
+    store.upsertPr({
+      number: PR,
+      state: "closed",
+      head_sha: "sha4242",
+      title: "Add retry to the ingest worker",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const gh = new SweepGitHub();
+    gh.open = [];
+    let clock = new Date("2026-08-25T10:10:00Z");
+    const run = () => reconcileOnce({ cfg, store, adapter: gh, hooks: hooks(), now: () => clock });
+    await run();
+    expect(gh.swept).toEqual([PR]);
+    // Same hour: the watermark holds, no reads.
+    clock = new Date("2026-08-25T10:40:00Z");
+    gh.top.set(PR, [
+      { id: 4501, user: "alex", user_type: "User", body: "after the merge", created_at: null },
+    ]);
+    await run();
+    expect(gh.swept).toEqual([PR]);
+    // The next hour: re-read, and the comment is captured.
+    clock = new Date("2026-08-25T11:05:00Z");
+    const later = await run();
+    expect(gh.swept).toEqual([PR, PR]);
+    expect(later.captured_comments).toBe(1);
+    // Past the recent-close window it is never read again.
+    clock = new Date("2026-08-26T11:05:00Z");
+    await run();
+    expect(gh.swept).toEqual([PR, PR]);
+    store.close();
+  });
+
   it("skips the capture reads for a PR unchanged since its last clean sweep", async () => {
     // An unchanged PR is not re-read: three reads per PR for 25 PRs on every
     // reconcile pass would be ~900 standing requests an hour with nothing

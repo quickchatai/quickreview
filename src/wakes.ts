@@ -24,6 +24,7 @@ import { AUTHOR_REPLY_WAKE_HEADING } from "./pingpong.js";
 import {
   AUTHOR_REPLY_WAKE_REASON,
   OPERATOR_RECOVERED_WAKE_PREFIX,
+  RECHECK_WAKE_PREFIX,
   type EvictedWake,
   type PendingWakeRow,
   type StateStore,
@@ -75,18 +76,20 @@ export async function wakeOrHold(
   if (!store.hasRunningRound(pr) && !store.blockingSessionCommand(`pr-${pr}`)) {
     // An existing backlog goes first (arrival order): queue behind it and
     // flush oldest-first, rather than letting this wake take the slot ahead of
-    // wakes still waiting for the stranded-wake sweep.
+    // wakes still waiting for the stranded-wake sweep. The flush may carry
+    // this wake out with the backlog (a coalesced author-reply burst), so what
+    // is reported is whether it is still held.
     if (store.hasHeldWakes(pr)) {
       hold(deps, pr, message, reason);
       await flushHeldWakes(deps, pr);
-      return "held";
+      return stillHeld(store, pr, message) ? "held" : "injected";
     }
     // A claimed obligation is durable before the first await: held, then
     // delivered through the same lease → inject → ack the flush paths use.
     if (opts.holdOnFailure) {
       hold(deps, pr, message, reason);
       await flushHeldWakes(deps, pr);
-      if (!store.heldWakes(pr).some((wake) => wake.payload === message)) return "injected";
+      if (!stillHeld(store, pr, message)) return "injected";
       store.logEvent("wake_inject_failed_held", pr, { reason });
       log(`wakes: #${pr} ${reason} wake not delivered — held for retry`);
       return "held";
@@ -112,6 +115,11 @@ export async function wakeOrHold(
   }
   hold(deps, pr, message, reason);
   return "held";
+}
+
+/** Is a wake with this payload still among the PR's held wakes? */
+function stillHeld(store: StateStore, pr: number, message: string): boolean {
+  return store.heldWakes(pr).some((wake) => wake.payload === message);
 }
 
 function hold(deps: WakeDeps, pr: number, message: string, reason: string): void {
@@ -175,13 +183,6 @@ export const AUTHOR_REPLY_DROPPED_KIND = "author_reply_wake_dropped";
  * re-raises records (a ci or base-advance recheck; QUIET grade — unlisted in
  * `anomalies.ts`, read at the daily heartbeat). */
 export const RECHECK_WAKE_DROPPED_KIND = "recheck_wake_dropped";
-
-/** The reason prefix of every recheck nudge (`recheck:<trigger>`). While its
- * PR is paused, a held recheck is deferred: a pause stops the PR's review
- * work, and a recheck is review work — held until the resume, never dropped.
- * A pause stops no other wake: the flush skips the deferred rechecks and
- * delivers everything else in arrival order. */
-export const RECHECK_WAKE_PREFIX = "recheck:";
 
 /** Is every wake this PR holds a recheck its pause defers? Then the
  * stranded-wake sweep has nothing to deliver until the resume. */

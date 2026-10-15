@@ -1578,8 +1578,6 @@ describe("serveAuthorReply: the ping-pong wake carries the replied file's repo f
     in_reply_to_id: 800_001,
     body: "done — fixed in the last push",
     author: "alice",
-    via: "thread_reply" as const,
-    scope: "review_comment" as const,
     path: "backend/api/views.py",
   };
 

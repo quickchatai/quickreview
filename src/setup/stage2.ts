@@ -70,7 +70,7 @@ import type { ScanDepth } from "../config.js";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
 import { lensEnabled, flooredTier, type LensTuningMap } from "../lenstuning.js";
-import { PASS_TIER_ORDER, type PassTier } from "../types.js";
+import { PASS_TIER_ORDER, tiersAtOrAbove, type PassTier } from "../types.js";
 import {
   caseEstimate,
   coverKey,
@@ -385,7 +385,7 @@ export function lensTiers(
   const risk = riskTier(riskPasses, lens);
   if (risk !== null) return [risk];
   const floor = flooredTier(lenses, lens, PASS_TIER_ORDER[0]);
-  return PASS_TIER_ORDER.slice(PASS_TIER_ORDER.indexOf(floor));
+  return tiersAtOrAbove(floor);
 }
 
 /** The deep lenses stage 2 may run on this repo: stage 1's suggestible set,

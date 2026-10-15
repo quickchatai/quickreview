@@ -84,7 +84,6 @@ describe("startup orphan sweep with the production posting-debt predicate", () =
     writeJob(30, 1, owedKey, "pending");
 
     const res = reconcileOrphanedRounds(store, [], {
-      botLogin: "bot[bot]",
       postingOwed: orphanPostingOwed(dir, false, "org/repo"),
     });
 
@@ -136,7 +135,6 @@ describe("startup orphan sweep with the production posting-debt predicate", () =
       orphanPostingOwed(dir, false, "org/repo")({ pr: 50, round_no: 1, posting_key: key }),
     ).toBe(false);
     const res = reconcileOrphanedRounds(store, [], {
-      botLogin: "bot[bot]",
       postingOwed: orphanPostingOwed(dir, false, "org/repo"),
     });
     expect(res.kept_for_posting).toEqual([]);

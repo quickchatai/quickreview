@@ -1,9 +1,10 @@
 // The dispatch levers: `drain` and `pause-pr`, and who may hold them for how
 // long.
 //
-// Both levers stop review work — the drain stops all of it, a pause stops one
-// PR's. An LLM session must never hold an uncapped availability lever, so the
-// SESSION's hold is bounded and the OPERATOR's is not:
+// Both levers stop new review work — the drain all of it, a pause one PR's;
+// a round already running finishes either way. An LLM session must never
+// hold an uncapped availability lever, so the SESSION's hold is bounded and
+// the OPERATOR's is not:
 //
 //   * An OPERATOR lever is the deploy flow's valve. `qcr drain on` engages it,
 //     the new boot's first healthy reconcile pass lifts it (daemon.ts), and it
@@ -205,7 +206,7 @@ export async function drainLever(
       return {
         ok: false,
         reason:
-          "drain is held by the operator (qcr drain on); only the operator lifts it (qcr drain off) or the next boot's first healthy reconcile",
+          "drain is held by the operator (qcr drain on); only the operator lifts it (qcr drain off), or the next boot's first reconcile pass if that pass is healthy",
       };
     }
     if (res.changed)
