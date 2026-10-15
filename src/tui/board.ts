@@ -1099,6 +1099,30 @@ function renderEventsOverlay(
 
 // ---- render ----------------------------------------------------------------
 
+/** The input box's three rows: its target, the text being typed, its keys. */
+function inputBoxLines(box: NonNullable<BoardView["inputBox"]>): string[] {
+  return [
+    ` ${HEADING}MSG → ${box.target}${DRESET}`,
+    ` > ${box.text}▁`,
+    ` ⏎ send · Esc cancel · Alt-⏎ newline`,
+  ];
+}
+
+/**
+ * The input box over the foot of a tab's own screen — the board paints it in
+ * its pi region, but a prompt a tab opens (a memory edit, a rejection reason)
+ * types into the same box and must be seen on that tab: a divider and the
+ * box's three rows, just above the frame's bottom border.
+ */
+export function overlayInputBox(frame: Frame, box: NonNullable<BoardView["inputBox"]>): void {
+  const top = frame.rows - 5;
+  if (top < 1) return;
+  frame.set(top, `├${"─".repeat(Math.max(0, frame.cols - 2))}┤`);
+  inputBoxLines(box).forEach((text, i) =>
+    frame.boxRow(top + 1 + i, [{ text, width: frame.cols - 2 }]),
+  );
+}
+
 export function renderBoard(view: BoardView, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   const now = view.now ?? new Date();
@@ -1209,11 +1233,9 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     frame.set(piTop, `│${piFocused ? `${FG.accent}${inner}${RESET}` : inner}│`);
   }
   if (view.inputBox) {
-    frame.boxRow(piTop + 1, [
-      { text: ` ${HEADING}MSG → ${view.inputBox.target}${DRESET}`, width: cols - 2 },
-    ]);
-    frame.boxRow(piTop + 2, [{ text: ` > ${view.inputBox.text}▁`, width: cols - 2 }]);
-    frame.boxRow(piTop + 3, [{ text: ` ⏎ send · Esc cancel · Alt-⏎ newline`, width: cols - 2 }]);
+    inputBoxLines(view.inputBox).forEach((text, i) =>
+      frame.boxRow(piTop + 1 + i, [{ text, width: cols - 2 }]),
+    );
     for (let i = 4; i <= piLines; i++) frame.boxRow(piTop + i, [{ text: "", width: cols - 2 }]);
   } else if (pRows > 0) {
     frame.boxRow(piTop + 1, [

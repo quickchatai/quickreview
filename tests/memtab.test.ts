@@ -200,6 +200,26 @@ describe("management verbs", () => {
     expect((rig.mem.applied[0] as { text: string }).text).toContain("AMENDED");
   });
 
+  // The prompt is typed into the shared input box, which only the board's pi
+  // region used to paint: on the memory tab the operator edited blind.
+  // MUTATION: paint a non-board tab's screen without the box — red.
+  it("the edit prompt is painted on the memory tab, draft and all", async () => {
+    const rig = await loaded();
+    const running = rig.app.run();
+    await settle();
+    key(rig, { kind: "events" });
+    const send = (s: string): void =>
+      (rig.app as unknown as { handleInput(b: Buffer): void }).handleInput(Buffer.from(s));
+    send(" AMENDED");
+    const frame = (rig.app as unknown as { lastFrame: { lines: string[] } }).lastFrame;
+    const text = frame.lines.map(stripAnsi).join("\n");
+    expect(text).toContain("MSG → ");
+    expect(text).toContain("AMENDED▁");
+    expect(text).toContain("⏎ send · Esc cancel");
+    rig.app.quit();
+    await running;
+  });
+
   it("n prompts for a new manual entry", async () => {
     const rig = await loaded();
     key(rig, { kind: "char", ch: "n" });

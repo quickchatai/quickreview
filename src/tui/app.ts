@@ -14,6 +14,7 @@ import type { MessageOutcome } from "./msg.js";
 import {
   boardBarHeight,
   boardKeys,
+  overlayInputBox,
   piPaneSize,
   renderBoard,
   type BoardAction,
@@ -1670,10 +1671,10 @@ export class App {
     // help is up, every tab shows it. A tab screen here would leave the flag
     // set with nothing on screen, and the next keystroke silently eaten.
     if (this.tab !== "board" && !this.view.help) {
-      paint(
-        this.tabHooks()?.screen(this, inner, rows),
-        `${this.tab} tab not wired — [1] back to board`,
-      );
+      const screen = this.tabHooks()?.screen(this, inner, rows);
+      // A prompt the tab opened types into the input box: show it there.
+      if (screen && this.view.inputBox) overlayInputBox(screen, this.view.inputBox);
+      paint(screen, `${this.tab} tab not wired — [1] back to board`);
       return;
     }
     this.view.now = this.now();
