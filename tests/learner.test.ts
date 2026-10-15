@@ -291,6 +291,19 @@ describe("the miner — human fates", () => {
     expect((await h.learner.mine()).added).toBe(0);
   });
 
+  it("quotes the thread's NEWEST reply by when it was written, not the last one captured", async () => {
+    const h = harness();
+    h.pr(11);
+    h.finding(11, { key: "F1" }, "refuted_conceded", { comment: 950, roundNo: 1 });
+    h.addMinutes(30);
+    h.comment({ pr: 11, id: 9502, author: "alice", body: "newer: still unreachable", inReplyTo: 950 });
+    // an older reply the sweep backfills after the newer one was captured
+    h.addMinutes(-20);
+    h.comment({ pr: 11, id: 9501, author: "alice", body: "older: not reachable", inReplyTo: 950 });
+    await h.learner.mine();
+    expect(h.learner.allCandidates()[0]!.quote).toBe("newer: still unreachable");
+  });
+
   it("follows a carried chain to its end, and roots never mint twice as the chain grows", () => {
     const rows = [
       {

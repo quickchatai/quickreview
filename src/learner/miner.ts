@@ -178,12 +178,17 @@ export function findingClass(lensIds: readonly string[], kind: string | null | u
   return safeClass(`${lens}.${k}`, "review.general");
 }
 
+/** The area slug a path clusters under: its top directory, `root` for a
+ * file at the root (or a top directory that slugs to nothing). */
+function topDirSlug(path: string): string {
+  return (path.includes("/") ? slugPart(path.split("/")[0]) : "") || "root";
+}
+
 /** A miss's class: `missed.<top directory>` (`missed.root` for a file at the
  * root, `missed.review` with no path). */
 export function missedClass(path: string | null | undefined): string {
   if (!path) return "missed.review";
-  const top = path.includes("/") ? slugPart(path.split("/")[0]) : "root";
-  return safeClass(`missed.${top || "root"}`, "missed.review");
+  return safeClass(`missed.${topDirSlug(path)}`, "missed.review");
 }
 
 /** A recheck REVERSAL's class: `recheck.<top directory>` of
@@ -197,8 +202,7 @@ export function missedClass(path: string | null | undefined): string {
  * reversals in unrelated areas are not one bucket a single lesson "covers". */
 export function recheckClass(path: string | null | undefined): string {
   if (!path) return "recheck.review";
-  const top = path.includes("/") ? slugPart(path.split("/")[0]) : "root";
-  return safeClass(`recheck.${top || "root"}`, "recheck.review");
+  return safeClass(`recheck.${topDirSlug(path)}`, "recheck.review");
 }
 
 // ---- small helpers ------------------------------------------------------------
@@ -388,13 +392,15 @@ export function chainRoots(
   return out;
 }
 
-/** The newest human reply in a bot comment's thread, when captured. */
+/** The newest human reply in a bot comment's thread, when captured — newest
+ * by when it was written (a reply the sweep backfilled late is captured after
+ * newer ones), its capture time when GitHub gave none, the row id last. */
 function latestReply(store: StateStore, pr: number, commentId: number | null): string | null {
   if (commentId === null) return null;
   const row = store.db
     .prepare(
       `SELECT body FROM pr_comments WHERE pr = ? AND (in_reply_to_id = ? OR thread_id = ?) AND comment_id <> ?
-        ORDER BY id DESC LIMIT 1`,
+        ORDER BY COALESCE(created_at, captured_at) DESC, id DESC LIMIT 1`,
     )
     .get(pr, commentId, commentId, commentId) as { body: string } | undefined;
   return row?.body ?? null;
@@ -1211,6 +1217,15 @@ const DIGEST_TYPES: Readonly<Record<string, Polarity>> = {
   "repo-gotcha": "either",
 };
 
+/** A bullet's `type` word: any key of DIGEST_TYPES, the longer spelling first
+ * (`wontfix-pattern` before `wontfix`). */
+const DIGEST_TYPE_RE = new RegExp(
+  `\\b(${Object.keys(DIGEST_TYPES)
+    .sort((a, b) => b.length - a.length)
+    .join("|")})\\b`,
+  "i",
+);
+
 const OPS_RE =
   /invalid api key|openviking|memory (?:was |is )?(?:down|unreachable|unavailable)|entries persisted|kind=bug|\boperations?\b|\binfra(?:structure)?\b/i;
 
@@ -1224,9 +1239,7 @@ export function digestBulletClass(bullet: string): {
   const lens = canonicalLensIds(
     [...bullet.matchAll(/\bpass-[a-z-]+/gi)].map((m) => m[0]).join(","),
   );
-  const type = /\b(missed-finding|false-positive|refuted|wontfix-pattern|wontfix|repo-gotcha)\b/i
-    .exec(bullet)?.[1]
-    ?.toLowerCase();
+  const type = DIGEST_TYPE_RE.exec(bullet)?.[1]?.toLowerCase();
   if (!type && OPS_RE.test(bullet))
     return { class: "digest.operations", polarity: "ops", lens_ids: [] };
   const lensPart = lens[0] ? slugPart(lens[0].replace(/^pass-/, "")) : "digest";
