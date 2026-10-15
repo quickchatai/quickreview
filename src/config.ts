@@ -196,14 +196,20 @@ export interface SlackPolicyConfig {
   soft_exchange_limit: number;
   /** Rolling-hour ceiling on announcements (they bypass turn caps, not this). */
   announcements_per_hour: number;
-  /** Cooldown for a cause with no explicit [slack.policy.causes] entry. */
+  /** Cooldown for a cause with none of its own: one outside the built-in
+   * table that is unlisted, or listed in [slack.policy.causes] without a
+   * `cooldown_min`. A built-in cause keeps its own unless that table sets one. */
   default_cooldown_min: number;
   /** The day boundary for every cap here — DST-correct via src/eod.ts. */
   timezone: string;
   pickup_grace_min: number;
   downtime_notice_min: number;
   heartbeat_interval_min: number;
+  /** Accepted so an older config still loads, and read by nothing: no
+   * code raises the `reconcile.storm` announcement this would threshold. */
   storm_corrections: number;
+  /** Accepted so an older config still loads, and read by nothing: no
+   * code raises the `pr.awaiting_author_stale` announcement this would time. */
   awaiting_author_stale_h: number;
   /** Accepted so an older config still loads, and read by nothing: a
    * verdict always stays in-thread, never `reply_broadcast`, whatever this
@@ -1015,10 +1021,16 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 /** `[models] effort` — `""` leaves every spec as written. */
 export type ReviewEffort = "" | "low" | "medium" | "high";
 
+/** "provider/model:thinking" → its model and its pi thinking level, or a
+ * null level when the spec carries no suffix. */
+export function splitModelSpec(spec: string): { model: string; thinking: string | null } {
+  const m = new RegExp(`^(.+):(${THINKING_LEVELS.join("|")})$`).exec(spec);
+  return m ? { model: m[1] as string, thinking: m[2] as string } : { model: spec, thinking: null };
+}
+
 /** Replace (or add) the `:thinking` suffix of one model spec. */
 export function withThinking(spec: string, level: ThinkingLevel): string {
-  const m = new RegExp(`^(.+):(${THINKING_LEVELS.join("|")})$`).exec(spec);
-  return `${m ? (m[1] as string) : spec}:${level}`;
+  return `${splitModelSpec(spec).model}:${level}`;
 }
 
 /** Apply `[models] effort` to every spec the review runs on. Pure. */
@@ -1084,6 +1096,11 @@ export const DEFAULT_PASS_TIERS: Readonly<Record<string, PassTier>> = Object.fre
  * healthy pass takes 20-100 s and the slowest about 4 min, so 8 min only
  * ever cuts a stalled one. */
 export const DEFAULT_SUBAGENT_PASS_DEADLINE_MIN = 8;
+
+/** `[pi] subagent_cache_stagger_ms`'s default — every reader's fallback too.
+ * The glue extension keeps its own copy (`DEFAULT_CACHE_STAGGER_MS`, it
+ * imports nothing from the daemon), pinned equal by a test. */
+export const DEFAULT_SUBAGENT_CACHE_STAGGER_MS = 2500;
 
 /** Refuse a per-pass deadline that is not a number of minutes in 0..240
  * (0 = off). A typo must not silently become "no deadline". */
@@ -1209,9 +1226,10 @@ export interface OpenVikingConfig {
   workspace: string;
   /** ov.conf `server.workers` — one worker on a 2-CPU cap. */
   workers: number;
-  /** ov.conf `queue_workers.*.max_concurrent` — reduced from the shipped
-   * defaults (4/4/8) for the same 2-CPU cap — and `embedding.max_concurrent`
-   * too (the server's default is 10). */
+  /** Accepted, and read by nothing in the daemon: the entrypoint that
+   * templates ov.conf takes its queue concurrency from the deploy
+   * (`openviking_queue_concurrency` in group_vars, or
+   * `QCR_OPENVIKING_QUEUE_CONCURRENCY` for the plain image), never from here. */
   queue_concurrency: number;
   /** Health-poll cadence; the heartbeat reports the CACHED sample, so
    * status.json writing never waits on the network. */
@@ -2075,10 +2093,8 @@ export function parseScanTable(
     }
     switch (key) {
       case "effort": {
-        const e = String(v ?? "")
-          .trim()
-          .toLowerCase();
-        if (e === "low" || e === "medium" || e === "high") out.effort = e;
+        const e = normalizeEffort(v);
+        if (e) out.effort = e;
         else fail(key, 'must be "low", "medium" or "high"', v);
         break;
       }
@@ -2643,7 +2659,7 @@ export function parseConfig(toml: string): Config {
     pi: parsePiPassDeadline({
       subagent_max_concurrency: 4,
       subagent_cache_group: 5,
-      subagent_cache_stagger_ms: 2500,
+      subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
       subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
       ...(req(raw, "pi") as Omit<
         Config["pi"],
@@ -2849,6 +2865,13 @@ export function parseConfig(toml: string): Config {
       "config.toml: require finite numbers 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
     );
   }
+  // The two second-scale daemon→pi bounds become command deadlines
+  // (`toISOString`), which a non-finite value would throw at the first command.
+  for (const key of ["session_command_start_lease_s", "session_bridge_ready_timeout_s"] as const) {
+    const v: unknown = cfg.daemon[key];
+    if (!(typeof v === "number" && Number.isFinite(v) && v > 0))
+      throw new Error(`config.toml: require a finite number [daemon] ${key} > 0`);
+  }
   const postedTail = cfg.daemon.round_posted_tail_grace_min ?? DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN;
   if (!(typeof postedTail === "number" && Number.isFinite(postedTail) && postedTail > 0)) {
     throw new Error("config.toml: require round_posted_tail_grace_min > 0");
@@ -2969,7 +2992,7 @@ export const fsSecretReader: SecretReader = (path) => {
     v = readFileSync(path, "utf8").trim();
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw new Error(`cannot read secret file '${path}': ${(err as Error).message}`);
+    throw new Error(`cannot read secret file '${path}': ${(err as Error).message}`, { cause: err });
   }
   return v.length > 0 ? v : undefined;
 };

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  archivedLedgerText,
   cancellationsOn,
   main,
+  parseBackfillArgs,
+  parseDrainArgs,
   parseReembedArgs,
   parseRelayoutArgs,
   rebuildCompanion,
@@ -127,6 +130,22 @@ describe("renderStatus", () => {
     });
     expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
     expect(out).toContain("#1421 paused by a session — flaky [2J CI 2Kdone");
+  });
+});
+
+describe("model-written text on the operator's terminal", () => {
+  it("status prints the digest headline on one line with no control bytes", () => {
+    const out = renderStatus({
+      ...snapshot,
+      digest_headline: "calm\x1b]0;pwned\x07day\n\x9b2Kend",
+    });
+    expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(out).toContain("digest: calm ]0;pwned day 2Kend");
+  });
+
+  it("why's archived ledger keeps its lines and loses its control bytes", () => {
+    const text = archivedLedgerText("# Ledger\n- F1 \x1b[2Jopen\x1b]0;x\x07\n- F2 done\x9b\n");
+    expect(text).toBe("# Ledger\n- F1 [2Jopen]0;x\n- F2 done\n");
   });
 });
 
@@ -346,6 +365,39 @@ describe("qcr memory reembed — flags", () => {
       ["--user", "a", "--force"],
     ])
       expect(() => parseReembedArgs(rest), rest.join(" ")).toThrow(/usage: qcr memory reembed/);
+  });
+});
+
+describe("qcr drain / qcr backfill arguments", () => {
+  it("drain takes exactly one of on|off and an optional --local; anything else is refused", () => {
+    expect(parseDrainArgs(["on"])).toEqual({ on: true, local: false });
+    expect(parseDrainArgs(["off", "--local"])).toEqual({ on: false, local: true });
+    expect(parseDrainArgs(["--local", "on"])).toEqual({ on: true, local: true });
+    for (const rest of [
+      [],
+      ["off", "--locl"],
+      ["on", "off"],
+      ["on", "on"],
+      ["on", "--local", "--local"],
+      ["of"],
+    ])
+      expect(() => parseDrainArgs(rest), rest.join(" ")).toThrow(/usage: qcr drain/);
+  });
+
+  it("backfill takes --dry-run and --limit <n> only; a mistyped flag never reads as an import", () => {
+    expect(parseBackfillArgs([])).toEqual({ dryRun: false, limit: undefined });
+    expect(parseBackfillArgs(["--dry-run", "--limit", "5"])).toEqual({ dryRun: true, limit: 5 });
+    expect(parseBackfillArgs(["--limit", "0"])).toEqual({ dryRun: false, limit: 0 });
+    for (const rest of [
+      ["--dryrun"],
+      ["--dry-run", "--dry-run"],
+      ["--limit"],
+      ["--limit", "x"],
+      ["--limit", "-1"],
+      ["--limit", "2", "--limit", "3"],
+      ["extra"],
+    ])
+      expect(() => parseBackfillArgs(rest), rest.join(" ")).toThrow(/usage: qcr backfill/);
   });
 });
 

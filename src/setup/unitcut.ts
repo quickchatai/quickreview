@@ -16,6 +16,7 @@
 //
 // Pure: the cut is a value, validation and the adjust ops are functions over
 // it and a file listing. The engine persists it (src/setup/engine.ts).
+import { SCAN_DEFAULTS } from "../config.js";
 import { UNIT_KINDS, UNIT_NAME_RE, type UnitKind } from "./facts.js";
 
 export interface Unit {
@@ -394,7 +395,10 @@ export interface CaseBudget {
   maxLines: number;
 }
 
-export const DEFAULT_CASE_BUDGET: CaseBudget = { maxFiles: 30, maxLines: 3000 };
+export const DEFAULT_CASE_BUDGET: CaseBudget = {
+  maxFiles: SCAN_DEFAULTS.case_max_files,
+  maxLines: SCAN_DEFAULTS.case_max_lines,
+};
 
 export interface CasePlan {
   /** The UNIT's name — never the part's. Reports group by this. */

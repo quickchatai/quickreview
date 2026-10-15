@@ -58,15 +58,32 @@ export function coverageEligible(files: readonly PrFile[]): CoverageFile[] {
     .map((f) => ({ path: f.filename, lines: f.additions + f.deletions }));
 }
 
-/** `addressed` names a file when it is the same path or a path suffix of it
- * at a `/` boundary (lenses often cite a repo-relative tail). */
-function isAddressed(path: string, addressed: ReadonlySet<string>): boolean {
-  if (addressed.has(path)) return true;
+/** The eligible paths `addressed` names. A name that is itself an eligible
+ * path names that path alone. Any other name is either a repo-relative tail
+ * (lenses often cite one), naming every eligible path that ends with it at a
+ * `/` boundary, or a path with a prefix of its own (a worktree's absolute
+ * path), naming the LONGEST eligible path it ends with — never also a
+ * shorter eligible path that happens to be its tail. */
+function addressedPaths(
+  eligible: readonly CoverageFile[],
+  addressed: ReadonlySet<string>,
+): Set<string> {
+  const paths = new Set(eligible.map((f) => f.path));
+  const out = new Set<string>();
   for (const a of addressed) {
-    if (!a) continue;
-    if (path.endsWith(`/${a}`) || a.endsWith(`/${path}`)) return true;
+    if (paths.has(a)) {
+      out.add(a);
+      continue;
+    }
+    let longest: string | undefined;
+    for (const p of paths) {
+      if (p.endsWith(`/${a}`)) out.add(p);
+      else if (a.endsWith(`/${p}`) && (longest === undefined || p.length > longest.length))
+        longest = p;
+    }
+    if (longest !== undefined) out.add(longest);
   }
-  return false;
+  return out;
 }
 
 export interface CoverageGaps {
@@ -94,7 +111,8 @@ export function coverageGaps(
   const seen = new Set(
     [...addressed, ...swept].map((a) => a.trim().replace(/^\.?\//, "")).filter(Boolean),
   );
-  const uncovered = eligible.filter((f) => !isAddressed(f.path, seen));
+  const covered = addressedPaths(eligible, seen);
+  const uncovered = eligible.filter((f) => !covered.has(f.path));
   const groups: string[][] = [];
   const unchecked: string[] = [];
   let cur: string[] = [];

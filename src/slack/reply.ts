@@ -103,7 +103,8 @@ export interface SlackReplyDeps {
 export interface SlackReplyInput {
   thread: string;
   text: string;
-  /** Idempotence scope — the command file basename ("" for direct calls). */
+  /** Idempotence scope — the command's context `file` (its name without
+   * `.json`, prefixed by the serving watcher's scope; "" for direct calls). */
   file?: string;
 }
 
@@ -117,7 +118,7 @@ function shortHash(s: string): string {
   return h.toString(16).padStart(8, "0");
 }
 
-/** `reply:<command file basename>` — one post per command file, forever. */
+/** `reply:<context file>` — one post per command delivery, forever. */
 export function replyIdemKey(input: SlackReplyInput): string {
   const scope =
     input.file && input.file.length > 0 ? input.file : `${input.thread}:${shortHash(input.text)}`;

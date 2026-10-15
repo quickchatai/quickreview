@@ -93,6 +93,9 @@ export class CommandDrainSender implements DeployDrainSender {
         ) {
           return { ok: false, reason: "daemon result omitted running_rounds" };
         }
+        // Untrusted like the reason: the result sits in a session-writable dir.
+        const expires =
+          typeof value.expires_at === "string" ? resultReason(value.expires_at, "") : "";
         return {
           ok: true,
           draining: true,
@@ -100,7 +103,7 @@ export class CommandDrainSender implements DeployDrainSender {
           ...(value.issuer === "operator" || value.issuer === "session"
             ? { issuer: value.issuer }
             : {}),
-          ...(typeof value.expires_at === "string" ? { expires_at: value.expires_at } : {}),
+          ...(expires ? { expires_at: expires } : {}),
         };
       }
       const dropped =

@@ -50,6 +50,7 @@ import { createInterface } from "node:readline";
 import { delimiter, dirname, join } from "node:path";
 import {
   applyReviewEffort,
+  DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
   loadConfig,
   parseConfig,
   parseEffort,
@@ -303,7 +304,7 @@ function reviewSettingsDigest(cfg: Config): string {
     subagents: {
       max_concurrency: cfg.pi.subagent_max_concurrency,
       cache_group: cfg.pi.subagent_cache_group ?? 0,
-      cache_stagger_ms: cfg.pi.subagent_cache_stagger_ms ?? 2500,
+      cache_stagger_ms: cfg.pi.subagent_cache_stagger_ms ?? DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
     },
   };
   return createHash("sha256").update(JSON.stringify(settings)).digest("hex");
@@ -1482,7 +1483,9 @@ export async function reviewCase(
       QCR_SUBAGENT_MAX_CONCURRENCY: String(ctx.cfg.pi.subagent_max_concurrency),
       QCR_SUBAGENT_WIDE_FANOUT: ctx.cfg.review?.wide_lens_fanout === false ? "0" : "1",
       QCR_SUBAGENT_CACHE_GROUP: String(ctx.cfg.pi.subagent_cache_group ?? 0),
-      QCR_SUBAGENT_CACHE_STAGGER_MS: String(ctx.cfg.pi.subagent_cache_stagger_ms ?? 2500),
+      QCR_SUBAGENT_CACHE_STAGGER_MS: String(
+        ctx.cfg.pi.subagent_cache_stagger_ms ?? DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
+      ),
       QCR_LEAF_CACHE_EXT: join(o.root, "extensions", "leaf-cache.ts"),
       // The case's task dirs are this replay's sanctioned launch_plan
       // dirs (production's live under state/pr-<n>-round-<k>-passes/).

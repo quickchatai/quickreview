@@ -27,7 +27,7 @@ import { stripModelDocs } from "./promptdoc.js";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
-import { MODELS_TIER_DEFAULTS, THINKING_LEVELS, type ScanDepth } from "./config.js";
+import { MODELS_TIER_DEFAULTS, splitModelSpec, type ScanDepth } from "./config.js";
 import { SCAN_DEEP_LENSES } from "./passes.js";
 import { higherTier, PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
@@ -296,15 +296,12 @@ export function applyMemoryTools(
   return frontmatter.replace(TOOLS_LINE_RE, `tools: ${[...kept, ...tools].join(", ")}`);
 }
 
-/** Split a "provider/model:thinking" spec into its model and thinking halves.
- * Only a recognized thinking level after the last colon is treated as a
- * suffix. The built `model:` field keeps the whole spec (pi's --model
- * accepts the suffix); the split feeds the `thinking:` field and the
- * BuiltAgent record. */
-export function splitModelSpec(spec: string): { model: string; thinking: string | null } {
-  const m = new RegExp(`^(.+):(${THINKING_LEVELS.join("|")})$`).exec(spec);
-  return m ? { model: m[1] as string, thinking: m[2] as string } : { model: spec, thinking: null };
-}
+/** Split a "provider/model:thinking" spec into its model and thinking halves
+ * (config.ts owns the parse). Only a recognized thinking level after the last
+ * colon is treated as a suffix. The built `model:` field keeps the whole spec
+ * (pi's --model accepts the suffix); the split feeds the `thinking:` field and
+ * the BuiltAgent record. */
+export { splitModelSpec };
 
 // ---- the build step ------------------------------------------------------
 

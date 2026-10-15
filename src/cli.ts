@@ -26,7 +26,6 @@ import {
   StateStore,
   tallyCancellations,
   type CancellationTally,
-  type RoundRow,
   type StatusSnapshot,
 } from "./state.js";
 import {
@@ -57,6 +56,7 @@ import {
   strandedLegacySecrets,
   type InstallEnv,
 } from "./install.js";
+import { sanitizeText } from "./tui/paint.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
 import { transportOf } from "./tui/remote.js";
 import { MutationGate } from "./gate.js";
@@ -435,11 +435,18 @@ function oneLine(s: string): string {
   return s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim();
 }
 
+/** A session-written ledger (the archived copy) headed for the operator's
+ * terminal: its lines kept, its control bytes gone — the board's LEDGER
+ * section reads it the same way. */
+export function archivedLedgerText(raw: string): string {
+  return sanitizeText(raw);
+}
+
 export function renderStatus(snapshot: StatusSnapshot): string {
   const lines: string[] = [];
   const mode = snapshot.dry_run ? "DRY-RUN" : "LIVE";
   lines.push(`quickreview — ${mode} — snapshot ${snapshot.written_at}`);
-  if (snapshot.digest_headline) lines.push(`digest: ${snapshot.digest_headline}`);
+  if (snapshot.digest_headline) lines.push(`digest: ${oneLine(snapshot.digest_headline)}`);
   lines.push(
     `rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`,
   );
@@ -684,14 +691,6 @@ export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promi
   }
 }
 
-/** Every round of PR `n`, oldest first — the history both `why` renderings
- * print. */
-function roundHistory(store: StateStore, n: number): RoundRow[] {
-  return store.db
-    .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
-    .all(n) as RoundRow[];
-}
-
 /** A kept-not-posted finding (doubted or withheld) as `why --json` carries it. */
 function keptFinding(f: DoubtedFinding): DoubtedFinding {
   return {
@@ -707,7 +706,7 @@ function keptFinding(f: DoubtedFinding): DoubtedFinding {
 
 export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPayload {
   const pr = store.getPr(n);
-  const rounds = roundHistory(store, n);
+  const rounds = store.roundsFor(n);
   const threadTotal = store.db
     .prepare("SELECT COUNT(*) AS c FROM bot_comments WHERE pr = ?")
     .get(n) as { c: number };
@@ -810,7 +809,7 @@ function cmdWhy(n: number): void {
   try {
     const pr = store.getPr(n);
     if (pr) console.log(whyHeaderLine(n, pr));
-    const rounds = roundHistory(store, n);
+    const rounds = store.roundsFor(n);
     for (const r of rounds)
       console.log(
         `round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} started=${r.started_at}`,
@@ -823,7 +822,7 @@ function cmdWhy(n: number): void {
       const ledger = join(archiveDir, "ledger.md");
       if (existsSync(ledger)) {
         console.log("--- archived ledger ---");
-        console.log(readFileSync(ledger, "utf8"));
+        console.log(archivedLedgerText(readFileSync(ledger, "utf8")));
       }
     } else if (!pr && rounds.length === 0) {
       console.log(`nothing known about #${n}`);
@@ -869,6 +868,28 @@ async function cmdMetrics(pr: number | null, json: boolean): Promise<void> {
   } finally {
     store.close();
   }
+}
+
+const BACKFILL_USAGE = "usage: qcr backfill [--dry-run] [--limit <n>] [--json]";
+
+/** `qcr backfill`'s arguments (`--json` is taken off before). An unknown or
+ * repeated token is refused: a mistyped `--dry-run` must not run the import. */
+export function parseBackfillArgs(rest: readonly string[]): {
+  dryRun: boolean;
+  limit: number | undefined;
+} {
+  let dryRun = false;
+  let limit: number | undefined;
+  for (let i = 0; i < rest.length; i += 1) {
+    const a = rest[i];
+    if (a === "--dry-run" && !dryRun) dryRun = true;
+    else if (a === "--limit" && limit === undefined && rest[i + 1] !== undefined) {
+      limit = Number(rest[i + 1]);
+      i += 1;
+      if (!Number.isInteger(limit) || limit < 0) throw new Error(BACKFILL_USAGE);
+    } else throw new Error(BACKFILL_USAGE);
+  }
+  return { dryRun, limit };
 }
 
 /** `qcr backfill [--dry-run] [--limit N]` — the one-shot pre-daemon history
@@ -1042,7 +1063,8 @@ export function drainManualCommand(tui: TuiConfig, on: boolean, now: Date): stri
   // a re-used name (an operator editing an old line) still executes — the
   // fresh name is what keeps its result readable.
   const name = `${now.toISOString().replace(/[:.]/g, "-")}-manual-drain.json`;
-  const payload = `printf '%s' '${JSON.stringify({ command: "drain", on })}' | `;
+  // drainPayload's own object, compacted onto the one line.
+  const payload = `printf '%s' '${JSON.stringify(JSON.parse(drainPayload(on)))}' | `;
   // Single quotes for the container's `sh -c`.
   const script = operatorCommandWriteScript(tui, name).replace(/'/g, "'\\''");
   if (transportOf(tui) === "local") return `${payload}${docker} sh -c '${script}'`;
@@ -1121,11 +1143,26 @@ function runDrainLocal(on: boolean): number {
   return 0;
 }
 
+const DRAIN_USAGE = "usage: qcr drain <on|off> [--local]";
+
+/** `qcr drain`'s arguments: exactly one of `on`/`off`, optionally `--local`.
+ * Anything else is refused before a transport is picked or a command file
+ * written — a mistyped `--local` must not send the drain over ssh instead. */
+export function parseDrainArgs(rest: readonly string[]): { on: boolean; local: boolean } {
+  let sub: "on" | "off" | undefined;
+  let local = false;
+  for (const a of rest) {
+    if ((a === "on" || a === "off") && sub === undefined) sub = a;
+    else if (a === "--local" && !local) local = true;
+    else throw new Error(DRAIN_USAGE);
+  }
+  if (sub === undefined) throw new Error(DRAIN_USAGE);
+  return { on: sub === "on", local };
+}
+
 async function cmdDrain(rest: string[]): Promise<number> {
-  const sub = rest.find((a) => a === "on" || a === "off");
-  if (!sub) throw new Error("usage: qcr drain <on|off> [--local]");
-  const on = sub === "on";
-  if (rest.includes("--local")) return runDrainLocal(on);
+  const { on, local } = parseDrainArgs(rest);
+  if (local) return runDrainLocal(on);
   // Honour [tui] target — on the laptop topology the same command
   // file write runs against local docker instead of ssh.
   const { runnerFor } = await import("./tui/remote.js");
@@ -1228,17 +1265,31 @@ function cmdEvents(tail: number, json: boolean): void {
   }
 }
 
-/** `qcr companion up|down|status` — thin over CompanionLifecycle. */
+/** What starting the companion needs from CompanionLifecycle. */
+interface CompanionStarter {
+  ensureUp(log?: (line: string) => void): Promise<string>;
+  spawnPi(): Promise<boolean>;
+}
+
+/** Start the companion the one way `up` and `rebuild` both do: the token and
+ * config mirror refreshed before the container starts, so it never mounts a
+ * stale mirror or an expired token — then the container, then pi. */
+async function startCompanion(
+  lc: CompanionStarter,
+  refreshInputs: () => Promise<void>,
+  log?: (line: string) => void,
+): Promise<{ outcome: string; born: boolean }> {
+  await refreshInputs();
+  const outcome = await lc.ensureUp(log);
+  return { outcome, born: await lc.spawnPi() };
+}
+
 /** `qcr companion rebuild`: replace the container and image, then start the
- * new one exactly as `up` does — the token and config mirror refreshed
- * before the container starts, so the rebuilt companion never mounts a stale
- * mirror or an expired token. The pihome volume is untouched. */
+ * new one exactly as `up` does. The pihome volume is untouched. */
 export async function rebuildCompanion(
-  lc: {
+  lc: CompanionStarter & {
     removeContainer(): Promise<unknown>;
     buildImage(log: (line: string) => void): Promise<unknown>;
-    ensureUp(log: (line: string) => void): Promise<string>;
-    spawnPi(): Promise<boolean>;
   },
   name: string,
   refreshInputs: () => Promise<void>,
@@ -1246,14 +1297,13 @@ export async function rebuildCompanion(
 ): Promise<void> {
   await lc.removeContainer();
   await lc.buildImage(log);
-  await refreshInputs();
-  const outcome = await lc.ensureUp(log);
-  const born = await lc.spawnPi();
+  const { outcome, born } = await startCompanion(lc, refreshInputs, log);
   log(
     `companion ${name}: image rebuilt, ${outcome}; pi session ${born ? "spawned" : "already running"}`,
   );
 }
 
+/** `qcr companion up|down|status|rebuild` — thin over CompanionLifecycle. */
 export async function cmdCompanion(sub: string | undefined): Promise<void> {
   const { CompanionLifecycle, companionStateWord, realDockerRunner } =
     await import("./tui/companion.js");
@@ -1279,9 +1329,7 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
   };
   switch (sub) {
     case "up": {
-      await refreshInputs();
-      const outcome = await lc.ensureUp();
-      const born = await lc.spawnPi();
+      const { outcome, born } = await startCompanion(lc, refreshInputs);
       console.log(
         `companion ${cfg.container_name}: ${outcome}; pi session ${born ? "spawned" : "already running"}`,
       );
@@ -1384,7 +1432,8 @@ export async function cmdMemory(rest: string[]): Promise<number> {
 const MEMORY_USAGE =
   "usage: qcr memory reembed [--user <name>[,<name>…]] | qcr memory relayout [--plan|--apply] [--user <name>]";
 
-/** A plain memory namespace name — the only shape a `--user` may take. */
+/** A plain memory namespace name — the shape `memory relayout` holds its
+ * `--user` (and its default) to. `memory reembed` keeps its names lenient. */
 const NAMESPACE_RE = /^[a-z][a-z0-9_-]*$/;
 
 /**
@@ -1769,12 +1818,8 @@ export async function main(argv: string[]): Promise<void> {
       return cmdMetrics(pr, json);
     }
     case "backfill": {
-      const limitIdx = rest.indexOf("--limit");
-      const limit = limitIdx >= 0 ? Number(rest[limitIdx + 1]) : undefined;
-      if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
-        throw new Error("usage: qcr backfill [--dry-run] [--limit <n>] [--json]");
-      }
-      return cmdBackfill(rest.includes("--dry-run"), limit, json);
+      const { dryRun, limit } = parseBackfillArgs(rest);
+      return cmdBackfill(dryRun, limit, json);
     }
     case "history": {
       process.exitCode = await cmdHistory(rest);

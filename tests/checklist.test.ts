@@ -31,6 +31,14 @@ import { verifySignature } from "../src/webhook.js";
 // one step that stretches without bound when the machine is loaded.
 import { derivedQueueOf, manualQueueOf, stalenessSimulation } from "../src/cliops.js";
 import { parseConfig } from "../src/config.js";
+import type { PrRef } from "../src/github.js";
+import {
+  reconcileOnce,
+  type ReconcileAdapter,
+  type ReconcileSearchItem,
+} from "../src/reconcile.js";
+import { StateStore, type PrLifecycleState } from "../src/state.js";
+import type { SessionHooks } from "../src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const tmpDirs: string[] = [];
@@ -220,25 +228,27 @@ describe("② derived queue (selfscan)", () => {
   });
 
   it("dry-run: a PR reviewed at its current head keeps a trigger reconcile suppresses — dropped from the manual side; a withdrawn trigger counts nowhere", async () => {
-    const rows: Record<number, { state: string; head_sha: string }> = {
-      1: { state: "queued", head_sha: "h1" },
-      2: { state: "reviewing", head_sha: "h2" },
-      3: { state: "tracked", head_sha: "h3" }, // reviewed at head, label still on
-      4: { state: "awaiting_author", head_sha: "h4" }, // reviewed at head, label removed
-      5: { state: "tracked", head_sha: "h5-new" }, // pushed since its review
+    const store = new StateStore(":memory:");
+    const heads: Record<number, [PrLifecycleState, string]> = {
+      1: ["queued", "h1"],
+      2: ["reviewing", "h2"],
+      3: ["tracked", "h3"], // reviewed at head, label still on
+      4: ["awaiting_author", "h4"], // reviewed at head, label removed
+      5: ["tracked", "h5-new"], // pushed since its review
     };
+    for (const [n, [state, head]] of Object.entries(heads)) seedPr(store, Number(n), state, head);
     const verdictHeads: Record<number, string> = { 2: "h2", 3: "h3", 4: "h4", 5: "h5-old" };
-    const derived = derivedQueueOf(
-      Object.entries(rows).map(([n, r]) => ({ number: Number(n), state: r.state })),
-      true,
-    );
+    for (const [n, head] of Object.entries(verdictHeads))
+      store.logEvent("verdict_applied", Number(n), { head_sha: head, verdict: "COMMENT" });
+    const derived = derivedQueueOf(store.allPrs(), true);
     expect(derived).toEqual([1, 2]);
-    const manual = (found: number[]) =>
+    const manual = (found: number[], dryRun = true) =>
       manualQueueOf(
-        found,
-        true,
-        (pr) => rows[pr],
-        (pr) => verdictHeads[pr],
+        found.map((n) => hit(n)),
+        "label",
+        dryRun,
+        BOT,
+        store,
       );
     // 3 is suppressed; 2 is reviewing (reconcile never reaches the check), so it stays.
     expect(manual([1, 2, 3])).toEqual([1, 2]);
@@ -254,17 +264,102 @@ describe("② derived queue (selfscan)", () => {
     // 5 was pushed after its review: reconcile would re-queue it, so a 5
     // still unqueued is a real disagreement.
     expect((await probe([1, 2, 5])).pass).toBe(false);
-    // Live, nothing is suppressed.
-    expect(
-      manualQueueOf(
-        [1, 2, 3],
-        false,
-        (pr) => rows[pr],
-        (pr) => verdictHeads[pr],
-      ),
-    ).toEqual([1, 2, 3]);
+    // Live, a reviewed head is not suppressed: the trigger was consumed.
+    expect(manual([1, 2, 3], false)).toEqual([1, 2, 3]);
   });
+
+  // The manual side is reconcile's own skip set: after a reconcile pass over
+  // the same searches, every hit is either queued by it or skipped by both.
+  for (const dryRun of [true, false]) {
+    it(`agrees with a reconcile pass over the same searches (${dryRun ? "dry-run" : "live"})`, async () => {
+      const store = new StateStore(":memory:");
+      const runCfg = { ...checklistCfg, dry_run: dryRun };
+      seedPr(store, 11, "closed", "h11"); // a lagging search still lists it
+      seedPr(store, 12, "tracked", "h12");
+      store.pausePr(12, { issuer: "operator", expires_at: null }, "test");
+      for (const n of [13, 14]) {
+        // Approved at an older head; the push recheck claimed the current one.
+        seedPr(store, n, "tracked", "layout");
+        store.recordReviewedHead(n, { head_sha: "approved", verdict: "APPROVE", round_no: 1 });
+        store.claimRecheck(n, "push:layout::", { head_sha: "layout", trigger: "push" });
+      }
+      store.observeTriggerLevel(14, "label", false); // 14's label is a fresh edge
+      seedPr(store, 15, "tracked", "h15");
+      store.logEvent("verdict_applied", 15, { head_sha: "h15", verdict: "COMMENT" });
+      const label = [10, 11, 12, 13, 14, 15, 16].map((n) =>
+        hit(n, n === 16 ? "dependabot[bot]" : "alice"),
+      );
+      const open = [10, 12, 13, 14, 15, 16].map((n) =>
+        openRef(n, store.getPr(n)?.head_sha ?? `h${n}`),
+      );
+      const adapter: ReconcileAdapter = {
+        searchLabelTriggered: async () => label,
+        searchTeamTriggered: async () => [],
+        listOpenPrs: async () => open,
+        getPr: async (n) => open.find((r) => r.number === n) ?? openRef(n, `h${n}`, "closed"),
+        listBotReviewComments: async () => [],
+      };
+      const hooks: SessionHooks = {
+        async dispatchRound() {},
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
+      };
+      // The checklist reads the store BEFORE the pass that acts on 14's edge,
+      // so 14 is owed and the pass then queues it.
+      const before = manualQueueOf(label, "label", dryRun, BOT, store);
+      await reconcileOnce({ cfg: runCfg, store, adapter, hooks });
+      const derived = derivedQueueOf(store.allPrs(), dryRun);
+      expect(before.sort((a, b) => a - b)).toEqual(derived);
+      const after = manualQueueOf(label, "label", dryRun, BOT, store);
+      expect(after.sort((a, b) => a - b)).toEqual(derived);
+      expect(derived).toEqual(dryRun ? [10, 14] : [10, 14, 15]);
+    });
+  }
 });
+
+const BOT = "example-review[bot]";
+const checklistCfg = parseConfig(
+  readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
+
+function hit(number: number, login = "alice"): ReconcileSearchItem {
+  return {
+    number,
+    title: `PR ${number}`,
+    user: { login, type: login.endsWith("[bot]") ? "Bot" : "User" },
+    updated_at: "2026-08-13T09:05:00Z",
+    created_at: "2026-08-13T08:00:00Z",
+  };
+}
+
+function openRef(number: number, head_sha: string, state: "open" | "closed" = "open"): PrRef {
+  return {
+    number,
+    title: `PR ${number}`,
+    author: number === 16 ? "dependabot[bot]" : "alice",
+    head_sha,
+    base_ref: "master",
+    updated_at: "2026-08-13T09:00:00Z",
+    state,
+    draft: false,
+    merged: false,
+    labels: [],
+  };
+}
+
+function seedPr(store: StateStore, number: number, state: PrLifecycleState, head: string): void {
+  store.upsertPr({
+    number,
+    state,
+    head_sha: head,
+    title: `PR ${number}`,
+    author: "alice",
+    trigger_ts: null,
+    stale_recheck: 0,
+    migration_gate: 0,
+  });
+}
 
 describe("⑤ ping-pong", () => {
   it("passes when the interpreter drops an inject file", async () => {

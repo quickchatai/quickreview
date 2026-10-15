@@ -16,7 +16,7 @@
 
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
-import { codePath } from "./codespan.js";
+import { codePath, flatControls } from "./codespan.js";
 import { fenceAsData } from "./memory/datafence.js";
 import type { PrFileEntry } from "./github.js";
 import { isTestFile } from "./heuristics.js";
@@ -91,8 +91,9 @@ export interface ContextPack {
   chars: number;
 }
 
-/** Which changed files are worth their full text: non-test, non-generated
- * code that still exists, most changed first. */
+/** Which changed files are worth their full text: every file that still
+ * exists and is not a test, a lockfile, or generated, vendored or fixture
+ * content — prose included — most changed first. */
 export function mustSeeCandidates(files: readonly PrFileEntry[]): PrFileEntry[] {
   return files
     .filter(
@@ -206,7 +207,7 @@ export function renderContextPack(input: ContextPackInput): ContextPack {
       diffOmitted.push(f.filename);
       return;
     }
-    const block = `### ${f.filename} (+${f.additions} −${f.deletions}, ${f.status})\n\n${fenceAsData(f.patch, "diff")}\n\n`;
+    const block = `### ${flatControls(f.filename)} (+${f.additions} −${f.deletions}, ${f.status})\n\n${fenceAsData(f.patch, "diff")}\n\n`;
     if (fits(block, noteRoom(input.files.length - i - 1))) {
       add(block);
       diffFiles.push(f.filename);
@@ -223,7 +224,7 @@ export function renderContextPack(input: ContextPackInput): ContextPack {
   for (const f of mustSeeCandidates(input.files)) {
     const text = input.readFile(f.filename);
     if (text === undefined || text.includes("\u0000")) continue;
-    const block = `### ${f.filename}\n\n${fenceAsData(text, "text")}\n\n`;
+    const block = `### ${flatControls(f.filename)}\n\n${fenceAsData(text, "text")}\n\n`;
     if (!fits((headerAdded ? "" : fullHeader) + block, note.length)) continue;
     if (!headerAdded) {
       add(fullHeader);

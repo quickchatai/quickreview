@@ -42,21 +42,9 @@ import { validateReceipt, type CurationReceipt } from "./learner/receipt.js";
 import type { OriginRecord } from "./slack/origin.js";
 import { SLACK_TS_RE } from "./slack/reply.js";
 
-export type CommandName =
-  | "rerun-round"
-  | "restart-session"
-  | "resolve-terminal-failure"
-  | "pause-pr"
-  | "resume-pr"
-  | "flag-owner"
-  | "file-improvement-pr"
-  | "file-issue"
-  | "slack_reply"
-  | "drain"
-  | "retry-thread-decision"
-  | "eod-curation-receipt";
-
-export const COMMAND_WHITELIST: readonly CommandName[] = [
+/** The session-writable command vocabulary — the one list `CommandName` is
+ * read from, so a name cannot be typed without being admitted. */
+export const COMMAND_WHITELIST = [
   "rerun-round",
   "restart-session",
   "resolve-terminal-failure",
@@ -70,6 +58,8 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "retry-thread-decision",
   "eod-curation-receipt",
 ] as const;
+
+export type CommandName = (typeof COMMAND_WHITELIST)[number];
 
 /**
  * The operator's commands: the lesson kill switch and the archiver's two
@@ -86,15 +76,7 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
  * in state.db (src/lessonledger.ts), never as a memory tag anyone holding a
  * key could write.
  */
-export type OperatorCommandName =
-  | "lessons-off"
-  | "lessons-on"
-  | "suppress-lesson"
-  | "unsuppress-lesson"
-  | "archive-run"
-  | "archive-restore";
-
-export const OPERATOR_COMMANDS: readonly OperatorCommandName[] = [
+export const OPERATOR_COMMANDS = [
   "lessons-off",
   "lessons-on",
   "suppress-lesson",
@@ -102,6 +84,8 @@ export const OPERATOR_COMMANDS: readonly OperatorCommandName[] = [
   "archive-run",
   "archive-restore",
 ] as const;
+
+export type OperatorCommandName = (typeof OPERATOR_COMMANDS)[number];
 
 /** A lesson the operator names: the full memory URI of one entry
  * (`viking://user/<user>/memories/<area>/<file>.md`) — `qcr lessons
@@ -174,7 +158,9 @@ export type CommandIssuer = LeverIssuer;
 /** Context a command file carries with it (its own name, for idempotence,
  * and the issuer the watcher stamped from the channel). */
 export interface CommandContext {
-  /** Basename of the command file, "" for a direct executeCommand call. */
+  /** The command file's name without `.json` — `<scope>/<name>` when the
+   * watcher serving it has a `scope` — or "" for a direct executeCommand
+   * call. It names one delivery, stable across that file's retries. */
   file: string;
   issuer: CommandIssuer;
 }
@@ -978,6 +964,10 @@ export interface CommandWatcherOptions {
    * `<parent>/results` — so the operator's clients read them from one place.
    */
   operator?: OperatorSeal;
+  /** Names this directory in each command's context `file`
+   * (`<scope>/<name>`), so a same-named file in another served directory is a
+   * different delivery to a handler's idempotence key. Absent ⇒ the bare name. */
+  scope?: string;
   deps: CommandDeps;
   store: StateStore;
   now?: () => Date;
@@ -1298,7 +1288,10 @@ export class CommandWatcher {
         );
       let outcome: FileOutcome;
       try {
-        outcome = await executeCommand(validation.command, this.opts.deps, { file: name, issuer });
+        outcome = await executeCommand(validation.command, this.opts.deps, {
+          file: this.opts.scope ? `${this.opts.scope}/${name}` : name,
+          issuer,
+        });
       } catch (err) {
         outcome = { ok: false, reason: `handler threw: ${(err as Error).message}` };
       }

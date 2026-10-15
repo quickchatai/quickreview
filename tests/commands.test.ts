@@ -347,6 +347,26 @@ describe("CommandWatcher", () => {
     });
   }
 
+  it("a scoped watcher names its directory in the context file; an unscoped one passes the bare name", async () => {
+    const thread = "1712345678.123456";
+    mkdirSync(slackDir(), { recursive: true });
+    writeFileSync(
+      join(cmdDir(), "r1.json"),
+      JSON.stringify({ command: "slack_reply", thread, text: "a" }),
+    );
+    writeFileSync(
+      join(slackDir(), "r1.json"),
+      JSON.stringify({ command: "slack_reply", thread, text: "b" }),
+    );
+    const deps = makeDeps();
+    await watcher(deps).sweep();
+    await new CommandWatcher({ dir: slackDir(), scope: "slack", deps, store }).sweep();
+    expect(deps.slackReply.mock.calls.map((c) => (c as unknown[])[0])).toEqual([
+      { thread, text: "a", file: "r1" },
+      { thread, text: "b", file: "slack/r1" },
+    ]);
+  });
+
   it("startup sweep executes a valid command, writes an ok result and archives the file", async () => {
     writeFileSync(join(cmdDir(), "c1.json"), JSON.stringify({ command: "rerun-round", pr: 5 }));
     const deps = makeDeps();
