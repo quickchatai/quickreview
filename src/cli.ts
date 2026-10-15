@@ -1917,6 +1917,9 @@ export async function main(argv: string[]): Promise<void> {
           "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
+      // A bare `qcr` (or an explicit help) is a usage request; anything else
+      // here is an unknown command, which must not look like success.
+      if (cmd !== undefined && !["help", "--help", "-h"].includes(cmd)) process.exitCode = 1;
       loadConfig(); // surface config errors early even on bad usage
   }
 }

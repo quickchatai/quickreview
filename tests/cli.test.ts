@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  rebuildCompanion,
   cancellationsOn,
+  main,
   parseReembedArgs,
   parseRelayoutArgs,
+  rebuildCompanion,
   renderStatus,
   todayCancellationLine,
   todayJson,
@@ -345,5 +346,29 @@ describe("qcr memory reembed — flags", () => {
       ["--user", "a", "--force"],
     ])
       expect(() => parseReembedArgs(rest), rest.join(" ")).toThrow(/usage: qcr memory reembed/);
+  });
+});
+
+describe("qcr with an unknown command", () => {
+  it("prints the usage and exits non-zero; a bare qcr or help stays a usage request", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const saved = process.exitCode;
+    try {
+      for (const [argv, code] of [
+        [["no-such-command"], 1],
+        [[], undefined],
+        [["help"], undefined],
+      ] as const) {
+        process.exitCode = undefined;
+        // The config check after the usage may throw on a machine without
+        // one; the exit code is set before it either way.
+        await main([...argv]).catch(() => {});
+        expect(process.exitCode, argv.join(" ") || "(none)").toBe(code);
+      }
+      expect(log.mock.calls[0]?.[0]).toMatch(/^usage: qcr /);
+    } finally {
+      process.exitCode = saved;
+      log.mockRestore();
+    }
   });
 });
