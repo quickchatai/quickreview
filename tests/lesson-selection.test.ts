@@ -591,6 +591,43 @@ describe("selectRound", () => {
     });
   });
 
+  it("the validator also gets the dont-raise lessons of a lens the session may ADD", () => {
+    // Planned: baseline + the validator; pass-security is only addable. A
+    // security-only dont-raise lesson reaches the added lens AND the
+    // validator, the one role that may act on it.
+    const planned: SelectionRow[] = [rows[0]!, { ...rows[2]!, row: 1 }];
+    const plan = planFinds({ title: "T", rows: planned, prFiles, addable: ["pass-security"] });
+    const outcomes = new Map<string, FindOutcome>(
+      plan.finds.map((f) => [
+        f.key,
+        f.area === "experiences"
+          ? { status: "ok", hits: [...baselineHits, ...securityHits] }
+          : { status: "ok", hits: [] },
+      ]),
+    );
+    const sel = selectRound({
+      pr: 42,
+      title: "T",
+      rows: planned,
+      prFiles,
+      root: ROOT,
+      plan,
+      outcomes,
+      retired: new Set(),
+      suppressed: new Set(),
+      addable: ["pass-security"],
+    });
+    expect(sel.map((s) => `${s.role}:${s.row}`)).toEqual([
+      "row:0",
+      "validator:1",
+      "addable:0",
+      "cases:-1",
+    ]);
+    const dr2 = `${EXP}/20261001T000000-dr2.md`;
+    expect(sel[2]!.lessons.map((l) => l.uri)).toContain(dr2);
+    expect(sel[1]!.lessons.map((l) => l.uri)).toContain(dr2);
+  });
+
   it("a timed-out find delivers nothing for its row; the validator still gets the rows' dont-raise", () => {
     const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const sel = selectRound({
