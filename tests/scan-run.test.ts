@@ -804,6 +804,62 @@ describe("the validator — a survivor it also doubts", () => {
   });
 });
 
+describe("a lane that fails stops its siblings before the run is settled", () => {
+  it("a run-record write failure in one lane aborts the case still running in another, and the run settles after it", async () => {
+    const order: string[] = [];
+    let failNext = false;
+    let siblingAborted: boolean | null = null;
+    const base = stateHomeFs(stateDir);
+    const state = {
+      ...base,
+      write: (rel: string, text: string) => {
+        if (failNext && rel === RUN_FILE) {
+          failNext = false;
+          throw new Error("disk full");
+        }
+        base.write(rel, text);
+      },
+    };
+    let first = true;
+    let siblingStarted!: () => void;
+    const started = new Promise<void>((r) => (siblingStarted = r));
+    const cases = {
+      specs: [] as CaseSpec[],
+      run: async (spec: CaseSpec, signal: AbortSignal): Promise<CaseOutcome> => {
+        if (first) {
+          // The first case answers once its sibling is reading; the lane's
+          // next run-record write then fails.
+          first = false;
+          await started;
+          failNext = true;
+          return { ok: true, output: scanAnswer(spec), cost_usd: 0.01 };
+        }
+        siblingStarted();
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, 2000);
+          signal.addEventListener("abort", () => {
+            clearTimeout(t);
+            resolve();
+          });
+        });
+        siblingAborted = signal.aborted;
+        order.push("sibling done");
+        return { ok: false, reason: "aborted", cost_usd: 0 };
+      },
+    };
+    const s = new ScanRunner({ ...ports(cases, { concurrency: 2 }), state });
+    const p = await previewOf(s);
+    expect(p.cases.length).toBeGreaterThan(1);
+    const r = await s.start({ key: p.key });
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    await s.idle();
+    order.push("settled");
+    expect(siblingAborted).toBe(true);
+    expect(order).toEqual(["sibling done", "settled"]);
+    expect(s.status().run!.problems.some((x) => /internal error: disk full/.test(x))).toBe(true);
+  });
+});
+
 describe("a skeptic that opened none of its candidates' files judged nothing", () => {
   const ROOT = `/state/scan/tree/${SHA1}`;
   const upheld = (spec: CaseSpec): string =>

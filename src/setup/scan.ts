@@ -420,6 +420,31 @@ export function caseEstimate(lines: number, rate: Pick<ScanRate, "usd_per_kline"
   return (Math.max(lines, 1) / 1000) * rate.usd_per_kline;
 }
 
+/**
+ * Run `lanes` copies of `lane` to the end. One that throws aborts the rest
+ * and the throw is raised only once EVERY lane has stopped — never while a
+ * sibling is still in a paid case, which would otherwise go on spending and
+ * writing the run record after the run is settled and its slot released.
+ */
+export async function drainLanes(
+  lanes: number,
+  lane: () => Promise<void>,
+  abort: AbortController,
+): Promise<void> {
+  let failed: { err: unknown } | null = null;
+  await Promise.all(
+    Array.from({ length: lanes }, async () => {
+      try {
+        await lane();
+      } catch (err) {
+        failed ??= { err };
+        abort.abort();
+      }
+    }),
+  );
+  if (failed !== null) throw (failed as { err: unknown }).err;
+}
+
 /** What a preview's key covers: change any of it and a start quoting the old
  * key is refused — the operator always saw the price of what runs. */
 export function planKey(parts: unknown): string {

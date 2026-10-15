@@ -117,6 +117,7 @@ import {
   scanCasePrompt,
   scanValidatorPrompt,
   survivorSource,
+  drainLanes,
   SCAN_DEEP_MAX_SUGGESTIONS,
   SCAN_PASS,
   type ExclusionReason,
@@ -1573,7 +1574,7 @@ export class ScanRunner {
       }
     };
     const lanes = Math.max(1, Math.min(settings.scan.concurrency, jobs.length));
-    await Promise.all(Array.from({ length: lanes }, lane));
+    await drainLanes(lanes, lane, abort);
 
     // Never started: `skipped` when the cap kept it out, `stopped` when a stop did.
     for (const c of run.cases)
@@ -1589,7 +1590,8 @@ export class ScanRunner {
   }
 
   /** One case, start to finish. Resolves with what it cost (its estimate
-   * when the runner could not price it), never rejects. */
+   * when the runner could not price it); a runner failure is an outcome, so
+   * it rejects only when the run record cannot be written. */
   private async runCase(
     file: RunFile,
     run: ScanRun,
