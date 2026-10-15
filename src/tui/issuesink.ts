@@ -35,7 +35,6 @@ import {
   stampFiled,
   type TrackerPaths,
 } from "./autofile.js";
-import { EVENT_TAG_RE } from "../memory/eventtags.js";
 import type { MemoryEntry, MemoryStore } from "./memory.js";
 import type { SshRunner } from "./remote.js";
 import { commandFileName, commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
