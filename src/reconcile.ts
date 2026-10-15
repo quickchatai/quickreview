@@ -21,7 +21,7 @@ import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
 import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "./github.js";
 import type { OutcomeCapture, OutcomeSweepReport } from "./outcomes.js";
 import { applyEvent, isBotAuthor, mergedOverBlock } from "./statemachine.js";
-import type { StateStore } from "./state.js";
+import type { RoundRow, StateStore } from "./state.js";
 import type { OvSessionSweepReport, SessionHooks } from "./types.js";
 import { performance } from "node:perf_hooks";
 import { yieldToLoop } from "./yieldloop.js";
@@ -162,19 +162,51 @@ function correction(
  * survive the restart will never produce a verdict — it would sit as a
  * phantom until its deadline, holding a capacity slot and then corrupting the
  * PR via the overdue path. Cancel it; if it was the PR's newest round and the
- * PR still says reviewing, requeue so the lost work is redone. */
+ * PR still says reviewing, requeue so the lost work is redone.
+ *
+ * A round that still owes a POSTING is no phantom: its review is finished and
+ * the outbox delivers it without any session (docs/architecture/
+ * posting-delivery.md). Cancelling it would make the outbox abandon the
+ * review and the requeue would run the lenses again, so it is left running
+ * (`postingOwed`) and settles from its receipt like any delivered round. */
 export function reconcileOrphanedRounds(
   store: StateStore,
   adoptedPrs: Iterable<number>,
-  opts: { botLogin: string; now?: () => Date; log?: (msg: string, extra?: unknown) => void },
-): { cancelled: number[]; requeued: number[] } {
+  opts: {
+    botLogin: string;
+    now?: () => Date;
+    log?: (msg: string, extra?: unknown) => void;
+    /** Does this round still owe a review posting the outbox delivers on its
+     * own? Absent ⇒ no round does. */
+    postingOwed?: (round: RoundRow) => boolean;
+  },
+): { cancelled: number[]; requeued: number[]; kept_for_posting: number[] } {
   const live = new Set(adoptedPrs);
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? (() => {});
   const cancelled: number[] = [];
   const requeued: number[] = [];
+  const keptForPosting: number[] = [];
   for (const round of store.runningRounds()) {
     if (live.has(round.pr)) continue;
+    let owed = false;
+    try {
+      owed = opts.postingOwed?.(round) === true;
+    } catch (err) {
+      log(`startup: #${round.pr} round ${round.round_no} posting debt unreadable`, err);
+    }
+    if (owed) {
+      store.logEvent("orphaned_round_posting_owed", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        posting_key: round.posting_key,
+      });
+      keptForPosting.push(round.pr);
+      log(
+        `startup: #${round.pr} round ${round.round_no} kept — session lost, but its review posting is still owed`,
+      );
+      continue;
+    }
     // `orphan_sweep` is the quiet cause: tmux lives in the container,
     // so a clean redeploy orphans every round in flight by construction. It is
     // counted and grouped like every other cause, and it raises nothing.
@@ -202,7 +234,7 @@ export function reconcileOrphanedRounds(
       log(`startup: #${round.pr} requeued — its in-flight round was lost`);
     }
   }
-  return { cancelled, requeued };
+  return { cancelled, requeued, kept_for_posting: keptForPosting };
 }
 
 /** One reconcile pass. Never throws: per-step failures land in

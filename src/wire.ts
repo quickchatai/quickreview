@@ -124,7 +124,8 @@ import { makeSlackReply } from "./slack/reply.js";
 import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
-import type { StateStore } from "./state.js";
+import type { RoundRow, StateStore } from "./state.js";
+import { pendingPosting } from "./posting-outbox.js";
 import type { RecheckOrder } from "./recheck.js";
 import {
   RECHECK_TEMPLATE_FILE,
@@ -620,6 +621,22 @@ export function routeCurationReceipt(
       reason: "the learner is not running on this daemon ([openviking] enabled = false)",
     };
   return learner.applyReceipt(receipt);
+}
+
+/**
+ * The startup orphan sweep's posting debt: a round whose outbox job is still
+ * pending owes its review, and the outbox delivers it with no session — the
+ * same test the verdict watcher's posting proof reads as posting in flight.
+ * A dry run never owes one.
+ */
+export function orphanPostingOwed(
+  receiptDir: string,
+  dryRun: boolean,
+): (round: Pick<RoundRow, "pr" | "round_no" | "posting_key">) => boolean {
+  return (round) =>
+    !dryRun &&
+    round.posting_key !== null &&
+    pendingPosting(receiptDir, round.pr, round.round_no, round.posting_key);
 }
 
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
@@ -1492,9 +1509,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
       // Rounds still marked running whose session did not survive the restart
       // are phantoms: cancel them, requeue the ones whose work was truly lost.
+      // A round whose finished review the outbox still owes GitHub is not one.
       const orphans = reconcileOrphanedRounds(d.store, pre.adoption.prs, {
         botLogin: cfg.github.bot_login,
         log,
+        postingOwed: orphanPostingOwed(join(root, "state", "posting-receipts"), cfg.dry_run),
       });
       if (orphans.cancelled.length) {
         log(
