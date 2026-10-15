@@ -548,6 +548,16 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
     return "failed";
   };
 
+  /** `fire`, total. Its context, render and inject steps already catch their
+   * own failures; should anything still reject, the day settles as failed —
+   * reported like an exhausted inject, with no attempt counted — rather than
+   * leaving `firing` set and every later sweep deferred behind it. */
+  const fireSettled = (date: string): Promise<"delivered" | "failed" | "stopped"> =>
+    fire(date).catch((err: unknown) => {
+      safely(() => deps.onInjectFailed?.(date, err, 0));
+      return "failed" as const;
+    });
+
   const armPoll = (): void => {
     if (stopped || pollHandle !== null || deferred.length === 0) return;
     pollHandle = setT(poll, deferPollMs);
@@ -566,7 +576,7 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
     const date = deferred[0]!;
     firing = true;
     safely(() => deps.onDeferredFire?.(date));
-    void fire(date).then((outcome) => {
+    void fireSettled(date).then((outcome) => {
       firing = false;
       // Stopped before the day was settled (a shutdown during the retries):
       // it stays in the persisted set, so the next boot fires it again.
@@ -604,7 +614,7 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
       persist();
     }
     firing = true;
-    void fire(date).then((outcome) => {
+    void fireSettled(date).then((outcome) => {
       firing = false;
       if (outcome !== "stopped") {
         deferred = deferred.filter((d) => d !== date);
