@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, sandboxRoot, type Config } from "../src/config.js";
@@ -284,6 +285,49 @@ describe("the round's context pack", () => {
         expect(existsSync(packPath)).toBe(false);
       } finally {
         rmSync(passesDir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("the context pack reads the worktree the round reviews", () => {
+  // MUTATION: hand readWorktreeFileForPack the worktree as configured
+  // (relative) — read against the process's cwd, every file is missing and
+  // the pack carries none of their text.
+  it(
+    "resolves a relative worktree against the sandbox root, not the process's cwd",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg: Config = {
+        ...baseCfg,
+        review: { ...baseCfg.review, task_files: true, context_pack: "pack-first" },
+        pi: { ...baseCfg.pi, subagent_cache_group: 1 },
+      };
+      const rel = "state/test-wt-pr-9302";
+      const tree = join(sandboxRoot(), rel);
+      const passesDir = join(sandboxRoot(), "state", "pr-9302-round-1-passes");
+      const elsewhere = mkdtempSync(join(tmpdir(), "qcr-cwd-"));
+      const cwd = process.cwd();
+      try {
+        mkdirSync(tree, { recursive: true });
+        writeFileSync(join(tree, "a.py"), "PACK_MARKER_9302 = 1\n");
+        queue(9302, "2026-08-13T09:00:00Z");
+        adapter.files.set(9302, [file("a.py", 1, 0)]);
+        const { hooks, orders } = recordingHooks();
+        process.chdir(elsewhere);
+
+        await dispatchOnce({ cfg, store, adapter, hooks, worktreeFor: () => rel });
+
+        process.chdir(cwd);
+        expect(orders).toHaveLength(1);
+        const pack = orders[0]!.order.context_pack_file;
+        expect(pack).toBeDefined();
+        expect(readFileSync(pack!, "utf8")).toContain("PACK_MARKER_9302");
+      } finally {
+        process.chdir(cwd);
+        rmSync(tree, { recursive: true, force: true });
+        rmSync(passesDir, { recursive: true, force: true });
+        rmSync(elsewhere, { recursive: true, force: true });
       }
     },
   );

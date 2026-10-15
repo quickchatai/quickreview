@@ -2765,7 +2765,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             mergeBase: built.merge_base,
             files,
             ...(followUp ? { deltaPatch: renderDeltaPatch(followUp.delta.files) } : {}),
-            readFile: (p) => readWorktreeFileForPack(built.worktree, p),
+            readFile: (p) => readWorktreeFileForPack(resolve(sandboxRoot(), built.worktree), p),
             maxTokens: cfg.review.context_pack_max_tokens,
           });
           mkdirSync(passesDir, { recursive: true });
