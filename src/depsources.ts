@@ -50,6 +50,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import * as zlib from "node:zlib";
+import { flatControls } from "./codespan.js";
 
 // ---------------------------------------------------------------------------
 // Public shapes
@@ -328,7 +329,9 @@ const JS_IMPORT_RES: readonly RegExp[] = [
   /(?:^|[^\w$.])(?:require|import)\s*\(\s*(['"`])([^'"`\n]+)\1\s*\)/g,
 ];
 
-/** Raw module specifiers imported by a JS/TS source (order of first appearance). */
+/** Raw module specifiers imported by a JS/TS source, each once: the `… from`
+ * forms in source order, then the bare `import "x"` / `require("x")` /
+ * `import("x")` forms in theirs. */
 export function extractJsImports(src: string): string[] {
   // Whole-line comments only: stripping `/* … */` spans is unsafe without a
   // tokenizer (a glob string like 'src/*' would open a "comment" that eats
@@ -775,7 +778,7 @@ function addYarnBlock(
     const s = splitYarnSpec(spec);
     if (!s) continue;
     const range = s.range.startsWith("npm:") ? s.range.slice(4) : s.range;
-    if (/^(workspace|link|portal|file):/.test(range)) {
+    if (isLocalRange(range)) {
       lock.links.add(s.name);
       continue;
     }
@@ -1006,13 +1009,11 @@ export function parsePythonLock(text: string): Map<string, string> {
       if (/^source\s*=\s*\{[^}]*\b(editable|virtual|directory|path)\s*=/.test(line))
         cur.local = true;
       else {
-        // uv: `source = { registry = "…" }` is PyPI only at pypi.org; git /
-        // url / any other index is a different artifact under the same name.
+        // uv: `source = { registry = "…" }` is PyPI only at public PyPI's
+        // index; git / url / any other index is a different artifact under
+        // the same name.
         const src = /^source\s*=\s*\{\s*(\w+)\s*=\s*"([^"]*)"/.exec(line);
-        if (
-          src &&
-          !(src[1] === "registry" && /^https:\/\/pypi\.org\/simple\/?$/.test(src[2] ?? ""))
-        )
+        if (src && !(src[1] === "registry" && isPublicPypiIndex(src[2] ?? "")))
           cur.foreign = src[1] ?? "other";
       }
     } else if (where === "source") {
@@ -1058,9 +1059,7 @@ export function parsePipfileLock(text: string): Map<string, string> {
     // No sources declared: pipenv's default source, named "pypi", is PyPI.
     if (indexUrl.size === 0) return index === undefined || index === "pypi";
     // pypi.python.org is PyPI's legacy host — older Pipfiles still name it.
-    return /^https:\/\/pypi\.(?:python\.)?org\/simple\/?$/i.test(
-      (index === undefined ? undefined : indexUrl.get(index)) ?? "",
-    );
+    return isPublicPypiIndex((index === undefined ? undefined : indexUrl.get(index)) ?? "");
   };
   for (const section of ["default", "develop"]) {
     const sec = doc[section];
@@ -1097,6 +1096,18 @@ function parsePep508(line: string): ({ name: string } & PyReq) | null {
   return { name, pin: pin?.[1] ?? null, range: spec };
 }
 
+/** A requirements-file line without its comment, trimmed. */
+function requirementLine(raw: string): string {
+  return raw.replace(/(^|\s)#.*$/, "").trim();
+}
+
+/** Public PyPI's simple index — pypi.org, or its legacy host pypi.python.org
+ * that older files still name. Any other index is a different artifact under
+ * the same name. */
+function isPublicPypiIndex(url: string): boolean {
+  return /^https:\/\/pypi\.(?:python\.)?org\/simple\/?$/i.test(url);
+}
+
 /**
  * requirements*.txt / *.in: every requirement line (options, `-r`, `-e` and
  * comments skipped). An index option anywhere in the file binds every
@@ -1110,12 +1121,12 @@ export function parseRequirements(text: string): Map<string, PyReq> {
   const out = new Map<string, PyReq>();
   let foreign = false;
   for (const raw of text.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
-    const line = raw.replace(/(^|\s)#.*$/, "").trim();
+    const line = requirementLine(raw);
     if (!line) continue;
     if (line.startsWith("-")) {
       const index = /^(?:--index-url|-i)(?:\s*=\s*|\s+)(\S+)/.exec(line);
       if (index) {
-        if (!/^https:\/\/pypi\.(?:python\.)?org\/simple\/?$/i.test(index[1] ?? "")) foreign = true;
+        if (!isPublicPypiIndex(index[1] ?? "")) foreign = true;
       } else if (/^(?:--extra-index-url|--find-links|-f|--no-index)(?:[=\s]|$)/.test(line)) {
         foreign = true;
       }
@@ -1131,12 +1142,15 @@ export function parseRequirements(text: string): Map<string, PyReq> {
   return out;
 }
 
+/** One TOML string token: basic (`"…"`, escapes) or literal (`'…'`). */
+const TOML_STRING_RE = /"((?:[^"\\]|\\.)*)"|'([^']*)'/g;
+
 function stripTomlStrings(line: string): string {
-  return line.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "");
+  return line.replace(TOML_STRING_RE, "");
 }
 
 function tomlStrings(line: string): string[] {
-  return [...line.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2] ?? "");
+  return [...line.matchAll(TOML_STRING_RE)].map((m) => m[1] ?? m[2] ?? "");
 }
 
 /**
@@ -1260,6 +1274,8 @@ export interface ManifestEdit {
 }
 
 const NPM_DEP_LINE = /^\s*"([^"]+)"\s*:\s*"([^"]*)"\s*,?\s*$/;
+/** A patch line opening one of the `NPM_DEP_SECTIONS` objects. */
+const NPM_DEP_SECTION_HEAD = new RegExp(`"(?:${NPM_DEP_SECTIONS.join("|")})"\\s*:\\s*\\{`);
 
 /**
  * Dependencies a package.json patch adds (or re-ranges). The HEAD file is the
@@ -1284,9 +1300,7 @@ export function npmManifestEdits(patch: string, headText: string | null): Manife
       continue;
     }
     if (sign !== "+" && sign !== " ") continue;
-    if (
-      /"(dependencies|devDependencies|peerDependencies|optionalDependencies)"\s*:\s*\{/.test(body)
-    ) {
+    if (NPM_DEP_SECTION_HEAD.test(body)) {
       section = "deps";
       continue;
     }
@@ -1343,7 +1357,7 @@ export function pythonManifestEdits(
   const removed = new Map<string, Candidate>();
   const candidates = (body: string): Candidate[] => {
     if (!isPyproject) {
-      const line = body.replace(/(^|\s)#.*$/, "").trim();
+      const line = requirementLine(body);
       if (!line || line.startsWith("-")) return [];
       const r = parsePep508(line);
       return r ? [{ name: r.name, range: r.range, spec: r.range }] : [];
@@ -3214,18 +3228,10 @@ export function pruneDependencyCache(
 
 const MAX_RENDERED_SKIPS = 8;
 
-/** Control characters (newlines included) as visible `\uXXXX` escapes — the
- * same rule as templates.ts' `flatControls`. `why` carries the PR's own file
- * paths, and git allows a newline in one: raw, it would open a line of
+/** The round prompt's block. "" when there is nothing to say at all. Every
+ * field goes through `flatControls`: `why` carries the PR's own file paths,
+ * and git allows a newline in one — raw, it would open a line of
  * daemon-authored prompt. */
-function flatControls(text: string): string {
-  return text.replace(
-    /[\u0000-\u001f\u007f\u2028\u2029]/g,
-    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-}
-
-/** The round prompt's block. "" when there is nothing to say at all. */
 export function renderDependencyNote(m: DepManifest): string {
   const f = flatControls;
   if (!m.sources.length && !m.skipped.length) return "";
@@ -3236,7 +3242,9 @@ export function renderDependencyNote(m: DepManifest): string {
     );
     for (const s of m.sources) {
       const unlocked =
-        s.range !== undefined ? ` (no lockfile pin: newest match for \`${f(s.range)}\`)` : "";
+        s.range !== undefined
+          ? ` (no lockfile pin: the registry's resolved match for \`${f(s.range)}\`)`
+          : "";
       lines.push(
         `- ${s.ecosystem} \`${f(s.name)}@${f(s.version)}\`${unlocked} — ${f(s.why)} → \`${f(s.path)}\``,
       );

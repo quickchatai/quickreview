@@ -1639,7 +1639,7 @@ describe("renderDependencyNote", () => {
       "- npm `jschardet@3.1.4` — added to package.json; imported by src/a.ts → `/c/npm/jschardet@3.1.4`",
     );
     expect(lines[2]).toBe(
-      "- pypi `chardet@5.2.0` (no lockfile pin: newest match for `>=5`) — imported by a.py → `/c/pypi/chardet@5.2.0`",
+      "- pypi `chardet@5.2.0` (no lockfile pin: the registry's resolved match for `>=5`) — imported by a.py → `/c/pypi/chardet@5.2.0`",
     );
     expect(lines[3]).toBe("Not available: `foo` (not found (404 from registry.npmjs.org)).");
   });
