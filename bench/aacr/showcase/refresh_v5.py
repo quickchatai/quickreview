@@ -112,7 +112,7 @@ def run_models(runs_dir, run, calls=True):
                         for m in json.load(open(f)).get("models") or []})
         if not specs:
             sys.exit(f"{run}: no case-summary.json names a model")
-        tool = TOOL["claude"]
+        tool = TOOL[r["reviewer"]]
     else:
         tool = TOOL.get(r.get("reviewer"))
         if tool is None:
