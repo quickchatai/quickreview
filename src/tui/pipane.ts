@@ -7,7 +7,7 @@
 // `tmux send-keys` (see `keysToTmux` + `sendKeysArgv`).
 import type { TuiConfig } from "../config.js";
 import { closeSgr } from "./paint.js";
-import { captureArgv, type SshRunner } from "./remote.js";
+import { captureArgv, scrolledRange, type SshRunner } from "./remote.js";
 
 /**
  * Keep SGR (color/style) escapes, drop everything else.
@@ -52,10 +52,6 @@ const MAX_LINES = 400;
 
 /** Wheel notch = three lines, the usual terminal step. */
 export const SCROLL_STEP = 3;
-
-/** Extra history a scrolled capture asks for beyond the offset itself, so the
- * pane above the parked window is filled rather than blank. */
-const SCROLL_PAD = 200;
 
 /**
  * Per-PR capture cache with stale-while-revalidate semantics, mirroring the
@@ -154,7 +150,7 @@ export class PiMirror {
       const offset = this.offsetFor(pr);
       // Live tail = the plain visible-pane capture; scrolled back = the same
       // capture with `-S -(offset + pad)` so there is history above the window.
-      const range = offset > 0 ? { startBack: offset + SCROLL_PAD } : undefined;
+      const range = scrolledRange(offset);
       const res = await this.ssh(
         this.cfg.ssh_host,
         captureArgv(this.cfg, `pr-${pr}`, range, this.paneSize),
