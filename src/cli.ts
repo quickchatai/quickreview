@@ -21,13 +21,15 @@ import { archiveStatusLine, fmtBytes } from "./archive/status.js";
 import { memoryStatusLine } from "./memory/health.js";
 import {
   cancelCauseLabel,
-  isLoudCancelCause,
+  parseExecutedPasses,
   StateStore,
-  type CancelCause,
+  tallyCancellations,
   type CancellationTally,
+  type RoundRow,
   type StatusSnapshot,
 } from "./state.js";
 import {
+  cancellationSummaryLine,
   computeMetrics,
   computeTimeline,
   readOps,
@@ -100,15 +102,17 @@ export function parseOutcomesArgs(rest: readonly string[]): {
 }
 
 /**
- * The gate behind `qcr outcomes --read-github`: it can only
- * RECORD. Dry-run, so every ordinary kind is written to `dryrunDir` and never
- * executed; and an executor that refuses, so even the one class the gate runs
- * in dry-run (`APP_SELF_CONFIG_KINDS`) cannot reach GitHub. The read the
- * command makes goes direct, as every adapter read does; nothing can write.
+ * The gate behind every read-only CLI command that opens the adapter
+ * (`qcr outcomes --read-github`, `why --json`'s enrichment, `backfill`,
+ * `history digest`, `regression`): it can only RECORD. Dry-run, so every
+ * ordinary kind is written to `dryrunDir` and never executed; and an executor
+ * that refuses, so even the one class the gate runs in dry-run
+ * (`APP_SELF_CONFIG_KINDS`) cannot reach GitHub. The reads the command makes
+ * go direct, as every adapter read does; nothing can write.
  */
-export function recordOnlyGate(dryrunDir: string): MutationGate {
+export function recordOnlyGate(dryrunDir: string, command = "qcr outcomes"): MutationGate {
   return new MutationGate(true, dryrunDir, async () => {
-    throw new Error("qcr outcomes performs no mutations");
+    throw new Error(`${command} performs no mutations`);
   });
 }
 
@@ -509,23 +513,19 @@ function cmdSpend(): void {
   try {
     const total = store.totalSpend();
     const today = new Date().toISOString().slice(0, 10);
-    // est_usd is the one spend field. Expired rounds are counted: they blew
-    // a deadline, they did not get a refund — excluding them would erase real
-    // token cost.
+    // est_usd is the one spend field; expired rounds count (`roundUsage`).
     const todayRounds = store.roundsOn(today);
-    const todaySpend = todayRounds.reduce((n, r) => n + (r.est_usd ?? 0), 0);
+    const day = roundUsage(todayRounds);
     const totals = store.db
       .prepare(
         "SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds",
       )
       .get() as { tin: number; tout: number };
-    const todayIn = todayRounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0);
-    const todayOut = todayRounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0);
     console.log(
       `total spend: $${total.toFixed(2)} (est) — ${totals.tin} in / ${totals.tout} out tokens`,
     );
     console.log(
-      `today (${today}): $${todaySpend.toFixed(2)} across ${todayRounds.length} rounds — ${todayIn} in / ${todayOut} out tokens`,
+      `today (${today}): $${day.spend_usd.toFixed(2)} across ${todayRounds.length} rounds — ${day.tokens_in} in / ${day.tokens_out} out tokens`,
     );
   } finally {
     store.close();
@@ -668,14 +668,9 @@ export interface DoubtedFinding {
 export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promise<WhyPayload> {
   try {
     const { TokenMinter } = await import("./githubAuth.js");
-    const { MutationGate } = await import("./gate.js");
     const { GitHubAdapter } = await import("./github.js");
     const cfg = loadConfig();
-    const gate = new MutationGate(
-      true,
-      join(sandboxRoot(), "state", "dryrun"),
-      async () => undefined,
-    );
+    const gate = recordOnlyGate(join(sandboxRoot(), "state", "dryrun"), "qcr why");
     const adapter = new GitHubAdapter(
       cfg,
       new TokenMinter(secretsDir ?? cfg.github.secrets_dir),
@@ -688,11 +683,45 @@ export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promi
   }
 }
 
+/** Every round of PR `n`, oldest first — the history both `why` renderings
+ * print. */
+function roundHistory(store: StateStore, n: number): RoundRow[] {
+  return store.db
+    .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
+    .all(n) as RoundRow[];
+}
+
+/** A kept-not-posted finding (doubted or withheld) as `why --json` carries it. */
+function keptFinding(f: DoubtedFinding): DoubtedFinding {
+  return {
+    round_no: f.round_no,
+    lens: f.lens,
+    path: f.path,
+    line: f.line,
+    severity: f.severity,
+    word: f.word,
+    reason: f.reason,
+  };
+}
+
+/** Spend and measured tokens summed over `rounds`. Expired rounds count:
+ * they blew a deadline, they did not get a refund — excluding them would
+ * erase real token cost (see StateStore.totalSpend). */
+function roundUsage(rounds: readonly RoundRow[]): {
+  spend_usd: number;
+  tokens_in: number;
+  tokens_out: number;
+} {
+  return {
+    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
+    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
+  };
+}
+
 export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPayload {
   const pr = store.getPr(n);
-  const rounds = store.db
-    .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
-    .all(n) as any[];
+  const rounds = roundHistory(store, n);
   const threadTotal = store.db
     .prepare("SELECT COUNT(*) AS c FROM bot_comments WHERE pr = ?")
     .get(n) as { c: number };
@@ -700,7 +729,7 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
     pr: n,
     known: pr !== undefined || rounds.length > 0,
     // Every round's cost, expired ones included.
-    spend_usd: rounds.reduce((s, r) => s + (r.est_usd ?? 0), 0),
+    spend_usd: roundUsage(rounds).spend_usd,
     rounds: rounds.map((r) => ({
       round_no: r.round_no,
       round_type: r.round_type,
@@ -715,15 +744,7 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
       tokens_out: r.tokens_out ?? null,
       lenses: r.lenses,
       validate_tier: r.validate_tier ?? null,
-      executed_passes: (() => {
-        if (typeof r.executed_passes !== "string") return null;
-        try {
-          const parsed = JSON.parse(r.executed_passes) as unknown;
-          return Array.isArray(parsed) ? parsed : null;
-        } catch {
-          return null;
-        }
-      })(),
+      executed_passes: parseExecutedPasses(r.executed_passes),
       summary: r.summary ?? null,
       // Why a cancelled round was cancelled — null on every other
       // status. The TUI's detail pane reads this beside the prose summary.
@@ -732,24 +753,8 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
     // The registry knows every bot thread; "open" needs GitHub truth the
     // daemon doesn't mirror, so it is UNKNOWN (null) — never the total.
     threads: { open: null, total: threadTotal.c },
-    doubted: store.doubtedFindings(n).map((f) => ({
-      round_no: f.round_no,
-      lens: f.lens,
-      path: f.path,
-      line: f.line,
-      severity: f.severity,
-      word: f.word,
-      reason: f.reason,
-    })),
-    withheld: store.withheldFindings(n).map((f) => ({
-      round_no: f.round_no,
-      lens: f.lens,
-      path: f.path,
-      line: f.line,
-      severity: f.severity,
-      word: f.word,
-      reason: f.reason,
-    })),
+    doubted: store.doubtedFindings(n).map(keptFinding),
+    withheld: store.withheldFindings(n).map(keptFinding),
   };
   if (pr) {
     payload.state = pr.state;
@@ -786,10 +791,7 @@ export function todayJson(
   return {
     date: today,
     rounds,
-    // Expired rounds included — see StateStore.totalSpend.
-    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
-    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
-    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
+    ...roundUsage(rounds),
     events: store.eventsOn(today),
     cancellations: cancellationsOn(store, today),
   };
@@ -799,32 +801,13 @@ export function todayJson(
  * metrics payload carries, scoped to one timezone-agnostic ISO date so `qcr
  * today` can print it beside the rounds it explains. */
 export function cancellationsOn(store: StateStore, date: string): CancellationTally[] {
-  const counts = new Map<string, number>();
-  for (const r of store.roundsOn(date)) {
-    if (r.status !== "cancelled") continue;
-    const cause = (r.cancel_cause ?? "unknown") as CancelCause;
-    counts.set(cause, (counts.get(cause) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([cause, count]) => ({
-      cause: cause as CancelCause,
-      count,
-      loud: isLoudCancelCause(cause),
-    }))
-    .sort(
-      (a, b) =>
-        Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
-    );
+  return tallyCancellations(store.roundsOn(date));
 }
 
 /** `qcr today`'s one-line cancellation summary. Never silent: "none" is an
  * answer. */
 export function todayCancellationLine(tallies: CancellationTally[]): string {
-  if (tallies.length === 0) return "cancelled: none";
-  const total = tallies.reduce((n, t) => n + t.count, 0);
-  const loud = tallies.filter((t) => t.loud).reduce((n, t) => n + t.count, 0);
-  const parts = tallies.map((t) => `${cancelCauseLabel(t.cause)} ${t.count}${t.loud ? " ⚑" : ""}`);
-  return `cancelled: ${total} — ${parts.join(", ")}${loud > 0 ? `  (${loud} needing a look)` : ""}`;
+  return cancellationSummaryLine("cancelled", tallies);
 }
 
 /** `qcr why`'s first line; the title is the author's text, so one line. */
@@ -841,9 +824,7 @@ function cmdWhy(n: number): void {
   try {
     const pr = store.getPr(n);
     if (pr) console.log(whyHeaderLine(n, pr));
-    const rounds = store.db
-      .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
-      .all(n) as any[];
+    const rounds = roundHistory(store, n);
     for (const r of rounds)
       console.log(
         `round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} started=${r.started_at}`,
@@ -913,15 +894,12 @@ export async function cmdBackfill(
   json: boolean,
 ): Promise<void> {
   const { TokenMinter } = await import("./githubAuth.js");
-  const { MutationGate } = await import("./gate.js");
   const { GitHubAdapter } = await import("./github.js");
   const { runBackfill } = await import("./backfill.js");
   const cfg = loadConfig();
   // A gate that can only ever record: the importer performs no mutations, and
   // this keeps that structural rather than prompted.
-  const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
-    throw new Error("qcr backfill performs no mutations");
-  });
+  const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr backfill");
   const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
   const store = openStore();
   try {
@@ -964,13 +942,10 @@ export async function cmdHistory(rest: string[]): Promise<number> {
   if (sub === "digest") {
     const limit = intFlag(rest, "--limit", HISTORY_USAGE);
     const { TokenMinter } = await import("./githubAuth.js");
-    const { MutationGate } = await import("./gate.js");
     const { GitHubAdapter } = await import("./github.js");
     const { collectReviewHistory } = await import("./reviewhistory.js");
     const cfg = loadConfig();
-    const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
-      throw new Error("qcr history performs no mutations");
-    });
+    const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr history");
     const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
     const store = openStore();
     try {
@@ -1019,7 +994,6 @@ export async function cmdHistory(rest: string[]): Promise<number> {
  * front even if one were live.
  */
 export async function cmdRegression(rest: string[], json: boolean): Promise<number> {
-  const { MutationGate } = await import("./gate.js");
   const { nodeReplayIo, parseRegressionArgs, readCaseSet, runRegressionCli, ScratchReplay } =
     await import("./replay.js");
   const root = sandboxRoot();
@@ -1036,9 +1010,7 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
     loadProfilePosting(root, loaded.review.profile),
   );
   const args = parseRegressionArgs(rest, json);
-  const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
-    throw new Error("qcr regression performs no mutations");
-  });
+  const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr regression");
   const scratchRoot = join(stateDir(), "regression");
   return runRegressionCli(args, {
     loadCaseSet: (p) => readCaseSet(p ?? join(root, "tests", "fixtures", "regression-cases.json")),
@@ -1256,8 +1228,7 @@ export function cmdInstall(
 
 function cmdAttach(target: string): void {
   // Live sessions run inside the quickreview container on the VM; locally the
-  // tmux server is direct. Print the right invocation and exec it when local
-  // tmux has the session.
+  // tmux server is direct. Print both invocations — this never attaches.
   const session = /^\d+$/.test(target) ? `pr-${target}` : target;
   console.log(`attach: tmux attach -t ${session}`);
   console.log(`(on the VM: docker exec -it quickreview-sandbox tmux attach -t ${session})`);

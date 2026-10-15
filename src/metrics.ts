@@ -11,7 +11,7 @@
 // Ops-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
 // manual offsets).
 import { zoneDateString } from "./eod.js";
-import { cancelCauseLabel, isLoudCancelCause, type RoundRow, type StateStore } from "./state.js";
+import { cancelCauseLabel, tallyCancellations, type RoundRow, type StateStore } from "./state.js";
 
 // ---- the payload contract (do not rename or reshape) ----------------------
 
@@ -560,24 +560,13 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     .slice(0, EVENT_KIND_CAP);
 
   // ---- cancellations by cause ----
-  const causeCounts = new Map<string, number>();
-  for (const r of live) {
-    if (r.status !== "cancelled") continue;
-    const cause = r.cancel_cause ?? "unknown";
-    causeCounts.set(cause, (causeCounts.get(cause) ?? 0) + 1);
-  }
-  const byCause = [...causeCounts.entries()]
-    .map(([cause, count]) => ({
-      cause,
-      label: cancelCauseLabel(cause),
-      count,
-      loud: isLoudCancelCause(cause),
-    }))
-    // Loud first: the surface renders in order and never has to know policy.
-    .sort(
-      (a, b) =>
-        Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
-    );
+  // Loud first: the surface renders in order and never has to know policy.
+  const byCause = tallyCancellations(live).map((t) => ({
+    cause: t.cause,
+    label: cancelCauseLabel(t.cause),
+    count: t.count,
+    loud: t.loud,
+  }));
   const cancellations = {
     total: byCause.reduce((n, c) => n + c.count, 0),
     loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
@@ -944,10 +933,22 @@ const fmtSecs = (s: number | null): string =>
  * ambiguous zero.
  */
 export function cancellationLine(win: MetricsWindow, label = "cancelled (7d)"): string {
-  const c = win.cancellations;
-  if (!c || c.total === 0) return `${label}: none`;
-  const parts = c.by_cause.map((b) => `${b.label} ${b.count}${b.loud ? " ⚑" : ""}`);
-  return `${label}: ${c.total} — ${parts.join(", ")}${c.loud > 0 ? `  (${c.loud} needing a look)` : ""}`;
+  return cancellationSummaryLine(label, win.cancellations?.by_cause ?? []);
+}
+
+/** The cancellation line's wording over any cause tallies, in the order
+ * given; a tally without its own label takes `cancelCauseLabel`'s. */
+export function cancellationSummaryLine(
+  label: string,
+  tallies: ReadonlyArray<{ cause: string; count: number; loud: boolean; label?: string }>,
+): string {
+  if (tallies.length === 0) return `${label}: none`;
+  const total = tallies.reduce((n, t) => n + t.count, 0);
+  const loud = tallies.filter((t) => t.loud).reduce((n, t) => n + t.count, 0);
+  const parts = tallies.map(
+    (t) => `${t.label ?? cancelCauseLabel(t.cause)} ${t.count}${t.loud ? " ⚑" : ""}`,
+  );
+  return `${label}: ${total} — ${parts.join(", ")}${loud > 0 ? `  (${loud} needing a look)` : ""}`;
 }
 
 export function renderMetrics(payload: MetricsPayload): string {
