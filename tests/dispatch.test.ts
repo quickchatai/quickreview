@@ -289,6 +289,31 @@ describe("the round's context pack", () => {
   );
 });
 
+describe("a PR closed while its own round is prepared", () => {
+  // MUTATION: drop the closed check before the handoff — the closed PR gets a
+  // session, a prompt and a running round.
+  it(
+    "is never handed off: no order, no running round, still closed",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(210, "2026-08-13T09:00:00Z");
+      class Closing extends FakeAdapter {
+        override async listPrFiles(n: number): Promise<PrFileEntry[]> {
+          store.setPrState(n, "closed");
+          return super.listPrFiles(n);
+        }
+      }
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter: new Closing(), hooks });
+
+      expect(orders).toEqual([]);
+      expect(store.runningRounds()).toEqual([]);
+      expect(store.getPr(210)?.state).toBe("closed");
+    },
+  );
+});
+
 describe("roundTypeFor", () => {
   it("first → staleness → re-review", () => {
     const row = { stale_recheck: 0 } as any;

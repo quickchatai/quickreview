@@ -2782,6 +2782,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         dir: join(passesDir, "lessons"),
       });
 
+      // A PR closed while its round was prepared gets no session and no
+      // prompt: the provisional round is discarded like any failed
+      // preparation (the close hook already archived the session).
+      if (store.getPr(row.number)?.state === "closed")
+        throw new Error(`#${row.number} closed while its round was prepared — not handed off`);
       // The round is provisional until the worktree/session/prompt handoff
       // completes; publishing reviewing/running state any earlier would leave
       // an orphan round whenever worktree preparation fails.
