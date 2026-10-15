@@ -679,7 +679,7 @@ describe("the memory budgets: longer, bounded, named in config.example.toml", ()
     expect(wire).toMatch(/timeoutMs: cfg\.memory\.context_timeout_ms,/);
     expect(wire).toMatch(/searchTimeoutMs: cfg\.openviking\.search_timeout_ms,/);
     expect(wire).toMatch(
-      /memory: \{\s*assembler: lateAssembler,[\s\S]*?activity: roundActivity,\s*\},/,
+      /roundMemorySeed\(cfg\.openviking\.enabled, \{\s*assembler: lateAssembler,[\s\S]*?activity: roundActivity,\s*\}\),/,
     );
     expect(wire).toMatch(
       /caseWriter = new CaseWriter\(\{[\s\S]*?rounds: roundActivity,[\s\S]*?embedTailMsPerCase: cfg\.memory\.case_embed_tail_ms,[\s\S]*?reviews: \(\) => reviewsInFlight\(d\.store\),[\s\S]*?\}\);/,
