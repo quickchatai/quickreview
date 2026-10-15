@@ -103,8 +103,10 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
 2. **Command guard** — `checkBashCommand`, `extensions/bash-guard.ts`. Program
    allowlist; `gh` and `git` by read-verb allowlist; the config-injection and
    config-relocation option and env families; and `checkReaderModes`, which gates the write and exec modes of the three
-   programs allowlisted for *reading*: `sed -i` and its `w`/`r`/`e` script
-   commands (including a script glued to `-e`/`--expression`),
+   programs allowlisted for *reading*: `sed`, which is PARSED rather than
+   matched (`checkSedInvocation`: `-i`/`-f`, the `e`/`w`/`W`/`r`/`R` commands
+   and `s`'s `e`/`w` flags at any address and with any delimiter, and anything
+   the parser cannot read),
    `sort -o`/`--compress-program`, and `find -exec`/`-delete`/`-fprintf` and
    kin. `awk` is off the allowlist entirely. git's read verbs have two such
    modes of their own, both refused: the diff options' `--output=<file>` (`git log`/`show`/`diff` WRITE
@@ -384,6 +386,32 @@ replayed against the compiled guard. **Layer 4 does not watch these dirs**:
 the daemon and the bridge rewrite them all the time, so the write veto is
 their protection, as it is for the memory scope.
 
+A thirteenth round found that the argument `sed` had been kept on — its
+file/exec verbs are single letters at a command position — had been enforced
+with patterns, and the patterns were the round-7 awk mistake again. GNU sed's
+`e` runs the pattern space as a shell command, as a command (`e`) and as a flag
+of `s`; the rules keyed the flag on a `/` delimiter and on its being last, and
+the command on a short list of address shapes, so each of these was allowed
+and ran a command:
+
+```
+sed 's|.*|<cmd>|e' f        sed -n 's/.*/<cmd>/ep' f        sed -n '1!e' f
+```
+
+The decision held — sed stays — but its enforcement changed shape:
+`checkSedInvocation` PARSES the invocation. Every option is classified (GNU
+long options by unambiguous prefix, as getopt resolves them; short clusters
+letter by letter), every script is split into commands (every address form,
+any `s`/`y` delimiter, `a`/`i`/`c` text, labels and comments), and the
+invocation is allowed only when every part is understood and none writes,
+reads another file or runs a command. What it cannot read is refused: an
+unknown option or command, an unfinished script, an argument whose value the
+command text does not fix (a `$`-expansion, `$'…'`, a backtick), and `xargs
+sed` unless sed's own words end with `--` — xargs appends stdin to them, and
+GNU sed reads an option anywhere, so a file in a PR's tree named
+`-es/.*/<cmd>/e` would otherwise be a script. The chains are round 13 of the
+corpus, replayed against the compiled guard.
+
 ## The guarantees, stated so they can be falsified
 
 **G1 — the set of files git reads configuration from is fixed at spawn, small,
@@ -455,14 +483,15 @@ compiled `dist/` guard.
   a write hidden inside a quoted `sed` program the reader-mode rules do not
   recognise. This is not a gap awaiting more spellings; it is the reason
   layer 4 exists. Adding spellings here is the mistake rounds 1–4 made.
-- **The reader-mode rules are pattern-based too**, and their `sed` script
-  parsing is approximate: a `w` flag on a non-`/` delimiter (`sed 's|a|b|w f'`)
-  is not recognised — VERIFIED writing. It is left in place deliberately: it
-  narrows to a *write*, which layer 4 catches when it lands on a config file.
-  They narrow the surface; they do not close it. This is exactly the kind of
-  residual that justified removing `awk` rather than gating it — when the gap
-  is an *exec* primitive instead of a write, layer 4 cannot cover it and the
-  program has to go.
+- **The `find` and `sort` reader-mode rules are pattern-based; `sed` is
+  parsed.** The sed parser reads sed as GNU sed 4.x reads it; a sed whose
+  script language grew a new file/exec verb would need the parser to learn it,
+  and until then the verb is an unknown command — refused, not allowed. The
+  parser's word split re-joins the guard's whitespace tokens, so a quoted
+  script with a run of spaces is judged with one space; that changes no
+  command boundary sed sees. Round 13 is the reminder that a residual left in
+  place because it "only writes" sat beside exec spellings the same patterns
+  missed: when the gap is an *exec* primitive, layer 4 cannot cover it.
 - **Layer 4 does not watch `<clone>/.git/modules/*/config`** (submodule
   configs), so a submodule's config is outside G4.
 - **G4's window starts at worktree preparation.** Anything planted BEFORE that

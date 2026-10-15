@@ -553,6 +553,60 @@ const CORPUS = [
     outcome: null,
     note: "a pattern onto the bridge's .done/ from a sibling inject dir",
   },
+  // Round 13. sed's `e` runs the pattern space as a shell command: the `e`
+  // command at any address, and the `e` flag of `s` with any delimiter and
+  // the flags in any order. The rules here were patterns keyed on a `/`
+  // delimiter and a trailing flag, so `s|..|..|e` and `s/../../ep` ran a
+  // command. sed is now PARSED, and what the parser cannot read is refused.
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed 's|.*|cmd|e' f",
+    outcome: null,
+    note: "the e flag behind a non-`/` delimiter",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n 's/.*/cmd/ep' f",
+    outcome: null,
+    note: "the e flag not last",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n 's#.*#cmd#e;p' f",
+    outcome: null,
+    note: "the e flag, then another command",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -es/.*/cmd/e f",
+    outcome: null,
+    note: "the script glued to a short -e",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n '1!e' f",
+    outcome: null,
+    note: "the e command behind a negated address",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed '1~2e' f",
+    outcome: null,
+    note: "the e command behind a step address",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed --expr='s/.*/cmd/e' f",
+    outcome: null,
+    note: "an abbreviated --expression",
+  },
 ] as const;
 
 /**

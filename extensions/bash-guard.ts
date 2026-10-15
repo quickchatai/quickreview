@@ -55,12 +55,11 @@ import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
  * `sort`, `uniq`, `head`, `tail`, `wc`, `nl`, `tr` and `sed -n`; `gawk`,
  * `mawk` and `nawk` are off ALLOWED too.
  *
- * `sed` stays, on a narrower argument: its script language has exactly three
- * file/exec verbs (`w`/`r`/`e`) and they are single letters at a command
- * position, not expressions. That is parseable; awk's is not. The residual —
- * a `w` flag on a non-`/` `s` delimiter — is declared in
- * docs/exec-boundary.md and covered by the integrity check when it lands on a
- * config file.
+ * `sed` stays, on a narrower argument: its script language is small and
+ * fixed — its file/exec verbs are the `e`/`w`/`W`/`r`/`R` commands and the
+ * `e`/`w` flags of `s` — so `checkSedInvocation` PARSES every invocation
+ * (options, addresses, any `s` delimiter) and refuses anything it cannot
+ * classify. awk's language takes an expression anywhere; sed's does not.
  *
  * Exported in ORDER because the sentence every built pass reads ("Allowed
  * commands: …", `src/include.ts`) is rendered from this array: a model told a
@@ -793,7 +792,7 @@ function checkSegment(segment: string, tokens: string[], depth: number): BashChe
       }
       if (lifted.kind === "unliftable") return block(lifted.reason);
     }
-    return checkProgram(raw, args, rawArgs, depth);
+    return checkProgram(raw, args, rawArgs, depth, textAfterWords(segment, i + 1));
   }
   return { allowed: true }; // empty segment
 }
@@ -957,6 +956,9 @@ function checkProgram(
   args: string[],
   rawArgs: string[] | undefined,
   depth: number,
+  /** The segment's text after `prog`, verbatim — quotes, and the newlines a
+   * whitespace split loses, intact. */
+  rawText?: string,
 ): BashCheck {
   // Sanctioned scripts, invoked directly.
   const direct = sanctionedScript(prog);
@@ -1025,12 +1027,31 @@ function checkProgram(
     const target = args.find((a) => !a.startsWith("-") && a !== "{}");
     if (target === undefined) return { allowed: true };
     const from = args.indexOf(target) + 1;
-    return checkProgram(target, args.slice(from), rawArgs?.slice(from), depth);
+    // xargs appends what it reads from stdin to sed's words, and GNU sed reads
+    // an option anywhere: a file NAMED "-es/.*/cmd/e" in a PR's tree, piped in
+    // from `git diff --name-only`, would be a script. So sed through xargs is
+    // allowed only when its own words end with `--` (everything appended is
+    // a file) and xargs substitutes nothing into them (-I/-i/--replace).
+    if (/(?:^|\/)sed$/.test(target)) {
+      const replaces = args.slice(0, from - 1).some((a) => /^(?:-[a-zA-Z]*[Ii]|--replace)/.test(a));
+      if (replaces || args[args.length - 1] !== "--") {
+        return block(
+          "exec policy: 'xargs sed' without a closing '--' — xargs appends stdin to sed's words, where a name like '-es/x/y/e' is a script; end sed's arguments with '--' (`xargs sed -n 1p --`)",
+        );
+      }
+    }
+    return checkProgram(
+      target,
+      args.slice(from),
+      rawArgs?.slice(from),
+      depth,
+      rawText === undefined ? undefined : textAfterWords(rawText, from),
+    );
   }
   if (ALLOWED.has(base)) {
     // Allowlisted for READING is not allowlisted outright: sed/sort/find each
     // carry a write or exec mode (all VERIFIED).
-    return checkReaderModes(base, args, rawArgs);
+    return checkReaderModes(base, args, rawArgs, rawText);
   }
   // ALLOWLIST MEMBERSHIP is what decides — this table only makes the refusal
   // name a replacement. Deliberately AFTER the check above: were it first,
@@ -2215,9 +2236,7 @@ export function checkBashCommand(cmd: string, depth = 0): BashCheck {
  */
 interface ReaderModeRule {
   /** Flags that write or execute, matched whole or as `--flag=value`. */
-  flags?: RegExp;
-  /** Patterns in a program body that write or execute. */
-  body?: Array<{ re: RegExp; what: string }>;
+  flags: RegExp;
   what: string;
 }
 
@@ -2238,26 +2257,314 @@ const READER_MODE_RULES: Readonly<Record<string, ReaderModeRule>> = {
     flags: /^(?:--(?:output|compress-program)(?:=|$)|-(?!-)[a-zA-Z]*o)/,
     what: "writes a file or names a program to run",
   },
-  // -i rewrites in place, -f/--file is a script we cannot inspect, and the
-  // script's own w/W (write), r/R (read a file into the stream) and e (execute)
-  // commands are file/exec verbs at a COMMAND position. `i` and `f` are
-  // unambiguous in sed's short-option set (n e f i r E s u z), so a cluster
-  // carrying either is one of those modes — `sed -ni 'w f'` included.
-  sed: {
-    flags: /^(?:--(?:in-place|file)(?:[=.]|$)|-(?!-)[a-zA-Z]*[if])/,
-    body: [
-      {
-        re: /(?:^|[;{}\n])[ \t]*(?:\/(?:\\.|[^/\\])*\/|[0-9]+|\$|,)*[ \t]*[wWrRe](?:[ \t]|$)/,
-        what: "a w/r/e command",
-      },
-      { re: /\/[gpiImMnN0-9]*[we](?:[ \t]|$)/, what: "a w/e flag on s///" },
-    ],
-    what: "writes a file or runs a command",
-  },
+  // sed is not here: `checkSedInvocation` parses it, which no pattern can match.
   // There is deliberately no `awk` entry: awk's exec and write forms take
   // arbitrary EXPRESSIONS (`print "cmd" | c`), so no rule here can gate it.
   // awk is off ALLOWED instead; see the comment there.
 };
+
+/**
+ * sed, read as sed reads it. The regex rules above match spellings; sed's
+ * script language is small enough to PARSE, so the decision is made on the
+ * parse: every option is classified, every script is split into commands, and
+ * the guard allows only an invocation whose every part it understood and none
+ * of which writes, reads another file or runs a command. Fails closed: an
+ * option it does not know, an abbreviation it cannot resolve to one safe
+ * option, a script it cannot finish parsing, a script it cannot see (a
+ * `$`-expansion or a backtick in an argument; `xargs`, which can append
+ * options and scripts from stdin) are all refused.
+ *
+ * What it refuses inside a script: the `e`, `w`, `W`, `r` and `R` commands
+ * (run a command, write a file, read a file into the stream), at any address
+ * (`/re/`, `\cREc`, a number, `$`, `first~step`, `addr,+N`, negated with `!`);
+ * and an `s` command whose flags carry `e` (run the pattern space as a
+ * command) or `w` (write) — with ANY delimiter, flags in any order.
+ */
+export function checkSedInvocation(words: readonly string[]): string | null {
+  const scripts: string[] = [];
+  let positional: string | null = null;
+  let explicit = false;
+  // GNU getopt_long accepts any unambiguous prefix of a long option.
+  const LONG: ReadonlyArray<[string, "script" | "value" | "flag" | "refuse"]> = [
+    ["expression", "script"],
+    ["file", "refuse"],
+    ["in-place", "refuse"],
+    ["line-length", "value"],
+    ["null-data", "flag"],
+    ["zero-terminated", "flag"],
+    ["quiet", "flag"],
+    ["silent", "flag"],
+    ["regexp-extended", "flag"],
+    ["separate", "flag"],
+    ["sandbox", "flag"],
+    ["debug", "flag"],
+    ["posix", "flag"],
+    ["unbuffered", "flag"],
+    ["follow-symlinks", "flag"],
+    ["binary", "flag"],
+    ["help", "flag"],
+    ["version", "flag"],
+  ];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]!;
+    if (w === "--") {
+      for (const rest of words.slice(i + 1))
+        if (positional === null && !explicit) positional = rest;
+      break;
+    }
+    if (w.startsWith("--")) {
+      const [name, value] = w.slice(2).split(/=(.*)/s) as [string, string | undefined];
+      const hits = LONG.filter(([n]) => n.startsWith(name));
+      const exact = LONG.find(([n]) => n === name);
+      const hit = exact ?? (hits.length === 1 ? hits[0] : undefined);
+      if (name === "" || hit === undefined) return `an option the guard cannot classify ('${w}')`;
+      const [full, kind] = hit;
+      if (kind === "refuse")
+        return `--${full}, which reads a script file or rewrites files in place`;
+      if (kind === "script") {
+        const script = value ?? words[++i];
+        if (script === undefined) return `--${full} with no script`;
+        scripts.push(script);
+        explicit = true;
+      } else if (kind === "value" && value === undefined) i++;
+      continue;
+    }
+    if (w.startsWith("-") && w.length > 1) {
+      for (let j = 1; j < w.length; j++) {
+        const c = w[j]!;
+        if ("nrEsuz".includes(c)) continue;
+        if (c === "e" || c === "l") {
+          const rest = w.slice(j + 1);
+          const arg = rest.length > 0 ? rest : words[++i];
+          if (arg === undefined) return `-${c} with no argument`;
+          if (c === "e") {
+            scripts.push(arg);
+            explicit = true;
+          }
+          break;
+        }
+        if (c === "f" || c === "i")
+          return `-${c}, which reads a script file or rewrites files in place`;
+        return `an option the guard cannot classify (-${c})`;
+      }
+      continue;
+    }
+    if (!explicit && positional === null) positional = w;
+  }
+  if (!explicit) {
+    if (positional === null) return null; // sed with no script: an error, not a risk
+    scripts.push(positional);
+  }
+  for (const script of scripts) {
+    const why = sedScriptDanger(script);
+    if (why !== null) return why;
+  }
+  return null;
+}
+
+/** The first command in a sed script that writes, reads a file or runs a
+ * command — or that the parser cannot classify — or null when every command
+ * is a plain stream edit. */
+export function sedScriptDanger(script: string): string | null {
+  const s = script;
+  let i = 0;
+  const at = (k = i) => s[k] ?? "";
+  const skipBlank = () => {
+    while (i < s.length && /[ \t]/.test(at())) i++;
+  };
+  // A delimited part (`/re/`, `\cREc`, an s or y part): up to the next
+  // unescaped delimiter. Brackets are not special here: a misread there only
+  // moves where the flags are scanned from, and the flag scan runs to the end
+  // of the command.
+  const delimited = (d: string): boolean => {
+    while (i < s.length) {
+      const c = at();
+      if (c === "\\") {
+        i += 2;
+        continue;
+      }
+      if (c === "\n" && d !== "\n") return false;
+      i++;
+      if (c === d) return true;
+    }
+    return false;
+  };
+  const address = (): boolean => {
+    const c = at();
+    if (/[0-9]/.test(c)) {
+      while (/[0-9]/.test(at())) i++;
+      if (at() === "~") {
+        i++;
+        while (/[0-9]/.test(at())) i++;
+      }
+      return true;
+    }
+    if (c === "$") {
+      i++;
+      return true;
+    }
+    if (c === "/" || c === "\\") {
+      const d = c === "/" ? "/" : at(i + 1);
+      i += c === "/" ? 1 : 2;
+      if (d === "" || d === "\n" || !delimited(d)) return false;
+      while (/[IM]/.test(at())) i++;
+      return true;
+    }
+    return false;
+  };
+  while (i < s.length) {
+    while (i < s.length && /[ \t\n;]/.test(at())) i++;
+    if (i >= s.length) break;
+    if (address()) {
+      skipBlank();
+      if (at() === ",") {
+        i++;
+        skipBlank();
+        if (at() === "+" || at() === "~") {
+          i++;
+          while (/[0-9]/.test(at())) i++;
+        } else if (!address()) return "an address the guard cannot read";
+      }
+    }
+    skipBlank();
+    while (at() === "!") {
+      i++;
+      skipBlank();
+    }
+    const cmd = at();
+    i++;
+    switch (cmd) {
+      case "{":
+      case "}":
+      case "=":
+      case "d":
+      case "D":
+      case "g":
+      case "G":
+      case "h":
+      case "H":
+      case "n":
+      case "N":
+      case "p":
+      case "P":
+      case "x":
+      case "z":
+      case "F":
+        break;
+      case "l":
+      case "L":
+      case "q":
+      case "Q":
+        skipBlank();
+        while (/[0-9]/.test(at())) i++;
+        break;
+      case "#":
+      case ":":
+      case "b":
+      case "t":
+      case "T":
+        // A comment or a label runs to the end of the line (a label also to `;`).
+        while (i < s.length && at() !== "\n" && (cmd === "#" || at() !== ";")) i++;
+        break;
+      case "a":
+      case "i":
+      case "c":
+        // Text to the end of the line, with backslash-newline continuations.
+        while (i < s.length && at() !== "\n") i += at() === "\\" ? 2 : 1;
+        break;
+      case "y": {
+        const d = at();
+        i++;
+        if (d === "" || d === "\\" || d === "\n" || !delimited(d) || !delimited(d))
+          return "a y command the guard cannot read";
+        break;
+      }
+      case "s": {
+        const d = at();
+        i++;
+        if (d === "" || d === "\\" || d === "\n" || !delimited(d) || !delimited(d))
+          return "an s command the guard cannot read";
+        // The flags: everything up to the end of the command. GNU's flags are
+        // g p N i I m M e w — `e` runs the pattern space as a command, `w`
+        // writes a file.
+        const start = i;
+        while (i < s.length && !/[;\n}]/.test(at())) i++;
+        const flags = s.slice(start, i);
+        if (/[ew]/.test(flags)) return `an s command with an ${/e/.test(flags) ? "e" : "w"} flag`;
+        break;
+      }
+      case "e":
+      case "w":
+      case "W":
+      case "r":
+      case "R":
+        return `a ${cmd} command`;
+      default:
+        return `a command the guard cannot classify (${JSON.stringify(cmd)})`;
+    }
+  }
+  return null;
+}
+
+/** `text` after its first `n` whitespace-separated words, verbatim — the same
+ * words `checkBashCommand` splits a segment into. */
+function textAfterWords(text: string, n: number): string {
+  const word = /\S+/g;
+  let end = 0;
+  for (let k = 0; k < n; k++) {
+    const m = word.exec(text);
+    if (m === null) return "";
+    end = m.index + m[0].length;
+  }
+  return text.slice(end);
+}
+
+/** Shell words of a sed invocation's argument text, as bash will hand them to
+ * sed — or null when a word's value is not knowable from the text (a `$`
+ * expansion, ANSI-C or locale quoting, a backtick, an unclosed quote). */
+export function sedWords(text: string): string[] | null {
+  const out: string[] = [];
+  let cur = "";
+  let inWord = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === "'") {
+      const end = text.indexOf("'", i + 1);
+      if (end < 0) return null;
+      cur += text.slice(i + 1, end);
+      i = end;
+      inWord = true;
+    } else if (c === '"') {
+      i++;
+      for (; i < text.length && text[i] !== '"'; i++) {
+        const d = text[i]!;
+        if (d === "$" || d === "`") return null;
+        if (d === "\\" && /["\\$`\n]/.test(text[i + 1] ?? "")) cur += text[++i]!;
+        else cur += d;
+      }
+      if (i >= text.length) return null;
+      inWord = true;
+    } else if (c === "\\") {
+      if (text[i + 1] === "\n") {
+        i++; // a line continuation joins, it adds nothing
+        continue;
+      }
+      cur += text[++i] ?? "";
+      inWord = true;
+    } else if (c === "$" || c === "`") {
+      return null;
+    } else if (/\s/.test(c)) {
+      if (inWord) out.push(cur);
+      cur = "";
+      inWord = false;
+    } else {
+      cur += c;
+      inWord = true;
+    }
+  }
+  if (inWord) out.push(cur);
+  return out;
+}
 
 /**
  * Does this invocation of an allowlisted reader use one of its write/exec
@@ -2267,40 +2574,36 @@ export function checkReaderModes(
   prog: string,
   args: readonly string[],
   rawArgs?: readonly string[],
+  rawText?: string,
 ): BashCheck {
+  if (prog === "sed") {
+    // From the verbatim text when there is one: a newline inside a quoted
+    // script ends an `a`/`i`/`c` text, a comment or a label, so re-joined
+    // tokens would hide the command after it (`'1a x⏎e'`).
+    const words =
+      rawText !== undefined
+        ? sedWords(rawText)
+        : rawArgs !== undefined
+          ? sedWords(rawArgs.join(" "))
+          : [...args];
+    const why =
+      words === null
+        ? "an argument the guard cannot read as words ($-expansion, $'…' quoting, a backtick, a quote cut by the command splitter)"
+        : checkSedInvocation(words);
+    if (why !== null) {
+      return block(
+        `exec policy: this 'sed' has ${why}, which writes a file or runs a command, or cannot be checked — the reviewer reads code and never writes or runs anything. Use 'sed -n' with plain p/s///g scripts.`,
+      );
+    }
+    return { allowed: true };
+  }
   const rule = READER_MODE_RULES[prog];
   if (rule === undefined) return { allowed: true };
   for (const raw of args) {
     const a = raw.replace(/^['"]+|['"]+$/g, "");
-    if (a.length > 0 && a.startsWith("-") && rule.flags?.test(a)) {
+    if (a.length > 0 && a.startsWith("-") && rule.flags.test(a)) {
       return block(
         `exec policy: '${prog} ${a}' ${rule.what} — the reviewer reads code and never writes or runs anything. Use the read-only form.`,
-      );
-    }
-  }
-  // The body rules run over the args JOINED **with their quotes intact**, and
-  // over each argument on its own, because:
-  //   · the splitter tokenises on whitespace, so a quoted program is already
-  //     shredded here — `sed -n '1 w f'` arrives as four tokens and no
-  //     per-token rule can see the command as one thing;
-  //   · `checkProgram` strips a leading/trailing quote from every token, which
-  //     destroys the very quoting the rules key on. Hence `rawArgs`.
-  //
-  // The third form is a script GLUED TO ITS FLAG. `sed -e 'w f'` is caught
-  // because `w` arrives as its own token, but `sed --expression='w f'` and
-  // `sed -e'w f'` do not — the flag and the script share a token, so neither
-  // the joined string (where `w` follows a quote, not a command position) nor
-  // the per-arg pass sees a script. Stripping the flag prefix yields the same
-  // script text either spelling produced.
-  const unglued = args
-    .map((a) => /^(?:--expression=|-e)(.+)$/.exec(a)?.[1])
-    .filter((s): s is string => s !== undefined)
-    .map((s) => s.replace(/^['"]+|['"]+$/g, ""));
-  const candidates = [(rawArgs ?? args).join(" "), ...args, ...unglued];
-  for (const { re, what } of rule.body ?? []) {
-    if (candidates.some((c) => re.test(c))) {
-      return block(
-        `exec policy: this '${prog}' program contains ${what}, which ${rule.what} — the reviewer reads code and never writes or runs anything.`,
       );
     }
   }
