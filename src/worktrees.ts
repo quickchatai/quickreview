@@ -16,6 +16,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExecFn, ExecResult } from "./tmux.js";
 import { nodeExec, runOrThrow } from "./tmux.js";
 import { parseHunkHeader } from "./hunkheader.js";
+import { repoCloneDirName } from "./clonedir.js";
 
 export interface WorktreeManagerOptions {
   /** Sandbox root — the clone lives at <root>/<cloneDir>, worktrees at <root>/wt. */
@@ -27,7 +28,7 @@ export interface WorktreeManagerOptions {
   run?: ExecFn;
   /** Directory name of the base clone. Production wires `[github] clone_dir`
    * via `githubCloneDir` (src/config.ts); absent ⇒ derived here
-   * from `repo`'s basename the same way ("owner/name" ⇒ "name"). */
+   * from `repo` by the same rule, `repoCloneDirName` ("owner/name" ⇒ "name"). */
   cloneDir?: string;
 }
 
@@ -637,19 +638,6 @@ export function cloneUrlFor(repo: string): string {
     : `https://github.com/${repo}.git`;
 }
 
-/** Fallback clone-dir derivation when the caller passes none: the repo's
- * basename, `.git` stripped — the same rule as `githubCloneDir`
- * (src/config.ts), duplicated here only so this module keeps zero config
- * imports. */
-function repoBasename(repo: string): string {
-  const tail = repo
-    .replace(/\.git$/, "")
-    .replace(/\/+$/, "")
-    .split("/")
-    .pop();
-  return tail || "repo";
-}
-
 /** The info/exclude file of the git repository whose work tree is exactly
  * `root`, or null when `root` is not a work-tree root (the VM's sandbox: the
  * rsync ships no `.git`). Pure filesystem — no `git` process, so a checkout
@@ -714,7 +702,7 @@ export class WorktreeManager {
 
   constructor(opts: WorktreeManagerOptions) {
     this.root = opts.root;
-    this.basePath = join(opts.root, opts.cloneDir ?? repoBasename(opts.repo));
+    this.basePath = join(opts.root, opts.cloneDir ?? repoCloneDirName(opts.repo));
     this.wtRoot = join(opts.root, "wt");
     this.cloneUrl = opts.cloneUrl ?? cloneUrlFor(opts.repo);
     this.run = opts.run ?? nodeExec;
