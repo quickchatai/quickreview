@@ -63,6 +63,20 @@ function order(over: Partial<RoundOrder> = {}): RoundOrder {
 }
 
 describe("renderPassTasks", () => {
+  it("renders a focus path as a code span that stays data — a backtick or newline in the name cannot break out", () => {
+    const row = {
+      lens: "pass-sweep",
+      agent: "pass-sweep--sol-med",
+      tier: "sol-med",
+      raisable_to: [],
+      focus: ["src/we`ird.py", "src/two\nlines.py"],
+    } as RoundOrder["pass_plan"][number];
+    const text = renderPassTask(order({ pass_plan: [row] }), row, "");
+    expect(text).toContain("- `` /opt/quickreview/wt/pr-42/src/we`ird.py ``");
+    expect(text).toContain("- `/opt/quickreview/wt/pr-42/src/two\\u000alines.py`");
+    expect(text).not.toContain("\nlines.py");
+  });
+
   it("writes one task per DISCOVERY row, in plan order, never the validator", () => {
     const tasks = renderPassTasks(order(), "");
     expect(tasks.map((t) => t.file)).toEqual([
