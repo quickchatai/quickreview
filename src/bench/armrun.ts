@@ -52,7 +52,8 @@ export interface ArmCasePrep {
   /** Call before a case is reviewed (again): its result file is about to be
    * rewritten, so the run's metrics go — once. */
   beforeReview(): void;
-  /** The cases whose earlier review was dropped for another configuration. */
+  /** The cases whose earlier review was dropped for another configuration, or
+   * for a summary that could not be read. */
   dropped: string[];
 }
 
@@ -65,9 +66,10 @@ export interface ArmCasePrep {
  * label. A case with no summary of this arm (an interrupted review: its
  * result is written before its summary) is re-reviewed by the loop, so any
  * result or judge input it left goes now too — nothing unverified is scored
- * under the new label. The run's metrics go BEFORE the first file is removed
- * (and with the first result rewritten), so no stop can leave a score of
- * findings already gone; a resume that keeps every case keeps them.
+ * under the new label; so does a case whose summary cannot be read (no proof
+ * of this run's fingerprint). The run's metrics go BEFORE the first file is
+ * removed (and with the first result rewritten), so no stop can leave a score
+ * of findings already gone; a resume that keeps every case keeps them.
  */
 export function prepareArmCases(o: {
   outDir: string;
@@ -99,7 +101,13 @@ export function prepareArmCases(o: {
       join(resultsDir, `${safeId(c.instance_id)}.json`),
     ];
     if (o.resume) {
-      const prior = o.readSummary(o.outDir, c);
+      let prior: { fingerprint: unknown } | null;
+      try {
+        prior = o.readSummary(o.outDir, c);
+      } catch {
+        // An unreadable summary is no proof of this run's fingerprint.
+        prior = { fingerprint: undefined };
+      }
       if (prior) {
         if (JSON.stringify(prior.fingerprint) === want) continue;
         o.log(`${o.arm}: ${c.instance_id} was reviewed by ${o.differs} — its result is dropped`);

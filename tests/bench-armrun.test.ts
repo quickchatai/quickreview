@@ -105,14 +105,16 @@ describe("a run dir set up for a new configuration", () => {
     expect(has("results", "all", "metrics_ocr_round_1.json")).toBe(true);
   });
 
-  it("removes nothing when a summary cannot be read: no result goes while its score stays", () => {
-    seed(A, "old");
+  it("an unreadable summary is no proof of the fingerprint: its case is dropped, never a throw", () => {
+    seed(A, "new");
     seed(B, "new");
     writeFileSync(join(out, "cases", B.instance_id, "case-summary.json"), "{");
-    expect(() => prep(true, "new")).toThrow();
-    // Both stay, so the metrics still describe the results beside them.
+    const p = prep(true, "new");
+    expect(p.dropped).toEqual([B.instance_id]);
+    expect(has("results", "all", `${B.instance_id}.json`)).toBe(false);
+    expect(has("cases", B.instance_id, "case-summary.json")).toBe(false);
     expect(has("results", "all", `${A.instance_id}.json`)).toBe(true);
-    expect(has("results", "all", "metrics_ocr_round_1.json")).toBe(true);
+    expect(has("results", "all", "metrics_ocr_round_1.json")).toBe(false);
   });
 
   it("a resume that keeps every case keeps the metrics until a case is reviewed again", () => {
