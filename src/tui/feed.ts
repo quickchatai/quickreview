@@ -413,13 +413,7 @@ export class FeedWriter {
     rmSync(join(this.dir, "wake"), { force: true });
     if (!existsSync(this.eventsPath)) return;
 
-    let lines = readFileSync(this.eventsPath, "utf8")
-      .split("\n")
-      .filter((line) => line.trim() !== "");
-    if (lines.length > EVENT_TAIL_CAP) {
-      lines = lines.slice(-EVENT_TAIL_KEEP);
-      this.writeAtomic(this.eventsPath, lines.join("\n") + "\n");
-    }
+    if (this.journalLines().length > EVENT_TAIL_CAP) this.keepJournalTail();
     // Seed through the same whole-lines reader every later write uses, so a
     // row another TUI is mid-appending right now is not lost to a failed parse.
     this.journalIno = -1;
@@ -514,12 +508,22 @@ export class FeedWriter {
     return { appended: fresh.length };
   }
 
-  private compactEvents(): void {
-    const lines = readFileSync(this.eventsPath, "utf8")
+  /** The journal's non-blank lines. */
+  private journalLines(): string[] {
+    return readFileSync(this.eventsPath, "utf8")
       .split("\n")
-      .filter((line) => line.trim() !== "")
-      .slice(-EVENT_TAIL_KEEP);
+      .filter((line) => line.trim() !== "");
+  }
+
+  /** Replace the journal with its newest `EVENT_TAIL_KEEP` rows; returns them. */
+  private keepJournalTail(): string[] {
+    const lines = this.journalLines().slice(-EVENT_TAIL_KEEP);
     this.writeAtomic(this.eventsPath, lines.join("\n") + (lines.length > 0 ? "\n" : ""));
+    return lines;
+  }
+
+  private compactEvents(): void {
+    const lines = this.keepJournalTail();
     this.eventLines = lines.length;
     this.seen.clear();
     this.seedSeen(lines);

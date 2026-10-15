@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
 import {
+  deliverMessage,
   InjectSender,
   injectFileName,
   injectProbeArgv,
@@ -16,6 +17,7 @@ import {
   digestCatArgv,
   digestKeys,
   digestListArgv,
+  digestToday,
   parseDigestList,
   renderDigestTab,
   SshDigestFetcher,
@@ -117,16 +119,41 @@ describe("InjectSender", () => {
     await sender.send("pr-5012", "x", record);
     expect(states.map(([s]) => s)).toEqual(["pending", "undelivered"]);
     expect(states[1]![1]).toContain("write failed");
+    expect(states[1]![1]).toContain("exit 1"); // no stderr: the exit code
   });
 
-  it("times out to undelivered (session down?) — never silent", async () => {
+  it("names the failed write's cause, one line, control bytes stripped", async () => {
+    const { sender, states, record } = senderWith([
+      {
+        ok: false,
+        stdout: "",
+        stderr: "Error: No such container\u001b[2J\nquickreview-sandbox",
+        code: 1,
+      },
+    ]);
+    await sender.send("pr-5012", "x", record);
+    expect(states[1]![1]).toBe(
+      "✖ msg pr-5012 undelivered (write failed: Error: No such container[2J quickreview-sandbox)",
+    );
+  });
+
+  // The bridge consumes nothing while its session is busy, so a file still
+  // pending at the timeout will be delivered later: queued, never lost.
+  it("times out to queued while the file is still pending — never silent", async () => {
     const probes = Array.from({ length: 20 }, () => ok("pending\n"));
     const { sender, states, record } = senderWith([ok(""), ...probes], 10);
     await sender.send("pr-5012", "x", record);
     expect(states[states.length - 1]).toEqual([
-      "undelivered",
-      "✖ msg pr-5012 undelivered (session down?)",
+      "queued",
+      "⧗ msg pr-5012 queued — will deliver when the session is idle; do not re-send",
     ]);
+  });
+
+  it("times out to unconfirmed when no probe saw the file pending", async () => {
+    const { sender, states, record } = senderWith([ok(""), ok("missing\n")], 4);
+    await sender.send("pr-5012", "x", record);
+    expect(states[states.length - 1]![0]).toBe("unconfirmed");
+    expect(states[states.length - 1]![1]).toContain("check the session before re-sending");
   });
 
   it("refuses to build paths from a bad session name", async () => {
@@ -138,6 +165,48 @@ describe("InjectSender", () => {
 });
 
 // ---- the input box flow through the App ------------------------------------
+
+// The action channel's message verbs read the sender's LAST word: delivered,
+// queued and unconfirmed resolve with their label; only a definite
+// non-delivery (undelivered, a throwing sender, no sender) rejects — a failed
+// result file asks the companion to re-send, and a queued message re-sent is
+// delivered twice.
+// MUTATION: reject on any state but delivered — the queued case goes red.
+describe("deliverMessage — the outcome the action result carries", () => {
+  it("resolves on delivered or queued, rejects on undelivered or a sender that throws", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let final: DeliveryState = "delivered";
+    installMessageHooks(app, {
+      send: async (session, _text, onState) => {
+        onState("pending", `→ msg ${session} pending…`);
+        if (final === ("pending" as DeliveryState)) throw new Error("ssh died");
+        onState(
+          final,
+          final === "delivered"
+            ? `✓ msg ${session} delivered`
+            : final === "queued"
+              ? `⧗ msg ${session} queued — will deliver when the session is idle; do not re-send`
+              : `✖ msg ${session} undelivered (write failed)`,
+        );
+      },
+    });
+    await expect(deliverMessage(app, "pr-7", "hi")).resolves.toBe("✓ msg pr-7 delivered");
+    final = "queued";
+    await expect(deliverMessage(app, "overseer", "hi")).resolves.toMatch(
+      /overseer queued .* do not re-send/,
+    );
+    final = "undelivered";
+    await expect(deliverMessage(app, "overseer", "hi")).rejects.toThrow(
+      /overseer undelivered \(write failed/,
+    );
+    final = "pending";
+    await expect(deliverMessage(app, "pr-7", "hi")).rejects.toThrow(/undelivered \(ssh died\)/);
+    expect(app.view.noticeLine).toContain("ssh died");
+    app.hooks.sendMessage = undefined;
+    await expect(deliverMessage(app, "pr-7", "hi")).rejects.toThrow(/not wired/);
+  });
+});
 
 describe("quick-message input box", () => {
   it("m opens the box, typing edits, ⏎ hands the verbatim text to the sender", async () => {
@@ -311,7 +380,44 @@ describe("digest tab", () => {
       ),
     );
     expect(none).toContain("0 days");
-    expect(none).toContain("none yet — the EOD sweep writes digest/<date>.md at 18:00");
+    expect(none).toContain("none yet — the EOD sweep writes digest/<date>.md once a day");
+    expect(none).not.toContain("18:00");
+  });
+
+  it("names the CONFIGURED sweep schedule, never a fixed one", () => {
+    const none = stripAnsi(
+      renderDigestTab({ files: [], back: 0, scroll: 0 }, false, "2026-08-13", 100, 24, {
+        time: "07:30",
+        timezone: "UTC",
+      }).lines.join("\n"),
+    );
+    expect(none).toContain("the EOD sweep writes digest/<date>.md at 07:30 UTC");
+    expect(none).not.toContain("Warsaw");
+  });
+
+  it("counts 'yesterday' in the sweep's zone, not in UTC", () => {
+    // 00:30 in Warsaw on the 14th is still the 13th in UTC.
+    const now = new Date("2026-08-13T22:30:00Z");
+    const eod = { time: "18:00", timezone: "Europe/Warsaw" };
+    expect(digestToday(now, eod)).toBe("2026-08-14");
+    expect(digestToday(now)).toBe("2026-08-13");
+    const frame = renderDigestTab(
+      { files: ["2026-08-13.md"], back: 0, scroll: 0, content: "# day" },
+      false,
+      digestToday(now, eod),
+      100,
+      24,
+      eod,
+    );
+    expect(stripAnsi(frame.lines.join("\n"))).toContain("(yesterday)");
+  });
+
+  it("an existing digest directory that cannot be listed is a failed read, not an empty one", () => {
+    const script = digestListArgv(TUI_DEFAULTS).at(-1)!;
+    expect(script).toBe(
+      "if [ -e '/opt/quickreview/sandbox/digest' ]; then ls '/opt/quickreview/sandbox/digest'; fi",
+    );
+    expect(script).not.toContain("|| true");
   });
 
   it("the installed tab pages with [ / ] and scrolls with j/k — and a boundary key is neither consumed nor offered", async () => {
@@ -413,6 +519,45 @@ describe("digest tab", () => {
     const screen = stripAnsi(tab.screen(rig.app, 100, 24).render());
     expect(screen).toContain("fresh body of 2026-08-19");
     expect(screen).not.toContain("could not read");
+  });
+
+  it("a refresh that finds a newer day never shows the old day's text under its heading", async () => {
+    let files = ["2026-08-19.md"];
+    const pending = new Map<string, (text: string) => void>();
+    const rig = learningRig({
+      digestFetcher: {
+        list: async () => files,
+        read: (f) => new Promise((res) => pending.set(f, res)),
+      },
+    });
+    rig.app.tab = "digest";
+    const tab = rig.app.hooks.tabs.digest!;
+    tab.screen(rig.app, 100, 24);
+    await settle();
+    pending.get("2026-08-19.md")!("# body of 2026-08-19");
+    await settle();
+    files = ["2026-08-19.md", "2026-08-20.md"]; // today's digest lands
+    tab.key(rig.app, { kind: "refresh" });
+    await settle(); // listed; today's read still in flight
+    const screen = stripAnsi(tab.screen(rig.app, 100, 24).render());
+    expect(screen).toContain("digest 2026-08-20");
+    expect(screen).not.toContain("body of 2026-08-19");
+    expect(screen).toContain("loading 2026-08-20.md");
+  });
+
+  it("the paint that asks for the listing is written before the listing starts", async () => {
+    let lists = 0;
+    const rig = learningRig({
+      digestFetcher: {
+        list: async () => ((lists += 1), ["2026-08-20.md"]),
+        read: async () => "# d",
+      },
+    });
+    rig.app.tab = "digest";
+    rig.app.hooks.tabs.digest!.screen(rig.app, 100, 24);
+    expect(lists).toBe(0); // nothing external inside the paint
+    await settle();
+    expect(lists).toBe(1);
   });
 
   it("a failed listing on the installed tab says so and r asks again", async () => {

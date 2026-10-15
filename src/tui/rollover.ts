@@ -21,6 +21,7 @@
 // initial-message flag — is undocumented for 0.84.1; if one turns up it is a
 // drop-in replacement for writeDayOpen().
 import { stripModelDocs } from "../promptdoc.js";
+import { isNoTmuxServer } from "../tmux.js";
 import {
   existsSync,
   mkdirSync,
@@ -34,7 +35,13 @@ import type { CompanionConfig } from "../config.js";
 import { zoneDateString } from "../eod.js";
 import type { StatusSnapshot } from "../state.js";
 import { parseAlert, readPolicyState } from "./alerts.js";
-import { CONTAINER, type DockerResult, type DockerRunner } from "./companion.js";
+import {
+  CONTAINER,
+  companionSessionDir,
+  dockerFailureLine,
+  type DockerResult,
+  type DockerRunner,
+} from "./companion.js";
 
 /** What a lookup of the previous conversation found. `none` (the volume holds
  * no conversation) and `unreadable` (the exec never answered) are separate
@@ -48,9 +55,7 @@ export type ConversationRead =
   { state: "read"; text: string } | { state: "unreadable"; reason: string };
 
 /** One-line cause from a failed `docker exec`, for the step log. */
-function execReason(r: DockerResult): string {
-  return (r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).split("\n").slice(-1)[0]!;
-}
+const execReason = (r: DockerResult): string => dockerFailureLine(r);
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -586,9 +591,9 @@ export class CompanionRollover {
     return todayDate(this.now(), this.env, this.timeZone);
   }
 
-  /** In-container session dir — must match CompanionLifecycle.piArgv(). */
+  /** In-container session dir — the one CompanionLifecycle.piArgv() names. */
   private sessionDir(): string {
-    return `${CONTAINER.piHome}/agent/sessions/${this.cfg.session}`;
+    return companionSessionDir(this.cfg.session);
   }
 
   private archiveDir(date: string): string {
@@ -665,15 +670,12 @@ export class CompanionRollover {
       "-t",
       this.cfg.session,
     ]);
-    // tmux words "no server" two ways: `no server running on <sock>` (a stale
-    // socket, ECONNREFUSED) and `error connecting to <sock> (No such file or
-    // directory)` (no socket at all — a freshly started container). Both mean
-    // nothing is running; any other connect error does not.
+    // No such session, or no tmux server at all (a freshly started container),
+    // means nothing is running; any other connect error does not.
     if (
       res.ok ||
-      /can't find session|no server running|session not found|error connecting to .*\(No such file or directory\)/i.test(
-        res.stderr,
-      )
+      /can't find session|session not found/i.test(res.stderr) ||
+      isNoTmuxServer(res.stderr)
     )
       return { state: "killed" };
     return { state: "failed", reason: execReason(res) };

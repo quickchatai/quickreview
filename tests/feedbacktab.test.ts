@@ -117,6 +117,35 @@ describe("the signal, as a card", () => {
     expect(feedbackInbox([raw, adjudication, actedOn], true)).toEqual([raw]);
   });
 
+  it("a hashtag QUOTED in a comment is not a tag — the signal stays in the inbox", () => {
+    const quoting = memoryEntry(
+      '#feedback kind=feedback pr=5372 day=2026-08-25 signal=feedback_comment human [feedback] by pmercier on PR #5372 (reply to bot comment 1, comment 2): "see the #adjudication and #feedback-action records" — a review comment judged wrong',
+    );
+    expect(quoting.tags).toContain("adjudication"); // the store's full-text scan
+    expect(feedbackInbox([quoting])).toEqual([quoting]);
+    expect(feedbackPresentation(quoting, [quoting])).toMatchObject({ status: "unprocessed" });
+  });
+
+  it("a deleted bot comment is presented as a deletion, one episode per comment", () => {
+    const deleted = (id: string, ts: string): MemoryEntry =>
+      memoryEntry(
+        `#feedback #operations kind=feedback pr=5372 day=2026-08-25 signal=bot_comment_deleted bot comment ${id} on PR #5372 was deleted by a human — the bluntest noise verdict there is; evidence: PR #5372 — 2026-08-25`,
+        ts,
+      );
+    const a = deleted("111", "2026-08-25 09:00:00");
+    const b = deleted("222", "2026-08-25 10:00:00");
+    const cardA = feedbackPresentation(a, [a, b])!;
+    expect(cardA.title).toBe("Bot comment was deleted");
+    expect(cardA.summary).not.toContain("challenged");
+    expect(cardA.episode).toBe("deleted-comment-111");
+    // A receipt for one deletion archives that one only.
+    const receipt = memoryEntry(
+      "#feedback-action #feedback pr=5372 episode=deleted-comment-111 action=landed acted=2026-08-25\nResult: noted.",
+      "2026-08-25 11:00:00",
+    );
+    expect(feedbackInbox([a, b, receipt])).toEqual([b]);
+  });
+
   it("RAW FEEDBACK is the comment's FULL text when the entry carries it — not the 280-character cut", async () => {
     const body = `[feedback] First line of the complaint.\nSECONDLINE says ${"why ".repeat(90)}and ends at TAILWORD.`;
     const full = memoryEntry(
@@ -259,6 +288,20 @@ describe("the surface", () => {
     expect(screen).not.toContain("INBOX (0)");
   });
 
+  it("a partial memory read qualifies the inbox instead of passing for complete", async () => {
+    const half = memoryOf([]);
+    (half as unknown as { health: () => unknown }).health = () => ({
+      ok: true,
+      namespaces: [],
+      warning: "reviewer: no key file",
+    });
+    const rig = await loaded({ mem: half });
+    const screen = screenOf(rig);
+    expect(screen).toContain("INBOX (0+?)");
+    expect(screen).toContain("partial read — reviewer: no key file");
+    expect(screen).not.toContain("INBOX (0)");
+  });
+
   it("renders every line at exactly cols cells", async () => {
     const rig = await loaded({ changes: new FakeChanges([changeEntry("a".repeat(40), "c")]) });
     for (const cols of [100, 141]) {
@@ -381,6 +424,34 @@ describe("the revert, armed and confirmed", () => {
     expect(changes.reverted).toEqual(["a".repeat(40)]);
     expect(rig.learning.feedback.armed).toBeUndefined();
     expect(rig.app.registeredKeys().has("y")).toBe(false);
+  });
+
+  it("a second revert cannot start while one is still running", async () => {
+    const changes = new FakeChanges([
+      changeEntry("a".repeat(40), "severity change"),
+      changeEntry("b".repeat(40), "other change"),
+    ]);
+    let finish: (() => void) | undefined;
+    changes.revert = (sha) => {
+      changes.reverted.push(sha);
+      return new Promise((resolve) => {
+        finish = () => resolve({ ok: true, message: `reverted ${sha.slice(0, 7)}` });
+      });
+    };
+    const rig = await loaded({ changes });
+    key(rig, { kind: "char", ch: "t" });
+    key(rig, { kind: "char", ch: "t" });
+    key(rig, { kind: "char", ch: "R" });
+    key(rig, decodeKey(Buffer.from("y")));
+    key(rig, { kind: "down" });
+    key(rig, { kind: "char", ch: "R" });
+    expect(rig.learning.feedback.armed).toBeUndefined();
+    expect(rig.learning.feedback.result).toContain("still running");
+    finish!();
+    await settle();
+    key(rig, { kind: "char", ch: "R" });
+    expect(rig.learning.feedback.armed).toBe("b".repeat(40));
+    expect(changes.reverted).toEqual(["a".repeat(40)]);
   });
 
   it("any other key cancels an armed revert, and runs nothing", async () => {
@@ -534,6 +605,20 @@ describe("the revert, armed and confirmed", () => {
     expect(behind).toContain("last git log scan failed");
     expect(behind).toContain("CHANGED (1)");
     expect(behind).toContain("newest change");
+    // A register the state dir refused is current but not durable — said so,
+    // never as a failed scan.
+    const unsaved = screenOf(
+      await loaded({
+        changes: new FakeChanges([changeEntry("a".repeat(40), "newest change")], {
+          kind: "save_failed",
+          reason: "ENOSPC",
+        }),
+      }),
+    );
+    expect(unsaved).toContain("change register not saved");
+    expect(unsaved).toContain("ENOSPC");
+    expect(unsaved).not.toContain("git log");
+    expect(unsaved).toContain("newest change");
   });
 
   it("the loader does not re-arm on an unreadable register — six paints, one scan; r is the way back in", async () => {

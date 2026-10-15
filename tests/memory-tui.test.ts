@@ -355,6 +355,15 @@ describe("ONE issue-tracker ticket per incident older than 2 h", () => {
     expect(maybeFileMemoryIncident(undefined, block(), opts(memo))).toEqual({ kind: "none" });
   });
 
+  it("a ticket it cannot read fails the attempt — an incomplete scan never authorizes another ticket", () => {
+    const paths = tracker();
+    const dir = join(paths.root, "efforts", "review-sandbox", "tickets");
+    mkdirSync(join(dir, "FT-0500-unreadable.md")); // EISDIR on read
+    const out = maybeFileMemoryIncident(paths, block(), opts());
+    expect(out.kind).toBe("failed");
+    expect(readdirSync(dir)).toEqual(["FT-0500-unreadable.md"]);
+  });
+
   it("a broken tracker is a failed outcome, never a throw — retried every 5 min, not every poll", () => {
     const root = tempDir("qcr-tracker-");
     const paths = { root, effort: "e", parent: "FT-1" };

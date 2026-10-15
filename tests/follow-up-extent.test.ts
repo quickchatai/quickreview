@@ -189,6 +189,23 @@ describe("the session's decision notes", () => {
     expect(note).toContain("| optional:2 | `pass-duplication--sol-med` | new code |");
   });
 
+  // Focus paths and reasons are DATA in a table cell: a pipe, a backtick or a
+  // newline cannot split the row or open a line of prompt.
+  // MUTATION: render a focus path as a bare one-backtick span — red.
+  it("keeps author-controlled focus paths and reasons inside their cell", () => {
+    const note = renderExtentNote({
+      ...base,
+      optional_plan: [
+        { ...rows[0]!, focus: ["src/a|b.py", "c`d.py"] },
+        { ...rows[1]!, why: "x|y\nz" },
+      ],
+    });
+    expect(note).toContain(
+      "| optional:1 | `pass-sweep--sol-high` | `src/a\\|b.py`, `` c`d.py `` |",
+    );
+    expect(note).toContain("| optional:2 | `pass-duplication--sol-med` | x\\|y\\u000az |");
+  });
+
   it("step 4b makes the owed sweep the session's call; step 7 names the fields", () => {
     expect(renderSweepDecisionNote(base)).toContain("whether the full sweep runs is your decision");
     expect(renderSweepDecisionNote(base)).toContain("or when in doubt");

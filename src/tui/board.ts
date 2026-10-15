@@ -27,6 +27,7 @@ import {
 } from "./design.js";
 import {
   Frame,
+  charWidth,
   displayWidth,
   fit,
   rule,
@@ -123,16 +124,20 @@ function pauseChip(pr: SnapshotPr): string {
   return pr.pause.expires_at ? `⏸→${pr.pause.expires_at.slice(11, 16)}Z` : "⏸";
 }
 
+/** A PR row's verdict chip: a held review failure, else the last verdict. */
+function rowChip(pr: SnapshotPr): string {
+  return pr.review_failure ? `${FG.anomaly}FAILED_LOUD${RESET}` : verdictChip(pr.last_verdict);
+}
+
+/** A PR title as one inert line — it is the author's text, and the row is
+ * written straight to the terminal. */
+function rowTitle(pr: SnapshotPr): string {
+  return oneLine(pr.title);
+}
+
+/** A PR row as `styledRow` paints it, without its styling — what the list
+ * is sized to. */
 function rowPlain(pr: SnapshotPr, now: Date): string {
-  // "ESCALATE" is the legacy spelling of NEEDS_HUMAN; older rounds carry it.
-  const chip =
-    pr.last_verdict === "APPROVE"
-      ? "✓A"
-      : pr.last_verdict === "REQUEST_CHANGES"
-        ? "✗RC"
-        : pr.last_verdict === "NEEDS_HUMAN" || pr.last_verdict === "ESCALATE"
-          ? "⚑H"
-          : "";
   const rounds = pr.rounds ? `r${pr.rounds}` : "";
   return [
     glyphFor(pr),
@@ -140,9 +145,9 @@ function rowPlain(pr: SnapshotPr, now: Date): string {
     pr.author ?? "",
     fmtAge(pr.updated_at, now),
     rounds,
-    chip,
+    stripAnsi(rowChip(pr)),
     pauseChip(pr),
-    pr.title,
+    rowTitle(pr),
   ]
     .filter((s) => s !== "")
     .join(" ");
@@ -529,9 +534,7 @@ function styledRow(
   repo: string | undefined,
 ): string {
   const color = stateColor(pr.stale_recheck ? "reviewing" : pr.state);
-  const chip = pr.review_failure
-    ? `${FG.anomaly}FAILED_LOUD${RESET}`
-    : verdictChip(pr.last_verdict);
+  const chip = rowChip(pr);
   const rounds = pr.rounds ? `${FG.dim}r${pr.rounds}${RESET}` : "";
   const paused = pr.paused ? `${WARN}${pauseChip(pr)}${DRESET}` : "";
   const head = `${color}${glyphFor(pr)} ${STRONG}#${pr.number}${RESET}`;
@@ -545,7 +548,7 @@ function styledRow(
     .filter((s) => stripAnsi(s) !== "")
     .join(" ");
   const used = displayWidth(`${stripAnsi(head)} ${stripAnsi(meta)} `);
-  const title = truncate(pr.title, Math.max(4, width - used - 1));
+  const title = truncate(rowTitle(pr), Math.max(4, width - used - 1));
   const numLinked = repo
     ? `${color}${glyphFor(pr)} ${STRONG}${osc8(prUrl(repo, pr.number), `#${pr.number}`)}${RESET}`
     : head;
@@ -632,16 +635,14 @@ function currentProgressLines(
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
-  const byName = new Map(
-    (current?.agents ?? []).map((agent) => [lensForAgent(agent.agent), agent]),
-  );
+  // The validator runs at its own tier, shown beside its row.
+  const tierOf = (name: string): string =>
+    name === "pass-validate" && round.validate_tier ? ` · ${round.validate_tier}` : "";
 
   if (!current) {
     lines.push(truncate(`  ${FG.dim}? parent · live progress unavailable${RESET}`, width));
     for (const name of planned) {
-      const tier =
-        name === "pass-validate" && round.validate_tier ? ` · ${round.validate_tier}` : "";
-      lines.push(truncate(`  ${FG.dim}? ${name} · unknown${tier}${RESET}`, width));
+      lines.push(truncate(`  ${FG.dim}? ${name} · unknown${tierOf(name)}${RESET}`, width));
     }
     lines.push(truncate(`  ${FG.dim}? final verdict · unknown${RESET}`, width));
     return lines;
@@ -673,7 +674,7 @@ function currentProgressLines(
   );
 
   const agentLine = (name: string, agent: LiveAgentProgress | undefined): string => {
-    const tier = name === "pass-validate" && round.validate_tier ? ` · ${round.validate_tier}` : "";
+    const tier = tierOf(name);
     if (!agent) return `  ${FG.dim}○ ${name} · pending${tier}${RESET}`;
     if (agent.status === "running") {
       const tool = agent.current_tool ? ` · ${oneLine(agent.current_tool)}` : "";
@@ -685,7 +686,18 @@ function currentProgressLines(
     }
     return `  ${FG.approve}✓ ${name} · done in ${durationLabel(agent.duration_ms)} · ${agent.tool_count} tools${tier}${RESET}`;
   };
-  for (const name of planned) lines.push(truncate(agentLine(name, byName.get(name)), width));
+  // Every execution of a planned lens is shown — a lens run twice (two task
+  // rows) never hides a running or failed sibling behind a finished one.
+  const runs = new Map<string, LiveAgentProgress[]>();
+  for (const agent of current.agents) {
+    const name = lensForAgent(agent.agent);
+    runs.set(name, [...(runs.get(name) ?? []), agent]);
+  }
+  for (const name of new Set(planned)) {
+    const executions = runs.get(name) ?? [];
+    const rows = Math.max(planned.filter((p) => p === name).length, executions.length);
+    for (let i = 0; i < rows; i++) lines.push(truncate(agentLine(name, executions[i]), width));
+  }
   // The parent may justify and add a lens outside the dispatch plan. Those
   // agents are real work too; omitting them would make "all agents" false.
   for (const agent of current.agents.filter(
@@ -744,7 +756,7 @@ export function doubtedLines(
     );
   }
   if (newest.length > DOUBTED_SHOWN)
-    lines.push(`${FG.dim}  … ${newest.length - DOUBTED_SHOWN} more (qcr why)${RESET}`);
+    lines.push(`${FG.dim}  … ${newest.length - DOUBTED_SHOWN} more (qcr why <pr> --json)${RESET}`);
   return lines;
 }
 
@@ -835,9 +847,14 @@ export function detailLines(
   lines.push(`${FG.dim}${"─".repeat(Math.max(0, width))}${RESET}`);
   // status.json advances every poll and therefore owns current timing/plan;
   // `why` is enriched and deliberately cached, so it is only the fallback for
-  // an older daemon that has not shipped current_round yet.
+  // an older daemon that has not shipped current_round yet — and only while
+  // the snapshot says a round is under way: a cached `running` row outlives
+  // the round it describes until the next read lands.
   const runningRound =
-    pr.current_round ?? [...detail.rounds].reverse().find((r) => r.status === "running");
+    pr.current_round ??
+    (pr.state === "reviewing"
+      ? [...detail.rounds].reverse().find((r) => r.status === "running")
+      : undefined);
   if (runningRound) lines.push(...currentProgressLines(runningRound, progress, width, now));
   const lastSummary = [...detail.rounds]
     .reverse()
@@ -1099,6 +1116,50 @@ function renderEventsOverlay(
 
 // ---- render ----------------------------------------------------------------
 
+/**
+ * The draft as one paintable line of at most `width` cells: control bytes
+ * stripped, each newline shown as `⏎`, and — when it overflows — its END kept
+ * behind a `…`, because the end is where the operator types (the `▁` cursor).
+ */
+function draftLine(text: string, width: number): string {
+  const full = `${sanitizeText(text).replace(/\n/g, "⏎")}▁`;
+  if (displayWidth(full) <= width) return full;
+  const chars = Array.from(full);
+  let tail = "";
+  let w = 0;
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const cw = charWidth(chars[i]!.codePointAt(0) ?? 0);
+    if (w + cw > width - 1) break;
+    tail = chars[i] + tail;
+    w += cw;
+  }
+  return `…${tail}`;
+}
+
+/** The input box's three rows: its target, the text being typed, its keys. */
+function inputBoxLines(box: NonNullable<BoardView["inputBox"]>, width: number): string[] {
+  return [
+    ` ${HEADING}MSG → ${oneLine(box.target)}${DRESET}`,
+    ` > ${draftLine(box.text, Math.max(1, width - 3))}`,
+    ` ⏎ send · Esc cancel · Alt-⏎ newline`,
+  ];
+}
+
+/**
+ * The input box over the foot of a tab's own screen — the board paints it in
+ * its pi region, but a prompt a tab opens (a memory edit, a rejection reason)
+ * types into the same box and must be seen on that tab: a divider and the
+ * box's three rows, just above the frame's bottom border.
+ */
+export function overlayInputBox(frame: Frame, box: NonNullable<BoardView["inputBox"]>): void {
+  const top = frame.rows - 5;
+  if (top < 1) return;
+  frame.set(top, `├${"─".repeat(Math.max(0, frame.cols - 2))}┤`);
+  inputBoxLines(box, frame.cols - 2).forEach((text, i) =>
+    frame.boxRow(top + 1 + i, [{ text, width: frame.cols - 2 }]),
+  );
+}
+
 export function renderBoard(view: BoardView, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   const now = view.now ?? new Date();
@@ -1209,11 +1270,9 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     frame.set(piTop, `│${piFocused ? `${FG.accent}${inner}${RESET}` : inner}│`);
   }
   if (view.inputBox) {
-    frame.boxRow(piTop + 1, [
-      { text: ` ${HEADING}MSG → ${view.inputBox.target}${DRESET}`, width: cols - 2 },
-    ]);
-    frame.boxRow(piTop + 2, [{ text: ` > ${view.inputBox.text}▁`, width: cols - 2 }]);
-    frame.boxRow(piTop + 3, [{ text: ` ⏎ send · Esc cancel · Alt-⏎ newline`, width: cols - 2 }]);
+    inputBoxLines(view.inputBox, cols - 2).forEach((text, i) =>
+      frame.boxRow(piTop + 1 + i, [{ text, width: cols - 2 }]),
+    );
     for (let i = 4; i <= piLines; i++) frame.boxRow(piTop + i, [{ text: "", width: cols - 2 }]);
   } else if (pRows > 0) {
     frame.boxRow(piTop + 1, [

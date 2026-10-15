@@ -17,7 +17,7 @@ import {
 const BASE = "http://127.0.0.1:1933";
 
 /** A `createForwarder` stand-in that records what happened to it. */
-function fakeModule(opts: { bound?: number; throwOnCreate?: boolean } = {}): {
+function fakeModule(opts: { bound?: number | number[]; throwOnCreate?: boolean } = {}): {
   mod: ForwardModule;
   closed: () => number;
   created: () => number;
@@ -26,8 +26,14 @@ function fakeModule(opts: { bound?: number; throwOnCreate?: boolean } = {}): {
   let closed = 0;
   let created = 0;
   let cfgSeen: unknown;
+  let listens = 0;
   const handle: ForwarderHandle = {
-    listen: () => Promise.resolve(opts.bound ?? 2),
+    listen: () =>
+      Promise.resolve(
+        Array.isArray(opts.bound)
+          ? opts.bound[Math.min(listens++, opts.bound.length - 1)]!
+          : (opts.bound ?? 2),
+      ),
     close: () => {
       closed += 1;
     },
@@ -192,6 +198,81 @@ describe("MemoryForward", () => {
     const st = await fwd.ensure();
     expect(st.state).toBe("owned");
     expect(st.detail).toMatch(/bound 1\/2/);
+  });
+
+  it("a re-check of a partially bound forward still says so", async () => {
+    const { fwd } = build([false, true, true], fakeModule({ bound: 1 }));
+    await fwd.ensure();
+    const again = await fwd.ensure();
+    expect(again.state).toBe("owned");
+    expect(again.detail).toMatch(/bound 1\/2/);
+  });
+
+  it("rebindMissing binds afresh a forward that came up partial, and leaves a whole one alone", async () => {
+    const f = fakeModule({ bound: [1, 2] });
+    const { fwd } = build([false, true, true], f);
+    await fwd.ensure();
+    const st = await fwd.rebindMissing();
+    expect(st.state).toBe("owned");
+    expect(st.detail).not.toMatch(/bound/);
+    expect(f.created()).toBe(2);
+    expect(f.closed()).toBe(1);
+    await fwd.rebindMissing(); // every address held now: nothing to do
+    expect(f.created()).toBe(2);
+  });
+
+  it("rebindMissing never touches a forward it adopted", async () => {
+    const { fwd, f } = build([true]);
+    await fwd.ensure();
+    expect((await fwd.rebindMissing()).state).toBe("adopted");
+    expect(f.created()).toBe(0);
+    expect(f.closed()).toBe(0);
+  });
+
+  it("passes the TUI's configured host and container to the script's own flags", async () => {
+    const f = fakeModule();
+    const fwd = new MemoryForward({
+      baseUrl: BASE,
+      repoRoot: "/does/not/matter",
+      probe: () => Promise.resolve(false),
+      load: () => Promise.resolve(f.mod),
+      sshHost: "box-a",
+      container: "daemon-b",
+    });
+    await fwd.ensure();
+    expect((f.cfgSeen() as { argv: string[] }).argv).toEqual([
+      "run",
+      "--ssh-host",
+      "box-a",
+      "--container",
+      "daemon-b",
+    ]);
+    const local = fakeModule();
+    await new MemoryForward({
+      baseUrl: BASE,
+      repoRoot: "/does/not/matter",
+      probe: () => Promise.resolve(false),
+      load: () => Promise.resolve(local.mod),
+      local: true,
+      sshHost: "box-a",
+      container: "daemon-b",
+    }).ensure();
+    expect((local.cfgSeen() as { argv: string[] }).argv).toEqual([
+      "run",
+      "--local",
+      "--container",
+      "daemon-b",
+    ]);
+  });
+
+  it("the real parseArgs reads those flags", async () => {
+    const mod =
+      (await import("../scripts/companion-memory-forward.mjs")) as unknown as ForwardModule;
+    const { cfg } = mod.parseArgs(
+      ["run", "--ssh-host", "box-a", "--container", "daemon-b"],
+      {} as NodeJS.ProcessEnv,
+    );
+    expect(cfg).toMatchObject({ sshHost: "box-a", container: "daemon-b" });
   });
 
   it("carries the studio URL in every status, so the tab never builds one", async () => {

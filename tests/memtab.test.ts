@@ -20,6 +20,7 @@ import {
   memoryOrder,
   memoryRows,
   pinnedBudget,
+  pinnedOverrun,
 } from "../src/tui/memtab.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
 import { FakeMemory, SAMPLE, learningRig, settle, type Rig } from "./helpers/tui-rig.js";
@@ -145,6 +146,63 @@ describe("the reading pane", () => {
     expect(screenOf(rig)).toContain("⚠ pinned");
   });
 
+  it("marks setup's pin proposal on the TUI's namespaced entry — reviewer ids only", async () => {
+    // Setup proposes against the reviewer's store by its bare ids; the TUI's
+    // merged store prefixes every id with its user.
+    class Namespaced extends FakeMemory {
+      override read(): Promise<MemoryEntry[]> {
+        return super
+          .read()
+          .then((es) => [
+            ...es.map((e) => ({ ...e, id: `reviewer:${e.id}` })),
+            ...es.map((e) => ({ ...e, id: `companion:${e.id}`, ts: `${e.ts}x` })),
+          ]);
+      }
+    }
+    const raw = parseMemory(SAMPLE).find((e) => e.text.includes("stale recheck"))!;
+    const rig = await loaded({
+      mem: new Namespaced(),
+      readPinProposals: () => ({
+        state: "ok",
+        file: {
+          proposed_at: "2026-08-21T00:00:00Z",
+          entries: [
+            {
+              id: raw.id,
+              ts: raw.ts,
+              block: raw.block,
+              hash: raw.hash,
+              excerpt: "x",
+              why: "a standing rule",
+            },
+          ],
+        },
+      }),
+    });
+    expect([...rig.learning.store.pinProposals.keys()]).toEqual([
+      `${raw.ts}|reviewer:${raw.id}#${raw.block}`,
+    ]);
+    expect(screenOf(rig, 140, 40)).toContain("☆ 1 proposed pin");
+  });
+
+  it("a timeline filter that hides the pins does not hide their overrun", async () => {
+    const md = `<!-- 2026-08-20 08:00:00 [aa] -->\n#pinned ${"x".repeat(2000)}\n\n${SAMPLE}`;
+    const rig = await loaded({ mem: new FakeMemory(md) });
+    rig.learning.memory.filter = "bug";
+    expect(screenOf(rig)).toContain("⚠ pinned");
+  });
+
+  it("pins are priced per user head, never summed across the merged timeline", () => {
+    const pin = (user: string, n: number): MemoryEntry => ({
+      ...parseMemory(`<!-- 2026-08-20 08:00:00 [aa] -->\n#pinned ${"x".repeat(n)}\n`)[0]!,
+      id: `${user}:preferences/pinned/a.md`,
+    });
+    expect(pinnedOverrun([pin("reviewer", 1200), pin("companion", 1200)])).toBeUndefined();
+    expect(pinnedOverrun([pin("reviewer", 2000), pin("companion", 1200)])).toMatchObject({
+      user: "reviewer",
+    });
+  });
+
   it("tags are not printed twice in the list line", async () => {
     const rig = await loaded();
     expect(screenOf(rig, 140, 40)).not.toMatch(/#bug #operations #bug #operations/);
@@ -198,6 +256,26 @@ describe("management verbs", () => {
     await settle();
     expect(rig.mem.applied[0]).toMatchObject({ op: "edit" });
     expect((rig.mem.applied[0] as { text: string }).text).toContain("AMENDED");
+  });
+
+  // The prompt is typed into the shared input box, which only the board's pi
+  // region used to paint: on the memory tab the operator edited blind.
+  // MUTATION: paint a non-board tab's screen without the box — red.
+  it("the edit prompt is painted on the memory tab, draft and all", async () => {
+    const rig = await loaded();
+    const running = rig.app.run();
+    await settle();
+    key(rig, { kind: "events" });
+    const send = (s: string): void =>
+      (rig.app as unknown as { handleInput(b: Buffer): void }).handleInput(Buffer.from(s));
+    send(" AMENDED");
+    const frame = (rig.app as unknown as { lastFrame: { lines: string[] } }).lastFrame;
+    const text = frame.lines.map(stripAnsi).join("\n");
+    expect(text).toContain("MSG → ");
+    expect(text).toContain("AMENDED▁");
+    expect(text).toContain("⏎ send · Esc cancel");
+    rig.app.quit();
+    await running;
   });
 
   it("n prompts for a new manual entry", async () => {

@@ -127,7 +127,35 @@ describe("RealDeployFetcher", () => {
     expect(localCalls.some((c) => c.includes("log"))).toBe(false);
   });
 
-  // `cat … || true` swallows a missing marker into empty output, so an
+  it("answers empty only for a MISSING marker — a marker it cannot read fails the exec", () => {
+    const script = buildShaArgv(TUI_DEFAULTS).at(-1)!;
+    expect(script).toBe(
+      "if [ -e '/opt/quickreview/sandbox/BUILD_SHA' ]; then cat '/opt/quickreview/sandbox/BUILD_SHA'; fi",
+    );
+    expect(script).not.toContain("|| true");
+  });
+
+  it("a range read that fails replaces the previous load's commits and diffstat", async () => {
+    const results: Record<string, RemoteResult> = {
+      [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),
+      [DIRTY_ARGV.join(" ")]: ok(""),
+      [PLAN_ARGV.join(" ")]: ok("plan\n"),
+      [logArgv("aaa1111").join(" ")]: ok("bbb2222 fix the thing\n"),
+      [diffStatArgv("aaa1111").join(" ")]: ok(" src/x.ts | 2 +-\n"),
+    };
+    const { f } = fetcherWith(ok("aaa1111 2026-08-14T12:00:00Z sync\n"), results);
+    const st: Partial<DeployState> = {};
+    Object.assign(st, await f.load());
+    expect(st.commits).toEqual(["bbb2222 fix the thing"]);
+    delete results[logArgv("aaa1111").join(" ")];
+    delete results[diffStatArgv("aaa1111").join(" ")];
+    // The tab merges every load over the last one (Object.assign).
+    Object.assign(st, await f.load());
+    expect(st.commits).toBeUndefined();
+    expect(st.diffstat).toBeUndefined();
+  });
+
+  // A missing marker answers empty output, so an
   // ok/empty answer is a VM with no marker; a failed exec is a VM we could not
   // ask. The two stay apart: neither the tab nor the companion feed may read
   // an unasked VM as "no marker".
@@ -276,6 +304,16 @@ describe("deployLines", () => {
     const text = stripAnsi(deployLines(emptyState({ armedAt: 123 }), 90).join("\n"));
     expect(text).toContain("ARMED");
     expect(text).toContain("press D again");
+  });
+
+  it("an armed stop/start names S, never D", () => {
+    for (const kind of ["stop", "start"] as const) {
+      const text = stripAnsi(
+        deployLines(emptyState({ armedAt: 123, armedKind: kind }), 120).join("\n"),
+      );
+      expect(text).toContain(`press S again to ${kind} the VM app`);
+      expect(text).not.toContain("press D again");
+    }
   });
 
   it("lists pending commits, dirty files and the plan", () => {
@@ -517,6 +555,14 @@ describe("deploy tab drain orchestration", () => {
     expect(st.deployPhase).toBe("waiting-rounds");
     expect(finishLoads).toHaveLength(2); // eager restore + zero-round preflight refresh
     for (const finish of finishLoads) finish({ dirty: [], plan: [], head: "abc1234" });
+    await settle();
+    // The App's own poll (a fake ssh with no status.json) has since marked the
+    // daemon unreachable: a sync never starts without a fresh quiet status.
+    expect(app.view.health.kind).toBe("unreachable");
+    expect(deploys).toBe(0);
+    publishStatus(app, 0);
+    expect(finishLoads).toHaveLength(3);
+    finishLoads[2]!({ dirty: [], plan: [], head: "abc1234" });
     await settle();
     expect(deploys).toBe(1);
     app.quit();
@@ -844,6 +890,91 @@ describe("deploy tab drain orchestration", () => {
     streams.type("x");
     expect(store.read()).toBeUndefined();
     expect(app.view.noticeLine).toContain("drain state unchanged");
+    streams.type("D");
+    expect(st.armedAt).toBeDefined();
+    app.quit();
+    await run;
+  });
+});
+
+describe("deploy tab drain orchestration — revalidation and refresh", () => {
+  it("a sync waits when the status goes stale while the preflight refresh runs", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = (_a, _id, _d, exit) => {
+      deploys++;
+      exit(0);
+      return { kill: () => {} };
+    };
+    const pending: Array<(value: any) => void> = [];
+    let lazy = true;
+    const fetcher = {
+      load: () => {
+        if (lazy) return Promise.resolve({ dirty: [], plan: [], head: "abc1234" });
+        return new Promise<any>((resolve) => pending.push(resolve));
+      },
+    };
+    const st = installDeployHooks(app, fetcher, () => 1000, quietDrain(1));
+    const run = app.run();
+    streams.type("5");
+    await settle();
+    streams.type("D");
+    streams.type("D");
+    await settle();
+    expect(st.deployPhase).toBe("waiting-rounds");
+    lazy = false;
+    publishStatus(app, 0); // zero rounds → the preflight refresh starts
+    expect(pending).toHaveLength(1);
+    app.view.health = { kind: "stale", dataAgeS: 600 };
+    app.hooks.onPoll?.(app);
+    pending[0]!({ dirty: [], plan: [], head: "abc1234" });
+    await settle();
+    expect(deploys).toBe(0);
+    expect(st.deployPhase).toBe("waiting-rounds");
+    publishStatus(app, 0); // fresh again → preflight again → sync
+    expect(pending).toHaveLength(2);
+    pending[1]!({ dirty: [], plan: [], head: "abc1234" });
+    await settle();
+    expect(deploys).toBe(1);
+    app.quit();
+    await run;
+  });
+
+  it("r after a failed sync keeps the result on screen so x can still acknowledge it", async () => {
+    const store = new MemoryDeployCeremonyStore();
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    app.hooks.deployRun = (_a, _id, _data, exit) => {
+      exit(1);
+      return { kill: () => {} };
+    };
+    let loads = 0;
+    const st = installDeployHooks(
+      app,
+      { load: async () => (loads++, { dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      quietDrain(0),
+      store,
+    );
+    const run = app.run();
+    streams.type("5");
+    await settle();
+    streams.type("D");
+    streams.type("D");
+    await settle();
+    publishStatus(app, 0);
+    await settle();
+    expect(st.deployPhase).toBe("deploy-failed");
+    const before = loads;
+    streams.type("r");
+    await settle();
+    expect(loads).toBeGreaterThan(before); // r still refreshes
+    expect(st.run).toBeDefined();
+    expect(st.deployPhase).toBe("deploy-failed");
+    expect(deployKeys(st).bar.map((b) => b.key)).toEqual(["x"]);
+    streams.type("x");
+    expect(store.read()).toBeUndefined();
     streams.type("D");
     expect(st.armedAt).toBeDefined();
     app.quit();

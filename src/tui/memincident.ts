@@ -33,25 +33,94 @@ export function incidentKey(m: MemoryStatus): string | undefined {
 
 /** Incident keys already filed in the effort's tickets. */
 export function filedIncidentKeys(paths: TrackerPaths): Set<string> {
-  return filedKeys(paths, /^Memory-incident: (.+)$/gm);
+  return filedKeys(paths, MEMORY_INCIDENT_LINE);
 }
 
-/** The values of a dedup line across the effort's tickets. */
-function filedKeys(paths: TrackerPaths, line: RegExp): Set<string> {
+/** The values of a dedup line (`<marker> <key>`, the spelling the ticket
+ * bodies write) across the effort's tickets. A ticket that cannot be read
+ * throws: a scan that could not see every ticket cannot prove an incident
+ * unfiled, and the caller's retry path handles the failure. */
+function filedKeys(paths: TrackerPaths, marker: string): Set<string> {
+  const line = new RegExp(`^${escapeRegExp(marker)} (.+)$`, "gm");
   const keys = new Set<string>();
   const dir = join(paths.root, "efforts", paths.effort, "tickets");
   if (!existsSync(dir)) return keys;
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".md")) continue;
-    let body: string;
-    try {
-      body = readFileSync(join(dir, f), "utf8");
-    } catch {
-      continue;
-    }
+    const body = readFileSync(join(dir, f), "utf8");
     for (const m of body.matchAll(line)) keys.add(m[1]!.trim());
   }
   return keys;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** One incident, as the shared filing protocol needs it. */
+interface DueIncident {
+  /** The dedup key — also the value of the ticket's marker line. */
+  key: string;
+  /** When the incident started (ISO): it is due once older than `afterMs`. */
+  since: string;
+  /** The ticket's dedup line marker. */
+  marker: string;
+  /** What the operator lines call it. */
+  noTrackerLine: string;
+  failedLine: string;
+  body: (id: string) => { name: string; content: string };
+}
+
+/**
+ * The protocol both incident filers share: due once older than the
+ * threshold, once per key (the memo, then the tickets on disk), said once
+ * when no tracker is configured, retried after a failure no sooner than
+ * `RETRY_AFTER_FAILURE_MS`, the FT id claimed by exclusive create. Never
+ * throws.
+ */
+function fileIncidentOnce(
+  paths: TrackerPaths | undefined,
+  incident: DueIncident,
+  opts: { now: Date; afterMs: number; memo: IncidentFilerMemo },
+): IncidentFileOutcome {
+  try {
+    const { key } = incident;
+    const started = Date.parse(incident.since);
+    if (!Number.isFinite(started) || opts.now.getTime() - started < opts.afterMs)
+      return { kind: "none" };
+    if (opts.memo.filed.has(key)) return { kind: "already", key };
+    if (!paths) {
+      if (opts.memo.noTrackerSaid) return { kind: "none" };
+      opts.memo.noTrackerSaid = true;
+      return { kind: "no-tracker", line: incident.noTrackerLine };
+    }
+    if (
+      opts.memo.failedAt !== undefined &&
+      opts.now.getTime() - opts.memo.failedAt < RETRY_AFTER_FAILURE_MS
+    )
+      return { kind: "none" };
+    if (filedKeys(paths, incident.marker).has(key)) {
+      opts.memo.filed.add(key);
+      return { kind: "already", key };
+    }
+    const ticketsDir = join(paths.root, "efforts", paths.effort, "tickets");
+    mkdirSync(ticketsDir, { recursive: true });
+    const id = claimNextId(
+      paths.root,
+      (n) => `efforts/${paths.effort}/tickets/${incident.body(n).name}`,
+    );
+    const { name, content } = incident.body(id);
+    writeFileSync(join(ticketsDir, name), content);
+    opts.memo.filed.add(key);
+    delete opts.memo.failedAt;
+    return { kind: "filed", ticketId: `FT-${id}`, file: name };
+  } catch (err) {
+    opts.memo.failedAt = opts.now.getTime();
+    return {
+      kind: "failed",
+      line: `${incident.failedLine}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 /** The ticket, from the status block alone. Never carries a key: the block
@@ -175,51 +244,22 @@ export function maybeFileMemoryIncident(
   memory: MemoryStatus | undefined,
   opts: { fresh: boolean; now: Date; afterMs: number; memo: IncidentFilerMemo },
 ): IncidentFileOutcome {
-  try {
-    if (!opts.fresh || !memory || !memory.enabled) return { kind: "none" };
-    if (memory.state !== "auth_failed" && memory.state !== "down") return { kind: "none" };
-    const key = incidentKey(memory);
-    if (key === undefined) return { kind: "none" };
-    const started = Date.parse(key);
-    if (!Number.isFinite(started) || opts.now.getTime() - started < opts.afterMs)
-      return { kind: "none" };
-    if (opts.memo.filed.has(key)) return { kind: "already", key };
-    if (!paths) {
-      if (opts.memo.noTrackerSaid) return { kind: "none" };
-      opts.memo.noTrackerSaid = true;
-      return {
-        kind: "no-tracker",
-        line: `memory incident since ${key} is past the ticket threshold, but no wayfinder tracker is configured ([sink] kind) — not filed; the board banner stands`,
-      };
-    }
-    if (
-      opts.memo.failedAt !== undefined &&
-      opts.now.getTime() - opts.memo.failedAt < RETRY_AFTER_FAILURE_MS
-    )
-      return { kind: "none" };
-    if (filedIncidentKeys(paths).has(key)) {
-      opts.memo.filed.add(key);
-      return { kind: "already", key };
-    }
-    const ticketsDir = join(paths.root, "efforts", paths.effort, "tickets");
-    mkdirSync(ticketsDir, { recursive: true });
-    const id = claimNextId(
-      paths.root,
-      (n) =>
-        `efforts/${paths.effort}/tickets/${incidentTicketBody(n, memory, paths, opts.now).name}`,
-    );
-    const { name, content } = incidentTicketBody(id, memory, paths, opts.now);
-    writeFileSync(join(ticketsDir, name), content);
-    opts.memo.filed.add(key);
-    delete opts.memo.failedAt;
-    return { kind: "filed", ticketId: `FT-${id}`, file: name };
-  } catch (err) {
-    opts.memo.failedAt = opts.now.getTime();
-    return {
-      kind: "failed",
-      line: `memory incident ticket could not be filed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
+  if (!opts.fresh || !memory || !memory.enabled) return { kind: "none" };
+  if (memory.state !== "auth_failed" && memory.state !== "down") return { kind: "none" };
+  const key = incidentKey(memory);
+  if (key === undefined) return { kind: "none" };
+  return fileIncidentOnce(
+    paths,
+    {
+      key,
+      since: key,
+      marker: MEMORY_INCIDENT_LINE,
+      noTrackerLine: `memory incident since ${key} is past the ticket threshold, but no wayfinder tracker is configured ([sink] kind) — not filed; the board banner stands`,
+      failedLine: "memory incident ticket could not be filed",
+      body: (id) => incidentTicketBody(id, memory, paths!, opts.now),
+    },
+    opts,
+  );
 }
 
 // ---- an EOD curation that did not reach memory → one ticket ---------------
@@ -320,48 +360,20 @@ export function maybeFileCurationIncident(
   memory: MemoryStatus | undefined,
   opts: { fresh: boolean; now: Date; afterMs: number; memo: IncidentFilerMemo },
 ): IncidentFileOutcome {
-  try {
-    if (!opts.fresh || !memory) return { kind: "none" };
-    const c = memory.curation;
-    const key = curationIncidentKey(c);
-    if (!c || key === undefined) return { kind: "none" };
-    const started = Date.parse(c.incident!.since);
-    if (!Number.isFinite(started) || opts.now.getTime() - started < opts.afterMs)
-      return { kind: "none" };
-    if (opts.memo.filed.has(key)) return { kind: "already", key };
-    if (!paths) {
-      if (opts.memo.noTrackerSaid) return { kind: "none" };
-      opts.memo.noTrackerSaid = true;
-      return {
-        kind: "no-tracker",
-        line: `EOD curation incident (${key}) is past the ticket threshold, but no wayfinder tracker is configured ([sink] kind) — not filed; the board banner stands`,
-      };
-    }
-    if (
-      opts.memo.failedAt !== undefined &&
-      opts.now.getTime() - opts.memo.failedAt < RETRY_AFTER_FAILURE_MS
-    )
-      return { kind: "none" };
-    if (filedKeys(paths, /^Curation-incident: (.+)$/gm).has(key)) {
-      opts.memo.filed.add(key);
-      return { kind: "already", key };
-    }
-    const ticketsDir = join(paths.root, "efforts", paths.effort, "tickets");
-    mkdirSync(ticketsDir, { recursive: true });
-    const id = claimNextId(
-      paths.root,
-      (n) => `efforts/${paths.effort}/tickets/${curationTicketBody(n, c, paths, opts.now).name}`,
-    );
-    const { name, content } = curationTicketBody(id, c, paths, opts.now);
-    writeFileSync(join(ticketsDir, name), content);
-    opts.memo.filed.add(key);
-    delete opts.memo.failedAt;
-    return { kind: "filed", ticketId: `FT-${id}`, file: name };
-  } catch (err) {
-    opts.memo.failedAt = opts.now.getTime();
-    return {
-      kind: "failed",
-      line: `EOD curation incident ticket could not be filed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
+  if (!opts.fresh || !memory) return { kind: "none" };
+  const c = memory.curation;
+  const key = curationIncidentKey(c);
+  if (!c || key === undefined) return { kind: "none" };
+  return fileIncidentOnce(
+    paths,
+    {
+      key,
+      since: c.incident!.since,
+      marker: CURATION_INCIDENT_LINE,
+      noTrackerLine: `EOD curation incident (${key}) is past the ticket threshold, but no wayfinder tracker is configured ([sink] kind) — not filed; the board banner stands`,
+      failedLine: "EOD curation incident ticket could not be filed",
+      body: (id) => curationTicketBody(id, c, paths!, opts.now),
+    },
+    opts,
+  );
 }

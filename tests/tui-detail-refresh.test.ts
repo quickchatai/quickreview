@@ -163,3 +163,36 @@ describe("App detail refresh", () => {
     expect(h.whys.length).toBe(3);
   });
 });
+
+describe("the operator's `r` and the help overlay", () => {
+  // `r` asks for the detail again, whatever the cache says. MUTATION: let `r`
+  // serve a fresh cache without a read — red.
+  it("r re-reads the selected PR's detail even while its cache is fresh", async () => {
+    const h = harness();
+    h.poll(snap("aaa"));
+    h.whys[0]!.resolve(why(5012, "aaa", "round-1"));
+    await flush();
+    h.app.pressKey("r");
+    expect(h.whys.filter((w) => w.pr === 5012)).toHaveLength(2);
+    h.whys[1]!.resolve(why(5012, "aaa", "round-1b"));
+    await flush();
+    expect(h.app.view.detail?.title).toBe("round-1b");
+  });
+
+  // The KEYS overlay hides the board's rows; the wheel under it must not move
+  // a selection nobody can see. MUTATION: guard help only off the board — red.
+  it("the wheel under the board's help overlay moves nothing", () => {
+    const h = harness();
+    h.poll(snap("aaa"));
+    h.app.view.help = true;
+    const mouse = h.app as unknown as {
+      handleMouse(ev: { kind: string; x: number; y: number }): void;
+    };
+    mouse.handleMouse({ kind: "wheel-down", x: 10, y: 5 });
+    expect(h.app.currentPr()).toBe(5012);
+    expect(h.app.view.help).toBe(true);
+    mouse.handleMouse({ kind: "click", x: 10, y: 5 });
+    expect(h.app.view.help).toBe(false); // a click dismisses it, as any key does
+    expect(h.app.currentPr()).toBe(5012);
+  });
+});

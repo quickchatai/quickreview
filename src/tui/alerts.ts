@@ -195,9 +195,16 @@ export class AlertPolicy {
     this.store?.save({ day: today, causes: Object.fromEntries(this.memory) });
   }
 
-  /** Folded repeats for a cause today (0 when it is fresh). */
+  /** The operations day it is now — the day every count here belongs to. */
+  today(): string {
+    return this.dayKey(this.now());
+  }
+
+  /** Folded repeats for a cause today (0 when it is fresh, or last folded on
+   * an earlier day). */
   folds(cause: string): number {
-    return this.memory.get(cause)?.folds ?? 0;
+    const m = this.memory.get(cause);
+    return m && m.day === this.today() ? m.folds : 0;
   }
 
   /** Total folded repeats across all causes today — the status-line counter. */
@@ -235,32 +242,24 @@ export class AlertPolicy {
       this.persist(today);
       return { action: "route", bypass: false };
     }
-    const elapsedMin = (now.getTime() - prev.lastAt) / 60_000;
-    if (elapsedMin >= this.cooldownMin) {
+    // A cause routed again: its folds restart, its routed count grows.
+    const routeAgain = (bypass: boolean): AlertDecision => {
       this.memory.set(alert.cause, {
         ...prev,
         lastAt: now.getTime(),
         lastTier: alert.tier,
         folds: 0,
-        bypassed: prev.bypassed,
+        bypassed: prev.bypassed || bypass,
         routed: (prev.routed ?? 1) + 1,
       });
       this.persist(today);
-      return { action: "route", bypass: false };
-    }
-    if (prev.lastTier === "notice" && alert.tier === "alert" && !prev.bypassed) {
-      // Genuine escalation of a live cause — breaks the cooldown once a day.
-      this.memory.set(alert.cause, {
-        ...prev,
-        lastAt: now.getTime(),
-        lastTier: "alert",
-        folds: 0,
-        bypassed: true,
-        routed: (prev.routed ?? 1) + 1,
-      });
-      this.persist(today);
-      return { action: "route", bypass: true };
-    }
+      return { action: "route", bypass };
+    };
+    const elapsedMin = (now.getTime() - prev.lastAt) / 60_000;
+    if (elapsedMin >= this.cooldownMin) return routeAgain(false);
+    // Genuine escalation of a live cause — breaks the cooldown once a day.
+    if (prev.lastTier === "notice" && alert.tier === "alert" && !prev.bypassed)
+      return routeAgain(true);
     const folds = prev.folds + 1;
     this.memory.set(alert.cause, { ...prev, folds, lastTier: alert.tier });
     this.persist(today);
@@ -324,12 +323,20 @@ const ALERT_FILE_RE = /\.json$/;
 
 /**
  * Scans the alerts dir and routes what it finds. Every processed file — good
- * or malformed — moves into `.done/`, so a scan is idempotent and a bad file
- * is reported exactly once.
+ * or malformed — moves into `.done/` BEFORE it is routed, and only the
+ * consumer whose move succeeded routes it: a scan is idempotent, a bad file
+ * is reported exactly once, and two TUIs on one alerts dir never both route
+ * one alert. A file that cannot be moved for any other reason (an unwritable
+ * `.done/`) is routed once per TUI process, with the failure on the notice
+ * line, rather than on every scan.
  */
 export class AlertConsumer {
   private timer: NodeJS.Timeout | undefined;
   private readonly badgeState: AlertBadge = { count: 0, folds: 0 };
+  /** The ops day `badgeState.latest` was routed on. */
+  private latestDay: string | undefined;
+  /** Files routed although their move into `.done/` failed. */
+  private readonly unarchivable = new Set<string>();
 
   constructor(
     readonly dir: string,
@@ -359,6 +366,24 @@ export class AlertConsumer {
 
   scanOnce(): void {
     for (const file of this.pending()) this.consume(file);
+    this.refreshBadge();
+  }
+
+  /** Publish the badge when the day's counts moved without an alert routing
+   * here — today's persisted count at startup, the reset at the ops-day
+   * boundary (which also drops an earlier day's latest alert). */
+  private refreshBadge(): void {
+    const count = this.policy.totalRouted();
+    const folds = this.policy.totalFolds();
+    const stale = this.badgeState.latest !== undefined && this.latestDay !== this.policy.today();
+    if (count === this.badgeState.count && folds === this.badgeState.folds && !stale) return;
+    this.badgeState.count = count;
+    this.badgeState.folds = folds;
+    if (stale) {
+      delete this.badgeState.latest;
+      this.latestDay = undefined;
+    }
+    this.sinks.badge(this.badgeState);
   }
 
   private consume(file: string): void {
@@ -369,8 +394,10 @@ export class AlertConsumer {
     } catch {
       return; // vanished between listing and read — nothing to report
     }
+    const claim = this.archive(file);
+    if (claim === "taken" || (claim === "failed" && this.unarchivable.has(file))) return;
+    if (claim === "failed") this.unarchivable.add(file);
     const parsed = parseAlert(text, file, this.now);
-    this.archive(file);
     if (!parsed.ok) {
       // Surfaced, never swallowed: the operator learns the companion wrote
       // something the TUI could not read, and which file it was.
@@ -383,17 +410,16 @@ export class AlertConsumer {
   /** Public so a test (or a future retry path) can route a fabricated alert. */
   route(alert: AlertRecord): void {
     const decision = this.policy.decide(alert);
+    // Derived from the policy's per-day memory, so the counts reset at the
+    // ops-day boundary and survive a TUI restart.
+    this.badgeState.count = this.policy.totalRouted();
+    this.badgeState.folds = this.policy.totalFolds();
     if (decision.action === "fold") {
-      this.badgeState.count = this.policy.totalRouted();
-      this.badgeState.folds = this.policy.totalFolds();
       this.sinks.notice(statusLine(alert, decision.count));
       this.sinks.badge(this.badgeState);
       return;
     }
-    // Derived from the policy's per-day memory, like `folds`, so the count
-    // resets at the ops-day boundary and survives a TUI restart.
-    this.badgeState.count = this.policy.totalRouted();
-    this.badgeState.folds = this.policy.totalFolds();
+    this.latestDay = this.policy.today();
     this.badgeState.latest = {
       tier: alert.tier,
       title: alert.title,
@@ -409,13 +435,19 @@ export class AlertConsumer {
     }
   }
 
-  private archive(file: string): void {
+  /** Move `file` into `.done/` — the claim on it. `taken`: it was gone, so
+   * another consumer moved it first; `failed`: it could not be moved. */
+  protected archive(file: string): "claimed" | "taken" | "failed" {
     const doneDir = join(this.dir, ".done");
     try {
       mkdirSync(doneDir, { recursive: true });
       renameSync(join(this.dir, file), join(doneDir, file));
-    } catch {
-      /* already moved / unwritable — the scan stays idempotent either way */
+      return "claimed";
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return "taken";
+      if (!this.unarchivable.has(file))
+        this.sinks.notice(`✖ alert ${file} could not be archived (${String(err)})`);
+      return "failed";
     }
   }
 

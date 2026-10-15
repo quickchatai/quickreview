@@ -24,6 +24,7 @@
 // scans ticket `Memory-key:` lines, github leans on the daemon's title dedup
 // (the re-filed duplicate is refused, not doubled).
 import { validateCommand } from "../commands.js";
+import { EVENT_TAG_RE } from "../memory/eventtags.js";
 import type { Config, IssueSinkKind, TuiConfig } from "../config.js";
 import { sinkTicketsEffort } from "../config.js";
 import {
@@ -31,10 +32,10 @@ import {
   filedAs,
   MEMORY_KEY_LINE,
   memoryKey,
-  withFiledTag,
+  stampFiled,
   type TrackerPaths,
 } from "./autofile.js";
-import { refOf, type MemoryEntry, type MemoryStore } from "./memory.js";
+import type { MemoryEntry, MemoryStore } from "./memory.js";
 import type { SshRunner } from "./remote.js";
 import { commandFileName, commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
 
@@ -84,17 +85,13 @@ export class WayfinderIssueSink implements IssueSink {
   }
 }
 
-/** Header-stripped prose of an entry — tags and `k=v` tokens are not title
- * material (same token grammar `withFiledTag` uses to find the header end). */
+/** The prose of an entry — `#tags`, `k=v` tokens (the memory vocabulary's
+ * one grammar) and `[[links]]` are not title material, wherever they sit. */
 export function issueTitleFor(e: MemoryEntry): string {
   const prose = e.text
     .split(/\s+/)
     .filter(
-      (t) =>
-        t !== "" &&
-        !t.startsWith("#") &&
-        !/^[a-z][a-z0-9_-]*=[^\s]+$/.test(t) &&
-        !/^\[\[[^\]]*\]\]$/.test(t),
+      (t) => t !== "" && !t.startsWith("#") && !EVENT_TAG_RE.test(t) && !/^\[\[[^\]]*\]\]$/.test(t),
     )
     .join(" ");
   const head = (prose || "memory defect").slice(0, 90).trim();
@@ -157,17 +154,7 @@ export class GithubIssueSink implements IssueSink {
       // Best-effort stamp, after the daemon's receipt — same crash-safe order
       // as the wayfinder filer. A refused stamp costs a re-check next tick,
       // where the daemon's title dedup refuses the duplicate.
-      if (this.store) {
-        try {
-          await this.store.apply({
-            op: "edit",
-            ...refOf(e),
-            text: withFiledTag(e.text, outcome.stamp),
-          });
-        } catch {
-          /* the seam resolves refusals; only a broken transport lands here */
-        }
-      }
+      if (this.store) await stampFiled(this.store, e, outcome.stamp);
     }
     return refused === undefined ? { filed } : { filed, refused };
   }
@@ -182,7 +169,11 @@ export class GithubIssueSink implements IssueSink {
     const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), {
       stdin: `${JSON.stringify(payload, null, 2)}\n`,
     });
-    if (!write.ok) return { ok: false, reason: "command write failed (ssh unreachable?)" };
+    if (!write.ok)
+      return {
+        ok: false,
+        reason: `command write failed (${resultReason(write.stderr, `exit ${write.code}`).slice(0, 200)})`,
+      };
     // Read the daemon's verdict, not the write's: a cap or dedup refusal is a
     // real answer, and only a receipt may stamp the entry as filed.
     const deadline = this.now().getTime() + this.cfg.msg_timeout_s * 1000;

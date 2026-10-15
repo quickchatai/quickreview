@@ -6,10 +6,8 @@
 // retry succeeds there is nothing to open — the column is already on screen
 // and the only thing left to do is give it the keyboard.
 import type { App } from "./app.js";
-import type { CompanionLifecycle } from "./companion.js";
 
 export interface CompanionTabDeps {
-  lifecycle: CompanionLifecycle;
   /** Live view of the companion's state — startup may fail and later heal. */
   available: () => boolean;
   /** The real startup error when unavailable (never a mislabel). */

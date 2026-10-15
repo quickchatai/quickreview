@@ -387,7 +387,13 @@ function fakeStreams() {
   };
 }
 
-function appWith(opts: { liveSessions?: number[]; sendLatencyMs?: (n: number) => number } = {}) {
+function appWith(
+  opts: {
+    liveSessions?: number[];
+    sendLatencyMs?: (n: number) => number;
+    sendFails?: (n: number) => boolean;
+  } = {},
+) {
   const captures: number[] = [];
   const captureArgvs: string[][] = [];
   const sendKeys: string[][] = [];
@@ -406,10 +412,13 @@ function appWith(opts: { liveSessions?: number[]; sendLatencyMs?: (n: number) =>
     if (argv.includes("send-keys")) {
       // Recorded on ARRIVAL, after the simulated ssh latency, so a test can
       // see the order keystrokes actually reach tmux in.
-      const delay = opts.sendLatencyMs?.(sendsStarted++) ?? 0;
+      const n = sendsStarted++;
+      const delay = opts.sendLatencyMs?.(n) ?? 0;
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       sendKeys.push(argv);
-      return ok("");
+      return opts.sendFails?.(n)
+        ? { ok: false, stdout: "", stderr: "ssh: timed out", code: 255 }
+        : ok("");
     }
     if (argv[0] === "cat") return ok(JSON.stringify(snapshot));
     if (argv.includes("events")) return ok(JSON.stringify({ events: [] }));
@@ -542,6 +551,33 @@ describe("focused pi pane — keys go to the session", () => {
       await new Promise((r) => setTimeout(r, 10));
     await settle();
     expect(h.sendKeys.map((a) => a.slice(8))).toEqual([["-l", "--", "a"], ["Enter"]]);
+    h.app.quit();
+    await h.running;
+  });
+
+  // A chunk that never reached tmux must not let the Enter queued behind it
+  // submit pi's input with a hole in it. MUTATION: ignore the send's result — red.
+  it("a keystroke send that fails drops what is queued behind it, and says so", async () => {
+    const h = appWith({ sendLatencyMs: (n) => (n === 0 ? 30 : 0), sendFails: (n) => n === 0 });
+    h.app.repaint();
+    h.streams.type(CLICK_IN_PANE);
+    await settle();
+    h.sendKeys.length = 0;
+    h.streams.type("a"); // fails, after 30 ms
+    h.streams.type("\r"); // queued behind it
+    const deadline = Date.now() + 4_000;
+    while (!h.app.view.noticeLine?.includes("not delivered") && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 10));
+    await settle();
+    expect(h.sendKeys.map((a) => a.slice(8))).toEqual([["-l", "--", "a"]]);
+    expect(h.app.view.noticeLine).toContain("pr-5012: keys not delivered (ssh: timed out)");
+    // Once the queue drained, the next keystroke is sent again.
+    h.streams.type("b");
+    await settle();
+    expect(h.sendKeys.map((a) => a.slice(8))).toEqual([
+      ["-l", "--", "a"],
+      ["-l", "--", "b"],
+    ]);
     h.app.quit();
     await h.running;
   });

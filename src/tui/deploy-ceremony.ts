@@ -4,15 +4,20 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-export type DurableDeployPhase =
-  | "engaging-drain"
-  | "abort-requested"
-  | "waiting-rounds"
-  | "syncing"
-  | "awaiting-lift"
-  | "deploy-failed"
-  | "drain-failed"
-  | "lifting-after-abort";
+/** Every phase the journal may hold — the type and the reader's check both
+ * come from this one list, so a phase the TUI can write is one it can read. */
+export const DURABLE_DEPLOY_PHASES = [
+  "engaging-drain",
+  "abort-requested",
+  "waiting-rounds",
+  "syncing",
+  "awaiting-lift",
+  "deploy-failed",
+  "drain-failed",
+  "lifting-after-abort",
+] as const;
+
+export type DurableDeployPhase = (typeof DURABLE_DEPLOY_PHASES)[number];
 
 export interface DeployCeremonyRecord {
   version: 1;
@@ -43,16 +48,7 @@ function valid(value: unknown): value is DeployCeremonyRecord {
   return (
     v.version === 1 &&
     typeof v.phase === "string" &&
-    [
-      "engaging-drain",
-      "abort-requested",
-      "waiting-rounds",
-      "syncing",
-      "awaiting-lift",
-      "deploy-failed",
-      "drain-failed",
-      "lifting-after-abort",
-    ].includes(v.phase) &&
+    (DURABLE_DEPLOY_PHASES as readonly string[]).includes(v.phase) &&
     (v.target_head === undefined || typeof v.target_head === "string") &&
     (v.pre_deploy_snapshot_at === undefined || typeof v.pre_deploy_snapshot_at === "string") &&
     (v.drain_observed === undefined || typeof v.drain_observed === "boolean") &&

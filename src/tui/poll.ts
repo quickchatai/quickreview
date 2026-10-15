@@ -20,6 +20,8 @@ export type Health =
  *  - no successful fetch yet, or the last fetch failed → unreachable;
  *  - `written_at` older than `staleAfterS` (sized to the daemon's ~30s write
  *    cadence, not the TUI's fetch cadence) → DATA STALE;
+ *  - a fresh snapshot whose pipeline reports itself unhealthy → pipeline
+ *    unhealthy, with its causes;
  *  - otherwise ok, reporting the daemon heartbeat age.
  * Snapshot ages are judged against wall clock, so a dead daemon behind a
  * healthy ssh path still degrades to stale.
@@ -46,6 +48,14 @@ export function classifyHealth(
     return { kind: "pipeline_unhealthy", heartbeatAgeS, causes: lastSnapshot.pipeline.causes };
   }
   return { kind: "ok", heartbeatAgeS };
+}
+
+/** Whether the snapshot behind `h` is fresh enough to act on: the poller
+ * reached it and it is not stale. An unhealthy pipeline is still a fresh
+ * reading. The one admission rule for every consumer that files or notifies
+ * from a snapshot. */
+export function isFreshHealth(h: Health): boolean {
+  return h.kind === "ok" || h.kind === "pipeline_unhealthy";
 }
 
 export function parseSnapshot(text: string): StatusSnapshot | undefined {

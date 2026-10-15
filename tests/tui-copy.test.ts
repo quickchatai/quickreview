@@ -82,6 +82,21 @@ describe("MouseDecoder — a report split across two reads", () => {
     expect(b.rest.length).toBe(0);
   });
 
+  it("reassembles a flood chunk split just before the '<'", () => {
+    const d = new MouseDecoder();
+    const a = d.feed(Buffer.from("\x1b[<32;4;5M\x1b["));
+    expect(a.events).toEqual([{ kind: "drag", x: 4, y: 5 }]);
+    expect(a.rest.length).toBe(0);
+    const b = d.feed(Buffer.from("<32;5;5M"));
+    expect(b.events).toEqual([{ kind: "drag", x: 5, y: 5 }]);
+    expect(b.rest.length).toBe(0);
+  });
+
+  it("never holds back an ESC-[ typed on its own (Alt-[)", () => {
+    const d = new MouseDecoder();
+    expect(d.feed(Buffer.from("\x1b[")).rest.toString()).toBe("\x1b[");
+  });
+
   it("never holds a bare Esc back", () => {
     const d = new MouseDecoder();
     expect(d.feed(Buffer.from("\x1b")).rest.toString()).toBe("\x1b");

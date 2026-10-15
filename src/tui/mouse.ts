@@ -50,8 +50,11 @@ export function extractMouseEvents(buf: Buffer): { events: MouseEvent[]; rest: B
  * Decoded per chunk, the head (`\x1b[<32;4`) matches nothing and the tail
  * (`5;12M`) is plain text — so the drag loses a point, and when the companion
  * column or the pi pane holds the keyboard those bytes are typed into pi.
- * Only an unfinished `\x1b[<…` is held back: a bare ESC at the end of a
- * chunk is the Esc key and must go through now.
+ * Only an unfinished `\x1b[<…` is held back — and a `\x1b[` that ENDS a
+ * longer chunk, the split falling just before the `<`. A bare ESC at the end
+ * of a chunk is the Esc key and must go through now, and so is a `\x1b[`
+ * that is the whole chunk: that is a key typed on its own (Alt-[), not the
+ * tail of a flood.
  *
  * A read can split a multi-byte UTF-8 character the same way. Decoded per
  * chunk, each half becomes U+FFFD and the character is lost for good, so the
@@ -64,7 +67,7 @@ export class MouseDecoder {
   feed(buf: Buffer): { events: MouseEvent[]; rest: Buffer } {
     let s = this.carry + this.utf8.write(buf);
     this.carry = "";
-    const tail = /\x1b\[<[\d;]*$/.exec(s);
+    const tail = /\x1b\[<[\d;]*$/.exec(s) ?? (s.length > 2 ? /\x1b\[$/.exec(s) : null);
     // A real report is at most ~20 bytes; anything longer is not one, and is
     // never held (a stuck carry would swallow every later keystroke).
     if (tail && tail[0].length <= 24) {

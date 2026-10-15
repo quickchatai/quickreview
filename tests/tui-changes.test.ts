@@ -135,6 +135,40 @@ describe("building the register", () => {
     expect(entries[0]!.reverted?.by).toBe("d".repeat(7));
   });
 
+  // A revert that was itself reverted undoes nothing: the change is live
+  // again, and revertible. MUTATION: index every revert, reapplied or not — red.
+  it("a change reverted and then restored is live again", () => {
+    const a = "a".repeat(40);
+    const b = "b".repeat(40);
+    const log =
+      record(
+        "c".repeat(40),
+        "2026-08-25T13:00:00Z",
+        "mat",
+        'Reapply "severity"',
+        `Reapply\n\nThis reverts commit ${b}.\n`,
+      ) +
+      record(
+        b,
+        "2026-08-25T12:00:00Z",
+        "mat",
+        'Revert "severity"',
+        `Revert\n\nThis reverts commit ${a}.\n`,
+      ) +
+      landed(a, "2026-08-25T09:00:00Z", "severity");
+    expect(buildEntries(parseGitLog(log), now)[0]!.reverted).toBeUndefined();
+    // …and reverted once more, it is reverted again.
+    const again =
+      record(
+        "e".repeat(40),
+        "2026-08-25T14:00:00Z",
+        "mat",
+        "Revert",
+        `Revert\n\nThis reverts commit ${a}.\n`,
+      ) + log;
+    expect(buildEntries(parseGitLog(again), now)[0]!.reverted?.by).toBe("eeeeeee");
+  });
+
   it("an abbreviated revert reference still matches", () => {
     const target = "a".repeat(40);
     const log =
@@ -166,6 +200,30 @@ describe("merging: a record, not a mirror", () => {
       [entry("a".repeat(40), "2026-08-20T00:00:00Z", "2026-08-25T00:00:00Z")],
     );
     expect(merged[0]!.first_seen).toBe("2026-08-20T01:00:00Z");
+  });
+
+  // `%aI` carries each author's offset: 12:00+02:00 is 10:00Z, older than
+  // 11:30Z. MUTATION: compare the strings — red.
+  it("orders by instant, not by the offset-bearing string", () => {
+    const merged = mergeRegister(
+      [],
+      [
+        entry("a".repeat(40), "2026-08-25T12:00:00+02:00", "x"),
+        entry("b".repeat(40), "2026-08-25T11:30:00Z", "x"),
+      ],
+    );
+    expect(merged.map((e) => e.short)).toEqual(["bbbbbbb", "aaaaaaa"]);
+  });
+
+  // A kept row reverted by B, whose revert C the scan reaches: live again.
+  it("a kept row whose revert was reverted is live again", () => {
+    const old = {
+      ...entry("a".repeat(40), "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+      reverted: { by: "bbbbbbb", at: "2026-02-01T00:00:00Z" },
+    };
+    const reverts = new Map([["b".repeat(40), { by: "ccccccc", at: "2026-09-01T00:00:00Z" }]]);
+    expect(mergeRegister([old], [], reverts)[0]!.reverted).toBeUndefined();
+    expect(mergeRegister([old], [], new Map())[0]!.reverted?.by).toBe("bbbbbbb");
   });
 
   it("never drops a row the fresh scan no longer reaches", () => {
@@ -281,6 +339,30 @@ describe("the revert, and everything it refuses", () => {
     expect(h.calls).toContainEqual(REVERT_ABORT_ARGV);
   });
 
+  // "tree unchanged" is said only when the abort says so. MUTATION: ignore
+  // the abort's answer — red.
+  it("a revert whose abort fails too says the checkout may be mid-revert", async () => {
+    const h = harness((argv) =>
+      argv[1] === "revert"
+        ? {
+            ok: false,
+            stdout: "",
+            stderr:
+              argv[2] === "--abort"
+                ? "fatal: no revert in progress\n"
+                : "error: could not revert\n",
+            code: 1,
+          }
+        : undefined,
+    );
+    await h.log.refresh();
+    const res = await h.log.revert("a".repeat(40));
+    expect(res.ok).toBe(false);
+    expect(res.message).not.toContain("tree unchanged");
+    expect(res.message).toContain("its abort failed too (fatal: no revert in progress)");
+    expect(res.message).toContain("check git status");
+  });
+
   it("refuses a sha the register does not list — this is not a run-git-for-me surface", async () => {
     const h = harness();
     await h.log.refresh();
@@ -310,6 +392,44 @@ describe("the revert, and everything it refuses", () => {
     const res = await cl.revert(target);
     expect(res.ok).toBe(false);
     expect(calls.some((a) => a[1] === "revert")).toBe(false);
+  });
+});
+
+describe("a register the state dir will not take", () => {
+  let dir = "";
+  beforeEach(() => (dir = mkdtempSync(join(tmpdir(), "qcr-changes-"))));
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  // The view stays; the durability loss is said, and the next scan merges
+  // onto what it scanned, not the older file. MUTATION: swallow the save
+  // failure — red.
+  it("says it was not saved, and the next scan keeps first_seen", async () => {
+    const store = new ChangeRegisterStore(dir);
+    let fail = true;
+    const realSave = store.save.bind(store);
+    store.save = (r) => {
+      if (fail) throw new Error("ENOSPC: no space left on device");
+      realSave(r);
+    };
+    let clock = new Date("2026-08-25T10:00:00Z");
+    const log = landed("a".repeat(40), "2026-08-25T09:00:00Z", "severity change");
+    const cl = new ChangeLog(
+      store,
+      async (argv) =>
+        argv[1] === "log"
+          ? { ok: true, stdout: log, stderr: "", code: 0 }
+          : { ok: true, stdout: "", stderr: "", code: 0 },
+      () => clock,
+    );
+    expect(await cl.refresh()).toMatchObject({
+      kind: "save_failed",
+      reason: expect.stringContaining("ENOSPC"),
+    });
+    expect(cl.register?.entries).toHaveLength(1);
+    clock = new Date("2026-08-25T11:00:00Z");
+    fail = false;
+    expect(await cl.refresh()).toBeUndefined();
+    expect(cl.register?.entries[0]!.first_seen).toBe("2026-08-25T10:00:00.000Z");
   });
 });
 

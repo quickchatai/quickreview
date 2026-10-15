@@ -29,7 +29,7 @@ import {
   type PolicyStore,
 } from "../src/tui/alerts.js";
 import { alertSegment, alertZone, topBar, renderBoard, type BoardView } from "../src/tui/board.js";
-import { CompanionLifecycle, type DockerRunner } from "../src/tui/companion.js";
+import type { DockerRunner } from "../src/tui/companion.js";
 import { companionStarter, installCompanionTabHooks } from "../src/tui/companiontab.js";
 import { EVENT_TAIL_CAP, FeedWriter, eventKey, type FeedEvent } from "../src/tui/feed.js";
 import { stripAnsi } from "../src/tui/paint.js";
@@ -329,7 +329,12 @@ describe("AlertPolicy", () => {
     let t = new Date("2026-08-14T21:50:00Z");
     const p = new AlertPolicy(120, () => t, undefined, "Europe/Warsaw");
     p.decide(rec("notice"));
+    p.decide(rec("notice"));
+    expect(p.folds("round-overdue")).toBe(1);
     t = new Date("2026-08-14T22:05:00Z");
+    // Yesterday's folds are not today's, even before a decision reaps them.
+    // MUTATION: read the cause's folds without its day — red.
+    expect(p.folds("round-overdue")).toBe(0);
     expect(p.decide(rec("notice"))).toEqual({ action: "route", bypass: false });
     expect(p.totalFolds()).toBe(0);
   });
@@ -473,6 +478,68 @@ describe("AlertConsumer", () => {
     dropAlert(dir, "a4.json", alertFor("four"));
     restarted.scanOnce();
     expect(f.badges.at(-1)).toMatchObject({ count: 1, folds: 0 });
+  });
+
+  // The badge follows the day with no alert arriving: a restart shows the
+  // count already persisted, and midnight clears the count and the latest
+  // alert. MUTATION: publish the badge only from route() — red.
+  it("the badge shows today's persisted count at startup and resets at midnight, alert or no alert", () => {
+    let t = new Date("2026-08-14T21:00:00Z");
+    let saved: PolicyState | undefined;
+    const store: PolicyStore = { load: () => saved, save: (st) => (saved = st) };
+    const policy = (): AlertPolicy => new AlertPolicy(60, () => t, store, "Europe/Warsaw");
+    const f = fakeSinks();
+    const first = new AlertConsumer(dir, policy(), f.sinks, () => t);
+    for (const cause of ["one", "two"])
+      dropAlert(dir, `${cause}.json`, {
+        tier: "notice",
+        cause,
+        pr: null,
+        title: cause,
+        body: "b",
+        ts: "x",
+      });
+    first.scanOnce();
+    expect(f.badges.at(-1)).toMatchObject({ count: 2, latest: { title: "two" } });
+
+    const g = fakeSinks();
+    const restarted = new AlertConsumer(dir, policy(), g.sinks, () => t);
+    restarted.scanOnce(); // an empty queue
+    expect(g.badges).toEqual([{ count: 2, folds: 0 }]);
+    restarted.scanOnce();
+    expect(g.badges).toHaveLength(1); // nothing moved, nothing re-published
+
+    t = new Date("2026-08-14T22:30:00Z"); // 00:30 in Warsaw
+    first.scanOnce();
+    expect(f.badges.at(-1)).toEqual({ count: 0, folds: 0 });
+  });
+
+  // Two TUIs read one alert before either moves it: only the one whose move
+  // succeeded routes it. MUTATION: route after an ENOENT move — red.
+  it("an alert another TUI moved first is not routed again here", () => {
+    const mine = fakeSinks();
+    const theirs = fakeSinks();
+    const other = new AlertConsumer(dir, new AlertPolicy(20), theirs.sinks);
+    class Racing extends AlertConsumer {
+      protected override archive(file: string): "claimed" | "taken" | "failed" {
+        other.scanOnce(); // the other TUI wins the move after this one read the file
+        return super.archive(file);
+      }
+    }
+    const c = new Racing(dir, new AlertPolicy(20), mine.sinks);
+    dropAlert(dir, "a1.json", {
+      tier: "alert",
+      cause: "c",
+      pr: null,
+      title: "t",
+      body: "",
+      ts: "x",
+    });
+    c.scanOnce();
+    expect(theirs.notified).toHaveLength(1);
+    expect(mine.notified).toEqual([]);
+    expect(mine.injected).toEqual([]);
+    expect(mine.notices).toEqual([]);
   });
 
   it("surfaces a malformed file by name and never swallows it", () => {
@@ -622,12 +689,10 @@ describe("companion tab", () => {
       s.out,
       s.input,
     );
-    const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
     // The companion is the sidebar column — there is no pty to spawn
     // and no screen to take over, so the harness wires the column instead.
     app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => available });
     installCompanionTabHooks(app, {
-      lifecycle,
       available: () => available,
       failure: () => (available ? undefined : "docker build qcr-companion failed: boom"),
     });
@@ -645,6 +710,19 @@ describe("companion tab", () => {
     // column that is already painted; nothing is spawned, nothing suspends.
     expect(h.app.sidebar?.focused).toBe(true);
     expect(h.app.isBusy()).toBe(true); // focused input owns the keyboard
+    await h.close();
+  });
+
+  // A companion that heals on retry focuses the column after the operator
+  // may have focused a PR pane: the pane must let go, or its keys keep going
+  // to the PR session under an accented column. MUTATION: focus the column
+  // without blurring the pane — red.
+  it("focusing the column takes the keyboard from a focused PR pane", async () => {
+    const h = harness();
+    h.app.view.piFocus = true;
+    h.app.focusCompanion();
+    expect(h.app.sidebar?.focused).toBe(true);
+    expect(h.app.piFocused()).toBe(false);
     await h.close();
   });
 
@@ -759,7 +837,6 @@ describe("companion tab", () => {
     );
     app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => up });
     installCompanionTabHooks(app, {
-      lifecycle: new CompanionLifecycle(CFG, noDocker, {}),
       available: () => up,
       retry: start,
     });
@@ -823,11 +900,9 @@ describe("companion tab", () => {
       s.out,
       s.input,
     );
-    const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
     let up = false;
     app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => up });
     installCompanionTabHooks(app, {
-      lifecycle,
       available: () => up,
       failure: () => (up ? undefined : "image missing"),
       retry: async () => {

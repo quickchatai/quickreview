@@ -42,9 +42,10 @@ import { emptyLine } from "./emptystate.js";
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import type { BoardKey } from "./keys.js";
 import type { LearningStore } from "./learning.js";
-import type { ForwardStatus } from "./memforward.js";
+import { forwardUsable, type ForwardStatus } from "./memforward.js";
 import {
   defectEntries,
+  nsId,
   refOf,
   splitNsId,
   timelineOrder,
@@ -98,7 +99,7 @@ export function findMemoryEntry(
 /** A companion ref as the TUI's own namespaced id (`reviewer:<area>/<file>`). */
 function memoryRefId(ref: string): string {
   const m = /^viking:\/\/user\/([a-z][a-z0-9_-]*)\/memories\/(.+)$/.exec(ref.trim());
-  return m ? `${m[1]}:${m[2]}` : ref.trim();
+  return m ? nsId(m[1]!, m[2]!) : ref.trim();
 }
 
 /**
@@ -117,6 +118,15 @@ export function memoryRefUnread(health: MemoryHealth | undefined, ref: string): 
     .filter((h) => !h.ok || h.unreadable > 0)
     .map((h) => `${h.user}: ${h.reason ?? (h.ok ? "entries unreadable" : "unreachable")}`);
   return gaps.length === 0 ? null : gaps.join(" · ");
+}
+
+/** Narrow the timeline to a tag (null clears): the selection restarts at the
+ * top, since the old ordinal may exceed the narrowed list. The one way the
+ * filter changes from outside the tab (the companion's filter verbs). */
+export function setTimelineFilter(st: MemoryTabState, tag: string | null): void {
+  st.filter = tag;
+  st.sel = 0;
+  st.selKey = undefined;
 }
 
 /** The timeline ordering — render and every verb share it, so x/p/e can
@@ -183,6 +193,27 @@ export function dayJump(ordered: MemoryEntry[], sel: number, dir: 1 | -1): numbe
  * against the same one. */
 export { pinnedBudget };
 
+/**
+ * The worst pinned-head overrun among `entries`, if any. Each user's pinned
+ * area is the head of that user's own sessions, so pins are priced per user
+ * (the namespace in the TUI's id), never summed across the merged timeline;
+ * and the caller passes every loaded entry, since a timeline filter narrows
+ * the view, never the head.
+ */
+export function pinnedOverrun(entries: MemoryEntry[]): { user: string; chars: number } | undefined {
+  const byUser = new Map<string, MemoryEntry[]>();
+  for (const e of entries) {
+    const user = splitNsId(e.id).user;
+    byUser.set(user, [...(byUser.get(user) ?? []), e]);
+  }
+  let worst: { user: string; chars: number } | undefined;
+  for (const [user, mine] of byUser) {
+    const b = pinnedBudget(mine);
+    if (b.over && (worst === undefined || b.chars > worst.chars)) worst = { user, chars: b.chars };
+  }
+  return worst;
+}
+
 /** Every click target on the memory tab. */
 export type MemAction =
   { t: "key"; key: string } | { t: "mem"; i: number } | { t: "url"; url: string };
@@ -214,25 +245,24 @@ export function forwardRows(
     { text: `${sectionTitle("MEMORY STORE")} ${dot} ${fwd.state}` },
     { text: truncate(fwd.detail, Math.max(10, width - 26)), dim: true },
   ];
-  const link: Array<RowChunk<MemAction>> =
-    fwd.state === "adopted" || fwd.state === "owned"
-      ? [
-          { text: button("W studio"), action: { t: "url", url: fwd.studioUrl } },
-          {
-            text: truncate(fwd.studioUrl, Math.max(10, width - 16)),
-            action: { t: "url", url: fwd.studioUrl },
-            dim: true,
-          },
-        ]
-      : [
-          {
-            text: truncate(
-              "no web UI while the forward is down — r retries, or install the systemd unit",
-              width - 2,
-            ),
-            dim: true,
-          },
-        ];
+  const link: Array<RowChunk<MemAction>> = forwardUsable(fwd)
+    ? [
+        { text: button("W studio"), action: { t: "url", url: fwd.studioUrl } },
+        {
+          text: truncate(fwd.studioUrl, Math.max(10, width - 16)),
+          action: { t: "url", url: fwd.studioUrl },
+          dim: true,
+        },
+      ]
+    : [
+        {
+          text: truncate(
+            "no web UI while the forward is down — r retries, or install the systemd unit",
+            width - 2,
+          ),
+          dim: true,
+        },
+      ];
   return [head, link];
 }
 
@@ -295,8 +325,10 @@ export function renderMemoryTab(
     left.push(`${MUTED}nothing below is memory — the store did not answer.${RESET}`);
     left.push(`${MUTED}r retries; verbs will refuse until it is back.${RESET}`);
   } else {
-    const budget = pinnedBudget(ordered);
-    const budgetNote = budget.over ? ` ${WARN}⚠ pinned ${budget.chars}ch${RESET}` : "";
+    const overrun = pinnedOverrun(store.entries);
+    const budgetNote = overrun
+      ? ` ${WARN}⚠ pinned ${overrun.chars}ch${overrun.user ? ` (${overrun.user})` : ""}${RESET}`
+      : "";
     const fl = memoryFilterLabel(st.filter);
     const proposals = store.pinProposals.size;
     const proposalNote =
@@ -515,7 +547,7 @@ export function installMemoryTab(app: App, store: LearningStore): MemoryTabState
               // W opens OpenViking's Studio web UI. Same target the
               // [W studio] zone clicks, so mouse and key cannot drift.
               const fwd = store.forward;
-              if (!fwd || (fwd.state !== "adopted" && fwd.state !== "owned")) {
+              if (!fwd || !forwardUsable(fwd)) {
                 store.status =
                   `no web UI — memory forward is ${fwd?.state ?? "starting"}: ${fwd?.detail ?? ""}`.trim();
                 theApp.notice(store.status);

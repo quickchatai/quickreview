@@ -151,6 +151,17 @@ describe("the seven families", () => {
     expect(fams).toContain("dismissed");
   });
 
+  // The feedback ledger records a dismissed bot review as `review_set_aside`.
+  // MUTATION: recognise only `review_dismissed` — red.
+  it("reads the ledger's `review_set_aside` as a dismissal", () => {
+    const f = facts({
+      pr: 5271,
+      rounds: [round(1, "APPROVE")],
+      signals: [{ kind: "review_set_aside" }],
+    });
+    expect(detectCandidates(f).map((d) => d.family)).toContain("dismissed");
+  });
+
   it("counts rounds that produced no verdict, however they died", () => {
     const f = facts({
       pr: 5180,
