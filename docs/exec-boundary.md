@@ -134,7 +134,7 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    sequence brace (`> recall-hint{s..s}/…`) is judged by every protected name
    it can expand onto (`protectedPatternHit`), while a `>` inside a quoted grep
    pattern stays text to this scan (the whitespace scan still reads a spaced one
-   as an operator — see "What is NOT guaranteed"). It refuses three closed, documented sets:
+   as an operator — see "What is NOT guaranteed"). It refuses four closed, documented sets:
    - **git's configuration surface** (`isGitConfigSurface`): anything
      inside a `.git` directory, `.gitconfig`, `<any>/git/config`,
      `.gitattributes` — git's own config locations, not attacks.
@@ -149,6 +149,10 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
      memory tools may reach) and `retired-uris.json` (the retired entries its
      recall excludes), both in the session's pi home. See "The memory scope"
      below.
+   - **the wake-delivery files** (`isDeliverySurface`): every `inject/` dir
+     and anything in it, the inject bridge's `.done/`, and any file named
+     like a wake (`<ISO stamp>-<seq>[--cmd-<id>].md`). See "The wake-delivery
+     files" below.
 4. **Integrity across the round** — `gitConfigWatchPaths` /
    `policySurfaceWatchPaths` / `fingerprintRoundIntegrity` / `integrityChanges`
    in `src/execboundary.ts`. `dispatch` hashes every file git reads
@@ -353,6 +357,32 @@ guard's own (`recall-hints/…` or the dir, `retired-uris.json` and its
 `.tmp-<pid>`; a `docs/recall-hints.md` or `retired-uris.json.bak` is neither,
 in both). Closing `--output` turned up `git grep -O<cmd>`, which RUNS `<cmd>`:
 arbitrary execution through a read verb, closed in the same change.
+
+## The wake-delivery files — a session cannot forge whose turn is running
+
+The daemon drops every session's wakes into `<root>/inject/<session>/`; the
+inject bridge takes pending wakes in name order and moves the one pi accepts
+into `.done/`. The daemon reads that move as "this turn is now running", and
+for the overseer it decides RIGHTS: a Slack-driven command gets the rights of
+the turn being served (`src/slack/origin.ts`), and the `commands/` belt is
+lifted only by a daemon wake pi accepted. The overseer runs as the daemon's
+uid, so before this set the inject dirs were writable: one
+`printf x > inject/overseer/.done/<queued wake>.md` handed a running guest
+turn the rights of a queued owner message or daemon wake, and a queued wake
+emptied in place did the same through the bridge (it moves an empty file to
+`.done/` without serving it).
+
+So the write veto refuses a fourth set, `DELIVERY_SURFACE`, through the same
+predicate both channels read, with its own refusal (`wake-delivery file`):
+the `inject` dir under any prefix, a `.done` dir under any prefix (a `cd` into
+the inject dir drops `inject/`), and the wake file's own NAME (a `cd` into the
+session's dir drops every directory). The origin store also asks for both
+halves of the bridge's one rename — the file in `.done/` AND gone from the
+queue — and a session has no program that moves or removes a file. The audit
+gained `delivery_surface_write`; the chains are round 12 of the corpus,
+replayed against the compiled guard. **Layer 4 does not watch these dirs**:
+the daemon and the bridge rewrite them all the time, so the write veto is
+their protection, as it is for the memory scope.
 
 ## The guarantees, stated so they can be falsified
 
