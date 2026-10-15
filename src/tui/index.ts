@@ -152,6 +152,24 @@ export function buildTuiDriver(
     app.sidebar?.blur();
     if (app.isBusy()) throw new Error("operator input open / terminal in use — action refused");
   };
+  /** Press a deploy-tab run key twice (arm + confirm) and answer whether a
+   * run started: the tab refuses a press with a result on screen, a drain
+   * still owned, or a target not yet loaded, and a refused printable would
+   * otherwise fall through to the companion column while the action read as
+   * done. */
+  const startDeployRun = (key: "D" | "S", kind: "deploy" | "stop" | "start"): void => {
+    if (deployState.run)
+      throw new Error(
+        `deploy_tab ${kind} refused — ${deployState.run.running ? "a run is in flight" : "the previous result is still on screen (x closes it)"}`,
+      );
+    app.pressKey(key);
+    app.pressKey(key);
+    const started = (): string | undefined => deployState.run?.kind; // read after the presses
+    if (started() !== kind)
+      throw new Error(
+        `deploy_tab ${kind} refused by the tab${app.view.noticeLine ? ` — ${app.view.noticeLine}` : ""}`,
+      );
+  };
   const driver: TuiDriver = {
     switchTab: (tab) => {
       prep();
@@ -282,8 +300,7 @@ export function buildTuiDriver(
         return;
       }
       if (action === "deploy") {
-        app.pressKey("D");
-        app.pressKey("D"); // arm+confirm inside the window = instant
+        startDeployRun("D", "deploy"); // arm+confirm inside the window = instant
         return;
       }
       // stop/start: the tab's S button computes its own kind from the observed
@@ -301,8 +318,7 @@ export function buildTuiDriver(
         throw new Error(
           `deploy_tab ${action} refused — container is ${deployState.containerStatus}`,
         );
-      app.pressKey("S");
-      app.pressKey("S");
+      startDeployRun("S", action);
     },
   };
   return driver;

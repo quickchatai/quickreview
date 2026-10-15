@@ -333,6 +333,27 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(deployState.armedKind).toBeUndefined();
   });
 
+  it("deploy_tab deploy with a previous result on screen is a FAILED result, not keystrokes for the companion", async () => {
+    const { deployState, driver } = makeRig();
+    deployState.run = { kind: "deploy", lines: ["done"], partial: "", running: false };
+    const dir = actionDir();
+    drop(dir, "d.json", { verb: "deploy_tab", params: { action: "deploy" } });
+    const [r] = await processTuiActions(dir, driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("previous result is still on screen");
+    expect(deployState.armedKind).toBeUndefined();
+  });
+
+  it("deploy_tab deploy the tab refuses (target not loaded) is a FAILED result naming why", async () => {
+    const { deployState, driver } = makeRig();
+    const dir = actionDir();
+    drop(dir, "d.json", { verb: "deploy_tab", params: { action: "deploy" } });
+    const [r] = await processTuiActions(dir, driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("deploy target is still loading");
+    expect(deployState.run).toBeUndefined();
+  });
+
   it("deploy_tab abort with no run in flight is a FAILED result, not a stray x", async () => {
     const { deployState, driver } = makeRig();
     const dir = actionDir();
