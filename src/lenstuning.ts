@@ -280,11 +280,22 @@ export function lensModelOverrides(
   const out: Record<string, string> = {};
   for (const [lens, t] of Object.entries(lenses ?? {})) {
     if (!t.effort) continue;
-    const level: ThinkingLevel = t.effort === "high" ? models.effort_max : t.effort;
     for (const tier of PASS_TIER_ORDER)
-      out[`${lens}--${tier}`] = withThinking(models.tiers[tier], level);
+      out[`${lens}--${tier}`] = effortSpec(models, tier, t.effort);
   }
   return out;
+}
+
+/** `tier`'s model spec at a configured `effort` — `high` is the model's
+ * ceiling (`[models] effort_max`). A lens's profile `effort` and the scan's
+ * `[scan] effort` resolve through this one rule. */
+export function effortSpec(
+  models: Pick<ModelsConfig, "tiers" | "effort_max">,
+  tier: PassTier,
+  effort: Exclude<ReviewEffort, "">,
+): string {
+  const level: ThinkingLevel = effort === "high" ? models.effort_max : effort;
+  return withThinking(models.tiers[tier], level);
 }
 
 /**
