@@ -72,9 +72,11 @@ export function parseLedgerCarry(
 
 const EMPTY_ITEM = /^(?:-+|—|–|none|\(none\)|n\/a|nothing(?: yet)?)$/i;
 
-/** The ledger's `SETTLED:` items, one `- item` line each, bounded to `max`
- * characters; "" when the ledger settles nothing. Items are split on the
- * ledger format's ` | ` separator (conversation-system.md). */
+/** The ledger's `SETTLED:` items, one `- item` line each: the items within
+ * `max` characters, then — when some did not fit — one short line counting
+ * the rest (that line is beyond `max`); "" when the ledger settles nothing.
+ * Items are split on the ledger format's ` | ` separator
+ * (conversation-system.md). */
 export function settledFromLedger(text: string, max: number = SETTLED_DIGEST_MAX_CHARS): string {
   const items: string[] = [];
   for (const line of text.split("\n")) {
