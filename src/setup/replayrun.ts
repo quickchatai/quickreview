@@ -32,6 +32,7 @@
 // and request), the current run, and the rates measured from finished cases
 // (what later previews price with).
 import { buildPassPlan } from "../dispatch.js";
+import { DOUBT_WORDS } from "../doubtwords.js";
 import { VALIDATE_PASS } from "../include.js";
 import { findStyleGuide } from "../styleguide.js";
 import { findCiLinters } from "../lintconfig.js";
@@ -63,7 +64,13 @@ import {
 } from "./replay.js";
 import type { ReplaySide, SideRequest } from "./replaybuild.js";
 import type { ReplaySource } from "./replaysource.js";
-import { parseScanAnswer, parseValidatorAnswer, type ScanCandidate } from "./scan.js";
+import {
+  drainLanes,
+  parseScanAnswer,
+  parseValidatorAnswer,
+  survivorSource,
+  type ScanCandidate,
+} from "./scan.js";
 
 // ---- ports ---------------------------------------------------------------------
 
@@ -289,6 +296,9 @@ export function parseReplayRequest(raw: {
 
 export class ReplayRunner {
   private active: { id: string; abort: AbortController; done: Promise<void> } | null = null;
+  /** A start is planning (it awaits GitHub): a second start must not pass
+   * the active check meanwhile and launch — and pay for — a second run. */
+  private starting = false;
   private readonly concurrency: number;
 
   constructor(private readonly ports: ReplayPorts) {
@@ -610,7 +620,7 @@ export class ReplayRunner {
         })),
         shared: planned.jobs.filter((j) => j.state.sides.length === 2).length,
         estimate_usd: planned.estimate,
-        cap_usd: usd(planned.estimate * REPLAY_CAP_FACTOR),
+        cap_usd: capOf(planned.estimate),
         rate_bases: planned.bases,
         concurrency: this.concurrency,
       },
@@ -625,6 +635,11 @@ export class ReplayRunner {
         ok: false,
         errors: [`replay ${this.active.id} is still running — stop it or wait for it`],
       };
+    if (this.starting)
+      return {
+        ok: false,
+        errors: ["a replay is already starting — wait for it, then check its status"],
+      };
     if (typeof args.key !== "string" || args.key === "") {
       return {
         ok: false,
@@ -633,14 +648,22 @@ export class ReplayRunner {
         ],
       };
     }
+    const key = args.key;
+    this.starting = true;
+    try {
+      return await this.startPlanned(key);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async startPlanned(key: string): Promise<{ ok: true; run: ReplayRun } | Refusal> {
     const { file, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
-    if (file.preview === null || file.preview.key !== args.key) {
+    if (file.preview === null || file.preview.key !== key) {
       return {
         ok: false,
-        errors: [
-          `no stored preview has key ${args.key} — preview again and show the operator the cost`,
-        ],
+        errors: [`no stored preview has key ${key} — preview again and show the operator the cost`],
       };
     }
     let p;
@@ -651,11 +674,11 @@ export class ReplayRunner {
     }
     if (!p.ok) return p;
     const planned = p.planned;
-    if (planned.key !== args.key) {
+    if (planned.key !== key) {
       return {
         ok: false,
         errors: [
-          `the replay changed since that preview (key ${args.key}, now ${planned.key}: a profile, a PR or a price moved) — preview again and show the operator the new cost`,
+          `the replay changed since that preview (key ${key}, now ${planned.key}: a profile, a PR or a price moved) — preview again and show the operator the new cost`,
         ],
       };
     }
@@ -670,7 +693,7 @@ export class ReplayRunner {
       finished_at: null,
       state: "running",
       estimate_usd: planned.estimate,
-      cap_usd: usd(planned.estimate * REPLAY_CAP_FACTOR),
+      cap_usd: capOf(planned.estimate),
       spent_usd: 0,
       unpriced_cases: 0,
       sides: sideViews(planned.sides),
@@ -692,9 +715,9 @@ export class ReplayRunner {
     const abort = new AbortController();
     const done = this.drive(file, run, planned.jobs, abort)
       .catch((err: unknown) => {
-        // One lane's failure rejects the whole drive while the other lanes'
-        // cases are still running: abort them, or they would go on spending
-        // past `settle` with no run left to count them against the cap.
+        // One lane's failure rejects the drive once every lane has stopped
+        // (drainLanes aborted the others); the abort here stops anything
+        // the drive had not yet started.
         abort.abort();
         run.problems.push(`the replay stopped on an internal error: ${clean(err)}`);
         this.settle(file, run, "partial");
@@ -765,10 +788,10 @@ export class ReplayRunner {
         while (next < list.length && !signal.aborted) {
           const job = list[next]!;
           const est = job.state.estimate_usd;
-          if (!within(est)) {
-            capHit = true;
-            return;
-          }
+          // Not beside what is in flight: this lane stops, and another may
+          // still take the case once those reservations settle. Only a case
+          // no lane could take is a cap hit (below).
+          if (!within(est)) return;
           next++;
           reserved += est;
           live.set(job.state.id, 0);
@@ -787,9 +810,8 @@ export class ReplayRunner {
           }
         }
       };
-      await Promise.all(
-        Array.from({ length: Math.max(1, Math.min(this.concurrency, list.length)) }, lane),
-      );
+      await drainLanes(Math.max(1, Math.min(this.concurrency, list.length)), lane, abort);
+      if (!signal.aborted && list.some((j) => j.state.status === "pending")) capHit = true;
     };
     await phase(jobs.filter((j) => j.state.kind === "lens"));
     if (!signal.aborted && !capHit) await phase(jobs.filter((j) => j.state.kind === "validate"));
@@ -804,7 +826,8 @@ export class ReplayRunner {
   }
 
   /** One case, start to finish. Resolves with what it cost (its estimate
-   * when the runner could not price it), never rejects. */
+   * when the runner could not price it); a runner failure is an outcome, so
+   * it rejects only when the run record cannot be written. */
   private async runCase(
     file: ReplayFile,
     run: ReplayRun,
@@ -883,6 +906,13 @@ export class ReplayRunner {
           `${c.id}: ${c.lens} — ${r.pr.length === 0 ? `read none of PR #${c.pr}'s files: ` : ""}${n} file read${n === 1 ? "" : "s"} opened outside PR #${c.pr}'s worktree (${shown}) — not the PR's code`,
         );
       }
+      // A lens that opened nothing of the PR did not review it, whatever it
+      // answered: never a finished review, never a price sample.
+      if (c.kind === "lens" && r.pr.length === 0) {
+        c.status = "failed";
+        c.error = `the lens opened none of PR #${c.pr}'s files (${outcome.reads.length} file-read call${outcome.reads.length === 1 ? "" : "s"} in all)`;
+        return spent;
+      }
     }
     if (c.kind === "lens") {
       const answer = parseScanAnswer(outcome.output, { root: job.root, deepLenses: [] });
@@ -933,6 +963,9 @@ export class ReplayRunner {
   }
 }
 
+/** The hard stop a replay estimate gets — the preview's and the run's. */
+const capOf = (estimate: number): number => usd(estimate * REPLAY_CAP_FACTOR);
+
 function sideViews(sides: Record<SideName, ReplaySide>): Record<SideName, ReplaySideView> {
   const v = (s: ReplaySide): ReplaySideView => ({
     profile: s.profile,
@@ -973,15 +1006,16 @@ export function validated(
   const used = new Set<ReplayFinding>();
   const findings: ReplayFinding[] = [];
   for (const s of answer.survivors) {
-    const from =
-      candidates.find((c) => !used.has(c) && near(s, c) && c.kind === s.kind) ??
-      candidates.find((c) => !used.has(c) && near(s, c));
+    const from = survivorSource(s, candidates, used);
     if (from) used.add(from);
     findings.push({ ...s, lens: from?.lens ?? VALIDATE_PASS, doubt: null, validated: true });
   }
   const kept = findings.length;
   let doubted = 0;
-  for (const d of answer.doubted) {
+  // A validity veto written under KILLED (an older spelling) is still a
+  // doubt, as the daemon's findings record reads it.
+  const vetoes = answer.killed.filter((k) => DOUBT_WORDS.includes(k.word.trim().toLowerCase()));
+  for (const d of [...answer.doubted, ...vetoes]) {
     const at = { path: d.path, start: d.line ?? 1, end: d.line ?? Number.MAX_SAFE_INTEGER };
     const c = candidates.find((x) => !used.has(x) && near(at, x));
     if (!c) continue;

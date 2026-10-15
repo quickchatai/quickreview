@@ -324,6 +324,30 @@ describe("every profile write records the profile it replaces", () => {
     });
   });
 
+  it("a profile directory with no profile.toml yet exists: the write records it, and the old side is that profile", () => {
+    const acme = join(configHome(env), "profiles", "acme");
+    write(join(acme, "NOTES.md"), "an addenda-only profile\n");
+    mkdirSync(join(acme, "addenda"), { recursive: true });
+    liveConfig("acme");
+    const r = tune({ security: "critical" });
+    const b = readBaselines(stateHomeFs(stateRoot()));
+    if (b.state !== "ok") throw new Error(b.error);
+    expect(b.baselines[0]).toMatchObject({ id: r.commit!.id, existed: true });
+    const sides = replaySides(
+      {
+        root: sandbox,
+        env,
+        stateRoot: stateRoot(),
+        state: stateHomeFs(stateRoot()),
+        clock: () => now,
+      },
+      { old: null, new_profile: null },
+    );
+    if (!sides.ok) throw new Error(sides.errors.join("; "));
+    expect(sides.sides.old).toMatchObject({ profile: "acme", baseline: r.commit!.id });
+    expect(sides.sides.old.cfg.lenses?.["pass-security"]).toBeUndefined();
+  });
+
   it("an unreadable baselines file is never overwritten, and the write still lands", () => {
     write(join(stateRoot(), PROFILE_BASELINES_FILE), "{not json");
     const r = tune({ security: "critical" });
@@ -430,6 +454,21 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     expect(r.sides.old.agentText("pass-baseline--sol-med")).toBe(
       r.sides.new.agentText("pass-baseline--sol-med"),
     );
+  });
+
+  it("each side builds its models the way the daemon does: a [models.pass_models] move included", () => {
+    tune({ security: "critical" });
+    const path = join(configHome(env), "config.toml");
+    write(
+      path,
+      `${readFileSync(path, "utf8")}\n[models.pass_models]\n"pass-baseline" = "openai-codex/moved-model"\n`,
+    );
+    const r = sides();
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    for (const side of ["old", "new"] as const)
+      expect(
+        /^model:\s*(.*)$/m.exec(r.sides[side].agentText("pass-baseline--sol-med")!)?.[1],
+      ).toMatch(/^openai-codex\/moved-model/);
   });
 
   it("old may name a write, another profile, or none; anything else is refused with the choices", () => {
@@ -679,6 +718,52 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(c!.complete).toEqual({ old: false, new: false });
   });
 
+  it("a case refused only while another's reservation is in flight is run once it settles — and the validators still run", async () => {
+    // Cap $0.06; each lens and validator is estimated at ~$0.0056. The first
+    // case costs $0.05 while the second is still in flight: the third does not
+    // fit beside the second's reservation, but fits once it settles cheaply.
+    const calls: Call[] = [];
+    const base = fakeRunner(calls, () => 0.0001);
+    let n = 0;
+    const rr = new ReplayRunner({
+      state: stateHomeFs(stateRoot()),
+      clock: () => now,
+      source: {
+        pr: async (k) => ({ ok: true, pr: pr(k) }),
+        open: () => ({ ok: true, tree: tree() }),
+      },
+      sides: (req) =>
+        replaySides(
+          {
+            root: sandbox,
+            env,
+            stateRoot: stateRoot(),
+            state: stateHomeFs(stateRoot()),
+            clock: () => now,
+          },
+          req,
+        ),
+      cases: (agentsDir) => ({
+        run: async (spec, signal, onCost) => {
+          const k = ++n;
+          if (k === 2) await new Promise((r) => setTimeout(r, 30));
+          const out = await base(agentsDir).run(spec, signal, onCost);
+          return k === 1 ? { ...out, cost_usd: 0.05 } : out;
+        },
+      }),
+      styleGuide: () => [],
+      concurrency: 2,
+    });
+    const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    expect(p.cap_usd).toBeCloseTo(0.06, 6);
+    const run = await ran(rr, p.key);
+    expect(run.cases.filter((c) => c.kind === "validate").map((c) => c.status)).toEqual([
+      "done",
+      "done",
+    ]);
+    expect(run.state).toBe("complete");
+  });
+
   it("stops HARD at the cap: what is in flight is aborted, the rest never starts", async () => {
     const calls: Call[] = [];
     const rr = runner(calls, () => 100); // every case costs far past any estimate
@@ -786,6 +871,11 @@ describe("replay: cost first, subagents, side by side", () => {
     const run = await ran(rr, previewOf(await rr.preview({ prs: [7], old: "none" })).key);
     const baseline = run.cases.find((c) => c.agent.startsWith("pass-baseline--"))!;
     expect(baseline.reads).toEqual({ pr: 0, elsewhere: 1 });
+    // It read none of the PR: not a finished review, whatever it answered.
+    expect(baseline).toMatchObject({
+      status: "failed",
+      error: expect.stringMatching(/opened none of PR #7's files/),
+    });
     const other = run.cases.find(
       (c) => c.kind === "lens" && !c.agent.startsWith("pass-baseline--"),
     )!;
@@ -795,6 +885,51 @@ describe("replay: cost first, subagents, side by side", () => {
         /pass-baseline — read none of PR #7's files: 1 file read opened outside PR #7's worktree \(\/workspace\/svc\/auth\/token\.py\)/,
       ),
     ]);
+  });
+
+  it("a lens that made no file read at all is no finished review: its side reads incomplete", async () => {
+    const calls: Call[] = [];
+    const base = fakeRunner(calls);
+    const rr = new ReplayRunner({
+      state: stateHomeFs(stateRoot()),
+      clock: () => now,
+      source: {
+        pr: async (n) => ({ ok: true, pr: pr(n) }),
+        open: () => ({ ok: true, tree: tree() }),
+      },
+      sides: (req) =>
+        replaySides(
+          {
+            root: sandbox,
+            env,
+            stateRoot: stateRoot(),
+            state: stateHomeFs(stateRoot()),
+            clock: () => now,
+          },
+          req,
+        ),
+      cases: (agentsDir) => ({
+        run: async (spec, signal, onCost) => {
+          const out = await base(agentsDir).run(spec, signal, onCost);
+          if (!out.ok) return out;
+          return {
+            ...out,
+            reads: spec.agent.startsWith("pass-baseline--") ? [] : [join(dir, "tree", FILE)],
+          };
+        },
+      }),
+      styleGuide: () => [],
+      concurrency: 2,
+    });
+    const run = await ran(rr, previewOf(await rr.preview({ prs: [7], old: "none" })).key);
+    const baseline = run.cases.filter((c) => c.agent.startsWith("pass-baseline--"));
+    expect(baseline.length).toBeGreaterThan(0);
+    for (const c of baseline)
+      expect(c).toMatchObject({
+        status: "failed",
+        error: expect.stringMatching(/opened none of PR #7's files \(0 file-read calls/),
+      });
+    expect(compareRun(run)[0]!.complete).toEqual({ old: false, new: false });
   });
 
   it("a finished replay prices the next preview from what it measured", async () => {
@@ -820,6 +955,15 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(s.ok).toBe(true);
     expect(await rr.start({ key: p.key })).toMatchObject({ ok: false });
     expect(await rr.preview({ prs: [7], old: "none" })).toMatchObject({ ok: false });
+    await rr.idle();
+  });
+
+  it("two starts issued together launch one run: the second is refused while the first plans", async () => {
+    const rr = runner([]);
+    const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    const [a, b] = await Promise.all([rr.start({ key: p.key }), rr.start({ key: p.key })]);
+    expect([a.ok, b.ok]).toEqual([true, false]);
+    expect(!b.ok && b.errors[0]).toMatch(/already starting/);
     await rr.idle();
   });
 
@@ -918,6 +1062,17 @@ describe("replay rules", () => {
       ["pass-baseline", "P2", "unverifiable"],
     ]);
     expect([v.kept, v.doubted, v.killed]).toEqual([1, 1, 1]);
+  });
+
+  it("a validity veto written under KILLED is a doubt, kept — only other kills drop", () => {
+    const cands = [f({ start: 20, end: 20 }), f({ path: "b.py", start: 5, end: 5 })];
+    const v = validated(
+      "FINDINGS pass-validate PR#1 @x\nNONE\nKILLED\n- pass-baseline a.py:20 — refuted: the caller checks it\n- b.py:5 duplicate",
+      "/t",
+      cands,
+    );
+    expect(v.findings.map((x) => [x.path, x.doubt?.word ?? null])).toEqual([["a.py", "refuted"]]);
+    expect([v.kept, v.doubted, v.killed]).toEqual([0, 1, 1]);
   });
 
   it("a validator's prose that judges nothing kills nothing", () => {
@@ -1089,6 +1244,57 @@ describe("gitReplaySource (a scratch git repo — git is the thing under test)",
     ]);
     expect(readFileSync(t.diffPath, "utf8")).toContain("+three");
     expect(t.lines("app/a.py")).toBe(3);
+  });
+
+  it("a non-ASCII or quoted path in the diff is the tree's own filename", () => {
+    git("checkout", "-qb", "feature");
+    write(join(repo, "app/café.py"), "x\n");
+    write(join(repo, 'app/say "hi".py'), "y\n");
+    git("add", "-A");
+    git("commit", "-qm", "names");
+    const head = git("rev-parse", "HEAD");
+    git("checkout", "-q", "-");
+    const src = gitReplaySource({
+      github: github({}),
+      repo: "acme/app",
+      repoRoot: repo,
+      stateRoot: stateRoot(),
+    });
+    const opened = src.open({ ...pr(), head_sha: head, base_sha: git("rev-parse", "HEAD") }, []);
+    if (!opened.ok) throw new Error(opened.reason);
+    const names = opened.tree.files.map((f) => f.filename).sort();
+    expect(names).toEqual(["app/café.py", 'app/say "hi".py'].sort());
+    for (const n of names) expect(opened.tree.lines(n)).toBe(1);
+  });
+
+  it("two PRs from one head into different bases each keep their own diff", () => {
+    const main = git("rev-parse", "HEAD");
+    git("checkout", "-qb", "feature");
+    write(join(repo, "app/a.py"), "one\ntwo\nfirst\n");
+    git("commit", "-qam", "feature 1");
+    const f1 = git("rev-parse", "HEAD");
+    write(join(repo, "app/a.py"), "one\ntwo\nfirst\nsecond\n");
+    git("commit", "-qam", "feature 2");
+    const head = git("rev-parse", "HEAD");
+    // A second base that already holds the first feature commit.
+    git("checkout", "-qb", "release", f1);
+    write(join(repo, "app/r.py"), "release\n");
+    git("add", "-A");
+    git("commit", "-qm", "release");
+    const release = git("rev-parse", "HEAD");
+    const src = gitReplaySource({
+      github: github({}),
+      repo: "acme/app",
+      repoRoot: repo,
+      stateRoot: stateRoot(),
+    });
+    const a = src.open({ ...pr(), number: 1, head_sha: head, base_sha: main }, [head]);
+    const b = src.open({ ...pr(), number: 2, head_sha: head, base_sha: release }, [head]);
+    if (!a.ok || !b.ok) throw new Error("not opened");
+    expect(a.tree.diffPath).not.toBe(b.tree.diffPath);
+    expect(readFileSync(a.tree.diffPath, "utf8")).toContain("+first");
+    expect(readFileSync(b.tree.diffPath, "utf8")).not.toContain("+first");
+    expect(readFileSync(b.tree.diffPath, "utf8")).toContain("+second");
   });
 
   it("falls back to the merge commit when the head is gone, and refuses when neither is here", () => {

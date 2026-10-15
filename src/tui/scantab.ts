@@ -65,6 +65,7 @@ import {
 import {
   clickStopScan,
   dismissedLookalike,
+  isOpenFinding,
   lookalikeRank,
   readScanFindings,
   readScanRuns,
@@ -280,7 +281,7 @@ export interface UnitRow {
   progress?: UnitProgress;
 }
 
-const open = (x: ScanFinding): boolean => x.state === "new" || x.state === "promoted";
+const open = isOpenFinding;
 const serious = (x: ScanFinding): boolean => open(x) && sevRank(x.severity) <= 2;
 
 /** Units: every unit a finding or the current run names, worst first. */

@@ -340,6 +340,19 @@ describe("first-scan calibration, then previews from the ledger", () => {
     expect((await s.start({ key: p.key })).ok).toBe(false);
   });
 
+  it("a calibration case nothing priced stops the run: no further case starts blind", async () => {
+    const r = runner({ perFile: null });
+    const s = new ScanRunner(ports(r, { concurrency: 1 }));
+    const p = await previewOf(s);
+    expect(p.mode).toBe("calibration");
+    expect(p.cases.length).toBeGreaterThan(1);
+    const { run } = await runToEnd(s);
+    expect(r.specs).toHaveLength(1);
+    expect(run.state).toBe("capped");
+    expect(run.cases.filter((c) => c.status === "skipped")).toHaveLength(p.cases.length - 1);
+    expect(run.problems.some((x) => /nothing priced it/.test(x))).toBe(true);
+  });
+
   it("a change of settings is a new price: back to calibration", async () => {
     const s = new ScanRunner(ports(runner()));
     await runToEnd(s);
@@ -804,7 +817,110 @@ describe("the validator — a survivor it also doubts", () => {
   });
 });
 
+describe("a lane that fails stops its siblings before the run is settled", () => {
+  it("a run-record write failure in one lane aborts the case still running in another, and the run settles after it", async () => {
+    const order: string[] = [];
+    let failNext = false;
+    let siblingAborted: boolean | null = null;
+    const base = stateHomeFs(stateDir);
+    const state = {
+      ...base,
+      write: (rel: string, text: string) => {
+        if (failNext && rel === RUN_FILE) {
+          failNext = false;
+          throw new Error("disk full");
+        }
+        base.write(rel, text);
+      },
+    };
+    let first = true;
+    let siblingStarted!: () => void;
+    const started = new Promise<void>((r) => (siblingStarted = r));
+    const cases = {
+      specs: [] as CaseSpec[],
+      run: async (spec: CaseSpec, signal: AbortSignal): Promise<CaseOutcome> => {
+        if (first) {
+          // The first case answers once its sibling is reading; the lane's
+          // next run-record write then fails.
+          first = false;
+          await started;
+          failNext = true;
+          return { ok: true, output: scanAnswer(spec), cost_usd: 0.01 };
+        }
+        siblingStarted();
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, 2000);
+          signal.addEventListener("abort", () => {
+            clearTimeout(t);
+            resolve();
+          });
+        });
+        siblingAborted = signal.aborted;
+        order.push("sibling done");
+        return { ok: false, reason: "aborted", cost_usd: 0 };
+      },
+    };
+    const s = new ScanRunner({ ...ports(cases, { concurrency: 2 }), state });
+    const p = await previewOf(s);
+    expect(p.cases.length).toBeGreaterThan(1);
+    const r = await s.start({ key: p.key });
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    await s.idle();
+    order.push("settled");
+    expect(siblingAborted).toBe(true);
+    expect(order).toEqual(["sibling done", "settled"]);
+    expect(s.status().run!.problems.some((x) => /internal error: disk full/.test(x))).toBe(true);
+  });
+});
+
+describe("a skeptic that opened none of its candidates' files judged nothing", () => {
+  const ROOT = `/state/scan/tree/${SHA1}`;
+  const upheld = (spec: CaseSpec): string =>
+    spec.agent.startsWith("pass-validate")
+      ? scanAnswer(spec)
+          .split("SUGGEST")[0]!
+          .replace("FINDINGS pass-scan", "FINDINGS pass-validate")
+          .replace(
+            "  claim:",
+            "  validity: confirmed\n  scenario: a caller passes None → crash\n  claim:",
+          )
+      : scanAnswer(spec);
+
+  it("its tiers are not taken: the findings stay unvalidated (unknown), and the run says why", async () => {
+    // Every lens opened its files; the skeptic opened nothing.
+    const reads = (spec: CaseSpec): string[] =>
+      spec.agent.startsWith("pass-validate") ? [] : spec.files.map((f) => `${ROOT}/${f}`);
+    const { run } = await runToEnd(
+      new ScanRunner(ports(runner({ answer: upheld, reads }), { validator: true })),
+    );
+    const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.every((f) => f.validated === false && f.validity === null)).toBe(true);
+    expect(run.problems.some((p) => /validator failed \(it opened none of the/.test(p))).toBe(true);
+  });
+
+  it("one that opened a candidate's file is taken as it answered", async () => {
+    const reads = (spec: CaseSpec): string[] => spec.files.map((f) => `${ROOT}/${f}`);
+    await runToEnd(new ScanRunner(ports(runner({ answer: upheld, reads }), { validator: true })));
+    const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.every((f) => f.validated === true && f.validity === "likely")).toBe(true);
+  });
+});
+
 describe("reading the lens's answer", () => {
+  it("a nit's `request:` is its fix when no `fix:` is written; a written `fix:` wins", () => {
+    const item = (extra: string): string =>
+      `FINDINGS pass-scan SCAN x @y\n- path: src/a.py\n  line: 7\n  severity: nit\n  claim: c\n${extra}\nSUGGEST NONE\n`;
+    expect(
+      parseScanAnswer(item("  request: rename it to total"), { root: "/t" }).candidates[0]!.fix,
+    ).toBe("rename it to total");
+    expect(
+      parseScanAnswer(item("  request: rename it\n  fix: drop it"), { root: "/t" }).candidates[0]!
+        .fix,
+    ).toBe("drop it");
+  });
+
   it("strips an absolute tree prefix, reads ranges, and keeps NONE apart from junk", () => {
     const a = parseScanAnswer(
       "FINDINGS pass-scan SCAN x @y\n- path: /t/root/src/a.py\n  line: 7\n  kind: data loss\n  severity: p2\n  claim: c\n\nSUGGEST NONE\n",
