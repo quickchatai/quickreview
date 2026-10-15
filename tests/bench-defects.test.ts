@@ -163,6 +163,11 @@ describe("the review as the author received it", () => {
     expect(p).toContain("C1 [blocker] a.py:11\nfinds D1");
     expect(p).toContain("Verdict: APPROVE");
     expect(p).toMatch(/Never run project code/);
+    // The answer template offers exactly the verdicts the parser accepts.
+    expect(p).toContain('"verdict":"found|partial|missed"');
+    expect(p).toContain(
+      '"verdict":"correct-valuable|correct-minor|partly-correct|incorrect|unverifiable"',
+    );
   });
 });
 
@@ -470,6 +475,27 @@ describe("scoring", () => {
     expect(s.new_defect_candidates).toEqual([
       { instance_id: "o__r@1234567", comment: "C2", why: "new thing" },
     ]);
+    // A flag the prompt forbids — on a comment that is not correct-valuable,
+    // or that finds a listed defect — is no candidate.
+    const flagged = (verdict: string, defect: string | null): CaseJudgement => {
+      const j = J(1, "missed", verdict);
+      j.comments = j.comments.map((x) => (x.id === "C2" ? { ...x, defect, new_defect: true } : x));
+      return j;
+    };
+    for (const [verdict, defect] of [
+      ["incorrect", null],
+      ["correct-minor", null],
+      ["correct-valuable", "D1"],
+    ] as const)
+      expect(
+        scoreRun(
+          set,
+          ["o__r@1234567"],
+          { "o__r@1234567": [flagged(verdict, defect)] },
+          { "o__r@1234567": REVIEW },
+        ).new_defect_candidates,
+        `${verdict} ${defect}`,
+      ).toEqual([]);
     const md = renderDefectReport("t", set, s, {
       tokensInPerPr: 1_000_000,
       tokensOutPerPr: 15_000,
@@ -666,7 +692,9 @@ describe("a re-judged round", () => {
         timeoutMs: 10_000,
       },
     });
-    expect(j!.error).toBeDefined();
+    expect(j!.error).toBe(
+      "judge exited 1 without an answer — see o__r@1234567.r1.events.stderr.log",
+    );
     expect(j!.usage).toEqual({ input: 0, output: 0, cacheRead: 0 });
   });
 });

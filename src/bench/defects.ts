@@ -346,7 +346,7 @@ YOUR TASK
 Be strict both ways: do not credit a comment for sounding plausible, and do not dismiss one without reading the code it cites.
 
 Answer with ONE JSON object and nothing after it:
-{"defects":[{"id":"D1","verdict":"found|partial|missed","comments":["C2"],"why":"one sentence"}],"comments":[{"id":"C1","defect":"D1","verdict":"correct-valuable|correct-minor|partly-correct|incorrect|unverifiable","new_defect":false,"why":"one sentence with file:line"}]}
+{"defects":[{"id":"D1","verdict":"${DEFECT_VERDICTS.join("|")}","comments":["C2"],"why":"one sentence"}],"comments":[{"id":"C1","defect":"D1","verdict":"${COMMENT_VERDICTS.join("|")}","new_defect":false,"why":"one sentence with file:line"}]}
 Every defect id and every comment id above must appear exactly once.`;
 }
 
@@ -643,7 +643,14 @@ export function scoreRun(
         if (v?.defect) finds++;
         if (c.tag === "blocker" && (kind === "incorrect" || kind === "partly-correct"))
           wrongBlocker++;
-        if (v?.new_defect && !candidates.some((x) => x.instance_id === iid && x.comment === c.id))
+        // A candidate is what the prompt allows new_defect on: a correct,
+        // valuable comment that finds no listed defect.
+        if (
+          v?.new_defect &&
+          kind === "correct-valuable" &&
+          !v.defect &&
+          !candidates.some((x) => x.instance_id === iid && x.comment === c.id)
+        )
           candidates.push({ instance_id: iid, comment: c.id, why: v.why });
       }
       cFinds += finds / n;
