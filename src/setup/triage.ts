@@ -653,7 +653,7 @@ export class ScanTriage {
     // The cap record is saved after EVERY note memory took, so an interrupted
     // call leaves each landed note counted and a retry cannot exceed the caps.
     file.scans[run.sha] = rec;
-    let unsaved: string | null = null;
+    let unsaved = null as string | null; // set by save(), read after the loops
     const save = (): void => {
       try {
         this.ports.state.write(SCAN_MEMORY_FILE, `${JSON.stringify(file, null, 1)}\n`);
