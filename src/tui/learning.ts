@@ -14,6 +14,7 @@
 // `undefined` / `unread` means nobody has asked, an error field means the
 // ask failed, and only a real answer sets a list. An empty list from a dead
 // store and an empty list from an empty store must never look alike.
+import { join } from "node:path";
 import { proposalKey, type PinProposalsRead } from "../setup/pins.js";
 import type { App } from "./app.js";
 import type { IssueSink } from "./issuesink.js";
@@ -40,6 +41,7 @@ import {
   parseImprovements,
   readRubricFile,
   removeRubricDir,
+  rubricDir,
   type AcceptDeps,
   type ImprovementItem,
   type RubricProposal,
@@ -353,7 +355,7 @@ export class LearningStore {
   private readonly defaultFetchProposals = async (app: App): Promise<ProposalsFetch> => {
     // Proposals are local: the companion's `land` skill writes state/rubric/
     // in this repo — no ssh, no VM path.
-    const root = this.deps.repoRoot ?? process.cwd();
+    const root = this.repoRoot;
     const proposals: RubricProposal[] = listRubricProposals(root).map((slug) => ({
       slug,
       head: (readRubricFile(root, slug, "PROPOSAL.md") ?? "")
@@ -476,19 +478,26 @@ export class LearningStore {
     });
   }
 
+  /** The checkout the proposals live in — listing, accepting and rejecting
+   * all address the same one. */
+  private get repoRoot(): string {
+    return this.deps.repoRoot ?? process.cwd();
+  }
+
   /** One accept at a time: each is several awaited git subprocesses in the
    * one shared checkout, and two interleaved would commit each other's
    * staged files. A second request while one runs is refused, not queued —
-   * the operator presses A again once the first has answered. */
-  private accepting = false;
+   * the operator presses A again once the first has answered. Holds the
+   * slug being accepted, so a rejection of that same proposal waits too. */
+  private accepting: string | undefined;
 
   accept(slug: string): Promise<{ ok: boolean; message: string }> {
-    if (this.accepting)
+    if (this.accepting !== undefined)
       return Promise.resolve({
         ok: false,
         message: `an accept is already running — '${slug}' not started; press A again once it answers`,
       });
-    this.accepting = true;
+    this.accepting = slug;
     // Async so a synchronous throw still reaches `.finally` — a latch that
     // never clears would refuse every accept for the rest of the session.
     const run = (async () =>
@@ -497,7 +506,7 @@ export class LearningStore {
         : acceptProposal(
             {
               git: { run: this.deps.gitRun ?? failingGit },
-              repoRoot: this.deps.repoRoot ?? process.cwd(),
+              repoRoot: this.repoRoot,
               today: () => this.now().toISOString().slice(0, 10),
               ...(this.deps.configPath ? { configPath: this.deps.configPath } : {}),
             },
@@ -509,28 +518,40 @@ export class LearningStore {
         message: `accept failed: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
       }))
       .finally(() => {
-        this.accepting = false;
+        this.accepting = undefined;
       });
   }
 
   async reject(slug: string, reason: string): Promise<{ ok: boolean; message: string }> {
     if (this.deps.reject) return this.deps.reject(this.app, slug, reason);
-    try {
-      removeRubricDir(this.deps.repoRoot ?? process.cwd(), slug);
-    } catch {
-      return { ok: false, message: `could not remove state/rubric/${slug}` };
-    }
-    // The sweep's never-re-propose contract rides this memory entry.
+    // An accept of this proposal already holds its patch and is committing
+    // it: a rejection now would record a verdict the commit contradicts.
+    if (this.accepting === slug)
+      return {
+        ok: false,
+        message: `'${slug}' is being accepted — not rejected; press x again once the accept answers`,
+      };
+    // The sweep's never-re-propose contract rides this memory entry, so it
+    // is written first: the proposal is removed only once the rejection is
+    // on record, and a refused record leaves it in place to reject again.
     const mem = await this.memory.apply({
       op: "add",
       text: `#rejected-proposal ${slug} — ${reason}`,
     });
-    return {
-      ok: mem.ok,
-      message: mem.ok
-        ? `rejected '${slug}' — recorded`
-        : `rejected '${slug}' but the memory record failed: ${mem.message}`,
-    };
+    if (!mem.ok)
+      return {
+        ok: false,
+        message: `'${slug}' not rejected — the memory record failed, the proposal stays: ${mem.message}`,
+      };
+    try {
+      removeRubricDir(this.repoRoot, slug);
+    } catch (err) {
+      return {
+        ok: false,
+        message: `rejection of '${slug}' recorded, but ${join(rubricDir(this.repoRoot), slug)} could not be removed: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
+      };
+    }
+    return { ok: true, message: `rejected '${slug}' — recorded` };
   }
 }
 
