@@ -221,11 +221,14 @@ describe("(b) invariant scan", () => {
     // An escalation review request is a legitimate intent.
     expect(ALLOWED_MUTATION_KINDS).toContain("request_reviewer");
     expect(ALLOWED_MUTATION_KINDS).toHaveLength(11);
-    // Every gate kind is either allowed or deliberately refused — a new kind
-    // must be placed on one side.
-    expect([...ALLOWED_MUTATION_KINDS, ...NOT_ALLOWED_MUTATION_KINDS].sort()).toEqual(
-      [...MUTATION_KINDS].sort(),
-    );
+    // Every allowed kind is a gate kind, and the gate kinds refused are
+    // exactly these two — a new gate kind lands here, refused, until it is
+    // put on the allowlist on purpose.
+    expect(ALLOWED_MUTATION_KINDS.every((k) => MUTATION_KINDS.includes(k))).toBe(true);
+    expect([...NOT_ALLOWED_MUTATION_KINDS].sort()).toEqual([
+      "supersede_own_review",
+      "update_own_webhook_url",
+    ]);
   });
 
   it("does NOT flag ping-pong's resolution of the bot's own finding thread", () => {
