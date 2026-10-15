@@ -142,21 +142,28 @@ export function classifyCi(allChecks: readonly CheckSummary[]): CiState {
   let pending = false;
   let succeeded = false;
   for (const c of checks) {
-    const status = (c.status ?? "").toLowerCase();
-    const conclusion = (c.conclusion ?? "").toLowerCase();
-    if (UNFINISHED.has(status) || (status !== "completed" && conclusion === "")) {
-      pending = true;
-      continue;
-    }
-    if (conclusion === "success") {
-      succeeded = true;
-      continue;
-    }
-    if (INERT_CONCLUSIONS.has(conclusion)) continue;
-    return "red"; // failure, cancelled, timed_out, action_required, stale, …
+    const outcome = checkOutcome(c);
+    if (outcome === "failed") return "red";
+    if (outcome === "pending") pending = true;
+    if (outcome === "success") succeeded = true;
   }
   if (pending) return "pending";
   return succeeded ? "green" : "red";
+}
+
+/**
+ * One check's outcome — the per-check half of `classifyCi`, and the one
+ * reading of a check anything else (the escalation's failing-check rule)
+ * may use. `failed` is every finished conclusion that is neither a success
+ * nor inert: failure, cancelled, timed_out, action_required, stale, …
+ */
+export function checkOutcome(c: CheckSummary): "pending" | "success" | "inert" | "failed" {
+  const status = (c.status ?? "").toLowerCase();
+  const conclusion = (c.conclusion ?? "").toLowerCase();
+  if (UNFINISHED.has(status) || (status !== "completed" && conclusion === "")) return "pending";
+  if (conclusion === "success") return "success";
+  if (INERT_CONCLUSIONS.has(conclusion)) return "inert";
+  return "failed";
 }
 
 /**

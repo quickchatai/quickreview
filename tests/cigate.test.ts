@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  checkOutcome,
   ciBlocksApproval,
   classifyCi,
   latestRunPerName,
@@ -54,6 +55,21 @@ const done = (conclusion: string, name = "test"): CheckSummary =>
   run("completed", conclusion, name);
 
 // ---- the classifier --------------------------------------------------------
+
+describe("checkOutcome — the one reading of a single check", () => {
+  it("reads status and conclusion case-insensitively, as classifyCi does", () => {
+    expect(checkOutcome(run("queued", null))).toBe("pending");
+    expect(checkOutcome(run("COMPLETED", "SUCCESS"))).toBe("success");
+    expect(checkOutcome(run("completed", "Neutral"))).toBe("inert");
+    expect(checkOutcome(run("completed", "FAILURE"))).toBe("failed");
+    expect(checkOutcome(run("completed", "cancelled"))).toBe("failed");
+    // A commit status reports no check-run status: its conclusion decides.
+    expect(
+      checkOutcome({ name: "ci/legacy", source: "status", status: "", conclusion: "failure" }),
+    ).toBe("failed");
+    expect(classifyCi([run("completed", "FAILURE")])).toBe("red");
+  });
+});
 
 describe("classifyCi", () => {
   it("is green only when everything finished and something really succeeded", () => {

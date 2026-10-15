@@ -25,7 +25,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
+import { checkOutcome, classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
 import {
   deliverEscalations,
   evaluateEscalationRules,
@@ -2369,13 +2369,7 @@ export class VerdictWatcher {
     if (!this.deps.adapter.listChecks || !head) return [];
     try {
       return latestRunPerName(await this.deps.adapter.listChecks(head))
-        .filter(
-          (c) =>
-            c.status === "completed" &&
-            (c.conclusion ?? "") !== "success" &&
-            (c.conclusion ?? "") !== "skipped" &&
-            (c.conclusion ?? "") !== "neutral",
-        )
+        .filter((c) => checkOutcome(c) === "failed")
         .map((c) => c.name);
     } catch (err) {
       this.log(`escalation: checks read failed on #${pr}`, err);
