@@ -219,6 +219,16 @@ describe("root-on-first-event (DP-2a)", () => {
     expect(store.slackPost("reround:5263:1")).toBeUndefined();
   });
 
+  it("with pickup switched off, a later round still speaks its own 🔄 line", async () => {
+    cfg.slack.policy.causes["pr.pickup"] = { enabled: false, cooldown_min: 0 };
+    const a = announcer();
+    await a.roundStarted(round);
+    expect(slack.posts).toHaveLength(0);
+    await a.roundStarted({ ...round, round_no: 2, round_type: "re-review" });
+    expect(slack.posts).toHaveLength(1);
+    expect(slack.posts[0]!.text).toBe("🔄 round 2 started — you pushed new commits (`abcdef1`)");
+  });
+
   it("retries a FAILED pickup with the pickup template, not a re-round line", async () => {
     slack.failNext = true;
     const a = announcer();
@@ -288,6 +298,35 @@ describe("failure containment", () => {
     await a.verdict({ pr: 5263, round_no: 1, verdict: "APPROVE", summary: "s", duration_s: 60 });
     expect(store.slackPost("verdict:5263:1")).toMatchObject({ ok: 0 });
     expect(String(store.slackPost("verdict:5263:1")!.error)).toContain("socket hang up");
+  });
+
+  it("a retried failed post is claimed afresh: the rolling-hour ceiling counts the new attempt", async () => {
+    cfg.slack.policy.announcements_per_hour = 1;
+    const a = announcer();
+    slack.failNext = true;
+    await a.anomaly({ pr: 1, round_no: 1, kind: "overdue", deadline_min: 45 });
+    expect(store.slackPost("round.overdue:1:1")).toMatchObject({ ok: 0 });
+    // Hours later the same incident is retried and delivered…
+    at("2026-08-17T12:00:00.000Z");
+    await a.anomaly({ pr: 1, round_no: 1, kind: "overdue", deadline_min: 45 });
+    expect(slack.posts).toHaveLength(1);
+    // …and it fills this hour's one slot.
+    await a.anomaly({ pr: 2, round_no: 1, kind: "overdue", deadline_min: 45 });
+    expect(slack.posts).toHaveLength(1);
+  });
+
+  it("an APPROVE whose approval was withheld is announced as withheld, never as APPROVED", async () => {
+    const a = announcer();
+    await a.verdict({
+      pr: 5263,
+      round_no: 1,
+      verdict: "APPROVE",
+      approval_withheld: true,
+      summary: "s",
+      duration_s: 60,
+    });
+    expect(slack.posts[0]!.text).toContain("*APPROVAL WITHHELD (CI not green)*");
+    expect(slack.posts[0]!.text).not.toContain("APPROVED");
   });
 
   it("lets a failed post be retried, but never a delivered one", async () => {
@@ -423,6 +462,16 @@ describe("daemon lifecycle", () => {
 });
 
 describe("pinned heartbeat", () => {
+  it("a heartbeat claim an earlier run never settled does not block the heartbeat forever", async () => {
+    // The previous process claimed the key and died before Slack answered.
+    store.recordSlackPost({ idem_key: HEARTBEAT_IDEM_KEY, kind: "announce" });
+    const a = announcer();
+    const ts = await a.heartbeat();
+    expect(ts).toBeDefined();
+    expect(slack.posts).toHaveLength(1);
+    expect(store.slackPost(HEARTBEAT_IDEM_KEY)).toMatchObject({ ok: 1, ts });
+  });
+
   it("posts once, pins best-effort, then UPDATES the same ts", async () => {
     const a = announcer();
     const ts = await a.heartbeat();

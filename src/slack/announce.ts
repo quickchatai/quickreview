@@ -89,6 +89,8 @@ export interface VerdictAnnouncement {
   summary: string | null;
   /** Measured round duration; null ⇒ rendered as 0 min rather than invented. */
   duration_s: number | null;
+  /** An APPROVE whose approval CI withheld (the review posted as a COMMENT). */
+  approval_withheld?: boolean;
   /** Falls back to the PR row when omitted. */
   author?: string;
 }
@@ -227,6 +229,9 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * once. Keyed on the recovery, not the incident: a reopened-then-recovered
    * incident is a new recovery and owes its own correction. */
   private readonly correctedIncidents = new Set<string>();
+  /** Ledger keys this process claimed — an unsettled claim it did not make
+   * is a previous run's, interrupted mid-post. */
+  private readonly claimedHere = new Set<string>();
   /** Tail of each posting lane (one per PR, else one per idem key). */
   private readonly lanes = new Map<string, Promise<unknown>>();
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
@@ -260,7 +265,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   /**
    * Claim, post, settle. Returns the message ts on success, undefined on any
-   * refusal or failure. The ONLY place this module talks to Slack.
+   * refusal or failure. Every NEW message goes through here; the heartbeat's
+   * edit and pin of its own message are the only other Slack calls.
    */
   private async post(req: PostRequest): Promise<string | undefined> {
     if (!this.deps.cfg.slack.enabled) return undefined;
@@ -296,22 +302,23 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       }
     }
 
-    if (
-      !store.recordSlackPost({
+    // A previously FAILED attempt may be retried, claimed afresh like a new
+    // one (so the rolling-hour ceiling counts it); a delivered one, or one
+    // claimed and not yet settled, may not.
+    const claimed =
+      store.recordSlackPost({
         idem_key: req.idemKey,
         kind: req.kind,
         pr: req.pr ?? null,
         thread_ts: threadTs ?? null,
         chars: req.text.length,
-      })
-    ) {
-      const prior = store.slackPost(req.idemKey);
-      // A previously FAILED attempt may be retried; a delivered one may not.
-      if (!prior || prior.ok === 1) {
-        this.log(`slack: skipping duplicate post (${req.idemKey})`);
-        return undefined;
-      }
+      }) ||
+      store.reclaimSlackPost(req.idemKey, { thread_ts: threadTs ?? null, chars: req.text.length });
+    if (!claimed) {
+      this.log(`slack: skipping duplicate post (${req.idemKey})`);
+      return undefined;
     }
+    this.claimedHere.add(req.idemKey);
 
     let result: { ok: boolean; ts?: string; error?: string };
     try {
@@ -380,6 +387,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     return this.now().toISOString().slice(0, 13);
   }
 
+  /** The ledger key of a PR's not-picked-up notice this hour. */
+  private notPickedUpKey(pr: number): string {
+    return `pr.not_picked_up:${pr}:${this.hourBucket()}`;
+  }
+
   private minuteBucket(): string {
     return this.now().toISOString().slice(0, 16);
   }
@@ -405,26 +417,26 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     const { store, cfg } = this.deps;
     // A previously FAILED pickup (ok = 0) is retried by `post`, so it does not
     // count as said.
+    // With pickup switched off nothing is owed before a later round, so the
+    // re-round line keeps its own switch.
     const pickupSaid = store.slackPost(`pickup:${a.pr}`)?.ok === 1;
-    if (!pickupSaid) {
-      if (this.lifecycleEnabled(LIFECYCLE_CAUSES.pickup)) {
-        await this.post({
-          idemKey: `pickup:${a.pr}`,
-          kind: "pickup",
+    if (!pickupSaid && this.lifecycleEnabled(LIFECYCLE_CAUSES.pickup)) {
+      await this.post({
+        idemKey: `pickup:${a.pr}`,
+        kind: "pickup",
+        pr: a.pr,
+        text: pickupMessage(cfg, {
           pr: a.pr,
-          text: pickupMessage(cfg, {
-            pr: a.pr,
-            title: a.title,
-            author: a.author,
-            round_no: a.round_no,
-            round_type: a.round_type,
-            changed_files: a.changed_files,
-            additions: a.additions,
-            deletions: a.deletions,
-            lenses: a.lenses,
-          }),
-        });
-      }
+          title: a.title,
+          author: a.author,
+          round_no: a.round_no,
+          round_type: a.round_type,
+          changed_files: a.changed_files,
+          additions: a.additions,
+          deletions: a.deletions,
+          lenses: a.lenses,
+        }),
+      });
     } else if (a.round_no > 1 && this.lifecycleEnabled(LIFECYCLE_CAUSES.reRound)) {
       const reason: ReRoundReason =
         a.reason ?? (a.round_type === "staleness" ? { kind: "base_moved" } : { kind: "pushed" });
@@ -451,6 +463,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
         author,
         round_no: a.round_no,
         verdict: a.verdict,
+        ...(a.approval_withheld ? { approval_withheld: true } : {}),
         summary: a.summary,
         duration_min: Math.max(0, Math.round((a.duration_s ?? 0) / 60)),
       }),
@@ -514,7 +527,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     const admitted = this.announcementAllowed("pr.not_picked_up", item.pr);
     if (!admitted) return;
     await this.post({
-      idemKey: `pr.not_picked_up:${item.pr}:${this.hourBucket()}`,
+      idemKey: this.notPickedUpKey(item.pr),
       kind: "announce",
       hourCapped: admitted,
       pr: item.pr,
@@ -527,9 +540,10 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (!this.enabled) return [];
     const announced: number[] = [];
     for (const item of scanNotPickedUp(this.deps.store, this.deps.cfg, this.now())) {
-      const before = this.deps.store.slackPost(`pr.not_picked_up:${item.pr}:${this.hourBucket()}`);
+      const key = this.notPickedUpKey(item.pr);
+      const before = this.deps.store.slackPost(key);
       await this.notPickedUp(item);
-      const after = this.deps.store.slackPost(`pr.not_picked_up:${item.pr}:${this.hourBucket()}`);
+      const after = this.deps.store.slackPost(key);
       if (!before && after?.ok === 1) announced.push(item.pr);
     }
     return announced;
@@ -687,7 +701,22 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       ...(recovered ? { recovered_incident: recovered.incident_id } : {}),
       dry_run: cfg.dry_run,
     });
-    const existing = store.slackPost(HEARTBEAT_IDEM_KEY);
+    let existing = store.slackPost(HEARTBEAT_IDEM_KEY);
+    // A claim with no message and no outcome that this process did not make
+    // is a previous run's, killed mid-post: settle it failed so the post is
+    // retried — a heartbeat lost for good is worse than one duplicate line.
+    if (
+      existing &&
+      existing.ok === 1 &&
+      !existing.ts &&
+      !this.claimedHere.has(HEARTBEAT_IDEM_KEY)
+    ) {
+      store.settleSlackPost(HEARTBEAT_IDEM_KEY, {
+        ok: false,
+        error: "claimed by an earlier run that never settled it",
+      });
+      existing = store.slackPost(HEARTBEAT_IDEM_KEY);
+    }
     if (existing?.ts) {
       try {
         const res = await slack.updateMessage({

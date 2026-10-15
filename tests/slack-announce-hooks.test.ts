@@ -283,6 +283,24 @@ describe("verdict hooks", () => {
     ]);
   });
 
+  it("announces an approval CI withheld as withheld, never as APPROVED", async () => {
+    store.upsertSlackThread({ pr: 5263, channel: "C_REVIEW", root_ts: "1699999999.0001" });
+    reviewingRound(5263);
+    writeVerdict(5263, 1, {
+      pr: 5263,
+      round_no: 1,
+      verdict: "APPROVE",
+      approval_withheld: true,
+      head_sha: "abcdef1234567890",
+      finished_at: clock.toISOString(),
+      summary: "Nothing blocking; CI is red.",
+    });
+    await watcher(announcer()).sweep();
+    expect(slack.posts[0]!.text.split("\n")[0]).toBe(
+      "<@U_ALICE> ⏳ *APPROVAL WITHHELD (CI not green)* — round 1, 0 min",
+    );
+  });
+
   it("drops the summary line when the verdict file carries none", async () => {
     store.upsertSlackThread({ pr: 5263, channel: "C_REVIEW", root_ts: "1699999999.0001" });
     reviewingRound(5263);

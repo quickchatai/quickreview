@@ -1996,6 +1996,7 @@ export class VerdictWatcher {
         pr: v.pr,
         round_no: v.round_no,
         verdict: v.verdict,
+        ...(v.verdict === "APPROVE" && v.approval_withheld ? { approval_withheld: true } : {}),
         summary: finished?.summary ?? v.summary ?? null,
         duration_s: finished?.duration_s ?? null,
       }),
