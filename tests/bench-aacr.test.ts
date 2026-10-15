@@ -55,13 +55,7 @@ import {
 } from "../src/bench/aacr.js";
 import { parseReferenceLabels, recallByQuality, renderReport } from "../src/bench/report.js";
 import { renderReviewFromRecord } from "../src/reviewrender.js";
-import {
-  AuthExpiring,
-  benchAuthFrom,
-  DISABLED_REFRESH,
-  syncBenchAuth,
-  BENCH_RETRY,
-} from "../src/bench/auth.js";
+import { AuthExpiring, benchAuthFrom, DISABLED_REFRESH, syncBenchAuth, BENCH_RETRY } from "../src/bench/auth.js";
 import {
   bridgeDelta,
   OCR_HARNESS_DEFAULTS,
