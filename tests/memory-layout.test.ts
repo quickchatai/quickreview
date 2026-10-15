@@ -1093,7 +1093,9 @@ describe("the round context block searches experiences/ only", () => {
       client,
       now: () => NOW,
       cacheTtlMs: 0,
-      onRetired: (uris) => published.push([...uris]),
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
     });
     const assembler = new OpenVikingContextAssembler({ client, store });
     await assembler.contextBlock("q", { maxTokens: 500 });

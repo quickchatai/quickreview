@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { GitHubRequestError } from "../src/github.js";
+import { GitHubRequestError, type ReviewCommentFull } from "../src/github.js";
 import Database from "better-sqlite3";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -525,14 +525,20 @@ describe("structured thread decision", () => {
     expect(ledger.discipline(4000).exchanges).toBe(1);
   });
 
-  const recovering = (listRecentReviewComments: ReturnType<typeof vi.fn>) => {
+  const recovering = (listRecentReviewComments: (n: number) => Promise<unknown[]>) => {
     const createReviewCommentReply = vi
       .fn()
       .mockResolvedValue({ executed: true, response: { id: 6009 } });
     const resolveOwnReviewThread = vi.fn().mockResolvedValue({ skipped: null });
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
-      adapter: { createReviewCommentReply, resolveOwnReviewThread, listRecentReviewComments },
+      adapter: {
+        createReviewCommentReply,
+        resolveOwnReviewThread,
+        listRecentReviewComments: listRecentReviewComments as (
+          n: number,
+        ) => Promise<ReviewCommentFull[]>,
+      },
       botLogin: "qc-bot[bot]",
       store,
       ledger,

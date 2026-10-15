@@ -2075,7 +2075,9 @@ describe("the incremental sweep", () => {
       }),
       now: () => NOW,
       cacheTtlMs: 0,
-      onRetired: (uris) => published.push([...uris]),
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
     });
     const [live] = await store.read();
     expect(published).toEqual([[`${ROOT_EXP}/20260801T000000-a.md`]]);
@@ -2145,7 +2147,9 @@ describe("the incremental sweep", () => {
       }),
       now: () => NOW,
       cacheTtlMs: 0,
-      onRetired: (uris) => published.push([...uris]),
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
     });
     const [live] = await store.read();
     expect(published).toEqual([[]]);
@@ -2186,7 +2190,9 @@ describe("the incremental sweep", () => {
       cacheTtlMs: 0,
       // Every sweep re-reads every file, so the failed read really is A's.
       fullRefreshMs: 0,
-      onRetired: (uris) => published.push([...uris]),
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
     });
     await store.read();
     expect(published).toEqual([[A]]);
@@ -2222,7 +2228,9 @@ describe("the incremental sweep", () => {
       }),
       now: () => NOW,
       cacheTtlMs: 0,
-      onRetired: (uris) => published.push([...uris]),
+      onRetired: (uris) => {
+        published.push([...uris]);
+      },
       initialRetired: [A, `${ROOT_EXP}/20260709T000000-z.md`],
     });
     // Before any sweep, the seed answers the round's exclusion list.
