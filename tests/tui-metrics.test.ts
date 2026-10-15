@@ -674,7 +674,7 @@ describe("OPERATIONS card", () => {
   });
 
   it("the subtitle never claims live without a heartbeat — the body's 'mode unknown' and it agree", () => {
-    // readOps keeps emptyOps()'s dry_run=false when status.json is unreadable.
+    // An older payload may still carry dry_run=false beside a null heartbeat.
     const noBeat = { ...ops, heartbeat: null, dry_run: false };
     const operations = metricsCards(fullWindow as never, daily, 24, {
       ops: noBeat as never,
@@ -696,6 +696,11 @@ describe("OPERATIONS card", () => {
     expect(noBeat).toContain("no heartbeat");
     expect(noBeat).toContain("mode unknown"); // no snapshot → never claim LIVE
     expect(noBeat).not.toContain("DRY-RUN");
+    // a snapshot that names no mode or cap: unknown, never LIVE or "/0"
+    const noMode = lines({ ops: { ...ops, dry_run: null, max_concurrent_rounds: null } })[0]!;
+    expect(noMode).toContain("mode unknown");
+    expect(noMode).not.toContain("LIVE");
+    expect(noMode).toContain("1/? rounds running");
   });
 
   it("line 2 is the version the VM runs, with its deploy age and mode", () => {

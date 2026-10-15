@@ -10,7 +10,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import { MutationGate } from "../src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
 import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
-import { StateStore } from "../src/state.js";
+import { StateStore, type RoundRow } from "../src/state.js";
 import type { PrTimelineRecord } from "../src/github.js";
 import {
   enumerationQueries,
@@ -128,10 +128,10 @@ function store(): StateStore {
   return new StateStore(":memory:");
 }
 
-function backfilledRows(s: StateStore): any[] {
+function backfilledRows(s: StateStore): RoundRow[] {
   return s.db
     .prepare("SELECT * FROM rounds WHERE backfilled = 1 ORDER BY pr, round_no")
-    .all() as any[];
+    .all() as RoundRow[];
 }
 
 // ---- unit: mapping + trigger reconstruction --------------------------------
@@ -385,6 +385,28 @@ describe("runBackfill", () => {
     expect(second.reviews_imported).toBe(0);
     expect(second.skipped_existing).toBe(2);
     expect(backfilledRows(s)).toEqual(snapshot);
+    s.close();
+  });
+
+  it("an import cut short inside a PR writes none of its rounds — the retry numbers them oldest first", async () => {
+    const { adapter } = harness([PR_5000]);
+    const s = store();
+    const real = s.insertBackfilledRound.bind(s);
+    let calls = 0;
+    s.insertBackfilledRound = (row) => {
+      calls += 1;
+      if (calls === 2) throw new Error("killed mid-PR");
+      return real(row);
+    };
+    await expect(runBackfill(s, adapter, cfg, {})).rejects.toThrow("killed mid-PR");
+    expect(backfilledRows(s)).toEqual([]);
+    s.insertBackfilledRound = real;
+    const stats = await runBackfill(s, adapter, cfg, {});
+    expect(stats.reviews_imported).toBe(2);
+    expect(backfilledRows(s).map((r) => [r.round_no, r.gh_review_id])).toEqual([
+      [1, 111],
+      [2, 222],
+    ]);
     s.close();
   });
 

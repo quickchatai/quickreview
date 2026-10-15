@@ -396,9 +396,12 @@
         image: "{{ image_name }}:{{ image_tag }}"
         state: started
         # `state: started` alone is idempotent — a running container is left
-        # untouched, so a code sync would ship bytes nobody executes. sync
-        # passes force_restart=true: restart re-runs the entrypoint (dist
-        # rebuild, fresh .tmux.conf/tmux server, daemon on the new build).
+        # untouched, so a code sync would ship bytes nobody executes. sync and
+        # rebuild both pass force_restart=true: restart re-runs the entrypoint
+        # (dist rebuild, fresh .tmux.conf/tmux server, daemon on the new
+        # build). A rebuild needs it too: the code and config are bind
+        # mounts, so a rebuild whose image comes out identical (an unchanged
+        # build context, fully cached) recreates nothing on its own.
         restart: "{{ force_restart | default(false) | bool }}"
         restart_policy: unless-stopped
         # PID-1 discipline: with a supervised OpenViking process

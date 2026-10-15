@@ -587,13 +587,16 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
       log: () => {},
     };
     const env = { PATH: process.env.PATH, CLAUDE_CODE_OAUTH_TOKEN: "tok-123" };
-    expect(await claudeReviewRun({ ...opts, env: { ...env, ANTHROPIC_MODEL: "claude-opus-5-5" } })).toBe(0);
+    const pinned = { ...env, ANTHROPIC_MODEL: "claude-opus-5-5", CLAUDE_CODE_MAX_RETRIES: "7" };
+    expect(await claudeReviewRun({ ...opts, env: pinned })).toBe(0);
     const caseDir = join(out, "cases", c.instance_id);
     const seen = JSON.parse(readFileSync(join(caseDir, "env-seen.json"), "utf8")) as Record<
       string,
       string
     >;
     expect(seen["ANTHROPIC_MODEL"]).toBe("claude-opus-5-5");
+    // The retries come from the command's environment too, never the ambient one.
+    expect(seen["CLAUDE_CODE_MAX_RETRIES"]).toBe("7");
     expect(readClaudeSummary(out, c)!.fingerprint).toMatchObject({ model: "claude-opus-5-5" });
     const run = JSON.parse(readFileSync(join(out, "run.json"), "utf8")) as Record<string, unknown>;
     expect(run["pinned_model"]).toBe("claude-opus-5-5");
@@ -736,6 +739,51 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     expect(existsSync(join(out, "results", "all", `${c.instance_id}.json`))).toBe(true);
     expect(reached).toEqual([c.instance_id]);
     expect(lines.join("\n")).toMatch(/STOPPED — Claude Code could not authenticate/);
+  });
+
+  it("a resume under a new configuration drops every case of the old one up front — an auth stop leaves none scored under the new label", async () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-"));
+    const { set, c, meta, store } = scratchCase(t);
+    const second: BenchCase = { ...c, instance_id: "o__r@0000000" };
+    const out = join(t, "run");
+    const all = join(out, "results", "all");
+    // The second case was reviewed, and the run scored, under another model.
+    mkdirSync(join(out, "cases", second.instance_id), { recursive: true });
+    mkdirSync(all, { recursive: true });
+    writeFileSync(join(out, "run.json"), JSON.stringify({ reviewer: "claude" }));
+    writeFileSync(
+      join(out, "cases", second.instance_id, "case-summary.json"),
+      JSON.stringify({
+        instance_id: second.instance_id,
+        arm: "claude",
+        status: "ok",
+        fingerprint: { model: "an-older-model" },
+        warnings: [],
+      }),
+    );
+    writeFileSync(join(all, `${second.instance_id}.json`), "{}\n");
+    writeFileSync(join(all, "metrics_ocr_average.json"), "{}\n");
+    const code = await claudeReviewRun({
+      set: { ...set, cases: [c, second] },
+      outDir: out,
+      store,
+      workRoot: join(t, "work"),
+      homeRoot: join(t, "homes"),
+      python: "python3",
+      driver: stubDriver(t, "auth"),
+      timeoutMin: 30,
+      resume: true,
+      keepTree: false,
+      env: { PATH: process.env.PATH, ANTHROPIC_API_KEY: "k", ANTHROPIC_MODEL: "the-new-one" },
+      readMeta: () => meta,
+      log: () => {},
+    });
+    expect(code).toBe(1);
+    expect(readClaudeSummary(out, c)?.status).toBe("auth-failed");
+    // Never reached, yet gone: no old result stays beside the new run.json.
+    expect(readClaudeSummary(out, second)).toBeNull();
+    expect(existsSync(join(all, `${second.instance_id}.json`))).toBe(false);
+    expect(existsSync(join(all, "metrics_ocr_average.json"))).toBe(false);
   });
 
   it("refuses to run without a credential, and refuses another arm's run dir", async () => {
@@ -993,6 +1041,57 @@ describe("claudeRebuildRun: the view for a finished run, no model and no network
     );
     await claudeRebuildRun({ set, outDir: out, filesDir: files, log: () => {} });
     expect(existsSync(join(all, "metrics_ocr_round_1.json"))).toBe(true);
+  });
+
+  it("the metrics go BEFORE the first changed result — a rebuild cut short never leaves them", async () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
+    const { set, out, files } = finishedRun(t, rawResult());
+    const all = join(out, "results", "all");
+    writeFileSync(join(all, "metrics_ocr_average.json"), "{}\n");
+    await expect(
+      claudeRebuildRun({
+        set,
+        outDir: out,
+        filesDir: files,
+        log: (l) => {
+          if (/comment\(s\) from the/.test(l)) throw new Error("killed");
+        },
+      }),
+    ).rejects.toThrow("killed");
+    expect(existsSync(join(all, "metrics_ocr_average.json"))).toBe(false);
+  });
+
+  it("an unreadable result file is called that, not missing", async () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
+    const { set, out, id, files } = finishedRun(t, rawResult());
+    writeFileSync(join(out, "results", "all", `${id}.json`), '{"truncated": ');
+    const lines: string[] = [];
+    await claudeRebuildRun({ set, outDir: out, filesDir: files, log: (l) => lines.push(l) });
+    const said = lines.join("\n");
+    expect(said).toContain(`${id}.json is unreadable or not a JSON object, skipped`);
+    expect(said).toMatch(/o__r@0000000 — no result file, skipped/);
+  });
+
+  it("the report never reads an unknown cost as $0", () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
+    const { set, out, id } = finishedRun(t, rawResult());
+    const summaryPath = join(out, "cases", id, "case-summary.json");
+    const s = JSON.parse(readFileSync(summaryPath, "utf8")) as Record<string, unknown>;
+    const total = "Total Claude Code cost (its own `total_cost_usd`, API-price equivalent)";
+    expect(renderClaudeReport(set, out, set.cases)).toContain(`${total}: $0.10`);
+    writeFileSync(summaryPath, JSON.stringify({ ...s, cost_usd: null }));
+    expect(renderClaudeReport(set, out, set.cases)).toContain(
+      `${total}: UNKNOWN — no case recorded one`,
+    );
+    const other = join(out, "cases", "o__r@0000000");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(
+      join(other, "case-summary.json"),
+      JSON.stringify({ ...s, instance_id: "o__r@0000000", cost_usd: 0.25 }),
+    );
+    expect(renderClaudeReport(set, out, set.cases)).toContain(
+      "$0.25 over 1 of 2 case(s) — 1 recorded none, so the total is at least this",
+    );
   });
 
   it("reads the changed files from the prefetched store, never writing into it", async () => {

@@ -7,13 +7,14 @@
 #           recreate the container (no image rebuild — pins untouched)
 #   rebuild the same, but force the image rebuild (-e rebuild_image=true) —
 #           the deliberate act after bumping a pin
-#   verify  post-deploy checks on the VM: cloudflared + docker services, the
-#           container, and the state/status.json heartbeat the status collector
-#           reads
+#   verify  post-deploy checks on the VM: the docker service (and cloudflared
+#           when the inventory enables it), the container, and the
+#           state/status.json heartbeat the status collector reads
 #
 # There are no systemd units for the daemon: quickreviewd is the
 # container entrypoint (`restart: unless-stopped`). The only host service this
-# script cares about is cloudflared.
+# script cares about is cloudflared, and only when `cloudflared_enabled` is
+# true — the playbook installs it on exactly that condition.
 #
 # Guardrails (all pre-flight, all fatal):
 #   * refuses to deploy a dirty working tree — what runs on the VM must be a
@@ -594,13 +595,35 @@ fi
 ANSIBLE_CMD=(ansible-playbook -i "$INVENTORY" "$PLAYBOOK")
 case "$MODE" in
   sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
-  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
+  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e force_restart=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
   verify)  ANSIBLE_CMD=() ;;
 esac
 
+# Ansible's `| bool`: its BOOLEANS_TRUE set (quoted or not, any case) is true,
+# everything else false — the same reading src/onboard/steps/inventory.ts's
+# ansibleBool gives the onboarding check.
+ansible_bool() {
+  local v="$1"
+  v="${v#\"}"; v="${v%\"}"; v="${v#\'}"; v="${v%\'}"
+  v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
+  case "$v" in
+    y|yes|on|1|true|t|1.0) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The playbook installs and starts cloudflared only under `cloudflared_enabled`
+# (an inventory host var over the group_vars default), so the service is
+# required exactly when that effective value is true. An unreadable value
+# counts as the tracked default, true.
+CLOUDFLARED_ENABLED="$(effective_var cloudflared_enabled || true)"
+CLOUDFLARED_ENABLED="${CLOUDFLARED_ENABLED:-true}"
 VM_HOST="${QC_VM_HOST:-$(first_inventory_host)}"
-VERIFY_CMDS=(
-  "systemctl is-active cloudflared"
+VERIFY_CMDS=()
+if ansible_bool "$CLOUDFLARED_ENABLED"; then
+  VERIFY_CMDS+=("systemctl is-active cloudflared")
+fi
+VERIFY_CMDS+=(
   "systemctl is-active docker"
   "sudo docker ps --filter name=$CONTAINER --format '{{.Names}} {{.Status}}'"
   "sudo docker exec $CONTAINER tmux ls || echo 'no tmux sessions yet'"
@@ -685,6 +708,8 @@ print_plan() {
   echo "  then verify  ssh ${VM_HOST:-<vm>}:"
   local c
   for c in "${VERIFY_CMDS[@]}"; do echo "                 $c"; done
+  ansible_bool "$CLOUDFLARED_ENABLED" ||
+    echo "                 (cloudflared not checked — cloudflared_enabled=$CLOUDFLARED_ENABLED, so the playbook does not install it)"
   echo "  dry_run      ${CFG_DRY_RUN:-<unset>} in $CONFIG — config.toml dry_run is NOT touched by deploy — the cutover flip is a manual edit"
   if [[ "$MODE" != "verify" ]]; then
     echo "  marker       BUILD_SHA=$HEAD_SHA written before the rsync (gitignored; the qcr tui deploy tab reads it on the VM)"
@@ -798,7 +823,7 @@ check_heartbeat_fresh || FAILED=1
 if [[ $FAILED -ne 0 ]]; then
   cat >&2 <<'EOF'
 One or more post-deploy checks failed. Triage order (README §fallback):
-  1. cloudflared inactive        -> systemctl restart cloudflared; journalctl -u cloudflared -n 50
+  1. cloudflared inactive (when enabled) -> systemctl restart cloudflared; journalctl -u cloudflared -n 50
   2. container not running       -> docker logs quickreview-sandbox --tail 100
   3. stale/absent status.json    -> the daemon is not writing its heartbeat; docker logs, then restart the container
 While the sandbox is down, run manual laptop ticks (`/auto-review <n>`) —

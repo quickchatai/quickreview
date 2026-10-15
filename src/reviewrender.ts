@@ -113,6 +113,32 @@ function firstSentence(text: string): string {
   return (m ? m[1]! : text.trim()).replace(/\s+/g, " ");
 }
 
+/** The ordinary tag a posted entry is counted and posted under: its own
+ * posting tag; `question` for `[check this]`; for `[ask your human]` and
+ * `[deferred]` the tag its severity maps to (a question without one). */
+function severityTagOf(
+  tag: Tag,
+  severity: string | null,
+  confidence: number | null,
+  reachability: string | null,
+): "blocker" | "question" | "nit" {
+  if (tag === "ask your human" || tag === "deferred")
+    return severity && SEVERITIES.has(severity)
+      ? postTag(severity as Severity, confidence ?? 1, reachability as never)
+      : "question";
+  return tag === "check this" ? "question" : tag;
+}
+
+/** A findings-record entry's ordinary tag (`severityTagOf`), whichever route
+ * renders it — null when its `posted_as` is outside the grammar. */
+export function postedSeverityTag(
+  raw: Record<string, unknown>,
+): "blocker" | "question" | "nit" | null {
+  const tag = (str(raw.posted_as) ?? "").toLowerCase().replace(/^\[|\]$/g, "") as Tag;
+  if (!TAGS.includes(tag)) return null;
+  return severityTagOf(tag, str(raw.severity), num(raw.confidence), str(raw.reachability));
+}
+
 function readPosted(
   raw: Record<string, unknown>,
   i: number,
@@ -129,14 +155,7 @@ function readPosted(
   const severity = str(raw.severity);
   const confidence = num(raw.confidence);
   const reachability = str(raw.reachability);
-  const sevTag =
-    tag === "ask your human" || tag === "deferred"
-      ? severity && SEVERITIES.has(severity)
-        ? postTag(severity as Severity, confidence ?? 1, reachability as never)
-        : "question"
-      : tag === "check this"
-        ? "question"
-        : tag;
+  const sevTag = severityTagOf(tag, severity, confidence, reachability);
   const reason = str(raw.reason) ?? "";
   const title = str(raw.title) ?? (reason ? firstSentence(reason) : "");
   if (!str(raw.title)) problems.push(`${id}: no title — the reason's first sentence stands in`);
@@ -370,12 +389,29 @@ export function postedRenderOptions(
   };
 }
 
-function postedClassOf(postedAs: unknown): PolicyClass {
+/** A record entry's `posted_as` as the posting policy classes it. */
+export function postedClassOf(postedAs: unknown): PolicyClass {
   const t = (typeof postedAs === "string" ? postedAs : "")
     .trim()
     .replace(/^\[|\]$/g, "")
     .toLowerCase();
   return t === "blocker" || t === "question" || t === "nit" ? t : "check";
+}
+
+/** Why a withheld entry is in the record and not on the PR. */
+export const withheldReason = (word: WithholdWord): string =>
+  `Withheld by this repo's posting policy (${word}); kept here, never posted.`;
+
+/** A posted record entry made `withheld` by the posting policy, in place —
+ * its tag kept as `withheld_as`, the word and the reason recorded — as every
+ * route records it. */
+export function markWithheld(entry: Record<string, unknown>, word: WithholdWord): void {
+  entry.withheld_as = entry.posted_as;
+  delete entry.posted_as;
+  entry.disposition = "withheld";
+  entry.word = word;
+  entry.reason =
+    `${withheldReason(word)} ${typeof entry.reason === "string" ? entry.reason : ""}`.trim();
 }
 
 export interface PolicyWithheld {
@@ -439,12 +475,7 @@ export function applyPostingPolicyToRecord(
   if (!sel.withheld.length) return { record, withheld: [] };
   const withheld: PolicyWithheld[] = [];
   for (const { item, word } of sel.withheld) {
-    item.withheld_as = item.posted_as;
-    delete item.posted_as;
-    item.disposition = "withheld";
-    item.word = word;
-    item.reason =
-      `Withheld by this repo's posting policy (${word}); kept here, never posted. ${typeof item.reason === "string" ? item.reason : ""}`.trim();
+    markWithheld(item, word);
     const line = typeof item.line === "number" ? item.line : null;
     const path = typeof item.path === "string" && item.path.trim() ? item.path : null;
     withheld.push({

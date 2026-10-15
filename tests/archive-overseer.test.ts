@@ -707,6 +707,42 @@ describe("a store's manifest is sharded: no write grows with its history (S4 rev
     },
   );
 
+  it("a batch appended to a nearly full shard fills it and carries the rest into the next — no shard over the bound", async () => {
+    const f = root();
+    const dir = join(f.root, "archive", "overseer");
+    const full = JSON.parse(fullShard("overseer")) as { entries: unknown[] };
+    full.entries.pop();
+    put(f.root, "archive/overseer/manifest.json", `${JSON.stringify(full, null, 1)}\n`);
+    const w = (await StoreWriter.open({
+      dir,
+      subject: "overseer",
+      now: () => new Date(f.clock.ms),
+      level: 6,
+      bytesPerS: 200 * 1024 * 1024,
+      signal: new AbortController().signal,
+      diskFor: async () => null,
+      stopReason: () => null,
+      verifyFailed: () => {},
+      log: () => {},
+      liveOf: (source) => join(f.root, source),
+    }))!;
+    const dup = (i: number) => ({
+      pass: w.passId,
+      kind: "duplicate_removed" as const,
+      path: `legacy/${i}/session.jsonl`,
+      bytes: 1,
+      sha256: "b".repeat(64),
+      duplicate_of: `d/f${i}.jsonl.gz`,
+      match: "exact" as const,
+      removed_at: "2026-10-21T12:00:00.000Z",
+    });
+    await w.append(dup(1), dup(2));
+    const shards = await readStoreShards(dir);
+    expect(shards.map((s) => s.m.entries.length)).toEqual([STORE_SHARD_ENTRIES, 1]);
+    expect(shards[0]!.m.entries.at(-1)).toMatchObject({ path: "legacy/1/session.jsonl" });
+    expect(shards[1]!.m.entries[0]).toMatchObject({ path: "legacy/2/session.jsonl" });
+  });
+
   it("a shard missing from the run is an unreadable record: the store is held, nothing moves, nothing is overwritten", async () => {
     const f = root();
     const storeDir = join(f.root, "pihome", "sessions");

@@ -7,6 +7,7 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -522,6 +523,48 @@ describe("seal crash recovery", () => {
     expect(existsSync(join(r.dir, `${SEP}.gz`))).toBe(false);
     expect(adb.entry(SEP)?.state).toBe("open");
   });
+
+  it("a .gz cut short by the crash does not decompress: removed, the .sqlite kept", async () => {
+    const r = await moved();
+    r.adb.close();
+    const gz = gzipSync(readFileSync(join(r.dir, SEP)));
+    writeFileSync(join(r.dir, `${SEP}.gz`), gz.subarray(0, Math.floor(gz.length / 2)));
+    const adb = await r.reopen();
+    const { notes, problems } = await recoverSeals({
+      adb,
+      maxBytesPerS: 1e12,
+      now: () => new Date(T0),
+    });
+    expect(problems).toEqual([]);
+    expect(notes).toEqual([expect.stringContaining(`removed ${SEP}.gz`)]);
+    expect(existsSync(join(r.dir, SEP))).toBe(true);
+    expect(existsSync(join(r.dir, `${SEP}.gz`))).toBe(false);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "a .gz that cannot be READ is not called a mismatch: left as found, reported",
+    async () => {
+      const r = await moved();
+      r.adb.close();
+      const gzPath = join(r.dir, `${SEP}.gz`);
+      writeFileSync(gzPath, gzipSync(readFileSync(join(r.dir, SEP))));
+      chmodSync(gzPath, 0o000);
+      try {
+        const adb = await r.reopen();
+        const { problems } = await recoverSeals({
+          adb,
+          maxBytesPerS: 1e12,
+          now: () => new Date(T0),
+        });
+        expect(problems).toEqual([expect.objectContaining({ file: SEP, code: "gz_unreadable" })]);
+        expect(existsSync(gzPath)).toBe(true);
+        expect(existsSync(join(r.dir, SEP))).toBe(true);
+        expect(adb.entry(SEP)?.state).toBe("open");
+      } finally {
+        chmodSync(gzPath, 0o644);
+      }
+    },
+  );
 
   it("a SEALED month whose .sqlite outlived the crash: removed once it is a verified duplicate, kept when it is not", async () => {
     for (const tamper of [false, true]) {

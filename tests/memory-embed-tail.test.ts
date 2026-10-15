@@ -654,6 +654,7 @@ describe("the memory budgets: longer, bounded, named in config.example.toml", ()
     expect(OPENVIKING_DEFAULTS.search_timeout_ms).toBe(8000);
     expect(OPENVIKING_DEFAULTS.health_timeout_ms).toBe(6000);
     expect(ROUND_CONTEXT_DEFAULTS.timeoutMs).toBe(MEMORY_DEFAULTS.context_timeout_ms);
+    expect(ROUND_CONTEXT_DEFAULTS.maxTokens).toBe(MEMORY_DEFAULTS.context_tokens);
     expect(DEFAULT_SEARCH_TIMEOUT_MS).toBe(OPENVIKING_DEFAULTS.search_timeout_ms);
     expect(CASE_DEFAULTS.embedTailMsPerCase).toBe(MEMORY_DEFAULTS.case_embed_tail_ms);
     // The search fits inside the seed, and the seed keeps its search reserve.

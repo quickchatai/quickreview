@@ -124,10 +124,17 @@ export function toolDefinitions(
     parameters: step.parameters ?? NO_PARAMS,
     execute: async (_id, params) => {
       const result = await engine.runStep(step.id, params ?? {});
-      const head = result.ok
-        ? `Step "${step.id}" completed and recorded.`
-        : `Step "${step.id}" FAILED — fix the red checks and run it again.`;
-      return text(`${head}\n${renderChecks(result.checks)}`);
+      if (result.ok)
+        return text(`Step "${step.id}" completed and recorded.\n${renderChecks(result.checks)}`);
+      // A refusal (a disabled or unknown step) runs no checks: its reason is
+      // the engine's failures, and there are no red checks to fix.
+      if (result.checks.length === 0)
+        return text(
+          `Step "${step.id}" REFUSED — ${result.failures.join("; ") || "no reason given"}.`,
+        );
+      return text(
+        `Step "${step.id}" FAILED — fix the red checks and run it again.\n${renderChecks(result.checks)}`,
+      );
     },
   }));
 

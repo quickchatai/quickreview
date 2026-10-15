@@ -35,6 +35,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import {
+  composeArgs,
   composePs,
   composeFileCheck,
   containerStateCheck,
@@ -54,7 +55,7 @@ import {
 } from "./embeddings.js";
 import { readEnvKey, setEnvKey } from "./ingress.js";
 import { UID_CHOICE_KEY } from "./preflight.js";
-import { CHOICE_KEYS } from "./configfill.js";
+import { topologyOf } from "./topology.js";
 
 export const BRINGUP_STEP_ID = "bringup";
 /** Recorded so the later steps know the stack was actually started once. */
@@ -70,7 +71,9 @@ export const FIRST_BUILD_WARNING = [
   "(llama-cpp-python) from source, which on a laptop takes anywhere from ten minutes to an hour",
   "depending on your CPU. That is expected, not a hang: every line Docker prints is shown below",
   "as it arrives. Later builds reuse the cache and take seconds.",
-  "Nothing is downloaded from anywhere but Docker Hub, PyPI and npm, and nothing is posted to",
+  "The build downloads only what the images are made of — the base image (Docker Hub), system",
+  "packages (Ubuntu, NodeSource, the GitHub CLI's apt repository), tmux's source (GitHub), Python",
+  "and npm packages, and the embedder's pinned model file (Hugging Face) — and nothing is posted to",
   "GitHub by this step.",
 ].join("\n");
 
@@ -92,7 +95,7 @@ export function configMountOf(configPath: string): { dir: string; name: string }
 /** `docker compose [--profile p] up -d --build`, built in one place. */
 export function bringUpArgs(root: string, profile: string): string[] {
   const profileArgs = profile === "" ? [] : ["--profile", profile];
-  return ["compose", "--project-directory", root, ...profileArgs, "up", "-d", "--build"];
+  return composeArgs(root, [...profileArgs, "up", "-d", "--build"]);
 }
 
 export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
@@ -122,7 +125,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
     // The compose stack is the laptop route. The VM-over-ssh route brings the
     // same system up through the existing Ansible flow and registers
     // its own steps; this one stays out of its way.
-    enabled: (choices) => choices[CHOICE_KEYS.topology] !== "vm",
+    enabled: (choices) => topologyOf(choices) === "local",
 
     async run(ctx): Promise<StepReport> {
       const root = rootOf(ctx.adapters);

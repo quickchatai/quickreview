@@ -63,7 +63,7 @@
 //
 // Nothing here writes memory or GitHub, and nothing here is on a round's path.
 import type { MemoryDelivery } from "./config.js";
-import { globMatcher } from "./glob.js";
+import { globMatcherOrNothing } from "./glob.js";
 import { findingClass, lensIdsOf } from "./learner/miner.js";
 import type {
   LessonLedger,
@@ -103,14 +103,6 @@ export function lensAttributable(lesson: Pick<SelectedLesson, "lens" | "paths">)
 /** The stronger of two tiers: `class` outranks `lens`. */
 export function strongerTier(a: ShadowMatchTier, b: ShadowMatchTier): ShadowMatchTier {
   return a === "class" || b === "class" ? "class" : "lens";
-}
-
-function safeMatcher(globs: readonly string[]): (p: string) => boolean {
-  try {
-    return globMatcher(globs);
-  } catch {
-    return () => false;
-  }
 }
 
 /** Every dont-raise lesson a round's selection delivered, with where. */
@@ -160,7 +152,8 @@ export function matchShadow(
         lesson.lens.length === 0 || lensShared.length > 0 || lesson.lens.includes(VALIDATOR_LENS);
       if (!lensOk) continue;
       const pathOk =
-        lesson.paths.length === 0 || (f.path !== null && safeMatcher(lesson.paths)(f.path));
+        lesson.paths.length === 0 ||
+        (f.path !== null && globMatcherOrNothing(lesson.paths)(f.path));
       if (!pathOk) continue;
       const classMatch =
         lesson.class === null ? undefined : classes.find((c) => classesRelated(c, lesson.class!));

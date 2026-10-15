@@ -22,7 +22,7 @@ import {
   sandboxRoot,
   type Config,
 } from "./config.js";
-import { dispatchOnce, type DispatchAdapter } from "./dispatch.js";
+import { dispatchOnce, type DispatchAdapter, type PreparedTree } from "./dispatch.js";
 import {
   DaemonLoadMonitor,
   EVENT_LOOP_WAKE_KIND,
@@ -139,10 +139,7 @@ export interface DaemonDeps {
   /** Fetch head + base and materialise the worktree before the order is built
    * (wire.ts passes the real WorktreeManager). Absent ⇒ no git: the order
    * falls back to the PR row's sha with no base facts. */
-  prepareWorktree?: (
-    pr: number,
-    baseRef: string,
-  ) => Promise<{ head_sha: string; base_ref: string; base_sha: string; merge_base: string }>;
+  prepareWorktree?: (pr: number, baseRef: string) => Promise<PreparedTree>;
   /** The PR-owned change between two reviewed heads (follow-up rounds) —
    * wire.ts passes `WorktreeManager.prOwnedDelta`. Absent ⇒ every
    * later round is a full re-review. */

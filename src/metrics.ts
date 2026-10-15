@@ -5,8 +5,11 @@
 // Backfilled rounds (rounds.backfilled = 1, imported from GitHub history)
 // carry timestamps and verdicts but never spend, duration or a deadline. They
 // are therefore included in time-to-first-verdict, verdict mix, rounds-until-
-// resolution and size, and excluded from spend, duration and overruns — every
-// `n` reflects actual data points rather than padded zeroes.
+// resolution and size, and excluded from spend, duration, overruns and
+// time-to-first-verdict's queue and review legs (an imported round's start is
+// its reconstructed trigger, or its verdict when none was found, so neither
+// leg was measured) — every `n` reflects actual data points rather than
+// padded zeroes.
 //
 // Ops-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
 // manual offsets).
@@ -88,9 +91,12 @@ export interface DailyRow {
 export interface OpsInfo {
   /** status.json heartbeat (ISO) — null when there is no snapshot yet. */
   heartbeat: string | null;
-  dry_run: boolean;
+  /** status.json's mode — null when no snapshot says, never a guess. */
+  dry_run: boolean | null;
+  /** sqlite's count of running rounds, then status.json's when it has one. */
   running_rounds: number;
-  max_concurrent_rounds: number;
+  /** status.json's concurrency cap — null when no snapshot says. */
+  max_concurrent_rounds: number | null;
   /** The BUILD_SHA marker deploy.sh drops in the sandbox root; null if absent. */
   build: { sha: string; at: string; mode: string } | null;
 }
@@ -122,18 +128,27 @@ export interface TimelinePayload {
 
 // ---- statistics ------------------------------------------------------------
 
-export const TIME_BUCKETS: Array<{ label: string; max: number }> = [
-  { label: "<1m", max: 60 },
-  { label: "<5m", max: 300 },
-  { label: "<15m", max: 900 },
-  { label: "<1h", max: 3600 },
-  { label: "<4h", max: 14_400 },
-  { label: "<1d", max: 86_400 },
+/** A histogram bucket: a value lands in the first bucket whose `max` it does
+ * not exceed — or, for a `strict` bucket, stays below. */
+export interface Bucket {
+  label: string;
+  max: number;
+  strict?: boolean;
+}
+
+/** Strict upper bounds, as the "<" labels say: exactly 60 s is not "<1m". */
+export const TIME_BUCKETS: Bucket[] = [
+  { label: "<1m", max: 60, strict: true },
+  { label: "<5m", max: 300, strict: true },
+  { label: "<15m", max: 900, strict: true },
+  { label: "<1h", max: 3600, strict: true },
+  { label: "<4h", max: 14_400, strict: true },
+  { label: "<1d", max: 86_400, strict: true },
   { label: ">=1d", max: Number.POSITIVE_INFINITY },
 ];
 
 /** 1,2,3,4,5+ — the count-shaped histograms (rounds, ping-pong exchanges). */
-export const COUNT_BUCKETS: Array<{ label: string; max: number }> = [
+export const COUNT_BUCKETS: Bucket[] = [
   { label: "1", max: 1 },
   { label: "2", max: 2 },
   { label: "3", max: 3 },
@@ -141,11 +156,10 @@ export const COUNT_BUCKETS: Array<{ label: string; max: number }> = [
   { label: "5+", max: Number.POSITIVE_INFINITY },
 ];
 
-/** 0,1,2,3,4,5+ — review depth, where "no comments" is a real observation. */
-export const DEPTH_BUCKETS: Array<{ label: string; max: number }> = [
-  { label: "0", max: 0 },
-  ...COUNT_BUCKETS,
-];
+/** 0,1,2,3,4,5+ — review depth. Its sample is the rounds with linked bot
+ * comments (a gap metric that fills as comments are recorded), so the "0"
+ * bucket stays empty until a round can be known to have posted none. */
+export const DEPTH_BUCKETS: Bucket[] = [{ label: "0", max: 0 }, ...COUNT_BUCKETS];
 
 /** Nearest-rank percentile (p in 0..1) over an unsorted numeric sample. */
 export function percentile(values: number[], p: number): number | null {
@@ -159,23 +173,17 @@ export function median(values: number[]): number | null {
   return percentile(values, 0.5);
 }
 
-export function histogram(
-  values: number[],
-  buckets: Array<{ label: string; max: number }>,
-): Dist["histogram"] {
+export function histogram(values: number[], buckets: Bucket[]): Dist["histogram"] {
   const out = buckets.map((b) => ({ label: b.label, count: 0 }));
   for (const v of values) {
-    const idx = buckets.findIndex((b) => v <= b.max);
+    const idx = buckets.findIndex((b) => (b.strict ? v < b.max : v <= b.max));
     const target = out[idx === -1 ? out.length - 1 : idx];
     if (target) target.count++;
   }
   return out;
 }
 
-export function dist(
-  values: number[],
-  buckets: Array<{ label: string; max: number }> = TIME_BUCKETS,
-): Dist {
+export function dist(values: number[], buckets: Bucket[] = TIME_BUCKETS): Dist {
   return {
     median: median(values),
     p90: percentile(values, 0.9),
@@ -410,9 +418,11 @@ export function computeWindow(input: WindowInput): MetricsWindow {
 
   // ---- ttfv (backfilled rounds included — they carry real timestamps) ----
   const ttfv = ttfvByPr(input.rounds, since);
+  // The queue and review legs are live only: a backfilled round's
+  // `started_at` is reconstructed, not when its review began.
   const queue: number[] = [];
   const review: number[] = [];
-  for (const r of rounds) {
+  for (const r of live) {
     if (r.trigger_ts) {
       const q = seconds(r.trigger_ts, r.started_at);
       if (Number.isFinite(q) && q >= 0) queue.push(q);
@@ -426,18 +436,28 @@ export function computeWindow(input: WindowInput): MetricsWindow {
   }
 
   // ---- time in state ----
-  const byState = new Map<string, number[]>();
+  // Every interval that overlaps the window counts, including one entered
+  // before it (a PR stuck for longer than the window is the case this card
+  // exists for): `median_s` is over the whole dwell of each such interval,
+  // `total_s` over the part of it inside the window.
+  const byState = new Map<string, { dwell: number[]; inside: number }>();
+  const sinceMs = since === null ? null : Date.parse(since);
   for (const iv of input.intervals) {
-    if (!within(iv.start, since)) continue;
-    const list = byState.get(iv.state) ?? [];
-    list.push(iv.seconds);
-    byState.set(iv.state, list);
+    const startMs = Date.parse(iv.start);
+    const endMs = startMs + iv.seconds * 1000;
+    if (!Number.isFinite(startMs)) continue;
+    if (sinceMs !== null && startMs < sinceMs && endMs <= sinceMs) continue;
+    const inside = sinceMs === null ? iv.seconds : (endMs - Math.max(startMs, sinceMs)) / 1000;
+    const acc = byState.get(iv.state) ?? { dwell: [], inside: 0 };
+    acc.dwell.push(iv.seconds);
+    acc.inside += inside;
+    byState.set(iv.state, acc);
   }
   const timeInState = [...byState.entries()]
-    .map(([state, values]) => ({
+    .map(([state, acc]) => ({
       state,
-      median_s: median(values),
-      total_s: round2(values.reduce((n, v) => n + v, 0)),
+      median_s: median(acc.dwell),
+      total_s: round2(acc.inside),
     }))
     .sort((a, b) => b.total_s - a.total_s);
 
@@ -676,7 +696,9 @@ export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days 
 // ---- resolution ------------------------------------------------------------
 
 /** Rounds spent per PR that reached a resolution: the first APPROVE round
- * (rounds up to and including it), or every round of a PR GitHub closed. */
+ * (rounds up to and including it), or every round of a PR GitHub closed.
+ * A PR known only from imported history has no live row and no events; its
+ * closure is the import's `backfill_pr_meta` record. */
 export function resolutionByPr(
   store: StateStore,
   rounds: RoundRow[],
@@ -684,7 +706,13 @@ export function resolutionByPr(
 ): Map<number, number> {
   const closed = new Set<number>();
   for (const e of events) if (e.kind === "pr_closed" && e.pr !== null) closed.add(e.pr);
-  for (const p of store.allPrs()) if (p.state === "closed") closed.add(p.number);
+  const tracked = new Set<number>();
+  for (const p of store.allPrs()) {
+    tracked.add(p.number);
+    if (p.state === "closed") closed.add(p.number);
+  }
+  for (const m of store.allBackfillPrMeta())
+    if (!tracked.has(m.pr) && (m.closed_at !== null || m.merged_at !== null)) closed.add(m.pr);
 
   const byPr = new Map<number, RoundRow[]>();
   for (const r of rounds) byPr.set(r.pr, [...(byPr.get(r.pr) ?? []), r]);
@@ -775,9 +803,9 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
 export function emptyOps(): OpsInfo {
   return {
     heartbeat: null,
-    dry_run: false,
+    dry_run: null,
     running_rounds: 0,
-    max_concurrent_rounds: 0,
+    max_concurrent_rounds: null,
     build: null,
   };
 }
@@ -819,7 +847,7 @@ export function readOps(
     if (typeof snap.max_concurrent_rounds === "number")
       ops.max_concurrent_rounds = snap.max_concurrent_rounds;
   } catch {
-    /* no snapshot (or an unreadable one) — the nulls/zeros stand */
+    /* no snapshot (or an unreadable one) — the unknowns stand */
   }
   try {
     const marker = io.parseBuildSha(io.readFile(paths.buildShaPath));
@@ -957,8 +985,8 @@ export function renderMetrics(payload: MetricsPayload): string {
   const ops = payload.ops;
   lines.push(
     // Without a snapshot the mode is unknown — never guess "LIVE".
-    `daemon: ${ops.heartbeat === null ? "mode unknown" : ops.dry_run ? "DRY-RUN" : "LIVE"} · heartbeat ${ops.heartbeat ?? "—"} · ` +
-      `rounds ${ops.running_rounds}/${ops.max_concurrent_rounds} · ` +
+    `daemon: ${ops.heartbeat === null || ops.dry_run === null ? "mode unknown" : ops.dry_run ? "DRY-RUN" : "LIVE"} · heartbeat ${ops.heartbeat ?? "—"} · ` +
+      `rounds ${ops.running_rounds}/${ops.max_concurrent_rounds ?? "?"} · ` +
       `build ${ops.build ? `${ops.build.sha}${ops.build.at ? ` (${ops.build.at}${ops.build.mode ? `, ${ops.build.mode}` : ""})` : ""}` : "unknown"}`,
   );
   lines.push("");

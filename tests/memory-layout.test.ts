@@ -1298,6 +1298,45 @@ describe("the relayout plan over a fixture shaped like the live store", () => {
     });
   });
 
+  it("an adjudication the curation retires supersedes no needs-attention note", () => {
+    const plan = planRelayout({
+      entries: [
+        entryFrom(
+          "experiences/adj.md",
+          "#adjudication #feedback pr=5359 episode=comment-9 attribution=accepted-policy-cost changed=no Complaint: carve-out rejected.\n",
+          "",
+        ),
+        entryFrom(
+          "experiences/na.md",
+          "#feedback-review #feedback pr=5359 episode=comment-9 status=needs-attention Reason: open.\n",
+          "",
+        ),
+      ],
+      retired: [],
+    });
+    expect(plan.actions.find((a) => a.id === "experiences/adj.md")).toMatchObject({
+      kind: "retire",
+    });
+    // the needs-attention note is a feedback event, moved — not retired as answered
+    expect(plan.actions.find((a) => a.id === "experiences/na.md")).toMatchObject({
+      kind: "move",
+      to: "events/na.md",
+    });
+  });
+
+  it("an entry rewritten in place keeps the hand-decision note a move would carry", () => {
+    const plan = planRelayout({
+      entries: [entryFrom("events/z.md", "# Title\n\nTags: #bug #operations\n", "")],
+      retired: [],
+    });
+    const z = plan.actions.find((a) => a.id === "events/z.md")!;
+    expect(z).toMatchObject({ kind: "rewrite" });
+    expect(z.kind === "rewrite" && z.note).toMatch(/make it kind=bug by hand/);
+    expect(renderRelayoutPlan(plan, ROOT).join("\n")).toMatch(
+      /rewrite events\/z\.md .*header fixed in place\) — its tag lines say bug/,
+    );
+  });
+
   it("the tolerant reader takes tag LINES, never a tag quoted in prose", () => {
     expect([...looseTags("# T\n\n#operations #bug\n\nbody").hash]).toEqual(
       expect.arrayContaining(["operations", "bug"]),

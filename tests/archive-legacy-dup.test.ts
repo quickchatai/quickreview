@@ -199,4 +199,45 @@ describe("legacy session.jsonl (acceptance 7)", () => {
       });
     },
   );
+
+  // The duplicate's record is committed BEFORE its unlink: nothing after the
+  // unlink could rebuild it (the copy is gone), so a crash on either side of
+  // the unlink still leaves exactly one record and one count.
+  for (const at of ["duplicate_recorded", "duplicate_unlinked"])
+    it(
+      `a crash at ${at}: the next pass converges on ONE duplicate_removed entry, counted once`,
+      { timeout: HEAVY_TIMEOUT_MS },
+      async () => {
+        const f = withLegacy((x) => x.bytes.get(x.transcripts[1]!)!);
+        const legacyBytes = readFileSync(legacyPath(f));
+        let crashed = false;
+        const first = onArchiver(
+          f,
+          {},
+          {
+            step: (name) => {
+              if (crashed || name !== at) return;
+              crashed = true;
+              throw new Error(`crash at ${name}`);
+            },
+          },
+        );
+        await first.tick();
+        first.stop();
+        expect(crashed).toBe(true);
+        expect(existsSync(legacyPath(f))).toBe(at === "duplicate_recorded");
+        await tick(f);
+        expect(existsSync(legacyPath(f))).toBe(false);
+        const dups = manifestOf(f).entries.filter((e) => e.kind === "duplicate_removed");
+        expect(dups).toHaveLength(1);
+        expect(dups[0]).toMatchObject({
+          match: "exact",
+          duplicate_of: gzName(f, 1),
+          bytes: legacyBytes.length,
+          sha256: sha(legacyBytes),
+        });
+        expect(marks(f)).toBe(1);
+        expect(archiveRow(f.store, f.pr)?.state).toBe("archived");
+      },
+    );
 });

@@ -50,3 +50,13 @@ export function globMatcher(globs: readonly string[]): (path: string) => boolean
   const res = globs.map(globToRegExp);
   return (path) => res.some((re) => re.test(path));
 }
+
+/** `globMatcher`, failing CLOSED: a list the compiler refuses matches
+ * nothing (never everything). */
+export function globMatcherOrNothing(globs: readonly string[]): (path: string) => boolean {
+  try {
+    return globMatcher(globs);
+  } catch {
+    return () => false;
+  }
+}

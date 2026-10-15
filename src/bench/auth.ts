@@ -278,9 +278,7 @@ export function syncBenchAuth(o: {
     mkdirSync(o.dstDir, { recursive: true, mode: 0o700 });
     writeFileSync(join(o.dstDir, "auth.json"), "{}\n", { mode: 0o600 });
     chmodSync(join(o.dstDir, "auth.json"), 0o600);
-    const { settings, trust } = benchSettings(o.root);
-    writeFileSync(join(o.dstDir, "settings.json"), settings);
-    writeFileSync(join(o.dstDir, "trust.json"), trust);
+    writeBenchSettings(o.dstDir, o.root);
     if (provider) {
       writeFileSync(
         join(o.dstDir, "models.json"),
@@ -310,8 +308,14 @@ export function syncBenchAuth(o: {
   writeFileSync(tmp, json, { mode: 0o600 });
   renameSync(tmp, join(o.dstDir, "auth.json"));
   chmodSync(join(o.dstDir, "auth.json"), 0o600);
-  const { settings, trust } = benchSettings(o.root);
-  writeFileSync(join(o.dstDir, "settings.json"), settings);
-  writeFileSync(join(o.dstDir, "trust.json"), trust);
+  writeBenchSettings(o.dstDir, o.root);
   return { expiresAt };
+}
+
+/** The sandbox's pi settings and project trust (`benchSettings`), into its
+ * agent dir — the same on either credential route. */
+function writeBenchSettings(dstDir: string, root: string): void {
+  const { settings, trust } = benchSettings(root);
+  writeFileSync(join(dstDir, "settings.json"), settings);
+  writeFileSync(join(dstDir, "trust.json"), trust);
 }

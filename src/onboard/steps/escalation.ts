@@ -23,11 +23,16 @@
 // blocks by hand; the section this step writes documents that in place, and
 // re-running the step never destroys rules it did not author (it rewrites only
 // the `onboarding:<login>` family).
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
-import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { parseConfig } from "../../config.js";
+import {
+  ESCALATION_DEFAULTS,
+  ESCALATION_LOGIN_RE as LOGIN_RE,
+  ESCALATION_SEVERITY_FLOORS as SEVERITIES,
+  parseConfig,
+} from "../../config.js";
+import { interviewConfigPath, writeAtomic } from "./compose.js";
 
 export const ESCALATION_STEP_ID = "escalation";
 
@@ -52,9 +57,6 @@ export function interviewRuleName(login: string): string {
 export function isInterviewRule(name: string): boolean {
   return name === INTERVIEW_RULE_PREFIX || name.startsWith(`${INTERVIEW_RULE_PREFIX}:`);
 }
-
-const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
-const SEVERITIES = ["P0", "P1", "P2", "P3"] as const;
 
 /** Split a comma/whitespace-separated answer into trimmed, non-empty items. */
 export function splitList(raw: unknown): string[] {
@@ -122,19 +124,44 @@ export function offerCheck(): CheckResult {
 
 // ---- config surgery -------------------------------------------------------
 
+/** A `[[escalation.rules]]` header line, in any valid TOML spelling (leading
+ * whitespace, whitespace inside the brackets, a trailing comment). */
+const RULE_HEADER_RE = /^[ \t]*\[\[[ \t]*escalation[ \t]*\.[ \t]*rules[ \t]*\]\][^\n]*$/;
+
+/** `toml` with every `[[escalation.rules]]` block removed — wherever it sits,
+ * not only right after `[escalation]`. A block runs from its header to the next
+ * line that opens a table, the same extent `foreignRuleBlocks` reads. */
+function withoutRuleBlocks(toml: string): string {
+  const out: string[] = [];
+  let inRule = false;
+  for (const line of toml.split("\n")) {
+    if (RULE_HEADER_RE.test(line)) {
+      inRule = true;
+      continue;
+    }
+    if (inRule && /^[ \t]*\[/.test(line)) inRule = false;
+    if (!inRule) out.push(line);
+  }
+  return out.join("\n");
+}
+
 /**
- * Replace the `[escalation]` table AND every `[[escalation.rules]]` block that
- * follows it with `body`.
+ * Replace the `[escalation]` table AND every `[[escalation.rules]]` block in
+ * the document with `body`. Every rule block is removed wherever it sits —
+ * `body` carries the foreign ones back (`foreignRuleBlocks` collects them from
+ * the whole document), so each survives exactly once.
  *
  * The generic `patchTomlSection` cannot do this: it stops at the next `[`, and
  * `[[escalation.rules]]` starts with `[` — so it would leave orphaned rules
  * behind a rewritten header, which is precisely the half-configured state this
  * step exists to make impossible.
  */
-export function patchEscalationSection(toml: string, body: string): string {
+export function patchEscalationSection(original: string, body: string): string {
+  const toml = withoutRuleBlocks(original);
   const header = /^[ \t]*\[[ \t]*escalation[ \t]*\][^\n]*\n/m.exec(toml);
   // TOML allows whitespace before a header, inside its brackets and a comment
-  // after it — every spelling counts, or a hand-written rule is swallowed.
+  // after it — every spelling of the next table ends the section, or the
+  // rewrite would swallow it.
   const tableRe = /^[ \t]*\[\[?[^\n\]]+\]\]?[^\n]*$/gm;
   if (header?.index === undefined) {
     // No table yet: put it before [slack] if that exists, else at the end.
@@ -143,33 +170,39 @@ export function patchEscalationSection(toml: string, body: string): string {
       return `${toml.slice(0, slack.index)}${body}\n${toml.slice(slack.index)}`;
     return `${toml.replace(/\n*$/, "\n")}\n${body}`;
   }
-  let end = toml.length;
   tableRe.lastIndex = header.index + header[0].length;
-  for (let m = tableRe.exec(toml); m; m = tableRe.exec(toml)) {
-    if (isRuleHeader(m[0])) continue; // ours; keep consuming
-    end = m.index;
-    break;
-  }
+  const next = tableRe.exec(toml);
+  const end = next ? next.index : toml.length;
   return `${toml.slice(0, header.index)}${body}${toml.slice(end)}`;
 }
 
-/** Is this header line `[[escalation.rules]]` — in any valid TOML spelling
- * (leading whitespace, whitespace inside the brackets, a trailing comment)? */
-function isRuleHeader(line: string): boolean {
-  return /^[ \t]*\[\[[ \t]*escalation[ \t]*\.[ \t]*rules[ \t]*\]\][ \t]*(#.*)?$/.test(line);
+/** One field of a single rule block, PARSED rather than pattern-matched — a
+ * literal string (`name = 'x'`) is as valid a spelling as `name = "x"`.
+ * undefined when the block does not parse (`parseConfig` refuses it loudly
+ * later) or does not carry the field. */
+function ruleField(block: string, field: "name" | "to"): unknown {
+  try {
+    const doc = parseToml(block) as {
+      escalation?: { rules?: Array<Record<string, unknown>> };
+    };
+    return doc.escalation?.rules?.[0]?.[field];
+  } catch {
+    return undefined;
+  }
 }
 
 /** Every `[[escalation.rules]]` block in `toml` that this step does NOT own,
- * rendered back verbatim — so a re-run never eats a hand-written rule. */
+ * rendered back verbatim (its header line included, comment and all) — so a
+ * re-run never eats a hand-written rule. */
 export function foreignRuleBlocks(toml: string): string[] {
   const out: string[] = [];
   const re =
-    /^[ \t]*\[\[[ \t]*escalation[ \t]*\.[ \t]*rules[ \t]*\]\][^\n]*\n((?:(?![ \t]*\[)[^\n]*\n?)*)/gm;
+    /^([ \t]*\[\[[ \t]*escalation[ \t]*\.[ \t]*rules[ \t]*\]\][^\n]*)\n?((?:(?![ \t]*\[)[^\n]*\n?)*)/gm;
   for (let m = re.exec(toml); m; m = re.exec(toml)) {
-    const body = m[1] ?? "";
-    const name = /^\s*name\s*=\s*"([^"]*)"/m.exec(body)?.[1];
-    if (name !== undefined && isInterviewRule(name)) continue;
-    out.push(`[[escalation.rules]]\n${body.replace(/\n*$/, "\n")}`);
+    const block = `${m[1]!.trim()}\n${(m[2] ?? "").replace(/\n*$/, "\n")}`;
+    const name = ruleField(block, "name");
+    if (typeof name === "string" && isInterviewRule(name)) continue;
+    out.push(block);
   }
   return out;
 }
@@ -184,13 +217,7 @@ export function foreignRuleTargets(foreign: readonly string[]): string[] {
     // Parsed, not pattern-matched: a literal string (`to = 'bob'`) or an
     // `@bob` is as valid a spelling as `to = "bob"`, and normalised the way
     // `parseConfig` normalises it, so the two never disagree on the login.
-    let raw: unknown;
-    try {
-      const doc = parseToml(block) as { escalation?: { rules?: Array<{ to?: unknown }> } };
-      raw = doc.escalation?.rules?.[0]?.to;
-    } catch {
-      continue; // an unparseable block is refused loudly by parseConfig later
-    }
+    const raw = ruleField(block, "to");
     const to = typeof raw === "string" ? raw.trim().replace(/^@/, "") : "";
     if (to && !out.includes(to)) out.push(to);
   }
@@ -203,7 +230,7 @@ export function foreignRuleTargets(foreign: readonly string[]): string[] {
  * interview target is ever refused as capped. */
 export function interviewMaxPerPr(a: EscalationAnswers, foreign: readonly string[]): number {
   const rules = (a.enabled ? a.targets.length : 0) + foreign.length;
-  return Math.max(2, rules + 1);
+  return Math.max(ESCALATION_DEFAULTS.max_per_pr, rules + 1);
 }
 
 function tomlList(values: readonly string[]): string {
@@ -222,14 +249,22 @@ export interface EscalationAnswers {
   why: string;
 }
 
+/** The `targets` the section carries: the interview's, then every hand rule's
+ * recipient it does not already name (`parseEscalation` refuses a rule
+ * pointing outside `targets`). */
+export function effectiveTargets(a: EscalationAnswers, foreign: readonly string[]): string[] {
+  const targets = [...a.targets];
+  for (const t of foreignRuleTargets(foreign)) if (!targets.includes(t)) targets.push(t);
+  return targets;
+}
+
 /** Render the whole `[escalation]` section — the switched-off form when the
  * operator declined, the full form otherwise. */
 export function renderEscalationSection(
   a: EscalationAnswers,
   foreign: readonly string[] = [],
 ): string {
-  const targets = [...a.targets];
-  for (const t of foreignRuleTargets(foreign)) if (!targets.includes(t)) targets.push(t);
+  const targets = effectiveTargets(a, foreign);
   const head = [
     "[escalation]",
     "# Optional escalation. The reviewer ALWAYS decides on the merits and",
@@ -296,7 +331,7 @@ export function answerProblems(a: EscalationAnswers): string[] {
       "no trigger given — set at least one of `paths`, `labels`, `min_severity`, `failing_checks`, or a rule that can never fire is all this writes",
     );
   }
-  if (a.min_severity && !SEVERITIES.includes(a.min_severity as (typeof SEVERITIES)[number])) {
+  if (a.min_severity && !SEVERITIES.includes(a.min_severity)) {
     bad.push(`\`min_severity\` must be one of ${SEVERITIES.join(", ")} (got "${a.min_severity}")`);
   }
   return bad;
@@ -312,7 +347,8 @@ function answersFrom(ctx: StepContext, enabled: boolean): EscalationAnswers {
     shape: shapeRaw === "review_request" ? "review_request" : "comment",
     targets,
     session_judgement: yesNo(ctx.input.session_judgement) === true,
-    paths: splitList(ctx.input.paths),
+    // A glob may contain a space (`docs/API changes/**`): commas separate.
+    paths: splitNames(ctx.input.paths),
     labels: splitNames(ctx.input.labels),
     failing_checks: splitNames(ctx.input.failing_checks),
     min_severity: String(ctx.input.min_severity ?? "")
@@ -320,11 +356,6 @@ function answersFrom(ctx: StepContext, enabled: boolean): EscalationAnswers {
       .toUpperCase(),
     why: String(ctx.input.why ?? "").trim(),
   };
-}
-
-function configPathOf(ctx: StepContext): string {
-  const recorded = ctx.choices[CHOICE_KEYS.configPath];
-  return typeof recorded === "string" && recorded ? recorded : ctx.adapters.paths.configPath;
 }
 
 export function escalationStep(): OnboardingStep {
@@ -364,7 +395,7 @@ export function escalationStep(): OnboardingStep {
         labels: { type: "string", description: "Comma-separated PR labels that warrant a look." },
         min_severity: {
           type: "string",
-          enum: ["", "P0", "P1", "P2", "P3"],
+          enum: ["", ...SEVERITIES],
           description: "Escalate when the round posted a finding at or above this severity.",
         },
         failing_checks: {
@@ -408,7 +439,7 @@ export function escalationStep(): OnboardingStep {
         };
       }
 
-      const path = configPathOf(ctx);
+      const path = interviewConfigPath(ctx);
       let toml: string;
       try {
         toml = readFileSync(path, "utf8");
@@ -425,8 +456,8 @@ export function escalationStep(): OnboardingStep {
         };
       }
       const foreign = foreignRuleBlocks(toml);
-      const handTargets = foreignRuleTargets(foreign).filter((t) => !answers.targets.includes(t));
-      const allTargets = [...answers.targets, ...handTargets];
+      const allTargets = effectiveTargets(answers, foreign);
+      const handTargets = allTargets.slice(answers.targets.length);
       const maxPerPr = interviewMaxPerPr(answers, foreign);
       const patched = patchEscalationSection(toml, renderEscalationSection(answers, foreign));
       // Parse BEFORE writing: `parseEscalation` is the same lock the loader
@@ -445,7 +476,7 @@ export function escalationStep(): OnboardingStep {
           ],
         };
       }
-      writeFileSync(path, patched);
+      writeAtomic(path, patched);
 
       const checks: CheckResult[] = [
         {
@@ -502,7 +533,7 @@ export function escalationStep(): OnboardingStep {
     },
 
     async verify(ctx): Promise<StepReport> {
-      const path = configPathOf(ctx);
+      const path = interviewConfigPath(ctx);
       let cfg;
       try {
         cfg = parseConfig(readFileSync(path, "utf8"));

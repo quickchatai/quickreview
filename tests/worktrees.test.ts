@@ -269,7 +269,7 @@ describe("listMigrationFiles", () => {
     return git(origin, "rev-parse", "HEAD").trim();
   }
 
-  it("lists only numbered migration files at that sha", async () => {
+  it("lists only the .py files directly under a migrations/ dir at that sha", async () => {
     const sha = commitAt({
       "backend/chat/migrations/__init__.py": "",
       "backend/chat/migrations/0041_add_index.py": "x\n",
