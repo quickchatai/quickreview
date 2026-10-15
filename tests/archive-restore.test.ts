@@ -780,6 +780,60 @@ describe("a restore has priority over a running pass (§8.3)", () => {
   );
 });
 
+describe("the tick's restores yield to a priority restore (§8.3)", () => {
+  it(
+    "a birth's restore queued during the tick's restores runs next; the remaining reopened PRs wait for the next tick",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = await archived();
+      reopen(f);
+      // Two more reopened PRs whose passes armed the guard and moved nothing.
+      for (const pr of [f.pr + 1, f.pr + 2]) {
+        f.store.upsertPr({
+          number: pr,
+          state: "tracked",
+          head_sha: "abc",
+          title: `pr ${pr}`,
+          author: "a",
+          trigger_ts: null,
+          stale_recheck: 0,
+          migration_gate: 0,
+        });
+        f.store.db
+          .prepare(
+            "INSERT INTO archive_prs (pr, state, max_mtime_ms, updated_at) VALUES (?, 'archiving', 0, ?)",
+          )
+          .run(pr, new Date(T0).toISOString());
+      }
+      let birth = null as Promise<void> | null;
+      const a = onArchiver(
+        f,
+        {},
+        {
+          step: async (name) => {
+            // During the tick's first restore, a birth asks for the last PR's.
+            if (name === "restored_file" && birth === null) birth = a.beforeBirth(f.pr + 2);
+          },
+        },
+      );
+      try {
+        const tick = await a.tick();
+        await birth;
+        expect(tick.state).toBe("idle");
+        const order = (
+          f.store.db
+            .prepare("SELECT pr FROM events WHERE kind = 'archive_pr_restored' ORDER BY id")
+            .all() as Array<{ pr: number }>
+        ).map((r) => r.pr);
+        expect(order).toEqual([f.pr, f.pr + 2]);
+        expect(archiveRow(f.store, f.pr + 1)?.state).toBe("archiving");
+      } finally {
+        a.stop();
+      }
+    },
+  );
+});
+
 describe("both birth paths await the restore, and wire.ts connects it", () => {
   it(
     "an out-of-round wake on a reopened PR (inject → ensureSessionForWake) restores before the rebirth",

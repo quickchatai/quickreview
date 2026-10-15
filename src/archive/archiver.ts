@@ -70,6 +70,7 @@ import type { FileOutcome } from "../improvements.js";
 import type { DaemonLoadStatus } from "../eventloop.js";
 import { DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO } from "../eventloop.js";
 import type { StateStore } from "../state.js";
+import { withinBudget } from "../budget.js";
 import { yieldToLoop } from "../yieldloop.js";
 import { ArchiveDb, ManifestUnreadable, archiveDbDir } from "./archivedb.js";
 import { DbMover, type DbMoveResult } from "./dbmove.js";
@@ -93,7 +94,7 @@ import {
   restoreTargets,
   type RestoreResult,
 } from "./restore.js";
-import { archiveRow, bumpMark, inFlightRows, reopenedRows } from "./rows.js";
+import { archiveRow, bumpMark, inFlightRows, markNumber, reopenedRows } from "./rows.js";
 import { SEAL_PROBLEMS, recoverSeals, sealDue, type SealResult } from "./seal.js";
 import {
   OPERATOR_WAIT_MS,
@@ -391,10 +392,10 @@ export class Archiver {
   /** When each PR's last restore attempt ran (ms) — a failed one is retried
    * only after RESTORE_RETRY_MS. */
   private readonly restoreAttempted = new Map<number, number>();
-  /** The disk-low incident: since when, when its wake last fired, and the
-   * archive-mount free space it needs to be over (the headroom plus the
-   * largest file that did not fit in it). */
-  private diskIncident: { since: number; raisedAt: number; need: number } | null = null;
+  /** The disk-low incident: when its wake last fired, and the archive-mount
+   * free space it needs to be over (the headroom plus the largest file that
+   * did not fit in it). */
+  private diskIncident: { raisedAt: number; need: number } | null = null;
   private birthsUnknownLogged = false;
   /** The stores' last passes. */
   private readonly stores: {
@@ -526,6 +527,7 @@ export class Archiver {
         this.runningSince = at.toISOString();
         await this.recoverFiles();
         await this.tickRestores();
+        if (this.mutex.priorityWaiting()) return this.yieldToRestore(at);
       }
       // The load holds — synchronous, nothing touched.
       const loadReason = this.loadReason();
@@ -602,8 +604,7 @@ export class Archiver {
           // failed reading) holds the tick; one month too large for the
           // archive mount only waits, as one large PR file does.
           const room = failure === null ? this.sealRoomHold : null;
-          if (room && !(room === "disk_low" && this.headroomHolds()))
-            return this.hold(room, { planned });
+          if (room && !this.oneFileTooLarge(room)) return this.hold(room, { planned });
         }
       }
       if (failure !== null) {
@@ -677,8 +678,8 @@ export class Archiver {
       this.forcePlan = true;
       return this.tick();
     });
-    const waited = await raceTimeout(run, this.deps.operatorWaitMs ?? OPERATOR_WAIT_MS);
-    if (!waited.done)
+    const waited = await withinBudget(run, this.deps.operatorWaitMs ?? OPERATOR_WAIT_MS);
+    if (waited.kind === "budget")
       return {
         ok: true,
         done: false,
@@ -755,8 +756,8 @@ export class Archiver {
         outcome: "restoring",
         note: "served while the daemon starts (before its first healthy reconcile): the restore goes on in the background — see `qcr archive status`",
       };
-    const waited = await raceTimeout(flight.promise, this.deps.operatorWaitMs ?? OPERATOR_WAIT_MS);
-    if (!waited.done)
+    const waited = await withinBudget(flight.promise, this.deps.operatorWaitMs ?? OPERATOR_WAIT_MS);
+    if (waited.kind === "budget")
       return {
         ok: true,
         done: false,
@@ -947,7 +948,9 @@ export class Archiver {
       return;
     }
     for (const row of rows) {
-      if (this.stopped) return;
+      // A birth's (or the operator's) restore waiting with priority goes
+      // first: the rest are the next tick's.
+      if (this.interruption()) return;
       if (row.state === "restore_failed" && !this.restoreRetryDue(row.pr)) continue;
       // A drain never holds a restore (§10); a stalled loop or a starved CPU
       // does — the tick's restores wait for the next tick (a birth's own
@@ -1016,10 +1019,18 @@ export class Archiver {
   /** Why no new file may start now: stopping, a restore waiting, the tick
    * budget spent, or a hold. */
   private fileStop(at: Date): string | null {
-    if (this.stopped) return "stopping";
-    if (this.mutex.priorityWaiting()) return "restore_pending";
+    const interrupted = this.interruption();
+    if (interrupted) return interrupted;
     if (this.now().getTime() - at.getTime() >= this.policy.tickBudgetMs) return "budget";
     return this.loadReason();
+  }
+
+  /** What ends any pass at its next boundary: stopping, or a restore waiting
+   * for the mutex. */
+  private interruption(): "stopping" | "restore_pending" | null {
+    if (this.stopped) return "stopping";
+    if (this.mutex.priorityWaiting()) return "restore_pending";
+    return null;
   }
 
   /** The eligibility facts outside the database, asked fresh for one PR. */
@@ -1048,11 +1059,17 @@ export class Archiver {
     return this.checkDisk(bytes);
   }
 
-  /** Does the last disk reading have the headroom itself on both mounts (so
-   * a `disk_low` it gave was one file too large, not a low disk)? */
-  private headroomHolds(): boolean {
+  /** Is `reason` a `disk_low` that only one item was too large for — the
+   * last disk reading has the headroom itself on both mounts? That item
+   * waits; the phase goes on (a low disk would hold the tick). */
+  private oneFileTooLarge(reason: string | null | undefined): boolean {
     const d = this.disk;
-    return d !== null && d.archive_free >= d.headroom && d.state_free >= d.headroom;
+    return (
+      reason === "disk_low" &&
+      d !== null &&
+      d.archive_free >= d.headroom &&
+      d.state_free >= d.headroom
+    );
   }
 
   /**
@@ -1194,7 +1211,7 @@ export class Archiver {
         run.prs_held += 1;
         this.fileHeld.set(pr, r.reason ?? "held");
         this.doneSincePlan.add(pr);
-      } else if (r.reason === "disk_low" && this.headroomHolds()) {
+      } else if (this.oneFileTooLarge(r.reason)) {
         // The mounts have their headroom, just not room for THIS PR's next
         // file: that PR waits (held disk_low, the wake raised once for the
         // incident) and the phase goes on to the next PR — one large file
@@ -1375,11 +1392,7 @@ export class Archiver {
       // mount while both mounts keep their headroom: that store waits (its
       // status says disk_low, the wake was raised once for the incident) and
       // the next store goes on, as one large PR file never stops the others.
-      if (
-        r.reason &&
-        isHoldReason(r.reason) &&
-        !(r.reason === "disk_low" && this.headroomHolds())
-      ) {
+      if (r.reason && isHoldReason(r.reason) && !this.oneFileTooLarge(r.reason)) {
         fold();
         return r.reason;
       }
@@ -1412,9 +1425,7 @@ export class Archiver {
 
   /** The hold, re-read before every batch and every seal. */
   private batchHold(): string | null {
-    if (this.stopped) return "stopping";
-    if (this.mutex.priorityWaiting()) return "restore_pending";
-    return this.loadReason();
+    return this.interruption() ?? this.loadReason();
   }
 
   /** Is incident `key` to be raised now — its first time, or ANOMALY_REPEAT_MS
@@ -1683,11 +1694,7 @@ export class Archiver {
       this.diskIncident.need = Math.max(this.diskIncident.need, need);
       if (nowMs - this.diskIncident.raisedAt < ANOMALY_REPEAT_MS) return;
     }
-    this.diskIncident = {
-      since: this.diskIncident?.since ?? nowMs,
-      raisedAt: nowMs,
-      need: Math.max(this.diskIncident?.need ?? 0, need),
-    };
+    this.diskIncident = { raisedAt: nowMs, need: Math.max(this.diskIncident?.need ?? 0, need) };
     const detail =
       `archive held: free disk below the headroom — archive mount ${r.archiveFree} B free` +
       (r.fileBytes > 0 ? ` (a ${r.fileBytes} B file needs ${r.fileBytes + r.headroom})` : "") +
@@ -1695,6 +1702,8 @@ export class Archiver {
     try {
       this.deps.store.logAnomaly("archive_disk_low", null, null, detail);
     } catch (err) {
+      // Not recorded, so it holds no window: the next low reading raises it.
+      this.diskIncident.raisedAt = Number.NEGATIVE_INFINITY;
       this.log("archive: could not raise archive_disk_low", err);
     }
   }
@@ -1709,6 +1718,8 @@ export class Archiver {
     try {
       this.deps.store.logAnomaly(kind, pr, null, detail);
     } catch (err) {
+      // Not recorded, so it holds no window: the next occurrence raises it.
+      this.raised.delete(key);
       this.log(`archive: could not raise ${kind}`, err);
     }
   }
@@ -1734,17 +1745,11 @@ export class Archiver {
       const events = db
         .prepare("SELECT COALESCE(SUM(n), 0) AS n FROM archived_event_counts")
         .get() as { n: number };
-      const mark = (name: string): number => {
-        const r = db.prepare("SELECT value FROM archive_marks WHERE name = ?").get(name) as
-          { value: unknown } | undefined;
-        const n = Number(r?.value ?? 0);
-        return Number.isFinite(n) ? n : 0;
-      };
       totals = {
         ...prs,
         event_rows: events.n,
-        delivery_rows: mark("deliveries.archived_rows"),
-        duplicates_removed: mark("duplicates.removed"),
+        delivery_rows: markNumber(this.deps.store, "deliveries.archived_rows"),
+        duplicates_removed: markNumber(this.deps.store, "duplicates.removed"),
       };
       restores = db
         .prepare(
@@ -1880,23 +1885,4 @@ async function waitAtMost(p: Promise<unknown>, ms: number): Promise<void> {
     }),
   ]);
   if (timer) clearTimeout(timer);
-}
-
-/** Wait for `p`, but never longer than `ms`: its value, or `done: false`. */
-async function raceTimeout<T>(
-  p: Promise<T>,
-  ms: number,
-): Promise<{ done: true; value: T } | { done: false }> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      p.then((value) => ({ done: true as const, value })),
-      new Promise<{ done: false }>((resolveWait) => {
-        timer = setTimeout(() => resolveWait({ done: false }), Math.max(0, ms));
-        timer.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }

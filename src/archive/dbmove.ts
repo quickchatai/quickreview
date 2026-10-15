@@ -74,7 +74,7 @@ import {
 } from "./archivedb.js";
 import { ARCHIVE_EVENT_KINDS } from "./kinds.js";
 import { workerCheckpointer, type LiveCheckpointer } from "./livecheckpoint.js";
-import { bumpMark } from "./rows.js";
+import { bumpMark, markNumber } from "./rows.js";
 
 const DAY_MS = 86_400_000;
 
@@ -123,10 +123,8 @@ export function classifyRow(row: {
  * when absent or not a positive number). The mover resumes after it and the
  * planner counts from it. */
 export function readWatermark(store: StateStore, name: string): number {
-  const row = store.db.prepare("SELECT value FROM archive_marks WHERE name = ?").get(name) as
-    { value: unknown } | undefined;
-  const n = Number(row?.value ?? 0);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  const n = markNumber(store, name);
+  return n > 0 ? Math.floor(n) : 0;
 }
 
 /** One table the mover empties of old rows. */

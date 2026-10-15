@@ -47,6 +47,7 @@ import {
   existsOnDisk,
   isBusy,
   sealEdgeMs,
+  tsMs,
   type ArchiveDb,
   type DbFileEntry,
   type DbFileTable,
@@ -64,6 +65,7 @@ import {
   unlinkIfPresent,
 } from "./fsutil.js";
 import { identityOrNull } from "./gzfile.js";
+import { markNumber, markValue } from "./rows.js";
 
 const DAY_MS = 86_400_000;
 
@@ -119,23 +121,7 @@ export interface SealDeps {
   log?: (msg: string, extra?: unknown) => void;
 }
 
-function readMark(store: StateStore, name: string): unknown {
-  const row = store.db.prepare("SELECT value FROM archive_marks WHERE name = ?").get(name) as
-    { value: unknown } | undefined;
-  return row?.value;
-}
-
-const markNumber = (store: StateStore, name: string): number => {
-  const n = Number(readMark(store, name) ?? 0);
-  return Number.isFinite(n) ? n : 0;
-};
-
-const markTime = (store: StateStore, name: string): number | null => {
-  const v = readMark(store, name);
-  if (typeof v !== "string") return null;
-  const t = Date.parse(v);
-  return Number.isFinite(t) ? t : null;
-};
+const markTime = (store: StateStore, name: string): number | null => tsMs(markValue(store, name));
 
 /**
  * The sealing rule for one open file — pure over what it is handed: why the

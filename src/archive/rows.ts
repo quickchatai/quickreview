@@ -151,6 +151,21 @@ export function reopenedRows(store: StateStore): ArchiveRow[] {
     .all() as ArchiveRow[];
 }
 
+/** An archive mark's stored value, as stored; undefined when it was never
+ * written. */
+export function markValue(store: StateStore, name: string): unknown {
+  const row = store.db.prepare("SELECT value FROM archive_marks WHERE name = ?").get(name) as
+    { value: unknown } | undefined;
+  return row?.value;
+}
+
+/** An archive mark as a number: 0 when it was never written or does not
+ * read as a finite number. */
+export function markNumber(store: StateStore, name: string): number {
+  const n = Number(markValue(store, name) ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /** Add `n` to an archive mark (a running total, e.g. `duplicates.removed`). */
 export function bumpMark(store: StateStore, name: string, n: number): void {
   if (n <= 0) return;

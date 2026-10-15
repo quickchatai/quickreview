@@ -96,6 +96,33 @@ describe("the disk guard (acceptance 8)", () => {
   );
 
   it(
+    "a wake the store could not record holds no window: the next low reading raises it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = fixture();
+      const log = f.store.logAnomaly.bind(f.store);
+      let failures = 1;
+      f.store.logAnomaly = ((...args: Parameters<typeof log>) => {
+        if (args[0] === "archive_disk_low" && failures-- > 0) throw new Error("SQLITE_BUSY");
+        return log(...args);
+      }) as typeof f.store.logAnomaly;
+      const a = onArchiver(f, {}, { statfs: async () => ({ bavail: HEADROOM - 1, bsize: 1 }) });
+      try {
+        expect(await a.tick()).toMatchObject({ state: "held", held_reason: "disk_low" });
+        expect(diskWakes(f)).toBe(0);
+        f.clock.ms += 60_000;
+        await a.tick();
+        expect(diskWakes(f)).toBe(1);
+        f.clock.ms += 60_000;
+        await a.tick();
+        expect(diskWakes(f)).toBe(1);
+      } finally {
+        a.stop();
+      }
+    },
+  );
+
+  it(
     "room for the headroom but not for the next file: that PR waits, the next PR goes on, and the wake fires ONCE across ticks",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
