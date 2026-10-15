@@ -42,21 +42,9 @@ import { validateReceipt, type CurationReceipt } from "./learner/receipt.js";
 import type { OriginRecord } from "./slack/origin.js";
 import { SLACK_TS_RE } from "./slack/reply.js";
 
-export type CommandName =
-  | "rerun-round"
-  | "restart-session"
-  | "resolve-terminal-failure"
-  | "pause-pr"
-  | "resume-pr"
-  | "flag-owner"
-  | "file-improvement-pr"
-  | "file-issue"
-  | "slack_reply"
-  | "drain"
-  | "retry-thread-decision"
-  | "eod-curation-receipt";
-
-export const COMMAND_WHITELIST: readonly CommandName[] = [
+/** The session-writable command vocabulary — the one list `CommandName` is
+ * read from, so a name cannot be typed without being admitted. */
+export const COMMAND_WHITELIST = [
   "rerun-round",
   "restart-session",
   "resolve-terminal-failure",
@@ -70,6 +58,8 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "retry-thread-decision",
   "eod-curation-receipt",
 ] as const;
+
+export type CommandName = (typeof COMMAND_WHITELIST)[number];
 
 /**
  * The operator's commands: the lesson kill switch and the archiver's two
@@ -86,15 +76,7 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
  * in state.db (src/lessonledger.ts), never as a memory tag anyone holding a
  * key could write.
  */
-export type OperatorCommandName =
-  | "lessons-off"
-  | "lessons-on"
-  | "suppress-lesson"
-  | "unsuppress-lesson"
-  | "archive-run"
-  | "archive-restore";
-
-export const OPERATOR_COMMANDS: readonly OperatorCommandName[] = [
+export const OPERATOR_COMMANDS = [
   "lessons-off",
   "lessons-on",
   "suppress-lesson",
@@ -102,6 +84,8 @@ export const OPERATOR_COMMANDS: readonly OperatorCommandName[] = [
   "archive-run",
   "archive-restore",
 ] as const;
+
+export type OperatorCommandName = (typeof OPERATOR_COMMANDS)[number];
 
 /** A lesson the operator names: the full memory URI of one entry
  * (`viking://user/<user>/memories/<area>/<file>.md`) — `qcr lessons

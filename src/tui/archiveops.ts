@@ -13,7 +13,7 @@
 // running then says `done: false` and goes on), so the client waits that
 // long plus the usual message timeout.
 import { randomUUID } from "node:crypto";
-import { validateCommand } from "../commands.js";
+import { validateCommand, type Command } from "../commands.js";
 import type { TuiConfig } from "../config.js";
 import {
   OPERATOR_WAIT_MS,
@@ -27,8 +27,8 @@ import {
 import type { SshRunner } from "./remote.js";
 import { commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
 
-export type ArchiveOpCommand =
-  { command: "archive-run" } | { command: "archive-restore"; pr: number };
+/** The archive verbs' payloads, read from the daemon's own `Command`. */
+export type ArchiveOpCommand = Extract<Command, { command: "archive-run" | "archive-restore" }>;
 
 export interface ArchiveOpOutcome {
   ok: boolean;

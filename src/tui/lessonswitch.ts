@@ -10,16 +10,16 @@
 // served as a session's and refused, and the result says so — this client
 // never infers acceptance from a successful write.
 import { randomUUID } from "node:crypto";
-import { validateCommand } from "../commands.js";
+import { validateCommand, type Command } from "../commands.js";
 import type { TuiConfig } from "../config.js";
 import type { SshRunner } from "./remote.js";
 import { commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
 
-export type LessonSwitchCommand =
-  | { command: "lessons-off" }
-  | { command: "lessons-on" }
-  | { command: "suppress-lesson"; uri: string }
-  | { command: "unsuppress-lesson"; uri: string };
+/** The kill switch's four payloads, read from the daemon's own `Command`. */
+export type LessonSwitchCommand = Extract<
+  Command,
+  { command: "lessons-off" | "lessons-on" | "suppress-lesson" | "unsuppress-lesson" }
+>;
 
 export interface LessonSwitchOutcome {
   ok: boolean;
