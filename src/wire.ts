@@ -176,11 +176,8 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   const memoryRequests: NonNullable<ProductionParts["memoryRequests"]> = { sink: null };
   const ovSessions = openVikingSessionLifecycle(
     new OpenVikingClient({
-      baseUrl: openVikingBaseUrl(cfg.openviking),
+      ...ovConnection(cfg.openviking),
       apiKey: keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET)),
-      user: cfg.openviking.user,
-      account: cfg.openviking.account,
-      timeoutMs: cfg.openviking.request_timeout_ms,
       // Counted with the daemon's other requests.
       onRequest: (r) => memoryRequests.sink?.(r),
     }),
@@ -703,6 +700,22 @@ export function roundMemorySeed(
   seed: RoundMemorySeed,
 ): { memory?: RoundMemorySeed } {
   return enabled ? { memory: seed } : {};
+}
+
+/** Where and as whom every daemon-side OpenViking client connects — the
+ * credential, the observers and the client instance stay each caller's own. */
+function ovConnection(ov: Config["openviking"]): {
+  baseUrl: string;
+  user: string;
+  account: string;
+  timeoutMs: number;
+} {
+  return {
+    baseUrl: openVikingBaseUrl(ov),
+    user: ov.user,
+    account: ov.account,
+    timeoutMs: ov.request_timeout_ms,
+  };
 }
 
 /**
@@ -1322,11 +1335,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         log,
       });
       const memoryClient = new OpenVikingClient({
-        baseUrl: openVikingBaseUrl(cfg.openviking),
+        ...ovConnection(cfg.openviking),
         apiKey: reviewerKey,
-        user: cfg.openviking.user,
-        account: cfg.openviking.account,
-        timeoutMs: cfg.openviking.request_timeout_ms,
         log,
         onGap: countedGap,
         onRequest: (r) => memoryHealth?.recordRequest(r),
@@ -1397,11 +1407,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // degraded and pause the case writer, the pump and the learner).
         const lessonEngine = openVikingLessonEngine(
           lessonFindClient({
-            baseUrl: openVikingBaseUrl(cfg.openviking),
+            ...ovConnection(cfg.openviking),
             apiKey: reviewerKey,
-            user: cfg.openviking.user,
-            account: cfg.openviking.account,
-            timeoutMs: cfg.openviking.request_timeout_ms,
             log,
           }),
           memory,
@@ -1462,10 +1469,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           return res.written;
         });
         const probeBase = {
-          baseUrl: openVikingBaseUrl(cfg.openviking),
-          user: cfg.openviking.user,
-          account: cfg.openviking.account,
-          timeoutMs: cfg.openviking.request_timeout_ms,
+          ...ovConnection(cfg.openviking),
         };
         memoryHealth = new MemoryHealthMonitor({
           probes: {
