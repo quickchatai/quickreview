@@ -1,10 +1,15 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import activate from "../extensions/round-progress.js";
 import { WIDE_FANOUT_ENV, WeightedSemaphore, wrapExecute } from "../extensions/subagents.js";
-import { parseRoundProgress, roundExecutionStage } from "../src/round-progress.js";
+import {
+  appendProgressLog,
+  parseRoundProgress,
+  progressLogPath,
+  roundExecutionStage,
+} from "../src/round-progress.js";
 import type { PiEventHandler } from "@earendil-works/pi-coding-agent";
 
 const dirs: string[] = [];
@@ -687,5 +692,153 @@ describe("round progress — launch_plan", () => {
     } finally {
       process.env = previous;
     }
+  });
+});
+
+// The snapshot is rewritten on every event; the transition log
+// beside it keeps the order a run took, so an ended round can be diagnosed.
+describe("round progress — append-only transition log", () => {
+  it("appends every transition in order and survives snapshot rewrites", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    process.env.QCR_SANDBOX_ROOT = root;
+    process.env.QCR_SESSION_NAME = "pr-5948";
+    process.env.QCR_PR = "5948";
+    const handlers = new Map<string, PiEventHandler[]>();
+    const pi = {
+      on(name: string, handler: PiEventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    };
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    const snapshotPath = join(root, "state", "round-progress", "pr-5948.json");
+    const logPath = join(root, "state", "round-progress", "pr-5948.jsonl");
+    const lines = () =>
+      readFileSync(logPath, "utf8")
+        .trimEnd()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+    const order = (cmd: string) => ({
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `round order\nexport QCR_ROUND_NO=4\n**Worktree**: wt @ \`head-4\`\n<!-- qcr-command:${cmd}:${"c".repeat(64)} -->`,
+          },
+        ],
+      },
+    });
+    try {
+      activate(pi as never);
+      await emit("agent_start");
+      await emit("message_start", order("cmd-r4"));
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "sweep",
+        args: {
+          tasks: [
+            { agent: "pass-sweep", task: "a" },
+            { agent: "pass-sweep", task: "b" },
+          ],
+        },
+      });
+      // A parallel slot finishes mid-call (update), then the call ends: one end line each.
+      await emit("tool_execution_update", {
+        toolName: "subagent",
+        toolCallId: "sweep",
+        partialResult: {
+          details: {
+            mode: "parallel",
+            results: [
+              { agent: "pass-sweep", exitCode: 0 },
+              { agent: "pass-sweep", exitCode: -1 },
+            ],
+          },
+        },
+      });
+      await emit("message_update"); // heartbeat rewrite: no transition
+      await emit("tool_execution_end", {
+        toolName: "subagent",
+        toolCallId: "sweep",
+        result: {
+          details: {
+            mode: "parallel",
+            results: [
+              { agent: "pass-sweep", exitCode: 0 },
+              { agent: "pass-sweep", exitCode: 1 },
+            ],
+          },
+        },
+      });
+      await emit("tool_execution_start", {
+        toolName: "bash",
+        toolCallId: "b1",
+        args: { command: "ls" },
+      });
+      await emit("agent_settled");
+      // The next run REWRITES the snapshot from scratch; the log only grows.
+      await emit("agent_start");
+      await emit("message_start", order("cmd-r5"));
+
+      const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+      expect(snapshot).toMatchObject({ command_id: "cmd-r5", agents: [] });
+
+      const log = lines();
+      expect(log.map((l) => [l.event, l.execution_id ?? null, l.status ?? null])).toEqual([
+        ["parent_start", null, null],
+        ["command_accepted", null, null],
+        ["pass_start", "sweep:pass-sweep", null],
+        ["pass_start", "sweep:pass-sweep#2", null],
+        ["pass_end", "sweep:pass-sweep", "completed"],
+        ["pass_end", "sweep:pass-sweep#2", "failed"],
+        ["parent_settle", null, null],
+        ["parent_start", null, null],
+        ["command_accepted", null, null],
+      ]);
+      expect(log[1]).toMatchObject({
+        pr: 5948,
+        session: "pr-5948",
+        command_id: "cmd-r4",
+        round_no: 4,
+        head_sha: "head-4",
+      });
+      expect(log[6].command_id).toBe("cmd-r4");
+      expect(log[7].command_id).toBeUndefined();
+      expect(log[8].command_id).toBe("cmd-r5");
+      expect(log.every((l) => typeof l.run_started_at === "string")).toBe(true);
+      const at = log.map((l) => Date.parse(l.at));
+      expect(at.every((t, i) => i === 0 || t >= at[i - 1]!)).toBe(true);
+    } finally {
+      process.env = previous;
+    }
+  });
+
+  it("is bounded: past the cap it rotates once to .jsonl.1", () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
+    dirs.push(root);
+    const path = progressLogPath(join(root, "pr-1.json"));
+    expect(path).toBe(join(root, "pr-1.jsonl"));
+    const line = (n: number) => ({
+      at: new Date(n * 1000).toISOString(),
+      pr: 1,
+      session: "pr-1",
+      run_started_at: new Date(0).toISOString(),
+      event: "parent_start" as const,
+    });
+    const size = Buffer.byteLength(`${JSON.stringify(line(1))}\n`);
+    for (let n = 1; n <= 7; n++) appendProgressLog(path, line(n), size * 3);
+    // 1-3 filled the first file, 4-6 the second (1-3 rotated, later replaced), 7 starts a third.
+    const read = (p: string) =>
+      readFileSync(p, "utf8")
+        .trimEnd()
+        .split("\n")
+        .map((l) => Date.parse(JSON.parse(l).at) / 1000);
+    expect(read(`${path}.1`)).toEqual([4, 5, 6]);
+    expect(read(path)).toEqual([7]);
+    expect(existsSync(`${path}.2`)).toBe(false);
   });
 });

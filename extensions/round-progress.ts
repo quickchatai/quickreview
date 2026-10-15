@@ -4,7 +4,9 @@
 // only pi sees the transient lifecycle of the subagents it is running. This
 // extension observes pi's documented tool-execution events and atomically
 // publishes that ephemeral state under state/round-progress/. It never drives
-// a session and never writes daemon state.
+// a session and never writes daemon state. Beside the rewritten snapshot it
+// appends one line per lifecycle transition to `pr-<n>.jsonl`, so
+// the order a run took survives the snapshot's next rewrite.
 //
 // VERIFY-ON-PIN (probed at 0.84.1; result shapes re-read statically against
 // the 0.84.4 tarball): tool_execution_start/update/end payload
@@ -14,10 +16,13 @@
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Pi, PiEventPayload } from "@earendil-works/pi-coding-agent";
-import type {
-  LiveAgentProgress,
-  LiveAgentStatus,
-  RoundProgressSnapshot,
+import {
+  appendProgressLog,
+  progressLogPath,
+  type LiveAgentProgress,
+  type LiveAgentStatus,
+  type ProgressTransition,
+  type RoundProgressSnapshot,
 } from "../src/round-progress.js";
 import { parseSessionCommandMarker } from "../src/session-command.js";
 import { LAUNCH_PLAN_TOOL, planLaunch } from "./subagents.js";
@@ -236,6 +241,7 @@ export default function activate(pi: Pi): void {
   const session = process.env.QCR_SESSION_NAME?.trim() || `pr-${pr}`;
   const root = process.env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
   const path = join(root, "state", "round-progress", `pr-${pr}.json`);
+  const logPath = progressLogPath(path);
   let sequence = 0;
   let lastHeartbeat = 0;
   // Key by invocation and task slot, never by agent name alone: a parent may
@@ -270,6 +276,32 @@ export default function activate(pi: Pi): void {
     }
   };
 
+  // Every pass whose end is already logged, so an end reported by an update
+  // and again by the tool's end is one line.
+  const endLogged = new Set<string>();
+  const transition = (entry: ProgressTransition): void => {
+    if (!snapshot) return;
+    try {
+      mkdirSync(dirname(logPath), { recursive: true });
+      appendProgressLog(logPath, {
+        at: nowIso(),
+        pr,
+        session,
+        run_started_at: snapshot.run_started_at,
+        ...(snapshot.command_id ? { command_id: snapshot.command_id } : {}),
+        ...entry,
+      });
+    } catch (err) {
+      console.error(`[round-progress] transition log append failed: ${String(err)}`);
+    }
+  };
+  const passEnded = (agent: LiveAgentProgress): void => {
+    const key = agent.execution_id;
+    if (!key || agent.status === "running" || endLogged.has(key)) return;
+    endLogged.add(key);
+    transition({ event: "pass_end", execution_id: key, agent: agent.agent, status: agent.status });
+  };
+
   const activity = (description: string): void => {
     if (!snapshot) return;
     snapshot.last_activity = description;
@@ -289,6 +321,7 @@ export default function activate(pi: Pi): void {
     const at = nowIso();
     agents.clear();
     callAgents.clear();
+    endLogged.clear();
     snapshot = {
       version: 2,
       pr,
@@ -301,6 +334,7 @@ export default function activate(pi: Pi): void {
       agents: [],
     };
     write();
+    transition({ event: "parent_start" });
   });
 
   pi.on("message_start", (event) => {
@@ -315,8 +349,15 @@ export default function activate(pi: Pi): void {
       snapshot.round_no = identity.round_no;
       snapshot.head_sha = identity.head_sha;
     }
+    const firstAcceptance = snapshot.command_accepted_at === undefined;
     snapshot.command_accepted_at ??= nowIso();
     snapshot.preparing_at ??= snapshot.command_accepted_at;
+    if (firstAcceptance)
+      transition({
+        event: "command_accepted",
+        ...(snapshot.round_no !== undefined ? { round_no: snapshot.round_no } : {}),
+        ...(snapshot.head_sha !== undefined ? { head_sha: snapshot.head_sha } : {}),
+      });
     activity(`command ${marker.id} accepted; parent preparing compact fanout context`);
   });
 
@@ -344,6 +385,7 @@ export default function activate(pi: Pi): void {
             tool_count: 0,
             started_at: at,
           });
+          transition({ event: "pass_start", execution_id: key, agent });
         }
         snapshot.first_lens_started_at ??= at;
         snapshot.fanout_started_at ??= snapshot.first_lens_started_at;
@@ -386,13 +428,15 @@ export default function activate(pi: Pi): void {
       // record carries its completion milestone from the first update that
       // reports it, and a running one never carries one.
       const { finished_at: previousFinished, ...kept } = previous ?? {};
-      agents.set(key, {
+      const next: LiveAgentProgress = {
         ...kept,
         ...agent,
         execution_id: key,
         started_at: previous?.started_at ?? nowIso(),
         ...(agent.status === "running" ? {} : { finished_at: previousFinished ?? nowIso() }),
-      });
+      };
+      agents.set(key, next);
+      passEnded(next);
       snapshot.active_tool = `subagent: ${agent.agent}`;
       changed = true;
     }
@@ -427,6 +471,7 @@ export default function activate(pi: Pi): void {
       };
       agents.set(key, finalAgent);
       finalAgents.push(finalAgent);
+      passEnded(finalAgent);
     }
     if (finalAgents.length === 0 && fallbacks.length > 0) {
       const failed = event.isError === true;
@@ -447,6 +492,7 @@ export default function activate(pi: Pi): void {
         };
         agents.set(key, finalAgent);
         finalAgents.push(finalAgent);
+        passEnded(finalAgent);
       }
     }
     callAgents.delete(id);
@@ -463,5 +509,6 @@ export default function activate(pi: Pi): void {
     snapshot.parent_status = "settled";
     snapshot.active_tool = undefined;
     activity("parent session settled");
+    transition({ event: "parent_settle" });
   });
 }

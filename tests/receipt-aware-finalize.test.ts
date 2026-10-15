@@ -19,6 +19,14 @@
 // the verdict file lands, or the grace runs out and the round settles from the
 // receipt. With no receipt the limit cancels the round as an infrastructure
 // failure, kills the session and requeues.
+//
+// The finalize limit now also waits while the parent's run reads ACTIVE —
+// which on the recorded day it was, so the limit would not have fired at
+// 08:54 at all (the first describe's last test replays exactly that). It still
+// fires for an "active" snapshot when tmux reports the session gone, so the
+// receipt tests below drive it that way: the receipt check is what is under
+// test, and it is what keeps a posted round alive when that liveness report
+// is wrong.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -60,6 +68,8 @@ let verdictDir: string;
 let clock: Date;
 let store: StateStore;
 let killed: number[];
+/** What the tmux liveness probe answers. */
+let alive: boolean;
 let roundId: number;
 
 const set = (iso: string): void => {
@@ -71,6 +81,7 @@ beforeEach(() => {
   verdictDir = join(root, "verdict");
   mkdirSync(verdictDir, { recursive: true });
   killed = [];
+  alive = true;
   set("2026-10-08T07:00:00.000Z");
   store = new StateStore(":memory:", () => clock);
   store.upsertPr({
@@ -214,7 +225,7 @@ function wire(live = false): { watcher: VerdictWatcher; supervisor: SessionComma
       killed.push(pr);
     },
     async sessionAlive() {
-      return true;
+      return alive;
     },
   };
   const watcher = new VerdictWatcher({
@@ -324,6 +335,7 @@ describe("#5850 round 5 replayed", () => {
   it("the parent_finalize limit after a confirmed posting waits; the late verdict then lands — one posting", async () => {
     const { watcher, supervisor } = wire();
     postReview();
+    alive = false; // the active snapshot is not trusted: the limit fires
 
     // 08:54:18.408 — the limit fires.
     set("2026-10-08T08:54:18.408Z");
@@ -368,6 +380,7 @@ describe("#5850 round 5 replayed", () => {
   it("the session never writes its verdict: past the posted-tail grace the round settles from the receipt — one posting", async () => {
     const { supervisor } = wire();
     postReview();
+    alive = false; // the active snapshot is not trusted: the limit fires
 
     set("2026-10-08T08:54:18.408Z");
     await supervisor.scan();
@@ -393,6 +406,7 @@ describe("#5850 round 5 replayed", () => {
 
   it("control — with NO receipt the old path still runs: cancelled as infrastructure, killed, requeued", async () => {
     const { supervisor } = wire();
+    alive = false; // the active snapshot is not trusted: the limit fires
     // No postReview(): nothing reached GitHub.
 
     set("2026-10-08T08:54:18.408Z");
@@ -407,5 +421,38 @@ describe("#5850 round 5 replayed", () => {
     expect(count("round_self_requeued")).toBe(1);
     expect(store.getPr(PR)?.state).toBe("queued");
     expect(postings()).toBe(0);
+  });
+
+  it("as recorded — the parent still ACTIVE: the limit never fires, the verdict lands — one posting, no kill", async () => {
+    const { watcher, supervisor } = wire();
+    postReview();
+
+    set("2026-10-08T08:54:18.408Z");
+    await supervisor.scan();
+    expect(round5().status).toBe("running");
+    expect(store.getSessionCommand(CMD)?.status).toBe("running");
+    expect(count("round_finalize_held_parent_active")).toBe(1);
+    expect(count("round_stage_posted_wait")).toBe(0);
+
+    set("2026-10-08T08:56:30.000Z");
+    writeFileSync(
+      join(verdictDir, `pr-${PR}-round-5.json`),
+      JSON.stringify({
+        pr: PR,
+        round_no: 5,
+        verdict: "REQUEST_CHANGES",
+        head_sha: HEAD,
+        summary: "One blocker remains.",
+        passes: [{ name: "pass-baseline", tier: "sol-med", findings: 2 }],
+        finished_at: "2026-10-08T08:56:29Z",
+      }),
+    );
+    expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
+    store.finishSessionCommand(CMD, "bridge-1", "acked");
+
+    set("2026-10-08T08:58:43.075Z");
+    await supervisor.scan();
+    expectOnePostingAndNothingOwed();
+    expect(killed).toEqual([]);
   });
 });

@@ -99,6 +99,8 @@ function fixture(): Fixture {
   put(root, "state/sessions/pr-100.json", 71);
   put(root, "state/sessions/pr-100.bridge-3.json", 72);
   put(root, "state/round-progress/pr-100.json", 73);
+  put(root, "state/round-progress/pr-100.jsonl", 74); // the transition log
+  put(root, "state/round-progress/pr-100.jsonl.1", 75); // its rotated generation
   put(root, "inject/pr-100/.done/w1.md", 80);
   put(root, "inject/pr-100/.terminal/w2.md", 81);
   put(root, "inject/pr-100/w3.md.operator-recovery-1", 82);
@@ -246,13 +248,13 @@ describe("the plan — what a pass would move (§7.2)", () => {
           findings: { files: 1, bytes: 40 },
           posting_receipts: { files: 2, bytes: 101 },
           round_files: { files: 3, bytes: 183 },
-          session_files: { files: 4, bytes: 286 },
+          session_files: { files: 6, bytes: 435 },
           inject_done: { files: 3, bytes: 243 },
           stale_injects: { files: 1, bytes: 83 },
           verdicts: { files: 2, bytes: 181 },
         });
-        const bytes = 1500 + 30 + 100 + 40 + 101 + 183 + 286 + 243 + 83 + 181;
-        expect(p.candidates[0]).toMatchObject({ files: 20, bytes });
+        const bytes = 1500 + 30 + 100 + 40 + 101 + 183 + 435 + 243 + 83 + 181;
+        expect(p.candidates[0]).toMatchObject({ files: 22, bytes });
         expect(p.ledger_snapshots).toEqual({ files: 1, bytes: 95 });
         expect(p.legacy_copies).toEqual({ files: 1, bytes: 900 });
         expect(p.backlog).toEqual({ prs: 2, bytes, event_rows: 2, delivery_rows: 2 });
@@ -284,7 +286,7 @@ describe("the plan — what a pass would move (§7.2)", () => {
           first: ["state/pr-100-notes.md", "state/pr-1000-scratch/x.txt"],
         });
         // Kept live: never counted as backlog or as a candidate's file.
-        expect(p.candidates[0]).toMatchObject({ files: 21 });
+        expect(p.candidates[0]).toMatchObject({ files: 23 });
         expect(p.empty).toEqual([1000]);
         const text = renderArchiveReport({
           block: undefined,

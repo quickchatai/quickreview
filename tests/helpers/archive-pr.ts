@@ -138,6 +138,8 @@ export function prFixture(
     `state/sessions/pr-${pr}.json`,
     `state/sessions/pr-${pr}.bridge-g1.json`,
     `state/round-progress/pr-${pr}.json`,
+    `state/round-progress/pr-${pr}.jsonl`,
+    `state/round-progress/pr-${pr}.jsonl.1`,
     `inject/pr-${pr}/.done/w1.md`,
     `inject/pr-${pr}/.terminal/w2.md`,
     `inject/pr-${pr}/w3.md.operator-recovery-1`,

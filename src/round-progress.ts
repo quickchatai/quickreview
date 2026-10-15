@@ -6,6 +6,8 @@
  * lens subagents are doing right now. Missing/stale data is UNKNOWN, never
  * inferred as pending or done.
  */
+import { appendFileSync, renameSync, statSync } from "node:fs";
+
 export type LiveAgentStatus = "running" | "completed" | "failed";
 
 export interface LiveAgentProgress {
@@ -190,4 +192,58 @@ export function parseRoundProgress(raw: string): RoundProgressSnapshot | undefin
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The APPEND-ONLY transition log beside the snapshot:
+ * `state/round-progress/pr-<n>.jsonl`. The snapshot is rewritten on every
+ * event, so it can only say what is true NOW; the log keeps the order in
+ * which a run got there — parent start/settle, command acceptance, every
+ * pass's start and end with its status — so a round the supervisor ended can
+ * be reconstructed afterwards. Diagnostic only: nothing in the daemon reads
+ * it for a decision.
+ */
+export type ProgressTransition =
+  | { event: "parent_start" }
+  | { event: "command_accepted"; round_no?: number; head_sha?: string }
+  | { event: "pass_start"; execution_id: string; agent: string }
+  | { event: "pass_end"; execution_id: string; agent: string; status: LiveAgentStatus }
+  | { event: "parent_settle" };
+
+export type ProgressLogLine = ProgressTransition & {
+  at: string;
+  pr: number;
+  session: string;
+  run_started_at: string;
+  command_id?: string;
+};
+
+/** Size cap of the live log. A transition line is ~200–300 bytes and a round
+ * writes a few dozen (sweeps a little over a hundred), so 256 KiB holds many
+ * rounds of one PR. Past it the file rotates ONCE to `.jsonl.1` (the previous
+ * `.1` dropped), so a PR never holds more than ~512 KiB of log and the round
+ * that just ended is always whole in one of the two files. */
+export const PROGRESS_LOG_MAX_BYTES = 256 * 1024;
+
+/** `pr-<n>.json` → `pr-<n>.jsonl`. */
+export function progressLogPath(snapshotPath: string): string {
+  return snapshotPath.replace(/\.json$/, ".jsonl");
+}
+
+/** Append one line, rotating first when it would cross the cap. Throws on an
+ * I/O failure — the caller (the extension) logs and carries on. */
+export function appendProgressLog(
+  path: string,
+  line: ProgressLogLine,
+  maxBytes = PROGRESS_LOG_MAX_BYTES,
+): void {
+  const bytes = `${JSON.stringify(line)}\n`;
+  let size = 0;
+  try {
+    size = statSync(path).size;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (size > 0 && size + Buffer.byteLength(bytes) > maxBytes) renameSync(path, `${path}.1`);
+  appendFileSync(path, bytes);
 }

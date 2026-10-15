@@ -133,7 +133,9 @@ const STATE_ROUND = /^pr-(\d+)-round-\d+-.+$/;
 const STATE_PR = /^pr-(\d+)(?:[-.]|$)/;
 const SESSION_PROMPT = /^pr-(\d+)\.md$/;
 const SESSION_STATE = /^pr-(\d+)\.(?:json|bridge-.+\.json)$/;
-const PROGRESS = /^pr-(\d+)\.json$/;
+/** The round-progress snapshot and its append-only transition log
+ * (`.jsonl`, plus its one rotated generation `.jsonl.1`). */
+const PROGRESS = /^pr-(\d+)\.(?:json|jsonl|jsonl\.1)$/;
 const LEDGER = /^pr-(\d+)\.md$/;
 const VERDICT = /(?:^|-)pr-(\d+)-/;
 const INJECT_RECOVERY = /\.operator-recovery-/;

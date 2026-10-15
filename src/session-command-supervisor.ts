@@ -69,6 +69,8 @@ export interface RoundStageSupervisorHealth {
 export class SessionCommandSupervisor {
   private readonly now: () => Date;
   private inFlight = false;
+  /** Commands whose finalize hold was already logged (one event each). */
+  private readonly finalizeHeld = new Set<string>();
 
   constructor(private readonly deps: SessionCommandSupervisorDeps) {
     this.now = deps.now ?? (() => new Date());
@@ -671,12 +673,56 @@ export class SessionCommandSupervisor {
       hardAt,
     );
     if (now < finalizeAt) return false;
+    // The grace measures how long the PARENT has been left with
+    // nothing to wait for — and a parent whose run is still ACTIVE (writing
+    // its ledger, validating, posting) is not idle. While the correlated
+    // snapshot says `active`, finalize does not fire. This is not a lease
+    // renewal: nothing here moves a deadline, and activity still can never
+    // renew one. The fixed start-derived hard bound binds unconditionally.
+    //
+    // Staleness: `active` is trusted only from the snapshot already matched
+    // above on command id + payload sha + run start (`correlatedExecution
+    // Progress`), never from its age — a parent deep in one long model turn
+    // writes nothing for minutes, and an updated_at freshness rule would
+    // bring back exactly the kill this fixes. A frozen snapshot (the
+    // extension or pi died mid-run) is caught two ways: a session tmux
+    // provably reports dead is not trusted (finalize fires as before), and
+    // anything else waits at most for the hard bound.
+    if (progress.parent_status === "active" && (await this.parentMayBeRunning(command))) {
+      if (now >= hardAt) {
+        await this.runningHardBound(command);
+        return true;
+      }
+      if (!this.finalizeHeld.has(command.id)) {
+        if (this.finalizeHeld.size >= 1_000) this.finalizeHeld.clear(); // a log dedupe, never state
+        this.finalizeHeld.add(command.id);
+        this.deps.store.logEvent("round_finalize_held_parent_active", command.pr, {
+          command_id: command.id,
+          round_no: command.round_no,
+          passes_finished_at: new Date(allFinishedAt).toISOString(),
+          hard_deadline_at: new Date(hardAt).toISOString(),
+        });
+      }
+      return false;
+    }
     await this.failRound(
       command,
       "parent_finalize",
       `command ${command.id} left all observed passes terminal without a verdict for ${this.deps.cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN} minutes`,
     );
     return true;
+  }
+
+  /** False only when the session is PROVABLY gone (tmux says so). Unknown
+   * (no hook, a probe that threw) keeps the active snapshot's word: the hard
+   * bound is the backstop for everything this cannot see. */
+  private async parentMayBeRunning(command: SessionCommandRow): Promise<boolean> {
+    if (!this.deps.hooks.sessionAlive) return true;
+    try {
+      return (await this.deps.hooks.sessionAlive(command.pr)) !== false;
+    } catch {
+      return true;
+    }
   }
 
   private progressShowsSettlement(command: SessionCommandRow): boolean {

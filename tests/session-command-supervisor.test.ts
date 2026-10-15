@@ -860,7 +860,9 @@ describe("bounded round-stage supervision", () => {
     );
   });
 
-  it("bounds parent finalization after every planned and added pass is terminal", async () => {
+  // An ACTIVE parent holds finalize — unless its session is
+  // provably dead, when the frozen snapshot is not trusted.
+  it("bounds parent finalization after every planned and added pass is terminal (session dead)", async () => {
     clock = new Date("2026-08-27T20:00:00.000Z");
     const { id, pr, round } = seedRoundCommand({
       status: "running",
@@ -905,7 +907,7 @@ describe("bounded round-stage supervision", () => {
     });
 
     await supervisor(
-      hooks({ killSession: async () => {} }),
+      hooks({ killSession: async () => {}, sessionAlive: async () => false }),
       onRoundFailure,
       baseCfg,
       progress,
@@ -1559,5 +1561,147 @@ describe("a follow-up round with the pre-approval sweep owed", () => {
       "passes_incomplete",
       expect.stringContaining("within 35 minutes; outstanding: pass-baseline"),
     );
+  });
+});
+
+// The finalize stage must not kill a main session whose run is
+// still active. The grace after the last pass measures an IDLE parent; an
+// active one is validating, writing its ledger or posting.
+describe("parent finalize waits for an active parent run", () => {
+  const STARTED = "2026-08-27T20:00:00.000Z";
+  function seedAllPassesTerminal() {
+    clock = new Date(STARTED);
+    const seeded = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+    });
+    const progressWith =
+      (parent: "active" | "settled") =>
+      (): import("../src/round-progress.js").RoundProgressSnapshot => ({
+        version: 2,
+        pr: seeded.pr,
+        session: `pr-${seeded.pr}`,
+        run_started_at: STARTED,
+        updated_at: clock.toISOString(),
+        parent_status: parent,
+        command_id: seeded.id,
+        command_sha256: "a".repeat(64),
+        command_accepted_at: "2026-08-27T20:00:01.000Z",
+        first_lens_started_at: "2026-08-27T20:05:00.000Z",
+        last_activity_at: clock.toISOString(),
+        last_activity: "writing the ledger",
+        agents: [
+          {
+            execution_id: "lens-1:pass-baseline",
+            agent: "pass-baseline",
+            status: "completed",
+            duration_ms: 1,
+            tool_count: 1,
+            started_at: "2026-08-27T20:05:00.000Z",
+            finished_at: "2026-08-27T20:10:00.000Z",
+          },
+        ],
+      });
+    return { ...seeded, progressWith };
+  }
+
+  it("all passes terminal + grace elapsed + parent active: no parent_finalize", async () => {
+    const { id, pr, progressWith } = seedAllPassesTerminal();
+    clock = new Date("2026-08-27T20:30:00.000Z"); // 20 min past the last pass
+    const kill = vi.fn(async () => {});
+    for (const h of [
+      hooks({ killSession: kill, sessionAlive: async () => true }),
+      // Liveness UNKNOWN (no hook, or a probe that throws) keeps the snapshot's word.
+      hooks({ killSession: kill }),
+      hooks({
+        killSession: kill,
+        sessionAlive: async () => {
+          throw new Error("tmux unreachable");
+        },
+      }),
+    ]) {
+      const { supervisor: sup, onRoundFailure } = supervisor(
+        h,
+        undefined,
+        baseCfg,
+        progressWith("active"),
+      );
+      await sup.scan();
+      await sup.scan();
+      expect(onRoundFailure).not.toHaveBeenCalled();
+    }
+    expect(kill).not.toHaveBeenCalled();
+    expect(store.getSessionCommand(id)?.status).toBe("running");
+    // One diagnostic event per supervisor instance, not one per scan.
+    const held = events("round_finalize_held_parent_active");
+    expect(held).toHaveLength(3);
+    expect(held[0]).toMatchObject({
+      pr,
+      payload: {
+        command_id: id,
+        passes_finished_at: "2026-08-27T20:10:00.000Z",
+        hard_deadline_at: "2026-08-27T20:45:00.000Z",
+      },
+    });
+  });
+
+  it("the same snapshot once settled takes the existing settled path", async () => {
+    const { pr, round, progressWith } = seedAllPassesTerminal();
+    clock = new Date("2026-08-27T20:30:00.000Z");
+    const kill = vi.fn(async () => {});
+    const { supervisor: sup, onRoundFailure } = supervisor(
+      hooks({ killSession: kill, sessionAlive: async () => true }),
+      undefined,
+      baseCfg,
+      progressWith("settled"),
+    );
+    await sup.scan();
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "settled_without_verdict",
+      expect.any(String),
+    );
+    expect(onRoundFailure).not.toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "parent_finalize",
+      expect.anything(),
+    );
+  });
+
+  it("the fixed hard bound still fires while the parent reads active", async () => {
+    const { id, pr, round, progressWith } = seedAllPassesTerminal();
+    clock = new Date("2026-08-27T20:45:00.000Z");
+    const { supervisor: sup, onRoundFailure } = supervisor(
+      hooks({ killSession: async () => {}, sessionAlive: async () => true }),
+      undefined,
+      baseCfg,
+      progressWith("active"),
+    );
+    await sup.scan();
+    expect(onRoundFailure).toHaveBeenCalledTimes(1);
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "running_hard_bound",
+      expect.stringContaining(id),
+    );
+    expect(store.getSessionCommand(id)?.status).toBe("failed");
+  });
+
+  it("before the grace runs out an active parent is simply left alone (no hold event)", async () => {
+    const { progressWith } = seedAllPassesTerminal();
+    clock = new Date("2026-08-27T20:12:00.000Z");
+    const { supervisor: sup, onRoundFailure } = supervisor(
+      hooks({ sessionAlive: async () => true }),
+      undefined,
+      baseCfg,
+      progressWith("active"),
+    );
+    await sup.scan();
+    expect(onRoundFailure).not.toHaveBeenCalled();
+    expect(events("round_finalize_held_parent_active")).toHaveLength(0);
   });
 });
