@@ -825,16 +825,30 @@ export class VerdictWatcher {
     }
   }
 
+  /** The round `roundNo` names, whatever its status — never another round:
+   * a lookup that names a round this PR does not have answers undefined. With
+   * no `roundNo`, the PR's newest running round. */
   private runningRound(pr: number, roundNo?: number): RoundRow | undefined {
     if (roundNo !== undefined) {
-      const row = this.deps.store.db
+      return this.deps.store.db
         .prepare("SELECT * FROM rounds WHERE pr = ? AND round_no = ? ORDER BY id DESC LIMIT 1")
         .get(pr, roundNo) as RoundRow | undefined;
-      if (row) return row;
     }
     return this.deps.store.db
       .prepare("SELECT * FROM rounds WHERE pr = ? AND status = 'running' ORDER BY id DESC LIMIT 1")
       .get(pr) as RoundRow | undefined;
+  }
+
+  /** A verdict file names a round this PR does not have: archived inert,
+   * recorded, and nothing else touched — no round settled, no lifecycle moved,
+   * no failure opened against whatever round IS running. */
+  private ignoreUnknownRound(pr: number, roundNo: number, name: string, malformed?: string): void {
+    this.deps.store.logEvent("verdict_round_unknown", pr, {
+      round_no: roundNo,
+      file: name,
+      ...(malformed !== undefined ? { malformed } : {}),
+    });
+    this.log(`verdicts: #${pr} has no round ${roundNo} — ${name} is not applied to any round`);
   }
 
   /** Whether the apply of this round's verdict ran to its last durable step. */
@@ -961,9 +975,12 @@ export class VerdictWatcher {
     name: string,
     message: string,
   ): Promise<void> {
-    const found = this.runningRound(pr, roundNo);
-    const round = found && found.round_no === roundNo ? found : undefined;
-    if (round && round.status !== "running") {
+    const round = this.runningRound(pr, roundNo);
+    if (!round) {
+      this.ignoreUnknownRound(pr, roundNo, name, message);
+      return;
+    }
+    if (round.status !== "running") {
       if (this.roundTerminallySettled(round)) {
         this.deps.store.logEvent("verdict_replay_ignored", pr, {
           round_id: round.id,
@@ -1729,6 +1746,37 @@ export class VerdictWatcher {
     // hands its measurement to the background; a verdict file's is awaited.
     const measure: MeasureMode = proven ? measureModeFor(proven.via) : "inline";
 
+    // A file naming a round this PR never had is nobody's verdict: it may
+    // neither settle another round nor move the PR's lifecycle.
+    if (!round) {
+      this.ignoreUnknownRound(v.pr, v.round_no, name);
+      return "applied";
+    }
+
+    // A round already cancelled is closed for good, whoever cancelled it — an
+    // operator's `u`, a self-requeue that queued its replacement, a
+    // supersession, the orphan sweep. A verdict file that reaches it
+    // afterwards (an archive that failed, a session finishing behind the
+    // cancel) is inert: finishing the round would apply the old verdict over
+    // whatever replaced it. The same rule `finishRound`'s claim enforces for a
+    // cancel landing DURING the apply. A guard-2 no-op (`no_new_evidence`)
+    // keeps its own replay path below.
+    if (round.status === "cancelled" && round.cancel_cause !== "no_new_evidence") {
+      store.logEvent("verdict_after_cancel_ignored", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        cancel_cause: round.cancel_cause,
+        head_sha: v.head_sha,
+        outcome: v.outcome ?? null,
+        verdict: v.verdict ?? null,
+        file: name,
+      });
+      this.log(
+        `verdicts: #${v.pr} round ${v.round_no} was already cancelled (${round.cancel_cause ?? "unknown"}) — ${name} is not applied over it`,
+      );
+      return "applied";
+    }
+
     // Guard-5 landing: the session was refused at posting time because the
     // PR advanced mid-round, and said so explicitly instead of idling to
     // deadline expiry. Mapped exactly like the needs_human_incomplete redo:
@@ -1737,8 +1785,7 @@ export class VerdictWatcher {
     // not killed: it is healthy, it did the
     // right thing. No verdict applies, no label lands, no reviewed-head mark
     // is stamped (nothing was reviewed-and-decided at the live head). Past
-    // the cap (or with no running round) the anomaly path terminalizes —
-    // never an approve.
+    // the cap the anomaly path terminalizes — never an approve.
     if (v.outcome === "head_moved") {
       store.logEvent("head_moved_reported", v.pr, {
         round_id: round?.id ?? null,
@@ -1746,7 +1793,19 @@ export class VerdictWatcher {
         reviewed_head: v.head_sha,
         file: name,
       });
-      if (round && round.status === "running" && (await this.selfRequeue(round, "head_moved"))) {
+      // The round already ended — this file is a replay of a report that was
+      // handled (or of a round some other path closed). Nothing is owed.
+      if (round.status !== "running") {
+        store.logEvent("verdict_replay_ignored", v.pr, {
+          round_id: round.id,
+          round_no: v.round_no,
+          round_status: round.status,
+          outcome: "head_moved",
+          file: name,
+        });
+        return "applied";
+      }
+      if (await this.selfRequeue(round, "head_moved")) {
         await this.safe(
           () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
           `remove ${cfg.github.in_progress_label} on #${v.pr}`,

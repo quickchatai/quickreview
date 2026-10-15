@@ -3731,6 +3731,68 @@ describe("integration review", () => {
       expect(count("verdict_settled_from_receipt_resumed", 622)).toBe(0);
       expect(store.reviewedHead(622)).toBeUndefined();
     });
+
+    // MUTATION: drop the cancelled-round guard at the top of apply — the
+    // late verdict finishes the cancelled round and moves the PR out of
+    // the replacement's queue.
+    it("a verdict reaching a round cancelled BEFORE the apply started is never applied over the cancel", async () => {
+      const roundId = reviewingRound(623);
+      const { key } = stampPosting(623, 1);
+      writePostingReceipt(623, 1, key, "APPROVE");
+      // The operator's `u`: the round cancelled, the PR queued for a rerun.
+      store.cancelRunningRounds(623, "rerun-round");
+      store.setPrState(623, "queued");
+      const name = write(623, 1, verdictFile({ pr: 623, verdict: "APPROVE" }));
+
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(existsSync(join(dir, name))).toBe(false);
+      expect(store.roundsFor(623)[0]).toMatchObject({
+        id: roundId,
+        status: "cancelled",
+        verdict: null,
+      });
+      expect(store.getPr(623)?.state).toBe("queued");
+      expect(store.reviewedHead(623)).toBeUndefined();
+      expect(count("verdict_applied", 623)).toBe(0);
+      expect(payloads("verdict_after_cancel_ignored", 623)).toEqual([
+        expect.objectContaining({
+          round_id: roundId,
+          cancel_cause: "operator",
+          verdict: "APPROVE",
+        }),
+      ]);
+      expect(adapter.calls.some((c) => c.startsWith("addLabel:623"))).toBe(false);
+    });
+
+    // MUTATION: restore runningRound's fallback to the newest running round —
+    // the stray file settles round 1 with round 2's verdict.
+    it("a verdict file naming a round the PR never had touches no other round", async () => {
+      const roundId = reviewingRound(624);
+      const name = write(624, 2, verdictFile({ pr: 624, round_no: 2, verdict: "APPROVE" }));
+
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.roundsFor(624)[0]).toMatchObject({ id: roundId, status: "running" });
+      expect(store.getPr(624)?.state).toBe("reviewing");
+      expect(store.reviewedHead(624)).toBeUndefined();
+      expect(store.openReviewFailure(624)).toBeUndefined();
+      expect(payloads("verdict_round_unknown", 624)).toEqual([
+        expect.objectContaining({ round_no: 2, file: name }),
+      ]);
+    });
+
+    it("…and a malformed one naming such a round opens no failure against the running one", async () => {
+      const roundId = reviewingRound(625);
+      const name = write(625, 2, "{ not json");
+
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.roundsFor(625)[0]).toMatchObject({ id: roundId, status: "running" });
+      expect(store.getPr(625)?.state).toBe("reviewing");
+      expect(store.openReviewFailure(625)).toBeUndefined();
+      expect(count("verdict_round_unknown", 625)).toBe(1);
+    });
   });
 
   // MUTATION: drop `pruneStaleStaging` from the sweep — the old staging files stay.

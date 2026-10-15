@@ -1106,6 +1106,28 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     expect(existsSync(join(dir, "pr-340-round-1.json"))).toBe(false);
   });
 
+  // MUTATION: drop apply's cancelled-round guard and the head_moved replay
+  // check — the replay opens FAILED_LOUD debt over the queued replacement.
+  it("a replay of a handled head_moved file is inert: no failure, the requeue stands", async () => {
+    const roundId = reviewingRound(343, "fresh-head");
+    const { hooks } = hooksWith(true);
+    const w = watcher(hooks);
+    headMovedFile(343, 1);
+    await w.sweep();
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.getPr(343)!.state).toBe("queued");
+
+    // The archive failed (or a restart cut the apply short): the file is back.
+    headMovedFile(343, 1);
+    await w.sweep();
+
+    expect(existsSync(join(dir, "pr-343-round-1.json"))).toBe(false);
+    expect(store.getPr(343)!.state).toBe("queued");
+    expect(store.openReviewFailure(343)).toBeUndefined();
+    expect(events("round_overdue")).toHaveLength(0);
+    expect(events("round_self_requeued")).toHaveLength(1);
+  });
+
   it("respects the self-requeue cap: past it the round terminalizes through the anomaly path, never loops", async () => {
     const { hooks } = hooksWith(true);
     const w = watcher(hooks);
