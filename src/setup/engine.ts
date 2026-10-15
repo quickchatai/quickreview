@@ -144,8 +144,11 @@ export type CaseOutcome =
        * runner cannot tell, which is unknown, never "read nothing". The scan
        * judges a lens that read none of its focus files as no reading at all. */
       reads?: string[];
+      /** Where the runner kept the case's event stream, relative to its
+       * transcript directory; absent when it kept none. */
+      transcript?: string;
     }
-  | { ok: false; reason: string; cost_usd?: number | null };
+  | { ok: false; reason: string; cost_usd?: number | null; transcript?: string };
 
 /** Runs cases as background subagents (survey, scan). The
  * engine decides what runs when and how many at once; the runner runs one

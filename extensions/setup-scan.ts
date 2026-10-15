@@ -64,6 +64,7 @@ import {
 } from "../src/setup/scanbuild.js";
 import { escapeControls } from "../src/setup/textsniff.js";
 import {
+  SCAN_TRANSCRIPTS_DIR,
   ScanRunner,
   type ScanPreview,
   type ScanSettings,
@@ -228,10 +229,17 @@ export function renderStatus(s: ScanStatus): string {
     if (r.mode === "stage2") {
       for (const c of r.cases.slice(0, 40)) {
         out.push(
-          `  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${usd(c.cost_usd)}`,
+          `  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${usd(c.cost_usd)}` +
+            (c.reads !== undefined ? `, ${c.reads} read(s)` : "") +
+            (c.unopened?.length ? `, ${c.unopened.length} focus file(s) not opened` : ""),
         );
       }
     }
+    // Where to read back what a lens did, when the runner kept it.
+    if (r.cases.some((c) => c.transcript !== undefined))
+      out.push(
+        `Transcripts: ${SCAN_TRANSCRIPTS_DIR}/${r.id}/ under the state home (one .jsonl per case, .validate.jsonl for its skeptic).`,
+      );
     const failed = r.cases.filter((c) => c.status === "failed");
     for (const c of failed.slice(0, 10)) out.push(`  ✗ ${c.id}: ${c.error}`);
     for (const p of r.problems.slice(-5)) out.push(`  ! ${p}`);
@@ -890,7 +898,7 @@ export function buildScan(
   const scan = new ScanRunner({
     state,
     clock: () => new Date(),
-    cases: piCaseRunner({ agentsDir, cwd: root }),
+    cases: piCaseRunner({ agentsDir, cwd: root, transcriptDir: join(home, SCAN_TRANSCRIPTS_DIR) }),
     source: gitScanSource(reviewedRepo, home),
     savedCut: () => {
       const cut = engine.savedCut();

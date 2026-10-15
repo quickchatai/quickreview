@@ -131,6 +131,7 @@ import {
   priceStage2Row,
   stage2Cases,
   stage2CasePrompt,
+  stage2Leads,
   stage2Key,
   unitOwner,
   type Stage2Row,
@@ -185,6 +186,25 @@ export function unreadFocus(
   root: string,
 ): string | null {
   if (reads === undefined) return null;
+  if (openedFocus(reads, focus, root)!.size > 0) return null;
+  const n = focus.length;
+  return `the lens read none of its ${n} focus file${n === 1 ? "" : "s"} (${reads.length} file-read call${reads.length === 1 ? "" : "s"} in all)`;
+}
+
+/**
+ * The focus files a lens opened, by the same reading `unreadFocus` makes: a
+ * read resolved inside the tree root naming the file. Null when the runner
+ * cannot tell (`reads` absent). A focus file the lens never opened is no
+ * reading of THAT file, whatever it read of the others: it gets no ledger
+ * row, so it is read again and a reconcile never settles its findings fixed
+ * from a reading that never happened. Pure.
+ */
+export function openedFocus(
+  reads: readonly string[] | undefined,
+  focus: readonly string[],
+  root: string,
+): Set<string> | null {
+  if (reads === undefined) return null;
   const base = posix.normalize(`${root}/`);
   const opened = new Set(
     reads
@@ -196,9 +216,7 @@ export function unreadFocus(
       .filter((r) => r.startsWith(base))
       .map((r) => r.slice(base.length)),
   );
-  if (focus.some((f) => opened.has(posix.normalize(f)))) return null;
-  const n = focus.length;
-  return `the lens read none of its ${n} focus file${n === 1 ? "" : "s"} (${reads.length} file-read call${reads.length === 1 ? "" : "s"} in all)`;
+  return new Set(focus.filter((f) => opened.has(posix.normalize(f))));
 }
 
 // ---- ports ---------------------------------------------------------------------
@@ -265,6 +283,9 @@ export interface ScanPorts {
 
 export { RUN_FILE, RUN_VERSION };
 export const SUGGESTIONS_FILE = "scan/suggestions.json";
+/** Under the state home: every case's event stream, one directory per run
+ * (`caserunner.ts` `transcriptFile`). */
+export const SCAN_TRANSCRIPTS_DIR = "scan/transcripts";
 /** Summaries of finished runs kept beside the current one. */
 export const RUN_HISTORY = 20;
 
@@ -294,6 +315,16 @@ export interface ScanCaseState {
   likely?: number;
   /** Answer items that could not be read or anchored. */
   dropped: number;
+  /** The lens's file-read calls, counted; absent when the runner could not
+   * tell. */
+  reads?: number;
+  /** Focus files the lens never opened — no coverage, read again. Absent
+   * when it opened every one, or the runner could not tell. */
+  unopened?: string[];
+  /** The case's and its validator's event streams, relative to
+   * `SCAN_TRANSCRIPTS_DIR`; absent when none was kept. */
+  transcript?: string;
+  validator_transcript?: string;
   suggestions: ScanSuggestion[];
   error: string | null;
   started_at: string | null;
@@ -960,7 +991,9 @@ export class ScanRunner {
               files: new Set(ledger.entries.filter((e) => e.lens === SCAN_PASS).map((e) => e.path))
                 .size,
               deep_files: new Set(
-                ledger.entries.filter((e) => e.lens !== SCAN_PASS).map((e) => `${e.lens}\0${e.path}`),
+                ledger.entries
+                  .filter((e) => e.lens !== SCAN_PASS)
+                  .map((e) => `${e.lens}\0${e.path}`),
               ).size,
               cost_usd: ledger.entries.reduce((n, e) => n + (e.cost_usd ?? 0), 0),
             },
@@ -1258,6 +1291,11 @@ export class ScanRunner {
       p.cut,
       p.tree.files.map((f) => f.path),
     );
+    // What stage 1 pointed each row's lens at in its files rides the case's
+    // prompt. An unreadable suggestions file is a problem on the run, never a
+    // refused start: the leads are help, not the plan.
+    const leadSource = this.suggestions();
+    const leadsOf = (row: Stage2Row) => stage2Leads(row, leadSource.suggestions);
     // One case per row — or, for a row over a file too big for one case, one
     // per line range (`<row>#<i>`), its estimate the range's share.
     const jobs: CaseJob[] = rows.flatMap((row: Stage2Row) =>
@@ -1274,7 +1312,7 @@ export class ScanRunner {
         lens: row.lens,
         tier: row.tier,
         effort: row.effort,
-        prompt: (ctx: PromptContext) => stage2CasePrompt(row, ctx, c.files),
+        prompt: (ctx: PromptContext) => stage2CasePrompt(row, ctx, c.files, leadsOf(row)),
         label: `stage 2, ${c.id} (${row.lens})`,
         unitOf,
         suggestions: false,
@@ -1307,6 +1345,10 @@ export class ScanRunner {
       p.tree,
       p.settings,
     );
+    if (leadSource.error !== null) {
+      run.problems.push(`stage-1 leads not carried into the cases: ${leadSource.error}`);
+      this.store(file);
+    }
     return { ok: true, run };
   }
 
@@ -1551,6 +1593,8 @@ export class ScanRunner {
       report(0),
     );
     addCost(outcome);
+    if (outcome.transcript !== undefined) c.transcript = outcome.transcript;
+    if (outcome.ok && outcome.reads !== undefined) c.reads = outcome.reads.length;
     const finish = (status: ScanCaseStatus, error: string | null): number => {
       c.status = status;
       c.error = error;
@@ -1578,6 +1622,16 @@ export class ScanRunner {
         `case ${plan.id}: ${job.lens} — ${unread}; not a reading (not coverage, not a price sample) — it will be read again`,
       );
       return finish("failed", unread);
+    }
+    // Opened some of its files and not others: the others are not read.
+    const focusPaths = [...new Set(plan.files.map((f) => f.path))];
+    const opened = openedFocus(outcome.reads, focusPaths, tree.root);
+    const unopened = opened === null ? [] : focusPaths.filter((p) => !opened.has(p));
+    if (unopened.length > 0) {
+      c.unopened = unopened;
+      run.problems.push(
+        `case ${plan.id}: ${job.lens} opened ${focusPaths.length - unopened.length} of its ${focusPaths.length} focus files — not opened: ${unopened.join(", ")}; those are not coverage and will be read again`,
+      );
     }
 
     const inTree = new Set(tree.files.map((f) => f.path));
@@ -1654,6 +1708,7 @@ export class ScanRunner {
         report(cost ?? seen),
       );
       addCost(v);
+      if (v.transcript !== undefined) c.validator_transcript = v.transcript;
       if (!v.ok && signal.aborted) return finish("stopped", v.reason);
       const read = v.ok ? parseValidatorAnswer(v.output, tree.root) : null;
       if (read === null || !read.answered) {
@@ -1795,23 +1850,28 @@ export class ScanRunner {
     c.dropped = dropped;
 
     // Last: the ledger. Only now is the case's reading on record.
+    // Each row keeps its share of the WHOLE case's cost, so leaving out a file
+    // the lens never opened leaves the rate per line what the case measured.
     const total = plan.files.reduce((n, f) => n + Math.max(f.lines, 1), 0);
-    const rows: LedgerEntry[] = plan.files.map((f) => ({
-      path: f.path,
-      blob: f.blob,
-      lens: job.lens,
-      ...(f.range ? { range: f.range } : {}),
-      tier: job.tier,
-      effort: job.effort,
-      validator: settings.scan.validator,
-      ...(deep ? { depth: "deep" as const } : {}),
-      sha: run.sha,
-      lines: f.lines,
-      cost_usd: cost === null ? null : (cost * Math.max(f.lines, 1)) / total,
-      run: run.id,
-      case: plan.id,
-      at,
-    }));
+    const notRead = new Set(unopened);
+    const rows: LedgerEntry[] = plan.files
+      .filter((f) => !notRead.has(f.path))
+      .map((f) => ({
+        path: f.path,
+        blob: f.blob,
+        lens: job.lens,
+        ...(f.range ? { range: f.range } : {}),
+        tier: job.tier,
+        effort: job.effort,
+        validator: settings.scan.validator,
+        ...(deep ? { depth: "deep" as const } : {}),
+        sha: run.sha,
+        lines: f.lines,
+        cost_usd: cost === null ? null : (cost * Math.max(f.lines, 1)) / total,
+        run: run.id,
+        case: plan.id,
+        at,
+      }));
     try {
       this.ledger.record(rows);
     } catch (err) {

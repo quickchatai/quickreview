@@ -10,11 +10,15 @@
 // new session kind, nothing on the VM).
 import { spawn as nodeSpawn } from "node:child_process";
 import {
+  appendFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -180,6 +184,40 @@ export function resolvedReadPath(raw: string, cwd: string, home: string = homedi
   return posix.resolve(cwd, p);
 }
 
+/** Transcript directories kept: the newest by modification time. */
+export const TRANSCRIPT_RUNS_KEPT = 20;
+
+/** Where a case's transcript lands under `dir`, relative to it: the case id's
+ * first segment (the run) is the directory, the rest of it the file name —
+ * `r3/row-2#1/validate` → `r3/row-2_1.validate.jsonl`. Every segment is
+ * reduced to `[A-Za-z0-9._-]` and none may be `.` or `..`, so an id never
+ * names a path outside `dir`. Pure. */
+export function transcriptFile(id: string): string {
+  const seg = (s: string): string => {
+    const t = s.replace(/[^A-Za-z0-9._-]/g, "_");
+    return t === "" || /^\.+$/.test(t) ? t.replace(/\./g, "_") || "_" : t;
+  };
+  const parts = id.split("/").map(seg);
+  if (parts.length === 1) return `${parts[0]}.jsonl`;
+  return `${parts[0]}/${parts.slice(1).join(".")}.jsonl`;
+}
+
+/** Remove all but the newest `keep` run directories under `dir` (by
+ * modification time, never `except`). Best effort: a transcript is evidence,
+ * not state, and a failure here never touches a case. */
+export function pruneTranscripts(dir: string, keep: number, except: string): void {
+  try {
+    const runs = readdirSync(dir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name !== except)
+      .map((d) => ({ name: d.name, at: statSync(join(dir, d.name)).mtimeMs }))
+      .sort((a, b) => b.at - a.at || b.name.localeCompare(a.name));
+    for (const r of runs.slice(Math.max(0, keep - 1)))
+      rmSync(join(dir, r.name), { recursive: true, force: true });
+  } catch {
+    // Evidence only: nothing to undo.
+  }
+}
+
 /**
  * Runs a case as one background pi subagent, the way pi's own subagent
  * extension runs a child: `pi --mode json -p --no-session` with the agent's
@@ -194,7 +232,12 @@ export function resolvedReadPath(raw: string, cwd: string, home: string = homedi
  * per-message accounting summed (null when it reported none); `reads` is
  * every path its `read`/`grep` calls named (`readPathOf`), resolved to the
  * file that call opened (`resolvedReadPath`, against `cwd`) — the scan's
- * evidence that the lens opened its files at all. The task string names
+ * evidence that the lens opened its files at all. With `transcriptDir`, the
+ * child's whole `--mode json` stream is kept at `transcriptFile(spec.id)`
+ * under it (`transcript` on the outcome, relative to the dir), so a reading
+ * that missed something can be read back rather than inferred; the newest
+ * `TRANSCRIPT_RUNS_KEPT` run directories are kept. A transcript that cannot
+ * be written is left out, never a failed case. The task string names
  * every file by its absolute tree path for the same reason. An abort kills
  * the child (TERM, then KILL). Every outcome resolves.
  *
@@ -205,6 +248,8 @@ export function resolvedReadPath(raw: string, cwd: string, home: string = homedi
 export function piCaseRunner(opts: {
   agentsDir: string;
   cwd: string;
+  /** Where each case's event stream is kept; absent, none is. */
+  transcriptDir?: string;
   spawn?: SpawnFn;
   invocation?: { command: string; prefix: string[] };
 }): CaseRunner {
@@ -248,6 +293,37 @@ export function piCaseRunner(opts: {
         if (agent.model) args.push("--model", agent.model);
         if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
         args.push("--append-system-prompt", promptFile, `Task: ${spec.prompt}`);
+        // The transcript: opened before the child, appended chunk by chunk,
+        // abandoned (and its name dropped from the outcome) at the first
+        // write that fails.
+        let transcript: string | undefined;
+        let transcriptAt: string | null = null;
+        if (opts.transcriptDir !== undefined) {
+          try {
+            const rel = transcriptFile(spec.id);
+            const at = join(opts.transcriptDir, rel);
+            const runDir = rel.includes("/") ? rel.slice(0, rel.indexOf("/")) : null;
+            const fresh = runDir !== null && !existsSync(join(opts.transcriptDir, runDir));
+            mkdirSync(dirname(at), { recursive: true });
+            if (fresh) pruneTranscripts(opts.transcriptDir, TRANSCRIPT_RUNS_KEPT, runDir);
+            writeFileSync(at, "", { mode: 0o600 });
+            transcript = rel;
+            transcriptAt = at;
+          } catch {
+            transcript = undefined;
+          }
+        }
+        const keep = (chunk: string): void => {
+          if (transcriptAt === null) return;
+          try {
+            appendFileSync(transcriptAt, chunk);
+          } catch {
+            transcriptAt = null;
+            transcript = undefined;
+          }
+        };
+        const withTranscript = <T extends CaseOutcome>(o: T): T =>
+          transcript === undefined ? o : { ...o, transcript };
         return await new Promise<CaseOutcome>((resolve) => {
           let final = "";
           let cost = 0;
@@ -316,6 +392,7 @@ export function piCaseRunner(opts: {
           };
           signal.addEventListener("abort", kill, { once: true });
           child.stdout.on("data", (d: Buffer | string) => {
+            keep(d.toString());
             buffer += d.toString();
             const lines = buffer.split("\n");
             buffer = lines.pop() ?? "";
@@ -329,7 +406,7 @@ export function piCaseRunner(opts: {
             if (settled) return;
             settled = true;
             signal.removeEventListener("abort", kill);
-            resolve(outcome);
+            resolve(withTranscript(outcome));
           };
           // What a case that ended without an answer had spent: a failure
           // costs money too, and a caller holding a budget must count it.

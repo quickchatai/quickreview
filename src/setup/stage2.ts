@@ -795,12 +795,61 @@ export function stage2Cases(
   }));
 }
 
+/** Stage-1 leads a stage-2 case carries at most. */
+export const STAGE2_MAX_LEADS = 8;
+/** A lead's reason is cut to this many characters. */
+const LEAD_MAX_CHARS = 300;
+
+/** A stage-1 suggestion as a stage-2 case reads it: which files, and what to
+ * chase there. */
+export interface Stage2Lead {
+  files: string[];
+  reason: string;
+}
+
+/**
+ * The stage-1 suggestions a stage-2 row's cases carry: those naming the
+ * row's lens and at least one of its code files, newest first (by `at`), one
+ * per reason, at most `STAGE2_MAX_LEADS`. Each keeps only the row's files it
+ * names; its reason is flattened to one line and capped. The companion's row reason is one line; what stage 1 saw in these
+ * files is otherwise never in front of the lens. Pure.
+ */
+export function stage2Leads(
+  row: Pick<Stage2Row, "lens" | "files">,
+  suggestions: ReadonlyArray<{
+    lens: string;
+    files: readonly string[];
+    reason: string;
+    at?: string;
+  }>,
+): Stage2Lead[] {
+  const mine = new Set(row.files.map((f) => f.path));
+  const seen = new Set<string>();
+  const out: Stage2Lead[] = [];
+  const newest = [...suggestions].sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
+  for (const s of newest) {
+    if (s.lens !== row.lens) continue;
+    const files = s.files.filter((f) => mine.has(f));
+    // Model-written: one line, capped, so a lead can never pass for a
+    // header or a findings block in the task string.
+    const flat = s.reason.replace(/\s+/g, " ").trim();
+    const reason = flat.length > LEAD_MAX_CHARS ? `${flat.slice(0, LEAD_MAX_CHARS - 1)}…` : flat;
+    if (files.length === 0 || reason === "" || seen.has(reason)) continue;
+    seen.add(reason);
+    out.push({ files, reason });
+    if (out.length >= STAGE2_MAX_LEADS) break;
+  }
+  return out;
+}
+
 /** The stage-2 task string for one row — or, for a ranged row, for the one
- * case whose `files` (from `stage2Cases`) are given. */
+ * case whose `files` (from `stage2Cases`) are given. `leads` are what stage 1
+ * pointed this lens at in the row's files (`stage2Leads`). */
 export function stage2CasePrompt(
   row: Stage2Row,
   ctx: PromptContext,
   caseFiles?: readonly ScanCaseFile[],
+  leads: readonly Stage2Lead[] = [],
 ): string {
   const list = (fs: readonly ScanCaseFile[]): string =>
     fs.map((f) => focusLine(f, ctx.root)).join("\n");
@@ -814,7 +863,16 @@ export function stage2CasePrompt(
     `Why this case: ${row.reason}`,
     ...(row.floor
       ? [
-          "This row is the deep scan's floor: every file is read with this lens whether or not a first look pointed here, so nobody names a shape for you — find it in the focus files yourself.",
+          leads.length > 0
+            ? "This row is the deep scan's floor: every file is read with this lens whether or not a first look pointed here."
+            : "This row is the deep scan's floor: every file is read with this lens whether or not a first look pointed here, so nobody names a shape for you — find it in the focus files yourself.",
+        ]
+      : []),
+    ...(leads.length > 0
+      ? [
+          "",
+          `What the first look pointed this lens at in these files (${leads.length} — leads to check first, not findings, and not the limit of your reading):`,
+          ...leads.map((l) => `- ${l.files.map((f) => `\`${f}\``).join(", ")}: ${l.reason}`),
         ]
       : []),
     "",
