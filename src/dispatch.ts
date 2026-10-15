@@ -71,6 +71,7 @@ import {
   classifyDelta,
   ownershipSet,
   recheckFingerprint,
+  verifyMerges,
   type DeltaClass,
   type DeltaList,
 } from "./recheck.js";
@@ -760,29 +761,21 @@ async function classifySystemRetrigger(
       delta,
       ownershipSet(await deps.adapter.listPrFiles(row.number)),
     );
-    let resolvedFiles: Set<string> | undefined;
-    if (deps.resolvedFilesInMerges) {
-      const res = await deps.resolvedFilesInMerges(mark.head_sha, row.head_sha, row.number);
-      resolvedFiles = new Set(res.files);
-      if (res.degraded) {
-        // Same bar as recheck.ts: a degraded merge-verify keeps the delta-only
-        // classification but is never silently quieter.
-        deps.store.logEvent("recheck_merge_verify_degraded", row.number, {
-          from: mark.head_sha,
-          to: row.head_sha,
-          via: "dispatch",
-        });
-        deps.store.logAnomaly(
-          "recheck_merge_verify_degraded",
-          row.number,
-          null,
-          `merge-verify degraded ${mark.head_sha.slice(0, 7)}→${row.head_sha.slice(0, 7)} at dispatch — delta-only classification kept`,
-        );
-      }
-    }
+    // The recheck's own merge check: a degraded one keeps the delta-only
+    // classification but is never silently quieter.
+    const resolvedFiles = new Set(
+      await verifyMerges(
+        deps.store,
+        deps.resolvedFilesInMerges,
+        mark.head_sha,
+        row.head_sha,
+        row.number,
+        "dispatch",
+      ),
+    );
     const cls = classifyDelta(delta, {
       ...(prFiles ? { prFiles } : {}),
-      ...(resolvedFiles ? { resolvedFiles } : {}),
+      resolvedFiles,
     });
     if (cls.class === "significant") return { skip: false };
     return {

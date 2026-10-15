@@ -26,7 +26,8 @@
 //     The path can therefore never re-approve and never park.
 //  2. **A trivial or empty delta costs one classification and a no-op.** That
 //     is what makes the broad trigger set affordable. A base advance touching
-//     no PR-owned file is the loudest instance and resolves to `empty-delta`.
+//     no PR-owned file is the loudest instance: every file it brings is a
+//     `base-merge` file, so it resolves to `trivial-delta`.
 //  3. **An unchanged head with no new evidence is a no-op** — the same rule
 //     the gate's guard applies (`guards.hasNewEvidence`), read here off the
 //     same single `reviewed_heads` mark. There is no second copy.
@@ -44,7 +45,7 @@ import { readFindingsRecord } from "./findingsrecord.js";
 import type { PrFileEntry } from "./github.js";
 import { isMigrationPath } from "./heuristics.js";
 import { applyEvent } from "./statemachine.js";
-import type { StateStore } from "./state.js";
+import { recheckWakeReason, type StateStore } from "./state.js";
 import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
 import { standingVerdict } from "./standing-review.js";
 import { wakeOrHold, withRepoFacts } from "./wakes.js";
@@ -63,8 +64,16 @@ export type DeltaFile = PrFileEntry & { previous_filename?: string };
 
 /** A file list as the adapter hands it over. `truncated` means GitHub's own
  * cap cut it short (a compare's 300 files, a PR's 3,000): the list is a
- * floor, and nothing may be concluded from a file's ABSENCE from it. */
-export type DeltaList = readonly DeltaFile[] & { truncated?: boolean };
+ * floor, and nothing may be concluded from a file's ABSENCE from it.
+ * `unread` means the read failed and the list is empty for that reason
+ * alone (`unreadDelta`). */
+export type DeltaList = readonly DeltaFile[] & { truncated?: boolean; unread?: boolean };
+
+/** The delta of a range GitHub could not list: no files, and significant by
+ * construction — nothing is known about what it holds. */
+export function unreadDelta(): DeltaList {
+  return Object.assign([] as DeltaFile[], { unread: true });
+}
 
 // ---- the ONE trivial-delta classifier ------------------------------------
 
@@ -93,6 +102,8 @@ export interface DeltaClassification {
   significant: FileClass[];
   /** The delta was cut short by GitHub — significant whatever it shows. */
   truncated?: true;
+  /** The delta could not be read at all — significant, with no files. */
+  unread?: true;
 }
 
 /** Dependency-manifest lockfiles: generated, never reviewed on their content. */
@@ -143,9 +154,11 @@ export function isMigrationRenumber(from: string, to: string): boolean {
 }
 
 /** One hunk of a unified diff: the text git prints after its `@@ … @@`
- * header (often the enclosing function or table) and its lines in order. */
+ * header (often the enclosing function or table), the old-side line it starts
+ * at (null when the header gives none), and its lines in order. */
 interface Hunk {
   section: string;
+  oldStart: number | null;
   lines: Array<{ kind: " " | "+" | "-"; text: string }>;
 }
 
@@ -159,7 +172,12 @@ function parseHunks(patch: string): Hunk[] {
   let cur: Hunk | null = null;
   for (const line of patch.split("\n")) {
     if (line.startsWith("@@")) {
-      cur = { section: /^@@[^@]*@@ ?(.*)$/.exec(line)?.[1] ?? "", lines: [] };
+      const start = /^@@ -(\d+)/.exec(line)?.[1];
+      cur = {
+        section: /^@@[^@]*@@ ?(.*)$/.exec(line)?.[1] ?? "",
+        oldStart: start === undefined ? null : Number(start),
+        lines: [],
+      };
       hunks.push(cur);
       continue;
     }
@@ -167,7 +185,7 @@ function parseHunks(patch: string): Hunk[] {
     const kind = line.charAt(0);
     if (kind !== " " && kind !== "+" && kind !== "-") continue;
     if (cur === null) {
-      cur = { section: "", lines: [] };
+      cur = { section: "", oldStart: null, lines: [] };
       hunks.push(cur);
     }
     cur.lines.push({ kind, text: line.slice(1) });
@@ -222,11 +240,13 @@ function stripOutsideQuotes(line: string): string {
 }
 
 /** Languages whose leading whitespace is syntax — a dedent in Python moves a
- * line out of its block; in YAML it moves a key to another mapping. */
+ * line out of its block; in YAML it moves a key to another mapping; in the
+ * indented style-sheet syntaxes (Sass, Stylus) it moves a rule out of the
+ * selector it was nested under. */
 function indentSignificant(path: string | undefined): boolean {
   if (!path) return false;
   const base = baseName(path);
-  return /\.(py|pyi|ya?ml)$/i.test(base) || base === "Makefile" || /\.mk$/i.test(base);
+  return /\.(py|pyi|ya?ml|sass|styl)$/i.test(base) || base === "Makefile" || /\.mk$/i.test(base);
 }
 
 /** Languages where a line break ends a command or statement — in a shell
@@ -327,7 +347,7 @@ function tokenSeams(lines: string[]): string {
           /^(?:\+\+|--)/.test(text));
       // A seam keeps its space and gains the break, so deleting every "\n"
       // gives back the form without breaks exactly — before and after
-      // `maskSeams` — and the break form only ever refines it.
+      // `digitsOnly` masks it — and the break form only ever refines it.
       if (seam) out += " ";
       if (ends) out += "\n";
     }
@@ -399,22 +419,30 @@ function mayTouchMultilineLiteral(hunk: Hunk, path: string | undefined): boolean
 }
 
 /**
- * One change block is whitespace-only: the added and removed text are
- * identical once insignificant whitespace is dropped (see `squash` — never
- * inside a quoted literal, never leading indentation of a
- * whitespace-significant language), and no line's whitespace changed between
- * its first and last `/` (see `slashSpans` — a regex literal's whitespace is
- * content), and no whitespace that separates two tokens appeared or vanished
- * (see `tokenSeams`; in a style sheet, `collapsed`).
+ * The forms a side of a change block is compared in, every one of which must
+ * match for the change to be whitespace-only: `squash` (insignificant
+ * whitespace dropped — never inside a quoted literal, never leading
+ * indentation of a whitespace-significant language), `slashSpans` (no line's
+ * whitespace changed between its first and last `/` — a regex literal's
+ * whitespace is content), `tokenSeams` (no whitespace that separates two
+ * tokens appeared or vanished) and, in a style sheet, `collapsed`. The one
+ * list both `formattingOnly` and `digitsOnly` compare.
  */
-function sameModuloFormatting(block: ChangeBlock, path: string | undefined): boolean {
-  const { added, removed } = block;
-  if (selectorWhitespace(path) && collapsed(added) !== collapsed(removed)) return false;
-  return (
-    squash(added, path) === squash(removed, path) &&
-    slashSpans(added) === slashSpans(removed) &&
-    tokenSeams(added) === tokenSeams(removed)
-  );
+function whitespaceForms(lines: string[], path: string | undefined): string[] {
+  const forms = [squash(lines, path), slashSpans(lines), tokenSeams(lines)];
+  if (selectorWhitespace(path)) forms.push(collapsed(lines));
+  return forms;
+}
+
+/** The two sides of a block agree in every `whitespaceForms` form, each
+ * compared after `mask` (identity unless a caller masks something out). */
+function sameForms(
+  block: ChangeBlock,
+  path: string | undefined,
+  mask: (form: string) => string = (form) => form,
+): boolean {
+  const removed = whitespaceForms(block.removed, path);
+  return whitespaceForms(block.added, path).every((form, i) => mask(form) === mask(removed[i]!));
 }
 
 /**
@@ -430,7 +458,7 @@ export function formattingOnly(patch: string, path?: string): boolean {
   const blocks = hunks.flatMap(changeBlocks);
   if (blocks.length === 0) return false;
   if (hunks.some((h) => mayTouchMultilineLiteral(h, path))) return false;
-  return blocks.every((b) => sameModuloFormatting(b, path));
+  return blocks.every((b) => sameForms(b, path));
 }
 
 /** A migration number: a digit run that starts a token and is followed by `_`
@@ -450,12 +478,10 @@ export function digitsOnly(patch: string, path?: string): boolean {
   const masked = (text: string): string => text.replace(MIGRATION_NUMBER, "#");
   return parseHunks(patch).every((hunk) => {
     const literal = mayTouchMultilineLiteral(hunk, path);
-    return changeBlocks(hunk).every(({ added, removed }) =>
+    return changeBlocks(hunk).every((block) =>
       literal
-        ? masked(added.join("\n")) === masked(removed.join("\n"))
-        : masked(squash(added, path)) === masked(squash(removed, path)) &&
-          masked(slashSpans(added)) === masked(slashSpans(removed)) &&
-          masked(tokenSeams(added)) === masked(tokenSeams(removed)),
+        ? masked(block.added.join("\n")) === masked(block.removed.join("\n"))
+        : sameForms(block, path, masked),
     );
   });
 }
@@ -483,22 +509,46 @@ function tomlTable(text: string): string | null {
   return header.startsWith("[[") ? header : header.slice(1, -1).replace(/\s+/g, "");
 }
 
+/** How far a line of JSON opens (+) or closes (−) objects and arrays, its
+ * quoted strings left out. */
+function jsonDepthDelta(text: string): number {
+  let delta = 0;
+  text.split(QUOTED).forEach((part, i) => {
+    if (i % 2 === 1) return;
+    for (const ch of part) {
+      if (ch === "{" || ch === "[") delta++;
+      else if (ch === "}" || ch === "]") delta--;
+    }
+  });
+  return delta;
+}
+
 /** Every changed line is the release-version key itself — the release-bump
- * shape. In a TOML manifest the key must also sit in a release table
- * (`RELEASE_TABLES`) that the hunk shows: `version = "2"` under
- * `[dependencies.serde]` is a dependency requirement, and a line whose table
- * the patch does not show is not proven to be the release. */
+ * shape. The key must also be the package's own, proven from what the hunk
+ * shows: in a TOML manifest it sits in a release table (`RELEASE_TABLES`) —
+ * `version = "2"` under `[dependencies.serde]` is a dependency requirement —
+ * and in a JSON manifest it is a key of the top-level object, which the hunk
+ * proves only when it starts at the file's first line (`"version"` under
+ * `"config"` is configuration, not the release). A line whose place the patch
+ * does not show is not proven to be the release. */
 export function versionOnly(patch: string, path?: string): boolean {
   const toml = path !== undefined && /\.toml$/i.test(path);
+  const json = path !== undefined && /\.json$/i.test(path);
   let changed = 0;
   for (const hunk of parseHunks(patch)) {
     let table = tomlTable(hunk.section);
+    // The old side's nesting depth before the line; unknown (null) unless
+    // the hunk starts at the top of the file.
+    let depth: number | null = hunk.oldStart === 1 ? 0 : null;
     for (const line of hunk.lines) {
       table = tomlTable(line.text) ?? table;
-      if (line.kind === " ") continue;
-      changed++;
-      if (!RELEASE_VERSION_LINE.test(line.text)) return false;
-      if (toml && (table === null || !RELEASE_TABLES.has(table))) return false;
+      if (line.kind !== " ") {
+        changed++;
+        if (!RELEASE_VERSION_LINE.test(line.text)) return false;
+        if (toml && (table === null || !RELEASE_TABLES.has(table))) return false;
+        if (json && depth !== 1) return false;
+      }
+      if (depth !== null && line.kind !== "+") depth += jsonDepthDelta(line.text);
     }
   }
   return changed > 0;
@@ -517,6 +567,19 @@ export interface ClassifyOpts {
    * conflict RESOLUTION is a human/agent decision and classifies significant
    * even outside prFiles: a resolution can silently drop the base's change. */
   resolvedFiles?: ReadonlySet<string>;
+}
+
+/** Does an ownership set hold this file — under its name, or, for a rename,
+ * under the name it had? The one ownership rule the classifier and the
+ * reviewed-head ownership read share. */
+export function ownedBy(
+  file: { filename: string; previous_filename?: string | undefined },
+  owned: ReadonlySet<string>,
+): boolean {
+  return (
+    owned.has(file.filename) ||
+    (file.previous_filename !== undefined && owned.has(file.previous_filename))
+  );
 }
 
 /** The PR's own files as an ownership set — or undefined, "ownership not
@@ -543,12 +606,7 @@ export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClas
   if (opts.resolvedFiles?.has(name))
     return { filename: name, class: "significant", reason: "content" };
 
-  if (
-    opts.prFiles &&
-    !opts.prFiles.has(name) &&
-    !(file.previous_filename && opts.prFiles.has(file.previous_filename))
-  )
-    return trivial("base-merge");
+  if (opts.prFiles && !ownedBy(file, opts.prFiles)) return trivial("base-merge");
 
   const patch = file.patch ?? "";
   const churn = (file.additions ?? 0) + (file.deletions ?? 0);
@@ -625,7 +683,8 @@ export function classifyDelta(files: DeltaList, opts: ClassifyOpts = {}): DeltaC
   const significant = classified.filter((f) => f.class === "significant");
   // A truncated delta is significant by construction: the files GitHub did not
   // return may be exactly the PR-owned edit, and "all visible files trivial"
-  // says nothing about them.
+  // says nothing about them. An unread one, for the same reason.
+  if (files.unread) return { class: "significant", files: classified, significant, unread: true };
   if (files.truncated)
     return { class: "significant", files: classified, significant, truncated: true };
   const cls: DeltaClass =
@@ -786,9 +845,11 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
   return {
     action: "recheck",
     class: classification.class,
-    evidence: classification.truncated
-      ? `GitHub truncated the delta at ${classification.files.length} file(s) — the unseen remainder may hold changes this review has not seen`
-      : `${classification.significant.length} changed file(s) this review has not seen`,
+    evidence: classification.unread
+      ? "GitHub could not list the delta's files — read the delta in the worktree yourself"
+      : classification.truncated
+        ? `GitHub truncated the delta at ${classification.files.length} file(s) — the unseen remainder may hold changes this review has not seen`
+        : `${classification.significant.length} changed file(s) this review has not seen`,
     classification,
   };
 }
@@ -934,14 +995,42 @@ export async function reviewedOwnership(
 ): Promise<Set<string> | undefined> {
   // Unknown ownership (a truncated listing) stays unknown.
   if (!ownedNow) return undefined;
-  const unowned = delta.some(
-    (f) => !ownedNow.has(f.filename) && !(f.previous_filename && ownedNow.has(f.previous_filename)),
-  );
+  const unowned = delta.some((f) => !ownedBy(f, ownedNow));
   if (!unowned || !adapter.getPr || !adapter.compareFiles) return new Set(ownedNow);
   const { base_ref } = await adapter.getPr(pr);
   if (!base_ref) return new Set(ownedNow);
   const then = ownershipSet(await adapter.compareFiles(base_ref, reviewedHead));
   return then ? new Set([...ownedNow, ...then]) : undefined;
+}
+
+/**
+ * The files hand-resolved inside the merges of `from..to` — the one reading
+ * of the merge check both the recheck and dispatch's system re-trigger
+ * classifier make. No check wired ⇒ none. Degraded (git could not tell) keeps
+ * the delta-only classification, but is recorded as an event and a durable
+ * anomaly row — never silently quieter. `via` names a caller other than the
+ * recheck.
+ */
+export async function verifyMerges(
+  store: StateStore,
+  resolve: RecheckDeps["resolvedFilesInMerges"],
+  from: string,
+  to: string,
+  pr: number,
+  via?: string,
+): Promise<string[]> {
+  if (!resolve) return [];
+  const res = await resolve(from, to, pr);
+  if (res.degraded) {
+    store.logEvent("recheck_merge_verify_degraded", pr, { from, to, ...(via ? { via } : {}) });
+    store.logAnomaly(
+      "recheck_merge_verify_degraded",
+      pr,
+      null,
+      `merge-verify degraded ${from.slice(0, 7)}→${to.slice(0, 7)}${via ? ` at ${via}` : ""} — delta-only classification kept`,
+    );
+  }
+  return res.files;
 }
 
 /**
@@ -1019,41 +1108,41 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     if (req.trigger !== "base_advance")
       prFiles = await reviewedOwnership(deps.adapter, req.pr, lastReviewed, delta, prFiles);
   } catch (err) {
-    // A read failure is not evidence of anything. Uphold and log: the reconcile
-    // poll and the next trigger both come round again.
+    // A read failure is not evidence of anything. A question the reconcile
+    // push backstop asks again — a push, or a benign CI result at a new head,
+    // whose push question is the same — upholds and is asked once the read
+    // recovers. An adverse CI result or a base advance is asked by nothing
+    // else: it goes on with the delta UNREAD, which is significant, so the
+    // session audits it in its worktree rather than the question being lost.
+    const askUnread = req.trigger === "base_advance" || ciIsAdverse(req.ci?.conclusion);
     log(`recheck: #${req.pr} delta read failed`, err);
-    store.logEvent("recheck_delta_failed", req.pr, { trigger: req.trigger, error: String(err) });
+    store.logEvent("recheck_delta_failed", req.pr, {
+      trigger: req.trigger,
+      error: String(err),
+      asked_unread: askUnread,
+    });
     // Durable anomaly row, quiet class: DB-only, reviewed at the daily
-    // heartbeat — the reconcile poll retries this on its own.
+    // heartbeat.
     store.logAnomaly(
       "recheck_delta_failed",
       req.pr,
       null,
-      `delta read failed (${req.trigger}): ${String(err)}`,
+      `delta read failed (${req.trigger}): ${String(err)} — ${askUnread ? "asked with the delta unread" : "the reconcile push backstop asks again"}`,
     );
-    return done({ action: "noop", reason: "no-delta-source", class: "empty" });
+    if (!askUnread) return done({ action: "noop", reason: "no-delta-source", class: "empty" });
+    delta = unreadDelta();
+    prFiles = undefined;
   }
 
   // Conflict resolutions are never trivial: ask git which files in this
-  // delta's merges were hand-resolved. Degraded/unknown classifies merges by
-  // the ownership rule alone, but is LOGGED — never silently quieter.
-  let resolvedFiles: string[] = [];
-  if (deps.resolvedFilesInMerges) {
-    const { from, to } = range;
-    const res = await deps.resolvedFilesInMerges(from, to, req.pr);
-    resolvedFiles = res.files;
-    if (res.degraded) {
-      store.logEvent("recheck_merge_verify_degraded", req.pr, { from, to });
-      // Durable anomaly record: a degraded check is never silently quieter,
-      // and never unqueryable.
-      store.logAnomaly(
-        "recheck_merge_verify_degraded",
-        req.pr,
-        null,
-        `merge-verify degraded ${from.slice(0, 7)}→${to.slice(0, 7)} — prior (delta-only) classification kept`,
-      );
-    }
-  }
+  // delta's merges were hand-resolved.
+  const resolvedFiles = await verifyMerges(
+    store,
+    deps.resolvedFilesInMerges,
+    range.from,
+    range.to,
+    req.pr,
+  );
 
   const plan = planRecheck({
     trigger: req.trigger,
@@ -1131,7 +1220,12 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     last_reviewed_sha: lastReviewed,
     head_sha: head,
     worktree: (deps.worktreeFor ?? ((n: number): string => `wt/pr-${n}`))(req.pr),
-    evidence: plan.evidence,
+    // A base advance's delta is the base branch's range, not anything since
+    // the reviewed head: the evidence names the range that was compared.
+    evidence:
+      req.trigger === "base_advance" && req.base
+        ? `the base branch \`${req.base.branch}\` advanced ${range.from.slice(0, 12)}→${range.to.slice(0, 12)}; ${plan.evidence}`
+        : plan.evidence,
     files: plan.classification.files,
     resolved_files: resolvedFiles,
     decision_file: recheckDecisionFile(req.pr, head),
@@ -1173,7 +1267,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       // drop is not — so the receipt is what lets the reconcile sweep release
       // the claim of a nudge that never arrived.
       stampPrompt(withRepoFacts(render(order), facts), recheckPromptMarker(req.pr, fingerprint)),
-      `recheck:${req.trigger}`,
+      recheckWakeReason(req.trigger),
       // A push question the reconcile backstop asks again; a CI or base-advance
       // question has no such sweep, so its claim stays and the wake is held
       // for the flush paths rather than released on a failed injection — and
@@ -1258,6 +1352,9 @@ export async function runBaseAdvance(
         // Called on the adapter, never through a detached reference: the real
         // GitHubAdapter's methods are class methods and need their `this`.
         const ref = await deps.adapter.getPr(row.number);
+        // GitHub already says closed: there is nothing left to audit, and the
+        // reconcile closed-sync settles the row.
+        if (ref.state === "closed" || ref.merged) continue;
         if (ref.base_ref && ref.base_ref !== advance.branch) continue;
       } catch (err) {
         log(`recheck: #${row.number} base ref lookup failed`, err);
@@ -1473,7 +1570,10 @@ export class RecheckWatcher {
    * The lifecycle half of a change request the session posted. The review on
    * GitHub is the standing decision at its head: when the shell stamped it at
    * the head the mark already held, the mark keeps the verdict it had, so the
-   * decided verdict is written here. The lifecycle moves to awaiting_author
+   * decided verdict is written here — whether it posted as REQUEST_CHANGES or
+   * guard 1 softened it to a COMMENT (a person approved the head), the same
+   * enrichment a round's verdict gets. A mark still reading APPROVE posted
+   * holds no post of this decision and is left as it is. The lifecycle moves to awaiting_author
    * unless newer work owns the PR — a round running, or a person's queued
    * re-review request — which this answer must not settle or erase; that
    * work's own verdict decides. The PR's head is GitHub's and is never
@@ -1485,7 +1585,7 @@ export class RecheckWatcher {
     if (
       mark &&
       mark.head_sha.toLowerCase() === headSha.toLowerCase() &&
-      mark.posted_event === "REQUEST_CHANGES" &&
+      (mark.posted_event === "REQUEST_CHANGES" || mark.posted_event === "COMMENT") &&
       standingVerdict(mark) !== "REQUEST_CHANGES"
     )
       store.recordReviewedVerdict(pr, mark.head_sha, "REQUEST_CHANGES");

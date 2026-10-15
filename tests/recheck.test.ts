@@ -83,6 +83,29 @@ describe("trivial-delta classifier", () => {
     expect(formattingOnly("@@\n-  a: 1\n+a: 1", "conf/app.yaml")).toBe(false);
   });
 
+  // Sass and Stylus nest by indentation: a dedent moves a rule out of the
+  // selector it sat under, which changes the generated CSS.
+  it("keeps an indentation change in an indented style sheet significant", () => {
+    for (const filename of ["src/app.sass", "src/app.styl"]) {
+      const d = classifyDelta([
+        file({
+          filename,
+          patch: "@@\n .parent\n   color: red\n-  .child\n+.child\n     color: blue",
+        }),
+      ]);
+      expect(d.class, filename).toBe("significant");
+    }
+    // A brace-syntax SCSS file nests by braces, so the same re-indent there
+    // stays formatting.
+    const scss = classifyDelta([
+      file({
+        filename: "src/app.scss",
+        patch: "@@\n-  .child { color: blue; }\n+.child { color: blue; }",
+      }),
+    ]);
+    expect(scss.class).toBe("trivial");
+  });
+
   it("still calls trailing / in-line whitespace in Python formatting", () => {
     const d = classifyDelta([
       file({ filename: "app/views.py", patch: "@@\n-    x = f(a,b)   \n+    x = f(a, b)" }),
@@ -245,7 +268,8 @@ describe("trivial-delta classifier", () => {
       file({ filename: "package-lock.json", additions: 400, deletions: 380 }),
       file({
         filename: "package.json",
-        patch: '@@\n-  "version": "1.2.3",\n+  "version": "1.2.4",',
+        patch:
+          '@@ -1,4 +1,4 @@\n {\n   "name": "x",\n-  "version": "1.2.3",\n+  "version": "1.2.4",',
       }),
     ]);
     expect(d.class).toBe("trivial");
@@ -275,7 +299,10 @@ describe("trivial-delta classifier", () => {
 
   it("still calls a bare release-version bump trivial in every manifest", () => {
     const cases: Array<[string, string]> = [
-      ["package.json", '@@\n-  "version": "1.2.3",\n+  "version": "1.2.4",'],
+      [
+        "package.json",
+        '@@ -1,4 +1,4 @@\n {\n   "name": "x",\n-  "version": "1.2.3",\n+  "version": "1.2.4",',
+      ],
       ["pyproject.toml", '@@\n [project]\n name = "x"\n-version = "0.4.1"\n+version = "0.4.2"'],
       ["Cargo.toml", "@@\n [package]\n name = 'x'\n-version = '0.4.1'\n+version = '0.5.0'"],
       ["pyproject.toml", '@@ -3,6 +3,6 @@ [tool.poetry]\n-version = "0.4.1"\n+version = "0.4.2"'],
@@ -305,6 +332,31 @@ describe("trivial-delta classifier", () => {
       const d = classifyDelta([file({ filename, patch })]);
       expect(d.class, `${filename}: ${patch}`).toBe("significant");
     }
+  });
+
+  // A package.json `version` key is the release only at the top level; the
+  // hunk proves that only when it starts at the file's first line.
+  it("keeps a package.json version key not proven top-level significant", () => {
+    const cases = [
+      // Nested under "config": configuration a script may read, not the release.
+      '@@ -1,6 +1,6 @@\n {\n   "name": "x",\n   "config": {\n-    "version": "1.0.0"\n+    "version": "2.0.0"\n   },',
+      // The hunk does not start at the top: the key's place is not shown.
+      '@@ -7,3 +7,3 @@\n   "license": "MIT",\n-  "version": "1.2.3",\n+  "version": "1.2.4",',
+      '@@\n-  "version": "1.2.3",\n+  "version": "1.2.4",',
+    ];
+    for (const patch of cases) {
+      const d = classifyDelta([file({ filename: "package.json", patch })]);
+      expect(d.class, patch).toBe("significant");
+    }
+    // A brace inside a string does not count as nesting.
+    const quoted = classifyDelta([
+      file({
+        filename: "package.json",
+        patch:
+          '@@ -1,4 +1,4 @@\n {\n   "description": "a {curly} name",\n-  "version": "1.2.3",\n+  "version": "1.2.4",',
+      }),
+    ]);
+    expect(quoted.files[0]?.reason).toBe("version-bump");
   });
 
   // A renamed migration WITH churn but no patch (GitHub omits it on large
@@ -732,6 +784,69 @@ describe("runRecheck", () => {
     expect(h.store.heldWakes(PR)[0]?.reason).toBe("recheck:ci");
   });
 
+  // Nothing asks an adverse CI result or a base advance again, so a failed
+  // delta read must not lose it: the question goes out with the delta unread.
+  it("asks an adverse CI question with the delta unread when the read fails", async () => {
+    const h = harness();
+    h.adapter.compareFiles = async () => {
+      throw new Error("GitHub 502");
+    };
+    const out = await runRecheck(h.deps, {
+      pr: PR,
+      trigger: "ci",
+      head_sha: OLD,
+      ci: { conclusion: "failure" },
+    });
+    expect(out).toMatchObject({ action: "recheck", class: "significant", delivered: "injected" });
+    expect(h.injected).toHaveLength(1);
+    expect(h.store.rechecksFor(PR)).toHaveLength(1);
+  });
+
+  it("asks a base advance with the delta unread when the read fails", async () => {
+    const h = harness();
+    h.store.recordReviewedHead(PR, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+    h.adapter.compareFiles = async () => {
+      throw new Error("GitHub 502");
+    };
+    const out = await runRecheck(h.deps, {
+      pr: PR,
+      trigger: "base_advance",
+      base: { branch: "master", before: "b0", after: "b1" },
+    });
+    expect(out).toMatchObject({ action: "recheck", class: "significant" });
+    expect(out.classification).toMatchObject({ unread: true });
+    expect(out.order?.evidence).toContain("could not list the delta");
+    expect(h.injected).toHaveLength(1);
+  });
+
+  // A push question the reconcile backstop asks again: a failed read upholds.
+  it("leaves a push question to the backstop when the read fails", async () => {
+    const h = harness();
+    h.adapter.compareFiles = async () => {
+      throw new Error("GitHub 502");
+    };
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(out).toMatchObject({ action: "noop", reason: "no-delta-source" });
+    expect(h.injected).toHaveLength(0);
+    expect(h.store.rechecksFor(PR)).toHaveLength(0);
+  });
+
+  it("names the base range a base-advance recheck compared", async () => {
+    const h = harness();
+    h.store.recordReviewedHead(PR, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+    h.adapter.delta = [file({ filename: "src/app.ts", patch: "@@\n-x=1\n+x=2" })];
+    const before = "b".repeat(40);
+    const after = "c".repeat(40);
+    const out = await runRecheck(h.deps, {
+      pr: PR,
+      trigger: "base_advance",
+      base: { branch: "master", before, after },
+    });
+    expect(out.order?.evidence).toContain(
+      `\`master\` advanced ${"b".repeat(12)}→${"c".repeat(12)}`,
+    );
+  });
+
   it("carries the standing verdict, the last-reviewed sha and the delta in the order", async () => {
     const h = harness();
     const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
@@ -974,6 +1089,20 @@ describe("runBaseAdvance", () => {
     expect(h.injected).toHaveLength(1);
   });
 
+  it("skips a PR GitHub already reports closed or merged", async () => {
+    for (const ref of [
+      { state: "closed", merged: false },
+      { state: "closed", merged: true },
+    ]) {
+      const h = harness();
+      h.adapter.delta = [file({ filename: "src/app.ts", patch: "@@\n-x=1\n+x=2" })];
+      h.adapter.getPr = async () => ({ base_ref: "master", head_sha: HEAD, ...ref });
+      const out = await runBaseAdvance(h.deps, { branch: "master", before: "b0", after: "b1" });
+      expect(out.size).toBe(0);
+      expect(h.injected).toHaveLength(0);
+    }
+  });
+
   it("skips PRs that target another branch", async () => {
     const h = harness();
     h.adapter.base_ref = "release-2";
@@ -1108,6 +1237,17 @@ describe("recheck decisions", () => {
     store.recordReviewedHead(PR, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
     store.recordReviewedHead(PR, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
     expect(standingVerdict(store.reviewedHead(PR))).toBe("APPROVE");
+    write({ pr: PR, head_sha: HEAD, outcome: "request_changes", reason: "CI shows a regression" });
+    await watcher.sweep();
+    expect(standingVerdict(store.reviewedHead(PR))).toBe("REQUEST_CHANGES");
+    expect(store.getPr(PR)?.state).toBe("awaiting_author");
+  });
+
+  // Guard 1 softens a change request to a COMMENT when a person approved the
+  // head; the session's decision still stands, as a round's softened one does.
+  it("a change request softened to a COMMENT still becomes the standing verdict", async () => {
+    store.recordReviewedHead(PR, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+    store.recordReviewedHead(PR, { head_sha: HEAD, posted_event: "COMMENT" });
     write({ pr: PR, head_sha: HEAD, outcome: "request_changes", reason: "CI shows a regression" });
     await watcher.sweep();
     expect(standingVerdict(store.reviewedHead(PR))).toBe("REQUEST_CHANGES");
