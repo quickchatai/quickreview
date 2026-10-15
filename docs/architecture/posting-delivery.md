@@ -47,6 +47,58 @@ an exceptionally delayed GitHub acceptance/visibility beyond these windows
 can still make a resend duplicate. We do not claim that finite negative reads
 prove a distributed POST was never accepted.
 
+## Deferred postings: a 5xx on the session's own POST
+
+When GitHub answers a receipt-keyed review POST from `post-review.sh` or
+`approve-pr.sh` with a 5xx, or does not answer at all (curl's `000`), the
+script first reads the PR's reviews for the round's `<!-- qcr-post:KEY -->`
+marker at the expected head (`guard_marker_review` in `scripts/guards.sh`):
+
+- **Found** — the review landed; the receipt is confirmed from it exactly as
+  from a 2xx, and the script goes on as usual.
+- **Not found, or unreadable** — the script hands the POST to the daemon:
+  `posting-receipt.py defer` marks the outbox job (which already holds the
+  exact payload) pending with `deferred_at` = the first failure, then sets the
+  receipt to `deferred`. It stamps nothing (no review exists) and exits 0 with
+  a message telling the session to finish its round normally; a second run of
+  the script sees `deferred` and exits 0 without a POST. `approve-pr.sh` also
+  skips its trigger cleanup (dispatch already consumed both triggers).
+
+The daemon's outbox runs a deferred job on its own, bounded schedule, never on
+the open-ended path above. The schedule is a state.db row
+(`posting_retries`, adopted from the receipt): attempts at `[daemon]
+posting_retry_offsets_min` (default 4, 12, 36) minutes after the first
+failure, all inside `posting_retry_window_min` (60). Each attempt is counted in
+the row before its first GitHub call (a crash never repeats one), then:
+
+1. reads the reviews for the marker — found ⇒ confirmed, no POST; a failed
+   read consumes the attempt;
+2. stops (`abandoned`) if the round no longer owes the posting (cancelled —
+   an operator's `u`); a new push does NOT stop it;
+3. POSTs through the ONE gate with `postingRetry` set. Admission confines that
+   field to a substantive `create_review` carrying the key's marker at the
+   key's head, and it exempts guard 5 only: the review posts at its ORIGINAL
+   commit_id. Guards 3, 1, 2 and 4 bind as on any gated review — guard 4
+   softens a red-CI APPROVE to a COMMENT, and the confirmed receipt
+   (`delivered_by: "daemon_retry"`) makes the verdict apply as a withheld
+   approval. Dry-run suppresses it like anything else.
+
+A refusal by a guard, a permanent 4xx, a failure on the last offset, or a due
+time already past the window (one marker read, no POST) exhausts the row: the
+job fails, a `posting_retry_exhausted` anomaly records why, and the verdict
+watcher's posting proof reads `failed`/`exhausted`, so whichever path reaches
+the round first (verdict sweep, stage limit, deadline) fails it loud — the
+FAILED_LOUD hold an operator clears with `u`, its `review_failed_loud` wake and
+status.json. Never a requeue: the POST was attempted.
+
+While a deferred post is owed the PR stays `reviewing` with its round
+`running` and its verdict file unapplied; `reviewed_heads` is not stamped
+(the gate's after-step stamps it when the retry's POST executes). Every stage
+limit, the deadline and the verdict apply read `deferred` as posting in flight
+and leave the round alone, without a GitHub read of their own that could race
+the retry. When the retry confirms, the round settles as a normally posted one.
+The round keeps its dispatch slot for the window.
+
 ## Lifecycle and visibility
 
 `src/verdicts.ts` leaves a pending outbox's round and verdict waiting beyond

@@ -456,3 +456,155 @@ describe("#5850 round 5 replayed", () => {
     expect(killed).toEqual([]);
   });
 });
+
+// A review POST GitHub answered 5xx, handed to the daemon as a `deferred`
+// receipt: posting in flight for its whole retry window — no stage limit,
+// deadline or verdict apply may requeue, fail or kill the round — and, once the
+// daemon's retry confirms it, the round settles as a normally posted one.
+describe("a deferred posting", () => {
+  const key = roundPostingKey(PR, 5, HEAD);
+  const dir = () => join(root, "state", "posting-receipts");
+  function writeDeferred(event: "APPROVE" | "REQUEST_CHANGES", jobStatus = "pending"): void {
+    mkdirSync(dir(), { recursive: true });
+    const payload = { commit_id: HEAD, event, body: `Review\n\n${postingMarker(key)}` };
+    const sha = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.outbox.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        repo: cfg.github.repo,
+        mode: "live",
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: event,
+        payload,
+        status: jobStatus,
+        attempts: 0,
+        payload_sha256: sha,
+        next_attempt_at: "2026-10-08T08:56:58.000Z",
+        created_at: "2026-10-08T08:52:57.000Z",
+        deferred_at: "2026-10-08T08:52:58.000Z",
+      }),
+    );
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        marker: postingMarker(key),
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: event,
+        actual_event: event,
+        status: "deferred",
+        payload_sha256: sha,
+        prepared_at: "2026-10-08T08:52:57.000Z",
+        deferred_at: "2026-10-08T08:52:58.000Z",
+        defer_reason: "GitHub answered 502; marker read: none",
+      }),
+    );
+  }
+  function retryConfirmed(intended: string, actual: string, state: string): void {
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        marker: postingMarker(key),
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: intended,
+        actual_event: actual,
+        status: "confirmed",
+        payload_sha256: "c".repeat(64),
+        prepared_at: "2026-10-08T08:52:57.000Z",
+        confirmed_at: clock.toISOString(),
+        gh_review_id: REVIEW_ID,
+        gh_commit_id: HEAD,
+        gh_state: state,
+        delivered_by: "daemon_retry",
+      }),
+    );
+  }
+  const verdictFile = (verdict: string) =>
+    writeFileSync(
+      join(verdictDir, `pr-${PR}-round-5.json`),
+      JSON.stringify({
+        pr: PR,
+        round_no: 5,
+        verdict,
+        head_sha: HEAD,
+        summary: "done",
+        passes: [{ name: "pass-baseline", tier: "sol-med", findings: 0 }],
+        finished_at: "2026-10-08T08:53:30Z",
+      }),
+    );
+
+  it("no stage limit, deadline or verdict apply requeues, fails or kills it; the retry's confirmation settles it", async () => {
+    writeDeferred("REQUEST_CHANGES");
+    const { watcher, supervisor } = wire(true);
+    verdictFile("REQUEST_CHANGES");
+    set("2026-10-08T08:54:00.000Z");
+    expect(await watcher.sweep()).toEqual([]); // waiting on the posting
+    store.finishSessionCommand(CMD, "bridge-1", "acked"); // the session finished its round
+    for (const at of ["2026-10-08T08:58:43.000Z", "2026-10-08T09:40:00.000Z"]) {
+      set(at);
+      await supervisor.scan();
+      await watcher.checkDeadlines();
+      expect(await watcher.sweep()).toEqual([]);
+    }
+    expect(round5().status).toBe("running");
+    expect(killed).toEqual([]);
+    expect(count("round_self_requeued")).toBe(0);
+    expect(count("round_infrastructure_failure")).toBe(0);
+    expect(store.openReviewFailure(PR)).toBeUndefined();
+    // No review exists yet, so nothing claims the head.
+    expect(store.reviewedHead(PR)).toBeUndefined();
+    expect(store.getPr(PR)?.state).toBe("reviewing");
+
+    set("2026-10-08T09:29:00.000Z");
+    retryConfirmed("REQUEST_CHANGES", "REQUEST_CHANGES", "CHANGES_REQUESTED");
+    store.recordReviewedHead(PR, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" }); // the gate's after-step
+    expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
+    expectOnePostingAndNothingOwed();
+  });
+
+  it("an exhausted retry fails the round loud (FAILED_LOUD hold), never a requeue", async () => {
+    writeDeferred("REQUEST_CHANGES", "failed");
+    store.adoptPostingRetry({
+      posting_key: key,
+      pr: PR,
+      round_no: 5,
+      head_sha: HEAD,
+      first_failed_at: "2026-10-08T08:52:58.000Z",
+      now: "2026-10-08T08:52:58.000Z",
+    });
+    store.settlePostingRetry(key, "exhausted", "GitHub 502 ×3", "2026-10-08T09:29:00.000Z");
+    const { supervisor } = wire(true);
+    set("2026-10-08T09:30:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(count("round_self_requeued")).toBe(0);
+    const failure = store.openReviewFailure(PR);
+    expect(failure).toBeDefined();
+    expect(failure!.detail).toContain("exhausted after 0 attempt(s): GitHub 502 ×3");
+    expect(postings()).toBe(0);
+  });
+
+  it("an APPROVE the gate softened at retry time (red CI) lands as a withheld approval", async () => {
+    writeDeferred("APPROVE");
+    const { watcher } = wire(true);
+    verdictFile("APPROVE");
+    set("2026-10-08T09:00:00.000Z");
+    retryConfirmed("APPROVE", "COMMENT", "COMMENTED");
+    expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
+    expect(round5()).toMatchObject({ status: "done", verdict: "APPROVE", posted_event: "COMMENT" });
+    expect(store.approvalWithheld(PR)?.head_sha).toBe(HEAD);
+    expect(count("posting_retry_approval_withheld")).toBe(1);
+    expect(store.getPr(PR)?.state).toBe("tracked");
+  });
+});

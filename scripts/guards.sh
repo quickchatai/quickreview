@@ -400,3 +400,39 @@ con.execute(
 con.commit()
 PY
 }
+
+# ---- the posting-marker read ---------------------------------------
+
+guard_marker_review() { # guard_marker_review <head-sha> <marker> — the ONE bot review carrying the marker at that head (JSON), or none|multiple|unreadable
+  # The read the shell route makes after a review POST that GitHub answered
+  # 5xx (or not at all): did the review land anyway? Every page, the bot's own
+  # identities only (bot_login and <app_slug>[bot]), the exact head — the same
+  # filter src/verdicts.ts postingProof and src/posting-outbox.ts apply. An
+  # unreadable list is `unreadable`, never `none`.
+  local head="${1:-}" marker="${2:-}" bot slug rows
+  bot="$(cfg github bot_login 2>/dev/null || true)"
+  slug="$(cfg github app_slug 2>/dev/null || true)"
+  rows="$(guard_array_pages "/repos/$REPO/pulls/$PR/reviews?per_page=100")"
+  if [[ -z "$rows" ]]; then echo "unreadable"; return 0; fi
+  printf '%s' "$rows" | python3 -c '
+import json, sys
+head, marker, bot, slug = sys.argv[1].lower(), sys.argv[2], sys.argv[3], sys.argv[4]
+try:
+    reviews = json.load(sys.stdin)
+except Exception:
+    print("unreadable"); raise SystemExit(0)
+if not isinstance(reviews, list):
+    print("unreadable"); raise SystemExit(0)
+ids = {i for i in (bot, f"{slug}[bot]" if slug else "") if i}
+hits = [r for r in reviews if isinstance(r, dict)
+        and ((r.get("user") or {}).get("login") or "") in ids
+        and str(r.get("commit_id") or "").lower() == head
+        and marker in str(r.get("body") or "")]
+if len(hits) > 1:
+    print("multiple")
+elif hits:
+    print(json.dumps(hits[0]))
+else:
+    print("none")
+' "$head" "$marker" "$bot" "$slug" 2>/dev/null || echo "unreadable"
+}

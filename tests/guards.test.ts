@@ -894,3 +894,58 @@ describe("guard 5 — the head the review is about must still be the live head",
     expect((await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD))).executed).toBe(true);
   });
 });
+
+// ---- the deferred-delivery intent (postingRetry) ----------------------------
+
+describe("postingRetry — a deferred session review delivered at its original head", () => {
+  const key = `v1:5180:3:${HEAD}`;
+  const retry = (over: Partial<MutationIntent> = {}, body?: string): MutationIntent => ({
+    ...reviewIntent("REQUEST_CHANGES", HEAD, body ?? `Review\n\n<!-- qcr-post:${key} -->`),
+    postingRetry: key,
+    ...over,
+  });
+
+  it("posts at the original commit_id after a push — guard 5 alone is exempt", async () => {
+    const { gate, adapter, executor } = harness();
+    adapter.pr = { ...adapter.pr, head_sha: "cafebabe" };
+    const result = await gate.execute(retry());
+    expect(result.executed).toBe(true);
+    expect(executor).toHaveBeenCalledTimes(1);
+    // The same review without the key is refused, as ever.
+    expect((await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD))).blocked).toBe("head-drift");
+  });
+
+  it("every other guard still binds: merged/closed refuses it", async () => {
+    const { gate, adapter, executor } = harness();
+    adapter.pr = { ...adapter.pr, merged: true };
+    expect((await gate.execute(retry())).blocked).toBe("pr-merged");
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("a human approval at the head softens it to COMMENT, as on any review", async () => {
+    const { gate, adapter, executor } = harness();
+    adapter.reviews = [{ id: 1, user: "carol", state: "APPROVED", commit_id: HEAD }];
+    expect((await gate.execute(retry())).executed).toBe(true);
+    const sent = executor.mock.calls[0]![0] as MutationIntent;
+    expect((sent.body as { event: string }).event).toBe("COMMENT");
+  });
+
+  it("dry-run suppresses it like anything else", async () => {
+    const { gate, executor } = harness({}, true);
+    const result = await gate.execute(retry());
+    expect(result.executed).toBe(false);
+    expect(result.dryRunFile).toBeTruthy();
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a body without the key's marker", retry({}, "Review without a marker")],
+    ["a key naming another head", retry({ postingRetry: `v1:5180:3:${OLD}` })],
+    ["a mechanical purpose", { ...retry(), reviewPurpose: "escalation" as const }],
+    ["another kind", { ...retry(), kind: "create_issue_comment" as const }],
+  ])("admission refuses %s", async (_label, intent) => {
+    const { gate, executor } = harness();
+    await expect(gate.execute(intent)).rejects.toThrow(/postingRetry|reviewPurpose/);
+    expect(executor).not.toHaveBeenCalled();
+  });
+});

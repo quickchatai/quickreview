@@ -79,6 +79,7 @@ import {
   postingMarker,
   readPostingReceipt,
   receiptMatchesVerdict,
+  retrySoftenedApproval,
   type GuardedNoopReceipt,
   type PostingReceipt,
 } from "./posting-receipt.js";
@@ -348,6 +349,9 @@ export interface ReceiptDecision {
  * (standing-review.ts rule 4).
  */
 export function decidedVerdictFromReceipt(receipt: PostingReceipt): ReceiptDecision | null {
+  // The daemon's deferred-posting retry delivered the session's
+  // APPROVE and guard 4 softened it on the gate — the withheld-approval shape.
+  if (retrySoftenedApproval(receipt)) return { verdict: "APPROVE", approval_withheld: true };
   if (
     receipt.intended_event === "REQUEST_CHANGES" &&
     (receipt.actual_event === "REQUEST_CHANGES" || receipt.actual_event === "COMMENT")
@@ -1241,8 +1245,12 @@ export class VerdictWatcher {
      *   - `contradicted`: evidence of a posting that disagrees with the round
      *     (conflicting linkage, several matching reviews, a receipt or review
      *     that does not match the verdict, a no-op record from the other
-     *     mode). */
-    failure?: "unconfirmed" | "ambiguous" | "contradicted";
+     *     mode).
+     *   - `exhausted`: a `deferred` receipt whose daemon-owned
+     *     retry is over without a confirmed review — its window spent, a
+     *     guard refused it, or its handoff is unreadable. The POST was
+     *     attempted, so never a requeue: every path fails it loud. */
+    failure?: "unconfirmed" | "ambiguous" | "contradicted" | "exhausted";
   }> {
     if (!round.posting_key) return { kind: "legacy" };
     const expectedHead = verdict?.head_sha ?? round.posting_key.split(":").slice(3).join(":");
@@ -1267,6 +1275,19 @@ export class VerdictWatcher {
       if ((receipt.mode === "dryrun") === this.deps.cfg.dry_run) noop = receipt;
       else noopModeMismatch = true;
     }
+    // A deferred POST is posting IN FLIGHT for its whole retry
+    // window. The daemon's retry owns it — the marker read included, so this
+    // proof makes no GitHub read of its own that could race the retry's POST
+    // — and no stage limit, deadline or verdict apply may requeue, fail or
+    // kill the round meanwhile (a rerun would post a second review).
+    if (
+      receiptIdentityOk &&
+      receipt &&
+      receipt.status === "deferred" &&
+      !this.deps.cfg.dry_run &&
+      pendingPosting(this.postingReceiptDir(), round.pr, round.round_no, round.posting_key)
+    )
+      return { kind: "waiting" };
     if (receiptIdentityOk && receipt && receipt.status !== "skipped") {
       if (receipt.status === "confirmed" && (!verdict || receiptMatchesVerdict(receipt, verdict))) {
         const persisted = this.deps.store.confirmRoundPosting(round.id, {
@@ -1427,6 +1448,17 @@ export class VerdictWatcher {
       pendingPosting(this.postingReceiptDir(), round.pr, round.round_no, round.posting_key)
     )
       return { kind: "waiting" };
+    // A deferred POST whose retry is over (the outbox job is failed or gone)
+    // and whose marker the read above did not find: attempted, never
+    // confirmed. Loud on every path — never a requeue.
+    if (receiptIdentityOk && receipt && receipt.status === "deferred") {
+      const ledger = this.deps.store.postingRetry(round.posting_key);
+      return {
+        kind: "failed",
+        detail: `deferred posting for ${round.posting_key} was not delivered${ledger ? ` (${ledger.status} after ${ledger.attempts} attempt(s)${ledger.last_error ? `: ${ledger.last_error}` : ""})` : " (no retry on record)"}`,
+        failure: "exhausted",
+      };
+    }
 
     const origin =
       receiptIdentityOk && receipt && receipt.status !== "skipped"
@@ -1790,6 +1822,25 @@ export class VerdictWatcher {
       if (proof.kind === "failed") {
         await this.failPostingProof(round, proof.detail ?? "posting receipt invalid");
         return "failed";
+      }
+      // The daemon's retry delivered this round's APPROVE after the
+      // session finished, and guard 4 softened it to a COMMENT on the gate.
+      // The posted review withheld the approval, so the verdict does too —
+      // what the session would have written had the softening happened
+      // under it; the withheld mark then re-queues on green CI (cigate.ts).
+      if (
+        proof.kind === "confirmed" &&
+        proof.receipt &&
+        retrySoftenedApproval(proof.receipt) &&
+        v.verdict === "APPROVE" &&
+        v.approval_withheld !== true
+      ) {
+        v = { ...v, approval_withheld: true };
+        store.logEvent("posting_retry_approval_withheld", v.pr, {
+          round_no: v.round_no,
+          posting_key: round.posting_key,
+          gh_review_id: proof.receipt.gh_review_id ?? null,
+        });
       }
       if (proof.kind === "legacy")
         store.logEvent("posting_receipt_legacy_unknown", v.pr, { round_no: v.round_no });
@@ -3344,7 +3395,10 @@ export class VerdictWatcher {
       }
       return "retryable";
     }
-    if (proof.kind === "failed" && proof.failure === "contradicted") {
+    if (
+      proof.kind === "failed" &&
+      (proof.failure === "contradicted" || proof.failure === "exhausted")
+    ) {
       // Evidence of a posting that disagrees with the round (conflicting
       // linkage, several matching reviews): a requeue could only add another.
       // Loud, as the verdict and deadline paths are on the same evidence.

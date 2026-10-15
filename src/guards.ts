@@ -264,8 +264,13 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       // case-insensitively, matching the shell twin (guards.sh uses
       // `${live,,}`/`${expected,,}`): git shas are hex, and an LLM-written
       // commit_id with drifted case must never fake a "moved" head.
+      // A deferred session review the daemon delivers
+      // (`intent.postingRetry`) posts at its ORIGINAL commit_id even when the
+      // PR has moved on; admission pins the key to
+      // that commit_id and marker.
       if (
         deps.guards.refuse_on_head_drift &&
+        intent.postingRetry === undefined &&
         body.commit_id &&
         ref &&
         ref.head_sha.toLowerCase() !== body.commit_id.toLowerCase()

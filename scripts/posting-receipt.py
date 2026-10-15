@@ -53,7 +53,9 @@ def check(path: Path, key: str) -> None:
         print(value.get("status") or "invalid")
 
 
-ATTEMPTED = ("prepared", "confirmed", "dryrun")
+# `deferred` is an attempted POST too: GitHub answered 5xx (or nothing), the
+# marker read found no review, and delivery was handed to the daemon.
+ATTEMPTED = ("prepared", "confirmed", "dryrun", "deferred")
 
 
 def skip(path: Path, key: str, raw_pr: str, raw_round: str, head: str, intended: str, mode: str, raw_mark: str) -> None:
@@ -154,6 +156,50 @@ def enqueue(path: Path, key: str, raw_pr: str, raw_round: str, head: str, event:
                   "created_at": now(), "next_attempt_at": now()})
 
 
+def defer(path: Path, key: str, raw_pr: str, raw_round: str, head: str, intended: str,
+          actual: str, payload: str, reason: str) -> None:
+    """Hand an unanswered POST to the daemon.
+
+    Written only over this attempt's own `prepared` receipt — same key, same
+    head, same payload bytes — after GitHub answered 5xx or not at all AND a
+    read of the PR's reviews found no review carrying this round's marker (or
+    could not be read; the daemon reads it again before every attempt). The
+    outbox job beside the receipt already holds the exact payload (`prepare`
+    copied it there); it is marked pending with the first failure's time, and
+    the daemon's retry schedule (state.db `posting_retries`) runs from that.
+    Idempotent for a receipt already deferred under the same identity.
+    """
+    value = base(path)
+    if not value or value.get("posting_key") != key:
+        raise SystemExit("posting-receipt: no receipt for this posting key to defer")
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+    if str(value.get("head_sha") or "").lower() != head.lower() or value.get("payload_sha256") != digest:
+        raise SystemExit("posting-receipt: deferral does not match the prepared attempt")
+    status = value.get("status")
+    if status not in ("prepared", "deferred"):
+        raise SystemExit(f"posting-receipt: refusing to defer a {status} receipt")
+    if intended not in ("APPROVE", "REQUEST_CHANGES", "COMMENT") or actual not in ("APPROVE", "REQUEST_CHANGES", "COMMENT"):
+        raise SystemExit("posting-receipt: bad event")
+    queued_path = path.with_name(path.stem + ".outbox.json")
+    queued = base(queued_path)
+    if queued.get("posting_key") != key:
+        raise SystemExit("posting-receipt: no delivery snapshot for this posting key — cannot hand off")
+    first = value.get("deferred_at") or now()
+    queued["payload"] = json.loads(payload)
+    queued["payload_sha256"] = hashlib.sha256(json.dumps(queued["payload"], separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    queued["status"] = "pending"
+    queued["deferred_at"] = first
+    queued["next_attempt_at"] = first
+    queued["last_error"] = reason
+    queued.pop("negative_at", None)
+    # The job first, then the receipt: a deferred receipt always has its
+    # handoff on disk.
+    atomic(queued_path, queued)
+    value.update({"status": "deferred", "deferred_at": first, "defer_reason": reason,
+                  "intended_event": intended, "actual_event": actual})
+    atomic(path, value)
+
+
 def main() -> None:
     if len(sys.argv) == 4 and sys.argv[1] == "owner":
         pid = int(sys.argv[3])
@@ -170,6 +216,11 @@ def main() -> None:
         if len(sys.argv) != 4:
             raise SystemExit("usage: posting-receipt.py check <path> <key>")
         check(Path(sys.argv[2]), sys.argv[3])
+        return
+    if len(sys.argv) >= 2 and sys.argv[1] == "defer":
+        if len(sys.argv) != 11:
+            raise SystemExit("usage: posting-receipt.py defer <path> <key> <pr> <round> <head> <intended> <actual> <payload-json> <reason>")
+        defer(Path(sys.argv[2]), *sys.argv[3:11])
         return
     if len(sys.argv) >= 2 and sys.argv[1] == "skip":
         if len(sys.argv) != 10:

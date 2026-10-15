@@ -4,12 +4,16 @@ import type { ReviewedHeadRow } from "./state.js";
 import { snapshotMark, standingReview, type StandingMarkSnapshot } from "./standing-review.js";
 import type { VerdictFile } from "./types.js";
 
-export type PostingReceiptStatus = "prepared" | "confirmed" | "dryrun";
+export type PostingReceiptStatus = "prepared" | "confirmed" | "dryrun" | "deferred";
 
 /** A receipt for a review the shell route attempted to post:
  * `prepared` brackets the ambiguous transport window, `confirmed` carries
  * GitHub's returned identity, `dryrun` records the intent that was written to
- * `state/dryrun/` instead of sent. */
+ * `state/dryrun/` instead of sent. `deferred`: GitHub answered the
+ * POST with a 5xx or not at all, a read of the PR's reviews found no review
+ * carrying the marker, and the script handed the exact payload (the outbox
+ * job beside the receipt) to the daemon, which retries it through the gate on
+ * a bounded schedule. Posting in flight — never a reason to requeue. */
 export interface PostingReceipt {
   version: 1;
   posting_key: string;
@@ -26,6 +30,15 @@ export interface PostingReceipt {
   gh_review_id?: number;
   gh_commit_id?: string;
   gh_state?: string;
+  /** `deferred` only: when the script handed the POST to the daemon — the
+   * first failure, from which the retry schedule runs. */
+  deferred_at?: string;
+  defer_reason?: string;
+  /** Set on a receipt the daemon's deferred-posting retry confirmed
+   *. The session was gone when the gate's guards ran, so a guard 4
+   * softening (APPROVE posted as a COMMENT, approval withheld for red CI) is
+   * something the verdict file cannot know: see `retrySoftenedApproval`. */
+  delivered_by?: "daemon_retry";
   /** In memory only, never written by the posting scripts: the
    * daemon SYNTHESISED this receipt from a bot review carrying the round's
    * marker, because the shell never persisted its own. `intended_event` is
@@ -185,7 +198,12 @@ export function parsePostingReceipt(raw: string): PostingOutcome | undefined {
     if (
       !event(value.intended_event) ||
       !event(value.actual_event) ||
-      (value.status !== "prepared" && value.status !== "confirmed" && value.status !== "dryrun") ||
+      (value.status !== "prepared" &&
+        value.status !== "confirmed" &&
+        value.status !== "dryrun" &&
+        value.status !== "deferred") ||
+      (value.status === "deferred" && !isoDate(value.deferred_at)) ||
+      (value.delivered_by !== undefined && value.delivered_by !== "daemon_retry") ||
       typeof value.payload_sha256 !== "string" ||
       !/^[a-f0-9]{64}$/.test(value.payload_sha256) ||
       !isoDate(value.prepared_at)
@@ -214,6 +232,20 @@ export function parsePostingReceipt(raw: string): PostingOutcome | undefined {
   }
 }
 
+/** An approval the daemon's deferred-posting retry delivered as a COMMENT:
+ * guard 4 (no green CI at the head) softened it on the gate, as it softens
+ * any approval there. The session that wrote the verdict file had finished
+ * long before, so its verdict says APPROVE without `approval_withheld` — and
+ * the receipt is the evidence that the approval was withheld. */
+export function retrySoftenedApproval(receipt: PostingReceipt): boolean {
+  return (
+    receipt.delivered_by === "daemon_retry" &&
+    receipt.status === "confirmed" &&
+    receipt.intended_event === "APPROVE" &&
+    receipt.actual_event === "COMMENT"
+  );
+}
+
 export function receiptMatchesVerdict(receipt: PostingReceipt, verdict: VerdictFile): boolean {
   if (
     receipt.pr !== verdict.pr ||
@@ -223,6 +255,7 @@ export function receiptMatchesVerdict(receipt: PostingReceipt, verdict: VerdictF
     return false;
   if (verdict.verdict === "REQUEST_CHANGES")
     return receipt.actual_event === "REQUEST_CHANGES" || receipt.actual_event === "COMMENT";
+  if (verdict.verdict === "APPROVE" && retrySoftenedApproval(receipt)) return true;
   if (verdict.verdict === "APPROVE")
     return verdict.approval_withheld === true
       ? receipt.actual_event === "COMMENT"

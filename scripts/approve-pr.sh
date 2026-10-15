@@ -118,6 +118,12 @@ if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
       fi
       ;;
     prepared) die "posting outcome is still unknown for $POSTING_KEY — refusing a duplicate POST; let the daemon reconcile the marker" ;;
+    deferred)
+      # An earlier attempt got no answer from GitHub and handed this
+      # exact approval to the daemon, which owns its delivery now. Never a
+      # second POST from here; the triggers were consumed at dispatch.
+      echo "posting for $POSTING_KEY is deferred to the daemon (GitHub did not answer an earlier attempt); it delivers this approval itself — nothing to do, finish the round normally"
+      exit 0 ;;
     none) : ;;
     *) die "invalid or mismatched posting receipt for $POSTING_KEY" ;;
   esac
@@ -158,8 +164,13 @@ token() {
 }
 
 CALL_RESPONSE=""
-call() { # call <method> <path> <body-json-or-empty> <note>
-  local out status
+CALL_STATUS=""
+# call <method> <path> <body-json-or-empty> <note> [soft]
+# With `soft`, a 5xx or no response (curl's 000) returns 75 instead of dying —
+# used for the approval POST only, whose caller then asks GitHub whether it
+# landed. Every other status keeps its old meaning.
+call() {
+  local out status soft="${5:-}"
   out="$(mktemp)"
   if [[ -n "$3" ]]; then
     status="$(curl --connect-timeout 10 --max-time 60 -sS -X "$1" -o "$out" -w '%{http_code}' \
@@ -167,26 +178,33 @@ call() { # call <method> <path> <body-json-or-empty> <note>
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       -H "Content-Type: application/json" \
-      -d "$3" "$API$2")"
+      -d "$3" "$API$2" || true)"
   else
     status="$(curl --connect-timeout 10 --max-time 60 -sS -X "$1" -o "$out" -w '%{http_code}' \
       -H "Authorization: Bearer $(token)" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
-      "$API$2")"
+      "$API$2" || true)"
   fi
+  [[ "$status" =~ ^[0-9]{3}$ ]] || status="000"
   if [[ "$status" == "401" ]]; then          # stale installation token: re-mint once
     TOKEN="$("$ROOT/scripts/mint-token.sh" --refresh)"
     status="$(curl --connect-timeout 10 --max-time 60 -sS -X "$1" -o "$out" -w '%{http_code}' \
       -H "Authorization: Bearer $TOKEN" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
-      ${3:+-H "Content-Type: application/json"} ${3:+-d "$3"} "$API$2")"
+      ${3:+-H "Content-Type: application/json"} ${3:+-d "$3"} "$API$2" || true)"
+    [[ "$status" =~ ^[0-9]{3}$ ]] || status="000"
   fi
+  CALL_STATUS="$status"
   echo "$1 $2 -> $status  ($4)"
   case "$status" in
     2*) CALL_RESPONSE="$(cat "$out")"; rm -f "$out" ;;
     404) echo "  not present, treating as already cleared: $(head -c 200 "$out")"; rm -f "$out" ;;
+    5*|000)
+      echo "  $(head -c 300 "$out" 2>/dev/null)" >&2; rm -f "$out"
+      [[ -n "$soft" ]] && return 75
+      die "$1 $2 failed with $status" ;;
     *)   echo "  $(head -c 300 "$out")" >&2; rm -f "$out"; die "$1 $2 failed with $status" ;;
   esac
 }
@@ -276,7 +294,34 @@ fi
 if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
   python3 "$ROOT/scripts/posting-receipt.py" prepare "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$GUARD_HEAD_SHA" "APPROVE" "APPROVE" "$REVIEW_BODY_JSON"
 fi
-if [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+if [[ "$POST_ALREADY_CONFIRMED" == "0" && "$LIVE" == "1" && -n "$POSTING_RECEIPT" ]]; then
+  POST_RC=0
+  call POST "/repos/$REPO/pulls/$PR/reviews" "$REVIEW_BODY_JSON" "approve #$PR" soft || POST_RC=$?
+  if [[ "$POST_RC" == "75" ]]; then
+    # GitHub answered 5xx or nothing. Did the approval land anyway?
+    FOUND="$(guard_marker_review "$GUARD_HEAD_SHA" "$POSTING_MARKER")"
+    case "$FOUND" in
+      multiple)
+        die "GitHub answered $CALL_STATUS and more than one bot review carries $POSTING_KEY — refusing to guess; the daemon reconciles this loud" ;;
+      none|unreadable|"")
+        # Hand it to the daemon: the outbox job holds the exact payload, the
+        # receipt becomes `deferred`, and the daemon retries through the gate
+        # (marker read and posting guards before every attempt). Nothing is
+        # stamped — no approval exists yet — and the trigger cleanup below is
+        # skipped: dispatch already consumed both triggers.
+        python3 "$ROOT/scripts/posting-receipt.py" defer "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$GUARD_HEAD_SHA" "APPROVE" "APPROVE" "$REVIEW_BODY_JSON" "GitHub answered $CALL_STATUS; marker read: ${FOUND:-unreadable}"
+        echo "posting deferred: GitHub answered $CALL_STATUS to the approval POST and the approval is not on GitHub (marker read: ${FOUND:-unreadable})."
+        echo "The daemon now owns its delivery: it retries this exact approval through the gate on its schedule and confirms it from GitHub before every attempt."
+        echo "Do NOT run the posting script again for this round — finish the round normally (verdict file, ledger)."
+        exit 0 ;;
+      *)
+        CALL_RESPONSE="$FOUND"
+        echo "GitHub answered $CALL_STATUS but the approval landed (marker found) — confirming the receipt from GitHub" ;;
+    esac
+  elif [[ "$POST_RC" != "0" ]]; then
+    die "approval POST failed"
+  fi
+elif [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
   do_mutation create_review POST "/repos/$REPO/pulls/$PR/reviews" "$REVIEW_BODY_JSON" \
     "approve #$PR"
 else

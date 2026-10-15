@@ -1070,16 +1070,17 @@ export class GitHubAdapter {
       body: string;
       comments?: unknown[];
     },
-    options?: { purpose?: "migration_precheck" | "escalation" },
+    options?: { purpose?: "migration_precheck" | "escalation"; postingRetry?: string },
   ): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_review",
       method: "POST",
       path: `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews`,
       body: payload,
-      note: `post ${payload.event} review on #${n}`,
+      note: `post ${payload.event} review on #${n}${options?.postingRetry ? " (deferred delivery)" : ""}`,
       pr: n,
       reviewPurpose: options?.purpose,
+      ...(options?.postingRetry !== undefined ? { postingRetry: options.postingRetry } : {}),
     });
   }
 

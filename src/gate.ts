@@ -136,6 +136,16 @@ export interface MutationIntent {
    * substantive review. It never enters the GitHub body; posting guards use
    * it only to keep mechanical pre-check output from claiming the head. */
   readonly reviewPurpose?: ReviewPurpose;
+  /** The posting key of a
+   * deferred SESSION review the daemon is delivering after GitHub failed to
+   * answer the session's own POST. It buys exactly one exemption — guard 5
+   * (head drift): the review is posted at its ORIGINAL `commit_id` even if
+   * the PR has moved on since. Every other guard binds (merged/closed, CI,
+   * human approval, no-new-evidence) and dry-run suppresses it like anything
+   * else. Admission confines it to a substantive `create_review` whose body
+   * carries this key's marker and whose `commit_id` is this key's head
+   * (`postingRetryCheck`). It never enters the GitHub body. */
+  readonly postingRetry?: string;
   /** Execute even in dry-run. Only `supersede_own_review` may set this: the
    * session-side posting leakage is accepted, so the cleanup of that leakage
    * must be real too. Noise-reducing only. */
@@ -307,6 +317,28 @@ function reviewPurposeCheck(intent: MutationIntent): void {
   }
 }
 
+/** See MutationIntent.postingRetry: a substantive create_review carrying
+ * the key's own marker at the key's own head, or it is refused. */
+function postingRetryCheck(intent: MutationIntent): void {
+  if (intent.postingRetry === undefined) return;
+  const key = intent.postingRetry;
+  const body = (intent.body ?? {}) as { commit_id?: unknown; body?: unknown };
+  const m = typeof key === "string" ? /^v1:\d+:\d+:([0-9a-f]+)$/.exec(key) : null;
+  if (
+    intent.kind !== "create_review" ||
+    intent.reviewPurpose !== undefined ||
+    !m ||
+    typeof body.commit_id !== "string" ||
+    body.commit_id.toLowerCase() !== m[1] ||
+    typeof body.body !== "string" ||
+    !body.body.includes(`<!-- qcr-post:${key} -->`)
+  ) {
+    throw new Error(
+      `gate: postingRetry is only allowed on a substantive create_review at its key's head carrying its key's marker (${intent.kind})`,
+    );
+  }
+}
+
 /**
  * Admission: what the gate demands of ANY intent before it may execute or be
  * recorded. It runs on the entry `snapshot` of the caller's intent — never on
@@ -353,6 +385,7 @@ function admit(intent: MutationIntent, perform: GitPerformer | undefined): void 
   // it buys two exemptions, so it is confined to the one shape those
   // exemptions are safe for.
   reviewPurposeCheck(intent);
+  postingRetryCheck(intent);
 }
 
 let seq = 0;

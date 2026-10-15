@@ -117,6 +117,12 @@ if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
       fi
       ;;
     prepared) die "posting outcome is still unknown for $POSTING_KEY — refusing a duplicate POST; let the daemon reconcile the marker" ;;
+    deferred)
+      # An earlier attempt got no answer from GitHub and handed this
+      # exact review to the daemon, which owns its delivery now. Never a
+      # second POST from here.
+      echo "posting for $POSTING_KEY is deferred to the daemon (GitHub did not answer an earlier attempt); it delivers this review itself — nothing to do, finish the round normally"
+      exit 0 ;;
     skipped)
       # This exact round was already refused by guard 2 and the
       # refusal is recorded. Terminal for the key — nothing was posted and
@@ -253,33 +259,81 @@ PY
 }
 
 CALL_RESPONSE=""
-call() { # call <method> <path> <body-json> <note>
-  local out status
+CALL_STATUS=""
+# call <method> <path> <body-json> <note> [soft]
+# A 2xx returns with CALL_RESPONSE set. With `soft`, a 5xx or no response at
+# all (curl's 000: connect failure, timeout, reset) returns 75 instead of
+# dying — the caller then asks GitHub whether the review landed.
+# Every other status dies, as before.
+call() {
+  local out status soft="${5:-}"
   out="$(mktemp)"
   status="$(curl --connect-timeout 10 --max-time 60 -sS -X "$1" -o "$out" -w '%{http_code}' \
     -H "Authorization: Bearer $("$ROOT/scripts/mint-token.sh")" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
-    -H "Content-Type: application/json" -d "$3" "$API$2")"
+    -H "Content-Type: application/json" -d "$3" "$API$2" || true)"
+  [[ "$status" =~ ^[0-9]{3}$ ]] || status="000"
   if [[ "$status" == "401" ]]; then          # stale installation token: re-mint once
     status="$(curl --connect-timeout 10 --max-time 60 -sS -X "$1" -o "$out" -w '%{http_code}' \
       -H "Authorization: Bearer $("$ROOT/scripts/mint-token.sh" --refresh)" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
-      -H "Content-Type: application/json" -d "$3" "$API$2")"
+      -H "Content-Type: application/json" -d "$3" "$API$2" || true)"
+    [[ "$status" =~ ^[0-9]{3}$ ]] || status="000"
   fi
+  CALL_STATUS="$status"
   echo "$1 $2 -> $status  ($4)"
   case "$status" in
     2*) CALL_RESPONSE="$(cat "$out")"; rm -f "$out" ;;
+    5*|000)
+      echo "  $(head -c 300 "$out" 2>/dev/null)" >&2; rm -f "$out"
+      [[ -n "$soft" ]] && return 75
+      die "$1 $2 failed with $status" ;;
     *)  echo "  $(head -c 300 "$out")" >&2; rm -f "$out"; die "$1 $2 failed with $status" ;;
+  esac
+}
+
+# GitHub answered the review POST with a 5xx or not at all. The
+# review may still have landed, so GitHub is asked first: a bot review
+# carrying this round's marker at this head means it did — confirm the
+# receipt from it, exactly as from a 2xx. Otherwise the POST is handed to the
+# daemon: the outbox job beside the receipt already holds the exact payload,
+# the receipt becomes `deferred`, and the daemon retries it through the ONE
+# MutationGate on its schedule (state.db posting_retries), reading the marker
+# again before every attempt. The script then exits 0 so the session finishes
+# its round normally — and it stamps nothing: no review exists yet.
+handoff_unanswered_post() { # handoff_unanswered_post <intended> <actual> <payload>
+  local intended="$1" actual="$2" payload="$3" found
+  found="$(guard_marker_review "$HEAD_SHA" "$POSTING_MARKER")"
+  case "$found" in
+    multiple)
+      die "GitHub answered $CALL_STATUS and more than one bot review carries $POSTING_KEY — refusing to guess; the daemon reconciles this loud" ;;
+    none|unreadable|"")
+      python3 "$ROOT/scripts/posting-receipt.py" defer "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$HEAD_SHA" "$intended" "$actual" "$payload" "GitHub answered $CALL_STATUS; marker read: ${found:-unreadable}"
+      echo "posting deferred: GitHub answered $CALL_STATUS to the review POST and the review is not on GitHub (marker read: ${found:-unreadable})."
+      echo "The daemon now owns its delivery: it retries this exact review through the gate on its schedule and confirms it from GitHub before every attempt."
+      echo "Do NOT run the posting script again for this round — finish the round normally (verdict file, ledger)."
+      exit 0 ;;
+    *)
+      CALL_RESPONSE="$found"
+      echo "GitHub answered $CALL_STATUS but the review landed (marker found) — confirming the receipt from GitHub" ;;
   esac
 }
 
 NOTE="post $EVENT review on #$PR"
 if [[ -n "$DOWNGRADE_NOTE" ]]; then NOTE="$NOTE (downgraded: @$APPROVER approved this head)"; fi
 if [[ "$LIVE" == "1" ]]; then
-  if [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
-    call POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE"
+  if [[ "$POST_ALREADY_CONFIRMED" == "0" && -n "$POSTING_RECEIPT" ]]; then
+    POST_RC=0
+    call POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE" soft || POST_RC=$?
+    if [[ "$POST_RC" == "75" ]]; then
+      handoff_unanswered_post "$INTENDED_EVENT" "$EVENT" "$PAYLOAD"
+    elif [[ "$POST_RC" != "0" ]]; then
+      die "review POST failed"
+    fi
+  elif [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+    call POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE"   # legacy unkeyed: no receipt, no handoff
   else
     echo "posting receipt already confirmed for $POSTING_KEY — skipping duplicate review"
   fi

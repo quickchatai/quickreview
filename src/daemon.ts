@@ -16,6 +16,8 @@ import {
   DEFAULT_ROUND_PASSES_MAX_MIN,
   DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
   DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
+  DEFAULT_POSTING_RETRY_OFFSETS_MIN,
+  DEFAULT_POSTING_RETRY_WINDOW_MIN,
   loadConfig,
   sandboxRoot,
   type Config,
@@ -66,7 +68,12 @@ import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
 import { applyInterpretation, createWebhookServer, type Interpretation } from "./webhook.js";
 import { wakeOrHold } from "./wakes.js";
 import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
-import { PostingOutbox, readPostingJob, type PostingDeliveryAdapter } from "./posting-outbox.js";
+import {
+  PostingOutbox,
+  readPostingJob,
+  type PostingDeliveryAdapter,
+  type PostingJob,
+} from "./posting-outbox.js";
 
 // Partial<RecheckAdapter>: the recheck's two extra reads (compare, files) are a
 // seam, not a requirement — a daemon wired without them simply never rechecks.
@@ -459,6 +466,44 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           );
         },
         ...(deps.now ? { now: deps.now } : {}),
+        ...(deps.postingDelivery.createDeferredReview
+          ? {
+              deferred: {
+                ledger: store,
+                offsetsMs: (
+                  cfg.daemon.posting_retry_offsets_min ?? DEFAULT_POSTING_RETRY_OFFSETS_MIN
+                ).map((m) => m * 60_000),
+                windowMs:
+                  (cfg.daemon.posting_retry_window_min ?? DEFAULT_POSTING_RETRY_WINDOW_MIN) *
+                  60_000,
+                deliver: (pr: number, payload: PostingJob["payload"], key: string) =>
+                  deps.postingDelivery!.createDeferredReview!(pr, payload, key),
+                // A new push does not end the debt (the review posts at its
+                // original commit_id); a cancelled round — an operator's `u`
+                // — does.
+                owed: (job: PostingJob) => {
+                  const round = store.roundsFor(job.pr).find((r) => r.round_no === job.round_no);
+                  return (
+                    store.getPr(job.pr)?.state !== "closed" &&
+                    round?.status === "running" &&
+                    round.posting_key === job.posting_key
+                  );
+                },
+                // The verdict watcher's posting proof now reads `exhausted`
+                // and fails the round loud on whichever path reaches it first
+                // (verdict sweep, stage limit, deadline): the FAILED_LOUD
+                // hold, its review_failed_loud wake and status.json. This
+                // row says why, at once.
+                onExhausted: (job: PostingJob, detail: string) =>
+                  store.logAnomaly(
+                    "posting_retry_exhausted",
+                    job.pr,
+                    job.round_no,
+                    `deferred review posting ${job.posting_key} was not delivered: ${detail}`,
+                  ),
+              },
+            }
+          : {}),
         log: (message, job) => {
           log(`#${job.pr} round ${job.round_no}: ${message}`);
           store.logEvent("posting_delivery", job.pr, {
@@ -954,6 +999,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
               attempts: job.attempts,
               next_attempt_at: job.next_attempt_at,
               ...(job.last_error ? { last_error: job.last_error } : {}),
+              ...(job.deferred_at ? { deferred_since: job.deferred_at } : {}),
             };
         }
       writeStatusJson(stateDir, snapshot);

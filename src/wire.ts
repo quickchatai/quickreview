@@ -814,6 +814,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         return adapter.createReview(pr, payload);
       },
       listReviewsFull: (pr) => adapter.listReviewsFull(pr),
+      // The deferred-posting retry: straight through the gate, whose guards
+      // bind as on any review (guard 4 softens a red-CI approval to a
+      // COMMENT there); only guard 5 is exempt, via `postingRetry`.
+      createDeferredReview: (pr, payload, postingKey) =>
+        adapter.createReview(pr, payload, { postingRetry: postingKey }),
     },
     hooks,
     renderPrompt,

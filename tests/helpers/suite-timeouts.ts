@@ -71,6 +71,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/fences-provenance.test.ts",
   "tests/guards-shell-cigate.test.ts",
   "tests/guards-shell-closed.test.ts",
+  "tests/guards-shell-deferred.test.ts",
   "tests/guards-shell-drift.test.ts",
   "tests/guards-shell-noop.test.ts",
   "tests/guards-shell-parity.test.ts",

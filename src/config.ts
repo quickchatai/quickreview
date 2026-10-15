@@ -1807,6 +1807,16 @@ export interface Config {
      * DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN. */
     follow_up_sweep_extra_min?: number;
     posting_receipt_grace_s?: number;
+    /** A review POST GitHub answered 5xx (or not at all) is handed
+     * to the daemon as a `deferred` receipt and retried at these offsets, in
+     * minutes from the first failure — one attempt per entry, each through
+     * the MutationGate after a marker read. Readers default to
+     * DEFAULT_POSTING_RETRY_OFFSETS_MIN. */
+    posting_retry_offsets_min?: number[];
+    /** Every retry lies inside this many minutes of the first failure; past
+     * it, nothing is POSTed (one last marker read) and the PR goes
+     * FAILED_LOUD. Readers default to DEFAULT_POSTING_RETRY_WINDOW_MIN. */
+    posting_retry_window_min?: number;
     session_command_unknown_grace_s?: number;
     session_command_unknown_max_checks?: number;
     session_command_max_start_retries?: number;
@@ -2387,6 +2397,10 @@ export const DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN = 15;
 /** `[daemon] follow_up_sweep_extra_min`'s default. */
 export const DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN = 20;
 export const DEFAULT_POSTING_RECEIPT_GRACE_S = 120;
+/** Three retries, exponential,
+ * all inside an hour of the first failure. */
+export const DEFAULT_POSTING_RETRY_OFFSETS_MIN: readonly number[] = [4, 12, 36];
+export const DEFAULT_POSTING_RETRY_WINDOW_MIN = 60;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S = 60;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS = 1;
 export const DEFAULT_SESSION_COMMAND_MAX_START_RETRIES = 2;
@@ -2537,6 +2551,8 @@ export function parseConfig(toml: string): Config {
       round_posted_tail_grace_min: DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN,
       follow_up_sweep_extra_min: DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
       posting_receipt_grace_s: DEFAULT_POSTING_RECEIPT_GRACE_S,
+      posting_retry_offsets_min: [...DEFAULT_POSTING_RETRY_OFFSETS_MIN],
+      posting_retry_window_min: DEFAULT_POSTING_RETRY_WINDOW_MIN,
       session_command_unknown_grace_s: DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
       session_command_unknown_max_checks: DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
       session_command_max_start_retries: DEFAULT_SESSION_COMMAND_MAX_START_RETRIES,
@@ -2760,6 +2776,25 @@ export function parseConfig(toml: string): Config {
   const sweepExtra = cfg.daemon.follow_up_sweep_extra_min ?? DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN;
   if (!(typeof sweepExtra === "number" && Number.isFinite(sweepExtra) && sweepExtra >= 0)) {
     throw new Error("config.toml: require follow_up_sweep_extra_min >= 0");
+  }
+  const retryWindow = cfg.daemon.posting_retry_window_min ?? DEFAULT_POSTING_RETRY_WINDOW_MIN;
+  const retryOffsets = cfg.daemon.posting_retry_offsets_min ?? DEFAULT_POSTING_RETRY_OFFSETS_MIN;
+  if (
+    !(typeof retryWindow === "number" && Number.isFinite(retryWindow) && retryWindow > 0) ||
+    !Array.isArray(retryOffsets) ||
+    retryOffsets.length === 0 ||
+    !retryOffsets.every(
+      (m, i) =>
+        typeof m === "number" &&
+        Number.isFinite(m) &&
+        m > 0 &&
+        m < retryWindow &&
+        (i === 0 || m > (retryOffsets[i - 1] as number)),
+    )
+  ) {
+    throw new Error(
+      "config.toml: require posting_retry_offsets_min = a non-empty, strictly increasing list of minutes, each > 0 and < posting_retry_window_min (> 0)",
+    );
   }
   const compactionMax = cfg.daemon.session_compaction_max_s ?? DEFAULT_SESSION_COMPACTION_MAX_S;
   if (!(typeof compactionMax === "number" && Number.isFinite(compactionMax) && compactionMax > 0)) {

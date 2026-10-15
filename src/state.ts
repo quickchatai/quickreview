@@ -1103,6 +1103,26 @@ CREATE TABLE IF NOT EXISTS archived_event_counts (
   n    INTEGER NOT NULL,
   PRIMARY KEY (kind, day)
 );
+-- A session review POST GitHub answered 5xx (or not at all), handed
+-- to the daemon as a deferred posting receipt. One row per posting key: the
+-- retry schedule runs from first_failed_at (config [daemon]
+-- posting_retry_offsets_min, inside posting_retry_window_min); attempts is
+-- written BEFORE each attempt's first GitHub call, so a restart mid-attempt
+-- resumes at the next offset and never repeats one. The exact payload lives
+-- in the outbox job beside the receipt (state/posting-receipts/). status:
+-- pending | confirmed | exhausted | abandoned.
+CREATE TABLE IF NOT EXISTS posting_retries (
+  posting_key     TEXT PRIMARY KEY,
+  pr              INTEGER NOT NULL,
+  round_no        INTEGER NOT NULL,
+  head_sha        TEXT NOT NULL,
+  first_failed_at TEXT NOT NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at TEXT,
+  status          TEXT NOT NULL DEFAULT 'pending',
+  last_error      TEXT,
+  updated_at      TEXT NOT NULL
+);
 `;
 
 /** One row of the [feedback] tuning-loop ledger. */
@@ -1222,6 +1242,20 @@ export interface ReviewedHeadRow {
  * else. Read by the `ci_completed` retry (cigate.ts) and by dispatch, which
  * treats a standing withholding as new evidence at the same head.
  */
+/** One deferred review posting the daemon owes. */
+export interface PostingRetryRow {
+  posting_key: string;
+  pr: number;
+  round_no: number;
+  head_sha: string;
+  first_failed_at: string;
+  attempts: number;
+  last_attempt_at: string | null;
+  status: "pending" | "confirmed" | "exhausted" | "abandoned";
+  last_error: string | null;
+  updated_at: string;
+}
+
 export interface ApprovalWithheldRow {
   pr: number;
   head_sha: string;
@@ -3972,6 +4006,80 @@ export class StateStore {
     this.db.prepare("DELETE FROM approval_withheld WHERE pr = ?").run(pr);
   }
 
+  // ---- deferred review postings -----------------------------
+
+  /** Adopt a deferred posting receipt into the retry ledger: insert once
+   * (the first failure is the receipt's `deferred_at`), then return the row
+   * as it stands — a later adopt never resets a schedule. */
+  adoptPostingRetry(input: {
+    posting_key: string;
+    pr: number;
+    round_no: number;
+    head_sha: string;
+    first_failed_at: string;
+    now: string;
+  }): PostingRetryRow {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO posting_retries
+           (posting_key, pr, round_no, head_sha, first_failed_at, attempts, status, updated_at)
+         VALUES (@posting_key, @pr, @round_no, @head_sha, @first_failed_at, 0, 'pending', @now)`,
+      )
+      .run(input);
+    return this.postingRetry(input.posting_key)!;
+  }
+
+  postingRetry(postingKey: string): PostingRetryRow | undefined {
+    return this.db.prepare("SELECT * FROM posting_retries WHERE posting_key = ?").get(postingKey) as
+      PostingRetryRow | undefined;
+  }
+
+  /** Count an attempt BEFORE its first GitHub call: a crash inside it
+   * resumes at the next offset, never repeats this one. Only a pending row
+   * whose count is still `expected` moves (a lost race changes nothing). */
+  beginPostingRetryAttempt(postingKey: string, expected: number, now: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE posting_retries SET attempts = attempts + 1, last_attempt_at = @now, updated_at = @now
+           WHERE posting_key = @posting_key AND status = 'pending' AND attempts = @expected`,
+        )
+        .run({ posting_key: postingKey, expected, now }).changes === 1
+    );
+  }
+
+  notePostingRetryError(postingKey: string, error: string, now: string): void {
+    this.db
+      .prepare(
+        `UPDATE posting_retries SET last_error = @error, updated_at = @now
+         WHERE posting_key = @posting_key AND status = 'pending'`,
+      )
+      .run({ posting_key: postingKey, error, now });
+  }
+
+  /** Terminal: only a pending row settles, once. */
+  settlePostingRetry(
+    postingKey: string,
+    status: "confirmed" | "exhausted" | "abandoned",
+    detail: string | null,
+    now: string,
+  ): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE posting_retries SET status = @status, last_error = COALESCE(@detail, last_error), updated_at = @now
+           WHERE posting_key = @posting_key AND status = 'pending'`,
+        )
+        .run({ posting_key: postingKey, status, detail, now }).changes === 1
+    );
+  }
+
+  pendingPostingRetries(): PostingRetryRow[] {
+    return this.db
+      .prepare("SELECT * FROM posting_retries WHERE status = 'pending' ORDER BY first_failed_at")
+      .all() as PostingRetryRow[];
+  }
+
   // ---- durable FAILED_LOUD review debt ---------------------------------
 
   openReviewFailure(pr: number): ReviewFailureRow | undefined;
@@ -6600,7 +6708,13 @@ export interface StatusSnapshot {
           command_sha256?: string;
           head_sha?: string;
           /** Finished review waiting on GitHub, not another model round. */
-          posting_delivery?: { attempts: number; next_attempt_at: string; last_error?: string };
+          posting_delivery?: {
+            attempts: number;
+            next_attempt_at: string;
+            last_error?: string;
+            /** A deferred POST the daemon retries on a bounded schedule: the first failure. */
+            deferred_since?: string;
+          };
           /** Immutable command-start-derived bounds. Absent until exact start
            * exists (and on snapshots from older daemons). */
           stage_deadlines?: {

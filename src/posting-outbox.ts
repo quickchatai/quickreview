@@ -16,6 +16,7 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { GateResult } from "./gate.js";
+import type { PostingRetryRow } from "./state.js";
 import {
   postingMarker,
   postingReceiptPath,
@@ -47,12 +48,23 @@ export interface PostingJob {
   attempted_at?: string;
   negative_at?: string;
   last_error?: string;
+  /** Set by `posting-receipt.py defer` — the session's POST got a
+   * 5xx or no answer and no review carried the marker. The first failure;
+   * the daemon's retry schedule (state.db `posting_retries`) runs from it. */
+  deferred_at?: string;
 }
 export interface PostingDeliveryAdapter {
   createReview(pr: number, payload: PostingJob["payload"]): Promise<GateResult>;
-  listReviewsFull(
+  /** The deferred-posting retry's POST — the adapter's createReview
+   * through the ONE gate with `postingRetry` set, so guard 5 lets it post at
+   * its original commit_id and every other guard (4's softening included)
+   * applies as it does on any gated review. Absent ⇒ no deferred retry. */
+  createDeferredReview?(
     pr: number,
-  ): Promise<
+    payload: PostingJob["payload"],
+    postingKey: string,
+  ): Promise<GateResult>;
+  listReviewsFull(pr: number): Promise<
     Array<{
       id: number;
       user: string;
@@ -106,6 +118,7 @@ export function readPostingJob(path: string): PostingJob | undefined {
       !Number.isFinite(Date.parse(j.created_at)) ||
       (j.attempted_at !== undefined && !Number.isFinite(Date.parse(j.attempted_at))) ||
       (j.negative_at !== undefined && !Number.isFinite(Date.parse(j.negative_at))) ||
+      (j.deferred_at !== undefined && !Number.isFinite(Date.parse(j.deferred_at))) ||
       !["APPROVE", "REQUEST_CHANGES", "COMMENT"].includes(j.intended_event) ||
       !j.payload ||
       j.payload.commit_id !== j.head_sha ||
@@ -141,6 +154,51 @@ export function pendingPosting(dir: string, pr: number, round: number, key: stri
   const j = readPostingJob(jobPath(dir, pr, round));
   return j?.posting_key === key && j.status === "pending";
 }
+/** What the deferred-posting retry needs beyond the outbox. */
+export interface DeferredPostingDeps {
+  /** The durable schedule: state.db `posting_retries`. */
+  ledger: PostingRetryLedger;
+  /** Attempt offsets from the first failure, ms, strictly increasing. */
+  offsetsMs: readonly number[];
+  /** Every attempt lies inside this window from the first failure. */
+  windowMs: number;
+  /** The POST: the adapter's createReview through the ONE MutationGate with
+   * `postingRetry` set (guard 5 exempt, every other guard binding). */
+  deliver: (pr: number, payload: PostingJob["payload"], postingKey: string) => Promise<GateResult>;
+  /** Does the round still owe this posting — running, same posting key? A
+   * new push does NOT end the debt: the review posts at its original
+   * commit_id. An operator's `u` (round cancelled) does. */
+  owed: (job: PostingJob) => boolean;
+  /** The window is spent or delivery is impossible: the verdict watcher's
+   * posting proof now reads `failed` and every path fails the round loud. */
+  onExhausted: (job: PostingJob, detail: string) => void;
+}
+export interface PostingRetryLedger {
+  adoptPostingRetry(input: {
+    posting_key: string;
+    pr: number;
+    round_no: number;
+    head_sha: string;
+    first_failed_at: string;
+    now: string;
+  }): PostingRetryRow;
+  postingRetry(postingKey: string): PostingRetryRow | undefined;
+  beginPostingRetryAttempt(postingKey: string, expected: number, now: string): boolean;
+  notePostingRetryError(postingKey: string, error: string, now: string): void;
+  settlePostingRetry(
+    postingKey: string,
+    status: "confirmed" | "exhausted" | "abandoned",
+    detail: string | null,
+    now: string,
+  ): boolean;
+}
+
+/** The deferred receipt of this job, when its receipt says `deferred`. */
+function deferredReceipt(dir: string, j: PostingJob): PostingReceipt | undefined {
+  const r = readPostingReceipt(dir, j.pr, j.round_no);
+  return r && r.status === "deferred" && r.posting_key === j.posting_key ? r : undefined;
+}
+
 const QUIET_WINDOW_MS = 120_000;
 const NEGATIVE_GAP_MS = 30_000;
 export class PostingOutbox {
@@ -155,6 +213,10 @@ export class PostingOutbox {
       current: (job: PostingJob) => boolean;
       now?: () => Date;
       log: (message: string, job: PostingJob) => void;
+      /** The deferred-posting retry. Absent ⇒ a deferred job is
+       * never touched (nothing posts it; the verdict watcher's stage limits
+       * still see it as in flight and fail loud once its window is over). */
+      deferred?: DeferredPostingDeps;
     },
   ) {}
   private now(): Date {
@@ -171,6 +233,19 @@ export class PostingOutbox {
         if (!/^pr-\d+-round-\d+\.outbox\.json$/.test(name)) continue;
         const path = join(this.deps.dir, name),
           job = readPostingJob(path);
+        if (
+          job &&
+          job.status === "pending" &&
+          job.mode === "live" &&
+          job.repo === this.deps.repo &&
+          deferredReceipt(this.deps.dir, job)
+        ) {
+          // A deferred job runs on its own bounded schedule and is
+          // never touched by the open-ended path below.
+          if (await this.deliverDeferred(path, job)) processed++;
+          if (processed >= 8) break;
+          continue;
+        }
         if (
           !job ||
           job.status !== "pending" ||
@@ -203,7 +278,8 @@ export class PostingOutbox {
     path: string,
     j: PostingJob,
     review: { id: number; commit_id: string; state: string; submitted_at?: string | null },
-  ): void {
+    deliveredBy?: "daemon_retry",
+  ): boolean {
     const state = review.state.toUpperCase();
     const event =
       state === "APPROVED"
@@ -221,7 +297,7 @@ export class PostingOutbox {
       review.commit_id.toLowerCase() !== j.head_sha.toLowerCase()
     ) {
       this.fail(path, j, "GitHub returned a contradictory review identity");
-      return;
+      return false;
     }
     writePostingFile(postingReceiptPath(this.deps.dir, j.pr, j.round_no), {
       version: 1,
@@ -239,10 +315,178 @@ export class PostingOutbox {
       gh_review_id: review.id,
       gh_commit_id: review.commit_id,
       gh_state: state,
+      ...(deliveredBy ? { delivered_by: deliveredBy } : {}),
     } satisfies PostingReceipt);
     j.status = "done";
     writePostingFile(path, j);
     this.deps.log("posting confirmed", j);
+    return true;
+  }
+
+  /**
+   * One step of a deferred posting's bounded retry. Returns whether
+   * it did GitHub work (the tick's per-pass bound counts those).
+   *
+   * The schedule is the state.db row, adopted from the receipt's
+   * `deferred_at`: attempt k is due at first failure + offsets[k], and every
+   * attempt (1) is counted durably first, (2) reads GitHub for the marker
+   * and confirms without POSTing when the review is there, (3) stops if the
+   * round no longer owes the posting, (4) POSTs through the gate, whose
+   * guards bind as on any review (guard 5 excepted, by the intent's
+   * `postingRetry`). A failure after the last offset, a due time past the
+   * window, or a permanent rejection exhausts it: the job is failed, the row
+   * `exhausted`, and the verdict watcher's posting proof fails the round
+   * loud. The receipt stays `deferred` throughout — only a confirmation
+   * rewrites it — so the shell refuses any second POST from the session.
+   */
+  private async deliverDeferred(path: string, job: PostingJob): Promise<boolean> {
+    const d = this.deps.deferred;
+    if (!d) return false;
+    const receipt = deferredReceipt(this.deps.dir, job)!;
+    const iso = () => this.now().toISOString();
+    let row = d.ledger.adoptPostingRetry({
+      posting_key: job.posting_key,
+      pr: job.pr,
+      round_no: job.round_no,
+      head_sha: job.head_sha,
+      first_failed_at: receipt.deferred_at ?? job.deferred_at ?? job.created_at,
+      now: iso(),
+    });
+    if (row.status !== "pending") {
+      // A settled row with a job still pending: a crash between the two
+      // writes. The row is the authority.
+      if (row.status === "confirmed") return false; // the receipt write will follow from GitHub
+      job.status = "failed";
+      job.last_error = row.last_error ?? `deferred posting ${row.status}`;
+      writePostingFile(path, job);
+      return false;
+    }
+    const first = Date.parse(row.first_failed_at);
+    const windowEnd = first + d.windowMs;
+    const offset = d.offsetsMs[row.attempts];
+    const due = offset === undefined ? windowEnd : first + offset;
+    const dueIso = new Date(due).toISOString();
+    if (job.next_attempt_at !== dueIso) {
+      job.next_attempt_at = dueIso; // the board's "next retry"
+      writePostingFile(path, job);
+    }
+    if (this.now().getTime() < due) return false;
+    const lock = `${postingReceiptPath(this.deps.dir, job.pr, job.round_no)}.lock`;
+    if (!this.acquire(lock)) return false;
+    try {
+      const fresh = readPostingJob(path);
+      if (!fresh || fresh.status !== "pending" || !deferredReceipt(this.deps.dir, fresh))
+        return false;
+      const j = fresh;
+      const lastChance = offset === undefined || this.now().getTime() >= windowEnd;
+      if (!d.ledger.beginPostingRetryAttempt(j.posting_key, row.attempts, iso())) return false;
+      row = d.ledger.postingRetry(j.posting_key) ?? row;
+      const exhaust = (detail: string): void => {
+        if (!d.ledger.settlePostingRetry(j.posting_key, "exhausted", detail, iso())) return;
+        this.fail(path, j, `deferred posting exhausted: ${detail}`);
+        d.onExhausted(j, detail);
+      };
+      const failed = (detail: string): void => {
+        if (lastChance || row.attempts >= d.offsetsMs.length) {
+          exhaust(
+            `${row.attempts} attempt(s) inside ${Math.round(d.windowMs / 60_000)} min of the first failure; last: ${detail}`,
+          );
+          return;
+        }
+        d.ledger.notePostingRetryError(j.posting_key, detail, iso());
+        j.attempts = row.attempts;
+        j.last_error = detail;
+        const next = d.offsetsMs[row.attempts];
+        j.next_attempt_at = new Date(first + (next ?? d.windowMs)).toISOString();
+        writePostingFile(path, j);
+        this.deps.log(`deferred posting attempt ${row.attempts} failed: ${detail}`, j);
+      };
+      // (2) Never post twice: GitHub first, every attempt.
+      let reviews: Awaited<ReturnType<PostingDeliveryAdapter["listReviewsFull"]>>;
+      try {
+        reviews = await this.deps.adapter.listReviewsFull(j.pr);
+      } catch (error) {
+        failed(`marker read failed: ${String(error)}`);
+        return true;
+      }
+      const matches = reviews.filter(
+        (r) =>
+          this.deps.botLogins.includes(r.user) &&
+          r.commit_id.toLowerCase() === j.head_sha.toLowerCase() &&
+          r.body.includes(postingMarker(j.posting_key)),
+      );
+      if (matches.length > 1) {
+        exhaust("multiple reviews carry this posting key");
+        return true;
+      }
+      if (matches.length === 1) {
+        // `daemon_retry` either way: an APPROVE found as a COMMENT can only
+        // be a gate softening of an earlier attempt whose answer was lost.
+        if (this.confirm(path, j, matches[0]!, "daemon_retry"))
+          d.ledger.settlePostingRetry(j.posting_key, "confirmed", null, iso());
+        else exhaust("GitHub holds a contradictory review for this posting key");
+        return true;
+      }
+      // (3) The round must still owe it. An operator's `u` cancelled it.
+      if (!d.owed(j)) {
+        d.ledger.settlePostingRetry(
+          j.posting_key,
+          "abandoned",
+          "round no longer owes this posting",
+          iso(),
+        );
+        this.fail(path, j, "deferred posting abandoned: round no longer running");
+        return true;
+      }
+      if (lastChance) {
+        exhaust(
+          "the retry window passed before the next attempt could run (no POST past the window)",
+        );
+        return true;
+      }
+      // (4) Through the ONE gate.
+      try {
+        const result = await d.deliver(j.pr, j.payload, j.posting_key);
+        if (result.blocked) {
+          if (result.blocked === "pr-unreadable") failed(`posting guard: ${result.blocked}`);
+          else exhaust(`posting guard refused at retry time: ${result.blocked}`);
+          return true;
+        }
+        if (!result.executed) {
+          exhaust("the gate did not execute the delivery (dry-run)");
+          return true;
+        }
+        const response = result.response as
+          { id: number; commit_id: string; state: string } | undefined;
+        if (
+          !response ||
+          typeof response.commit_id !== "string" ||
+          typeof response.state !== "string"
+        ) {
+          // Executed but unreadable: the next attempt's marker read decides.
+          failed("POST response lacks a review identity");
+          return true;
+        }
+        if (this.confirm(path, j, response, "daemon_retry"))
+          d.ledger.settlePostingRetry(j.posting_key, "confirmed", null, iso());
+        else exhaust("GitHub returned a contradictory review identity");
+      } catch (error) {
+        const e = error as { status?: number; message?: string };
+        if (
+          e.status &&
+          e.status >= 400 &&
+          e.status < 500 &&
+          e.status !== 408 &&
+          e.status !== 429 &&
+          !(e.status === 403 && /rate limit|abuse|secondary/i.test(e.message ?? ""))
+        )
+          exhaust(`GitHub rejected the review: ${String(error)}`);
+        else failed(String(error));
+      }
+      return true;
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
   }
   private owner(pid: number): string | undefined {
     try {

@@ -128,6 +128,12 @@ round_posted_tail_grace_min = 15
 # passes and its hard cap.
 # follow_up_sweep_extra_min = 20
 posting_receipt_grace_s = 120
+# A review POST GitHub answers 5xx (or not at all) is handed to the daemon
+# (receipt `deferred`) and retried at these minutes after the first failure,
+# each attempt through the gate after a marker read; past the window the PR
+# goes FAILED_LOUD (u to recover).
+# posting_retry_offsets_min = [4, 12, 36]
+# posting_retry_window_min = 60
 session_command_unknown_grace_s = 60
 session_command_unknown_max_checks = 1
 session_command_max_start_retries = 2
