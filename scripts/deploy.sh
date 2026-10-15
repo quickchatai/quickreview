@@ -246,8 +246,8 @@ base_clone_dir() {
   explicit="$(echo "$explicit" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   if [[ -n "$explicit" ]]; then echo "$explicit"; return 0; fi
   repo="$(config_table_key github repo || true)"
-  repo="${repo%.git}"
   while [[ "$repo" == */ ]]; do repo="${repo%/}"; done
+  repo="${repo%.git}"
   tail="${repo##*/}"
   echo "${tail:-repo}"
 }

@@ -258,6 +258,7 @@ describe("[github] base_branch + clone_dir", () => {
     expect(githubCloneDir(cfg.github)).toBe("example-app");
     expect(githubCloneDir({ ...cfg.github, repo: "acme/widget-app" })).toBe("widget-app");
     expect(githubCloneDir({ ...cfg.github, repo: "https://github.com/o/n.git" })).toBe("n");
+    expect(githubCloneDir({ ...cfg.github, repo: "https://github.com/o/n.git/" })).toBe("n");
     expect(githubCloneDir({ ...cfg.github, clone_dir: "elsewhere" })).toBe("elsewhere");
     expect(githubCloneDir({ ...cfg.github, repo: "" })).toBe("repo");
   });
