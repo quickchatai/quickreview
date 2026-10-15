@@ -108,11 +108,6 @@ function num(v: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? n : null;
 }
 
-function firstSentence(text: string): string {
-  const m = /^(.+?[.!?])(\s|$)/s.exec(text.trim());
-  return (m ? m[1]! : text.trim()).replace(/\s+/g, " ");
-}
-
 /** The ordinary tag a posted entry is counted and posted under: its own
  * posting tag; `question` for `[check this]`; for `[ask your human]` and
  * `[deferred]` the tag its severity maps to (a question without one). */
@@ -157,7 +152,7 @@ function readPosted(
   const reachability = str(raw.reachability);
   const sevTag = severityTagOf(tag, severity, confidence, reachability);
   const reason = str(raw.reason) ?? "";
-  const title = str(raw.title) ?? (reason ? firstSentence(reason) : "");
+  const title = str(raw.title) ?? (reason ? policyFirstSentence(reason) : "");
   if (!str(raw.title)) problems.push(`${id}: no title — the reason's first sentence stands in`);
   const body = str(raw.body) ?? reason;
   if (!str(raw.body)) problems.push(`${id}: no body — the reason stands in`);
