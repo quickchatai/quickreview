@@ -40,6 +40,7 @@
 import { canonicalLensIds } from "../lensids.js";
 import { ALL_PASSES } from "../passes.js";
 import { parseEventTags, parseHashTags } from "./eventtags.js";
+import { IMPORT_TAG } from "./import.js";
 
 /** The hash tag a typed lesson's header opens with. */
 export const LESSON_TAG = "lesson";
@@ -193,6 +194,9 @@ const LEGACY_TYPES: Readonly<Record<string, LessonKind>> = {
   "repo-gotcha": "repo-fact",
 };
 
+/** An own key of LEGACY_TYPES — never an inherited one like `constructor`. */
+const isLegacyType = (t: string): boolean => Object.hasOwn(LEGACY_TYPES, t);
+
 /** Header tags that say an entry is an EVENT (or not ours to read as a
  * lesson): its body is never read for lesson fields. */
 const EVENT_HASH_TAGS: ReadonlySet<string> = new Set([
@@ -303,9 +307,18 @@ export function parseLesson(text: string): ParsedLesson | null {
     };
   }
 
-  // Legacy prose: the type from the header's own hash tags first, else a
-  // `type:` line near the top of the body.
-  const headerType = hash.find((t) => t in LEGACY_TYPES) ?? null;
+  // Legacy prose: the type from the header first — its own hash tags, a
+  // `type=` tag, or, on an imported entry, the hash tags the source entry
+  // opened with (the import puts its provenance line in front of them) —
+  // else a `type:` line near the top of the body.
+  const nl = trimmed.indexOf("\n");
+  const sourceHash =
+    hash.includes(IMPORT_TAG) && nl >= 0 ? parseHashTags(trimmed.slice(nl + 1)) : [];
+  const headerType =
+    hash.find(isLegacyType) ??
+    (isLegacyType(tags["type"] ?? "") ? tags["type"]! : null) ??
+    sourceHash.find(isLegacyType) ??
+    null;
   const learningTagged = hash.includes("eod-learning") || hash.includes("learning");
   // A `type:` line near the top; for an entry the header already calls a
   // learning (the curated import puts it mid-line, after its own tags), a
@@ -314,11 +327,14 @@ export function parseLesson(text: string): ParsedLesson | null {
     bodyField(trimmed, /^(?:[-*]\s*)?type:\s*([a-z-]+)/i) ??
     (learningTagged ? (/\btype:\s*([a-z-]+)/i.exec(trimmed.slice(0, 600))?.[1] ?? "") : "")
   ).toLowerCase();
-  const legacyType = headerType ?? (bodyType in LEGACY_TYPES ? bodyType : null);
+  const legacyType = headerType ?? (isLegacyType(bodyType) ? bodyType : null);
   if (legacyType === null && !learningTagged) return null;
 
   const lensLine =
-    bodyField(trimmed, /^(?:[-*]\s*)?lens:\s*(.+)$/i) ?? /\bLens:\s*([^.\n]+)/.exec(trimmed)?.[1] ?? "";
+    bodyField(trimmed, /^(?:[-*]\s*)?lens:\s*(.+)$/i) ??
+    /\bLens:\s*([^.\n]+)/.exec(trimmed)?.[1] ??
+    tags["lens"] ??
+    "";
   const prs = [
     ...new Set(
       [...trimmed.matchAll(/(?:\/pull\/|\bPR #|\[\[pr-)(\d{1,7})/g)].map((m) => `pr:${m[1]}`),
