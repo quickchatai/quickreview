@@ -168,6 +168,12 @@ export const CONTAINER = {
   alerts: "/alerts",
 } as const;
 
+/** In-container dir of the companion's pi conversations — what pi is given as
+ * `--session-dir`, and where the day rollover finds yesterday's conversation. */
+export function companionSessionDir(session: string): string {
+  return `${CONTAINER.piHome}/agent/sessions/${session}`;
+}
+
 // No `~/.ssh` and no ssh-agent socket are mounted, on purpose: the companion's
 // only reach into the VM is OpenViking memory over a forward the host owns
 // (systemd --user, see scripts/companion-memory-forward.mjs), so the container
@@ -559,7 +565,7 @@ export class CompanionLifecycle {
       "--model",
       this.cfg.model,
       "--session-dir",
-      `${CONTAINER.piHome}/agent/sessions/${this.cfg.session}`,
+      companionSessionDir(this.cfg.session),
       "--system-prompt",
       `${CONTAINER.workspace}/prompts/companion.md`,
       "--name",
@@ -1078,7 +1084,8 @@ export class CompanionLifecycle {
   }
 }
 
-function errText(r: DockerResult): string {
+/** One-line cause from a failed docker call, for an error or a step log. */
+export function errText(r: DockerResult): string {
   return (r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).split("\n").slice(-1)[0]!;
 }
 

@@ -1003,6 +1003,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
           `companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`,
         );
       }
+      for (const warning of report.warnings ?? []) app.notice(`companion: ${warning}`);
       if (report.interviewFile) {
         app.notice(
           "companion: first start on this installation — greeting + calibration interview queued",

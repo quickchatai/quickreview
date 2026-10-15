@@ -80,7 +80,7 @@ export async function runOrThrow(
 export const LIST_SESSIONS_TIMEOUT_MS = 10_000;
 
 /** The two tmux answers that mean "no server running", and nothing else. */
-const NO_SERVER = /no server running|error connecting to .*\(No such file or directory\)/i;
+export const NO_SERVER = /no server running|error connecting to .*\(No such file or directory\)/i;
 
 export interface TmuxOptions {
   exec?: ExecFn;

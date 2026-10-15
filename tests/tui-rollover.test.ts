@@ -1,7 +1,16 @@
 // Daily rollover, opening-context assembly, and the
 // Warsaw-day alert-policy memory. No docker, no pi, no clock dependence —
 // every seam is injected and every path is a temp dir.
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +33,7 @@ import {
   digestLine,
   firstRunFileName,
   interviewDue,
+  newestSessionScript,
   openAlerts,
   parseConversation,
   readFirstRunMarker,
@@ -114,6 +124,43 @@ function rollover(
 }
 
 // ---------------------------------------------------------------------------
+
+describe("the newest-conversation listing, run by a real shell", () => {
+  const run = (script: string): { status: number | null; stdout: string } => {
+    const r = spawnSync("sh", ["-c", script], { encoding: "utf8" });
+    return { status: r.status, stdout: r.stdout };
+  };
+
+  it("a dir that is not there or holds no conversation is an empty answer; the newest file wins", () => {
+    const sessions = join(dir, "sessions");
+    expect(run(newestSessionScript(sessions))).toEqual({ status: 0, stdout: "" });
+    mkdirSync(sessions);
+    writeFileSync(join(sessions, "notes.txt"), "x");
+    expect(run(newestSessionScript(sessions))).toEqual({ status: 0, stdout: "" });
+    writeFileSync(join(sessions, "old.jsonl"), "{}");
+    utimesSync(join(sessions, "old.jsonl"), 1_000, 1_000);
+    writeFileSync(join(sessions, "new.jsonl"), "{}");
+    expect(run(newestSessionScript(sessions))).toEqual({
+      status: 0,
+      stdout: `${join(sessions, "new.jsonl")}\n`,
+    });
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "a dir that cannot be listed FAILS — never the empty answer that rolls the day over without yesterday",
+    () => {
+      const sessions = join(dir, "locked");
+      mkdirSync(sessions);
+      writeFileSync(join(sessions, "a.jsonl"), "{}");
+      chmodSync(sessions, 0o000);
+      try {
+        expect(run(newestSessionScript(sessions)).status).not.toBe(0);
+      } finally {
+        chmodSync(sessions, 0o755);
+      }
+    },
+  );
+});
 
 describe("ops-day derivation", () => {
   // The zone is threaded from config; these pin the derivation for a
@@ -698,7 +745,32 @@ describe("the rollover sequence", () => {
       expect(report.deferred).toBeUndefined();
       expect(report.archivedTo).toBeUndefined();
       expect(report.steps.some((s) => s.includes("archive FAILED"))).toBe(true);
+      // The failure and its cause reach the operator, not only the step log.
+      expect(report.warnings).toEqual([
+        "archive FAILED — /x/abc.jsonl is unarchived (it remains on the volume): Error: No such container: companion",
+      ]);
       expect(readFileSync(report.dayOpenFile!, "utf8")).toContain("PR 5012 stalled overnight");
+    });
+
+    it("a second start that finds the day already rolled over by another start kills nothing and queues nothing", async () => {
+      writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
+      const calls: string[][] = [];
+      const runner: DockerRunner = async (argv) => {
+        calls.push(argv);
+        const script = argv[argv.length - 1] ?? "";
+        if (script.includes("ls -1t")) return OK("/x/abc.jsonl\n");
+        if (script.includes("tail -c")) {
+          // Meanwhile the other TUI finished its rollover and spawned pi.
+          writeRolloverState(statePath(), { last_open_date: "2026-08-14", updated_at: "" });
+          return OK("");
+        }
+        return OK();
+      };
+      const report = await rollover(runner).run();
+      expect(report.deferred).toBeUndefined();
+      expect(report.dayOpenFile).toBeUndefined();
+      expect(calls.some((c) => c.includes("kill-session"))).toBe(false);
+      expect(report.steps.at(-1)).toMatch(/another start already rolled the day over/);
     });
   });
 
@@ -854,10 +926,23 @@ describe("first-run interview", () => {
     expect(report.verdict.kind).toBe("first-run");
     expect(report.interviewFile).toBeUndefined();
     expect(report.steps.some((s) => s.includes("template unreadable"))).toBe(true);
-    // Not marked delivered: fixing the template lets the next start deliver it.
-    expect(
-      readRolloverState(join(dir, "state", "rollover.json"))?.first_run_interviewed,
-    ).toBeUndefined();
+    // Not marked delivered: fixing the template lets the next start deliver it
+    // — on an install with no wizard marker too, where the state now exists.
+    const state = readRolloverState(join(dir, "state", "rollover.json"));
+    expect(state?.first_run_interviewed).toBeUndefined();
+    expect(state?.first_run_owed).toBe("2026-08-14");
+    const next = await rollover(fakeDocker().runner, {
+      firstRun: true,
+      now: () => new Date("2026-08-14T10:00:00Z"),
+    }).run();
+    expect(next.verdict.kind).toBe("same-day");
+    expect(next.interviewFile).toBeDefined();
+    const after = readRolloverState(join(dir, "state", "rollover.json"));
+    expect(after?.first_run_interviewed).toBe("2026-08-14");
+    expect(after?.first_run_owed).toBeUndefined();
+    // Delivered once: a later start does not deliver it again.
+    const third = await rollover(fakeDocker().runner, { firstRun: true }).run();
+    expect(third.interviewFile).toBeUndefined();
   });
 
   it("without the first-run wiring the rollover behaves exactly as before", async () => {
