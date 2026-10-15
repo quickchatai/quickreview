@@ -2,6 +2,7 @@
 // it, and verdict files close the loop.
 import type { MigrationCollision } from "./migrations.js";
 import type { PostingPolicy } from "./postingpolicy.js";
+import type { SessionBridgeCompaction } from "./session-bridge.js";
 
 export type RoundType = "first" | "re-review" | "staleness";
 
@@ -480,7 +481,10 @@ export interface MeritsVerdictFile {
   extent?: "ran" | "partial" | "skipped";
   extent_reason?: string;
   head_sha: string;
-  spend_usd?: number;
+  /** Retired: a self-reported figure the models copied from the template.
+   * Accepted in any shape and stripped by `validateVerdict`, so no consumer
+   * ever sees it; spend is measured from the session transcripts. */
+  spend_usd?: unknown;
   ledger_snapshot?: string;
   /** 3-4 sentence plain-prose "what is going on" written by the session for
    * the operator's TUI detail pane. Optional; capped by the consumer. */
@@ -533,16 +537,9 @@ export interface SessionCommandObservation {
   next_check_at: string;
 }
 /** The inject bridge's compaction report, as `SessionHooks.sessionCompaction`
- * returns it (the `compaction` block of the bridge's ready receipt,
- * `src/session-bridge.ts`). */
-export interface SessionCompactionReport {
-  state: "idle" | "running";
-  seq: number;
-  started_at?: string;
-  ended_at?: string;
-  outcome?: "compacted" | "failed" | "stale";
-  source?: "request" | "event";
-}
+ * returns it: the `compaction` block of the bridge's ready receipt, as
+ * `src/session-bridge.ts` declares it. */
+export type SessionCompactionReport = SessionBridgeCompaction;
 /** What the round-stage supervisor's failure callback did with a stage limit.
  * `posted_wait`: the round's review is already on GitHub (or
  * was refused by guard 2), so the limit is NOT a failure — the session's tail

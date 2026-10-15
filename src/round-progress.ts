@@ -7,6 +7,7 @@
  * inferred as pending or done.
  */
 import { appendFileSync, renameSync, statSync } from "node:fs";
+import { PASS_TIER_ORDER } from "./types.js";
 
 export type LiveAgentStatus = "running" | "completed" | "failed";
 
@@ -65,8 +66,11 @@ export interface RoundProgressSnapshot {
  * authoritative plan stores the lens, while Pi progress reports the invoked
  * agent, so every comparison crosses this one normalization seam. */
 export function lensForAgent(agent: string): string {
-  return agent.replace(/--(?:terra-med|sol-med|sol-high)$/, "");
+  return agent.replace(TIER_SUFFIX, "");
 }
+
+/** `--<tier>` for every tier on the ladder (`PASS_TIER_ORDER`). */
+const TIER_SUFFIX = new RegExp(`--(?:${PASS_TIER_ORDER.join("|")})$`);
 
 /** A pass execution that has ended, either way. */
 export function isTerminalAgentStatus(status: LiveAgentStatus): boolean {

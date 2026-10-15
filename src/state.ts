@@ -18,8 +18,16 @@ import {
   type LeverIssuer,
   type LeverKind,
 } from "./levers.js";
-import { parseRecheckPromptMarker, type PassPlanEntry, type VerdictPassEntry } from "./types.js";
-import { standingVerdict as standingReviewVerdict } from "./standing-review.js";
+import {
+  parseRecheckPromptMarker,
+  type PassPlanEntry,
+  type SessionCommandObservation,
+  type VerdictPassEntry,
+} from "./types.js";
+import {
+  standingLifecycleState,
+  standingVerdict as standingReviewVerdict,
+} from "./standing-review.js";
 import { canonicalLensIds } from "./lensids.js";
 
 /** The lifecycle states a PR can occupy. There is no "awaiting human" member:
@@ -3280,7 +3288,7 @@ export class StateStore {
    */
   requeueSessionCommandForRedelivery(
     id: string,
-    expected: { attempt: number; redeliveries: number; next_check_at: string },
+    expected: SessionCommandObservation,
     nextCheckAt: string,
   ): boolean {
     const ts = this.ts();
@@ -4866,7 +4874,7 @@ export class StateStore {
             kind: "resolved",
             incident_id: input.incident_id,
             command_id: input.command_id,
-            restored_state: standingVerdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked",
+            restored_state: standingLifecycleState(standingVerdict),
             standing_verdict: standingVerdict,
             already_resolved: true,
           };
@@ -5005,7 +5013,7 @@ export class StateStore {
       if (failureChanged !== 1)
         throw new Error(`exact-head failure CAS lost for ${input.incident_id}`);
 
-      const restoredState = standingVerdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
+      const restoredState = standingLifecycleState(standingVerdict);
       const prChanged = this.db
         .prepare(
           `UPDATE pr_state

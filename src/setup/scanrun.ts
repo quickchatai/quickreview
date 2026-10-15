@@ -78,7 +78,7 @@
 import { posix } from "node:path";
 import { VALIDATE_PASS } from "../include.js";
 import type { LensTuningMap } from "../lenstuning.js";
-import { PASS_TIER_ORDER, type PassTier } from "../types.js";
+import { higherTier, type PassTier } from "../types.js";
 import type { ScanConfig, ScanDepth } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import {
@@ -1368,10 +1368,7 @@ export class ScanRunner {
       })),
     );
     const cfg = p.settings.scan;
-    const top = rows.reduce<PassTier>(
-      (t, r) => (PASS_TIER_ORDER.indexOf(r.tier) > PASS_TIER_ORDER.indexOf(t) ? r.tier : t),
-      rows[0]!.tier,
-    );
+    const top = rows.reduce<PassTier>((t, r) => higherTier(t, r.tier), rows[0]!.tier);
     const run = this.launch(
       file,
       {
