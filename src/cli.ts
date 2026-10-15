@@ -1072,7 +1072,8 @@ export function drainManualCommand(tui: TuiConfig, on: boolean, now: Date): stri
   // a re-used name (an operator editing an old line) still executes — the
   // fresh name is what keeps its result readable.
   const name = `${now.toISOString().replace(/[:.]/g, "-")}-manual-drain.json`;
-  const payload = `printf '%s' '${JSON.stringify({ command: "drain", on })}' | `;
+  // drainPayload's own object, compacted onto the one line.
+  const payload = `printf '%s' '${JSON.stringify(JSON.parse(drainPayload(on)))}' | `;
   // Single quotes for the container's `sh -c`.
   const script = operatorCommandWriteScript(tui, name).replace(/'/g, "'\\''");
   if (transportOf(tui) === "local") return `${payload}${docker} sh -c '${script}'`;
