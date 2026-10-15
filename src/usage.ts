@@ -686,9 +686,12 @@ const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
   // `o` is unambiguous in sort's short options, so a cluster carrying it —
   // its value attached (`-o/tmp/out`) or not — is an output redirect.
   sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o)/,
-  // -i/-f, a w/W/e command at a command position, and s///'s own w/e flags
-  // (`s/x/y/e` runs the pattern space as a command; `s/x/y/w f` writes f).
-  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|['"\s](?:[0-9$,]|\/[^/]*\/)*\s*[wWe]\s|['"\s;{](?:[0-9$,]|\/[^/]*\/)*\s*s\/(?:\\.|[^/\\])*\/(?:\\.|[^/\\])*\/[gpiImMnN0-9]*[we](?=['"\s;}]|$)/,
+  // -i/-f; a w/W/e command at a command position (`sed 'e' f`, `1e`); and an
+  // s-command whose flag cluster carries `e` anywhere (it runs the pattern
+  // space: `s/x/y/e`, `/ep`, `/eg`, `/eI`) or ends in `w` (writes a file),
+  // with ANY delimiter (`s|..|..|e`, `s#..#..#e` — the backreference) and a
+  // script glued to its flag (`--expression=s/…/e`, `-es/…/e`).
+  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|['"\s;{](?:[0-9$,]|\/[^/]*\/)*\s*[wWe](?=['"\s;}]|$)|(?:['"\s;{=]|(?:^|\s)-[nEsuzr]*e)(?:[0-9$,]|\/[^/]*\/)*\s*s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiImMnN0-9]*(?:e[gpiImMnN0-9e]*w?|w)(?=['"\s;}]|$)/,
   // The diff options' `--output=<file>` on any verb, and
   // `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O<cmd>` (any unique
   // abbreviation of the long form; `-O` ending a short cluster).
@@ -737,6 +740,7 @@ function assignmentPrefix(segment: string): string {
       continue;
     }
     if (t === "env" || (t.startsWith("-") && t.length <= 3)) continue;
+    if (/^\d*[<>]/.test(t)) continue; // a redirection remnant, as segmentProgram skips
     break;
   }
   return out.join(" ");

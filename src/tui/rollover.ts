@@ -38,7 +38,7 @@ import { parseAlert, readPolicyState } from "./alerts.js";
 import {
   CONTAINER,
   companionSessionDir,
-  errText as execReason,
+  dockerFailureLine as execReason,
   type DockerRunner,
 } from "./companion.js";
 
@@ -592,6 +592,9 @@ export interface RolloverReport {
    * so the day was deliberately not recorded and nothing was killed or
    * queued. The next start retries the whole sequence. */
   deferred?: string;
+  /** Set when another start rolled the day over while this one assembled
+   * its context: this start killed and queued nothing — the day is not its. */
+  stoodDown?: string;
   /** What went wrong without stopping the rollover (a dated archive that
    * could not be written, with its cause) — for the operator's notice line. */
   warnings?: string[];
@@ -925,13 +928,15 @@ export class CompanionRollover {
       // The verdict was read before the awaits above. A second TUI starting
       // the same morning may have rolled the day over meanwhile and spawned
       // the fresh conversation; killing now would end THAT one. Its record
-      // says so — stand down and leave the day to it.
+      // says so — stand down and leave the day to it. This narrows the race,
+      // it does not close it: there is no cross-process lock, so a start
+      // whose re-read lands before the other's record can still kill the
+      // conversation the other start just spawned.
       const now = readRolloverStateFile(this.opts.statePath);
       if (now.state === "state" && now.value.last_open_date >= today) {
-        steps.push(
-          `another start already rolled the day over to ${now.value.last_open_date} — nothing killed or queued`,
-        );
-        return { verdict, steps, archivedTo, ...(warnings.length ? { warnings } : {}) };
+        const stoodDown = `another start already rolled the day over to ${now.value.last_open_date} — nothing killed or queued`;
+        steps.push(stoodDown);
+        return { verdict, steps, archivedTo, stoodDown, ...(warnings.length ? { warnings } : {}) };
       }
       const kill = await this.killSession();
       if (kill.state === "failed") {

@@ -43,10 +43,15 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { TuiConfig } from "../config.js";
+import { TUI_DEFAULTS, type TuiConfig } from "../config.js";
 import type { StatusSnapshot } from "../state.js";
-import { settledIndex, type Manifest, type SettledRecord } from "../archive/manifest.js";
-import { whyArgv, type RemoteResult, type SshRunner } from "./remote.js";
+import {
+  parseManifestText,
+  settledIndex,
+  type Manifest,
+  type SettledRecord,
+} from "../archive/manifest.js";
+import { dockerShArgv, whyArgv, type RemoteResult, type SshRunner } from "./remote.js";
 
 /** Roles a round bundle can carry, in copy order. `transcript` carries the pass
  * output too: lens passes run as subagent children inside the PR's one
@@ -137,18 +142,6 @@ export interface RoundManifest {
 
 export const MANIFEST_NAME = "manifest.json";
 
-function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [
-    ...(cfg.sudo_docker ? ["sudo"] : []),
-    "docker",
-    "exec",
-    cfg.container,
-    "sh",
-    "-c",
-    script,
-  ];
-}
-
 /**
  * Locate a round's artefacts on the VM in ONE call, printing `role<space>path`
  * for each that exists.
@@ -186,11 +179,15 @@ export function manifestArgv(
     `[ -f "$r/archive/pr-${pr}/manifest.json" ] && echo "${ARCHIVE_MANIFEST_LINE} $r/archive/pr-${pr}/manifest.json"`,
     `exit 0`,
   ].join("\n");
-  return dockerSh(cfg, script);
+  return dockerShArgv(cfg, script);
 }
 
 /** The listing line naming the PR's archive manifest. */
 export const ARCHIVE_MANIFEST_LINE = "archive-manifest";
+
+/** A VM-reported path is interpolated into the next command's shell script,
+ * so it must be plainly shell-safe: no quote, space or metacharacter. */
+const isShellSafePath = (path: string): boolean => /^[\w./@:+-]+$/.test(path);
 
 /** The PR's archive manifest, when the listing named one — with the same
  * trust-boundary checks as an artefact path, and it must be the manifest of
@@ -201,7 +198,7 @@ export function parseArchiveManifestLine(stdout: string, root: string, pr: numbe
     const sp = line.indexOf(" ");
     if (sp <= 0 || line.slice(0, sp).trim() !== ARCHIVE_MANIFEST_LINE) continue;
     const path = line.slice(sp + 1).trim();
-    if (path === want && /^[\w./@:+-]+$/.test(path)) return path;
+    if (path === want && isShellSafePath(path)) return path;
   }
   return null;
 }
@@ -225,7 +222,7 @@ export function parseManifest(stdout: string, root: string): EvidenceFile[] {
     const role = line.slice(0, sp).trim() as EvidenceRole;
     const remotePath = line.slice(sp + 1).trim();
     if (!(EVIDENCE_ROLES as readonly string[]).includes(role) || seen.has(role)) continue;
-    if (!remotePath.startsWith(`${root}/`) || !/^[\w./@:+-]+$/.test(remotePath)) continue;
+    if (!remotePath.startsWith(`${root}/`) || !isShellSafePath(remotePath)) continue;
     seen.add(role);
     out.push({ role, remotePath });
   }
@@ -242,30 +239,22 @@ export function parseManifest(stdout: string, root: string): EvidenceFile[] {
  * file that looks complete — then `zcat | head -c <cap>`. */
 export function fetchArgv(cfg: TuiConfig, remotePath: string, maxBytes = MAX_FILE_BYTES): string[] {
   if (isArchivedGzip(remotePath, cfg.remote_sandbox_root))
-    return dockerSh(cfg, `zcat -t '${remotePath}' && zcat '${remotePath}' | head -c ${maxBytes}`);
-  return dockerSh(cfg, `head -c ${maxBytes} '${remotePath}'`);
+    return dockerShArgv(
+      cfg,
+      `zcat -t '${remotePath}' && zcat '${remotePath}' | head -c ${maxBytes}`,
+    );
+  return dockerShArgv(cfg, `head -c ${maxBytes} '${remotePath}'`);
 }
 
 /** An archive manifest (`archive/pr-<n>/manifest.json`) as fetched, or null
  * when it is not one. A manifest is plain, append-only JSON; one
  * that does not parse is never read as "nothing archived". */
 export function parseArchiveManifest(text: string): Manifest | null {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    return parseManifestText(text, "archive manifest");
   } catch {
     return null;
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-  const m = parsed as Partial<Manifest>;
-  if (
-    m.format !== 1 ||
-    !Array.isArray(m.passes) ||
-    !Array.isArray(m.entries) ||
-    !m.entries.every((e) => typeof e === "object" && e !== null && typeof e.kind === "string")
-  )
-    return null;
-  return m as Manifest;
 }
 
 /**
@@ -356,7 +345,7 @@ export function prSignature(pr: StatusSnapshot["prs"][number]): string {
 /** `[tui] evidence_why_interval_s` — the shipped default and its bounds. A
  * value outside the bounds is clamped, a non-number is the default: the knob
  * tunes the pace, it can never switch the pacing off. */
-export const EVIDENCE_WHY_INTERVAL_DEFAULT_S = 10;
+export const EVIDENCE_WHY_INTERVAL_DEFAULT_S = TUI_DEFAULTS.evidence_why_interval_s;
 export const EVIDENCE_WHY_INTERVAL_MIN_S = 5;
 export const EVIDENCE_WHY_INTERVAL_MAX_S = 600;
 
@@ -713,8 +702,12 @@ export class EvidenceCopier {
     }
     const byNumber = [...snapshot.prs].sort((a, b) => a.number - b.number);
     // A PR with no rounds costs nothing: retired without a `why`, whatever
-    // the pace says.
-    for (const pr of byNumber) if ((pr.rounds ?? 0) === 0) this.retire(pr.number, prSignature(pr));
+    // the pace says. The snapshot's count leaves `expired` rounds out, so a
+    // PR last reconciled WITH rounds that now counts none had them expire —
+    // finished rounds `why` still lists, and copies — and is asked once.
+    for (const pr of byNumber)
+      if ((pr.rounds ?? 0) === 0 && !this.hadRounds(pr.number))
+        this.retire(pr.number, prSignature(pr));
     const pending = byNumber.filter(
       (pr) => this.reconciled.get(pr.number)?.sig !== prSignature(pr),
     );
@@ -761,6 +754,12 @@ export class EvidenceCopier {
     const interval = this.deps.whyIntervalMs ?? 0;
     if (interval <= 0 || this.lastWhyEndMs === undefined) return true;
     return this.nowMs() - this.lastWhyEndMs >= interval;
+  }
+
+  /** Was this PR last reconciled at a signature that counted rounds? */
+  private hadRounds(pr: number): boolean {
+    const sig = this.reconciled.get(pr)?.sig;
+    return sig !== undefined && Number.parseInt(sig, 10) > 0;
   }
 
   /** Record a clean reconcile, with whether the store now holds anything
@@ -858,7 +857,11 @@ export class EvidenceCopier {
       this.lastWhyEndMs = this.nowMs();
     }
     if (!res.ok)
-      return this.fail(report, `pr-${pr}`, `evidence: #${pr} — could not read round list (ssh)`);
+      return this.fail(
+        report,
+        `pr-${pr}`,
+        `evidence: #${pr} — could not read round list (ssh${remoteCause(res)})`,
+      );
     // The round list is what `qcr why --json` PROVES; anything else that came
     // back — a wrapper's own JSON, an older build's shape, a torn write — is an
     // unreadable list, not an empty one. Reading it as empty would retire this
@@ -866,6 +869,7 @@ export class EvidenceCopier {
     const rounds = readWhyRounds(res.stdout);
     if (rounds === undefined)
       return this.fail(report, `pr-${pr}`, `evidence: #${pr} — unreadable round list`);
+    this.announced.delete(`pr-${pr}`);
     const pending = rounds.filter((r) => !this.store.has(pr, r.round_no));
     if (pending.length === 0) return true;
     let complete = true;
@@ -889,7 +893,11 @@ export class EvidenceCopier {
       },
     );
     if (!listed.ok)
-      return this.fail(report, key, `evidence: ${key} — could not list artefacts (ssh)`);
+      return this.fail(
+        report,
+        key,
+        `evidence: ${key} — could not list artefacts (ssh${remoteCause(listed)})`,
+      );
     const files = parseManifest(listed.stdout, this.cfg.remote_sandbox_root);
     // A round that finished before this copier first saw the PR — or before
     // it came back from a hold — is a backfill: the pr-current
@@ -903,7 +911,7 @@ export class EvidenceCopier {
     const skipped: EvidenceRole[] = backfill
       ? PR_CURRENT_ROLES.filter((r) => files.some((f) => f.role === r))
       : [];
-    const toCopy = backfill ? files.filter((f) => f.role === "verdict") : files;
+    const toCopy = backfill ? files.filter((f) => !PR_CURRENT_ROLES.includes(f.role)) : files;
     // A role found nowhere live may be in the PR's archive. Its
     // manifest says where; a role it holds is `archived` (a pr-current one
     // in a backfill is skipped as stale, exactly as a live one is), never
@@ -917,7 +925,11 @@ export class EvidenceCopier {
         timeoutMs: this.deps.timeoutMs,
       });
       if (!got.ok)
-        return this.fail(report, key, `evidence: ${key} — archive manifest fetch failed`);
+        return this.fail(
+          report,
+          key,
+          `evidence: ${key} — archive manifest fetch failed${remoteCause(got)}`,
+        );
       const manifest = parseArchiveManifest(got.stdout);
       if (!manifest)
         return this.fail(report, key, `evidence: ${key} — unreadable archive manifest`);
@@ -935,7 +947,12 @@ export class EvidenceCopier {
       });
       // An ssh that failed is a transport fault, not an absent artefact: leaving
       // the manifest unwritten is what makes the round come back next poll.
-      if (!got.ok) return this.fail(report, key, `evidence: ${key} — ${f.role} fetch failed`);
+      if (!got.ok)
+        return this.fail(
+          report,
+          key,
+          `evidence: ${key} — ${f.role} fetch failed${remoteCause(got)}`,
+        );
       this.store.writeArtifact(pr, round.round_no, f.role, got.stdout);
       written.push({
         role: f.role,
@@ -972,7 +989,8 @@ export class EvidenceCopier {
     return true;
   }
 
-  /** Announce a failure once, then stay quiet until that round succeeds. */
+  /** Announce a failure once, then stay quiet until that PR's round list
+   * (`pr-<n>`) or that round (`pr-<n> round <k>`) next reads cleanly. */
   private fail(report: SweepReport, key: string, text: string): false {
     if (!this.announced.has(key)) {
       this.announced.add(key);
@@ -980,6 +998,14 @@ export class EvidenceCopier {
     }
     return false;
   }
+}
+
+/** A failed remote call's cause for a notice: its exit status and the last
+ * line of its stderr, bounded. */
+function remoteCause(res: RemoteResult): string {
+  const last = res.stderr.trim().split("\n").pop()?.trim() ?? "";
+  const status = res.code === null ? "no exit status" : `exit ${res.code}`;
+  return `: ${status}${last ? ` — ${last.length > 160 ? `${last.slice(0, 160)}…` : last}` : ""}`;
 }
 
 function msg(err: unknown): string {

@@ -1728,9 +1728,25 @@ describe("the audit does not fire on the reads that ARE the job", () => {
     expect(kindOf("sed 's/.*/id/e' input.txt")).toBe("reader_write_or_exec");
     expect(kindOf("sed -n 's/a/b/gw out.txt' f")).toBe("reader_write_or_exec");
     expect(kindOf("sed '3s/a\\/b/c/e' f")).toBe("reader_write_or_exec");
+    // e anywhere in the flag cluster, w at its end, any delimiter, a script
+    // glued to its flag, and the bare e command.
+    for (const c of [
+      "sed 's/.*/id/ep' f",
+      "sed 's/.*/id/ew out' f",
+      "sed 's/x/y/eg' f",
+      "sed 's/x/y/eI' f",
+      "sed 's|a|b|e' f",
+      "sed -n 's#.*#id#e;p' f",
+      "sed --expression=s/.*/id/e f",
+      "sed -es/.*/id/e f",
+      "sed 'e' f",
+      "sed -n '1e' f",
+    ])
+      expect(kindOf(c), c).toBe("reader_write_or_exec");
     // An env prefix in front of a reader is its environment, not a pattern.
     expect(kindOf("LD_PRELOAD=/tmp/hook.so cat README.md")).toBe("git_config_injection");
     expect(kindOf("env PAGER=/tmp/x head -5 f")).toBe("git_config_injection");
+    expect(kindOf("2>/dev/null LD_PRELOAD=x cat f")).toBe("git_config_injection");
     // …while the reads stay silent: a pattern naming the variable, ordinary
     // substitutions and prints, and a path that merely ends like a flag.
     expect(kindOf("grep -rn LD_PRELOAD= src")).toBeUndefined();
@@ -1738,6 +1754,10 @@ describe("the audit does not fire on the reads that ARE the job", () => {
     expect(kindOf("sed -n 's/foo/bar/gp' f")).toBeUndefined();
     expect(kindOf("sed -n '/^def /p' home/me")).toBeUndefined();
     expect(kindOf("sed -n 1,5p a/ne")).toBeUndefined();
+    expect(kindOf("sed 's/e/f/g' f")).toBeUndefined();
+    expect(kindOf("sed -n 's|e|w|p' f")).toBeUndefined();
+    expect(kindOf("sed -n 's/x\\/e/y/p' f")).toBeUndefined();
+    expect(kindOf("sed -E 's/(a)(b)/\\2\\1/g' f")).toBeUndefined();
     expect(kindOf("sort -k1,1 -t: names")).toBeUndefined();
   });
 });

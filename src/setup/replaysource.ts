@@ -7,7 +7,7 @@
 // the network: the tree at the PR's head is materialised into
 // `<state home>/replay/tree/<sha>/` (scantree.ts, its own directory so a
 // replay and a scan never prune each other's trees) and the diff against the
-// merge base is written beside it, in `replay/diff/`, for the lenses to read
+// merge base is written beside it, in `replay/diff/<sha>-<base>.diff`, for the lenses to read
 // in place of `git diff` (they have no shell). A PR whose head the checkout
 // does not hold (a squash-merged branch long deleted) is read at the commit
 // GitHub merged it as, diffed against that commit's first parent — the change
@@ -18,7 +18,7 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GitHubReader } from "./engine.js";
 import { parseUnifiedDiff, type ReplayPr, type ReplayTree } from "./replay.js";
-import { gitScanSource } from "./scantree.js";
+import { gitScanSource, isFullSha } from "./scantree.js";
 
 /** Where replay trees and diffs live, under the state home. */
 export const REPLAY_TREES_DIR = "replay/tree";
@@ -26,8 +26,6 @@ export const REPLAY_DIFFS_DIR = "replay/diff";
 
 /** The biggest diff a replay reads (git's output buffer). */
 const MAX_DIFF_BYTES = 64 * 1024 * 1024;
-
-const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /** The PR and its code, as the replay runner needs them. */
 export interface ReplaySource {
@@ -49,7 +47,7 @@ export function parsePull(
   const d = (data ?? {}) as Record<string, unknown>;
   const head = (d.head ?? {}) as Record<string, unknown>;
   const base = (d.base ?? {}) as Record<string, unknown>;
-  const sha = (v: unknown): string | null => (typeof v === "string" && SHA_RE.test(v) ? v : null);
+  const sha = (v: unknown): string | null => (typeof v === "string" && isFullSha(v) ? v : null);
   const headSha = sha(head.sha);
   const baseSha = sha(base.sha);
   if (d.number !== n || headSha === null || baseSha === null) {
@@ -151,7 +149,7 @@ export function gitReplaySource(opts: {
             `are not in the reviewed checkout at ${opts.repoRoot} — pull it on the host (the companion mounts it read-only and fetches nothing)`,
         };
       }
-      if (base === null || !SHA_RE.test(base)) {
+      if (base === null || !isFullSha(base)) {
         return {
           ok: false,
           reason: `PR #${pr.number}: no base to diff ${sha.slice(0, 12)} against in the reviewed checkout — pull its base branch on the host`,
@@ -165,11 +163,14 @@ export function gitReplaySource(opts: {
         };
       const opened = trees.open(sha, keep);
       if (!opened.ok) return opened;
-      const diffPath = join(diffsDir, `${sha}.diff`);
+      // The tree depends on the sha alone, the diff on the base too: two PRs
+      // from one head into different bases each read their own diff.
+      const diffName = `${sha}-${base}.diff`;
+      const diffPath = join(diffsDir, diffName);
       try {
         mkdirSync(diffsDir, { recursive: true });
         for (const other of readdirSync(diffsDir)) {
-          if (other !== `${sha}.diff` && !keep.some((k) => other === `${k}.diff`))
+          if (other !== diffName && !keep.some((k) => other.startsWith(`${k}-`)))
             rmSync(join(diffsDir, other), { force: true });
         }
         writeFileSync(diffPath, diff);

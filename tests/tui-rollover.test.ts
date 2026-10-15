@@ -771,6 +771,7 @@ describe("the rollover sequence", () => {
       expect(report.dayOpenFile).toBeUndefined();
       expect(calls.some((c) => c.includes("kill-session"))).toBe(false);
       expect(report.steps.at(-1)).toMatch(/another start already rolled the day over/);
+      expect(report.stoodDown).toMatch(/another start already rolled the day over/);
     });
   });
 

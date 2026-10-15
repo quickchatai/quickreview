@@ -73,16 +73,14 @@ import {
   buildAgents,
   configAddenda,
   identityVars,
-  passTierModels,
-  sweepLightVariants,
   PASS_ADDENDA,
 } from "../include.js";
 import { MEMORY_LESS } from "../memory/context.js";
 import {
   applyProfileTuning,
   lensEnabled,
-  lensModelOverrides,
   lensTuningAddenda,
+  roundAgentModels,
   type LensTuning,
 } from "../lenstuning.js";
 import {
@@ -567,14 +565,7 @@ export function buildBenchAgents(root: string, cfg: Config): number {
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
     ecosystem: loadProfileEcosystem(root, cfg.review.profile),
-    models: passTierModels(
-      cfg.models.pass_tiers,
-      cfg.models.tiers,
-      lensModelOverrides(cfg.models, cfg.lenses),
-      cfg.models.pass_models,
-      sweepLightVariants(cfg.review, cfg.lenses),
-      cfg.lenses,
-    ),
+    models: roundAgentModels(cfg),
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),

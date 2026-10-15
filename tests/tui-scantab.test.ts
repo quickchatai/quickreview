@@ -4,7 +4,7 @@
 // What is asserted is what the operator SEES and what the tab WRITES — the
 // request files the companion's scan belt answers, and the asks that reach
 // its column.
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
@@ -264,6 +264,14 @@ describe("honest unknown — never 'no scan' for a record that was not read", ()
       expect(barLabels(app)).not.toContain("x stop");
       expect(barLabels(app)).toContain("D delta");
     });
+  });
+
+  it("an unreadable stop answer is no answer — it never reads the run as interrupted", () => {
+    const { s, screen } = rig({ companionUp: true });
+    mkdirSync(join(s.home, SCAN_STOP_RESULT_FILE)); // EISDIR on read
+    s.store.reload();
+    expect(s.store.stopAnswer).toBeNull();
+    expect(screen()).toMatch(/stage 1 ▶ running/);
   });
 
   it("an answer for another run, or one that does not say what is in flight, leaves the run running", () => {

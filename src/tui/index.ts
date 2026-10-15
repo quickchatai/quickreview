@@ -647,6 +647,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     configPath: liveConfigPath(),
     sink: buildIssueSink(full, app.ssh, memStore),
     issueLabel: full.github.issue_label,
+    eod: { time: full.eod.time, timezone: full.eod.timezone },
     changes: new ChangeLog(
       new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")),
       localRunner,
@@ -998,6 +999,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         // recorded and yesterday's conversation continues. Loud, because a
         // rollover that silently did not happen reads as one that did.
         app.notice(`companion: day rollover DEFERRED — ${report.deferred}`);
+      } else if (report.stoodDown) {
+        app.notice(`companion: ${report.stoodDown}`);
       } else if (report.verdict.kind === "rollover") {
         app.notice(
           `companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`,
@@ -1013,9 +1016,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         "rollover",
         report.deferred
           ? `deferred — ${report.deferred}`
-          : report.verdict.kind === "rollover"
-            ? `new day ${report.verdict.today}`
-            : "same day",
+          : report.stoodDown
+            ? "rolled over by another start"
+            : report.verdict.kind === "rollover"
+              ? `new day ${report.verdict.today}`
+              : "same day",
       );
       progress.begin("companion-pi");
       await companion.spawnPi();
@@ -1050,7 +1055,6 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     wire: () => wireCompanionChannels(),
   });
   installCompanionTabHooks(app, {
-    lifecycle: companion,
     available: () => companionUp,
     failure: () => companionError,
     retry: companionOn ? startAndWire : undefined,

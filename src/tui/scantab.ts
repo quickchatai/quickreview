@@ -68,6 +68,7 @@ import {
   DISMISS_REASON_MAX,
   dismissedLookalike,
   goneDismissal,
+  isOpenFinding,
   lookalikeRank,
   readScanFindings,
   readScanRuns,
@@ -283,7 +284,7 @@ export interface UnitRow {
   progress?: UnitProgress;
 }
 
-const open = (x: ScanFinding): boolean => x.state === "new" || x.state === "promoted";
+const open = isOpenFinding;
 const serious = (x: ScanFinding): boolean => open(x) && sevRank(x.severity) <= 2;
 
 /** Units: every unit a finding or the current run names, worst first. */
@@ -446,7 +447,9 @@ export class ScanReportStore {
   reload(): void {
     this.runs = readScanRuns(this.home);
     this.findings = readScanFindings(this.home);
-    this.stopAnswer = readStopResult(this.home);
+    // An unreadable answer is no answer here: it never infers an interruption.
+    const stop = readStopResult(this.home);
+    this.stopAnswer = stop.kind === "read" ? stop.result : null;
     const p = readStage2Proposal(this.home);
     this.proposal = p.ok
       ? { kind: "read", proposal: p.proposal }

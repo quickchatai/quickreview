@@ -33,7 +33,7 @@
 // next run without anything else to remember.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, withThinking, type Config } from "../config.js";
+import { parseConfig, type Config } from "../config.js";
 import { locateConfig } from "../install.js";
 import {
   PASS_ADDENDA,
@@ -42,7 +42,12 @@ import {
   identityVars,
   type BuiltAgent,
 } from "../include.js";
-import { lensModelOverrides, lensTuningAddenda, applyProfileTuning } from "../lenstuning.js";
+import {
+  applyProfileTuning,
+  effortSpec,
+  lensModelOverrides,
+  lensTuningAddenda,
+} from "../lenstuning.js";
 import { PASS_TIER_ORDER } from "../types.js";
 import {
   applyProfileScan,
@@ -118,9 +123,8 @@ export function scanSettings(cfg: Config): ScanSettings {
  * (`high` = the model's ceiling), through the same per-variant hook a
  * lens's `effort` uses. One variant — stage 1 runs at that tier alone. */
 export function scanPassModels(cfg: Pick<Config, "models" | "scan">): Record<string, string> {
-  const level = cfg.scan.effort === "high" ? cfg.models.effort_max : cfg.scan.effort;
   return {
-    [`${SCAN_PASS}--${cfg.scan.tier}`]: withThinking(cfg.models.tiers[cfg.scan.tier], level),
+    [`${SCAN_PASS}--${cfg.scan.tier}`]: effortSpec(cfg.models, cfg.scan.tier, cfg.scan.effort),
   };
 }
 
