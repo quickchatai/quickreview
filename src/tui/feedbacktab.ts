@@ -574,6 +574,15 @@ export function renderFeedbackTab(
         }),
       },
     ]);
+  } else if (problem?.kind === "save_failed") {
+    row([
+      {
+        text: emptyLine({
+          kind: "unreadable",
+          why: `change register not saved (${sanitizeText(problem.reason)}) — the list is current, but rows only it holds would not survive a restart; r retries`,
+        }),
+      },
+    ]);
   } else if (problem) {
     row([
       {

@@ -19,7 +19,7 @@
 //
 // A leaf: nothing engine-specific; its one import is the leaf `codespan.ts`.
 
-import { longestBacktickRun } from "../codespan.js";
+import { backtickFence } from "../codespan.js";
 
 /** The label a `[feedback]` comment's full text follows in its `events/`
  * entry (src/feedback.ts `memoryEntryFor`) — here, in the leaf, so the TUI's
@@ -44,7 +44,7 @@ export function cleanQuotedText(text: string): string {
  */
 export function fenceAsData(text: string, info = "text"): string {
   const body = cleanQuotedText(text);
-  const fence = "`".repeat(Math.max(3, longestBacktickRun(body) + 1));
+  const fence = backtickFence(body);
   return `${fence}${info}\n${body}\n${fence}`;
 }
 

@@ -10,9 +10,11 @@
 import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
 import type { AlertBadge } from "./alerts.js";
+import type { MessageOutcome } from "./msg.js";
 import {
   boardBarHeight,
   boardKeys,
+  overlayInputBox,
   piPaneSize,
   renderBoard,
   type BoardAction,
@@ -41,7 +43,7 @@ import {
 } from "./paint.js";
 import { ACCENT, RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
-import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
+import { PANE_ESCAPE, PiMirror, isEndKey, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { parseRoundProgress } from "../round-progress.js";
 import { prUrl } from "./theme.js";
@@ -91,8 +93,9 @@ export interface AppHooks {
   // pane and the companion column are the only terminals, both embedded.
   /** Open the quick-message box for the given session. */
   message?: (session: string, app: App) => void;
-  /** Deliver a submitted quick-message (inject write + confirmation). */
-  sendMessage?: (session: string, text: string, app: App) => void;
+  /** Deliver a submitted quick-message (inject write + confirmation);
+   * resolves with how the delivery ended. */
+  sendMessage?: (session: string, text: string, app: App) => void | Promise<MessageOutcome>;
   /** Cancel the PR's running round and re-queue it, via the daemon's
    * `commands/` dir. The board's one write action beyond wakes — see
    * src/tui/unwedge.ts for why it exists and what bounds it. */
@@ -131,9 +134,6 @@ export interface AppHooks {
    * the one native GCP-passphrase prompt. */
   reconnect?: (app: App) => void;
 }
-
-/** Every encoding of the End key we might see — the pi pane's "back to live". */
-const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
 
 /**
  * Decoded verbs the BOARD owns. `handleInput` refuses them off the board —
@@ -292,19 +292,44 @@ export class App {
     }
     // One queue for every keystroke into a pane: each chunk is its own ssh
     // round trip, and unqueued a slow "a" lets the Enter typed after it reach
-    // tmux first and submit pi's input without it.
+    // tmux first and submit pi's input without it. For the same reason a
+    // chunk that did not arrive drops everything queued behind it — an Enter
+    // must never submit input with a hole in it — and says so; the next
+    // keystroke typed once the queue has drained starts afresh.
+    if (this.paneSendsQueued === 0) this.paneSendDropped = false;
+    this.paneSendsQueued++;
     this.paneSendTail = this.paneSendTail
       .then(async () => {
         for (const parts of groups) {
-          await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), {
+          if (this.paneSendDropped) return;
+          const res = await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), {
             timeoutMs: 5_000,
           });
+          if (!res.ok) {
+            this.paneSendDropped = true;
+            this.notice(
+              `✖ pr-${pr}: keys not delivered (${res.stderr.trim() || `exit ${res.code}`}) — input after them dropped`,
+            );
+            return;
+          }
         }
-        void this.pi.refresh(pr);
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => {
+        this.paneSendDropped = true;
+        this.notice(
+          `✖ pr-${pr}: keys not delivered (${err instanceof Error ? err.message : String(err)}) — input after them dropped`,
+        );
+      })
+      .finally(() => {
+        this.paneSendsQueued--;
+        void this.pi.refresh(pr);
+      });
   }
   private paneSendTail: Promise<void> = Promise.resolve();
+  /** Sends queued and not yet finished. */
+  private paneSendsQueued = 0;
+  /** A send in the current queue failed: the rest of it is not sent. */
+  private paneSendDropped = false;
 
   /** Wheel over the pane: move its scrollback window, re-capture with history.
    * Wheeling back to the bottom returns it to the live tail. */
@@ -594,16 +619,17 @@ export class App {
     return !c || Date.now() - c.fetched_at >= App.DETAIL_TTL_MS;
   }
 
-  async refreshDetail(): Promise<void> {
+  /** Read the selected PR's detail. Served from cache at once; the fetch is
+   * skipped while the cache is fresh, unless `force` (the operator's `r`). */
+  async refreshDetail(opts: { force?: boolean } = {}): Promise<void> {
     const pr = this.selectedPr;
     if (pr === undefined) return;
-    // Serve from cache immediately; skip the fetch entirely while fresh.
     const cached = this.detailCache.get(pr);
     const now = Date.now();
     if (cached) {
       this.view.detail = cached.payload;
       this.repaint();
-      if (now - cached.fetched_at < App.DETAIL_TTL_MS) return;
+      if (!opts.force && now - cached.fetched_at < App.DETAIL_TTL_MS) return;
     }
     const seq = ++this.detailSeq;
     this.detailPending.set(pr, seq);
@@ -656,16 +682,40 @@ export class App {
 
   // ---- input -------------------------------------------------------------
 
-  /** Point the board selection at a PR (the companion's `select_pr` action and
-   * the events overlay land here). */
-  selectPr(pr: number): void {
-    this.selectedPr = pr;
+  /**
+   * Point the board at `pr` (the companion's `select_pr` action, a row click
+   * and the events overlay land here). Once the board has loaded, a PR it does not list
+   * (closed, or outside the filter) is refused with a notice and the
+   * selection stays where it is — the highlighted row, the detail and the
+   * mirrored session never point at different PRs. Before the first snapshot
+   * the request is kept (a `qcr tui <pr>` deep link), and the first poll
+   * settles it. False when refused.
+   */
+  selectPr(pr: number): boolean {
     const sorted = visiblePrs(this.view);
+    if (this.view.snapshot !== undefined && !sorted.some((p) => p.number === pr)) {
+      this.notice(`#${pr} is not on the board (closed, or outside the filter)`);
+      return false;
+    }
     this.view.selected = reselect(sorted, pr, this.view.selected);
+    this.selectionMoved(pr);
+    return true;
+  }
+
+  /** The selection now points at `pr`: everything that shows the selected PR
+   * follows it — the progress panel (another PR's is never shown), the
+   * detail, and the mirrored session. */
+  private selectionMoved(pr: number | undefined): void {
+    this.selectedPr = pr;
     if (this.view.progress?.pr !== pr) this.view.progress = undefined;
     void this.refreshDetail();
     void this.refreshProgress();
     this.followSelection();
+  }
+
+  /** Move the events overlay's scroll, clamped to its lines. */
+  private scrollEvents(delta: number): void {
+    this.view.eventsScroll = moveSelection(this.view.eventsScroll, delta, this.view.events.length);
   }
 
   /** Narrow (or, with null, clear) the board. The selection stays on the
@@ -678,11 +728,7 @@ export class App {
     this.view.selected = reselect(sorted, this.selectedPr, this.view.selected);
     const pr = sorted[this.view.selected]?.number;
     if (pr === this.selectedPr) return;
-    this.selectedPr = pr;
-    if (this.view.progress?.pr !== pr) this.view.progress = undefined;
-    void this.refreshDetail();
-    void this.refreshProgress();
-    this.followSelection();
+    this.selectionMoved(pr);
   }
 
   selectedSession(): string | undefined {
@@ -760,7 +806,7 @@ export class App {
         }
         this.msgDraft = "";
         if (text.length > 0 && session) {
-          if (this.hooks.sendMessage) this.hooks.sendMessage(session, text, this);
+          if (this.hooks.sendMessage) void this.hooks.sendMessage(session, text, this);
           else this.notice(`✖ msg ${session} undelivered (sender not wired)`);
         }
         break;
@@ -969,19 +1015,20 @@ export class App {
         return;
       }
     }
+    // The KEYS overlay covers the tab, the board included (see repaint): what
+    // it hides is not on screen, so a click must not reach it (a hidden [url]
+    // or row would fire unseen) and the wheel must not move a hidden
+    // selection. A click dismisses help, as any key does; the wheel is
+    // swallowed.
+    if (this.view.help) {
+      if (ev.kind === "click") {
+        this.view.help = false;
+        this.repaint();
+      }
+      return;
+    }
     const tab = this.tabHooks();
     if (this.tab !== "board") {
-      // The KEYS overlay covers the tab (see repaint): its zones are not on
-      // screen, so a click must not reach them (a hidden [url] or row would
-      // fire unseen). A click dismisses help, as any key does; the wheel is
-      // swallowed.
-      if (this.view.help) {
-        if (ev.kind === "click") {
-          this.view.help = false;
-          this.repaint();
-        }
-        return;
-      }
       // An installed surface: clicks hit its own zones (rows select, buttons
       // act); the wheel is handed over as a key that says it was a wheel.
       if (ev.kind === "click") tab?.click?.(this, ev.x, ev.y);
@@ -1001,16 +1048,11 @@ export class App {
       // The events overlay owns the wheel while it is up; otherwise the wheel
       // moves the selection (and the mirror follows it).
       if (this.view.eventsFocus) {
-        this.view.eventsScroll = Math.max(
-          0,
-          Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)),
-        );
+        this.scrollEvents(delta);
       } else {
         const sorted = visiblePrs(this.view);
         this.view.selected = moveSelection(this.view.selected, delta, sorted.length);
-        this.selectedPr = sorted[this.view.selected]?.number;
-        void this.refreshDetail();
-        this.followSelection();
+        this.selectionMoved(sorted[this.view.selected]?.number);
       }
       this.repaint();
       return;
@@ -1094,7 +1136,7 @@ export class App {
       }
       // End, while parked in scrollback, is the "back to live" key the header
       // advertises — it snaps the window to the tail instead of travelling.
-      if (END_KEYS.has(buf.toString("utf8")) && this.pi.offsetFor(this.piFocusPr) > 0) {
+      if (isEndKey(buf.toString("utf8")) && this.pi.offsetFor(this.piFocusPr) > 0) {
         this.pi.setOffset(this.piFocusPr!, 0);
         this.syncPiPane();
         this.repaint();
@@ -1175,24 +1217,15 @@ export class App {
         break;
       case "up":
       case "down": {
+        const delta = key.kind === "down" ? 1 : -1;
         if (this.view.eventsFocus) {
-          const delta = key.kind === "down" ? 1 : -1;
-          this.view.eventsScroll = Math.max(
-            0,
-            Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)),
-          );
+          this.scrollEvents(delta);
           break;
         }
         const sorted = visiblePrs(this.view);
-        this.view.selected = moveSelection(
-          this.view.selected,
-          key.kind === "down" ? 1 : -1,
-          sorted.length,
-        );
-        this.selectedPr = sorted[this.view.selected]?.number;
+        this.view.selected = moveSelection(this.view.selected, delta, sorted.length);
         this.msgDraft = ""; // board navigation drops a cancelled draft
-        void this.refreshDetail();
-        this.followSelection();
+        this.selectionMoved(sorted[this.view.selected]?.number);
         break;
       }
       case "escape":
@@ -1205,7 +1238,7 @@ export class App {
         break;
       case "refresh":
         void this.poller.tick();
-        void this.refreshDetail();
+        void this.refreshDetail({ force: true });
         void this.pi.refresh(this.panePr());
         break;
       case "reconnect":
@@ -1296,9 +1329,12 @@ export class App {
     this.notice("companion unavailable (started with --no-companion?)");
   }
 
-  /** Give the column the keyboard. */
+  /** Give the companion column the keyboard — taking it from the PR pane
+   * first: one keyboard owner, whoever asked (a retry that heals can land
+   * here after the operator focused a pane). */
   focusCompanion(): void {
     if (!this.sidebar) return;
+    if (this.view.piFocus) this.blurPiPane();
     this.sidebar.focus();
     this.repaint();
   }
@@ -1668,10 +1704,10 @@ export class App {
     // help is up, every tab shows it. A tab screen here would leave the flag
     // set with nothing on screen, and the next keystroke silently eaten.
     if (this.tab !== "board" && !this.view.help) {
-      paint(
-        this.tabHooks()?.screen(this, inner, rows),
-        `${this.tab} tab not wired — [1] back to board`,
-      );
+      const screen = this.tabHooks()?.screen(this, inner, rows);
+      // A prompt the tab opened types into the input box: show it there.
+      if (screen && this.view.inputBox) overlayInputBox(screen, this.view.inputBox);
+      paint(screen, `${this.tab} tab not wired — [1] back to board`);
       return;
     }
     this.view.now = this.now();

@@ -79,8 +79,25 @@ export async function runOrThrow(
  * then is killed and read as "could not ask" (null). */
 export const LIST_SESSIONS_TIMEOUT_MS = 10_000;
 
-/** The two tmux answers that mean "no server running", and nothing else. */
-const NO_SERVER = /no server running|error connecting to .*\(No such file or directory\)/i;
+/**
+ * Does tmux's stderr say "no server running"? Exactly two answers do:
+ * `no server running on <sock>` (a stale socket, ECONNREFUSED) and
+ * `error connecting to <sock> (No such file or directory)` (no socket at all).
+ * tmux prints the same `error connecting to` prefix for EVERY other connect
+ * errno — Permission denied, EAGAIN — and those are "could not ask", never
+ * "none alive".
+ */
+export function isNoTmuxServer(stderr: string): boolean {
+  return /no server running|error connecting to .*\(No such file or directory\)/i.test(stderr);
+}
+
+/** A successful listing's session names, one per non-blank line. */
+function sessionNames(stdout: string): string[] {
+  return stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+}
 
 export interface TmuxOptions {
   exec?: ExecFn;
@@ -105,10 +122,7 @@ export class Tmux {
   async listSessions(): Promise<string[]> {
     const res = await this.exec(this.bin, ["list-sessions", "-F", "#{session_name}"]);
     if (res.code !== 0) return []; // "no server running on ..." is not an error here
-    return res.stdout
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
+    return sessionNames(res.stdout);
   }
 
   /**
@@ -118,12 +132,8 @@ export class Tmux {
    * []; a caller that must never read "could not ask" as "none alive" — the
    * archiver's eligibility — reads this one.
    *
-   * Only two answers mean "no server, so no sessions" (the `rollover.ts`
-   * kill reads the same two): `no server running on <sock>` (a stale socket,
-   * ECONNREFUSED) and `error connecting to <sock> (No such file or
-   * directory)` (no socket at all). tmux prints the same `error connecting
-   * to` prefix for EVERY other connect errno — Permission denied, EAGAIN —
-   * and those are "could not ask", never "none alive".
+   * Only `isNoTmuxServer`'s two answers mean "no server, so no sessions"
+   * (the `rollover.ts` kill reads the same two).
    */
   async listSessionsKnown(timeoutMs = LIST_SESSIONS_TIMEOUT_MS): Promise<string[] | null> {
     let res: ExecResult;
@@ -134,13 +144,13 @@ export class Tmux {
     }
     // A negative code is a kill (the timeout) or no exit status at all.
     if (res.code < 0) return null;
-    if (res.code !== 0) return NO_SERVER.test(res.stderr) ? [] : null;
-    return res.stdout
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
+    if (res.code !== 0) return isNoTmuxServer(res.stderr) ? [] : null;
+    return sessionNames(res.stdout);
   }
 
+  /** Does tmux have `name`? Every failed probe — absent, no server, or one
+   * that could not ask (a socket it may not open) — reads as false; a caller
+   * that must not read "could not ask" as "gone" reads `listSessionsKnown`. */
   async hasSession(name: string): Promise<boolean> {
     const res = await this.exec(this.bin, ["has-session", "-t", `=${name}`]);
     return res.code === 0;

@@ -224,6 +224,12 @@ const SEQUENCES: Array<[string, string]> = [
   ["\x1b\x7f", "M-BSpace"],
 ];
 
+/** Is `input` exactly one encoding of the End key (the pane's "back to
+ * live")? Read off the same table the keys are translated by. */
+export function isEndKey(input: string): boolean {
+  return SEQUENCES.some(([seq, name]) => name === "End" && seq === input);
+}
+
 /**
  * The board's Ctrl-q — the byte that hands focus back to the list. It is the
  * one byte that never reaches the session, so the operator can always get out.

@@ -136,6 +136,31 @@ describe("autofile", () => {
     ).toBeUndefined();
   });
 
+  // Only the header's `filed=` is the filer's; one in the prose is the
+  // reporter's words. MUTATION: strip `filed=` tokens from the whole text — red.
+  it("a `filed=` word in the prose is part of the defect, not bookkeeping", () => {
+    const a = entry({ text: "#bug parser rejects filed=one requests" });
+    const b = entry({ text: "#bug parser rejects filed=two requests" });
+    expect(memoryKey(a)).not.toBe(memoryKey(b));
+    expect(memoryKey(entry({ text: withFiledTag(a.text, "FT-0199") }))).toBe(memoryKey(a));
+  });
+
+  // The stamp goes through the vocabulary's one header editor, so the body
+  // keeps its own shape. MUTATION: rebuild the text with single spaces — red.
+  it("the stamp keeps the entry's paragraph breaks", () => {
+    expect(withFiledTag("#bug\n\nDescription line.\n\nMore.", "FT-0170")).toBe(
+      "#bug filed=FT-0170\n\nDescription line.\n\nMore.",
+    );
+    expect(withFiledTag("plain prose only", "FT-0170")).toBe("filed=FT-0170\nplain prose only");
+  });
+
+  // A ticket is written aside and renamed into place (so the Memory-key scan
+  // never takes a torn file for a filing); the staging file never lingers.
+  it("a filed ticket leaves no staging file behind", async () => {
+    const filed = await autofileDefects(paths, [entry()], "2026-08-20T10:00:00Z");
+    expect(readdirSync(join(root, "efforts/review-sandbox/tickets"))).toEqual([filed[0]!.file]);
+  });
+
   it("two distinct defects get two keys and two tickets", async () => {
     const filed = await autofileDefects(
       paths,

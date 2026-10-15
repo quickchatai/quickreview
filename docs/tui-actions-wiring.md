@@ -136,8 +136,9 @@ const driver: import("./actions.js").TuiDriver = {
     memState.memFilter = tag;                      // see §4
     app.repaint();
   },
-  msgSession: (session, text) => app.hooks.sendMessage?.(session, text, app),
-  overseerInject: (text) => app.hooks.sendMessage?.("overseer", text, app),
+  // Resolve on delivery, reject when undelivered — the result file says which.
+  msgSession: (session, text) => deliverMessage(app, session, text),
+  overseerInject: (text) => deliverMessage(app, "overseer", text),
   deployTab: (action) => {
     app.tab = "deploy";
     app.repaint();

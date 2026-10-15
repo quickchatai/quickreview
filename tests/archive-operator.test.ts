@@ -787,6 +787,19 @@ describe("the CLI client (`qcr archive run|restore <pr>`)", () => {
     expect(lines.join("\n")).toContain("backlog 3 PR(s)");
   });
 
+  // The result dir is one sessions can write: valid JSON that is not an
+  // object is an unreadable receipt, never a throw. MUTATION: dereference the
+  // parsed value unchecked — red (TypeError on `null`).
+  it("a receipt that parses to null, a number or an array is unreadable", async () => {
+    for (const body of ["null", "7", "[]"]) {
+      const { ssh } = runner([body]);
+      expect(await sender(ssh).send({ command: "archive-run" })).toEqual({
+        ok: false,
+        reason: "unreadable daemon result",
+      });
+    }
+  });
+
   it("restore: the payload names the PR; outcomes render; an unsealed dir and a refusal are failures", async () => {
     expect(JSON.parse(archiveOpPayload({ command: "archive-restore", pr: 12 }))).toEqual({
       command: "archive-restore",

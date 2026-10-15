@@ -32,10 +32,11 @@ import {
   filedAs,
   MEMORY_KEY_LINE,
   memoryKey,
-  withFiledTag,
+  stampFiled,
   type TrackerPaths,
 } from "./autofile.js";
-import { refOf, type MemoryEntry, type MemoryStore } from "./memory.js";
+import { EVENT_TAG_RE } from "../memory/eventtags.js";
+import type { MemoryEntry, MemoryStore } from "./memory.js";
 import type { SshRunner } from "./remote.js";
 import { commandFileName, commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
 
@@ -85,8 +86,8 @@ export class WayfinderIssueSink implements IssueSink {
   }
 }
 
-/** Header-stripped prose of an entry — tags and `k=v` tokens are not title
- * material (same token grammar `withFiledTag` uses to find the header end). */
+/** The prose of an entry — `#tags`, `k=v` tokens (the memory vocabulary's
+ * one grammar) and `[[links]]` are not title material, wherever they sit. */
 export function issueTitleFor(e: MemoryEntry): string {
   const prose = e.text
     .split(/\s+/)
@@ -154,17 +155,7 @@ export class GithubIssueSink implements IssueSink {
       // Best-effort stamp, after the daemon's receipt — same crash-safe order
       // as the wayfinder filer. A refused stamp costs a re-check next tick,
       // where the daemon's title dedup refuses the duplicate.
-      if (this.store) {
-        try {
-          await this.store.apply({
-            op: "edit",
-            ...refOf(e),
-            text: withFiledTag(e.text, outcome.stamp),
-          });
-        } catch {
-          /* the seam resolves refusals; only a broken transport lands here */
-        }
-      }
+      if (this.store) await stampFiled(this.store, e, outcome.stamp);
     }
     return refused === undefined ? { filed } : { filed, refused };
   }

@@ -31,6 +31,7 @@ import {
 } from "./reload.js";
 import { killInFlightSsh, runnerFor, transportOf } from "./remote.js";
 import { chainOnPoll } from "./poll-hooks.js";
+import { deliverMessage } from "./msg.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
 
 export { chainOnPoll } from "./poll-hooks.js";
@@ -178,8 +179,9 @@ export function buildTuiDriver(
     },
     selectPr: (pr) => {
       prep();
+      // public App API — selects + refreshes detail; a refusal leaves the tab
+      if (!app.selectPr(pr)) throw new Error(`#${pr} is not on the board`);
       app.tab = "board";
-      app.selectPr(pr); // public App API — selects + refreshes detail
       app.repaint();
     },
     metricsWindow: (w) => {
@@ -288,8 +290,8 @@ export function buildTuiDriver(
       setTimelineFilter(learning.memory, tag);
       app.repaint();
     },
-    msgSession: (session, text) => app.hooks.sendMessage?.(session, text, app),
-    overseerInject: (text) => app.hooks.sendMessage?.("overseer", text, app),
+    msgSession: (session, text) => deliverMessage(app, session, text),
+    overseerInject: (text) => deliverMessage(app, "overseer", text),
     deployTab: (action) => {
       prep();
       app.tab = "deploy";

@@ -36,6 +36,12 @@ interface Writer {
   mode: "stdin" | "arg";
 }
 
+/** Klipper's D-Bus method — one call, whichever qdbus binary carries it. */
+const KLIPPER_SET: Omit<Writer, "cmd"> = {
+  argv: ["org.kde.klipper", "/klipper", "setClipboardContents"],
+  mode: "arg",
+};
+
 /** Probe order: the dedicated tools first, klipper's D-Bus method as the
  * KDE fallback (qdbus6 is the Arch/Qt6 name, qdbus the compat shim). */
 const WRITERS: Writer[] = [
@@ -43,8 +49,8 @@ const WRITERS: Writer[] = [
   { cmd: "xclip", argv: ["-selection", "clipboard"], mode: "stdin" },
   { cmd: "xsel", argv: ["--input", "--clipboard"], mode: "stdin" },
   { cmd: "pbcopy", argv: [], mode: "stdin" },
-  { cmd: "qdbus6", argv: ["org.kde.klipper", "/klipper", "setClipboardContents"], mode: "arg" },
-  { cmd: "qdbus", argv: ["org.kde.klipper", "/klipper", "setClipboardContents"], mode: "arg" },
+  { cmd: "qdbus6", ...KLIPPER_SET },
+  { cmd: "qdbus", ...KLIPPER_SET },
 ];
 
 /** Decode the text carried by one complete OSC 52 sequence; undefined for

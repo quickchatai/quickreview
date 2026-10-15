@@ -801,6 +801,14 @@ describe("an unreadable transcript makes the usage UNKNOWN", () => {
     expect(store.unreadable).toEqual([
       { path: "/g/sub", reason: expect.stringContaining("EACCES") },
     ]);
+    fs.listErrors.delete("/g/sub");
+
+    // A store subdir that cannot even be stat'ed hides its subtree just the
+    // same. MUTATION: swallow the subdir stat failure as "not a dir" — red.
+    fs.statErrors.set("/g/sub", "EIO");
+    const hidden = await idx.measure(window("/s", "/g"));
+    expect(hidden.usage).toBeNull();
+    expect(hidden.unreadable).toEqual([{ path: "/g/sub", reason: expect.stringContaining("EIO") }]);
   });
 
   it("an absent session dir or store is NOT unknown — there is simply nothing there", async () => {

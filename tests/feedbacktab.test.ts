@@ -605,6 +605,20 @@ describe("the revert, armed and confirmed", () => {
     expect(behind).toContain("last git log scan failed");
     expect(behind).toContain("CHANGED (1)");
     expect(behind).toContain("newest change");
+    // A register the state dir refused is current but not durable — said so,
+    // never as a failed scan.
+    const unsaved = screenOf(
+      await loaded({
+        changes: new FakeChanges([changeEntry("a".repeat(40), "newest change")], {
+          kind: "save_failed",
+          reason: "ENOSPC",
+        }),
+      }),
+    );
+    expect(unsaved).toContain("change register not saved");
+    expect(unsaved).toContain("ENOSPC");
+    expect(unsaved).not.toContain("git log");
+    expect(unsaved).toContain("newest change");
   });
 
   it("the loader does not re-arm on an unreadable register — six paints, one scan; r is the way back in", async () => {

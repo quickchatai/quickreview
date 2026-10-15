@@ -29,9 +29,11 @@
 // stays marked after any restart, on any checkout, even if this file is deleted
 // — the durability of record lives in the repository, and the JSON is a cache
 // that makes the tab paint instantly and remembers when we first saw a change.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { LocalRunner } from "./deploytab.js";
+import { errText, readJsonFile, writeJsonFile } from "./jsonfile.js";
+import type { RemoteResult } from "./remote.js";
 
 // ---- the trailer convention ---------------------------------------------------
 
@@ -168,21 +170,41 @@ export function shortSha(sha: string): string {
  */
 export type RevertIndex = Map<string, { by: string; at: string }>;
 
-/** Every revert the scan saw, keyed by the sha (or abbreviation) it undoes. */
+/** Every revert the scan saw that still stands, keyed by the sha (or
+ * abbreviation) it undoes. A revert that was itself reverted (a reapply)
+ * undoes nothing any more, so it marks nothing: a change reverted and then
+ * restored is live again, and revertible. */
 export function revertsIn(commits: ChangeCommit[]): RevertIndex {
   const reverts: RevertIndex = new Map();
+  // Newest first, so a revert is seen before the commit it undoes — and a
+  // revert's own undoing before the revert.
   for (const c of commits) {
     const target = revertedSha(c.body);
     if (!target) continue;
-    // Newest first, so the first revert seen for a target is the latest one.
+    if (revertOf(reverts, c.sha)) continue; // this revert was itself reverted
+    // The first revert seen for a target is the latest one.
     if (!reverts.has(target)) reverts.set(target, { by: shortSha(c.sha), at: c.at });
   }
   return reverts;
 }
 
-/** The revert of `sha` in the index — full sha or an abbreviation of it. */
+/** The revert of `sha` in the index. Either side may be abbreviated: a revert
+ * message can name an abbreviation, and a register row records its reverter
+ * by its short sha. */
 function revertOf(reverts: RevertIndex, sha: string): { by: string; at: string } | undefined {
-  return reverts.get(sha) ?? [...reverts.entries()].find(([k]) => sha.startsWith(k))?.[1];
+  return (
+    reverts.get(sha) ??
+    [...reverts.entries()].find(([k]) => sha.startsWith(k) || k.startsWith(sha))?.[1]
+  );
+}
+
+/** Newest first by author date — compared as instants, since `%aI` carries
+ * each author's own offset — with the sha as the tiebreak so the order is
+ * stable. */
+function newestFirst(a: ChangeEntry, b: ChangeEntry): number {
+  const d = (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0);
+  if (d !== 0) return d;
+  return a.sha < b.sha ? 1 : a.sha > b.sha ? -1 : 0;
 }
 
 export function buildEntries(commits: ChangeCommit[], now: string): ChangeEntry[] {
@@ -238,11 +260,13 @@ export function mergeRegister(
   const seen = new Set(merged.map((e) => e.sha));
   for (const old of previous) {
     if (seen.has(old.sha)) continue;
-    const rev = old.reverted ? undefined : revertOf(reverts, old.sha);
-    merged.push(rev ? { ...old, reverted: rev } : old);
+    // A kept row's revert stands unless the scan saw that revert reverted.
+    const stands = old.reverted && !revertOf(reverts, old.reverted.by) ? old.reverted : undefined;
+    const rev = stands ?? revertOf(reverts, old.sha);
+    const { reverted: _was, ...rest } = old;
+    merged.push(rev ? { ...rest, reverted: rev } : rest);
   }
-  // Newest first by author date, sha as the tiebreak so the order is stable.
-  return merged.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : a.sha < b.sha ? 1 : -1));
+  return merged.sort(newestFirst);
 }
 
 export const REGISTER_FILE = "change-register.json";
@@ -279,29 +303,15 @@ export class ChangeRegisterStore {
    * there is deliberately no `load()` returning `ChangeRegister | undefined`
    * beside this (that accessor is what a merge-and-save reaches for). */
   read(): RegisterRead {
-    let raw: string;
-    try {
-      raw = readFileSync(this.path, "utf8");
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return { state: "absent" };
-      return { state: "unreadable", reason: code ?? errText(err) };
-    }
-    try {
-      const parsed = JSON.parse(raw) as ChangeRegister;
-      if (!Array.isArray(parsed?.entries))
-        return { state: "unreadable", reason: "no entries array" };
-      return { state: "register", register: parsed };
-    } catch (err) {
-      return { state: "unreadable", reason: errText(err) };
-    }
+    const read = readJsonFile(this.path);
+    if (read.state !== "parsed") return read;
+    const parsed = read.value as ChangeRegister | null;
+    if (!Array.isArray(parsed?.entries)) return { state: "unreadable", reason: "no entries array" };
+    return { state: "register", register: parsed };
   }
 
   save(register: ChangeRegister): void {
-    this.ensure();
-    const tmp = `${this.path}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(register, null, 2)}\n`);
-    renameSync(tmp, this.path);
+    writeJsonFile(this.path, register);
   }
 }
 
@@ -315,7 +325,9 @@ export class ChangeRegisterStore {
  * own sentence — neither is "no changes yet".
  */
 export type ChangeLogProblem =
-  { kind: "register_unreadable"; reason: string } | { kind: "scan_failed"; reason: string };
+  | { kind: "register_unreadable"; reason: string }
+  | { kind: "scan_failed"; reason: string }
+  | { kind: "save_failed"; reason: string };
 
 export interface RevertResult {
   ok: boolean;
@@ -360,6 +372,11 @@ export class ChangeLog {
 
   private busy = false;
 
+  /** A scanned register the store refused to save: the next scan merges onto
+   * it rather than onto the older file, so `first_seen` is not rewritten and
+   * no row the scan no longer reaches is dropped. */
+  private unsaved: ChangeRegister | undefined;
+
   /** Fold one file read into the two fields above. An unreadable file keeps
    * whatever register is already in memory (an earlier, true read) and marks
    * the problem; it never blanks the list. */
@@ -395,21 +412,26 @@ export class ChangeLog {
       }
       const commits = parseGitLog(res.stdout);
       const now = this.now().toISOString();
-      const previous = baseline.state === "register" ? baseline.register.entries : [];
+      const previous =
+        this.unsaved?.entries ?? (baseline.state === "register" ? baseline.register.entries : []);
       const register: ChangeRegister = {
         version: 1,
         updated_at: now,
         entries: mergeRegister(previous, buildEntries(commits, now), revertsIn(commits)),
         scanned: commits.length,
       };
+      this.register = register;
+      // An unwritable state dir costs durability, never the view — and says
+      // so, since the rows only this register holds would not survive a restart.
       try {
         this.store.save(register);
-      } catch {
-        // An unwritable state dir costs durability, never the view.
+        this.unsaved = undefined;
+        this.problem = undefined;
+      } catch (err) {
+        this.unsaved = register;
+        this.problem = { kind: "save_failed", reason: errText(err) };
       }
-      this.register = register;
-      this.problem = undefined;
-      return undefined;
+      return this.problem;
     } catch (err) {
       this.problem = { kind: "scan_failed", reason: errText(err) };
       return this.problem;
@@ -444,11 +466,23 @@ export class ChangeLog {
 
     const res = await this.local(revertArgv(sha));
     if (!res.ok) {
-      // A conflicted revert leaves the shared tree half-applied — abort it.
-      await this.local(REVERT_ABORT_ARGV).catch(() => undefined);
+      // A conflicted revert leaves the shared tree half-applied — abort it,
+      // and say "tree unchanged" only when the abort says so.
+      const why = firstLine(res.stderr || res.stdout);
+      const abort = await this.local(REVERT_ABORT_ARGV).catch((err: unknown): RemoteResult => ({
+        ok: false,
+        stdout: "",
+        stderr: errText(err),
+        code: -1,
+      }));
+      if (!abort.ok)
+        return {
+          ok: false,
+          message: `✖ revert of ${entry.short} failed (${why}) and its abort failed too (${firstLine(abort.stderr || abort.stdout)}) — the shared checkout may be mid-revert: check git status`,
+        };
       return {
         ok: false,
-        message: `✖ revert of ${entry.short} failed (aborted, tree unchanged): ${firstLine(res.stderr || res.stdout)}`,
+        message: `✖ revert of ${entry.short} failed (aborted, tree unchanged): ${why}`,
       };
     }
     await this.refresh();
@@ -466,8 +500,4 @@ function firstLine(text: string): string {
       .find((l) => l.trim() !== "")
       ?.trim() ?? "no output"
   );
-}
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

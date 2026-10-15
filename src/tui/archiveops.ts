@@ -93,12 +93,16 @@ export class ArchiveOpSender {
       if (!probe.ok) continue;
       const body = probe.stdout.trim();
       if (body === "" || body === "pending") continue;
-      let v: Record<string, unknown>;
+      let parsed: unknown;
       try {
-        v = JSON.parse(body) as Record<string, unknown>;
+        parsed = JSON.parse(body);
       } catch {
         return { ok: false, reason: "unreadable daemon result" };
       }
+      // Valid JSON is not yet a receipt: anything but an object is unreadable.
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+        return { ok: false, reason: "unreadable daemon result" };
+      const v = parsed as Record<string, unknown>;
       const issuer =
         v["issuer"] === "operator" || v["issuer"] === "session" ? v["issuer"] : undefined;
       if (v["ok"] !== true)

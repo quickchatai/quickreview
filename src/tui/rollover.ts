@@ -21,6 +21,7 @@
 // initial-message flag — is undocumented for 0.84.1; if one turns up it is a
 // drop-in replacement for writeDayOpen().
 import { stripModelDocs } from "../promptdoc.js";
+import { isNoTmuxServer } from "../tmux.js";
 import {
   existsSync,
   mkdirSync,
@@ -669,15 +670,12 @@ export class CompanionRollover {
       "-t",
       this.cfg.session,
     ]);
-    // tmux words "no server" two ways: `no server running on <sock>` (a stale
-    // socket, ECONNREFUSED) and `error connecting to <sock> (No such file or
-    // directory)` (no socket at all — a freshly started container). Both mean
-    // nothing is running; any other connect error does not.
+    // No such session, or no tmux server at all (a freshly started container),
+    // means nothing is running; any other connect error does not.
     if (
       res.ok ||
-      /can't find session|no server running|session not found|error connecting to .*\(No such file or directory\)/i.test(
-        res.stderr,
-      )
+      /can't find session|session not found/i.test(res.stderr) ||
+      isNoTmuxServer(res.stderr)
     )
       return { state: "killed" };
     return { state: "failed", reason: execReason(res) };

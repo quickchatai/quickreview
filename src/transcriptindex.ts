@@ -145,7 +145,8 @@ export interface TranscriptMeasureOpts {
   /** The PR's pi session dir: its top-level `*.jsonl`, line-window filtered. */
   sessionDir: string;
   /** pi HOME global store (pass transcripts): whole files matched by mtime.
-   * Optional, best-effort. */
+   * Optional; when given, an unreadable part of it makes the usage unknown,
+   * as one of the session dir does. */
   globalStoreDir?: string | undefined;
   /** ISO round window, inclusive on both ends. */
   startedAt: string;
@@ -486,15 +487,20 @@ export class TranscriptIndex {
         }
         continue;
       }
-      // Any other name is followed only when it is a directory — a stat that
-      // fails says nothing is there to follow.
-      let isDir = false;
+      // Any other name is followed, while the walk may go deeper, only when it
+      // is a directory. Gone is nothing to follow; any other stat failure is a
+      // subtree that may hold this round's transcripts — unreadable, as an
+      // unlistable one is.
+      if (depth === 0) continue;
+      let st: TranscriptStat;
       try {
-        isDir = (await this.fs.stat(path)).isDirectory();
-      } catch {
-        isDir = false;
+        st = await this.fs.stat(path);
+      } catch (err) {
+        if (!isMissing(err)) unreadable.push({ path, reason: reasonOf(err) });
+        continue;
       }
-      if (isDir) await this.globalParts(path, depth - 1, start, end, parts, unreadable, usage);
+      if (st.isDirectory())
+        await this.globalParts(path, depth - 1, start, end, parts, unreadable, usage);
     }
   }
 
