@@ -808,33 +808,31 @@ async function consumeTriggers(
 ): Promise<string[]> {
   const consumed: string[] = [];
   const log = deps.log ?? (() => {});
-  try {
-    await deps.adapter.removeLabel(pr, deps.cfg.github.trigger_label);
-    consumed.push("label");
-  } catch (err) {
-    if (alreadyConsumed(err)) {
-      consumed.push("label");
-      deps.store.logEvent("trigger_already_consumed", pr, { which: "label" });
-    } else {
-      log(`dispatch: label removal failed on #${pr}`, err);
-      deps.store.logEvent("trigger_consume_failed", pr, { which: "label", error: String(err) });
+  /** One trigger: consumed, already gone (consumed too), or failed — logged. */
+  const consume = async (
+    which: "label" | "team_request",
+    what: string,
+    op: () => Promise<unknown>,
+  ): Promise<void> => {
+    try {
+      await op();
+      consumed.push(which);
+    } catch (err) {
+      if (alreadyConsumed(err)) {
+        consumed.push(which);
+        deps.store.logEvent("trigger_already_consumed", pr, { which });
+      } else {
+        log(`dispatch: ${what} failed on #${pr}`, err);
+        deps.store.logEvent("trigger_consume_failed", pr, { which, error: String(err) });
+      }
     }
-  }
-  try {
-    await deps.adapter.deleteTeamReviewRequest(pr);
-    consumed.push("team_request");
-  } catch (err) {
-    if (alreadyConsumed(err)) {
-      consumed.push("team_request");
-      deps.store.logEvent("trigger_already_consumed", pr, { which: "team_request" });
-    } else {
-      log(`dispatch: team-request DELETE failed on #${pr}`, err);
-      deps.store.logEvent("trigger_consume_failed", pr, {
-        which: "team_request",
-        error: String(err),
-      });
-    }
-  }
+  };
+  await consume("label", "label removal", () =>
+    deps.adapter.removeLabel(pr, deps.cfg.github.trigger_label),
+  );
+  await consume("team_request", "team-request DELETE", () =>
+    deps.adapter.deleteTeamReviewRequest(pr),
+  );
   if (opts.markInProgress !== false) {
     try {
       await deps.adapter.addLabel(pr, deps.cfg.github.in_progress_label);
@@ -927,6 +925,10 @@ export interface PassPlan {
   pass_plan: PassPlanEntry[];
   addable_lenses: string[];
   sweep_unswept: string[];
+  /** Files the behaviour-delta lens would read but its group cap left out —
+   * present only when the cap cut something, so a capped lens never reads
+   * as covering the change. */
+  behaviour_unread?: string[];
 }
 
 /** Deterministic per-round pass plan (agent = `${lens}--${tier}`):
@@ -1133,9 +1135,8 @@ export function buildPassPlan(
   }
   // The sweep (`[review] sweep`): one row per group of
   // changed files, at the cheapest tier — its job is attention, line by line,
-  // not deep reasoning — inserted before the validator (appended when a
-  // profile switched the validator off: the validator is always last or
-  // absent, never followed).
+  // not deep reasoning. Appended: `slowestFirst` below puts the validator
+  // last whatever is appended after it.
   let sweep_unswept: string[] = [];
   if (sweepOn) {
     const { groups, unswept } = sweepGroups(
@@ -1167,14 +1168,14 @@ export function buildPassPlan(
         focus,
       };
     });
-    const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;
-    pass_plan.splice(at, 0, ...rows);
+    pass_plan.push(...rows);
   }
   // The behaviour-delta lens: one row per group of files the
   // PR modifies or deletes code in, at the round's tier — comparing base and
-  // head is reasoning, not attention — inserted before the validator.
+  // head is reasoning, not attention. Appended, as the sweep's rows are.
+  let behaviour_unread: string[] = [];
   if (on(BEHAVIOUR_DELTA_PASS, cfg.review.behaviour_delta) && !skip.has(BEHAVIOUR_DELTA_PASS)) {
-    const { groups } = behaviourDeltaGroups(
+    const { groups, unread } = behaviourDeltaGroups(
       files,
       cfg.review.behaviour_delta_max_groups,
       cfg.review.sweep_group_lines,
@@ -1189,14 +1190,19 @@ export function buildPassPlan(
       why: `base behaviour is at risk in ${focus.length === 1 ? focus[0] : `${focus.length} files`}: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch`,
       focus,
     }));
-    const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;
-    pass_plan.splice(at, 0, ...rows);
+    pass_plan.push(...rows);
+    behaviour_unread = unread;
   }
   const selected = new Set(pass_plan.map((p) => p.lens));
   const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
     (l) => !selected.has(l) && on(l) && !skip.has(l),
   );
-  return { pass_plan: slowestFirst(pass_plan, files, risk), addable_lenses, sweep_unswept };
+  return {
+    pass_plan: slowestFirst(pass_plan, files, risk),
+    addable_lenses,
+    sweep_unswept,
+    ...(behaviour_unread.length > 0 ? { behaviour_unread } : {}),
+  };
 }
 
 /** The lenses `slowestFirst` launches last within their tier: conditional
@@ -1836,6 +1842,29 @@ export function buildRoundOrder(args: {
   };
 }
 
+/** What the round row records of a plan — the same projection on the
+ * normal path and on the patch-write fallback, so the stored round and the
+ * order always describe one plan. */
+function recordedPlan(
+  cfg: Config,
+  plan: PassPlan,
+): {
+  plannedPasses: PassPlanEntry[];
+  lenses: string[];
+  addablePasses: Array<{ lens: string; tier: PassTier }>;
+  validateTier: PassTier | null;
+} {
+  const plannedPasses = plan.pass_plan;
+  return {
+    plannedPasses,
+    lenses: [...new Set(plannedPasses.map((p) => p.lens))],
+    addablePasses: plan.addable_lenses.map((lens) => ({ lens, tier: addTierOf(cfg, lens) })),
+    // Null when the profile switched the validator off: the round had no
+    // validator, and recording the configured tier would say it did.
+    validateTier: plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null,
+  };
+}
+
 // A reconcile, webhook and periodic tick may all ask for a pump at once. The
 // store is the daemon-instance identity; joiners wait for the active pump and
 // return no duplicate orders. This closes the race where two pumps both saw a
@@ -2138,6 +2167,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       const tree = deps.prepareWorktree
         ? await deps.prepareWorktree(row.number, baseRef)
         : undefined;
+      // The head this round reviews — the prepared tree's, else the row's —
+      // decided once, so the round row, the prior findings, the pre-check,
+      // the recovery identity and the order all name the same one.
+      const preparedHead = tree?.head_sha || row.head_sha;
 
       const files = await deps.adapter.listPrFiles(row.number);
       const gate = eco.migrationGate(files);
@@ -2196,15 +2229,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           };
       }
       let passPolicy = followUp ? followUp.plan : fullPlan;
-      let plannedPasses = passPolicy.pass_plan;
-      let lenses = [...new Set(plannedPasses.map((p) => p.lens))];
-      let addablePasses = passPolicy.addable_lenses.map((lens) => ({
-        lens,
-        tier: addTierOf(cfg, lens),
-      }));
-      // Null when the profile switched the validator off: the round
-      // had no validator, and recording the configured tier would say it did.
-      let validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null;
+      let { plannedPasses, lenses, addablePasses, validateTier } = recordedPlan(cfg, passPolicy);
 
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
@@ -2223,7 +2248,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           validate_tier: validateTier,
           pass_plan: plannedPasses,
           addable_passes: addablePasses,
-          head_sha: tree?.head_sha || row.head_sha,
+          head_sha: preparedHead,
           ...(tree?.merge_base ? { merge_base: tree.merge_base } : {}),
           ...(roundType === "re-review"
             ? followUp
@@ -2272,13 +2297,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           };
           followUp = null;
           passPolicy = fullPlan;
-          plannedPasses = passPolicy.pass_plan;
-          lenses = [...new Set(plannedPasses.map((p) => p.lens))];
-          addablePasses = passPolicy.addable_lenses.map((lens) => ({
-            lens,
-            tier: addTierOf(cfg, lens),
-          }));
-          validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null;
+          ({ plannedPasses, lenses, addablePasses, validateTier } = recordedPlan(cfg, passPolicy));
           store.setRoundPlan(roundId, lenses, {
             validate_tier: validateTier,
             pass_plan: plannedPasses,
@@ -2300,12 +2319,18 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           round_id: roundId,
           round_no: roundNo,
           reason: fullRound.reason,
-          head_sha: tree?.head_sha || row.head_sha,
+          head_sha: preparedHead,
           last_reviewed_sha: mark?.head_sha ?? null,
           ...(fullRound.detail ?? {}),
         });
         log(`dispatch: #${row.number} round ${roundNo} runs in full (${fullRound.reason})`);
       }
+      if (passPolicy.behaviour_unread)
+        store.logEvent("behaviour_delta_unread", row.number, {
+          round_id: roundId,
+          round_no: roundNo,
+          files: passPolicy.behaviour_unread,
+        });
       // The prior findings this follow-up round verifies — listed in
       // prior_finding_checks and written to the round's sidecar. Total: a list
       // that cannot be assembled renders an explicit "verify from your ledger"
@@ -2320,7 +2345,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             },
             row.number,
             roundNo,
-            tree?.head_sha || row.head_sha,
+            preparedHead,
           )
         : null;
       const priorFindingsNote = priorFindings?.note ?? "";
@@ -2382,7 +2407,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         round_id: roundId,
         pr: row.number,
         files,
-        head_sha: tree?.head_sha || row.head_sha,
+        head_sha: preparedHead,
         base_ref: tree?.base_ref ?? baseRef,
         base_sha: tree?.base_sha ?? "",
       });
@@ -2445,7 +2470,6 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         base_sha: tree?.base_sha ?? "",
       });
 
-      const preparedHead = tree?.head_sha || row.head_sha;
       const rawRecoveryInstruction = store.roundRecoveryInstruction(row.number, roundNo);
       const recoveryInstruction = store.roundRecoveryInstructionForDispatch(
         row.number,
