@@ -161,16 +161,26 @@ function pingPongSimulation(cfg: Config, root: string) {
   };
 }
 
-/** ② The daemon's side of the queue comparison: the PRs still OWED a trigger
- * consumption. Live, dispatch consumes the label and team request as the round
- * starts, so a `reviewing` row no longer shows in the manual searches; in
- * dry-run nothing is consumed, so it still does. */
+/** ② The daemon's side of the queue comparison: the PRs whose trigger the
+ * manual searches should still find. Live, dispatch consumes the label and
+ * team request as the round starts, so only a `queued` row is owed one. In
+ * dry-run nothing is consumed: a `reviewing` row still carries its trigger,
+ * and so does a reviewed PR at the head its last verdict was applied to —
+ * reconcile suppresses that standing trigger until the head moves, so it is
+ * accounted for, not missing. */
 export function derivedQueueOf(
-  rows: ReadonlyArray<{ number: number; state: string }>,
+  rows: ReadonlyArray<{ number: number; state: string; head_sha?: string }>,
   dryRun: boolean,
+  lastVerdictHead: (pr: number) => string | undefined = () => undefined,
 ): number[] {
   return rows
-    .filter((r) => r.state === "queued" || (dryRun && r.state === "reviewing"))
+    .filter(
+      (r) =>
+        r.state === "queued" ||
+        (dryRun &&
+          (r.state === "reviewing" ||
+            (r.state !== "closed" && !!r.head_sha && lastVerdictHead(r.number) === r.head_sha))),
+    )
     .map((r) => r.number);
 }
 
@@ -198,7 +208,8 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
     queue: {
       labelTriggered: async () => (await p.adapter.searchLabelTriggered()).map((i) => i.number),
       teamTriggered: async () => (await p.adapter.searchTeamTriggered()).map((i) => i.number),
-      derivedQueue: () => derivedQueueOf(store.allPrs(), cfg.dry_run),
+      derivedQueue: () =>
+        derivedQueueOf(store.allPrs(), cfg.dry_run, (pr) => store.lastVerdictHead(pr)),
     },
     staleness: stalenessSimulation(cfg),
     pingPong: pingPongSimulation(cfg, root),

@@ -209,6 +209,20 @@ describe("② derived queue (selfscan)", () => {
     expect(derivedQueueOf(rows, false)).toEqual([1]);
     expect(derivedQueueOf(rows, true)).toEqual([1, 2]);
   });
+
+  it("dry-run: a PR reviewed at its current head keeps a trigger reconcile suppresses, so it is accounted for", () => {
+    const rows = [
+      { number: 3, state: "tracked", head_sha: "h3" },
+      { number: 4, state: "awaiting_author", head_sha: "h4" },
+      { number: 5, state: "tracked", head_sha: "h5-new" },
+      { number: 6, state: "closed", head_sha: "h6" },
+    ];
+    const verdictHeads: Record<number, string> = { 3: "h3", 4: "h4", 5: "h5-old", 6: "h6" };
+    const at = (pr: number) => verdictHeads[pr];
+    expect(derivedQueueOf(rows, true, at)).toEqual([3, 4]);
+    // Live, dispatch consumed the trigger: a settled row is never owed one.
+    expect(derivedQueueOf(rows, false, at)).toEqual([]);
+  });
 });
 
 describe("⑤ ping-pong", () => {
