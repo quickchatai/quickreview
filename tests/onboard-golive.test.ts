@@ -483,6 +483,19 @@ describe("the restart that makes the flip real is never forgotten", () => {
     expect((await healthy.engine.finish()).ok).toBe(true);
   });
 
+  it("a later decline pays off the owed restart, so a hand flip after it verifies live", async () => {
+    seedChoices({ [PROOF_CHOICE_KEY]: PROOF });
+    await harness({ restartCode: 1 }).engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
+    writeFileSync(join(root, "config.toml"), configText().replace(/^dry_run = false/m, "dry_run = true"));
+    const declined = await harness().engine.runStep(GO_LIVE_STEP_ID, { decision: "stay_dry_run" });
+    expect(declined.ok).toBe(true);
+    writeFileSync(join(root, "config.toml"), configText().replace(/^dry_run = true/m, "dry_run = false"));
+    expect((await harness().engine.verifyAll()).ok).toBe(true);
+  });
+
   it("re-offering on a LIVE installation says it is live, not that dry_run is true", async () => {
     writeFileSync(join(root, "config.toml"), exampleConfig.replace(/^dry_run = true/m, "dry_run = false"));
     seedChoices({ [PROOF_CHOICE_KEY]: PROOF });

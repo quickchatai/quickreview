@@ -337,7 +337,9 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
             },
             { name: "next", ok: true, detail: SETUP_RECOMMENDATION },
           ],
-          data: { decision: "dry_run" },
+          // The installation is in dry-run now, whatever an earlier flip
+          // left owed: there is no flag on disk for a restart to deliver.
+          data: { decision: "dry_run", [RESTART_OWED_KEY]: false },
         };
       }
 
