@@ -17,6 +17,9 @@ import type { ExecFn, ExecResult } from "./tmux.js";
 import { nodeExec, runOrThrow } from "./tmux.js";
 import { parseHunkHeader } from "./hunkheader.js";
 import { repoCloneDirName } from "./clonedir.js";
+import { unquoteGitPath } from "./unifieddiff.js";
+
+export { unquoteGitPath };
 
 export interface WorktreeManagerOptions {
   /** Sandbox root — the clone lives at <root>/<cloneDir>, worktrees at <root>/wt. */
@@ -203,51 +206,6 @@ export function parseNewSideRanges(hunks: string): NewSideParse {
   flush();
   if (!sawHunk && hunks.trim() !== "") ok = false;
   return { ranges, additions, deletions, ok };
-}
-
-/** Git's C-style quoting of a path (`"a\tb\303\251"`), undone: the escapes
- * name BYTES, so octal runs are decoded as UTF-8 together. An unquoted
- * string comes back as is; a malformed one is null. */
-export function unquoteGitPath(s: string): string | null {
-  if (!s.startsWith('"')) return s;
-  if (s.length < 2 || !s.endsWith('"')) return null;
-  const body = s.slice(1, -1);
-  const bytes: number[] = [];
-  const simple: Record<string, number> = {
-    a: 7,
-    b: 8,
-    t: 9,
-    n: 10,
-    v: 11,
-    f: 12,
-    r: 13,
-    '"': 34,
-    "\\": 92,
-  };
-  for (let i = 0; i < body.length; i++) {
-    const c = body[i]!;
-    if (c !== "\\") {
-      // A whole code point: a supplementary character is two UTF-16 units.
-      const cp = String.fromCodePoint(body.codePointAt(i)!);
-      for (const b of Buffer.from(cp, "utf8")) bytes.push(b);
-      i += cp.length - 1;
-      continue;
-    }
-    const n = body[i + 1];
-    if (n === undefined) return null;
-    if (/[0-7]/.test(n)) {
-      const oct = /^[0-7]{3}/.exec(body.slice(i + 1));
-      if (!oct) return null;
-      bytes.push(parseInt(oct[0], 8));
-      i += 3;
-      continue;
-    }
-    const v = simple[n];
-    if (v === undefined) return null;
-    bytes.push(v);
-    i += 1;
-  }
-  return Buffer.from(bytes).toString("utf8");
 }
 
 /** One `diff --git` section of a patch, read for the delta. */

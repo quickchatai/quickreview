@@ -5,44 +5,50 @@
 
 import type { PrFileEntry } from "./github.js";
 
-const C_ESCAPES: Readonly<Record<string, number>> = {
-  a: 7,
-  b: 8,
-  t: 9,
-  n: 10,
-  v: 11,
-  f: 12,
-  r: 13,
-  '"': 34,
-  "\\": 92,
-};
-
-/**
- * A path as git prints it: a name with a special or (under the default
- * `core.quotePath`) non-ASCII byte comes double-quoted, C-style, each such
- * byte an octal `\ooo` escape — decoded here back to the UTF-8 name the
- * tree holds. An unquoted path is returned as is.
- */
-export function gitUnquote(p: string): string {
-  if (p.length < 2 || !p.startsWith('"') || !p.endsWith('"')) return p;
-  const body = p.slice(1, -1);
+/** Git's C-style quoting of a path, undone. A name with a special or (under
+ * the default `core.quotePath`) non-ASCII byte comes double-quoted, each such
+ * byte an escape (`"a\tb\303\251"`); the escapes name BYTES, so octal runs
+ * are decoded as UTF-8 together. An unquoted string comes back as is; a
+ * malformed one is null. The one decoder: worktrees.ts reads patch sections
+ * with it too. */
+export function unquoteGitPath(s: string): string | null {
+  if (!s.startsWith('"')) return s;
+  if (s.length < 2 || !s.endsWith('"')) return null;
+  const body = s.slice(1, -1);
   const bytes: number[] = [];
+  const simple: Record<string, number> = {
+    a: 7,
+    b: 8,
+    t: 9,
+    n: 10,
+    v: 11,
+    f: 12,
+    r: 13,
+    '"': 34,
+    "\\": 92,
+  };
   for (let i = 0; i < body.length; i++) {
-    const ch = String.fromCodePoint(body.codePointAt(i)!);
-    if (ch !== "\\") {
-      bytes.push(...Buffer.from(ch, "utf8"));
-      i += ch.length - 1;
+    const c = body[i]!;
+    if (c !== "\\") {
+      // A whole code point: a supplementary character is two UTF-16 units.
+      const cp = String.fromCodePoint(body.codePointAt(i)!);
+      for (const b of Buffer.from(cp, "utf8")) bytes.push(b);
+      i += cp.length - 1;
       continue;
     }
-    const next = body[i + 1] ?? "";
-    const oct = /^[0-7]{3}/.exec(body.slice(i + 1, i + 4));
-    if (oct) {
+    const n = body[i + 1];
+    if (n === undefined) return null;
+    if (/[0-7]/.test(n)) {
+      const oct = /^[0-7]{3}/.exec(body.slice(i + 1));
+      if (!oct) return null;
       bytes.push(parseInt(oct[0], 8));
       i += 3;
-    } else if (next in C_ESCAPES) {
-      bytes.push(C_ESCAPES[next]!);
-      i += 1;
-    } else bytes.push(92);
+      continue;
+    }
+    const v = simple[n];
+    if (v === undefined) return null;
+    bytes.push(v);
+    i += 1;
   }
   return Buffer.from(bytes).toString("utf8");
 }
@@ -57,7 +63,10 @@ export function gitUnquote(p: string): string {
 export function parseUnifiedDiff(text: string): PrFileEntry[] {
   const out: PrFileEntry[] = [];
   const blocks = text.split(/^(?=diff --git )/m).filter((b) => b.startsWith("diff --git "));
-  const unq = (p: string): string => gitUnquote(p.trim()).replace(/^[ab]\//, "");
+  // A path with a space carries a trailing tab in a `---`/`+++` line; only
+  // that tab goes, never a space the name itself ends with.
+  const unquote = (p: string): string => unquoteGitPath(p) ?? p;
+  const unq = (p: string): string => unquote(p.replace(/\t$/, "")).replace(/^[ab]\//, "");
   for (const block of blocks) {
     const lines = block.split("\n");
     let from: string | null = null;
@@ -81,9 +90,8 @@ export function parseUnifiedDiff(text: string): PrFileEntry[] {
       if (line.startsWith("new file mode")) status = "added";
       else if (line.startsWith("deleted file mode")) status = "removed";
       else if (line.startsWith("rename from "))
-        renameFrom = gitUnquote(line.slice("rename from ".length));
-      else if (line.startsWith("rename to "))
-        renameTo = gitUnquote(line.slice("rename to ".length));
+        renameFrom = unquote(line.slice("rename from ".length));
+      else if (line.startsWith("rename to ")) renameTo = unquote(line.slice("rename to ".length));
       else if (line.startsWith("--- "))
         from = line.slice(4) === "/dev/null" ? null : unq(line.slice(4));
       else if (line.startsWith("+++ "))
