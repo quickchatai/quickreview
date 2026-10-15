@@ -23,7 +23,12 @@ import {
   type ScanSource,
   type ScanTree,
 } from "../src/setup/scanrun.js";
-import { pairTests, type Stage2RowRequest } from "../src/setup/stage2.js";
+import {
+  pairTests,
+  planStage2,
+  type Stage2PlanInput,
+  type Stage2RowRequest,
+} from "../src/setup/stage2.js";
 import {
   clickStartStage2,
   readStage2Proposal,
@@ -219,6 +224,51 @@ describe("pairing tests with their code", () => {
     ]);
     expect(pairTests("svc/billing.py", t)).toEqual(["svc/tests/test_billing.py"]);
     expect(pairTests("svc/tests/test_billing.py", t)).toEqual([]);
+  });
+});
+
+describe("paired tests obey the named files' rules, and never crowd out a readable one", () => {
+  const rowOf = (paths: string[], exclude: string[]) => {
+    const input: Stage2PlanInput = {
+      rows: [{ lens: "pass-security", files: ["pkg/foo.ts"], reason: "auth" }],
+      cut: { units: [{ name: "pkg", roots: ["pkg"], kind: "directory", note: "" }], ignored: [] },
+      files: paths.map((path) => ({ path, blob: path.replace(/\W/g, "") })),
+      linesOf: () => 5,
+      exclude,
+      budget: { maxFiles: 30, maxLines: 3000 },
+      riskPasses: [],
+      defaultTier: "sol-med",
+      covered: () => new Set(),
+      price: () => ({
+        rate: { usd_per_kline: 1, cases: 1, lines: 1000, cost_usd: 1 },
+        basis: "measured",
+        from: "x",
+      }),
+      budgetUsd: null,
+    };
+    const p = planStage2(input);
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    return p.rows[0]!;
+  };
+
+  it("excluded matches do not take the cap's places: the next readable test is paired", () => {
+    const row = rowOf(
+      [
+        "pkg/foo.ts",
+        "pkg/foo.spec.ts",
+        "pkg/foo.test.ts",
+        "pkg/foo_test.ts",
+        "pkg/tests/foo.test.ts",
+      ],
+      ["pkg/foo.spec.ts", "pkg/foo.test.ts", "pkg/foo_test.ts"],
+    );
+    expect(row.tests.map((t) => t.path)).toEqual(["pkg/tests/foo.test.ts"]);
+  });
+
+  it("a generated or vendored test is never paired", () => {
+    const row = rowOf(["pkg/foo.ts", "dist/pkg/foo.test.ts", "node_modules/pkg/foo.test.ts"], []);
+    expect(row.tests).toEqual([]);
+    expect(row.unpaired).toEqual([]);
   });
 });
 

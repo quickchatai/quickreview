@@ -35,7 +35,8 @@ export interface RetuneRecord {
   /** The finished scan run the re-tune follows. */
   scan: { run: string; sha: string; mode: string };
   changes: RetuneChange[];
-  /** Profile files written (relative to the profile's directory); empty when
+  /** Profile files written, relative to the config home
+   * (`profiles/<name>/profile.toml`); empty when
    * the answers moved nothing on disk — then there is nothing to deploy. */
   files: string[];
   /** The config-home commit asked for, when files were written. */

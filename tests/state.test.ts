@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import Database from "better-sqlite3";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -228,6 +229,38 @@ describe("rounds", () => {
     expect(store.roundsOn("2026-08-13").map((r) => r.pr)).toEqual([7]);
     expect(store.roundsOn("2026-08-14").map((r) => r.pr)).toEqual([8]);
     expect(store.roundsOn("2026-08-15")).toEqual([]);
+  });
+});
+
+describe("additive schema migrations", () => {
+  it("a column ALTER that fails for any reason but 'already present' stops the boot, naming the DDL", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-state-migration-"));
+    try {
+      const path = join(dir, "state.db");
+      new StateStore(path).close();
+      // An older store missing one additive column, on a file the boot
+      // cannot write: the ALTER fails, and not because the column exists.
+      const raw = new Database(path);
+      raw.exec("ALTER TABLE rounds DROP COLUMN merge_base");
+      raw.close();
+      chmodSync(path, 0o444);
+      expect(() => new StateStore(path)).toThrow(
+        /state\.db migration failed: ALTER TABLE rounds ADD COLUMN merge_base TEXT: .*readonly/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("re-opening a current store adds nothing and throws nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-state-migration-"));
+    try {
+      const path = join(dir, "state.db");
+      new StateStore(path).close();
+      expect(() => new StateStore(path).close()).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1643,6 +1676,47 @@ describe("durable FAILED_LOUD review obligations", () => {
     expect(store.getSessionCommand("cmd-target")?.status).toBe("failed");
   });
 
+  it("refuses a second failed owner even under a malformed session name", () => {
+    store.upsertPr(prRow(5408, { state: "closed", head_sha: "abc123" }));
+    const failed = (id: string, session: string) => {
+      store.createSessionCommand({
+        id,
+        pr: 5408,
+        session,
+        kind: "wake",
+        round_no: null,
+        payload_sha256: id,
+        payload_path: `/payload/${id}.md`,
+        inject_path: `/inject/${id}.md`,
+        next_check_at: T0.toISOString(),
+      });
+      store.failPendingSessionCommand(id, `${id} failed`);
+    };
+    failed("cmd-target", "pr-5408");
+    failed("legacy-failed", "overseer");
+    store.openReviewFailure({
+      pr: 5408,
+      command_id: "cmd-target",
+      head_sha: "abc123",
+      stage: "session_command",
+      detail: "target failed",
+      attempts: 2,
+      retry_cap: 2,
+    });
+
+    expect(
+      store.resolveTerminalReviewFailure({
+        pr: 5408,
+        incident_id: "review-failure:cmd-target",
+        command_id: "cmd-target",
+        head_sha: "abc123",
+        disposition: "closed",
+      }),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("legacy-failed") });
+    expect(store.openReviewFailure(5408)?.incident_id).toBe("review-failure:cmd-target");
+    expect(store.getSessionCommand("cmd-target")?.status).toBe("failed");
+  });
+
   it("refuses and preserves an outstanding successor obligation", () => {
     store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "abc123" }));
     const predecessor = store.startRound(5408, "re-review", [], 75);
@@ -1736,6 +1810,29 @@ describe("durable FAILED_LOUD review obligations", () => {
     );
     expect(snap.pipeline).toMatchObject({ healthy: false, failed_loud: 0 });
     expect(snap.pipeline?.causes[0]).toMatchObject({ key: "round-stage-supervisor", pr: null });
+  });
+
+  it("operator recovery keeps a head the PR moved to while queued, with no successor recorded", () => {
+    store.upsertPr(prRow(5470, { state: "reviewing", head_sha: "failed-head" }));
+    const roundId = store.startRound(5470, "re-review", ["pass-baseline"], 75);
+    store.openReviewFailure({
+      pr: 5470,
+      command_id: "cmd-5470",
+      round_id: roundId,
+      round_no: 1,
+      head_sha: "failed-head",
+      stage: "running_hard_bound",
+      detail: "fixed bound exhausted",
+      attempts: 2,
+      retry_cap: 2,
+    });
+    // A push reconciled while the PR sits queued moves its head; with no
+    // round running, no successor obligation is recorded.
+    store.upsertPr(prRow(5470, { state: "queued", head_sha: "pushed-head" }));
+    expect(store.successorFor(5470)).toBeUndefined();
+
+    expect(store.recoverReviewFailure(5470, "operator-rerun")?.work_owed).toBe(0);
+    expect(store.getPr(5470)).toMatchObject({ state: "queued", head_sha: "pushed-head" });
   });
 });
 

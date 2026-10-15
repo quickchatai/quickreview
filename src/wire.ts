@@ -64,11 +64,9 @@ import {
   configAddenda,
   lessonAddendaFor,
   identityVars,
-  passTierModels,
-  sweepLightVariants,
 } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
-import { lensModelOverrides, lensTuningAddenda } from "./lenstuning.js";
+import { lensTuningAddenda, roundAgentModels } from "./lenstuning.js";
 import {
   applyProfileOverlays,
   loadProfileAddenda,
@@ -1258,14 +1256,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             ecosystem: ecosystem.name,
             // A lens's profile `effort` rides the per-variant hook;
             // `[models.pass_tiers]` pins move a lens's tier on top of it.
-            models: passTierModels(
-              cfg.models.pass_tiers,
-              cfg.models.tiers,
-              lensModelOverrides(cfg.models, cfg.lenses),
-              cfg.models.pass_models,
-              sweepLightVariants(cfg.review, cfg.lenses),
-              cfg.lenses,
-            ),
+            models: roundAgentModels(cfg),
             addenda: [
               ...PASS_ADDENDA,
               ...configAddenda(cfg.review),

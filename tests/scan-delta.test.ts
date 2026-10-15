@@ -297,6 +297,92 @@ function samePathJudge(q: MatchQuestionView): MatchPair[] {
   });
 }
 
+describe("a run with nothing to read still reconciles what it owes", () => {
+  // The next commit only deletes a reported file: every remaining file is
+  // covered at its content, so no case is planned — yet the deleted file's
+  // finding must still settle.
+  const ONLY_DELETED: Record<string, string> = { ...TREE };
+  delete ONLY_DELETED["web/index.ts"];
+
+  it.each([false, true])(
+    "a deletion-only commit is startable and reconciles the deleted file's finding (delta %s)",
+    async (delta) => {
+      await fullScan();
+      expect(byPath("web/index.ts").map((f) => f.state)).toEqual(["new"]);
+      const r = runner();
+      const s = new ScanRunner(ports(r, { [SHA1]: TREE, [SHA3]: ONLY_DELETED }));
+      const p = await s.preview({ sha: SHA3, delta });
+      expect(p.ok && p.preview.cases).toEqual([]);
+      expect(p.ok && p.preview.blockers).toEqual([]);
+      expect(p.ok && p.preview.reconcile_only).toMatch(/1 open finding/);
+      const got = await run(s, SHA3, delta);
+      expect(r.specs).toEqual([]);
+      expect(got.run.state).toBe("complete");
+      // Reconciled: gone from the tree, it is put to the companion (it may
+      // have moved into a file the full scan read after it was seen).
+      expect(got.run.matching).toMatchObject({ pending: 1 });
+      expect(
+        store()
+          .question()
+          .question?.unreported.map((f) => f.path),
+      ).toEqual(["web/index.ts"]);
+      // Asked: nothing is owed any more, so the empty plan is refused again.
+      const again = await s.preview({ sha: SHA3, delta });
+      expect(again.ok && again.preview.reconcile_only).toBeUndefined();
+      expect(again.ok && again.preview.blockers.join(" ")).toMatch(
+        /nothing (left|changed) to read/,
+      );
+    },
+  );
+
+  it("a run that ended before its reconcile leaves the empty plan startable", async () => {
+    await fullScan();
+    const file = join(stateDir, "scan/run.json");
+    const raw = JSON.parse(readFileSync(file, "utf8")) as {
+      current: { matching?: unknown; state: string };
+    };
+    raw.current.matching = null;
+    raw.current.state = "running";
+    writeFileSync(file, JSON.stringify(raw));
+    const s = new ScanRunner(ports(runner()));
+    const p = await s.preview({ sha: SHA1 });
+    expect(p.ok && p.preview.blockers).toEqual([]);
+    expect(p.ok && p.preview.reconcile_only).toMatch(/ended before its findings were reconciled/);
+    const got = await run(s, SHA1);
+    expect(got.run.matching).not.toBeNull();
+  });
+});
+
+describe("a start still planning keeps its tree", () => {
+  it("a preview at another sha, planned meanwhile, does not prune the starting run's tree", async () => {
+    await fullScan();
+    const p = ports(runner(), { [SHA1]: TREE, [SHA2]: TREE2 });
+    const keeps: Array<{ sha: string; keep: string[] }> = [];
+    const open = p.source.open;
+    p.source = {
+      ...p.source,
+      open: (sha, keep) => {
+        keeps.push({ sha, keep: [...keep] });
+        return open(sha, keep);
+      },
+    };
+    const s = new ScanRunner(p);
+    const first = await s.preview({ sha: SHA2, delta: true });
+    if (!first.ok) throw new Error(first.errors.join("; "));
+    keeps.length = 0;
+    // Issued together, as a model's parallel tool calls are.
+    const [started, other] = await Promise.all([
+      s.start({ key: first.preview.key, sha: SHA2, delta: true }),
+      s.preview({ sha: SHA1 }),
+    ]);
+    expect(started.ok).toBe(true);
+    expect(other.ok).toBe(true);
+    await s.idle();
+    expect(keeps.map((k) => k.sha)).toEqual([SHA2, SHA1]);
+    expect(keeps[1]!.keep).toContain(SHA2);
+  });
+});
+
 describe("exact match first, then the companion, then fixed", () => {
   async function rescan() {
     await fullScan();

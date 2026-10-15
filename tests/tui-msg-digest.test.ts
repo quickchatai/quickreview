@@ -17,6 +17,7 @@ import {
   digestCatArgv,
   digestKeys,
   digestListArgv,
+  digestToday,
   parseDigestList,
   renderDigestTab,
   SshDigestFetcher,
@@ -344,7 +345,44 @@ describe("digest tab", () => {
       ),
     );
     expect(none).toContain("0 days");
-    expect(none).toContain("none yet — the EOD sweep writes digest/<date>.md at 18:00");
+    expect(none).toContain("none yet — the EOD sweep writes digest/<date>.md once a day");
+    expect(none).not.toContain("18:00");
+  });
+
+  it("names the CONFIGURED sweep schedule, never a fixed one", () => {
+    const none = stripAnsi(
+      renderDigestTab({ files: [], back: 0, scroll: 0 }, false, "2026-08-13", 100, 24, {
+        time: "07:30",
+        timezone: "UTC",
+      }).lines.join("\n"),
+    );
+    expect(none).toContain("the EOD sweep writes digest/<date>.md at 07:30 UTC");
+    expect(none).not.toContain("Warsaw");
+  });
+
+  it("counts 'yesterday' in the sweep's zone, not in UTC", () => {
+    // 00:30 in Warsaw on the 14th is still the 13th in UTC.
+    const now = new Date("2026-08-13T22:30:00Z");
+    const eod = { time: "18:00", timezone: "Europe/Warsaw" };
+    expect(digestToday(now, eod)).toBe("2026-08-14");
+    expect(digestToday(now)).toBe("2026-08-13");
+    const frame = renderDigestTab(
+      { files: ["2026-08-13.md"], back: 0, scroll: 0, content: "# day" },
+      false,
+      digestToday(now, eod),
+      100,
+      24,
+      eod,
+    );
+    expect(stripAnsi(frame.lines.join("\n"))).toContain("(yesterday)");
+  });
+
+  it("an existing digest directory that cannot be listed is a failed read, not an empty one", () => {
+    const script = digestListArgv(TUI_DEFAULTS).at(-1)!;
+    expect(script).toBe(
+      "if [ -e '/opt/quickreview/sandbox/digest' ]; then ls '/opt/quickreview/sandbox/digest'; fi",
+    );
+    expect(script).not.toContain("|| true");
   });
 
   it("the installed tab pages with [ / ] and scrolls with j/k — and a boundary key is neither consumed nor offered", async () => {

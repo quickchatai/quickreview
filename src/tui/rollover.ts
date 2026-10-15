@@ -35,7 +35,13 @@ import type { CompanionConfig } from "../config.js";
 import { zoneDateString } from "../eod.js";
 import type { StatusSnapshot } from "../state.js";
 import { parseAlert, readPolicyState } from "./alerts.js";
-import { CONTAINER, type DockerResult, type DockerRunner } from "./companion.js";
+import {
+  CONTAINER,
+  companionSessionDir,
+  dockerFailureLine,
+  type DockerResult,
+  type DockerRunner,
+} from "./companion.js";
 
 /** What a lookup of the previous conversation found. `none` (the volume holds
  * no conversation) and `unreadable` (the exec never answered) are separate
@@ -49,9 +55,7 @@ export type ConversationRead =
   { state: "read"; text: string } | { state: "unreadable"; reason: string };
 
 /** One-line cause from a failed `docker exec`, for the step log. */
-function execReason(r: DockerResult): string {
-  return (r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).split("\n").slice(-1)[0]!;
-}
+const execReason = (r: DockerResult): string => dockerFailureLine(r);
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -587,9 +591,9 @@ export class CompanionRollover {
     return todayDate(this.now(), this.env, this.timeZone);
   }
 
-  /** In-container session dir — must match CompanionLifecycle.piArgv(). */
+  /** In-container session dir — the one CompanionLifecycle.piArgv() names. */
   private sessionDir(): string {
-    return `${CONTAINER.piHome}/agent/sessions/${this.cfg.session}`;
+    return companionSessionDir(this.cfg.session);
   }
 
   private archiveDir(date: string): string {

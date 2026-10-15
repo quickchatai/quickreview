@@ -76,12 +76,14 @@
 // and its answer (`scan/stop.json`, `scan/stop-result.json` —
 // scanreport.ts, which also owns the run record's name and parser).
 import { posix } from "node:path";
+import { VALIDATE_PASS } from "../include.js";
 import type { LensTuningMap } from "../lenstuning.js";
 import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig, ScanDepth } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import {
   FindingsStore,
+  settled,
   type FindingDoubt,
   type ReconcileResult,
   type ReportedFinding,
@@ -114,6 +116,8 @@ import {
   planStage1,
   scanCasePrompt,
   scanValidatorPrompt,
+  survivorSource,
+  drainLanes,
   SCAN_DEEP_MAX_SUGGESTIONS,
   SCAN_PASS,
   type ExclusionReason,
@@ -414,7 +418,8 @@ export interface ScanPreview {
   rate_across_depth: boolean;
   /** Priced cases the rate stands on, and how many calibration wants. */
   calibration: { measured: number; wanted: number };
-  /** Stage-1 cases left after this run (all of them, for a calibration). */
+  /** Stage-1 cases a calibration run leaves for the next one (0 for any
+   * other run, which reads every case it plans). */
   remaining_cases: number;
   excluded: Record<ExclusionReason, number>;
   covered: number;
@@ -430,6 +435,9 @@ export interface ScanPreview {
    * (a deep delta only): how many of those a complete standard reading covers
    * at this content — owed only because no deep reading does. */
   delta: { since: string; owed: number; owed_shallow?: number } | null;
+  /** Set when there is nothing to read but the findings still owe a
+   * reconcile: why. The run reads no case and only settles them. */
+  reconcile_only?: string;
   /** Why a start would be refused whatever the key. */
   blockers: string[];
 }
@@ -452,7 +460,7 @@ const EPS = 1e-9;
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 /** The validator's variant at the tier of the lens it judges — never raised:
  * the scan validator is the skeptic, at the same tier. */
-const validatorAgent = (tier: PassTier): string => `pass-validate--${tier}`;
+const validatorAgent = (tier: PassTier): string => `${VALIDATE_PASS}--${tier}`;
 
 /** Why a candidate the skeptic's answer never mentioned is doubtful. */
 export const UNMENTIONED_REASON =
@@ -562,6 +570,9 @@ export class ScanRunner {
   private active: { id: string; sha: string; abort: AbortController; done: Promise<void> } | null =
     null;
   private starting = false;
+  /** The commit a start still planning has opened: its tree is kept, like
+   * the active run's, from a preview or proposal planned meanwhile. */
+  private startingSha: string | null = null;
   private consuming = false;
   private readonly ledger: Ledger;
   private readonly findings: FindingsStore;
@@ -587,10 +598,23 @@ export class ScanRunner {
 
   // -- the plan --
 
-  private async plan(
+  /** What every plan reads first: the settings, the saved cut, the commit
+   * `ref` names (default HEAD), its tree and the ledger. Opening a tree
+   * prunes the others, never the active run's nor a planning start's;
+   * `claim` (a start planning) marks this one as the starting start's. */
+  private prerequisites(
     ref: string | undefined,
-    delta = false,
-  ): Promise<{ ok: true; planned: Planned } | Refusal> {
+    claim: boolean,
+  ):
+    | {
+        ok: true;
+        settings: ScanSettings;
+        cut: UnitCut;
+        sha: string;
+        tree: ScanTree;
+        entries: LedgerEntry[];
+      }
+    | Refusal {
     const s = this.ports.settings();
     if (!s.ok) return s;
     const cut = this.ports.savedCut();
@@ -602,16 +626,29 @@ export class ScanRunner {
         ok: false,
         errors: [`${JSON.stringify(wanted)} names no commit in ${this.ports.source.location}`],
       };
-    const opened = this.ports.source.open(sha, this.active ? [this.active.sha] : []);
+    if (claim) this.startingSha = sha;
+    const keep = [this.active?.sha, this.startingSha].filter(
+      (k): k is string => k !== undefined && k !== null,
+    );
+    const opened = this.ports.source.open(sha, keep);
     if (!opened.ok)
       return {
         ok: false,
         errors: [`cannot read the tree at ${sha.slice(0, 12)}: ${opened.reason}`],
       };
-    const tree = opened.tree;
     const { entries, error } = this.ledger.load();
     if (error !== null) return { ok: false, errors: [error] };
-    const settings = s.settings;
+    return { ok: true, settings: s.settings, cut: cut.cut, sha, tree: opened.tree, entries };
+  }
+
+  private async plan(
+    ref: string | undefined,
+    delta = false,
+    claim = false,
+  ): Promise<{ ok: true; planned: Planned } | Refusal> {
+    const pre = this.prerequisites(ref, claim);
+    if (!pre.ok) return pre;
+    const { sha, tree, entries, settings } = pre;
     const cfg = settings.scan;
     const depth = cfg.depth;
     // A delta compares against the last scan: each file's newest content the
@@ -641,7 +678,7 @@ export class ScanRunner {
       };
     }
     const plan = planStage1({
-      cut: cut.cut,
+      cut: pre.cut,
       files: tree.files,
       linesOf: (p) => tree.lines(p),
       whyUnreadable: (p) => tree.whyUnreadable?.(p) ?? null,
@@ -716,15 +753,17 @@ export class ScanRunner {
       estimate = null;
       cap = cfg.calibration_max_usd;
     }
-    if (cases.length === 0 && delta) {
+    // Nothing to read, but the findings still owe a reconcile — a reported
+    // file deleted since, or a run that ended before its own reconcile: the
+    // run reads nothing and only settles them, so emptiness is no blocker.
+    const reconcileOnly = cases.length === 0 ? this.reconcileOwed(tree) : null;
+    if (cases.length === 0 && reconcileOnly === null) {
       blockers.push(
-        `nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)}), and the ledger covers every other file at its content`,
-      );
-    } else if (cases.length === 0) {
-      blockers.push(
-        plan.covered > 0
-          ? `nothing left to read at ${sha.slice(0, 12)}: the ledger already covers every stage-1 file at this content`
-          : "nothing to read: no unit of the saved cut owns a readable, non-excluded file",
+        delta
+          ? `nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)}), and the ledger covers every other file at its content`
+          : plan.covered > 0
+            ? `nothing left to read at ${sha.slice(0, 12)}: the ledger already covers every stage-1 file at this content`
+            : "nothing to read: no unit of the saved cut owns a readable, non-excluded file",
       );
     }
     // A deep delta owes an unchanged file a standard reading already covers
@@ -777,9 +816,30 @@ export class ScanRunner {
       skipped: plan.skipped,
       settings: { ...runSettings, exclude: cfg.exclude, concurrency: cfg.concurrency },
       delta: basis ? { since: basis.since, owed: plan.owed, ...owedShallow(basis) } : null,
+      ...(reconcileOnly !== null ? { reconcile_only: reconcileOnly } : {}),
       blockers,
     };
     return { ok: true, planned: { preview, tree, settings } };
+  }
+
+  /** Why a run that reads nothing must still run, or null: an open finding
+   * on a file the tree no longer holds (outside the pending match question,
+   * which waits for the companion's answer), or a last run that ended before
+   * its own reconcile (interrupted, or its reconcile failed). */
+  private reconcileOwed(tree: ScanTree): string | null {
+    const last = this.load().file.current;
+    if (last !== null && last.id !== this.active?.id && last.matching == null)
+      return `the last run (${last.id}) ended before its findings were reconciled`;
+    const { findings, error } = this.findings.load();
+    if (error !== null) return null;
+    const asked = new Set(
+      (this.findings.question().question?.unreported ?? []).map((f) => f.fingerprint),
+    );
+    const paths = new Set(tree.files.map((f) => f.path));
+    const gone = findings.filter(
+      (f) => !settled(f) && !asked.has(f.fingerprint) && !paths.has(f.path),
+    ).length;
+    return gone > 0 ? `${gone} open finding(s) on file(s) no longer in the tree` : null;
   }
 
   // -- the four verbs --
@@ -799,19 +859,8 @@ export class ScanRunner {
     sha?: string;
     delta?: boolean;
   }): Promise<{ ok: true; run: ScanRun } | Refusal> {
-    if (this.active)
-      return {
-        ok: false,
-        errors: [`scan ${this.active.id} is still running — stop it or wait for it`],
-      };
-    // Two starts in parallel (a model may issue tool calls concurrently) must
-    // not both pass the check above while the first is still planning: that
-    // would run — and pay for — the same scan twice.
-    if (this.starting)
-      return {
-        ok: false,
-        errors: ["a scan is already starting — wait for it, then check scan_status"],
-      };
+    const busy = this.refuseBusy();
+    if (busy !== null) return busy;
     if (typeof args.key !== "string" || args.key === "") {
       return {
         ok: false,
@@ -820,11 +869,36 @@ export class ScanRunner {
         ],
       };
     }
+    const key = args.key;
+    return this.holdingStart(() => this.startPlanned(key, args.sha, args.delta === true));
+  }
+
+  /** Why no start may begin now: a run is active, or another start is still
+   * planning. Two starts in parallel (a model may issue tool calls
+   * concurrently) must not both pass the active check while the first is
+   * still planning: that would run — and pay for — the same scan twice. */
+  private refuseBusy(): Refusal | null {
+    if (this.active)
+      return {
+        ok: false,
+        errors: [`scan ${this.active.id} is still running — stop it or wait for it`],
+      };
+    if (this.starting)
+      return {
+        ok: false,
+        errors: ["a scan is already starting — wait for it, then check scan_status"],
+      };
+    return null;
+  }
+
+  /** Hold the starting slot across a start's planning and launch. */
+  private async holdingStart<T>(body: () => Promise<T>): Promise<T> {
     this.starting = true;
     try {
-      return await this.startPlanned(args.key, args.sha, args.delta === true);
+      return await body();
     } finally {
       this.starting = false;
+      this.startingSha = null;
     }
   }
 
@@ -834,7 +908,7 @@ export class ScanRunner {
     delta: boolean,
   ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const args = { key, sha };
-    const p = await this.plan(args.sha, delta);
+    const p = await this.plan(args.sha, delta, true);
     if (!p.ok) return p;
     const { preview, tree, settings } = p.planned;
     if (args.key !== preview.key) {
@@ -1047,34 +1121,18 @@ export class ScanRunner {
     budgetUsd: number | null,
     ref: string | undefined,
     deep: boolean | undefined,
+    claim = false,
   ): Promise<Stage2Planned> {
-    const s = this.ports.settings();
-    if (!s.ok) return s;
-    const cut = this.ports.savedCut();
-    if (!cut.ok) return cut;
-    const wanted = (ref ?? "").trim() || "HEAD";
-    const sha = this.ports.source.resolve(wanted);
-    if (sha === null)
-      return {
-        ok: false,
-        errors: [`${JSON.stringify(wanted)} names no commit in ${this.ports.source.location}`],
-      };
-    const opened = this.ports.source.open(sha, this.active ? [this.active.sha] : []);
-    if (!opened.ok)
-      return {
-        ok: false,
-        errors: [`cannot read the tree at ${sha.slice(0, 12)}: ${opened.reason}`],
-      };
-    const tree = opened.tree;
-    const { entries, error } = this.ledger.load();
-    if (error !== null) return { ok: false, errors: [error] };
+    const pre = this.prerequisites(ref, claim);
+    if (!pre.ok) return pre;
+    const { sha, tree, entries } = pre;
     const depth: ScanDepth =
-      deep === undefined ? s.settings.scan.depth : deep ? "deep" : "standard";
-    const settings: ScanSettings = { ...s.settings, scan: { ...s.settings.scan, depth } };
+      deep === undefined ? pre.settings.scan.depth : deep ? "deep" : "standard";
+    const settings: ScanSettings = { ...pre.settings, scan: { ...pre.settings.scan, depth } };
     const cfg = settings.scan;
     const plan = planStage2({
       rows: request,
-      cut: cut.cut,
+      cut: pre.cut,
       files: tree.files,
       linesOf: (p) => tree.lines(p),
       whyUnreadable: (p) => tree.whyUnreadable?.(p) ?? null,
@@ -1120,7 +1178,7 @@ export class ScanRunner {
       depth,
       floor: plan.floor,
     };
-    return { ok: true, proposal, tree, settings, cut: cut.cut };
+    return { ok: true, proposal, tree, settings, cut: pre.cut };
   }
 
   /**
@@ -1198,16 +1256,8 @@ export class ScanRunner {
     key?: unknown;
     rows?: unknown;
   }): Promise<{ ok: true; run: ScanRun } | Refusal> {
-    if (this.active)
-      return {
-        ok: false,
-        errors: [`scan ${this.active.id} is still running — stop it or wait for it`],
-      };
-    if (this.starting)
-      return {
-        ok: false,
-        errors: ["a scan is already starting — wait for it, then check scan_status"],
-      };
+    const busy = this.refuseBusy();
+    if (busy !== null) return busy;
     if (typeof args.key !== "string" || args.key === "") {
       return {
         ok: false,
@@ -1229,12 +1279,8 @@ export class ScanRunner {
       }
       keep = args.rows;
     }
-    this.starting = true;
-    try {
-      return await this.startStage2Planned(args.key, keep);
-    } finally {
-      this.starting = false;
-    }
+    const key = args.key;
+    return this.holdingStart(() => this.startStage2Planned(key, keep));
   }
 
   private async startStage2Planned(
@@ -1259,6 +1305,7 @@ export class ScanRunner {
       stored.proposal.budget_usd,
       stored.proposal.sha,
       proposalDepth(stored.proposal) === "deep",
+      true,
     );
     if (!p.ok) return p;
     if (p.proposal.key !== key) {
@@ -1490,11 +1537,13 @@ export class ScanRunner {
     // May a case with this estimate start? Within the cap counting what is in
     // flight; a case with no estimate (calibration) only while the cap is not
     // yet reached. A zero cap is a free run (the runner prices at zero).
+    let unknownSpend = false;
     const within = (extra: number): boolean =>
-      run.cap_usd <= EPS ||
-      (extra > 0
-        ? run.spent_usd + reserved + extra <= run.cap_usd + EPS
-        : run.spent_usd + reserved < run.cap_usd - EPS);
+      !unknownSpend &&
+      (run.cap_usd <= EPS ||
+        (extra > 0
+          ? run.spent_usd + reserved + extra <= run.cap_usd + EPS
+          : run.spent_usd + reserved < run.cap_usd - EPS));
     const lane = async (): Promise<void> => {
       while (next < jobs.length && !signal.aborted) {
         const job = jobs[next]!;
@@ -1513,6 +1562,25 @@ export class ScanRunner {
         live.delete(plan.id);
         reserved -= est;
         run.spent_usd += spent;
+        // A case with no estimate (calibration) that ended with no price and
+        // no live report spent an UNKNOWN amount — never read as free. Under
+        // a cap, nothing more starts: the hard stop cannot be held blind.
+        const done = run.cases.find((x) => x.id === plan.id);
+        if (
+          run.cap_usd > EPS &&
+          !signal.aborted &&
+          plan.estimate_usd === null &&
+          spent === 0 &&
+          done?.started_at != null &&
+          done.cost_usd === null &&
+          !unknownSpend
+        ) {
+          unknownSpend = true;
+          capHit = true;
+          run.problems.push(
+            `case ${plan.id} ended and nothing priced it — what it spent is unknown, so no further case starts (the cap cannot be held without prices)`,
+          );
+        }
         this.store(file);
         // The hard stop: once spending reaches the cap, nothing in flight may
         // add to it.
@@ -1528,7 +1596,7 @@ export class ScanRunner {
       }
     };
     const lanes = Math.max(1, Math.min(settings.scan.concurrency, jobs.length));
-    await Promise.all(Array.from({ length: lanes }, lane));
+    await drainLanes(lanes, lane, abort);
 
     // Never started: `skipped` when the cap kept it out, `stopped` when a stop did.
     for (const c of run.cases)
@@ -1544,7 +1612,8 @@ export class ScanRunner {
   }
 
   /** One case, start to finish. Resolves with what it cost (its estimate
-   * when the runner could not price it), never rejects. */
+   * when the runner could not price it); a runner failure is an outcome, so
+   * it rejects only when the run record cannot be written. */
   private async runCase(
     file: RunFile,
     run: ScanRun,
@@ -1655,23 +1724,21 @@ export class ScanRunner {
       return finish("failed", "the lens answered with no finding and no NONE line");
     }
     let dropped = answer.dropped + answer.suggestions_dropped;
-    const anchored: Array<{ cand: ScanCandidate; code: string; quoted: boolean }> = [];
-    for (const cand of answer.candidates) {
-      if (outside(cand)) {
-        dropped++;
-        continue;
-      }
+    // A candidate — a lens's or a skeptic's survivor — stands on the code at
+    // its anchor: null when it falls outside the case's range or its lines
+    // are not in the tree (dropped).
+    const anchor = (cand: ScanCandidate): { code: string; quoted: boolean } | null => {
+      if (outside(cand)) return null;
       const text = inTree.has(cand.path) ? tree.read(cand.path) : null;
       const lines = text === null ? null : anchoredLines(text, cand.start, cand.end);
-      if (lines === null) {
-        dropped++;
-        continue;
-      }
-      anchored.push({
-        cand,
-        code: normalizeCode(lines),
-        quoted: evidenceQuotesAnchor(cand.evidence, lines),
-      });
+      if (lines === null) return null;
+      return { code: normalizeCode(lines), quoted: evidenceQuotesAnchor(cand.evidence, lines) };
+    };
+    const anchored: Array<{ cand: ScanCandidate; code: string; quoted: boolean }> = [];
+    for (const cand of answer.candidates) {
+      const at = anchor(cand);
+      if (at === null) dropped++;
+      else anchored.push({ cand, ...at });
     }
 
     // The validator, when this scan runs one, is the skeptic: at the tier of
@@ -1710,9 +1777,18 @@ export class ScanRunner {
       addCost(v);
       if (v.transcript !== undefined) c.validator_transcript = v.transcript;
       if (!v.ok && signal.aborted) return finish("stopped", v.reason);
-      const read = v.ok ? parseValidatorAnswer(v.output, tree.root) : null;
+      // A skeptic that opened none of the files its candidates name judged
+      // nothing from the code: its tiers are not taken — unknown, not guessed.
+      const candPaths = [...new Set(anchored.map((a) => a.cand.path))];
+      const skepticOpened = v.ok ? openedFocus(v.reads, candPaths, tree.root) : null;
+      const skepticUnread = skepticOpened !== null && skepticOpened.size === 0;
+      const read = v.ok && !skepticUnread ? parseValidatorAnswer(v.output, tree.root) : null;
       if (read === null || !read.answered) {
-        const why = v.ok ? "it answered with no survivor, NONE, DOUBTED or KILLED" : v.reason;
+        const why = !v.ok
+          ? v.reason
+          : skepticUnread
+            ? `it opened none of the ${candPaths.length} file(s) its candidates name`
+            : "it answered with no survivor, NONE, DOUBTED or KILLED";
         run.problems.push(
           `case ${plan.id}: the validator failed (${why}) — its findings are kept unvalidated`,
         );
@@ -1725,33 +1801,18 @@ export class ScanRunner {
         // duplicate on the same lines, a neighbour of another kind) would be
         // neither upheld nor unmentioned — silently dropped, a kill.
         const upheld = new Set<ScanCandidate>();
-        const standsFor = (s: ScanCandidate): ScanCandidate | undefined => {
-          const open = anchored.filter(
-            (a) =>
-              !upheld.has(a.cand) &&
-              a.cand.path === s.path &&
-              a.cand.start <= s.end &&
-              s.start <= a.cand.end,
-          );
-          return (open.find((a) => a.cand.kind === s.kind) ?? open[0])?.cand;
-        };
+        const cands = anchored.map((a) => a.cand);
         for (const s of read.survivors) {
-          if (outside(s)) {
+          const at = anchor(s);
+          if (at === null) {
             dropped++;
             continue;
           }
-          const text = inTree.has(s.path) ? tree.read(s.path) : null;
-          const lines = text === null ? null : anchoredLines(text, s.start, s.end);
-          if (lines === null) {
-            dropped++;
-            continue;
-          }
-          const meant = standsFor(s);
+          const meant = survivorSource(s, cands, upheld);
           if (meant) upheld.add(meant);
           judged.push({
             cand: s,
-            code: normalizeCode(lines),
-            quoted: evidenceQuotesAnchor(s.evidence, lines),
+            ...at,
             validity: s.validity,
             scenario: s.scenario,
             doubt: null,

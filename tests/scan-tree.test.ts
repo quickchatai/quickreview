@@ -116,6 +116,13 @@ describe("gitScanSource", () => {
     expect(src.list("f".repeat(40))).toBeNull();
     expect(src.list("HEAD")).toBeNull();
   });
+
+  it("a tree git cannot list is refused with git's own reason", () => {
+    const opened = gitScanSource(repo, state).open("f".repeat(40), []);
+    expect(opened.ok).toBe(false);
+    // git's stderr names the missing object, not just "cannot list".
+    expect(!opened.ok && opened.reason).toMatch(/git cannot list that commit's tree \(.+\)/);
+  });
 });
 
 describe("gitScanSource materialisation is the listed blobs, byte for byte (selfscan)", () => {

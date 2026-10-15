@@ -40,7 +40,7 @@ export const OK = fg256(71);
 export const BAD = fg256(167);
 /** Semantic yellow — stale data, arming, budget overruns. */
 export const WARN = fg256(179);
-/** Chip backgrounds for badge(); exported for tests, not call sites. */
+/** Chip backgrounds — badge()'s fills, also the deploy tab's armed buttons. */
 export const OK_BG = `${bg256(71)}${INK_ON_FILL}`;
 export const BAD_BG = `${bg256(124)}${fg256(231)}`;
 export const WARN_BG = `${bg256(179)}${INK_ON_FILL}`;

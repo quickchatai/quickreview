@@ -416,8 +416,33 @@ export interface ScanRate {
   cost_usd: number;
 }
 
-export function caseEstimate(lines: number, rate: ScanRate): number {
+export function caseEstimate(lines: number, rate: Pick<ScanRate, "usd_per_kline">): number {
   return (Math.max(lines, 1) / 1000) * rate.usd_per_kline;
+}
+
+/**
+ * Run `lanes` copies of `lane` to the end. One that throws aborts the rest
+ * and the throw is raised only once EVERY lane has stopped — never while a
+ * sibling is still in a paid case, which would otherwise go on spending and
+ * writing the run record after the run is settled and its slot released.
+ */
+export async function drainLanes(
+  lanes: number,
+  lane: () => Promise<void>,
+  abort: AbortController,
+): Promise<void> {
+  let failed: { err: unknown } | null = null;
+  await Promise.all(
+    Array.from({ length: lanes }, async () => {
+      try {
+        await lane();
+      } catch (err) {
+        failed ??= { err };
+        abort.abort();
+      }
+    }),
+  );
+  if (failed !== null) throw (failed as { err: unknown }).err;
 }
 
 /** What a preview's key covers: change any of it and a start quoting the old
@@ -496,6 +521,28 @@ export function scanCasePrompt(
   ].join("\n");
 }
 
+/** One candidate as a validator reads it, in the findings grammar — the
+ * scan's skeptic and the replay's validator alike. */
+export function candidateItem(f: ScanCandidate): string {
+  return [
+    `- path: ${f.path}`,
+    `  line: ${f.start === f.end ? f.end : `${f.start}-${f.end}`}`,
+    `  kind: ${f.kind}`,
+    // The severity the LENS wrote, not the capped one: the validator audits
+    // reachability, and a corrected `routine` must be able to restore it —
+    // its survivors are re-read, so the cap applies again on the way out.
+    `  severity: ${f.capped_from ?? f.severity}`,
+    ...(f.confidence !== null ? [`  confidence: ${f.confidence}`] : []),
+    ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
+    `  claim: ${f.claim}`,
+    ...(f.evidence ? [`  evidence: ${f.evidence}`] : []),
+    // The failure mechanism: the validator judges with it, and a survivor
+    // is re-read from the validator's answer, so it must travel both ways.
+    ...(f.detail ? [`  detail: ${f.detail}`] : []),
+    ...(f.fix ? [`  fix: ${f.fix}`] : []),
+  ].join("\n");
+}
+
 /** The validator's task string over one case's stage-1 candidates. */
 export function scanValidatorPrompt(
   c: ScanCasePlan,
@@ -504,27 +551,7 @@ export function scanValidatorPrompt(
   lens: string = SCAN_PASS,
   label = `stage 1, unit ${c.unit}`,
 ): string {
-  const block = candidates
-    .map((f) =>
-      [
-        `- path: ${f.path}`,
-        `  line: ${f.start === f.end ? f.end : `${f.start}-${f.end}`}`,
-        `  kind: ${f.kind}`,
-        // The severity the LENS wrote, not the capped one: the validator audits
-        // reachability, and a corrected `routine` must be able to restore it —
-        // its survivors are re-read, so the cap applies again on the way out.
-        `  severity: ${f.capped_from ?? f.severity}`,
-        ...(f.confidence !== null ? [`  confidence: ${f.confidence}`] : []),
-        ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
-        `  claim: ${f.claim}`,
-        ...(f.evidence ? [`  evidence: ${f.evidence}`] : []),
-        // The failure mechanism: the validator judges with it, and a survivor
-        // is re-read from the validator's answer, so it must travel both ways.
-        ...(f.detail ? [`  detail: ${f.detail}`] : []),
-        ...(f.fix ? [`  fix: ${f.fix}`] : []),
-      ].join("\n"),
-    )
-    .join("\n");
+  const block = candidates.map(candidateItem).join("\n");
   return [
     `SCAN VALIDATION ${ctx.caseId} — ${label}.`,
     `Scan sha: ${ctx.sha}`,
@@ -546,6 +573,36 @@ export function scanValidatorPrompt(
 
 export const SEVERITIES = ["P0", "P1", "P2", "P3", "nit"] as const;
 export type ScanSeverity = (typeof SEVERITIES)[number];
+
+/** A finding's place: its file, its line range and its kind. */
+interface Placed {
+  path: string;
+  start: number;
+  end: number;
+  kind: string;
+}
+
+/**
+ * The candidate a validator's survivor stands for: one not yet `used`, on the
+ * same file with overlapping lines — the same kind first. One survivor stands
+ * for at most one candidate, so a duplicate on the same lines or a neighbour
+ * of another kind is never silently claimed by a survivor that did not mean
+ * it. The scan and the replay attribute survivors through this one rule.
+ */
+export function survivorSource<T extends Placed>(
+  survivor: Placed,
+  candidates: readonly T[],
+  used: ReadonlySet<T>,
+): T | undefined {
+  const open = candidates.filter(
+    (c) =>
+      !used.has(c) &&
+      c.path === survivor.path &&
+      c.start <= survivor.end &&
+      survivor.start <= c.end,
+  );
+  return open.find((c) => c.kind === survivor.kind) ?? open[0];
+}
 
 /** A stage-1 candidate as read back, anchored or not yet checked. */
 export interface ScanCandidate {
@@ -716,7 +773,9 @@ function readFindingItems(
       capped_from: severity === said ? null : said,
       claim,
       evidence: opt("evidence"),
-      fix: opt("fix"),
+      // A nit's remedy rides `request:` (the findings contract); it is the
+      // candidate's fix when no `fix:` is written.
+      fix: opt("fix") ?? opt("request"),
       detail: opt("detail"),
     };
     read.push({ candidate, fields: f });

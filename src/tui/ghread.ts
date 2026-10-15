@@ -26,8 +26,9 @@
 // Everything here is total at the edge the TUI calls: `refresh()` answers an
 // outcome, never throws — a companion without GitHub is under-equipped, never
 // a companion that does not start.
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { randomBytes } from "node:crypto";
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { mintAppJwt, type FetchFn } from "../githubAuth.js";
 
 /** The only permissions the companion's token is ever minted with. */
@@ -182,11 +183,28 @@ export function writeTokenEnv(dir: string, text: string): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   const file = join(dir, TOKEN_FILE);
-  const tmp = join(dir, `.${TOKEN_FILE}.tmp`);
-  writeFileSync(tmp, text, { mode: 0o600 });
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, file);
+  writePrivateAtomic(file, text);
   return file;
+}
+
+/** Stage-then-rename a 0600 file. The staging name is unique per process and
+ * per write and created exclusively: two TUIs (or two pulls) publishing the
+ * same file at once must never share one staging inode, where one would
+ * truncate or rename the other's half-written bytes. A failed write removes
+ * its own staging file, never another's. */
+export function writePrivateAtomic(path: string, text: string): void {
+  const tmp = join(
+    dirname(path),
+    `.${basename(path)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`,
+  );
+  try {
+    writeFileSync(tmp, text, { mode: 0o600, flag: "wx" });
+    chmodSync(tmp, 0o600); // the umask may have narrowed the create mode
+    renameSync(tmp, path);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
 }
 
 /** The expiry recorded in the env file, as epoch ms, or undefined. With

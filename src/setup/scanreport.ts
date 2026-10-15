@@ -19,8 +19,8 @@
 // aborted, the ledger resumes the rest) and answers in
 // `SCAN_STOP_RESULT_FILE`, naming the request it answered — so a stop is
 // answered once and never replayed onto a later run.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { readTextIfPresent, writeAtomic } from "../channelfs.js";
 import type { FindingsFile, MatchQuestion, ResemblesDismissed, ScanFinding } from "./findings.js";
 import type { RunFile, ScanRun, ScanRunSummary } from "./scanrun.js";
 
@@ -61,6 +61,11 @@ export function validityOf(f: { validity?: Validity | null }): ValidityView {
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 // ---- the two records ---------------------------------------------------------------
+
+/** Is a finding still standing — new, or promoted and not yet fixed? The
+ * portrait's counts and the scan tab's weights read open the same way. */
+export const isOpenFinding = (f: Pick<ScanFinding, "state">): boolean =>
+  f.state === "new" || f.state === "promoted";
 
 /** A finding's resemblance to a DISMISSED one (findings.ts sets it when it
  * stores the finding), as a reader shows it: only on a finding still
@@ -166,19 +171,10 @@ function stickyDismissal(f: ScanFinding): ScanFinding {
 export type RecordRead<T> =
   { kind: "absent" } | { kind: "read"; value: T } | { kind: "unreadable"; why: string };
 
-function readText(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
-  }
-}
-
 function readRecord<T>(home: string, rel: string, parse: (text: string) => T): RecordRead<T> {
   let text: string | null;
   try {
-    text = readText(join(home, rel));
+    text = readTextIfPresent(join(home, rel));
   } catch (err) {
     return { kind: "unreadable", why: `${rel} cannot be read: ${clean(err)}` };
   }
@@ -273,13 +269,6 @@ export function parseStopResult(text: string): ScanStopResult | null {
   }
 }
 
-function writeAtomic(path: string, text: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, text);
-  renameSync(tmp, path);
-}
-
 /**
  * The TUI's stop: ask the companion to stop the run `run`, which the TUI
  * showed running. Refused when the record cannot be read or no longer shows
@@ -327,9 +316,11 @@ export function clickStopScan(
 export function scanStopOutcome(home: string, request: string): string | null {
   let text: string | null;
   try {
-    text = readText(join(home, SCAN_STOP_RESULT_FILE));
-  } catch {
-    return null;
+    text = readTextIfPresent(join(home, SCAN_STOP_RESULT_FILE));
+  } catch (err) {
+    // Not "no answer yet": the answer may be there, unreadable — said once,
+    // never polled for silently.
+    return `the scan stop's answer cannot be read (${SCAN_STOP_RESULT_FILE}: ${clean(err)}) — check scan_status`;
   }
   const r = text === null ? null : parseStopResult(text);
   if (r === null || r.request !== request) return null;

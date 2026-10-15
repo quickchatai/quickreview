@@ -21,7 +21,7 @@
 //     rules would be noise on a Rust PR. `--profile <config.toml [review]
 //     profile>` measures production as deployed.
 
-import { sweepStatusOf, type SweepStatus } from "../sweepstatus.js";
+import { isSweepClaim, sweepStatusOf, type SweepClaim, type SweepStatus } from "../sweepstatus.js";
 import { renderPassTasks } from "../passtasks.js";
 import {
   postedRenderOptions,
@@ -73,16 +73,14 @@ import {
   buildAgents,
   configAddenda,
   identityVars,
-  passTierModels,
-  sweepLightVariants,
   PASS_ADDENDA,
 } from "../include.js";
 import { MEMORY_LESS } from "../memory/context.js";
 import {
   applyProfileTuning,
   lensEnabled,
-  lensModelOverrides,
   lensTuningAddenda,
+  roundAgentModels,
   type LensTuning,
 } from "../lenstuning.js";
 import {
@@ -567,14 +565,7 @@ export function buildBenchAgents(root: string, cfg: Config): number {
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
     ecosystem: loadProfileEcosystem(root, cfg.review.profile),
-    models: passTierModels(
-      cfg.models.pass_tiers,
-      cfg.models.tiers,
-      lensModelOverrides(cfg.models, cfg.lenses),
-      cfg.models.pass_models,
-      sweepLightVariants(cfg.review, cfg.lenses),
-      cfg.lenses,
-    ),
+    models: roundAgentModels(cfg),
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),
@@ -837,7 +828,7 @@ export interface CaseFollowUp {
    * as `followup_sweep_skipped`). Absent until the case has an outcome. */
   executed_phases?: Array<{ agent: string; phase: "delta" | "sweep" | null }>;
   sweep?: {
-    claim: "ran" | "not_owed" | "not_reached" | "skipped" | null;
+    claim: SweepClaim | null;
     status: SweepStatus;
     note?: string;
     sweep_passes: number | null;
@@ -864,13 +855,7 @@ export function followUpOutcomeOf(
   const phaseOf = (p: Record<string, unknown>): "delta" | "sweep" | null =>
     p["phase"] === "delta" || p["phase"] === "sweep" ? p["phase"] : null;
   const rawClaim = outcome["sweep"];
-  const claim =
-    rawClaim === "ran" ||
-    rawClaim === "not_owed" ||
-    rawClaim === "not_reached" ||
-    rawClaim === "skipped"
-      ? rawClaim
-      : null;
+  const claim = isSweepClaim(rawClaim) ? rawClaim : null;
   const sweepPasses = passes ? passes.filter((p) => phaseOf(p) === "sweep").length : null;
   const owed = fu.sweep_owed === true;
   const { status, note } = sweepStatusOf({

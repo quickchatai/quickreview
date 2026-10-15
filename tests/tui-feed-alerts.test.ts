@@ -29,7 +29,7 @@ import {
   type PolicyStore,
 } from "../src/tui/alerts.js";
 import { alertSegment, alertZone, topBar, renderBoard, type BoardView } from "../src/tui/board.js";
-import { CompanionLifecycle, type DockerRunner } from "../src/tui/companion.js";
+import type { DockerRunner } from "../src/tui/companion.js";
 import { companionStarter, installCompanionTabHooks } from "../src/tui/companiontab.js";
 import { EVENT_TAIL_CAP, FeedWriter, eventKey, type FeedEvent } from "../src/tui/feed.js";
 import { stripAnsi } from "../src/tui/paint.js";
@@ -689,12 +689,10 @@ describe("companion tab", () => {
       s.out,
       s.input,
     );
-    const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
     // The companion is the sidebar column — there is no pty to spawn
     // and no screen to take over, so the harness wires the column instead.
     app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => available });
     installCompanionTabHooks(app, {
-      lifecycle,
       available: () => available,
       failure: () => (available ? undefined : "docker build qcr-companion failed: boom"),
     });
@@ -839,7 +837,6 @@ describe("companion tab", () => {
     );
     app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => up });
     installCompanionTabHooks(app, {
-      lifecycle: new CompanionLifecycle(CFG, noDocker, {}),
       available: () => up,
       retry: start,
     });
@@ -903,11 +900,9 @@ describe("companion tab", () => {
       s.out,
       s.input,
     );
-    const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
     let up = false;
     app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => up });
     installCompanionTabHooks(app, {
-      lifecycle,
       available: () => up,
       failure: () => (up ? undefined : "image missing"),
       retry: async () => {

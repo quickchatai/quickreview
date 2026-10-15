@@ -9,7 +9,7 @@
 // inject the overseer. There is no path here that touches an existing review:
 // the invariant against retracting an approval is structural, not prompted
 // (CLAUDE.md rule 2).
-import { sweepStatusOf, type SweepStatus } from "./sweepstatus.js";
+import { isSweepClaim, sweepStatusOf, type SweepClaim, type SweepStatus } from "./sweepstatus.js";
 import { pendingPosting } from "./posting-outbox.js";
 
 export { sweepStatusOf, type SweepStatus };
@@ -562,17 +562,13 @@ function normalizePassPhase(raw: unknown): "delta" | "sweep" | null {
 /** The verdict's top-level `sweep`: `ran` | `not_owed` | `not_reached` |
  * `skipped`, case forgiven and `-`/space read as `_`; anything else is
  * unusable (null). */
-export function normalizeSweepClaim(
-  raw: unknown,
-): "ran" | "not_owed" | "not_reached" | "skipped" | null {
+export function normalizeSweepClaim(raw: unknown): SweepClaim | null {
   if (typeof raw !== "string") return null;
   const word = raw
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, "_");
-  return word === "ran" || word === "not_owed" || word === "not_reached" || word === "skipped"
-    ? word
-    : null;
+  return isSweepClaim(word) ? word : null;
 }
 
 /** The verdict's `extent`: what the session did with the follow-up

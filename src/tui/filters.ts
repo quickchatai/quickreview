@@ -3,6 +3,7 @@
 // `applyBoardFilter` / `applyMemoryFilter` over their own rows and render
 // `filterLabel` as the active-filter indicator. Filters are a VIEW concern —
 // they never touch the poller's snapshot or the memory store.
+import { normalizeTag } from "../memory/store.js";
 import type { MemoryEntry } from "./memory.js";
 import { sortPrs, type SnapshotPr } from "./model.js";
 
@@ -52,11 +53,6 @@ export function filterLabel(f: BoardFilter | null | undefined): string {
   return `⛉ ${bits.join(" · ")} — F clears`;
 }
 
-/** Normalize a tag for comparison: leading '#'s dropped, lowercased. */
-function normTag(tag: string): string {
-  return tag.replace(/^#+/, "").toLowerCase();
-}
-
 /**
  * Filter memory timeline entries by tag: exact tag match, case-insensitive,
  * a leading '#' on the query is ignored (`#pinned` ≡ `pinned`). Null/empty
@@ -66,9 +62,9 @@ export function applyMemoryFilter<T extends Pick<MemoryEntry, "tags">>(
   entries: T[],
   tag: string | null | undefined,
 ): T[] {
-  if (tag === null || tag === undefined || normTag(tag) === "") return entries;
-  const want = normTag(tag);
-  return entries.filter((e) => e.tags.some((t) => normTag(t) === want));
+  if (tag === null || tag === undefined || normalizeTag(tag) === "") return entries;
+  const want = normalizeTag(tag);
+  return entries.filter((e) => e.tags.some((t) => normalizeTag(t) === want));
 }
 
 /** The board's one filtered ordering — render, selection movement and the
@@ -83,6 +79,6 @@ export function visiblePrs(view: {
 
 /** The memory view's indicator, same shape as the board's. */
 export function memoryFilterLabel(tag: string | null | undefined): string {
-  if (tag === null || tag === undefined || normTag(tag) === "") return "";
-  return `⛉ #${normTag(tag)} — F clears`;
+  if (tag === null || tag === undefined || normalizeTag(tag) === "") return "";
+  return `⛉ #${normalizeTag(tag)} — F clears`;
 }

@@ -119,6 +119,36 @@ describe("findStyleGuide reads the style rules a repo wrote for its agents", () 
     expect(findStyleGuide(repo)).toEqual([]);
   });
 
+  it("an alias sorting before a style-named instructions file does not hide it", () => {
+    put(".github/instructions/code-style.instructions.md", `${rules(SECTION_MIN_LINES)}\n`);
+    symlinkSync("code-style.instructions.md", join(repo, ".github/instructions/base.md"));
+    expect(findStyleGuide(repo)).toEqual([".github/instructions/code-style.instructions.md"]);
+  });
+
+  it("a heading inside a fenced example neither ends a style section nor starts one", () => {
+    const fence = "```";
+    put(
+      "CONTRIBUTING.md",
+      [
+        "# Contributing",
+        "## Code style",
+        "Run the formatter first:",
+        `${fence}sh`,
+        "# Example",
+        "make fmt",
+        fence,
+        rules(SECTION_MIN_LINES),
+        "## Releases",
+        "x",
+      ].join("\n"),
+    );
+    put(
+      "AGENTS.md",
+      ["# Agents", "~~~md", "## Code style", rules(SECTION_MIN_LINES), "~~~", "done"].join("\n"),
+    );
+    expect(findStyleGuide(repo)).toEqual([`CONTRIBUTING.md:2-${7 + SECTION_MIN_LINES}`]);
+  });
+
   it("CLAUDE.md linked to AGENTS.md is read once", () => {
     put("AGENTS.md", `## Code style\n${rules(SECTION_MIN_LINES)}\n`);
     symlinkSync("AGENTS.md", join(repo, "CLAUDE.md"));

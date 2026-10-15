@@ -33,8 +33,8 @@
 // Files, all in the state home: `scan/stage2.json` (the latest proposal, the
 // engine's), `scan/stage2-start.json` (the TUI's request),
 // `scan/stage2-start-result.json` (the engine's answer).
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { readTextIfPresent, writeAtomic } from "../channelfs.js";
 import type { ScanDepth } from "../config.js";
 import type { RowPrice, Stage2Floor, Stage2Row, Stage2RowRequest } from "./stage2.js";
 
@@ -107,6 +107,8 @@ export function parseStage2File(text: string): Stage2File {
     p !== null &&
     (typeof p !== "object" ||
       typeof p.key !== "string" ||
+      typeof p.sha !== "string" ||
+      typeof p.cap_usd !== "number" ||
       !Array.isArray(p.rows) ||
       !Array.isArray(p.request))
   ) {
@@ -170,29 +172,13 @@ export function parseStartResult(text: string): Stage2StartResult | null {
   }
 }
 
-function readText(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
-  }
-}
-
-function writeAtomic(path: string, text: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, text);
-  renameSync(tmp, path);
-}
-
 /** The latest stage-2 proposal in the state home at `home`, none, or why it
  * cannot be read (then the TUI shows UNKNOWN — never "no proposal"). */
 export function readStage2Proposal(
   home: string,
 ): { ok: true; proposal: StoredStage2Proposal | null } | { ok: false; error: string } {
   try {
-    const text = readText(join(home, STAGE2_FILE));
+    const text = readTextIfPresent(join(home, STAGE2_FILE));
     return { ok: true, proposal: text === null ? null : parseStage2File(text).proposal };
   } catch (err) {
     return { ok: false, error: `${STAGE2_FILE} cannot be read: ${clean(err)}` };
@@ -278,14 +264,10 @@ export function requestStage2Start(
 }
 
 /** The companion's answer to the request `id`, or null while it has not
- * answered (or answered another one). */
+ * answered (or answered another one); throws when the answer file exists
+ * but cannot be read. */
 export function readStage2StartResult(home: string, id: string): Stage2StartResult | null {
-  let text: string | null;
-  try {
-    text = readText(join(home, STAGE2_RESULT_FILE));
-  } catch {
-    return null;
-  }
+  const text = readTextIfPresent(join(home, STAGE2_RESULT_FILE));
   const r = text === null ? null : parseStartResult(text);
   return r !== null && r.request === id ? r : null;
 }
@@ -315,9 +297,17 @@ export function clickStartStage2(
 }
 
 /** What became of the click `request`: the companion's answer, or null while
- * it has not answered (a companion that is down starts nothing). */
+ * it has not answered (a companion that is down starts nothing) — or that
+ * the answer cannot be read. */
 export function stage2ClickOutcome(home: string, request: string): string | null {
-  const r = readStage2StartResult(home, request);
+  let r: Stage2StartResult | null;
+  try {
+    r = readStage2StartResult(home, request);
+  } catch (err) {
+    // Not "no answer yet": the answer may be there, unreadable — said once,
+    // never polled for silently.
+    return `stage 2's answer cannot be read (${STAGE2_RESULT_FILE}: ${clean(err)}) — check scan_status`;
+  }
   if (r === null) return null;
   return r.ok ? `stage 2 started: ${r.run}` : `stage 2 refused: ${r.errors.join("; ")}`;
 }

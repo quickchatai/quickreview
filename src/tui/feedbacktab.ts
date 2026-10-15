@@ -1,6 +1,6 @@
 // `[7] feedback` — the tuning loop on one surface, end to end:
 //
-//   signal        the inbox: every `#feedback` memory entry, unprocessed first,
+//   signal        the inbox: every `#feedback` memory entry, newest first,
 //                 acted-on ones archived (`a` shows them)
 //   adjudication  the selected signal's card, and what the record says about it
 //   proposal      PROPOSED: the companion's rubric proposals, `A` accept / `x` reject
@@ -22,15 +22,16 @@
 // uses. The register itself (what counts as one, how reverts are read back)
 // lives in `changelog-store.ts`.
 import { FEEDBACK_FULL_TEXT_LABEL, readFencedData } from "../memory/datafence.js";
-import { parseEventTags } from "../memory/eventtags.js";
+import { parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import { lessonHeadline, lessonTierLine } from "../memory/shadowstatus.js";
 import type { StatusSnapshot } from "../state.js";
 import type { App } from "./app.js";
-import type {
-  ChangeEntry,
-  ChangeLogProblem,
-  ChangeRegister,
-  RevertResult,
+import {
+  revertArgv,
+  type ChangeEntry,
+  type ChangeLogProblem,
+  type ChangeRegister,
+  type RevertResult,
 } from "./changelog-store.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import {
@@ -52,6 +53,7 @@ import { emptyLine } from "./emptystate.js";
 import { keyChar, type BoardKey } from "./keys.js";
 import type { LearningStore } from "./learning.js";
 import { timelineOrder, type MemoryEntry } from "./memory.js";
+import { moveSelection } from "./model.js";
 import { hitTest, type Zone } from "./mouse.js";
 import { Frame, fit, rule, sanitizeText, truncate, wrap } from "./paint.js";
 import {
@@ -83,8 +85,11 @@ export interface FeedbackPresentation {
   learning: string;
 }
 
-const hasTag = (e: MemoryEntry, tag: string): boolean =>
-  e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === tag);
+/** Header-only (`parseHashTags`), not `e.tags`: the store's tag list is a
+ * full-text scan, and a feedback entry quotes a human comment verbatim — a
+ * comment mentioning `#adjudication` must not turn its own signal into a
+ * disposition record and drop it from the inbox. */
+const hasTag = (e: MemoryEntry, tag: string): boolean => parseHashTags(e.text).includes(tag);
 
 const isDisposition = (e: MemoryEntry): boolean =>
   hasTag(e, "adjudication") || hasTag(e, "feedback-review") || hasTag(e, "feedback-action");
@@ -121,6 +126,10 @@ function feedbackEpisode(e: MemoryEntry, signal: string): string {
   if (signal === "review_set_aside") {
     const id = /\bbot review\s+(\d+)\b/.exec(e.text)?.[1];
     if (id) return `review-${id}`;
+  }
+  if (signal === "bot_comment_deleted") {
+    const id = /\bbot comment\s+(\d+)\b/.exec(e.text)?.[1];
+    if (id) return `deleted-comment-${id}`;
   }
   return `${signal || "feedback"}-${e.day}`;
 }
@@ -183,6 +192,11 @@ export function feedbackPresentation(
     summary = `The PR${pr ? ` #${pr}` : ""} merged while REQUEST_CHANGES stood. That is a low-weight disagreement signal because repository policy may allow advisory overrides.`;
     learning =
       "Reconstruct the standing blockers and test each against the merged code; the merge alone does not refute them.";
+  } else if (signal === "bot_comment_deleted") {
+    title = "Bot comment was deleted";
+    summary = `A bot comment${pr ? ` on #${pr}` : ""} was deleted by a human. A deletion carries no stated reason: it may reject the finding, or tidy a thread that was already settled.`;
+    learning =
+      "Find the deleted comment's finding in the review record and check it against the code before reading the deletion as disagreement.";
   } else if (signal === "trigger_withdrawn") {
     title = "Review trigger was withdrawn";
     summary = `The review trigger${pr ? ` on #${pr}` : ""} was removed before completion, which may indicate cost, delay, irrelevance, or an ordinary workflow change.`;
@@ -242,12 +256,16 @@ export function feedbackPresentation(
   };
 }
 
-const STATUS_MARK: Record<FeedbackStatus, string> = {
-  unprocessed: "○",
-  settled: "✓",
-  "needs-attention": "!",
-  "acted-on": "◆",
+/** Each status's glyph and its card line — the list row shows the glyph. */
+const STATUS: Record<FeedbackStatus, { mark: string; line: string }> = {
+  unprocessed: { mark: "○", line: "UNPROCESSED — needs review" },
+  settled: { mark: "✓", line: "PROCESSED · SETTLED" },
+  "needs-attention": { mark: "!", line: "PROCESSED · NEEDS ATTENTION" },
+  "acted-on": { mark: "◆", line: "ACTED ON · ARCHIVED" },
 };
+
+const statusLine = (status: FeedbackStatus): string =>
+  `${STATUS[status].mark} ${STATUS[status].line}`;
 
 export function feedbackEntryLine(
   e: MemoryEntry,
@@ -255,17 +273,10 @@ export function feedbackEntryLine(
   width: number,
 ): string {
   return truncate(
-    `  ${e.day} ${STATUS_MARK[presentation.status]} ${presentation.listTitle}`,
+    `  ${e.day} ${STATUS[presentation.status].mark} ${presentation.listTitle}`,
     width,
   );
 }
-
-const STATUS_LINE: Record<FeedbackStatus, string> = {
-  settled: "✓ PROCESSED · SETTLED",
-  "needs-attention": "! PROCESSED · NEEDS ATTENTION",
-  "acted-on": "◆ ACTED ON · ARCHIVED",
-  unprocessed: "○ UNPROCESSED — needs review",
-};
 
 // ---- the change register, as rows -----------------------------------------------
 
@@ -314,7 +325,7 @@ export function armedLines(entry: ChangeEntry, width: number): string[] {
       width,
     ),
     truncate(
-      `${FG.dim}runs${RESET} git revert --no-edit ${entry.short} ${FG.dim}in this checkout — no push, no GitHub, nothing near the mutation gate${RESET}`,
+      `${FG.dim}runs${RESET} ${revertArgv(entry.short).join(" ")} ${FG.dim}in this checkout — no push, no GitHub, nothing near the mutation gate${RESET}`,
       width,
     ),
     truncate(`${button("y do it")}  ${button("any other key cancels")}`, width),
@@ -421,10 +432,17 @@ export function renderFeedbackTab(
     for (const l of wrap(sanitizeText(store.memError), leftW - 3)) left.push(`${WARN}${l}${RESET}`);
     left.push(`${MUTED}the signals live in memory — r retries.${RESET}`);
   } else {
+    // Part of memory answered and part did not: the counts are of what was
+    // read, and the inbox says so rather than passing for complete.
+    const partial = store.memWarn !== undefined;
     left.push(
-      `${focusTitle(`INBOX (${inbox.length})`, "inbox")} ${MUTED}${unprocessed} unprocessed${RESET}`,
+      `${focusTitle(`INBOX (${inbox.length}${partial ? "+?" : ""})`, "inbox")} ${MUTED}${unprocessed}${partial ? "+?" : ""} unprocessed${RESET}`,
     );
-    if (inbox.length === 0) {
+    if (partial)
+      left.push(
+        `${WARN}⚠ ${truncate(sanitizeText(`partial read — ${store.memWarn}`), leftW - 5)}${RESET}`,
+      );
+    if (inbox.length === 0 && !partial) {
       left.push(
         st.showArchived
           ? emptyLine({
@@ -467,7 +485,7 @@ export function renderFeedbackTab(
     row([
       { text: `${sectionTitle("SIGNAL")} ${selected.ts} ${MUTED}episode=${card.episode}${RESET}` },
     ]);
-    row([{ text: STATUS_LINE[card.status] }]);
+    row([{ text: statusLine(card.status) }]);
     const cardCap = Math.max(6, bodyRows - 18);
     const text = [
       `TITLE\n${card.title}`,
@@ -817,7 +835,7 @@ export function installFeedbackTab(
   const inbox = (): MemoryEntry[] => feedbackInbox(store.entries, st.showArchived);
   const selectSignal = (i: number): void => {
     const list = inbox();
-    st.sel = Math.max(0, Math.min(i, Math.max(0, list.length - 1)));
+    st.sel = moveSelection(i, 0, list.length);
     st.selKey = list[st.sel] ? entryKey(list[st.sel]!) : undefined;
   };
   store.onLoaded((part) => {
@@ -849,15 +867,31 @@ export function installFeedbackTab(
       });
   };
 
+  // One revert at a time: two in flight would both pass the clean-tree check
+  // and interleave in the one checkout (a failing one runs `revert --abort`).
+  let reverting = false;
   const runRevert = (sha: string): void => {
     st.armed = undefined;
+    reverting = true;
     st.result = `${FG.dim}reverting ${sha.slice(0, 7)}…${RESET}`;
     app.repaint();
-    void changes.revert(sha).then((res) => {
-      st.result = res.ok ? `${OK}${res.message}${RESET}` : `${BAD}${res.message}${RESET}`;
-      app.notice(res.message);
-      app.repaint();
-    });
+    void changes
+      .revert(sha)
+      .then(
+        (res) => {
+          st.result = res.ok ? `${OK}${res.message}${RESET}` : `${BAD}${res.message}${RESET}`;
+          app.notice(res.message);
+        },
+        (err: unknown) => {
+          const message = `revert ${sha.slice(0, 7)} failed: ${err instanceof Error ? err.message : String(err)}`;
+          st.result = `${BAD}${message}${RESET}`;
+          app.notice(message);
+        },
+      )
+      .finally(() => {
+        reverting = false;
+        app.repaint();
+      });
   };
 
   let lastZones: Zone<FeedbackAction>[] = [];
@@ -954,15 +988,8 @@ export function installFeedbackTab(
           const delta = key.kind === "down" ? 1 : -1;
           if (st.focus === "inbox") selectSignal(st.sel + delta);
           else if (st.focus === "proposed")
-            st.propSel = Math.max(
-              0,
-              Math.min(st.propSel + delta, Math.max(0, store.proposals.length - 1)),
-            );
-          else
-            st.changeSel = Math.max(
-              0,
-              Math.min(st.changeSel + delta, Math.max(0, entries.length - 1)),
-            );
+            st.propSel = moveSelection(st.propSel, delta, store.proposals.length);
+          else st.changeSel = moveSelection(st.changeSel, delta, entries.length);
           theApp.repaint();
           return true;
         }
@@ -1009,6 +1036,11 @@ export function installFeedbackTab(
               if (!entry) return false;
               if (entry.reverted) {
                 st.result = `${WARN}${entry.short} was already reverted by ${entry.reverted.by}${RESET}`;
+                theApp.repaint();
+                return true;
+              }
+              if (reverting) {
+                st.result = `${WARN}a revert is still running — wait for its result${RESET}`;
                 theApp.repaint();
                 return true;
               }

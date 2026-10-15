@@ -649,6 +649,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     configPath: liveConfigPath(),
     sink: buildIssueSink(full, app.ssh, memStore),
     issueLabel: full.github.issue_label,
+    eod: { time: full.eod.time, timezone: full.eod.timezone },
     changes: new ChangeLog(
       new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")),
       localRunner,
@@ -1051,7 +1052,6 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     wire: () => wireCompanionChannels(),
   });
   installCompanionTabHooks(app, {
-    lifecycle: companion,
     available: () => companionUp,
     failure: () => companionError,
     retry: companionOn ? startAndWire : undefined,

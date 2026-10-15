@@ -3,9 +3,19 @@
 // replay (src/bench/runner.ts, which may not import verdicts.ts) read a
 // session's sweep report one way.
 
+/** What a session may CLAIM became of its owed sweep (the verdict's
+ * `sweep`): `ran`, `not_owed` (the order carried none), `not_reached` (the
+ * round decided REQUEST_CHANGES first) or `skipped` (decided not needed). */
+export const SWEEP_CLAIMS = ["ran", "not_owed", "not_reached", "skipped"] as const;
+export type SweepClaim = (typeof SWEEP_CLAIMS)[number];
+
+export function isSweepClaim(word: unknown): word is SweepClaim {
+  return (SWEEP_CLAIMS as readonly unknown[]).includes(word);
+}
+
 /** What became of a follow-up round's pre-approval sweep
  * (`rounds.sweep_status`). */
-export type SweepStatus = "ran" | "not_owed" | "not_reached" | "skipped" | "unknown";
+export type SweepStatus = SweepClaim | "unknown";
 
 /**
  * The sweep status a follow-up round's verdict earns. `ran` only
@@ -21,7 +31,7 @@ export type SweepStatus = "ran" | "not_owed" | "not_reached" | "skipped" | "unkn
  */
 export function sweepStatusOf(args: {
   owed: boolean;
-  claim: "ran" | "not_owed" | "not_reached" | "skipped" | null;
+  claim: SweepClaim | null;
   sweepPasses: number | null;
   receiptSettled: boolean;
   verdict?: string | null;

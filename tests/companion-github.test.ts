@@ -8,7 +8,16 @@
 // (tests/helpers/suite-timeouts.ts PROCESS_SUITES).
 import { execFileSync } from "node:child_process";
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -298,6 +307,20 @@ describe("GitHub's current token format — the env file carries it, and only sa
       expect(line).toMatch(/^[A-Z_]+=[^\s'"$`\\#]+$/);
     // Fresh now: the next check mints nothing.
     expect((await t.refresh()).kind).toBe("fresh");
+  });
+
+  it("publishes through its own staging file, never a shared fixed name", () => {
+    const dir = join(tmp, "out-staging");
+    mkdirSync(dir, { recursive: true });
+    // A fixed-name staging path another writer is using right now.
+    mkdirSync(join(dir, ".github-read.env.tmp"));
+    const file = writeTokenEnv(dir, renderTokenEnv(tokenOf(REAL_FORMAT_TOKEN), "acme/widgets"));
+    expect(readFileSync(file, "utf8")).toContain(REAL_FORMAT_TOKEN);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Nothing of this write's own is left behind.
+    expect(
+      readdirSync(dir).filter((n) => n.endsWith(".tmp") && n !== ".github-read.env.tmp"),
+    ).toEqual([]);
   });
 
   it("sourced by a real shell, the file yields exactly the token, the expiry and the repo", () => {

@@ -59,7 +59,12 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { ModelsConfig, ReviewEffort, ThinkingLevel } from "./config.js";
 import { normalizeEffort, withThinking } from "./config.js";
-import { VALIDATE_PASS as VALIDATE, type PassAddendum } from "./include.js";
+import {
+  passTierModels,
+  sweepLightVariants,
+  VALIDATE_PASS as VALIDATE,
+  type PassAddendum,
+} from "./include.js";
 import type { Severity } from "./severity.js";
 import { higherTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
 
@@ -275,11 +280,44 @@ export function lensModelOverrides(
   const out: Record<string, string> = {};
   for (const [lens, t] of Object.entries(lenses ?? {})) {
     if (!t.effort) continue;
-    const level: ThinkingLevel = t.effort === "high" ? models.effort_max : t.effort;
     for (const tier of PASS_TIER_ORDER)
-      out[`${lens}--${tier}`] = withThinking(models.tiers[tier], level);
+      out[`${lens}--${tier}`] = effortSpec(models, tier, t.effort);
   }
   return out;
+}
+
+/** `tier`'s model spec at a configured `effort` — `high` is the model's
+ * ceiling (`[models] effort_max`). A lens's profile `effort` and the scan's
+ * `[scan] effort` resolve through this one rule. */
+export function effortSpec(
+  models: Pick<ModelsConfig, "tiers" | "effort_max">,
+  tier: PassTier,
+  effort: Exclude<ReviewEffort, "">,
+): string {
+  const level: ThinkingLevel = effort === "high" ? models.effort_max : effort;
+  return withThinking(models.tiers[tier], level);
+}
+
+/**
+ * The per-variant model map a PR round's agent build takes: the profile's
+ * per-lens `effort` (`lensModelOverrides`), with `[models.pass_tiers]` pins
+ * and `[models.pass_models]` overrides on top (`passTierModels`). The daemon,
+ * the bench and the setup replay all build through this one recipe, so each
+ * runs a lens at the same model.
+ */
+export function roundAgentModels(cfg: {
+  models: Pick<ModelsConfig, "tiers" | "effort_max" | "pass_tiers" | "pass_models">;
+  lenses?: LensTuningMap | undefined;
+  review: { sweep_light_tier?: "" | PassTier };
+}): Record<string, string> {
+  return passTierModels(
+    cfg.models.pass_tiers,
+    cfg.models.tiers,
+    lensModelOverrides(cfg.models, cfg.lenses),
+    cfg.models.pass_models,
+    sweepLightVariants(cfg.review, cfg.lenses),
+    cfg.lenses,
+  );
 }
 
 function ceilingText(lens: string, sev: Severity): string {

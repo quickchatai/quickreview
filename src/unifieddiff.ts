@@ -5,6 +5,48 @@
 
 import type { PrFileEntry } from "./github.js";
 
+const C_ESCAPES: Readonly<Record<string, number>> = {
+  a: 7,
+  b: 8,
+  t: 9,
+  n: 10,
+  v: 11,
+  f: 12,
+  r: 13,
+  '"': 34,
+  "\\": 92,
+};
+
+/**
+ * A path as git prints it: a name with a special or (under the default
+ * `core.quotePath`) non-ASCII byte comes double-quoted, C-style, each such
+ * byte an octal `\ooo` escape — decoded here back to the UTF-8 name the
+ * tree holds. An unquoted path is returned as is.
+ */
+export function gitUnquote(p: string): string {
+  if (p.length < 2 || !p.startsWith('"') || !p.endsWith('"')) return p;
+  const body = p.slice(1, -1);
+  const bytes: number[] = [];
+  for (let i = 0; i < body.length; i++) {
+    const ch = String.fromCodePoint(body.codePointAt(i)!);
+    if (ch !== "\\") {
+      bytes.push(...Buffer.from(ch, "utf8"));
+      i += ch.length - 1;
+      continue;
+    }
+    const next = body[i + 1] ?? "";
+    const oct = /^[0-7]{3}/.exec(body.slice(i + 1, i + 4));
+    if (oct) {
+      bytes.push(parseInt(oct[0], 8));
+      i += 3;
+    } else if (next in C_ESCAPES) {
+      bytes.push(C_ESCAPES[next]!);
+      i += 1;
+    } else bytes.push(92);
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
 /**
  * The files of a unified diff (`git diff` output) in the shape GitHub's
  * files API returns and `buildPassPlan` reads: path, status, +/- counts and
@@ -15,17 +57,7 @@ import type { PrFileEntry } from "./github.js";
 export function parseUnifiedDiff(text: string): PrFileEntry[] {
   const out: PrFileEntry[] = [];
   const blocks = text.split(/^(?=diff --git )/m).filter((b) => b.startsWith("diff --git "));
-  const unq = (p: string): string => {
-    let s = p.trim();
-    if (s.startsWith('"') && s.endsWith('"')) {
-      try {
-        s = JSON.parse(s) as string;
-      } catch {
-        s = s.slice(1, -1);
-      }
-    }
-    return s.replace(/^[ab]\//, "");
-  };
+  const unq = (p: string): string => gitUnquote(p.trim()).replace(/^[ab]\//, "");
   for (const block of blocks) {
     const lines = block.split("\n");
     let from: string | null = null;
@@ -48,8 +80,10 @@ export function parseUnifiedDiff(text: string): PrFileEntry[] {
       }
       if (line.startsWith("new file mode")) status = "added";
       else if (line.startsWith("deleted file mode")) status = "removed";
-      else if (line.startsWith("rename from ")) renameFrom = line.slice("rename from ".length);
-      else if (line.startsWith("rename to ")) renameTo = line.slice("rename to ".length);
+      else if (line.startsWith("rename from "))
+        renameFrom = gitUnquote(line.slice("rename from ".length));
+      else if (line.startsWith("rename to "))
+        renameTo = gitUnquote(line.slice("rename to ".length));
       else if (line.startsWith("--- "))
         from = line.slice(4) === "/dev/null" ? null : unq(line.slice(4));
       else if (line.startsWith("+++ "))

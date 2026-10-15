@@ -20,6 +20,7 @@
 // a wedged PR (rule 9).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DOUBT_WORDS } from "./doubtwords.js";
 import { findingRecordKey, recordNumber, recordString } from "./findingkey.js";
 import { WITHHOLD_WORDS } from "./postingpolicy.js";
 import { bareTag, isSanctionedTag } from "./severity.js";
@@ -95,15 +96,8 @@ const DISPOSITION_ALIASES: Readonly<Record<string, FindingDisposition>> = {
   refuted_and_conceded: "conceded",
 };
 
-/**
- * The kill words that are a doubt about the CLAIM itself — the
- * validator's validity vetoes, as opposed to a repeat, scope, bar or shape
- * kill. The validator lists these under DOUBTED (the
- * `validate-doubt-not-kill` addendum in src/include.ts); a `killed` entry
- * carrying one is folded onto `doubted` at parse time anyway, so a session
- * still on an older prompt cannot make a doubted finding vanish as a kill.
- */
-export const DOUBT_WORDS: readonly string[] = ["refuted", "unverifiable", "bad-anchor"];
+/** The validator's validity vetoes (src/doubtwords.ts). */
+export { DOUBT_WORDS };
 
 export function normalizeDisposition(raw: unknown): FindingDisposition {
   if (typeof raw !== "string") return "unknown";

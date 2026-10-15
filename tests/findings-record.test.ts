@@ -368,6 +368,26 @@ describe("enforceFindingsRecord", () => {
     expect(anomalyKinds()).toEqual([]);
   });
 
+  it("a composite or annotated spelling of planned lenses is planned; one naming an unplanned lens is not", async () => {
+    writeRecord("pr-7-round-2.json", {
+      pr: 7,
+      round_no: 2,
+      findings: [
+        { id: "a", lens: "pass-baseline + pass-sweep (2 lenses)", disposition: "posted" },
+        { id: "b", lens: "pass-sweep:G1", disposition: "posted" },
+        { id: "c", lens: "pass-baseline, pass-backcompat", disposition: "posted" },
+        { id: "d", lens: "pass-x", disposition: "posted" },
+      ],
+    });
+    await enforceFindingsRecord(deps([]), { ...target, planned: ["pass-baseline", "pass-sweep"] });
+    expect(store.findingsForRound(7, 2).map((r) => [r.finding_key, r.unplanned])).toEqual([
+      ["a", 0],
+      ["b", 0],
+      ["c", 1],
+      ["d", 1],
+    ]);
+  });
+
   it("with no plan on the round nothing is called unplanned (absence of a plan is not evidence)", async () => {
     writeRecord("pr-7-round-2.json", {
       pr: 7,
