@@ -26,6 +26,7 @@
 // stopped writing.
 import { readFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
+import { archiveStamp, identityFields } from "./archivewrite.js";
 import { fileDigestWithPrefix, identityOrNull } from "./gzfile.js";
 import type { FileIdentity } from "./fsutil.js";
 import type { DuplicateEntry } from "./manifest.js";
@@ -62,12 +63,6 @@ export interface OverseerPassDeps extends Omit<StorePassDeps, "dir" | "subject" 
   /** When the current overseer was born; null = unknown (nothing moves). */
   bornAt: () => Date | null;
 }
-
-const stampOf = (ms: number): string =>
-  new Date(ms)
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}/, "");
 
 /** A rotation record's `meta.json`: the live transcript it named, and when. */
 async function metaOf(
@@ -265,7 +260,7 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
     const f: StoreFile = {
       path: l.path,
       source,
-      archive: `transcripts/session-at-close-${stampOf(Number.isFinite(at) ? at : id.mtimeMs)}.jsonl.gz`,
+      archive: `transcripts/session-at-close-${archiveStamp(new Date(Number.isFinite(at) ? at : id.mtimeMs))}.jsonl.gz`,
       identity: id,
     };
     const entryOf = writer.transcriptEntry(f, { legacy: true });
@@ -313,13 +308,6 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
         : null);
   return res;
 }
-
-const identityFields = (id: FileIdentity) => ({
-  bytes: id.size,
-  mtime_ms: id.mtimeMs,
-  dev: id.dev,
-  ino: id.ino,
-});
 
 /**
  * The transcript a legacy copy names: its archived record (by path under this
