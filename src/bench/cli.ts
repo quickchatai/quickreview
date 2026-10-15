@@ -137,6 +137,9 @@ const DEFAULTS = {
   agentDir: "/tmp/pi-agent",
   /** 75 min: with sol-high on baseline/sweep/behaviour-delta (the shipped default) a large PR can exceed 45. */
   timeoutMin: 75,
+  /** The loopback Codex bridge in-container.sh starts (bench/aacr/codex_bridge.py
+   * --port 8766): OCR, OpenCode and PR-Agent reach the model through it. */
+  bridgeUrl: "http://127.0.0.1:8766",
 };
 
 function flags(argv: string[]): {
@@ -351,23 +354,14 @@ async function main(): Promise<number> {
     };
     if (phase !== "case") {
       const previous = existsSync(runFile)
-        ? (JSON.parse(readFileSync(runFile, "utf8")) as {
-            started_at?: string;
-            resumes?: unknown[];
-          })
+        ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
         : null;
       // A fresh run owns its cases outright: nothing an earlier invocation
       // left for them may be scored as this run's (an interrupted run then
       // shows its unreached cases as MISSING, and eval refuses the number).
       // A resumed run keeps only what this configuration produced.
       prepareReviewCases(outDir, cases, { resume, fingerprint: ctx.fingerprint }, log);
-      run.started_at = (resume && previous?.started_at) || run.started_at;
-      run.resumes = [
-        ...(resume && Array.isArray(previous?.resumes) ? previous.resumes : []),
-        ...(resume && previous
-          ? [{ at: new Date().toISOString(), fingerprint: ctx.fingerprint }]
-          : []),
-      ];
+      Object.assign(run, runLifecycle(resume, previous, ctx.fingerprint));
       writeFileSync(runFile, JSON.stringify(run, null, 2) + "\n");
       if (phase === "init") {
         log(`review: run initialised — ${cases.length} case(s)${resume ? " (resume)" : ""}`);
@@ -499,7 +493,7 @@ async function main(): Promise<number> {
     if (!f.get("--out")) throw new Error("--out <dir> is required");
     const outDir = resolve(f.get("--out")!);
     const cases = selectCases(set, only(f));
-    const bridgeUrl = f.get("--bridge") ?? "http://127.0.0.1:8766";
+    const bridgeUrl = f.get("--bridge") ?? DEFAULTS.bridgeUrl;
     const ocrBin = f.get("--ocr-bin") ?? "opencodereview";
     const flagsOcr = {
       concurrency: Number(f.get("--ocr-concurrency") ?? OCR_HARNESS_DEFAULTS.concurrency),
@@ -671,7 +665,7 @@ async function main(): Promise<number> {
     if (!f.get("--out")) throw new Error("--out <dir> is required");
     const outDir = resolve(f.get("--out")!);
     assertArm(outDir, "opencode");
-    const bridgeUrl = f.get("--bridge") ?? "http://127.0.0.1:8766";
+    const bridgeUrl = f.get("--bridge") ?? DEFAULTS.bridgeUrl;
     const opencodeBin = f.get("--opencode-bin") ?? "opencode";
     const timeoutMin = Number(f.get("--timeout-min") ?? OPENCODE_HARNESS_DEFAULTS.timeoutMin);
     if (!Number.isInteger(timeoutMin) || timeoutMin < 1)
@@ -809,7 +803,7 @@ async function main(): Promise<number> {
     if (!f.get("--out")) throw new Error("--out <dir> is required");
     const outDir = resolve(f.get("--out")!);
     assertArm(outDir, "pragent");
-    const bridgeUrl = f.get("--bridge") ?? "http://127.0.0.1:8766";
+    const bridgeUrl = f.get("--bridge") ?? DEFAULTS.bridgeUrl;
     const timeoutMin = Number(f.get("--timeout-min") ?? PRAGENT_DEFAULTS.timeoutMin);
     if (!Number.isInteger(timeoutMin) || timeoutMin < 1)
       throw new Error("pragent-review: --timeout-min must be a positive integer");

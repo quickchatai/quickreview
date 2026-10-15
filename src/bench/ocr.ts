@@ -38,7 +38,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
-import { checkMergeBase } from "./armrun.js";
+import { checkMergeBase, HARNESS_TIMEOUT_MIN } from "./armrun.js";
 import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import { prTextFor } from "./prtext.js";
 import { prepareTree } from "./runner.js";
@@ -46,7 +46,11 @@ import { prepareTree } from "./runner.js";
 /** The harness's OCR flags: reviewers/ocr.py `review_instance` defaults and
  * pipeline.py's `apply_defaults` (timeout None → 30; --max-tools 30). The
  * concurrency is ocr.py's own default — pipeline.py never passes one. */
-export const OCR_HARNESS_DEFAULTS = { concurrency: 8, timeoutMin: 30, maxTools: 30 } as const;
+export const OCR_HARNESS_DEFAULTS = {
+  concurrency: 8,
+  timeoutMin: HARNESS_TIMEOUT_MIN,
+  maxTools: 30,
+} as const;
 
 export interface OcrFlags {
   concurrency: number;

@@ -86,6 +86,7 @@ import {
   aacrScoreTable,
   caseWarningsSection,
   checkMergeBase,
+  HARNESS_TIMEOUT_MIN,
   harnessProcessTimeoutMs,
   prepareArmCases,
   runLifecycle,
@@ -109,7 +110,7 @@ import { prepareTree } from "./runner.js";
 
 /** reviewers/codex.py `review_instance(timeout_minutes=30)` = pipeline.py
  * `apply_defaults` (timeout None → 30). */
-export const OPENCODE_HARNESS_DEFAULTS = { timeoutMin: 30 } as const;
+export const OPENCODE_HARNESS_DEFAULTS = { timeoutMin: HARNESS_TIMEOUT_MIN } as const;
 
 /** reviewers/codex.py `run_codex_review`'s process timeout. */
 export function opencodeProcessTimeoutMs(timeoutMin: number): number {
@@ -1084,7 +1085,8 @@ export interface OpencodeReviewRun {
   opencodeBin: string;
   opencodeVersion: string;
   bridgeUrl: string;
-  /** From the bridge's /health — what the model IS, never a flag. */
+  /** What the model IS: the bridge's /health on the bridge provider; natively,
+   * the model OpenCode was told (`--model`). */
   model: string;
   effort: string;
   verbosity: string | null;

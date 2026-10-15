@@ -981,6 +981,18 @@ describe("dollar cost across the arms", () => {
       { encoding: "utf8" },
     );
     expect(JSON.parse(r.stdout)).toEqual(CODEX_USD_PER_MTOK);
+    // The re-run planner estimates at gpt-6.1-sol's rates.
+    const plan = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        "import json, sys; sys.path.insert(0, sys.argv[1]); import rerun_plan; print(json.dumps(rerun_plan.RATE))",
+        root,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(JSON.parse(plan.stdout)).toEqual(CODEX_USD_PER_MTOK["gpt-6.1-sol"]);
   });
 
   it("a case recorded unprefetched is not priced at an earlier attempt's event stream", () => {

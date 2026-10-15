@@ -23,7 +23,7 @@
 // case summary says why.
 
 import { basename, dirname } from "node:path";
-import type { Config } from "../config.js";
+import { REVIEW_DEFAULTS, type Config } from "../config.js";
 import {
   followUpSweepOwed,
   planFollowUp,
@@ -115,7 +115,7 @@ export function decideBenchFollowUp(
 ): BenchFollowUpDecision {
   const fu = c.followup;
   if (!fu) return { kind: "full", reason: "no-reviewed-head" };
-  if ((cfg.review.follow_up ?? "delta") !== "delta")
+  if ((cfg.review.follow_up ?? REVIEW_DEFAULTS.follow_up) !== "delta")
     return { kind: "full", reason: "follow_up_full" };
   const d = args.delta;
   if (!d) return { kind: "full", reason: "no-adapter" };

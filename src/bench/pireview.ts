@@ -77,6 +77,7 @@ import {
   aacrScoreTable,
   caseWarningsSection,
   checkMergeBase,
+  HARNESS_TIMEOUT_MIN,
   harnessProcessTimeoutMs,
   JUDGE_INPUT_FILES,
   prepareArmCases,
@@ -95,7 +96,7 @@ import { prepareTree } from "./runner.js";
 /** The harness's CLI runners' default (reviewers/codex.py, pipeline.py
  * `apply_defaults`): 30 minutes, process timeout = that + 60 s. */
 export const PIREVIEW_DEFAULTS = {
-  timeoutMin: 30,
+  timeoutMin: HARNESS_TIMEOUT_MIN,
   model: "openai-codex/gpt-6-sol",
   thinking: "medium",
 } as const;

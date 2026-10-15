@@ -9,6 +9,11 @@ import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
 import type { ExecOptions, ExecResult } from "./exec.js";
 import type { roundMetrics } from "./report.js";
 
+/** pipeline.py `apply_defaults`: `--timeout-minutes` None → 30 — the review
+ * budget the harness gives every reviewer it runs, which the arms run in the
+ * shape of. */
+export const HARNESS_TIMEOUT_MIN = 30;
+
 /** reviewers/codex.py `run_codex_review`: `process_timeout = timeout_minutes
  * * 60 + 60` — the budget the harness gives its CLI reviewers, which the arms
  * run in the shape of. */
