@@ -85,6 +85,15 @@ export function roundPostingKey(pr: number, roundNo: number, headSha: string): s
   return `v1:${pr}:${roundNo}:${headSha.toLowerCase()}`;
 }
 
+/** The head a `roundPostingKey` names, when the key is one for exactly this
+ * PR and round; undefined for any other key. */
+export function postingKeyHead(key: string, pr: number, roundNo: number): string | undefined {
+  const prefix = `v1:${pr}:${roundNo}:`;
+  if (!key.startsWith(prefix)) return undefined;
+  const head = key.slice(prefix.length);
+  return head !== "" && !head.includes(":") ? head : undefined;
+}
+
 export function postingMarker(key: string): string {
   return `<!-- qcr-post:${key} -->`;
 }
