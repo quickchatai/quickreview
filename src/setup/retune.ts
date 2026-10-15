@@ -36,6 +36,7 @@ import {
 } from "./retunelog.js";
 import { finishedRuns } from "./scanrun.js";
 import {
+  draftedGuideBytes,
   parseEmphasis,
   profileApply,
   readRecord,
@@ -193,7 +194,7 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
     if (
       guide === null
         ? pointed
-        : typeof guide !== "string" || !pointed || current !== guide.replace(/\n*$/, "\n")
+        : typeof guide !== "string" || !pointed || current !== draftedGuideBytes(guide)
     ) {
       changes.push({
         key: GUIDE_REASON,
