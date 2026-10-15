@@ -390,6 +390,20 @@ describe("memory health — incidents survive a restart, recovery closes them", 
     expect(h.saved).not.toContain(null);
   });
 
+  it("a daemon answer does not close an incident while the sessions' probe still fails", async () => {
+    const h = harness({ sessions: AUTH });
+    await h.probeAt(0);
+    const open = h.monitor.status().incident;
+    expect(open).toEqual({ kind: "auth_failed", since: new Date(T0).toISOString() });
+    h.set("sessions", DEAD);
+    await h.probeAt(2 * MIN);
+    expect(h.monitor.currentState()).toBe("degraded");
+    expect(h.monitor.status().incident).toEqual(open);
+    h.set("sessions", OK);
+    await h.probeAt(4 * MIN);
+    expect(h.monitor.status().incident).toBeNull();
+  });
+
   it("degraded closes an incident only once memory has ANSWERED since it began", async () => {
     // Live: down at 10 min, then one good probe — but the request window is
     // full of failures, so the state is `degraded`. An authenticated answer
