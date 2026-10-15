@@ -173,7 +173,7 @@ export async function restorePr(
     try {
       const live = await identityOrNull(target);
       if (live) {
-        // Present: left alone — the recorded bytes (idempotent), or newer ones.
+        // Present: left alone — the recorded bytes (idempotent), or other ones.
         const d = await fileDigestWithPrefix(target, {
           bytesPerS: deps.bytesPerS,
           ...(deps.signal ? { signal: deps.signal } : {}),
@@ -284,7 +284,9 @@ export async function restorePr(
   out.outcome = "restored";
   deps.log(
     `archive: pr-${pr} restored (${trigger}) — ${out.restored} file(s) back, ${out.present} already present` +
-      (out.liveDiffers.length > 0 ? `, ${out.liveDiffers.length} left as the newer live file` : ""),
+      (out.liveDiffers.length > 0
+        ? `, ${out.liveDiffers.length} differing live file(s) left as found`
+        : ""),
   );
   return out;
 }

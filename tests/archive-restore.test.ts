@@ -462,10 +462,12 @@ describe("a restore's own crash safety (§7.6, §8.2)", () => {
       reopen(f);
       const target = f.transcripts[0]!;
       const theirs = line("a file someone else wrote meanwhile");
+      const logs: string[] = [];
       const a = onArchiver(
         f,
         {},
         {
+          log: (m) => logs.push(m),
           step: (name, info) => {
             if (name === "restore_partial_written" && info.target === join(f.root, target))
               put(f.root, target, theirs);
@@ -478,6 +480,10 @@ describe("a restore's own crash safety (§7.6, §8.2)", () => {
       expect(restorePartials(f)).toEqual([]);
       const restore = manifestOf(f).entries.find((e) => e.kind === "restore")!;
       expect(restore.live_differs).toEqual([target]);
+      // The live file differs; nothing says it is the newer one.
+      const done = logs.find((m) => m.includes(`pr-${f.pr} restored`))!;
+      expect(done).toContain("1 differing live file(s) left as found");
+      expect(done).not.toContain("newer");
       for (const rel of f.transcripts.slice(1))
         expect(readFileSync(join(f.root, rel)).equals(f.bytes.get(rel)!), rel).toBe(true);
     },
