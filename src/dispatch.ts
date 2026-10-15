@@ -17,7 +17,7 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
-import { githubCloneDir, sandboxRoot } from "./config.js";
+import { githubCloneDir, REVIEW_DEFAULTS, sandboxRoot } from "./config.js";
 import {
   fingerprintRoundIntegrity,
   INTEGRITY_BUDGET_MS,
@@ -1112,7 +1112,12 @@ export function buildPassPlan(
   // At or under the threshold nothing here runs.
   const baselineAt = pass_plan.findIndex((p) => p.lens === BASELINE_PASS);
   const baselineSplit =
-    baselineAt < 0 ? [] : baselineGroups(files, cfg.review.baseline_split_lines ?? 0);
+    baselineAt < 0
+      ? []
+      : baselineGroups(
+          files,
+          cfg.review.baseline_split_lines ?? REVIEW_DEFAULTS.baseline_split_lines,
+        );
   if (baselineSplit.length > 1) {
     const row = pass_plan[baselineAt]!;
     const lines = baselineSplitLines(files);
@@ -1323,7 +1328,8 @@ export async function decideFollowUp(
   const { cfg, store } = deps;
   const full = (reason: FollowUpFullReason, detail?: Record<string, unknown>) =>
     ({ kind: "full", reason, ...(detail ? { detail } : {}) }) as const;
-  if ((cfg.review.follow_up ?? "delta") !== "delta") return full("follow_up_full");
+  if ((cfg.review.follow_up ?? REVIEW_DEFAULTS.follow_up) !== "delta")
+    return full("follow_up_full");
   if (!args.markHead) return full("no-reviewed-head");
   if (!args.tree || !args.tree.merge_base || !deps.prOwnedDelta) return full("no-adapter");
   // The merge base the reviewed head's round recorded (the latest live round
@@ -1388,7 +1394,9 @@ export function followUpSweepOwed(
   },
 ): boolean {
   if (args.standing === "APPROVE" && !args.approvalWithheld) {
-    const floor = cfg.review.follow_up_post_approval_sweep_lines ?? 500;
+    const floor =
+      cfg.review.follow_up_post_approval_sweep_lines ??
+      REVIEW_DEFAULTS.follow_up_post_approval_sweep_lines;
     return floor > 0 && args.deltaLines >= floor;
   }
   return !args.fullLookSinceFirst();
@@ -1425,7 +1433,7 @@ export function planFollowUp(
   | { kind: "full"; reason: FollowUpFullReason; detail?: Record<string, unknown> } {
   const { delta } = args;
   const prLines = args.files.reduce((n, f) => n + (f.additions ?? 0) + (f.deletions ?? 0), 0);
-  const ratio = cfg.review.follow_up_max_delta_ratio ?? 0.6;
+  const ratio = cfg.review.follow_up_max_delta_ratio ?? REVIEW_DEFAULTS.follow_up_max_delta_ratio;
   if (delta.lines > ratio * prLines)
     return {
       kind: "full",
@@ -1473,7 +1481,7 @@ export function planFollowUp(
   // the session to run, partly run or skip — the small-delta threshold is the
   // session's call. Under `"rules"`, the lean plan at or under the threshold.
   let optionalPlan: PassPlanEntry[] = [];
-  if ((cfg.review.follow_up_extent ?? "rules") === "session") {
+  if ((cfg.review.follow_up_extent ?? REVIEW_DEFAULTS.follow_up_extent) === "session") {
     const lean = leanFollowUpPlan(plan);
     const kept = new Set(lean.pass_plan);
     optionalPlan = plan.pass_plan.filter((p) => !kept.has(p));
@@ -1483,7 +1491,8 @@ export function planFollowUp(
       addable_lenses: lean.addable_lenses.filter((l) => !optionalLenses.has(l)),
     };
   } else {
-    const smallDelta = cfg.review.follow_up_small_delta_lines ?? 150;
+    const smallDelta =
+      cfg.review.follow_up_small_delta_lines ?? REVIEW_DEFAULTS.follow_up_small_delta_lines;
     if (smallDelta > 0 && delta.lines <= smallDelta) plan = leanFollowUpPlan(plan);
   }
   // pass-baseline carries every prior finding no other planned lens owns: a
@@ -1493,7 +1502,7 @@ export function planFollowUp(
   // An owed sweep needs a plan to run: an empty full plan records nothing
   // owed rather than a sweep no round could ever satisfy.
   const sweepOwed =
-    (cfg.review.follow_up_sweep ?? true) &&
+    (cfg.review.follow_up_sweep ?? REVIEW_DEFAULTS.follow_up_sweep) &&
     args.fullPlan.pass_plan.length > 0 &&
     args.sweepOwed(delta.lines);
   return {
@@ -1798,7 +1807,7 @@ export function buildRoundOrder(args: {
           scope: "delta" as const,
           delta: args.followUp.delta,
           prior_findings_note: args.followUp.priorFindingsNote,
-          ...((args.cfg.review.follow_up_extent ?? "rules") === "session"
+          ...((args.cfg.review.follow_up_extent ?? REVIEW_DEFAULTS.follow_up_extent) === "session"
             ? { follow_up_extent: "session" as const }
             : {}),
           ...(args.followUp.optionalPlan && args.followUp.optionalPlan.length > 0
