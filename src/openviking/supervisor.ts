@@ -299,8 +299,10 @@ export class OpenVikingSupervisor {
   /** One health + resource sample into the cache. Never rejects. */
   async poll(): Promise<void> {
     const wasReady = this.health?.ready ?? false;
+    const child = this.child;
+    let health: OpenVikingHealth;
     try {
-      this.health = await probeHealth({
+      health = await probeHealth({
         baseUrl: openVikingBaseUrl(this.cfg),
         timeoutMs: this.cfg.health_timeout_ms,
         ...(this.fetchFn ? { fetchFn: this.fetchFn } : {}),
@@ -308,13 +310,22 @@ export class OpenVikingSupervisor {
       });
     } catch (err) {
       // probeHealth is total, but a caller-supplied fetch seam is not.
-      this.health = {
+      health = {
         reachable: false,
         ready: false,
         error: err instanceof Error ? err.message : String(err),
         at: this.now().toISOString(),
       };
     }
+    // A probe that raced an exit or a respawn describes a process that is no
+    // longer the tracked one: the exit already cleared the cache, and the next
+    // poll reads the new child. Installing it would report a dead server ready
+    // and fire onReady for it.
+    if (this.child !== child) return;
+    this.health = health;
+    // The server answered, so a spawn failure from before it came up is
+    // history: the probe's own error (if any) is the current one.
+    if (health.reachable) this.lastError = undefined;
     this.notReadyPolls = this.health.reachable && !this.health.ready ? this.notReadyPolls + 1 : 0;
     this.proc = this.childPid !== undefined ? this.sampler.sample(this.childPid) : undefined;
     if (this.health.ready && !wasReady) {
