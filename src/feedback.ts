@@ -113,6 +113,11 @@ export function interpretReviewEvent(
     // and the bot itself has no dismissal path — rule 2.)
     if (review.user?.login !== deps.botLogin)
       return { kind: "ignored", reason: "non-bot review set aside", pr };
+    // Another automation dismissing it is mechanics, not a person's verdict —
+    // the same line the comment-deletion and trigger-withdrawal signals draw.
+    const sender = payload?.sender;
+    if (sender?.type === "Bot" || sender?.login === deps.botLogin)
+      return { kind: "ignored", reason: "review set aside by a bot", pr };
     return { kind: "review_set_aside", pr, review_id: review.id, by: payload?.sender?.login ?? "" };
   }
   if (action === "submitted") {

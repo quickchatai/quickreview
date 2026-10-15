@@ -467,6 +467,14 @@ describe("interpretEvent — behavioral signals", () => {
     ).toBe("ignored");
   });
 
+  it("a dismissal of the bot's review by another bot is not a human signal", () => {
+    const payload = { ...reviewPayload("dismissed"), sender: { login: "ci[bot]", type: "Bot" } };
+    expect(interpretEvent("pull_request_review", "dismissed", payload, deps())).toMatchObject({
+      kind: "ignored",
+      reason: "review set aside by a bot",
+    });
+  });
+
   it("a submitted human review with a [feedback] body is an explicit feedback comment", () => {
     const payload = reviewPayload("submitted", {
       user: { login: "pmercier", type: "User" },
