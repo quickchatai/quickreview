@@ -2134,6 +2134,32 @@ describe("qcr lessons [mine]", () => {
   });
 });
 
+describe("a failed read is logged with its cause, never read as a slow one", () => {
+  it("a lessons sweep that rejects logs why, and the packet still lands", async () => {
+    const logged: Array<[string, unknown]> = [];
+    const store = new StateStore(":memory:", () => new Date("2026-10-07T10:00:00.000Z"));
+    new OutcomeCapture({ store, botLogin: BOT });
+    const root = mkdtempSync(join(tmpdir(), "qcr-learner-"));
+    roots.push(root);
+    const learner = new Learner({
+      store,
+      root,
+      eodTime: "18:00",
+      timeZone: "Europe/Warsaw",
+      botLogin: BOT,
+      baseBranch: "main",
+      lessons: { sweep: () => Promise.reject(new Error("engine said no")) },
+      healthy: () => true,
+      now: () => new Date("2026-10-07T10:00:00.000Z"),
+      log: (msg, extra) => logged.push([msg, extra]),
+    });
+    const { packet } = await learner.prepareEod("2026-10-07");
+    expect(packet.day).toBe("2026-10-07");
+    const failure = logged.find(([m]) => /lessons read failed/.test(m));
+    expect((failure?.[1] as Error | undefined)?.message).toBe("engine said no");
+  });
+});
+
 describe("the knobs live in [memory], with floors", () => {
   it("config defaults equal the learner's, and config.example.toml names every one", () => {
     for (const [k, v] of Object.entries(LEARNER_DEFAULTS))

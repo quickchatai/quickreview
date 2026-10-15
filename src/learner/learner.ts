@@ -355,7 +355,14 @@ function json<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
+/** `p`, or "timeout" once `ms` passed. A rejection reads as "timeout" too —
+ * the caller's fallback is the same — but its cause goes to `onReject`, so a
+ * failure is never mistaken for a slow answer in the log. */
+function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  onReject: (err: unknown) => void,
+): Promise<T | "timeout"> {
   return new Promise((resolve) => {
     const t = setTimeout(() => resolve("timeout"), ms);
     t.unref?.();
@@ -364,8 +371,9 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
         clearTimeout(t);
         resolve(v);
       },
-      () => {
+      (err: unknown) => {
         clearTimeout(t);
+        onReject(err);
         resolve("timeout");
       },
     );
@@ -743,7 +751,9 @@ export class Learner {
   private async readLessons(): Promise<{ lessons: IndexedLesson[]; complete: boolean } | null> {
     if (!this.deps.lessons) return null;
     if (this.deps.healthy && !this.deps.healthy()) return null;
-    const res = await withTimeout(this.deps.lessons.sweep(), LESSON_READ_BUDGET_MS);
+    const res = await withTimeout(this.deps.lessons.sweep(), LESSON_READ_BUDGET_MS, (err) =>
+      this.log("learner: the lessons read failed", err),
+    );
     if (res === "timeout") return null;
     const lessons: IndexedLesson[] = [];
     for (const e of res.entries) {
@@ -1027,7 +1037,9 @@ export class Learner {
     day: string,
   ): Promise<{ lines: string; curation: string; packet: OutcomesPacket }> {
     if (this.mark(`mined:${day}`) === null) {
-      const r = await withTimeout(this.mine(), PREPARE_MINE_BUDGET_MS);
+      const r = await withTimeout(this.mine(), PREPARE_MINE_BUDGET_MS, (err) =>
+        this.log("learner: the EOD mine failed", err),
+      );
       if (r !== "timeout") this.setMark(`mined:${day}`, this.ts());
     }
     const packet = await this.buildPacket(day);
