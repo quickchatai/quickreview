@@ -21,6 +21,7 @@
 //     in Warsaw): fire at the FIRST (earlier, still-DST) occurrence, once only.
 import { stripModelDocs } from "./promptdoc.js";
 import { readFileSync } from "node:fs";
+import { withinBudget } from "./budget.js";
 import { NEUTRAL_IDENTITY_VARS } from "./include.js";
 import { render, type TemplateVars } from "./templates.js";
 
@@ -275,27 +276,21 @@ async function resolveDayContext(
   onMissing?: EodTimerDeps["onContextMissing"],
 ): Promise<EodDayContext> {
   if (!fn) return { lines: "" };
-  const TIMED_OUT = Symbol("timed out");
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const answer = await Promise.race([
+    const read = await withinBudget(
       Promise.resolve().then(() => fn(date)),
-      new Promise<typeof TIMED_OUT>((resolve) => {
-        timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
-        timer.unref?.();
-      }),
-    ]);
-    if (answer === TIMED_OUT) {
+      timeoutMs,
+    );
+    if (read.kind === "budget") {
       safely(() => onMissing?.(date, `no answer within ${timeoutMs} ms`));
       return { lines: "" };
     }
+    const answer = read.value;
     if (answer === null || answer === undefined) return { lines: "" };
     return typeof answer === "string" ? { lines: answer } : answer;
   } catch (err) {
     safely(() => onMissing?.(date, err));
     return { lines: "" };
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
