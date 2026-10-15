@@ -325,6 +325,29 @@ describe("slack on — the two command watchers", () => {
     expect(opts.deps.slackReply).toBe(runtime.slackReply);
   });
 
+  it("gives the operator watcher the same local belt and the same reply handler", () => {
+    const watcher = buildOperatorCommandWatcher({
+      root: dir,
+      deps: noopCommandDeps,
+      store,
+      slack: runtime,
+      log: () => {},
+    });
+    watcher.stop();
+    const opts = (
+      watcher as unknown as {
+        opts: {
+          dir: string;
+          tier: { dir: string; currentOrigin: () => unknown };
+          deps: CommandDeps;
+        };
+      }
+    ).opts;
+    expect(opts.dir).toBe(join(dir, "commands", "operator"));
+    expect(opts.tier.dir).toBe("local");
+    expect(opts.deps.slackReply).toBe(runtime.slackReply);
+  });
+
   it("subscribes to the socket — the only inbound transport", () => {
     const t = runtime.transport as unknown as { handler: SlackInboundHandler | null };
     expect(t.handler).toBeTypeOf("function");

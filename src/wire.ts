@@ -459,11 +459,20 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
  * The local Slack belt both daemon-side watchers install (`commands/` and
  * `commands/operator/`): with Slack live, a file is refused while the turn
  * being served was caused by a non-owner Slack message — read through
- * `latestAny()`, which only a daemon wake's `local` origin supersedes. Slack
- * off ⇒ no tier gate at all.
+ * `latestAny()`, which only a daemon wake's `local` origin supersedes, and
+ * `slack_reply` is executable there. Slack off ⇒ no tier gate at all and the
+ * handlers as given.
  */
-function localSlackBelt(slack: SlackRuntime | null): Pick<CommandWatcherOptions, "tier"> {
-  return slack ? { tier: { dir: "local", currentOrigin: () => slack.origins.latestAny() } } : {};
+function localSlackBelt(
+  slack: SlackRuntime | null,
+  deps: CommandDeps,
+): Pick<CommandWatcherOptions, "tier" | "deps"> {
+  return slack
+    ? {
+        tier: { dir: "local", currentOrigin: () => slack.origins.latestAny() },
+        deps: { ...deps, slackReply: slack.slackReply },
+      }
+    : { deps };
 }
 
 /**
@@ -489,8 +498,7 @@ export function buildLocalCommandWatcher(opts: {
   const { slack } = opts;
   return new CommandWatcher({
     dir: join(opts.root, "commands"),
-    ...localSlackBelt(slack),
-    deps: slack ? { ...opts.deps, slackReply: slack.slackReply } : opts.deps,
+    ...localSlackBelt(slack, opts.deps),
     store: opts.store,
     log: opts.log,
   });
@@ -499,8 +507,9 @@ export function buildLocalCommandWatcher(opts: {
 /**
  * The operator's command watcher: `commands/operator/`, the directory
  * `qcr drain`, the board's `u` and the deploy tab write as root.
- * Same vocabulary, same handlers; the difference is the issuer the watcher
- * stamps, and only the real process seal decides it. The same local Slack
+ * Same vocabulary, same handlers (`slack_reply` included while Slack is
+ * live); the difference is the issuer the watcher stamps, and only the real
+ * process seal decides it. The same local Slack
  * belt as `commands/` is installed, and binds only files the seal does not
  * vouch for: the overseer cannot write into a sealed directory, but the
  * parent is the daemon's, so it can make or swap in an unsealed one — and a
@@ -519,8 +528,7 @@ export function buildOperatorCommandWatcher(opts: {
   return new CommandWatcher({
     dir: join(opts.root, "commands", "operator"),
     operator: processOperatorSeal(),
-    ...localSlackBelt(slack),
-    deps: opts.deps,
+    ...localSlackBelt(slack, opts.deps),
     store: opts.store,
     log: opts.log,
   });
