@@ -378,9 +378,8 @@ export class TuiMemoryStore implements HealthyMemoryStore {
       ...(log ? { log } : {}),
       ...(retiredFile !== undefined
         ? {
-            onRetired: (uris: readonly string[]) => {
-              writeRetiredUris(retiredFile, uris, log ? { log: (msg) => log(msg) } : {});
-            },
+            onRetired: (uris: readonly string[]) =>
+              writeRetiredUris(retiredFile, uris, log ? { log: (msg) => log(msg) } : {}),
             initialRetired: () => readRetiredUrisFile(retiredFile),
           }
         : {}),

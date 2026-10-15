@@ -54,6 +54,7 @@ import {
   PINNED_AREA,
   PREFERENCES_AREA,
   areaOfId,
+  isMovedStub,
   nameOfId,
   withHeaderTags,
 } from "./layout.js";
@@ -183,13 +184,6 @@ export function looseTags(text: string): { hash: Set<string>; kv: Record<string,
   return { hash, kv };
 }
 
-/** A move's stub (`#retired #moved …`) — a pointer a later move may write
- * over (src/openviking/store.ts `isMovedStub`, the same header rule). */
-function isMovedStubText(text: string): boolean {
-  const tags = parseHashTags(text);
-  return tags.includes("retired") && tags.includes("moved");
-}
-
 type Decision =
   | { dest: "stay"; why: string }
   | { dest: "retire"; why: string }
@@ -307,7 +301,7 @@ export function planRelayout(input: {
     }
     const to = `${d.dest}/${nameOfId(e.id)}`;
     const there = byId.get(to);
-    const stub = there !== undefined && isMovedStubText(there.text);
+    const stub = there !== undefined && isMovedStub(there.text);
     if ((there && !stub && there.text.trim() !== text) || claimed.has(to)) {
       actions.push({
         kind: "blocked",

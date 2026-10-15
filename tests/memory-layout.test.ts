@@ -1429,6 +1429,21 @@ describe("qcr memory relayout --apply", () => {
     expect(server.batches()).toHaveLength(0);
   });
 
+  it("an entry directly in the memories root is refused before anything is written", async () => {
+    const server = new OvServer();
+    seed(server, [["loose.md", "#manual a standing instruction"]]);
+    const { store } = wire(server);
+    const sweep = await store.sweep();
+    const plan = planRelayout({ entries: sweep.entries, retired: sweep.retired });
+    const items = relocateItemsOf(plan);
+    expect(items.map((it) => it.id)).toEqual(["loose.md"]);
+    const report = await store.relocate(items);
+    expect(report.results).toHaveLength(1);
+    expect(report.results[0]!.ok).toBe(false);
+    expect(report.results[0]!.message).toMatch(/directly in the memories root/);
+    expect(server.batches()).toHaveLength(0);
+  });
+
   it("a source that changed under the plan writes nothing in that batch and leaves no second live copy", async () => {
     const server = new OvServer();
     seed(server, [
