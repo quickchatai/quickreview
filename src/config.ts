@@ -11,6 +11,15 @@ import {
   strandedCheckoutConfig,
 } from "./install.js";
 import { globProblem } from "./glob.js";
+import {
+  INTENT_MIN_SUBSTANCE_WORDS,
+  PLACEMENT_MIN_NEW_FILE_LINES,
+  PLACEMENT_MIN_PROD_FILES,
+  QUALITY_MIN_ADDED_LINES,
+  SWEEP_MAX_FILES_PER_GROUP,
+  SWEEP_MAX_LINES_PER_GROUP,
+  SWEEP_WIDE_FILES_PER_GROUP,
+} from "./heuristics.js";
 import type { LensTuningMap } from "./lenstuning.js";
 import type { PostingPolicy } from "./postingpolicy.js";
 import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES } from "./passes.js";
@@ -613,7 +622,9 @@ type PresetLevers = Pick<
   | "lint_conformance"
 >;
 
-/** The lean lever plan — `default` and `low` share it. */
+/** The lean lever plan — `default` and `low` share it. Its thresholds ARE
+ * the pure selection's own defaults (src/heuristics.ts), so a direct call and
+ * the default preset can never disagree. */
 const LEAN_LEVERS: PresetLevers = {
   sublenses: true,
   sweep: true,
@@ -621,19 +632,19 @@ const LEAN_LEVERS: PresetLevers = {
   // 8 files, so the 500-line budget binds first on most groups: a 5-file cap
   // cut nearly half the sweep rows at a median of 78 changed lines, and 8
   // plans ~17% fewer rows with none unswept.
-  sweep_group_files: 8,
-  sweep_group_lines: 500,
-  sweep_wide_files: 40,
+  sweep_group_files: SWEEP_MAX_FILES_PER_GROUP,
+  sweep_group_lines: SWEEP_MAX_LINES_PER_GROUP,
+  sweep_wide_files: SWEEP_WIDE_FILES_PER_GROUP,
   behaviour_delta: true,
   behaviour_delta_max_groups: 3,
   loosened_test_hint: true,
-  intent_min_words: 60,
-  placement_min_code_files: 8,
-  placement_min_new_file_lines: 30,
+  intent_min_words: INTENT_MIN_SUBSTANCE_WORDS,
+  placement_min_code_files: PLACEMENT_MIN_PROD_FILES,
+  placement_min_new_file_lines: PLACEMENT_MIN_NEW_FILE_LINES,
   dependency_sources: true,
   tests_lens: true,
   quality_lenses: true,
-  quality_min_added_lines: 20,
+  quality_min_added_lines: QUALITY_MIN_ADDED_LINES,
   style_lens: true,
   lint_conformance: true,
 };

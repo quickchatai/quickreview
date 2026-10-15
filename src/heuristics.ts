@@ -489,35 +489,33 @@ export interface SubLensTrigger {
   fires: (files: PrFile[], text: string) => string | null;
 }
 
+/** A non-test CODE file whose patch the content triggers can read — the
+ * one population both `addedCode` and `changedCode` scan. */
+function isPatchedSourceCode(f: PrFile): boolean {
+  return f.patch !== undefined && CODE_FILE_RE.test(f.filename) && !isTestFile(f.filename);
+}
+
 /** Added lines of CODE files only (a README that says "encoding" is not a
  * round trip). */
 function addedCode(files: PrFile[]): { file: PrFile; added: string }[] {
-  return files
-    .filter(
-      (f) => f.patch !== undefined && CODE_FILE_RE.test(f.filename) && !isTestFile(f.filename),
-    )
-    .map((f) => ({
-      file: f,
-      added: (f.patch as string)
-        .split("\n")
-        .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
-        .join("\n"),
-    }));
+  return files.filter(isPatchedSourceCode).map((f) => ({
+    file: f,
+    added: (f.patch as string)
+      .split("\n")
+      .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
+      .join("\n"),
+  }));
 }
 
 /** Changed (added or removed) lines of code files. */
 function changedCode(files: PrFile[]): { file: PrFile; changed: string }[] {
-  return files
-    .filter(
-      (f) => f.patch !== undefined && CODE_FILE_RE.test(f.filename) && !isTestFile(f.filename),
-    )
-    .map((f) => ({
-      file: f,
-      changed: (f.patch as string)
-        .split("\n")
-        .filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l))
-        .join("\n"),
-    }));
+  return files.filter(isPatchedSourceCode).map((f) => ({
+    file: f,
+    changed: (f.patch as string)
+      .split("\n")
+      .filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l))
+      .join("\n"),
+  }));
 }
 
 /** A predicate's name: `isBinary(`, `is_supported(`, and the prefixed C
@@ -582,6 +580,9 @@ const ROLLOUT_CODE_RE =
 // fire on another. They test changed lines (added or removed — dropping a lock
 // is as much a concurrency change as adding one) of non-test code files.
 
+/** The JS/TS family's extensions — one test for both of its signals below. */
+const JS_FILE_RE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/i;
+
 /** Per-language synchronisation spellings: [extension test, probe]. */
 const SYNC_PROBES: ReadonlyArray<readonly [RegExp, RegExp]> = [
   // Go: sync/atomic, Lock/Unlock calls, goroutines, channels.
@@ -628,14 +629,13 @@ const SYNC_PROBES: ReadonlyArray<readonly [RegExp, RegExp]> = [
   // one shared-state race the added lines can show — a member written after an
   // await, or bumped in place, on an object other callers share.
   [
-    /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/i,
+    JS_FILE_RE,
     /\bAtomics\.\w+|\bSharedArrayBuffer\b|\bnew\s+Worker\(|\bworker_threads\b|\bnavigator\.locks\b|\b(?:Mutex|Semaphore)\b|\bthis\.[\w.]+\s*=\s*await\b/,
   ],
 ];
 
 /** JS/TS: an in-place read-modify-write of a shared member, counted only in a
  * file whose changed lines also await — the shape where two callers interleave. */
-const JS_FILE_RE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/i;
 const JS_SHARED_RMW_RE =
   /\bthis\.[\w.]+(?:\s*(?:\+\+|--|[-+*]=)|\[[^\]\n]+\]\s*(?:\+\+|--|[-+*]=))/;
 const JS_AWAIT_RE = /\bawait\b/;
@@ -880,29 +880,52 @@ export function behaviourDeltaGroups(
       !SWEEP_SKIP_RE.test(f.filename) &&
       behaviourDeltaRisk(f),
   );
+  const { groups, left: unread } = packGroups(
+    eligible,
+    (f) => f.additions + f.deletions,
+    maxGroups,
+    Number.POSITIVE_INFINITY,
+    maxLines,
+  );
+  return { groups, unread };
+}
+
+/**
+ * Greedy packing in the given order: a group closes when the next file would
+ * take it past `maxFiles` files or `maxLines` lines (a file alone may exceed
+ * `maxLines`), and at most `maxGroups` groups are made. Files past the last
+ * group come back in `left`, never dropped.
+ */
+function packGroups(
+  files: readonly PrFile[],
+  size: (f: PrFile) => number,
+  maxGroups: number,
+  maxFiles: number,
+  maxLines: number,
+): { groups: string[][]; left: string[] } {
   const groups: string[][] = [];
-  const unread: string[] = [];
+  const left: string[] = [];
   let cur: string[] = [];
   let lines = 0;
-  for (const f of eligible) {
-    const size = f.additions + f.deletions;
-    if (cur.length > 0 && lines + size > maxLines) {
+  for (const f of files) {
+    const n = size(f);
+    if (cur.length > 0 && (cur.length >= maxFiles || lines + n > maxLines)) {
       groups.push(cur);
       cur = [];
       lines = 0;
     }
     if (groups.length >= maxGroups) {
-      unread.push(f.filename);
+      left.push(f.filename);
       continue;
     }
     cur.push(f.filename);
-    lines += size;
+    lines += n;
   }
   if (cur.length > 0) {
     if (groups.length < maxGroups) groups.push(cur);
-    else unread.push(...cur);
+    else left.push(...cur);
   }
-  return { groups, unread };
+  return { groups, left };
 }
 
 /** The tests lens (agents/pass-tests.md). */
@@ -943,21 +966,25 @@ export const LINT_CONFORMANCE_PASS = "pass-lint-conformance";
  * reader maintains too), once its test code adds that many —
  * none below. */
 export function selectQualityLenses(files: PrFileEntry[], minAdded: number): string[] {
-  const code = files.filter((f) => CODE_FILE_RE.test(f.filename));
-  const prod = code.filter((f) => !isTestFile(f.filename)).reduce((n, f) => n + f.additions, 0);
-  const testOnly = code.length > 0 && code.every((f) => isTestFile(f.filename));
-  const tests = code.filter((f) => isTestFile(f.filename)).reduce((n, f) => n + f.additions, 0);
-  const added = testOnly ? tests : prod;
+  const { added } = qualityCount(files);
   return added >= minAdded && added > 0 ? [...QUALITY_PASSES] : [];
+}
+
+/** What the quality lenses count: the added lines of non-test code — or, on a
+ * test-only change, of its test code. One count for the selection and the
+ * reason the plan shows. */
+function qualityCount(files: PrFileEntry[]): { testOnly: boolean; added: number } {
+  const code = files.filter((f) => CODE_FILE_RE.test(f.filename));
+  const testOnly = code.length > 0 && code.every((f) => isTestFile(f.filename));
+  const added = code
+    .filter((f) => isTestFile(f.filename) === testOnly)
+    .reduce((n, f) => n + f.additions, 0);
+  return { testOnly, added };
 }
 
 /** Why the quality lenses were planned, for the plan. */
 export function qualityReason(files: PrFileEntry[], minAdded: number): string {
-  const code = files.filter((f) => CODE_FILE_RE.test(f.filename));
-  const testOnly = code.length > 0 && code.every((f) => isTestFile(f.filename));
-  const n = code
-    .filter((f) => isTestFile(f.filename) === testOnly)
-    .reduce((m, f) => m + f.additions, 0);
+  const { testOnly, added: n } = qualityCount(files);
   return testOnly
     ? `a test-only change adds ${n} lines of test code (at least ${minAdded})`
     : `the change adds ${n} lines of non-test code (at least ${minAdded})`;
@@ -1058,31 +1085,14 @@ export function sweepGroups(
   // A wide, shallow change: pack by changed lines, not by file count, so the
   // budget of passes covers every file instead of running out of groups.
   if (wideFiles > maxFiles && eligible.length > maxFiles * maxGroups) maxFiles = wideFiles;
-  const groups: string[][] = [];
-  let cur: string[] = [];
-  let lines = 0;
-  const unswept: string[] = [];
-  for (const f of eligible) {
-    const size = isDoc(f.filename)
-      ? Math.ceil((f.additions + f.deletions) / 2)
-      : f.additions + f.deletions;
-    if (cur.length > 0 && (cur.length >= maxFiles || lines + size > maxLines)) {
-      groups.push(cur);
-      cur = [];
-      lines = 0;
-    }
-    if (groups.length >= maxGroups) {
-      unswept.push(f.filename);
-      continue;
-    }
-    cur.push(f.filename);
-    lines += size;
-  }
-  if (cur.length > 0) {
-    if (groups.length < maxGroups) groups.push(cur);
-    else unswept.push(...cur);
-  }
+  const { groups, left: unswept } = packGroups(eligible, sweepSize, maxGroups, maxFiles, maxLines);
   return { groups, unswept };
+}
+
+/** A file's changed lines by the sweep's sizing rule: prose counts half. */
+function sweepSize(f: PrFile): number {
+  const lines = f.additions + f.deletions;
+  return SWEEP_DOC_RE.test(f.filename) ? Math.ceil(lines / 2) : lines;
 }
 
 /** At most this many pass-baseline rows when a very large change splits it:
@@ -1094,9 +1104,8 @@ export const BASELINE_SPLIT_MAX_ROWS = 3;
  * prose half, lockfiles / generated / vendored / binary nothing, the rest
  * additions + deletions. */
 function readLines(f: PrFile): number {
-  const lines = f.additions + f.deletions;
-  if (SWEEP_DOC_RE.test(f.filename)) return Math.ceil(lines / 2);
-  return SWEEP_SKIP_RE.test(f.filename) ? 0 : lines;
+  if (SWEEP_DOC_RE.test(f.filename)) return sweepSize(f);
+  return SWEEP_SKIP_RE.test(f.filename) ? 0 : sweepSize(f);
 }
 
 /** The changed lines `baselineGroups` measures a change by. */
