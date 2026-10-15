@@ -196,11 +196,18 @@ export class LearningStore {
     this.app.repaint();
   }
 
+  /** Start one part's load unless it is already running. The load starts
+   * after the current synchronous turn, never inside it: the `ensure*` calls
+   * come from a tab's paint, and a TUI resumed on that tab paints it as its
+   * first frame — nothing external (an ssh fetch, a directory scan) may run
+   * before that frame is written. */
   private guard(key: keyof LearningStore["busy"], run: () => Promise<void>): void {
     if (this.busy[key]) return;
     this.busy[key] = true;
-    void run().finally(() => {
-      this.busy[key] = false;
+    queueMicrotask(() => {
+      void run().finally(() => {
+        this.busy[key] = false;
+      });
     });
   }
 
@@ -405,12 +412,20 @@ export class LearningStore {
       this.digest.files = listed;
       this.digest.back = Math.min(this.digest.back, Math.max(0, listed.length - 1));
     }
+    // The listing may have moved the selection to another day: the text on
+    // hand belongs to the day it was read for, never under another heading.
+    if (currentDigestFile(this.digest) !== this.digestContentFile) {
+      this.digest.content = undefined;
+      this.digest.contentError = undefined;
+    }
     await this.loadDigestContent();
     this.loaded("digest");
   }
 
   /** Bumped per content read; only the newest read's answer may land. */
   private digestReadSeq = 0;
+  /** The file `digest.content` / `contentError` were read for. */
+  private digestContentFile: string | undefined;
 
   private async loadDigestContent(): Promise<void> {
     const file = currentDigestFile(this.digest);
@@ -421,6 +436,7 @@ export class LearningStore {
     // or a slow read lands under another heading — or, paged away and back,
     // a stale failure overwrites the fresh text of the same day.
     if (seq !== this.digestReadSeq || currentDigestFile(this.digest) !== file) return;
+    this.digestContentFile = file;
     this.digest.content = content;
     if (file && content === undefined)
       this.digest.contentError = `${file} could not be read over ssh`;
@@ -435,6 +451,7 @@ export class LearningStore {
     this.digest.scroll = 0;
     this.digest.content = undefined;
     this.digest.contentError = undefined;
+    this.digestContentFile = undefined;
     void this.loadDigestContent().then(() => this.app.repaint());
     return true;
   }
