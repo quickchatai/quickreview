@@ -30,7 +30,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BenchCase, CaseSet, PrefetchMeta } from "../src/bench/aacr.js";
+import { DATASET_PINS, type BenchCase, type CaseSet, type PrefetchMeta } from "../src/bench/aacr.js";
 import {
   CLAUDE_HARNESS_DEFAULTS,
   CLAUDE_HARNESS_FLAGS,
@@ -1092,6 +1092,20 @@ describe("claudeRebuildRun: the view for a finished run, no model and no network
     expect(renderClaudeReport(set, out, set.cases)).toContain(
       "$0.25 over 1 of 2 case(s) — 1 recorded none, so the total is at least this",
     );
+  });
+
+  it("the report names the set's own dataset and preamble, never AACR-Bench's for another", () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
+    const { set, out } = finishedRun(t, rawResult());
+    const martian = DATASET_PINS.find((p) => p.id === "martian-offline-e616e84")!;
+    const ext: CaseSet = {
+      ...set,
+      dataset: { ...set.dataset, commit: martian.commit, sha256: martian.sha256 },
+    };
+    const report = renderClaudeReport(ext, out, ext.cases);
+    expect(report).toContain(`- Dataset: ${martian.denomination}`);
+    expect(report).not.toContain("AACR-Bench v1.0");
+    expect(report).not.toContain("AACR-Bench's reference comments");
   });
 
   it("reads the changed files from the prefetched store, never writing into it", async () => {

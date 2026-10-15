@@ -52,20 +52,18 @@
 // is built at review time, and `claude-rebuild` rebuilds it for a finished run
 // without re-reviewing anything.
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
-import { run } from "./exec.js";
-import { AACR_REPORT_PREAMBLE, roundMetrics } from "./report.js";
+import { GIT_ISOLATION_ENV, run } from "./exec.js";
+import {
+  aacrScoreTable,
+  checkMergeBase,
+  dropStaleMetrics,
+  harnessProcessTimeoutMs,
+} from "./armrun.js";
+import { datasetLine, reportPreamble, roundMetrics } from "./report.js";
 import { claudeRowsForJudge, claudeScoredFindings } from "./claudeshape.js";
 import { parseClaudeProse, PROSE_PARSER_VERSION } from "./claudeprose.js";
 import { prepareTree } from "./runner.js";
@@ -75,14 +73,12 @@ export { claudeRowsForJudge, claudeScoredFindings } from "./claudeshape.js";
 /** pipeline.py `apply_defaults`: `--timeout-minutes` None → 30. */
 export const CLAUDE_HARNESS_DEFAULTS = { timeoutMin: 30 } as const;
 
-/** The pinned Claude Code version (Dockerfile `CLAUDE_CODE_VERSION`). */
-export const CLAUDE_CODE_PIN = "2.1.283";
-
-/** reviewers/claude.py: `process_timeout = timeout_minutes * 60 + 60`. Our
- * outer bound on the driver leaves the harness's own timeout room to fire and
- * still write its result file. */
+/** reviewers/claude.py: `process_timeout = timeout_minutes * 60 + 60` — the
+ * budget the harness gives every CLI reviewer. Our outer bound on the driver
+ * leaves the harness's own timeout room to fire and still write its result
+ * file. */
 export function claudeProcessTimeoutMs(timeoutMin: number): number {
-  return (timeoutMin * 60 + 60) * 1000;
+  return harnessProcessTimeoutMs(timeoutMin);
 }
 export function driverTimeoutMs(timeoutMin: number): number {
   return claudeProcessTimeoutMs(timeoutMin) + 5 * 60_000;
@@ -164,15 +160,6 @@ export function pickCredential(env: NodeJS.ProcessEnv): {
   );
 }
 
-/** git without any system or global config, and never prompting — every
- * git this arm runs, the driver's and its own. */
-const GIT_ISOLATION = {
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_TERMINAL_PROMPT: "0",
-} as const;
-
 /** The environment the driver (and so the harness, and so `claude`) runs
  * with: a fresh per-case HOME and CLAUDE_CONFIG_DIR, exactly one credential,
  * the pinned model (ANTHROPIC_MODEL) when there is one, no auto-update, no
@@ -203,7 +190,7 @@ export function claudeEnv(o: {
     CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1",
     CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
     PYTHONDONTWRITEBYTECODE: "1",
-    ...GIT_ISOLATION,
+    ...GIT_ISOLATION_ENV,
   };
 }
 
@@ -315,7 +302,7 @@ export function claudeViewOf(
 const GIT_ENV: NodeJS.ProcessEnv = {
   PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
   HOME: tmpdir(),
-  ...GIT_ISOLATION,
+  ...GIT_ISOLATION_ENV,
 };
 
 /** The PR's changed files (`diff --name-only -M <merge base> <head>`, the new
@@ -644,12 +631,9 @@ export async function reviewCaseClaude(
       maxRetries: o.maxRetries,
       model: o.model,
     });
-    const mb = await run("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
-    summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
-    if (!summary.merge_base_ok)
-      summary.warnings.push(
-        `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
-      );
+    const mb = await checkMergeBase(run, tree, c, meta, env);
+    summary.merge_base_ok = mb.ok;
+    if (mb.warning) summary.warnings.push(mb.warning);
     const argvFile = join(caseDir, "claude-argv.json");
     const stdoutFile = join(caseDir, "claude-stdout.json");
     rmSync(argvFile, { force: true });
@@ -852,7 +836,13 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
       // The metrics scored the old results: they go BEFORE the first result
       // changes, so a rebuild cut short never leaves them beside new findings
       // (and a re-run, finding those bytes already written, would not know).
-      if (changed === 0) dropStaleMetrics(o.outDir, o.log, "claude-rebuild", "the rebuilt view");
+      if (changed === 0)
+        dropStaleMetrics(
+          join(o.outDir, "results", "all"),
+          o.log,
+          "claude-rebuild",
+          "the rebuilt view",
+        );
       changed++;
       writeFileSync(resultFile, text);
     }
@@ -882,26 +872,6 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
       (missing ? `; ${missing} case(s) had no readable result file` : ""),
   );
   return out;
-}
-
-/** The harness scored the result files as they were; a rewritten or removed
- * one makes every metrics file beside them a score of findings that no longer
- * exist. They go (as the eval step's own `rm -f metrics_*.json` does), so a
- * report before the next eval shows no score rather than a stale one. */
-function dropStaleMetrics(
-  outDir: string,
-  log: (line: string) => void,
-  who: string,
-  what: string,
-): void {
-  const all = join(outDir, "results", "all");
-  if (!existsSync(all)) return;
-  const stale = readdirSync(all).filter((n) => n.startsWith("metrics_") && n.endsWith(".json"));
-  for (const f of stale) rmSync(join(all, f), { force: true });
-  if (stale.length)
-    log(
-      `${who}: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score ${what}`,
-    );
 }
 
 // ---- the whole run -------------------------------------------------------------
@@ -952,7 +922,7 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
   const dropMetricsOnce = (): void => {
     if (metricsDropped) return;
     metricsDropped = true;
-    dropStaleMetrics(o.outDir, o.log, "claude-review", "the new reviews");
+    dropStaleMetrics(join(o.outDir, "results", "all"), o.log, "claude-review", "the new reviews");
   };
   // run.json is about to carry THIS configuration, so no case reviewed under
   // another may stay a result of the run: without --resume every case goes;
@@ -1042,16 +1012,9 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
 
 // ---- the report ------------------------------------------------------------------
 
-function fmt(v: number | undefined): string {
-  return v === undefined
-    ? "?"
-    : Number.isInteger(v)
-      ? String(v)
-      : String(Math.round(v * 100) / 100);
-}
-
-/** The Claude Code arm's report: the harness's numbers (its Claude reader),
- * then per case what ran, which model, and what it cost. */
+/** The Claude Code arm's report: the harness's numbers (its OCR reader on
+ * the `review.comments` view), then per case what ran, which model, and what
+ * it cost. */
 export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
   const L: string[] = [];
   const run = (readJson(join(outDir, "run.json")) ?? {}) as Obj;
@@ -1063,11 +1026,9 @@ export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCas
   const models = [...new Set(summaries.flatMap((x) => (x.s?.model ? [x.s.model] : [])))];
   L.push(`# AACR-Bench run — ${set.name} — Claude Code`);
   L.push("");
-  L.push(AACR_REPORT_PREAMBLE);
+  L.push(reportPreamble(set));
   L.push("");
-  L.push(
-    `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
-  );
+  L.push(datasetLine(set, cases));
   L.push(
     `- Reviewer: Claude Code ${String(run["claude_code_version"] ?? "?")}, run by the AACR harness's own reviewers/claude.py: \`claude -p '/code-review <base_commit>...<head_commit> ' --add-dir <repo> --permission-mode acceptEdits --output-format json --mcp-config <findings server> --allowed-tools mcp__findings__report --append-system-prompt <findings requirement> --settings <StopFailure hook>\`, timeout ${String((run["flags"] as Obj | undefined)?.["timeout_min"] ?? "?")} min; no PR title/description (the harness passes none)`,
   );
@@ -1079,14 +1040,7 @@ export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCas
   L.push("");
   L.push("## Scores (the AACR harness, OCR reader on the `review.comments` view)");
   L.push("");
-  L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
-  L.push("|---|---|---|---|---|---|---|---|---|");
-  const { rounds, average } = roundMetrics(join(outDir, "results", "all"), "ocr");
-  const row = (label: string, s: Record<string, number>) =>
-    `| ${label} | ${fmt(s["evaluated_instances"])}/${cases.length} | ${fmt(s["generated_notes"])} | ${fmt(s["matched_semantic_notes"])}/${fmt(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
-  if (average) L.push(row("**average**", average));
-  for (const r of rounds) L.push(row(String(r.round), r.summary));
-  if (!average && rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  L.push(...aacrScoreTable(roundMetrics(join(outDir, "results", "all"), "ocr"), cases.length));
   L.push("");
   L.push("## Per case");
   L.push("");
