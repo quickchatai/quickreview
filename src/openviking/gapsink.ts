@@ -46,13 +46,15 @@ export function countedGapSink(deps: CountedGapSinkDeps): (gap: OvGap) => void {
       const t = now();
       const last = rowAt.get(key);
       if (last !== undefined && t - last < everyMs) return;
-      rowAt.set(key, t);
       deps.logAnomaly(
         GAP_ANOMALY_KIND,
         null,
         null,
         `${gap.op} ${gap.code} (${gap.status || "no answer"}): ${gap.message.slice(0, 200)} — ${n} such gap${n === 1 ? "" : "s"} since boot`,
       );
+      // The hour starts only once a row is WRITTEN: a failed insert leaves the
+      // next gap of this kind free to write it.
+      rowAt.set(key, t);
     } catch {
       // Swallowed by contract: the client already swallows a throwing sink,
       // and this sink promises not to need that.

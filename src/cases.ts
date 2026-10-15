@@ -114,12 +114,14 @@ import type { ReviewCommentFull } from "./github.js";
 import { cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags, parseHashTags } from "./memory/eventtags.js";
 import { MEMORY_DEFAULTS } from "./config.js";
+import { storedLensIds } from "./lensids.js";
 import type { CaseWritesStatus } from "./memory/health.js";
 import { CASES_AREA } from "./memory/layout.js";
 import type { RoundActivityGate } from "./memory/roundactivity.js";
 import type { DocumentPut, DocumentPutResult, MemoryStore } from "./memory/store.js";
 import {
   inCaptureWindow,
+  parseCarriedTo,
   type FindingCommentRow,
   type FindingFate,
   type FindingOutcomeRow,
@@ -357,12 +359,7 @@ function isoSecond(at: string | null | undefined): string | null {
 }
 
 function lensIdsOf(row: RoundFindingRow): string[] {
-  try {
-    const parsed = JSON.parse(row.lens_ids ?? "[]") as unknown;
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
+  return storedLensIds(row.lens_ids) ?? [];
 }
 
 /** One line of model- or human-written text for a prose sentence: no quotes
@@ -502,15 +499,14 @@ export function prCases(
   for (const c of outcomes.commentsFor(pr))
     if (c.round_no !== null && c.finding_key !== null)
       links.set(fkey(c.round_no, c.finding_key), c);
-  // carried_to is `<round>:<key>` (src/outcomes.ts) — the key may hold ':'.
   const next = new Map<string, string>();
   const carriedInto = new Set<string>();
   for (const [k, o] of fates) {
     if (!o.carried_to || !byKey.has(k)) continue;
-    const cut = o.carried_to.indexOf(":");
-    const round = Number(o.carried_to.slice(0, cut));
-    const target = fkey(round, o.carried_to.slice(cut + 1));
-    if (cut <= 0 || !Number.isInteger(round) || !byKey.has(target)) continue;
+    const to = parseCarriedTo(o.carried_to);
+    if (!to) continue;
+    const target = fkey(to.round_no, to.finding_key);
+    if (!byKey.has(target)) continue;
     next.set(k, target);
     carriedInto.add(target);
   }

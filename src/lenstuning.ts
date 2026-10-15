@@ -58,7 +58,7 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { ModelsConfig, ReviewEffort, ThinkingLevel } from "./config.js";
-import { withThinking } from "./config.js";
+import { normalizeEffort, withThinking } from "./config.js";
 import { VALIDATE_PASS as VALIDATE, type PassAddendum } from "./include.js";
 import type { Severity } from "./severity.js";
 import { higherTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
@@ -111,8 +111,16 @@ export const EMPHASIS_MAX_CHARS = 2000;
  * candidate (src/findingsrecord.ts DOWNGRADE_WORDS). */
 export const PROFILE_CAP_WORD = "profile-over-cap";
 
+const EMPHASIS_ID_PREFIX = "lens-emphasis-";
+const CEILING_ID_PREFIX = "lens-ceiling-";
+const GUIDE_ID_PREFIX = "lens-guide-";
+
 /** Ids the compiled tuning addenda take — a profile pack may not claim them. */
-export const LENS_TUNING_ID_PREFIXES = ["lens-emphasis-", "lens-ceiling-", "lens-guide-"] as const;
+export const LENS_TUNING_ID_PREFIXES = [
+  EMPHASIS_ID_PREFIX,
+  CEILING_ID_PREFIX,
+  GUIDE_ID_PREFIX,
+] as const;
 
 /** Read the guide a profile's `[lenses.pass-style] guide` names: a relative
  * path that stays inside the profile's directory (symlinks resolved), a
@@ -184,10 +192,9 @@ export function parseLensTable(
           t.min_tier = value as PassTier;
           break;
         case "effort": {
-          const v = typeof value === "string" ? value.trim().toLowerCase() : value;
-          if (v === "low" || v === "high" || v === "medium") t.effort = v;
-          else if (v === "med") t.effort = "medium";
-          else throw new Error(`${at} effort must be "low", "medium" or "high"`);
+          const effort = normalizeEffort(value);
+          if (effort === null) throw new Error(`${at} effort must be "low", "medium" or "high"`);
+          t.effort = effort;
           break;
         }
         case "enabled":
@@ -316,20 +323,24 @@ export function lensTuningAddenda(lenses: LensTuningMap | undefined): PassAddend
     const t = (lenses as LensTuningMap)[lens] as LensTuning;
     if (t.emphasis !== undefined) {
       out.push({
-        id: `lens-emphasis-${lens}`,
+        id: `${EMPHASIS_ID_PREFIX}${lens}`,
         scope: [lens],
         text: `\n## What this repo asks of this lens (this repo's profile)\n${t.emphasis}\n`,
       });
     }
     if (t.max_severity !== undefined) {
       out.push({
-        id: `lens-ceiling-${lens}`,
+        id: `${CEILING_ID_PREFIX}${lens}`,
         scope: [lens, VALIDATE],
         text: ceilingText(lens, t.max_severity),
       });
     }
     if (t.guide !== undefined) {
-      out.push({ id: `lens-guide-${lens}`, scope: [lens, VALIDATE], text: guideText(t.guide) });
+      out.push({
+        id: `${GUIDE_ID_PREFIX}${lens}`,
+        scope: [lens, VALIDATE],
+        text: guideText(t.guide),
+      });
     }
   }
   return out;

@@ -141,6 +141,28 @@ describe("dayScopedRebuild — the day-change agents rebuild wire.ts runs", () =
     expect(r.builtDay()).toBe("2026-01-15");
   });
 
+  it("a same-day rebuild that throws (the kill switch, an ingest) is retried by the next tick, the same day", () => {
+    let fail = false;
+    const built: string[] = [];
+    const r = dayScopedRebuild(
+      () => "2026-01-15",
+      (day) => {
+        if (fail) throw new Error("ENOSPC writing state/agents");
+        built.push(day);
+      },
+    );
+    r.rebuild();
+    fail = true;
+    expect(() => r.rebuild()).toThrow("ENOSPC");
+    expect(r.stale()).toBe(true);
+    fail = false;
+    r.tick(); // same day — the stale build is retried anyway
+    expect(built).toEqual(["2026-01-15", "2026-01-15"]);
+    expect(r.stale()).toBe(false);
+    r.tick(); // landed: nothing more to do
+    expect(built).toEqual(["2026-01-15", "2026-01-15"]);
+  });
+
   it("an explicit day (the [feedback] ingest path) builds that day", () => {
     const built: string[] = [];
     const r = dayScopedRebuild(

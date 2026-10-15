@@ -128,7 +128,7 @@ export function majorityPolarity(cands: readonly { polarity: Polarity }[]): Pola
 
 const POLARITY_LABEL: Readonly<Record<Polarity, string>> = {
   "look-for": "look-for (a miss: something the bot did not raise)",
-  "dont-raise": "dont-raise (people rejected what the bot raised)",
+  "dont-raise": "dont-raise (what the bot raised was rejected, or conceded on re-check)",
   either: "either way (contested)",
   review: "whole review (a signal about a review, never one finding)",
   ops: "operations (about the review system, not the code)",

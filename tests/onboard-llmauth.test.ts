@@ -362,6 +362,10 @@ describe("tolerant config reads", () => {
     expect(expandHomePath("/abs", "/h")).toBe("/abs");
   });
 
+  it("reads a single-quoted secrets_dir the way every other onboarding step does", () => {
+    expect(resolveSecretsDir("[github]\nsecrets_dir = '/lit/keys'\n", "/h")).toBe("/lit/keys");
+  });
+
   it("falls back to the shipped container names when config does not override them", () => {
     expect(daemonContainerName(EXAMPLE_CONFIG)).toBe("quickreview-sandbox");
     expect(companionContainerName(EXAMPLE_CONFIG)).toBe("qcr-companion");
@@ -384,9 +388,19 @@ describe("API key validation", () => {
 
   it("mirrors deploy/collect-secrets.sh's validator and file name — the two must not drift", () => {
     const shell = readFileSync(join(process.cwd(), "deploy", "collect-secrets.sh"), "utf8");
-    expect(shell).toContain("v_openai()");
-    expect(shell).toContain("'^sk-'");
     expect(shell).toContain(OPENAI_KEY_FILE);
+    // Run the shell's own function against the TypeScript validator's table:
+    // the two must AGREE on every value, not merely mention the same prefix.
+    const fn = /^v_openai\(\).*$/m.exec(shell)?.[0];
+    expect(fn).toBeDefined();
+    const shellAccepts = (value: string): boolean =>
+      spawnSync("bash", ["-c", `${fn}\nprintf '%s' "$1" | v_openai`, "v", value], {
+        encoding: "utf8",
+      }).status === 0;
+    // `read -r` hands the shell an already-trimmed value; the TS side trims.
+    for (const value of [KEY, "nope", "", "sk-", "sk- with space", "sk-a\tb", "sk-x", "SK-upper"]) {
+      expect(shellAccepts(value.trim()), JSON.stringify(value)).toBe(validateOpenAiKey(value));
+    }
   });
 });
 
@@ -471,6 +485,24 @@ describe("OAuth route", () => {
     expect(report.ok).toBe(false);
     expect(report.results[0]?.failures.join(" ")).toMatch(/no auth\.json on the pi home/);
     expect(report.results[0]?.failures.join(" ")).toMatch(/tmux attach/);
+  });
+
+  it("verify: the companion's login repair attaches to the COMPANION's session, never the daemon's overseer", async () => {
+    hostLogin();
+    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
+    const world = {
+      containers: { "qcr-companion": { piHome: "/home/companion/.pi", auth: false } },
+    };
+    const detail = async (): Promise<string> =>
+      ((await engine(world).verifyAll()).results[0]?.failures ?? []).join(" ");
+    expect(await detail()).toContain("docker exec -it qcr-companion tmux attach -t companion");
+    expect(await detail()).not.toMatch(/-t overseer/);
+    // A configured session name is the one attached to.
+    writeFileSync(
+      configPathFor(stateDir),
+      configText().replace("[companion]\n", '[companion]\nsession = "buddy"\n'),
+    );
+    expect(await detail()).toContain("tmux attach -t buddy");
   });
 
   it("verify: a stopped container and an undetectable docker are notes, not failures", async () => {
@@ -591,7 +623,12 @@ describe("API-key route", () => {
 
     for (const a of auditModelStrings(configText())) expect(a.kind).toBe("api");
     expect(detailOf(result.checks, "models")).toMatch(/rewrote 6/);
-    expect(detailOf(result.checks, "credential")).toMatch(/covered|OPENAI_API_KEY/);
+    expect(detailOf(result.checks, "credential")).toMatch(/OPENAI_API_KEY/);
+    // The companion container is never handed the key file: the step must not
+    // claim it is covered.
+    expect(detailOf(result.checks, "credential")).not.toMatch(/companion are all covered/);
+    expect(detailOf(result.checks, "credential")).toMatch(/companion container is never handed it/);
+    expect(detailOf(result.checks, "models")).toMatch(/companion .*keeps its own login/);
     // No container logins are asked for on this route.
     expect(result.checks.map((c) => c.name)).not.toContain("wizard_login");
   });

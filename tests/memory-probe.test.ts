@@ -345,6 +345,23 @@ describe("countedGapSink — the counted, rate-limited openviking_gap", () => {
     expect(h.rows()).toHaveLength(3);
   });
 
+  it("a row that failed to write does not use up the hour — the next gap writes it", () => {
+    const written: string[] = [];
+    let dbUp = false;
+    const sink = countedGapSink({
+      logAnomaly: (_k, _p, _r, detail) => {
+        if (!dbUp) throw new Error("db busy");
+        written.push(detail);
+      },
+      now: () => 0,
+    });
+    sink(gap());
+    dbUp = true;
+    sink(gap());
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatch(/— 2 such gaps since boot$/);
+  });
+
   it("a throwing health counter or row writer never escapes", () => {
     const sink = countedGapSink({
       logAnomaly: () => {

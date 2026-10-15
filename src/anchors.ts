@@ -8,6 +8,8 @@
 // Input is the unified patch text GitHub returns per file in the PR files API
 // (`patch` field). Pure module: no I/O.
 
+import { parseHunkHeader } from "./hunkheader.js";
+
 export type Side = "RIGHT" | "LEFT";
 
 export interface ChangedRun {
@@ -65,11 +67,11 @@ export function changedRuns(patch: string): ChangedRun[] {
   for (const raw of patch.split("\n")) {
     if (raw.startsWith("@@")) {
       close();
-      const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(raw);
-      if (!m) continue;
+      const h = parseHunkHeader(raw);
+      if (!h) continue;
       hunk += 1;
-      oldLine = Number(m[1]);
-      newLine = Number(m[3]);
+      oldLine = h.old_start;
+      newLine = h.new_start;
       continue;
     }
     if (hunk < 0) continue; // preamble (diff --git / index / --- / +++)

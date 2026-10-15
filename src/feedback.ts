@@ -259,24 +259,41 @@ export function memoryEntryFor(e: FeedbackEvent, day: string): string {
  * day whose build LANDED — it is assigned only after `build` returns, so a
  * build that throws on the day-change tick leaves the old day in place and
  * the next `tick` retries, rather than every later tick seeing "already
- * built" while yesterday's feedback addendum stays in force.
+ * built" while yesterday's feedback addendum stays in force. Any rebuild
+ * that throws — a same-day one too (a [feedback] ingest, the lesson kill
+ * switch flipping) — leaves the build `stale`, and the next `tick` retries it
+ * on the same day: what the build should compose has changed, and repeating
+ * the change that asked for it is no retry (it is a no-op).
  */
 export function dayScopedRebuild(
   today: () => string,
   build: (day: string) => void,
-): { rebuild: (day?: string) => void; tick: () => void; builtDay: () => string | null } {
+): {
+  rebuild: (day?: string) => void;
+  tick: () => void;
+  builtDay: () => string | null;
+  stale: () => boolean;
+} {
   let builtDay: string | null = null;
+  let stale = false;
   const rebuild = (day?: string): void => {
     const target = day ?? today();
-    build(target);
+    try {
+      build(target);
+    } catch (err) {
+      stale = true;
+      throw err;
+    }
     builtDay = target;
+    stale = false;
   };
   return {
     rebuild,
     tick: () => {
-      if (today() !== builtDay) rebuild();
+      if (stale || today() !== builtDay) rebuild();
     },
     builtDay: () => builtDay,
+    stale: () => stale,
   };
 }
 

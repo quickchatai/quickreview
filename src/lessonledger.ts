@@ -37,8 +37,10 @@
 //   overseer, the companion) could write and nothing could tell from the
 //   operator's. The selector reads both on every round.
 //
-// Nothing here writes memory or GitHub, and nothing here is on a round's
-// critical path: the selector records after the round was dispatched.
+// Nothing here writes memory or GitHub. Under `shadow` the selector records
+// after the round was dispatched; under `on` it records before the round's
+// handoff (the round waits for its selection), so a write here is on that
+// round's path and stays one small synchronous transaction.
 import type { MemoryDelivery } from "./config.js";
 import { matchShadow } from "./lessonshadow.js";
 import type {
@@ -47,7 +49,7 @@ import type {
   SelectedLesson,
   SelectionCut,
 } from "./memory/selection.js";
-import type { StateStore } from "./state.js";
+import type { RoundFindingRow, StateStore } from "./state.js";
 
 // The marks table, shared by the schema and the tier migration that rebuilds
 // an untiered one (SQLite cannot drop a NOT NULL in place).
@@ -234,6 +236,43 @@ export type LessonSwitchChange =
   | { action: "suppress"; uri: string }
   | { action: "unsuppress"; uri: string };
 
+/** The mark row's columns, and the parameters one mark binds to them — one
+ * mapping for the live marking and the tier backfill. */
+const MARK_INSERT_COLUMNS = `(pr, round_no, finding_key, lesson_uri, round_id, lens, finding_class, lesson_class,
+            match, severity, path, via, why, marked_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+function markParams(
+  pr: number,
+  roundNo: number,
+  roundId: number | null,
+  m: ShadowMark,
+  at: string,
+): unknown[] {
+  return [
+    pr,
+    roundNo,
+    m.finding_key,
+    m.lesson_uri,
+    roundId,
+    JSON.stringify(m.lens),
+    m.finding_class,
+    m.lesson_class,
+    m.match,
+    m.severity,
+    m.path,
+    JSON.stringify(m.via),
+    m.why,
+    at,
+  ];
+}
+
+/** A selection role's order — discovery rows, the validator, the addable
+ * lenses — over the column `col`. */
+function roleOrderSql(col: string): string {
+  return `CASE ${col} WHEN 'row' THEN 0 WHEN 'validator' THEN 1 WHEN 'addable' THEN 2 ELSE 3 END`;
+}
+
 function json<T>(raw: string | null | undefined, fallback: T): T {
   try {
     const v = JSON.parse(raw ?? "") as unknown;
@@ -333,23 +372,16 @@ export class LessonLedger {
     const pairs = db
       .prepare("SELECT DISTINCT pr, round_no FROM lesson_rounds ORDER BY pr, round_no")
       .all() as Array<{ pr: number; round_no: number }>;
-    const ins = db.prepare(
-      `INSERT OR IGNORE INTO lesson_shadow_marks
-         (pr, round_no, finding_key, lesson_uri, round_id, lens, finding_class, lesson_class,
-          match, severity, path, via, why, marked_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
+    const ins = db.prepare(`INSERT OR IGNORE INTO lesson_shadow_marks ${MARK_INSERT_COLUMNS}`);
     const firstMark = db.prepare(
       "SELECT MIN(marked_at) AS at FROM lesson_shadow_marks WHERE pr = ? AND round_no = ?",
     );
     let rounds = 0;
     const marks: Record<ShadowMatchTier, number> = { class: 0, lens: 0 };
     for (const { pr, round_no } of pairs) {
-      const round = this.roundFor(pr, round_no);
-      if (!round || round.state === "lessons_off") continue;
-      const findings = this.store.findingsForRound(pr, round_no);
-      const computed = matchShadow(this.selections(round.round_id), findings);
-      if (computed.length === 0) continue;
+      const matched = this.matchRound(pr, round_no);
+      if (!matched || matched.marks.length === 0) continue;
+      const { round, findings, marks: computed } = matched;
       // A mark comes from a posted finding, so `findings` is not empty here:
       // when the round's findings record landed is the latest of its rows.
       const findingsAt = findings.reduce(
@@ -359,22 +391,7 @@ export class LessonLedger {
       const at = (firstMark.get(pr, round_no) as { at: string | null }).at ?? findingsAt;
       let added = 0;
       for (const m of computed) {
-        const n = ins.run(
-          pr,
-          round_no,
-          m.finding_key,
-          m.lesson_uri,
-          round.round_id,
-          JSON.stringify(m.lens),
-          m.finding_class,
-          m.lesson_class,
-          m.match,
-          m.severity,
-          m.path,
-          JSON.stringify(m.via),
-          m.why,
-          at,
-        ).changes;
+        const n = ins.run(...markParams(pr, round_no, round.round_id, m, at)).changes;
         marks[m.match] += n;
         added += n;
       }
@@ -566,6 +583,20 @@ export class LessonLedger {
       LessonRoundRow | undefined;
   }
 
+  /** What a round's marks are matched from — its newest recorded selection
+   * and its findings record — and the marks; null for a round with no
+   * recorded selection or recorded with the kill switch off (nothing to
+   * match against). */
+  matchRound(
+    pr: number,
+    roundNo: number,
+  ): { round: LessonRoundRow; findings: RoundFindingRow[]; marks: ShadowMark[] } | null {
+    const round = this.roundFor(pr, roundNo);
+    if (!round || round.state === "lessons_off") return null;
+    const findings = this.store.findingsForRound(pr, roundNo);
+    return { round, findings, marks: matchShadow(this.selections(round.round_id), findings) };
+  }
+
   /** The newest recorded round of (pr, round_no) — a round number is unique
    * per PR, but a replayed record keeps the last. */
   roundFor(pr: number, roundNo: number): LessonRoundRow | undefined {
@@ -579,7 +610,7 @@ export class LessonLedger {
   selections(roundId: number): StoredSelection[] {
     const rows = this.store.db
       .prepare(
-        "SELECT * FROM lesson_selections WHERE round_id = ? ORDER BY CASE role WHEN 'row' THEN 0 WHEN 'validator' THEN 1 WHEN 'addable' THEN 2 ELSE 3 END, row",
+        `SELECT * FROM lesson_selections WHERE round_id = ? ORDER BY ${roleOrderSql("role")}, row`,
       )
       .all(roundId) as Array<Record<string, unknown>>;
     return rows.map(storedSelection);
@@ -607,28 +638,9 @@ export class LessonLedger {
         .prepare("DELETE FROM lesson_shadow_marks WHERE pr = ? AND round_no = ?")
         .run(pr, roundNo);
       const ins = this.store.db.prepare(
-        `INSERT OR REPLACE INTO lesson_shadow_marks
-           (pr, round_no, finding_key, lesson_uri, round_id, lens, finding_class, lesson_class,
-            match, severity, path, via, why, marked_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO lesson_shadow_marks ${MARK_INSERT_COLUMNS}`,
       );
-      for (const m of marks)
-        ins.run(
-          pr,
-          roundNo,
-          m.finding_key,
-          m.lesson_uri,
-          roundId,
-          JSON.stringify(m.lens),
-          m.finding_class,
-          m.lesson_class,
-          m.match,
-          m.severity,
-          m.path,
-          JSON.stringify(m.via),
-          m.why,
-          at,
-        );
+      for (const m of marks) ins.run(...markParams(pr, roundNo, roundId, m, at));
     });
     tx();
   }
@@ -656,7 +668,7 @@ export class LessonLedger {
       .prepare(
         `SELECT s.* FROM lesson_selections s JOIN lesson_rounds r ON r.round_id = s.round_id
          WHERE r.recorded_at >= ?
-         ORDER BY r.recorded_at, s.round_id, CASE s.role WHEN 'row' THEN 0 WHEN 'validator' THEN 1 WHEN 'addable' THEN 2 ELSE 3 END, s.row`,
+         ORDER BY r.recorded_at, s.round_id, ${roleOrderSql("s.role")}, s.row`,
       )
       .all(since) as Array<Record<string, unknown>>;
     return rows.map(storedSelection);

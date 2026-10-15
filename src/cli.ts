@@ -21,13 +21,15 @@ import { archiveStatusLine, fmtBytes } from "./archive/status.js";
 import { memoryStatusLine } from "./memory/health.js";
 import {
   cancelCauseLabel,
-  isLoudCancelCause,
+  parseExecutedPasses,
   StateStore,
-  type CancelCause,
+  tallyCancellations,
   type CancellationTally,
+  type RoundRow,
   type StatusSnapshot,
 } from "./state.js";
 import {
+  cancellationSummaryLine,
   computeMetrics,
   computeTimeline,
   readOps,
@@ -55,6 +57,7 @@ import {
   type InstallEnv,
 } from "./install.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
+import { transportOf } from "./tui/remote.js";
 import { MutationGate } from "./gate.js";
 import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
@@ -99,15 +102,17 @@ export function parseOutcomesArgs(rest: readonly string[]): {
 }
 
 /**
- * The gate behind `qcr outcomes --read-github`: it can only
- * RECORD. Dry-run, so every ordinary kind is written to `dryrunDir` and never
- * executed; and an executor that refuses, so even the one class the gate runs
- * in dry-run (`APP_SELF_CONFIG_KINDS`) cannot reach GitHub. The read the
- * command makes goes direct, as every adapter read does; nothing can write.
+ * The gate behind every read-only CLI command that opens the adapter
+ * (`qcr outcomes --read-github`, `why --json`'s enrichment, `backfill`,
+ * `history digest`, `regression`): it can only RECORD. Dry-run, so every
+ * ordinary kind is written to `dryrunDir` and never executed; and an executor
+ * that refuses, so even the one class the gate runs in dry-run
+ * (`APP_SELF_CONFIG_KINDS`) cannot reach GitHub. The reads the command makes
+ * go direct, as every adapter read does; nothing can write.
  */
-export function recordOnlyGate(dryrunDir: string): MutationGate {
+export function recordOnlyGate(dryrunDir: string, command = "qcr outcomes"): MutationGate {
   return new MutationGate(true, dryrunDir, async () => {
-    throw new Error("qcr outcomes performs no mutations");
+    throw new Error(`${command} performs no mutations`);
   });
 }
 
@@ -508,23 +513,19 @@ function cmdSpend(): void {
   try {
     const total = store.totalSpend();
     const today = new Date().toISOString().slice(0, 10);
-    // est_usd is the one spend field. Expired rounds are counted: they blew
-    // a deadline, they did not get a refund — excluding them would erase real
-    // token cost.
+    // est_usd is the one spend field; expired rounds count (`roundUsage`).
     const todayRounds = store.roundsOn(today);
-    const todaySpend = todayRounds.reduce((n, r) => n + (r.est_usd ?? 0), 0);
+    const day = roundUsage(todayRounds);
     const totals = store.db
       .prepare(
         "SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds",
       )
       .get() as { tin: number; tout: number };
-    const todayIn = todayRounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0);
-    const todayOut = todayRounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0);
     console.log(
       `total spend: $${total.toFixed(2)} (est) — ${totals.tin} in / ${totals.tout} out tokens`,
     );
     console.log(
-      `today (${today}): $${todaySpend.toFixed(2)} across ${todayRounds.length} rounds — ${todayIn} in / ${todayOut} out tokens`,
+      `today (${today}): $${day.spend_usd.toFixed(2)} across ${todayRounds.length} rounds — ${day.tokens_in} in / ${day.tokens_out} out tokens`,
     );
   } finally {
     store.close();
@@ -667,14 +668,9 @@ export interface DoubtedFinding {
 export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promise<WhyPayload> {
   try {
     const { TokenMinter } = await import("./githubAuth.js");
-    const { MutationGate } = await import("./gate.js");
     const { GitHubAdapter } = await import("./github.js");
     const cfg = loadConfig();
-    const gate = new MutationGate(
-      true,
-      join(sandboxRoot(), "state", "dryrun"),
-      async () => undefined,
-    );
+    const gate = recordOnlyGate(join(sandboxRoot(), "state", "dryrun"), "qcr why");
     const adapter = new GitHubAdapter(
       cfg,
       new TokenMinter(secretsDir ?? cfg.github.secrets_dir),
@@ -687,11 +683,45 @@ export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promi
   }
 }
 
+/** Every round of PR `n`, oldest first — the history both `why` renderings
+ * print. */
+function roundHistory(store: StateStore, n: number): RoundRow[] {
+  return store.db
+    .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
+    .all(n) as RoundRow[];
+}
+
+/** A kept-not-posted finding (doubted or withheld) as `why --json` carries it. */
+function keptFinding(f: DoubtedFinding): DoubtedFinding {
+  return {
+    round_no: f.round_no,
+    lens: f.lens,
+    path: f.path,
+    line: f.line,
+    severity: f.severity,
+    word: f.word,
+    reason: f.reason,
+  };
+}
+
+/** Spend and measured tokens summed over `rounds`. Expired rounds count:
+ * they blew a deadline, they did not get a refund — excluding them would
+ * erase real token cost (see StateStore.totalSpend). */
+function roundUsage(rounds: readonly RoundRow[]): {
+  spend_usd: number;
+  tokens_in: number;
+  tokens_out: number;
+} {
+  return {
+    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
+    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
+  };
+}
+
 export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPayload {
   const pr = store.getPr(n);
-  const rounds = store.db
-    .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
-    .all(n) as any[];
+  const rounds = roundHistory(store, n);
   const threadTotal = store.db
     .prepare("SELECT COUNT(*) AS c FROM bot_comments WHERE pr = ?")
     .get(n) as { c: number };
@@ -699,7 +729,7 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
     pr: n,
     known: pr !== undefined || rounds.length > 0,
     // Every round's cost, expired ones included.
-    spend_usd: rounds.reduce((s, r) => s + (r.est_usd ?? 0), 0),
+    spend_usd: roundUsage(rounds).spend_usd,
     rounds: rounds.map((r) => ({
       round_no: r.round_no,
       round_type: r.round_type,
@@ -714,15 +744,7 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
       tokens_out: r.tokens_out ?? null,
       lenses: r.lenses,
       validate_tier: r.validate_tier ?? null,
-      executed_passes: (() => {
-        if (typeof r.executed_passes !== "string") return null;
-        try {
-          const parsed = JSON.parse(r.executed_passes) as unknown;
-          return Array.isArray(parsed) ? parsed : null;
-        } catch {
-          return null;
-        }
-      })(),
+      executed_passes: parseExecutedPasses(r.executed_passes),
       summary: r.summary ?? null,
       // Why a cancelled round was cancelled — null on every other
       // status. The TUI's detail pane reads this beside the prose summary.
@@ -731,24 +753,8 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
     // The registry knows every bot thread; "open" needs GitHub truth the
     // daemon doesn't mirror, so it is UNKNOWN (null) — never the total.
     threads: { open: null, total: threadTotal.c },
-    doubted: store.doubtedFindings(n).map((f) => ({
-      round_no: f.round_no,
-      lens: f.lens,
-      path: f.path,
-      line: f.line,
-      severity: f.severity,
-      word: f.word,
-      reason: f.reason,
-    })),
-    withheld: store.withheldFindings(n).map((f) => ({
-      round_no: f.round_no,
-      lens: f.lens,
-      path: f.path,
-      line: f.line,
-      severity: f.severity,
-      word: f.word,
-      reason: f.reason,
-    })),
+    doubted: store.doubtedFindings(n).map(keptFinding),
+    withheld: store.withheldFindings(n).map(keptFinding),
   };
   if (pr) {
     payload.state = pr.state;
@@ -785,10 +791,7 @@ export function todayJson(
   return {
     date: today,
     rounds,
-    // Expired rounds included — see StateStore.totalSpend.
-    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
-    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
-    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
+    ...roundUsage(rounds),
     events: store.eventsOn(today),
     cancellations: cancellationsOn(store, today),
   };
@@ -798,32 +801,13 @@ export function todayJson(
  * metrics payload carries, scoped to one timezone-agnostic ISO date so `qcr
  * today` can print it beside the rounds it explains. */
 export function cancellationsOn(store: StateStore, date: string): CancellationTally[] {
-  const counts = new Map<string, number>();
-  for (const r of store.roundsOn(date)) {
-    if (r.status !== "cancelled") continue;
-    const cause = (r.cancel_cause ?? "unknown") as CancelCause;
-    counts.set(cause, (counts.get(cause) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([cause, count]) => ({
-      cause: cause as CancelCause,
-      count,
-      loud: isLoudCancelCause(cause),
-    }))
-    .sort(
-      (a, b) =>
-        Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
-    );
+  return tallyCancellations(store.roundsOn(date));
 }
 
 /** `qcr today`'s one-line cancellation summary. Never silent: "none" is an
  * answer. */
 export function todayCancellationLine(tallies: CancellationTally[]): string {
-  if (tallies.length === 0) return "cancelled: none";
-  const total = tallies.reduce((n, t) => n + t.count, 0);
-  const loud = tallies.filter((t) => t.loud).reduce((n, t) => n + t.count, 0);
-  const parts = tallies.map((t) => `${cancelCauseLabel(t.cause)} ${t.count}${t.loud ? " ⚑" : ""}`);
-  return `cancelled: ${total} — ${parts.join(", ")}${loud > 0 ? `  (${loud} needing a look)` : ""}`;
+  return cancellationSummaryLine("cancelled", tallies);
 }
 
 /** `qcr why`'s first line; the title is the author's text, so one line. */
@@ -840,9 +824,7 @@ function cmdWhy(n: number): void {
   try {
     const pr = store.getPr(n);
     if (pr) console.log(whyHeaderLine(n, pr));
-    const rounds = store.db
-      .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
-      .all(n) as any[];
+    const rounds = roundHistory(store, n);
     for (const r of rounds)
       console.log(
         `round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} started=${r.started_at}`,
@@ -912,15 +894,12 @@ export async function cmdBackfill(
   json: boolean,
 ): Promise<void> {
   const { TokenMinter } = await import("./githubAuth.js");
-  const { MutationGate } = await import("./gate.js");
   const { GitHubAdapter } = await import("./github.js");
   const { runBackfill } = await import("./backfill.js");
   const cfg = loadConfig();
   // A gate that can only ever record: the importer performs no mutations, and
   // this keeps that structural rather than prompted.
-  const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
-    throw new Error("qcr backfill performs no mutations");
-  });
+  const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr backfill");
   const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
   const store = openStore();
   try {
@@ -963,13 +942,10 @@ export async function cmdHistory(rest: string[]): Promise<number> {
   if (sub === "digest") {
     const limit = intFlag(rest, "--limit", HISTORY_USAGE);
     const { TokenMinter } = await import("./githubAuth.js");
-    const { MutationGate } = await import("./gate.js");
     const { GitHubAdapter } = await import("./github.js");
     const { collectReviewHistory } = await import("./reviewhistory.js");
     const cfg = loadConfig();
-    const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
-      throw new Error("qcr history performs no mutations");
-    });
+    const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr history");
     const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
     const store = openStore();
     try {
@@ -1018,26 +994,17 @@ export async function cmdHistory(rest: string[]): Promise<number> {
  * front even if one were live.
  */
 export async function cmdRegression(rest: string[], json: boolean): Promise<number> {
-  const { MutationGate } = await import("./gate.js");
   const { nodeReplayIo, parseRegressionArgs, readCaseSet, runRegressionCli, ScratchReplay } =
     await import("./replay.js");
   const root = sandboxRoot();
   // The replay plans rounds with `buildPassPlan`, so it must see the
-  // profile's per-lens tuning exactly as the daemon does (wire.ts buildParts)
-  // — otherwise a lens the profile switched off would be replayed.
-  const { applyProfileTuning } = await import("./lenstuning.js");
-  const { loadProfileLensTuning } = await import("./profiles.js");
-  const loaded = loadConfig();
-  const { loadProfilePosting } = await import("./profiles.js");
-  const { applyProfilePosting } = await import("./postingpolicy.js");
-  const cfg = applyProfilePosting(
-    applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile)),
-    loadProfilePosting(root, loaded.review.profile),
-  );
+  // profile's overlays exactly as the daemon does (wire.ts buildParts, the
+  // same function) — otherwise a lens the profile switched off would be
+  // replayed.
+  const { applyProfileOverlays } = await import("./profiles.js");
+  const cfg = applyProfileOverlays(root, loadConfig());
   const args = parseRegressionArgs(rest, json);
-  const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
-    throw new Error("qcr regression performs no mutations");
-  });
+  const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr regression");
   const scratchRoot = join(stateDir(), "regression");
   return runRegressionCli(args, {
     loadCaseSet: (p) => readCaseSet(p ?? join(root, "tests", "fixtures", "regression-cases.json")),
@@ -1075,9 +1042,11 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
 // container or against a local dev daemon) — sealed only if that dir is
 // root-owned; otherwise the daemon bounds it like a session's drain.
 
-/** The documented manual fallback: the exact ssh one-liner that writes the
- * same command file by hand when the runner path fails. */
-export function drainManualSshCommand(tui: TuiConfig, on: boolean, now: Date): string {
+/** The documented manual fallback: the exact one-liner that writes the same
+ * command file by hand when the runner path fails — over ssh, or straight
+ * into local docker when `[tui] target = "local"`, the transport the runner
+ * path itself used. */
+export function drainManualCommand(tui: TuiConfig, on: boolean, now: Date): string {
   // Same root-owned operator directory the runner path writes: a
   // fallback that wrote into the session dir would be a bounded session drain.
   const docker = `${tui.sudo_docker ? "sudo " : ""}docker exec -i -u 0 ${tui.container}`;
@@ -1087,16 +1056,15 @@ export function drainManualSshCommand(tui: TuiConfig, on: boolean, now: Date): s
   // a re-used name (an operator editing an old line) still executes — the
   // fresh name is what keeps its result readable.
   const name = `${now.toISOString().replace(/[:.]/g, "-")}-manual-drain.json`;
-  // Single quotes for the remote `sh -c`, then backslash, dollar, double quote
-  // and backtick for the LOCAL double-quoted ssh argument, which would
-  // otherwise expand them on the operator's machine.
-  const script = operatorCommandWriteScript(tui, name)
-    .replace(/'/g, "'\\''")
-    .replace(/[\\$"`]/g, "\\$&");
-  return (
-    `printf '%s' '${JSON.stringify({ command: "drain", on })}' | ` +
-    `ssh ${tui.ssh_host} "${docker} sh -c '${script}'"`
-  );
+  const payload = `printf '%s' '${JSON.stringify({ command: "drain", on })}' | `;
+  // Single quotes for the container's `sh -c`.
+  const script = operatorCommandWriteScript(tui, name).replace(/'/g, "'\\''");
+  if (transportOf(tui) === "local") return `${payload}${docker} sh -c '${script}'`;
+  // Over ssh, also backslash, dollar, double quote and backtick for the LOCAL
+  // double-quoted ssh argument, which would otherwise expand them on the
+  // operator's machine.
+  const remote = script.replace(/[\\$"`]/g, "\\$&");
+  return `${payload}ssh ${tui.ssh_host} "${docker} sh -c '${remote}'"`;
 }
 
 export interface DrainRunDeps {
@@ -1107,12 +1075,13 @@ export interface DrainRunDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** Write the drain command over ssh and wait for the daemon's verdict.
- * Returns a process exit code; every failure path prints the manual ssh
- * fallback so the operator is never stuck behind this wrapper. */
+/** Write the drain command through the configured transport and wait for the
+ * daemon's verdict. Returns a process exit code; every failure path prints
+ * the manual fallback so the operator is never stuck behind this wrapper. */
 export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number> {
   const tui = deps.cfg.tui;
-  deps.log(`drain ${on ? "on" : "off"} → ${tui.ssh_host}:${tui.remote_sandbox_root}/commands/`);
+  const where = transportOf(tui) === "local" ? `local docker ${tui.container}` : tui.ssh_host;
+  deps.log(`drain ${on ? "on" : "off"} → ${where}:${tui.remote_sandbox_root}/commands/`);
   const sender = new CommandDrainSender(tui, deps.ssh, deps.now, deps.sleep);
   const result = await sender.set(on);
   if (result.ok) {
@@ -1143,7 +1112,7 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
   }
   deps.log(`✖ drain refused: ${result.reason ?? "no reason given"}`);
   deps.log("manual fallback — run:");
-  deps.log(`  ${drainManualSshCommand(tui, on, (deps.now ?? (() => new Date()))())}`);
+  deps.log(`  ${drainManualCommand(tui, on, (deps.now ?? (() => new Date()))())}`);
   return 1;
 }
 
@@ -1253,8 +1222,7 @@ export function cmdInstall(
 
 function cmdAttach(target: string): void {
   // Live sessions run inside the quickreview container on the VM; locally the
-  // tmux server is direct. Print the right invocation and exec it when local
-  // tmux has the session.
+  // tmux server is direct. Print both invocations — this never attaches.
   const session = /^\d+$/.test(target) ? `pr-${target}` : target;
   console.log(`attach: tmux attach -t ${session}`);
   console.log(`(on the VM: docker exec -it quickreview-sandbox tmux attach -t ${session})`);
@@ -1275,29 +1243,57 @@ function cmdEvents(tail: number, json: boolean): void {
 }
 
 /** `qcr companion up|down|status` — thin over CompanionLifecycle. */
+/** `qcr companion rebuild`: replace the container and image, then start the
+ * new one exactly as `up` does — the token and config mirror refreshed
+ * before the container starts, so the rebuilt companion never mounts a stale
+ * mirror or an expired token. The pihome volume is untouched. */
+export async function rebuildCompanion(
+  lc: {
+    removeContainer(): Promise<unknown>;
+    buildImage(log: (line: string) => void): Promise<unknown>;
+    ensureUp(log: (line: string) => void): Promise<string>;
+    spawnPi(): Promise<boolean>;
+  },
+  name: string,
+  refreshInputs: () => Promise<void>,
+  log: (line: string) => void,
+): Promise<void> {
+  await lc.removeContainer();
+  await lc.buildImage(log);
+  await refreshInputs();
+  const outcome = await lc.ensureUp(log);
+  const born = await lc.spawnPi();
+  log(
+    `companion ${name}: image rebuilt, ${outcome}; pi session ${born ? "spawned" : "already running"}`,
+  );
+}
+
 export async function cmdCompanion(sub: string | undefined): Promise<void> {
   const { CompanionLifecycle, companionStateWord, realDockerRunner } =
     await import("./tui/companion.js");
   const cfg = loadConfig().companion;
   const lc = new CompanionLifecycle(cfg, realDockerRunner);
+  // What every start publishes before pi spawns: the read-only GitHub token
+  // and the config mirror. Both are one-shot — nothing refreshes them after
+  // this command exits (the TUI does, while it runs).
+  const refreshInputs = async (): Promise<void> => {
+    const { CompanionGithubToken, tokenOutcomeLine } = await import("./tui/ghread.js");
+    const { companionGithubDir } = await import("./install.js");
+    const full = loadConfig();
+    const gh = await new CompanionGithubToken({
+      dir: companionGithubDir(),
+      repo: full.github.repo,
+      secretsDir: full.github.secrets_dir,
+    }).refresh();
+    console.log(`companion ${cfg.container_name}: ${tokenOutcomeLine(gh)}`);
+    const mirror = lc.syncConfigMirror();
+    console.log(
+      `companion ${cfg.container_name}: config mirror ${typeof mirror === "object" ? `NOT refreshed — ${mirror.failed}` : mirror}`,
+    );
+  };
   switch (sub) {
     case "up": {
-      // Mint the read-only GitHub token first. One-shot: nothing
-      // refreshes it after this command exits (the TUI does, while it runs).
-      const { CompanionGithubToken, tokenOutcomeLine } = await import("./tui/ghread.js");
-      const { companionGithubDir } = await import("./install.js");
-      const full = loadConfig();
-      const gh = await new CompanionGithubToken({
-        dir: companionGithubDir(),
-        repo: full.github.repo,
-        secretsDir: full.github.secrets_dir,
-      }).refresh();
-      console.log(`companion ${cfg.container_name}: ${tokenOutcomeLine(gh)}`);
-      // One-shot too: the config mirror reflects the config as of now.
-      const mirror = lc.syncConfigMirror();
-      console.log(
-        `companion ${cfg.container_name}: config mirror ${typeof mirror === "object" ? `NOT refreshed — ${mirror.failed}` : mirror}`,
-      );
+      await refreshInputs();
       const outcome = await lc.ensureUp();
       const born = await lc.spawnPi();
       console.log(
@@ -1329,13 +1325,7 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
       // explicit "apply what I changed" path. The pihome volume is untouched,
       // so OAuth and the conversation survive; only the container and image
       // are replaced.
-      await lc.removeContainer();
-      await lc.buildImage((line) => console.log(line));
-      const outcome = await lc.ensureUp((line) => console.log(line));
-      const born = await lc.spawnPi();
-      console.log(
-        `companion ${cfg.container_name}: image rebuilt, ${outcome}; pi session ${born ? "spawned" : "already running"}`,
-      );
+      await rebuildCompanion(lc, cfg.container_name, refreshInputs, (line) => console.log(line));
       return;
     }
     default:
@@ -1360,15 +1350,10 @@ export async function cmdMemory(rest: string[]): Promise<number> {
   const sub = rest[0];
   if (sub === "relayout") return cmdMemoryRelayout(rest.slice(1));
   if (sub !== "reembed") throw new Error(MEMORY_USAGE);
+  const named = parseReembedArgs(rest.slice(1));
   const cfg = loadConfig();
   const own = cfg.openviking.user;
-  const userIdx = rest.indexOf("--user");
-  const users =
-    userIdx >= 0
-      ? String(rest[userIdx + 1] ?? "")
-          .split(/[,\s]+/)
-          .filter(Boolean)
-      : cfg.openviking.provision_users.filter((u) => u !== own);
+  const users = named ?? cfg.openviking.provision_users.filter((u) => u !== own);
   if (users.length === 0)
     throw new Error(
       "usage: qcr memory reembed [--user <name>[,<name>…]] — no namespace to re-embed",
@@ -1392,16 +1377,7 @@ export async function cmdMemory(rest: string[]): Promise<number> {
     module: await loadReembedModule(sandboxRoot()),
     base,
     users,
-    keyFor: (user) => {
-      const names = (USER_KEY_ENV as Record<string, readonly string[]>)[user] ?? [
-        `OPENVIKING_${user.toUpperCase()}_KEY`,
-      ];
-      for (const name of names) {
-        const v = readKey(name);
-        if (v) return v;
-      }
-      return null;
-    },
+    keyFor: (user) => namespaceKey(user, USER_KEY_ENV, readKey).key,
     log: (line) => console.log(line),
   });
   for (const r of results) console.log(`  ${r.user}: ${r.status} — ${r.detail}`);
@@ -1421,6 +1397,41 @@ export async function cmdMemory(rest: string[]): Promise<number> {
 
 const MEMORY_USAGE =
   "usage: qcr memory reembed [--user <name>[,<name>…]] | qcr memory relayout [--plan|--apply] [--user <name>]";
+
+/** A plain memory namespace name — the only shape a `--user` may take. */
+const NAMESPACE_RE = /^[a-z][a-z0-9_-]*$/;
+
+/**
+ * The flags of `qcr memory reembed` (after the verb): the namespaces `--user`
+ * names, or null when it is absent (the caller's default set). An unknown
+ * token or a repeated or empty `--user` is refused rather than ignored — a
+ * mistyped flag must not quietly re-embed the default namespaces instead.
+ */
+export function parseReembedArgs(rest: readonly string[]): string[] | null {
+  let users: string[] | null = null;
+  for (let i = 0; i < rest.length; i += 1) {
+    if (rest[i] !== "--user" || users !== null) throw new Error(MEMORY_USAGE);
+    users = String(rest[i + 1] ?? "")
+      .split(/[,\s]+/)
+      .filter(Boolean);
+    i += 1;
+    if (users.length === 0) throw new Error(MEMORY_USAGE);
+  }
+  return users;
+}
+
+/** The keys-file names that may hold `user`'s key — a known user's own
+ * list, else `OPENVIKING_<USER>_KEY` — and the first one present. */
+function namespaceKey(
+  user: string,
+  known: Readonly<Record<string, readonly string[]>>,
+  readKey: (name: string) => string | null,
+): { names: readonly string[]; key: string | null } {
+  const names = Object.hasOwn(known, user)
+    ? known[user]!
+    : [`OPENVIKING_${user.toUpperCase()}_KEY`];
+  return { names, key: names.map((n) => readKey(n)).find((v) => v) ?? null };
+}
 
 /**
  * The flags of `qcr memory relayout`, or the usage error. `--plan` is the
@@ -1448,7 +1459,7 @@ export function parseRelayoutArgs(
   }
   if (apply && plan) throw new Error(MEMORY_USAGE);
   const name = user ?? defaultUser();
-  if (!/^[a-z][a-z0-9_-]*$/.test(name)) throw new Error(MEMORY_USAGE);
+  if (!NAMESPACE_RE.test(name)) throw new Error(MEMORY_USAGE);
   return { apply, user: name };
 }
 
@@ -1479,10 +1490,7 @@ export async function cmdMemoryRelayout(rest: string[]): Promise<number> {
   ]);
   const keysFile = keysFilePath(process.env);
   const readKey = keysFileReader(keysFile);
-  const names = (USER_KEY_ENV as Record<string, readonly string[]>)[user] ?? [
-    `OPENVIKING_${user.toUpperCase()}_KEY`,
-  ];
-  const key = names.map((n) => readKey(n)).find((v) => v) ?? null;
+  const { names, key } = namespaceKey(user, USER_KEY_ENV, readKey);
   if (!key) {
     console.log(`no key for the ${user} namespace in ${keysFile} (${names.join(" or ")})`);
     return 1;
@@ -1874,6 +1882,9 @@ export async function main(argv: string[]): Promise<void> {
           "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
+      // A bare `qcr` (or an explicit help) is a usage request; anything else
+      // here is an unknown command, which must not look like success.
+      if (cmd !== undefined && !["help", "--help", "-h"].includes(cmd)) process.exitCode = 1;
       loadConfig(); // surface config errors early even on bad usage
   }
 }

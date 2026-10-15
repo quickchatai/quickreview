@@ -129,6 +129,8 @@ function harness(
     whyStdout?: string;
     dryrun?: Record<string, unknown>[];
     dryrunListCode?: number;
+    /** The index of a listed dry-run file whose read fails. */
+    unreadable?: number;
     daemonRunning?: boolean;
     pollAttempts?: number;
   } = {},
@@ -160,14 +162,18 @@ function harness(
       if (args.includes("ls")) {
         if (o.dryrunListCode)
           return { code: o.dryrunListCode, stdout: "", stderr: "ls: no such directory" };
+        // Named the way the gate names them: the write time, then a sequence.
         const names = (o.dryrun ?? [LABEL_RECORD, REVIEW_RECORD]).map(
-          (_, i) => `2026-08-30T11-5${i}-00-000Z-000${i}-rec.json`,
+          (rec, i) =>
+            `${(typeof rec.recorded_at === "string" ? rec.recorded_at : `2026-08-30T11:5${i}:00.000Z`).replace(/[:.]/g, "-")}-000${i}-rec.json`,
         );
         return { code: 0, stdout: `${names.join("\n")}\n`, stderr: "" };
       }
       if (args.includes("cat")) {
         const path = args[args.length - 1]!;
         const index = Number(/-000(\d)-rec\.json$/.exec(path)?.[1] ?? -1);
+        if (index === o.unreadable)
+          return { code: 1, stdout: "", stderr: "cat: Permission denied" };
         const records = o.dryrun ?? [LABEL_RECORD, REVIEW_RECORD];
         const rec = records[index];
         return rec
@@ -343,7 +349,7 @@ describe("following the round to completion", () => {
     const h = harness();
     const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
     const detail = result.checks.find((c) => c.name === "nothing-posted")!.detail;
-    expect(detail).toMatch(/2 would-be GitHub calls were recorded/);
+    expect(detail).toMatch(/2 would-be GitHub calls for #17 were recorded/);
     expect(detail).toMatch(/none was executed/);
   });
 });
@@ -389,7 +395,8 @@ describe("the two paths that actually happen", () => {
     const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(/no recorded review for #17/);
-    expect(result.failures.join(" ")).toMatch(/grep dry_run config\.toml/);
+    // The live config the install locator found — never a checkout-relative one.
+    expect(result.failures.join(" ")).toContain(`grep -n '^dry_run' ${join(root, "config.toml")}`);
     expect(h.engine.choices()[PROOF_CHOICE_KEY]).toBeUndefined();
   });
 
@@ -438,8 +445,64 @@ describe("the two paths that actually happen", () => {
     expect(result.ok).toBe(true);
     // Only the round's own intents are counted (the 11:50 label predates it).
     expect(result.checks.find((c) => c.name === "nothing-posted")!.detail).toMatch(
-      /^1 would-be GitHub call were recorded/,
+      /^1 would-be GitHub call for #17 were recorded/,
     );
+  });
+
+  it("another PR's intents are not counted in this PR's summary", async () => {
+    const other = { ...LABEL_RECORD, path: "/repos/acme/web/issues/99/labels", pr: 99 };
+    const h = harness({ dryrun: [other, REVIEW_RECORD] });
+    const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
+    expect(result.ok).toBe(true);
+    expect(result.checks.find((c) => c.name === "nothing-posted")!.detail).toMatch(
+      /^1 would-be GitHub call for #17 were recorded .* plus 0 other intents/,
+    );
+  });
+
+  it("a recorded file it could not read is named, with its cause — not blamed on dry_run", async () => {
+    // The listing names the review's file; reading it fails.
+    const h = harness({ dryrun: [LABEL_RECORD, REVIEW_RECORD], unreadable: 1 });
+    const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
+    expect(result.ok).toBe(false);
+    const detail = result.failures.join(" ");
+    expect(detail).toMatch(/1 recorded file could not be read/);
+    expect(detail).toMatch(/-0001-rec\.json: cat: Permission denied/);
+  });
+
+  it("the review is found even when more than the read limit of newer files follow it", async () => {
+    const seen: string[] = [];
+    const runner = {
+      run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
+        if (args.includes("ls")) {
+          const names = [
+            "2026-08-30T11-58-00-000Z-0000-create_review.json",
+            ...Array.from(
+              { length: 45 },
+              (_, i) =>
+                `2026-08-30T11-59-${String(i).padStart(2, "0")}-000Z-${1000 + i}-add_label.json`,
+            ),
+          ];
+          return { code: 0, stdout: names.join("\n"), stderr: "" };
+        }
+        const path = args.at(-1) ?? "";
+        seen.push(path);
+        return {
+          code: 0,
+          stdout: JSON.stringify(path.includes("create_review") ? REVIEW_RECORD : LABEL_RECORD),
+          stderr: "",
+        };
+      },
+    };
+    const read = await readContainerDryrun(transportFor(runner, {}), 40);
+    expect(read.records.some((r) => r.kind === "create_review")).toBe(true);
+    // A start time narrows the listing BEFORE the limit.
+    seen.length = 0;
+    const later = await readContainerDryrun(transportFor(runner, {}), 40, {
+      since: Date.parse("2026-08-30T11:59:30.000Z"),
+    });
+    expect(later.records.some((r) => r.kind === "create_review")).toBe(false);
+    expect(seen.every((p) => p.includes("11-59-"))).toBe(true);
+    expect(seen).toHaveLength(15);
   });
 
   it("a missing dry-run directory is explained rather than crashed on", async () => {

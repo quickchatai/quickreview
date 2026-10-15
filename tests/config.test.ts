@@ -74,6 +74,19 @@ describe("parseConfig", () => {
     expect(() => parseConfig(invalid)).toThrow(/round_first_pass_max_min/);
   });
 
+  it("refuses a non-finite or non-numeric stage bound, which the ordering alone would pass", () => {
+    const shipped = readFileSync(configPath, "utf8");
+    for (const [from, to] of [
+      ["session_command_running_max_min = 45", "session_command_running_max_min = inf"],
+      ["session_command_running_max_min = 45", 'session_command_running_max_min = "60"'],
+      ["round_finalize_grace_min = 5", 'round_finalize_grace_min = "5"'],
+    ] as const) {
+      const bad = shipped.replace(from, to);
+      expect(bad, to).not.toBe(shipped);
+      expect(() => parseConfig(bad), to).toThrow(/require finite numbers/);
+    }
+  });
+
   it("the posted-tail grace defaults to 15 minutes and must be positive", () => {
     expect(cfg.daemon.round_posted_tail_grace_min).toBe(15);
     const set = (line: string) =>
@@ -152,6 +165,32 @@ describe("[ops] timezone", () => {
     // The fixture sets both sections explicitly — they keep their own zone.
     expect(cfg.eod.timezone).toBe("Europe/Warsaw");
     expect(cfg.slack.policy.timezone).toBe("Europe/Warsaw");
+  });
+
+  it("rejects an [eod] or (live) [slack.policy] override Intl does not know, as it does [ops]", () => {
+    const badEod = shipped.replace(
+      'time = "18:00"\ntimezone = "Europe/Warsaw"',
+      'time = "18:00"\ntimezone = "Mars/Olympus_Mons"',
+    );
+    expect(badEod).not.toBe(shipped);
+    expect(() => parseConfig(badEod)).toThrowError(
+      /\[eod\] timezone 'Mars\/Olympus_Mons' is not a valid IANA timezone/,
+    );
+    const badSlack = shipped.replace(
+      /^timezone = "Europe\/Warsaw"( +# the day boundary.*)$/m,
+      'timezone = "Mars/Olympus_Mons"$1',
+    );
+    expect(badSlack).not.toBe(shipped);
+    // A switched-off concierge is a draft: nothing reads its clock.
+    expect(parseConfig(badSlack).slack.policy.timezone).toBe("Mars/Olympus_Mons");
+    const live = badSlack.replace(
+      /^\[slack\]\n((?:#.*\n)*)enabled = false/m,
+      "[slack]\n$1enabled = true",
+    );
+    expect(live).not.toBe(badSlack);
+    expect(() => parseConfig(live)).toThrowError(
+      /\[slack\.policy\] timezone 'Mars\/Olympus_Mons' is not a valid IANA timezone/,
+    );
   });
 
   it("rejects a zone Intl does not know — same check the EOD formatter would hit at 18:00", () => {

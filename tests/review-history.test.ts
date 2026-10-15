@@ -421,8 +421,16 @@ describe("structure", () => {
       cli.indexOf("export async function cmdHistory"),
       cli.indexOf("export async function cmdRegression"),
     );
-    expect(body).toMatch(
-      /new MutationGate\(true, join\(stateDir\(\), "dryrun"\), async \(\) => \{\n\s+throw new Error\("qcr history performs no mutations"\);/,
+    expect(body).toMatch(/recordOnlyGate\(join\(stateDir\(\), "dryrun"\), "qcr history"\)/);
+    expect(body).not.toMatch(/new MutationGate/);
+    // …and that helper is a dry-run gate whose executor refuses
+    // (tests/outcomes.test.ts drives it); here its shape is pinned too.
+    const helper = cli.slice(
+      cli.indexOf("export function recordOnlyGate"),
+      cli.indexOf("export async function captureOutcomesWindow"),
+    );
+    expect(helper).toMatch(
+      /new MutationGate\(true, dryrunDir, async \(\) => \{\n\s+throw new Error\(`\$\{command\} performs no mutations`\);/,
     );
     expect(body).not.toMatch(/writeFileSync|stateHome\(\)[^;]*digest/);
   });

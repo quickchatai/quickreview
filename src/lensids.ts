@@ -35,3 +35,17 @@ export function canonicalLensIds(raw: string | null | undefined): string[] {
   }
   return ids;
 }
+
+/** The `round_findings.lens_ids` column as stored — a JSON array of the ids
+ * `canonicalLensIds` parsed, its non-string elements dropped — or null when
+ * the column is empty or not such an array (each reader picks its own
+ * fallback). */
+export function storedLensIds(column: string | null | undefined): string[] | null {
+  if (!column) return null;
+  try {
+    const parsed = JSON.parse(column) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : null;
+  } catch {
+    return null;
+  }
+}

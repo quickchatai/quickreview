@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   cancellationsOn,
+  main,
+  parseReembedArgs,
   parseRelayoutArgs,
+  rebuildCompanion,
   renderStatus,
   todayCancellationLine,
   todayJson,
@@ -295,5 +298,77 @@ describe("qcr memory relayout — flags", () => {
       expect(() => parseRelayoutArgs(rest, fromConfig), rest.join(" ")).toThrow(
         /usage: qcr memory .*relayout \[--plan\|--apply\]/,
       );
+  });
+});
+
+describe("qcr companion rebuild", () => {
+  it("refreshes the token and config mirror after the build and before the new container starts", async () => {
+    const order: string[] = [];
+    const lines: string[] = [];
+    await rebuildCompanion(
+      {
+        removeContainer: async () => void order.push("remove"),
+        buildImage: async () => void order.push("build"),
+        ensureUp: async () => {
+          order.push("ensureUp");
+          return "created";
+        },
+        spawnPi: async () => {
+          order.push("spawnPi");
+          return true;
+        },
+      },
+      "qcr-companion",
+      async () => void order.push("refresh"),
+      (l) => lines.push(l),
+    );
+    expect(order).toEqual(["remove", "build", "refresh", "ensureUp", "spawnPi"]);
+    expect(lines.at(-1)).toBe(
+      "companion qcr-companion: image rebuilt, created; pi session spawned",
+    );
+  });
+});
+
+describe("qcr memory reembed — flags", () => {
+  it("names namespaces with --user, and leaves the default set to the caller without it", () => {
+    expect(parseReembedArgs([])).toBeNull();
+    expect(parseReembedArgs(["--user", "companion"])).toEqual(["companion"]);
+    expect(parseReembedArgs(["--user", "companion,reviewer"])).toEqual(["companion", "reviewer"]);
+  });
+
+  it("refuses an unknown token, an empty --user and a repeated one rather than re-embedding the defaults", () => {
+    for (const rest of [
+      ["--usr", "reviewer"],
+      ["reviewer"],
+      ["--user"],
+      ["--user", ""],
+      ["--user", "a", "--user", "b"],
+      ["--user", "a", "--force"],
+    ])
+      expect(() => parseReembedArgs(rest), rest.join(" ")).toThrow(/usage: qcr memory reembed/);
+  });
+});
+
+describe("qcr with an unknown command", () => {
+  it("prints the usage and exits non-zero; a bare qcr or help stays a usage request", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const saved = process.exitCode;
+    try {
+      for (const [argv, code] of [
+        [["no-such-command"], 1],
+        [[], undefined],
+        [["help"], undefined],
+      ] as const) {
+        process.exitCode = undefined;
+        // The config check after the usage may throw on a machine without
+        // one; the exit code is set before it either way.
+        await main([...argv]).catch(() => {});
+        expect(process.exitCode, argv.join(" ") || "(none)").toBe(code);
+      }
+      expect(log.mock.calls[0]?.[0]).toMatch(/^usage: qcr /);
+    } finally {
+      process.exitCode = saved;
+      log.mockRestore();
+    }
   });
 });

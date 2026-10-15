@@ -476,6 +476,42 @@ describe("the deploy composes the real script, at full strictness", () => {
     expect(asked.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
   });
 
+  it("a later deploy is a rebuild when the inventory's host settings changed since — a sync skips host provisioning", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS} cloudflared_enabled=true\n`);
+    const changed = deployHarness({
+      choices: {
+        ...VM_CHOICES,
+        [VM_DEPLOY_CHOICE_KEY]: {
+          mode: "rebuild",
+          at: "2026-08-30T10:00:00Z",
+          host: ALIAS,
+          host_vars: { cloudflared_enabled: "false" },
+        },
+      },
+    });
+    const result = await changed.engine.runStep(VM_DEPLOY_STEP_ID);
+    expect(changed.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
+    expect(result.checks.find((c) => c.name === "mode")!.detail).toMatch(/cloudflared_enabled/);
+    // What it deployed with is recorded, so the next run compares against it.
+    expect(changed.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({
+      host_vars: { cloudflared_enabled: "true" },
+    });
+
+    const same = deployHarness({
+      choices: {
+        ...VM_CHOICES,
+        [VM_DEPLOY_CHOICE_KEY]: {
+          mode: "rebuild",
+          at: "2026-08-30T10:00:00Z",
+          host: ALIAS,
+          host_vars: { cloudflared_enabled: "true" },
+        },
+      },
+    });
+    await same.engine.runStep(VM_DEPLOY_STEP_ID);
+    expect(same.runs.map((r) => r.at(-1))).toEqual(["sync", "sync"]);
+  });
+
   it("a deploy recorded for another host does not make a fresh host's first deploy a sync", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     for (const record of [
@@ -681,6 +717,69 @@ describe("the transport is the one decision point", () => {
   });
 });
 
+describe("the ssh transport's probes and restart", () => {
+  function sshWith(answer: (line: string) => ProcessResult) {
+    seedChoices(VM_CHOICES);
+    const calls: string[] = [];
+    const runner = {
+      run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
+        const line = args.join(" ");
+        calls.push(line);
+        return answer(line);
+      },
+    };
+    const ctx: StepContext = {
+      adapters: baseAdapters(runner),
+      input: {},
+      choices: VM_CHOICES,
+      data: {},
+      recordChoice: () => undefined,
+    };
+    return { calls, ctx };
+  }
+  const ok = (stdout: string): ProcessResult => ({ code: 0, stdout, stderr: "" });
+
+  it("picks its container out of docker's substring filter by EXACT name", async () => {
+    // Only a sibling whose name merely starts with ours is running.
+    const { ctx } = sshWith(() => ok("quickreview-sandbox-backup running\n"));
+    const t = stackTransportFor(ctx);
+    expect((await t.daemonState()).state).toBe("stopped");
+    const [check] = await t.containerChecks(null);
+    expect(check).toMatchObject({ ok: false });
+    expect(check!.detail).toMatch(/is not there at all/);
+    // The real one among siblings is found whatever the row order.
+    const both = sshWith(() => ok("quickreview-sandbox-old exited\nquickreview-sandbox running\n")).ctx;
+    expect((await stackTransportFor(both).containerChecks(null))[0]).toMatchObject({ ok: true });
+  });
+
+  it("the health probe honours the step's health budget", async () => {
+    const { ctx, calls } = sshWith(() => ok('{"ok":true}\n200'));
+    await stackTransportFor(ctx, { healthTimeoutMs: 30_000 }).health();
+    expect(calls.find((c) => c.includes("curl"))).toMatch(/curl -sS -m 30 /);
+  });
+
+  it("a STOPPED deployed container keeps the change owed — never 'nothing to restart'", async () => {
+    const { ctx } = sshWith((line) =>
+      line.includes("ps --all") ? ok("quickreview-sandbox\n") : ok(""),
+    );
+    const r = await stackTransportFor(ctx).restart(() => undefined, false);
+    expect(r.ok).toBe(false);
+    expect(r.detail).toMatch(/exists but is not running/);
+    expect(r.detail).toMatch(/deploy\.sh sync/);
+  });
+
+  it("a server never deployed to has nothing to restart; one Docker cannot answer for is not 'done'", async () => {
+    const never = sshWith(() => ok("quickreview-sandbox-other\n")).ctx;
+    const r = await stackTransportFor(never).restart(() => undefined, false);
+    expect(r).toMatchObject({ ok: true });
+    expect(r.detail).toMatch(/nothing is deployed on the server yet/);
+    const down = sshWith(() => ({ code: 255, stdout: "", stderr: "ssh: connect refused" })).ctx;
+    const u = await stackTransportFor(down).restart(() => undefined, false);
+    expect(u.ok).toBe(false);
+    expect(u.detail).toMatch(/NOT known to be on the server/);
+  });
+});
+
 describe("the layered verification runs over ssh, unchanged", () => {
   interface Layered {
     engine: OnboardingEngine;
@@ -693,6 +792,7 @@ describe("the layered verification runs over ssh, unchanged", () => {
       cloudflared?: string;
       health?: ProcessResult;
       ingress?: string;
+      pingStatus?: number;
     } = {},
   ): Layered {
     seedChoices({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: o.ingress ?? "named" });
@@ -727,7 +827,7 @@ describe("the layered verification runs over ssh, unchanged", () => {
               id: 1,
               event: "ping",
               status: "OK",
-              status_code: 200,
+              status_code: o.pingStatus ?? 200,
               delivered_at: "2026-08-30T11:59:00Z",
               redelivery: false,
             },
@@ -737,7 +837,12 @@ describe("the layered verification runs over ssh, unchanged", () => {
       }
       throw new Error(`unexpected fetch ${url}`);
     }) as unknown as typeof fetch;
-    const step = verifyStackStep({ apiBase: API, secretsDir, sleep: async () => undefined });
+    const step = verifyStackStep({
+      apiBase: API,
+      secretsDir,
+      sleep: async () => undefined,
+      redeliver: false,
+    });
     return { engine: new OnboardingEngine([step], baseAdapters(runner, fetchFake)), calls };
   }
 
@@ -807,6 +912,15 @@ describe("the layered verification runs over ssh, unchanged", () => {
     expect(result.checks.find((c) => c.name === "ingress-sidecar")!.detail).toMatch(
       /no cloudflared service is active on review-box/,
     );
+  });
+
+  it("a failed ping on this route points at the cloudflared service's journal, not a compose sidecar", async () => {
+    const h = layered({ pingStatus: 502 });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(false);
+    const said = result.checks.find((c) => c.name === "ping-delivery")!.detail;
+    expect(said).toMatch(/ssh review-box journalctl -u cloudflared/);
+    expect(said).not.toMatch(/docker compose logs/);
   });
 
   it("a health endpoint that answers nothing says where to look, over ssh", async () => {

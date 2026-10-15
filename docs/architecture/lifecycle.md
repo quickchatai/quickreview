@@ -178,7 +178,10 @@ cannot stall the daemon (failures land in `report.errors`):
 
 `reconcileOrphanedRounds()` runs at startup: a round whose tmux session did not
 survive a restart is cancelled with the quiet `orphan_sweep` cause and the PR is
-requeued (or its recorded successor head promoted).
+requeued (or its recorded successor head promoted). A round whose review
+posting the outbox still owes (a pending `posting-receipts/*.outbox.json` job)
+is kept running instead (`orphaned_round_posting_owed`): the outbox delivers it
+without a session, and it settles from its receipt.
 
 ## 4. Dispatch: FIFO, and the round order
 

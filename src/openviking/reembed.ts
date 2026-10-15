@@ -126,6 +126,12 @@ const defaultSchedule: Schedule = (fn, ms) => {
   return () => clearTimeout(t);
 };
 
+/** A journal state with a re-embed still owed by this host: the one test the
+ * boot, the tick and the retry all apply. */
+function outstanding(state: ReembedJournalStatus["state"] | undefined): boolean {
+  return state === "pending" || state === "failed";
+}
+
 function sameEmbedder(a: Embedder, b: Embedder): boolean {
   return (
     a.provider === b.provider && a.model === b.model && Number(a.dimension) === Number(b.dimension)
@@ -191,7 +197,7 @@ export class ReembedDriver {
     this.checkDrift();
     if (!this.refresh()) return;
     const state = this.journal?.state;
-    if (state === "pending" || state === "failed") {
+    if (outstanding(state)) {
       this.deps.log(
         `openviking: reembed of ${this.deps.cfg.user} memory is outstanding (${state}) — resuming once the server is ready`,
       );
@@ -267,8 +273,7 @@ export class ReembedDriver {
   private async tick(): Promise<void> {
     if (this.stopped || this.inFlight || !this.module) return;
     if (!this.refresh()) return;
-    const state = this.journal?.state;
-    if (state !== "pending" && state !== "failed") return;
+    if (!outstanding(this.journal?.state)) return;
     if (!this.deps.ready()) {
       this.arm(this.deps.pollMs ?? REEMBED_POLL_MS);
       return;
@@ -304,8 +309,7 @@ export class ReembedDriver {
       this.inFlight = false;
     }
     this.refresh();
-    const after = this.journal?.state;
-    if (after === "pending" || after === "failed") this.arm(this.deps.retryMs ?? REEMBED_RETRY_MS);
+    if (outstanding(this.journal?.state)) this.arm(this.deps.retryMs ?? REEMBED_RETRY_MS);
   }
 
   /** The `reembed` block of the heartbeat's `openviking` entry. Total.
@@ -316,20 +320,13 @@ export class ReembedDriver {
     const base: ReembedStatus = { state: "unknown", attempts: this.attempts };
     try {
       this.refresh();
-      const j = this.journal;
+      // The journal's own fields, forwarded whole (an empty awaiting list
+      // is dropped: nothing is awaiting).
+      const { awaiting_operator: awaiting, ...journal } = this.journal ?? {};
       return {
         ...base,
-        ...(j
-          ? {
-              state: j.state,
-              ...(j.embedder ? { embedder: j.embedder } : {}),
-              ...(j.previous !== undefined ? { previous: j.previous } : {}),
-              ...(j.reset_at ? { reset_at: j.reset_at } : {}),
-              ...(j.moved_to ? { moved_to: j.moved_to } : {}),
-              ...(j.awaiting_operator?.length ? { awaiting_operator: j.awaiting_operator } : {}),
-              ...(j.namespaces ? { namespaces: j.namespaces } : {}),
-            }
-          : {}),
+        ...journal,
+        ...(awaiting?.length ? { awaiting_operator: awaiting } : {}),
         ...(this.lastRunAt ? { last_run_at: this.lastRunAt } : {}),
         ...((this.lastError ?? this.unknownWhy)
           ? { last_error: this.lastError ?? this.unknownWhy }
@@ -377,6 +374,9 @@ export async function reembedNamespaces(opts: {
   fetchFn?: ReembedFetch;
 }): Promise<{ ok: boolean; results: OperatorReembedResult[] }> {
   const results: OperatorReembedResult[] = [];
+  // Whether each namespace finished clean — read from the counts, never from
+  // the words the detail renders them in.
+  const clean: boolean[] = [];
   for (const user of opts.users) {
     const key = opts.keyFor(user);
     if (!key) {
@@ -385,6 +385,7 @@ export async function reembedNamespaces(opts: {
         status: "no-key",
         detail: `no ${user} key on this machine — nothing was sent`,
       });
+      clean.push(false);
       continue;
     }
     const run = await opts.module.reindexNamespace({
@@ -400,9 +401,7 @@ export async function reembedNamespaces(opts: {
           (run.failed_records ? ` — ${run.failed_records} FAILED (run it again)` : "")
         : (run.detail ?? run.status);
     results.push({ user, status: run.status, detail });
+    clean.push(run.status === "completed" && !run.failed_records);
   }
-  return {
-    ok: results.every((r) => r.status === "completed" && !/FAILED/.test(r.detail)),
-    results,
-  };
+  return { ok: clean.every(Boolean), results };
 }

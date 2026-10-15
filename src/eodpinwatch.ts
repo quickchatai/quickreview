@@ -35,6 +35,7 @@
 // acting. Silent-but-wrong would be worse than honest-and-occasionally-noisy.
 
 import { createHash } from "node:crypto";
+import { EOD_PINNED_WATCHDOG_WINDOW_MIN } from "./config.js";
 import { zoneDateString, zonedParts, type TimerHandle } from "./eod.js";
 
 /** The loud kind: the pinned area is not what it was when the sweep started.
@@ -52,7 +53,7 @@ export const EOD_PIN_WATCH_DEFAULTS = {
   /** How long the window stays open when the digest never appears. The sweep
    * is a single overseer conversation; 90 minutes is generous for it and short
    * enough that the "after" read still lands the same evening. */
-  windowMin: 90,
+  windowMin: EOD_PINNED_WATCHDOG_WINDOW_MIN,
   /** How often the digest-arrival signal is checked. Cheap `existsSync`. */
   pollMs: 60_000,
   /** Deadline on ONE pinned read. Bounds how long a window close waits on a
