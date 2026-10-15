@@ -57,8 +57,12 @@ export interface ArmCasePrep {
  * --resume every case goes; with it, every case whose recorded fingerprint
  * differs goes now, not when the loop reaches it — a stop partway
  * (AuthExpiring) must leave those cases incomplete, never scored under the new
- * label. The run's metrics go with the first result removed or rewritten; a
- * resume that keeps every case keeps them.
+ * label. A case with no summary of this arm (an interrupted review: its
+ * result is written before its summary) is re-reviewed by the loop, so any
+ * result or judge input it left goes now too — nothing unverified is scored
+ * under the new label. The run's metrics go BEFORE the first file is removed
+ * (and with the first result rewritten), so no stop can leave a score of
+ * findings already gone; a resume that keeps every case keeps them.
  */
 export function prepareArmCases(o: {
   outDir: string;
@@ -81,19 +85,32 @@ export function prepareArmCases(o: {
   };
   const want = JSON.stringify(o.fingerprint);
   const dropped: string[] = [];
+  const clear: string[][] = [];
   for (const c of o.cases) {
-    const prior = o.resume ? o.readSummary(o.outDir, c) : null;
-    if (o.resume && (!prior || JSON.stringify(prior.fingerprint) === want)) continue;
-    if (prior) {
-      o.log(`${o.arm}: ${c.instance_id} was reviewed by ${o.differs} — its result is dropped`);
-      dropped.push(c.instance_id);
-    }
     const caseDir = join(o.outDir, "cases", safeId(c.instance_id));
-    rmSync(join(caseDir, "case-summary.json"), { force: true });
-    for (const f of JUDGE_INPUT_FILES) rmSync(join(caseDir, f), { force: true });
-    rmSync(join(resultsDir, `${safeId(c.instance_id)}.json`), { force: true });
+    const files = [
+      join(caseDir, "case-summary.json"),
+      ...JUDGE_INPUT_FILES.map((f) => join(caseDir, f)),
+      join(resultsDir, `${safeId(c.instance_id)}.json`),
+    ];
+    if (o.resume) {
+      const prior = o.readSummary(o.outDir, c);
+      if (prior) {
+        if (JSON.stringify(prior.fingerprint) === want) continue;
+        o.log(`${o.arm}: ${c.instance_id} was reviewed by ${o.differs} — its result is dropped`);
+        dropped.push(c.instance_id);
+      } else {
+        const left = files.slice(1).filter((f) => existsSync(f));
+        if (!left.length) continue;
+        o.log(
+          `${o.arm}: ${c.instance_id} left a result without a case summary (an interrupted review) — dropped; it is reviewed again`,
+        );
+      }
+    }
+    clear.push(files);
   }
-  if (!o.resume || dropped.length) dropMetrics();
+  if (!o.resume || clear.length) dropMetrics();
+  for (const files of clear) for (const f of files) rmSync(f, { force: true });
   return { beforeReview: dropMetrics, dropped };
 }
 

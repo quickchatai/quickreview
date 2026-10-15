@@ -82,6 +82,39 @@ describe("a run dir set up for a new configuration", () => {
     expect(log.join("\n")).toContain(`x: ${A.instance_id} was reviewed by another model`);
   });
 
+  it("a resume drops what an interrupted review left without a summary — and the metrics", () => {
+    // A died after writing its result, before its case summary.
+    seed(A, "old");
+    rmSync(join(out, "cases", A.instance_id, "case-summary.json"));
+    seed(B, "new");
+    const log: string[] = [];
+    const p = prep(true, "new", log);
+    expect(p.dropped).toEqual([]);
+    expect(has("results", "all", `${A.instance_id}.json`)).toBe(false);
+    expect(has("cases", A.instance_id, "review.md")).toBe(false);
+    expect(has("cases", A.instance_id, "comments.json")).toBe(false);
+    expect(has("results", "all", `${B.instance_id}.json`)).toBe(true);
+    expect(has("results", "all", "metrics_ocr_round_1.json")).toBe(false);
+    expect(log.join("\n")).toContain(`x: ${A.instance_id} left a result without a case summary`);
+  });
+
+  it("a resume with nothing left by a summary-less case keeps the metrics", () => {
+    seed(B, "m");
+    const p = prep(true, "m");
+    expect(p.dropped).toEqual([]);
+    expect(has("results", "all", "metrics_ocr_round_1.json")).toBe(true);
+  });
+
+  it("removes nothing when a summary cannot be read: no result goes while its score stays", () => {
+    seed(A, "old");
+    seed(B, "new");
+    writeFileSync(join(out, "cases", B.instance_id, "case-summary.json"), "{");
+    expect(() => prep(true, "new")).toThrow();
+    // Both stay, so the metrics still describe the results beside them.
+    expect(has("results", "all", `${A.instance_id}.json`)).toBe(true);
+    expect(has("results", "all", "metrics_ocr_round_1.json")).toBe(true);
+  });
+
   it("a resume that keeps every case keeps the metrics until a case is reviewed again", () => {
     seed(A, "m");
     seed(B, "m");
