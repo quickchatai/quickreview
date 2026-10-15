@@ -17,7 +17,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseEventTags } from "../memory/eventtags.js";
-import { claimTrackerId } from "../setup/trackersink.js";
+import { claimTrackerId } from "../trackerid.js";
 import { refOf, type MemoryEntry, type MemoryStore } from "./memory.js";
 
 export const MEMORY_KEY_LINE = "Memory-key:";

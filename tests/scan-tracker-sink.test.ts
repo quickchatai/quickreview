@@ -19,12 +19,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stateHomeFs } from "../src/setup/adapters.js";
+import { claimTrackerId } from "../src/trackerid.js";
 import { claimNextId } from "../src/tui/autofile.js";
 import type { TrackerTicket } from "../src/setup/engine.js";
 import {
   FINGERPRINT_LINE,
   PROMOTED_DIR,
-  claimTrackerId,
   issueTrackerSink,
   isIssueTracker,
   markdownFindingSink,
