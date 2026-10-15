@@ -2863,15 +2863,17 @@ export function parseConfig(toml: string): Config {
 
 function parseSlack(raw: Record<string, any>, defaultTimezone: string): SlackConfig {
   const rawPolicy = (raw.policy ?? {}) as Record<string, any>;
+  // A cause with no cooldown of its own takes the configured default — the
+  // same one an unlisted cause gets (`causePolicy`).
+  const defaultCooldown =
+    rawPolicy.default_cooldown_min ?? SLACK_POLICY_DEFAULTS.default_cooldown_min;
   const causes: Record<string, SlackCausePolicy> = { ...SLACK_CAUSE_DEFAULTS };
   for (const [cause, v] of Object.entries(
     (rawPolicy.causes ?? {}) as Record<string, Partial<SlackCausePolicy>>,
   )) {
     causes[cause] = {
       enabled: v.enabled ?? causes[cause]?.enabled ?? true,
-      cooldown_min: Number(
-        v.cooldown_min ?? causes[cause]?.cooldown_min ?? SLACK_POLICY_DEFAULTS.default_cooldown_min,
-      ),
+      cooldown_min: Number(v.cooldown_min ?? causes[cause]?.cooldown_min ?? defaultCooldown),
     };
   }
   const { causes: _drop, ...policyScalars } = rawPolicy;
