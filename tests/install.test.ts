@@ -1153,7 +1153,7 @@ describe("migrate repoints the compose .env", () => {
       ["app.pem", "RUNNING-PEM\n"],
       ["app_id", "123\n"],
       ["webhook_secret", "s\n"],
-    ])
+    ] as const)
       writeFileSync(join(legacy(), name), text, { mode: 0o600 });
     mkdirSync(secretsHome(env), { recursive: true });
     writeFileSync(join(secretsHome(env), "app.pem"), "OTHER-PEM\n", { mode: 0o600 });
