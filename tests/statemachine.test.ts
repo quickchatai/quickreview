@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
-import { applyEvent, isBotAuthor, transition, type SmEvent } from "../src/statemachine.js";
+import {
+  applyEvent,
+  isBotAuthor,
+  restoreStandingLifecycle,
+  transition,
+  type SmEvent,
+} from "../src/statemachine.js";
 
 // One column per member of the lifecycle union. There is no `awaiting_human`
 // state, so there is no park column.
@@ -147,6 +153,41 @@ describe("applyEvent", () => {
     expect(row.state).toBe("queued");
     expect(row.trigger_ts).toBeTruthy();
     expect(row.author).toBe("alice");
+    store.close();
+  });
+
+  // A trigger that changes nothing is still logged (metrics count it as a
+  // request); one a closed PR absorbed asked for nothing and is not.
+  it("logs a same-state trigger, but not one a closed PR absorbed", () => {
+    const store = open();
+    const transitions = (pr: number): number =>
+      (
+        store.db
+          .prepare("SELECT COUNT(*) AS n FROM events WHERE pr = ? AND kind = 'pr_transition'")
+          .get(pr) as { n: number }
+      ).n;
+    applyEvent(store, 7, { type: "trigger", source: "label" }, { author: "alice" });
+    applyEvent(store, 7, { type: "trigger", source: "label" }, { author: "alice" });
+    expect(transitions(7)).toBe(2);
+    applyEvent(store, 9, { type: "track" }, { author: "alice" });
+    applyEvent(store, 9, { type: "closed" });
+    const before = transitions(9);
+    const res = applyEvent(store, 9, { type: "trigger", source: "label" });
+    expect(res.to).toBe("closed");
+    expect(transitions(9)).toBe(before);
+    store.close();
+  });
+
+  it("a standing-lifecycle restore reports the state the row is really in", () => {
+    const store = open();
+    applyEvent(store, 7, { type: "track" }, { author: "alice" });
+    expect(restoreStandingLifecycle(store, 7, "REQUEST_CHANGES", { reason: "t" })).toBe(
+      "awaiting_author",
+    );
+    applyEvent(store, 7, { type: "closed" });
+    expect(restoreStandingLifecycle(store, 7, "REQUEST_CHANGES", { reason: "t" })).toBe("closed");
+    expect(restoreStandingLifecycle(store, 7, null, { reason: "t" })).toBe("closed");
+    expect(store.getPr(7)!.state).toBe("closed");
     store.close();
   });
 
