@@ -165,7 +165,7 @@ function harness(
         // Named the way the gate names them: the write time, then a sequence.
         const names = (o.dryrun ?? [LABEL_RECORD, REVIEW_RECORD]).map(
           (rec, i) =>
-            `${String(rec.recorded_at ?? `2026-08-30T11:5${i}:00.000Z`).replace(/[:.]/g, "-")}-000${i}-rec.json`,
+            `${(typeof rec.recorded_at === "string" ? rec.recorded_at : `2026-08-30T11:5${i}:00.000Z`).replace(/[:.]/g, "-")}-000${i}-rec.json`,
         );
         return { code: 0, stdout: `${names.join("\n")}\n`, stderr: "" };
       }
