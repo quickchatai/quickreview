@@ -1449,6 +1449,27 @@ describe("the curation receipt", () => {
       lesson_ids: '["experiences/20261007-one.md"]',
     });
   });
+
+  it("a late adoption never rewrites a settled candidate's reason or claimed lesson", async () => {
+    const h = await offered();
+    h.store.db
+      .prepare(
+        "UPDATE lesson_candidates SET status = 'withdrawn', reason = 'withdrawn: its fate is now fixed' WHERE id = 1",
+      )
+      .run();
+    expect(
+      h.learner.applyReceipt({
+        day: "2026-10-07",
+        decisions: [{ candidates: [1], decision: "adopted", lesson: "late-lesson", reason: "late" }],
+      }).ok,
+    ).toBe(true);
+    expect(h.learner.candidate(1)).toMatchObject({
+      status: "withdrawn",
+      reason: "withdrawn: its fate is now fixed",
+      claimed_lesson: null,
+      receipt_day: "2026-10-07",
+    });
+  });
 });
 
 describe("a missing receipt wakes a person", () => {

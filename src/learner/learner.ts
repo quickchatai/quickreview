@@ -260,8 +260,8 @@ CREATE TABLE IF NOT EXISTS learner_recall_scans (
 export type CandidateStatus =
   "open" | "adopting" | "adopted" | "declined" | "expired" | "withdrawn";
 
-/** A candidate in one of these is decided: it leaves the not-persisted lists
- * and is never re-opened by a refused write. */
+/** A candidate in one of these is decided: it leaves the not-persisted lists,
+ * and a refused write re-opens only an expired one (`applyReceipt`). */
 const SETTLED_STATUSES = ["adopted", "declined", "expired", "withdrawn"] as const;
 const SETTLED_SQL = SETTLED_STATUSES.map((s) => `'${s}'`).join(", ");
 
@@ -1122,12 +1122,15 @@ export class Learner {
         for (const id of d.candidates) {
           if (d.decision === "adopted") {
             // An adoption memory already showed stands; an undecided one
-            // waits for the lesson to be found; a settled one is left alone.
+            // waits for the lesson to be found; a settled one keeps its
+            // decision and the reason for it — only the receipt is recorded.
             db.prepare(
               `UPDATE lesson_candidates SET status = CASE WHEN status IN ('open', 'adopting') THEN 'adopting' ELSE status END,
-                 receipt_day = ?, receipt_at = ?, claimed_lesson = ?, reason = COALESCE(?, reason), updated_at = ?
+                 claimed_lesson = CASE WHEN status IN ('open', 'adopting') THEN ? ELSE claimed_lesson END,
+                 reason = CASE WHEN status IN ('open', 'adopting') THEN COALESCE(?, reason) ELSE reason END,
+                 receipt_day = ?, receipt_at = ?, updated_at = ?
                WHERE id = ?`,
-            ).run(receipt.day, at, d.lesson ?? null, d.reason ?? null, at, id);
+            ).run(d.lesson ?? null, d.reason ?? null, receipt.day, at, at, id);
             counts.adopted += 1;
           } else if (d.decision === "declined") {
             // Only an undecided candidate is declined: a declination never
