@@ -11,6 +11,15 @@ import {
   strandedCheckoutConfig,
 } from "./install.js";
 import { globProblem } from "./glob.js";
+import {
+  INTENT_MIN_SUBSTANCE_WORDS,
+  PLACEMENT_MIN_NEW_FILE_LINES,
+  PLACEMENT_MIN_PROD_FILES,
+  QUALITY_MIN_ADDED_LINES,
+  SWEEP_MAX_FILES_PER_GROUP,
+  SWEEP_MAX_LINES_PER_GROUP,
+  SWEEP_WIDE_FILES_PER_GROUP,
+} from "./heuristics.js";
 import type { LensTuningMap } from "./lenstuning.js";
 import type { PostingPolicy } from "./postingpolicy.js";
 import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES } from "./passes.js";
@@ -129,7 +138,8 @@ export interface CompanionConfig {
   feed_dir: string;
   /** Host dir the companion writes alert files into → /alerts. */
   alerts_dir: string;
-  /** Host ssh config dir mounted read-only (VM reads + inject). */
+  /** Accepted so an older config still loads, and read by nothing: the
+   * companion never mounts `~/.ssh` (no ssh config, no agent socket). */
   ssh_dir: string;
   /** Docker build context for the companion image (auto-built when missing). */
   build_context: string;
@@ -185,7 +195,8 @@ export interface SlackPolicyConfig {
   per_user_daily_turns: number;
   /** Daemon posts into any ONE thread per policy day. */
   thread_replies_per_day: number;
-  /** Author ping-pong courtesy limit before the bot goes quiet in-thread. */
+  /** Accepted so an older config still loads, and read by nothing: the
+   * policy's turn caps are the daily and per-person ones above. */
   soft_exchange_limit: number;
   /** Rolling-hour ceiling on announcements (they bypass turn caps, not this). */
   announcements_per_hour: number;
@@ -198,7 +209,9 @@ export interface SlackPolicyConfig {
   heartbeat_interval_min: number;
   storm_corrections: number;
   awaiting_author_stale_h: number;
-  /** "never" (the default): verdicts stay in-thread, never reply_broadcast. */
+  /** Accepted so an older config still loads, and read by nothing: a
+   * verdict always stays in-thread, never `reply_broadcast`, whatever this
+   * says — the announcer has no broadcast parameter. */
   broadcast_verdicts: "never" | "always";
   causes: Record<string, SlackCausePolicy>;
 }
@@ -613,7 +626,8 @@ type PresetLevers = Pick<
   | "lint_conformance"
 >;
 
-/** The lean lever plan — `default` and `low` share it. */
+/** The lean lever plan — `default` and `low` share it. Its thresholds are the
+ * selection's own defaults (src/heuristics.ts), named once there. */
 const LEAN_LEVERS: PresetLevers = {
   sublenses: true,
   sweep: true,
@@ -621,19 +635,19 @@ const LEAN_LEVERS: PresetLevers = {
   // 8 files, so the 500-line budget binds first on most groups: a 5-file cap
   // cut nearly half the sweep rows at a median of 78 changed lines, and 8
   // plans ~17% fewer rows with none unswept.
-  sweep_group_files: 8,
-  sweep_group_lines: 500,
-  sweep_wide_files: 40,
+  sweep_group_files: SWEEP_MAX_FILES_PER_GROUP,
+  sweep_group_lines: SWEEP_MAX_LINES_PER_GROUP,
+  sweep_wide_files: SWEEP_WIDE_FILES_PER_GROUP,
   behaviour_delta: true,
   behaviour_delta_max_groups: 3,
   loosened_test_hint: true,
-  intent_min_words: 60,
-  placement_min_code_files: 8,
-  placement_min_new_file_lines: 30,
+  intent_min_words: INTENT_MIN_SUBSTANCE_WORDS,
+  placement_min_code_files: PLACEMENT_MIN_PROD_FILES,
+  placement_min_new_file_lines: PLACEMENT_MIN_NEW_FILE_LINES,
   dependency_sources: true,
   tests_lens: true,
   quality_lenses: true,
-  quality_min_added_lines: 20,
+  quality_min_added_lines: QUALITY_MIN_ADDED_LINES,
   style_lens: true,
   lint_conformance: true,
 };
@@ -1032,9 +1046,19 @@ export function parseEffort(raw: unknown): ReviewEffort {
     .trim()
     .toLowerCase();
   if (v === "") return "";
-  if (v === "low" || v === "high") return v;
-  if (v === "med" || v === "medium") return "medium";
+  const effort = normalizeEffort(v);
+  if (effort !== null) return effort;
   throw new Error(`config.toml [models] effort must be "", "low", "medium" or "high" (got "${v}")`);
+}
+
+/** The nonempty effort vocabulary every effort knob shares — `low`,
+ * `medium` (alias `med`) and `high`, case- and space-insensitive — or null for
+ * anything else. What an empty value means is each knob's own call. */
+export function normalizeEffort(raw: unknown): "low" | "medium" | "high" | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  if (v === "low" || v === "medium" || v === "high") return v;
+  return v === "med" ? "medium" : null;
 }
 
 function parseEffortMax(raw: unknown): ThinkingLevel {
@@ -1710,6 +1734,9 @@ export interface OpsConfig {
   timezone: string;
 }
 
+/** `[eod] pinned_watchdog_window_min`'s default, and the watchdog's own. */
+export const EOD_PINNED_WATCHDOG_WINDOW_MIN = 90;
+
 /** Neutral default — a config that never names a zone runs on UTC days. */
 export const OPS_DEFAULTS: OpsConfig = { timezone: "UTC" };
 
@@ -1723,6 +1750,13 @@ export function assertIanaTimeZone(tz: string, where: string): string {
     throw new Error(`config.toml: ${where} '${tz}' is not a valid IANA timezone`);
   }
   return tz;
+}
+
+/** A section carrying its own `timezone` (defaulted from [ops]), returned
+ * once that zone passes `assertIanaTimeZone`. */
+function checkSectionTimeZone<T extends { timezone: string }>(section: T, where: string): T {
+  assertIanaTimeZone(String(section.timezone), where);
+  return section;
 }
 
 /**
@@ -2592,14 +2626,17 @@ export function parseConfig(toml: string): Config {
       ...(req(raw, "daemon") as Partial<Config["daemon"]>),
     } as Config["daemon"],
     // heartbeat_time defaults so older configs keep parsing; the timezone
-    // defaults from [ops], own [eod] value wins.
-    eod: {
-      heartbeat_time: "09:00",
-      pinned_watchdog: true,
-      pinned_watchdog_window_min: 90,
-      timezone: ops.timezone,
-      ...(req(raw, "eod") as Partial<Config["eod"]>),
-    } as Config["eod"],
+    // defaults from [ops], own [eod] value wins — and is checked as [ops] is.
+    eod: checkSectionTimeZone(
+      {
+        heartbeat_time: "09:00",
+        pinned_watchdog: true,
+        pinned_watchdog_window_min: EOD_PINNED_WATCHDOG_WINDOW_MIN,
+        timezone: ops.timezone,
+        ...(req(raw, "eod") as Partial<Config["eod"]>),
+      } as Config["eod"],
+      "[eod] timezone",
+    ),
     caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
     models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
     pi: parsePiPassDeadline({
@@ -2798,7 +2835,9 @@ export function parseConfig(toml: string): Config {
   const running =
     cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN;
   const finalize = cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN;
+  const stageBounds = [firstPass, passes, running, finalize] as unknown[];
   if (!(
+    stageBounds.every((v) => typeof v === "number" && Number.isFinite(v)) &&
     firstPass > 0 &&
     firstPass < passes &&
     passes < running &&
@@ -2806,7 +2845,7 @@ export function parseConfig(toml: string): Config {
     finalize < running
   )) {
     throw new Error(
-      "config.toml: require 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
+      "config.toml: require finite numbers 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
     );
   }
   const postedTail = cfg.daemon.round_posted_tail_grace_min ?? DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN;
@@ -2848,15 +2887,17 @@ export function parseConfig(toml: string): Config {
 
 function parseSlack(raw: Record<string, any>, defaultTimezone: string): SlackConfig {
   const rawPolicy = (raw.policy ?? {}) as Record<string, any>;
+  // A cause with no cooldown of its own takes the configured default — the
+  // same one an unlisted cause gets (`causePolicy`).
+  const defaultCooldown =
+    rawPolicy.default_cooldown_min ?? SLACK_POLICY_DEFAULTS.default_cooldown_min;
   const causes: Record<string, SlackCausePolicy> = { ...SLACK_CAUSE_DEFAULTS };
   for (const [cause, v] of Object.entries(
     (rawPolicy.causes ?? {}) as Record<string, Partial<SlackCausePolicy>>,
   )) {
     causes[cause] = {
       enabled: v.enabled ?? causes[cause]?.enabled ?? true,
-      cooldown_min: Number(
-        v.cooldown_min ?? causes[cause]?.cooldown_min ?? SLACK_POLICY_DEFAULTS.default_cooldown_min,
-      ),
+      cooldown_min: Number(v.cooldown_min ?? causes[cause]?.cooldown_min ?? defaultCooldown),
     };
   }
   const { causes: _drop, ...policyScalars } = rawPolicy;
@@ -2876,6 +2917,9 @@ function parseSlack(raw: Record<string, any>, defaultTimezone: string): SlackCon
       causes,
     },
   };
+  // An explicit zone is checked as [ops]'s is — when the concierge is on;
+  // a switched-off section is a draft, and nothing reads its clock.
+  if (slack.enabled) checkSectionTimeZone(slack.policy, "[slack.policy] timezone");
   // Token *files* are names under secrets_dir, but an absolute or ~-rooted
   // override must still work — expand here so every reader sees one shape.
   slack.bot_token_file = expandHome(slack.bot_token_file);
@@ -2912,16 +2956,21 @@ function checkSlackShape(slack: SlackConfig, owner: OwnerConfig): void {
 }
 
 /** How validation reads a secret file. Injectable so tests never need real
- * files; the default is the same read-and-trim every other secret gets. */
+ * files; the default is the same read-and-trim every other secret gets.
+ * Undefined means absent or empty; a file that is there but cannot be read
+ * (permissions, a directory) throws with its cause, so a mount problem is
+ * never reported as a missing token. */
 export type SecretReader = (path: string) => string | undefined;
 
 export const fsSecretReader: SecretReader = (path) => {
+  let v: string;
   try {
-    const v = readFileSync(path, "utf8").trim();
-    return v.length > 0 ? v : undefined;
-  } catch {
-    return undefined;
+    v = readFileSync(path, "utf8").trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Error(`cannot read secret file '${path}': ${(err as Error).message}`);
   }
+  return v.length > 0 ? v : undefined;
 };
 
 /**

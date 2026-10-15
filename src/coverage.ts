@@ -23,12 +23,18 @@
 // files on the round order, the `coverage_gaps` tool
 // (extensions/finding-clusters.ts) answers the uncovered groups.
 
-import { CODE_FILE_RE, isSweepSkipped, isTestFile, type PrFile } from "./heuristics.js";
+import {
+  CODE_FILE_RE,
+  isSweepSkipped,
+  isTestFile,
+  SWEEP_MAX_LINES_PER_GROUP,
+  type PrFile,
+} from "./heuristics.js";
 
 /** At most this many coverage rows per round. */
 export const COVERAGE_MAX_GROUPS = 2;
 /** Changed lines per coverage row (the sweep's own group budget). */
-export const COVERAGE_GROUP_LINES = 500;
+export const COVERAGE_GROUP_LINES = SWEEP_MAX_LINES_PER_GROUP;
 
 export interface CoverageFile {
   path: string;

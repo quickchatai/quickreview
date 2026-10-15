@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ALLOWED_MUTATION_KINDS,
-  addedLineNumbers,
+  NOT_ALLOWED_MUTATION_KINDS,
   attestDryRun,
   blockerParity,
   checkAnchors,
@@ -27,6 +27,7 @@ import {
   type DryrunRecord,
   type ReviewSnapshot,
 } from "../src/compare.js";
+import { MUTATION_KINDS } from "../src/gate.js";
 
 const tmpDirs: string[] = [];
 function scratch(): string {
@@ -219,7 +220,37 @@ describe("(b) invariant scan", () => {
     expect(ALLOWED_MUTATION_KINDS).toContain("create_review");
     // An escalation review request is a legitimate intent.
     expect(ALLOWED_MUTATION_KINDS).toContain("request_reviewer");
-    expect(ALLOWED_MUTATION_KINDS).toHaveLength(10);
+    expect(ALLOWED_MUTATION_KINDS).toHaveLength(11);
+    // Every allowed kind is a gate kind, and the gate kinds refused are
+    // exactly these two — a new gate kind lands here, refused, until it is
+    // put on the allowlist on purpose.
+    expect(ALLOWED_MUTATION_KINDS.every((k) => MUTATION_KINDS.includes(k))).toBe(true);
+    expect([...NOT_ALLOWED_MUTATION_KINDS].sort()).toEqual([
+      "supersede_own_review",
+      "update_own_webhook_url",
+    ]);
+  });
+
+  it("does NOT flag ping-pong's resolution of the bot's own finding thread", () => {
+    const resolve: DryrunRecord = {
+      kind: "resolve_own_review_thread",
+      method: "POST",
+      path: "/graphql",
+      pr: 501,
+      file: "t.json",
+    };
+    expect(invariantScan([...sandboxRecords, resolve], 501)).toEqual([]);
+  });
+
+  it("flags a supersede_own_review record — the kind has no caller", () => {
+    const v = invariantScan(
+      [
+        ...sandboxRecords,
+        { kind: "supersede_own_review", method: "PUT", path: "/x", pr: 501, file: "u.json" },
+      ],
+      501,
+    );
+    expect(v.map((x) => x.rule)).toContain("mutation-kind allowlist");
   });
 
   it("does NOT flag a request_reviewer record — it is an ordinary kind again", () => {
@@ -248,12 +279,76 @@ describe("(b) invariant scan", () => {
 });
 
 describe("(c) anchor validity", () => {
-  it("computes added and hunk line numbers from a unified diff", () => {
-    expect([...addedLineNumbers(PATCH)].sort((a, b) => a - b)).toEqual([11, 12, 13, 44]);
+  it("computes each side's hunk line numbers from a unified diff", () => {
     const hunk = hunkLineNumbers(PATCH);
     expect(hunk.has(10)).toBe(true); // context line
     expect(hunk.has(11)).toBe(true); // added line
     expect(hunk.has(100)).toBe(false);
+    expect([...hunk].sort((a, b) => a - b)).toEqual([10, 11, 12, 13, 14, 43, 44]);
+    // The old file: context and the removed line, numbered from `-10` / `-40`.
+    expect([...hunkLineNumbers(PATCH, "LEFT")].sort((a, b) => a - b)).toEqual([10, 11, 12, 40]);
+  });
+
+  it("judges each comment on its own side and whole range, as the posting path does", () => {
+    const checks = checkAnchors(
+      [
+        { path: "api/handler.py", line: 11, side: "LEFT", body: "on the removed line" },
+        { path: "api/handler.py", line: 12, side: "LEFT", body: "old-side context" },
+        { path: "api/handler.py", line: 13, start_line: 11, body: "range inside the added run" },
+        { path: "api/handler.py", line: 12, start_line: 10, body: "range starting on context" },
+      ],
+      patches,
+    );
+    expect(checks.map((c) => c.status)).toEqual([
+      "on-changed-line",
+      "context-only",
+      "on-changed-line",
+      "context-only",
+    ]);
+  });
+
+  it("compares the round's own review, never a mechanical COMMENT recorded after it", () => {
+    const review = (purpose: string | undefined, body: string): DryrunRecord => ({
+      kind: "create_review",
+      method: "POST",
+      path: "/repos/o/r/pulls/9/reviews",
+      pr: 9,
+      ...(purpose ? { reviewPurpose: purpose } : {}),
+      body: { event: purpose ? "COMMENT" : "REQUEST_CHANGES", body },
+    });
+    expect(
+      sandboxReviewFrom([review(undefined, "the review"), review("escalation", "a note")], 9)!.body,
+    ).toBe("the review");
+    // A round that only left its migration pre-check has no review to compare.
+    expect(sandboxReviewFrom([review("migration_precheck", "renumber")], 9)).toBeNull();
+  });
+
+  it("keeps a recorded comment's side and start line", () => {
+    const snap = sandboxReviewFrom(
+      [
+        {
+          kind: "create_review",
+          method: "POST",
+          path: "/repos/o/r/pulls/9/reviews",
+          pr: 9,
+          body: {
+            event: "COMMENT",
+            body: "b",
+            comments: [
+              { path: "a.py", line: 4, side: "LEFT", body: "x" },
+              { path: "a.py", line: 6, start_line: 5, side: "RIGHT", body: "y" },
+              { path: "a.py", line: 7, body: "z" },
+            ],
+          },
+        },
+      ],
+      9,
+    )!;
+    expect(snap.comments).toEqual([
+      { path: "a.py", line: 4, side: "LEFT", body: "x" },
+      { path: "a.py", line: 6, side: "RIGHT", start_line: 5, body: "y" },
+      { path: "a.py", line: 7, body: "z" },
+    ]);
   });
 
   it("classifies anchors against the patch", () => {
@@ -446,6 +541,11 @@ describe("report rendering", () => {
     expect(attestDryRun({ gateIsDryRun: null, executedMutations: null }, none).status).toBe(
       "unobserved",
     );
+    // A dry-run gate still executes the app-self-config class: the flag with
+    // no executed count is no proof that nothing was posted.
+    const flagOnly = attestDryRun({ gateIsDryRun: true, executedMutations: null }, none);
+    expect(flagOnly.status).toBe("unobserved");
+    expect(flagOnly.substantiated).toBe(false);
     // forceLive executes even under dry-run (rule 1's sole exception), so a
     // record carrying it disproves "nothing was posted".
     const forced = [

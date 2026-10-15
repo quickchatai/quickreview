@@ -16,8 +16,10 @@
 
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
+import { codePath } from "./codespan.js";
 import { fenceAsData } from "./memory/datafence.js";
 import type { PrFileEntry } from "./github.js";
+import { isTestFile } from "./heuristics.js";
 
 /** A changed file's text at the worktree's head, for the pack — or undefined.
  * The worktree is the PR author's: a path is read only when it is a REGULAR
@@ -48,10 +50,21 @@ export const CONTEXT_PACK_FILE = "context-pack.md";
  * the token budget into a character cap. */
 export const CHARS_PER_TOKEN = 4;
 
-/** Non-test code files whose full text may ride the pack. */
-const TEST_PATH_RE = /(^|\/)(tests?|__tests__|spec)\/|(^|\/)test_[^/]*$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$/i;
+/** Test files whose full text never rides the pack — beside the shared
+ * `isTestFile` (which adds fixtures and conftest), the pack's own spelling,
+ * an RSpec-style `spec/` tree included. */
+const TEST_PATH_RE =
+  /(^|\/)(tests?|__tests__|spec)\/|(^|\/)test_[^/]*$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$/i;
+/** Lockfiles, minified/binary assets, numbered migrations, and generated or
+ * vendored trees. */
 const LOCK_OR_GENERATED_RE =
-  /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|uv\.lock|Cargo\.lock)$|\.(min\.js|map|snap|svg|png|jpe?g|gif|ico|pdf|woff2?)$|(^|\/)migrations\/\d+/i;
+  /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|uv\.lock|Cargo\.lock)$|\.(min\.js|map|snap|svg|png|jpe?g|gif|ico|pdf|woff2?)$|(^|\/)migrations\/\d+|(^|\/)(vendor|third_party|node_modules|dist|generated)\//i;
+
+/** The room the "Not in this pack" note is sure of while the diff fills:
+ * the diff never takes the last of it. Past this many characters a note
+ * that would otherwise not fit counts files instead of naming them; it names
+ * every one whenever the budget left after the diff holds them. */
+const OMITTED_NOTE_MAX = 600;
 
 export interface ContextPackInput {
   pr: number;
@@ -86,6 +99,7 @@ export function mustSeeCandidates(files: readonly PrFileEntry[]): PrFileEntry[] 
       (f) =>
         f.status !== "removed" &&
         !TEST_PATH_RE.test(f.filename) &&
+        !isTestFile(f.filename) &&
         !LOCK_OR_GENERATED_RE.test(f.filename),
     )
     .sort(
@@ -95,18 +109,70 @@ export function mustSeeCandidates(files: readonly PrFileEntry[]): PrFileEntry[] 
     );
 }
 
+/** The "Not in this pack" note for `paths`, at most `max` characters: every
+ * name when they fit, else as many as fit and a count of the rest
+ * (`complete` says which). */
+function omittedNoteOf(paths: readonly string[], max: number): { text: string; complete: boolean } {
+  if (paths.length === 0) return { text: "", complete: true };
+  const head = "## Not in this pack\n\nRead these files' changes yourself: ";
+  const rest = (n: number) =>
+    `${n} ${n < paths.length ? "more" : n === 1 ? "file" : "files"} (the PR's file list names them)`;
+  const names: string[] = [];
+  let len = head.length;
+  for (const p of paths) {
+    const span = codePath(p);
+    const next = len + (names.length > 0 ? 2 : 0) + span.length;
+    const left = paths.length - names.length - 1;
+    // Room for this name, then for the count of the rest (if any) and the end.
+    const tail = left === 0 ? ".\n" : `, and ${rest(left)}.\n`;
+    if (next + tail.length > max) break;
+    names.push(span);
+    len = next;
+  }
+  const left = paths.length - names.length;
+  if (left === 0) return { text: `${head}${names.join(", ")}.\n`, complete: true };
+  const count = names.length > 0 ? `${names.join(", ")}, and ${rest(left)}` : rest(left);
+  return { text: `${head}${count}.\n`, complete: false };
+}
+
+/** The "Not in this pack" note for `paths`, at most `max` characters: every
+ * name when they fit, else as many as fit and a count of the rest. */
+export function omittedNote(paths: readonly string[], max: number): string {
+  return omittedNoteOf(paths, max).text;
+}
+
 /**
  * Render the pack. Deterministic for its inputs, so every child of a round
  * sees identical bytes. Order: the change since the last review (follow-up
  * rounds), the PR's diff file by file, then the full text of the most-changed
  * files — each section filled until the budget runs out, and what did not fit
- * named, so a lens knows to fetch it.
+ * named, so a lens knows to fetch it. The note naming those is inside the
+ * budget too: the diff fill leaves room for the note as it would read if
+ * everything still undecided were left out (at most `OMITTED_NOTE_MAX`), and
+ * the note then takes what it needs ahead of the full text — every name when
+ * the budget holds them, a count of the rest only when it does not. Only the
+ * fixed section headings ride regardless, and the config's smallest budget
+ * holds them many times over.
  */
 export function renderContextPack(input: ContextPackInput): ContextPack {
   const cap = Math.max(0, input.maxTokens) * CHARS_PER_TOKEN;
   const out: string[] = [];
   let used = 0;
-  const fits = (chunk: string) => used + chunk.length <= cap;
+  const diffFiles: string[] = [];
+  const diffOmitted: string[] = [];
+  /** Room for the note if every file not yet decided — `undecided` of
+   * them, from the end of the list — were left out too. A complete list
+   * bounds every shorter one; a cut-short list does not (a smaller set may
+   * list in full and run longer), so it reserves the note's maximum. */
+  const noteRoom = (undecided: number): number => {
+    const all = [
+      ...diffOmitted,
+      ...input.files.slice(input.files.length - undecided).map((f) => f.filename),
+    ];
+    const note = omittedNoteOf(all, OMITTED_NOTE_MAX);
+    return note.complete ? note.text.length : OMITTED_NOTE_MAX;
+  };
+  const fits = (chunk: string, reserve: number) => used + chunk.length + reserve <= cap;
   const add = (chunk: string) => {
     out.push(chunk);
     used += chunk.length;
@@ -127,24 +193,29 @@ export function renderContextPack(input: ContextPackInput): ContextPack {
 
   if (input.deltaPatch && input.deltaPatch.trim()) {
     const block = `## The change since the last review\n\n${fenceAsData(input.deltaPatch, "diff")}\n\n`;
-    if (fits(block)) add(block);
-    else add("## The change since the last review\n\n(too large for the pack — read the patch file your task names)\n\n");
+    if (fits(block, noteRoom(input.files.length))) add(block);
+    else
+      add(
+        "## The change since the last review\n\n(too large for the pack — read the patch file your task names)\n\n",
+      );
   }
 
-  const diffFiles: string[] = [];
-  const diffOmitted: string[] = [];
   add("## The PR's diff, file by file\n\n");
-  for (const f of input.files) {
+  input.files.forEach((f, i) => {
     if (!f.patch) {
       diffOmitted.push(f.filename);
-      continue;
+      return;
     }
     const block = `### ${f.filename} (+${f.additions} −${f.deletions}, ${f.status})\n\n${fenceAsData(f.patch, "diff")}\n\n`;
-    if (fits(block)) {
+    if (fits(block, noteRoom(input.files.length - i - 1))) {
       add(block);
       diffFiles.push(f.filename);
     } else diffOmitted.push(f.filename);
-  }
+  });
+
+  // Every omitted file named whenever what is left of the budget holds the
+  // list — the diff left at least the room `noteRoom` promised for it.
+  const note = omittedNote(diffOmitted, cap - used);
 
   const fullFiles: string[] = [];
   const fullHeader = "## Full text of the most-changed files, at the head\n\n";
@@ -153,7 +224,7 @@ export function renderContextPack(input: ContextPackInput): ContextPack {
     const text = input.readFile(f.filename);
     if (text === undefined || text.includes("\u0000")) continue;
     const block = `### ${f.filename}\n\n${fenceAsData(text, "text")}\n\n`;
-    if (!fits((headerAdded ? "" : fullHeader) + block)) continue;
+    if (!fits((headerAdded ? "" : fullHeader) + block, note.length)) continue;
     if (!headerAdded) {
       add(fullHeader);
       headerAdded = true;
@@ -162,11 +233,7 @@ export function renderContextPack(input: ContextPackInput): ContextPack {
     fullFiles.push(f.filename);
   }
 
-  if (diffOmitted.length > 0) {
-    const note = `## Not in this pack\n\nRead these files' changes yourself: ${diffOmitted.map((p) => `\`${p}\``).join(", ")}.\n`;
-    out.push(note);
-    used += note.length;
-  }
+  if (note) add(note);
   const text = out.join("");
   return { text, diffFiles, diffOmitted, fullFiles, chars: text.length };
 }

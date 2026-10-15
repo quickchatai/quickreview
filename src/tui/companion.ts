@@ -1063,9 +1063,15 @@ export class CompanionLifecycle {
     return true;
   }
 
-  /** Graceful `docker stop` — SIGTERM to the entrypoint; volumes persist. */
+  /** Graceful `docker stop` — SIGTERM to the entrypoint; volumes persist.
+   * A container docker could not be asked about is not a stopped one: that
+   * throws rather than return as if the stop had happened. */
   async gracefulStop(): Promise<void> {
     const st = await this.status();
+    if (st.unknown !== undefined)
+      throw new Error(
+        `cannot tell whether ${this.cfg.container_name} is running (docker inspect failed: ${st.unknown}) — nothing was stopped`,
+      );
     if (!st.running) return;
     const res = await this.docker(["stop", this.cfg.container_name], { timeoutMs: 60_000 });
     if (!res.ok) throw new Error(`docker stop ${this.cfg.container_name} failed: ${errText(res)}`);
