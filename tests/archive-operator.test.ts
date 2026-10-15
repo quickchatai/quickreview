@@ -381,6 +381,47 @@ describe("a restore issued during a pass waits for the file boundary (acceptance
   );
 });
 
+describe("a restore issued during the unlinks waits only for the unlink in hand", () => {
+  it(
+    "the pass stops unlinking at the next file boundary — then the restore runs",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = fixture();
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let reached!: () => void;
+      const atStep = new Promise<void>((r) => (reached = r));
+      let unlinked = 0;
+      const a = archiverOn(
+        f,
+        {},
+        {
+          step: async (name) => {
+            if (name !== "unlinked") return;
+            unlinked += 1;
+            if (unlinked === 1) {
+              reached();
+              await gate;
+            }
+          },
+        },
+      );
+      const tick = a.tick();
+      await atStep;
+      const restore = a.operatorRestore(f.pr);
+      await turns(20);
+      release();
+      await tick;
+      const r = await restore;
+      expect(r).toMatchObject({ ok: true, done: true, outcome: "restored" });
+      // One unlink, then the restore: the rest of the PR's sources stayed.
+      expect(unlinked).toBe(1);
+      for (const rel of f.transcripts) expect(existsSync(join(f.root, rel)), rel).toBe(true);
+      expect(archiveRow(f.store, f.pr)?.state).toBe("restored");
+    },
+  );
+});
+
 describe("operatorRun", () => {
   it("mode off refuses — nothing runs", async () => {
     const f = fixture();

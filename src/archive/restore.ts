@@ -32,7 +32,9 @@ import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "../yieldloop.js";
+import { archiveStamp, bundlePassOf, identityFields, sameRecorded } from "./archivewrite.js";
 import { readBundleRecords } from "./bundle.js";
+import { sameIdentity } from "./fsutil.js";
 import {
   fileDigestWithPrefix,
   identityOrNull,
@@ -96,7 +98,7 @@ function restorable(r: SettledRecord, sessionsRel: string): boolean {
 }
 
 /** A bundle's name (`state-<pass>.jsonl.gz`), as opposed to a file's gzip. */
-const isBundle = (archive: string): boolean => /^state-.+\.jsonl\.gz$/.test(archive);
+const isBundle = (archive: string): boolean => bundlePassOf(archive) !== null;
 
 /** Restore one PR (§8.2). Never throws for a failure it can name — the row
  * says `restore_failed` and the result carries the error. */
@@ -171,12 +173,7 @@ export async function restorePr(
           ...(deps.signal ? { signal: deps.signal } : {}),
         });
         const after = await identityOrNull(target);
-        const steady =
-          after !== null &&
-          after.dev === live.dev &&
-          after.ino === live.ino &&
-          after.size === live.size &&
-          after.mtimeMs === live.mtimeMs;
+        const steady = sameIdentity(live, after);
         if (steady && d.bytes === r.bytes && d.sha256 === r.sha256) {
           out.present += 1;
           // Its identity is recorded unless it is the one the archive record
@@ -185,20 +182,12 @@ export async function restorePr(
           // was written — has a NEW inode: unrecorded, a re-archive after a
           // re-close would not know it and would compress the same bytes
           // again under `.v2`, instead of reusing the archived copy.
-          if (!(
-            live.dev === r.dev &&
-            live.ino === r.ino &&
-            live.size === r.bytes &&
-            live.mtimeMs === r.mtime_ms
-          ))
+          if (!sameRecorded(r, live))
             restored.push({
               source: r.source,
               archive: r.archive,
               sha256: r.sha256,
-              bytes: live.size,
-              mtime_ms: live.mtimeMs,
-              dev: live.dev,
-              ino: live.ino,
+              ...identityFields(live),
               present: true,
             });
         } else out.liveDiffers.push(r.source);
@@ -243,10 +232,7 @@ export async function restorePr(
         source: r.source,
         archive: r.archive,
         sha256: r.sha256,
-        bytes: result.identity.size,
-        mtime_ms: result.identity.mtimeMs,
-        dev: result.identity.dev,
-        ino: result.identity.ino,
+        ...identityFields(result.identity),
       });
       out.restored += 1;
     } catch (err) {
@@ -262,11 +248,7 @@ export async function restorePr(
   // archived copies), whether or not everything came back.
   if (restored.length > 0 || failed.length > 0 || out.liveDiffers.length > 0) {
     const next = cloneManifest(manifest);
-    const id = `restore-${deps
-      .now()
-      .toISOString()
-      .replace(/[-:]/g, "")
-      .replace(/\.\d{3}/, "")}`;
+    const id = `restore-${archiveStamp(deps.now())}`;
     let passId = id;
     for (let k = 2; next.passes.some((p) => p.id === passId); k++) passId = `${id}-${k}`;
     next.passes.push({ id: passId, kind: "restore", started_at: at(), finished_at: at(), trigger });

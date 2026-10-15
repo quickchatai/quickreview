@@ -22,13 +22,20 @@
 //
 // Nothing here spawns, injects, wakes or kills a session (rule 9), and
 // nothing reads or writes memory.
-import { lstat, mkdir, readFile, readdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { yieldToLoop } from "../yieldloop.js";
-import { fsyncDir, unlinkIfPresent, writeTextAtomic, type FileIdentity } from "./fsutil.js";
 import {
-  adoptOrphan,
-  archiveFile,
+  archiveFileSize,
+  archiveStamp,
+  identityFields,
+  placeArchive,
+  bytesHeld,
+  sameRecorded,
+  type Packed,
+} from "./archivewrite.js";
+import { sameIdentity, writeTextAtomic, type FileIdentity } from "./fsutil.js";
+import {
   identityOrNull,
   sweepPartials,
   unlinkIfIdentity,
@@ -139,59 +146,7 @@ export const emptyStoreResult = (
   keptLive: 0,
 });
 
-const stampOf = (d: Date): string =>
-  d
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}/, "");
-
-/** The facts an entry for one archived gzip records. */
-export interface Packed {
-  bytes: number;
-  mtime_ms: number;
-  dev: number | null;
-  ino: number | null;
-  sha256: string;
-  gz_bytes: number;
-  adopted?: true;
-}
-
-const toFields = (id: FileIdentity) => ({
-  bytes: id.size,
-  mtime_ms: id.mtimeMs,
-  dev: id.dev,
-  ino: id.ino,
-});
-
-const sameIdentity = (a: FileIdentity, b: FileIdentity | null): boolean =>
-  b !== null && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
-
-/** A source the manifest's latest record holds with exactly this identity. */
-const sameRecorded = (rec: SettledRecord | undefined, id: FileIdentity | null): boolean =>
-  rec !== undefined &&
-  id !== null &&
-  rec.dev === id.dev &&
-  rec.ino === id.ino &&
-  rec.bytes === id.size &&
-  rec.mtime_ms === id.mtimeMs;
-
-/** Is `rel` (relative to `dir`) an existing regular file? Its size, or null. */
-export async function archiveFileSize(dir: string, rel: string): Promise<number | null> {
-  try {
-    const st = await lstat(join(dir, rel));
-    return st.isFile() ? st.size : null;
-  } catch {
-    return null;
-  }
-}
-
-/** The stops an unlink obeys, out of the pass's `stopReason`: the archiver
- * stopping, or a restore waiting for the mutex — it is served at the next
- * file boundary, and an unlink is one. A spent budget or a load hold does not
- * stop them: each is one cheap step over a copy already verified. */
-export function unlinkStopOf(reason: string | null): string | null {
-  return reason === "stopping" || reason === "restore_pending" ? reason : null;
-}
+export { archiveFileSize, unlinkStopOf, type Packed } from "./archivewrite.js";
 
 /** A pending unlink: the live path and the identity hashed. */
 export interface StoreUnlink {
@@ -295,8 +250,8 @@ export class StoreWriter {
   ) {
     this.shards = shards;
     this.meter = meter;
-    const base = stampOf(deps.now());
-    const taken = new Set(shards.flatMap((s) => s.m.passes.map((p) => p.id)));
+    const base = archiveStamp(deps.now());
+    const taken = meter.measure(() => new Set(shards.flatMap((s) => s.m.passes.map((p) => p.id))));
     let id = base;
     for (let k = 2; taken.has(id); k++) id = `${base}-${k}`;
     this.passId = id;
@@ -368,43 +323,25 @@ export class StoreWriter {
     this.touched.add(k);
   }
 
-  /** Append entries — to the last shard while it has room, else to a new
-   * one — durable before the pass goes on. */
+  /** Append entries — to the last shard up to its room, the rest to new
+   * ones — each shard's write durable before the next. */
   async append(...entries: ManifestEntry[]): Promise<void> {
-    if (entries.length === 0) return;
-    const last = this.shards.at(-1);
-    if (!last || last.m.entries.length >= STORE_SHARD_ENTRIES)
-      this.shards.push({
-        name: shardName(this.shards.length + 1),
-        m: emptyManifest(this.deps.subject),
+    let rest = entries;
+    while (rest.length > 0) {
+      const last = this.shards.at(-1);
+      if (!last || last.m.entries.length >= STORE_SHARD_ENTRIES)
+        this.shards.push({
+          name: shardName(this.shards.length + 1),
+          m: emptyManifest(this.deps.subject),
+        });
+      const room = STORE_SHARD_ENTRIES - this.shards.at(-1)!.m.entries.length;
+      const chunk = rest.slice(0, room);
+      rest = rest.slice(room);
+      await this.rewrite(this.shards.length - 1, (next) => {
+        next.entries.push(...chunk);
       });
-    await this.rewrite(this.shards.length - 1, (next) => {
-      next.entries.push(...entries);
-    });
-    this.meter.measure(() => this.absorb(entries));
-  }
-
-  /** The archive name for a base name: itself while no entry references it,
-   * else the first `.v<k>` no entry references (§7.6). */
-  private destFor(base: string): string {
-    if (!this.refs.has(base)) return base;
-    for (let k = 2; ; k++) {
-      const cand = base.replace(/\.gz$/, `.v${k}.gz`);
-      if (!this.refs.has(cand)) return cand;
+      this.meter.measure(() => this.absorb(chunk));
     }
-  }
-
-  /** Bytes an entry of this manifest already holds in an archive on disk. */
-  private async heldAlready(sha256: string, bytes: number): Promise<boolean> {
-    for (const e of this.entries())
-      if (
-        fileish(e) &&
-        e.sha256 === sha256 &&
-        e.bytes === bytes &&
-        (await archiveFileSize(this.deps.dir, e.archive)) !== null
-      )
-        return true;
-    return false;
   }
 
   /** Is `f` archived already with exactly its identity (unlink only)? */
@@ -420,8 +357,8 @@ export class StoreWriter {
 
   /**
    * One file through the protocol (or adoption of the orphan gzip already at
-   * its name). `entryOf` builds the entry for the name used. Returns the
-   * placed archive, or why not.
+   * its name — `placeArchive`). `entryOf` builds the entry for the name used.
+   * Returns the placed archive, or why not.
    */
   async archiveOne(
     f: StoreFile,
@@ -429,51 +366,25 @@ export class StoreWriter {
     prefixBytes?: number,
   ): Promise<{ ok: ArchiveFileOk; dest: string } | "verify_failed" | "changed"> {
     const { deps } = this;
-    const opts = {
-      level: deps.level,
-      bytesPerS: deps.bytesPerS,
-      signal: deps.signal,
-      identity: f.identity,
-      ...(prefixBytes !== undefined ? { prefixBytes } : {}),
-      ...(deps.step ? { step: deps.step } : {}),
-    };
-    let dest = this.destFor(f.archive);
-    while ((await archiveFileSize(deps.dir, dest)) !== null && !this.refs.has(dest)) {
-      const o = await adoptOrphan(f.path, join(deps.dir, dest), opts);
-      if (o.kind === "ok") {
-        deps.log(`archive: ${deps.subject} — adopted the orphan gzip ${dest} (no recompress)`);
-        return { ok: o, dest };
-      }
-      if (o.kind === "changed") {
-        deps.log(`archive: ${deps.subject} — ${o.detail}; the store stops for this pass`);
-        return "changed";
-      }
-      if (o.kind === "corrupt") {
-        deps.log(`archive: ${deps.subject} — ${o.detail}: removed, the file is archived again`);
-        break;
-      }
-      if (await this.heldAlready(o.sha256, o.bytes)) {
-        await unlinkIfPresent(join(deps.dir, dest));
-        await fsyncDir(dirname(join(deps.dir, dest)));
-        deps.log(`archive: ${deps.subject} — the orphan gzip ${dest} duplicates an entry: removed`);
-        break;
-      }
-      const kept: Packed = {
-        bytes: o.bytes,
-        mtime_ms: o.mtimeMs,
-        dev: null,
-        ino: null,
-        sha256: o.sha256,
-        gz_bytes: o.gzBytes,
-        adopted: true,
-      };
-      await this.append(entryOf(dest, kept));
-      deps.log(
-        `archive: ${deps.subject} — the orphan gzip ${dest} holds an earlier version of ${f.source}: kept under its own entry`,
-      );
-      dest = this.destFor(f.archive);
-    }
-    const r = await archiveFile(f.path, join(deps.dir, dest), opts);
+    const r = await placeArchive({
+      path: f.path,
+      dir: deps.dir,
+      base: f.archive,
+      source: f.source,
+      who: deps.subject,
+      opts: {
+        level: deps.level,
+        bytesPerS: deps.bytesPerS,
+        signal: deps.signal,
+        identity: f.identity,
+        ...(prefixBytes !== undefined ? { prefixBytes } : {}),
+        ...(deps.step ? { step: deps.step } : {}),
+      },
+      refs: () => this.refs,
+      heldAlready: (sha256, bytes) => bytesHeld(this.entries(), deps.dir, sha256, bytes),
+      keep: (dest, p) => this.append(entryOf(dest, p)),
+      log: (m) => deps.log(m),
+    });
     if (r.kind === "verify_failed") {
       this.result.verifyFailures += 1;
       deps.verifyFailed(
@@ -482,11 +393,8 @@ export class StoreWriter {
       );
       return "verify_failed";
     }
-    if (r.kind === "changed") {
-      deps.log(`archive: ${deps.subject} — ${r.detail}; the store stops for this pass`);
-      return "changed";
-    }
-    return { ok: r, dest };
+    if (r.kind === "changed") return "changed";
+    return { ok: r.ok, dest: r.dest };
   }
 
   /** A transcript entry of this pass for `f`. */
@@ -524,7 +432,7 @@ export class StoreWriter {
         continue;
       }
       if (await this.alreadyHeld(f)) {
-        unlinks.push({ path: f.path, source: f.source, identity: toFields(f.identity) });
+        unlinks.push({ path: f.path, source: f.source, identity: identityFields(f.identity) });
         continue;
       }
       const disk = await this.deps.diskFor(f.identity.size);
@@ -540,7 +448,7 @@ export class StoreWriter {
       }
       await this.append(
         entryOf(out.dest, {
-          ...toFields(f.identity),
+          ...identityFields(f.identity),
           sha256: out.ok.sha256,
           gz_bytes: out.ok.gzBytes,
         }),
@@ -549,7 +457,7 @@ export class StoreWriter {
       this.result.archived += 1;
       this.result.bytesIn += out.ok.bytes;
       this.result.bytesOut += out.ok.gzBytes;
-      unlinks.push({ path: f.path, source: f.source, identity: toFields(f.identity) });
+      unlinks.push({ path: f.path, source: f.source, identity: identityFields(f.identity) });
       await yieldToLoop();
     }
     return { unlinks, stop, incomplete };
@@ -583,7 +491,7 @@ export class StoreWriter {
   /** Remove one proven duplicate (the legacy copy), only while its identity
    * is the one compared. */
   async removeDuplicate(path: string, id: FileIdentity): Promise<boolean> {
-    const r = await unlinkIfIdentity(path, toFields(id));
+    const r = await unlinkIfIdentity(path, identityFields(id));
     if (r === "removed") this.result.duplicatesRemoved += 1;
     return r === "removed";
   }
