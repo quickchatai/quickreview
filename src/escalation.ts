@@ -96,6 +96,7 @@
 // `APP_SELF_CONFIG_KINDS`.
 import type { EscalationConfig, EscalationRule, EscalationSeverityFloor } from "./config.js";
 import { codePath } from "./codespan.js";
+import { severityRank } from "./severityrank.js";
 import type { GateResult } from "./gate.js";
 
 // ---- what to look at ------------------------------------------------------
@@ -185,7 +186,7 @@ export function normalizeScope(raw: unknown): EscalationScope | null {
     // paragraph-length free-text field carrying a whole-review ask.
     // `validateEscalationRequest` additionally puts it through
     // `asksForWholeReview` (session origin), exactly like `question`.
-    const decision = str(r.decision).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_DECISION);
+    const decision = decisionName(str(r.decision));
     if (!decision) return null;
     return path ? { kind: "decision", decision, path } : { kind: "decision", decision };
   }
@@ -463,13 +464,11 @@ export const NO_FACTS: EscalationFacts = {
   failing_checks: [],
 };
 
-const SEVERITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, NIT: 4 };
-
 /** Is `severity` at or above `floor`? Unknown spellings never satisfy a floor
  * — a rule must not fire on a severity nobody can read. */
 export function severityAtLeast(severity: string, floor: EscalationSeverityFloor): boolean {
-  const s = SEVERITY_ORDER[severity.trim().toUpperCase()];
-  return s !== undefined && s <= SEVERITY_ORDER[floor]!;
+  const s = severityRank(severity);
+  return s !== undefined && s <= severityRank(floor)!;
 }
 
 /**
@@ -491,34 +490,42 @@ export function pathMatches(pattern: string, path: string): boolean {
   return new RegExp(`^${rx}$`).test(path);
 }
 
+// One predicate per condition, shared by `ruleFires` (does any fact match?)
+// and `scopeForRule` (which fact matched?), so the two never disagree.
+const sameName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+const pathHits = (rule: EscalationRule, path: string): boolean =>
+  rule.paths.some((pat) => pathMatches(pat, path));
+const labelHits = (rule: EscalationRule, label: string): boolean =>
+  rule.labels.some((n) => sameName(n, label));
+const checkHits = (rule: EscalationRule, check: string): boolean =>
+  rule.failing_checks.some((n) => sameName(n, check));
+const findingHits = (rule: EscalationRule, f: EscalationFacts["findings"][number]): boolean =>
+  severityAtLeast(String(f.severity ?? ""), rule.min_severity as EscalationSeverityFloor);
+
+/** A `decision` name: whitespace collapsed, trimmed, capped. */
+function decisionName(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, MAX_ESCALATION_DECISION);
+}
+
 /** Did this rule's conditions all hold? A rule with no condition never fires
  * (config validation refuses one, so this is belt). */
 export function ruleFires(rule: EscalationRule, facts: EscalationFacts): boolean {
   let declared = 0;
   if (rule.paths.length > 0) {
     declared++;
-    if (!facts.changed_paths.some((p) => rule.paths.some((pat) => pathMatches(pat, p))))
-      return false;
+    if (!facts.changed_paths.some((p) => pathHits(rule, p))) return false;
   }
   if (rule.labels.length > 0) {
     declared++;
-    const have = new Set(facts.labels.map((l) => l.toLowerCase()));
-    if (!rule.labels.some((l) => have.has(l.toLowerCase()))) return false;
+    if (!facts.labels.some((l) => labelHits(rule, l))) return false;
   }
   if (rule.failing_checks.length > 0) {
     declared++;
-    const failing = new Set(facts.failing_checks.map((c) => c.toLowerCase()));
-    if (!rule.failing_checks.some((c) => failing.has(c.toLowerCase()))) return false;
+    if (!facts.failing_checks.some((c) => checkHits(rule, c))) return false;
   }
   if (rule.min_severity) {
     declared++;
-    if (
-      !facts.findings.some((f) =>
-        severityAtLeast(String(f.severity ?? ""), rule.min_severity as EscalationSeverityFloor),
-      )
-    ) {
-      return false;
-    }
+    if (!facts.findings.some((f) => findingHits(rule, f))) return false;
   }
   return declared > 0;
 }
@@ -530,16 +537,14 @@ export function ruleFires(rule: EscalationRule, facts: EscalationFacts): boolean
  */
 export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): EscalationScope | null {
   if (rule.paths.length > 0) {
-    const hit = facts.changed_paths.find((p) => rule.paths.some((pat) => pathMatches(pat, p)));
+    const hit = facts.changed_paths.find((p) => pathHits(rule, p));
     if (hit)
       return /(^|\/)migrations?\//i.test(hit)
         ? { kind: "migration", path: hit }
         : { kind: "code", path: hit };
   }
   if (rule.min_severity) {
-    const hit = facts.findings.find((f) =>
-      severityAtLeast(String(f.severity ?? ""), rule.min_severity as EscalationSeverityFloor),
-    );
+    const hit = facts.findings.find((f) => findingHits(rule, f));
     if (hit?.path) return { kind: "code", path: hit.path };
     // The finding's reason is model-written text reaching a rule-built scope,
     // so it is belted HERE, at the boundary it enters — not in
@@ -554,20 +559,16 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
     // OUTSIDE the origin gate and catches it — deliberately, since a path is
     // checkable against a fact and prose is not.
     if (hit?.title) {
-      const decision = hit.title.replace(/\s+/g, " ").slice(0, MAX_ESCALATION_DECISION);
+      const decision = decisionName(hit.title);
       if (!asksForWholeReview(decision)) return { kind: "decision", decision };
     }
   }
   if (rule.failing_checks.length > 0) {
-    const hit = facts.failing_checks.find((c) =>
-      rule.failing_checks.some((n) => n.toLowerCase() === c.toLowerCase()),
-    );
+    const hit = facts.failing_checks.find((c) => checkHits(rule, c));
     if (hit) return { kind: "decision", decision: `the failing check "${hit}"` };
   }
   if (rule.labels.length > 0) {
-    const hit = facts.labels.find((l) =>
-      rule.labels.some((n) => n.toLowerCase() === l.toLowerCase()),
-    );
+    const hit = facts.labels.find((l) => labelHits(rule, l));
     if (hit)
       return {
         kind: "decision",
@@ -774,6 +775,9 @@ export function renderEscalationPromptNote(targets: readonly string[] | undefine
   ].join("\n");
 }
 
+/** The most `escalations` entries one verdict file is read for. */
+const MAX_SESSION_ESCALATIONS = 10;
+
 /**
  * Pull the `escalations` array out of a verdict file, tolerantly.
  *
@@ -784,12 +788,16 @@ export function renderEscalationPromptNote(targets: readonly string[] | undefine
 export function normalizeSessionEscalations(raw: unknown): { entries: unknown[]; note?: string } {
   if (raw === undefined || raw === null) return { entries: [] };
   if (!Array.isArray(raw)) return { entries: [], note: "escalations was not an array — ignored" };
-  const entries = raw.filter((e) => typeof e === "object" && e !== null).slice(0, 10);
-  const note =
-    entries.length === raw.length
-      ? undefined
-      : `${raw.length - entries.length} escalation entr(ies) were not objects — ignored`;
-  return { entries, ...(note ? { note } : {}) };
+  const objects = raw.filter((e) => typeof e === "object" && e !== null);
+  const entries = objects.slice(0, MAX_SESSION_ESCALATIONS);
+  const notes: string[] = [];
+  if (objects.length < raw.length)
+    notes.push(`${raw.length - objects.length} escalation entr(ies) were not objects — ignored`);
+  if (entries.length < objects.length)
+    notes.push(
+      `${objects.length - entries.length} escalation entr(ies) past the first ${MAX_SESSION_ESCALATIONS} — ignored`,
+    );
+  return { entries, ...(notes.length ? { note: notes.join("; ") } : {}) };
 }
 
 // ---- delivery -------------------------------------------------------------
@@ -836,7 +844,9 @@ export interface EscalationOutcome {
   target: string;
   scope_key: string;
   origin: EscalationOrigin;
-  /** null ⇒ delivered; otherwise why it was not. */
+  /** Why the candidate was refused before posting; null when a post was
+   * attempted — delivered, recorded as a dry-run intent, blocked by a posting
+   * guard, or failed (`comment_executed` says whether it reached GitHub). */
   refused: EscalationRefusal | null;
   /** Did the comment actually reach GitHub (false in dry-run — the gate
    * recorded it instead, exactly like every other suppressed mutation). */
@@ -953,11 +963,33 @@ export async function deliverEscalations(
       review_requested: wantsRequest,
       ...(args.review_posted !== undefined ? { review_posted: args.review_posted } : {}),
     });
-    const result = await adapter.createReview(
-      args.pr,
-      { commit_id: args.head_sha, event: "COMMENT", body },
-      { purpose: "escalation" },
-    );
+    let result: GateResult;
+    try {
+      result = await adapter.createReview(
+        args.pr,
+        { commit_id: args.head_sha, event: "COMMENT", body },
+        { purpose: "escalation" },
+      );
+    } catch (err) {
+      // One failed POST is this candidate's alone: nothing is recorded, so a
+      // later round may try again, and the remaining candidates still go.
+      store.logEvent("escalation_comment_failed", args.pr, {
+        target: req.target,
+        scope_key: key,
+        origin: req.origin,
+        round_no: args.round_no ?? null,
+        error: String(err),
+      });
+      log(`escalation: #${args.pr} → @${req.target} comment failed: ${String(err)}`);
+      outcomes.push({
+        target: req.target,
+        scope_key: key,
+        origin: req.origin,
+        refused: null,
+        comment_executed: false,
+      });
+      continue;
+    }
     if (result.blocked) {
       // A posting guard refused (merged, closed, head drift). Nothing was
       // delivered and nothing is recorded, so a later round may try again.

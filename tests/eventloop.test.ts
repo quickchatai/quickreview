@@ -693,6 +693,22 @@ describe("the watch: figures, state, thresholds", () => {
     expect(r.monitor.status().event_loop.longest_stall?.ms).toBe(15_000);
   });
 
+  it("a BACKWARD wall-clock step does not hold the wake cooldown: a fresh stall after it is raised", () => {
+    const r = rig({ knobs: { event_loop_wake_cooldown_min: 5 } });
+    r.monitor.start();
+    r.advance(15 * S);
+    r.sample(15_000);
+    r.monitor.evaluate();
+    expect(r.raised).toHaveLength(1);
+    r.advance(-60 * MIN);
+    steady(r, 10 * S);
+    r.monitor.evaluate();
+    r.advance(15 * S);
+    r.sample(15_000);
+    expect(r.monitor.evaluate().event_loop.state).toBe("stalled");
+    expect(r.raised).toHaveLength(2);
+  });
+
   it("before the samples span a window, a high p99 is not sustained; covered_s says how much they span", () => {
     const r = rig({ knobs: { event_loop_window_s: 120 } });
     r.monitor.start();
@@ -1339,13 +1355,13 @@ describe("`qcr status` — the daemon event-loop line", () => {
     expect(line).toContain("container CPU: throttled in 39% of 150 CFS periods");
   });
 
-  it("stalled: since when, the detail with its cause, and when the overseer was woken", () => {
+  it("stalled: since when, the detail with its cause, and when the stall wake was raised", () => {
     const line = daemonLoadLine(stalledBlock());
     expect(line).toMatch(
       /^daemon event loop: STALLED since 2026-10-07T13:30:40\.000Z — event loop stalled 1m10s/,
     );
     expect(line).toContain("CPU starved");
-    expect(line).toContain("overseer woken 2026-10-07T13:30:40.000Z");
+    expect(line).toContain("stall wake raised 2026-10-07T13:30:40.000Z");
   });
 
   it("never prints ok for a block that is absent, unmeasured, or a cgroup that cannot be read", () => {

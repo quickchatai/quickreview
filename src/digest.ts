@@ -3,9 +3,10 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
-import { localWallClockToInstant } from "./eod.js";
+import { zoneDayBounds } from "./eod.js";
 import {
   cancelCauseLabel,
+  roundUsage,
   tallyCancellations,
   type CancellationTally,
   type StateStore,
@@ -24,7 +25,7 @@ export function writeDigest(
   digestDir: string = defaultDigestDir(),
 ): string {
   mkdirSync(digestDir, { recursive: true });
-  const path = join(digestDir, `${date}.md`);
+  const path = digestPath(date, digestDir);
   writeFileSync(path, content.endsWith("\n") ? content : `${content}\n`);
   return path;
 }
@@ -32,7 +33,12 @@ export function writeDigest(
 /** Has the day's digest been written — the exact file `writeDigest` and the
  * EOD sweep (`digest/{{date}}.md`, cwd = the sandbox root) produce. */
 export function digestWritten(date: string, digestDir: string = defaultDigestDir()): boolean {
-  return existsSync(join(digestDir, `${date}.md`));
+  return existsSync(digestPath(date, digestDir));
+}
+
+/** digest/<date>.md — the one spelling of a day's digest file. */
+function digestPath(date: string, digestDir: string): string {
+  return join(digestDir, `${date}.md`);
 }
 
 /** First non-empty, non-heading line, trimmed and truncated to 200 chars. */
@@ -88,13 +94,8 @@ export interface DailyUsage {
  */
 export function dailyUsage(store: StateStore, date: string): DailyUsage {
   const rounds = store.roundsOn(date);
-  return {
-    date,
-    rounds: rounds.length,
-    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
-    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
-    est_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
-  };
+  const { spend_usd, tokens_in, tokens_out } = roundUsage(rounds);
+  return { date, rounds: rounds.length, tokens_in, tokens_out, est_usd: spend_usd };
 }
 
 /** One digest-ready line, e.g. "usage: 3 rounds — 120000 in / 4000 out tokens — est $1.23". */
@@ -141,17 +142,7 @@ export function dailyCancellations(
 function roundsOnDay(store: StateStore, date: string, timeZone?: string) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!timeZone || !m) return store.roundsOn(date);
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const next = new Date(Date.UTC(y, mo - 1, d + 1));
-  const start = localWallClockToInstant(y, mo, d, 0, 0, timeZone);
-  const end = localWallClockToInstant(
-    next.getUTCFullYear(),
-    next.getUTCMonth() + 1,
-    next.getUTCDate(),
-    0,
-    0,
-    timeZone,
-  );
+  const { start, end } = zoneDayBounds(Number(m[1]), Number(m[2]), Number(m[3]), timeZone);
   return store.roundsStartedBetween(start.toISOString(), end.toISOString());
 }
 

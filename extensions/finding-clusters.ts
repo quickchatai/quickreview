@@ -17,7 +17,7 @@
 // VERIFY-ON-PIN: registerTool's definition shape and execute's positional
 // signature, as extensions/pi-api.d.ts records them.
 import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
-import { clusterFindings, renderGroups, type ClusterCandidate } from "../src/dedup.js";
+import { CLOSE_LINES, clusterFindings, renderGroups, type ClusterCandidate } from "../src/dedup.js";
 import { coverageGaps, coverageReason, type CoverageFile } from "../src/coverage.js";
 
 function text(t: string, details?: Record<string, unknown>): PiToolResult {
@@ -72,8 +72,7 @@ function safeParse(s: string, problems: string[]): unknown {
 export const CLUSTER_TOOL: PiToolDefinition = {
   name: "cluster_findings",
   label: "Cluster findings",
-  description:
-    "Group this round's candidate findings before pass-validate: candidates in the same file within 10 lines, naming a shared identifier, or with the same fix target form one group. Returns the groups to paste verbatim into the validate task string under CANDIDATE GROUPS.",
+  description: `Group this round's candidate findings before pass-validate: candidates in the same file within ${CLOSE_LINES} lines, naming a shared identifier, or with the same fix target form one group. Returns the groups to paste verbatim into the validate task string under CANDIDATE GROUPS.`,
   parameters: {
     type: "object",
     properties: {

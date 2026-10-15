@@ -50,6 +50,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import * as zlib from "node:zlib";
+import { flatControls } from "./codespan.js";
 
 // ---------------------------------------------------------------------------
 // Public shapes
@@ -328,7 +329,9 @@ const JS_IMPORT_RES: readonly RegExp[] = [
   /(?:^|[^\w$.])(?:require|import)\s*\(\s*(['"`])([^'"`\n]+)\1\s*\)/g,
 ];
 
-/** Raw module specifiers imported by a JS/TS source (order of first appearance). */
+/** Raw module specifiers imported by a JS/TS source, each once: the `… from`
+ * forms in source order, then the bare `import "x"` / `require("x")` /
+ * `import("x")` forms in theirs. */
 export function extractJsImports(src: string): string[] {
   // Whole-line comments only: stripping `/* … */` spans is unsafe without a
   // tokenizer (a glob string like 'src/*' would open a "comment" that eats
@@ -775,7 +778,7 @@ function addYarnBlock(
     const s = splitYarnSpec(spec);
     if (!s) continue;
     const range = s.range.startsWith("npm:") ? s.range.slice(4) : s.range;
-    if (/^(workspace|link|portal|file):/.test(range)) {
+    if (isLocalRange(range)) {
       lock.links.add(s.name);
       continue;
     }
@@ -842,7 +845,9 @@ function splitPnpmKey(key: string): { name: string; version: string } | null {
  * own pin (`importers:` in v6+/workspaces, the top-level `dependencies:` of a
  * v5 single project). Those pins are recorded with their specifier (and the
  * importer dir as scope), so pickLocked takes the importer's resolution rather
- * than the newest copy some transitive dependency pulled in.
+ * than the newest copy some transitive dependency pulled in. A package whose
+ * `resolution` names a tarball off the public registry is foreign, and so is
+ * every importer pin at its name and version.
  */
 export function parsePnpmLock(text: string): NpmLock {
   const lock = emptyLock();
@@ -861,9 +866,35 @@ export function parsePnpmLock(text: string): NpmLock {
     return p;
   };
   const unquote = (x: string): string => x.trim().replace(/^['"]|['"]$/g, "");
+  /** A dependency's own line: an inline value (v5: the version, or under
+   * `specifiers` the spec) is recorded; a bare `name:` opens its v6 block. */
+  const depHead = (imp: string, name: string, inline: string, specs: boolean): string | null => {
+    if (!inline) return name;
+    const p = pin(imp, name);
+    if (specs) p.spec = inline;
+    else p.version = inline;
+    return null;
+  };
+  /** A `specifier:` / `version:` line inside a dependency's v6 block. */
+  const depField = (imp: string, name: string, field: string, value: string): void => {
+    const p = pin(imp, name);
+    if (field === "specifier") p.spec = unquote(value);
+    else p.version = unquote(value);
+  };
+  /** The `packages:` block being read, and the name@version of every one whose
+   * resolution is a tarball off the public registry. */
+  let pkg: { name: string; version: string; foreign: boolean } | null = null;
+  const foreignPkgs = new Set<string>();
+  const flushPkg = (): void => {
+    if (!pkg) return;
+    addLock(lock, pkg.name, { version: pkg.version, ...(pkg.foreign ? { foreign: true } : {}) });
+    if (pkg.foreign) foreignPkgs.add(`${pkg.name}@${pkg.version}`);
+    pkg = null;
+  };
   const DEP_GROUP = /^(dependencies|devDependencies|optionalDependencies|specifiers):\s*$/;
   for (const raw of text.split(/\r?\n/)) {
     if (/^\S/.test(raw)) {
+      flushPkg();
       const g = DEP_GROUP.exec(raw);
       section = /^(packages|snapshots):\s*$/.test(raw)
         ? "packages"
@@ -877,36 +908,33 @@ export function parsePnpmLock(text: string): NpmLock {
       continue;
     }
     if (section === "packages") {
+      // `  key:` opens a package; its deeper lines are its fields.
       const m = /^ {2}(\S.*?):\s*$/.exec(raw);
-      if (!m) continue;
+      if (!m) {
+        // `resolution: {…, tarball: <url>}`, inline or as its own line.
+        const tarball = /\btarball:\s*['"]?([^,'"}\s]+)/.exec(raw);
+        if (pkg && tarball && /^ {4}/.test(raw) && isForeignResolved(tarball[1]))
+          pkg.foreign = true;
+        continue;
+      }
+      flushPkg();
       let key = unquote(m[1] ?? "");
       if (key.startsWith("/")) key = key.slice(1);
       const paren = key.indexOf("(");
       if (paren > 0) key = key.slice(0, paren);
       const nv = splitPnpmKey(key);
       if (nv && nv.name && VERSION_LIKE.test(nv.version))
-        addLock(lock, nv.name, { version: nv.version });
+        pkg = { name: nv.name, version: nv.version, foreign: false };
     } else if (section === "root") {
       // v5 single project: `  name: value` directly under the section;
       // v6 single project: `  name:` then `    specifier:` / `    version:`.
       const head = /^ {2}(\S.*?):\s*(.*?)\s*$/.exec(raw);
       if (head) {
-        const name = unquote(head[1] ?? "");
-        const inline = unquote(head[2] ?? "");
-        dep = inline ? null : name;
-        if (inline) {
-          const p = pin(".", name);
-          if (rootGroup === "specs") p.spec = inline;
-          else p.version = inline;
-        }
+        dep = depHead(".", unquote(head[1] ?? ""), unquote(head[2] ?? ""), rootGroup === "specs");
         continue;
       }
       const kv = /^ {4}(specifier|version):\s*(.*?)\s*$/.exec(raw);
-      if (kv && dep && rootGroup === "deps") {
-        const p = pin(".", dep);
-        if (kv[1] === "specifier") p.spec = unquote(kv[2] ?? "");
-        else p.version = unquote(kv[2] ?? "");
-      }
+      if (kv && dep && rootGroup === "deps") depField(".", dep, kv[1] ?? "", kv[2] ?? "");
     } else if (section === "importers") {
       const imp = /^ {2}(\S.*?):\s*$/.exec(raw);
       if (imp) {
@@ -923,27 +951,17 @@ export function parsePnpmLock(text: string): NpmLock {
         continue;
       }
       if (!group) continue;
+      // v5 workspace form: `      name: 1.2.3` / specifiers `      name: ^1`.
       const d = /^ {6}(\S.*?):\s*(.*?)\s*$/.exec(raw);
       if (d) {
-        const name = unquote(d[1] ?? "");
-        const inline = unquote(d[2] ?? "");
-        dep = inline ? null : name;
-        if (inline) {
-          // v5 workspace form: `      name: 1.2.3` / specifiers `      name: ^1`.
-          const p = pin(importer, name);
-          if (group === "specs") p.spec = inline;
-          else p.version = inline;
-        }
+        dep = depHead(importer, unquote(d[1] ?? ""), unquote(d[2] ?? ""), group === "specs");
         continue;
       }
       const kv = /^ {8}(specifier|version):\s*(.*?)\s*$/.exec(raw);
-      if (kv && dep && group === "deps") {
-        const p = pin(importer, dep);
-        if (kv[1] === "specifier") p.spec = unquote(kv[2] ?? "");
-        else p.version = unquote(kv[2] ?? "");
-      }
+      if (kv && dep && group === "deps") depField(importer, dep, kv[1] ?? "", kv[2] ?? "");
     }
   }
+  flushPkg();
   for (const [imp, deps] of pins) {
     for (const [name, p] of deps) {
       // `1.2.0(react@18)` (v6+) / `1.2.0_react@18` (v5): the peer suffix is not the version.
@@ -951,6 +969,7 @@ export function parsePnpmLock(text: string): NpmLock {
       if (!VERSION_LIKE.test(version)) continue;
       const entry: LockEntry = { version };
       if (p.spec) entry.specs = [p.spec];
+      if (foreignPkgs.has(`${name}@${version}`)) entry.foreign = true;
       const scope = imp.replace(/^\.\//, "").replace(/\/$/, "");
       if (scope && scope !== ".") entry.scope = scope;
       addLock(lock, name, entry);
@@ -968,15 +987,18 @@ const PY_FOREIGN_PIN_PREFIX = "@ ";
 /**
  * uv.lock / poetry.lock: `[[package]]` blocks with `name` and `version`. A
  * line scanner, not a TOML parser — only the block's own top-level keys are
- * read, and local (editable / virtual / directory) packages are first-party.
- * A package from git, a URL or a non-PyPI index maps to `@ <kind> source`
- * (PY_FOREIGN_PIN_PREFIX), never to its bare version.
+ * read, and local (editable / virtual / directory) packages are first-party:
+ * never in the returned pins, and named in `locals` when the caller passes
+ * one, so a workspace member the import scan cannot find on disk is still
+ * never fetched from PyPI. A package from git, a URL or a non-PyPI index maps
+ * to `@ <kind> source` (PY_FOREIGN_PIN_PREFIX), never to its bare version.
  */
-export function parsePythonLock(text: string): Map<string, string> {
+export function parsePythonLock(text: string, locals?: Set<string>): Map<string, string> {
   const out = new Map<string, string>();
   let cur: { name?: string; version?: string; local?: boolean; foreign?: string } | null = null;
   let where: "top" | "source" | "other" = "other";
   const flush = (): void => {
+    if (cur?.name && cur.local) locals?.add(normPy(cur.name));
     if (cur?.name && cur.version && !cur.local) {
       const n = normPy(cur.name);
       if (!out.has(n))
@@ -1006,13 +1028,11 @@ export function parsePythonLock(text: string): Map<string, string> {
       if (/^source\s*=\s*\{[^}]*\b(editable|virtual|directory|path)\s*=/.test(line))
         cur.local = true;
       else {
-        // uv: `source = { registry = "…" }` is PyPI only at pypi.org; git /
-        // url / any other index is a different artifact under the same name.
+        // uv: `source = { registry = "…" }` is PyPI only at public PyPI's
+        // index; git / url / any other index is a different artifact under
+        // the same name.
         const src = /^source\s*=\s*\{\s*(\w+)\s*=\s*"([^"]*)"/.exec(line);
-        if (
-          src &&
-          !(src[1] === "registry" && /^https:\/\/pypi\.org\/simple\/?$/.test(src[2] ?? ""))
-        )
+        if (src && !(src[1] === "registry" && isPublicPypiIndex(src[2] ?? "")))
           cur.foreign = src[1] ?? "other";
       }
     } else if (where === "source") {
@@ -1058,9 +1078,7 @@ export function parsePipfileLock(text: string): Map<string, string> {
     // No sources declared: pipenv's default source, named "pypi", is PyPI.
     if (indexUrl.size === 0) return index === undefined || index === "pypi";
     // pypi.python.org is PyPI's legacy host — older Pipfiles still name it.
-    return /^https:\/\/pypi\.(?:python\.)?org\/simple\/?$/i.test(
-      (index === undefined ? undefined : indexUrl.get(index)) ?? "",
-    );
+    return isPublicPypiIndex((index === undefined ? undefined : indexUrl.get(index)) ?? "");
   };
   for (const section of ["default", "develop"]) {
     const sec = doc[section];
@@ -1097,6 +1115,18 @@ function parsePep508(line: string): ({ name: string } & PyReq) | null {
   return { name, pin: pin?.[1] ?? null, range: spec };
 }
 
+/** A requirements-file line without its comment, trimmed. */
+function requirementLine(raw: string): string {
+  return raw.replace(/(^|\s)#.*$/, "").trim();
+}
+
+/** Public PyPI's simple index — pypi.org, or its legacy host pypi.python.org
+ * that older files still name. Any other index is a different artifact under
+ * the same name. */
+function isPublicPypiIndex(url: string): boolean {
+  return /^https:\/\/pypi\.(?:python\.)?org\/simple\/?$/i.test(url);
+}
+
 /**
  * requirements*.txt / *.in: every requirement line (options, `-r`, `-e` and
  * comments skipped). An index option anywhere in the file binds every
@@ -1110,12 +1140,12 @@ export function parseRequirements(text: string): Map<string, PyReq> {
   const out = new Map<string, PyReq>();
   let foreign = false;
   for (const raw of text.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
-    const line = raw.replace(/(^|\s)#.*$/, "").trim();
+    const line = requirementLine(raw);
     if (!line) continue;
     if (line.startsWith("-")) {
       const index = /^(?:--index-url|-i)(?:\s*=\s*|\s+)(\S+)/.exec(line);
       if (index) {
-        if (!/^https:\/\/pypi\.(?:python\.)?org\/simple\/?$/i.test(index[1] ?? "")) foreign = true;
+        if (!isPublicPypiIndex(index[1] ?? "")) foreign = true;
       } else if (/^(?:--extra-index-url|--find-links|-f|--no-index)(?:[=\s]|$)/.test(line)) {
         foreign = true;
       }
@@ -1131,12 +1161,15 @@ export function parseRequirements(text: string): Map<string, PyReq> {
   return out;
 }
 
+/** One TOML string token: basic (`"…"`, escapes) or literal (`'…'`). */
+const TOML_STRING_RE = /"((?:[^"\\]|\\.)*)"|'([^']*)'/g;
+
 function stripTomlStrings(line: string): string {
-  return line.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "");
+  return line.replace(TOML_STRING_RE, "");
 }
 
 function tomlStrings(line: string): string[] {
-  return [...line.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2] ?? "");
+  return [...line.matchAll(TOML_STRING_RE)].map((m) => m[1] ?? m[2] ?? "");
 }
 
 /**
@@ -1194,8 +1227,13 @@ export function parsePyprojectDeps(text: string): Map<string, PyReq> {
       const version = /\bversion\s*=\s*["']([^"']*)["']/.exec(val);
       const path = /\bpath\s*=\s*["']([^"']*)["']/.exec(val);
       const other = /\b(git|url)\s*=\s*["']([^"']*)["']/.exec(val);
+      // A named Poetry source other than PyPI: the same name there is a
+      // different artifact from PyPI's release.
+      const source = /\bsource\s*=\s*["']([^"']*)["']/.exec(val);
       if (path) range = `file:${path[1] ?? ""}`;
       else if (other) range = `@ ${other[2] ?? ""}`;
+      else if (source && !/^pypi$/i.test(source[1] ?? ""))
+        range = `${PY_FOREIGN_PIN_PREFIX}index source`;
       else if (version) range = version[1] ?? "*";
     }
     const pin = /^(?:==)?\s*(\d[0-9A-Za-z.+!_-]*)$/.exec(range);
@@ -1260,6 +1298,8 @@ export interface ManifestEdit {
 }
 
 const NPM_DEP_LINE = /^\s*"([^"]+)"\s*:\s*"([^"]*)"\s*,?\s*$/;
+/** A patch line opening one of the `NPM_DEP_SECTIONS` objects. */
+const NPM_DEP_SECTION_HEAD = new RegExp(`"(?:${NPM_DEP_SECTIONS.join("|")})"\\s*:\\s*\\{`);
 
 /**
  * Dependencies a package.json patch adds (or re-ranges). The HEAD file is the
@@ -1284,9 +1324,7 @@ export function npmManifestEdits(patch: string, headText: string | null): Manife
       continue;
     }
     if (sign !== "+" && sign !== " ") continue;
-    if (
-      /"(dependencies|devDependencies|peerDependencies|optionalDependencies)"\s*:\s*\{/.test(body)
-    ) {
+    if (NPM_DEP_SECTION_HEAD.test(body)) {
       section = "deps";
       continue;
     }
@@ -1343,7 +1381,7 @@ export function pythonManifestEdits(
   const removed = new Map<string, Candidate>();
   const candidates = (body: string): Candidate[] => {
     if (!isPyproject) {
-      const line = body.replace(/(^|\s)#.*$/, "").trim();
+      const line = requirementLine(body);
       if (!line || line.startsWith("-")) return [];
       const r = parsePep508(line);
       return r ? [{ name: r.name, range: r.range, spec: r.range }] : [];
@@ -1835,6 +1873,8 @@ interface DirInfo {
   npmLocks: NpmLock[];
   pkg: PackageJsonInfo | null;
   pyPins: Map<string, string>;
+  /** Distributions a Python lockfile here records as local (first-party). */
+  pyLocal: Set<string>;
   pyDecl: Map<string, PyReq>;
 }
 
@@ -1868,13 +1908,14 @@ class Resolver {
     const pkg = pkgText !== null ? parsePackageJson(pkgText) : null;
 
     const pyPins = new Map<string, string>();
+    const pyLocal = new Set<string>();
     const pyDecl = new Map<string, PyReq>();
     const pins = (m: Map<string, string>): void => {
       for (const [k, v] of m) if (!pyPins.has(k)) pyPins.set(k, v);
     };
     for (const f of ["uv.lock", "poetry.lock"]) {
       const t = read(f);
-      if (t !== null) pins(parsePythonLock(t));
+      if (t !== null) pins(parsePythonLock(t, pyLocal));
     }
     const pipfile = read("Pipfile.lock");
     if (pipfile !== null) pins(parsePipfileLock(pipfile));
@@ -1896,7 +1937,7 @@ class Resolver {
     if (pyproject !== null)
       for (const [k, r] of parsePyprojectDeps(pyproject)) if (!pyDecl.has(k)) pyDecl.set(k, r);
 
-    const info: DirInfo = { npmLocks, pkg, pyPins, pyDecl };
+    const info: DirInfo = { npmLocks, pkg, pyPins, pyLocal, pyDecl };
     this.dirs.set(rel, info);
     return info;
   }
@@ -1948,16 +1989,31 @@ class Resolver {
   /** A Python distribution (normalised name) as seen from one file. */
   pyDist(dist: string, relFile: string): Resolved | null | "first-party" {
     let pin: string | undefined;
+    let pinDepth = -1;
+    let local = false;
     let decl: PyReq | undefined;
-    for (const d of ancestors(relDirOf(relFile))) {
+    let declDepth = -1;
+    ancestors(relDirOf(relFile)).forEach((d, depth) => {
       const info = this.dir(d);
-      pin ??= info.pyPins.get(dist);
-      decl ??= info.pyDecl.get(dist);
-    }
-    if (decl && isLocalRange(decl.range)) return "first-party";
+      // The nearest lockfile that knows the name decides: a pin, or local.
+      if (pin === undefined && !local) {
+        pin = info.pyPins.get(dist);
+        if (pin !== undefined) pinDepth = depth;
+        else local = info.pyLocal.has(dist);
+      }
+      if (decl === undefined) {
+        decl = info.pyDecl.get(dist);
+        if (decl !== undefined) declDepth = depth;
+      }
+    });
+    if (local || (decl && isLocalRange(decl.range))) return "first-party";
     // Locked to git / a URL / a private index: a non-registry range, so
     // preparation skips it rather than substituting PyPI's release.
     if (pin?.startsWith(PY_FOREIGN_PIN_PREFIX)) return { name: dist, version: null, range: pin };
+    // A nearer declaration naming a non-registry source (a direct reference,
+    // a private index) is not what an ancestor's public pin installs here.
+    if (decl && isNonRegistryRange(decl.range) && (pin === undefined || pinDepth > declDepth))
+      return { name: dist, version: null, range: decl.range };
     if (pin === undefined && !decl) return null;
     const version = pin ?? decl?.pin ?? null;
     return decl ? { name: dist, version, range: decl.range } : { name: dist, version };
@@ -2043,8 +2099,11 @@ export function planDependencyRequests(
   // Keyed by package, one Acc per distinct resolved VERSION: two workspaces can
   // lock one package at different versions, and each importer must be shown the
   // sources it actually runs against. An unresolved (null) sighting joins the
-  // package's first registry entry, and a later resolution fills a null one
-  // in. A sighting preparation SKIPS (a git / URL / private-registry source)
+  // package's first registry entry whose range it shares (`*` or no range
+  // shares any; an unresolved `*` entry a specific range joins narrows to that
+  // range, whichever was seen first), and a later resolution fills in a null
+  // one of a shared range — so an importer is never credited with a version
+  // its own declared range was not resolved against. A sighting preparation SKIPS (a git / URL / private-registry source)
   // stays apart from every registry entry and joins only one of the same
   // source, so its importers are never credited with the registry's release
   // and a registry pin never turns it into a fetch.
@@ -2060,12 +2119,18 @@ export function planDependencyRequests(
     const key = `${eco}:${r.name}`;
     const same = accs.get(key) ?? [];
     const registry = same.filter((x) => !unfetchable(x));
+    const shared = (x: { range?: string }): boolean =>
+      x.range === undefined ||
+      r.range === undefined ||
+      x.range === "*" ||
+      r.range === "*" ||
+      x.range === r.range;
     let a = unfetchable(r)
       ? same.find((x) => unfetchable(x) && x.range === r.range)
       : r.version === null
-        ? registry[0]
+        ? registry.find(shared)
         : (registry.find((x) => x.version === r.version) ??
-          registry.find((x) => x.version === null));
+          registry.find((x) => x.version === null && shared(x)));
     if (!a) {
       a = {
         ecosystem: eco,
@@ -2078,8 +2143,18 @@ export function planDependencyRequests(
       if (r.range !== undefined) a.range = r.range;
       same.push(a);
       accs.set(key, same);
-    } else if (a.version === null && r.version !== null) {
-      a.version = r.version;
+    } else {
+      // A `*` or range-less entry a specific range joins is narrowed to that
+      // range, so a `*` seen first never bridges two incompatible ranges.
+      if (
+        a.version === null &&
+        r.version === null &&
+        r.range !== undefined &&
+        r.range !== "*" &&
+        (a.range === undefined || a.range === "*")
+      )
+        a.range = r.range;
+      if (a.version === null && r.version !== null) a.version = r.version;
     }
     if (why.manifest && !a.manifestWhys.includes(why.manifest)) a.manifestWhys.push(why.manifest);
     if (why.importer && !a.importers.includes(why.importer)) a.importers.push(why.importer);
@@ -2175,7 +2250,10 @@ export interface ArchiveEntry {
   path: string;
   kind: "file" | "dir" | "symlink" | "hardlink" | "other";
   size: number;
-  /** The entry's bytes (lazy for zip, so filtered-out entries are never inflated). */
+  /** The entry's bytes (lazy for zip, so filtered-out entries are never inflated).
+   * Read each entry once: every zip read charges its compressed size to the
+   * archive's one overlap budget, so a second read of a large entry can make a
+   * sound archive read as overlapping. */
   read: () => Buffer;
 }
 
@@ -2514,7 +2592,8 @@ export function unpackEntries(
     // before its entry is inflated.
     try {
       mkdirSync(dirname(dest), { recursive: true });
-    } catch {
+    } catch (err) {
+      if (!isNameClash(err)) throw err;
       continue; // a file/dir name clash inside the archive: that one entry is lost
     }
     const data = e.read();
@@ -2530,11 +2609,21 @@ export function unpackEntries(
       writeFileSync(dest, data, { mode: 0o644 });
       files++;
       bytes += data.length;
-    } catch {
+    } catch (err) {
       // A file/dir name clash inside the archive: that one entry is lost.
+      if (!isNameClash(err)) throw err;
     }
   }
   return { files, bytes, dirs: dirs.size, rejected };
+}
+
+/** A file/dir name clash, or a name too long for the filesystem, inside one
+ * archive — the only filesystem failures an unpack shrugs off (that one entry
+ * is lost). Anything else (no space, no permission, an I/O error) fails the
+ * unpack, so a partial copy is never marked complete. */
+function isNameClash(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "EEXIST" || code === "ENOTDIR" || code === "EISDIR" || code === "ENAMETOOLONG";
 }
 
 function gunzipCapped(buf: Buffer): Buffer {
@@ -2605,20 +2694,43 @@ function readMarker(dir: string): CacheMarker | null {
   return null;
 }
 
-/** Remove this package's tmp dirs left by a crashed run (older than an hour). */
-function sweepStaleTmp(final: string): void {
+/** An install's private unpack dir: `<package dir>.tmp-<hex>`. */
+const INSTALL_TMP_RE = /\.tmp-[0-9a-f]+$/;
+
+/** Remove the install tmp dirs in `parent` (only those of `owner`, a package
+ * dir's name, when given) that a crashed run left — older than an hour. A
+ * live install's dir is minutes old at most. */
+function sweepStaleTmp(parent: string, owner?: string): void {
   try {
-    const parent = dirname(final);
-    const prefix = `${basename(final)}.tmp-`;
     for (const f of readdirSync(parent)) {
-      if (!f.startsWith(prefix)) continue;
-      const p = join(parent, f);
-      if (Date.now() - statSync(p).mtimeMs > STALE_TMP_MS)
-        rmSync(p, { recursive: true, force: true });
+      if (!INSTALL_TMP_RE.test(f)) continue;
+      if (owner !== undefined && !f.startsWith(`${owner}.tmp-`)) continue;
+      try {
+        const p = join(parent, f);
+        // A complete entry (a version that merely ends like a tmp name) stays.
+        if (readMarker(p)) continue;
+        if (Date.now() - statSync(p).mtimeMs > STALE_TMP_MS)
+          rmSync(p, { recursive: true, force: true });
+      } catch {
+        // vanished, or not ours to remove: the next one
+      }
     }
   } catch {
     // best effort
   }
+}
+
+/** Every ecosystem dir's stale install tmp dirs, whatever package left them:
+ * a run killed mid-unpack whose package is then served from the cache never
+ * installs again, so its own sweep would never come. */
+export function sweepStaleInstallDirs(root: string): void {
+  let ecos: string[] = [];
+  try {
+    ecos = readdirSync(root);
+  } catch {
+    return;
+  }
+  for (const eco of ecos) sweepStaleTmp(join(root, eco));
 }
 
 // ---------------------------------------------------------------------------
@@ -2819,7 +2931,7 @@ function install(
   const raced = fromCache(ctx, req, name, version, range);
   if (raced) return raced;
   mkdirSync(dirname(final), { recursive: true });
-  sweepStaleTmp(final);
+  sweepStaleTmp(dirname(final), basename(final));
   // Unpack into a private tmp dir and rename it into place: a reader either
   // sees no dir or a complete one, never a half-written package.
   const tmp = `${final}.tmp-${randomBytes(6).toString("hex")}`;
@@ -3047,9 +3159,11 @@ async function prepareOne(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
 
 /**
  * Plan, fetch and unpack the third-party sources this PR's review needs.
- * NEVER throws and never blocks past `timeoutMs` (plus one in-flight request
- * settling): every failure is a `skipped` entry, and a cached package is
- * served without touching the network at all.
+ * NEVER throws, and its network phase never runs past `timeoutMs` (plus one
+ * in-flight request settling) — the cache sweep and the planning before it
+ * are local, synchronous and outside that budget. Every failure is a
+ * `skipped` entry, and a cached package is served without touching the
+ * network at all.
  */
 export async function prepareDependencySources(
   tree: string,
@@ -3072,6 +3186,7 @@ export async function prepareDependencySources(
   }
   const manifest: DepManifest = { dir: root, sources: [], skipped: [] };
   try {
+    sweepStaleInstallDirs(root);
     pruneDependencyCache(root, opts.maxCacheBytes ?? DEFAULT_MAX_CACHE_BYTES, log, {
       inUseMs: opts.cacheInUseMs ?? DEFAULT_CACHE_IN_USE_MS,
     });
@@ -3214,18 +3329,10 @@ export function pruneDependencyCache(
 
 const MAX_RENDERED_SKIPS = 8;
 
-/** Control characters (newlines included) as visible `\uXXXX` escapes — the
- * same rule as templates.ts' `flatControls`. `why` carries the PR's own file
- * paths, and git allows a newline in one: raw, it would open a line of
+/** The round prompt's block. "" when there is nothing to say at all. Every
+ * field goes through `flatControls`: `why` carries the PR's own file paths,
+ * and git allows a newline in one — raw, it would open a line of
  * daemon-authored prompt. */
-function flatControls(text: string): string {
-  return text.replace(
-    /[\u0000-\u001f\u007f\u2028\u2029]/g,
-    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-}
-
-/** The round prompt's block. "" when there is nothing to say at all. */
 export function renderDependencyNote(m: DepManifest): string {
   const f = flatControls;
   if (!m.sources.length && !m.skipped.length) return "";
@@ -3236,7 +3343,9 @@ export function renderDependencyNote(m: DepManifest): string {
     );
     for (const s of m.sources) {
       const unlocked =
-        s.range !== undefined ? ` (no lockfile pin: newest match for \`${f(s.range)}\`)` : "";
+        s.range !== undefined
+          ? ` (no lockfile pin: the registry's resolved match for \`${f(s.range)}\`)`
+          : "";
       lines.push(
         `- ${s.ecosystem} \`${f(s.name)}@${f(s.version)}\`${unlocked} — ${f(s.why)} → \`${f(s.path)}\``,
       );

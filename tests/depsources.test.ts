@@ -4,6 +4,7 @@
 // hand-built tar/zip archives and temp dirs — no network, no package manager.
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -39,6 +40,7 @@ import {
   planDependencyRequests,
   prepareDependencySources,
   pruneDependencyCache,
+  sweepStaleInstallDirs,
   pythonManifestEdits,
   pyVersionMatches,
   renderDependencyNote,
@@ -1003,6 +1005,101 @@ describe("planDependencyRequests", () => {
     ]);
   });
 
+  it("python: a workspace member a lockfile records as local is first-party, wherever its source lives", () => {
+    const root = tree({
+      "pyproject.toml": '[project]\ndependencies = ["requests", "httpx"]\n',
+      "uv.lock": [
+        "[[package]]",
+        'name = "requests"',
+        'version = "0.1.0"',
+        'source = { editable = "packages/requests" }',
+        "",
+        "[[package]]",
+        'name = "httpx"',
+        'version = "0.27.0"',
+      ].join("\n"),
+      "packages/requests/src/requests/__init__.py": "",
+      "svc/app.py": "import requests\nimport httpx\n",
+    });
+    expect(
+      planDependencyRequests(root, [{ filename: "svc/app.py", status: "modified" }]).map(
+        (r) => r.name,
+      ),
+    ).toEqual(["httpx"]);
+  });
+
+  it("python: a nearer non-registry declaration is never satisfied by an ancestor's public pin", () => {
+    const root = tree({
+      "requirements.txt": "requests==2.31.0\n",
+      "svc/requirements.txt": "requests @ git+https://example.org/requests.git\n",
+      "svc/app.py": "import requests\n",
+      "web/app.py": "import requests\n",
+    });
+    expect(
+      planDependencyRequests(root, [
+        { filename: "svc/app.py", status: "modified" },
+        { filename: "web/app.py", status: "modified" },
+      ]).map((r) => [r.name, r.version, r.range]),
+    ).toEqual([
+      ["requests", null, "@ git+https://example.org/requests.git"],
+      ["requests", "2.31.0", "==2.31.0"],
+    ]);
+  });
+
+  it("python: a Poetry dependency on a named non-PyPI source is not pinned to PyPI", () => {
+    const root = tree({
+      "pyproject.toml": [
+        "[tool.poetry.dependencies]",
+        'requests = { version = "2.31.0", source = "internal" }',
+        'httpx = { version = "0.27.0", source = "PyPI" }',
+      ].join("\n"),
+      "app.py": "import requests\nimport httpx\n",
+    });
+    expect(
+      planDependencyRequests(root, [{ filename: "app.py", status: "modified" }]).map((r) => [
+        r.name,
+        r.version,
+        r.range,
+      ]),
+    ).toEqual([
+      ["httpx", "0.27.0", "0.27.0"],
+      ["requests", null, "@ index source"],
+    ]);
+  });
+
+  it("unlocked workspaces declaring incompatible ranges stay two requests, each with its own importer", () => {
+    const root = tree({
+      "a/package.json": JSON.stringify({ dependencies: { lodash: "^1.0.0" } }),
+      "b/package.json": JSON.stringify({ dependencies: { lodash: "^2.0.0" } }),
+      "c/package.json": JSON.stringify({ dependencies: { lodash: "*" } }),
+      "a/x.js": "import _ from 'lodash';",
+      "b/y.js": "import _ from 'lodash';",
+      "c/z.js": "import _ from 'lodash';",
+    });
+    expect(
+      planDependencyRequests(root, [
+        { filename: "a/x.js", status: "modified" },
+        { filename: "b/y.js", status: "modified" },
+        { filename: "c/z.js", status: "modified" },
+      ]).map((r) => [r.range, r.why]),
+    ).toEqual([
+      ["^1.0.0", "imported by a/x.js, c/z.js"],
+      ["^2.0.0", "imported by b/y.js"],
+    ]);
+    // A `*` seen first narrows to the first specific range that joins it, so
+    // it never bridges `^1` and `^2` into one resolution.
+    expect(
+      planDependencyRequests(root, [
+        { filename: "c/z.js", status: "modified" },
+        { filename: "a/x.js", status: "modified" },
+        { filename: "b/y.js", status: "modified" },
+      ]).map((r) => [r.range, r.why]),
+    ).toEqual([
+      ["^1.0.0", "imported by c/z.js, a/x.js"],
+      ["^2.0.0", "imported by b/y.js"],
+    ]);
+  });
+
   it("names at most three importing files, then +N more", () => {
     const files: Record<string, string> = {
       "package.json": JSON.stringify({ dependencies: { lodash: "^4" } }),
@@ -1639,7 +1736,7 @@ describe("renderDependencyNote", () => {
       "- npm `jschardet@3.1.4` — added to package.json; imported by src/a.ts → `/c/npm/jschardet@3.1.4`",
     );
     expect(lines[2]).toBe(
-      "- pypi `chardet@5.2.0` (no lockfile pin: newest match for `>=5`) — imported by a.py → `/c/pypi/chardet@5.2.0`",
+      "- pypi `chardet@5.2.0` (no lockfile pin: the registry's resolved match for `>=5`) — imported by a.py → `/c/pypi/chardet@5.2.0`",
     );
     expect(lines[3]).toBe("Not available: `foo` (not found (404 from registry.npmjs.org)).");
   });
@@ -1697,6 +1794,38 @@ describe("pruneDependencyCache — the cache's size cap", () => {
 
   it("is a no-op on a missing cache", () => {
     expect(pruneDependencyCache(join(tmpdir(), "qcr-no-such-cache-x"), 1)).toBe(0);
+  });
+});
+
+describe("sweepStaleInstallDirs — a crashed unpack's leftovers, whatever package left them", () => {
+  it("removes install tmp dirs over an hour old; a fresh one and a complete entry stay", () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-depcache-"));
+    try {
+      const old = join(root, "npm", "left@1.0.0.tmp-0a1b2c3d4e5f");
+      const fresh = join(root, "pypi", "busy@2.0.0.tmp-ffeeddccbbaa");
+      const complete = join(root, "npm", "odd@1.0.0.tmp-abc");
+      for (const d of [old, fresh, complete]) mkdirSync(d, { recursive: true });
+      writeFileSync(
+        join(complete, ".qcr-complete"),
+        JSON.stringify({
+          name: "odd",
+          version: "1.0.0.tmp-abc",
+          url: "",
+          sha256: "",
+          files: 0,
+          bytes: 0,
+        }),
+      );
+      const twoHours = new Date(Date.now() - 2 * 3_600_000);
+      utimesSync(old, twoHours, twoHours);
+      utimesSync(complete, twoHours, twoHours);
+      sweepStaleInstallDirs(root);
+      expect(existsSync(old)).toBe(false);
+      expect(existsSync(fresh)).toBe(true);
+      expect(existsSync(complete)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1854,6 +1983,65 @@ describe("selfscan2: the version a file actually runs against", () => {
       name: "x",
       version: "1.2.0",
     });
+  });
+
+  it("pnpm: a package resolved from a tarball off the public registry is skipped, never swapped for npm's", () => {
+    const lock = [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "",
+      "  .:",
+      "    dependencies:",
+      "      x:",
+      "        specifier: ^1.0.0",
+      "        version: 1.2.0",
+      "      y:",
+      "        specifier: ^2.0.0",
+      "        version: 2.0.0",
+      "      z:",
+      "        specifier: ^3.0.0",
+      "        version: 3.0.0",
+      "",
+      "packages:",
+      "",
+      "  x@1.2.0:",
+      "    resolution: {integrity: sha512-x, tarball: https://npm.internal.example/x/-/x-1.2.0.tgz}",
+      "",
+      "  y@2.0.0:",
+      "    resolution:",
+      "      tarball: https://registry.npmjs.org/y/-/y-2.0.0.tgz",
+      "",
+      "  z@3.0.0:",
+      "    resolution:",
+      "      integrity: sha512-z",
+      "      tarball: 'https://git.example/z.tgz'",
+      "",
+      "snapshots:",
+      "",
+      "  x@1.2.0: {}",
+      "  y@2.0.0: {}",
+      "  z@3.0.0: {}",
+    ].join("\n");
+    const l = parsePnpmLock(lock);
+    expect(l.entries.get("x")).toEqual([{ version: "1.2.0", specs: ["^1.0.0"], foreign: true }]);
+    expect(l.entries.get("y")).toEqual([{ version: "2.0.0", specs: ["^2.0.0"] }]);
+    const root = tree({
+      "package.json": JSON.stringify({ dependencies: { x: "^1.0.0", y: "^2.0.0", z: "^3.0.0" } }),
+      "pnpm-lock.yaml": lock,
+      "src/a.js": "import x from 'x';\nimport y from 'y';\nimport z from 'z';\n",
+    });
+    expect(
+      planDependencyRequests(root, [{ filename: "src/a.js" }]).map((r) => [
+        r.name,
+        r.version,
+        r.range,
+      ]),
+    ).toEqual([
+      ["x", null, "@ non-npmjs source"],
+      ["y", "2.0.0", "^2.0.0"],
+      ["z", null, "@ non-npmjs source"],
+    ]);
   });
 
   it("pnpm v5: the single-project dependencies section pins the direct dependency", () => {
@@ -2387,6 +2575,25 @@ describe("selfscan4: hostile lockfiles and archives are linear work", () => {
     expect(r.files).toBe(1);
     expect(reads).toBe(1);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "unpack: a filesystem failure that is not a name clash fails the unpack rather than dropping files",
+    () => {
+      const target = tmp();
+      chmodSync(target, 0o555);
+      try {
+        expect(() =>
+          unpackEntries(
+            [{ path: "pkg/a.py", kind: "file", size: 1, read: () => Buffer.from("a") }],
+            target,
+            { strip: "none", maxUnpackedBytes: 1 << 20 },
+          ),
+        ).toThrow(/EACCES/);
+      } finally {
+        chmodSync(target, 0o755);
+      }
+    },
+  );
 
   it("unpack: inflate work is bounded in aggregate even when the writes fail", () => {
     // `dN.py/k.py` (kept, empty) makes `dN.py` a directory, so the 2 MiB

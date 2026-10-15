@@ -383,6 +383,23 @@ export function cancellationOrder(a: CancellationTally, b: CancellationTally): n
   return Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause);
 }
 
+/** Spend and measured tokens summed over `rounds`. Expired rounds count:
+ * they blew a deadline, they did not get a refund — excluding them would
+ * erase real token cost (see StateStore.totalSpend). */
+export function roundUsage(
+  rounds: readonly Pick<RoundRow, "est_usd" | "tokens_in" | "tokens_out">[],
+): {
+  spend_usd: number;
+  tokens_in: number;
+  tokens_out: number;
+} {
+  return {
+    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
+    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
+  };
+}
+
 /** The cancelled rounds among `rounds`, grouped by cause (an unclassified
  * one is `unknown`) and in `cancellationOrder`. */
 export function tallyCancellations(
@@ -7203,9 +7220,7 @@ export function buildStatusSnapshot(
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
     total_spend_usd: store.totalSpend(),
-    // Expired rounds COUNT: a round that blew its deadline still burned its
-    // tokens — same rule as totalSpend/cli/metrics.
-    today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    today_spend_usd: roundUsage(store.roundsOn(today)).spend_usd,
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth
       ? {

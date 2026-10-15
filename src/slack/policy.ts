@@ -19,10 +19,8 @@
 // per cause per cooldown, repeats inside the window fold into a counter, and a
 // genuine escalation may break the cooldown exactly once per policy day.
 import type { Config, SlackCausePolicy } from "../config.js";
-import { localWallClockToInstant, zoneDateString, zonedParts } from "../eod.js";
+import { zoneDateString, zoneDayBounds, zonedParts } from "../eod.js";
 import type { SlackPostKind, StateStore } from "../state.js";
-
-const DAY_MS = 86_400_000;
 
 export interface DayWindow {
   /** "YYYY-MM-DD" in the policy timezone — the cooldown table's day key. */
@@ -38,16 +36,7 @@ export interface DayWindow {
  */
 export function dayWindow(now: Date, timeZone: string): DayWindow {
   const p = zonedParts(now, timeZone);
-  const start = localWallClockToInstant(p.year, p.month, p.day, 0, 0, timeZone);
-  const nextCal = new Date(Date.UTC(p.year, p.month - 1, p.day) + DAY_MS);
-  const end = localWallClockToInstant(
-    nextCal.getUTCFullYear(),
-    nextCal.getUTCMonth() + 1,
-    nextCal.getUTCDate(),
-    0,
-    0,
-    timeZone,
-  );
+  const { start, end } = zoneDayBounds(p.year, p.month, p.day, timeZone);
   return {
     day: zoneDateString(now, timeZone),
     startIso: start.toISOString(),

@@ -374,6 +374,27 @@ export const SANCTIONED_TAGS: readonly string[] = [
   DEFERRED_TAG,
 ];
 
+const SEVERITY_WORDS: ReadonlySet<string> = new Set(["P0", "P1", "P2", "P3", "nit"]);
+
+/** The ordinary posting tag a findings-record tag word (bare, lower case) is
+ * counted, posted and ranked under: a posting tag is itself; `check this` is a
+ * question; `ask your human` and `deferred` take the tag their severity maps
+ * to (a question without one). Null for a word outside the grammar. */
+export function ordinaryPostTag(
+  tag: string,
+  severity: string | null,
+  confidence: number | null,
+  reachability: string | null,
+): PostTag | null {
+  if ((POSTING_TAG_WORDS as readonly string[]).includes(tag)) return tag as PostTag;
+  if (tag === "check this") return "question";
+  if (tag === "ask your human" || tag === "deferred")
+    return severity && SEVERITY_WORDS.has(severity)
+      ? postTag(severity as Severity, confidence ?? 1, reachability as Reachability | null)
+      : "question";
+  return null;
+}
+
 /** A leading `[…]` tag on a line, however it is spelled. Bounded length so a
  * markdown link or an array literal at the start of a title is not mistaken
  * for a tag. */

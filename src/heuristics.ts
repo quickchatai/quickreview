@@ -48,8 +48,8 @@ export function prodStats(files: PrFile[]): ProdStats {
 // migration gate alone.
 
 /** A path under a `migrations/` directory — the one spelling of "this file is
- * a migration" shared by the migration gate, lens selection and the recheck's
- * renumber classifier. */
+ * a migration" shared by the migration gate, lens selection, the ecosystem
+ * pre-check and the recheck's renumber classifier. */
 export const MIGRATION_DIR_RE = /(^|\/)migrations\//;
 
 export function isMigrationPath(path: string): boolean {
