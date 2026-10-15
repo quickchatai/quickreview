@@ -63,7 +63,13 @@ function fakeSpawn(lines: unknown[]): SpawnFn {
 }
 
 const EVENTS = [
-  { type: "tool_execution_start", toolName: "read", args: { path: "/tree/a.py" } },
+  {
+    type: "tool_execution_start",
+    toolCallId: "c1",
+    toolName: "read",
+    args: { path: "/tree/a.py" },
+  },
+  { type: "tool_execution_end", toolCallId: "c1", toolName: "read", result: {}, isError: false },
   {
     type: "message_end",
     message: {

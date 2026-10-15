@@ -51,6 +51,14 @@ const tool = (toolName: string, path: string) => ({
   toolName,
   args: { path },
 });
+// pi's end of that call: a read is credited only once it succeeded.
+const ended = (path: string, isError = false) => ({
+  type: "tool_execution_end",
+  toolCallId: `c-${path}`,
+  toolName: "read",
+  result: {},
+  isError,
+});
 const done = {
   type: "message_end",
   message: {
@@ -68,7 +76,7 @@ const spec: CaseSpec = {
 };
 
 async function readsOf(paths: string[]): Promise<string[] | undefined> {
-  const f = fakeSpawn([...paths.map((p) => tool("read", p)), done]);
+  const f = fakeSpawn([...paths.flatMap((p) => [tool("read", p), ended(p)]), done]);
   const out = await piCaseRunner({
     agentsDir: COMPANION_AGENTS_DIR,
     cwd: APP,
