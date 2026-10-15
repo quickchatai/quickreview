@@ -129,7 +129,7 @@ import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
 import type { RoundRow, StateStore } from "./state.js";
-import { pendingPosting } from "./posting-outbox.js";
+import { deliverablePosting } from "./posting-outbox.js";
 import type { RecheckOrder } from "./recheck.js";
 import {
   RECHECK_TEMPLATE_FILE,
@@ -669,18 +669,21 @@ export function roundMemorySeed(
 
 /**
  * The startup orphan sweep's posting debt: a round whose outbox job is still
- * pending owes its review, and the outbox delivers it with no session — the
- * same test the verdict watcher's posting proof reads as posting in flight.
- * A dry run never owes one.
+ * pending owes its review, and the outbox delivers it with no session. Only a
+ * job the outbox will actually process counts — live mode, this repo
+ * (`outboxProcesses`): a pending dry-run snapshot left over a flip to live is
+ * never delivered, so keeping its round would hold it until the operator's
+ * `u`. A dry run never owes one.
  */
 export function orphanPostingOwed(
   receiptDir: string,
   dryRun: boolean,
+  repo: string,
 ): (round: Pick<RoundRow, "pr" | "round_no" | "posting_key">) => boolean {
   return (round) =>
     !dryRun &&
     round.posting_key !== null &&
-    pendingPosting(receiptDir, round.pr, round.round_no, round.posting_key);
+    deliverablePosting(receiptDir, round.pr, round.round_no, round.posting_key, repo);
 }
 
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
@@ -1581,7 +1584,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       const orphans = reconcileOrphanedRounds(d.store, pre.adoption.prs, {
         botLogin: cfg.github.bot_login,
         log,
-        postingOwed: orphanPostingOwed(join(root, "state", "posting-receipts"), cfg.dry_run),
+        postingOwed: orphanPostingOwed(
+          join(root, "state", "posting-receipts"),
+          cfg.dry_run,
+          cfg.github.repo,
+        ),
       });
       if (orphans.cancelled.length) {
         log(

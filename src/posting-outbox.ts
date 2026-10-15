@@ -154,6 +154,24 @@ export function pendingPosting(dir: string, pr: number, round: number, key: stri
   const j = readPostingJob(jobPath(dir, pr, round));
   return j?.posting_key === key && j.status === "pending";
 }
+/** The outbox's own eligibility: the only jobs its tick ever processes. A
+ * pending job outside it — a dry-run snapshot, another repo's — is never
+ * delivered by this daemon. (The tick also never runs on a dry-run daemon.) */
+export function outboxProcesses(job: PostingJob, repo: string): boolean {
+  return job.status === "pending" && job.mode === "live" && job.repo === repo;
+}
+/** A pending job for this round and posting key that this daemon's outbox
+ * will deliver — {@link pendingPosting} narrowed by {@link outboxProcesses}. */
+export function deliverablePosting(
+  dir: string,
+  pr: number,
+  round: number,
+  key: string,
+  repo: string,
+): boolean {
+  const j = readPostingJob(jobPath(dir, pr, round));
+  return j?.posting_key === key && outboxProcesses(j, repo);
+}
 /** What the deferred-posting retry needs beyond the outbox. */
 export interface DeferredPostingDeps {
   /** The durable schedule: state.db `posting_retries`. */
@@ -233,13 +251,7 @@ export class PostingOutbox {
         if (!/^pr-\d+-round-\d+\.outbox\.json$/.test(name)) continue;
         const path = join(this.deps.dir, name),
           job = readPostingJob(path);
-        if (
-          job &&
-          job.status === "pending" &&
-          job.mode === "live" &&
-          job.repo === this.deps.repo &&
-          deferredReceipt(this.deps.dir, job)
-        ) {
+        if (job && outboxProcesses(job, this.deps.repo) && deferredReceipt(this.deps.dir, job)) {
           // A deferred job runs on its own bounded schedule and is
           // never touched by the open-ended path below.
           if (await this.deliverDeferred(path, job)) processed++;
@@ -248,9 +260,7 @@ export class PostingOutbox {
         }
         if (
           !job ||
-          job.status !== "pending" ||
-          job.mode !== "live" ||
-          job.repo !== this.deps.repo ||
+          !outboxProcesses(job, this.deps.repo) ||
           Date.parse(job.next_attempt_at) > this.now().getTime()
         )
           continue;
