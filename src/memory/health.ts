@@ -16,8 +16,8 @@
 //              wake until it lifts.
 //   auth_failed — a credential in use is refused (401/403, "Invalid API
 //              Key") or there is no key to send. Wakes `memory_auth_failed`
-//              on the first one, on every transition, and every 6 h while it
-//              lasts. Never graced, never deferred by a drain.
+//              on the first one, on every transition, and every `rewakeMs`
+//              (6 h) while it lasts. Never graced, never deferred by a drain.
 //
 // Three inputs drive it: an AUTHENTICATED probe of each credential in use (the
 // daemon's key file and the `ovcli.conf` the sessions are handed — judged
@@ -548,10 +548,11 @@ export class MemoryHealthMonitor {
   recordRequest(r: HealthRequest): void {
     const t = this.now().getTime();
     this.count(r.op, r.outcome);
-    // A NOT_FOUND is an authenticated ANSWER (the server checks the key before
-    // it resolves a path — the probe reads it the same way): it proves the key
-    // and the server exactly as a success does, and is never a failure.
-    if (r.outcome === "ok" || r.outcome === "absent") {
+    // A NOT_FOUND or a 409 conflict is an authenticated ANSWER (the server
+    // checks the key before it resolves a path or a precondition — the probe
+    // reads it the same way): it proves the key and the server exactly as a
+    // success does, and is never a failure.
+    if (r.outcome === "ok" || r.outcome === "absent" || r.outcome === "conflict") {
       this.lastOkAt = t;
       // A key the server just accepted IS a working daemon credential —
       // whatever the last probe said.
@@ -587,7 +588,7 @@ export class MemoryHealthMonitor {
   /** One round's memory seed, after the round was built (dispatch's
    * `round_memory_seeded`). A seed that timed out never reached the client's
    * observer — this is the only place that sees it. */
-  recordRoundSeed(seed: { degraded: boolean; ms: number; reasons?: string[] }): void {
+  recordRoundSeed(seed: { degraded: boolean; reasons?: string[] }): void {
     const t = this.now().getTime();
     this.count("round_seed", seed.degraded ? "failed" : "ok");
     if (seed.degraded) {
@@ -677,23 +678,32 @@ export class MemoryHealthMonitor {
       if (t - this.bootAt < this.bootGraceMs) return "unknown";
       return "degraded";
     }
-    if (t - this.lastOkAt >= this.downAfterMs) return "down";
+    if (this.unanswered(t)) return "down";
     // An engine that authenticates but cannot search is not
     // healthy — degraded at once, down (and woken) once it lasts as long as
     // an unanswered one would.
     if (this.notServingSince !== null) {
       return t - this.notServingSince >= this.downAfterMs ? "down" : "degraded";
     }
-    const d = this.creds.daemon;
-    if (d && d.result !== "ok" && d.result !== "absent") return "degraded";
+    // Either credential's latest failure degrades: the sessions' probe is
+    // judged as the daemon's is.
+    for (const n of CREDENTIALS) {
+      const c = this.creds[n];
+      if (c && c.result !== "ok" && c.result !== "absent") return "degraded";
+    }
     if (this.windowDegraded(t)) return "degraded";
     return "healthy";
+  }
+
+  /** No authenticated answer for `downAfterMs` (or none at all). */
+  private unanswered(t: number): boolean {
+    return this.lastOkAt === null || t - this.lastOkAt >= this.downAfterMs;
   }
 
   /** Why `down`: no authenticated answer outranks "answers but does not
    * serve" — a server that is not there is not serving either. */
   private downCause(t: number): "unanswered" | "not_serving" {
-    if (this.lastOkAt === null || t - this.lastOkAt >= this.downAfterMs) return "unanswered";
+    if (this.unanswered(t)) return "unanswered";
     return this.notServingSince !== null ? "not_serving" : "unanswered";
   }
 
@@ -761,14 +771,20 @@ export class MemoryHealthMonitor {
       return;
     }
     const open = this.incident ?? this.storedIncident;
-    if (open && (s === "healthy" || (s === "degraded" && this.answeredSince(open)))) {
+    if (
+      open &&
+      (s === "healthy" ||
+        (s === "degraded" && this.answeredSince(open) && this.notServingSince === null))
+    ) {
       this.incident = null;
       this.storedIncident = null;
       this.save(null);
     }
     // Only a MEASURED recovery closes an incident. `healthy` is one by
     // construction (it needs a fresh authenticated answer); `degraded` is one
-    // only with an authenticated answer since the incident began. A daemon
+    // only with an authenticated answer since the incident began and no
+    // not-serving run going (a restart resets the not-serving clock, so an
+    // engine still not serving reads `degraded` again for a while). A daemon
     // that restarts inside an outage passes through `degraded` with NO answer
     // when its boot grace ends — closing there would give the same outage a
     // new start, a fresh wake, and the TUI a second ticket (and a daemon
@@ -809,13 +825,31 @@ export class MemoryHealthMonitor {
       (n) => `  ${n === "daemon" ? "daemon key" : "sessions' ovcli.conf"}${this.deps.where?.[n] ? ` (${this.deps.where[n]})` : ""}: ${credentialPhrase(this.creds[n])}`,
     );
     const detail = `reviewer memory refuses a credential in use — ${authBad.map((n) => `${n} ${credentialPhrase(this.creds[n])}`).join("; ")}`;
-    this.fire(MEMORY_WAKE.auth, detail, [
+    // What is lost depends on WHICH credential is refused: the two are used by
+    // different readers and writers.
+    const effects = [
+      ...(authBad.includes("daemon")
+        ? ["with the daemon key refused, rounds get no pinned head or recalled context (they run memory-less) and nothing the daemon records (feedback, finding cases) is written"]
+        : []),
+      ...(authBad.includes("sessions")
+        ? ["with the sessions' ovcli.conf refused, no session recalls or searches memory and the EOD curator writes no lesson"]
+        : []),
+    ];
+    const fired = this.fire(MEMORY_WAKE.auth, detail, [
       "MEMORY AUTH FAILED — reviewer memory is refusing a credential the review system uses.",
       ...lines,
-      `Since ${this.incident?.since ?? new Date(this.stateSince).toISOString()}. Rounds are NOT blocked — they run memory-less — but nothing the reviewer learns is written, and no round recalls anything, until this is fixed.`,
+      `Since ${this.incident?.since ?? new Date(this.stateSince).toISOString()}. Rounds are NOT blocked — but ${effects.join("; and ")}, until this is fixed.`,
       "Fix the credential, not the symptom: the key in the secrets mount must be the reviewer USER key the server holds (docs/companion-memory-access.md). Never mint or rotate a key from a session.",
-      "A person sees this on the TUI board and in `qcr status` (status.json `memory`), and the TUI files a tracker ticket once it is 2 h old. Re-raised every 6 h while it lasts.",
+      this.whoSees(),
     ].join("\n"));
+    // An undelivered wake stays due: the next evaluation raises it again.
+    if (!fired) this.lastAuthWakeAt = null;
+  }
+
+  /** Who sees an incident, and how often the wake repeats — from the settings
+   * in force, never a fixed promise. */
+  private whoSees(): string {
+    return `A person sees this on the TUI board and in \`qcr status\` (status.json \`memory\`), and the TUI files a tracker ticket once the incident is older than \`[memory] incident_ticket_after_min\`. Re-raised every ${fmtDuration(this.rewakeMs)} while it lasts.`;
   }
 
   private downWakes(t: number): void {
@@ -841,44 +875,53 @@ export class MemoryHealthMonitor {
       }
       return;
     }
-    this.lastDownWakeAt = t;
     this.downDeferredLogged = false;
+    // An undelivered wake stays due: the next evaluation raises it again.
+    this.lastDownWakeAt = this.fireDown(t) ? t : null;
+  }
+
+  /** Raise the `memory_down` wake for its cause; false when it was not delivered. */
+  private fireDown(t: number): boolean {
     if (this.downCause(t) === "not_serving") {
       // It authenticates — the fs/ls probe answers — but nothing
       // is searchable. Name the engine's own reason (the embedder, /ready).
       const notServingFor = fmtDuration(t - (this.notServingSince ?? t));
       const reason = this.servingReason ?? "memory does not serve search";
-      this.fire(
+      return this.fire(
         MEMORY_WAKE.down,
         `reviewer memory answers but has not served search for ${notServingFor} — ${reason.slice(0, 200)}`,
         [
           `MEMORY DOWN — reviewer memory authenticates (its fs/ls probe answers) but has not SERVED search for ${notServingFor} (since ${new Date(this.notServingSince ?? t).toISOString()}).`,
           `Why: ${reason.slice(0, 300)}`,
           "Rounds are NOT blocked — they run memory-less — but no round recalls anything and nothing written is vectorized (findable) until it serves again.",
-          "Check the `openviking` block of state/status.json — `ready`, and its `embedder` block (the local embedder: state, reason, ready, restarts, last_exit, last_error) — and the daemon log. A person sees this on the TUI board and in `qcr status`; the TUI files a tracker ticket once it is 2 h old. Re-raised every 6 h while it lasts.",
+          "Check the `openviking` block of state/status.json — `ready`, and its `embedder` block (the local embedder: state, reason, ready, restarts, last_exit, last_error) — and the daemon log.",
+          this.whoSees(),
         ].join("\n"),
       );
-      return;
     }
     const silentFor = fmtDuration(t - (this.lastOkAt ?? this.bootAt));
     const err = this.lastError;
-    this.fire(
+    return this.fire(
       MEMORY_WAKE.down,
       `no authenticated answer from reviewer memory for ${silentFor}${err ? ` — last error ${err.op}: ${err.code} ${err.message.slice(0, 160)}` : ""}`,
       [
         `MEMORY DOWN — no authenticated answer from reviewer memory for ${silentFor} (${this.lastOkAt === null ? "none since the daemon booted" : `last at ${new Date(this.lastOkAt).toISOString()}`}).`,
         ...(err ? [`Last error: ${err.op} — ${err.status || "no answer"} ${err.code} ${err.message.slice(0, 200)}`] : []),
         "Rounds are NOT blocked — they run memory-less — but nothing is recalled or written until it answers again.",
-        "Check the `openviking` block of state/status.json (running, ready, restarts, last_error, and its `embedder` block) and the daemon log. A person sees this on the TUI board and in `qcr status`; the TUI files a tracker ticket once it is 2 h old. Re-raised every 6 h while it lasts.",
+        "Check the `openviking` block of state/status.json (running, ready, restarts, last_error, and its `embedder` block) and the daemon log.",
+        this.whoSees(),
       ].join("\n"),
     );
   }
 
-  private fire(kind: string, detail: string, message: string): void {
+  /** Raise a wake; false when the sink threw (logged and swallowed). */
+  private fire(kind: string, detail: string, message: string): boolean {
     try {
       this.deps.wake(kind, detail, message);
+      return true;
     } catch (err) {
       this.log(`memory health: ${kind} wake failed`, err);
+      return false;
     }
   }
 }

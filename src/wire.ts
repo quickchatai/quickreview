@@ -837,7 +837,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       onSeeded: (mem: RoundMemory) =>
         memoryHealth?.recordRoundSeed({
           degraded: mem.degraded,
-          ms: mem.ms,
           reasons: mem.gaps.map((g) => `${g.part}: ${g.reason}`),
         }),
       // The PR session's own recall (vendored openviking-pi patch 0008)
