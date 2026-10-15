@@ -1309,6 +1309,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             keyed: res.keyed,
             reason: res.reason,
           });
+          // A failed rewrite stays owed: the next probe tick tries again.
+          return res.written;
         });
         const probeBase = {
           baseUrl: openVikingBaseUrl(cfg.openviking),
