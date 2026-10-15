@@ -179,7 +179,10 @@ prompt_hidden() { # file  label  validator-fn
 v_app_id()   { grep -qE '^[0-9]{1,12}$' || { echo "    app_id must be a number (GitHub App settings → App ID)" >&2; return 1; }; }
 v_secret()   { local v; v="$(cat)"; [[ ${#v} -ge 8 ]] || { echo "    suspiciously short (<8 chars)" >&2; return 1; }; }
 v_token()    { local v; v="$(cat)"; [[ ${#v} -ge 60 && "$v" != *" "* ]] || { echo "    tunnel token should be one long unbroken string (connector page → the string after 'cloudflared service install')" >&2; return 1; }; }
-v_openai()   { grep -qE '^sk-' || { echo "    OpenAI keys start with sk-" >&2; return 1; }; }
+# The same rule as validateOpenAiKey (src/onboard/steps/llmauth.ts): sk- plus at
+# least one more character, one unbroken string. tests/onboard-llmauth.test.ts
+# runs this function against the TypeScript validator's table.
+v_openai()   { local v; v="$(cat)"; [[ "$v" == sk-?* && "$v" != *[[:space:]]* ]] || { echo "    OpenAI keys start with sk- and contain no spaces" >&2; return 1; }; }
 # OpenViking keys have no documented prefix — length and "one unbroken string"
 # is everything we can honestly assert about them.
 v_nonempty() { local v; v="$(cat)"; [[ ${#v} -ge 16 && "$v" != *" "* ]] || { echo "    expected one unbroken string of at least 16 characters" >&2; return 1; }; }

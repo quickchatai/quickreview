@@ -460,6 +460,14 @@ so plainly, and step 72 — after bring-up — mints the user keys, places them,
 proves the confinement with the four-cell matrix. An inconclusive matrix row
 fails: a probe that cannot tell reach from refusal is never a pass.
 
+The memory engine is never published on a host port, on either route: this
+machine reaches it through the memory forward (`scripts/companion-memory-forward.mjs`,
+`--local` on the laptop route), and when nothing answers the step says which
+command starts one. On the server route the daemon reads the copy of the reviewer
+key a deploy shipped, and only a `rebuild` copies the secrets dir (a `sync`
+never does): step 72 compares the server's copy with yours by hash — never the
+key itself — and stays red, naming the rebuild, until they match.
+
 Nothing is ever re-issued. A key that already exists is read back and
 redistributed; a rotation would orphan every copy already handed out, so a file
 holding a *different* value is reported as a conflict and left alone.
