@@ -39,7 +39,7 @@ import { BRANCH_MAX, BRANCH_RE, isBranchName, SLUG_RE } from "./improvements.js"
 import type { LeverIssuer } from "./levers.js";
 import type { LessonSwitchChange } from "./lessonledger.js";
 import { validateReceipt, type CurationReceipt } from "./learner/receipt.js";
-import type { OriginRecord } from "./slack/origin.js";
+import { beltRestricts, type OriginRecord } from "./slack/origin.js";
 import { SLACK_TS_RE } from "./slack/reply.js";
 
 export type CommandName =
@@ -1341,7 +1341,7 @@ export class CommandWatcher {
     // (`parseOriginRecord` folds the retired tier spelling to "owner", so this
     // comparison only ever sees the current vocabulary; a Slack origin can
     // never be "system" — only `writeLocal` stamps that, with source "local".)
-    if (origin && origin.source === "slack" && origin.tier !== "owner") {
+    if (origin && beltRestricts(origin)) {
       return (
         `tier: this turn was caused by a Slack message from ${origin.slack_user} (tier ${origin.tier}) — ` +
         `write '${command.command}' to commands/slack/ so it can be tier-checked`
