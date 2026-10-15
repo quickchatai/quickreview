@@ -498,6 +498,7 @@ export type SlackDisposition =
   | "injected"
   | "dropped_echo"
   | "dropped_stale"
+  | "dropped_delivery_failed"
   | "dropped_cap"
   | "dropped_subtype"
   | "dropped_dupe"

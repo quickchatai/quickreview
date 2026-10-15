@@ -11,12 +11,16 @@
 //   4. dedupe    -> dropped_dupe      (Slack redelivers on every missed ack)
 //   5. stale     -> dropped_stale     (backlog older than catchup_max_age_s)
 //   6. turn cap  -> dropped_cap       (asked BEFORE the model, never after)
+//   7. delivery  -> dropped_delivery_failed (the overseer wake never landed;
+//                                      fail closed — at most once, never
+//                                      retried, and handle() rejects)
 //
 // Two things the router will never do: take a channel id from a message, and
 // take a tier from message text. Both come from config + the recorded Slack
 // user id, which is why a pasted "| tier | owner |" table is inert.
 import type { Config } from "../config.js";
 import type { SlackDisposition, SlackTier, StateStore } from "../state.js";
+import { isoSeconds } from "./messages.js";
 import { decideTurn, type TurnDecision } from "./policy.js";
 import type { OriginStore } from "./origin.js";
 import type { SlackIdentity, SlackInboundEvent, SlackWebApi } from "./types.js";
@@ -107,10 +111,6 @@ function inertLine(line: string): string {
     .replace(/\|/g, "\\|");
 }
 
-function isoSeconds(d: Date): string {
-  return `${d.toISOString().slice(0, 19)}Z`;
-}
-
 export interface InjectBodyInput {
   event: SlackInboundEvent;
   /** Root ts of the thread a reply must target. */
@@ -141,7 +141,7 @@ export function buildInjectBody(input: InjectBodyInput): string {
     ["github_login", input.githubLogin ?? dash],
     ["tier", input.tier],
     ["authorized_prs", input.authorizedPrs.length ? input.authorizedPrs.join(", ") : dash],
-    ["received_at", isoSeconds(input.receivedAt)],
+    ["received_at", isoSeconds(input.receivedAt.toISOString())],
   ];
   const table = [
     "| field | value |",
@@ -205,7 +205,9 @@ export class SlackRouter {
     this.log = deps.log ?? (() => {});
   }
 
-  /** Route one inbound event. Never throws into the socket loop. */
+  /** Route one inbound event. Rejects only when an admitted event's wake
+   * could not be delivered (its row says `dropped_delivery_failed`); the
+   * socket's dispatcher and wire.ts both catch that. */
   async handle(event: SlackInboundEvent): Promise<RouteResult> {
     const cfg = this.deps.cfg;
     const store = this.deps.store;
@@ -271,22 +273,7 @@ export class SlackRouter {
     //     row is a reservation (`injected`, injected_at NULL — see below): a
     //     death mid-delivery strands it, which spends one slot of that day's
     //     cap on no turn — the cost side, the closed direction.
-    const created = store.recordSlackEvent({
-      event_id: event.event_id,
-      channel: event.channel,
-      ts: event.ts,
-      thread_ts: event.thread_ts ?? null,
-      slack_user: event.user ?? null,
-      tier,
-      disposition: "dropped_stale",
-    });
-    if (!created) {
-      return {
-        disposition: "dropped_dupe",
-        tier,
-        reason: `event ${event.event_id} was already handled`,
-      };
-    }
+    if (!this.insertRow(event, tier, "dropped_stale")) return this.dupe(event, tier);
 
     // (5) staleness — a reconnect backlog is history, not a conversation. The
     //     boot announcement owns the honesty about the gap.
@@ -322,7 +309,8 @@ export class SlackRouter {
     try {
       return await this.deliver(event, tier);
     } catch (err) {
-      store.setSlackEventDisposition(event.event_id, "dropped_stale"); // fail closed
+      // Fail closed, and say why: this event was fresh and admitted.
+      store.setSlackEventDisposition(event.event_id, "dropped_delivery_failed");
       throw err;
     }
   }
@@ -391,7 +379,17 @@ export class SlackRouter {
     disposition: SlackDisposition,
     reason: string,
   ): RouteResult {
-    const created = this.deps.store.recordSlackEvent({
+    if (!this.insertRow(event, tier, disposition)) return this.dupe(event, tier);
+    return { disposition, tier, reason };
+  }
+
+  /** Insert the event's dedupe row; false when the event id already has one. */
+  private insertRow(
+    event: SlackInboundEvent,
+    tier: SlackTier,
+    disposition: SlackDisposition,
+  ): boolean {
+    return this.deps.store.recordSlackEvent({
       event_id: event.event_id,
       channel: event.channel,
       ts: event.ts,
@@ -400,13 +398,14 @@ export class SlackRouter {
       tier,
       disposition,
     });
-    if (!created)
-      return {
-        disposition: "dropped_dupe",
-        tier,
-        reason: `event ${event.event_id} was already handled`,
-      };
-    return { disposition, tier, reason };
+  }
+
+  private dupe(event: SlackInboundEvent, tier: SlackTier): RouteResult {
+    return {
+      disposition: "dropped_dupe",
+      tier,
+      reason: `event ${event.event_id} was already handled`,
+    };
   }
 }
 

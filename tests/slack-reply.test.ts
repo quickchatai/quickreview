@@ -126,6 +126,30 @@ describe("slack_reply execution", () => {
     expect((await reply()({ thread: THREAD, text: "ok", file: "c" })).ok).toBe(true);
   });
 
+  it("a thread only a bot (or a user-less message) spoke in stays unknown", async () => {
+    store.recordSlackEvent({
+      event_id: "EvBot",
+      channel: CHANNEL,
+      ts: THREAD,
+      thread_ts: null,
+      slack_user: null,
+      tier: "ignored",
+      disposition: "dropped_echo",
+    });
+    expect(threadIsKnown(store, CHANNEL, THREAD)).toBe(false);
+    // A person's message there, even one the cap refused, makes it known.
+    store.recordSlackEvent({
+      event_id: "EvCap",
+      channel: CHANNEL,
+      ts: "1712345999.000200",
+      thread_ts: THREAD,
+      slack_user: "U0ALICE",
+      tier: "author",
+      disposition: "dropped_cap",
+    });
+    expect(threadIsKnown(store, CHANNEL, THREAD)).toBe(true);
+  });
+
   it("rejects a malformed ts and a thread known only in another channel", async () => {
     seenInbound();
     expect((await reply()({ thread: "nope", text: "x", file: "c" })).ok).toBe(false);
