@@ -804,6 +804,15 @@ describe("#scan memory: patterns and hotspots, capped per scan; findings never",
       ok: false,
       errors: [expect.stringMatching(/no finished scan run/)],
     });
+    // A run a restarted companion left behind is no finished scan either.
+    expect(
+      await setup({
+        runs: [{ id: "scan-9", sha: SHA1, state: "interrupted" }],
+      }).triage.writeMemory({ patterns: [pattern(1)] }),
+    ).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/no finished scan run/)],
+    });
     expect(
       await setup().triage.writeMemory({ run: "scan-7", patterns: [pattern(1)] }),
     ).toMatchObject({ ok: false, errors: [expect.stringMatching(/not a finished scan run/)] });

@@ -514,7 +514,10 @@ export class ScanTriage {
   }
 
   private pickRun(ref: unknown): { ok: true; run: ScanRunRef } | Refusal {
-    const runs = this.ports.runs().filter((r) => r.state !== "running");
+    // Live or interrupted, a run's findings are not settled (`finishedRuns`).
+    const runs = this.ports
+      .runs()
+      .filter((r) => r.state !== "running" && r.state !== "interrupted");
     if (runs.length === 0)
       return {
         ok: false,
