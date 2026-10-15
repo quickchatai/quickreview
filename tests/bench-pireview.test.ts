@@ -10,7 +10,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { BenchCase, CaseSet, PrefetchMeta } from "../src/bench/aacr.js";
+import {
+  DATASET_PINS,
+  type BenchCase,
+  type CaseSet,
+  type PrefetchMeta,
+} from "../src/bench/aacr.js";
 import { DISABLED_REFRESH } from "../src/bench/auth.js";
 import { reviewForJudge } from "../src/bench/defects.js";
 import { run } from "../src/bench/exec.js";
@@ -252,6 +257,24 @@ describe("output → findings: pi-review's PI_REVIEW_META_JSON line", () => {
       path: "src/a.ts",
       lines: { start: 12, end: 14 },
     });
+    // Relative: a top-level `a/` or `b/` the tree really has is kept; one it
+    // lacks is git's diff prefix.
+    const real = mkdtempSync(join(tmpdir(), "pireview-ab-"));
+    try {
+      mkdirSync(join(real, "a"));
+      writeFileSync(join(real, "a", "module.ts"), "");
+      mkdirSync(join(real, "src"));
+      writeFileSync(join(real, "src", "x.ts"), "");
+      expect(normalizeFindingPath("a/module.ts:3", real)).toEqual({
+        path: "a/module.ts",
+        lines: { start: 3, end: 3 },
+      });
+      expect(normalizeFindingPath("./a/module.ts", real).path).toBe("a/module.ts");
+      expect(normalizeFindingPath("b/src/x.ts", real).path).toBe("src/x.ts");
+      expect(normalizeFindingPath("a/src/x.ts", real).path).toBe("src/x.ts");
+    } finally {
+      rmSync(real, { recursive: true, force: true });
+    }
     const { comments } = toComments([{ summary: "S", actionable: true, path: "src/a.ts:7" }], t);
     expect(comments[0]).toMatchObject({ path: "src/a.ts", start_line: 7, end_line: 7 });
     // A parsed location wins over a line in Path; a single line ends where it starts.
@@ -735,31 +758,28 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
 });
 
 describe("a replacement attempt", () => {
-  it("an unprefetched case leaves no earlier attempt's progress log, meta or judge inputs behind", () => {
+  it("an unprefetched case leaves no earlier attempt's progress log, meta, diagnostics or judge inputs behind", () => {
     const tmp = mkdtempSync(join(tmpdir(), "pireview-unpref-"));
     try {
       const caseDir = join(tmp, "cases", CASE.instance_id);
       mkdirSync(caseDir, { recursive: true });
-      for (const f of [
+      const earlier = [
         "pi-events.jsonl",
         "pi-events.r1.jsonl",
         "pireview-meta.json",
+        "pireview-argv.json",
+        "pireview-stdout.txt",
+        "pireview-stderr.log",
         "review.md",
         "comments.json",
-      ])
-        writeFileSync(join(caseDir, f), "earlier attempt\n");
+      ];
+      for (const f of earlier) writeFileSync(join(caseDir, f), "earlier attempt\n");
       const s = unprefetchedPireviewCase(tmp, CASE, FP, "not prefetched");
       expect(s.status).toBe("failed");
       // The cost reader prices pi-events.jsonl first: an old one would charge
       // this attempt, which ran no model, with the earlier one's spend.
-      for (const f of [
-        "pi-events.jsonl",
-        "pi-events.r1.jsonl",
-        "pireview-meta.json",
-        "review.md",
-        "comments.json",
-      ])
-        expect(existsSync(join(caseDir, f)), f).toBe(false);
+      // Nor is an operator shown the earlier attempt's invocation or output.
+      for (const f of earlier) expect(existsSync(join(caseDir, f)), f).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -780,6 +800,26 @@ describe("the report", () => {
       expect(md).not.toContain("ChatGPT login");
       writeFileSync(join(tmp, "run.json"), JSON.stringify({ reviewer: "pireview" }));
       expect(renderPireviewReport(SET, tmp, [CASE])).toContain("— endpoint not recorded");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the report's dataset", () => {
+  it("names the dataset the set is pinned to — a Martian run never reads as AACR-Bench", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pireview-report-ds-"));
+    try {
+      const pinned = (id: string): CaseSet => {
+        const pin = DATASET_PINS.find((p) => p.id === id)!;
+        return { ...SET, dataset: { ...SET.dataset, commit: pin.commit, sha256: pin.sha256 } };
+      };
+      expect(renderPireviewReport(pinned("aacr-v1"), tmp, [CASE])).toContain(
+        "- Dataset: AACR-Bench v1.0 (1,505 references)",
+      );
+      const ext = renderPireviewReport(pinned("martian-offline-e616e84"), tmp, [CASE]);
+      expect(ext).toContain("- Dataset: Martian offline code-review benchmark");
+      expect(ext).not.toContain("AACR-Bench v1.0");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

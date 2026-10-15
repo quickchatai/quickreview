@@ -35,7 +35,7 @@ import { caseCostUsd } from "../src/bench/cost.js";
 import { reviewForJudge } from "../src/bench/defects.js";
 import { runArmOf } from "../src/bench/ocr.js";
 import { renderCodexReport } from "../src/bench/codexreport.js";
-import type { BenchCase, CaseSet } from "../src/bench/aacr.js";
+import { DATASET_PINS, type BenchCase, type CaseSet } from "../src/bench/aacr.js";
 
 const execp = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -353,6 +353,24 @@ describe("the result file: the harness's payload + the OCR-shaped view", () => {
     writeFileSync(join(t, "run.json"), JSON.stringify({ reviewer: "codex", pr_text: true }));
     expect(reviewerLine()).toContain("PR title/description appended to the /review instructions");
     expect(reviewerLine()).not.toContain("no PR title/description");
+  });
+
+  it("the report names the dataset the set is pinned to; the AACR preamble opens only an AACR-Bench report", () => {
+    const pinned = (id: string): CaseSet => {
+      const pin = DATASET_PINS.find((p) => p.id === id)!;
+      return {
+        name: "s",
+        dataset: { source: "s", file: "f", commit: pin.commit, sha256: pin.sha256 },
+      } as unknown as CaseSet;
+    };
+    writeFileSync(join(t, "run.json"), JSON.stringify({ reviewer: "codex" }));
+    const aacr = renderCodexReport(pinned("aacr-v1"), t, [CASE]);
+    expect(aacr).toContain("- Dataset: AACR-Bench v1.0 (1,505 references)");
+    expect(aacr).toContain("74% AI-written");
+    const ext = renderCodexReport(pinned("martian-offline-e616e84"), t, [CASE]);
+    expect(ext).toContain("- Dataset: Martian offline code-review benchmark");
+    expect(ext).not.toContain("AACR-Bench v1.0");
+    expect(ext).not.toContain("74% AI-written");
   });
 
   it("the report names the endpoint the run recorded; a run from before the record reads as the login", () => {

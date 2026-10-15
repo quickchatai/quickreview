@@ -10,7 +10,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { BenchCase, CaseSet, PrefetchMeta } from "../src/bench/aacr.js";
+import {
+  DATASET_PINS,
+  type BenchCase,
+  type CaseSet,
+  type PrefetchMeta,
+} from "../src/bench/aacr.js";
 import { authFingerprint, DISABLED_REFRESH } from "../src/bench/auth.js";
 import { reviewForJudge } from "../src/bench/defects.js";
 import { run } from "../src/bench/exec.js";
@@ -816,6 +821,24 @@ describe("the report describes the run it reads", () => {
   };
   const line = (md: string, prefix: string): string =>
     md.split("\n").find((l) => l.startsWith(prefix)) ?? "";
+
+  it("names the dataset the set is pinned to — a Martian run never reads as AACR-Bench", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-opencode-report-ds-"));
+    try {
+      const pinned = (id: string): CaseSet => {
+        const pin = DATASET_PINS.find((p) => p.id === id)!;
+        return { ...SET, dataset: { ...SET.dataset, commit: pin.commit, sha256: pin.sha256 } };
+      };
+      expect(renderOpencodeReport(pinned("aacr-v1"), tmp, [CASE])).toContain(
+        "- Dataset: AACR-Bench v1.0 (1,505 references)",
+      );
+      const ext = renderOpencodeReport(pinned("martian-offline-e616e84"), tmp, [CASE]);
+      expect(ext).toContain("- Dataset: Martian offline code-review benchmark");
+      expect(ext).not.toContain("AACR-Bench v1.0");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 
   it("names the recorded endpoint, not always the ChatGPT bridge", () => {
     const native = "ChatGPT Codex backend through OpenCode's own ChatGPT login (provider openai)";

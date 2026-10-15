@@ -37,7 +37,7 @@ import {
   runJudgeSession,
   type RunFingerprint,
 } from "../src/bench/runner.js";
-import { caseCostUsd, caseTokenCounts, CODEX_USD_PER_MTOK } from "../src/bench/cost.js";
+import { caseCostUsd, caseTokenCounts, CODEX_USD_PER_MTOK, runCostUsd } from "../src/bench/cost.js";
 
 const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({
   id,
@@ -163,6 +163,11 @@ describe("the review as the author received it", () => {
     expect(p).toContain("C1 [blocker] a.py:11\nfinds D1");
     expect(p).toContain("Verdict: APPROVE");
     expect(p).toMatch(/Never run project code/);
+    // The answer template offers exactly the verdicts the parser accepts.
+    expect(p).toContain('"verdict":"found|partial|missed"');
+    expect(p).toContain(
+      '"verdict":"correct-valuable|correct-minor|partly-correct|incorrect|unverifiable"',
+    );
   });
 });
 
@@ -470,6 +475,27 @@ describe("scoring", () => {
     expect(s.new_defect_candidates).toEqual([
       { instance_id: "o__r@1234567", comment: "C2", why: "new thing" },
     ]);
+    // A flag the prompt forbids — on a comment that is not correct-valuable,
+    // or that finds a listed defect — is no candidate.
+    const flagged = (verdict: string, defect: string | null): CaseJudgement => {
+      const j = J(1, "missed", verdict);
+      j.comments = j.comments.map((x) => (x.id === "C2" ? { ...x, defect, new_defect: true } : x));
+      return j;
+    };
+    for (const [verdict, defect] of [
+      ["incorrect", null],
+      ["correct-minor", null],
+      ["correct-valuable", "D1"],
+    ] as const)
+      expect(
+        scoreRun(
+          set,
+          ["o__r@1234567"],
+          { "o__r@1234567": [flagged(verdict, defect)] },
+          { "o__r@1234567": REVIEW },
+        ).new_defect_candidates,
+        `${verdict} ${defect}`,
+      ).toEqual([]);
     const md = renderDefectReport("t", set, s, {
       tokensInPerPr: 1_000_000,
       tokensOutPerPr: 15_000,
@@ -666,7 +692,9 @@ describe("a re-judged round", () => {
         timeoutMs: 10_000,
       },
     });
-    expect(j!.error).toBeDefined();
+    expect(j!.error).toBe(
+      "judge exited 1 without an answer — see o__r@1234567.r1.events.stderr.log",
+    );
     expect(j!.usage).toEqual({ input: 0, output: 0, cacheRead: 0 });
   });
 });
@@ -865,6 +893,81 @@ describe("dollar cost across the arms", () => {
     expect(py(bridged)).toBeCloseTo(caseCostUsd(bridged)!.usd, 12);
   });
 
+  it("a slim-bundle case (no transcript) is priced at its exported bench_cost_usd, as compare.py prices it", () => {
+    const root = join(import.meta.dirname, "..", "bench", "aacr");
+    const py = (caseDir: string): string =>
+      spawnSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          "import sys; sys.path.insert(0, sys.argv[1]); import compare; print(compare.usd_and_minutes(sys.argv[2])[0])",
+          root,
+          caseDir,
+        ],
+        { encoding: "utf8" },
+      ).stdout.trim();
+    const slim = (summary: Record<string, unknown>): string => {
+      const dir = mkdtempSync(join(tmpdir(), "defects-cost-slim-"));
+      writeFileSync(join(dir, "case-summary.json"), JSON.stringify(summary));
+      return dir;
+    };
+    // Our arm and pi-review: the transcript is gone, the price stays.
+    const qcr = slim({ bench_cost_usd: 0.37, usage: { input: 1, output: 2, cacheRead: 0 } });
+    expect(caseCostUsd(qcr)).toEqual({ usd: 0.37, source: "pi" });
+    expect(Number(py(qcr))).toBeCloseTo(0.37, 12);
+    // A bridge arm: the exported price wins over re-pricing the counts.
+    const bridged = slim({
+      bench_cost_usd: 0.5,
+      model: "gpt-6.1-sol",
+      bridge: { input_tokens: 1_000_000, cached_tokens: 0, output_tokens: 0 },
+    });
+    expect(caseCostUsd(bridged)).toEqual({ usd: 0.5, source: "priced", model: "gpt-6.1-sol" });
+    expect(Number(py(bridged))).toBeCloseTo(0.5, 12);
+    expect(caseCostUsd(slim({ arm: "claude", cost_usd: 9, bench_cost_usd: 1.25 }))).toEqual({
+      usd: 1.25,
+      source: "claude",
+    });
+    // An unpriced case exported as null stays unknown in both readers.
+    const none = slim({ bench_cost_usd: null, bridge: { input_tokens: 5 } });
+    expect(caseCostUsd(none)).toBeNull();
+    expect(py(none)).toBe("None");
+  });
+
+  it("a partly priced run says how many cases its dollar figures cover", () => {
+    const out = mkdtempSync(join(tmpdir(), "defects-cost-partial-"));
+    const dirs = ["a", "b"].map((n) => join(out, n));
+    for (const d of dirs) mkdirSync(d);
+    writeFileSync(
+      join(dirs[0]!, "case-summary.json"),
+      JSON.stringify({ arm: "claude", cost_usd: 1 }),
+    );
+    writeFileSync(
+      join(dirs[1]!, "case-summary.json"),
+      JSON.stringify({ arm: "claude", cost_usd: null }),
+    );
+    const cost = runCostUsd(dirs);
+    expect(cost).toMatchObject({ usdPerPr: 1, usdTotal: 1, usdPriced: 1, usdCases: 2 });
+    const md = renderDefectReport(
+      "t",
+      parseDefectSet(SET),
+      scoreRun(parseDefectSet(SET), [], {}, {}),
+      { medianMinPerPr: 1, ...cost },
+    );
+    expect(md).toContain("| $1.000 (1/2 priced) | $1.00 (1/2 priced) |");
+    expect(md).toContain("Only 1 of 2 cases recorded a price");
+    // Every case priced: the figures stand unqualified.
+    const full = renderDefectReport(
+      "t",
+      parseDefectSet(SET),
+      scoreRun(parseDefectSet(SET), [], {}, {}),
+      { medianMinPerPr: 1, ...runCostUsd([dirs[0]!]) },
+    );
+    expect(full).toContain("| $1.000 | $1.00 |");
+    expect(full).not.toContain("priced)");
+    expect(runCostUsd([dirs[1]!])).toEqual({});
+  });
+
   it("compare.py carries the same price list as src/bench/cost.ts", () => {
     const root = join(import.meta.dirname, "..", "bench", "aacr");
     const r = spawnSync(
@@ -878,6 +981,18 @@ describe("dollar cost across the arms", () => {
       { encoding: "utf8" },
     );
     expect(JSON.parse(r.stdout)).toEqual(CODEX_USD_PER_MTOK);
+    // The re-run planner estimates at gpt-6.1-sol's rates.
+    const plan = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        "import json, sys; sys.path.insert(0, sys.argv[1]); import rerun_plan; print(json.dumps(rerun_plan.RATE))",
+        root,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(JSON.parse(plan.stdout)).toEqual(CODEX_USD_PER_MTOK["gpt-6.1-sol"]);
   });
 
   it("a case recorded unprefetched is not priced at an earlier attempt's event stream", () => {

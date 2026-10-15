@@ -7,7 +7,7 @@
 // against a newer defect set without touching the existing verdicts, and re-scored
 // (`defect-report`) with no model call at all.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { usageFromEvents } from "./aacr.js";
 import { runJudgeSession } from "./runner.js";
 import {
@@ -154,6 +154,10 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
     try {
       if (r.timedOut) throw new Error("judge timed out");
       if (r.streamError) throw new Error(`judge output stream failed: ${r.streamError}`);
+      if (!r.text.trim() && r.code !== 0)
+        throw new Error(
+          `judge ${r.code === null ? "was killed" : `exited ${r.code}`} without an answer — see ${basename(eventsPath).replace(/\.jsonl$/, ".stderr.log")}`,
+        );
       j = { ...base, ...parseJudgement(r.text, o.defects, o.review), usage: r.usage };
     } catch (err) {
       j = { ...base, usage: r.usage, error: String(err instanceof Error ? err.message : err) };

@@ -31,7 +31,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
-import { checkMergeBase, harnessProcessTimeoutMs } from "./armrun.js";
+import { checkMergeBase, HARNESS_TIMEOUT_MIN, harnessProcessTimeoutMs } from "./armrun.js";
 import { piUsageFromInclusive } from "./cost.js";
 import { benchAuthMode, DISABLED_REFRESH, type BenchAuthMode } from "./auth.js";
 import { GIT_ISOLATION_ENV, run } from "./exec.js";
@@ -40,7 +40,7 @@ import { prepareTree } from "./runner.js";
 
 /** pipeline.py `apply_defaults`: timeout None → 30 minutes; reviewers/codex.py
  * `run_codex_review`: process timeout = timeout×60 + 60 s. */
-export const CODEX_HARNESS_DEFAULTS = { timeoutMin: 30 } as const;
+export const CODEX_HARNESS_DEFAULTS = { timeoutMin: HARNESS_TIMEOUT_MIN } as const;
 
 export function codexProcessTimeoutMs(timeoutMin: number): number {
   return harnessProcessTimeoutMs(timeoutMin);
@@ -463,8 +463,9 @@ function blankSummary(c: BenchCase, fp: CodexFingerprint): CodexCaseSummary {
 }
 
 /** Review one case through the harness's Codex runner and write its result
- * file. Never throws for a case that fails — a failure is a recorded outcome
- * with an empty result. */
+ * file. Never throws for a case that fails — a failure is a recorded outcome:
+ * whatever result the runner wrote is kept (its findings scored), an empty
+ * one stands in when it wrote none. */
 export async function reviewCaseCodex(
   c: BenchCase,
   meta: PrefetchMeta,

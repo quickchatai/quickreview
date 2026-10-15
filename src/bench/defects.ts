@@ -346,7 +346,7 @@ YOUR TASK
 Be strict both ways: do not credit a comment for sounding plausible, and do not dismiss one without reading the code it cites.
 
 Answer with ONE JSON object and nothing after it:
-{"defects":[{"id":"D1","verdict":"found|partial|missed","comments":["C2"],"why":"one sentence"}],"comments":[{"id":"C1","defect":"D1","verdict":"correct-valuable|correct-minor|partly-correct|incorrect|unverifiable","new_defect":false,"why":"one sentence with file:line"}]}
+{"defects":[{"id":"D1","verdict":"${DEFECT_VERDICTS.join("|")}","comments":["C2"],"why":"one sentence"}],"comments":[{"id":"C1","defect":"D1","verdict":"${COMMENT_VERDICTS.join("|")}","new_defect":false,"why":"one sentence with file:line"}]}
 Every defect id and every comment id above must appear exactly once.`;
 }
 
@@ -643,7 +643,14 @@ export function scoreRun(
         if (v?.defect) finds++;
         if (c.tag === "blocker" && (kind === "incorrect" || kind === "partly-correct"))
           wrongBlocker++;
-        if (v?.new_defect && !candidates.some((x) => x.instance_id === iid && x.comment === c.id))
+        // A candidate is what the prompt allows new_defect on: a correct,
+        // valuable comment that finds no listed defect.
+        if (
+          v?.new_defect &&
+          kind === "correct-valuable" &&
+          !v.defect &&
+          !candidates.some((x) => x.instance_id === iid && x.comment === c.id)
+        )
           candidates.push({ instance_id: iid, comment: c.id, why: v.why });
       }
       cFinds += finds / n;
@@ -702,6 +709,10 @@ export function renderDefectReport(
     usdSource?: string;
     /** Whose prices the dollar column is in; pi's unless said otherwise. */
     usdBasis?: string;
+    /** How many of the run's cases recorded a price, of how many: a partly
+     * priced run's total is a lower bound and says so. */
+    usdPriced?: number;
+    usdCases?: number;
   } = {},
 ): string {
   const s = score;
@@ -734,15 +745,27 @@ export function renderDefectReport(
   ];
   // No run-level cost at all hides the section; a cell the run did not record
   // reads "—", never 0.
+  const partlyPriced =
+    extra.usdPriced !== undefined &&
+    extra.usdCases !== undefined &&
+    extra.usdPriced < extra.usdCases
+      ? ` (${extra.usdPriced}/${extra.usdCases} priced)`
+      : "";
   if (extra.medianMinPerPr !== undefined || extra.tokensInPerPr !== undefined)
     lines.push(
       "## Cost",
       "",
       `| $ / PR (${extra.usdBasis ?? "pi's"} prices) | $ total | Input tokens / PR | Output tokens / PR | Median minutes / PR |`,
       "|---|---|---|---|---|",
-      `| ${extra.usdPerPr !== undefined ? `$${extra.usdPerPr.toFixed(3)}` : "—"} | ${extra.usdTotal !== undefined ? `$${extra.usdTotal.toFixed(2)}` : "—"} | ${extra.tokensInPerPr !== undefined ? `${Math.round(extra.tokensInPerPr / 1000)}k` : "—"} | ${extra.tokensOutPerPr !== undefined ? `${(extra.tokensOutPerPr / 1000).toFixed(1)}k` : "—"} | ${extra.medianMinPerPr !== undefined ? extra.medianMinPerPr.toFixed(1) : "—"} |`,
+      `| ${extra.usdPerPr !== undefined ? `$${extra.usdPerPr.toFixed(3)}${partlyPriced}` : "—"} | ${extra.usdTotal !== undefined ? `$${extra.usdTotal.toFixed(2)}${partlyPriced}` : "—"} | ${extra.tokensInPerPr !== undefined ? `${Math.round(extra.tokensInPerPr / 1000)}k` : "—"} | ${extra.tokensOutPerPr !== undefined ? `${(extra.tokensOutPerPr / 1000).toFixed(1)}k` : "—"} | ${extra.medianMinPerPr !== undefined ? extra.medianMinPerPr.toFixed(1) : "—"} |`,
       "",
       ...(extra.usdSource ? [extra.usdSource, ""] : []),
+      ...(partlyPriced
+        ? [
+            `Only ${extra.usdPriced} of ${extra.usdCases} cases recorded a price: the $ / PR averages those, and the total is at least this.`,
+            "",
+          ]
+        : []),
     );
   if (s.approved_over_missed_high.length)
     lines.push(
