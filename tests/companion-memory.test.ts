@@ -270,6 +270,23 @@ describe("memory wiring on the container", () => {
     ).toBe(true);
   });
 
+  it("connects a stopped container it starts to the bridge too", async () => {
+    const { runner, calls } = docker([
+      networkUp(),
+      (argv) => (argv[0] === "inspect" ? { ...OK, stdout: "false\n" } : undefined),
+      verb("start"),
+      verb("network", "connect"),
+    ]);
+    const lc = new CompanionLifecycle(CFG, runner, {}, () => {}, fakeFs({}));
+    expect(await lc.ensureUp()).toBe("started");
+    const start = calls.findIndex((c) => c[0] === "start");
+    const connect = calls.findIndex(
+      (c) => c[0] === "network" && c[1] === "connect" && c[3] === CFG.container_name,
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(connect).toBeGreaterThan(start);
+  });
+
   it("loads the vendored patched extension when it is present, and shrugs when it is not", async () => {
     const { runner } = docker([networkUp()]);
     const without = new CompanionLifecycle(CFG, runner, {}, () => {}, fakeFs({}));

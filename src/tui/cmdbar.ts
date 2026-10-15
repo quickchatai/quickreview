@@ -56,8 +56,14 @@ const GLOBALS: readonly BarButton[] = [
   { key: "q", label: "q quit" },
 ];
 
-/** Row A globals + the navigation keys every tab answers to. */
-export const GLOBAL_KEYS: readonly string[] = ["q", "r", "s", "?", "j", "k", ...TABS.map(tabDigit)];
+/** Row A globals + the navigation keys every tab answers to — derived from
+ * the painted buttons, so a global that paints is always registered. */
+export const GLOBAL_KEYS: readonly string[] = [
+  ...GLOBALS.map((b) => b.key),
+  "j",
+  "k",
+  ...TABS.map(tabDigit),
+];
 
 /**
  * Every row-B button a tab can ever paint — its vocabulary, with the canonical

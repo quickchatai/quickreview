@@ -117,6 +117,9 @@ export class DurableDeployProcess {
         done = true;
         clearInterval(timer);
         if (result.error) onData(`\ndeploy runner error: ${result.error}\n`);
+        // A null code is a signal death; the log keeps which signal it was.
+        if (result.code === null && result.signal)
+          onData(`\ndeploy process ended by ${result.signal}\n`);
         onExit(result.code);
       };
       const result = this.readResult(resultPath);

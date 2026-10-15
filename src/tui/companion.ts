@@ -10,8 +10,10 @@
 //   the pi home survive on volumes; next start is a fast resume). TUI crash →
 //   the container keeps running and the next start adopts it. A second
 //   concurrent TUI attaches to the same container, never spawns a twin:
-//   ensureUp() and spawnPi() are both idempotent and there is no kill path
-//   except the explicit `qcr companion down`.
+//   ensureUp() and spawnPi() are both idempotent. A container goes away only
+//   on the explicit `qcr companion down`, or when ensureUp() recreates one
+//   whose mounts or DNS drifted from runArgv() or that can no longer start —
+//   the conversation and the pi home survive both on their volumes.
 import { spawn } from "node:child_process";
 import {
   existsSync,
@@ -187,6 +189,10 @@ export type EnsureOutcome = "adopted" | "started" | "created" | "recreated";
  * exists; `resolveMemoryWiring()` still asks docker for the real gateway and
  * only falls back to this constant.
  */
+/** The vendored patched OpenViking pi extension, relative to the repo root —
+ * checked on the host and loaded from the container's bind mount of it. */
+const VENDOR_EXTENSION = "extensions/vendor/openviking-pi/index.ts";
+
 export const MEMORY = {
   /** User-defined docker bridge shared by the forward and the companion. */
   network: "qcr-memory",
@@ -202,7 +208,7 @@ export const MEMORY = {
    * identity as `user` for the companion — one surface, one actor. */
   peerId: "companion",
   /** The vendored patched OpenViking pi extension, inside /workspace. */
-  extension: `${CONTAINER.workspace}/extensions/vendor/openviking-pi/index.ts`,
+  extension: `${CONTAINER.workspace}/${VENDOR_EXTENSION}`,
   /** The companion namespace's retired URIs, relative to the state home.
    * The TUI's memory store publishes them there on the host
    * (no daemon sweeps the companion's tree); the extension's per-turn recall
@@ -389,53 +395,8 @@ export class CompanionLifecycle {
     if (this.wiring.network !== "") argv.push("--network", this.wiring.network);
     // Network-roaming survival: see PUBLIC_DNS.
     for (const ip of PUBLIC_DNS) argv.push("--dns", ip);
-    argv.push(
-      "--volume",
-      `${this.cfg.pihome_volume}:${CONTAINER.piHome}`,
-      "--volume",
-      `${this.cfg.repo_dir}:${CONTAINER.workspace}:rw`,
-    );
-    // The tracker and its protocol docs are optional: mounted only when the
-    // operator configured them ([companion] tracker_dir / tracker_docs_dir).
-    if (this.cfg.tracker_dir !== "") {
-      argv.push("--volume", `${this.cfg.tracker_dir}:${CONTAINER.tracker}:rw`);
-    }
-    if (this.cfg.tracker_docs_dir !== "") {
-      argv.push("--volume", `${this.cfg.tracker_docs_dir}:${CONTAINER.trackerDocs}:ro`);
-    }
-    // The reviewed repo, read-only and only when it is really there.
-    if (this.reviewedRepoPresent()) {
-      argv.push("--volume", `${this.cfg.reviewed_repo_dir}:${CONTAINER.reviewedRepo}:ro`);
-    }
-    argv.push(
-      // The evidence store. Created by the TUI before the container
-      // starts (`ensureDirs`), so unlike the reviewed repo it is never absent
-      // and the mount is unconditional — an empty store is a companion that has
-      // seen no rounds yet, which is honest; a missing one would have docker
-      // invent a root-owned dir the copier could not then write.
-      "--volume",
-      `${this.cfg.evidence_dir}:${CONTAINER.evidence}:ro`,
-      "--volume",
-      `${this.cfg.feed_dir}:${CONTAINER.feed}:rw`,
-      "--volume",
-      `${this.cfg.alerts_dir}:${CONTAINER.alerts}:rw`,
-    );
-    // The install's homes (profiles/, portrait/, state), the config mirror
-    // and the read-only GitHub token. All directories, created before a cold
-    // run (`ensureDirs`), so unconditional like the evidence store.
-    const homes = this.hostHomes();
-    argv.push(
-      "--volume",
-      `${homes.profiles}:${CONTAINER.profiles}:rw`,
-      "--volume",
-      `${homes.portrait}:${CONTAINER.portrait}:rw`,
-      "--volume",
-      `${homes.configMirror}:${CONTAINER.configLive}:ro`,
-      "--volume",
-      `${homes.state}:${CONTAINER.stateHome}:rw`,
-      "--volume",
-      `${homes.github}:${CONTAINER.githubRead}:ro`,
-    );
+    for (const m of this.mountSpec())
+      argv.push("--volume", `${m.source}:${m.dest}${m.mode ? `:${m.mode}` : ""}`);
     argv.push(...this.memoryEnvArgv());
     argv.push(this.cfg.image);
     return argv;
@@ -559,7 +520,7 @@ export class CompanionLifecycle {
       "--model",
       this.cfg.model,
       "--session-dir",
-      `${CONTAINER.piHome}/agent/sessions/${this.cfg.session}`,
+      companionSessionDir(this.cfg.session),
       "--system-prompt",
       `${CONTAINER.workspace}/prompts/companion.md`,
       "--name",
@@ -687,7 +648,7 @@ export class CompanionLifecycle {
 
   /** Host side of the vendored extension (the repo is bind-mounted). */
   hostVendorExtension(): string {
-    return `${this.cfg.repo_dir}/extensions/vendor/openviking-pi/index.ts`;
+    return `${this.cfg.repo_dir}/${VENDOR_EXTENSION}`;
   }
 
   // ---- state --------------------------------------------------------------
@@ -770,6 +731,11 @@ export class CompanionLifecycle {
   async removeContainer(): Promise<void> {
     const st = await this.status();
     if (!st.exists) return;
+    await this.forceRemove();
+  }
+
+  /** `docker rm -f` the container; a refusal throws with docker's reason. */
+  private async forceRemove(): Promise<void> {
     const res = await this.docker(["rm", "-f", this.cfg.container_name]);
     if (!res.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(res)}`);
   }
@@ -926,30 +892,53 @@ export class CompanionLifecycle {
       : [`dns is [${actual.join(", ")}], expected [${PUBLIC_DNS.join(", ")}]`];
   }
 
+  /**
+   * Every mount the container is created with, in `runArgv()` order — the
+   * one list `runArgv()` turns into `--volume` flags and `expectedMounts()`
+   * (the drift check) reads, so the two can never disagree.
+   */
+  mountSpec(): Array<{ dest: string; source: string; mode?: "ro" | "rw" }> {
+    const spec: Array<{ dest: string; source: string; mode?: "ro" | "rw" }> = [
+      { dest: CONTAINER.piHome, source: this.cfg.pihome_volume },
+      { dest: CONTAINER.workspace, source: this.cfg.repo_dir, mode: "rw" },
+    ];
+    // The tracker and its protocol docs are optional: mounted only when the
+    // operator configured them ([companion] tracker_dir / tracker_docs_dir).
+    if (this.cfg.tracker_dir !== "")
+      spec.push({ dest: CONTAINER.tracker, source: this.cfg.tracker_dir, mode: "rw" });
+    if (this.cfg.tracker_docs_dir !== "")
+      spec.push({ dest: CONTAINER.trackerDocs, source: this.cfg.tracker_docs_dir, mode: "ro" });
+    // The reviewed repo, read-only and only when it is really there — see
+    // reviewedRepoPresent().
+    if (this.reviewedRepoPresent())
+      spec.push({ dest: CONTAINER.reviewedRepo, source: this.cfg.reviewed_repo_dir, mode: "ro" });
+    // The evidence store. Created by the TUI before the container starts
+    // (`ensureDirs`), so unlike the reviewed repo it is never absent and the
+    // mount is unconditional — an empty store is a companion that has seen no
+    // rounds yet, which is honest; a missing one would have docker invent a
+    // root-owned dir the copier could not then write.
+    spec.push(
+      { dest: CONTAINER.evidence, source: this.cfg.evidence_dir, mode: "ro" },
+      { dest: CONTAINER.feed, source: this.cfg.feed_dir, mode: "rw" },
+      { dest: CONTAINER.alerts, source: this.cfg.alerts_dir, mode: "rw" },
+    );
+    // The install's homes (profiles/, portrait/, state), the config mirror
+    // and the read-only GitHub token. All directories, created before a cold
+    // run (`ensureDirs`), so unconditional like the evidence store.
+    const homes = this.hostHomes();
+    spec.push(
+      { dest: CONTAINER.profiles, source: homes.profiles, mode: "rw" },
+      { dest: CONTAINER.portrait, source: homes.portrait, mode: "rw" },
+      { dest: CONTAINER.configLive, source: homes.configMirror, mode: "ro" },
+      { dest: CONTAINER.stateHome, source: homes.state, mode: "rw" },
+      { dest: CONTAINER.githubRead, source: homes.github, mode: "ro" },
+    );
+    return spec;
+  }
+
   /** `dest -> source` for every mount `runArgv()` declares. */
   expectedMounts(): Map<string, string> {
-    const m = new Map<string, string>([
-      [CONTAINER.piHome, this.cfg.pihome_volume],
-      [CONTAINER.workspace, this.cfg.repo_dir],
-      [CONTAINER.evidence, this.cfg.evidence_dir],
-      [CONTAINER.feed, this.cfg.feed_dir],
-      [CONTAINER.alerts, this.cfg.alerts_dir],
-    ]);
-    // Same conditions as runArgv().
-    if (this.cfg.tracker_dir !== "") m.set(CONTAINER.tracker, this.cfg.tracker_dir);
-    if (this.cfg.tracker_docs_dir !== "") m.set(CONTAINER.trackerDocs, this.cfg.tracker_docs_dir);
-    // Same condition as runArgv() — see reviewedRepoPresent().
-    if (this.reviewedRepoPresent()) m.set(CONTAINER.reviewedRepo, this.cfg.reviewed_repo_dir);
-    // Same shape as runArgv(), so a container created without these mounts
-    // (or with a differently named reviewed-repo one) drifts and is
-    // recreated.
-    const homes = this.hostHomes();
-    m.set(CONTAINER.profiles, homes.profiles);
-    m.set(CONTAINER.portrait, homes.portrait);
-    m.set(CONTAINER.configLive, homes.configMirror);
-    m.set(CONTAINER.stateHome, homes.state);
-    m.set(CONTAINER.githubRead, homes.github);
-    return m;
+    return new Map(this.mountSpec().map((m) => [m.dest, m.source]));
   }
 
   /** Idempotent: running → adopt; stopped → start; absent → run. */
@@ -980,9 +969,7 @@ export class CompanionLifecycle {
       const drift = [...mountIssues, ...(dns === undefined ? [] : this.dnsDrift(dns))];
       if (drift.length > 0) {
         onProgress?.(`companion mounts drifted (${drift.join("; ")}) — recreating`);
-        const removed = await this.docker(["rm", "-f", this.cfg.container_name]);
-        if (!removed.ok)
-          throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(removed)}`);
+        await this.forceRemove();
         st = { exists: false, running: false, mounts: new Map() };
         recreating = true;
       }
@@ -995,16 +982,19 @@ export class CompanionLifecycle {
     }
     if (st.exists) {
       const started = await this.docker(["start", this.cfg.container_name]);
-      if (started.ok) return "started";
+      if (started.ok) {
+        // Same repair as adopting a running container: one created before
+        // the memory network existed joins it now.
+        await this.attachToMemoryNetwork();
+        return "started";
+      }
       // A stopped container can be permanently unstartable: bind-mount
       // sources are recorded at creation, and a source that no longer exists
       // makes `docker start` fail forever. Remove the husk and recreate with
       // the current environment; named volumes (pihome auth, conversation)
       // survive the rm.
       onProgress?.(`companion container unstartable (${firstLine(errText(started))}) — recreating`);
-      const removed = await this.docker(["rm", "-f", this.cfg.container_name]);
-      if (!removed.ok)
-        throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(removed)}`);
+      await this.forceRemove();
     }
     // Self-healing first run: build the image rather than failing on its absence.
     if (!(await this.imageExists())) await this.buildImage(onProgress);
@@ -1059,6 +1049,9 @@ export class CompanionLifecycle {
       await this.waitRunning();
       res = await this.docker(this.spawnArgv());
     }
+    // Another TUI may have created the session between the check above and
+    // this spawn (tmux refuses a duplicate): that session is the one to adopt.
+    if (!res.ok && (await this.piRunning())) return false;
     if (!res.ok) throw new Error(`spawning the companion pi session failed: ${errText(res)}`);
     return true;
   }
@@ -1078,17 +1071,36 @@ export class CompanionLifecycle {
   }
 }
 
-function errText(r: DockerResult): string {
+/** One-line cause from a failed docker call: the last line of stderr, else
+ * of stdout, else the exit status. */
+export function dockerFailureLine(r: DockerResult): string {
   return (r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).split("\n").slice(-1)[0]!;
+}
+
+const errText = dockerFailureLine;
+
+/** The companion's pi session dir inside the container — where `piArgv` points
+ * pi and where the day rollover looks for the conversation. */
+export function companionSessionDir(session: string): string {
+  return `${CONTAINER.piHome}/agent/sessions/${session}`;
 }
 
 function firstLine(s: string): string {
   return s.split("\n", 1)[0] ?? "";
 }
 
-export const realDockerRunner: DockerRunner = (argv, opts) =>
-  new Promise((resolvePromise) => {
-    const child = spawn("docker", argv, { stdio: ["ignore", "pipe", "pipe"] });
+export const realDockerRunner: DockerRunner = (argv, opts) => runCommand("docker", argv, opts);
+
+/** Run `bin argv…` and collect its output. A spawn failure (no such binary,
+ * no permission) or the timeout is said in `stderr`, so the caller's
+ * one-line cause names it instead of "exit null". */
+export function runCommand(
+  bin: string,
+  argv: string[],
+  opts?: { timeoutMs?: number },
+): Promise<DockerResult> {
+  return new Promise((resolvePromise) => {
+    const child = spawn(bin, argv, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -1098,10 +1110,12 @@ export const realDockerRunner: DockerRunner = (argv, opts) =>
       clearTimeout(timer);
       resolvePromise({ ok, stdout, stderr, code });
     };
+    const timeoutMs = opts?.timeoutMs ?? 20_000;
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
+      stderr += `${stderr === "" || stderr.endsWith("\n") ? "" : "\n"}${bin} timed out after ${timeoutMs} ms`;
       settle(false, null);
-    }, opts?.timeoutMs ?? 20_000);
+    }, timeoutMs);
     // Decoded by the stream, never per chunk: a multi-byte character split
     // across two reads (a `─` in a large capture, any non-ASCII in a long
     // copied buffer) otherwise becomes two U+FFFD.
@@ -1109,6 +1123,10 @@ export const realDockerRunner: DockerRunner = (argv, opts) =>
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (d: string) => (stdout += d));
     child.stderr.on("data", (d: string) => (stderr += d));
-    child.on("error", () => settle(false, null));
+    child.on("error", (err) => {
+      stderr += `${stderr === "" || stderr.endsWith("\n") ? "" : "\n"}${bin}: ${err.message}`;
+      settle(false, null);
+    });
     child.on("close", (code) => settle(code === 0, code));
   });
+}

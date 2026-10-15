@@ -48,6 +48,11 @@ function dockerPrefix(cfg: TuiConfig): string[] {
   return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec"];
 }
 
+/** A shell script run inside the container: `[sudo] docker exec <container> sh -c <script>`. */
+export function dockerShArgv(cfg: TuiConfig, script: string): string[] {
+  return [...dockerPrefix(cfg), cfg.container, "sh", "-c", script];
+}
+
 /** `cat status.json` on the host — the state volume is host-mounted, no docker. */
 export function statusArgv(cfg: TuiConfig): string[] {
   return ["cat", `${cfg.remote_state_dir}/status.json`];

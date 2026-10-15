@@ -115,6 +115,31 @@ describe("DurableDeployProcess", () => {
     expect(output.join("")).toContain("exited without a result");
   });
 
+  it("names the signal that ended the deploy in the streamed log", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-durable-deploy-signal-"));
+    roots.push(root);
+    const state = join(root, "state", "runs");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(
+      join(state, "sig-run-1234.started.json"),
+      JSON.stringify({ pid: process.pid, state: "running", started_at: new Date().toISOString() }),
+    );
+    writeFileSync(
+      join(state, "sig-run-1234.result.json"),
+      JSON.stringify({ code: null, signal: "SIGTERM" }),
+    );
+    let log = "";
+    const code = await new Promise<number | null>((resolve) => {
+      new DurableDeployProcess(root, state, 5, 5).startOrAttach(
+        "sig-run-1234",
+        (chunk) => (log += chunk),
+        resolve,
+      );
+    });
+    expect(code).toBeNull();
+    expect(log).toContain("deploy process ended by SIGTERM");
+  });
+
   it("keeps attaching while the running marker's runner is alive", async () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-durable-deploy-live-"));
     roots.push(root);

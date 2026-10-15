@@ -1,13 +1,16 @@
 // `[3] digest` — the document the EOD sweep writes, `digest/<date>.md`,
 // rendered full width and read top to bottom. Its own tab because
 // the operator reads it as a document rather than looking things up in it; `[`
-// and `]` page to older / newer days, j/k scroll. Pre-18:00 the newest digest
-// is yesterday's — it renders with a "(yesterday)" tag rather than pretending.
+// and `]` page to older / newer days, j/k scroll. Before the day's sweep the
+// newest digest is yesterday's — it renders with a "(yesterday)" tag rather
+// than pretending. "Yesterday" is a day in the `[eod]` timezone, the zone the
+// sweep names its file in.
 //
 // The digest is a file on the VM, so "there is none" and "I could not look"
 // are different facts: the fetcher's `list` is undefined when the
 // listing itself failed, and the tab says so instead of showing an empty day.
 import type { TuiConfig } from "../config.js";
+import { zoneDateString } from "../eod.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type LiveKeys } from "./cmdbar.js";
 import { HEADING, MUTED, RESET, modeBadge } from "./design.js";
@@ -15,29 +18,19 @@ import { emptyLine } from "./emptystate.js";
 import type { BoardKey } from "./keys.js";
 import type { LearningStore } from "./learning.js";
 import { Frame, rule } from "./paint.js";
-import type { SshRunner } from "./remote.js";
-
-function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [
-    ...(cfg.sudo_docker ? ["sudo"] : []),
-    "docker",
-    "exec",
-    cfg.container,
-    "sh",
-    "-c",
-    script,
-  ];
-}
+import { dockerShArgv, type SshRunner } from "./remote.js";
 
 export function digestListArgv(cfg: TuiConfig): string[] {
-  // `ls` of a directory that does not exist yet is an EMPTY digest, not a
-  // failed read — the sweep creates it with the first file. A failed ssh is
-  // what the fetcher reports as undefined.
-  return dockerSh(cfg, `ls '${cfg.remote_sandbox_root}/digest' 2>/dev/null || true`);
+  // A directory that does not exist yet is an EMPTY digest, not a failed
+  // read — the sweep creates it with the first file. One that exists but
+  // cannot be listed fails the exec, like a failed ssh, and the fetcher
+  // reports both as undefined.
+  const dir = `${cfg.remote_sandbox_root}/digest`;
+  return dockerShArgv(cfg, `if [ -e '${dir}' ]; then ls '${dir}'; fi`);
 }
 
 export function digestCatArgv(cfg: TuiConfig, file: string): string[] {
-  return dockerSh(cfg, `cat '${cfg.remote_sandbox_root}/digest/${file}'`);
+  return dockerShArgv(cfg, `cat '${cfg.remote_sandbox_root}/digest/${file}'`);
 }
 
 /** Digest file names are `<YYYY-MM-DD>.md`; anything else is ignored. */
@@ -51,8 +44,21 @@ export function parseDigestList(stdout: string): string[] {
 
 /** Light markdown styling: headings accent, bullets kept, everything else raw. */
 export function styleDigestLine(line: string): string {
-  if (/^#{1,3} /.test(line)) return `${HEADING}${line.replace(/^#{1,3} /, "")}${RESET}`;
-  return line;
+  const heading = /^#{1,3} (.*)$/.exec(line);
+  return heading ? `${HEADING}${heading[1]}${RESET}` : line;
+}
+
+/** When the EOD sweep runs (`[eod] time` / `timezone`) — the zone its digest
+ * files are named in. */
+export interface EodSchedule {
+  time: string;
+  timezone: string;
+}
+
+/** Today's digest date: the calendar day in the sweep's zone, or the UTC day
+ * when the schedule was not handed in. */
+export function digestToday(now: Date, eod?: EodSchedule): string {
+  return eod ? zoneDateString(now, eod.timezone) : now.toISOString().slice(0, 10);
 }
 
 export interface DigestFetcher {
@@ -120,6 +126,7 @@ export function renderDigestTab(
   today: string,
   cols: number,
   rows: number,
+  eod?: EodSchedule,
 ): Frame {
   const frame = new Frame(cols, rows);
   const file = currentDigestFile(st);
@@ -149,7 +156,9 @@ export function renderDigestTab(
     body.push(
       emptyLine({
         kind: "none",
-        what: "the EOD sweep writes digest/<date>.md at 18:00 Europe/Warsaw",
+        what: eod
+          ? `the EOD sweep writes digest/<date>.md at ${eod.time} ${eod.timezone}`
+          : "the EOD sweep writes digest/<date>.md once a day, at [eod] time",
       }),
     );
   else if (st.contentError !== undefined)
@@ -166,7 +175,7 @@ export function renderDigestTab(
 }
 
 /** Install the digest surface over the shared learning store. */
-export function installDigestTab(app: App, store: LearningStore): void {
+export function installDigestTab(app: App, store: LearningStore, eod?: EodSchedule): void {
   app.hooks.tabs.digest = {
     keys: () => digestKeys(store.digest),
     screen: (theApp, cols, rows) => {
@@ -174,9 +183,10 @@ export function installDigestTab(app: App, store: LearningStore): void {
       return renderDigestTab(
         store.digest,
         theApp.view.dryRun,
-        store.now().toISOString().slice(0, 10),
+        digestToday(store.now(), eod),
         cols,
         rows,
+        eod,
       );
     },
     key: (theApp, key: BoardKey): boolean => {
