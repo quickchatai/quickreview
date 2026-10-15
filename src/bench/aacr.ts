@@ -27,7 +27,8 @@
 // credential, so the override is backed by an environment in which posting is
 // impossible rather than merely forbidden.
 
-import { RENDER_RECORD_FIELDS } from "../reviewrender.js";
+import { postedSeverityTag, RENDER_RECORD_FIELDS } from "../reviewrender.js";
+import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, POSTING_TAG_WORDS } from "../severity.js";
 import type { PrFileEntry } from "../github.js";
 
 // ---- the case set -------------------------------------------------------------
@@ -518,7 +519,7 @@ export function safeId(instanceId: string): string {
 // ---- prefetch metadata --------------------------------------------------------
 
 /** What `prefetch` learns once, network-side, so the review needs no network
- * except the model API. Written to `<store>/<safe id>/meta.json`. */
+ * except the model API. Written to `<store>/<safe id>/bench-meta.json`. */
 export interface PrefetchMeta {
   instance_id: string;
   repo: string;
@@ -649,13 +650,14 @@ export function filesFromGitDiff(
 
 /** GitHub's `patch` field starts at the first hunk header; `git diff` output
  * for one file starts with `diff --git …` headers. Strip to the hunks, and cap
- * the size the way GitHub does (it omits patches past ~3,000 lines). */
+ * the size the way GitHub does (it omits patches past ~3,000 lines) — in
+ * UTF-8 bytes. */
 export function patchFromGitDiff(fileDiff: string, maxBytes = 200_000): string | undefined {
   const at = fileDiff.indexOf("\n@@");
   const start = fileDiff.startsWith("@@") ? 0 : at >= 0 ? at + 1 : -1;
   if (start < 0) return undefined;
   const body = fileDiff.slice(start);
-  return body.length > maxBytes ? undefined : body;
+  return Buffer.byteLength(body, "utf8") > maxBytes ? undefined : body;
 }
 
 // ---- the offline override -----------------------------------------------------
@@ -749,6 +751,9 @@ export function benchAppendix(a: AppendixArgs): string {
   L.push("");
   L.push("**The files — write them in this order, then stop:**");
   L.push("");
+  // The outcome file is the last item on both routes; only its number differs.
+  const outcomeItem = (n: number): string =>
+    `${n}. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": ${roundNo}, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`;
   if (a.renderOutputs) {
     L.push(
       `1. \`${f(CASE_FILES.findings)}\` — the findings record, in the shape step 7 specifies (every candidate finding and its disposition), WITH the posting fields below. Do NOT write ${CASE_FILES.comments} or ${CASE_FILES.review}: the benchmark renders both from this record exactly as step 6 formats them — the review body from the top-level fields and the posted entries, and each inline comment from its entry (tag line from \`posted_as\`, your \`body\`, the severity trailer). Head-side (\`RIGHT\`) line numbers of the file at \`${a.headSha}\`.`,
@@ -756,9 +761,7 @@ export function benchAppendix(a: AppendixArgs): string {
     L.push("");
     L.push(RENDER_RECORD_FIELDS);
     L.push("");
-    L.push(
-      `2. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": ${roundNo}, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
-    );
+    L.push(outcomeItem(2));
   } else {
     L.push(
       `1. \`${f(CASE_FILES.comments)}\` — the inline comments array, exactly as you would pass it to the posting script: \`[{"path": "<repo-relative path>", "line": <line>, "side": "RIGHT", "body": "<the full comment text as it would be posted>"}]\` — the four fields the posting script accepts. Head-side (\`RIGHT\`) line numbers of the file at \`${a.headSha}\`. \`[]\` when nothing survives.`,
@@ -767,9 +770,7 @@ export function benchAppendix(a: AppendixArgs): string {
     L.push(
       `3. \`${f(CASE_FILES.findings)}\` — the findings record, in the shape step 7 specifies (every candidate finding and its disposition).`,
     );
-    L.push(
-      `4. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": ${roundNo}, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
-    );
+    L.push(outcomeItem(4));
   }
   L.push("");
   L.push(
@@ -839,10 +840,15 @@ export function reanchorLeftLine(
   let newN = 0;
   let inHunk = false;
   let hunkAdds: number[] = [];
+  /** The hunk's last head-side line (null: the hunk has none of its own). */
+  let hunkEnd: number | null = null;
   let at: number | null = null;
   const pick = (): { line: number; how: "hunk" } | null => {
     if (at === null) return null;
-    if (hunkAdds.length === 0) return { line: Math.max(1, at), how: "hunk" };
+    // A deletion at the end of the file sits past the head's last line: the
+    // context line before it is the one that exists.
+    if (hunkAdds.length === 0)
+      return { line: Math.max(1, hunkEnd === null ? at : Math.min(at, hunkEnd)), how: "hunk" };
     const pos = at;
     const best = hunkAdds.reduce((a, b) => (Math.abs(b - pos) < Math.abs(a - pos) ? b : a));
     return { line: best, how: "hunk" };
@@ -851,13 +857,16 @@ export function reanchorLeftLine(
     if (raw.startsWith("@@")) {
       const done = pick();
       if (done) return done;
-      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(raw);
       if (!m) {
         inHunk = false;
         continue;
       }
       oldN = Number(m[1]);
       newN = Number(m[2]);
+      // `+N,0` names the line BEFORE an all-deleted hunk, which exists.
+      const newCount = m[3] === undefined ? 1 : Number(m[3]);
+      hunkEnd = newCount === 0 ? null : newN + newCount - 1;
       inHunk = true;
       hunkAdds = [];
       continue;
@@ -906,8 +915,13 @@ export function reanchorLeftComments(
   return { comments: out, reanchored };
 }
 
-const TAG_RE = /\[(blocker|question|nit)\]/i;
-const MARKER_RE = /^\s*\[(check this|ask your human|deferred)\]/i;
+/** The closed tag grammar (`severity.ts`), as the bench matches it. */
+const bare = (tag: string): string => tag.replace(/^\[|\]$/g, "");
+const TAG_RE = new RegExp(`\\[(${POSTING_TAG_WORDS.join("|")})\\]`, "i");
+const MARKER_RE = new RegExp(
+  `^\\s*\\[(${[CHECK_THIS_TAG, ASK_HUMAN_TAG, DEFERRED_TAG].map(bare).join("|")})\\]`,
+  "i",
+);
 
 /** The posting tag from a comment's first line (the closed grammar). */
 export function tagOf(body: string): { tag: PostTag; marker?: string } {
@@ -920,7 +934,8 @@ export function tagOf(body: string): { tag: PostTag; marker?: string } {
   };
 }
 
-function posInt(v: unknown): number | undefined {
+/** A positive line number: an integer, or a digit string (LLMs write strings). */
+export function posInt(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isInteger(v) && v > 0) return v;
   if (typeof v === "string" && /^\d+$/.test(v.trim()) && Number(v) > 0) return Number(v);
   return undefined;
@@ -946,7 +961,7 @@ export function parseSessionComments(raw: unknown): { comments: BenchComment[]; 
   let dropped = 0;
   for (const row of rows) {
     const r = (typeof row === "object" && row !== null ? row : {}) as Record<string, unknown>;
-    const path = typeof r["path"] === "string" ? r["path"].trim().replace(/^\.?\/+/, "") : "";
+    const path = benchPath(r["path"]);
     const body =
       typeof r["body"] === "string" ? r["body"] : typeof r["text"] === "string" ? r["text"] : "";
     const line = posInt(r["line"]) ?? posInt(r["end_line"]);
@@ -969,51 +984,178 @@ export function parseSessionComments(raw: unknown): { comments: BenchComment[]; 
   return { comments, dropped };
 }
 
-const POSTED_AS_TAG: Record<string, PostTag> = {
-  blocker: "blocker",
-  question: "question",
-  nit: "nit",
-  "check this": "question",
-  "ask your human": "question",
-  deferred: "question",
-};
+/** A comment or record path as every bench reader compares it: trimmed, no
+ * leading `./` or `/`. "" when it is not a string. */
+export function benchPath(v: unknown): string {
+  return typeof v === "string" ? v.trim().replace(/^\.?\/+/, "") : "";
+}
 
-/** The text a body-posted finding carries in `review.md`: its bullet
- * (`` - `path:line` — title _(…)_ ``) plus the indented paragraphs under it. */
-function bodyTextFor(reviewMd: string, path: string, line: number): string | null {
-  const lines = reviewMd.split("\n");
-  const key = `\`${path}:${line}\``;
-  const at = lines.findIndex((l) => l.trimStart().startsWith("- ") && l.includes(key));
-  if (at < 0) return null;
-  const title = (lines[at] ?? "")
-    .slice((lines[at] ?? "").indexOf(key) + key.length)
-    .replace(/^\s*[—-]\s*/, "")
-    .replace(/\s*_\([^)]*\)_\s*$/, "")
-    .trim();
-  const body: string[] = [];
-  for (const l of lines.slice(at + 1)) {
-    if (/^\s*$/.test(l)) {
-      body.push("");
-      continue;
-    }
-    if (!/^\s{2,}/.test(l)) break; // next bullet, heading or footer
-    body.push(l.trim());
+/** How many lines apart a findings-record entry and an inline comment may
+ * sit and still be read as one finding (a session's record line and its
+ * comment's anchor can disagree by a little). */
+export const NEAR_LINES = 3;
+
+/** A located finding — a record entry or an inline comment — with the tag
+ * it is counted under. */
+export interface BenchSite {
+  path: string;
+  line: number;
+  start_line?: number;
+  tag?: PostTag;
+}
+
+/**
+ * Which inline comment carries each record entry, ONE TO ONE — two findings
+ * on neighbouring lines are never folded into one comment, and a comment is
+ * never claimed by a finding beside the one it states: the closest pair first
+ * (a line inside a comment's span is 0 apart), never more than NEAR_LINES
+ * apart, a same-tag pair before a cross-tag one at equal distance, then
+ * record and comment order. A null entry never pairs. Per entry: the index of
+ * its comment, or null.
+ */
+export function pairWithInline(
+  entries: readonly (BenchSite | null)[],
+  comments: readonly BenchSite[],
+): Array<number | null> {
+  const cands: Array<[dist: number, mismatch: number, e: number, c: number]> = [];
+  entries.forEach((e, ei) => {
+    if (!e) return;
+    comments.forEach((c, ci) => {
+      if (c.path !== e.path) return;
+      const lo = Math.min(c.start_line ?? c.line, c.line);
+      const d = e.line < lo ? lo - e.line : e.line > c.line ? e.line - c.line : 0;
+      if (d > NEAR_LINES) return;
+      const mismatch = e.tag !== undefined && c.tag !== undefined && e.tag !== c.tag ? 1 : 0;
+      cands.push([d, mismatch, ei, ci]);
+    });
+  });
+  cands.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3]);
+  const out: Array<number | null> = entries.map(() => null);
+  const taken = new Set<number>();
+  for (const [, , ei, ci] of cands) {
+    if (out[ei] !== null || taken.has(ci)) continue;
+    out[ei] = ci;
+    taken.add(ci);
   }
-  // Drop the trailing metadata line the comment grammar ends with.
-  const text = [title, ...body]
-    .join("\n")
-    .replace(/\n_[^\n]*·[^\n]*_\s*$/, "")
-    .trim();
-  return text || null;
+  return out;
+}
+
+/** The tag a posted record entry is counted under — the one its posted
+ * comment shows, whichever route posts it (`postedSeverityTag`). */
+export function recordTag(r: Record<string, unknown>): PostTag {
+  return postedSeverityTag(r) ?? "other";
+}
+
+/** Where one posted record entry went: the inline comment that carries it,
+ * the review body, or folded into a neighbouring comment (`merged`). */
+export type PostedPlace = { at: "inline"; comment: number } | { at: "body" } | { at: "merged" };
+
+/** The bullets of `review.md` that name `` `path:line` ``: their indices. */
+function bulletsNaming(lines: readonly string[], path: string, line: number): number[] {
+  const key = `\`${path}:${line}\``;
+  const out: number[] = [];
+  lines.forEach((l, i) => {
+    if (l.trimStart().startsWith("- ") && l.includes(key)) out.push(i);
+  });
+  return out;
+}
+
+/**
+ * Where each posted record entry went (null: it has no path or line). An
+ * entry the record puts in the body (`inline: false`) is in the body. Any
+ * other is carried by the inline comment `pairWithInline` gives it; without
+ * one it is in the body when no comment sits within NEAR_LINES of it or the
+ * body names it with a bullet — else it was folded into the comment beside it
+ * (a session that merged two findings into one comment).
+ */
+export function placePosted(
+  posted: readonly Record<string, unknown>[],
+  reviewMd: string,
+  inline: readonly BenchSite[],
+): Array<PostedPlace | null> {
+  const lines = reviewMd.split("\n");
+  const sites = posted.map((r): BenchSite | null => {
+    const path = benchPath(r["path"]);
+    const line = posInt(r["line"]);
+    return path && line !== undefined ? { path, line, tag: recordTag(r) } : null;
+  });
+  const pairs = pairWithInline(
+    sites.map((x, i) => (posted[i]!["inline"] === false ? null : x)),
+    inline,
+  );
+  return sites.map((site, i): PostedPlace | null => {
+    if (!site) return null;
+    if (posted[i]!["inline"] === false) return { at: "body" };
+    const c = pairs[i];
+    if (c !== null && c !== undefined) return { at: "inline", comment: c };
+    const besideOne = inline.some(
+      (x) =>
+        x.path === site.path &&
+        site.line >= Math.min(x.start_line ?? x.line, x.line) - NEAR_LINES &&
+        site.line <= x.line + NEAR_LINES,
+    );
+    return !besideOne || bulletsNaming(lines, site.path, site.line).length > 0
+      ? { at: "body" }
+      : { at: "merged" };
+  });
+}
+
+/** The text a body-posted finding carries in `review.md`: a bullet naming it
+ * (`` - `path:line` — title _(…)_ ``) plus the indented paragraphs under it.
+ * The full review lists an overflow finding twice — a title-only bullet in
+ * its section, then the bullet WITH its text under "Additional findings" — so
+ * a bullet with text is preferred, and one an earlier finding of the same
+ * `path:line` took (`used`) is not taken again. */
+function bodyTextFor(
+  lines: readonly string[],
+  path: string,
+  line: number,
+  used: Set<number>,
+): string | null {
+  const key = `\`${path}:${line}\``;
+  const texts = bulletsNaming(lines, path, line)
+    .filter((at) => !used.has(at))
+    .map((at) => {
+      const title = (lines[at] ?? "")
+        .slice((lines[at] ?? "").indexOf(key) + key.length)
+        .replace(/^\s*[—-]\s*/, "")
+        // the overflow bullet's ` — _why_`, then the `_(severity, lens)_` meta
+        .replace(/\s*—\s*_[^_\n]*_\s*$/, "")
+        .replace(/\s*_\([^)]*\)_\s*$/, "")
+        .trim();
+      const body: string[] = [];
+      for (const l of lines.slice(at + 1)) {
+        if (/^\s*$/.test(l)) {
+          body.push("");
+          continue;
+        }
+        if (!/^\s{2,}/.test(l)) break; // next bullet, heading or footer
+        body.push(l.trim());
+      }
+      // Drop the trailing metadata line the comment grammar ends with.
+      const text = [title, ...body]
+        .join("\n")
+        .replace(/\n_[^\n]*·[^\n]*_\s*$/, "")
+        .trim();
+      return { at, text, hasBody: body.some((b) => b !== "") };
+    })
+    .filter((t) => t.text !== "");
+  const pick = texts.find((t) => t.hasBody) ?? texts[0];
+  if (!pick) return null;
+  used.add(pick.at);
+  return pick.text;
 }
 
 /**
  * Findings production POSTS but not inline: the round template sends a
- * finding with no valid changed-line anchor into the review body. They are
- * posted findings with a file and a line, so the benchmark scores them — from
- * the session's own findings record (`disposition: "posted"`), skipping any
- * that already went out inline. The text is the finding as the body carries
- * it; the record's reason + evidence stand in when the body cannot be read.
+ * finding with no valid changed-line anchor into the review body, and the
+ * record may put one there (`inline: false`). They are posted findings with a
+ * file and a line, so the benchmark scores them — from the session's own
+ * findings record (`disposition: "posted"`), each placed by `placePosted`, so
+ * neither one that went out inline nor a distinct one beside it is lost. The
+ * text is the finding as the body carries it; the record's reason + evidence
+ * stand in when the body cannot be read. Its tag is the one its comment shows
+ * on either route (`recordTag`).
  */
 export function bodyPostedFindings(
   record: unknown,
@@ -1026,33 +1168,32 @@ export function bodyPostedFindings(
     Array.isArray((record as { findings?: unknown }).findings)
       ? (record as { findings: unknown[] }).findings
       : [];
+  const posted = rows
+    .map((row) => (typeof row === "object" && row !== null ? row : {}) as Record<string, unknown>)
+    .filter((r) => r["disposition"] === "posted");
+  const places = placePosted(posted, reviewMd, inline);
+  const lines = reviewMd.split("\n");
+  const used = new Set<number>();
   const out: BenchComment[] = [];
-  for (const row of rows) {
-    const r = (typeof row === "object" && row !== null ? row : {}) as Record<string, unknown>;
-    if (r["disposition"] !== "posted") continue;
-    const path = typeof r["path"] === "string" ? r["path"].trim().replace(/^\.?\/+/, "") : "";
-    const line = posInt(r["line"]);
-    if (!path || line === undefined) continue;
-    const inlineAlready = [...inline, ...out].some(
-      (c) => c.path === path && line >= (c.start_line ?? c.line) - 3 && line <= c.line + 3,
-    );
-    if (inlineAlready) continue;
+  posted.forEach((r, i) => {
+    if (places[i]?.at !== "body") return;
+    const path = benchPath(r["path"]);
+    const line = posInt(r["line"])!;
     const postedAs = typeof r["posted_as"] === "string" ? r["posted_as"].toLowerCase() : "";
-    const tag = POSTED_AS_TAG[postedAs] ?? "other";
     const fallback = [r["reason"], r["evidence"]]
       .filter((x): x is string => typeof x === "string")
       .join("\n\n");
-    const text = bodyTextFor(reviewMd, path, line) ?? fallback;
-    if (!text.trim()) continue;
+    const text = bodyTextFor(lines, path, line, used) ?? fallback;
+    if (!text.trim()) return;
     out.push({
       path,
       line,
       side: "RIGHT",
       body: `[${postedAs || "finding"}] ${text}`.trim(),
-      tag,
+      tag: recordTag(r),
       source: "body",
     });
-  }
+  });
   return out;
 }
 
@@ -1142,6 +1283,17 @@ export function toOcrResult(
 
 // ---- pi's JSON event stream ---------------------------------------------------
 
+/** Add one pi `usage` object's token counts to `into` (a field that is not a
+ * number counts 0; a usage that is not an object adds nothing). */
+function addUsage(into: Usage, x: unknown): void {
+  if (typeof x !== "object" || x === null) return;
+  const r = x as Record<string, unknown>;
+  const n = (k: string): number => (typeof r[k] === "number" ? r[k] : 0);
+  into.input += n("input");
+  into.output += n("output");
+  into.cacheRead += n("cacheRead");
+}
+
 /**
  * Sum model usage from pi `--mode json` stdout lines. The parent's own turns
  * carry `usage` on every assistant `message_end`; lens passes run as child
@@ -1151,14 +1303,7 @@ export function toOcrResult(
  */
 export function usageFromEvents(lines: Iterable<string>): Usage & { children: number } {
   const u = { input: 0, output: 0, cacheRead: 0, children: 0 };
-  const add = (x: unknown): void => {
-    if (typeof x !== "object" || x === null) return;
-    const r = x as Record<string, unknown>;
-    const n = (k: string): number => (typeof r[k] === "number" ? r[k] : 0);
-    u.input += n("input");
-    u.output += n("output");
-    u.cacheRead += n("cacheRead");
-  };
+  const add = (x: unknown): void => addUsage(u, x);
   for (const line of lines) {
     if (!line.trim()) continue;
     let e: Record<string, unknown>;
@@ -1321,10 +1466,7 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
         const r = (r0 ?? {}) as Record<string, unknown>;
         const u = r["usage"] as Record<string, unknown> | undefined;
         if (u) {
-          const n = (k: string): number => (typeof u[k] === "number" ? u[k] : 0);
-          call.usage.input += n("input");
-          call.usage.output += n("output");
-          call.usage.cacheRead += n("cacheRead");
+          addUsage(call.usage, u);
           call.cost += costOf(u["cost"]);
           call.children++;
         }
