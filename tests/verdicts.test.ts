@@ -33,6 +33,7 @@ import {
   type VerdictAdapter,
 } from "../src/verdicts.js";
 import { retryWithheldApproval } from "../src/cigate.js";
+import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { TranscriptIndex } from "../src/transcriptindex.js";
 import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -1316,6 +1317,34 @@ describe("confirmed round posting receipts", () => {
     ).toMatchObject({ c: 1 });
   });
 
+  // MUTATION: read every state but APPROVED/CHANGES_REQUESTED as COMMENT —
+  // a dismissed review proves a withheld approval it may never have been.
+  it("a marker review in a state that hides what was posted (DISMISSED) is contradicting evidence, never a COMMENT", async () => {
+    reviewingRound(189);
+    const { key } = stampPosting(189, 1);
+    adapter.listReviewsFull = async () => [
+      {
+        id: 778,
+        user: cfg.github.bot_login,
+        user_type: "Bot",
+        state: "DISMISSED",
+        body: `review body\n\n${postingMarker(key)}`,
+        commit_id: "abc123",
+        submitted_at: "2026-08-13T11:59:59Z",
+      },
+    ];
+
+    expect(
+      await watcher({ cfg: { ...cfg, dry_run: false }, postingReceiptGraceS: 0 }).handleFile(
+        write(189, 1, verdictFile({ pr: 189, verdict: "APPROVE", approval_withheld: true })),
+      ),
+    ).toBe(true);
+
+    expect(store.roundsFor(189)[0]).toMatchObject({ status: "cancelled", verdict: null });
+    expect(store.openReviewFailure(189)).toMatchObject({ stage: "posting_receipt" });
+    expect(store.approvalWithheld(189)).toBeUndefined();
+  });
+
   // The posted review is the evidence, so a round whose session stopped
   // without its verdict file is settled from the receipt — never requeued
   // (that would post twice), and never FAILED_LOUD over a review that stands
@@ -2285,6 +2314,12 @@ describe("held wakes are flushed at round end", () => {
     expect(injects).toEqual([]);
     expect(store.heldWakes(101)).toHaveLength(1);
     expect(store.openReviewFailure(101)?.work_owed).toBe(1);
+
+    // MUTATION: drop the failure check in flushStrandedWakes — the next
+    // tick's stranded-wake sweep delivers them over the owed review.
+    expect(await w.checkDeadlines()).toEqual([]);
+    expect(injects).toEqual([]);
+    expect(store.heldWakes(101)).toHaveLength(1);
   });
 
   it("leaves a wake held while the round is still running", async () => {
@@ -2976,6 +3011,49 @@ describe("guarded no-op settlement", () => {
     });
   });
 
+  // MUTATION: await the label call before the restoration — a restart inside
+  // it strands the PR in `reviewing` behind a cancelled round no replay settles.
+  it("restores the standing lifecycle before its first await: a restart inside the label call strands nothing", async () => {
+    skippedRound(510);
+    let atLabelCall: { state?: string; settled: number } | undefined;
+    adapter.removeLabel = async (n, label) => {
+      adapter.calls.push(`removeLabel:${n}:${label}`);
+      atLabelCall = {
+        state: store.getPr(510)?.state,
+        settled: events("posting_guarded_noop", 510).length,
+      };
+      return { executed: false, dryRunFile: "d" };
+    };
+
+    await watcher().handleFile(write(510, 1, verdictFile({ pr: 510 })));
+
+    expect(atLabelCall).toEqual({ state: "awaiting_author", settled: 1 });
+  });
+
+  // MUTATION: promote the successor before the label call — the old round's
+  // removal can then strip the label the successor's dispatch adds.
+  it("takes its in-progress label off before it promotes a fresh-head successor", async () => {
+    const { roundId } = skippedRound(511);
+    store.recordSuccessor({
+      pr: 511,
+      predecessor_round_id: roundId,
+      head_sha: "fresh-head",
+      provenance: "system",
+      reason: "test",
+    });
+    let stateAtLabelCall: string | undefined;
+    adapter.removeLabel = async (n, label) => {
+      adapter.calls.push(`removeLabel:${n}:${label}`);
+      stateAtLabelCall = store.getPr(511)?.state;
+      return { executed: false, dryRunFile: "d" };
+    };
+
+    await watcher().handleFile(write(511, 1, verdictFile({ pr: 511 })));
+
+    expect(stateAtLabelCall).toBe("awaiting_author");
+    expect(store.getPr(511)?.state).toBe("queued");
+  });
+
   it("a COMMENT-only standing mark is never guessed: tracked, an anomaly, still no failure and no approve", async () => {
     skippedRound(503, "COMMENT");
 
@@ -3556,6 +3634,28 @@ describe("integration review", () => {
       submitted_at: "2026-08-13T12:29:00Z",
     });
 
+    // MUTATION: drop the stillRunning check on the settled_without_verdict
+    // failure — the operator's `u` that won during the read is reopened as debt.
+    it("a settled parent's failed proof opens no incident over a round an operator ended during the read", async () => {
+      reviewingRound(614);
+      const { key } = stampPosting(614, 1);
+      prepared(614, key);
+      adapter.listReviewsFull = async () => {
+        store.cancelRunningRounds(614, "rerun-round");
+        return [];
+      };
+      const w = watcher({ cfg: live, now: at }, killingHooks([]));
+
+      expect(await w.recoverInfrastructureFailure(614, 1, "settled_without_verdict", "x")).toBe(
+        "settled",
+      );
+      expect(store.openReviewFailure(614)).toBeUndefined();
+      expect(store.roundsFor(614)[0]).toMatchObject({
+        status: "cancelled",
+        cancel_cause: "operator",
+      });
+    });
+
     // MUTATION: drop the `ambiguous` branch in receiptAwareStage — the limit
     // kills the session and requeues a round that may already have posted.
     it("a prepared receipt past its grace with GitHub unreadable waits for a read that can decide", async () => {
@@ -3711,6 +3811,156 @@ describe("integration review", () => {
       expect(count("verdict_applied", 622)).toBe(0);
       expect(count("verdict_settled_from_receipt_resumed", 622)).toBe(0);
       expect(store.reviewedHead(622)).toBeUndefined();
+    });
+
+    // MUTATION: drop the cancelled-round guard at the top of apply — the
+    // late verdict finishes the cancelled round and moves the PR out of
+    // the replacement's queue.
+    it("a verdict reaching a round cancelled BEFORE the apply started is never applied over the cancel", async () => {
+      const roundId = reviewingRound(623);
+      const { key } = stampPosting(623, 1);
+      writePostingReceipt(623, 1, key, "APPROVE");
+      // The operator's `u`: the round cancelled, the PR queued for a rerun.
+      store.cancelRunningRounds(623, "rerun-round");
+      store.setPrState(623, "queued");
+      const name = write(623, 1, verdictFile({ pr: 623, verdict: "APPROVE" }));
+
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(existsSync(join(dir, name))).toBe(false);
+      expect(store.roundsFor(623)[0]).toMatchObject({
+        id: roundId,
+        status: "cancelled",
+        verdict: null,
+      });
+      expect(store.getPr(623)?.state).toBe("queued");
+      expect(store.reviewedHead(623)).toBeUndefined();
+      expect(count("verdict_applied", 623)).toBe(0);
+      expect(payloads("verdict_after_cancel_ignored", 623)).toEqual([
+        expect.objectContaining({
+          round_id: roundId,
+          cancel_cause: "operator",
+          verdict: "APPROVE",
+        }),
+      ]);
+      expect(adapter.calls.some((c) => c.startsWith("addLabel:623"))).toBe(false);
+    });
+
+    // MUTATION: restore runningRound's fallback to the newest running round —
+    // the stray file settles round 1 with round 2's verdict.
+    it("a verdict file naming a round the PR never had touches no other round", async () => {
+      const roundId = reviewingRound(624);
+      const name = write(624, 2, verdictFile({ pr: 624, round_no: 2, verdict: "APPROVE" }));
+
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.roundsFor(624)[0]).toMatchObject({ id: roundId, status: "running" });
+      expect(store.getPr(624)?.state).toBe("reviewing");
+      expect(store.reviewedHead(624)).toBeUndefined();
+      expect(store.openReviewFailure(624)).toBeUndefined();
+      expect(payloads("verdict_round_unknown", 624)).toEqual([
+        expect.objectContaining({ round_no: 2, file: name }),
+      ]);
+    });
+
+    it("…and a malformed one naming such a round opens no failure against the running one", async () => {
+      const roundId = reviewingRound(625);
+      const name = write(625, 2, "{ not json");
+
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.roundsFor(625)[0]).toMatchObject({ id: roundId, status: "running" });
+      expect(store.getPr(625)?.state).toBe("reviewing");
+      expect(store.openReviewFailure(625)).toBeUndefined();
+      expect(count("verdict_round_unknown", 625)).toBe(1);
+    });
+
+    // MUTATION: drop the cancelled-round return in handleMalformed — the old
+    // round's bad file reopens FAILED_LOUD over the operator's `u`.
+    it("a malformed file reaching a round the operator cancelled opens no failure: the `u` stands", async () => {
+      const roundId = reviewingRound(626);
+      store.cancelRunningRounds(626, "rerun-round");
+      store.setPrState(626, "queued");
+      const name = write(626, 1, "{ not json");
+
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.openReviewFailure(626)).toBeUndefined();
+      expect(store.getPr(626)?.state).toBe("queued");
+      expect(store.roundsFor(626)[0]).toMatchObject({ id: roundId, status: "cancelled" });
+      expect(payloads("verdict_after_cancel_ignored", 626)).toEqual([
+        expect.objectContaining({ round_id: roundId, cancel_cause: "operator", file: name }),
+      ]);
+      expect(count("verdict_malformed", 626)).toBe(0);
+    });
+
+    // MUTATION: drop `orphanVerdictOwed` from apply's cancelled guard — the
+    // orphan-swept round's posted, withheld review is dropped, the PR reruns
+    // at the head and the withheld-approval mark is never recorded.
+    it("an orphan-swept round's verdict still applies while no later round has started; once one has, it is inert", async () => {
+      const roundId = reviewingRound(627);
+      const { key } = stampPosting(627, 1);
+      writePostingReceipt(627, 1, key, "COMMENT", { intended_event: "APPROVE" });
+      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      expect(store.roundsFor(627)[0]).toMatchObject({
+        status: "cancelled",
+        cancel_cause: "orphan_sweep",
+      });
+      expect(store.getPr(627)?.state).toBe("queued");
+
+      const name = write(
+        627,
+        1,
+        verdictFile({ pr: 627, verdict: "APPROVE", approval_withheld: true }),
+      );
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.roundsFor(627)[0]).toMatchObject({
+        id: roundId,
+        status: "done",
+        verdict: "APPROVE",
+      });
+      expect(store.approvalWithheld(627)).toMatchObject({ head_sha: "abc123" });
+      expect(store.reviewedHead(627)).toMatchObject({ head_sha: "abc123", verdict: "APPROVE" });
+      expect(store.getPr(627)?.state).not.toBe("queued");
+
+      // With a later round already started, the same late file is inert.
+      reviewingRound(628);
+      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      store.startRound(628, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+      const late = write(628, 1, verdictFile({ pr: 628, verdict: "APPROVE" }));
+      expect(await watcher().handleFile(late)).toBe(true);
+      expect(store.roundsFor(628)[0]).toMatchObject({ status: "cancelled", verdict: null });
+      expect(count("verdict_after_cancel_ignored", 628)).toBe(1);
+    });
+
+    // MUTATION: drop the later-round re-check at apply's claim — the orphan
+    // round finishes done over the requeued round the pump started meanwhile.
+    it("an orphan-swept round's verdict is not applied over the requeued round that started during its apply", async () => {
+      reviewingRound(629);
+      const { key } = stampPosting(629, 1);
+      writePostingReceipt(629, 1, key, "REQUEST_CHANGES");
+      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      adapter.addLabel = async (n, label) => {
+        adapter.calls.push(`addLabel:${n}:${label}`);
+        // The boot pump dispatches the requeued PR while the label call is out.
+        store.startRound(629, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+        store.setPrState(629, "reviewing");
+        return { executed: false, dryRunFile: "d" };
+      };
+
+      const name = write(629, 1, verdictFile({ pr: 629, verdict: "REQUEST_CHANGES" }));
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.roundsFor(629).map((r) => [r.round_no, r.status, r.verdict])).toEqual([
+        [1, "cancelled", null],
+        [2, "running", null],
+      ]);
+      expect(store.getPr(629)?.state).toBe("reviewing");
+      expect(store.reviewedHead(629)).toBeUndefined();
+      expect(payloads("verdict_after_cancel_ignored", 629)).toEqual([
+        expect.objectContaining({ reason: "a later round started while the verdict was applied" }),
+      ]);
     });
   });
 

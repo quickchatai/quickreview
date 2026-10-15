@@ -8,6 +8,7 @@
 // and the gate, not the call site, decides whether it runs.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { postingMarker } from "./posting-receipt.js";
 
 export type MutationKind =
   | "add_label"
@@ -33,10 +34,11 @@ export type MutationKind =
   | "create_issue"
   | "create_pull"
   | "push_branch"
-  // Post-review cleanup: the bot supersedes ITS OWN
-  // stale non-APPROVED reviews after posting a new one. The adapter enforces
-  // owner+state guards; dismissing an approval or another identity's review
-  // remains structurally impossible.
+  // Post-review cleanup: the bot superseding ITS OWN stale non-APPROVED
+  // review after posting a new one. No adapter method and no caller exist
+  // today, so nothing is superseded; one that is added must enforce the
+  // owner+state guards in the adapter (CLAUDE.md rule 2) — dismissing an
+  // approval or another identity's review stays impossible.
   | "supersede_own_review"
   // App-self-config class (CLAUDE.md rule 1): re-point the GitHub App's OWN
   // webhook URL
@@ -103,7 +105,7 @@ export type AppSelfConfigKind = (typeof APP_SELF_CONFIG_KINDS)[number];
  * That is enforced, not described. A `reviewPurpose` buys two
  * exemptions — it never claims the head, and the escalation purpose is exempt
  * from guard 2 — so a purpose riding an APPROVE would be an approval that
- * skips the no-new-evidence guard AND never marks the head it approved.
+ * never marks the head it approved.
  * `execute()` therefore refuses any purposed intent that is not a
  * `create_review` with `event: "COMMENT"` — on the detached snapshot of the
  * caller's intent at entry, and again on the detached copy of what the guard
@@ -331,7 +333,7 @@ function postingRetryCheck(intent: MutationIntent): void {
     typeof body.commit_id !== "string" ||
     body.commit_id.toLowerCase() !== m[1] ||
     typeof body.body !== "string" ||
-    !body.body.includes(`<!-- qcr-post:${key} -->`)
+    !body.body.includes(postingMarker(key))
   ) {
     throw new Error(
       `gate: postingRetry is only allowed on a substantive create_review at its key's head carrying its key's marker (${intent.kind})`,

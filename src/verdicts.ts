@@ -25,7 +25,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
+import { checkOutcome, classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
 import {
   deliverEscalations,
   evaluateEscalationRules,
@@ -438,7 +438,6 @@ function comparePlan(
   };
   if (plan && addable) {
     out.planned = plan.map((p) => p.lens);
-    if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
     const byAddable = new Map(addable.map((p) => [p.lens, p]));
     const byPlan = new Map(plan.map((p) => [p.lens, p]));
     for (const pass of passes) {
@@ -465,9 +464,9 @@ function comparePlan(
   } else {
     // Rows with no structured plan (in flight across a migration) compare
     // by lens name only.
-    if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
     out.unknownAdditions = [...new Set(executed.filter((lens) => !out.planned.includes(lens)))];
   }
+  if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
   return out;
 }
 
@@ -601,15 +600,23 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   // the round and self-requeues instead of applying a verdict.
   const outcome = typeof v.outcome === "string" ? v.outcome.trim().toLowerCase() : "";
   const verdictSpelled = typeof v.verdict === "string" ? v.verdict.trim().toUpperCase() : "";
-  if (outcome === "head_moved" || verdictSpelled === "HEAD_MOVED") {
-    v.outcome = "head_moved";
-    delete v.verdict;
+  // The envelope every outcome carries: the head the round reviewed and when
+  // it finished. spend_usd is a legacy self-reported field — accepted in any
+  // shape and IGNORED (models copy the template's example figure; real usage
+  // is measured from the session JSONLs) — deleted so no consumer can store
+  // it.
+  const badEnvelope = (): ParsedVerdict | null => {
     if (typeof v.head_sha !== "string" || v.head_sha.length === 0)
       return bad("head_sha must be a non-empty string");
     if (typeof v.finished_at !== "string" || v.finished_at.length === 0)
       return bad("finished_at must be a non-empty string");
     delete v.spend_usd;
-    return { ok: true, verdict: raw as unknown as VerdictFile };
+    return null;
+  };
+  if (outcome === "head_moved" || verdictSpelled === "HEAD_MOVED") {
+    v.outcome = "head_moved";
+    delete v.verdict;
+    return badEnvelope() ?? { ok: true, verdict: raw as unknown as VerdictFile };
   }
   if (outcome) return bad(`bad outcome: ${String(v.outcome)}`);
   // normalizeVerdict also folds the retired "ESCALATE" spelling into
@@ -617,14 +624,8 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   const verdict = normalizeVerdict(v.verdict);
   if (verdict === null) return bad(`bad verdict: ${String(v.verdict)}`);
   v.verdict = verdict;
-  if (typeof v.head_sha !== "string" || v.head_sha.length === 0)
-    return bad("head_sha must be a non-empty string");
-  if (typeof v.finished_at !== "string" || v.finished_at.length === 0)
-    return bad("finished_at must be a non-empty string");
-  // spend_usd: legacy self-reported field — accepted in any shape and IGNORED
-  // (models copy the template's example figure; real usage is measured from
-  // the session JSONLs). Deleted so no consumer can store it.
-  delete v.spend_usd;
+  const envelope = badEnvelope();
+  if (envelope) return envelope;
   if (v.ai_approved !== undefined && typeof v.ai_approved !== "boolean")
     return bad("ai_approved must be a boolean");
   // LLM-written booleans arrive as strings often enough to coerce the
@@ -826,16 +827,65 @@ export class VerdictWatcher {
     }
   }
 
+  /** The round `roundNo` names, whatever its status — never another round:
+   * a lookup that names a round this PR does not have answers undefined. With
+   * no `roundNo`, the PR's newest running round. */
   private runningRound(pr: number, roundNo?: number): RoundRow | undefined {
     if (roundNo !== undefined) {
-      const row = this.deps.store.db
+      return this.deps.store.db
         .prepare("SELECT * FROM rounds WHERE pr = ? AND round_no = ? ORDER BY id DESC LIMIT 1")
         .get(pr, roundNo) as RoundRow | undefined;
-      if (row) return row;
     }
     return this.deps.store.db
       .prepare("SELECT * FROM rounds WHERE pr = ? AND status = 'running' ORDER BY id DESC LIMIT 1")
       .get(pr) as RoundRow | undefined;
+  }
+
+  /** A file reaching a cancelled round is not applied over the cancel:
+   * recorded, archived by the caller, nothing else touched. */
+  private ignoreAfterCancel(
+    round: RoundRow,
+    name: string,
+    detail: { malformed?: string; reason?: string } = {},
+  ): void {
+    this.deps.store.logEvent("verdict_after_cancel_ignored", round.pr, {
+      round_id: round.id,
+      round_no: round.round_no,
+      cancel_cause: round.cancel_cause,
+      file: name,
+      ...detail,
+    });
+    this.log(
+      `verdicts: #${round.pr} round ${round.round_no} was already cancelled (${round.cancel_cause ?? "unknown"}) — ${name} is not applied over it`,
+    );
+  }
+
+  /**
+   * The orphan sweep cancels a round because its session did not survive a
+   * restart — not because anything decided against the round. A verdict file
+   * the session committed before the restart, which the boot sweep had not
+   * settled yet (still waiting on its posting receipt), is that round's
+   * decision and still applies — the posted review is settled, never re-run —
+   * as long as no later round has started on the PR.
+   */
+  private orphanVerdictOwed(round: RoundRow): boolean {
+    return (
+      round.status === "cancelled" &&
+      round.cancel_cause === "orphan_sweep" &&
+      !this.deps.store.hasLaterRound(round.pr, round.round_no)
+    );
+  }
+
+  /** A verdict file names a round this PR does not have: archived inert,
+   * recorded, and nothing else touched — no round settled, no lifecycle moved,
+   * no failure opened against whatever round IS running. */
+  private ignoreUnknownRound(pr: number, roundNo: number, name: string, malformed?: string): void {
+    this.deps.store.logEvent("verdict_round_unknown", pr, {
+      round_no: roundNo,
+      file: name,
+      ...(malformed !== undefined ? { malformed } : {}),
+    });
+    this.log(`verdicts: #${pr} has no round ${roundNo} — ${name} is not applied to any round`);
   }
 
   /** Whether the apply of this round's verdict ran to its last durable step. */
@@ -962,9 +1012,12 @@ export class VerdictWatcher {
     name: string,
     message: string,
   ): Promise<void> {
-    const found = this.runningRound(pr, roundNo);
-    const round = found && found.round_no === roundNo ? found : undefined;
-    if (round && round.status !== "running") {
+    const round = this.runningRound(pr, roundNo);
+    if (!round) {
+      this.ignoreUnknownRound(pr, roundNo, name, message);
+      return;
+    }
+    if (round.status !== "running") {
       if (this.roundTerminallySettled(round)) {
         this.deps.store.logEvent("verdict_replay_ignored", pr, {
           round_id: round.id,
@@ -980,6 +1033,13 @@ export class VerdictWatcher {
       // The file is still in verdict/ because the round's receipt settlement
       // was cut short (archive runs only after it): finish that settlement.
       if (await this.resumeReceiptSettlement(round)) return;
+      // A cancelled round is closed for good, as in `apply`: a malformed file
+      // reaching it afterwards opens no failure over whatever replaced it (an
+      // operator's `u` stays undone by nothing the old session writes).
+      if (round.status === "cancelled") {
+        this.ignoreAfterCancel(round, name, { malformed: message });
+        return;
+      }
     }
     let anomaly = message;
     if (round && round.status === "running" && round.posting_key) {
@@ -1375,12 +1435,26 @@ export class VerdictWatcher {
           };
         if (matches.length === 1) {
           const match = matches[0]!;
-          const actualEvent: PostingReceipt["actual_event"] =
-            match.state.toUpperCase() === "APPROVED"
+          // Only the three submitted states say what was posted. Any other —
+          // a review a person retracted, whose state no longer says whether
+          // it approved or blocked, or one still pending — is evidence the
+          // round's posting cannot be read off, never a COMMENT (the posting
+          // outbox reads them the same way).
+          const state = match.state.toUpperCase();
+          const actualEvent: PostingReceipt["actual_event"] | undefined =
+            state === "APPROVED"
               ? "APPROVE"
-              : match.state.toUpperCase() === "CHANGES_REQUESTED"
+              : state === "CHANGES_REQUESTED"
                 ? "REQUEST_CHANGES"
-                : "COMMENT";
+                : state === "COMMENTED"
+                  ? "COMMENT"
+                  : undefined;
+          if (!actualEvent)
+            return {
+              kind: "failed",
+              detail: `GitHub review ${match.id} carries ${round.posting_key} in state ${match.state}, which does not say what was posted`,
+              failure: "contradicted",
+            };
           const synthetic: PostingReceipt = {
             version: 1,
             posting_key: round.posting_key,
@@ -1508,8 +1582,11 @@ export class VerdictWatcher {
    *     failed;
    *   - the PR returns to the state its standing review put it in, read off
    *     the live mark through the one standing-review interpretation; the
-   *     mark itself, GitHub, the withheld-approval mark and any successor or
-   *     held wake are left exactly as they were;
+   *     mark itself, GitHub and the withheld-approval mark are left exactly
+   *     as they were;
+   *   - round-end housekeeping runs as after a verdict: a fresh-head
+   *     successor is promoted, otherwise the wakes held during the round
+   *     flow;
    *   - no `review_failures` row, no retry budget, no Slack FAILED_LOUD, no
    *     replacement round, no escalation.
    *
@@ -1568,20 +1645,25 @@ export class VerdictWatcher {
         `standing ${standing ?? "review (verdict unknown)"} stands, nothing was posted`,
       "no_new_evidence",
     );
-    // ---- claimed; everything below may await ---------------------------------
+    // ---- claimed; the restoration below lands in this same turn --------------
     // The round ran a full review and burned its tokens: measured like every
     // other terminal path, never hidden behind a benign cause. Its window
     // closes here, and the measurement is owed from here, durably; the reads
     // (async — seconds, at most the usage budget) run last, after the
     // restored lifecycle and the held-wake flush, so they
-    // never widen the window before either: a restart cannot strand the PR in
-    // `reviewing`, and no round dispatched while they run can receive this
-    // round's held wakes. A restart while they run resumes them.
+    // never widen the window before either: no round dispatched while they
+    // run can receive this round's held wakes. A restart while they run
+    // resumes them.
+    //
+    // The restored lifecycle and the settlement event land synchronously
+    // with the cancel, before the first await: a replay of a cancelled round
+    // is inert, so a restart inside an await must find nothing left to do
+    // (the PR never stranded in `reviewing`). The successor is promoted only
+    // once this round's in-progress label is off, so that removal can never
+    // strip the label the successor's dispatch adds; a restart between the
+    // two leaves the durable successor obligation to reconcile's
+    // successor-obligations step.
     const owed = this.oweMeasurement(round);
-    await this.safe(
-      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
-      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
-    );
 
     if (standingInfo.kind === "unknown") {
       // A COMMENT-only mark: guard 2 was right to refuse, and nothing here
@@ -1624,6 +1706,11 @@ export class VerdictWatcher {
     this.log(
       `verdicts: #${round.pr} round ${round.round_no} closed as a guarded no-op — guard 2 refused at ${head7}, ` +
         `standing ${standing ?? "unknown"} stands, PR ${restored} (via ${via})`,
+    );
+    // ---- everything below may await ------------------------------------------
+    await this.safe(
+      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
+      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
     );
     // Round-end housekeeping, the same as a verdict's: a fresh-head successor
     // takes the session slot; otherwise the wakes held during the round flow.
@@ -1720,6 +1807,42 @@ export class VerdictWatcher {
     // hands its measurement to the background; a verdict file's is awaited.
     const measure: MeasureMode = proven ? measureModeFor(proven.via) : "inline";
 
+    // A file naming a round this PR never had is nobody's verdict: it may
+    // neither settle another round nor move the PR's lifecycle.
+    if (!round) {
+      this.ignoreUnknownRound(v.pr, v.round_no, name);
+      return "applied";
+    }
+
+    // A round already cancelled is closed for good, whoever cancelled it — an
+    // operator's `u`, a self-requeue that queued its replacement, a
+    // supersession, the orphan sweep. A verdict file that reaches it
+    // afterwards (an archive that failed, a session finishing behind the
+    // cancel) is inert: finishing the round would apply the old verdict over
+    // whatever replaced it. The same rule `finishRound`'s claim enforces for a
+    // cancel landing DURING the apply. A guard-2 no-op (`no_new_evidence`)
+    // keeps its own replay path below, and so does the one cancel that is not
+    // a decision about the round (`orphanVerdictOwed`).
+    if (
+      round.status === "cancelled" &&
+      round.cancel_cause !== "no_new_evidence" &&
+      !this.orphanVerdictOwed(round)
+    ) {
+      store.logEvent("verdict_after_cancel_ignored", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        cancel_cause: round.cancel_cause,
+        head_sha: v.head_sha,
+        outcome: v.outcome ?? null,
+        verdict: v.verdict ?? null,
+        file: name,
+      });
+      this.log(
+        `verdicts: #${v.pr} round ${v.round_no} was already cancelled (${round.cancel_cause ?? "unknown"}) — ${name} is not applied over it`,
+      );
+      return "applied";
+    }
+
     // Guard-5 landing: the session was refused at posting time because the
     // PR advanced mid-round, and said so explicitly instead of idling to
     // deadline expiry. Mapped exactly like the needs_human_incomplete redo:
@@ -1728,8 +1851,7 @@ export class VerdictWatcher {
     // not killed: it is healthy, it did the
     // right thing. No verdict applies, no label lands, no reviewed-head mark
     // is stamped (nothing was reviewed-and-decided at the live head). Past
-    // the cap (or with no running round) the anomaly path terminalizes —
-    // never an approve.
+    // the cap the anomaly path terminalizes — never an approve.
     if (v.outcome === "head_moved") {
       store.logEvent("head_moved_reported", v.pr, {
         round_id: round?.id ?? null,
@@ -1737,7 +1859,19 @@ export class VerdictWatcher {
         reviewed_head: v.head_sha,
         file: name,
       });
-      if (round && round.status === "running" && (await this.selfRequeue(round, "head_moved"))) {
+      // The round already ended — this file is a replay of a report that was
+      // handled (or of a round some other path closed). Nothing is owed.
+      if (round.status !== "running") {
+        store.logEvent("verdict_replay_ignored", v.pr, {
+          round_id: round.id,
+          round_no: v.round_no,
+          round_status: round.status,
+          outcome: "head_moved",
+          file: name,
+        });
+        return "applied";
+      }
+      if (await this.selfRequeue(round, "head_moved")) {
         await this.safe(
           () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
           `remove ${cfg.github.in_progress_label} on #${v.pr}`,
@@ -1772,19 +1906,25 @@ export class VerdictWatcher {
     // verdict applies below like any other — the cap guarantees this can
     // never loop. No reviewed-head mark is recorded on
     // this path, so the redo round can dispatch and post at the same head.
+    // A round whose review already went out — a posting receipt other than a
+    // guard-2 refusal, confirmed or still owned by the daemon's delivery — is
+    // not redone (a redo would post again): it applies below through its
+    // posting proof, as the required-pass gap does.
     if (
       v.verdict === "NEEDS_HUMAN" &&
-      round &&
       round.status === "running" &&
       (!v.passes || v.passes.length === 0)
     ) {
+      const receipt = readPostingReceipt(this.postingReceiptDir(), v.pr, v.round_no);
+      const posting = receipt !== undefined && receipt.status !== "skipped";
       store.logEvent("needs_human_incomplete", v.pr, {
         round_id: round.id,
         round_no: v.round_no,
         head_sha: v.head_sha,
         passes_reported: v.passes ? 0 : null,
+        ...(posting ? { posting_receipt: receipt.status } : {}),
       });
-      if (await this.selfRequeue(round, "needs_human_incomplete")) {
+      if (!posting && (await this.selfRequeue(round, "needs_human_incomplete"))) {
         await this.safe(
           () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
           `remove ${cfg.github.in_progress_label} on #${v.pr}`,
@@ -1843,6 +1983,14 @@ export class VerdictWatcher {
           : "applied";
       }
       if (proof.kind === "failed") {
+        // An orphan-swept round's verdict that its posting cannot prove is
+        // not applied — and opens no incident over the requeue that stands.
+        if (round.status === "cancelled") {
+          this.ignoreAfterCancel(round, name, {
+            reason: `posting proof failed: ${proof.detail ?? "?"}`,
+          });
+          return "applied";
+        }
         await this.failPostingProof(round, proof.detail ?? "posting receipt invalid");
         return "failed";
       }
@@ -1889,6 +2037,17 @@ export class VerdictWatcher {
     // whatever landed meanwhile — an operator's `u`, a supersession — stands,
     // and nothing below runs. Before the successor record, so a lost claim
     // leaves no obligation behind either.
+    //
+    // An orphan-swept round's claim is `cancelled`, which a cancel landing
+    // meanwhile cannot change — but the requeue the sweep queued can have
+    // started its round while this awaited. Re-asked here, in the claim's own
+    // turn: a later round owns the PR, and the old verdict is not applied over it.
+    if (round && claimedStatus === "cancelled" && store.hasLaterRound(v.pr, v.round_no)) {
+      this.ignoreAfterCancel(round, name, {
+        reason: "a later round started while the verdict was applied",
+      });
+      return "applied";
+    }
     if (round && !store.finishRound(round.id, v.verdict, null, v.summary ?? null, claimedStatus)) {
       const now = this.runningRound(v.pr, v.round_no);
       const nowStatus = now?.id === round.id ? now.status : "missing";
@@ -2280,13 +2439,7 @@ export class VerdictWatcher {
     if (!this.deps.adapter.listChecks || !head) return [];
     try {
       return latestRunPerName(await this.deps.adapter.listChecks(head))
-        .filter(
-          (c) =>
-            c.status === "completed" &&
-            (c.conclusion ?? "") !== "success" &&
-            (c.conclusion ?? "") !== "skipped" &&
-            (c.conclusion ?? "") !== "neutral",
-        )
+        .filter((c) => checkOutcome(c) === "failed")
         .map((c) => c.name);
     } catch (err) {
       this.log(`escalation: checks read failed on #${pr}`, err);
@@ -2594,8 +2747,8 @@ export class VerdictWatcher {
   private async checkRoundIntegrity(pr: number, roundId: number): Promise<void> {
     const { cfg, store } = this.deps;
     try {
-      const before = store.roundGitConfig(roundId) as IntegrityFingerprint | undefined;
-      if (!before || typeof before.digest !== "string") return; // no baseline — never judged
+      const before = this.integrityBaseline(roundId);
+      if (!before) return; // no baseline — never judged
       const root = this.deps.root ?? sandboxRoot();
       const budgetMs = Math.max(0, this.deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
       const rehash = await withinBudget(
@@ -2881,12 +3034,18 @@ export class VerdictWatcher {
     );
   }
 
+  /** The round's integrity baseline, when dispatch took one that can be
+   * judged against; undefined otherwise — such a round is never judged. */
+  private integrityBaseline(roundId: number): IntegrityFingerprint | undefined {
+    const before = this.deps.store.roundGitConfig(roundId) as IntegrityFingerprint | undefined;
+    return before && typeof before.digest === "string" ? before : undefined;
+  }
+
   /** The round-end integrity re-check did not run for this round because a
    * restart cut its measurement short — recorded, never read as "unchanged".
    * Only a round with a baseline could have been judged at all. */
   private integrityInterrupted(pr: number, roundId: number): void {
-    const before = this.deps.store.roundGitConfig(roundId) as IntegrityFingerprint | undefined;
-    if (!before || typeof before.digest !== "string") return;
+    if (!this.integrityBaseline(roundId)) return;
     this.deps.store.logEvent("round_integrity_unchecked", pr, {
       round_id: roundId,
       stage: "round_end",
@@ -2901,10 +3060,11 @@ export class VerdictWatcher {
     return Math.max(0, this.deps.usage?.budgetMs ?? USAGE_BUDGET_MS);
   }
 
-  /** Malformed verdict or blown deadline: overseer anomaly, round marked, and
-   * the PR returned to its standing-verdict state (no park — the AI keeps
-   * driving). Never an approve path: "tracked" here means
-   * "no work owed", not approved. */
+  /** Malformed verdict or blown deadline: overseer anomaly, round marked, the
+   * PR's lifecycle returned to its standing-verdict state (never an approve,
+   * never a park), and the review still OWED as a FAILED_LOUD incident
+   * (`openReviewFailure`) that holds the PR out of the pump — and its held
+   * wakes behind it — until the operator presses `u`. */
   private async handleAnomaly(
     pr: number,
     roundNo: number | null,
@@ -3017,19 +3177,44 @@ export class VerdictWatcher {
    * caller escalates.
    */
   private async recoverNeverDelivered(round: RoundRow): Promise<boolean> {
+    return (await this.redeliverPrompt(round, "deadline")) === "redelivered";
+  }
+
+  /**
+   * Re-deliver a round's own dispatched order — same round, same session,
+   * the exact bytes — bounded by `max_prompt_redeliveries`. The one
+   * redelivery of both the deadline path and the pre-deadline lost-prompt
+   * net. A delivered order gets a fresh deadline from now, wherever it was
+   * caught: the review has not started, so none of the elapsed time was spent
+   * reviewing, and a prompt caught minutes before its deadline must not be
+   * judged overdue before the session could have finished. The silent mark
+   * is cleared, so the next escalation must be re-earned.
+   *
+   * `unavailable`: no hook, or the budget is spent — nothing attempted.
+   * `failed`: attempted (the attempt counted), nothing delivered.
+   */
+  private async redeliverPrompt(
+    round: RoundRow,
+    at: "deadline" | "before_deadline",
+  ): Promise<"redelivered" | "failed" | "unavailable"> {
     const { cfg, store } = this.deps;
     const hooks = this.deps.hooks;
     const cap = cfg.daemon.max_prompt_redeliveries ?? DEFAULT_MAX_PROMPT_REDELIVERIES;
-    if (!hooks.redeliverRound || round.redeliveries >= cap) return false;
+    if (!hooks.redeliverRound || round.redeliveries >= cap) return "unavailable";
     const attempt = store.countRedelivery(round.id);
     let redelivered = false;
     try {
       redelivered = await hooks.redeliverRound.call(hooks, round.pr, round.round_no);
     } catch (err) {
-      this.log(`verdicts: #${round.pr} round ${round.round_no} deadline redelivery failed`, err);
-      return false;
+      this.log(`verdicts: #${round.pr} round ${round.round_no} redelivery (${at}) failed`, err);
+      return "failed";
     }
-    if (!redelivered) return false;
+    if (!redelivered) {
+      this.log(
+        `verdicts: #${round.pr} round ${round.round_no} has no saved prompt to redeliver (${at})`,
+      );
+      return "failed";
+    }
     store.extendRoundDeadline(round.id, cfg.daemon.round_deadline_min);
     store.clearRoundSilent(round.id);
     store.logEvent("round_prompt_redelivered", round.pr, {
@@ -3037,20 +3222,20 @@ export class VerdictWatcher {
       round_no: round.round_no,
       attempt,
       cap,
-      at: "deadline",
+      at,
       deadline_extended_min: cfg.daemon.round_deadline_min,
     });
     this.log(
-      `verdicts: REDELIVER (deadline) #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — the session was alive and idle because the order never arrived; nothing cancelled, nothing killed`,
+      `verdicts: REDELIVER (${at}) #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — the prompt never reached the session; same round, same session, nothing cancelled or killed`,
     );
-    return true;
+    return "redelivered";
   }
 
   /**
    * Deliver wakes that are held with no round left to flush them.
    *
-   * `flushWakes` runs from exactly two places — a verdict landing and the
-   * anomaly path — on the assumption that every round ends through one of
+   * `flushWakes` runs at a round's settled end — a verdict landing or a
+   * guarded no-op — on the assumption that every round ends through one of
    * them. Three cancellations do not: `superseded`, a startup orphan that is
    * not requeued (the requeue needs `state === "reviewing"` and no later
    * round), and a self-requeue whose successor is cancelled the same way. The
@@ -3058,9 +3243,13 @@ export class VerdictWatcher {
    * then sit in `pending_wakes` with nothing to flush them, and that table has
    * no expiry.
    *
-   * A PR holding wakes with no round running is unambiguous: the reason to
-   * hold is gone, so deliver. Runs on the deadline tick, which is already the
-   * daemon's "is anything stuck?" sweep.
+   * A PR holding wakes with no round running and no review owed is
+   * unambiguous: the reason to hold is gone, so deliver. A PR whose review
+   * is owed FAILED_LOUD (the anomaly path, an exhausted recovery) keeps them
+   * held — conversation never overtakes owed review work; the operator's `u`
+   * resolves the debt, and the next sweep delivers them. A paused PR holding
+   * only deferred rechecks keeps them too, until the pause lifts. Runs on the
+   * deadline tick, which is already the daemon's "is anything stuck?" sweep.
    */
   private async flushStrandedWakes(): Promise<void> {
     const { store } = this.deps;
@@ -3072,6 +3261,8 @@ export class VerdictWatcher {
         if (dropped > 0) store.logEvent("wakes_dropped_closed", pr, { dropped });
         continue;
       }
+      // Owed FAILED_LOUD review work keeps its wakes behind it.
+      if (store.openReviewFailure(pr)) continue;
       // A paused PR holding only deferred rechecks waits for the resume,
       // quietly: the next tick after the pause lifts delivers them.
       if (pauseDefersAllHeldWakes(store, pr)) continue;
@@ -3119,8 +3310,7 @@ export class VerdictWatcher {
     } catch {
       return "not_stuck";
     }
-    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`)))
-      return "verdict_pending";
+    if (this.verdictFilePresent(round.pr, round.round_no)) return "verdict_pending";
     if (dead) return "dead";
     // A live session that never received the order is not wedged — it is
     // idle, waiting for work that was lost in transit. Killing it destroys a
@@ -3192,7 +3382,7 @@ export class VerdictWatcher {
       }
       // The old parent is now fenced (or had already settled), so this read is
       // definitive. A verdict that won before the fence stays the sweep's.
-      if (existsSync(join(this.deps.verdictDir, `pr-${pr}-round-${roundNo}.json`))) {
+      if (this.verdictFilePresent(pr, roundNo)) {
         this.deps.store.logEvent("round_stage_verdict_won", pr, {
           round_id: round.id,
           round_no: roundNo,
@@ -3374,6 +3564,9 @@ export class VerdictWatcher {
       // fails loud — never a requeue that could post a second time.
       if (proof.kind === "waiting") return "retryable";
       if (proof.kind === "failed") {
+        // The proof awaited GitHub: a verdict or an operator's `u` may have
+        // ended the round meanwhile, and its incident must not be reopened.
+        if (!this.stillRunning(round)) return "settled";
         await this.failPostingProof(
           round,
           proof.detail ?? "settled without a posting receipt",
@@ -3623,7 +3816,7 @@ export class VerdictWatcher {
         : mode === "alive_stuck"
           ? `round ${round.round_no} passed its deadline (${round.deadline_at}) with no verdict; its session was alive but wedged and has been killed for a fresh rebirth`
           : mode === "lost_prompt"
-            ? `round ${round.round_no}'s prompt was consumed from the inject dir but the session shows no activity since the round started (${round.started_at}) — the prompt was dropped in delivery; redispatching`
+            ? `round ${round.round_no}'s prompt left the inject dir but its receipt never appeared in the session transcript since the round started (${round.started_at}) — the prompt was dropped in delivery and redelivery is spent or impossible; redispatching`
             : mode === "required_pass_missing"
               ? `round ${round.round_no} ended with a required pass (pass-baseline or a risk lens) failed and never completed — the session posted nothing; redispatching`
               : mode === "head_moved"
@@ -3659,12 +3852,24 @@ export class VerdictWatcher {
         return false;
       }
     }
+    if (mode === "alive_stuck" && this.verdictFilePresent(round.pr, round.round_no)) {
+      // The wedged session committed its verdict while it was being stopped:
+      // that verdict wins, exactly as on the infrastructure path below. The
+      // round stays running for the sweep to consume — handled here, so the
+      // deadline path neither requeues nor fails it.
+      store.logEvent("round_stage_verdict_won", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        mode,
+      });
+      return true;
+    }
     if (infrastructure) {
       // For active failures the strict kill above makes this check definitive:
       // no new verdict can appear after the session is gone. For a settled
       // parent, all writes are already over. A verdict that won this race is
       // left to the 10s sweep, never cancelled/quarantined here.
-      if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) {
+      if (this.verdictFilePresent(round.pr, round.round_no)) {
         store.logEvent("round_stage_verdict_won", round.pr, {
           round_id: round.id,
           round_no: round.round_no,
@@ -3785,8 +3990,7 @@ export class VerdictWatcher {
     const startedMs = Date.parse(round.started_at);
     if (!Number.isFinite(startedMs) || nowMs - startedMs < graceMs) return;
     if (store.hasLaterRound(round.pr, round.round_no)) return; // superseded — the deadline sweep owns that case
-    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`)))
-      return;
+    if (this.verdictFilePresent(round.pr, round.round_no)) return;
     const clearSilent = (): void => {
       if (round.silent_since) store.clearRoundSilent(round.id);
     };
@@ -3830,33 +4034,7 @@ export class VerdictWatcher {
       redeliveries: round.redeliveries,
     });
     // ---- cheap recovery first: deliver the same order again ----------------
-    const cap = cfg.daemon.max_prompt_redeliveries ?? DEFAULT_MAX_PROMPT_REDELIVERIES;
-    if (hooks.redeliverRound && round.redeliveries < cap) {
-      const attempt = store.countRedelivery(round.id);
-      let redelivered = false;
-      try {
-        redelivered = await hooks.redeliverRound.call(hooks, round.pr, round.round_no);
-      } catch (err) {
-        this.log(`verdicts: #${round.pr} round ${round.round_no} redelivery failed`, err);
-      }
-      if (redelivered) {
-        // A fresh window: the mark must be re-earned before the next escalation.
-        store.clearRoundSilent(round.id);
-        store.logEvent("round_prompt_redelivered", round.pr, {
-          round_id: round.id,
-          round_no: round.round_no,
-          attempt,
-          cap,
-        });
-        this.log(
-          `verdicts: REDELIVER #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — the prompt never reached the session; same round, same session, nothing cancelled`,
-        );
-        return;
-      }
-      this.log(
-        `verdicts: #${round.pr} round ${round.round_no} has no saved prompt to redeliver — escalating`,
-      );
-    }
+    if ((await this.redeliverPrompt(round, "before_deadline")) === "redelivered") return;
     // ---- redelivery is spent or impossible: the expensive path -------------
     await this.selfRequeue(round, "lost_prompt");
   }
@@ -3923,10 +4101,7 @@ export class VerdictWatcher {
         this.log(`verdicts: #${round.pr} round ${round.round_no} cancelled (superseded)`);
         continue;
       }
-      if (
-        round.posting_key &&
-        !existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))
-      ) {
+      if (round.posting_key && !this.verdictFilePresent(round.pr, round.round_no)) {
         const proof = await this.postingProof(round);
         if (proof.kind === "waiting") continue;
         // The deadline honours the posted-tail grace the stage limits give:

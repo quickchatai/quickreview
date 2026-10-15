@@ -4,7 +4,7 @@
 // `overdue` through the overdue-anomaly path. Failed/self-requeued
 // rounds never age the PR (verdicted-only priorRoundCount discipline), and the
 // restart orphan-requeue path and this one can never double-dispatch a round.
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
@@ -16,6 +16,7 @@ import type { PrFileEntry } from "../src/github.js";
 import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
 import { roundPromptMarker } from "../src/types.js";
+import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
@@ -653,6 +654,37 @@ describe("live-but-stuck recovery", () => {
     expect(events("round_overdue")).toHaveLength(0);
   });
 
+  // MUTATION: keep the post-kill verdict check infrastructure-only — the
+  // round is cancelled and requeued under a verdict that won the race.
+  it("a verdict committed while the wedged session is being stopped wins: no requeue, no anomaly", async () => {
+    const roundId = reviewingRound(313);
+    pastDeadline();
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {
+      writeFileSync(
+        join(dir, "pr-313-round-1.json"),
+        JSON.stringify({
+          pr: 313,
+          round_no: 1,
+          verdict: "REQUEST_CHANGES",
+          head_sha: "abc123",
+          finished_at: clock.toISOString(),
+          passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }],
+        }),
+      );
+    };
+    const w = watcher(hooks);
+
+    expect(await w.checkDeadlines()).toEqual([]);
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+    expect(events("round_overdue")).toHaveLength(0);
+    expect(events("round_stage_verdict_won")[0]!.payload).toMatchObject({ mode: "alive_stuck" });
+
+    await w.sweep();
+    expect(roundStatus(roundId)).toBe("done");
+  });
+
   it("a live session with a pending verdict file is left to the sweep, never killed", async () => {
     reviewingRound(311);
     pastDeadline();
@@ -722,6 +754,47 @@ describe("NEEDS_HUMAN requires a finished review", () => {
     // The in-progress label came off; the reviewed label was NOT applied.
     expect(adapter.calls.some((c) => c.startsWith("removeLabel:320"))).toBe(true);
     expect(adapter.calls.some((c) => c.startsWith("addLabel:320"))).toBe(false);
+  });
+
+  // MUTATION: requeue before looking at the posting receipt — the round whose
+  // COMMENT is already on GitHub is redone and posts a second review.
+  it("no executed passes but its review already posted ⇒ applied through the receipt, never redone", async () => {
+    const roundId = reviewingRound(323);
+    const key = roundPostingKey(323, 1, "abc123");
+    store.stampPostingKey(roundId, key);
+    const receiptDir = join(dir, "state", "posting-receipts");
+    mkdirSync(receiptDir, { recursive: true });
+    writeFileSync(
+      join(receiptDir, "pr-323-round-1.json"),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        marker: postingMarker(key),
+        pr: 323,
+        round_no: 1,
+        head_sha: "abc123",
+        intended_event: "COMMENT",
+        actual_event: "COMMENT",
+        status: "confirmed",
+        payload_sha256: "a".repeat(64),
+        prepared_at: clock.toISOString(),
+        confirmed_at: clock.toISOString(),
+        gh_review_id: 991,
+        gh_commit_id: "abc123",
+        gh_state: "COMMENTED",
+      }),
+    );
+    const { hooks } = hooksWith();
+    needsHumanFile(323, 1);
+
+    await watcher(hooks).sweep();
+
+    expect(events("round_self_requeued")).toHaveLength(0);
+    expect(events("needs_human_incomplete")[0]!.payload).toMatchObject({
+      posting_receipt: "confirmed",
+    });
+    expect(roundStatus(roundId)).toBe("done");
+    expect(store.getPr(323)!.state).toBe("tracked");
   });
 
   it("with executed passes a legacy NEEDS_HUMAN lands tracked (park retired), not requeued", async () => {
@@ -843,6 +916,40 @@ describe("lost-prompt net — a round with no prompt receipt", () => {
     expect(events("round_self_requeued")).toHaveLength(0);
     // …and the window resets, so the next escalation must be re-earned.
     expect(silentSince(roundId)).toBeNull();
+  });
+
+  // MUTATION: drop the deadline extension from the pre-deadline redelivery —
+  // the round caught near its deadline is judged overdue minutes later.
+  it("a prompt redelivered just before the deadline gets a fresh deadline, as one caught at it does", async () => {
+    const roundId = reviewingRound(315);
+    const deadlineOf = (): number =>
+      Date.parse(
+        (
+          store.db.prepare("SELECT deadline_at FROM rounds WHERE id = ?").get(roundId) as {
+            deadline_at: string;
+          }
+        ).deadline_at,
+      );
+    // Three minutes before the original deadline, the grace long blown.
+    clock = new Date(deadlineOf() - 3 * 60_000);
+    const { hooks, redelivered } = netHooksDelivering({ accepted: false });
+    const w = watcher(hooks);
+
+    await w.checkDeadlines(); // marks
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines(); // redelivers
+    expect(redelivered).toEqual([{ pr: 315, round: 1 }]);
+    expect(deadlineOf()).toBe(clock.getTime() + baseCfg.daemon.round_deadline_min * 60_000);
+    expect(events("round_prompt_redelivered")[0]!.payload).toMatchObject({
+      at: "before_deadline",
+      deadline_extended_min: baseCfg.daemon.round_deadline_min,
+    });
+
+    // Past the ORIGINAL deadline the redelivered round is still reviewing.
+    clock = new Date(clock.getTime() + 5 * 60_000);
+    expect(await w.checkDeadlines()).toEqual([]);
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
   });
 
   it("escalates to a self-requeue only once redelivery is exhausted", async () => {
@@ -1104,6 +1211,28 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     expect(adapter.calls.some((c) => c.startsWith("addLabel:340"))).toBe(false);
     // Consumed: the file is archived, not reprocessed.
     expect(existsSync(join(dir, "pr-340-round-1.json"))).toBe(false);
+  });
+
+  // MUTATION: drop apply's cancelled-round guard and the head_moved replay
+  // check — the replay opens FAILED_LOUD debt over the queued replacement.
+  it("a replay of a handled head_moved file is inert: no failure, the requeue stands", async () => {
+    const roundId = reviewingRound(343, "fresh-head");
+    const { hooks } = hooksWith(true);
+    const w = watcher(hooks);
+    headMovedFile(343, 1);
+    await w.sweep();
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.getPr(343)!.state).toBe("queued");
+
+    // The archive failed (or a restart cut the apply short): the file is back.
+    headMovedFile(343, 1);
+    await w.sweep();
+
+    expect(existsSync(join(dir, "pr-343-round-1.json"))).toBe(false);
+    expect(store.getPr(343)!.state).toBe("queued");
+    expect(store.openReviewFailure(343)).toBeUndefined();
+    expect(events("round_overdue")).toHaveLength(0);
+    expect(events("round_self_requeued")).toHaveLength(1);
   });
 
   it("respects the self-requeue cap: past it the round terminalizes through the anomaly path, never loops", async () => {

@@ -32,7 +32,8 @@
 // its own route. The two halves are kept behaviourally identical:
 // tests/guards.test.ts drives the real gate and tests/guards-shell-*.test.ts
 // runs the real scripts, over the same cases.
-// Guard coverage per shell route: post-review.sh 1+2+3+5 (it hard-rejects
+// Guard 2 never gates an APPROVE on either route. Guard coverage per shell
+// route: post-review.sh 1+2+3+5 (it hard-rejects
 // APPROVE, so guard 4 has nothing to say there), approve-pr.sh 3+4+5 — guards
 // 1 and 2 do not apply to it (an approval is not softened for a human
 // approval, and gating it on evidence would strand the wake triggers this
@@ -42,13 +43,15 @@
 // post-review.sh instead, which is what the round template tells it to do.
 //
 // Nothing here dismisses, retracts or edits an existing review. A guard's only
-// powers are to refuse a mutation and to soften an event from REQUEST_CHANGES
-// to COMMENT.
+// powers are to refuse a mutation and to soften its event to COMMENT — a
+// REQUEST_CHANGES a human's approval outranks (guard 1), an APPROVE red CI
+// withholds (guard 4).
 import {
   ciBlocksApproval,
   classifyCi,
   withholdApproval,
   type CheckSummary,
+  type CiReviewBody,
   type CiState,
 } from "./cigate.js";
 import { standingReview } from "./standing-review.js";
@@ -97,13 +100,9 @@ export interface GuardDeps {
   log?: (msg: string, extra?: unknown) => void;
 }
 
-/** The review payload as it appears inside a `create_review` intent. */
-interface ReviewBody {
-  commit_id?: string;
-  event?: string;
-  body?: string;
-  comments?: unknown[];
-}
+/** The review payload as it appears inside a `create_review` intent — the
+ * one shape both softenings (guard 1 here, guard 4 in cigate.ts) rewrite. */
+type ReviewBody = CiReviewBody;
 
 // ---- guard 1: a human already approved this head --------------------------
 
@@ -293,10 +292,19 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       // person + the same thing on the same PR forever, and `[escalation]
       // max_per_pr` caps the rest. Every other guard still binds it —
       // merged/closed (3) and head drift (5) both ran above, unconditionally.
+      //
+      // An APPROVE is exempt too, exactly as on the shell route (approve-pr.sh
+      // runs guards 3, 4 and 5 only). Every approval reaching the gate is a
+      // session's approve-pr.sh POST the daemon delivers, and the one that
+      // meets an already-stamped head is the CI-green retry of a withheld
+      // approval: its COMMENT stamped the head, and refusing the APPROVE here
+      // would strand the approval that withholding promised.
       const mechanical = intent.reviewPurpose === "escalation";
+      const approval = (body.event ?? "").toUpperCase() === "APPROVE";
       if (
         deps.guards.skip_unchanged_head &&
         !mechanical &&
+        !approval &&
         !hasNewEvidence(deps.store.reviewedHead(pr), head)
       ) {
         return refuse(intent, pr, "no-new-evidence", { head_sha: head });

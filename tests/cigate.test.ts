@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  checkOutcome,
   ciBlocksApproval,
   classifyCi,
   latestRunPerName,
@@ -54,6 +55,21 @@ const done = (conclusion: string, name = "test"): CheckSummary =>
   run("completed", conclusion, name);
 
 // ---- the classifier --------------------------------------------------------
+
+describe("checkOutcome — the one reading of a single check", () => {
+  it("reads status and conclusion case-insensitively, as classifyCi does", () => {
+    expect(checkOutcome(run("queued", null))).toBe("pending");
+    expect(checkOutcome(run("COMPLETED", "SUCCESS"))).toBe("success");
+    expect(checkOutcome(run("completed", "Neutral"))).toBe("inert");
+    expect(checkOutcome(run("completed", "FAILURE"))).toBe("failed");
+    expect(checkOutcome(run("completed", "cancelled"))).toBe("failed");
+    // A commit status reports no check-run status: its conclusion decides.
+    expect(
+      checkOutcome({ name: "ci/legacy", source: "status", status: "", conclusion: "failure" }),
+    ).toBe("failed");
+    expect(classifyCi([run("completed", "FAILURE")])).toBe("red");
+  });
+});
 
 describe("classifyCi", () => {
   it("is green only when everything finished and something really succeeded", () => {
@@ -910,6 +926,41 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
           .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_dispatched'")
           .get(),
       ).toEqual({ c: 1 });
+    },
+  );
+
+  // MUTATION: spend the mark before the handoff (right after the trigger
+  // consumption) — the failed pump drops it and the next pump skips the head.
+  it(
+    "keeps the withholding when the dispatch fails before its handoff, so the next pump still retries",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      tracked(5180, HEAD);
+      store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
+      store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+      await retryWithheldApproval(
+        { cfg, store, adapter: new CiFake() },
+        { pr: 5180, head_sha: HEAD },
+      );
+      const failing = new DispatchFake();
+      failing.listPrFiles = async () => {
+        throw new Error("files API 502");
+      };
+      const h = hooks();
+
+      expect(await dispatchOnce({ cfg, store, adapter: failing, hooks: h.hooks })).toEqual([]);
+      expect(store.approvalWithheld(5180)).toMatchObject({ head_sha: HEAD });
+      expect(store.getPr(5180)?.state).toBe("queued");
+
+      const orders = await dispatchOnce({
+        cfg,
+        store,
+        adapter: new DispatchFake(),
+        hooks: h.hooks,
+      });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.head_sha).toBe(HEAD);
+      expect(store.approvalWithheld(5180)).toBeUndefined();
     },
   );
 
