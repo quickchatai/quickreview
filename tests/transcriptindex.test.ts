@@ -719,7 +719,9 @@ describe("what is read: an old file not at all, a measured file from its offset"
     expect(idx.stats()).toMatchObject({ full_scans: 1, incremental_scans: 1, hits: 1 });
     // Confirmed again once its mtime is clear of the window, then answered
     // without a byte read.
-    clock += TRANSCRIPT_RACY_MS + 1_000;
+    // From the file's own mtime, so a stall on a loaded machine cannot leave
+    // the clock inside the window.
+    clock = statSync(live).mtimeMs + TRANSCRIPT_RACY_MS + 1_000;
     expect(await measured(idx, opts)).toEqual(oldMeasure(opts));
     before = idx.stats().bytes_read;
     expect(await measured(idx, opts)).toEqual(oldMeasure(opts));
