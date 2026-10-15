@@ -607,6 +607,13 @@ const CORPUS = [
     outcome: null,
     note: "an abbreviated --expression",
   },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n '1a x\ne' f",
+    outcome: null,
+    note: "a newline ends the a text, so the e after it is a command",
+  },
 ] as const;
 
 /**

@@ -695,7 +695,7 @@ const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
   // space: `s/x/y/e`, `/ep`, `/eg`, `/eI`) or ends in `w` (writes a file),
   // with ANY delimiter (`s|..|..|e`, `s#..#..#e` — the backreference) and a
   // script glued to its flag (`--expression=s/…/e`, `-es/…/e`).
-  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|(?:(?:^|\s)(?:--expression=|-[a-zA-Z]*e)?['"]|[;{]|\s(?=\S*\s))(?:[0-9$,]|\/[^/]*\/)*\s*[wWe](?=\s|[;}]|['"](?:\s|$)|$)|(?:^|\s)sed(?:\s+-\S+)*\s+(?:[0-9$,]|\/[^/]*\/)*[wWe]\s*$|(?:['"\s;{=]|(?:^|\s)-[nEsuzr]*e)(?:[0-9$,]|\/[^/]*\/)*\s*s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiImMnN0-9]*(?:e[gpiImMnN0-9e]*w?|w)(?=['"\s;}]|$)/,
+  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|(?:(?:^|\s)(?:--e[a-z-]*=|-[a-zA-Z]*e)?['"]|[;{\n]|\s(?=\S*\s))(?:[0-9$,!~+]|\/[^/]*\/)*\s*[wWe](?=\s|[;}]|['"](?:\s|$)|$)|(?:^|\s)sed(?:\s+-\S+)*\s+(?:[0-9$,!~+]|\/[^/]*\/)*[wWe]\s*$|(?:['"\s;{=]|(?:^|\s)-[nEsuzr]*e)(?:[0-9$,!~+]|\/[^/]*\/)*\s*s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiImMnN0-9]*(?:e[gpiImMnN0-9e]*w?|w)(?=['"\s;}]|$)/,
   // The diff options' `--output=<file>` on any verb, and
   // `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O<cmd>` (any unique
   // abbreviation of the long form; `-O` ending a short cluster).
