@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
@@ -201,5 +201,16 @@ describe("boot validation", () => {
     expect(() => validateSlackConfig(cfg)).toThrow(/app token file/);
     writeFileSync(join(dir, "slack_app_token"), "xapp-real\n");
     expect(() => validateSlackConfig(cfg)).not.toThrow();
+  });
+
+  it("a token file that is there but unreadable fails with its cause, never as missing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-slack-secrets-"));
+    const cfg = withSlack(enabled());
+    cfg.github.secrets_dir = dir;
+    writeFileSync(join(dir, "slack_bot_token"), "xoxb-real\n");
+    mkdirSync(join(dir, "slack_app_token")); // a bad mount: a directory where the file goes
+    expect(() => validateSlackConfig(cfg)).toThrow(
+      /cannot read secret file .*slack_app_token.*EISDIR/,
+    );
   });
 });

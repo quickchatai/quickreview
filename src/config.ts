@@ -2930,16 +2930,21 @@ function checkSlackShape(slack: SlackConfig, owner: OwnerConfig): void {
 }
 
 /** How validation reads a secret file. Injectable so tests never need real
- * files; the default is the same read-and-trim every other secret gets. */
+ * files; the default is the same read-and-trim every other secret gets.
+ * Undefined means absent or empty; a file that is there but cannot be read
+ * (permissions, a directory) throws with its cause, so a mount problem is
+ * never reported as a missing token. */
 export type SecretReader = (path: string) => string | undefined;
 
 export const fsSecretReader: SecretReader = (path) => {
+  let v: string;
   try {
-    const v = readFileSync(path, "utf8").trim();
-    return v.length > 0 ? v : undefined;
-  } catch {
-    return undefined;
+    v = readFileSync(path, "utf8").trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Error(`cannot read secret file '${path}': ${(err as Error).message}`);
   }
+  return v.length > 0 ? v : undefined;
 };
 
 /**
