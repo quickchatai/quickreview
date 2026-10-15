@@ -86,8 +86,9 @@ export const SCOPE_ENV = "QCR_SUBAGENT_SCOPE";
 export const CONCURRENCY_ENV = "QCR_SUBAGENT_MAX_CONCURRENCY";
 
 /** Env var switching the wide fan-out on ("1"): a `tasks:[…]` call is split
- * into native-sized chunks that run CONCURRENTLY, each under its own permits
- * of the process-wide semaphore, so one batched launch runs as wide as the
+ * into one-task native calls that run CONCURRENTLY, each under one permit of
+ * the process-wide semaphore released when its own pass ends, so one batched
+ * launch runs as wide as the
  * configured cap instead of native's in-call four (bench/aacr/PERF.md §1).
  * Absent or anything but "1" ⇒ the native shape (the companion's default).
  * The VM session and the bench set it from `[review] wide_lens_fanout`. */
@@ -351,12 +352,13 @@ function runningPlaceholder(task: unknown): Record<string, unknown> {
 }
 
 /**
- * The wide fan-out: one `tasks:[…]` call, split into contiguous chunks of at
- * most native's in-call concurrency, every chunk launched at once. Each chunk
- * holds exactly as many semaphore permits as it can have children in flight,
- * so the process-wide cap still binds across every call of the process, and
- * a chunk never exceeds native's own MAX_PARALLEL_TASKS. Results keep task
- * order, and the combined result has the shape the sequential path returns.
+ * The wide fan-out: one `tasks:[…]` call, every pass launched at once, each
+ * as its own one-task native call holding exactly ONE semaphore permit that
+ * it releases the moment THAT pass ends. A slow pass therefore
+ * never keeps siblings' permits idle, the process-wide cap still binds across
+ * every call of the process, and the semaphore's FIFO starts passes in plan
+ * order. Results keep task order, and the combined result has the shape the
+ * sequential path returns.
  */
 async function runWide(
   this: unknown,
@@ -369,47 +371,39 @@ async function runWide(
   ctx: Parameters<ToolExecute>[4],
 ): Promise<Awaited<ReturnType<ToolExecute>>> {
   const tasks = safe.tasks as unknown[];
-  const size = Math.max(1, Math.min(NATIVE_IN_CALL_CONCURRENCY, semaphore.permits));
-  const chunks: unknown[][] = [];
-  for (let offset = 0; offset < tasks.length; offset += size)
-    chunks.push(tasks.slice(offset, offset + size));
-  // Every chunk's slots stand in the combined update from the start, as the
-  // still-running placeholders native itself emits (`exitCode: -1`), so a
-  // chunk that reports before an earlier one never shifts that earlier one's
-  // tasks out of their positions: position i of every update is task i.
-  const partial: unknown[][] = chunks.map((chunk) => chunk.map(runningPlaceholder));
+  // Every pass's slot stands in the combined update from the start, as the
+  // still-running placeholder native itself emits (`exitCode: -1`), so a pass
+  // that reports before an earlier one never shifts that earlier one out of
+  // its position: position i of every update is task i (round-progress keys
+  // its slots by position).
+  const partial: unknown[][] = tasks.map((task) => [runningPlaceholder(task)]);
   const notify =
     typeof onUpdate === "function"
       ? (onUpdate as unknown as (update: ParallelNativeResult) => void)
       : undefined;
   const values = await Promise.all(
-    chunks.map(async (chunk, index) => {
-      await semaphore.acquire(chunk.length);
-      try {
-        signal?.throwIfAborted();
-        const chunkUpdate = notify
-          ? (update: unknown) => {
-              let value: ParallelNativeResult;
-              try {
-                value = parallelResult(update);
-              } catch {
-                return;
-              }
-              partial[index] = value.details.results;
-              notify({
-                ...value,
-                details: { ...value.details, mode: "parallel", results: partial.flat() },
-              });
-            }
-          : undefined;
-        const value = parallelResult(
-          await execute.call(this, id, { ...safe, tasks: chunk }, signal, chunkUpdate, ctx),
-        );
-        partial[index] = value.details.results;
-        return value;
-      } finally {
-        semaphore.release(chunk.length);
-      }
+    tasks.map(async (task, index) => {
+      const passUpdate = notify
+        ? (value: ParallelNativeResult) => {
+            partial[index] = value.details.results;
+            notify({
+              ...value,
+              details: { ...value.details, mode: "parallel", results: partial.flat() },
+            });
+          }
+        : undefined;
+      const value = await runPass.call(
+        this,
+        execute,
+        semaphore,
+        id,
+        { ...safe, tasks: [task] },
+        signal,
+        passUpdate,
+        ctx,
+      );
+      partial[index] = value.details.results;
+      return value;
     }),
   );
   const allResults = values.flatMap((v) => v.details.results);
@@ -429,6 +423,45 @@ async function runWide(
     details: { ...last?.details, mode: "parallel", results: allResults },
     ...(anyError ? { isError: true } : {}),
   };
+}
+
+/**
+ * One pass of the wide fan-out: wait for one permit, run the one-task native
+ * call, release the permit when it ends however it ends. The unit a per-pass
+ * deadline and retry would wrap: `params.tasks` holds exactly one task,
+ * and `signal` is the only abort this call sees.
+ */
+async function runPass(
+  this: unknown,
+  execute: ToolExecute,
+  semaphore: WeightedSemaphore,
+  id: Parameters<ToolExecute>[0],
+  params: Record<string, unknown>,
+  signal: Parameters<ToolExecute>[2],
+  onUpdate: ((update: ParallelNativeResult) => void) | undefined,
+  ctx: Parameters<ToolExecute>[4],
+): Promise<ParallelNativeResult> {
+  await semaphore.acquire(1);
+  try {
+    // Aborted while parked: never spend the newly-acquired permit on a child.
+    signal?.throwIfAborted();
+    const passUpdate = onUpdate
+      ? (update: unknown) => {
+          // Progress is advisory. Drop a malformed native update and let the
+          // final result produce the explicit pin-compatibility error.
+          let value: ParallelNativeResult;
+          try {
+            value = parallelResult(update);
+          } catch {
+            return;
+          }
+          onUpdate(value);
+        }
+      : undefined;
+    return parallelResult(await execute.call(this, id, params, signal, passUpdate, ctx));
+  } finally {
+    semaphore.release(1);
+  }
 }
 
 // ---------------------------------------------------------------------------

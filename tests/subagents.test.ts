@@ -399,7 +399,7 @@ describe("wide fan-out (QCR_SUBAGENT_WIDE_FANOUT=1, bench/aacr/PERF.md §1)", ()
     expect(resolveWideFanout(WIDE)).toBe(true);
   });
 
-  it("runs one 12-task call 12 wide under a cap of 12, in chunks native accepts, results in task order", async () => {
+  it("runs one 12-task call 12 wide under a cap of 12, one task per native call, results in task order", async () => {
     const log = { inFlight: 0, peak: 0, sizes: [] as number[] };
     const wrapped = wrapExecute(nativeStub(log), new WeightedSemaphore(12), WIDE);
     const tasks = Array.from({ length: 12 }, (_, i) => ({
@@ -411,7 +411,7 @@ describe("wide fan-out (QCR_SUBAGENT_WIDE_FANOUT=1, bench/aacr/PERF.md §1)", ()
       content: Array<{ text: string }>;
       details: { results: Array<{ task: string; cwd?: string }> };
     };
-    expect(log.sizes).toEqual([4, 4, 4]);
+    expect(log.sizes).toEqual(Array.from({ length: 12 }, () => 1));
     expect(log.peak).toBe(12);
     expect(result.details.results.map((r) => r.task)).toEqual(tasks.map((t) => t.task));
     expect(result.details.results.every((r) => r.cwd === undefined)).toBe(true);
@@ -428,7 +428,7 @@ describe("wide fan-out (QCR_SUBAGENT_WIDE_FANOUT=1, bench/aacr/PERF.md §1)", ()
     expect(log.sizes.reduce((x, y) => x + y, 0)).toBe(15);
   });
 
-  it("keeps every task at its own position in an update a later chunk sends first", async () => {
+  it("keeps every task at its own position in an update a later pass sends first", async () => {
     const tasks = Array.from({ length: 6 }, (_, i) => ({
       agent: i === 0 || i === 4 ? "pass-sweep" : `pass-${i}`,
       task: `task-${i}`,
@@ -454,7 +454,159 @@ describe("wide fan-out (QCR_SUBAGENT_WIDE_FANOUT=1, bench/aacr/PERF.md §1)", ()
     const early = updates[0]!;
     expect(early.map((r) => r.task)).toEqual(tasks.map((t) => t.task));
     expect(early.map((r) => r.agent)).toEqual(tasks.map((t) => t.agent));
-    expect(early.map((r) => r.exitCode)).toEqual([-1, -1, -1, -1, 0, 0]);
+    expect(early.map((r) => r.exitCode)).toEqual([-1, 0, -1, -1, -1, -1]);
+  });
+
+  // A native stub whose every one-task call parks until the test ends it.
+  function gatedNative() {
+    const started: string[] = [];
+    const finish = new Map<string, (exitCode: number) => void>();
+    const execute = asExecute(async (_id, params) => {
+      const tasks = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
+      if (tasks.length !== 1) throw new Error(`expected one task per call, got ${tasks.length}`);
+      const task = tasks[0]!;
+      started.push(task.task);
+      const exitCode = await new Promise<number>((r) => finish.set(task.task, r));
+      return {
+        content: [
+          { type: "text", text: `Parallel: ${exitCode === 0 ? 1 : 0}/1 succeeded\n\n${task.task}` },
+        ],
+        details: { mode: "parallel", results: [{ ...task, exitCode }] },
+        ...(exitCode === 0 ? {} : { isError: true }),
+      };
+    });
+    return { execute, started, finish };
+  }
+  const nine = () =>
+    Array.from({ length: 9 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}` }));
+
+  it("frees a slot when its own pass ends: the 5th of 9 starts while a slow one of the first 4 runs", async () => {
+    const { execute, started, finish } = gatedNative();
+    const sem = new WeightedSemaphore(4);
+    const wrapped = wrapExecute(execute, sem, WIDE);
+    const call = wrapped("round", { tasks: nine() });
+    await tick();
+    // The semaphore's FIFO starts passes in plan order.
+    expect(started).toEqual(["task-0", "task-1", "task-2", "task-3"]);
+    expect(sem.held).toBe(4);
+    // task-0 is the slow one; task-2 ending frees exactly one permit.
+    finish.get("task-2")!(0);
+    await tick();
+    await tick();
+    expect(started).toEqual(["task-0", "task-1", "task-2", "task-3", "task-4"]);
+    expect(sem.held).toBe(4);
+    for (const t of ["task-1", "task-3", "task-4"]) finish.get(t)!(0);
+    await tick();
+    await tick();
+    expect(started).toHaveLength(8);
+    for (let i = 5; i < 8; i++) finish.get(`task-${i}`)!(0);
+    await tick();
+    await tick();
+    expect(started).toHaveLength(9);
+    finish.get("task-8")!(0);
+    finish.get("task-0")!(0);
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    await call;
+    expect(sem.held).toBe(0);
+  });
+
+  it("aggregates one-task calls into one result: task order, one header, isError if any failed", async () => {
+    const { execute, finish } = gatedNative();
+    const wrapped = wrapExecute(execute, new WeightedSemaphore(9), WIDE);
+    const call = wrapped("round", { tasks: nine() });
+    await tick();
+    // Finish in reverse plan order, task-5 failing.
+    for (let i = 8; i >= 0; i--) {
+      finish.get(`task-${i}`)!(i === 5 ? 1 : 0);
+      await tick();
+    }
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    const result = (await call) as unknown as {
+      content: Array<{ type: string; text: string }>;
+      details: { mode: string; results: Array<{ task: string; exitCode: number }> };
+      isError?: boolean;
+    };
+    expect(result.details.mode).toBe("parallel");
+    expect(result.details.results.map((r) => r.task)).toEqual(nine().map((t) => t.task));
+    expect(result.details.results.map((r) => r.exitCode)).toEqual([0, 0, 0, 0, 0, 1, 0, 0, 0]);
+    expect(result.isError).toBe(true);
+    expect(result.content).toHaveLength(1);
+    const text = result.content[0]!.text;
+    expect(text.match(/^Parallel: /gm)).toHaveLength(1);
+    expect(text).toBe(
+      `Parallel: 8/9 succeeded\n\n${nine()
+        .map((t) => t.task)
+        .join("\n\n---\n\n")}`,
+    );
+  });
+
+  it("carries no isError when every pass succeeded", async () => {
+    const log = { inFlight: 0, peak: 0, sizes: [] as number[] };
+    const wrapped = wrapExecute(nativeStub(log), new WeightedSemaphore(8), WIDE);
+    const result = (await wrapped("round", { tasks: nine() })) as unknown as {
+      isError?: boolean;
+      content: Array<{ text: string }>;
+    };
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toMatch(/^Parallel: 9\/9 succeeded/);
+  });
+
+  it("streams every update with all nine slots in position, placeholders for passes not yet reported", async () => {
+    const tasks = nine();
+    const native = asExecute(async (_id, params, _signal, onUpdate) => {
+      const chunk = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
+      const results = chunk.map((task) => ({ ...task, exitCode: 0 }));
+      (onUpdate as (u: unknown) => void)({
+        content: [{ type: "text", text: "Parallel: 1 done" }],
+        details: { mode: "parallel", results },
+      });
+      return { content: [{ type: "text", text: "ok" }], details: { mode: "parallel", results } };
+    });
+    const updates: Array<Array<{ agent: string; task: string; exitCode: number }>> = [];
+    const wrapped = wrapExecute(native, new WeightedSemaphore(2), WIDE);
+    await wrapped("round", { tasks }, undefined, (u: unknown) =>
+      updates.push((u as { details: { results: never } }).details.results),
+    );
+    expect(updates).toHaveLength(9);
+    for (const update of updates)
+      expect(update.map((r) => r.agent)).toEqual(tasks.map((t) => t.agent));
+    expect(updates[0]!.map((r) => r.exitCode)).toEqual([0, -1, -1, -1, -1, -1, -1, -1, -1]);
+    expect(updates[8]!.every((r) => r.exitCode === 0)).toBe(true);
+  });
+
+  it("never starts a pass cancelled while parked, and releases every permit when a pass throws", async () => {
+    const { execute, started, finish } = gatedNative();
+    const sem = new WeightedSemaphore(2);
+    const controller = new AbortController();
+    const wrapped = wrapExecute(execute, sem, WIDE);
+    const call = wrapped("round", { tasks: nine() }, controller.signal);
+    await tick();
+    expect(started).toEqual(["task-0", "task-1"]);
+    controller.abort();
+    finish.get("task-0")!(0);
+    finish.get("task-1")!(0);
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    await expect(call).rejects.toThrow();
+    await tick();
+    expect(started).toEqual(["task-0", "task-1"]);
+    expect(sem.held).toBe(0);
+
+    const throwing = asExecute(async (_id, params) => {
+      const task = (params as { tasks: Array<{ task: string }> }).tasks[0]!;
+      if (task.task === "task-3") throw new Error("native blew up");
+      await tick();
+      return {
+        content: [{ type: "text", text: "ok" }],
+        details: { mode: "parallel", results: [{ ...task, exitCode: 0 }] },
+      };
+    });
+    const sem2 = new WeightedSemaphore(4);
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    await expect(wrapExecute(throwing, sem2, WIDE)("round", { tasks: nine() })).rejects.toThrow(
+      "native blew up",
+    );
+    for (let i = 0; i < 6; i++) await tick();
+    expect(sem2.held).toBe(0);
   });
 
   it("leaves single-mode calls and the native shape alone when off", async () => {

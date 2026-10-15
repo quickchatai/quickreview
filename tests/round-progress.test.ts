@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import activate from "../extensions/round-progress.js";
+import { WIDE_FANOUT_ENV, WeightedSemaphore, wrapExecute } from "../extensions/subagents.js";
 import { parseRoundProgress, roundExecutionStage } from "../src/round-progress.js";
 import type { PiEventHandler } from "@earendil-works/pi-coding-agent";
 
@@ -505,6 +506,112 @@ describe("round progress extension", () => {
     try {
       activate({ on() {} } as never);
       expect(() => readFileSync(join(root, "state", "round-progress", "pr-0.json"))).toThrow();
+    } finally {
+      process.env = previous;
+    }
+  });
+});
+
+// The wide fan-out runs each pass as its own one-task native call,
+// but the events round-progress sees still belong to the ONE outer call: its
+// slot keys come from the outer name list and are matched by position. Pin
+// that the per-pass fan-out keeps every update positional, including two
+// tasks of one agent finishing out of order.
+describe("round progress — wide fan-out, one permit per pass", () => {
+  it("keys every slot of the outer call by position while passes finish out of order", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-wide-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    process.env.QCR_SANDBOX_ROOT = root;
+    process.env.QCR_SESSION_NAME = "pr-5583";
+    process.env.QCR_PR = "5583";
+    const handlers = new Map<string, PiEventHandler[]>();
+    const pi = {
+      on(name: string, handler: PiEventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    };
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    const tick = () => new Promise<void>((r) => setTimeout(r, 0));
+    const tasks = [
+      { agent: "pass-baseline", task: "t0" },
+      { agent: "pass-sweep", task: "t1" },
+      { agent: "pass-security", task: "t2" },
+      { agent: "pass-sweep", task: "t3" },
+      { agent: "pass-style", task: "t4" },
+    ];
+    const finish = new Map<string, () => void>();
+    const native = (async (
+      _id: string,
+      params: Record<string, unknown>,
+      _signal: unknown,
+      onUpdate: (u: unknown) => void,
+    ) => {
+      const task = (params.tasks as typeof tasks)[0]!;
+      await new Promise<void>((r) => finish.set(task.task, r));
+      // Native emits a parallel update as each child completes.
+      onUpdate({
+        content: [{ type: "text", text: "Parallel: 1/1 done" }],
+        details: { mode: "parallel", results: [{ ...task, exitCode: 0 }] },
+      });
+      return {
+        content: [{ type: "text", text: `Parallel: 1/1 succeeded\n\n${task.task}` }],
+        details: { mode: "parallel", results: [{ ...task, exitCode: 0 }] },
+      };
+    }) as unknown as Parameters<typeof wrapExecute>[0];
+    const pending: Array<Promise<void>> = [];
+    try {
+      activate(pi as never);
+      await emit("agent_start");
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "wide-1",
+        args: { tasks },
+      });
+      const wrapped = wrapExecute(native, new WeightedSemaphore(4), { [WIDE_FANOUT_ENV]: "1" });
+      const call = wrapped("wide-1", { tasks }, undefined, (u: unknown) => {
+        pending.push(
+          emit("tool_execution_update", {
+            toolName: "subagent",
+            toolCallId: "wide-1",
+            partialResult: u,
+          }),
+        );
+      }) as unknown as Promise<unknown>;
+      await tick();
+      const path = join(root, "state", "round-progress", "pr-5583.json");
+      // The later pass-sweep (#2) ends first, while the first one still runs.
+      finish.get("t3")!();
+      await tick();
+      await tick();
+      await Promise.all(pending);
+      const mid = parseRoundProgress(readFileSync(path, "utf8"))!;
+      const byId = new Map(mid.agents.map((a) => [a.execution_id, a.status]));
+      expect(byId.get("wide-1:pass-sweep#2")).toBe("completed");
+      expect(byId.get("wide-1:pass-sweep")).toBe("running");
+      expect(byId.get("wide-1:pass-style")).toBe("running");
+      expect(mid.agents).toHaveLength(5);
+      finish.get("t0")!();
+      await tick();
+      await tick();
+      for (const t of ["t1", "t2", "t4"]) {
+        finish.get(t)!();
+        await tick();
+        await tick();
+      }
+      const result = await call;
+      await Promise.all(pending);
+      await emit("tool_execution_end", { toolName: "subagent", toolCallId: "wide-1", result });
+      const done = parseRoundProgress(readFileSync(path, "utf8"))!;
+      expect(done.agents.map((a) => [a.execution_id, a.status])).toEqual([
+        ["wide-1:pass-baseline", "completed"],
+        ["wide-1:pass-sweep", "completed"],
+        ["wide-1:pass-security", "completed"],
+        ["wide-1:pass-sweep#2", "completed"],
+        ["wide-1:pass-style", "completed"],
+      ]);
     } finally {
       process.env = previous;
     }
