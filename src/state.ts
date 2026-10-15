@@ -3477,21 +3477,34 @@ export class StateStore {
   /** Lease an oldest-first prefix as one delivery unit. A live lease anywhere
    * in that prefix blocks the claim, so concurrent flushers cannot split or
    * reorder an author-message burst. */
+  /** Lease the oldest `count` held wakes for one delivery, or null when they
+   * are not all free. Wakes whose reason starts with `skipReasonPrefix` are
+   * passed over (a paused PR's deferred rechecks). */
   claimHeldWakeBatch(
     pr: number,
     token: string,
     leaseBefore: string,
     count: number,
+    skipReasonPrefix?: string,
   ): PendingWakeRow[] | null {
     if (!Number.isSafeInteger(count) || count < 1)
       throw new Error(`invalid held-wake batch size ${count}`);
     const claim = this.db.transaction((n: number): PendingWakeRow[] | null => {
-      const rows = this.db
-        .prepare(
-          `SELECT * FROM pending_wakes WHERE pr = ?
+      const rows = (
+        skipReasonPrefix === undefined
+          ? this.db
+              .prepare(
+                `SELECT * FROM pending_wakes WHERE pr = ?
         ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`,
-        )
-        .all(n, count) as PendingWakeRow[];
+              )
+              .all(n, count)
+          : this.db
+              .prepare(
+                `SELECT * FROM pending_wakes WHERE pr = ? AND substr(reason, 1, ?) != ?
+        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`,
+              )
+              .all(n, skipReasonPrefix.length, skipReasonPrefix, count)
+      ) as PendingWakeRow[];
       if (rows.length !== count) return null;
       if (rows.some((row) => row.claim_token && row.claimed_at && row.claimed_at > leaseBefore))
         return null;

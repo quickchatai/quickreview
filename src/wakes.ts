@@ -61,7 +61,7 @@ export async function wakeOrHold(
      * release their own claim on failure leave this off. */
     holdOnFailure?: boolean;
     /** A recheck nudge (`recheck:*`) on a paused PR is held, not delivered:
-     * the pause defers the question until it lifts (`pauseDefersHeldWakes`). */
+     * the pause defers the question until it lifts (`RECHECK_WAKE_PREFIX`). */
     deferWhilePaused?: boolean;
   } = {},
 ): Promise<WakeDisposition> {
@@ -176,17 +176,19 @@ export const AUTHOR_REPLY_DROPPED_KIND = "author_reply_wake_dropped";
  * `anomalies.ts`, read at the daily heartbeat). */
 export const RECHECK_WAKE_DROPPED_KIND = "recheck_wake_dropped";
 
-/**
- * Does a pause hold this PR's backlog? Only while the oldest held wake is a
- * recheck nudge: a pause stops the PR's review work and a recheck is review
- * work, deferred to the resume, never dropped. Wakes behind it keep their
- * arrival order and wait with it; with no recheck at the head of the backlog
- * a pause holds nothing back. The flush and the stranded-wake sweep both ask.
- */
-export function pauseDefersHeldWakes(store: StateStore, pr: number): boolean {
+/** The reason prefix of every recheck nudge (`recheck:<trigger>`). While its
+ * PR is paused, a held recheck is deferred: a pause stops the PR's review
+ * work, and a recheck is review work — held until the resume, never dropped.
+ * A pause stops no other wake: the flush skips the deferred rechecks and
+ * delivers everything else in arrival order. */
+export const RECHECK_WAKE_PREFIX = "recheck:";
+
+/** Is every wake this PR holds a recheck its pause defers? Then the
+ * stranded-wake sweep has nothing to deliver until the resume. */
+export function pauseDefersAllHeldWakes(store: StateStore, pr: number): boolean {
   if (!store.getPr(pr)?.paused) return false;
-  const oldest = store.heldWakes(pr)[0];
-  return oldest !== undefined && oldest.reason.startsWith("recheck:");
+  const held = store.heldWakes(pr);
+  return held.length > 0 && held.every((wake) => wake.reason.startsWith(RECHECK_WAKE_PREFIX));
 }
 
 function isOwedWakeReason(wake: EvictedWake): boolean {
@@ -268,8 +270,11 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
   while (true) {
     if (store.hasRunningRound(pr)) break;
     if (store.blockingSessionCommand(`pr-${pr}`)) break;
-    if (pauseDefersHeldWakes(store, pr)) break;
-    const queued = store.heldWakes(pr);
+    // A paused PR's recheck nudges wait for the resume; the rest go now.
+    const skip = store.getPr(pr)?.paused ? RECHECK_WAKE_PREFIX : undefined;
+    const queued = store
+      .heldWakes(pr)
+      .filter((wake) => skip === undefined || !wake.reason.startsWith(skip));
     const batchSize = leadingDeliveryCount(queued);
     if (batchSize === 0) break;
     const token = randomUUID();
@@ -278,6 +283,7 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
       token,
       new Date(Date.now() - leaseMs).toISOString(),
       batchSize,
+      skip,
     );
     if (!wakes) break;
     const ids = wakes.map((wake) => wake.id);
