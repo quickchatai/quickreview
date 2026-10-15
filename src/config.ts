@@ -2854,6 +2854,13 @@ export function parseConfig(toml: string): Config {
       "config.toml: require finite numbers 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
     );
   }
+  // The two second-scale daemon→pi bounds become command deadlines
+  // (`toISOString`), which a non-finite value would throw at the first command.
+  for (const key of ["session_command_start_lease_s", "session_bridge_ready_timeout_s"] as const) {
+    const v: unknown = cfg.daemon[key];
+    if (!(typeof v === "number" && Number.isFinite(v) && v > 0))
+      throw new Error(`config.toml: require a finite number [daemon] ${key} > 0`);
+  }
   const postedTail = cfg.daemon.round_posted_tail_grace_min ?? DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN;
   if (!(typeof postedTail === "number" && Number.isFinite(postedTail) && postedTail > 0)) {
     throw new Error("config.toml: require round_posted_tail_grace_min > 0");

@@ -87,6 +87,22 @@ describe("parseConfig", () => {
     }
   });
 
+  it("refuses a non-finite, non-numeric or non-positive start lease or bridge-ready timeout", () => {
+    const shipped = readFileSync(configPath, "utf8");
+    const shipping = {
+      session_command_start_lease_s: "session_command_start_lease_s = 120",
+      session_bridge_ready_timeout_s: "session_bridge_ready_timeout_s = 30",
+    } as const;
+    for (const [key, line] of Object.entries(shipping))
+      for (const value of ["inf", '"120"', "0", "-5"]) {
+        const bad = shipped.replace(line, `${key} = ${value}`);
+        expect(bad).not.toBe(shipped);
+        expect(() => parseConfig(bad), `${key} = ${value}`).toThrow(
+          new RegExp(`require a finite number \\[daemon\\] ${key} > 0`),
+        );
+      }
+  });
+
   it("the posted-tail grace defaults to 15 minutes and must be positive", () => {
     expect(cfg.daemon.round_posted_tail_grace_min).toBe(15);
     const set = (line: string) =>
