@@ -57,23 +57,22 @@
 //     either guide unless `max_severity` raises the lens's ceiling.
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
-import type { ModelsConfig, ReviewEffort, ThinkingLevel } from "./config.js";
-import { normalizeEffort, withThinking } from "./config.js";
+import type { ModelsConfig, ReviewEffort } from "./config.js";
+import { effortLevel, normalizeEffort, withThinking } from "./config.js";
 import {
   passTierModels,
   sweepLightVariants,
   VALIDATE_PASS as VALIDATE,
+  type BuildMode,
   type PassAddendum,
 } from "./include.js";
-import type { Severity } from "./severity.js";
+import { SEVERITIES, type Severity } from "./severity.js";
 import { higherTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
 
 /** A style guide a profile points `pass-style` at. */
 export interface ProfileStyleGuide {
   /** As `profile.toml` spells it — relative to the profile's directory. */
   file: string;
-  /** Where it was read from. */
-  path: string;
   text: string;
 }
 
@@ -106,8 +105,6 @@ export const STYLE_LENS = "pass-style";
 /** A drafted guide is a guide, not a manual: it is compiled into two built
  * bodies (the style lens and the validator). */
 export const PROFILE_GUIDE_MAX_CHARS = 32_000;
-
-const SEVERITIES: readonly Severity[] = ["P0", "P1", "P2", "P3", "nit"];
 
 /** An emphasis is a few sentences for one lens, not a second rulebook. */
 export const EMPHASIS_MAX_CHARS = 2000;
@@ -159,7 +156,7 @@ function readProfileGuide(at: string, value: unknown, dir: string | undefined): 
   if (text.trim() === "") throw new Error(`${at} guide ${path} is empty`);
   if (text.length > PROFILE_GUIDE_MAX_CHARS)
     throw new Error(`${at} guide ${path} is over ${PROFILE_GUIDE_MAX_CHARS} characters`);
-  return { file, path, text };
+  return { file, text };
 }
 
 /**
@@ -294,8 +291,7 @@ export function effortSpec(
   tier: PassTier,
   effort: Exclude<ReviewEffort, "">,
 ): string {
-  const level: ThinkingLevel = effort === "high" ? models.effort_max : effort;
-  return withThinking(models.tiers[tier], level);
+  return withThinking(models.tiers[tier], effortLevel(effort, models.effort_max));
 }
 
 /**
@@ -332,12 +328,24 @@ function ceilingText(lens: string, sev: Severity): string {
   );
 }
 
-function guideText(g: ProfileStyleGuide): string {
+/** When the profile's guide is the standard: a PR round's plan row says
+ * (dispatch picks the repo's own guide first); a whole-repo scan has no plan
+ * row, so the rule is stated outright. */
+const GUIDE_WHEN: Record<BuildMode, string> = {
+  pr:
+    `It is the standard ONLY in a round whose \`${STYLE_LENS}\` plan row names "this repo's profile style guide"; ` +
+    `when that row names a guide the repo itself writes, the repo's guide is the only standard and this section does not apply. `,
+  scan:
+    `This is a whole-repo scan, which has no plan row: it is the standard wherever the repo writes no style guide of its own ` +
+    `(a style guide file, a CONTRIBUTING style section, the style sections of its agent-directive files); ` +
+    `where the repo writes one, the repo's guide is the only standard and this section does not apply. `,
+};
+
+function guideText(g: ProfileStyleGuide, mode: BuildMode): string {
   return (
     `\n## This repo's profile style guide (\`${g.file}\`)\n` +
     `This repo's profile carries a style guide for \`${STYLE_LENS}\`, below, for when the repo writes none of its own. ` +
-    `It is the standard ONLY in a round whose \`${STYLE_LENS}\` plan row names "this repo's profile style guide"; ` +
-    `when that row names a guide the repo itself writes, the repo's guide is the only standard and this section does not apply. ` +
+    GUIDE_WHEN[mode] +
     `It is not a file in the repo: do not look for it at head — the guide is the text below, so "guide missing or unreadable at head, answer NONE" never applies to it. ` +
     `A \`${STYLE_LENS}\` finding against it quotes the rule verbatim and cites it as \`profile style guide ${g.file}\` in place of a repo file and line, ` +
     `and cites the CHANGED line that breaks it, exactly as for a repo guide. ` +
@@ -374,11 +382,20 @@ export function lensTuningAddenda(lenses: LensTuningMap | undefined): PassAddend
       });
     }
     if (t.guide !== undefined) {
-      out.push({
-        id: `${GUIDE_ID_PREFIX}${lens}`,
-        scope: [lens, VALIDATE],
-        text: guideText(t.guide),
-      });
+      out.push(
+        {
+          id: `${GUIDE_ID_PREFIX}${lens}`,
+          scope: [lens, VALIDATE],
+          mode: "pr",
+          text: guideText(t.guide, "pr"),
+        },
+        {
+          id: `${GUIDE_ID_PREFIX}${lens}-scan`,
+          scope: [lens, VALIDATE],
+          mode: "scan",
+          text: guideText(t.guide, "scan"),
+        },
+      );
     }
   }
   return out;

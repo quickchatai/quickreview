@@ -28,7 +28,10 @@
 
 import type { Verdict as VerdictType } from "./types.js";
 
-export type Severity = "P0" | "P1" | "P2" | "P3" | "nit";
+/** Every severity, highest first — the one vocabulary the type and every
+ * membership check derive from. */
+export const SEVERITIES = ["P0", "P1", "P2", "P3", "nit"] as const;
+export type Severity = (typeof SEVERITIES)[number];
 export type PostTag = "blocker" | "question" | "nit";
 
 /** How often the state a finding depends on actually arises. */
@@ -374,7 +377,7 @@ export const SANCTIONED_TAGS: readonly string[] = [
   DEFERRED_TAG,
 ];
 
-const SEVERITY_WORDS: ReadonlySet<string> = new Set(["P0", "P1", "P2", "P3", "nit"]);
+const SEVERITY_WORDS: ReadonlySet<string> = new Set(SEVERITIES);
 
 /** The ordinary posting tag a findings-record tag word (bare, lower case) is
  * counted, posted and ranked under: a posting tag is itself; `check this` is a
