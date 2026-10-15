@@ -421,7 +421,8 @@ interface Piece {
  * (a directory that fits stays whole), then file chunks in path order; small
  * neighbouring pieces are packed back together so a split never produces a
  * case per tiny directory. Every case keeps the unit's name. Deterministic:
- * the same files, sizes and budget always give the same cases.
+ * the same files, sizes and budget always give the same cases. No files, no
+ * case.
  */
 export function splitUnit(
   unit: string,
@@ -429,6 +430,7 @@ export function splitUnit(
   linesOf: (path: string) => number,
   budget: CaseBudget = DEFAULT_CASE_BUDGET,
 ): CasePlan[] {
+  if (files.length === 0) return [];
   const sorted = [...files].sort();
   const size = new Map(sorted.map((f) => [f, Math.max(0, linesOf(f))]));
   const fits = (n: number, lines: number): boolean =>
