@@ -205,6 +205,13 @@ interface Connection<N> {
  * comment a lost reply answered. */
 const RECENT_COMMENTS_MAX_PAGES = 10;
 
+/** GitHub search serves at most 1,000 hits: ten pages of 100. */
+const TRIGGER_SEARCH_MAX_PAGES = 10;
+
+/** The trigger events the history importer reconstructs — one list for the
+ * first query and every follow-up page. */
+const HISTORY_TIMELINE_TYPES = "[LABELED_EVENT, REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT]";
+
 /** Hard stop for a connection walk — a server that keeps answering
  * hasNextPage with a cursor that never ends cannot loop forever. */
 const MAX_CONNECTION_PAGES = 50;
@@ -437,7 +444,21 @@ export class GitHubAdapter {
    * this list as trigger-ABSENT, so a truncated page would fake an absent →
    * present edge the moment search order reshuffled it back in. */
   private async searchIssues(q: string): Promise<SearchIssueItem[]> {
-    return this.searchIssuesPaged(q);
+    const out: SearchIssueItem[] = [];
+    for (let page = 1; page <= TRIGGER_SEARCH_MAX_PAGES; page++) {
+      const res = await this.request<{ items?: SearchIssueItem[]; incomplete_results?: boolean }>(
+        "GET",
+        `/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=${page}`,
+      );
+      // GitHub's search may time out and answer a partial set; absence read
+      // from it would be invented, so the read fails rather than answers.
+      if (res.incomplete_results === true)
+        throw new Error(`trigger search "${q}" answered incomplete results`);
+      const items = res.items ?? [];
+      out.push(...items);
+      if (items.length < 100) return out;
+    }
+    throw new Error(`trigger search "${q}" exceeded ${TRIGGER_SEARCH_MAX_PAGES} pages`);
   }
 
   /** Every page of a list endpoint that answers a bare JSON array. `path`
@@ -484,7 +505,7 @@ export class GitHubAdapter {
             number title createdAt closedAt mergedAt merged
             author { login }
             reviews(author: $author, first: 100) { ${HISTORY_REVIEWS_BODY} }
-            timelineItems(itemTypes: [LABELED_EVENT, REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT], first: 100) { ${HISTORY_TIMELINE_BODY} }
+            timelineItems(itemTypes: ${HISTORY_TIMELINE_TYPES}, first: 100) { ${HISTORY_TIMELINE_BODY} }
           }
         }
       }`,
@@ -513,7 +534,7 @@ export class GitHubAdapter {
         `query ($owner: String!, $repo: String!, $number: Int!, $after: String!) {
           repository(owner: $owner, name: $repo) {
             pullRequest(number: $number) {
-              timelineItems(itemTypes: [LABELED_EVENT, REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT], first: 100, after: $after) { ${HISTORY_TIMELINE_BODY} }
+              timelineItems(itemTypes: ${HISTORY_TIMELINE_TYPES}, first: 100, after: $after) { ${HISTORY_TIMELINE_BODY} }
             }
           }
         }`,
@@ -741,9 +762,12 @@ export class GitHubAdapter {
   /** EVERY open PR: the list is newest-first, so a first-page read drops the
    * oldest tracked PRs out of reconcile step 1 entirely. */
   async listOpenPrs(): Promise<PrRef[]> {
-    const { rows: prs } = await this.pagedArray<any>(
+    const { rows: prs, truncated } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls?state=open&per_page=100`,
     );
+    // A PR past the bound would silently miss every head refresh: a partial
+    // list fails the read instead.
+    if (truncated) throw new Error("open PRs exceeded the pagination bound");
     // An open PR is not merged; the list endpoint does not carry `merged`.
     return prs.map((pr) => toPrRef(pr, false));
   }
@@ -925,10 +949,12 @@ export class GitHubAdapter {
     );
   }
 
-  /** Review comments the bot authored on a PR — the registry backfill source. */
+  /** Review comments the bot authored on a PR — the registry backfill source.
+   * Read newest first, so a PR past the page bound loses its OLDEST comments
+   * (registered by earlier passes), never the newest. */
   async listBotReviewComments(n: number): Promise<number[]> {
     const { rows: res } = await this.pagedArray<any>(
-      `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?per_page=100`,
+      `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?sort=created&direction=desc&per_page=100`,
     );
     return res.filter((c) => c.user?.login === this.cfg.github.bot_login).map((c) => c.id);
   }
@@ -1052,7 +1078,7 @@ export class GitHubAdapter {
       // Removing an already-absent label is the outcome we wanted — GitHub's
       // 404 ("Label does not exist") is idempotent success, not an error —
       // e.g. a label consumed by an earlier failed-dispatch cycle.
-      if (String(err).includes("404"))
+      if (err instanceof GitHubRequestError && err.status === 404)
         return { executed: false, response: { already_absent: label } };
       throw err;
     }
@@ -1254,9 +1280,10 @@ export class GitHubAdapter {
     // and bring the answer back"), so what a human owes the thread is the
     // answer, not the resolution. Making it human-only would force a person
     // into every such thread, and the ordinary path already lands in the right
-    // place — the only caller is ping-pong, so the bot resolves such a thread
-    // only after the author replied and the session judged the reply settles
-    // it. Rule 2 is
+    // place — ping-pong resolves such a thread only after the author replied
+    // and the session judged the reply settles it, and the prior-finding
+    // resolver only for a finding a later round reported fixed or obsolete.
+    // Rule 2 is
     // unaffected: this resolves the bot's OWN finding thread and never
     // dismisses or edits any review, anyone's.
     if (found.isResolved) return { skipped: "already-resolved" };
