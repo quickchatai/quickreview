@@ -890,6 +890,31 @@ describe("re-runs that carry the checklist forward", () => {
     expect(producedConfig().github.base_branch).toBe("develop");
   });
 
+  it("a portable ~/ checkout path stays ~/ — a keep-everything re-run is byte-identical", async () => {
+    const home = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const first = await runStep({
+        noPrompter: true,
+        input: { ...fullAnswers(), reviewed_repo_dir: "~/checkout" },
+      });
+      expect(failed(first.report)).toBe("");
+      const path = join(root, "config.toml");
+      const before = readFileSync(path, "utf8");
+      expect(before).toMatch(/^reviewed_repo_dir = "~\/checkout"/m);
+      const second = await runStep({
+        noPrompter: true,
+        choices: first.choices,
+        data: first.report.data,
+      });
+      expect(failed(second.report)).toBe("");
+      expect(readFileSync(path, "utf8")).toBe(before);
+    } finally {
+      if (home === undefined) delete process.env.HOME;
+      else process.env.HOME = home;
+    }
+  });
+
   it("says so when an argument answers a question the recorded shape does not ask", async () => {
     const { report } = await runStep({ noPrompter: true, input: fullAnswers() });
     expect(failed(report)).toBe("");

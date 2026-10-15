@@ -68,7 +68,7 @@ import {
   type StepContext,
   type StepReport,
 } from "../engine.js";
-import { secretsDirFor } from "./ingress.js";
+import { readTomlKey, secretsDirFor } from "./ingress.js";
 
 export const CONFIG_FILL_STEP_ID = "config_fill";
 
@@ -760,6 +760,9 @@ export async function collectAnswers(
   ctx: StepContext,
   cfg: Config | null,
   previous: Partial<Record<AnswerKey, string>>,
+  /** The text `cfg` was parsed from: a kept value is read as the FILE spells
+   * it, so a portable `~/…` is never replaced by the loader's expansion. */
+  configText: string | null = null,
 ): Promise<CollectResult> {
   const choices = ctx.choices;
   const prompter = ctx.adapters.prompter;
@@ -798,7 +801,9 @@ export async function collectAnswers(
       .filter((k) => OWN_ANSWER_KEYS.has(k))
       .map((k) => str(choices, k))
       .find((v) => v.length > 0);
-    const fallback = cfg ? q.read(cfg) : (previous[q.id] ?? ownRecorded ?? "");
+    const fallback = cfg
+      ? ((configText !== null ? readTomlKey(configText, q.section, q.key) : null) ?? q.read(cfg))
+      : (previous[q.id] ?? ownRecorded ?? "");
     if (given !== null || !prompter) {
       const value = given || fallback;
       if (!value) {
@@ -1030,7 +1035,7 @@ export function configFillStep(): OnboardingStep {
       }
 
       const cfg = currentConfig(configPath);
-      const collected = await collectAnswers(ctx, cfg, previousAnswers(ctx));
+      const collected = await collectAnswers(ctx, cfg, previousAnswers(ctx), existing);
       const checks: CheckResult[] = collected.ignored.map((i) => ({
         name: `answer:${i.id}`,
         ok: true,
