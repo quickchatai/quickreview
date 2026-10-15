@@ -84,7 +84,7 @@ export function commandFileName(now: Date, seq: number): string {
  * check (`operatorSealVerdict`) reads both; that check also `lstat`s the
  * directory, so a link the script did not catch is still no seal there.
  *
- * `drainManualSshCommand` (cli.ts) prints this script inside a double-quoted
+ * `drainManualCommand` (cli.ts) prints this script inside a double-quoted
  * ssh argument and escapes it for that; run it, don't only read it
  * (`tests/levers.test.ts`).
  */

@@ -28,7 +28,8 @@ export function flatControls(text: string): string {
  * they could close the span, split a plan-table row, or open a new line of
  * daemon-authored prompt text. Control characters are shown as `\uXXXX`,
  * and the fence is one backtick longer than any run inside the name
- * (CommonMark), so the name reads back exactly otherwise. Pipes are escaped
+ * (CommonMark), padded with a space when CommonMark would otherwise strip one
+ * of the name's own, so the name reads back exactly otherwise. Pipes are escaped
  * only for a TABLE cell (`table`): GFM un-escapes `\|` there, even inside a
  * code span, but everywhere else the backslash would read back as part of
  * the path.
@@ -37,7 +38,10 @@ export function codePath(path: string, opts: { table?: boolean } = {}): string {
   let flat = flatControls(path);
   if (opts.table) flat = flat.replace(/\|/g, "\\|");
   const longest = longestBacktickRun(flat);
-  if (longest === 0) return `\`${flat}\``;
+  // CommonMark strips one space from each end of a span whose content starts
+  // AND ends with one, so such a name is padded like a backtick one is.
+  const strippable = /^ [^]* $/.test(flat) && /[^ ]/.test(flat);
+  if (longest === 0 && !strippable) return `\`${flat}\``;
   const fence = "`".repeat(longest + 1);
   return `${fence} ${flat} ${fence}`;
 }

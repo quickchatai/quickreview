@@ -6,8 +6,7 @@ import { sandboxRoot } from "./config.js";
 import { localWallClockToInstant } from "./eod.js";
 import {
   cancelCauseLabel,
-  isLoudCancelCause,
-  type CancelCause,
+  tallyCancellations,
   type CancellationTally,
   type StateStore,
 } from "./state.js";
@@ -128,22 +127,7 @@ export function dailyCancellations(
    * the UTC date prefix, as every other `roundsOn` reader does. */
   timeZone?: string,
 ): DailyCancellations {
-  const counts = new Map<string, number>();
-  for (const r of roundsOnDay(store, date, timeZone)) {
-    if (r.status !== "cancelled") continue;
-    const cause = r.cancel_cause ?? "unknown";
-    counts.set(cause, (counts.get(cause) ?? 0) + 1);
-  }
-  const byCause: CancellationTally[] = [...counts.entries()]
-    .map(([cause, count]) => ({
-      cause: cause as CancelCause,
-      count,
-      loud: isLoudCancelCause(cause),
-    }))
-    .sort(
-      (a, b) =>
-        Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
-    );
+  const byCause = tallyCancellations(roundsOnDay(store, date, timeZone));
   return {
     date,
     total: byCause.reduce((n, c) => n + c.count, 0),

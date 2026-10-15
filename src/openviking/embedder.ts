@@ -402,33 +402,41 @@ export class LocalEmbedderSupervisor {
   }
 
   /** Self-rescheduling: fast until the child first serves, then at the
-   * server's health cadence. Two probes never overlap. */
+   * server's health cadence. Two probes never overlap. A probe re-arms only
+   * for the child it probed: a replacement arms its own at spawn. */
   private armProbe(ms: number): void {
     if (this.stopping) return;
     this.cancelHealth?.();
     this.cancelHealth = this.schedule(() => {
       this.cancelHealth = null;
+      const probed = this.child;
       void this.probe().finally(() => {
-        if (this.child === null) return;
+        if (this.child === null || this.child !== probed) return;
         this.armProbe(this.everReady ? this.cfg.health_interval_s * 1000 : EMBEDDER_FAST_POLL_MS);
       });
     }, ms);
   }
 
-  /** One `/health` probe into the cache. Never rejects. */
+  /** One `/health` probe into the cache. Never rejects. An answer that lands
+   * after the child it probed was replaced says nothing about the new one
+   * and is dropped — the same identity rule `onExit` keeps. */
   async probe(): Promise<void> {
+    const probed = this.child;
     const at = this.now().toISOString();
     let ok = false;
+    let error: string | undefined;
     try {
       const res = await this.fetchFn(`http://127.0.0.1:${this.spec.port}/health`, {
         signal: AbortSignal.timeout(this.cfg.health_timeout_ms),
       });
       ok = res.ok;
-      if (!ok) this.lastError = `health ${res.status}`;
+      if (!ok) error = `health ${res.status}`;
     } catch (err) {
       ok = false;
-      this.lastError = err instanceof Error ? err.message : String(err);
+      error = err instanceof Error ? err.message : String(err);
     }
+    if (this.child !== probed) return;
+    if (error !== undefined) this.lastError = error;
     this.checkedAt = at;
     const was = this.ready;
     this.ready = ok && this.child !== null;

@@ -29,6 +29,16 @@ function makeDeps() {
   };
 }
 
+/** Until the watcher's own work queue is empty — every command it queued has
+ * run — rather than a count of ticks. */
+async function drained(w: CommandWatcher): Promise<void> {
+  const q = () => (w as unknown as { queue: Promise<void> }).queue;
+  for (let p = q(); ; p = q()) {
+    await p;
+    if (p === q()) return;
+  }
+}
+
 describe("validateCommand — whitelist", () => {
   it("accepts every whitelisted command with a valid payload", () => {
     const valid: unknown[] = [
@@ -355,6 +365,42 @@ describe("CommandWatcher", () => {
         .eventsOn(new Date().toISOString().slice(0, 10))
         .some((e) => e.kind === "command_executed"),
     ).toBe(true);
+  });
+
+  it("a command that replaced its file while the first one ran is run next, never archived unrun", async () => {
+    writeFileSync(join(cmdDir(), "c9.json"), JSON.stringify({ command: "rerun-round", pr: 5 }));
+    const deps = makeDeps();
+    deps.rerunRound.mockImplementationOnce(async () => {
+      // The session writes its next command under the same name meanwhile —
+      // in place, as a plain write does.
+      writeFileSync(join(cmdDir(), "c9.json"), JSON.stringify({ command: "rerun-round", pr: 6 }));
+      return { ok: true, redispatched: true };
+    });
+    const w = watcher(deps);
+    await w.sweep();
+    await drained(w);
+    expect(deps.rerunRound.mock.calls.map((c) => (c as unknown[])[0])).toEqual([5, 6]);
+    expect(JSON.parse(readFileSync(join(cmdDir(), "processed", "c9.json"), "utf8"))).toEqual({
+      command: "rerun-round",
+      pr: 6,
+    });
+    w.stop();
+  });
+
+  it("the same command written again while it ran is the same command — run once, archived", async () => {
+    const body = JSON.stringify({ command: "rerun-round", pr: 8 });
+    writeFileSync(join(cmdDir(), "c10.json"), body);
+    const deps = makeDeps();
+    deps.rerunRound.mockImplementationOnce(async () => {
+      writeFileSync(join(cmdDir(), "c10.json"), body); // an impatient re-write
+      return { ok: true, redispatched: true };
+    });
+    const w = watcher(deps);
+    await w.sweep();
+    await drained(w);
+    w.stop();
+    expect(deps.rerunRound).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(cmdDir(), "processed", "c10.json"))).toBe(true);
   });
 
   it("rejects a non-whitelisted command loudly with a result file and event", async () => {

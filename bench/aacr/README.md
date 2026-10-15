@@ -394,9 +394,17 @@ so a bench run picks them up only when its `--config` selects that profile.
   file and a line, so the result file carries it too (`source: body`), taken
   from the session's own findings record (`disposition: posted`) with the text
   the body gives it. The report's "In body" column counts them.
-- **LEFT-side comments** are excluded (the harness forces every generated
-  comment to the right side, so an old-side anchor could only score wrong);
-  the count is in each result file's `qcr.excluded`.
+- **LEFT-side comments are moved to the head side, not dropped.** A comment
+  the session anchored on a deleted line is re-anchored to the nearest added
+  line of its own hunk (a hunk with no added line: the head-side line where
+  the deletion sat; a deleted file: line 1), from the head patches the run
+  keeps (`head-patches.json`), and scored there with its body untouched — the
+  harness forces every generated comment to the right side, so an old-side
+  anchor could only score wrong. The case summary counts them
+  (`comments.reanchored`; each carries `reanchored_from`). Only a LEFT comment
+  the patch cannot place (no patch for its path, or a line the patch does not
+  carry) stays LEFT and is excluded; that count is in each result file's
+  `qcr.excluded`.
 - **A case that failed or timed out still gets a result file with zero
   comments**, so its references count against recall. The harness silently
   drops an instance with no file from both denominators; `eval` also refuses a

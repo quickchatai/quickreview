@@ -26,6 +26,7 @@ import {
   type OnboardingStep,
 } from "../src/onboard/engine.js";
 import {
+  MIN_NODE_MAJOR,
   PREFLIGHT_STEP_ID,
   UID_CHOICE_KEY,
   parseNodeMajor,
@@ -95,6 +96,14 @@ describe("parseNodeMajor", () => {
 });
 
 describe("preflight step lifecycle", () => {
+  it("checks the same Node floor package.json declares, and says that number", () => {
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
+      engines: { node: string };
+    };
+    expect(pkg.engines.node).toBe(`>=${MIN_NODE_MAJOR}`);
+    expect(preflightStep().explain).toContain(`Node ${MIN_NODE_MAJOR} or newer`);
+  });
+
   it("green run marks the step done, captures the uid as a choice, and persists", async () => {
     const e = engine();
     const result = await e.runStep(PREFLIGHT_STEP_ID);

@@ -11,6 +11,7 @@
 // Total by construction, like every call in this directory: a dead server, a
 // missing key or a garbage body is a classified answer, never a throw.
 import type { ProbeAnswer, ProbeResult } from "../memory/health.js";
+import type { readOvcliKey } from "../memory/ovsession.js";
 import {
   OpenVikingClient,
   isAuthFailure,
@@ -19,11 +20,12 @@ import {
   type KeySource,
 } from "./client.js";
 
-/** Where a probe's key comes from. `absent` (no credential file at all — e.g.
- * no session has been born yet to need one) is reported as such and is never
- * a failure; `unreadable` is (a session handed a torn file runs keyless). */
-export type ProbeKey =
-  { state: "key"; key: string } | { state: "absent" } | { state: "unreadable"; detail: string };
+/** Where a probe's key comes from — the credential reader's own answer
+ * (`readOvcliKey`), one declaration. `absent` (no credential file at all —
+ * e.g. no session has been born yet to need one) is reported as such and is
+ * never a failure; `unreadable` is (a session handed a torn file runs
+ * keyless). */
+export type ProbeKey = ReturnType<typeof readOvcliKey>;
 
 export interface CredentialProbeOptions {
   baseUrl: string;

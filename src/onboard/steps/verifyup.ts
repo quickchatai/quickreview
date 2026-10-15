@@ -36,6 +36,8 @@ import { mintAppJwt } from "../../githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { ingressOptionOf, secretsDirFor } from "./compose.js";
 import { readCredentials } from "./githubapp.js";
+import { sshCommandLine } from "./ssh.js";
+import { sshAliasOf, topologyOf } from "./topology.js";
 import { stackTransportFor, type TransportOptions } from "./transport.js";
 
 export const VERIFY_STACK_STEP_ID = "verify_stack";
@@ -102,6 +104,20 @@ export function pings(deliveries: readonly HookDelivery[]): HookDelivery[] {
   return deliveries.filter((d) => d.event === "ping").sort((a, b) => b.id - a.id);
 }
 
+/** How many pages of the delivery log (50 rows each) are read looking for the
+ * newest ping: ordinary traffic after a ping pushes it off the first page. */
+export const MAX_DELIVERY_PAGES = 10;
+
+/** The `rel="next"` URL of a GitHub `Link` header, or null. */
+export function nextPageUrl(link: string | null): string | null {
+  if (!link) return null;
+  for (const part of link.split(",")) {
+    const m = /<([^>]+)>\s*;\s*rel="next"/.exec(part);
+    if (m) return m[1]!;
+  }
+  return null;
+}
+
 /** The newest delivery of ANY event that is newer than `ping` and was NOT
  * accepted, or undefined. GitHub pings only when the webhook is (re)configured,
  * so an accepted ping can be long stale: if the ingress stopped reaching the
@@ -121,6 +137,8 @@ interface ApiAnswer {
   status: number;
   body: unknown;
   error: string;
+  /** The response's `Link` header (pagination), or null. */
+  link: string | null;
 }
 
 async function api(
@@ -146,9 +164,9 @@ async function api(
     } catch {
       body = null;
     }
-    return { status: res.status, body, error: "" };
+    return { status: res.status, body, error: "", link: res.headers?.get?.("link") ?? null };
   } catch (err) {
-    return { status: 0, body: null, error: String(err) };
+    return { status: 0, body: null, error: String(err), link: null };
   }
 }
 
@@ -192,17 +210,28 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
     });
     if (config.status !== 200) return checks;
 
+    // Newest first, page by page until a ping turns up: the deliveries
+    // above it are exactly the ones `newerFailure` must see, and ordinary
+    // traffic since the last ping must not push the ping out of view.
     const read = async (): Promise<{ rows: HookDelivery[]; problem: string }> => {
-      const r = await api(ctx, `${apiBase}/app/hook/deliveries?per_page=50`, jwt);
-      if (r.status !== 200) {
-        return {
-          rows: [],
-          problem:
-            `GET /app/hook/deliveries answered HTTP ${r.status}${r.error ? ` (${r.error})` : ""} — Fix: an App created without a ` +
-            "webhook has no delivery log; check the App's Advanced tab, and that the webhook is Active",
-        };
+      const rows: HookDelivery[] = [];
+      let url: string | null = `${apiBase}/app/hook/deliveries?per_page=50`;
+      for (let page = 0; url !== null && page < MAX_DELIVERY_PAGES; page += 1) {
+        const r = await api(ctx, url, jwt);
+        if (r.status !== 200) {
+          return {
+            rows: [],
+            problem:
+              `GET /app/hook/deliveries answered HTTP ${r.status}${r.error ? ` (${r.error})` : ""} — Fix: an App created without a ` +
+              "webhook has no delivery log; check the App's Advanced tab, and that the webhook is Active",
+          };
+        }
+        const got = parseDeliveries(r.body);
+        rows.push(...got);
+        if (got.some((d) => d.event === "ping")) break;
+        url = nextPageUrl(r.link);
       }
-      return { rows: parseDeliveries(r.body), problem: "" };
+      return { rows, problem: "" };
     };
 
     let { rows, problem } = await read();
@@ -214,7 +243,7 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
     const good = candidates[0];
     const stale = good && deliverySucceeded(good) ? newerFailure(rows, good) : undefined;
     const pingDetail = (d: HookDelivery): string =>
-      stale && deliverySucceeded(d) ? stalePingDetail(d, stale) : failedPingDetail(d);
+      stale && deliverySucceeded(d) ? stalePingDetail(ctx, d, stale) : failedPingDetail(ctx, d);
     if (good && deliverySucceeded(good) && !stale) {
       checks.push({
         name: "ping-delivery",
@@ -230,8 +259,9 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
         name: "ping-delivery",
         ok: false,
         detail:
-          `${rows.length} deliveries in the App's log and none of them a ping — Fix: GitHub sends a ping when the webhook is ` +
-          '(re)configured. Open the App\'s Advanced tab and use "Redeliver" on any delivery, or change and re-save the webhook URL. ' +
+          `${rows.length} deliveries in the App's log and none of them a ping — only a ping counts here, and GitHub sends one ` +
+          "only when the webhook is (re)configured: redelivering another event from the App's Advanced tab re-sends THAT " +
+          "event, never a ping. Fix: change and re-save the webhook URL, then run this step again. " +
           "Reviews would still be triggered by the reconcile poll, but author replies and the feedback loop are webhook-only",
       });
       return checks;
@@ -263,11 +293,26 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
     for (let i = 1; i <= pingPollAttempts; i += 1) {
       await sleep(pingPollIntervalMs);
       ({ rows, problem } = await read());
-      if (problem) break;
+      if (problem) {
+        // The watch itself failed: say THAT, not the older ping's diagnosis —
+        // its fixes (URL, secret, tunnel) do not answer a log we cannot read.
+        checks.push({
+          name: "ping-delivery",
+          ok: false,
+          detail: `a ping redelivery was requested, but reading the delivery log again failed: ${problem}`,
+        });
+        return checks;
+      }
       candidates = pings(rows);
       const good = candidates[0];
-      // Only a ping NEWER than the one redelivered answers for the path now.
-      if (good && good.id > failed.id && deliverySucceeded(good)) {
+      // Only a ping NEWER than the one redelivered answers for the path now,
+      // and — as on the first read — only when nothing newer has failed since.
+      if (
+        good &&
+        good.id > failed.id &&
+        deliverySucceeded(good) &&
+        newerFailure(rows, good) === undefined
+      ) {
         checks.push({
           name: "ping-delivery",
           ok: true,
@@ -281,34 +326,44 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
         `${VERIFY_STACK_STEP_ID}: no accepted ping yet (${i}/${pingPollAttempts}) — still watching GitHub's delivery log`,
       );
     }
+    const last = candidates[0] ?? failed;
+    const newer = deliverySucceeded(last) ? newerFailure(rows, last) : undefined;
     checks.push({
       name: "ping-delivery",
       ok: false,
-      detail: pingDetail(candidates[0] ?? failed),
+      detail: newer ? stalePingDetail(ctx, last, newer) : failedPingDetail(ctx, last),
     });
     return checks;
   }
 
-  function stalePingDetail(ping: HookDelivery, newer: HookDelivery): string {
+  function stalePingDetail(ctx: StepContext, ping: HookDelivery, newer: HookDelivery): string {
     return (
       `the last ping was accepted (HTTP ${ping.status_code} at ${ping.delivered_at || "an unrecorded time"}), but a newer ` +
       `${newer.event} delivery was not (HTTP ${newer.status_code}${newer.status ? `, ${newer.status}` : ""} at ` +
       `${newer.delivered_at || "an unrecorded time"}) and no fresh ping got through — so the path is NOT proven as it is now. ` +
-      pingFixes()
+      pingFixes(ctx)
     );
   }
 
-  function failedPingDetail(d: HookDelivery): string {
-    return `GitHub could not deliver its ping: HTTP ${d.status_code}${d.status ? ` (${d.status})` : ""}. ${pingFixes()}`;
+  function failedPingDetail(ctx: StepContext, d: HookDelivery): string {
+    return `GitHub could not deliver its ping: HTTP ${d.status_code}${d.status ? ` (${d.status})` : ""}. ${pingFixes(ctx)}`;
   }
 
-  function pingFixes(): string {
+  /** Where the tunnel's own log is: a compose sidecar here, the cloudflared
+   * host service on the server route. */
+  function tunnelLogs(ctx: StepContext): string {
+    if (topologyOf(ctx.choices) !== "vm") return "`docker compose logs` on the tunnel sidecar";
+    const alias = sshAliasOf(ctx.choices) || "<vm>";
+    return `\`${sshCommandLine(alias, ["journalctl", "-u", "cloudflared", "-n", "50"])}\` (cloudflared runs as a service on the server)`;
+  }
+
+  function pingFixes(ctx: StepContext): string {
     return (
       "Fix, in the order worth trying: " +
       "① the webhook URL above must be the public address of THIS daemon — on a rotating tunnel the daemon re-points it itself, " +
       "so give it a few seconds after bring-up and run this step again; ② a 401/403 means the webhook secret on GitHub is not the " +
       "one in your secrets dir (re-run the github_app step to re-create the App with a fresh pair); ③ a timeout means the tunnel " +
-      "is not reaching the daemon — `docker compose logs` on the tunnel sidecar."
+      `is not reaching the daemon — ${tunnelLogs(ctx)}.`
     );
   }
 

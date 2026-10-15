@@ -28,11 +28,17 @@ import {
   writeFileSync,
   mkdirSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { parseConfig } from "../src/config.js";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OnboardingEngine, type OnboardAdapters, type StepReport } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  type OnboardAdapters,
+  type ProcessResult,
+  type StepReport,
+} from "../src/onboard/engine.js";
 import {
   COMPANION_VARS,
   DECLINED_CHECKS,
@@ -747,7 +753,15 @@ describe("degraded modes stay legal and loud", () => {
     for (const no of ["n", "No", "skip", "later", "decline", "without memory"])
       expect(normalizeMemoryChoice(no)).toBe("declined");
     expect(normalizeMemoryChoice(undefined)).toBe("configure");
-    for (const unclear of ["maybe", "configur", "turn it off", "?", "memory"])
+    for (const unclear of [
+      "maybe",
+      "configur",
+      "turn it off",
+      "?",
+      "memory",
+      "need more information",
+      "nothing",
+    ])
       expect(normalizeMemoryChoice(unclear)).toBeNull();
   });
 
@@ -962,5 +976,190 @@ describe("verify()", () => {
     expect(report.checks.find((c) => c.name === "confinement-matrix")?.detail).toMatch(
       /both USER keys are needed/,
     );
+  });
+});
+
+describe("verify() checks what the consumers read now", () => {
+  it("a key file the locator no longer names is not proof: the CURRENT file must hold the keys", async () => {
+    const engine = engineWith(fakeServer().fetchFn);
+    expect((await runStep(engine)).ok).toBe(true);
+    // The operator points the TUI and companion somewhere else, still confined,
+    // but empty: verify must not keep certifying the file written earlier.
+    const moved = join(root, "operator", "moved.env");
+    const step = memoryStep(stepOptions({ keysFile: moved }));
+    const report = await step.verify({
+      adapters: adapters(fakeServer().fetchFn),
+      input: {},
+      choices: engine.choices(),
+      data: { keys_file: keysFile },
+      recordChoice: () => {},
+    });
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name === "key-file")?.detail).toContain(moved);
+  });
+
+  it("the two companion spellings must agree — proving one while the other is stale is no proof", async () => {
+    const server = fakeServer();
+    const engine = engineWith(server.fetchFn);
+    expect((await runStep(engine)).ok).toBe(true);
+    const text = readFileSync(keysFile, "utf8").replace(
+      /^OPENVIKING_API_KEY=.*$/m,
+      "OPENVIKING_API_KEY=stale-companion-key",
+    );
+    writeFileSync(keysFile, text, { mode: 0o600 });
+    const report = await engine.verifyAll();
+    const row = report.results.find((r) => r.id === MEMORY_STEP_ID)!;
+    expect(row.ok).toBe(false);
+    expect(row.failures.join(" ")).toMatch(/different values/);
+  });
+
+  it("a configured install whose config now says enabled = false is red — the daemon runs memory-less", async () => {
+    const live = join(dirname(stateDir), "config.toml");
+    writeFileSync(
+      live,
+      readFileSync(join(process.cwd(), "tests", "fixtures", "config.toml"), "utf8"),
+    );
+    const engine = engineWith(fakeServer().fetchFn);
+    expect((await runStep(engine)).ok).toBe(true);
+    writeFileSync(
+      live,
+      readFileSync(live, "utf8").replace(
+        /^(\[openviking\][\s\S]*?^)enabled = true/m,
+        "$1enabled = false",
+      ),
+    );
+    const row = (await engine.verifyAll()).results.find((r) => r.id === MEMORY_STEP_ID)!;
+    expect(row.ok).toBe(false);
+    expect(row.failures.join(" ")).toMatch(/says \[openviking\] enabled = false/);
+  });
+});
+
+describe("reaching the server", () => {
+  it("defaults to the endpoint the TUI uses, QCR_MEMORY_PORT included", async () => {
+    const urls: string[] = [];
+    const server = fakeServer();
+    const spy = (async (input: string | URL | Request, init?: RequestInit) => {
+      urls.push(String(input));
+      return server.fetchFn(input, init);
+    }) as unknown as typeof fetch;
+    await runStep(engineWith(spy, { base: undefined, env: { QCR_MEMORY_PORT: "2933" } }));
+    expect(urls[0]).toBe("http://127.0.0.1:2933/ready");
+  });
+
+  it("an unreachable server names the memory forward for this topology, not only the stack", async () => {
+    const result = await runStep(engineWith(fakeServer({ ready: false }).fetchFn));
+    const detail = detailOf(result, "memory-server")?.detail ?? "";
+    expect(detail).toMatch(/memory forward/);
+    expect(detail).toMatch(/from the repo root/);
+    expect(detail).toContain(
+      `cd ${dirname(stateDir)} && node scripts/companion-memory-forward.mjs run --local`,
+    );
+    expect(detail).toContain(`--container "$(docker compose ps --format '{{.Name}}' daemon)"`);
+  });
+
+  it("on the server route the forward command carries THIS install's alias, container and sudo — never the script's defaults", async () => {
+    writeFileSync(
+      join(dirname(stateDir), "config.toml"),
+      '[tui]\ncontainer = "my-reviewer"\nsudo_docker = false\n',
+    );
+    const step = memoryStep(stepOptions());
+    const report = await step.run({
+      adapters: adapters(fakeServer({ ready: false }).fetchFn),
+      input: {},
+      choices: { topology: "vm", vm_ssh_alias: "review-box" },
+      data: {},
+      recordChoice: () => {},
+    });
+    const detail = report.checks.find((c) => c.name === "memory-server")?.detail ?? "";
+    for (const sub of ["run", "install"])
+      expect(detail).toContain(
+        `node scripts/companion-memory-forward.mjs ${sub} --ssh-host review-box --container my-reviewer --no-sudo`,
+      );
+    // No other host is ever named — the script's own default included.
+    expect(detail.match(/--ssh-host \S+/g)).toEqual([
+      "--ssh-host review-box",
+      "--ssh-host review-box",
+    ]);
+  });
+});
+
+describe("the server route's daemon copy of the reviewer key", () => {
+  const vmChoices = { topology: "vm", vm_ssh_alias: "review-box" };
+
+  function vmCtx(fetchFn: typeof fetch, remote: (argv: string[]) => ProcessResult) {
+    const calls: string[][] = [];
+    return {
+      calls,
+      ctx: {
+        adapters: {
+          ...adapters(fetchFn),
+          runner: {
+            run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
+              calls.push([cmd, ...args]);
+              return remote(args);
+            },
+          },
+        },
+        input: {},
+        choices: vmChoices,
+        data: {},
+        recordChoice: () => {},
+      },
+    };
+  }
+
+  it("is red until a rebuild has shipped the placed key, then green when the hashes match", async () => {
+    const server = fakeServer();
+    const step = memoryStep(stepOptions());
+    const missing = vmCtx(server.fetchFn, () => ({
+      code: 1,
+      stdout: "",
+      stderr:
+        "sha256sum: /opt/quickreview/secrets/openviking_reviewer_key: No such file or directory",
+    }));
+    const first = await step.run(missing.ctx);
+    expect(first.ok).toBe(false);
+    const check = first.checks.find((c) => c.name === "reviewer-key-on-server");
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toMatch(/no reviewer key yet/);
+    expect(check?.detail).toMatch(/mode "rebuild"/);
+    // Only a hash crosses ssh — never the key.
+    expect(missing.calls.at(-1)?.join(" ")).toContain("sha256sum");
+
+    const placed = readFileSync(join(secretsDir, REVIEWER_KEY_FILE));
+    const hash = createHash("sha256").update(placed).digest("hex");
+    const shipped = vmCtx(server.fetchFn, () => ({
+      code: 0,
+      stdout: `${hash}  /opt/quickreview/secrets/openviking_reviewer_key\n`,
+      stderr: "",
+    }));
+    const verified = await step.verify({ ...shipped.ctx, data: { keys_file: keysFile } });
+    expect(verified.checks.find((c) => c.name === "reviewer-key-on-server")?.ok).toBe(true);
+    expect(verified.ok).toBe(true);
+
+    const stale = vmCtx(server.fetchFn, () => ({
+      code: 0,
+      stdout: `${"0".repeat(64)}  /opt/quickreview/secrets/openviking_reviewer_key\n`,
+      stderr: "",
+    }));
+    const red = await step.verify({ ...stale.ctx, data: { keys_file: keysFile } });
+    expect(red.checks.find((c) => c.name === "reviewer-key-on-server")?.detail).toMatch(
+      /DIFFERENT reviewer key/,
+    );
+  });
+
+  it("an unanswerable server is not proof either way", async () => {
+    const server = fakeServer();
+    const step = memoryStep(stepOptions());
+    await step.run(vmCtx(server.fetchFn, () => ({ code: 0, stdout: "", stderr: "" })).ctx);
+    const down = vmCtx(server.fetchFn, () => ({
+      code: 255,
+      stdout: "",
+      stderr: "ssh: connect to host review-box port 22: Connection refused",
+    }));
+    const report = await step.verify({ ...down.ctx, data: { keys_file: keysFile } });
+    const check = report.checks.find((c) => c.name === "reviewer-key-on-server");
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toMatch(/not proven either way/);
   });
 });

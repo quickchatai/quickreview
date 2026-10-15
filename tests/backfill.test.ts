@@ -10,7 +10,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import { MutationGate } from "../src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
 import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
-import { StateStore } from "../src/state.js";
+import { StateStore, type RoundRow } from "../src/state.js";
 import type { PrTimelineRecord } from "../src/github.js";
 import {
   enumerationQueries,
@@ -128,10 +128,10 @@ function store(): StateStore {
   return new StateStore(":memory:");
 }
 
-function backfilledRows(s: StateStore): any[] {
+function backfilledRows(s: StateStore): RoundRow[] {
   return s.db
     .prepare("SELECT * FROM rounds WHERE backfilled = 1 ORDER BY pr, round_no")
-    .all() as any[];
+    .all() as RoundRow[];
 }
 
 // ---- unit: mapping + trigger reconstruction --------------------------------
