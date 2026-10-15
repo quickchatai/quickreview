@@ -2313,9 +2313,9 @@ export class VerdictWatcher {
     // Every durable step of the apply has landed: from here a replay of this
     // file is inert (the done-round guard above reads this).
     //
-    // The round's usage window closes here, and its measurement is owed from
-    // here — in the same synchronous turn as `verdict_settled`, so no restart
-    // can land between the two. Its reads (async — seconds, at most the usage
+    // The round's usage window closed at its claim (`finished_at`), and its
+    // measurement is owed from here — in the same synchronous turn as
+    // `verdict_settled`, so no restart can land between the two. Its reads (async — seconds, at most the usage
     // budget) run at the very end of the apply, after the compaction request
     // and the held-wake flush: a round dispatched while they run must never
     // receive this round's held wakes (rule 9), and nothing in between reads
@@ -2324,7 +2324,10 @@ export class VerdictWatcher {
     let owed: OwedMeasurement | undefined;
     if (round) {
       store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
-      owed = this.oweMeasurement(round);
+      // The window ends where the round did — its claim — not here: the
+      // awaits since (CI read, Slack) can outlast a successor's dispatch, and
+      // its transcript must not count twice.
+      owed = this.oweMeasurement(round, finished?.finished_at);
     }
     // Escalation — off unless the operator switched it on, and it runs here,
     // after the verdict has been applied, the label moved and the
@@ -3032,8 +3035,12 @@ export class VerdictWatcher {
    */
   private oweMeasurement(
     round: Pick<RoundRow, "id" | "pr" | "round_no" | "started_at">,
+    /** The window's end when it is not now: the round's terminal write
+     * landed turns earlier (a verdict's apply stamps `finished_at` at its
+     * claim and owes the measurement only once every durable step landed). */
+    endedAt?: string | null,
   ): OwedMeasurement {
-    const measuredTo = this.now().toISOString();
+    const measuredTo = endedAt ?? this.now().toISOString();
     this.measuring.add(round.id);
     try {
       this.deps.store.oweRoundMeasurement(round.id, measuredTo);

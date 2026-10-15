@@ -4568,3 +4568,38 @@ describe("ownership after awaits: a round some other path ended owes nothing", (
     ]);
   });
 });
+
+describe("a verdict's usage window ends at its claim", () => {
+  // MUTATION: owe the measurement with `this.now()` at verdict_settled — the
+  // CI read's wait lets a successor's transcript into this round's window.
+  it("tokens written after the round finished — while the apply awaited GitHub — are not this round's", async () => {
+    const roundId = reviewingRound(710);
+    const at = (offsetMin: number, input: number): string =>
+      JSON.stringify({
+        type: "message",
+        timestamp: new Date(Date.now() + offsetMin * 60_000).toISOString(),
+        message: { role: "assistant", usage: { input, output: 0 } },
+      });
+    const sessionDir = join(dir, cfg.pi.session_dir, "pr-710");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "session.jsonl"),
+      // The round's own turn, then a successor's half an hour later.
+      [at(0, 10), at(30, 1000)].join("\n"),
+    );
+    let clock = new Date(Date.now() + 1000);
+    adapter.listChecks = async () => {
+      clock = new Date(Date.now() + 60 * 60_000);
+      return [];
+    };
+
+    expect(
+      await watcher({ now: () => clock }).handleFile(
+        write(710, 1, verdictFile({ pr: 710, verdict: "APPROVE", approval_withheld: true })),
+      ),
+    ).toBe(true);
+
+    expect(store.roundsFor(710)[0]?.status).toBe("done");
+    expect(tokensIn(roundId)).toBe(10);
+  });
+});
