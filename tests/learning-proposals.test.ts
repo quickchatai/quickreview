@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { MemoryOp } from "../src/memory/store.js";
-import { FakeMemory, learningRig } from "./helpers/tui-rig.js";
+import { stripAnsi } from "../src/tui/paint.js";
+import { FakeMemory, learningRig, settle } from "./helpers/tui-rig.js";
 
 const SLUG = "baseline-mergebase-2026-08-20";
 const roots: string[] = [];
@@ -66,5 +67,23 @@ describe("LearningStore.reject", () => {
     finish({ ok: true, message: "accepted" });
     await accepting;
     expect((await rig.learning.store.reject(SLUG, "changed my mind")).ok).toBe(true);
+  });
+});
+
+describe("the feedback tab's PROPOSED pane", () => {
+  it("a rubric directory that cannot be listed reads as unread, never as no proposals", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-proposals-"));
+    roots.push(root);
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(join(root, "state", "rubric"), "not a directory");
+    const rig = learningRig({ repoRoot: root, fetchProposals: undefined });
+    rig.app.tab = "feedback";
+    const tab = rig.app.hooks.tabs.feedback!;
+    tab.screen(rig.app, 140, 40);
+    await settle();
+    const screen = stripAnsi(tab.screen(rig.app, 140, 40).render());
+    expect(screen).toContain("PROPOSED (—)");
+    expect(screen).toContain("state/rubric/ could not be listed");
+    expect(screen).not.toContain("PROPOSED (0)");
   });
 });

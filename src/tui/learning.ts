@@ -118,6 +118,9 @@ export interface LearningDeps {
 /** One proposals load: the local rubric dirs and the remote gh read. */
 export interface ProposalsFetch {
   proposals: RubricProposal[];
+  /** Set when state/rubric/ could not be listed — `proposals` is then empty
+   * because nothing was read, not because there are none. */
+  proposalsError?: string;
   /** `undefined` = the gh read was skipped or failed outright. */
   improvements: ImprovementItem[] | undefined;
   /** Lists whose gh call failed while the other one answered. */
@@ -157,6 +160,9 @@ export class LearningStore {
 
   // ---- proposals + bot PRs ---------------------------------------------------
   proposals: RubricProposal[] = [];
+  /** Set when the last load could not list state/rubric/: the pane says so
+   * instead of reading as "no proposals". */
+  proposalsError?: string;
   /** `undefined` = the gh read was skipped or failed, not "no bot PRs": the
    * fetch needs `view.repo`, which is not always set. */
   improvements: ImprovementItem[] | undefined;
@@ -341,10 +347,11 @@ export class LearningStore {
     // first frame makes opening the tab before that snapshot the normal case,
     // which would otherwise park the pane on "not read" all session.
     const hadRepo = (this.app.view.repo ?? "") !== "";
-    const { proposals, improvements, improvementsFailed } = await (
+    const { proposals, proposalsError, improvements, improvementsFailed } = await (
       this.deps.fetchProposals ?? this.defaultFetchProposals
     )(this.app);
     this.proposals = proposals;
+    this.proposalsError = proposalsError;
     this.improvements = improvements;
     this.improvementsFailed = improvements === undefined ? [] : (improvementsFailed ?? []);
     this.propLoaded = true;
@@ -356,7 +363,14 @@ export class LearningStore {
     // Proposals are local: the companion's `land` skill writes state/rubric/
     // in this repo — no ssh, no VM path.
     const root = this.repoRoot;
-    const proposals: RubricProposal[] = listRubricProposals(root).map((slug) => ({
+    let slugs: string[] = [];
+    let proposalsError: string | undefined;
+    try {
+      slugs = listRubricProposals(root);
+    } catch (err) {
+      proposalsError = `state/rubric/ could not be listed: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`;
+    }
+    const proposals: RubricProposal[] = slugs.map((slug) => ({
       slug,
       head: (readRubricFile(root, slug, "PROPOSAL.md") ?? "")
         .split("\n")
@@ -386,7 +400,12 @@ export class LearningStore {
         }
       }
     }
-    return { proposals, improvements, improvementsFailed };
+    return {
+      proposals,
+      ...(proposalsError !== undefined ? { proposalsError } : {}),
+      improvements,
+      improvementsFailed,
+    };
   };
 
   // ---- digest --------------------------------------------------------------

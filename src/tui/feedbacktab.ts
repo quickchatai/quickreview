@@ -488,7 +488,9 @@ export function renderFeedbackTab(
   row([
     {
       text: focusTitle(
-        store.propLoaded ? `PROPOSED (${store.proposals.length})` : "PROPOSED (—)",
+        store.propLoaded && store.proposalsError === undefined
+          ? `PROPOSED (${store.proposals.length})`
+          : "PROPOSED (—)",
         "proposed",
       ),
     },
@@ -497,6 +499,8 @@ export function renderFeedbackTab(
   if (st.focus === "proposed") markFocus(right.length - 1);
   if (!store.propLoaded)
     row([{ text: emptyLine({ kind: "unread", how: "listing state/rubric/" }) }]);
+  else if (store.proposalsError !== undefined)
+    row([{ text: emptyLine({ kind: "unreadable", why: `${store.proposalsError} · r retries` }) }]);
   else if (store.proposals.length === 0)
     row([
       {
