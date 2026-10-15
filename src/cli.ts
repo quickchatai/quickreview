@@ -1278,29 +1278,57 @@ function cmdEvents(tail: number, json: boolean): void {
 }
 
 /** `qcr companion up|down|status` — thin over CompanionLifecycle. */
+/** `qcr companion rebuild`: replace the container and image, then start the
+ * new one exactly as `up` does — the token and config mirror refreshed
+ * before the container starts, so the rebuilt companion never mounts a stale
+ * mirror or an expired token. The pihome volume is untouched. */
+export async function rebuildCompanion(
+  lc: {
+    removeContainer(): Promise<unknown>;
+    buildImage(log: (line: string) => void): Promise<unknown>;
+    ensureUp(log: (line: string) => void): Promise<string>;
+    spawnPi(): Promise<boolean>;
+  },
+  name: string,
+  refreshInputs: () => Promise<void>,
+  log: (line: string) => void,
+): Promise<void> {
+  await lc.removeContainer();
+  await lc.buildImage(log);
+  await refreshInputs();
+  const outcome = await lc.ensureUp(log);
+  const born = await lc.spawnPi();
+  log(
+    `companion ${name}: image rebuilt, ${outcome}; pi session ${born ? "spawned" : "already running"}`,
+  );
+}
+
 export async function cmdCompanion(sub: string | undefined): Promise<void> {
   const { CompanionLifecycle, companionStateWord, realDockerRunner } =
     await import("./tui/companion.js");
   const cfg = loadConfig().companion;
   const lc = new CompanionLifecycle(cfg, realDockerRunner);
+  // What every start publishes before pi spawns: the read-only GitHub token
+  // and the config mirror. Both are one-shot — nothing refreshes them after
+  // this command exits (the TUI does, while it runs).
+  const refreshInputs = async (): Promise<void> => {
+    const { CompanionGithubToken, tokenOutcomeLine } = await import("./tui/ghread.js");
+    const { companionGithubDir } = await import("./install.js");
+    const full = loadConfig();
+    const gh = await new CompanionGithubToken({
+      dir: companionGithubDir(),
+      repo: full.github.repo,
+      secretsDir: full.github.secrets_dir,
+    }).refresh();
+    console.log(`companion ${cfg.container_name}: ${tokenOutcomeLine(gh)}`);
+    const mirror = lc.syncConfigMirror();
+    console.log(
+      `companion ${cfg.container_name}: config mirror ${typeof mirror === "object" ? `NOT refreshed — ${mirror.failed}` : mirror}`,
+    );
+  };
   switch (sub) {
     case "up": {
-      // Mint the read-only GitHub token first. One-shot: nothing
-      // refreshes it after this command exits (the TUI does, while it runs).
-      const { CompanionGithubToken, tokenOutcomeLine } = await import("./tui/ghread.js");
-      const { companionGithubDir } = await import("./install.js");
-      const full = loadConfig();
-      const gh = await new CompanionGithubToken({
-        dir: companionGithubDir(),
-        repo: full.github.repo,
-        secretsDir: full.github.secrets_dir,
-      }).refresh();
-      console.log(`companion ${cfg.container_name}: ${tokenOutcomeLine(gh)}`);
-      // One-shot too: the config mirror reflects the config as of now.
-      const mirror = lc.syncConfigMirror();
-      console.log(
-        `companion ${cfg.container_name}: config mirror ${typeof mirror === "object" ? `NOT refreshed — ${mirror.failed}` : mirror}`,
-      );
+      await refreshInputs();
       const outcome = await lc.ensureUp();
       const born = await lc.spawnPi();
       console.log(
@@ -1332,13 +1360,7 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
       // explicit "apply what I changed" path. The pihome volume is untouched,
       // so OAuth and the conversation survive; only the container and image
       // are replaced.
-      await lc.removeContainer();
-      await lc.buildImage((line) => console.log(line));
-      const outcome = await lc.ensureUp((line) => console.log(line));
-      const born = await lc.spawnPi();
-      console.log(
-        `companion ${cfg.container_name}: image rebuilt, ${outcome}; pi session ${born ? "spawned" : "already running"}`,
-      );
+      await rebuildCompanion(lc, cfg.container_name, refreshInputs, (line) => console.log(line));
       return;
     }
     default:

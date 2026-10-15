@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  rebuildCompanion,
   cancellationsOn,
   parseRelayoutArgs,
   renderStatus,
@@ -295,5 +296,33 @@ describe("qcr memory relayout — flags", () => {
       expect(() => parseRelayoutArgs(rest, fromConfig), rest.join(" ")).toThrow(
         /usage: qcr memory .*relayout \[--plan\|--apply\]/,
       );
+  });
+});
+
+describe("qcr companion rebuild", () => {
+  it("refreshes the token and config mirror after the build and before the new container starts", async () => {
+    const order: string[] = [];
+    const lines: string[] = [];
+    await rebuildCompanion(
+      {
+        removeContainer: async () => void order.push("remove"),
+        buildImage: async () => void order.push("build"),
+        ensureUp: async () => {
+          order.push("ensureUp");
+          return "created";
+        },
+        spawnPi: async () => {
+          order.push("spawnPi");
+          return true;
+        },
+      },
+      "qcr-companion",
+      async () => void order.push("refresh"),
+      (l) => lines.push(l),
+    );
+    expect(order).toEqual(["remove", "build", "refresh", "ensureUp", "spawnPi"]);
+    expect(lines.at(-1)).toBe(
+      "companion qcr-companion: image rebuilt, created; pi session spawned",
+    );
   });
 });
