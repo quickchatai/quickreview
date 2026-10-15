@@ -1674,16 +1674,27 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           // while the kill switch is on — so flipping it rebuilds the agents,
           // the way a [feedback] comment does for its addendum. Suppressing
           // one lesson needs no rebuild: the selector reads it every round.
+          // A rebuild that throws leaves the build stale: the 5-minute agents
+          // tick retries it, and the answer says so rather than reading as
+          // a validator already rebuilt.
+          let rebuildFailed = false;
           if (r.changed && (change.action === "off" || change.action === "on")) {
             try {
               rebuildAgents();
             } catch (err) {
-              log("lessons: agents rebuild after the kill switch flipped failed", err);
+              rebuildFailed = true;
+              log(
+                "lessons: agents rebuild after the kill switch flipped failed — the agents tick retries it",
+                err,
+              );
             }
           }
           return {
             ok: true,
             changed: r.changed,
+            ...(rebuildFailed
+              ? { agents_rebuild: "failed — the 5-minute agents tick retries it" }
+              : {}),
             lessons_off: r.lessons_off,
             suppressed: r.suppressed.length,
             ...("uri" in change ? { uri: change.uri } : {}),
@@ -1909,7 +1920,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
       // Expire a stale same-day feedback addendum promptly on the
       // ops-day change — a 5-minute string compare, so yesterday's items
-      // bite at most minutes into a new day, not an hour.
+      // bite at most minutes into a new day, not an hour — and retries a
+      // rebuild that threw (a stale build) on the same day.
       const dayCheck = setInterval(() => {
         try {
           agentsDay.tick();
