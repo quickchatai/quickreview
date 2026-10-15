@@ -14,7 +14,7 @@
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
 // prompt renderer (src/templates.ts) is injected so this module has no content
 // dependency.
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
 import { githubCloneDir, REVIEW_DEFAULTS, sandboxRoot } from "./config.js";
@@ -75,7 +75,7 @@ import {
   type DeltaClass,
   type DeltaList,
 } from "./recheck.js";
-import { roundPostingKey } from "./posting-receipt.js";
+import { postingReceiptPath, readPostingReceipt, roundPostingKey } from "./posting-receipt.js";
 import type { RoundLessonHook, RoundSelectionResult } from "./lessonselect.js";
 import {
   buildRoundDelivery,
@@ -257,6 +257,10 @@ export interface DispatchDeps {
    * the follow-up round's prior-findings list. Default: under the
    * sandbox root's state dir. */
   findingsDir?: string;
+  /** `<root>/state/posting-receipts` — read to prove an interrupted
+   * approval retry posted nothing before its withheld mark is restored.
+   * Default: under the sandbox root's state dir. */
+  postingReceiptDir?: string;
   /** The round's integrity baseline, taken before the session hears about
    * the round. Default: `fingerprintRoundIntegrity` — real, async reads of the
    * clone, worktree, pi home and sandbox policy surface. Injected only by a
@@ -885,10 +889,19 @@ async function consumeTriggers(
  * runs instead of being skipped as no new evidence. A round that decided (a
  * verdict, a guard-2 no-op) or is still running owes nothing; neither does a
  * spend at another head or one a later round has overtaken.
+ *
+ * Only a round that PROVABLY posted nothing is restored: a restored mark
+ * takes the replacement round past guard 2's daemon half, and the approval
+ * route has no guard 2 of its own, so a round whose APPROVE went out would
+ * post a second one. So the round has no posting receipt but a guard-2
+ * refusal (a `prepared` or `deferred` one is unknown, never "not posted"), its
+ * row records no posting, and the reviewed-head mark has not been stamped
+ * since it started.
  */
 function restoreInterruptedApprovalRetry(
   store: DispatchDeps["store"],
   row: Pick<PrStateRow, "number" | "head_sha">,
+  postingReceiptDir: string,
 ): ApprovalWithheldRow | undefined {
   const spent = store.db
     .prepare(
@@ -907,6 +920,14 @@ function restoreInterruptedApprovalRetry(
   if (!round || round.status === "running" || round.status === "done") return undefined;
   if (round.status === "cancelled" && round.cancel_cause === "no_new_evidence") return undefined;
   if (store.hasLaterRound(row.number, round.round_no)) return undefined;
+  // A receipt file that cannot be read is unknown too.
+  if (existsSync(postingReceiptPath(postingReceiptDir, row.number, round.round_no))) {
+    const receipt = readPostingReceipt(postingReceiptDir, row.number, round.round_no);
+    if (receipt?.status !== "skipped") return undefined;
+  }
+  if (round.posted_event || round.gh_review_id !== null) return undefined;
+  const mark = store.reviewedHead(row.number);
+  if (mark && mark.reviewed_at >= round.started_at) return undefined;
   store.recordApprovalWithheld(row.number, {
     head_sha: row.head_sha,
     ci_state: typeof record.ci_state === "string" ? record.ci_state : null,
@@ -2099,7 +2120,12 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // never re-attempted, which is the stuck-PR failure the gate must not
       // create.
       const withheld =
-        store.approvalWithheld(row.number) ?? restoreInterruptedApprovalRetry(store, row);
+        store.approvalWithheld(row.number) ??
+        restoreInterruptedApprovalRetry(
+          store,
+          row,
+          deps.postingReceiptDir ?? join(sandboxRoot(), "state", "posting-receipts"),
+        );
       const withheldHere = withheld?.head_sha === row.head_sha;
       // The round about to run re-decides the verdict from scratch, so the
       // withholding it inherits is spent — once the round has a durable owner

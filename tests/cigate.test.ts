@@ -2,7 +2,7 @@
 // is driven here through the real machinery it lives in: the pure classifier,
 // the guard on the real MutationGate, and the `ci_completed` → re-queue path
 // that keeps a withheld approval from becoming a stuck PR.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -899,6 +899,14 @@ function hooks(): { hooks: SessionHooks; orders: RoundOrder[] } {
   };
 }
 
+/** Back-date the reviewed-head stamp: it was written by a round before the
+ * one under test, not in the same millisecond as its start. */
+function stampedEarlier(pr: number): void {
+  store.db
+    .prepare("UPDATE reviewed_heads SET reviewed_at = ? WHERE pr = ?")
+    .run("2026-01-01T00:00:00.000Z", pr);
+}
+
 describe("dispatch — a withheld approval is new evidence at the same head", () => {
   it(
     "runs the round the no-new-evidence guard would otherwise have skipped",
@@ -978,6 +986,8 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
       tracked(5180, HEAD);
       store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
       store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+      // The withheld COMMENT's stamp is from the earlier round.
+      stampedEarlier(5180);
       await retryWithheldApproval(
         { cfg, store, adapter: new CiFake() },
         { pr: 5180, head_sha: HEAD },
@@ -1006,6 +1016,64 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
       ).toEqual({ c: 1 });
       // Spent again by the round that now owns it.
       expect(store.approvalWithheld(5180)).toBeUndefined();
+    },
+  );
+
+  // MUTATION: drop the posted-nothing proof from restoreInterruptedApprovalRetry
+  // — the retry round whose APPROVE went out is re-run past guard 2's daemon
+  // half, and approve-pr.sh (no guard 2) approves a second time.
+  it(
+    "a retry round that may have posted is never restored: no second round, no second APPROVE",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const receipts = mkdtempSync(join(tmpdir(), "qcr-receipts-"));
+      try {
+        for (const posted of ["stamp", "receipt"] as const) {
+          store.db.prepare("DELETE FROM approval_withheld").run();
+          tracked(5180, HEAD);
+          store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
+          store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+          stampedEarlier(5180);
+          await retryWithheldApproval(
+            { cfg, store, adapter: new CiFake() },
+            { pr: 5180, head_sha: HEAD },
+          );
+          const h = hooks();
+          await dispatchOnce({
+            cfg,
+            store,
+            adapter: new DispatchFake(),
+            hooks: h.hooks,
+            postingReceiptDir: receipts,
+          });
+          expect(h.orders, posted).toHaveLength(1);
+          const roundNo = h.orders[0]!.round_no;
+          if (posted === "stamp")
+            // approve-pr.sh confirmed its APPROVE and stamped the head.
+            store.recordReviewedHead(5180, { head_sha: HEAD, posted_event: "APPROVE" });
+          // A receipt still `prepared` (or unreadable) is unknown, never "not posted".
+          else writeFileSync(join(receipts, `pr-5180-round-${roundNo}.json`), "{ not json");
+
+          // Restart before the verdict file: the orphan sweep requeues the head.
+          reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+          const again = await dispatchOnce({
+            cfg,
+            store,
+            adapter: new DispatchFake(),
+            hooks: h.hooks,
+            postingReceiptDir: receipts,
+          });
+          expect(again, posted).toEqual([]);
+          expect(
+            store.db
+              .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_restored'")
+              .get(),
+            posted,
+          ).toEqual({ c: 0 });
+        }
+      } finally {
+        rmSync(receipts, { recursive: true, force: true });
+      }
     },
   );
 
