@@ -3,6 +3,7 @@
 // legend — a glance at the color tells the state without reading. Verdicts
 // and anomalies get their own fixed colors.
 import { ACCENT, MUTED } from "./design.js";
+import { STATE_GLYPHS } from "./model.js";
 import { ESC, rgb } from "./paint.js";
 
 export const FG = {
@@ -38,18 +39,24 @@ export function verdictColor(verdict: string | null | undefined): string {
   return FG.dim;
 }
 
-/** Compact verdict chip: APPROVE → ✓A, REQUEST_CHANGES → ✗RC, NEEDS_HUMAN → ⚑H. */
+/** The verdict chip's text, unstyled: APPROVE → ✓A, REQUEST_CHANGES → ✗RC,
+ * NEEDS_HUMAN (and its legacy ESCALATE spelling) → ⚑H, any other verdict as
+ * itself, none → "". What the board measures is what it paints. */
+export function verdictLabel(verdict: string | null | undefined): string {
+  if (!verdict) return "";
+  return verdict === "APPROVE"
+    ? "✓A"
+    : verdict === "REQUEST_CHANGES"
+      ? "✗RC"
+      : verdict === "NEEDS_HUMAN" || verdict === "ESCALATE"
+        ? "⚑H"
+        : verdict;
+}
+
+/** Compact verdict chip: `verdictLabel` in the verdict's color. */
 export function verdictChip(verdict: string | null | undefined): string {
   if (!verdict) return "";
-  const label =
-    verdict === "APPROVE"
-      ? "✓A"
-      : verdict === "REQUEST_CHANGES"
-        ? "✗RC"
-        : verdict === "NEEDS_HUMAN" || verdict === "ESCALATE"
-          ? "⚑H"
-          : verdict;
-  return `${verdictColor(verdict)}${label}${RESET}`;
+  return `${verdictColor(verdict)}${verdictLabel(verdict)}${RESET}`;
 }
 
 /** 45s / 12m / 3h / 2d — age at a glance. */
@@ -64,11 +71,13 @@ export function fmtAge(iso: string | null | undefined, now: Date): string {
 
 /** Colored one-line glyph legend rendered under the PR list. */
 export function legendLine(): string {
+  // The lifecycle glyphs are the board's own (`STATE_GLYPHS`); `↻` is the
+  // stale-recheck prefix `glyphFor` adds.
   const parts: Array<[string, string, string]> = [
-    ["▶", "reviewing", FG.reviewing],
-    ["●", "queued", FG.queued],
-    ["✎", "author", FG.awaiting_author],
-    ["·", "tracked", FG.tracked],
+    [STATE_GLYPHS.reviewing, "reviewing", FG.reviewing],
+    [STATE_GLYPHS.queued, "queued", FG.queued],
+    [STATE_GLYPHS.awaiting_author, "author", FG.awaiting_author],
+    [STATE_GLYPHS.tracked, "tracked", FG.tracked],
     ["↻", "stale", FG.accent],
   ];
   return parts

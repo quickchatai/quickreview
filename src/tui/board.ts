@@ -44,7 +44,17 @@ import {
   type RoundProgressSnapshot,
 } from "../round-progress.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
-import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
+import {
+  FG,
+  RESET,
+  fmtAge,
+  legendLine,
+  osc8,
+  prUrl,
+  stateColor,
+  verdictChip,
+  verdictLabel,
+} from "./theme.js";
 
 /** Every clickable thing the board declares. */
 export type BoardAction =
@@ -124,15 +134,7 @@ function pauseChip(pr: SnapshotPr): string {
 }
 
 function rowPlain(pr: SnapshotPr, now: Date): string {
-  // "ESCALATE" is the legacy spelling of NEEDS_HUMAN; older rounds carry it.
-  const chip =
-    pr.last_verdict === "APPROVE"
-      ? "✓A"
-      : pr.last_verdict === "REQUEST_CHANGES"
-        ? "✗RC"
-        : pr.last_verdict === "NEEDS_HUMAN" || pr.last_verdict === "ESCALATE"
-          ? "⚑H"
-          : "";
+  const chip = verdictLabel(pr.last_verdict);
   const rounds = pr.rounds ? `r${pr.rounds}` : "";
   return [
     glyphFor(pr),

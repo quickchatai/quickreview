@@ -557,6 +557,17 @@ describe("adaptive layout", () => {
     expect(listWidth(prs, 60)).toBe(27); // clamp: 45% of 60
   });
 
+  it("measures a verdict the board has no short chip for as it paints it — by its own name", async () => {
+    const { listWidth } = await import("../src/tui/board.js");
+    const base = { ...snapshot.prs[0]!, title: "t", author: "a", rounds: 0 };
+    const known = listWidth([{ ...base, last_verdict: "APPROVE" }], 400);
+    const odd = listWidth(
+      [{ ...base, last_verdict: "A_FUTURE_VERDICT_NAME_LONGER_THAN_THE_LEGEND_BELOW_THE_LIST" }],
+      400,
+    );
+    expect(odd).toBeGreaterThan(known);
+  });
+
   it("gives the live pi mirror half the screen, never starving the body", async () => {
     const { piRows } = await import("../src/tui/board.js");
     // With the two-row bar the usable height is rows - 4.
