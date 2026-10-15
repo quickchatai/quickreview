@@ -347,6 +347,10 @@ export class Archiver {
   /** The archive databases — opened lazily, only in mode `on`. */
   private adb: ArchiveDb | null = null;
   private mover: DbMover | null = null;
+  /** The disk reason that stopped this tick's DB phase between batches. */
+  private dbRoomHold: "disk_low" | "disk_unknown" | null = null;
+  /** The disk reason a month's gzip found no room under this tick. */
+  private sealRoomHold: "disk_low" | "disk_unknown" | null = null;
   private sealsRecovered = false;
   private db: ArchiveDbStatus | null = null;
   /** When each incident's anomaly was last raised (key → ms). */
@@ -483,11 +487,16 @@ export class Archiver {
     return this.plan;
   }
 
-  private hold(reason: ArchiveHoldReason, until: string | null = null): ArchiveTick {
+  /** End the tick held. `planned` says whether this tick computed a plan
+   * before the hold came up. */
+  private hold(
+    reason: ArchiveHoldReason,
+    opts: { until?: string | null; planned?: boolean } = {},
+  ): ArchiveTick {
     this.state = "held";
     this.heldReason = reason;
-    this.heldUntil = until;
-    return { state: "held", held_reason: reason, planned: false };
+    this.heldUntil = opts.until ?? null;
+    return { state: "held", held_reason: reason, planned: opts.planned ?? false };
   }
 
   private async runTick(): Promise<ArchiveTick> {
@@ -503,7 +512,8 @@ export class Archiver {
       const healthy = this.deps.firstHealthyReconcileAt();
       if (!healthy) return this.hold("awaiting_reconcile");
       const opens = healthy.getTime() + this.policy.startDelayMs;
-      if (at.getTime() < opens) return this.hold("start_delay", new Date(opens).toISOString());
+      if (at.getTime() < opens)
+        return this.hold("start_delay", { until: new Date(opens).toISOString() });
       const on = this.policy.mode === "on";
       // Mode on: crash recovery (once per start), then the restores of reopened
       // PRs — before the tick's holds, because a drain never holds a restore
@@ -528,8 +538,9 @@ export class Archiver {
         this.state = "running";
         this.runningSince ??= at.toISOString();
         failure = await this.dbPhase();
-        // A hold that came up during it (the mover stops on one) ends the tick.
-        const midway = failure === null ? this.loadReason() : null;
+        // A hold that came up during it (the mover stops on one, the disk
+        // included) ends the tick.
+        const midway = failure === null ? (this.loadReason() ?? this.dbRoomHold) : null;
         if (midway) return this.hold(midway);
         if (this.mutex.priorityWaiting()) return this.yieldToRestore(at);
       }
@@ -565,12 +576,12 @@ export class Archiver {
         if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
         const files = await this.filePhase(at);
         if (files.failure) failure = files.failure;
-        else if (files.hold) return this.hold(files.hold);
+        else if (files.hold) return this.hold(files.hold, { planned });
         if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
         // The stores that belong to no PR: after the PRs (§10).
         if (failure === null) {
           const hold = await this.storesPhase(at);
-          if (hold) return this.hold(hold);
+          if (hold) return this.hold(hold, { planned });
           if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
         }
       }
@@ -579,10 +590,18 @@ export class Archiver {
       // the tick budget is spent.
       if (on && failure === null) {
         const before = this.loadReason() ?? (await this.checkDisk());
-        if (before) return this.hold(before);
+        if (before) return this.hold(before, { planned });
         if (this.now().getTime() - at.getTime() >= this.policy.tickBudgetMs)
           this.log("archive: sealing waits for the next tick — the tick budget is spent");
-        else failure = await this.sealPhase();
+        else {
+          failure = await this.sealPhase();
+          // No room for a month's gzip: a mount short of the headroom (or a
+          // failed reading) holds the tick; one month too large for the
+          // archive mount only waits, as one large PR file does.
+          const room = failure === null ? this.sealRoomHold : null;
+          if (room && !(room === "disk_low" && this.headroomHolds()))
+            return this.hold(room, { planned });
+        }
       }
       if (failure !== null) {
         this.state = "failed";
@@ -1423,6 +1442,7 @@ export class Archiver {
    */
   private async dbPhase(): Promise<string | null> {
     const startedAt = this.now().toISOString();
+    this.dbRoomHold = null;
     let adb: ArchiveDb;
     try {
       adb = await this.archiveDb();
@@ -1457,6 +1477,7 @@ export class Archiver {
       wallBudgetMs: this.policy.tickBudgetMs,
       signal: this.abort.signal,
       hold: () => this.batchHold(),
+      room: async () => (this.dbRoomHold = await this.checkDisk()),
       ...(this.deps.sleep ? { sleep: this.deps.sleep } : {}),
       ...(this.deps.clock ? { clock: this.deps.clock } : {}),
       log: this.log,
@@ -1531,6 +1552,7 @@ export class Archiver {
    * or a check refuses is reported and retried later; only an unexpected
    * failure fails the tick. */
   private async sealPhase(): Promise<string | null> {
+    this.sealRoomHold = null;
     const adb = this.adb;
     if (!adb) return null;
     let results: SealResult[];
@@ -1545,6 +1567,7 @@ export class Archiver {
         maxBytesPerS: this.policy.maxBytesPerS,
         signal: this.abort.signal,
         hold: () => this.batchHold(),
+        roomFor: async (bytes) => (this.sealRoomHold = await this.checkDisk(bytes)),
         log: this.log,
       });
     } catch (err) {
@@ -1565,7 +1588,10 @@ export class Archiver {
         });
         continue;
       }
-      this.log(`archive: ${r.file} not sealed (${r.outcome}): ${r.detail ?? ""}`);
+      const line = `archive: ${r.file} not sealed (${r.outcome}): ${r.detail ?? ""}`;
+      // A month waiting for room says so once, not every tick.
+      if (r.outcome === "held") this.logTickLine(`seal:${r.file}`, line, false, line);
+      else this.log(line);
       if (SEAL_PROBLEMS.has(r.outcome))
         this.raiseQuiet(
           `${r.outcome}:${r.file}`,

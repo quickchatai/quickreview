@@ -78,7 +78,8 @@ export type SealOutcome =
   | "verify_failed" // the gzip round trip did not reproduce the file
   | "changed" // the file changed while it was being compressed
   | "missing" // the manifest lists it open, but it is not on disk: held, never recreated
-  | "conflict"; // a `.gz` of it is already on disk: nothing is replaced
+  | "conflict" // a `.gz` of it is already on disk: nothing is replaced
+  | "held"; // no room on the archive mount for its gzip (or the disk unread): it waits
 
 /** The outcomes that need a person (the archiver raises the quiet
  * `archive_verify_failed` anomaly for each, once per incident). */
@@ -109,6 +110,9 @@ export interface SealDeps {
   clock?: () => number;
   /** Re-read before each file: a reason starts nothing more (§10). */
   hold?: () => string | null;
+  /** Room for a gzip of `bytes` on the archive mount, the headroom kept
+   * (§7.7): a reason starts no gzip — the file is `held` and sealing stops. */
+  roomFor?: (bytes: number) => Promise<string | null>;
   /** Tests: runs after the gzip partial is written, before it is verified. */
   beforeVerify?: (partial: string) => Promise<void>;
   log?: (msg: string, extra?: unknown) => void;
@@ -347,6 +351,8 @@ export async function sealFile(deps: SealDeps, entry: DbFileEntry): Promise<Seal
       detail: "another connection keeps a non-empty WAL",
     };
   const before = await identityOf(path);
+  const noRoom = (await deps.roomFor?.(before?.size ?? 0)) ?? null;
+  if (noRoom) return { file: entry.file, outcome: "held", detail: noRoom };
 
   // ---- 4–6. gzip, verify the round trip, identity again ------------------------
   const partial = `${gzPath}${PARTIAL_SUFFIX}`;
@@ -441,6 +447,7 @@ export async function sealDue(deps: SealDeps, max = 1): Promise<SealResult[]> {
     if (deps.hold?.()) break;
     const r = await sealFile(deps, entry);
     if (r.outcome !== "not_due") out.push(r);
+    if (r.outcome === "held") break;
     await yieldToLoop();
   }
   return out;

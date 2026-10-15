@@ -240,6 +240,9 @@ export interface DbMoverDeps {
   signal?: AbortSignal;
   /** Re-checked before every batch: a reason stops the run (`held`). */
   hold?: () => string | null;
+  /** The disk, re-read (awaited) before every batch: a reason — no room, or
+   * a reading that failed — stops the run (`held`) like `hold`. */
+  room?: () => Promise<string | null>;
   /** Past this much archive WAL a PASSIVE checkpoint runs (default
    * `CHECKPOINT_WAL_BYTES`) — a seam for tests. */
   checkpointWalBytes?: number;
@@ -585,6 +588,9 @@ export class DbMover {
     for (;;) {
       try {
         this.checkStop(result, started);
+        const noRoom = (await this.deps.room?.()) ?? null;
+        if (noRoom) throw new Stop("held", null, noRoom);
+        this.checkAborted();
       } catch (err) {
         // A budget or a hold keeps what the scan settled; a stop writes nothing.
         if (err instanceof Stop && err.outcome !== "aborted") this.persistQuietly(persist);
