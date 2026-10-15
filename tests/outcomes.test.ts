@@ -859,6 +859,54 @@ describe("the fate table", () => {
     expect(await fate(argued)).toEqual([["F1", "upheld_after_reply", "kept_open"]]);
   });
 
+  it("a later verified fix supersedes an intervening hold — every citation is read, not only the first", async () => {
+    const h = threaded(fakeGit({}, { aaaa1111: true, bbbb2222: true }));
+    h.push(H2);
+    humanReply(h.store, { id: 860, root: 800, body: "Fixed in aaaa1111", at: h.tick() });
+    h.tick();
+    resolvedThread(h.store, 800, 860, { resolution: "keep_open", outcome: "held" });
+    h.tick();
+    humanReply(h.store, { id: 861, root: 800, body: "Now fixed in bbbb2222", at: h.tick() });
+    expect(await fate(h)).toEqual([["F1", "fixed", "sha_cited"]]);
+    expect(h.capture.outcomesFor(PR)[0]!.evidence).toContain("reply 861 cites bbbb2222");
+  });
+
+  it("keep_open is judged by the reply it answered (its comment id), never by capture order or another reply's citation", async () => {
+    // The argument (870) was captured BEFORE the older fix-citing reply (871)
+    // was backfilled; the decision answered 870 — the bot held against it.
+    const held = threaded(fakeGit({}, { "432a199f79": true }));
+    held.push(H2);
+    const early = held.tick();
+    const late = held.tick();
+    humanReply(held.store, { id: 870, root: 800, body: "I still disagree.", at: late });
+    humanReply(held.store, { id: 871, root: 800, body: "Fixed in 432a199f79", at: early });
+    held.tick();
+    resolvedThread(held.store, 800, 870, { resolution: "keep_open" });
+    expect(await fate(held)).toEqual([["F1", "upheld_after_reply", "kept_open"]]);
+
+    // An earlier verified citation, then a reply citing a commit git cannot
+    // check, kept open: THAT citation is unchecked — undecided, not fixed.
+    const unchecked = threaded(fakeGit({}, { "432a199f79": true }));
+    unchecked.push(H2);
+    humanReply(unchecked.store, {
+      id: 872,
+      root: 800,
+      body: "Fixed in 432a199f79",
+      at: unchecked.tick(),
+    });
+    humanReply(unchecked.store, {
+      id: 873,
+      root: 800,
+      body: "and the rest in cccc3333",
+      at: unchecked.tick(),
+    });
+    unchecked.tick();
+    resolvedThread(unchecked.store, 800, 873, { resolution: "keep_open" });
+    expect(await fate(unchecked)).toEqual([
+      ["F1", "unknown", "conflict:kept_open_after_unverified_sha"],
+    ]);
+  });
+
   it("a resolve after a push that changed the anchored lines is fixed", async () => {
     const git = fakeGit({ "workers/ingest.py@a1..b2": true });
     const h = threaded(git);

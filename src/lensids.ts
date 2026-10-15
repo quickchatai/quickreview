@@ -17,6 +17,19 @@ import { ALL_PASSES } from "./passes.js";
 const VALIDATOR = "pass-validate";
 const KNOWN: ReadonlySet<string> = new Set([...ALL_PASSES, VALIDATOR]);
 
+/** The stored `round_findings.lens_ids` column (a JSON array of ids), read
+ * back: its string members, or null when the column is empty or not such an
+ * array — each caller says what null means (no ids, or the raw `lens`). */
+export function storedLensIds(raw: string | null | undefined): string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The known lens ids a recorded `lens` value names, in written order. */
 export function canonicalLensIds(raw: string | null | undefined): string[] {
   if (typeof raw !== "string") return [];

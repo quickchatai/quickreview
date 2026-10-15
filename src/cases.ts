@@ -115,6 +115,7 @@ import { cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags, parseHashTags } from "./memory/eventtags.js";
 import { MEMORY_DEFAULTS } from "./config.js";
 import type { CaseWritesStatus } from "./memory/health.js";
+import { storedLensIds } from "./lensids.js";
 import { CASES_AREA } from "./memory/layout.js";
 import type { RoundActivityGate } from "./memory/roundactivity.js";
 import type { DocumentPut, DocumentPutResult, MemoryStore } from "./memory/store.js";
@@ -357,12 +358,7 @@ function isoSecond(at: string | null | undefined): string | null {
 }
 
 function lensIdsOf(row: RoundFindingRow): string[] {
-  try {
-    const parsed = JSON.parse(row.lens_ids ?? "[]") as unknown;
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
+  return storedLensIds(row.lens_ids) ?? [];
 }
 
 /** One line of model- or human-written text for a prose sentence: no quotes

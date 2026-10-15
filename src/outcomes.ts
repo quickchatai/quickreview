@@ -97,6 +97,7 @@
 // change and never no-change. Every failure is the sweep's own — reconcile's
 // health (which lifts a deploy drain) never waits on it.
 import { parseFindingMarker } from "./findingkey.js";
+import { storedLensIds } from "./lensids.js";
 import type { ReviewCommentFull } from "./github.js";
 import { yieldToLoop } from "./yieldloop.js";
 import type { PrCommentRow, PrStateRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
@@ -353,13 +354,7 @@ function ms(iso: string | null | undefined): number | null {
 }
 
 function lensIdsOf(row: RoundFindingRow): string[] {
-  if (!row.lens_ids) return [];
-  try {
-    const parsed = JSON.parse(row.lens_ids) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
+  return storedLensIds(row.lens_ids) ?? [];
 }
 
 /**
@@ -378,22 +373,27 @@ export function predecessorOf(
   round: readonly RoundFindingRow[],
   e: RoundFindingRow,
 ): string | null {
-  const ids = lensIdsOf(e);
   const dist = (s: RoundFindingRow) =>
     s.line === null || e.line === null ? CONTINUATION_LINES : Math.abs(s.line - e.line);
-  const candidates = round.filter(
-    (s) =>
-      !!s.path &&
-      s.path === e.path &&
-      lensIdsOf(s).some((id) => ids.includes(id)) &&
-      dist(s) <= CONTINUATION_LINES,
-  );
+  const candidates = round.filter((s) => sameSite(s, e));
   const keyed = candidates.find((s) => s.finding_key === e.finding_key);
   if (keyed) return keyed.finding_key;
   if (candidates.length === 0) return null;
   const best = Math.min(...candidates.map(dist));
   const nearest = candidates.filter((s) => dist(s) === best);
   return nearest.length === 1 ? nearest[0]!.finding_key : null;
+}
+
+/** Could `b` be `a` again? The same path, a shared lens, within
+ * `CONTINUATION_LINES` (an entry without a line is near). The one eligibility
+ * rule of predecessor ownership and of the weak next-round match; who wins
+ * among the eligible is each caller's own rule. */
+function sameSite(a: RoundFindingRow, b: RoundFindingRow): boolean {
+  if (!a.path || a.path !== b.path) return false;
+  if (a.line !== null && b.line !== null && Math.abs(a.line - b.line) > CONTINUATION_LINES)
+    return false;
+  const ids = lensIdsOf(a);
+  return lensIdsOf(b).some((id) => ids.includes(id));
 }
 
 const fkey = (round: number, key: string): string => `${round}\u0000${key}`;
@@ -467,14 +467,28 @@ interface PrFacts {
   closedAt: number | null;
 }
 
-/** What the human replies of a thread say about a fix commit: a cited sha
- * git confirmed (`verified`), one git could not check (`unverified` — no
- * evidence, and no "no sha was cited" either), or none (`none`: no token, or
- * every token provably not a later commit). */
+/** What a human reply — or the human replies of a thread — say about a fix
+ * commit: a cited sha git confirmed (`verified`), one git could not check
+ * (`unverified` — no evidence, and no "no sha was cited" either), or none
+ * (`none`: no token, or every token provably not a later commit). */
 type CitedFix =
   | { state: "verified"; sha: string; reply: PrCommentRow }
   | { state: "unverified" }
   | { state: "none" };
+
+/** The thread's reading (`overall`: the LATEST verified citation, so a fix
+ * cited after an intervening hold still supersedes it) and each reply's own
+ * (`byReply`, by comment id: a decision on one reply is judged by THAT reply's
+ * citation, never another's). */
+interface CitedFixes {
+  overall: CitedFix;
+  byReply: Map<number, CitedFix["state"]>;
+}
+
+/** When a human reply was made: GitHub's time, else when it was captured. */
+function replyMs(r: PrCommentRow): number {
+  return ms(r.created_at) ?? ms(r.captured_at) ?? 0;
+}
 
 /** A resolve that counts: the bot's own, or one GitHub answered "already
  * resolved" (a human clicked first; the session still decided `resolve`). The
@@ -496,7 +510,6 @@ export interface OutcomeCaptureDeps {
   /** Absent ⇒ every "did the code change" question is unknown. */
   git?: AnchorGit;
   now?: () => Date;
-  log?: (msg: string, extra?: unknown) => void;
 }
 
 export class OutcomeCapture {
@@ -866,10 +879,6 @@ export class OutcomeCapture {
     facts: PrFacts,
     comment: number | null,
   ): { strong: RoundFindingRow[]; next: { round: number; weak: RoundFindingRow[] } | null } {
-    const lenses = lensIdsOf(f);
-    const near = (e: RoundFindingRow) =>
-      f.line === null || e.line === null || Math.abs(e.line - f.line) <= CONTINUATION_LINES;
-    const sameLens = (e: RoundFindingRow) => lensIdsOf(e).some((id) => lenses.includes(id));
     const ownRound = facts.byRound.get(f.round_no) ?? [];
     const strong: RoundFindingRow[] = [];
     for (const e of facts.rows) {
@@ -886,9 +895,7 @@ export class OutcomeCapture {
       .filter((r) => r > f.round_no)
       .sort((a, b) => a - b)[0];
     if (nextRound === undefined) return { strong, next: null };
-    const weak = (facts.byRound.get(nextRound) ?? []).filter(
-      (e) => !!f.path && e.path === f.path && sameLens(e) && near(e),
-    );
+    const weak = (facts.byRound.get(nextRound) ?? []).filter((e) => sameSite(f, e));
     return { strong, next: { round: nextRound, weak } };
   }
 
@@ -915,32 +922,50 @@ export class OutcomeCapture {
     return out.slice(0, MAX_LATER_HEADS);
   }
 
-  /** Does a human reply cite a commit made after `f`'s head (see `CitedFix`)? */
+  /** Does a human reply cite a commit made after `f`'s head (see `CitedFix`)?
+   * Every reply is read, each on its own. */
   private async citedFix(
     f: RoundFindingRow,
     facts: PrFacts,
     replies: readonly PrCommentRow[],
+  ): Promise<CitedFixes> {
+    const heads = this.laterHeads(f, facts);
+    const byReply = new Map<number, CitedFix["state"]>();
+    let latest: Extract<CitedFix, { state: "verified" }> | null = null;
+    let unverified = false;
+    for (const r of replies) {
+      const own = await this.replyCitesFix(f, heads, r);
+      byReply.set(r.comment_id, own.state);
+      if (own.state === "verified") {
+        if (latest === null || replyMs(r) >= replyMs(latest.reply)) latest = own;
+      } else if (own.state === "unverified") unverified = true;
+    }
+    const overall: CitedFix = latest ?? (unverified ? { state: "unverified" } : { state: "none" });
+    return { overall, byReply };
+  }
+
+  /** One reply's citation: the first of its shas git confirms is a commit
+   * after `f`'s head, else unverified when git could not answer for one. */
+  private async replyCitesFix(
+    f: RoundFindingRow,
+    heads: readonly string[],
+    r: PrCommentRow,
   ): Promise<CitedFix> {
     let unverified = false;
-    const heads = this.laterHeads(f, facts);
-    for (const r of replies) {
-      for (const sha of citedShas(r.body)) {
-        if (!this.deps.git || !f.head_sha || heads.length === 0) {
-          unverified = true;
-          continue;
+    for (const sha of citedShas(r.body)) {
+      if (!this.deps.git || !f.head_sha || heads.length === 0) {
+        unverified = true;
+        continue;
+      }
+      for (const to of heads) {
+        let answer: boolean | null;
+        try {
+          answer = await this.deps.git.introducedBetween(sha, f.head_sha, to);
+        } catch {
+          answer = null;
         }
-        let unknown = false;
-        for (const to of heads) {
-          let answer: boolean | null;
-          try {
-            answer = await this.deps.git.introducedBetween(sha, f.head_sha, to);
-          } catch {
-            answer = null;
-          }
-          if (answer === true) return { state: "verified", sha, reply: r };
-          if (answer === null) unknown = true;
-        }
-        if (unknown) unverified = true;
+        if (answer === true) return { state: "verified", sha, reply: r };
+        if (answer === null) unverified = true;
       }
     }
     return unverified ? { state: "unverified" } : { state: "none" };
@@ -971,22 +996,22 @@ export class OutcomeCapture {
     const postedAt =
       ms(link?.created_at) ?? facts.recorded.get(f.round_no)?.at ?? ms(f.recorded_at) ?? 0;
     const replies = thread !== null ? (facts.replies.get(thread) ?? []) : [];
-    const replyAt = (r: PrCommentRow) => ms(r.created_at) ?? ms(r.captured_at) ?? 0;
     /** A human reply in the thread, no later than `at`, that accepts the
      * point (`concedesPoint`) — the latest one, or null. */
     const humanConceded = (at: number): PrCommentRow | null =>
-      [...replies].reverse().find((r) => replyAt(r) <= at && concedesPoint(r.body)) ?? null;
+      [...replies].reverse().find((r) => replyMs(r) <= at && concedesPoint(r.body)) ?? null;
 
     // 1. A human reply that cites a commit made after the review — "Fixed in
     //    3f2a9c1", checked in git. One git cannot check is no evidence, and no
     //    "nothing was cited" either.
-    const cited = await this.citedFix(f, facts, replies);
+    const cites = await this.citedFix(f, facts, replies);
+    const cited = cites.overall;
     const fixCited = cited.state === "verified";
     if (cited.state === "verified")
       evidence.push({
         fate: "fixed",
         basis: "sha_cited",
-        at: replyAt(cited.reply),
+        at: replyMs(cited.reply),
         detail: `reply ${cited.reply.comment_id} cites ${cited.sha}, a commit after the review`,
       });
 
@@ -1013,20 +1038,24 @@ export class OutcomeCapture {
         } else if (d.resolution === "keep_open") {
           // Keeping a thread open right after "Fixed in <sha>" is the
           // session not having re-verified the new head yet — not the bot
-          // holding against a human. When the human reply it answered cites
-          // a commit: a fix git verified stands (nothing is added —
-          // `sha_cited` is the evidence); one git cannot check yet leaves the
-          // finding undecided.
-          const answered = [...replies].reverse().find((r) => replyAt(r) <= d.at) ?? null;
+          // holding against a human. When the human reply it answered (the
+          // decision's own comment id) cites a commit: a fix git verified
+          // stands (nothing is added — `sha_cited` is the evidence); one git
+          // cannot check yet leaves the finding undecided. Another reply's
+          // citation decides nothing here.
+          const answered = replies.find((r) => r.comment_id === d.comment_id) ?? null;
           const citesSha = answered !== null && citedShas(answered.body).length > 0;
-          if (citesSha && cited.state === "verified" && replyAt(cited.reply) <= d.at) continue;
+          const answeredCite = answered
+            ? (cites.byReply.get(answered.comment_id) ?? "none")
+            : "none";
+          if (citesSha && answeredCite === "verified") continue;
           evidence.push(
-            citesSha && cited.state === "unverified"
+            citesSha && answeredCite === "unverified"
               ? {
                   fate: "unknown",
                   basis: "conflict:kept_open_after_unverified_sha",
                   at: d.at,
-                  detail: `kept open after reply ${answered!.comment_id} cited a commit git could not check`,
+                  detail: `kept open after reply ${answered.comment_id} cited a commit git could not check`,
                 }
               : {
                   fate: "upheld_after_reply",
@@ -1131,7 +1160,7 @@ export class OutcomeCapture {
     if (reposted) {
       carriedTo = reposted;
       const againAt = facts.recorded.get(reposted.round_no)?.at ?? ms(reposted.recorded_at) ?? 0;
-      if (replies.some((r) => replyAt(r) < againAt))
+      if (replies.some((r) => replyMs(r) < againAt))
         evidence.push({
           fate: "upheld_after_reply",
           basis: "reposted_after_reply",
@@ -1475,13 +1504,7 @@ export class OutcomeCapture {
     let replied = 0;
     let repliedKnown = 0;
     for (const r of rows) {
-      let ids: string[] = [];
-      try {
-        const parsed = JSON.parse(r.lens_ids ?? "[]") as unknown;
-        if (Array.isArray(parsed)) ids = parsed.filter((x): x is string => typeof x === "string");
-      } catch {
-        /* no ids */
-      }
+      const ids = storedLensIds(r.lens_ids) ?? [];
       const count = (c: LensOutcomeCounts) => {
         c.posted++;
         if (r.linked) c.linked++;

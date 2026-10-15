@@ -747,7 +747,6 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     botLogin: cfg.github.bot_login,
     ...(deps.outcomeGit ? { git: deps.outcomeGit } : {}),
     ...(deps.now ? { now: deps.now } : {}),
-    log,
   });
 
   let firstReconcileSeen = false;
