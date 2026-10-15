@@ -10,6 +10,9 @@
 // Neither is a bill: the runs go through a ChatGPT login. The Claude Code arm
 // runs no OpenAI model; its cost is Claude Code's own `total_cost_usd` (the
 // API-price equivalent), as bench/aacr/compare.py reads it — labelled apart.
+// A slim re-score bundle has no transcripts: its case-summary.json carries
+// the price the export computed from the full case dir (`bench_cost_usd`,
+// null = unpriced), which wins for every arm, as compare.py reads it.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -58,6 +61,10 @@ export interface CaseCost {
   model?: string;
 }
 
+/** The slim bundle's per-case price (bench/aacr/export_runs.py, compare.py
+ * `SLIM_COST_KEY`). */
+export const SLIM_COST_KEY = "bench_cost_usd";
+
 function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
@@ -101,14 +108,24 @@ export function caseCostUsd(caseDir: string): CaseCost | null {
     model?: unknown;
     fingerprint?: { model?: unknown };
     bridge?: { input_tokens?: unknown; cached_tokens?: unknown; output_tokens?: unknown };
+    [SLIM_COST_KEY]?: unknown;
   };
+  const named = typeof s.model === "string" ? s.model : s.fingerprint?.model;
+  const model = typeof named === "string" ? named : "gpt-6-sol";
+  if (Object.hasOwn(s, SLIM_COST_KEY)) {
+    const usd = s[SLIM_COST_KEY];
+    if (typeof usd !== "number" || !Number.isFinite(usd)) return null;
+    return s.arm === "claude"
+      ? { usd, source: "claude" }
+      : s.bridge
+        ? { usd, source: "priced", ...(ratesFor(model) ? { model } : {}) }
+        : { usd, source: "pi" };
+  }
   if (s.arm === "claude")
     return typeof s.cost_usd === "number" && Number.isFinite(s.cost_usd)
       ? { usd: s.cost_usd, source: "claude" }
       : null;
   if (!s.bridge) return null;
-  const named = typeof s.model === "string" ? s.model : s.fingerprint?.model;
-  const model = typeof named === "string" ? named : "gpt-6-sol";
   const r = ratesFor(model);
   if (!r) return null;
   const u = piUsageFromInclusive(
@@ -118,6 +135,56 @@ export function caseCostUsd(caseDir: string): CaseCost | null {
   );
   const usd = (u.input * r.input + u.cacheRead * r.cacheRead + u.output * r.output) / 1e6;
   return { usd, source: "priced", model };
+}
+
+/** The defect report's dollar figures over a run's case dirs: the per-PR
+ * average over the cases that recorded a price, their total, and how many of
+ * the run's cases that is — a case with no price is unknown, never $0, so a
+ * partly priced run says so. Empty when no case recorded a price. */
+export function runCostUsd(caseDirs: readonly string[]): {
+  usdPerPr?: number;
+  usdTotal?: number;
+  usdSource?: string;
+  usdBasis?: string;
+  usdPriced?: number;
+  usdCases?: number;
+} {
+  let usd = 0,
+    priced = 0;
+  const sources = new Set<string>();
+  const pricedAs = new Set<string>();
+  for (const dir of caseDirs) {
+    const k = caseCostUsd(dir);
+    if (!k) continue;
+    usd += k.usd;
+    priced++;
+    sources.add(k.source);
+    if (k.model) pricedAs.add(k.model);
+  }
+  if (!priced) return {};
+  const rates = [...pricedAs]
+    .sort()
+    .flatMap((m) => {
+      const r = ratesFor(m);
+      return r
+        ? [
+            `${m}: $${r.input} input, $${r.cacheRead.toFixed(2)} cache read, $${r.output} output per million`,
+          ]
+        : [];
+    })
+    .join("; ");
+  return {
+    usdPerPr: usd / priced,
+    usdTotal: usd,
+    usdSource: sources.has("claude")
+      ? "Cost: Claude Code's own total_cost_usd per case (the API-price equivalent) — this arm runs no OpenAI model, so pi has no price for it."
+      : sources.has("priced")
+        ? `Cost: tokens priced at pi's rates (${rates}) — this arm does not run through pi.`
+        : "Cost: pi's own per-call prices, summed over the main session and every lens pass.",
+    ...(sources.has("claude") ? { usdBasis: "Claude Code's own" } : {}),
+    usdPriced: priced,
+    usdCases: caseDirs.length,
+  };
 }
 
 /** A case's token counts from its case-summary.json, whichever arm wrote it:

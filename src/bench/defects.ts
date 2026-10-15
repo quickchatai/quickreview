@@ -702,6 +702,10 @@ export function renderDefectReport(
     usdSource?: string;
     /** Whose prices the dollar column is in; pi's unless said otherwise. */
     usdBasis?: string;
+    /** How many of the run's cases recorded a price, of how many: a partly
+     * priced run's total is a lower bound and says so. */
+    usdPriced?: number;
+    usdCases?: number;
   } = {},
 ): string {
   const s = score;
@@ -734,15 +738,27 @@ export function renderDefectReport(
   ];
   // No run-level cost at all hides the section; a cell the run did not record
   // reads "—", never 0.
+  const partlyPriced =
+    extra.usdPriced !== undefined &&
+    extra.usdCases !== undefined &&
+    extra.usdPriced < extra.usdCases
+      ? ` (${extra.usdPriced}/${extra.usdCases} priced)`
+      : "";
   if (extra.medianMinPerPr !== undefined || extra.tokensInPerPr !== undefined)
     lines.push(
       "## Cost",
       "",
       `| $ / PR (${extra.usdBasis ?? "pi's"} prices) | $ total | Input tokens / PR | Output tokens / PR | Median minutes / PR |`,
       "|---|---|---|---|---|",
-      `| ${extra.usdPerPr !== undefined ? `$${extra.usdPerPr.toFixed(3)}` : "—"} | ${extra.usdTotal !== undefined ? `$${extra.usdTotal.toFixed(2)}` : "—"} | ${extra.tokensInPerPr !== undefined ? `${Math.round(extra.tokensInPerPr / 1000)}k` : "—"} | ${extra.tokensOutPerPr !== undefined ? `${(extra.tokensOutPerPr / 1000).toFixed(1)}k` : "—"} | ${extra.medianMinPerPr !== undefined ? extra.medianMinPerPr.toFixed(1) : "—"} |`,
+      `| ${extra.usdPerPr !== undefined ? `$${extra.usdPerPr.toFixed(3)}${partlyPriced}` : "—"} | ${extra.usdTotal !== undefined ? `$${extra.usdTotal.toFixed(2)}${partlyPriced}` : "—"} | ${extra.tokensInPerPr !== undefined ? `${Math.round(extra.tokensInPerPr / 1000)}k` : "—"} | ${extra.tokensOutPerPr !== undefined ? `${(extra.tokensOutPerPr / 1000).toFixed(1)}k` : "—"} | ${extra.medianMinPerPr !== undefined ? extra.medianMinPerPr.toFixed(1) : "—"} |`,
       "",
       ...(extra.usdSource ? [extra.usdSource, ""] : []),
+      ...(partlyPriced
+        ? [
+            `Only ${extra.usdPriced} of ${extra.usdCases} cases recorded a price: the $ / PR averages those, and the total is at least this.`,
+            "",
+          ]
+        : []),
     );
   if (s.approved_over_missed_high.length)
     lines.push(

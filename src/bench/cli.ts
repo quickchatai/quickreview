@@ -126,7 +126,7 @@ import {
 } from "./defects.js";
 import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectjudge.js";
 import { codexCommand } from "./codexcli.js";
-import { caseCostUsd, caseTokenCounts, ratesFor } from "./cost.js";
+import { caseTokenCounts, runCostUsd } from "./cost.js";
 
 const DEFAULTS = {
   root: "/opt/quickreview/sandbox",
@@ -1089,41 +1089,12 @@ async function main(): Promise<number> {
     // Dollars the way pi prices them (src/bench/cost.ts): summed per call for
     // our arm, the bridge's tokens at pi's rates for the case's model for the
     // bridge arms (OCR, OpenCode, PR-Agent); Claude Code's own for its arm.
-    let usd = 0,
-      priced = 0;
-    const sources = new Set<string>();
-    const pricedAs = new Set<string>();
-    for (const c of cases) {
-      const k = caseCostUsd(join(outDir, "cases", safeId(c.instance_id)));
-      if (!k) continue;
-      usd += k.usd;
-      priced++;
-      sources.add(k.source);
-      if (k.model) pricedAs.add(k.model);
-    }
-    const rates = [...pricedAs]
-      .sort()
-      .map((m) => {
-        const r = ratesFor(m)!;
-        return `${m}: $${r.input} input, $${r.cacheRead.toFixed(2)} cache read, $${r.output} output per million`;
-      })
-      .join("; ");
+    const dollars = runCostUsd(cases.map((c) => join(outDir, "cases", safeId(c.instance_id))));
     const extra = secs.length
       ? {
           ...(tokened ? { tokensInPerPr: tin / tokened, tokensOutPerPr: tout / tokened } : {}),
           medianMinPerPr: (secs[Math.floor(secs.length / 2)] ?? 0) / 60,
-          ...(priced
-            ? {
-                usdPerPr: usd / priced,
-                usdTotal: usd,
-                usdSource: sources.has("claude")
-                  ? "Cost: Claude Code's own total_cost_usd per case (the API-price equivalent) — this arm runs no OpenAI model, so pi has no price for it."
-                  : sources.has("priced")
-                    ? `Cost: tokens priced at pi's rates (${rates}) — this arm does not run through pi.`
-                    : "Cost: pi's own per-call prices, summed over the main session and every lens pass.",
-                ...(sources.has("claude") ? { usdBasis: "Claude Code's own" } : {}),
-              }
-            : {}),
+          ...dollars,
         }
       : {};
     mkdirSync(judgeDir, { recursive: true });

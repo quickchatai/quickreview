@@ -37,7 +37,7 @@ import {
   runJudgeSession,
   type RunFingerprint,
 } from "../src/bench/runner.js";
-import { caseCostUsd, caseTokenCounts, CODEX_USD_PER_MTOK } from "../src/bench/cost.js";
+import { caseCostUsd, caseTokenCounts, CODEX_USD_PER_MTOK, runCostUsd } from "../src/bench/cost.js";
 
 const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({
   id,
@@ -863,6 +863,81 @@ describe("dollar cost across the arms", () => {
     expect(caseCostUsd(pi)!.usd).toBeCloseTo(0.4, 12);
     expect(py(pi)).toBeCloseTo(0.4, 12);
     expect(py(bridged)).toBeCloseTo(caseCostUsd(bridged)!.usd, 12);
+  });
+
+  it("a slim-bundle case (no transcript) is priced at its exported bench_cost_usd, as compare.py prices it", () => {
+    const root = join(import.meta.dirname, "..", "bench", "aacr");
+    const py = (caseDir: string): string =>
+      spawnSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          "import sys; sys.path.insert(0, sys.argv[1]); import compare; print(compare.usd_and_minutes(sys.argv[2])[0])",
+          root,
+          caseDir,
+        ],
+        { encoding: "utf8" },
+      ).stdout.trim();
+    const slim = (summary: Record<string, unknown>): string => {
+      const dir = mkdtempSync(join(tmpdir(), "defects-cost-slim-"));
+      writeFileSync(join(dir, "case-summary.json"), JSON.stringify(summary));
+      return dir;
+    };
+    // Our arm and pi-review: the transcript is gone, the price stays.
+    const qcr = slim({ bench_cost_usd: 0.37, usage: { input: 1, output: 2, cacheRead: 0 } });
+    expect(caseCostUsd(qcr)).toEqual({ usd: 0.37, source: "pi" });
+    expect(Number(py(qcr))).toBeCloseTo(0.37, 12);
+    // A bridge arm: the exported price wins over re-pricing the counts.
+    const bridged = slim({
+      bench_cost_usd: 0.5,
+      model: "gpt-6.1-sol",
+      bridge: { input_tokens: 1_000_000, cached_tokens: 0, output_tokens: 0 },
+    });
+    expect(caseCostUsd(bridged)).toEqual({ usd: 0.5, source: "priced", model: "gpt-6.1-sol" });
+    expect(Number(py(bridged))).toBeCloseTo(0.5, 12);
+    expect(caseCostUsd(slim({ arm: "claude", cost_usd: 9, bench_cost_usd: 1.25 }))).toEqual({
+      usd: 1.25,
+      source: "claude",
+    });
+    // An unpriced case exported as null stays unknown in both readers.
+    const none = slim({ bench_cost_usd: null, bridge: { input_tokens: 5 } });
+    expect(caseCostUsd(none)).toBeNull();
+    expect(py(none)).toBe("None");
+  });
+
+  it("a partly priced run says how many cases its dollar figures cover", () => {
+    const out = mkdtempSync(join(tmpdir(), "defects-cost-partial-"));
+    const dirs = ["a", "b"].map((n) => join(out, n));
+    for (const d of dirs) mkdirSync(d);
+    writeFileSync(
+      join(dirs[0]!, "case-summary.json"),
+      JSON.stringify({ arm: "claude", cost_usd: 1 }),
+    );
+    writeFileSync(
+      join(dirs[1]!, "case-summary.json"),
+      JSON.stringify({ arm: "claude", cost_usd: null }),
+    );
+    const cost = runCostUsd(dirs);
+    expect(cost).toMatchObject({ usdPerPr: 1, usdTotal: 1, usdPriced: 1, usdCases: 2 });
+    const md = renderDefectReport(
+      "t",
+      parseDefectSet(SET),
+      scoreRun(parseDefectSet(SET), [], {}, {}),
+      { medianMinPerPr: 1, ...cost },
+    );
+    expect(md).toContain("| $1.000 (1/2 priced) | $1.00 (1/2 priced) |");
+    expect(md).toContain("Only 1 of 2 cases recorded a price");
+    // Every case priced: the figures stand unqualified.
+    const full = renderDefectReport(
+      "t",
+      parseDefectSet(SET),
+      scoreRun(parseDefectSet(SET), [], {}, {}),
+      { medianMinPerPr: 1, ...runCostUsd([dirs[0]!]) },
+    );
+    expect(full).toContain("| $1.000 | $1.00 |");
+    expect(full).not.toContain("priced)");
+    expect(runCostUsd([dirs[1]!])).toEqual({});
   });
 
   it("compare.py carries the same price list as src/bench/cost.ts", () => {
