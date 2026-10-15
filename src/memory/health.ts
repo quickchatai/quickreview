@@ -774,7 +774,10 @@ export class MemoryHealthMonitor {
     if (
       open &&
       (s === "healthy" ||
-        (s === "degraded" && this.answeredSince(open) && this.notServingSince === null))
+        (s === "degraded" &&
+          this.answeredSince(open) &&
+          this.notServingSince === null &&
+          !this.credentialFailing()))
     ) {
       this.incident = null;
       this.storedIncident = null;
@@ -782,8 +785,8 @@ export class MemoryHealthMonitor {
     }
     // Only a MEASURED recovery closes an incident. `healthy` is one by
     // construction (it needs a fresh authenticated answer); `degraded` is one
-    // only with an authenticated answer since the incident began and no
-    // not-serving run going (a restart resets the not-serving clock, so an
+    // only with an authenticated answer since the incident began, no
+    // credential's latest probe failing, and no not-serving run going (a restart resets the not-serving clock, so an
     // engine still not serving reads `degraded` again for a while). A daemon
     // that restarts inside an outage passes through `degraded` with NO answer
     // when its boot grace ends — closing there would give the same outage a
@@ -791,6 +794,15 @@ export class MemoryHealthMonitor {
     // restarted more often than the ticket age would never get one at all).
     // `unknown` decides nothing either: a boot inside an incident keeps it on
     // file.
+  }
+
+  /** Does either credential's latest probe read a failure? An answer on the
+   * daemon key proves nothing about the sessions' ovcli.conf. */
+  private credentialFailing(): boolean {
+    return CREDENTIALS.some((n) => {
+      const c = this.creds[n];
+      return c !== null && c.result !== "ok" && c.result !== "absent";
+    });
   }
 
   /** Has memory given an authenticated answer since `open` began? */

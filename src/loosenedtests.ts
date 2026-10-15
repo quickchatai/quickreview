@@ -153,7 +153,13 @@ export function detectLoosenedAssertions(files: readonly PrFile[]): LoosenedHit[
             hits.push({ file: f.filename, line: a.line, kind: "bound-relaxed" });
           else if (grew === true && UPPER_BOUND_RE.test(r.text) && !LOWER_BOUND_RE.test(r.text))
             hits.push({ file: f.filename, line: a.line, kind: "bound-relaxed" });
-          else if (shrank === true && isAssert && COUNT_RE.test(r.text))
+          // a lowered UPPER bound is a tightening, not a lowered count
+          else if (
+            shrank === true &&
+            isAssert &&
+            COUNT_RE.test(r.text) &&
+            !(UPPER_BOUND_RE.test(r.text) && !LOWER_BOUND_RE.test(r.text))
+          )
             hits.push({ file: f.filename, line: a.line, kind: "count-lowered" });
           continue;
         }
