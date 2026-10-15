@@ -3910,6 +3910,21 @@ export class StateStore {
       });
   }
 
+  /**
+   * Record the decided verdict on the mark at `headSha`, leaving every other
+   * field — `reviewed_at`, the reply stamp — as it is. For a decision that
+   * reaches the daemon after its review was stamped at that head (the
+   * post-approval recheck's change request). No mark at that head: nothing
+   * written.
+   */
+  recordReviewedVerdict(pr: number, headSha: string, verdict: string): boolean {
+    return (
+      this.db
+        .prepare("UPDATE reviewed_heads SET verdict = ? WHERE pr = ? AND lower(head_sha) = lower(?)")
+        .run(verdict, pr, headSha).changes === 1
+    );
+  }
+
   reviewedHead(pr: number): ReviewedHeadRow | undefined {
     return this.db.prepare("SELECT * FROM reviewed_heads WHERE pr = ?").get(pr) as
       ReviewedHeadRow | undefined;
@@ -3966,6 +3981,14 @@ export class StateStore {
    * evidence". Only ever moves the stamp forward; a PR with no mark has nothing
    * to skip, so the reply is simply not recorded. */
   noteAuthorReply(pr: number, atIso?: string): void {
+    this.noteNewEvidence(pr, atIso);
+  }
+
+  /** Record new evidence at the PR's reviewed head — an author reply, or a
+   * question the post-approval recheck asked at that head (an adverse CI
+   * conclusion, a base advance). Guard 2 and dispatch's no-new-evidence skip
+   * read it as the mark's reply stamp. Only ever moves the stamp forward. */
+  noteNewEvidence(pr: number, atIso?: string): void {
     const at = atIso ?? this.ts();
     this.db
       .prepare(

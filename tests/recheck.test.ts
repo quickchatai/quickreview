@@ -30,6 +30,8 @@ import {
   type RecheckAdapter,
   type RecheckDeps,
 } from "../src/recheck.js";
+import { hasNewEvidence } from "../src/guards.js";
+import { standingVerdict } from "../src/standing-review.js";
 import { StateStore } from "../src/state.js";
 import { applyInterpretation, interpretEvent, type Interpretation } from "../src/webhook.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -653,6 +655,55 @@ describe("runRecheck", () => {
     expect(h.injected).toHaveLength(1);
   });
 
+  // An adverse CI conclusion at the approved head is new evidence at a head
+  // already reviewed: the change request the session may post must not be
+  // refused as a duplicate by the posting guard.
+  it("a same-head CI recheck records new evidence on the mark guard 2 reads", async () => {
+    const h = harness();
+    expect(hasNewEvidence(h.store.reviewedHead(PR), OLD)).toBe(false);
+    const out = await runRecheck(h.deps, {
+      pr: PR,
+      trigger: "ci",
+      head_sha: OLD,
+      ci: { conclusion: "failure" },
+    });
+    expect(out).toMatchObject({ action: "recheck", delivered: "injected" });
+    expect(hasNewEvidence(h.store.reviewedHead(PR), OLD)).toBe(true);
+    // A moved head needs no stamp: guard 2 already admits it.
+    const pushed = harness();
+    await runRecheck(pushed.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(pushed.store.reviewedHead(PR)?.last_author_reply_at).toBeNull();
+  });
+
+  it("asks nothing of a paused PR", async () => {
+    const h = harness();
+    h.store.pausePr(PR, { issuer: "operator", expires_at: null }, "hold");
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(out).toMatchObject({ action: "noop", reason: "paused" });
+    expect(h.injected).toHaveLength(0);
+    expect(h.adapter.calls).toEqual([]);
+    expect(h.store.rechecksFor(PR)).toHaveLength(0);
+  });
+
+  // Nothing asks a CI or base-advance question again, so a failed injection
+  // keeps its claim and holds the nudge for the flush paths.
+  it("holds a CI recheck whose injection fails instead of dropping it", async () => {
+    const h = harness();
+    h.deps.inject = async () => {
+      throw new Error("session pr-5109 failed its readiness deadline");
+    };
+    const out = await runRecheck(h.deps, {
+      pr: PR,
+      trigger: "ci",
+      head_sha: OLD,
+      ci: { conclusion: "failure" },
+    });
+    expect(out).toMatchObject({ action: "recheck", delivered: "held" });
+    expect(h.store.rechecksFor(PR)).toHaveLength(1);
+    expect(h.store.heldWakes(PR)).toHaveLength(1);
+    expect(h.store.heldWakes(PR)[0]?.reason).toBe("recheck:ci");
+  });
+
   it("carries the standing verdict, the last-reviewed sha and the delta in the order", async () => {
     const h = harness();
     const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
@@ -1020,6 +1071,59 @@ describe("recheck decisions", () => {
     await watcher.sweep();
     expect(store.getPr(PR)?.state).toBe("awaiting_author");
     expect(kinds()).toContain("recheck_request_changes");
+  });
+
+  // The shell stamps a review posted at the head the mark already holds
+  // without touching its verdict; the change request is the standing
+  // decision there from now on.
+  it("a change request posted at the reviewed head becomes the standing verdict", async () => {
+    store.recordReviewedHead(PR, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+    store.recordReviewedHead(PR, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
+    expect(standingVerdict(store.reviewedHead(PR))).toBe("APPROVE");
+    write({ pr: PR, head_sha: HEAD, outcome: "request_changes", reason: "CI shows a regression" });
+    await watcher.sweep();
+    expect(standingVerdict(store.reviewedHead(PR))).toBe("REQUEST_CHANGES");
+    expect(store.getPr(PR)?.state).toBe("awaiting_author");
+  });
+
+  it("a change request never erases a person's queued re-review request", async () => {
+    store.upsertPr({
+      number: PR,
+      state: "queued",
+      head_sha: HEAD,
+      title: "t",
+      author: "alice",
+      trigger_ts: "2026-10-01T10:00:00.000Z",
+      trigger_provenance: "human",
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    write({ pr: PR, head_sha: HEAD, outcome: "request_changes", reason: "regression" });
+    await watcher.sweep();
+    const row = store.getPr(PR);
+    expect(row?.state).toBe("queued");
+    expect(row?.trigger_provenance).toBe("human");
+    expect(row?.trigger_ts).toBe("2026-10-01T10:00:00.000Z");
+    expect(kinds()).toContain("recheck_lifecycle_deferred");
+    expect(kinds()).toContain("recheck_request_changes");
+  });
+
+  it("a delayed change request never rewinds the PR's head", async () => {
+    const NEWER = "3333333333333333333333333333333333333333";
+    store.upsertPr({
+      number: PR,
+      state: "tracked",
+      head_sha: NEWER,
+      title: "t",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    write({ pr: PR, head_sha: HEAD, outcome: "request_changes", reason: "regression" });
+    await watcher.sweep();
+    expect(store.getPr(PR)?.head_sha).toBe(NEWER);
+    expect(store.getPr(PR)?.state).toBe("awaiting_author");
   });
 
   it.each(["APPROVE", "approve", "NEEDS_HUMAN", "escalate", ""])(

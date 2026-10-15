@@ -649,7 +649,9 @@ export type NoopReason =
   | "no-delta-source"
   | "delivery-failed"
   /** Deploy-window drain: no nudge is generated while draining. */
-  | "draining";
+  | "draining"
+  /** The PR is paused (`pause-pr`): no review work for it, a nudge included. */
+  | "paused";
 
 export interface RecheckPlanInput {
   trigger: RecheckTrigger;
@@ -677,6 +679,22 @@ const CI_BENIGN = new Set(["success", "neutral", "skipped", "cancelled", "stale"
 export function ciIsAdverse(conclusion: string | null | undefined): boolean {
   if (!conclusion) return false;
   return !CI_BENIGN.has(conclusion.toLowerCase());
+}
+
+/**
+ * Guard 2's rule as the recheck reads it, off the same mark: an unchanged head
+ * with nothing new is a no-op. A base advance is exempt because its delta is on
+ * the base side, and an adverse CI conclusion IS the new evidence. The runner's
+ * free early refusal and the plan both ask this one predicate.
+ */
+export function unchangedHeadNoop(
+  trigger: RecheckTrigger,
+  headSha: string,
+  lastReviewedSha: string,
+  ci: { conclusion?: string | null } | null | undefined,
+): boolean {
+  const adverseCi = trigger === "ci" && ciIsAdverse(ci?.conclusion);
+  return trigger !== "base_advance" && headSha === lastReviewedSha && !adverseCi;
 }
 
 /** Move a withheld-approval mark to a newer head after an uphold. This is NOT
@@ -748,12 +766,9 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
   // a route: the ordinary trigger → round path.
   if (normalizeVerdict(input.standing) !== "APPROVE") return noop("no-standing-approval");
 
-  const adverseCi = input.trigger === "ci" && ciIsAdverse(input.ci?.conclusion);
-  // Guard 2's rule, read off the same mark: same head, nothing new ⇒ nothing
-  // to do. A base advance is exempt because its delta is on the base side, and
-  // an adverse CI conclusion IS the new evidence.
-  if (input.trigger !== "base_advance" && input.head_sha === input.last_reviewed_sha && !adverseCi)
+  if (unchangedHeadNoop(input.trigger, input.head_sha, input.last_reviewed_sha, input.ci))
     return noop("unchanged-head");
+  const adverseCi = input.trigger === "ci" && ciIsAdverse(input.ci?.conclusion);
 
   const classification = classifyDelta(input.delta, {
     ...(input.prFiles ? { prFiles: new Set(input.prFiles) } : {}),
@@ -801,7 +816,8 @@ export interface RecheckOrder {
   issued_at: string;
 }
 
-/** `verdict/pr-<n>-recheck-<head12>.json`. */
+/** `pr-<n>-recheck-<head12>.json` — the decision file's name under `verdict/`,
+ * and the findings record's under `state/findings/`. */
 export function recheckDecisionFile(pr: number, headSha: string): string {
   return `pr-${pr}-recheck-${headSha.slice(0, 12).toLowerCase()}.json`;
 }
@@ -968,13 +984,20 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   const row = store.getPr(req.pr);
   if (!row || row.state === "closed")
     return done({ action: "noop", reason: "pr-not-open", class: "empty" });
+  // A pause stops this PR's review work, a nudge included. A push question is
+  // asked again by the reconcile backstop once the pause lifts.
+  if (row.paused) return done({ action: "noop", reason: "paused", class: "empty" });
 
   const head = req.head_sha || row.head_sha;
   const lastReviewed = mark!.head_sha;
-  const adverseCi = req.trigger === "ci" && ciIsAdverse(req.ci?.conclusion);
   // Refuse before spending a single API call on a head we already decided.
-  if (req.trigger !== "base_advance" && head === lastReviewed && !adverseCi)
+  if (unchangedHeadNoop(req.trigger, head, lastReviewed, req.ci))
     return done({ action: "noop", reason: "unchanged-head", class: "empty" });
+  // The range the delta is read over — and the one its merges are checked in.
+  const range =
+    req.trigger === "base_advance" && req.base
+      ? { from: req.base.before, to: req.base.after }
+      : { from: lastReviewed, to: head };
 
   if (!deps.adapter.compareFiles || !deps.adapter.listPrFiles)
     return done({ action: "noop", reason: "no-delta-source", class: "empty" });
@@ -982,10 +1005,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   let delta: DeltaList;
   let prFiles: Set<string> | undefined;
   try {
-    delta =
-      req.trigger === "base_advance" && req.base
-        ? await deps.adapter.compareFiles(req.base.before, req.base.after)
-        : await deps.adapter.compareFiles(lastReviewed, head);
+    delta = await deps.adapter.compareFiles(range.from, range.to);
     prFiles = ownershipSet(await deps.adapter.listPrFiles(req.pr));
     // Ownership is the union of the reviewed head's and the current head's —
     // see reviewedOwnership. A base advance leaves the
@@ -1015,8 +1035,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   // the ownership rule alone, but is LOGGED — never silently quieter.
   let resolvedFiles: string[] = [];
   if (deps.resolvedFilesInMerges) {
-    const from = req.trigger === "base_advance" && req.base ? req.base.before : lastReviewed;
-    const to = req.trigger === "base_advance" && req.base ? req.base.after : head;
+    const { from, to } = range;
     const res = await deps.resolvedFilesInMerges(from, to, req.pr);
     resolvedFiles = res.files;
     if (res.degraded) {
@@ -1087,6 +1106,19 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       classification: plan.classification,
     });
 
+  // A same-head question (an adverse CI conclusion, a base advance) is new
+  // evidence at a head already reviewed. Recorded on the mark the posting
+  // guard reads, so the change request it may lead to is not refused as a
+  // duplicate of the review that stands (guard 2).
+  if (head === lastReviewed) {
+    store.noteNewEvidence(req.pr, now().toISOString());
+    store.logEvent("recheck_evidence_noted", req.pr, {
+      trigger: req.trigger,
+      head_sha: head,
+      evidence: plan.evidence,
+    });
+  }
+
   const order: RecheckOrder = {
     pr: req.pr,
     title: row.title,
@@ -1136,11 +1168,12 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       // out and released only on a synchronous throw — which a bridge-level
       // drop is not — so the receipt is what lets the reconcile sweep release
       // the claim of a nudge that never arrived.
-      stampPrompt(
-        withRepoFacts(render(order), facts),
-        recheckPromptMarker(req.pr, fingerprint),
-      ),
+      stampPrompt(withRepoFacts(render(order), facts), recheckPromptMarker(req.pr, fingerprint)),
       `recheck:${req.trigger}`,
+      // A push question the reconcile backstop asks again; a CI or base-advance
+      // question has no such sweep, so its claim stays and the wake is held
+      // for the flush paths rather than released on a failed injection.
+      { holdOnFailure: req.trigger !== "push" },
     );
   } catch (err) {
     // A claim must not outlive a nudge that never reached the session — the
@@ -1323,11 +1356,13 @@ export interface RecheckWatcherDeps {
  * session has already posted the review through the gated scripts — the daemon
  * only moves the lifecycle state.
  *
- * Neither outcome moves the reviewed-head mark. The mark records what was
- * really REVIEWED and posted; an upheld recheck posted nothing, and stamping
- * it would make the no-new-evidence guard swallow a genuine review
- * re-request at that head. The recheck's own runaway guard is the `rechecks`
- * claim table instead.
+ * Neither outcome moves the reviewed-head mark to a new head. The mark
+ * records what was really REVIEWED and posted; an upheld recheck posted
+ * nothing, and stamping it would make the no-new-evidence guard swallow a
+ * genuine review re-request at that head. A change request the session posted
+ * was stamped by the posting route itself; the watcher only writes its
+ * decided verdict onto that stamp (`settleChangeRequest`). The recheck's own
+ * runaway guard is the `rechecks` claim table.
  */
 export class RecheckWatcher {
   private watcher: FSWatcher | null = null;
@@ -1395,7 +1430,7 @@ export class RecheckWatcher {
     if (!dir) return;
     try {
       const head12 = headSha.slice(0, 12).toLowerCase();
-      const path = join(dir, `pr-${pr}-recheck-${head12}.json`);
+      const path = join(dir, recheckDecisionFile(pr, headSha));
       const store = this.deps.store;
       const roundNo =
         store.reviewedHead(pr)?.round_no ??
@@ -1427,6 +1462,52 @@ export class RecheckWatcher {
     } catch (err) {
       this.deps.log?.(`recheck: #${pr} findings record read failed`, err);
     }
+  }
+
+  /**
+   * The lifecycle half of a change request the session posted. The review on
+   * GitHub is the standing decision at its head: when the shell stamped it at
+   * the head the mark already held, the mark keeps the verdict it had, so the
+   * decided verdict is written here. The lifecycle moves to awaiting_author
+   * unless newer work owns the PR — a round running, or a person's queued
+   * re-review request — which this answer must not settle or erase; that
+   * work's own verdict decides. The PR's head is GitHub's and is never
+   * rewound to the decision's.
+   */
+  private settleChangeRequest(pr: number, headSha: string, file: string): void {
+    const { store } = this.deps;
+    const mark = store.reviewedHead(pr);
+    if (
+      mark &&
+      mark.head_sha.toLowerCase() === headSha.toLowerCase() &&
+      mark.posted_event === "REQUEST_CHANGES" &&
+      standingVerdict(mark) !== "REQUEST_CHANGES"
+    )
+      store.recordReviewedVerdict(pr, mark.head_sha, "REQUEST_CHANGES");
+    const row = store.getPr(pr);
+    if (
+      row?.state === "reviewing" ||
+      (row?.state === "queued" && row.trigger_provenance === "human")
+    ) {
+      store.logEvent("recheck_lifecycle_deferred", pr, {
+        file,
+        head_sha: headSha,
+        state: row.state,
+        trigger_provenance: row.trigger_provenance ?? null,
+      });
+      return;
+    }
+    applyEvent(
+      store,
+      pr,
+      { type: "verdict", verdict: "REQUEST_CHANGES" },
+      {},
+      {
+        botLogin: this.deps.cfg.github.bot_login,
+        ...(this.deps.now ? { now: this.deps.now } : {}),
+        reason: "recheck:request-changes",
+      },
+    );
   }
 
   async handleFile(name: string): Promise<boolean> {
@@ -1490,17 +1571,7 @@ export class RecheckWatcher {
         // a later green CI re-queue "for the withheld approval" of a PR whose
         // standing verdict this very decision just flipped.
         this.deps.store.clearApprovalWithheld(pr);
-        applyEvent(
-          this.deps.store,
-          pr,
-          { type: "verdict", verdict: "REQUEST_CHANGES" },
-          { head_sha: d.head_sha },
-          {
-            botLogin: this.deps.cfg.github.bot_login,
-            ...(this.deps.now ? { now: this.deps.now } : {}),
-            reason: "recheck:request-changes",
-          },
-        );
+        this.settleChangeRequest(pr, d.head_sha, name);
       }
       if (d.outcome === "uphold") {
         // Session-examined significant delta, verdict upheld: the withheld
