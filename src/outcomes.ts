@@ -97,6 +97,7 @@
 // change and never no-change. Every failure is the sweep's own — reconcile's
 // health (which lifts a deploy drain) never waits on it.
 import { parseFindingMarker } from "./findingkey.js";
+import { storedLensIds } from "./lensids.js";
 import type { ReviewCommentFull } from "./github.js";
 import { yieldToLoop } from "./yieldloop.js";
 import type { PrCommentRow, PrStateRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
@@ -241,6 +242,21 @@ export interface FindingCommentRow {
   seen_at: string;
 }
 
+/** A `finding_outcomes.carried_to` address: `<round>:<key>`. */
+export function carriedToRef(roundNo: number, findingKey: string): string {
+  return `${roundNo}:${findingKey}`;
+}
+
+/** The finding a `carried_to` address names — split at the FIRST ':', since
+ * the key itself may hold ':' — or null when the round part is not an
+ * integer. */
+export function parseCarriedTo(ref: string): { round_no: number; finding_key: string } | null {
+  const cut = ref.indexOf(":");
+  const round = Number(ref.slice(0, cut));
+  if (cut <= 0 || !Number.isInteger(round)) return null;
+  return { round_no: round, finding_key: ref.slice(cut + 1) };
+}
+
 export interface FindingOutcomeRow {
   pr: number;
   round_no: number;
@@ -353,13 +369,7 @@ function ms(iso: string | null | undefined): number | null {
 }
 
 function lensIdsOf(row: RoundFindingRow): string[] {
-  if (!row.lens_ids) return [];
-  try {
-    const parsed = JSON.parse(row.lens_ids) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
+  return storedLensIds(row.lens_ids) ?? [];
 }
 
 /**
@@ -1169,7 +1179,7 @@ export class OutcomeCapture {
       evidence,
       comment: thread,
       replies: replies.length,
-      carriedTo: carriedTo ? `${carriedTo.round_no}:${carriedTo.finding_key}` : null,
+      carriedTo: carriedTo ? carriedToRef(carriedTo.round_no, carriedTo.finding_key) : null,
     };
   }
 
@@ -1475,13 +1485,7 @@ export class OutcomeCapture {
     let replied = 0;
     let repliedKnown = 0;
     for (const r of rows) {
-      let ids: string[] = [];
-      try {
-        const parsed = JSON.parse(r.lens_ids ?? "[]") as unknown;
-        if (Array.isArray(parsed)) ids = parsed.filter((x): x is string => typeof x === "string");
-      } catch {
-        /* no ids */
-      }
+      const ids = storedLensIds(r.lens_ids) ?? [];
       const count = (c: LensOutcomeCounts) => {
         c.posted++;
         if (r.linked) c.linked++;

@@ -84,7 +84,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { caseName } from "../cases.js";
-import { canonicalLensIds } from "../lensids.js";
+import { FEEDBACK_PREFIX_RE } from "../feedback.js";
+import { canonicalLensIds, storedLensIds } from "../lensids.js";
 import { cleanQuotedText } from "../memory/datafence.js";
 import { LESSON_CLASS_RE } from "../memory/lessons.js";
 import type { StateStore } from "../state.js";
@@ -242,13 +243,7 @@ export function lensIdsOf(
   raw: string | null | undefined,
   lensText: string | null | undefined,
 ): string[] {
-  try {
-    const parsed = JSON.parse(raw ?? "null") as unknown;
-    if (Array.isArray(parsed)) return parsed.filter((x): x is string => typeof x === "string");
-  } catch {
-    /* fall through */
-  }
-  return canonicalLensIds(lensText ?? "");
+  return storedLensIds(raw) ?? canonicalLensIds(lensText ?? "");
 }
 
 interface FindingFacts {
@@ -598,8 +593,6 @@ interface SignalRow {
   created_at: string;
 }
 
-const FEEDBACK_PREFIX = /^\s*\[feedback\]\s*/i;
-
 /** The ONE ref of a `[feedback]` comment, whichever route recorded it. */
 export function feedbackCommentRef(scope: string, commentId: number): string {
   return `feedback-comment:${scope || "comment"}:${commentId}`;
@@ -638,7 +631,7 @@ function feedbackCommentDraft(
           : ""
       }`,
     ),
-    quote: quoteOf((c.body ?? "").replace(FEEDBACK_PREFIX, "")),
+    quote: quoteOf((c.body ?? "").replace(FEEDBACK_PREFIX_RE, "").replace(/^\s+/, "")),
     evidence: [
       `pr:${c.pr}`,
       `comment:${c.comment_id}`,

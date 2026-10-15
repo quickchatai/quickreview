@@ -1,5 +1,5 @@
 // The SHADOW LEDGER's half that reads outcomes: which posted findings a
-// delivered dont-raise lesson WOULD have touched, and what humans then did
+// selected dont-raise lesson WOULD have touched, and what humans then did
 // with those findings.
 //
 // WHY. Under `delivery = "on"` a curated dont-raise lesson has authority over
@@ -73,7 +73,9 @@ import type {
   ShadowMatchTier,
   StoredSelection,
 } from "./lessonledger.js";
+import { memoryLabel } from "./memory/delivery.js";
 import { classesRelated } from "./memory/lessons.js";
+import { parseCarriedTo } from "./outcomes.js";
 import { VALIDATOR_LENS, type RoleSelection, type SelectedLesson } from "./memory/selection.js";
 import type { LessonDeliveryStatus, LessonTierCounts } from "./memory/shadowstatus.js";
 import type { RoundFindingRow, StateStore } from "./state.js";
@@ -102,8 +104,10 @@ export function strongerTier(a: ShadowMatchTier, b: ShadowMatchTier): ShadowMatc
   return a === "class" || b === "class" ? "class" : "lens";
 }
 
-/** Every dont-raise lesson a round's selection delivered, with where. */
-function deliveredDontRaise(
+/** Every dont-raise lesson a round's selection chose for a discovery row or
+ * the validator, with where — what was SELECTED, whether or not that round's
+ * delivery then carried it. */
+function selectedDontRaise(
   selections: ReadonlyArray<Pick<RoleSelection | StoredSelection, "role" | "row" | "lessons">>,
 ): Map<string, { lesson: SelectedLesson; via: string[] }> {
   const out = new Map<string, { lesson: SelectedLesson; via: string[] }>();
@@ -122,7 +126,7 @@ function deliveredDontRaise(
 }
 
 /**
- * The marks of one round: every POSTED finding a delivered dont-raise lesson
+ * The marks of one round: every POSTED finding a selected dont-raise lesson
  * would have touched — on its lens and path — with the tier it matched
  * on and why. Pure and deterministic (sorted by finding, then lesson).
  */
@@ -130,7 +134,7 @@ export function matchShadow(
   selections: ReadonlyArray<Pick<RoleSelection | StoredSelection, "role" | "row" | "lessons">>,
   findings: readonly MatchFinding[],
 ): ShadowMark[] {
-  const lessons = [...deliveredDontRaise(selections).entries()].sort((a, b) =>
+  const lessons = [...selectedDontRaise(selections).entries()].sort((a, b) =>
     a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0,
   );
   const marks: ShadowMark[] = [];
@@ -421,12 +425,10 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
         finding_key: string;
         carried_to: string;
       }>) {
-        // `<round>:<key>` — the key itself may hold ':'.
-        const cut = row.carried_to.indexOf(":");
-        const round = Number(row.carried_to.slice(0, cut));
-        if (cut <= 0 || !Number.isInteger(round)) continue;
+        const to = parseCarriedTo(row.carried_to);
+        if (!to) continue;
         carriedFrom.set(
-          findingId(pr, round, row.carried_to.slice(cut + 1)),
+          findingId(pr, to.round_no, to.finding_key),
           findingId(pr, row.round_no, row.finding_key),
         );
       }
@@ -655,11 +657,9 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
 }
 
 /** The memory-relative id of a lesson URI (`experiences/<file>`), for a
- * person to read; the URI itself when it is not under a memories root. */
-export function lessonLabel(uri: string): string {
-  const cut = uri.indexOf("/memories/");
-  return cut < 0 ? uri : uri.slice(cut + "/memories/".length);
-}
+ * person to read; the URI itself when it is not under a memories root — the
+ * label the delivered lessons carry (src/memory/delivery.ts). */
+export const lessonLabel: (uri: string) => string = memoryLabel;
 
 function bucketsLine(b: BucketCounts): string {
   return (

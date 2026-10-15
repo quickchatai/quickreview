@@ -40,6 +40,7 @@
 // path. Its tables live on the state database beside the outcome capture's.
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { MEMORY_DEFAULTS } from "../config.js";
 import { localWallClockToInstant, zoneDateString, zonedParts, parseHHMM } from "../eod.js";
 import type { FileOutcome } from "../improvements.js";
 import { EXPERIENCES_AREA, areaOfId } from "../memory/layout.js";
@@ -114,16 +115,18 @@ export interface LearnerConfig {
   lessons_digest_backfill_to: string;
 }
 
+/** The learner's knobs at their shipped values — the `[memory]` defaults
+ * (src/config.ts MEMORY_DEFAULTS), which hold each value once. */
 export const LEARNER_DEFAULTS: LearnerConfig = Object.freeze({
-  lessons_mine_lead_min: 15,
-  lessons_mine_days: 45,
-  lessons_receipt_wait_min: 180,
-  lessons_expiry_ops_days: 7,
-  lessons_packet_new_max: 40,
-  lessons_recall_window_days: 14,
-  lessons_recurrence_days: 90,
-  lessons_digest_backfill_from: "2026-08-31",
-  lessons_digest_backfill_to: "2026-10-02",
+  lessons_mine_lead_min: MEMORY_DEFAULTS.lessons_mine_lead_min,
+  lessons_mine_days: MEMORY_DEFAULTS.lessons_mine_days,
+  lessons_receipt_wait_min: MEMORY_DEFAULTS.lessons_receipt_wait_min,
+  lessons_expiry_ops_days: MEMORY_DEFAULTS.lessons_expiry_ops_days,
+  lessons_packet_new_max: MEMORY_DEFAULTS.lessons_packet_new_max,
+  lessons_recall_window_days: MEMORY_DEFAULTS.lessons_recall_window_days,
+  lessons_recurrence_days: MEMORY_DEFAULTS.lessons_recurrence_days,
+  lessons_digest_backfill_from: MEMORY_DEFAULTS.lessons_digest_backfill_from,
+  lessons_digest_backfill_to: MEMORY_DEFAULTS.lessons_digest_backfill_to,
 });
 
 /** The `[memory] lessons_*` knobs (src/config.ts) as the learner takes them,
