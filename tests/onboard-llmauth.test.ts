@@ -142,6 +142,9 @@ interface World {
   remote?: { alias: string; containers: Record<string, FakeContainer> };
   /** docker itself unavailable. */
   noDocker?: boolean;
+  /** The name `docker compose ps` reports for the daemon service on this
+   * machine; unset = compose answers as if there were no stack here. */
+  composeDaemon?: string;
 }
 
 const CODEX_LOGIN = JSON.stringify({
@@ -199,6 +202,8 @@ function fakeAdapters(
         if (world.noDocker) return { code: 127, stdout: "", stderr: "docker: command not found" };
         if (cmd !== "docker") return { code: 127, stdout: "", stderr: `${cmd}: not found` };
         const name = args[args.length - 1] ?? "";
+        if (args[0] === "compose" && args.includes("ps") && world.composeDaemon !== undefined)
+          return { code: 0, stdout: `${world.composeDaemon}\n`, stderr: "" };
         if (args[0] === "inspect" && args[1] === "--format" && args[2] === "{{json .Mounts}}") {
           const c = containers[name];
           if (!c) return { code: 1, stdout: "", stderr: `Error: No such object: ${name}` };
@@ -338,6 +343,16 @@ describe("model-string rewrite", () => {
     const out = rewriteModelPrefixes(withOther, "api");
     expect(out.text).toContain('[somewhere]\ndefault = "openai-codex/other"');
   });
+
+  it("reads and rewrites a literal-string model, keeping its quote style", () => {
+    const literal = EXAMPLE_CONFIG.replace(/^default = "([^"]*)"/m, "default = '$1'");
+    expect(literal).not.toBe(EXAMPLE_CONFIG);
+    const out = rewriteModelPrefixes(literal, "api");
+    expect(out.missing).toEqual([]);
+    expect(out.rewritten).toContain("models.default");
+    expect(out.text).toMatch(/^default = 'openai\//m);
+    expect(rewriteModelPrefixes(out.text, "oauth").text).toBe(literal);
+  });
 });
 
 describe("tolerant config reads", () => {
@@ -345,6 +360,7 @@ describe("tolerant config reads", () => {
     expect(readTomlString(EXAMPLE_CONFIG, "tui", "container")).toBe("quickreview-sandbox");
     expect(readTomlString(EXAMPLE_CONFIG, "companion", "model")).toBeNull(); // commented out
     expect(readTomlString(EXAMPLE_CONFIG, "models", "nope")).toBeNull();
+    expect(readTomlString("[tui]\ncontainer = 'my-box'\n", "tui", "container")).toBe("my-box");
   });
 
   it("resolves the secrets dir: config first, then $QC_SECRETS_DIR, then the install locator", async () => {
@@ -503,6 +519,26 @@ describe("OAuth route", () => {
       configText().replace("[companion]\n", '[companion]\nsession = "buddy"\n'),
     );
     expect(await detail()).toContain("tmux attach -t buddy");
+  });
+
+  it("verify: on this machine the daemon is the container compose names, not the VM's configured name", async () => {
+    hostLogin();
+    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
+    // The compose project names its daemon `quickreview-daemon-1`; nothing is
+    // called `quickreview-sandbox` here, so probing that name would pass as
+    // "no container yet" while the real daemon has no login.
+    const world = {
+      composeDaemon: "quickreview-daemon-1",
+      containers: {
+        "quickreview-daemon-1": { piHome: "/home/review/.pi", auth: false },
+        "qcr-companion": { piHome: "/home/companion/.pi", auth: true },
+      },
+    };
+    const report = await engine(world).verifyAll();
+    expect(report.ok).toBe(false);
+    const failures = report.results[0]?.failures.join(" ") ?? "";
+    expect(failures).toMatch(/daemon container: no auth\.json/);
+    expect(failures).toContain("docker exec -it quickreview-daemon-1 tmux attach");
   });
 
   it("verify: a stopped container and an undetectable docker are notes, not failures", async () => {
