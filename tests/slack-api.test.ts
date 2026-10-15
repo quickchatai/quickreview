@@ -170,7 +170,7 @@ describe("rate limits and retries", () => {
     let n = 0;
     const fetchFn = ((_url: string, init: RequestInit = {}) => {
       n += 1;
-      if (n > 3) {
+      if (n > 1) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -189,7 +189,39 @@ describe("rate limits and retries", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect((await first).ok).toBe(false);
     expect(await second).toEqual({ ok: true, ts: "1712345678.000200" });
-    expect(n).toBe(4);
+    // The stalled post may have landed: it is never resent.
+    expect(n).toBe(2);
+  });
+
+  it("a new message is resent only after a definite refusal — never when Slack may have taken it", async () => {
+    let calls = 0;
+    const throwing = (err: unknown) =>
+      (async () => {
+        calls += 1;
+        throw err;
+      }) as unknown as SlackFetchFn;
+    // A reset mid-exchange: the post may be in the channel already.
+    let api = build(throwing(new Error("ECONNRESET")));
+    let p = api.postMessage({ channel: "C1", text: "hi" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await p).ok).toBe(false);
+    expect(calls).toBe(1);
+    // Never connected: nothing was sent, so it is retried.
+    calls = 0;
+    api = build(
+      throwing(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    p = api.postMessage({ channel: "C1", text: "hi" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await p;
+    expect(calls).toBe(3);
+    // An edit is idempotent: retried whatever happened.
+    calls = 0;
+    api = build(throwing(new Error("ECONNRESET")));
+    const u = api.updateMessage({ channel: "C1", ts: "1712345678.000100", text: "x" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await u;
+    expect(calls).toBe(3);
   });
 
   it("a network throw is swallowed into an error result", async () => {

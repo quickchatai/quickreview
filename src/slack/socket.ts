@@ -5,7 +5,13 @@
 // This file is PURE TRANSPORT. It acks, it reconnects, it normalizes — it does
 // not filter, dedupe or tier. That is the router's job.
 import diagnosticsChannel from "node:diagnostics_channel";
-import type { SlackFetchFn, SlackInboundEvent, SlackInboundHandler, SlackSocket } from "./types.js";
+import {
+  SLACK_API_BASE,
+  type SlackFetchFn,
+  type SlackInboundEvent,
+  type SlackInboundHandler,
+  type SlackSocket,
+} from "./types.js";
 
 /** The slice of the WebSocket API we use — global WebSocket satisfies it. */
 export interface SlackWebSocketLike {
@@ -73,6 +79,9 @@ export interface SlackSocketOptions {
   backoffMs?: number[];
   /** Tear down + reconnect when neither a frame nor a ping arrives for this long. */
   serverPingTimeoutMs?: number;
+  /** Deadline for the whole `apps.connections.open` exchange (headers and
+   * body), ms: a stalled one is abandoned and the reconnect ladder takes over. */
+  openTimeoutMs?: number;
   /** Web API base (override in tests). */
   apiBase?: string;
   /** Jitter source, [0,1). */
@@ -86,6 +95,7 @@ export interface SlackSocketOptions {
 
 const DEFAULT_BACKOFF_MS = [1000, 2000, 5000, 15000, 30000];
 const DEFAULT_SERVER_PING_TIMEOUT_MS = 30_000;
+const DEFAULT_OPEN_TIMEOUT_MS = 15_000;
 
 export class SlackSocketClient implements SlackSocket {
   private readonly appToken: string;
@@ -93,6 +103,7 @@ export class SlackSocketClient implements SlackSocket {
   private readonly wsFactory: SlackWebSocketFactory;
   private readonly backoff: number[];
   private readonly pingTimeoutMs: number;
+  private readonly openTimeoutMs: number;
   private readonly apiBase: string;
   private readonly random: () => number;
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
@@ -120,7 +131,8 @@ export class SlackSocketClient implements SlackSocket {
       });
     this.backoff = opts.backoffMs?.length ? [...opts.backoffMs] : [...DEFAULT_BACKOFF_MS];
     this.pingTimeoutMs = opts.serverPingTimeoutMs ?? DEFAULT_SERVER_PING_TIMEOUT_MS;
-    this.apiBase = opts.apiBase ?? "https://slack.com/api";
+    this.openTimeoutMs = opts.openTimeoutMs ?? DEFAULT_OPEN_TIMEOUT_MS;
+    this.apiBase = opts.apiBase ?? SLACK_API_BASE;
     this.random = opts.random ?? Math.random;
     this.setTimeoutFn = opts.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimeoutFn =
@@ -153,19 +165,37 @@ export class SlackSocketClient implements SlackSocket {
   private async connect(): Promise<void> {
     if (!this.running) return;
     let url: string | undefined;
+    // The whole exchange runs under one deadline: a stalled open would
+    // otherwise hold startup, or silence a reconnect, with no watchdog armed.
+    const abort = new AbortController();
+    let deadline: unknown = null;
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      deadline = this.setTimeoutFn(() => {
+        const err = new Error(`apps.connections.open timed out after ${this.openTimeoutMs}ms`);
+        abort.abort(err);
+        reject(err);
+      }, this.openTimeoutMs);
+    });
     try {
-      const res = await this.fetchFn(`${this.apiBase}/apps.connections.open`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${this.appToken}`,
-          "content-type": "application/x-www-form-urlencoded",
-        },
-      });
-      const body = (await res.json()) as { ok?: boolean; url?: string; error?: string };
+      const exchange = (async () => {
+        const res = await this.fetchFn(`${this.apiBase}/apps.connections.open`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${this.appToken}`,
+            "content-type": "application/x-www-form-urlencoded",
+          },
+          signal: abort.signal,
+        });
+        return (await res.json()) as { ok?: boolean; url?: string; error?: string };
+      })();
+      exchange.catch(() => undefined); // settled by the race below either way
+      const body = await Promise.race([exchange, timedOut]);
       if (body?.ok && typeof body.url === "string") url = body.url;
       else this.log("slack.socket.open_failed", { error: body?.error ?? "no_url" });
     } catch (err) {
       this.log("slack.socket.open_threw", { error: String(err) });
+    } finally {
+      if (deadline !== null) this.clearTimeoutFn(deadline);
     }
     // stopSocket may have run while the open was in flight: it found no socket
     // to close, so building one now would leak it onto a stopped client.
