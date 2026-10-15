@@ -3444,6 +3444,9 @@ export class VerdictWatcher {
       // fails loud — never a requeue that could post a second time.
       if (proof.kind === "waiting") return "retryable";
       if (proof.kind === "failed") {
+        // The proof awaited GitHub: a verdict or an operator's `u` may have
+        // ended the round meanwhile, and its incident must not be reopened.
+        if (!this.stillRunning(round)) return "settled";
         await this.failPostingProof(
           round,
           proof.detail ?? "settled without a posting receipt",

@@ -3581,6 +3581,28 @@ describe("integration review", () => {
       submitted_at: "2026-08-13T12:29:00Z",
     });
 
+    // MUTATION: drop the stillRunning check on the settled_without_verdict
+    // failure — the operator's `u` that won during the read is reopened as debt.
+    it("a settled parent's failed proof opens no incident over a round an operator ended during the read", async () => {
+      reviewingRound(614);
+      const { key } = stampPosting(614, 1);
+      prepared(614, key);
+      adapter.listReviewsFull = async () => {
+        store.cancelRunningRounds(614, "rerun-round");
+        return [];
+      };
+      const w = watcher({ cfg: live, now: at }, killingHooks([]));
+
+      expect(await w.recoverInfrastructureFailure(614, 1, "settled_without_verdict", "x")).toBe(
+        "settled",
+      );
+      expect(store.openReviewFailure(614)).toBeUndefined();
+      expect(store.roundsFor(614)[0]).toMatchObject({
+        status: "cancelled",
+        cancel_cause: "operator",
+      });
+    });
+
     // MUTATION: drop the `ambiguous` branch in receiptAwareStage — the limit
     // kills the session and requeues a round that may already have posted.
     it("a prepared receipt past its grace with GitHub unreadable waits for a read that can decide", async () => {
