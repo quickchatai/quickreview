@@ -33,6 +33,7 @@ import {
   type VerdictAdapter,
 } from "../src/verdicts.js";
 import { retryWithheldApproval } from "../src/cigate.js";
+import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { TranscriptIndex } from "../src/transcriptindex.js";
 import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -3848,6 +3849,65 @@ describe("integration review", () => {
       expect(store.getPr(625)?.state).toBe("reviewing");
       expect(store.openReviewFailure(625)).toBeUndefined();
       expect(count("verdict_round_unknown", 625)).toBe(1);
+    });
+
+    // MUTATION: drop the cancelled-round return in handleMalformed — the old
+    // round's bad file reopens FAILED_LOUD over the operator's `u`.
+    it("a malformed file reaching a round the operator cancelled opens no failure: the `u` stands", async () => {
+      const roundId = reviewingRound(626);
+      store.cancelRunningRounds(626, "rerun-round");
+      store.setPrState(626, "queued");
+      const name = write(626, 1, "{ not json");
+
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.openReviewFailure(626)).toBeUndefined();
+      expect(store.getPr(626)?.state).toBe("queued");
+      expect(store.roundsFor(626)[0]).toMatchObject({ id: roundId, status: "cancelled" });
+      expect(payloads("verdict_after_cancel_ignored", 626)).toEqual([
+        expect.objectContaining({ round_id: roundId, cancel_cause: "operator", file: name }),
+      ]);
+      expect(count("verdict_malformed", 626)).toBe(0);
+    });
+
+    // MUTATION: drop `orphanVerdictOwed` from apply's cancelled guard — the
+    // orphan-swept round's posted, withheld review is dropped, the PR reruns
+    // at the head and the withheld-approval mark is never recorded.
+    it("an orphan-swept round's verdict still applies while no later round has started; once one has, it is inert", async () => {
+      const roundId = reviewingRound(627);
+      const { key } = stampPosting(627, 1);
+      writePostingReceipt(627, 1, key, "COMMENT", { intended_event: "APPROVE" });
+      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      expect(store.roundsFor(627)[0]).toMatchObject({
+        status: "cancelled",
+        cancel_cause: "orphan_sweep",
+      });
+      expect(store.getPr(627)?.state).toBe("queued");
+
+      const name = write(
+        627,
+        1,
+        verdictFile({ pr: 627, verdict: "APPROVE", approval_withheld: true }),
+      );
+      expect(await watcher().handleFile(name)).toBe(true);
+
+      expect(store.roundsFor(627)[0]).toMatchObject({
+        id: roundId,
+        status: "done",
+        verdict: "APPROVE",
+      });
+      expect(store.approvalWithheld(627)).toMatchObject({ head_sha: "abc123" });
+      expect(store.reviewedHead(627)).toMatchObject({ head_sha: "abc123", verdict: "APPROVE" });
+      expect(store.getPr(627)?.state).not.toBe("queued");
+
+      // With a later round already started, the same late file is inert.
+      reviewingRound(628);
+      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      store.startRound(628, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+      const late = write(628, 1, verdictFile({ pr: 628, verdict: "APPROVE" }));
+      expect(await watcher().handleFile(late)).toBe(true);
+      expect(store.roundsFor(628)[0]).toMatchObject({ status: "cancelled", verdict: null });
+      expect(count("verdict_after_cancel_ignored", 628)).toBe(1);
     });
   });
 

@@ -841,6 +841,37 @@ export class VerdictWatcher {
       .get(pr) as RoundRow | undefined;
   }
 
+  /** A file reaching a cancelled round is not applied over the cancel:
+   * recorded, archived by the caller, nothing else touched. */
+  private ignoreAfterCancel(round: RoundRow, name: string, malformed?: string): void {
+    this.deps.store.logEvent("verdict_after_cancel_ignored", round.pr, {
+      round_id: round.id,
+      round_no: round.round_no,
+      cancel_cause: round.cancel_cause,
+      file: name,
+      ...(malformed !== undefined ? { malformed } : {}),
+    });
+    this.log(
+      `verdicts: #${round.pr} round ${round.round_no} was already cancelled (${round.cancel_cause ?? "unknown"}) — ${name} is not applied over it`,
+    );
+  }
+
+  /**
+   * The orphan sweep cancels a round because its session did not survive a
+   * restart — not because anything decided against the round. A verdict file
+   * the session committed before the restart, which the boot sweep had not
+   * settled yet (still waiting on its posting receipt), is that round's
+   * decision and still applies — the posted review is settled, never re-run —
+   * as long as no later round has started on the PR.
+   */
+  private orphanVerdictOwed(round: RoundRow): boolean {
+    return (
+      round.status === "cancelled" &&
+      round.cancel_cause === "orphan_sweep" &&
+      !this.deps.store.hasLaterRound(round.pr, round.round_no)
+    );
+  }
+
   /** A verdict file names a round this PR does not have: archived inert,
    * recorded, and nothing else touched — no round settled, no lifecycle moved,
    * no failure opened against whatever round IS running. */
@@ -998,6 +1029,13 @@ export class VerdictWatcher {
       // The file is still in verdict/ because the round's receipt settlement
       // was cut short (archive runs only after it): finish that settlement.
       if (await this.resumeReceiptSettlement(round)) return;
+      // A cancelled round is closed for good, as in `apply`: a malformed file
+      // reaching it afterwards opens no failure over whatever replaced it (an
+      // operator's `u` stays undone by nothing the old session writes).
+      if (round.status === "cancelled") {
+        this.ignoreAfterCancel(round, name, message);
+        return;
+      }
     }
     let anomaly = message;
     if (round && round.status === "running" && round.posting_key) {
@@ -1776,8 +1814,13 @@ export class VerdictWatcher {
     // cancel) is inert: finishing the round would apply the old verdict over
     // whatever replaced it. The same rule `finishRound`'s claim enforces for a
     // cancel landing DURING the apply. A guard-2 no-op (`no_new_evidence`)
-    // keeps its own replay path below.
-    if (round.status === "cancelled" && round.cancel_cause !== "no_new_evidence") {
+    // keeps its own replay path below, and so does the one cancel that is not
+    // a decision about the round (`orphanVerdictOwed`).
+    if (
+      round.status === "cancelled" &&
+      round.cancel_cause !== "no_new_evidence" &&
+      !this.orphanVerdictOwed(round)
+    ) {
       store.logEvent("verdict_after_cancel_ignored", v.pr, {
         round_id: round.id,
         round_no: v.round_no,
@@ -1933,6 +1976,12 @@ export class VerdictWatcher {
           : "applied";
       }
       if (proof.kind === "failed") {
+        // An orphan-swept round's verdict that its posting cannot prove is
+        // not applied — and opens no incident over the requeue that stands.
+        if (round.status === "cancelled") {
+          this.ignoreAfterCancel(round, name, `posting proof failed: ${proof.detail ?? "?"}`);
+          return "applied";
+        }
         await this.failPostingProof(round, proof.detail ?? "posting receipt invalid");
         return "failed";
       }
