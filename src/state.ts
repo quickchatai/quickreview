@@ -2898,6 +2898,20 @@ export class StateStore {
       .all({ pr, session: `pr-${pr}` }) as SessionCommandRow[];
   }
 
+  /** The oldest command other than `exceptId` that still owns PR `pr`'s
+   * session slot. Queried by PR, not by the canonical session spelling: a
+   * malformed or legacy row is still durable PR ownership and must not
+   * disappear behind cleanup of a named incident. */
+  private otherBlockingCommandForPr(pr: number, exceptId: string): SessionCommandRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT c.* FROM session_commands c
+        WHERE c.pr=@pr AND c.id<>@except_id AND ${BLOCKING_SESSION_COMMAND_SQL}
+        ORDER BY c.created_at, c.id LIMIT 1`,
+      )
+      .get({ pr, except_id: exceptId }) as SessionCommandRow | undefined;
+  }
+
   /**
    * Terminalize stale ownership after the operator has killed the target Pi.
    * Non-round commands own the only durable copy of their conversational
@@ -4932,16 +4946,7 @@ export class StateStore {
           kind: "blocked",
           reason: `failed command/round identity changed for ${input.command_id}`,
         };
-      // Do not limit this to the canonical session spelling: a malformed or
-      // legacy failed row is still durable PR ownership and must not disappear
-      // behind cleanup of the named incident.
-      const otherFailed = this.db
-        .prepare(
-          `SELECT c.* FROM session_commands c
-          WHERE c.pr=@pr AND c.id<>@command_id AND ${BLOCKING_SESSION_COMMAND_SQL}
-          ORDER BY c.created_at, c.id LIMIT 1`,
-        )
-        .get({ pr: input.pr, command_id: input.command_id }) as SessionCommandRow | undefined;
+      const otherFailed = this.otherBlockingCommandForPr(input.pr, input.command_id);
       if (otherFailed)
         return {
           kind: "blocked",
@@ -5143,9 +5148,7 @@ export class StateStore {
             reason: `PR #${input.pr} linked round ${round.round_no} is still running`,
           };
       }
-      const otherBlocker = this.blockingSessionCommandsForPr(input.pr).find(
-        (row) => row.id !== input.command_id,
-      );
+      const otherBlocker = this.otherBlockingCommandForPr(input.pr, input.command_id);
       if (otherBlocker)
         return {
           ok: false,

@@ -1676,6 +1676,47 @@ describe("durable FAILED_LOUD review obligations", () => {
     expect(store.getSessionCommand("cmd-target")?.status).toBe("failed");
   });
 
+  it("refuses a second failed owner even under a malformed session name", () => {
+    store.upsertPr(prRow(5408, { state: "closed", head_sha: "abc123" }));
+    const failed = (id: string, session: string) => {
+      store.createSessionCommand({
+        id,
+        pr: 5408,
+        session,
+        kind: "wake",
+        round_no: null,
+        payload_sha256: id,
+        payload_path: `/payload/${id}.md`,
+        inject_path: `/inject/${id}.md`,
+        next_check_at: T0.toISOString(),
+      });
+      store.failPendingSessionCommand(id, `${id} failed`);
+    };
+    failed("cmd-target", "pr-5408");
+    failed("legacy-failed", "overseer");
+    store.openReviewFailure({
+      pr: 5408,
+      command_id: "cmd-target",
+      head_sha: "abc123",
+      stage: "session_command",
+      detail: "target failed",
+      attempts: 2,
+      retry_cap: 2,
+    });
+
+    expect(
+      store.resolveTerminalReviewFailure({
+        pr: 5408,
+        incident_id: "review-failure:cmd-target",
+        command_id: "cmd-target",
+        head_sha: "abc123",
+        disposition: "closed",
+      }),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("legacy-failed") });
+    expect(store.openReviewFailure(5408)?.incident_id).toBe("review-failure:cmd-target");
+    expect(store.getSessionCommand("cmd-target")?.status).toBe("failed");
+  });
+
   it("refuses and preserves an outstanding successor obligation", () => {
     store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "abc123" }));
     const predecessor = store.startRound(5408, "re-review", [], 75);
