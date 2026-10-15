@@ -3,11 +3,10 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
-import { localWallClockToInstant } from "./eod.js";
+import { zoneDayBounds } from "./eod.js";
 import {
   cancelCauseLabel,
-  isLoudCancelCause,
-  type CancelCause,
+  tallyCancellations,
   type CancellationTally,
   type StateStore,
 } from "./state.js";
@@ -25,7 +24,7 @@ export function writeDigest(
   digestDir: string = defaultDigestDir(),
 ): string {
   mkdirSync(digestDir, { recursive: true });
-  const path = join(digestDir, `${date}.md`);
+  const path = digestPath(date, digestDir);
   writeFileSync(path, content.endsWith("\n") ? content : `${content}\n`);
   return path;
 }
@@ -33,7 +32,12 @@ export function writeDigest(
 /** Has the day's digest been written — the exact file `writeDigest` and the
  * EOD sweep (`digest/{{date}}.md`, cwd = the sandbox root) produce. */
 export function digestWritten(date: string, digestDir: string = defaultDigestDir()): boolean {
-  return existsSync(join(digestDir, `${date}.md`));
+  return existsSync(digestPath(date, digestDir));
+}
+
+/** digest/<date>.md — the one spelling of a day's digest file. */
+function digestPath(date: string, digestDir: string): string {
+  return join(digestDir, `${date}.md`);
 }
 
 /** First non-empty, non-heading line, trimmed and truncated to 200 chars. */
@@ -128,28 +132,7 @@ export function dailyCancellations(
    * the UTC date prefix, as every other `roundsOn` reader does. */
   timeZone?: string,
 ): DailyCancellations {
-  const counts = new Map<string, number>();
-  for (const r of roundsOnDay(store, date, timeZone)) {
-    if (r.status !== "cancelled") continue;
-    const cause = r.cancel_cause ?? "unknown";
-    counts.set(cause, (counts.get(cause) ?? 0) + 1);
-  }
-  const byCause: CancellationTally[] = [...counts.entries()]
-    .map(([cause, count]) => ({
-      cause: cause as CancelCause,
-      count,
-      loud: isLoudCancelCause(cause),
-    }))
-    .sort(
-      (a, b) =>
-        Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
-    );
-  return {
-    date,
-    total: byCause.reduce((n, c) => n + c.count, 0),
-    loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
-    by_cause: byCause,
-  };
+  return { date, ...tallyCancellations(roundsOnDay(store, date, timeZone)) };
 }
 
 /** The rounds started on `date` — a zone-local calendar day when `timeZone`
@@ -157,17 +140,7 @@ export function dailyCancellations(
 function roundsOnDay(store: StateStore, date: string, timeZone?: string) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!timeZone || !m) return store.roundsOn(date);
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const next = new Date(Date.UTC(y, mo - 1, d + 1));
-  const start = localWallClockToInstant(y, mo, d, 0, 0, timeZone);
-  const end = localWallClockToInstant(
-    next.getUTCFullYear(),
-    next.getUTCMonth() + 1,
-    next.getUTCDate(),
-    0,
-    0,
-    timeZone,
-  );
+  const { start, end } = zoneDayBounds(Number(m[1]), Number(m[2]), Number(m[3]), timeZone);
   return store.roundsStartedBetween(start.toISOString(), end.toISOString());
 }
 

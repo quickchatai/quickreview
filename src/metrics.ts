@@ -11,7 +11,7 @@
 // Ops-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
 // manual offsets).
 import { zoneDateString } from "./eod.js";
-import { cancelCauseLabel, isLoudCancelCause, type RoundRow, type StateStore } from "./state.js";
+import { cancelCauseLabel, tallyCancellations, type RoundRow, type StateStore } from "./state.js";
 
 // ---- the payload contract (do not rename or reshape) ----------------------
 
@@ -560,28 +560,16 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     .slice(0, EVENT_KIND_CAP);
 
   // ---- cancellations by cause ----
-  const causeCounts = new Map<string, number>();
-  for (const r of live) {
-    if (r.status !== "cancelled") continue;
-    const cause = r.cancel_cause ?? "unknown";
-    causeCounts.set(cause, (causeCounts.get(cause) ?? 0) + 1);
-  }
-  const byCause = [...causeCounts.entries()]
-    .map(([cause, count]) => ({
-      cause,
-      label: cancelCauseLabel(cause),
-      count,
-      loud: isLoudCancelCause(cause),
-    }))
-    // Loud first: the surface renders in order and never has to know policy.
-    .sort(
-      (a, b) =>
-        Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
-    );
+  // Loud first: the surface renders in order and never has to know policy.
+  const tally = tallyCancellations(live);
   const cancellations = {
-    total: byCause.reduce((n, c) => n + c.count, 0),
-    loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
-    by_cause: byCause,
+    ...tally,
+    by_cause: tally.by_cause.map((c) => ({
+      cause: c.cause,
+      label: cancelCauseLabel(c.cause),
+      count: c.count,
+      loud: c.loud,
+    })),
   };
 
   return {

@@ -149,6 +149,31 @@ export function localWallClockToInstant(
 }
 
 /**
+ * The calendar day year-month-day in `timeZone` as a half-open instant window
+ * [start, end): midnight to midnight on that zone's wall clock, so the 23 h
+ * and 25 h DST days are exact.
+ */
+export function zoneDayBounds(
+  year: number,
+  month: number,
+  day: number,
+  timeZone: string,
+): { start: Date; end: Date } {
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return {
+    start: localWallClockToInstant(year, month, day, 0, 0, timeZone),
+    end: localWallClockToInstant(
+      next.getUTCFullYear(),
+      next.getUTCMonth() + 1,
+      next.getUTCDate(),
+      0,
+      0,
+      timeZone,
+    ),
+  };
+}
+
+/**
  * The next instant strictly after `now` whose wall clock in `timeZone` reads
  * `timeHHMM`. Pure — no timers, no I/O.
  */

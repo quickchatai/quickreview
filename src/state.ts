@@ -364,6 +364,40 @@ export interface CancellationTally {
   loud: boolean;
 }
 
+/** Every cancellation surface's order: loud first, then by count, then by
+ * cause — so the surface that renders a tally never has to know the policy. */
+export function compareCancellationTallies(a: CancellationTally, b: CancellationTally): number {
+  return Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause);
+}
+
+/** The cancelled rounds among `rounds`, tallied by cause (a missing cause is
+ * `unknown`), in `compareCancellationTallies` order, with the total and the
+ * loud subset. */
+export function tallyCancellations(rounds: Iterable<Pick<RoundRow, "status" | "cancel_cause">>): {
+  total: number;
+  loud: number;
+  by_cause: CancellationTally[];
+} {
+  const counts = new Map<string, number>();
+  for (const r of rounds) {
+    if (r.status !== "cancelled") continue;
+    const cause = r.cancel_cause ?? "unknown";
+    counts.set(cause, (counts.get(cause) ?? 0) + 1);
+  }
+  const byCause = [...counts.entries()]
+    .map(([cause, count]) => ({
+      cause: cause as CancelCause,
+      count,
+      loud: isLoudCancelCause(cause),
+    }))
+    .sort(compareCancellationTallies);
+  return {
+    total: byCause.reduce((n, c) => n + c.count, 0),
+    loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
+    by_cause: byCause,
+  };
+}
+
 /** One parsed row of the durable reasoning record. */
 export interface RoundFindingRow {
   id: number;
@@ -2650,10 +2684,7 @@ export class StateStore {
       .all({ since }) as Array<{ cause: string; c: number }>;
     return rows
       .map((r) => ({ cause: r.cause as CancelCause, count: r.c, loud: isLoudCancelCause(r.cause) }))
-      .sort(
-        (a, b) =>
-          Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
-      );
+      .sort(compareCancellationTallies);
   }
 
   /** The cancelled rounds a human should look at — loud causes only. */
