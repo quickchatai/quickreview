@@ -2969,10 +2969,11 @@ export class VerdictWatcher {
     return Math.max(0, this.deps.usage?.budgetMs ?? USAGE_BUDGET_MS);
   }
 
-  /** Malformed verdict or blown deadline: overseer anomaly, round marked, and
-   * the PR returned to its standing-verdict state (no park — the AI keeps
-   * driving). Never an approve path: "tracked" here means
-   * "no work owed", not approved. */
+  /** Malformed verdict or blown deadline: overseer anomaly, round marked, the
+   * PR's lifecycle returned to its standing-verdict state (never an approve,
+   * never a park), and the review still OWED as a FAILED_LOUD incident
+   * (`openReviewFailure`) that holds the PR out of the pump — and its held
+   * wakes behind it — until the operator presses `u`. */
   private async handleAnomaly(
     pr: number,
     roundNo: number | null,
@@ -3117,8 +3118,8 @@ export class VerdictWatcher {
   /**
    * Deliver wakes that are held with no round left to flush them.
    *
-   * `flushWakes` runs from exactly two places — a verdict landing and the
-   * anomaly path — on the assumption that every round ends through one of
+   * `flushWakes` runs at a round's settled end — a verdict landing or a
+   * guarded no-op — on the assumption that every round ends through one of
    * them. Three cancellations do not: `superseded`, a startup orphan that is
    * not requeued (the requeue needs `state === "reviewing"` and no later
    * round), and a self-requeue whose successor is cancelled the same way. The
@@ -3126,9 +3127,12 @@ export class VerdictWatcher {
    * then sit in `pending_wakes` with nothing to flush them, and that table has
    * no expiry.
    *
-   * A PR holding wakes with no round running is unambiguous: the reason to
-   * hold is gone, so deliver. Runs on the deadline tick, which is already the
-   * daemon's "is anything stuck?" sweep.
+   * A PR holding wakes with no round running and no review owed is
+   * unambiguous: the reason to hold is gone, so deliver. A PR whose review
+   * is owed FAILED_LOUD (the anomaly path, an exhausted recovery) keeps them
+   * held — conversation never overtakes owed review work; the operator's `u`
+   * resolves the debt, and the next sweep delivers them. Runs on the deadline
+   * tick, which is already the daemon's "is anything stuck?" sweep.
    */
   private async flushStrandedWakes(): Promise<void> {
     const { store } = this.deps;
@@ -3140,6 +3144,7 @@ export class VerdictWatcher {
         if (dropped > 0) store.logEvent("wakes_dropped_closed", pr, { dropped });
         continue;
       }
+      if (store.openReviewFailure(pr)) continue;
       store.logEvent("wakes_stranded", pr, { held: store.heldWakes(pr).length });
       this.log(`verdicts: #${pr} held wakes with no round running — flushing`);
       await this.flushWakes(pr);

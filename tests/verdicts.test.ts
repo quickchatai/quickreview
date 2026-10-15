@@ -2285,6 +2285,12 @@ describe("held wakes are flushed at round end", () => {
     expect(injects).toEqual([]);
     expect(store.heldWakes(101)).toHaveLength(1);
     expect(store.openReviewFailure(101)?.work_owed).toBe(1);
+
+    // MUTATION: drop the failure check in flushStrandedWakes — the next
+    // tick's stranded-wake sweep delivers them over the owed review.
+    expect(await w.checkDeadlines()).toEqual([]);
+    expect(injects).toEqual([]);
+    expect(store.heldWakes(101)).toHaveLength(1);
   });
 
   it("leaves a wake held while the round is still running", async () => {
