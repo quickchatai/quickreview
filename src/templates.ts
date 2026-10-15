@@ -328,8 +328,10 @@ export function renderPassPlan(
   plan: PassPlanEntry[],
   unswept: string[] = [],
   /** The pre-approval sweep's table: its rows take the prior findings as
-   * "do not re-raise", so the split note does not assign them to one row. */
-  opts: { sweep?: boolean } = {},
+   * "do not re-raise", so the split note does not assign them to one row.
+   * `behaviourUnread`: the files the behaviour-delta group cap left
+   * uncompared, named so a capped lens never reads as full coverage. */
+  opts: { sweep?: boolean; behaviourUnread?: readonly string[] } = {},
 ): string {
   const notes = plan.some((p) => p.focus !== undefined || p.why !== undefined);
   const rows = plan.map((p) => {
@@ -376,7 +378,15 @@ export function renderPassPlan(
           `Not swept (over the per-round sweep cap): ${unswept.map((f) => codePath(f)).join(", ")}.`,
         ]
       : [];
-  return [...head, ...rows, ...split, ...tail].join("\n");
+  const unread = opts.behaviourUnread ?? [];
+  const behaviourTail =
+    unread.length > 0
+      ? [
+          "",
+          `Base behaviour not compared (over the behaviour-delta group cap): ${unread.map((f) => codePath(f)).join(", ")}.`,
+        ]
+      : [];
+  return [...head, ...rows, ...split, ...tail, ...behaviourTail].join("\n");
 }
 
 /** Comma list of lenses the session may additionally run this round. A lens
@@ -839,7 +849,9 @@ export function roundVars(
     round_type: order.round_type,
     round_no: String(order.round_no),
     lenses: order.lenses.join(", "),
-    pass_plan: renderPassPlan(order.pass_plan, order.sweep_unswept ?? []),
+    pass_plan: renderPassPlan(order.pass_plan, order.sweep_unswept ?? [], {
+      ...(order.behaviour_unread ? { behaviourUnread: order.behaviour_unread } : {}),
+    }),
     // Third-party sources (src/depsources.ts) — "" when nothing was unpacked.
     dependency_note: order.dependency_note ? `\n${order.dependency_note}\n` : "",
     addable_lenses: renderAddableLenses(order.addable_lenses, order.addable_tiers),

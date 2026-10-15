@@ -190,6 +190,9 @@ export interface RoundOrder {
   /** Changed files past the sweep's per-round cap — named in the plan so a
    * capped sweep never reads as full coverage. */
   sweep_unswept?: string[];
+  /** Files the behaviour-delta lens's group cap left uncompared — named in
+   * the plan for the same reason. */
+  behaviour_unread?: string[];
   /** The rendered third-party-sources block (src/depsources.ts), carried
    * into every pass's task string. Absent or "" ⇒ nothing was unpacked. */
   dependency_note?: string;

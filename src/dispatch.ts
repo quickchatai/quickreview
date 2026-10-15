@@ -1782,7 +1782,7 @@ export function buildRoundOrder(args: {
   };
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
-  const { pass_plan, addable_lenses, sweep_unswept } =
+  const { pass_plan, addable_lenses, sweep_unswept, behaviour_unread } =
     args.plan ??
     buildPassPlan(
       args.cfg,
@@ -1818,6 +1818,7 @@ export function buildRoundOrder(args: {
     addable_lenses,
     ...(Object.keys(addable_tiers).length > 0 ? { addable_tiers } : {}),
     ...(sweep_unswept.length > 0 ? { sweep_unswept } : {}),
+    ...(behaviour_unread && behaviour_unread.length > 0 ? { behaviour_unread } : {}),
     ...(args.dependencyNote ? { dependency_note: args.dependencyNote } : {}),
     ...(args.cfg.review.nits === "open" ? { nit_policy: "open" as const } : {}),
     ...(isDefaultPosting(args.cfg.posting) ? {} : { posting_policy: args.cfg.posting }),
