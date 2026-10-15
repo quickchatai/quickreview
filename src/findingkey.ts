@@ -103,3 +103,16 @@ const FINDING_MARKER_STRIP_RE = new RegExp(`\\n*${FINDING_MARKER_RE.source}`, "g
 export function stripFindingMarkers(body: string): string {
   return body.replace(FINDING_MARKER_STRIP_RE, "");
 }
+
+/** A recheck head as the recheck's own key: its first 12 characters,
+ * lowercased — so a full sha and its prefix are one head. */
+export function recheckHead12(head: string): string {
+  return head.slice(0, 12).toLowerCase();
+}
+
+/** The `finding_key` prefix of a recheck's own findings at `head`
+ * (`recheck:<head12>:`): the recheck writes its rows under it and the learner
+ * reads them back by it. */
+export function recheckKeyPrefix(head: string): string {
+  return `recheck:${recheckHead12(head)}:`;
+}

@@ -44,6 +44,7 @@ import { readFindingsRecord } from "./findingsrecord.js";
 import type { PrFileEntry } from "./github.js";
 import { isMigrationPath } from "./heuristics.js";
 import { applyEvent } from "./statemachine.js";
+import { recheckHead12, recheckKeyPrefix } from "./findingkey.js";
 import type { StateStore } from "./state.js";
 import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
 import { standingVerdict } from "./standing-review.js";
@@ -819,7 +820,7 @@ export interface RecheckOrder {
 /** `pr-<n>-recheck-<head12>.json` — the decision file's name under `verdict/`,
  * and the findings record's under `state/findings/`. */
 export function recheckDecisionFile(pr: number, headSha: string): string {
-  return `pr-${pr}-recheck-${headSha.slice(0, 12).toLowerCase()}.json`;
+  return `pr-${pr}-recheck-${recheckHead12(headSha)}.json`;
 }
 
 export const RECHECK_FILE_RE = /^pr-(\d+)-recheck-([0-9a-f]{7,40})\.json$/i;
@@ -1434,7 +1435,6 @@ export class RecheckWatcher {
     const dir = this.deps.findingsDir;
     if (!dir) return;
     try {
-      const head12 = headSha.slice(0, 12).toLowerCase();
       const path = join(dir, recheckDecisionFile(pr, headSha));
       const store = this.deps.store;
       const roundNo =
@@ -1453,7 +1453,7 @@ export class RecheckWatcher {
       }
       const entries = parsed.record.findings.map((f) => ({
         ...f,
-        key: `recheck:${head12}:${f.key}`,
+        key: `${recheckKeyPrefix(headSha)}${f.key}`,
       }));
       store.recordRoundFindings(
         { pr, round_id: null, round_no: roundNo, head_sha: headSha },

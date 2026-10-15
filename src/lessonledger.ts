@@ -273,7 +273,9 @@ function roleOrderSql(col: string): string {
   return `CASE ${col} WHEN 'row' THEN 0 WHEN 'validator' THEN 1 WHEN 'addable' THEN 2 ELSE 3 END`;
 }
 
-function json<T>(raw: string | null | undefined, fallback: T): T {
+/** A JSON column's value, else `fallback` (for NULL, a JSON null or text
+ * that does not parse). */
+export function jsonColumn<T>(raw: string | null | undefined, fallback: T): T {
   try {
     const v = JSON.parse(raw ?? "") as unknown;
     return (v ?? fallback) as T;
@@ -687,10 +689,10 @@ function storedSelection(r: Record<string, unknown>): StoredSelection {
     query: (r["query"] as string | null) ?? null,
     status: r["status"] as StoredSelection["status"],
     reason: (r["reason"] as string | null) ?? null,
-    lessons: json<SelectedLesson[]>(r["lessons"] as string, []),
-    cases: json<SelectedCase[]>(r["cases"] as string, []),
-    cuts: json<SelectionCut[]>(r["cuts"] as string, []),
-    dropped: json<Record<string, number>>(r["dropped"] as string, {}),
+    lessons: jsonColumn<SelectedLesson[]>(r["lessons"] as string, []),
+    cases: jsonColumn<SelectedCase[]>(r["cases"] as string, []),
+    cuts: jsonColumn<SelectionCut[]>(r["cuts"] as string, []),
+    dropped: jsonColumn<Record<string, number>>(r["dropped"] as string, {}),
     timed_out: r["timed_out"] as number,
     recorded_at: r["recorded_at"] as string,
   };

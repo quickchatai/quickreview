@@ -402,6 +402,23 @@ describe("the miner — the feedback ledger and drained [feedback] comments", ()
     });
   });
 
+  it("a [feedback] review body is evidenced as a review, never as a comment", async () => {
+    const h = harness();
+    h.pr(22);
+    h.store.recordFeedbackSignal({
+      kind: "feedback_comment",
+      pr: 22,
+      comment_id: 8002,
+      scope: "review",
+      author: "pmercier",
+      body: "[feedback] too many nits",
+      day: "2026-10-07",
+    });
+    await h.learner.mine();
+    const [c] = h.learner.allCandidates();
+    expect(JSON.parse(c!.evidence)).toEqual(["pr:22", "review:8002"]);
+  });
+
   it("a [feedback] comment a drain dropped (pr_comments tagged=1, no ledger row) is mined once — and one the ledger has is not doubled", async () => {
     const h = harness();
     h.pr(21);
@@ -1450,6 +1467,27 @@ describe("the curation receipt", () => {
     });
   });
 
+  it("a decline repeated by a later day's receipt records that receipt, as an adoption's does", async () => {
+    const h = await offered();
+    // Both days' packets went out while c1 was still open.
+    await h.learner.buildPacket("2026-10-08");
+    h.learner.eodFired("2026-10-08");
+    for (const day of ["2026-10-07", "2026-10-08"])
+      expect(
+        h.learner.applyReceipt({
+          day,
+          decisions: [{ candidates: [1], decision: "declined", reason: `noise (${day})` }],
+        }).ok,
+      ).toBe(true);
+    expect(h.learner.candidate(1)).toMatchObject({
+      status: "declined",
+      // The decision is the first receipt's; the receipt on record is the latest.
+      decided_day: "2026-10-07",
+      reason: "noise (2026-10-07)",
+      receipt_day: "2026-10-08",
+    });
+  });
+
   it("a late adoption never rewrites a settled candidate's reason or claimed lesson", async () => {
     const h = await offered();
     h.store.db
@@ -1676,6 +1714,21 @@ describe("the miner — fates are re-read, never trusted as written", () => {
         .prepare("SELECT COUNT(*) AS n FROM events WHERE kind = 'lesson_candidates_revised'")
         .get(),
     ).toEqual({ n: 3 });
+  });
+
+  it("a revised fate candidate takes its finding's corrected anchor with its summary", async () => {
+    const h = harness();
+    h.pr(13);
+    h.finding(13, { key: "F" }, "refuted_conceded", { roundNo: 1 });
+    await h.learner.mine();
+    expect(h.learner.candidate(1)).toMatchObject({ path: "backend/api/orders.py", line: 42 });
+    h.store.db
+      .prepare("UPDATE round_findings SET path = ?, line = ? WHERE pr = ? AND finding_key = ?")
+      .run("backend/api/invoices.py", 7, 13, "F");
+    const r = await h.learner.mine();
+    expect(r.fates.revised).toBe(1);
+    expect(h.learner.candidate(1)).toMatchObject({ path: "backend/api/invoices.py", line: 7 });
+    expect(h.learner.candidate(1)!.summary).toContain("backend/api/invoices.py");
   });
 
   it("a posting that joins an earlier chain withdraws its own candidate; the chain is named by its root and read from its END", async () => {

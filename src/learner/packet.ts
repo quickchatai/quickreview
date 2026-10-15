@@ -23,6 +23,7 @@
 // Pure: no clock, no I/O — the learner (src/learner/learner.ts) assembles the
 // data and writes the files.
 import { fenceAsData } from "../memory/datafence.js";
+import { EXPERIENCES_AREA } from "../memory/layout.js";
 import { balancePhrase, type LessonBalance } from "../memory/lessons.js";
 import { quoteAuthor, type CandidateKind, type CandidateSource, type Polarity } from "./miner.js";
 
@@ -102,6 +103,15 @@ export function packetRelDir(day: string): string {
   return `state/eod/${day}`;
 }
 
+/** The curator's copy of the packet of `day` (`outcomes.md`), relative to
+ * the sandbox root — the address every pointer at it names. */
+export function packetMarkdownRel(day: string): string {
+  return `${packetRelDir(day)}/outcomes.md`;
+}
+
+/** Where an adopted lesson is written: the reviewer's `experiences/` area. */
+const EXPERIENCES_URI = `viking://user/reviewer/memories/${EXPERIENCES_AREA}/`;
+
 /** `YYYY-MM-DD` + n calendar days. */
 export function addDays(day: string, n: number): string {
   const t = Date.parse(`${day}T00:00:00Z`);
@@ -136,7 +146,7 @@ const POLARITY_LABEL: Readonly<Record<Polarity, string>> = {
 
 /** The one line the digest carries (`dayContext`). */
 export function packetPointer(p: OutcomesPacket): string {
-  const rel = `${packetRelDir(p.day)}/outcomes.md`;
+  const rel = packetMarkdownRel(p.day);
   const parts = [
     `${p.offered} candidate${p.offered === 1 ? "" : "s"} to decide (${p.new} new, ${p.carried} carried)`,
   ];
@@ -233,14 +243,16 @@ export function renderPacketMarkdown(p: OutcomesPacket): string {
  * `tests/eod-seed-coherence.test.ts` renders both and checks.
  */
 export function renderCurationSection(p: OutcomesPacket): string {
-  const rel = `${packetRelDir(p.day)}/outcomes.md`;
+  const rel = packetMarkdownRel(p.day);
   const example = receiptExample(p.day);
   const lines = [
     `The daemon mined the human outcomes of the review system into candidate lessons: \`${rel}\` (machine copy: \`outcomes.json\` beside it). ${p.offered} candidate${p.offered === 1 ? " is" : "s are"} offered today — ${p.new} new, ${p.carried} carried.`,
     "",
     "For EVERY candidate in the packet, decide one of:",
     "",
-    "- **adopt** — write a TYPED lesson with `viking_write` and its `lesson` parameter `{kind, lens, class, paths, evidence}` into `viking://user/reviewer/memories/experiences/`. Cite every candidate the lesson adopts as `cand:c<id>` in `evidence` (one lesson may adopt a whole cluster). Reuse the cluster's class. A look-for lesson rests on a miss or a fix a human made, or on the reviewer's OWN re-check reversal (`recheck_flip`, labelled so — its conclusion, not a person's: adopt one only when the code it names shows the miss, and since a `recheck.*` cluster groups reversals by directory alone, a lesson adopts only the reversals that show the SAME miss, never the whole cluster on its count); a dont-raise lesson rests on a human refutation, a deletion or a `[feedback]` comment — never on a whole-review signal alone.",
+    "- **adopt** — write a TYPED lesson with `viking_write` and its `lesson` parameter `{kind, lens, class, paths, evidence}` into `" +
+      EXPERIENCES_URI +
+      "`. Cite every candidate the lesson adopts as `cand:c<id>` in `evidence` (one lesson may adopt a whole cluster). Reuse the cluster's class. A look-for lesson rests on a miss or a fix a human made, or on the reviewer's OWN re-check reversal (`recheck_flip`, labelled so — its conclusion, not a person's: adopt one only when the code it names shows the miss, and since a `recheck.*` cluster groups reversals by directory alone, a lesson adopts only the reversals that show the SAME miss, never the whole cluster on its count); a dont-raise lesson rests on a human refutation, a deletion or a `[feedback]` comment — never on a whole-review signal alone.",
     "- **decline** — with a one-line reason (a one-off, noise, an ops note, already covered by a lesson the packet names).",
     "",
     "Then write ONE command file into `commands/` — the curation receipt:",
@@ -275,7 +287,7 @@ export function receiptExample(day: string): {
       {
         candidates: ["c12", "c13"],
         decision: "adopted",
-        lesson: "viking://user/reviewer/memories/experiences/<name>.md",
+        lesson: `${EXPERIENCES_URI}<name>.md`,
       },
       {
         candidates: ["c14"],
@@ -312,7 +324,7 @@ export function renderNoPacketSection(day: string, why: NoPacketWhy): string {
       "",
       "Run §1 on the day's PRs alone, and say in the digest's Learnings line that there was no packet.",
     ].join("\n");
-  const rel = `${packetRelDir(day)}/outcomes.md`;
+  const rel = packetMarkdownRel(day);
   return [
     "Today's outcomes packet did not come with this prompt: the daemon failed to build it, or it was not ready in time.",
     "",
