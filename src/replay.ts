@@ -69,9 +69,12 @@ import { dirname, join, resolve } from "node:path";
 import { githubCloneDir, type Config } from "./config.js";
 import { buildPassPlan } from "./dispatch.js";
 // Type-only, erased at build: `buildPassPlan` takes the file list shape the
-// files API returns, and this module builds one out of `git diff --numstat`.
+// files API returns, and this module builds one out of a local `git diff`.
 import type { PrFileEntry } from "./github.js";
+import { renderPassPlan } from "./templates.js";
 import type { ExecFn } from "./tmux.js";
+import type { PassPlanEntry } from "./types.js";
+import { parseUnifiedDiff } from "./unifieddiff.js";
 import {
   assertReplaySafe,
   parseCaseSet,
@@ -255,7 +258,11 @@ export interface ReplayOrderArgs {
   c: RegressionCase;
   treePath: string;
   findingsPath: string;
-  lenses: readonly string[];
+  /** The round's pass plan as `buildPassPlan` made it: each row's agent
+   * variant, and a sweep row's files, are part of what a round runs. */
+  plan: PassPlanEntry[];
+  /** Files the sweep cap left out of the plan. */
+  unswept?: string[];
   baseSha: string;
   changedFiles: number;
   /** True when the diff base could not be resolved — the session is told so
@@ -277,9 +284,13 @@ export function replayOrder(a: ReplayOrderArgs): string {
       : `Diff base: \`${a.baseSha}\` — \`git diff ${a.baseSha} ${a.c.headSha}\` is this PR's change (${a.changedFiles} file(s)).`,
   );
   L.push("");
-  L.push("Run these lens passes as subagents against that tree, exactly as a review round would:");
+  L.push(
+    "Run these lens passes as subagents against that tree, exactly as a review round would — each row's subagent, over its row's files when it names some:",
+  );
   L.push("");
-  for (const lens of a.lenses) L.push(`- \`${lens}\``);
+  // `sweep`: a replay carries no prior findings, so the split note says
+  // nothing about where one goes.
+  L.push(renderPassPlan(a.plan, a.unswept ?? [], { sweep: true }));
   L.push("");
   L.push("Then write the surviving findings — the ones that would actually have been posted — to:");
   L.push("");
@@ -421,18 +432,15 @@ export class ScratchReplay {
     );
     if (mb.code === 0 && mb.stdout.trim()) {
       baseSha = mb.stdout.trim();
-      const diff = await this.git(["diff", "--numstat", baseSha, c.headSha], baseClone);
+      // The whole patch, not a count: lens selection reads each file's
+      // status and hunks (content-triggered lenses, an added file's
+      // placement), exactly as it reads the files API in a live round.
+      const diff = await this.git(
+        ["diff", "--no-color", "--no-ext-diff", "-M", baseSha, c.headSha],
+        baseClone,
+      );
       if (diff.code === 0) {
-        for (const line of diff.stdout.split("\n")) {
-          const [add = "", del = "", path = ""] = line.trim().split("\t");
-          if (!path) continue;
-          files.push({
-            filename: path,
-            additions: Number(add) || 0,
-            deletions: Number(del) || 0,
-            status: "modified",
-          });
-        }
+        files.push(...parseUnifiedDiff(diff.stdout));
         // A merge-committed PR's head is an ancestor of TODAY's base, so the
         // merge-base is the head itself and the diff is empty. A replayed PR
         // changed something by definition: an empty diff means the base was
@@ -484,13 +492,13 @@ export class ScratchReplay {
         );
         return [];
       }
-      const { pass_plan } = buildPassPlan(this.o.cfg, prepared.files);
-      const lenses = pass_plan.map((p) => p.lens);
+      const { pass_plan, sweep_unswept } = buildPassPlan(this.o.cfg, prepared.files);
       const order = replayOrder({
         c,
         treePath: prepared.tree,
         findingsPath,
-        lenses,
+        plan: pass_plan,
+        unswept: sweep_unswept,
         baseSha: prepared.baseSha,
         changedFiles: prepared.files.length,
         degradedDiff: prepared.degraded,
