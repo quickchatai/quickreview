@@ -1057,6 +1057,78 @@ describe("bounded round-stage supervision", () => {
     });
   });
 
+  it("one command's recovery error leaves the scan red but still inspects the commands after it", async () => {
+    // Due first (earliest check): a failed wake whose retry hook is unwired.
+    const wake = seedWakeCommand({ status: "failed", attempt: 1 });
+    // Then an operator-cancelled round whose running command must be fenced.
+    const round = seedRoundCommand({
+      pr: 5500,
+      status: "running",
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+    });
+    store.markRoundCancelled(round.roundId, "operator rerun", "operator");
+    const killed: number[] = [];
+    const s = supervisor(
+      hooks({
+        killSession: async (n) => {
+          killed.push(n);
+        },
+      }),
+    ).supervisor;
+
+    await expect(s.scan()).rejects.toThrow(/retry hook unavailable/);
+
+    expect(killed).toEqual([round.pr]);
+    expect(store.getSessionCommand(round.id)?.status).toBe("failed");
+    expect(store.getSessionCommand(wake.id)).toMatchObject({
+      status: "failed",
+      recovery_attempts: 0,
+    });
+    expect(s.health()).toMatchObject({ healthy: false });
+  });
+
+  it("a failed attempt stamp does not wedge every later scan", async () => {
+    const s = supervisor(hooks()).supervisor;
+    const mark = store.markSupervisorAttempt.bind(store);
+    let fail = true;
+    store.markSupervisorAttempt = (...args) => {
+      if (fail) {
+        fail = false;
+        throw new Error("database is locked");
+      }
+      return mark(...args);
+    };
+
+    await expect(s.scan()).rejects.toThrow(/database is locked/);
+    await s.scan();
+
+    expect(s.health()).toMatchObject({ last_success_at: clock.toISOString() });
+  });
+
+  it("leaves the session's tail alone after its verdict ended the round, then fences it past the grace", async () => {
+    const { id, pr, roundId } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+    });
+    store.finishRound(roundId, "APPROVE", null);
+    const killed: number[] = [];
+    const h = hooks({
+      killSession: async (n) => {
+        killed.push(n);
+      },
+    });
+
+    await supervisor(h).supervisor.scan();
+    expect(killed).toEqual([]);
+    expect(store.getSessionCommand(id)?.status).toBe("running");
+
+    clock = new Date(clock.getTime() + (baseCfg.daemon.round_finalize_grace_min ?? 5) * 60_000);
+    await supervisor(h).supervisor.scan();
+    expect(killed).toEqual([pr]);
+    expect(store.getSessionCommand(id)?.status).toBe("acked");
+  });
+
   it("rejects stale settled progress without exact command identity", async () => {
     const { id, pr } = seedRoundCommand({ status: "running", started: true });
     const onRoundFailure = vi.fn(async () => "requeued" as const);

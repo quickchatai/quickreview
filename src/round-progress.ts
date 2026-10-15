@@ -68,6 +68,24 @@ export function lensForAgent(agent: string): string {
   return agent.replace(/--(?:terra-med|sol-med|sol-high)$/, "");
 }
 
+/** A pass execution that has ended, either way. */
+export function isTerminalAgentStatus(status: LiveAgentStatus): boolean {
+  return status === "completed" || status === "failed";
+}
+
+/** The executions that open a round's fanout: a started run of one of the
+ * plan's DISCOVERY lenses. Validator-first, an added lens or a foreign
+ * subagent never counts. */
+export function plannedFanoutAgents(
+  progress: RoundProgressSnapshot,
+  planned: readonly string[],
+): LiveAgentProgress[] {
+  const discovery = planned.filter((name) => name !== "pass-validate");
+  return progress.agents.filter(
+    (agent) => discovery.includes(lensForAgent(agent.agent)) && agent.started_at !== undefined,
+  );
+}
+
 /** Classify the current parent stage from immutable milestones plus the
  * authoritative round plan. Activity text and heartbeat age are deliberately
  * absent: they can describe a stage but can never renew it. */
@@ -77,13 +95,9 @@ export function roundExecutionStage(
 ): RoundExecutionStage {
   if (progress.version !== 2 || !progress.command_id || !progress.command_sha256) return "unknown";
   if (progress.parent_status === "settled") return "finalized";
-  const discovery = planned.filter((name) => name !== "pass-validate");
-  const plannedFanout = progress.agents.some(
-    (agent) => discovery.includes(lensForAgent(agent.agent)) && agent.started_at !== undefined,
-  );
-  if (!plannedFanout) return progress.preparing_at ? "preparing" : "accepted";
-  const terminal = (status: LiveAgentStatus): boolean =>
-    status === "completed" || status === "failed";
+  if (plannedFanoutAgents(progress, planned).length === 0)
+    return progress.preparing_at ? "preparing" : "accepted";
+  const terminal = isTerminalAgentStatus;
   const plannedComplete = planned.every((name) => {
     const executions = progress.agents.filter((agent) => lensForAgent(agent.agent) === name);
     return executions.length > 0 && executions.every((agent) => terminal(agent.status));
@@ -221,8 +235,9 @@ export type ProgressLogLine = ProgressTransition & {
 /** Size cap of the live log. A transition line is ~200–300 bytes and a round
  * writes a few dozen (sweeps a little over a hundred), so 256 KiB holds many
  * rounds of one PR. Past it the file rotates ONCE to `.jsonl.1` (the previous
- * `.1` dropped), so a PR never holds more than ~512 KiB of log and the round
- * that just ended is always whole in one of the two files. */
+ * `.1` dropped), so a PR never holds more than ~512 KiB of log. Rotation is
+ * per line, not per round: a round may straddle the two files, so a
+ * reconstruction reads `.jsonl.1` then `.jsonl`. */
 export const PROGRESS_LOG_MAX_BYTES = 256 * 1024;
 
 /** `pr-<n>.json` → `pr-<n>.jsonl`. */
