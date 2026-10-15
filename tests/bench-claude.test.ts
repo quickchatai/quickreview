@@ -604,7 +604,7 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     // A resume without the pin is a different configuration: the case re-runs.
     const lines: string[] = [];
     expect(await claudeReviewRun({ ...opts, resume: true, env, log: (l) => lines.push(l) })).toBe(0);
-    expect(lines.some((l) => /different build\/version — re-running/.test(l))).toBe(true);
+    expect(lines.some((l) => /different build\/version — its result is dropped/.test(l))).toBe(true);
     expect(readClaudeSummary(out, c)!.fingerprint.model).toBeUndefined();
   });
 

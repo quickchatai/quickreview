@@ -51,11 +51,16 @@ import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
 import { authFingerprint, AuthExpiring, benchAuthMode, syncBenchAuth } from "./auth.js";
 import { run } from "./exec.js";
+import {
+  checkMergeBase,
+  harnessProcessTimeoutMs,
+  prepareArmCases,
+  runLifecycle,
+} from "./armrun.js";
 import { bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
 import type { OcrShapedComment } from "./opencode.js";
 import {
   datasetLine,
-  dropMetricsFiles,
   kTokens,
   reportPreamble,
   roundMetrics,
@@ -75,7 +80,7 @@ export const PRAGENT_COMMANDS = ["describe", "review", "improve"] as const;
 export type PragentCommand = (typeof PRAGENT_COMMANDS)[number];
 
 export function pragentProcessTimeoutMs(timeoutMin: number): number {
-  return (timeoutMin * 60 + 60) * 1000;
+  return harnessProcessTimeoutMs(timeoutMin);
 }
 
 /** Where the target branch of the local provider points: the PR's base commit,
@@ -560,12 +565,9 @@ export async function reviewCasePragent(
       tmpDir,
     });
     const git = (...args: string[]) => exec("git", ["-C", tree, ...args], { env });
-    const mb = await git("merge-base", c.base_commit, c.head_commit);
-    summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
-    if (!summary.merge_base_ok)
-      summary.warnings.push(
-        `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
-      );
+    const mb = await checkMergeBase(exec, tree, c, meta, env);
+    summary.merge_base_ok = mb.ok;
+    if (mb.warning) summary.warnings.push(mb.warning);
     // The local provider's target: a LOCAL branch at the PR's base commit,
     // named like the PR's base branch when git takes the name.
     let target = meta.base_ref;
@@ -788,35 +790,17 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
   const previous = existsSync(runFile)
     ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
     : null;
-  // Every result file this run removes or rewrites was scored by the run's
-  // metrics, so they go before the first one changes; a resume that skips
-  // every case keeps them.
-  let metricsDropped = false;
-  const dropMetricsOnce = (): void => {
-    if (metricsDropped) return;
-    metricsDropped = true;
-    const gone = dropMetricsFiles(join(r.outDir, "results", "all"));
-    if (gone.length)
-      r.log(
-        `pragent: ${gone.length} metrics file(s) scored the old results — removed; re-run eval to score the new reviews`,
-      );
-  };
-  // run.json is about to carry THIS configuration: a case reviewed under
-  // another goes now (not when the loop reaches it), so a stop partway can
-  // never leave it scored under this run's label.
-  for (const c of r.cases) {
-    const prior = r.resume ? readPragentSummary(r.outDir, c) : null;
-    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
-      continue;
-    if (prior)
-      r.log(
-        `pragent: ${c.instance_id} was reviewed by a different PR-Agent/model/verbosity/flags — its result is dropped`,
-      );
-    const result = join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`);
-    if (existsSync(result)) dropMetricsOnce();
-    rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-    rmSync(result, { force: true });
-  }
+  // run.json is about to carry THIS configuration (prepareArmCases).
+  const prep = prepareArmCases({
+    outDir: r.outDir,
+    cases: r.cases,
+    resume: r.resume,
+    fingerprint,
+    readSummary: readPragentSummary,
+    log: r.log,
+    arm: "pragent",
+    differs: "a different PR-Agent/model/verbosity/flags",
+  });
   const runRecord = {
     reviewer: "pragent",
     set: r.set.name,
@@ -836,15 +820,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
     flags: { timeout_min: r.timeoutMin },
     qcr_commit: r.qcrCommit,
     cases: r.cases.map((c) => c.instance_id),
-    started_at:
-      (r.resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
-      new Date().toISOString(),
-    resumes: [
-      ...(r.resume && Array.isArray(previous?.["resumes"])
-        ? (previous["resumes"] as unknown[])
-        : []),
-      ...(r.resume && previous ? [{ at: new Date().toISOString(), fingerprint }] : []),
-    ],
+    ...runLifecycle(r.resume, previous, fingerprint),
     finished_at: null as string | null,
   };
   writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
@@ -872,7 +848,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
       break;
     }
     // This case's result is about to be rewritten.
-    dropMetricsOnce();
+    prep.beforeReview();
     let meta: PrefetchMeta;
     try {
       meta = r.readMeta(c);

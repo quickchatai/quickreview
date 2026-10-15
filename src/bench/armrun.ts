@@ -3,11 +3,20 @@
 // configuration, the run record's lifecycle fields, the harness's time
 // budget, the prepared tree's merge-base check and the AACR score table.
 
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
 import type { ExecOptions, ExecResult } from "./exec.js";
-import { SCORE_TABLE_HEAD, scoreRow, type roundMetrics } from "./report.js";
+import {
+  caseWarningLines,
+  dropMetricsFiles,
+  SCORE_TABLE_HEAD,
+  scoreRow,
+  type CaseDiagnostics,
+  type roundMetrics,
+} from "./report.js";
+
+export type { CaseDiagnostics };
 
 /** reviewers/codex.py `run_codex_review`: `process_timeout = timeout_minutes
  * * 60 + 60` — the budget the harness gives its CLI reviewers, which the arms
@@ -27,11 +36,7 @@ export function dropStaleMetrics(
   who: string,
   what: string,
 ): number {
-  if (!existsSync(resultsDir)) return 0;
-  const stale = readdirSync(resultsDir).filter(
-    (n) => n.startsWith("metrics_") && n.endsWith(".json"),
-  );
-  for (const f of stale) rmSync(join(resultsDir, f), { force: true });
+  const stale = dropMetricsFiles(resultsDir);
   if (stale.length)
     log(
       `${who}: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score ${what}`,
@@ -160,29 +165,9 @@ export function aacrScoreTable(m: ReturnType<typeof roundMetrics>, cases: number
   return L;
 }
 
-/** What a case summary says went wrong, for the report's warnings section. */
-export interface CaseDiagnostics {
-  instance_id: string;
-  status: string;
-  merge_base_ok: boolean;
-  error?: string;
-  warnings: string[];
-}
-
 /** The report's "Warnings (case errors)" section: every case with an error,
  * a warning or a failed merge-base check; nothing when there is none. */
 export function caseWarningsSection(cases: readonly CaseDiagnostics[]): string[] {
-  const warned = cases.filter((s) => s.warnings.length || s.error || !s.merge_base_ok);
-  if (!warned.length) return [];
-  const L = ["", "## Warnings (case errors)", ""];
-  for (const s of warned) {
-    if (!s.merge_base_ok && s.status !== "failed")
-      L.push(`- \`${s.instance_id}\`: merge-base check failed — see case-summary.json`);
-    for (const w of [
-      ...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []),
-      ...s.warnings,
-    ])
-      L.push(`- \`${s.instance_id}\`: ${w}`);
-  }
-  return L;
+  const lines = caseWarningLines(cases);
+  return lines.length ? ["", "## Warnings (case errors)", "", ...lines] : [];
 }

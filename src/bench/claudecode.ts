@@ -52,19 +52,12 @@
 // is built at review time, and `claude-rebuild` rebuilds it for a finished run
 // without re-reviewing anything.
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
 import { run } from "./exec.js";
+import { aacrScoreTable, checkMergeBase, dropStaleMetrics, prepareArmCases } from "./armrun.js";
 import { AACR_REPORT_PREAMBLE, roundMetrics } from "./report.js";
 import { claudeRowsForJudge, claudeScoredFindings } from "./claudeshape.js";
 import { parseClaudeProse, PROSE_PARSER_VERSION } from "./claudeprose.js";
@@ -644,12 +637,9 @@ export async function reviewCaseClaude(
       maxRetries: o.maxRetries,
       model: o.model,
     });
-    const mb = await run("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
-    summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
-    if (!summary.merge_base_ok)
-      summary.warnings.push(
-        `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
-      );
+    const mb = await checkMergeBase(run, tree, c, meta, env);
+    summary.merge_base_ok = mb.ok;
+    if (mb.warning) summary.warnings.push(mb.warning);
     const argvFile = join(caseDir, "claude-argv.json");
     const stdoutFile = join(caseDir, "claude-stdout.json");
     rmSync(argvFile, { force: true });
@@ -852,7 +842,13 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
       // The metrics scored the old results: they go BEFORE the first result
       // changes, so a rebuild cut short never leaves them beside new findings
       // (and a re-run, finding those bytes already written, would not know).
-      if (changed === 0) dropStaleMetrics(o.outDir, o.log, "claude-rebuild", "the rebuilt view");
+      if (changed === 0)
+        dropStaleMetrics(
+          join(o.outDir, "results", "all"),
+          o.log,
+          "claude-rebuild",
+          "the rebuilt view",
+        );
       changed++;
       writeFileSync(resultFile, text);
     }
@@ -882,26 +878,6 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
       (missing ? `; ${missing} case(s) had no readable result file` : ""),
   );
   return out;
-}
-
-/** The harness scored the result files as they were; a rewritten or removed
- * one makes every metrics file beside them a score of findings that no longer
- * exist. They go (as the eval step's own `rm -f metrics_*.json` does), so a
- * report before the next eval shows no score rather than a stale one. */
-function dropStaleMetrics(
-  outDir: string,
-  log: (line: string) => void,
-  who: string,
-  what: string,
-): void {
-  const all = join(outDir, "results", "all");
-  if (!existsSync(all)) return;
-  const stale = readdirSync(all).filter((n) => n.startsWith("metrics_") && n.endsWith(".json"));
-  for (const f of stale) rmSync(join(all, f), { force: true });
-  if (stale.length)
-    log(
-      `${who}: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score ${what}`,
-    );
 }
 
 // ---- the whole run -------------------------------------------------------------
@@ -946,29 +922,17 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
     throw new Error(
       `${o.outDir} holds another arm's run (reviewer ${JSON.stringify(previous["reviewer"] ?? "QuickReview")}) — pick a new --run`,
     );
-  // Every case reviewed again rewrites its result file, so the run's metrics
-  // go before the first one does; a resume that skips every case keeps them.
-  let metricsDropped = false;
-  const dropMetricsOnce = (): void => {
-    if (metricsDropped) return;
-    metricsDropped = true;
-    dropStaleMetrics(o.outDir, o.log, "claude-review", "the new reviews");
-  };
-  // run.json is about to carry THIS configuration, so no case reviewed under
-  // another may stay a result of the run: without --resume every case goes;
-  // with it, every case whose fingerprint differs goes now, not when the loop
-  // reaches it — a stop partway (an auth failure) must leave those cases
-  // unreviewed, never scored under the new label.
-  for (const c of cases) {
-    const prior = o.resume ? readClaudeSummary(o.outDir, c) : null;
-    if (o.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
-      continue;
-    dropMetricsOnce();
-    if (prior)
-      o.log(`claude: ${c.instance_id} was reviewed by a different build/version — re-running`);
-    rmSync(join(o.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-    rmSync(join(o.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
-  }
+  // run.json is about to carry THIS configuration (prepareArmCases).
+  const prep = prepareArmCases({
+    outDir: o.outDir,
+    cases,
+    resume: o.resume,
+    fingerprint,
+    readSummary: readClaudeSummary,
+    log: o.log,
+    arm: "claude",
+    differs: "a different build/version",
+  });
   const runRecord = {
     reviewer: "claude",
     set: o.set.name,
@@ -999,7 +963,7 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
       summaries.push(prior);
       continue;
     }
-    dropMetricsOnce();
+    prep.beforeReview();
     let meta: PrefetchMeta;
     try {
       meta = o.readMeta(c);
@@ -1042,14 +1006,6 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
 
 // ---- the report ------------------------------------------------------------------
 
-function fmt(v: number | undefined): string {
-  return v === undefined
-    ? "?"
-    : Number.isInteger(v)
-      ? String(v)
-      : String(Math.round(v * 100) / 100);
-}
-
 /** The Claude Code arm's report: the harness's numbers (its Claude reader),
  * then per case what ran, which model, and what it cost. */
 export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
@@ -1079,14 +1035,7 @@ export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCas
   L.push("");
   L.push("## Scores (the AACR harness, OCR reader on the `review.comments` view)");
   L.push("");
-  L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
-  L.push("|---|---|---|---|---|---|---|---|---|");
-  const { rounds, average } = roundMetrics(join(outDir, "results", "all"), "ocr");
-  const row = (label: string, s: Record<string, number>) =>
-    `| ${label} | ${fmt(s["evaluated_instances"])}/${cases.length} | ${fmt(s["generated_notes"])} | ${fmt(s["matched_semantic_notes"])}/${fmt(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
-  if (average) L.push(row("**average**", average));
-  for (const r of rounds) L.push(row(String(r.round), r.summary));
-  if (!average && rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  L.push(...aacrScoreTable(roundMetrics(join(outDir, "results", "all"), "ocr"), cases.length));
   L.push("");
   L.push("## Per case");
   L.push("");
