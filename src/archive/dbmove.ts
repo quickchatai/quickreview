@@ -67,11 +67,14 @@ import {
   dayOf,
   isBusy,
   monthOf,
+  quoteIdent as q,
+  tsMs,
   type ArchiveConn,
   type ArchiveDb,
 } from "./archivedb.js";
 import { ARCHIVE_EVENT_KINDS } from "./kinds.js";
 import { workerCheckpointer, type LiveCheckpointer } from "./livecheckpoint.js";
+import { bumpMark } from "./rows.js";
 
 const DAY_MS = 86_400_000;
 
@@ -88,10 +91,42 @@ export const BATCH_PAUSE_MS = 100;
 export type RowAge = "old" | "young" | "undatable";
 
 export function rowAge(ts: unknown, cutoffMs: number): RowAge {
-  if (typeof ts !== "string") return "undatable";
-  const t = Date.parse(ts);
-  if (!Number.isFinite(t)) return "undatable";
+  const t = tsMs(ts);
+  if (t === null) return "undatable";
   return t < cutoffMs ? "old" : "young";
+}
+
+/**
+ * What the mover does with one row — the rule the planner counts by too, so
+ * its backlog is what the mover will move. `young` (younger than the cut-off,
+ * or the table's highest rowid with `keepNewest`) ends the scan after its
+ * window; `undatable` is passed over and kept live; `kept` is an event of a
+ * kind with readers; `move` is an old row of an archivable kind.
+ */
+export function classifyRow(row: {
+  rowid: number;
+  /** The table's highest rowid when it never moves, else +Infinity. */
+  newest: number;
+  ts: unknown;
+  cutoffMs: number;
+  /** Filtered by kind (events): only `ARCHIVE_EVENT_KINDS` move. */
+  byKind: boolean;
+  kind: unknown;
+}): RowAge | "kept" | "move" {
+  const age = row.rowid >= row.newest ? "young" : rowAge(row.ts, row.cutoffMs);
+  if (age !== "old") return age;
+  if (row.byKind && !ARCHIVE_EVENT_KINDS.has(row.kind as string)) return "kept";
+  return "move";
+}
+
+/** A mover watermark from `archive_marks`: every rowid ≤ it was examined (0
+ * when absent or not a positive number). The mover resumes after it and the
+ * planner counts from it. */
+export function readWatermark(store: StateStore, name: string): number {
+  const row = store.db.prepare("SELECT value FROM archive_marks WHERE name = ?").get(name) as
+    { value: unknown } | undefined;
+  const n = Number(row?.value ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
 /** One table the mover empties of old rows. */
@@ -155,7 +190,7 @@ export type MoveOutcome =
   | "budget" // the synchronous or the wall budget ran out
   | "held" // a hold came up between batches
   | "aborted" // the archiver stopped
-  | "skipped" // a lock or a check made a batch fail fast — nothing deleted
+  | "skipped" // a lock or a check made a batch fail fast — that batch deleted nothing (earlier batches' moves stand)
   | "failed"; // something unexpected — nothing deleted past the last commit
 
 export type SkipReason =
@@ -291,8 +326,6 @@ function shapeOf(db: Database.Database, table: string): Shape {
   const alias = pks.length === 1 && pks[0]!.type.toUpperCase() === "INTEGER" ? pks[0]!.name : null;
   return { cols: info.map((c) => c.name), alias };
 }
-
-const q = (name: string): string => `"${name.replace(/"/g, '""')}"`;
 
 /** SQLite values compared as they came back from the same schema. */
 function sameValue(a: unknown, b: unknown): boolean {
@@ -515,14 +548,6 @@ export class DbMover {
     return result;
   }
 
-  private mark(name: string): number {
-    const row = this.deps.store.db
-      .prepare("SELECT value FROM archive_marks WHERE name = ?")
-      .get(name) as { value: unknown } | undefined;
-    const n = Number(row?.value ?? 0);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
-  }
-
   private checkStop(result: DbMoveResult, started: number): void {
     if (this.deps.signal?.aborted) throw new Stop("aborted", null, "stopped");
     const held = this.deps.hold?.() ?? null;
@@ -558,7 +583,7 @@ export class DbMover {
     // examined and is older than the cut-off (or undatable), so it is never
     // read again. The CURSOR is where the scan stands; it runs ahead of the
     // watermark past a young row inside a window, whose old rows still move.
-    let persisted = this.mark(spec.mark);
+    let persisted = readWatermark(this.deps.store, spec.mark);
     let watermark = persisted;
     let cursor = watermark;
     let prefixOpen = true;
@@ -607,19 +632,22 @@ export class DbMover {
       const moves: unknown[][] = [];
       for (const row of rows) {
         const rowid = row[0] as number;
-        const age = rowid >= newest ? "young" : rowAge(row[tsIdx], cutoffMs);
-        if (age === "young") {
+        const what = classifyRow({
+          rowid,
+          newest,
+          ts: row[tsIdx],
+          cutoffMs,
+          byKind: kindIdx > 0,
+          kind: kindIdx > 0 ? row[kindIdx] : null,
+        });
+        if (what === "young") {
           sawYoung = true;
           prefixOpen = false;
           continue;
         }
         if (prefixOpen) watermark = rowid;
-        if (age === "undatable") {
-          into.undatable += 1;
-          continue;
-        }
-        if (kindIdx > 0 && !ARCHIVE_EVENT_KINDS.has(row[kindIdx] as string)) continue;
-        moves.push(row);
+        if (what === "undatable") into.undatable += 1;
+        else if (what === "move") moves.push(row);
       }
       into.examined += rows.length;
       if (rows.length > 0) cursor = rows[rows.length - 1]![0] as number;
@@ -699,9 +727,9 @@ export class DbMover {
                 );
               this.deps.fault?.("after_live_delete", spec.table);
               if (spec.rollup) this.rollup(moves, tsIdx, kindIdx);
-              if (spec.countMark) this.addMark(spec.countMark, moves.length);
+              if (spec.countMark) bumpMark(this.deps.store, spec.countMark, moves.length);
               for (const { conn, rows: group } of byFile.values())
-                this.addMark(fileRowsMark(conn.file, spec.table), group.length);
+                bumpMark(this.deps.store, fileRowsMark(conn.file, spec.table), group.length);
               this.deps.fault?.("before_watermark", spec.table);
               if (watermark !== persisted) this.setMark(spec.mark, watermark);
               if (stop) this.setMark(spec.caughtUpMark, cutoffIso);
@@ -851,15 +879,6 @@ export class DbMover {
            ON CONFLICT(name) DO UPDATE SET value = excluded.value`,
       )
       .run(name, value);
-  }
-
-  private addMark(name: string, n: number): void {
-    this.deps.store.db
-      .prepare(
-        `INSERT INTO archive_marks (name, value) VALUES (?, ?)
-           ON CONFLICT(name) DO UPDATE SET value = value + excluded.value`,
-      )
-      .run(name, n);
   }
 
   /** Past `CHECKPOINT_WAL_BYTES`: PASSIVE checkpoint (a page copy, measured),
