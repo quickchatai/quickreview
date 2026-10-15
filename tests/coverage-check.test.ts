@@ -64,6 +64,27 @@ describe("coverageGaps", () => {
     ]);
     expect(g).toEqual({ uncovered: [], groups: [], unchecked: [] });
   });
+  it("a path that is itself eligible covers only itself, never a shorter eligible path it ends with", () => {
+    const pair = [
+      { path: "utils.ts", lines: 10 },
+      { path: "src/utils.ts", lines: 10 },
+    ];
+    // A sweep focused on src/utils.ts did not read the root utils.ts.
+    expect(coverageGaps(pair, [], undefined, undefined, ["src/utils.ts"]).uncovered).toEqual([
+      "utils.ts",
+    ]);
+    // A prefixed path (a worktree's) names the longest eligible path it ends with.
+    expect(coverageGaps(pair, ["/wt/pr-1/src/utils.ts"]).uncovered).toEqual(["utils.ts"]);
+    // A name that is an eligible path is that path, even where it is another's tail.
+    expect(coverageGaps(pair, ["utils.ts"]).uncovered).toEqual(["src/utils.ts"]);
+    expect(coverageGaps(pair, ["/wt/pr-1/utils.ts"]).uncovered).toEqual(["src/utils.ts"]);
+    // A tail no eligible path equals still names every eligible path ending with it.
+    const twins = [
+      { path: "a/x.ts", lines: 1 },
+      { path: "b/x.ts", lines: 1 },
+    ];
+    expect(coverageGaps(twins, ["x.ts"]).uncovered).toEqual([]);
+  });
   it("packs the unaddressed files by line budget into at most two rows and lists the rest", () => {
     const g = coverageGaps(el, ["a/One.java"]);
     expect(g.uncovered).toEqual(["a/Two.java", "a/Three.java", "a/Four.java", "a/Five.java"]);
