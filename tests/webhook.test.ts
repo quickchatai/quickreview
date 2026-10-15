@@ -162,6 +162,14 @@ function delivery(
 }
 
 describe("handleDelivery", () => {
+  it("hands the delivery's parsed action back with its interpretation", () => {
+    const store = new StateStore(":memory:");
+    const res = delivery(store, synchronizePayload(), "pull_request", "g-action");
+    expect(res.interpretation?.kind).toBe("synchronize");
+    expect(res.action).toBe("synchronize");
+    store.close();
+  });
+
   it("403s a bad signature and logs the rejection", () => {
     const store = new StateStore(":memory:");
     const res = delivery(
@@ -596,6 +604,62 @@ describe("applyInterpretation", () => {
     );
     expect(store.getPr(4242)).toMatchObject({ state: "awaiting_author", head_sha: "2222222222" });
     expect(touched).not.toHaveBeenCalled();
+    store.close();
+  });
+
+  // The poll's head refresh skips PRs nobody triggered; the webhook keeps
+  // the same admission boundary — a push or a close adopts nothing.
+  it("adopts no row for a PR nobody triggered — not on a push, not on a close", async () => {
+    const store = new StateStore(":memory:");
+    const pushes: number[] = [];
+    const closed: number[] = [];
+    const hooks = {
+      cfg,
+      store,
+      onSynchronize: (i: { pr: number }) => void pushes.push(i.pr),
+      onClosed: (pr: number) => void closed.push(pr),
+    };
+    await applyInterpretation(
+      hooks,
+      interpretEvent("pull_request", "synchronize", synchronizePayload(), deps()),
+    );
+    await applyInterpretation(
+      hooks,
+      interpretEvent("pull_request", "closed", closedPayload(true), deps()),
+    );
+    expect(store.getPr(4242)).toBeUndefined();
+    expect(pushes).toEqual([]);
+    expect(closed).toEqual([]);
+    store.close();
+  });
+
+  // A closed PR's session is archived and never reborn for a wake: a reply
+  // after the close must not become a claimed obligation nothing can serve.
+  it("routes no author reply on a closed PR", async () => {
+    const store = new StateStore(":memory:");
+    store.upsertPr({
+      number: 4242,
+      state: "closed",
+      head_sha: "old",
+      title: "T",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.recordReviewedHead(4242, { head_sha: "old", verdict: "REQUEST_CHANGES", round_no: 1 });
+    const replies: number[] = [];
+    await applyInterpretation(
+      { cfg, store, onAuthorReply: (r) => void replies.push(r.pr) },
+      interpretEvent(
+        "pull_request_review_comment",
+        "created",
+        reviewCommentPayload(),
+        deps((id) => (id === 800001 ? 4242 : undefined)),
+      ),
+    );
+    expect(replies).toEqual([]);
+    expect(store.reviewedHead(4242)?.last_author_reply_at).toBeNull();
     store.close();
   });
 

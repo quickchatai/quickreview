@@ -1253,6 +1253,16 @@ describe("webhook interpretation of the recheck triggers", () => {
 
   it("routes a push to the recheck, and still never queues a review", async () => {
     const store = new StateStore(":memory:");
+    store.upsertPr({
+      number: PR,
+      state: "tracked",
+      head_sha: OLD,
+      title: "t",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     const seen: string[] = [];
     await applyInterpretation(
       {

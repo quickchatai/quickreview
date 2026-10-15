@@ -135,6 +135,16 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
   }
 }
 
+/** A merge landing over a standing REQUEST_CHANGES — the feedback signal both
+ * close paths (the webhook and reconcile's closed-sync) derive, read off the
+ * lifecycle state from BEFORE the close is applied. */
+export function mergedOverBlock(
+  merged: boolean,
+  priorState: PrLifecycleState | undefined,
+): boolean {
+  return merged && priorState === "awaiting_author";
+}
+
 /** Bot-authored PRs never enter the machine (spec §3). */
 export function isBotAuthor(author: string, botLogin: string): boolean {
   return author === botLogin || author.endsWith("[bot]");

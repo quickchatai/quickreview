@@ -20,7 +20,7 @@ import { standingVerdict } from "./standing-review.js";
 import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
 import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "./github.js";
 import type { OutcomeCapture, OutcomeSweepReport } from "./outcomes.js";
-import { applyEvent, isBotAuthor } from "./statemachine.js";
+import { applyEvent, isBotAuthor, mergedOverBlock } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 import type { OvSessionSweepReport, SessionHooks } from "./types.js";
 import { performance } from "node:perf_hooks";
@@ -621,7 +621,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       // landing over a standing REQUEST_CHANGES. Read the state BEFORE
       // applyEvent erases it; per-(pr, day) dedupe absorbs the overlap with
       // a webhook delivery that already fired.
-      const mergedOverBlock = ref.merged && local.state === "awaiting_author";
+      const overBlock = mergedOverBlock(ref.merged, local.state);
       applyEvent(
         store,
         local.number,
@@ -630,7 +630,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         { botLogin, now },
       );
       store.logEvent("pr_closed", local.number, { merged: ref.merged, source: "reconcile" });
-      if (mergedOverBlock && deps.onMergedOverBlock) {
+      if (overBlock && deps.onMergedOverBlock) {
         try {
           await deps.onMergedOverBlock(local.number);
         } catch (err) {

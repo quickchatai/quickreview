@@ -8,9 +8,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { captureFromEvent, recordCapturedComment } from "./capture.js";
-import type { Config } from "./config.js";
+import { reviewTeamSlug, type Config } from "./config.js";
 import { interpretReviewEvent, isFeedbackBody } from "./feedback.js";
-import { applyEvent as applyEventFor } from "./statemachine.js";
+import { applyEvent as applyEventFor, mergedOverBlock } from "./statemachine.js";
 import type { StateStore, StatusSnapshot } from "./state.js";
 import { blockedPrAuthor } from "./pr-conversation.js";
 
@@ -140,6 +140,33 @@ function isBotUser(user: any, botLogin: string): boolean {
   return user?.type === "Bot" || user?.login === botLogin;
 }
 
+/** A deleted comment on either comment route: a human deleting one of the
+ * bot's comments is the bluntest noise verdict (the bot never deletes its own —
+ * it has no deletion path at all); another bot tidying up is mechanics. */
+function commentDeletion(comment: any, payload: any, pr: number, botLogin: string): Interpretation {
+  if (comment?.user?.login === botLogin && !isBotUser(payload?.sender, botLogin))
+    return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
+  return { kind: "ignored", reason: "non-signal comment deletion", pr };
+}
+
+/** What both comment routes decide before their own routing: the bot's own
+ * comment echoing back (registry backfill, never a reply — loop risk),
+ * another bot's comment, a bot sender. Null when a human wrote it. */
+function nonHumanComment(
+  comment: any,
+  payload: any,
+  pr: number,
+  scope: "review_comment" | "issue_comment",
+  botLogin: string,
+): Interpretation | null {
+  if (comment.user?.login === botLogin)
+    return { kind: "bot_comment", pr, comment_id: comment.id, scope };
+  if (comment.user?.type === "Bot") return { kind: "ignored", reason: "other-bot comment", pr };
+  if (payload?.sender?.login === botLogin)
+    return { kind: "ignored", reason: "sender is the bot", pr };
+  return null;
+}
+
 /** Pure event interpreter — the whole receiver's decision logic, testable
  * without HTTP. */
 export function interpretEvent(
@@ -195,8 +222,7 @@ function interpretPullRequest(
       const team = payload?.requested_team;
       if (!team) return { kind: "ignored", reason: "individual review request", pr: meta.number };
       const slug: string = team.slug ?? "";
-      const wantSlug = deps.reviewTeam.split("/")[1] ?? deps.reviewTeam;
-      if (slug !== wantSlug)
+      if (slug !== reviewTeamSlug(deps.reviewTeam))
         return { kind: "ignored", reason: `other team requested: ${slug}`, pr: meta.number };
       return { kind: "trigger", pr: meta.number, source: "team_request", meta };
     }
@@ -221,8 +247,7 @@ function interpretPullRequest(
       if (!team)
         return { kind: "ignored", reason: "individual review request removed", pr: meta.number };
       const slug: string = team.slug ?? "";
-      const wantSlug = deps.reviewTeam.split("/")[1] ?? deps.reviewTeam;
-      if (slug !== wantSlug)
+      if (slug !== reviewTeamSlug(deps.reviewTeam))
         return { kind: "ignored", reason: `other team request removed: ${slug}`, pr: meta.number };
       if (isBotUser(payload?.sender, deps.botLogin))
         return { kind: "ignored", reason: "trigger consumed by the bot", pr: meta.number };
@@ -244,27 +269,13 @@ function interpretReviewComment(
 ): Interpretation {
   const comment = payload?.comment;
   const pr: number = payload?.pull_request?.number ?? 0;
-  // A human deleting one of the bot's comments is a behavioral
-  // feedback signal (the bot never deletes its own comments — it has no
-  // deletion path at all).
-  if (action === "deleted") {
-    // Only a human deleting our comment is a signal — another bot (merge
-    // queue, housekeeping app) tidying up is mechanics.
-    if (comment?.user?.login === deps.botLogin && !isBotUser(payload?.sender, deps.botLogin))
-      return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
-    return { kind: "ignored", reason: "non-signal comment deletion", pr };
-  }
+  if (action === "deleted") return commentDeletion(comment, payload, pr, deps.botLogin);
   if (action !== "created")
     return { kind: "ignored", reason: `unhandled review-comment action: ${action}` };
   if (!comment) return { kind: "ignored", reason: "review comment payload without comment" };
 
-  // The bot's own comments echo back as deliveries: registry backfill, never a
-  // reply (loop risk).
-  if (comment.user?.login === deps.botLogin)
-    return { kind: "bot_comment", pr, comment_id: comment.id, scope: "review_comment" };
-  if (comment.user?.type === "Bot") return { kind: "ignored", reason: "other-bot comment", pr };
-  if (payload?.sender?.login === deps.botLogin)
-    return { kind: "ignored", reason: "sender is the bot", pr };
+  const nonHuman = nonHumanComment(comment, payload, pr, "review_comment", deps.botLogin);
+  if (nonHuman) return nonHuman;
 
   const inReplyTo: number | null =
     typeof comment.in_reply_to_id === "number" ? comment.in_reply_to_id : null;
@@ -341,21 +352,12 @@ function interpretIssueComment(
   const comment = payload?.comment;
   const pr: number = issue.number ?? 0;
   if (!comment) return { kind: "ignored", reason: "issue comment payload without comment", pr };
-  // Symmetric with the inline route — a human deleting the bot's
-  // top-level comment is the same bluntest-possible noise verdict.
-  if (action === "deleted") {
-    if (comment.user?.login === deps.botLogin && !isBotUser(payload?.sender, deps.botLogin))
-      return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
-    return { kind: "ignored", reason: "non-signal comment deletion", pr };
-  }
+  if (action === "deleted") return commentDeletion(comment, payload, pr, deps.botLogin);
   if (action !== "created")
     return { kind: "ignored", reason: `unhandled issue-comment action: ${action}`, pr };
 
-  if (comment.user?.login === deps.botLogin)
-    return { kind: "bot_comment", pr, comment_id: comment.id, scope: "issue_comment" };
-  if (comment.user?.type === "Bot") return { kind: "ignored", reason: "other-bot comment", pr };
-  if (payload?.sender?.login === deps.botLogin)
-    return { kind: "ignored", reason: "sender is the bot", pr };
+  const nonHuman = nonHumanComment(comment, payload, pr, "issue_comment", deps.botLogin);
+  if (nonHuman) return nonHuman;
 
   // The one exception to the rule below — a [feedback]-prefixed
   // top-level comment is captured for the tuning loop (and still never
@@ -418,6 +420,8 @@ export interface WebhookHandleResult {
   status: number;
   reason: string;
   interpretation?: Interpretation;
+  /** The delivery's `action`, as parsed — handed to `onInterpretation`. */
+  action?: string | null;
 }
 
 const MAX_BODY = 10 * 1024 * 1024;
@@ -505,10 +509,13 @@ export function handleDelivery(
 
   // Deploy-window drain: while draining, every authentic delivery is
   // answered 200 and dropped — not interpreted, not recorded. GitHub never
-  // auto-retries either way, and the reconcile poll is the single recovery
-  // path once the drain lifts. Counted so the lift log line can say how many
-  // the poll has to make up. GET /health is untouched (it never reaches this
-  // function).
+  // auto-retries either way, and the reconcile poll is the recovery path once
+  // the drain lifts for what it re-derives: triggers, heads, closes and the
+  // comment record. It does not answer: an inline reply in a bot thread that
+  // arrived during the drain is captured but never routed to ping-pong — only
+  // a redelivery from GitHub serves it. Counted so the lift log line can say
+  // how many deliveries were dropped. GET /health is untouched (it never
+  // reaches this function).
   const drain = deps.store.drainState();
   if (drain.draining) {
     const dropped = deps.store.countDrainedDelivery();
@@ -576,7 +583,7 @@ export function handleDelivery(
     interpretation: interpretation.kind,
     ...(interpretation.kind === "ignored" ? { reason: interpretation.reason } : {}),
   });
-  return { status: 200, reason: interpretation.kind, interpretation };
+  return { status: 200, reason: interpretation.kind, interpretation, action };
 }
 
 /** Capture every human comment on a tracked PR. Returns nothing —
@@ -649,7 +656,7 @@ export function createWebhookServer(deps: WebhookDeps): Server {
           try {
             await deps.onInterpretation(interpretation, {
               event: headers.event ?? "",
-              action: null,
+              action: result.action ?? null,
               guid: headers.guid ?? "",
             });
           } catch (err) {
@@ -713,6 +720,9 @@ export async function applyInterpretation(
       await deps.onPrTouched?.(i.pr);
       return;
     case "synchronize":
+      // A PR nobody triggered is not tracked: a push to it adopts nothing
+      // (the reconcile poll's head refresh skips unknown PRs the same way).
+      if (!store.getPr(i.pr)) return;
       // Metadata refresh only: pushes never start or pump a review.
       applyEventFor(store, i.pr, { type: "synchronize" }, i.meta, opts);
       // The author-response metric needs the push instant; no transition is
@@ -726,9 +736,11 @@ export async function applyInterpretation(
       // Capture the pre-close state — after applyEventFor it is
       // gone. awaiting_author means a REQUEST_CHANGES stood at close.
       const priorState = store.getPr(i.pr)?.state;
+      // A PR nobody triggered is not tracked, closing or not.
+      if (priorState === undefined) return;
       applyEventFor(store, i.pr, { type: "closed" }, i.meta, opts);
       store.logEvent("pr_closed", i.pr, { merged: i.merged, source: "webhook" });
-      if (i.merged && priorState === "awaiting_author")
+      if (mergedOverBlock(i.merged, priorState))
         await deps.onFeedbackSignal?.({ kind: "merged_over_block", pr: i.pr });
       await deps.onClosed?.(i.pr);
       return;
@@ -737,6 +749,12 @@ export async function applyInterpretation(
       await deps.onAuthorPrComment?.(i);
       return;
     case "author_reply":
+      // A closed PR's session is archived and is never reborn for a wake: a
+      // reply there is recorded (capture) and owes nothing.
+      if (store.getPr(i.pr)?.state === "closed") {
+        store.logEvent("author_reply_ignored_closed", i.pr, { comment_id: i.comment_id });
+        return;
+      }
       applyEventFor(store, i.pr, { type: "author_reply" }, {}, opts);
       // New evidence at the current head (guard 2): a reply is the one
       // thing other than a push that makes re-reviewing the same head useful.
