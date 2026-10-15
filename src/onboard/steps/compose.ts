@@ -148,13 +148,14 @@ export const nodeStreamRunner: StreamRunner = {
       const child = spawn(cmd, [...args], { stdio: ["ignore", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
-      let pending = "";
+      // One partial line per stream: an unfinished stdout line must never be
+      // spliced onto a line stderr completes in between.
+      const pending = { out: "", err: "" };
       const feed = (chunk: string, into: "out" | "err"): void => {
         if (into === "out") stdout += chunk;
         else stderr += chunk;
-        pending += chunk;
-        const lines = pending.split("\n");
-        pending = lines.pop() ?? "";
+        const lines = (pending[into] + chunk).split("\n");
+        pending[into] = lines.pop() ?? "";
         for (const line of lines) if (line.trim() !== "") onLine(line.replace(/\r$/, ""));
       };
       child.stdout?.setEncoding("utf8");
@@ -165,7 +166,8 @@ export const nodeStreamRunner: StreamRunner = {
         resolvePromise({ code: 127, stdout, stderr: `${stderr}${String(err)}` });
       });
       child.on("close", (code) => {
-        if (pending.trim() !== "") onLine(pending.replace(/\r$/, ""));
+        for (const rest of [pending.out, pending.err])
+          if (rest.trim() !== "") onLine(rest.replace(/\r$/, ""));
         resolvePromise({ code: code ?? 1, stdout, stderr });
       });
     }),

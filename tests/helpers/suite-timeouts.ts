@@ -35,6 +35,7 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  *   guards-shell-* — the real posting scripts, spawned by their shared rig
  *     (tests/helpers/guards-shell-rig.ts);
  *   companion-memory — the forward's ssh probe (fails fast, no VM);
+ *   onboard-streamrunner — a node child under the wizard's streaming runner;
  *   tui-deploy-process — a node child under the deploy tab's runner;
  *   tui-openurl — a launcher that does not exist.
  */
@@ -83,6 +84,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/lens-yield.test.ts",
   "tests/levers.test.ts",
   "tests/onboard-llmauth.test.ts",
+  "tests/onboard-streamrunner.test.ts",
   "tests/openviking-embedder.test.ts",
   "tests/openviking.test.ts",
   "tests/pibuiltins.test.ts",
