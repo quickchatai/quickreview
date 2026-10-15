@@ -1663,15 +1663,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             {
               store: d.store,
               pump: () => d.pump(),
-              killSession: async (pr) => {
-                const name = prSessionName(pr);
-                if (await sessions.tmux.hasSession(name)) await sessions.tmux.killSession(name);
-                if (await sessions.tmux.hasSession(name)) {
-                  throw new Error(
-                    `session ${name} survived operator restart; refusing ownership reset`,
-                  );
-                }
-              },
+              // Returns only once tmux lists the session as gone; a tmux it
+              // could not ask throws, which leaves ownership unchanged.
+              killSession: (pr) => sessions.killSession(pr),
             },
             target,
             "restart-session",

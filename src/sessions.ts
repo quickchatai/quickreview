@@ -1407,7 +1407,7 @@ export class PiSessionManager implements SessionHooks {
     const payload = read.payload;
 
     const session = prSessionName(command.pr);
-    if ((await this.tmux.hasSession(session)) && !(await this.killConfirmed(session))) {
+    if (!(await this.sessionProvenGone(session)) && !(await this.killConfirmed(session))) {
       throw new Error(`session ${session} survived command-recovery kill; refusing replay`);
     }
 
@@ -1685,22 +1685,27 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /** SessionHooks: kill a wedged session so the requeued round's dispatch
-   * rebirths it fresh (live-but-stuck recovery). The ledger on disk is the
-   * continuity that matters and survives the kill by design. */
+   * rebirths it fresh (live-but-stuck recovery), and the operator's
+   * restart-session fence. It returns only once tmux affirmatively lists the
+   * session as gone; a tmux that could not be asked throws, so no caller
+   * releases ownership beside a pi that may still run. The ledger on disk is
+   * the continuity that matters and survives the kill by design. */
   async killSession(pr: number): Promise<void> {
     const session = prSessionName(pr);
-    if (!(await this.tmux.hasSession(session))) return;
+    if (await this.sessionProvenGone(session)) return;
     if (!(await this.killConfirmed(session))) {
-      throw new Error(`session ${session} survived kill; recovery must not dispatch beside it`);
+      throw new Error(
+        `session ${session} not proven gone after kill; recovery must not dispatch beside it`,
+      );
     }
   }
 
   /** Kill `session` and confirm it gone: `Tmux.killSession` ignores its exit
-   * status, so the follow-up probe is the fence. True when tmux no longer
-   * has it. */
+   * status, so the follow-up listing is the fence. True only when tmux
+   * answered and no longer lists it — never when tmux could not be asked. */
   private async killConfirmed(session: string): Promise<boolean> {
     await this.tmux.killSession(session);
-    return !(await this.tmux.hasSession(session));
+    return this.sessionProvenGone(session);
   }
 
   /** Does tmux affirmatively say `session` is gone? `hasSession` reads every
