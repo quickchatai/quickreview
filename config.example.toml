@@ -486,7 +486,7 @@ home = "/opt/quickreview/state/openviking"
 # ov.conf is TEMPLATED at boot by the entrypoint — the interactive
 # `openviking-server init` wizard is never invoked in-container.
 workers = 1                       # ov.conf server.workers, 2-CPU cap
-queue_concurrency = 2             # ov.conf queue_workers.* (defaults 4/4/8) and embedding.max_concurrent (default 10)
+queue_concurrency = 2             # accepted, unused: the entrypoint takes ov.conf's queue concurrency from the deploy (group_vars openviking_queue_concurrency)
 # Health gate is /ready, NEVER `doctor`: doctor makes live provider calls and
 # exits 1 when no `vlm` is configured, which is our normal state. /health is
 # unauthenticated and carries the version the drift check reads. The heartbeat
@@ -958,15 +958,15 @@ per_user_daily_turns = 20         # per person, same window
 thread_replies_per_day = 6        # daemon posts into any one thread
 soft_exchange_limit = 3           # accepted, unused (no reader enforces it)
 announcements_per_hour = 20       # rolling hour; announcements bypass turn caps
-default_cooldown_min = 60         # for causes absent from [slack.policy.causes]
+default_cooldown_min = 60         # for a non-built-in cause with no cooldown_min of its own
 # The day boundary for every cap (DST-correct). Defaults from [ops] timezone;
 # uncomment to run the Slack caps on another clock.
 #timezone = "Europe/Warsaw"
 pickup_grace_min = 20
 downtime_notice_min = 5
 heartbeat_interval_min = 5
-storm_corrections = 5
-awaiting_author_stale_h = 48
+storm_corrections = 5             # accepted, unused: no code raises reconcile.storm
+awaiting_author_stale_h = 48      # accepted, unused: no code raises pr.awaiting_author_stale
 broadcast_verdicts = "never"      # accepted, unused: verdicts always stay in-thread
 
 [slack.policy.causes]

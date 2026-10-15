@@ -196,14 +196,20 @@ export interface SlackPolicyConfig {
   soft_exchange_limit: number;
   /** Rolling-hour ceiling on announcements (they bypass turn caps, not this). */
   announcements_per_hour: number;
-  /** Cooldown for a cause with no explicit [slack.policy.causes] entry. */
+  /** Cooldown for a cause with none of its own: one outside the built-in
+   * table that is unlisted, or listed in [slack.policy.causes] without a
+   * `cooldown_min`. A built-in cause keeps its own unless that table sets one. */
   default_cooldown_min: number;
   /** The day boundary for every cap here — DST-correct via src/eod.ts. */
   timezone: string;
   pickup_grace_min: number;
   downtime_notice_min: number;
   heartbeat_interval_min: number;
+  /** Accepted so an older config still loads, and read by nothing: no
+   * code raises the `reconcile.storm` announcement this would threshold. */
   storm_corrections: number;
+  /** Accepted so an older config still loads, and read by nothing: no
+   * code raises the `pr.awaiting_author_stale` announcement this would time. */
   awaiting_author_stale_h: number;
   /** Accepted so an older config still loads, and read by nothing: a
    * verdict always stays in-thread, never `reply_broadcast`, whatever this
@@ -1209,9 +1215,10 @@ export interface OpenVikingConfig {
   workspace: string;
   /** ov.conf `server.workers` — one worker on a 2-CPU cap. */
   workers: number;
-  /** ov.conf `queue_workers.*.max_concurrent` — reduced from the shipped
-   * defaults (4/4/8) for the same 2-CPU cap — and `embedding.max_concurrent`
-   * too (the server's default is 10). */
+  /** Accepted, and read by nothing in the daemon: the entrypoint that
+   * templates ov.conf takes its queue concurrency from the deploy
+   * (`openviking_queue_concurrency` in group_vars, or
+   * `QCR_OPENVIKING_QUEUE_CONCURRENCY` for the plain image), never from here. */
   queue_concurrency: number;
   /** Health-poll cadence; the heartbeat reports the CACHED sample, so
    * status.json writing never waits on the network. */
