@@ -44,7 +44,7 @@ import {
   type RubricProposal,
 } from "./proposals.js";
 import { installMemoryTab, type MemoryTabState } from "./memtab.js";
-import { installDigestTab } from "./digesttab.js";
+import { installDigestTab, type EodSchedule } from "./digesttab.js";
 import { installTicketsTab, type TicketsTabState } from "./ticketstab.js";
 import {
   installFeedbackTab,
@@ -84,6 +84,10 @@ export interface LearningDeps {
    * feedback tab lists the issues this reviewer actually files. Absent = the
    * shipped default. */
   issueLabel?: string;
+  /** `[eod] time` / `timezone` — when the digest tab's sweep runs and the
+   * zone its files are named in. Absent = the tab names no time and counts
+   * days in UTC. */
+  eod?: EodSchedule;
   /** Read-only tracker-ticket projection for the configured effort (index.ts
    * wires this from `ticketProjection`). Absent ⇒ no tracker is configured,
    * and the tickets tab says so rather than showing an empty list. */
@@ -517,7 +521,7 @@ export interface LearningTabs {
 /** Install `memory`, `digest`, `tickets` and `feedback` over one store. */
 export function installLearningTabs(app: App, deps: LearningDeps): LearningTabs {
   const store = new LearningStore(app, deps);
-  installDigestTab(app, store); // the digest's state IS the store's `digest`
+  installDigestTab(app, store, deps.eod); // the digest's state IS the store's `digest`
   return {
     store,
     memory: installMemoryTab(app, store),
