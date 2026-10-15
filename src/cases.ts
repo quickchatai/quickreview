@@ -1,7 +1,7 @@
 // Finding cases: the knowledge outside the code, into the memory engine.
 //
 // WHAT. For every finding the reviewer POSTED that drew a human response or
-// reached a fate (any fate but `unknown`, which is the PR still being open),
+// reached a fate (any fate but `unknown`, which no evidence has settled yet),
 // the daemon keeps ONE case document in reviewer memory's
 // `finding-cases/` area (src/memory/layout.ts): a header the
 // learner can filter on — PR, rounds, lens ids, kind, severity, path and line
@@ -113,6 +113,7 @@ import { createHash } from "node:crypto";
 import type { ReviewCommentFull } from "./github.js";
 import { cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags, parseHashTags } from "./memory/eventtags.js";
+import { MEMORY_DEFAULTS } from "./config.js";
 import type { CaseWritesStatus } from "./memory/health.js";
 import { CASES_AREA } from "./memory/layout.js";
 import type { RoundActivityGate } from "./memory/roundactivity.js";
@@ -159,7 +160,7 @@ export const REACHED_FATES: readonly FindingFate[] = [
 export const PROBE_EXPECT = `sha256:${"0".repeat(64)}`;
 
 export const CASE_DEFAULTS = Object.freeze({
-  intervalMs: 120_000,
+  intervalMs: MEMORY_DEFAULTS.cases_interval_s * 1000,
   /** Cases written per tick — ONE batch-write. Paced by embedding cost, not
    * by request count: every case is embedded in full on the server's one
    * local-embedder thread, and a review round's memory seed and lesson
@@ -172,7 +173,7 @@ export const CASE_DEFAULTS = Object.freeze({
    * before it gives the tick up: longer than a round's seed, its
    * handoff and its shadow selection together (≤ 3 s + a few s + ≤ 20 s). */
   yieldWaitMs: 30_000,
-  backfillDays: 60,
+  backfillDays: MEMORY_DEFAULTS.cases_backfill_days,
   /** PRs the backfill covers per tick… */
   backfillPrsPerTick: 2,
   /** …and only while fewer than this many cases are owed. */
@@ -196,7 +197,7 @@ export const CASE_DEFAULTS = Object.freeze({
   /** The embedding tail a written case is estimated to cost after the write
    * returns: ~3.4 s a case on the live VM, 8–29 s a call under
    * CPU throttling. `[memory] case_embed_tail_ms`; 0 turns the tail off. */
-  embedTailMsPerCase: 4000,
+  embedTailMsPerCase: MEMORY_DEFAULTS.case_embed_tail_ms,
 });
 
 /** Caps that keep one case readable (and one embedding meaningful). */
@@ -592,7 +593,7 @@ const FATE_PHRASE: Record<FindingFate, string> = {
   refuted_conceded: "REFUTED — the reviewer conceded it",
   upheld_after_reply: "UPHELD after a human replied",
   open_at_close: "OPEN AT CLOSE — the PR closed with no evidence either way",
-  unknown: "UNKNOWN — no evidence yet; the PR is still open",
+  unknown: "UNKNOWN — no evidence settles it yet",
 };
 
 function threadUrl(repo: string, pr: number, commentId: number): string {
@@ -988,13 +989,7 @@ export class CaseWriter {
       reviewsActive: false,
       owed: 0,
     };
-    let healthy = false;
-    try {
-      healthy = this.deps.healthy();
-    } catch {
-      healthy = false;
-    }
-    if (!healthy) out.held = true;
+    if (!this.healthyNow()) out.held = true;
     else {
       this.requeueGivenUp();
       // History waits while a review round is in flight.
@@ -1122,7 +1117,15 @@ export class CaseWriter {
    * and that memory holds is owed its WITHDRAWAL; one never written is simply
    * forgotten. No memory I/O. Returns the number of cases now owed for it.
    */
-  syncPr(pr: number, capturedAt?: string, origin: CaseOrigin = "sync"): number {
+  syncPr(
+    pr: number,
+    capturedAt?: string,
+    origin: CaseOrigin = "sync",
+    /** The PR's activity the facts this sync renders were captured from —
+     * its watermark. Absent: the activity now (the capture ran from state.db
+     * as it stands). */
+    seen?: { comments: number; signals: number },
+  ): number {
     const { cases, caseOf } = prCases(this.store, this.deps.outcomes, {
       pr,
       repo: this.deps.repo,
@@ -1224,9 +1227,10 @@ export class CaseWriter {
                synced_at = excluded.synced_at`,
           )
           .run(pr, capturedAt, at);
-      // What this render saw of the PR's human activity: a later comment or
-      // signal on a PR the capture pass no longer visits is step 2's cue.
-      const act = this.activityOf(pr);
+      // What this render's facts saw of the PR's human activity: a later
+      // comment or signal on a PR the capture pass no longer visits is step
+      // 2's cue.
+      const act = seen ?? this.activityOf(pr);
       this.store.db
         .prepare(
           `INSERT INTO case_activity_marks (pr, comments_max, signals_max, at) VALUES (?, ?, ?, ?)
@@ -1278,6 +1282,10 @@ export class CaseWriter {
       if (inCaptureWindow(this.store.getPr(pr), nowMs)) continue;
       // A round queued while the last PR was captured: stop starting PRs.
       if (this.reviewsActive(out)) return;
+      // The activity the capture is about to read: one arriving while it
+      // runs is not in its fate, so it stays beyond the watermark and the
+      // next tick catches it up.
+      const seen = this.activityOf(pr);
       try {
         await this.deps.outcomes.capturePr(pr);
       } catch (err) {
@@ -1287,7 +1295,7 @@ export class CaseWriter {
         const mark = this.store.db
           .prepare("SELECT captured_at FROM outcome_capture_marks WHERE pr = ?")
           .get(pr) as { captured_at: string } | undefined;
-        this.syncPr(pr, mark?.captured_at, "late");
+        this.syncPr(pr, mark?.captured_at, "late", seen);
         out.late.push(pr);
       } catch (err) {
         this.log(`cases: late sync of #${pr} failed`, err);
@@ -1445,13 +1453,14 @@ export class CaseWriter {
     const waited = this.roundsBusy();
     if (waited) await this.waitForRounds();
     if (this.stopped) return;
-    // Memory health was read at the tick's start; the wait (up to
-    // `yieldWaitMs`) may have outlived it — a batch never starts into memory
-    // that stopped reading healthy meanwhile.
-    if (waited && !this.healthyNow()) {
+    // Memory health was read at the tick's start; the late capture, the
+    // backfill's reads and the wait for rounds (up to `yieldWaitMs`) may all
+    // have outlived it — a batch never starts into memory that stopped
+    // reading healthy meanwhile.
+    if (!this.healthyNow()) {
       out.held = true;
       this.log(
-        "cases: memory stopped reading healthy while the write waited for a review round — no case batch this tick",
+        `cases: memory stopped reading healthy ${waited ? "while the write waited for a review round" : "since the tick started"} — no case batch this tick`,
       );
       return;
     }
@@ -1470,6 +1479,17 @@ export class CaseWriter {
     const rows = this.reviewsActive(out) ? this.liveOwedRows() : this.owedRows();
     if (rows.length === 0) return;
     out.attempted += rows.length;
+    // A create may land even when its answer never comes back — or the
+    // process ends before it does. Recorded before the send, so a restart
+    // whose sync no longer wants the case owes it a withdrawal (a probe)
+    // instead of forgetting a document memory may hold. Every answer below
+    // sets the flag to what it proves.
+    const maybe = this.store.db.prepare(
+      "UPDATE finding_cases SET maybe_stored = 1 WHERE name = ? AND stored_hash IS NULL AND withdraw = 0",
+    );
+    this.store.db.transaction(() => {
+      for (const r of rows) maybe.run(r.name);
+    })();
     const docs: DocumentPut[] = rows.map((r) => ({
       area: CASES_AREA,
       name: r.name,

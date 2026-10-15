@@ -2262,3 +2262,114 @@ describe("wire.ts: the case writer is actually connected", () => {
     expect(src).not.toMatch(/\.apply\(/);
   });
 });
+
+describe("what a case says and what the writer records around a send", () => {
+  it("an UNKNOWN fate says no evidence settles it — never that the PR is open", async () => {
+    const h = harness({ state: "closed" });
+    const r = h.round(H1, [posted({ key: "F1" })]);
+    h.capture.observeBotComments(PR, [h.botComment({ id: 900, round: r, key: "F1" })]);
+    h.reply({ id: 9001, root: 900, author: "bob", body: "Hm.", at: h.tick(1) });
+    await h.capture.capturePr(PR);
+    const { cases } = prCases(h.store, h.capture, { pr: PR, repo: REPO, botLogin: BOT });
+    const doc = renderCase({ ...cases[0]!, fate: "unknown" });
+    expect(doc).toContain("Fate: UNKNOWN — no evidence settles it yet");
+    expect(doc).not.toMatch(/still open/);
+  });
+
+  it("memory that stopped reading healthy during the backfill's reads holds the batch, with no round in sight", async () => {
+    const h = harness({ pr: 1 });
+    h.store.db.prepare("DELETE FROM pr_state").run();
+    h.setNow("2026-09-30T10:00:00.000Z");
+    h.addPr(4003, "alice", "closed");
+    h.round(H1, [posted({ key: "K4003" })], 4003);
+    h.reply({ id: 40031, root: 40030, author: "bob", body: "reply", at: h.tick(1), n: 4003 });
+    h.setNow("2026-10-07T10:00:00.000Z");
+    let healthy = true;
+    const logs: string[] = [];
+    const puts: string[][] = [];
+    const { w } = writer(h, {
+      healthy: () => healthy,
+      backfillDays: 60,
+      read: {
+        async listReviewCommentsFull(n: number): Promise<ReviewCommentFull[]> {
+          // The server degrades while the backfill reads GitHub.
+          healthy = false;
+          return [h.botComment({ id: n * 10, round: 1, key: `K${n}` })];
+        },
+      },
+      memory: {
+        async putDocuments(docs: readonly DocumentPut[]): Promise<DocumentPutResult[]> {
+          puts.push(docs.map((d) => d.name));
+          return docs.map((d) => ({ area: d.area, name: d.name, state: "failed", message: "x" }));
+        },
+      },
+      log: (m) => logs.push(m),
+    });
+    expect(await w.tick()).toMatchObject({ backfilled: [4003], held: true, attempted: 0 });
+    expect(puts).toEqual([]);
+    expect(logs.some((m) => /stopped reading healthy since the tick started/.test(m))).toBe(true);
+  });
+
+  it("a create is marked maybe-stored before it is sent, so a restart that no longer wants it withdraws instead of forgetting", async () => {
+    const h = harness();
+    const r = h.round(H1, [posted({ key: "F1" })]);
+    h.capture.observeBotComments(PR, [h.botComment({ id: 900, round: r, key: "F1" })]);
+    h.decide(900, 1, "fixed");
+    await h.capture.capturePr(PR);
+    const name = caseName(PR, r, "F1");
+    const flagAtSend: number[] = [];
+    let release: () => void = () => {};
+    const { w } = writer(h, {
+      memory: {
+        async putDocuments(docs: readonly DocumentPut[]): Promise<DocumentPutResult[]> {
+          const row = h.store.db
+            .prepare("SELECT maybe_stored FROM finding_cases WHERE name = ?")
+            .get(name) as { maybe_stored: number };
+          flagAtSend.push(row.maybe_stored);
+          // The process dies here: the answer never comes.
+          await new Promise<void>((res) => (release = res));
+          return docs.map((d) => ({ area: d.area, name: d.name, state: "failed", message: "x" }));
+        },
+      },
+    });
+    const tick = w.tick();
+    for (let i = 0; i < 20 && flagAtSend.length === 0; i++)
+      await new Promise((res) => setImmediate(res));
+    expect(flagAtSend).toEqual([1]);
+    // A restart's sync, where the finding no longer qualifies: the row is
+    // owed a withdrawal, never dropped.
+    h.store.db.prepare("DELETE FROM round_findings WHERE finding_key = 'F1'").run();
+    const { w: restarted } = writer(h, { healthy: () => false });
+    restarted.syncPr(PR);
+    const row = h.store.db
+      .prepare("SELECT withdraw, maybe_stored FROM finding_cases WHERE name = ?")
+      .get(name) as { withdraw: number; maybe_stored: number } | undefined;
+    expect(row).toMatchObject({ withdraw: 1, maybe_stored: 1 });
+    release();
+    await tick;
+  });
+
+  it("a reply that arrives while a late capture runs stays beyond the watermark and is caught up next tick", async () => {
+    const h = harness({ state: "closed" });
+    const r = h.round(H1, [posted({ key: "F1" })]);
+    h.capture.observeBotComments(PR, [h.botComment({ id: 900, round: r, key: "F1" })]);
+    await h.capture.capturePr(PR);
+    const { w } = writer(h);
+    expect(await w.tick()).toMatchObject({ written: 1, late: [] });
+    h.tick(3 * 24 * 60);
+    h.reply({ id: 9001, root: 900, author: "bob", body: "First.", at: h.at() });
+    const capture = h.capture.capturePr.bind(h.capture);
+    let during = true;
+    h.capture.capturePr = async (n: number) => {
+      const out = await capture(n);
+      // Recorded after the capture read its facts, before the sync.
+      if (during) h.reply({ id: 9002, root: 900, author: "bob", body: "Second.", at: h.at() });
+      during = false;
+      return out;
+    };
+    expect(await w.tick()).toMatchObject({ late: [PR] });
+    // The second reply was not in that capture: the next tick takes it up.
+    expect(await w.tick()).toMatchObject({ late: [PR] });
+    expect(await w.tick()).toMatchObject({ late: [] });
+  });
+});
