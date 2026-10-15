@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -269,6 +269,23 @@ describe("blocked author's PR conversation", () => {
     answer();
     await conversation.sweep();
     expect(post).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a broken answer only after it sat unchanged past the settle window", async () => {
+    await conversation.accept(objection);
+    const file = join(dir, "pr-77-conversation-comment-100.json");
+    writeFileSync(file, '{"pr": 77, "comm');
+    await conversation.sweep();
+    // A second sweep moments later (the reconcile sweep beside the verdict
+    // sweep) sees the same stalled bytes: the writer may still be mid-file.
+    advance(300);
+    await conversation.sweep();
+    expect(existsSync(file)).toBe(true);
+    expect(store.prEvents(77, ["pr_conversation_decision_rejected"])).toEqual([]);
+    advance(3_000);
+    await conversation.sweep();
+    expect(existsSync(file)).toBe(false);
+    expect(store.prEvents(77, ["pr_conversation_decision_rejected"])).toHaveLength(1);
   });
 
   it("preserves an answer on unreadable PR state without consuming it", async () => {

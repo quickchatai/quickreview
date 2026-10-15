@@ -21,11 +21,20 @@ import {
   type Config,
 } from "./config.js";
 import { sessionCommandMarker } from "./session-command.js";
-import { lensForAgent, type RoundProgressSnapshot } from "./round-progress.js";
+import {
+  isTerminalAgentStatus,
+  lensForAgent,
+  plannedFanoutAgents,
+  type RoundProgressSnapshot,
+} from "./round-progress.js";
 import type { RoundRow, SessionCommandRow, StateStore, SupervisorLeaseRow } from "./state.js";
 import type { RoundRecoveryDisposition, SessionHooks } from "./types.js";
 
 export const ROUND_STAGE_SUPERVISOR = "round-stage";
+
+/** How far a progress snapshot's run start may sit from the command's durable
+ * start and still be the same run. */
+const RUN_START_TOLERANCE_MS = 5_000;
 
 export type RoundInfrastructureStage =
   | "command_start"
@@ -40,8 +49,11 @@ export interface SessionCommandSupervisorDeps {
   store: StateStore;
   hooks: SessionHooks;
   verdictDir: string;
-  /** Independent observational sidecar. It can corroborate a durable start
-   * that settled after the bridge died; it never creates/renews a lease. */
+  /** Independent observational sidecar, trusted only when it names the
+   * command exactly. It corroborates a durable start that settled after the
+   * bridge died, supplies the start ORIGIN (and so the fixed hard deadline)
+   * when the bridge missed its start stamp, and drives the earlier pass-stage
+   * bounds; it never creates or renews a lease. */
   progress?: (pr: number) => RoundProgressSnapshot | undefined;
   /** Existing bounded round recovery. `requeued` = fresh round queued;
    * `exhausted` = its recovery budget is spent and failed work remains owed;
@@ -83,8 +95,8 @@ export class SessionCommandSupervisor {
     if (this.inFlight) return;
     this.inFlight = true;
     const attemptedAt = this.now().toISOString();
-    this.deps.store.markSupervisorAttempt(ROUND_STAGE_SUPERVISOR, attemptedAt);
     try {
+      this.deps.store.markSupervisorAttempt(ROUND_STAGE_SUPERVISOR, attemptedAt);
       const candidates = new Map<string, SessionCommandRow>();
       for (const command of this.deps.store.dueSessionCommands(attemptedAt))
         candidates.set(command.id, command);
@@ -93,7 +105,23 @@ export class SessionCommandSupervisor {
       // immediately instead of waiting for the 45-minute hard deadline.
       for (const command of this.deps.store.activeSessionCommands())
         candidates.set(command.id, command);
-      for (const command of candidates.values()) await this.inspect(command);
+      // One command's failure (a kill that keeps failing, a missing hook)
+      // leaves the scan red, but never costs the commands after it their
+      // inspection: each is its own obligation.
+      let failed: { error: unknown } | undefined;
+      for (const command of candidates.values()) {
+        try {
+          await this.inspect(command);
+        } catch (error) {
+          failed ??= { error };
+          this.deps.store.logEvent("round_stage_supervisor_command_error", command.pr, {
+            command_id: command.id,
+            round_no: command.round_no,
+            error: String(error),
+          });
+        }
+      }
+      if (failed) throw failed.error;
       this.deps.store.markSupervisorSuccess(ROUND_STAGE_SUPERVISOR, this.now().toISOString());
     } catch (error) {
       this.deps.store.markSupervisorError(
@@ -137,6 +165,26 @@ export class SessionCommandSupervisor {
     }
   }
 
+  /** Within the finalize grace of the verdict FILE that ended `round`. A
+   * round the daemon settled from its posting receipt (the session never
+   * wrote a usable verdict) has no healthy tail to wait for. */
+  private inVerdictTail(round: RoundRow): boolean {
+    const finished = Date.parse(round.finished_at ?? "");
+    if (!Number.isFinite(finished)) return false;
+    if (this.now().getTime() >= finished + this.finalizeGraceMin() * 60_000) return false;
+    const settledFromReceipt = this.deps.store.db
+      .prepare(
+        "SELECT 1 FROM events WHERE kind = 'verdict_settled_from_receipt' AND pr = ? AND json_extract(payload, '$.round_id') = ? LIMIT 1",
+      )
+      .get(round.pr, round.id);
+    return settledFromReceipt === undefined;
+  }
+
+  /** `[daemon] round_finalize_grace_min`. */
+  private finalizeGraceMin(): number {
+    return this.deps.cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN;
+  }
+
   private verdictPending(command: SessionCommandRow): boolean {
     return (
       command.round_no !== null &&
@@ -170,6 +218,19 @@ export class SessionCommandSupervisor {
         return;
       }
       if (round.status !== "running") {
+        // A round its verdict file ended is the session's own finished work:
+        // the file is its last action, and its run settles moments later.
+        // That tail is left alone for the finalize grace — killing it would
+        // cost a healthy conversation — unless the run already settled (the
+        // bridge died before its ack) or the round was settled from its
+        // receipt because no verdict came.
+        if (
+          command.status === "running" &&
+          round.status === "done" &&
+          !settled &&
+          this.inVerdictTail(round)
+        )
+          return;
         // Operator cancellation/head movement already ended the round. Stop an
         // owned Pi run immediately (not at its old hard deadline) before the
         // cancelled command releases the successor slot. Pending was never
@@ -291,9 +352,7 @@ export class SessionCommandSupervisor {
       // the conservative latest possible origin — never observation time,
       // which would let a long daemon outage reset the hard cap.
       const origin = progress?.run_started_at ?? command.next_check_at;
-      const hardAt = new Date(
-        Date.parse(origin) + this.runningMaxMin(command) * 60_000,
-      ).toISOString();
+      const hardAt = new Date(this.hardDeadlineMs(origin, command)).toISOString();
       if (this.deps.store.observeSessionCommandStarted(command.id, origin, hardAt)) {
         this.deps.store.logEvent("session_command_start_reconciled", command.pr, {
           command_id: command.id,
@@ -453,6 +512,33 @@ export class SessionCommandSupervisor {
     return false;
   }
 
+  /**
+   * Admit one automatic process recovery, for a round command and an ordinary
+   * wake alike, and hand back the retry hook to run it with.
+   *
+   * An unbound production adapter is an unhealthy supervisor, not spent
+   * recovery: it throws, keeping the command due so wiring can be repaired
+   * and the same bytes replayed without inventing operator debt at 0/N. The
+   * allowance is spent BEFORE any tmux/filesystem work, so a generation that
+   * dies before a bridge reserves the row still advances the finite bound.
+   */
+  private admitRecovery(
+    command: SessionCommandRow,
+    retryCap: number,
+    what: "round command" | "command",
+  ): NonNullable<SessionHooks["retrySessionCommand"]> {
+    const hook = this.deps.hooks.retrySessionCommand;
+    if (!hook) {
+      throw new Error(
+        `${what} ${command.id} retry hook unavailable with ${command.recovery_attempts}/${retryCap} recoveries spent`,
+      );
+    }
+    if (!this.deps.store.beginSessionCommandRecovery(command.id, command.recovery_attempts)) {
+      throw new Error(`${what} ${command.id} lost its automatic-recovery claim`);
+    }
+    return (id, reason) => hook.call(this.deps.hooks, id, reason);
+  }
+
   private async recoverMissingStart(command: SessionCommandRow, reason: string): Promise<void> {
     if (command.kind !== "round") {
       await this.recoverNonRound(command, reason);
@@ -461,20 +547,12 @@ export class SessionCommandSupervisor {
     const retryCap =
       this.deps.cfg.daemon.session_command_max_start_retries ??
       DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
-    // Process rebirths and bridge reservations are different counters. Spend
-    // the finite process-recovery allowance BEFORE tmux/filesystem work: a
-    // generation that dies before reserve must not retry forever at attempt=0.
+    // Process rebirths and bridge reservations are different counters; the
+    // admission spends the process-recovery allowance first (`admitRecovery`).
     if (command.recovery_attempts < retryCap) {
-      if (!this.deps.hooks.retrySessionCommand) {
-        throw new Error(
-          `round command ${command.id} retry hook unavailable with ${command.recovery_attempts}/${retryCap} recoveries spent`,
-        );
-      }
-      if (!this.deps.store.beginSessionCommandRecovery(command.id, command.recovery_attempts)) {
-        throw new Error(`round command ${command.id} lost its automatic-recovery claim`);
-      }
+      const retry = this.admitRecovery(command, retryCap, "round command");
       const recoveryAttempt = command.recovery_attempts + 1;
-      const result = await this.deps.hooks.retrySessionCommand(command.id, reason);
+      const result = await retry(command.id, reason);
       if (result === "retried") {
         const replayed = this.deps.store.getSessionCommand(command.id);
         this.deps.store.logEvent("session_command_start_recovery", command.pr, {
@@ -570,7 +648,7 @@ export class SessionCommandSupervisor {
       !Number.isFinite(started) ||
       !Number.isFinite(runStarted) ||
       !Number.isFinite(accepted) ||
-      Math.abs(runStarted - started) > 5_000 ||
+      Math.abs(runStarted - started) > RUN_START_TOLERANCE_MS ||
       accepted < runStarted
     )
       return undefined;
@@ -597,23 +675,20 @@ export class SessionCommandSupervisor {
     const passesMaxMin =
       (this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN) + sweepExtraMin;
     const passesAt = started + passesMaxMin * minute;
-    const hardAt = started + this.runningMaxMin(command, round) * minute;
+    const hardAt = this.hardDeadlineMs(command.started_at!, command, round);
     const planned = round.lenses
       .split(",")
       .map((name) => name.trim())
       .filter(Boolean);
 
-    const discovery = planned.filter((name) => name !== "pass-validate");
     // The extension's generic subagent milestone is descriptive only. The
     // finite gate opens solely when exact correlated progress names one of the
     // authoritative planned DISCOVERY lenses — validator-first, an added lens
     // or a foreign tool cannot buy a later failure class.
-    const plannedFanoutAgents = progress.agents.filter(
-      (agent) => discovery.includes(lensForAgent(agent.agent)) && agent.started_at !== undefined,
-    );
-    const plannedFanout = plannedFanoutAgents.length > 0;
+    const fanoutAgents = plannedFanoutAgents(progress, planned);
+    const plannedFanout = fanoutAgents.length > 0;
     if (plannedFanout) {
-      const firstStarted = plannedFanoutAgents.map((agent) => agent.started_at!).sort()[0]!;
+      const firstStarted = fanoutAgents.map((agent) => agent.started_at!).sort()[0]!;
       this.deps.store.recordRoundFanoutStarted(round.id, command.id, firstStarted);
     }
     if (!plannedFanout && now >= firstPassAt) {
@@ -626,7 +701,7 @@ export class SessionCommandSupervisor {
     }
     if (!plannedFanout) return false;
 
-    const terminal = (status: string): boolean => status === "completed" || status === "failed";
+    const terminal = isTerminalAgentStatus;
     // A sweep-owed round's planned (delta-stage) lens is judged by its FIRST
     // execution only: a later run of the same lens is the sweep's, started
     // after the delta stage, and counts as ADDED — never as this lens missing.
@@ -666,12 +741,7 @@ export class SessionCommandSupervisor {
     )
       return false;
     const allFinishedAt = Math.max(...finished);
-    const finalizeAt = Math.min(
-      allFinishedAt +
-        (this.deps.cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN) *
-          minute,
-      hardAt,
-    );
+    const finalizeAt = Math.min(allFinishedAt + this.finalizeGraceMin() * minute, hardAt);
     if (now < finalizeAt) return false;
     // The grace measures how long the PARENT has been left with
     // nothing to wait for — and a parent whose run is still ACTIVE (writing
@@ -708,7 +778,7 @@ export class SessionCommandSupervisor {
     await this.failRound(
       command,
       "parent_finalize",
-      `command ${command.id} left all observed passes terminal without a verdict for ${this.deps.cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN} minutes`,
+      `command ${command.id} left all observed passes terminal without a verdict for ${this.finalizeGraceMin()} minutes`,
     );
     return true;
   }
@@ -736,8 +806,7 @@ export class SessionCommandSupervisor {
       Number.isFinite(started) &&
       Number.isFinite(runStarted) &&
       Number.isFinite(updated) &&
-      runStarted >= started - 5_000 &&
-      runStarted <= started + 5_000 &&
+      Math.abs(runStarted - started) <= RUN_START_TOLERANCE_MS &&
       updated >= started
     );
   }
@@ -781,9 +850,15 @@ export class SessionCommandSupervisor {
     return row?.sweep_owed === 1 ? base + this.sweepExtraMin() : base;
   }
 
+  /** The fixed running deadline (epoch ms) of a command whose run began at
+   * `origin`: the origin plus `runningMaxMin`. */
+  private hardDeadlineMs(origin: string, command: SessionCommandRow, round?: RoundRow): number {
+    return Date.parse(origin) + this.runningMaxMin(command, round) * 60_000;
+  }
+
   private async runningHardBound(command: SessionCommandRow): Promise<void> {
     const maxMin = this.runningMaxMin(command);
-    const hardAt = new Date(Date.parse(command.started_at!) + maxMin * 60_000).toISOString();
+    const hardAt = new Date(this.hardDeadlineMs(command.started_at!, command)).toISOString();
     if (this.now().getTime() < Date.parse(hardAt)) {
       // Upgrade/restart reconciliation: an older bridge may have written a
       // shorter advisory check. Move it to the FIXED start-derived cap; never
@@ -814,21 +889,9 @@ export class SessionCommandSupervisor {
       DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
     const effectiveReason = command.failure?.trim() || reason;
     if (command.recovery_attempts < retryCap) {
-      // An unbound production adapter is an unhealthy supervisor, not spent
-      // recovery. Keep the failed command due so wiring can be repaired and
-      // the same bytes replayed without inventing operator debt at 0/N.
-      if (!this.deps.hooks.retrySessionCommand) {
-        throw new Error(
-          `command ${command.id} retry hook unavailable with ${command.recovery_attempts}/${retryCap} recoveries spent`,
-        );
-      }
-      // Spend the allowance before tmux/filesystem work. If rebirth fails
-      // before a bridge reserves the row, the finite bound still advances.
-      if (!this.deps.store.beginSessionCommandRecovery(command.id, command.recovery_attempts)) {
-        throw new Error(`command ${command.id} lost its automatic-recovery claim`);
-      }
+      const retry = this.admitRecovery(command, retryCap, "command");
       const recoveryAttempt = command.recovery_attempts + 1;
-      const result = await this.deps.hooks.retrySessionCommand(command.id, effectiveReason);
+      const result = await retry(command.id, effectiveReason);
       if (result === "retried") {
         const replayed = this.deps.store.getSessionCommand(command.id);
         this.deps.store.logEvent("session_command_nonround_recovery", command.pr, {

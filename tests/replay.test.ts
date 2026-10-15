@@ -19,6 +19,8 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
+import { buildPassPlan } from "../src/dispatch.js";
+import { parseUnifiedDiff } from "../src/unifieddiff.js";
 import {
   ReplayRefused,
   parseCaseSet,
@@ -50,6 +52,21 @@ const cfg: Config = parseConfig(
 const set = parseCaseSet(
   JSON.parse(readFileSync(join(here, "fixtures", "regression-cases.json"), "utf8")),
 );
+
+/** The fake clone's `git diff`: one edited file. */
+const HANDLER_DIFF = [
+  "diff --git a/app/handler.py b/app/handler.py",
+  "index 1111111..2222222 100644",
+  "--- a/app/handler.py",
+  "+++ b/app/handler.py",
+  "@@ -1,2 +1,4 @@",
+  " import os",
+  "-x = 1",
+  "+x = 2",
+  "+y = 3",
+  "+z = 4",
+  "",
+].join("\n");
 
 const DRY = { isDryRun: true };
 const LIVE = { isDryRun: false };
@@ -96,8 +113,7 @@ function fakeIo(
         return { code: 128, stdout: "", stderr: "fatal: No space left on device" };
       if (args[0] === "merge-base")
         return { code: 0, stdout: `${opts.mergeBase ?? "basesha"}\n`, stderr: "" };
-      if (args[0] === "diff")
-        return { code: 0, stdout: opts.diff ?? "3\t1\tapp/handler.py\n", stderr: "" };
+      if (args[0] === "diff") return { code: 0, stdout: opts.diff ?? HANDLER_DIFF, stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     },
     async spawnSession(name) {
@@ -227,7 +243,14 @@ describe("a replay is not a posting path", () => {
         c: set.cases[0]!,
         treePath: "/tmp/tree",
         findingsPath: "/tmp/f.json",
-        lenses: ["pass-baseline"],
+        plan: [
+          {
+            lens: "pass-baseline",
+            agent: "pass-baseline--sol-high",
+            tier: "sol-high",
+            raisable_to: [],
+          },
+        ],
         baseSha: "b",
         changedFiles: 1,
         degradedDiff: false,
@@ -307,6 +330,48 @@ describe("one case, end to end", () => {
     expect(order).not.toContain("0 file(s)");
   });
 
+  // The order is the round's plan, not its lens names: each row's agent
+  // variant (the tier a round would run) is what the session must call.
+  it("hands the session each plan row's agent variant", async () => {
+    const io = fakeIo({ answer: { findings: [] } });
+    await replayer(io, { baseClone: REPO }).replay(c());
+    const order = io.files.get(join(SCRATCH, "run-t1", `pr-${c().pr}`, "order.md"))!;
+    const plan = buildPassPlan(cfg, parseUnifiedDiff(HANDLER_DIFF)).pass_plan;
+    expect(plan.length).toBeGreaterThan(0);
+    for (const row of plan) expect(order).toContain(`\`${row.agent}\``);
+    expect(order).toContain("1 file(s)");
+  });
+
+  // Lens selection reads each file's status and hunks: an added code file is
+  // a placement question, which a status-less count of the same diff loses.
+  it("plans from the diff's statuses and hunks, as a live round reads the files API", async () => {
+    const added = [
+      "diff --git a/app/services/new_module.py b/app/services/new_module.py",
+      "new file mode 100644",
+      "index 0000000..3333333",
+      "--- /dev/null",
+      "+++ b/app/services/new_module.py",
+      `@@ -0,0 +1,40 @@`,
+      ...Array.from({ length: 40 }, (_, i) => `+line_${i} = ${i}`),
+      "",
+    ].join("\n");
+    const io = fakeIo({ answer: { findings: [] }, diff: added });
+    await replayer(io, { baseClone: REPO }).replay(c());
+    const order = io.files.get(join(SCRATCH, "run-t1", `pr-${c().pr}`, "order.md"))!;
+    expect(order).toContain("pass-placement");
+  });
+
+  it("logs a scratch link it could not make, and still runs the case", async () => {
+    const io = fakeIo({ answer: { findings: [] } });
+    io.linkDir = (_t, l) => (l.endsWith("agents") ? "EPERM: operation not permitted" : undefined);
+    const lines: string[] = [];
+    await replayer(io, { baseClone: REPO, log: (l) => lines.push(l) }).replay(c());
+    expect(lines.filter((l) => l.includes("could not link"))).toEqual([
+      `replay: could not link ${join(SCRATCH, "state", "agents")} -> ${join(SANDBOX, "state", "agents")} (EPERM: operation not permitted)`,
+    ]);
+    expect(io.spawned).toHaveLength(1);
+  });
+
   it("gives the session the pass agents and the exec guard, and no scripts/", async () => {
     const io = fakeIo({ answer: { findings: [] } });
     await replayer(io, { baseClone: REPO }).replay(c());
@@ -330,6 +395,15 @@ describe("one case, end to end", () => {
     expect(out).toEqual([
       { path: "app/handler.py", text: "token may be None", line: 42, tag: "[blocker]" },
     ]);
+  });
+
+  it("reads a path written under the scratch tree as the repo file it names", async () => {
+    const tree = join(SCRATCH, "run-t1", `pr-${set.cases[0]!.pr}`, "tree");
+    const io = fakeIo({
+      answer: [{ path: `${tree}/app/handler.py`, line: 42, text: "token may be None" }],
+    });
+    const out = await replayer(io, { baseClone: REPO }).replay(c());
+    expect(out.map((f) => f.path)).toEqual(["app/handler.py"]);
   });
 
   it("returns nothing (and so scores VACUOUS) when the session never answers", async () => {

@@ -99,6 +99,7 @@
 import { parseFindingMarker } from "./findingkey.js";
 import { storedLensIds } from "./lensids.js";
 import type { ReviewCommentFull } from "./github.js";
+import { bareTag } from "./severity.js";
 import { yieldToLoop } from "./yieldloop.js";
 import type { PrCommentRow, PrStateRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
 
@@ -352,14 +353,6 @@ function normTitle(t: string | null | undefined): string {
     .replace(/\s+/g, " ")
     .replace(/[.!?:;\s]+$/, "")
     .trim();
-}
-
-function normTag(t: string | null | undefined): string {
-  return (t ?? "")
-    .trim()
-    .replace(/^\[|\]$/g, "")
-    .trim()
-    .toLowerCase();
 }
 
 function ms(iso: string | null | undefined): number | null {
@@ -733,7 +726,7 @@ export class OutcomeCapture {
       const byTitle = pool.filter((f) => f.title && normTitle(f.title) === normTitle(head.title));
       if (byTitle.length === 1) return { f: byTitle[0]!, via: "path_line_title" };
       const tag = head.tags.find((t) => t !== "ask your human" && t !== "deferred") ?? head.tags[0];
-      const byTag = pool.filter((f) => f.posted_as && normTag(f.posted_as) === tag);
+      const byTag = pool.filter((f) => f.posted_as && bareTag(f.posted_as) === tag);
       if (byTag.length === 1) return { f: byTag[0]!, via: "path_line_tag" };
       return null;
     };

@@ -278,6 +278,9 @@ export async function collectReviewHistory(
   for (const { n, pr, error } of read) {
     if (error !== null) problems.push(`#${n}: ${error}`);
     if (!pr) {
+      // An answer with no pull request leaves the history as partial as a
+      // failed read does, and is said the same way.
+      if (error === null) problems.push(`#${n}: GitHub returned no pull request — not read`);
       missing++;
       continue;
     }

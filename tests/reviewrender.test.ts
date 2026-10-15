@@ -21,6 +21,8 @@ import {
   renderedFooter,
 } from "../src/reviewrender.js";
 import { renderBenchOutputs } from "../src/bench/runner.js";
+import { parseConfig } from "../src/config.js";
+import { renderConfig } from "../src/reviewrendercli.js";
 import { parseFindingsRecord } from "../src/findingsrecord.js";
 import { findingMarker, parseFindingMarker, stripFindingMarkers } from "../src/findingkey.js";
 import { reviewFooter } from "../src/posting.js";
@@ -253,6 +255,87 @@ describe("numbers read as the record parser reads them", () => {
   });
 });
 
+describe("the posting cut and the renderer read one posted set and one class", () => {
+  const POLICY = {
+    max_comments: 1,
+    nits: "post" as const,
+    questions: "post" as const,
+    repeat_sites: true,
+    body: "full" as const,
+    comment_style: "full" as const,
+  };
+
+  it("an entry the record parser folds onto posted is rendered and cut as posted", () => {
+    const rec = record([
+      entry({ id: "a", disposition: "survived" }),
+      entry({ id: "b", disposition: " Posted ", path: "b.py", title: "Other" }),
+    ]);
+    const parsed = parseFindingsRecord(rec, 7, 1);
+    expect(parsed.status === "ok" && parsed.record?.findings.map((f) => f.disposition)).toEqual([
+      "posted",
+      "posted",
+    ]);
+    expect(renderReviewFromRecord(rec).comments).toHaveLength(2);
+    const nitsOff = renderPostedReview(
+      record([entry({ id: "n", disposition: "survived", posted_as: "nit", severity: "nit" })]),
+      { policy: { ...POLICY, max_comments: 0, nits: "off" } },
+    );
+    expect(nitsOff.withheld.map((w) => [w.id, w.word])).toEqual([["n", "nits-off"]]);
+    expect(nitsOff.rendered.comments).toEqual([]);
+  });
+
+  it("a blocker under [ask your human] is a blocker to the budget, never withheld", () => {
+    const out = renderPostedReview(
+      record([
+        entry({ id: "q", posted_as: "question", severity: "P2", title: "A question" }),
+        entry({ id: "h", posted_as: "ask your human", severity: "P1", title: "Ask about it" }),
+      ]),
+      { policy: POLICY },
+    );
+    expect(out.withheld.map((w) => [w.id, w.word])).toEqual([["q", "over-budget"]]);
+    expect(out.rendered.comments.map((c) => c.body.split("\n")[0])).toEqual([
+      "[ask your human] [blocker] Ask about it",
+    ]);
+  });
+
+  it("a tag outside the grammar renders as a question, so `questions = off` withholds it", () => {
+    const out = renderPostedReview(record([entry({ id: "x", posted_as: "concern" })]), {
+      policy: { ...POLICY, max_comments: 0, questions: "off" },
+    });
+    expect(out.withheld.map((w) => [w.id, w.word, w.cls])).toEqual([
+      ["x", "questions-off", "question"],
+    ]);
+  });
+
+  it("the budget counts root causes: a follower site posts on its lead's slot", () => {
+    const out = renderPostedReview(
+      record([
+        entry({ id: "L", posted_as: "question", severity: "P2", title: "Same cause" }),
+        entry({ id: "S", posted_as: "question", severity: "P2", path: "b.py", same_as: "L" }),
+        entry({ id: "Q", posted_as: "question", severity: "P2", path: "c.py", title: "Another" }),
+      ]),
+      { policy: { ...POLICY, max_comments: 2 } },
+    );
+    expect(out.withheld).toEqual([]);
+    expect(out.rendered.comments).toHaveLength(3);
+    expect(out.rendered.body).toContain("— 2 questions.");
+  });
+
+  it("a kept follower whose lead was cut stands for the root cause in the counts", () => {
+    const out = renderPostedReview(
+      record([
+        entry({ id: "L", posted_as: "nit", severity: "nit", title: "Same cause" }),
+        entry({ id: "S", posted_as: "blocker", severity: "P1", path: "b.py", same_as: "L" }),
+      ]),
+      { policy: { ...POLICY, max_comments: 0, repeat_sites: false } },
+    );
+    expect(out.withheld.map((w) => [w.id, w.word])).toEqual([["L", "repeat-site"]]);
+    expect(out.rendered.comments).toHaveLength(1);
+    expect(out.rendered.body).toContain("**Verdict: Changes requested** — 1 blocker.");
+    expect(out.rendered.body).toContain("### Blockers");
+  });
+});
+
 describe("the footer", () => {
   it("is posting.ts's reviewFooter, word for word", () => {
     expect(renderedFooter("qc-bot")).toBe(reviewFooter("qc-bot"));
@@ -308,6 +391,24 @@ describe("the render-review CLI (what scripts/render-review.sh execs)", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("says why the config did not load instead of rendering silently without the policy", () => {
+    const cfg = parseConfig(readFileSync(join(ROOT, "tests/fixtures/config.toml"), "utf8"));
+    const broken = renderConfig("/sandbox", "qc-bot", {
+      config: () => cfg,
+      profilePosting: () => {
+        throw new Error("profile acme: [posting] max_comments must be a whole number");
+      },
+    });
+    expect(broken.unread).toBe("profile acme: [posting] max_comments must be a whole number");
+    expect(broken.cfg.posting).toBeUndefined();
+    expect(broken.cfg.github).toEqual({ bot_login: "qc-bot" });
+    const fine = renderConfig("/sandbox", undefined, {
+      config: () => cfg,
+      profilePosting: () => ({}),
+    });
+    expect(fine.unread).toBeUndefined();
   });
 });
 

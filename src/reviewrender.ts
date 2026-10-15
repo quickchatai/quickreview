@@ -19,23 +19,33 @@
 // whatever the record claims (posting validates it as before), and every
 // problem the input has is returned rather than thrown, so a thin record still
 // renders the review the record describes.
-import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, postTag, type Severity } from "./severity.js";
+import {
+  ASK_HUMAN_TAG,
+  bareTag,
+  CHECK_THIS_TAG,
+  DEFERRED_TAG,
+  postTag,
+  SANCTIONED_TAGS,
+  type Severity,
+} from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
 import { findingMarker, findingRecordKey, recordNumber } from "./findingkey.js";
+import { normalizeDisposition } from "./findingsrecord.js";
 import {
   firstSentence as policyFirstSentence,
   isDefaultPosting,
   selectPosted,
   siteKey,
+  verdictLineFor,
   type PolicyClass,
   type PostingPolicy,
   type WithholdWord,
 } from "./postingpolicy.js";
 
-/** The standard footer, word for word posting.ts `reviewFooter` (pinned equal
- * by tests/reviewrender.test.ts). Not imported: posting.ts is the recorded
- * unwired module of tests/fences-reachability.test.ts, and an import for one
- * string would make it read as live. */
+/** The standard review footer, naming the configured bot identity
+ * (`[github] bot_login`; "" degrades to the role). posting.ts takes its
+ * `reviewFooter` from here: posting.ts is the recorded unwired module of
+ * tests/fences-reachability.test.ts, so the live route owns the text. */
 export function renderedFooter(botLogin?: string): string {
   return (
     `_Automated review by \`${botLogin?.trim() || "the review bot"}\` (quickreview sandbox). ` +
@@ -43,8 +53,8 @@ export function renderedFooter(botLogin?: string): string {
   );
 }
 
-/** GitHub's per-review inline cap (posting.ts INLINE_COMMENT_CAP). */
-const INLINE_CAP = 50;
+/** GitHub caps a single review at 50 inline comments. */
+export const INLINE_COMMENT_CAP = 50;
 
 export interface RenderedComment {
   path: string;
@@ -66,14 +76,8 @@ export interface RenderedReview {
 }
 
 type Tag = "blocker" | "question" | "nit" | "check this" | "ask your human" | "deferred";
-const TAGS: readonly Tag[] = [
-  "blocker",
-  "question",
-  "nit",
-  "check this",
-  "ask your human",
-  "deferred",
-];
+/** The closed tag grammar (`severity.ts` `SANCTIONED_TAGS`), bare. */
+const TAGS = SANCTIONED_TAGS.map(bareTag) as readonly Tag[];
 const SEVERITIES = new Set(["P0", "P1", "P2", "P3", "nit"]);
 
 interface Posted {
@@ -106,9 +110,15 @@ function str(v: unknown): string | null {
 /** The parser's own coercion: a value the record stores is the value posted. */
 const num = recordNumber;
 
-function firstSentence(text: string): string {
-  const m = /^(.+?[.!?])(\s|$)/s.exec(text.trim());
-  return (m ? m[1]! : text.trim()).replace(/\s+/g, " ");
+/** Is this findings-record entry `posted`, under every spelling the record
+ * parser folds onto it (src/findingsrecord.ts `normalizeDisposition`)? The
+ * one test the posting cut and the renderer both apply. */
+function isPostedEntry(e: unknown): e is Record<string, unknown> {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    normalizeDisposition((e as Record<string, unknown>).disposition) === "posted"
+  );
 }
 
 /** The ordinary tag a posted entry is counted and posted under: its own
@@ -132,7 +142,7 @@ function severityTagOf(
 export function postedSeverityTag(
   raw: Record<string, unknown>,
 ): "blocker" | "question" | "nit" | null {
-  const tag = (str(raw.posted_as) ?? "").toLowerCase().replace(/^\[|\]$/g, "") as Tag;
+  const tag = bareTag(str(raw.posted_as)) as Tag;
   if (!TAGS.includes(tag)) return null;
   return severityTagOf(tag, str(raw.severity), num(raw.confidence), str(raw.reachability));
 }
@@ -144,7 +154,7 @@ function readPosted(
   recordKey: string,
 ): Posted {
   const id = str(raw.id) ?? `#${i + 1}`;
-  const rawTag = (str(raw.posted_as) ?? "").toLowerCase().replace(/^\[|\]$/g, "") as Tag;
+  const rawTag = bareTag(str(raw.posted_as)) as Tag;
   const tag: Tag = TAGS.includes(rawTag) ? rawTag : "question";
   if (!TAGS.includes(rawTag))
     problems.push(
@@ -155,7 +165,7 @@ function readPosted(
   const reachability = str(raw.reachability);
   const sevTag = severityTagOf(tag, severity, confidence, reachability);
   const reason = str(raw.reason) ?? "";
-  const title = str(raw.title) ?? (reason ? firstSentence(reason) : "");
+  const title = str(raw.title) ?? (reason ? policyFirstSentence(reason) : "");
   if (!str(raw.title)) problems.push(`${id}: no title — the reason's first sentence stands in`);
   const body = str(raw.body) ?? reason;
   if (!str(raw.body)) problems.push(`${id}: no body — the reason stands in`);
@@ -255,12 +265,7 @@ export function renderReviewFromRecord(
     // The index in the WHOLE findings array is what the record parser keys a
     // key-less entry by, so it is taken before the filter.
     .map((e, index) => ({ e, index }))
-    .filter(
-      (x): x is { e: Record<string, unknown>; index: number } =>
-        typeof x.e === "object" &&
-        x.e !== null &&
-        str((x.e as Record<string, unknown>).disposition) === "posted",
-    )
+    .filter((x): x is { e: Record<string, unknown>; index: number } => isPostedEntry(x.e))
     .map(({ e, index }, i) => readPosted(e, i, problems, findingRecordKey(e, index)));
   const markers = opts.findingMarkers;
 
@@ -276,8 +281,8 @@ export function renderReviewFromRecord(
       });
       continue;
     }
-    if (comments.length >= INLINE_CAP) {
-      overflow.push({ p, why: `over the ${INLINE_CAP}-inline-comment cap` });
+    if (comments.length >= INLINE_COMMENT_CAP) {
+      overflow.push({ p, why: `over the ${INLINE_COMMENT_CAP}-inline-comment cap` });
       continue;
     }
     comments.push({
@@ -292,28 +297,35 @@ export function renderReviewFromRecord(
   }
 
   // The verdict line and the sections count ROOT CAUSES: a follower row
-  // (same_as) is posted inline but neither counted nor bulleted.
-  const leads = posted.filter((p) => p.same_as === null);
+  // (same_as) is posted inline but neither counted nor bulleted. A follower
+  // whose lead is not posted (the posting cut kept the stronger site) stands
+  // for its root cause — the first such follower of that lead.
+  const postedIds = new Set(posted.map((p) => p.id));
+  const standIn = new Set<string>();
+  const leads = posted.filter((p) => {
+    if (p.same_as === null) return true;
+    if (postedIds.has(p.same_as) || standIn.has(p.same_as)) return false;
+    standIn.add(p.same_as);
+    return true;
+  });
   const of = (t: "blocker" | "nit" | "question") =>
     leads.filter((p) => p.tag !== "check this" && p.tag !== "deferred" && p.sevTag === t);
-  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
-  const counts: string[] = [];
-  if (of("blocker").length) counts.push(plural(of("blocker").length, "blocker"));
-  if (of("nit").length) counts.push(plural(of("nit").length, "nit"));
-  if (of("question").length) counts.push(plural(of("question").length, "question"));
 
   const verdict = str(rec.verdict);
   if (verdict !== "APPROVE" && verdict !== "REQUEST_CHANGES")
     problems.push(`verdict ${JSON.stringify(rec.verdict)} is neither APPROVE nor REQUEST_CHANGES`);
+  const verdictLine = verdictLineFor(verdictLabel(verdict), {
+    blocker: of("blocker").length,
+    nit: of("nit").length,
+    question: of("question").length,
+  });
   const summary = str(rec.summary);
   if (!summary) problems.push("no summary — the body opens on the verdict line");
   const lensesLine = str(rec.lenses_applied);
   if (!lensesLine) problems.push("no lenses_applied — the posted lenses stand in");
 
   if (opts.bodyMode === "verdict") {
-    const lines = [
-      `**Verdict: ${verdictLabel(verdict)}** — ${counts.length ? counts.join(", ") : "no findings"}.`,
-    ];
+    const lines = [verdictLine];
     const one = summary ? policyFirstSentence(summary) : "";
     if (one) lines.push("", one);
     if (overflow.length) lines.push("", ...overflow.map(({ p }) => `- ${ref(p)} — ${p.title}`));
@@ -322,7 +334,7 @@ export function renderReviewFromRecord(
   const out: string[] = [];
   if (summary) out.push(summary, "");
   out.push(
-    `**Verdict: ${verdictLabel(verdict)}** — ${counts.length ? counts.join(", ") : "no findings"}.`,
+    verdictLine,
     "",
     `_Lenses applied: ${lensesLine ?? ([...new Set(posted.map((p) => p.lens))].join(", ") || "none recorded")}._`,
   );
@@ -387,13 +399,20 @@ export function postedRenderOptions(
   };
 }
 
-/** A record entry's `posted_as` as the posting policy classes it. */
-export function postedClassOf(postedAs: unknown): PolicyClass {
-  const t = (typeof postedAs === "string" ? postedAs : "")
-    .trim()
-    .replace(/^\[|\]$/g, "")
-    .toLowerCase();
-  return t === "blocker" || t === "question" || t === "nit" ? t : "check";
+/** A record entry as the posting policy classes it — the class it RENDERS
+ * as (`readPosted`): `[check this]` is a check item; `[ask your human]` and
+ * `[deferred]` take their severity's tag, so a blocker under a routing marker
+ * keeps a blocker's protection; a tag outside the grammar renders, and so
+ * counts, as a question. `tagField` names the field holding the tag
+ * (`withheld_as` once an entry is withheld). */
+export function postedClassOf(
+  entry: Record<string, unknown>,
+  tagField: "posted_as" | "withheld_as" = "posted_as",
+): PolicyClass {
+  const tag = bareTag(str(entry[tagField])) as Tag;
+  if (tag === "check this") return "check";
+  if (!TAGS.includes(tag)) return "question";
+  return severityTagOf(tag, str(entry.severity), num(entry.confidence), str(entry.reachability));
 }
 
 /** Why a withheld entry is in the record and not on the PR. */
@@ -445,12 +464,7 @@ export function applyPostingPolicyToRecord(
   const entries = (rec.findings as unknown[]).map((e) =>
     typeof e === "object" && e !== null ? { ...(e as Record<string, unknown>) } : e,
   );
-  const posted = entries.filter(
-    (e): e is Record<string, unknown> =>
-      typeof e === "object" &&
-      e !== null &&
-      (e as Record<string, unknown>).disposition === "posted",
-  );
+  const posted = entries.filter(isPostedEntry);
   const byId = new Map(posted.map((e) => [String(e.id ?? ""), e]));
   const titleOf = (e: Record<string, unknown>) =>
     typeof e.title === "string" && e.title.trim()
@@ -463,7 +477,7 @@ export function applyPostingPolicyToRecord(
     (e) => {
       const lead = typeof e.same_as === "string" ? byId.get(e.same_as) : undefined;
       return {
-        cls: postedClassOf(e.posted_as),
+        cls: postedClassOf(e),
         severity: typeof e.severity === "string" && e.severity.trim() ? e.severity.trim() : null,
         key: siteKey(titleOf(lead ?? e)),
       };
@@ -481,7 +495,7 @@ export function applyPostingPolicyToRecord(
       word,
       path,
       line,
-      cls: postedClassOf(item.withheld_as),
+      cls: postedClassOf(item, "withheld_as"),
       severity:
         typeof item.severity === "string" && item.severity.trim() ? item.severity.trim() : null,
       title: titleOf(item),

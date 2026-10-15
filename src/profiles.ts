@@ -58,8 +58,10 @@
 //   * the posting policy (`[posting]`) — per key, the nearest
 //     profile that sets it wins.
 // The shipped `default` profile encodes the shipped behaviour (an empty pack,
-// no heuristics, `ecosystem = "none"`) and is the base a generated profile
-// extends: an empty child of it reviews exactly as no profile does.
+// no heuristics, `ecosystem = "none"`, and `[posting] repeat_sites = false`:
+// one comment per root cause) and is the base a generated profile extends. An
+// empty child of it reviews as no profile does, but posts each root cause
+// once where no profile keeps the code default (`repeat_sites = true`).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
