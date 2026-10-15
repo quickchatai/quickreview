@@ -84,7 +84,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { caseName } from "../cases.js";
-import { canonicalLensIds } from "../lensids.js";
+import { FEEDBACK_PREFIX_RE } from "../feedback.js";
+import { canonicalLensIds, storedLensIds } from "../lensids.js";
 import { cleanQuotedText } from "../memory/datafence.js";
 import { LESSON_CLASS_RE } from "../memory/lessons.js";
 import type { StateStore } from "../state.js";
@@ -178,12 +179,17 @@ export function findingClass(lensIds: readonly string[], kind: string | null | u
   return safeClass(`${lens}.${k}`, "review.general");
 }
 
+/** The area slug a path clusters under: its top directory, `root` for a
+ * file at the root (or a top directory that slugs to nothing). */
+function topDirSlug(path: string): string {
+  return (path.includes("/") ? slugPart(path.split("/")[0]) : "") || "root";
+}
+
 /** A miss's class: `missed.<top directory>` (`missed.root` for a file at the
  * root, `missed.review` with no path). */
 export function missedClass(path: string | null | undefined): string {
   if (!path) return "missed.review";
-  const top = path.includes("/") ? slugPart(path.split("/")[0]) : "root";
-  return safeClass(`missed.${top || "root"}`, "missed.review");
+  return safeClass(`missed.${topDirSlug(path)}`, "missed.review");
 }
 
 /** A recheck REVERSAL's class: `recheck.<top directory>` of
@@ -197,8 +203,7 @@ export function missedClass(path: string | null | undefined): string {
  * reversals in unrelated areas are not one bucket a single lesson "covers". */
 export function recheckClass(path: string | null | undefined): string {
   if (!path) return "recheck.review";
-  const top = path.includes("/") ? slugPart(path.split("/")[0]) : "root";
-  return safeClass(`recheck.${top || "root"}`, "recheck.review");
+  return safeClass(`recheck.${topDirSlug(path)}`, "recheck.review");
 }
 
 // ---- small helpers ------------------------------------------------------------
@@ -224,7 +229,8 @@ function oneLine(s: string, cap = 300): string {
   return t.length > cap ? `${t.slice(0, cap - 1)}…` : t;
 }
 
-function tableExists(store: StateStore, name: string): boolean {
+/** Whether state.db holds table `name` (an optional source's tables may be absent). */
+export function tableExists(store: StateStore, name: string): boolean {
   return (
     store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !==
     undefined
@@ -237,13 +243,7 @@ export function lensIdsOf(
   raw: string | null | undefined,
   lensText: string | null | undefined,
 ): string[] {
-  try {
-    const parsed = JSON.parse(raw ?? "null") as unknown;
-    if (Array.isArray(parsed)) return parsed.filter((x): x is string => typeof x === "string");
-  } catch {
-    /* fall through */
-  }
-  return canonicalLensIds(lensText ?? "");
+  return storedLensIds(raw) ?? canonicalLensIds(lensText ?? "");
 }
 
 interface FindingFacts {
@@ -388,13 +388,15 @@ export function chainRoots(
   return out;
 }
 
-/** The newest human reply in a bot comment's thread, when captured. */
+/** The newest human reply in a bot comment's thread, when captured — newest
+ * by when it was written (a reply the sweep backfilled late is captured after
+ * newer ones), its capture time when GitHub gave none, the row id last. */
 function latestReply(store: StateStore, pr: number, commentId: number | null): string | null {
   if (commentId === null) return null;
   const row = store.db
     .prepare(
       `SELECT body FROM pr_comments WHERE pr = ? AND (in_reply_to_id = ? OR thread_id = ?) AND comment_id <> ?
-        ORDER BY id DESC LIMIT 1`,
+        ORDER BY COALESCE(created_at, captured_at) DESC, id DESC LIMIT 1`,
     )
     .get(pr, commentId, commentId, commentId) as { body: string } | undefined;
   return row?.body ?? null;
@@ -591,8 +593,6 @@ interface SignalRow {
   created_at: string;
 }
 
-const FEEDBACK_PREFIX = /^\s*\[feedback\]\s*/i;
-
 /** The ONE ref of a `[feedback]` comment, whichever route recorded it. */
 export function feedbackCommentRef(scope: string, commentId: number): string {
   return `feedback-comment:${scope || "comment"}:${commentId}`;
@@ -631,7 +631,7 @@ function feedbackCommentDraft(
           : ""
       }`,
     ),
-    quote: quoteOf((c.body ?? "").replace(FEEDBACK_PREFIX, "")),
+    quote: quoteOf((c.body ?? "").replace(FEEDBACK_PREFIX_RE, "").replace(/^\s+/, "")),
     evidence: [
       `pr:${c.pr}`,
       `comment:${c.comment_id}`,
@@ -1013,6 +1013,10 @@ function postMergeDraft(
  * re-reads; the stale backlog — closed windows never read, the most recent
  * first — and closed PRs still owed come last. A PR is re-read at most once
  * per `rescanMs`.
+ *
+ * `persist` stores a read PR's drafts in the same transaction that records
+ * the read: a scan marked done whose candidates never landed would be lost
+ * for good (done PRs are never read again).
  */
 export async function minePostMerge(
   store: StateStore,
@@ -1029,6 +1033,8 @@ export async function minePostMerge(
     budgetMs?: number;
     /** The wall clock the budget is measured on (tests inject one). */
     clock?: () => number;
+    /** Store one PR's drafts; runs inside the transaction recording its read. */
+    persist?: (drafts: CandidateDraft[]) => void;
   },
 ): Promise<{ drafts: CandidateDraft[]; scanned: number; unknown: number }> {
   const merges = store.db
@@ -1134,8 +1140,9 @@ export async function minePostMerge(
     }
     const byCommit = new Map<string, PostMergeScan["touches"]>();
     for (const t of scan.touches) byCommit.set(t.commit, [...(byCommit.get(t.commit) ?? []), t]);
-    for (const [commit, touches] of byCommit)
-      drafts.push(postMergeDraft(row, commit, touches, nowIso));
+    const prDrafts = [...byCommit].map(([commit, touches]) =>
+      postMergeDraft(row, commit, touches, nowIso),
+    );
     // Done only once the window has passed AND the clone holds it: the
     // learner never fetches, and a clone whose base tip predates the window's
     // end has not seen its last commits — reading that as "nothing more
@@ -1154,24 +1161,28 @@ export async function minePostMerge(
         nowMs - windowEnd >= RECALL_SCAN_LIMITS.attempts * RECALL_SCAN_LIMITS.rescanMs
       );
     const done = closed && fetchedPast && !unreadRetry;
-    finish.run(
-      row.attempts + 1,
-      nowIso,
-      scan.merge,
-      scan.touches.length,
-      baseRef,
-      done ? 1 : 0,
-      `${scan.shape}${scan.truncated ? " (partial)" : ""}${
-        closed && !fetchedPast ? " (the clone is not fetched past the window yet)" : ""
-      }${
-        closed && fetchedPast && scan.unread === true
-          ? unreadRetry
-            ? " (a read failed: retried)"
-            : " (a read failed: gave up)"
-          : ""
-      }`,
-      row.pr,
-    );
+    store.db.transaction(() => {
+      if (prDrafts.length > 0) opts.persist?.(prDrafts);
+      finish.run(
+        row.attempts + 1,
+        nowIso,
+        scan.merge,
+        scan.touches.length,
+        baseRef,
+        done ? 1 : 0,
+        `${scan.shape}${scan.truncated ? " (partial)" : ""}${
+          closed && !fetchedPast ? " (the clone is not fetched past the window yet)" : ""
+        }${
+          closed && fetchedPast && scan.unread === true
+            ? unreadRetry
+              ? " (a read failed: retried)"
+              : " (a read failed: gave up)"
+            : ""
+        }`,
+        row.pr,
+      );
+    })();
+    drafts.push(...prDrafts);
   }
   return { drafts, scanned, unknown };
 }
@@ -1211,6 +1222,15 @@ const DIGEST_TYPES: Readonly<Record<string, Polarity>> = {
   "repo-gotcha": "either",
 };
 
+/** A bullet's `type` word: any key of DIGEST_TYPES, the longer spelling first
+ * (`wontfix-pattern` before `wontfix`). */
+const DIGEST_TYPE_RE = new RegExp(
+  `\\b(${Object.keys(DIGEST_TYPES)
+    .sort((a, b) => b.length - a.length)
+    .join("|")})\\b`,
+  "i",
+);
+
 const OPS_RE =
   /invalid api key|openviking|memory (?:was |is )?(?:down|unreachable|unavailable)|entries persisted|kind=bug|\boperations?\b|\binfra(?:structure)?\b/i;
 
@@ -1224,9 +1244,7 @@ export function digestBulletClass(bullet: string): {
   const lens = canonicalLensIds(
     [...bullet.matchAll(/\bpass-[a-z-]+/gi)].map((m) => m[0]).join(","),
   );
-  const type = /\b(missed-finding|false-positive|refuted|wontfix-pattern|wontfix|repo-gotcha)\b/i
-    .exec(bullet)?.[1]
-    ?.toLowerCase();
+  const type = DIGEST_TYPE_RE.exec(bullet)?.[1]?.toLowerCase();
   if (!type && OPS_RE.test(bullet))
     return { class: "digest.operations", polarity: "ops", lens_ids: [] };
   const lensPart = lens[0] ? slugPart(lens[0].replace(/^pass-/, "")) : "digest";
