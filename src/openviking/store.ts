@@ -177,9 +177,7 @@ export function renderEntryBody(text: string, addTags: readonly string[] = []): 
   // Header-only, like `pinned`: a tag quoted in the body is prose, so it
   // must not stop the real one landing in the header where readers look.
   const have = new Set(parseHashTags(trimmed));
-  const missing = addTags
-    .map(normalizeTag)
-    .filter((t) => t !== "" && !have.has(t));
+  const missing = addTags.map(normalizeTag).filter((t) => t !== "" && !have.has(t));
   const head = missing.map((t) => `#${t}`).join(" ");
   return `${head === "" ? trimmed : `${head} ${trimmed}`}\n`;
 }
@@ -513,7 +511,8 @@ export class OpenVikingStore implements MemoryStore {
     if (SWEEP_EXCLUDED_AREAS.includes(dir.split("/")[0]!)) return null;
     const known = this.listedByArea.counts.get(dir);
     if (known !== undefined) return known;
-    for (const u of this.listedByArea.unknown) if (dir === u || dir.startsWith(`${u}/`)) return null;
+    for (const u of this.listedByArea.unknown)
+      if (dir === u || dir.startsWith(`${u}/`)) return null;
     return 0;
   }
 
@@ -562,6 +561,19 @@ export class OpenVikingStore implements MemoryStore {
       return { ok: true, message: `${uri} ready` };
     }
     return { ok: false, message: `could not create the memory root ${uri}` };
+  }
+
+  /** A write that answered NOT_FOUND on `dir`: make the area, once per store
+   * instance, and say whether the caller may retry. A fresh server holds only
+   * `viking://user/default`, and batch-write 404s on a missing area rather than
+   * creating it. Recorded only on success, so a transient mkdir failure leaves
+   * the next write free to try again; each caller keeps its own retry budget. */
+  private async madeMissingArea(code: string, dir: string): Promise<boolean> {
+    if (code !== "NOT_FOUND" || this.ensuredRoots.has(dir)) return false;
+    if (!(await this.client.mkdir(dir))) return false;
+    this.ensuredRoots.add(dir);
+    this.log(`openviking: created the memory root ${dir}`);
+    return true;
   }
 
   /**
@@ -1101,21 +1113,13 @@ export class OpenVikingStore implements MemoryStore {
           ok: false,
           message: `memory write failed: the server accepted the batch without writing ${id}`,
         };
-      // A fresh server holds only `viking://user/default`: our category root
-      // does not exist until something makes it, and batch-write 404s rather
-      // than creating it. Make it once, here, and let the loop retry — the
+      // A missing area is made here, once, and the loop retries — the
       // alternative is a bootstrap step that a restart or a new category
-      // silently outlives.
-      if (res.code === "NOT_FOUND" && !this.ensuredRoots.has(dir) && !mkdirTried) {
+      // silently outlives. One attempt per call: a failed mkdir falls through
+      // to the refusal below.
+      if (!mkdirTried && res.code === "NOT_FOUND") {
         mkdirTried = true;
-        // Recorded only on success: a transient mkdir failure must leave the
-        // next write (and ensureWritable) free to try again. One attempt per
-        // call still holds — a failed mkdir falls through to the refusal below.
-        if (await this.client.mkdir(dir)) {
-          this.ensuredRoots.add(dir);
-          this.log(`openviking: created the memory root ${dir}`);
-          continue;
-        }
+        if (await this.madeMissingArea(res.code, dir)) continue;
       }
       if (!res.conflict) return { ok: false, message: `memory write failed: ${res.message}` };
       if (name !== undefined) {
@@ -1304,15 +1308,10 @@ export class OpenVikingStore implements MemoryStore {
       if (res.ok && batchWriteLanded(res.result, uri)) return { ok: true };
       if (
         !res.ok &&
-        res.code === "NOT_FOUND" &&
         precondition.kind === "create_if_absent" &&
-        !this.ensuredRoots.has(dir)
-      ) {
-        if (await this.client.mkdir(dir)) {
-          this.ensuredRoots.add(dir);
-          continue;
-        }
-      }
+        (await this.madeMissingArea(res.code, dir))
+      )
+        continue;
       if (!res.ok && res.conflict && precondition.kind === "create_if_absent") {
         const there = await this.client.readContent(uri);
         if (there.ok && isMovedStub(there.result)) {
@@ -1767,12 +1766,7 @@ export class OpenVikingStore implements MemoryStore {
           landed,
         };
       }
-      if (res.code === "NOT_FOUND" && attempt === 0 && !this.ensuredRoots.has(root)) {
-        if (await this.client.mkdir(root)) {
-          this.ensuredRoots.add(root);
-          continue;
-        }
-      }
+      if (attempt === 0 && (await this.madeMissingArea(res.code, root))) continue;
       return {
         ok: false,
         refused: provenUnwritten(res),
