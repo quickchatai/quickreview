@@ -217,6 +217,28 @@ describe("planPrepare — pure", () => {
     expect(plan.reason).toContain("already reset");
   });
 
+  it("a reset journalled for THIS embedder whose move never happened is FINISHED, not refused", () => {
+    const journal = {
+      version: 1,
+      embedder: LOCAL,
+      previous: HOSTED,
+      reset_at: "2026-09-02T15:00:00.000Z",
+      moved_to: "/nowhere/context.pre-reembed-20260902T150000Z",
+      namespaces: {},
+    };
+    const args = {
+      stored: { ...HOSTED, model_identity: HOSTED.model },
+      metaPresent: true,
+      expected: LOCAL,
+      journal,
+    };
+    const interrupted = reembed.planPrepare({ ...args, movedAsidePresent: false });
+    expect(interrupted.action).toBe("reset");
+    expect(interrupted.reason).toContain("never moved aside");
+    // The move did happen: the loop guard stands.
+    expect(reembed.planPrepare({ ...args, movedAsidePresent: true }).action).toBe("refuse");
+  });
+
   it("a reset recorded for a DIFFERENT embedder does not block a new one", () => {
     const journal = {
       version: 1,
@@ -394,6 +416,85 @@ describe("prepare — the disk half", () => {
         n.startsWith("context.pre-reembed-"),
       ),
     ).toHaveLength(1);
+  });
+
+  it("the journal is durable BEFORE the collection moves: an interruption between the two is finished by the next prepare", async () => {
+    seedStore(HOSTED);
+    // The state a prepare interrupted after its journal write leaves: the
+    // rebuild on record, the old collection still in place.
+    writeFileSync(
+      join(home, "reembed.json"),
+      JSON.stringify({
+        version: 1,
+        embedder: LOCAL,
+        previous: { ...HOSTED, model_identity: HOSTED.model },
+        reset_at: "2026-09-02T15:00:00.000Z",
+        moved_to: `${collectionDir()}.pre-reembed-20260902T150000Z`,
+        namespaces: { reviewer: { state: "pending" } },
+      }),
+    );
+    const report = await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+      now: () => new Date("2026-09-02T15:30:00.000Z"),
+    });
+    expect(report.action).toBe("reset");
+    expect(existsSync(collectionDir())).toBe(false);
+    const moved = `${collectionDir()}.pre-reembed-20260902T153000Z`;
+    expect(existsSync(join(moved, "store", "CURRENT"))).toBe(true);
+    const journal = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
+    expect(journal).toMatchObject({
+      moved_to: moved,
+      namespaces: { reviewer: { state: "pending" } },
+    });
+    expect(reembed.journalStatus(home).state).toBe("pending");
+  });
+
+  it("a move that fails puts the journal back as it was — none, or the earlier one", async () => {
+    const now = () => new Date("2026-09-02T15:30:00.000Z");
+    // The target already exists and is not empty, so the rename fails.
+    const blockMove = () => {
+      const target = `${collectionDir()}.pre-reembed-20260902T153000Z`;
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, "occupied"), "x");
+    };
+    seedStore(HOSTED);
+    blockMove();
+    const first = await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+      now,
+    });
+    expect(first.action).toBe("refuse");
+    expect(first.reason).toContain("could not move");
+    expect(existsSync(collectionDir())).toBe(true);
+    expect(existsSync(join(home, "reembed.json"))).toBe(false);
+
+    const earlier = {
+      version: 1,
+      embedder: HOSTED,
+      previous: null,
+      reset_at: "2026-08-01T00:00:00.000Z",
+      moved_to: "/elsewhere",
+      namespaces: { reviewer: { state: "completed" } },
+    };
+    writeFileSync(join(home, "reembed.json"), JSON.stringify(earlier));
+    const second = await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+      now,
+    });
+    expect(second.action).toBe("refuse");
+    expect(JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"))).toEqual(earlier);
   });
 
   it("an ov.conf with no embedding section runs local — a hosted store is reset for it", async () => {
