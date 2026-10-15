@@ -2244,8 +2244,14 @@ export class StateStore {
   }
 
   /** Persist successful stage progress once, both for diagnostics and to reset
-   * the per-head fast-retry generation after a later unrelated round. */
+   * the per-head fast-retry generation after a later unrelated round. The stamp
+   * and its `round_fanout_started` event commit together: a stamp alone would
+   * make every later call a no-op, so the budget reset could never be written. */
   recordRoundFanoutStarted(id: number, commandId: string, startedAt: string): boolean {
+    return this.db.transaction(() => this.recordRoundFanoutStartedTx(id, commandId, startedAt))();
+  }
+
+  private recordRoundFanoutStartedTx(id: number, commandId: string, startedAt: string): boolean {
     const row = this.db
       .prepare(
         `SELECT r.pr, r.round_no, r.posting_key, c.id AS command_id

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -994,6 +994,40 @@ describe("durable FAILED_LOUD review obligations", () => {
     expect(store.selfRequeueCount(5467, "same-head")).toBe(0);
     store.logEvent("round_self_requeued", 5467, { head_sha: "same-head" });
     expect(store.selfRequeueCount(5467, "same-head")).toBe(1);
+  });
+
+  it("records fanout progress and its budget-reset event together, or neither", () => {
+    store.upsertPr(prRow(5471, { state: "reviewing", head_sha: "fanout-head" }));
+    const roundId = store.startRound(5471, "re-review", ["pass-baseline", "pass-validate"], 75);
+    const roundNo = store.roundsFor(5471)[0]!.round_no;
+    store.stampPostingKey(roundId, `v1:5471:${roundNo}:fanout-head`);
+    store.createSessionCommand({
+      id: "cmd-fanout",
+      pr: 5471,
+      session: "pr-5471",
+      kind: "round",
+      round_no: roundNo,
+      payload_sha256: "f".repeat(64),
+      payload_path: "/payload/cmd-fanout.md",
+      inject_path: "/inject/cmd-fanout.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.logEvent("round_self_requeued", 5471, { head_sha: "fanout-head" });
+    const startedAt = "2026-08-13T09:05:00.000Z";
+    // The event insert fails after the stamp's UPDATE: the stamp must not
+    // commit alone, or the next scan sees it set and never writes the event.
+    const spy = vi.spyOn(store, "logEvent").mockImplementationOnce(() => {
+      throw new Error("SQLITE_FULL");
+    });
+    expect(() => store.recordRoundFanoutStarted(roundId, "cmd-fanout", startedAt)).toThrow(
+      /SQLITE_FULL/,
+    );
+    spy.mockRestore();
+    expect(store.roundsFor(5471)[0]!.fanout_started_at ?? null).toBeNull();
+    expect(store.selfRequeueCount(5471, "fanout-head")).toBe(1);
+
+    expect(store.recordRoundFanoutStarted(roundId, "cmd-fanout", startedAt)).toBe(true);
+    expect(store.selfRequeueCount(5471, "fanout-head")).toBe(0);
   });
 
   it(
