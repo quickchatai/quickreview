@@ -40,6 +40,7 @@
 // path. Its tables live on the state database beside the outcome capture's.
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { MEMORY_DEFAULTS } from "../config.js";
 import { localWallClockToInstant, zoneDateString, zonedParts, parseHHMM } from "../eod.js";
 import type { FileOutcome } from "../improvements.js";
 import { EXPERIENCES_AREA, areaOfId } from "../memory/layout.js";
@@ -114,16 +115,18 @@ export interface LearnerConfig {
   lessons_digest_backfill_to: string;
 }
 
+/** The learner's knobs at their shipped values — the `[memory]` defaults
+ * (src/config.ts MEMORY_DEFAULTS), which hold each value once. */
 export const LEARNER_DEFAULTS: LearnerConfig = Object.freeze({
-  lessons_mine_lead_min: 15,
-  lessons_mine_days: 45,
-  lessons_receipt_wait_min: 180,
-  lessons_expiry_ops_days: 7,
-  lessons_packet_new_max: 40,
-  lessons_recall_window_days: 14,
-  lessons_recurrence_days: 90,
-  lessons_digest_backfill_from: "2026-08-31",
-  lessons_digest_backfill_to: "2026-10-02",
+  lessons_mine_lead_min: MEMORY_DEFAULTS.lessons_mine_lead_min,
+  lessons_mine_days: MEMORY_DEFAULTS.lessons_mine_days,
+  lessons_receipt_wait_min: MEMORY_DEFAULTS.lessons_receipt_wait_min,
+  lessons_expiry_ops_days: MEMORY_DEFAULTS.lessons_expiry_ops_days,
+  lessons_packet_new_max: MEMORY_DEFAULTS.lessons_packet_new_max,
+  lessons_recall_window_days: MEMORY_DEFAULTS.lessons_recall_window_days,
+  lessons_recurrence_days: MEMORY_DEFAULTS.lessons_recurrence_days,
+  lessons_digest_backfill_from: MEMORY_DEFAULTS.lessons_digest_backfill_from,
+  lessons_digest_backfill_to: MEMORY_DEFAULTS.lessons_digest_backfill_to,
 });
 
 /** The `[memory] lessons_*` knobs (src/config.ts) as the learner takes them,
@@ -260,8 +263,8 @@ CREATE TABLE IF NOT EXISTS learner_recall_scans (
 export type CandidateStatus =
   "open" | "adopting" | "adopted" | "declined" | "expired" | "withdrawn";
 
-/** A candidate in one of these is decided: it leaves the not-persisted lists
- * and is never re-opened by a refused write. */
+/** A candidate in one of these is decided: it leaves the not-persisted lists,
+ * and a refused write re-opens only an expired one (`applyReceipt`). */
 const SETTLED_STATUSES = ["adopted", "declined", "expired", "withdrawn"] as const;
 const SETTLED_SQL = SETTLED_STATUSES.map((s) => `'${s}'`).join(", ");
 
@@ -355,7 +358,14 @@ function json<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
+/** `p`, or "timeout" once `ms` passed. A rejection reads as "timeout" too —
+ * the caller's fallback is the same — but its cause goes to `onReject`, so a
+ * failure is never mistaken for a slow answer in the log. */
+function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  onReject: (err: unknown) => void,
+): Promise<T | "timeout"> {
   return new Promise((resolve) => {
     const t = setTimeout(() => resolve("timeout"), ms);
     t.unref?.();
@@ -364,8 +374,9 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
         clearTimeout(t);
         resolve(v);
       },
-      () => {
+      (err: unknown) => {
         clearTimeout(t);
+        onReject(err);
         resolve("timeout");
       },
     );
@@ -509,16 +520,16 @@ export class Learner {
     // conclusion, so a candidate only, gated on a standing APPROVE and one per
     // (PR, head) (miner.ts header).
     run("recheck reversals", () => mineRecheckFlips(this.store, since));
+    // Post-merge recall stores its candidates as it records each read.
+    let recallAdded = 0;
     if (this.deps.git) {
       try {
         const r = await minePostMerge(this.store, {
-          sinceIso: since,
-          now,
-          windowDays: this.cfg.lessons_recall_window_days,
-          baseBranch: this.deps.baseBranch,
-          git: this.deps.git,
-          log: this.log,
+          ...this.recallScope(now, this.deps.git),
           maxPrs: RECALL_SCAN_LIMITS.prsPerMine,
+          persist: (d) => {
+            recallAdded += this.insert(d).recall ?? 0;
+          },
         });
         drafts.push(...r.drafts);
         report.recall = { scanned: r.scanned, unknown: r.unknown };
@@ -528,6 +539,8 @@ export class Learner {
     }
     for (const d of drafts) report.seen[d.source] = (report.seen[d.source] ?? 0) + 1;
     report.added_by_source = this.insert(drafts);
+    if (recallAdded > 0)
+      report.added_by_source.recall = (report.added_by_source.recall ?? 0) + recallAdded;
     try {
       report.relinked = this.relink(drafts);
     } catch (err) {
@@ -569,7 +582,9 @@ export class Learner {
    * may make only after the candidate was mined, and `INSERT OR IGNORE` never
    * revisits a row, so it would stay `feedback.general` with no lens for good.
    * Every mine re-derives them from today's drafts, as `reviseFates` does for
-   * fates. Decided candidates are history.
+   * fates. Decided candidates are history. A ref two routes both drafted
+   * takes its FIRST draft, as the insert does: the ledger's before the
+   * tagged comment's.
    */
   private relink(drafts: readonly CandidateDraft[]): number {
     const stmt = this.store.db.prepare(
@@ -581,9 +596,12 @@ export class Learner {
     );
     const at = this.ts();
     let n = 0;
+    const seen = new Set<string>();
     this.store.db.transaction(() => {
       for (const d of drafts) {
         if (d.source !== "feedback" && d.source !== "tagged-comment") continue;
+        if (seen.has(d.ref)) continue;
+        seen.add(d.ref);
         const lens = JSON.stringify(d.lens_ids);
         n += stmt.run(
           d.class,
@@ -609,6 +627,19 @@ export class Learner {
     return n;
   }
 
+  /** What post-merge recall reads — the same for the day's mine and the
+   * ticks between mines, which differ only in their budgets. */
+  private recallScope(now: Date, git: RecallGit) {
+    return {
+      sinceIso: new Date(now.getTime() - this.cfg.lessons_mine_days * DAY_MS).toISOString(),
+      now,
+      windowDays: this.cfg.lessons_recall_window_days,
+      baseBranch: this.deps.baseBranch,
+      git,
+      log: this.log,
+    };
+  }
+
   /**
    * Post-merge recall between mines (`RECALL_SCAN_LIMITS.prsPerTick` PRs and
    * `budgetMs` a tick): the day's mine alone reads too few merged PRs to keep
@@ -616,21 +647,18 @@ export class Learner {
    * finds is inserted at once and offered by the next packet. Never throws.
    */
   private async recallStep(): Promise<void> {
-    if (!this.deps.git) return;
-    const now = this.now();
-    const since = new Date(now.getTime() - this.cfg.lessons_mine_days * DAY_MS).toISOString();
+    const git = this.deps.git;
+    if (!git) return;
+    let added = 0;
     try {
       const r = await minePostMerge(this.store, {
-        sinceIso: since,
-        now,
-        windowDays: this.cfg.lessons_recall_window_days,
-        baseBranch: this.deps.baseBranch,
-        git: this.deps.git,
-        log: this.log,
+        ...this.recallScope(this.now(), git),
         maxPrs: RECALL_SCAN_LIMITS.prsPerTick,
         budgetMs: RECALL_SCAN_LIMITS.budgetMs,
+        persist: (d) => {
+          added += this.insert(d).recall ?? 0;
+        },
       });
-      const added = this.insert(r.drafts).recall ?? 0;
       if (r.scanned > 0 || added > 0)
         this.log(
           `learner: post-merge recall read ${r.scanned} merged PR(s), ${added} new candidate(s)${r.unknown ? `, ${r.unknown} unknown` : ""}`,
@@ -738,7 +766,9 @@ export class Learner {
   private async readLessons(): Promise<{ lessons: IndexedLesson[]; complete: boolean } | null> {
     if (!this.deps.lessons) return null;
     if (this.deps.healthy && !this.deps.healthy()) return null;
-    const res = await withTimeout(this.deps.lessons.sweep(), LESSON_READ_BUDGET_MS);
+    const res = await withTimeout(this.deps.lessons.sweep(), LESSON_READ_BUDGET_MS, (err) =>
+      this.log("learner: the lessons read failed", err),
+    );
     if (res === "timeout") return null;
     const lessons: IndexedLesson[] = [];
     for (const e of res.entries) {
@@ -835,10 +865,14 @@ export class Learner {
         offered_day: c.offered_day!,
       });
     }
-    // Candidates expired by an earlier build of the same day stay listed.
+    const newlyExpired = expired.length;
+    // Candidates expired by an earlier build of the same day stay listed —
+    // the ones its record lists, and the ones its expiry committed before
+    // that build was cut short (the rows say so: expired on this day).
     const prior = this.curation(day);
     const priorExpired = prior ? json<number[]>(prior.expired, []) : [];
-    for (const id of priorExpired) {
+    const expiredOnDay = this.candidates("status = 'expired' AND decided_day = ? ORDER BY id", day);
+    for (const id of [...priorExpired, ...expiredOnDay.map((c) => c.id)]) {
       if (expired.some((e) => e.id === id)) continue;
       const c = this.candidates("id = ?", id)[0];
       if (c)
@@ -850,7 +884,7 @@ export class Learner {
           offered_day: c.offered_day ?? day,
         });
     }
-    if (expired.length > priorExpired.length)
+    if (newlyExpired > 0)
       this.store.logEvent("lesson_candidates_expired", null, {
         day,
         ids: expired.map((e) => e.id),
@@ -1022,7 +1056,9 @@ export class Learner {
     day: string,
   ): Promise<{ lines: string; curation: string; packet: OutcomesPacket }> {
     if (this.mark(`mined:${day}`) === null) {
-      const r = await withTimeout(this.mine(), PREPARE_MINE_BUDGET_MS);
+      const r = await withTimeout(this.mine(), PREPARE_MINE_BUDGET_MS, (err) =>
+        this.log("learner: the EOD mine failed", err),
+      );
       if (r !== "timeout") this.setMark(`mined:${day}`, this.ts());
     }
     const packet = await this.buildPacket(day);
@@ -1101,12 +1137,15 @@ export class Learner {
         for (const id of d.candidates) {
           if (d.decision === "adopted") {
             // An adoption memory already showed stands; an undecided one
-            // waits for the lesson to be found; a settled one is left alone.
+            // waits for the lesson to be found; a settled one keeps its
+            // decision and the reason for it — only the receipt is recorded.
             db.prepare(
               `UPDATE lesson_candidates SET status = CASE WHEN status IN ('open', 'adopting') THEN 'adopting' ELSE status END,
-                 receipt_day = ?, receipt_at = ?, claimed_lesson = ?, reason = COALESCE(?, reason), updated_at = ?
+                 claimed_lesson = CASE WHEN status IN ('open', 'adopting') THEN ? ELSE claimed_lesson END,
+                 reason = CASE WHEN status IN ('open', 'adopting') THEN COALESCE(?, reason) ELSE reason END,
+                 receipt_day = ?, receipt_at = ?, updated_at = ?
                WHERE id = ?`,
-            ).run(receipt.day, at, d.lesson ?? null, d.reason ?? null, at, id);
+            ).run(d.lesson ?? null, d.reason ?? null, receipt.day, at, at, id);
             counts.adopted += 1;
           } else if (d.decision === "declined") {
             // Only an undecided candidate is declined: a declination never
@@ -1243,14 +1282,19 @@ export class Learner {
   }
 
   /** Wake `eod_curation_missing` once per day whose delivered sweep offered
-   * candidates and drew no receipt within the wait. */
+   * candidates and drew no receipt within the wait — never for a day a later
+   * day's receipt already made good (`unresolved`'s rule: its candidates rode
+   * that later packet), and an empty packet, which owes no receipt, never
+   * takes one of the checked days' places. */
   checkMissing(): void {
     const now = this.now().getTime();
     const waitMs = this.cfg.lessons_receipt_wait_min * 60_000;
     const rows = this.store.db
       .prepare(
         `SELECT * FROM eod_curations WHERE fired_at IS NOT NULL AND receipt_at IS NULL
-           AND missing_woken_at IS NULL ORDER BY day DESC LIMIT 7`,
+           AND missing_woken_at IS NULL AND offered <> '[]'
+           AND day > COALESCE((SELECT MAX(day) FROM eod_curations WHERE receipt_at IS NOT NULL), '')
+         ORDER BY day DESC LIMIT 7`,
       )
       .all() as CurationRow[];
     for (const r of rows) {

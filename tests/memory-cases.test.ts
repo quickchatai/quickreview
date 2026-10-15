@@ -2234,7 +2234,7 @@ describe("wire.ts: the case writer is actually connected", () => {
       /caseWriter = new CaseWriter\(\{[\s\S]*?rounds: roundActivity,[\s\S]*?\}\);/,
     );
     expect(wire).toMatch(
-      /memory: \{\s*assembler: lateAssembler,[\s\S]*?activity: roundActivity,\s*\},/,
+      /roundMemorySeed\(cfg\.openviking\.enabled, \{\s*assembler: lateAssembler,[\s\S]*?activity: roundActivity,\s*\}\),/,
     );
     expect(wire).toMatch(
       /new RoundLessonSelector\(\{[\s\S]*?activity: roundActivity,[\s\S]*?\}\);/,

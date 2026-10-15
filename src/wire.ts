@@ -17,7 +17,12 @@ import {
   type Config,
   type SecretReader,
 } from "./config.js";
-import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./commands.js";
+import {
+  CommandWatcher,
+  processOperatorSeal,
+  type CommandDeps,
+  type CommandWatcherOptions,
+} from "./commands.js";
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { CaseWriter } from "./cases.js";
 import { Archiver } from "./archive/archiver.js";
@@ -63,15 +68,14 @@ import {
   sweepLightVariants,
 } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
-import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "./lenstuning.js";
+import { lensModelOverrides, lensTuningAddenda } from "./lenstuning.js";
 import {
+  applyProfileOverlays,
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
-  loadProfileLensTuning,
-  loadProfilePosting,
 } from "./profiles.js";
-import { applyProfilePosting, postingPolicyAddenda } from "./postingpolicy.js";
+import { postingPolicyAddenda } from "./postingpolicy.js";
 import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
 import { fileImprovementPr, fileIssue, gitRunner, type FileOutcome } from "./improvements.js";
 import {
@@ -95,7 +99,7 @@ import {
   writeRecallHint,
   writeRetiredUris,
 } from "./memory/ovsession.js";
-import type { ContextAssembler, RoundMemory } from "./memory/context.js";
+import type { ContextAssembler, RoundMemory, RoundMemorySeed } from "./memory/context.js";
 import { MEMORY_LAYOUT_NOTE, ROUND_SEARCH_AREAS } from "./memory/layout.js";
 import {
   MemoryHealthMonitor,
@@ -124,7 +128,8 @@ import { makeSlackReply } from "./slack/reply.js";
 import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
-import type { StateStore } from "./state.js";
+import type { RoundRow, StateStore } from "./state.js";
+import { pendingPosting } from "./posting-outbox.js";
 import type { RecheckOrder } from "./recheck.js";
 import {
   RECHECK_TEMPLATE_FILE,
@@ -156,10 +161,7 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   // config.toml, the preset and the defaults. A malformed `[lenses]` table
   // fails the boot loudly, like every other profile loader.
   // The profile's `[posting]` policy rides the same overlay (src/postingpolicy.ts).
-  const cfg = applyProfilePosting(
-    applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile)),
-    loadProfilePosting(root, loaded.review.profile),
-  );
+  const cfg = applyProfileOverlays(root, loaded);
   const minter = new TokenMinter(cfg.github.secrets_dir);
   const gate: MutationGate = new MutationGate(
     cfg.dry_run,
@@ -198,6 +200,15 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
 // defaulted to the daemon's own cwd (a repo with no remote) would leave the
 // improvement channel unable to push without saying so.
 const gitRun = gitRunner(nodeExec);
+
+/** The status.json a previous run left, or undefined (first boot, unreadable). */
+function readPreviousStatus(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
 
 /** package.json version for the `daemon.up` line; never worth failing a boot. */
 function packageVersion(root: string): string | undefined {
@@ -249,8 +260,18 @@ export interface SlackWiringOptions {
   now?: () => Date;
   /** Test seam: how a token file is read. Default is the shared fs reader. */
   readSecret?: SecretReader;
-  /** Test seam: how the transport is built from the two tokens. */
-  makeTransport?: (opts: { cfg: Config; botToken: string; appToken: string }) => SlackTransport;
+  /** Test seam: how the transport is built from the two tokens. `log` is the
+   * wiring's own sink, so the socket's connection diagnostics reach it. */
+  makeTransport?: (opts: {
+    cfg: Config;
+    botToken: string;
+    appToken: string;
+    log: (msg: string, extra?: unknown) => void;
+  }) => SlackTransport;
+  /** The previous run's `state/status.json`, read before this boot wrote its
+   * own first snapshot — the downtime `daemon.up` reports is measured from
+   * its heartbeat. Absent ⇒ the file is read at announce time. */
+  previousStatus?: string;
   /**
    * The origin store, when the caller already owns one. `createProductionDaemon`
    * builds it before the daemon so daemon-originated overseer wakes can stamp a
@@ -278,17 +299,21 @@ function defaultTransport(opts: {
   cfg: Config;
   botToken: string;
   appToken: string;
+  log: (msg: string, extra?: unknown) => void;
 }): SlackTransport {
   const { cfg } = opts;
+  const log = (message: string, meta?: Record<string, unknown>): void => opts.log(message, meta);
   const api = new SlackApiClient({
     botToken: opts.botToken,
     postMinIntervalMs: cfg.slack.post_min_interval_ms,
     userCacheTtlSec: cfg.slack.name_cache_ttl_s,
+    log,
   });
   const socket = new SlackSocketClient({
     appToken: opts.appToken,
     backoffMs: cfg.slack.reconnect_backoff_ms,
     serverPingTimeoutMs: cfg.slack.server_ping_timeout_ms,
+    log,
   });
   return {
     postMessage: (a) => api.postMessage(a),
@@ -321,7 +346,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   if (!botToken || !appToken)
     throw new Error("slack: token files vanished between validation and read");
 
-  const transport = (opts.makeTransport ?? defaultTransport)({ cfg, botToken, appToken });
+  const transport = (opts.makeTransport ?? defaultTransport)({ cfg, botToken, appToken, log });
 
   // Who are we? Resolved once, and required: the router's echo filter is built
   // on this identity, and a bot that cannot recognise its own messages will
@@ -343,6 +368,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
     log,
     version: opts.version,
     statusPath: join(root, "state", "status.json"),
+    ...(opts.previousStatus !== undefined ? { readStatus: () => opts.previousStatus } : {}),
     onAnomalySignal: (message) => {
       // Durable anomaly record beside the overseer wake.
       store.logAnomaly("slack_connections", null, null, message);
@@ -430,6 +456,17 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
 }
 
 /**
+ * The local Slack belt both daemon-side watchers install (`commands/` and
+ * `commands/operator/`): with Slack live, a file is refused while the turn
+ * being served was caused by a non-owner Slack message — read through
+ * `latestAny()`, which only a daemon wake's `local` origin supersedes. Slack
+ * off ⇒ no tier gate at all.
+ */
+function localSlackBelt(slack: SlackRuntime | null): Pick<CommandWatcherOptions, "tier"> {
+  return slack ? { tier: { dir: "local", currentOrigin: () => slack.origins.latestAny() } } : {};
+}
+
+/**
  * The legacy `commands/` watcher. Two things change when Slack is live, and
  * only those two: `slack_reply` becomes executable from this dir as well, and
  * the belt gate is installed — when the turn being served was caused by a
@@ -452,9 +489,7 @@ export function buildLocalCommandWatcher(opts: {
   const { slack } = opts;
   return new CommandWatcher({
     dir: join(opts.root, "commands"),
-    ...(slack
-      ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latestAny() } }
-      : {}),
+    ...localSlackBelt(slack),
     deps: slack ? { ...opts.deps, slackReply: slack.slackReply } : opts.deps,
     store: opts.store,
     log: opts.log,
@@ -484,9 +519,7 @@ export function buildOperatorCommandWatcher(opts: {
   return new CommandWatcher({
     dir: join(opts.root, "commands", "operator"),
     operator: processOperatorSeal(),
-    ...(slack
-      ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latestAny() } }
-      : {}),
+    ...localSlackBelt(slack),
     deps: opts.deps,
     store: opts.store,
     log: opts.log,
@@ -622,9 +655,40 @@ export function routeCurationReceipt(
   return learner.applyReceipt(receipt);
 }
 
+/**
+ * The daemon's round-memory seed, or none when memory is switched off: a
+ * round with no seed renders memory-less without a read, so a deliberate off
+ * never reads as degraded memory in the prompt or the round's record.
+ */
+export function roundMemorySeed(
+  enabled: boolean,
+  seed: RoundMemorySeed,
+): { memory?: RoundMemorySeed } {
+  return enabled ? { memory: seed } : {};
+}
+
+/**
+ * The startup orphan sweep's posting debt: a round whose outbox job is still
+ * pending owes its review, and the outbox delivers it with no session — the
+ * same test the verdict watcher's posting proof reads as posting in flight.
+ * A dry run never owes one.
+ */
+export function orphanPostingOwed(
+  receiptDir: string,
+  dryRun: boolean,
+): (round: Pick<RoundRow, "pr" | "round_no" | "posting_key">) => boolean {
+  return (round) =>
+    !dryRun &&
+    round.posting_key !== null &&
+    pendingPosting(receiptDir, round.pr, round.round_no, round.posting_key);
+}
+
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
   const { cfg, root, gate, adapter, sessions } = parts;
   const log = (msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? "");
+  // The last run's heartbeat, read before start() writes this boot's first
+  // status.json over it: the Slack `daemon.up` downtime is measured from it.
+  const previousStatus = readPreviousStatus(join(root, "state", "status.json"));
 
   // The daemon's one memory store, built in onStart once secrets are readable.
   // Everything that needs it is late-bound through this holder: the round
@@ -679,6 +743,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   let commands: CommandWatcher | null = null;
   let operatorCommands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
+  // onStart's own intervals (the overseer rotation, the agents day check),
+  // cleared at stop like every other timer.
+  const intervals: Array<ReturnType<typeof setInterval>> = [];
   // The [feedback] engine, built in onStart (it needs the memory store). A
   // signal arriving in the boot gap between the webhook binding and onStart
   // is ledgered, never dropped: its row starts `pending`, the backfill pump
@@ -826,8 +893,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     heuristics: profileHeuristics,
     // Pinned head + one budgeted context block per round. Past the
     // deadline the round dispatches memory-less and logs the gap — memory
-    // never blocks or delays a round.
-    memory: {
+    // never blocks or delays a round. Memory switched off
+    // (`[openviking] enabled = false`) seeds nothing: no read, no
+    // "memory unavailable" note, nothing counted as degraded.
+    ...roundMemorySeed(cfg.openviking.enabled, {
       assembler: lateAssembler,
       maxTokens: cfg.memory.context_tokens,
       timeoutMs: cfg.memory.context_timeout_ms,
@@ -852,7 +921,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // The round's memory window — the case writer starts no
       // batch from the seed until the lesson selection has taken over.
       activity: roundActivity,
-    },
+    }),
     // The round's lesson selection (shadow ledger; awaited by dispatch only
     // under `delivery = "on"`); and the matcher, told when a round's findings
     // record lands.
@@ -882,7 +951,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     renderRecheckPrompt: renderRecheck,
     // Conflict resolutions are never trivial: git-level auto-merge comparison
     // in the base clone names the hand-resolved files.
-    resolvedFilesInMerges: (from, to, pr) => sessions.worktrees.resolvedFilesInMerges(from, to, pr),
+    // A degraded merge-verify is logged with its reason here (the failed git
+    // command and its stderr when one failed); the callers record the
+    // degradation itself.
+    resolvedFilesInMerges: async (from, to, pr) => {
+      const res = await sessions.worktrees.resolvedFilesInMerges(from, to, pr);
+      if (res.degraded)
+        log(
+          `merge-verify degraded${pr !== undefined ? ` #${pr}` : ""} ${from.slice(0, 7)}→${to.slice(0, 7)}: ${res.reason ?? "unknown"}`,
+        );
+      return res;
+    },
     // Outcome capture: did the code at a posted finding's anchor
     // change? Read-only git in the same base clone, no fetch, memoised.
     outcomeGit: sessions.worktrees,
@@ -1221,19 +1300,24 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           log("feedback: agents rebuild for boot-gap signals failed", err);
         }
       }
-      memoryStore = memory;
-      memorySweep = memory;
-      memoryAssembler = openVikingContextAssembler({
-        client: memoryClient,
-        store: memory,
-        // Without quotas the server balances the block across every scope it
-        // holds and a round gets about one memory entry beside two built-in
-        // scope blurbs. The quotas name the corpus;
-        // `context_tokens` stays the budget. See [memory] in config.toml.
-        quotas: cfg.memory.context_quotas,
-        searchTimeoutMs: cfg.openviking.search_timeout_ms,
-        log,
-      });
+      // Memory switched off leaves the holders empty: the round seeds
+      // nothing (above) and the EOD pinned-area watchdog is not built, so a
+      // deliberate off never reads as an outage.
+      if (cfg.openviking.enabled) {
+        memoryStore = memory;
+        memorySweep = memory;
+        memoryAssembler = openVikingContextAssembler({
+          client: memoryClient,
+          store: memory,
+          // Without quotas the server balances the block across every scope it
+          // holds and a round gets about one memory entry beside two built-in
+          // scope blurbs. The quotas name the corpus;
+          // `context_tokens` stays the budget. See [memory] in config.toml.
+          quotas: cfg.memory.context_quotas,
+          searchTimeoutMs: cfg.openviking.search_timeout_ms,
+          log,
+        });
+      }
 
       // The lesson shadow ledger and the round's selection. The
       // ledger (and so the operator's kill switch) always; the selector only
@@ -1493,9 +1577,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
       // Rounds still marked running whose session did not survive the restart
       // are phantoms: cancel them, requeue the ones whose work was truly lost.
+      // A round whose finished review the outbox still owes GitHub is not one.
       const orphans = reconcileOrphanedRounds(d.store, pre.adoption.prs, {
         botLogin: cfg.github.bot_login,
         log,
+        postingOwed: orphanPostingOwed(join(root, "state", "posting-receipts"), cfg.dry_run),
       });
       if (orphans.cancelled.length) {
         log(
@@ -1532,7 +1618,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               store: d.store,
               pump: () => d.pump(),
               killSession: async (pr) => {
-                const name = `pr-${pr}`;
+                const name = prSessionName(pr);
                 if (await sessions.tmux.hasSession(name)) await sessions.tmux.killSession(name);
                 if (await sessions.tmux.hasSession(name)) {
                   throw new Error(
@@ -1602,16 +1688,27 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           // while the kill switch is on — so flipping it rebuilds the agents,
           // the way a [feedback] comment does for its addendum. Suppressing
           // one lesson needs no rebuild: the selector reads it every round.
+          // A rebuild that throws leaves the build stale: the 5-minute agents
+          // tick retries it, and the answer says so rather than reading as
+          // a validator already rebuilt.
+          let rebuildFailed = false;
           if (r.changed && (change.action === "off" || change.action === "on")) {
             try {
               rebuildAgents();
             } catch (err) {
-              log("lessons: agents rebuild after the kill switch flipped failed", err);
+              rebuildFailed = true;
+              log(
+                "lessons: agents rebuild after the kill switch flipped failed — the agents tick retries it",
+                err,
+              );
             }
           }
           return {
             ok: true,
             changed: r.changed,
+            ...(rebuildFailed
+              ? { agents_rebuild: "failed — the 5-minute agents tick retries it" }
+              : {}),
             lessons_off: r.lessons_off,
             suppressed: r.suppressed.length,
             ...("uri" in change ? { uri: change.uri } : {}),
@@ -1664,6 +1761,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           origins,
           log,
           version: packageVersion(root),
+          ...(previousStatus !== undefined ? { previousStatus } : {}),
         })) ?? null;
       if (slack) log("slack: concierge live (socket mode; commands/slack tier-checked)");
 
@@ -1782,7 +1880,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         },
         onDeferredFire: (date) => {
           d.store.logEvent("eod_deferred_fired", null, { date });
-          log(`EOD sweep for ${date} firing — owed from a deferral or an interrupted fire`);
+          // An owed day — deferred behind a drain or an earlier sweep, or one
+          // whose fire a restart interrupted — fires only once neither holds;
+          // the timer does not say which owed it.
+          log(
+            `EOD sweep for ${date} firing — owed from a deferral or an interrupted fire; no drain or sweep holds it now`,
+          );
         },
         injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
         onFire: (date) => {
@@ -1833,10 +1936,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           .catch((err) => log("overseer rotation failed", err));
       }, 3600_000);
       rotation.unref?.();
+      intervals.push(rotation);
 
       // Expire a stale same-day feedback addendum promptly on the
       // ops-day change — a 5-minute string compare, so yesterday's items
-      // bite at most minutes into a new day, not an hour.
+      // bite at most minutes into a new day, not an hour — and retries a
+      // rebuild that threw (a stale build) on the same day.
       const dayCheck = setInterval(() => {
         try {
           agentsDay.tick();
@@ -1845,6 +1950,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         }
       }, 300_000);
       dayCheck.unref?.();
+      intervals.push(dayCheck);
     },
 
     async onStop(reason = "shutdown") {
@@ -1869,6 +1975,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           new Promise<void>((r) => setTimeout(r, cfg.memory.delivery_budget_ms + 500).unref?.()),
         ]);
       }
+      for (const t of intervals) clearInterval(t);
+      intervals.length = 0;
       eod?.stop();
       // Its open window polls the pinned area; drop it before the server goes.
       pinWatch?.stop();

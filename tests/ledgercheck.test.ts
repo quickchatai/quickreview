@@ -188,6 +188,27 @@ describe("enforceLedgerFreshness", () => {
     ]);
   });
 
+  it("a round-less (recheck) check for a head the PR has moved past never queues a rewrite", async () => {
+    store.upsertPr({
+      number: 7,
+      state: "reviewing",
+      head_sha: "b".repeat(40),
+      title: "t",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.startRound(7, "re-review", ["pass-baseline"], 60);
+    const injects: string[] = [];
+    expect(
+      await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: null, headSha: HEAD }),
+    ).toBe("superseded");
+    expect(injects).toEqual([]);
+    expect(store.heldWakes(7)).toEqual([]);
+    expect(anomalyKinds()).toEqual(["ledger_stale"]);
+  });
+
   it("round-less (recheck) checks key the once-cap by head", async () => {
     const injects: string[] = [];
     const d = deps(injects);

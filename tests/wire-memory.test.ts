@@ -9,13 +9,28 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MEMORY_DEFAULTS } from "../src/config.js";
 import { DEFAULT_CATEGORY } from "../src/openviking/store.js";
+import { roundMemorySeed } from "../src/wire.js";
 
 const wire = readFileSync(join(process.cwd(), "src", "wire.ts"), "utf8");
 
 describe("wire.ts: the memory phase is actually connected", () => {
   it("the daemon is handed a round-memory seed built on the assembler", () => {
-    expect(wire).toMatch(/memory:\s*\{\s*\n\s*assembler:/);
+    expect(wire).toMatch(/\.\.\.roundMemorySeed\(cfg\.openviking\.enabled, \{\s*\n\s*assembler:/);
     expect(wire).toContain("openVikingContextAssembler");
+  });
+
+  it("memory switched off seeds no round and builds no pinned-area watchdog — off is not an outage", () => {
+    const seed = { assembler: {} } as never;
+    expect(roundMemorySeed(true, seed)).toEqual({ memory: seed });
+    // No seed: dispatch renders the round memory-less without a read, so no
+    // prompt says "MEMORY UNAVAILABLE" and no round records degraded memory.
+    expect(roundMemorySeed(false, seed)).toEqual({});
+    // The holders the round assembler and the EOD watchdog read are filled
+    // only while memory is on; an empty sweep holder builds no watchdog.
+    expect(wire).toMatch(
+      /if \(cfg\.openviking\.enabled\) \{\s*memoryStore = memory;\s*memorySweep = memory;\s*memoryAssembler = openVikingContextAssembler\(/,
+    );
+    expect(wire).toMatch(/cfg\.eod\.pinned_watchdog && sweepSource\s*\?\s*startEodPinWatch/);
   });
 
   it("the context search is quota'd to the memory scopes, not left to the server's balance", () => {

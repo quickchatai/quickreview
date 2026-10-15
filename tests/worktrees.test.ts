@@ -288,6 +288,16 @@ describe("listMigrationFiles", () => {
     ]);
   });
 
+  it("keeps a migration under a non-ASCII directory, spelled as the repository spells it", async () => {
+    // git quotes such a path in its default line output ("backend/caf\303\251/…"),
+    // which no migrations filter matches — the collision check would lose it.
+    const sha = commitAt({ "backend/café/migrations/0007_add_flag.py": "x\n" });
+    const m = mgr();
+    await m.ensureBaseClone();
+    await m.ensureWorktree(1, { baseRef: "master" }).catch(() => undefined);
+    expect(await m.listMigrationFiles(sha)).toEqual(["backend/café/migrations/0007_add_flag.py"]);
+  });
+
   // Never []: an empty list means "the base has no migrations", and a reader
   // that cannot read must not be able to impersonate that answer — the
   // pre-check would then go silently quiet, which it must never do.
@@ -312,23 +322,24 @@ describe("resolvedFilesInMerges", () => {
   /** Base → `side` branch; master edits shared.txt; merge master into side.
    * Conflicting scenarios resolve by hand with `resolution`. Returns the
    * span (base sha → merge sha). */
-  function mergeScenario(opts: { conflicting: boolean; resolution?: string }): {
+  function mergeScenario(opts: { conflicting: boolean; resolution?: string; file?: string }): {
     from: string;
     to: string;
   } {
-    writeFileSync(join(origin, "shared.txt"), "line1\nline2\nline3\n");
+    const shared = opts.file ?? "shared.txt";
+    writeFileSync(join(origin, shared), "line1\nline2\nline3\n");
     git(origin, "add", "-A");
     git(origin, "commit", "-q", "-m", "base");
     const from = git(origin, "rev-parse", "HEAD").trim();
     git(origin, "checkout", "-q", "-b", "side");
     writeFileSync(
-      join(origin, opts.conflicting ? "shared.txt" : "other.txt"),
+      join(origin, opts.conflicting ? shared : "other.txt"),
       opts.conflicting ? "line1 SIDE\nline2\nline3\n" : "side\n",
     );
     git(origin, "add", "-A");
     git(origin, "commit", "-q", "-m", "side edit");
     git(origin, "checkout", "-q", "master");
-    writeFileSync(join(origin, "shared.txt"), "line1 MASTER\nline2\nline3\n");
+    writeFileSync(join(origin, shared), "line1 MASTER\nline2\nline3\n");
     git(origin, "add", "-A");
     git(origin, "commit", "-q", "-m", "master edit");
     git(origin, "checkout", "-q", "side");
@@ -336,7 +347,7 @@ describe("resolvedFilesInMerges", () => {
       git(origin, "merge", "-q", "master");
     } catch {
       // conflict: resolve by hand (possibly dropping master's change)
-      writeFileSync(join(origin, "shared.txt"), opts.resolution ?? "line1 SIDE\nline2\nline3\n");
+      writeFileSync(join(origin, shared), opts.resolution ?? "line1 SIDE\nline2\nline3\n");
       git(origin, "add", "-A");
       git(origin, "commit", "-q", "-m", "resolve");
     }
@@ -364,6 +375,15 @@ describe("resolvedFilesInMerges", () => {
     const res = await m.resolvedFilesInMerges(from, to);
     expect(res.degraded).toBe(false);
     expect(res.files).toEqual(["shared.txt"]);
+  });
+
+  it("names a hand-resolved non-ASCII file as GitHub spells it, never git's quoted display", async () => {
+    const { from, to } = mergeScenario({ conflicting: true, file: "café.txt" });
+    const m = mgr();
+    await m.ensureBaseClone();
+    git(join(root, "example-app"), "fetch", "-q", "origin", "side", "master");
+    const res = await m.resolvedFilesInMerges(from, to);
+    expect(res).toEqual({ files: ["café.txt"], degraded: false });
   });
 
   it("fetches missing objects on demand instead of degrading", async () => {
@@ -400,7 +420,11 @@ describe("resolvedFilesInMerges", () => {
     await m.ensureBaseClone();
     git(join(root, "example-app"), "fetch", "-q", "origin", "side", "master");
     const res = await m.resolvedFilesInMerges(from, to);
-    expect(res).toEqual({ files: ["shared.txt"], degraded: true });
+    expect(res).toEqual({
+      files: ["shared.txt"],
+      degraded: true,
+      reason: `merge(s) with other than two parents not verified: ${to}`,
+    });
   });
 
   it("reports degraded on unusable shas instead of guessing", async () => {
@@ -409,15 +433,20 @@ describe("resolvedFilesInMerges", () => {
     expect(await m.resolvedFilesInMerges("not-a-sha", "also-not")).toEqual({
       files: [],
       degraded: true,
+      reason: "not a commit sha",
     });
+    // The reason names what is missing — the caller's log is the diagnosis.
     expect(
-      (
-        await m.resolvedFilesInMerges(
-          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-        )
-      ).degraded,
-    ).toBe(true);
+      await m.resolvedFilesInMerges(
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      ),
+    ).toEqual({
+      files: [],
+      degraded: true,
+      reason:
+        "not in the clone: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef, deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    });
   });
 });
 
@@ -491,6 +520,22 @@ describe("anchorTouched", () => {
     expect(await m.anchorTouched("app.py", 20, far, other)).toBe(false); // app.py untouched
     expect(await m.anchorTouched("app.py", null, base, near)).toBe(true); // a file-level anchor
     expect(await m.anchorTouched("app.py", 20, base, base)).toBe(false);
+  });
+
+  it("reads the anchored file alone — a bracketed path is literal, never a glob over its siblings", async () => {
+    mkdirSync(join(origin, "app"), { recursive: true });
+    writeFileSync(join(origin, "app", "[id].tsx"), lines(20));
+    writeFileSync(join(origin, "app", "i.tsx"), lines(20));
+    git(origin, "add", "-A");
+    git(origin, "commit", "-q", "-m", "pages");
+    const base = git(origin, "rev-parse", "HEAD").trim();
+    // Only the sibling `app/i.tsx` — which `app/[id].tsx` matches as a glob —
+    // changes, right next to the anchored line.
+    const edited = commit("app/i.tsx", lines(20, { 10: "changed 10" }));
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.anchorTouched("app/[id].tsx", 10, base, edited)).toBe(false);
+    expect(await m.anchorTouched("app/i.tsx", 10, base, edited)).toBe(true);
   });
 
   it("is unknown — never a guess — for a commit the clone does not hold, or a non-sha", async () => {
@@ -716,6 +761,24 @@ describe("postMergeTouches (the learner's recall source)", () => {
     expect(scan!.tip_at).toContain("2026-10-20");
   });
 
+  it("finds the later fix of a non-ASCII file's lines — git's quoted spelling never loses it", async () => {
+    commitAt({ "app/café.py": lines(20, "base") }, "seed", "2026-09-01T10:00:00Z");
+    const a = lines(20, "base").split("\n");
+    a[9] = "pr line 10";
+    commitAt({ "app/café.py": a.join("\n") }, "Add (#7)", "2026-09-10T12:00:00Z");
+    a[9] = "fixed line 10";
+    const fix = commitAt({ "app/café.py": a.join("\n") }, "Fix (#8)", "2026-09-11T12:00:00Z");
+    const m = await fetched();
+    const scan = await m.postMergeTouches({
+      pr: 7,
+      baseRef: "master",
+      mergedAt: "2026-09-10T12:00:03Z",
+      windowDays: 14,
+    });
+    expect(scan).toMatchObject({ checked: 1, truncated: false });
+    expect(scan!.touches).toMatchObject([{ commit: fix, path: "app/café.py", start: 10, end: 10 }]);
+  });
+
   it("finds a merge commit by its 'Merge pull request #N' subject and blames the branch's own commits", async () => {
     commitAt({ "app/m.py": lines(10, "base") }, "seed", "2026-09-01T10:00:00Z");
     git(origin, "checkout", "-q", "-b", "feature");
@@ -864,10 +927,19 @@ describe("postMergeTouches (the learner's recall source)", () => {
       "--- /dev/null",
       "+++ b/new.py",
       "@@ -0,0 +1,3 @@",
-      'diff --git "a/sp ace.py" "b/sp ace.py"',
-      '--- "a/sp ace.py"',
-      '+++ "b/sp ace.py"',
+      'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"',
+      '--- "a/caf\\303\\251.py"',
+      '+++ "b/caf\\303\\251.py"',
       "@@ -1 +1 @@",
+      // A path with a space: git appends a tab to its ---/+++ header.
+      "diff --git a/sp ace.py b/sp ace.py",
+      "--- a/sp ace.py\t",
+      "+++ b/sp ace.py\t",
+      "@@ -2 +2 @@",
+      // A header this reader cannot decode: its section is left out.
+      'diff --git "a/bad\\q.py" "b/bad\\q.py"',
+      '--- "a/bad\\q.py"',
+      "@@ -5 +5 @@",
       // A -U0 hunk REMOVING an SQL comment line prints it as `--- …`: a body
       // line, never a header — the file's later hunks still count.
       "diff --git a/schema.sql b/schema.sql",
@@ -889,6 +961,8 @@ describe("postMergeTouches (the learner's recall source)", () => {
           { old_start: 9, old_count: 1 },
         ],
       ],
+      ["café.py", [{ old_start: 1, old_count: 1 }]],
+      ["sp ace.py", [{ old_start: 2, old_count: 1 }]],
       [
         "schema.sql",
         [

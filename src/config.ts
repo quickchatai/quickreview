@@ -10,6 +10,7 @@ import {
   missingConfigMessage,
   strandedCheckoutConfig,
 } from "./install.js";
+import { repoCloneDirName } from "./clonedir.js";
 import { globProblem } from "./glob.js";
 import {
   INTENT_MIN_SUBSTANCE_WORDS,
@@ -59,12 +60,7 @@ export function githubCloneDir(g: GithubConfig): string {
   // ?? "": hand-rolled configs (tests) may omit both keys.
   const explicit = (g.clone_dir ?? "").trim();
   if (explicit) return explicit;
-  const tail = (g.repo ?? "")
-    .replace(/\.git$/, "")
-    .replace(/\/+$/, "")
-    .split("/")
-    .pop();
-  return tail || "repo";
+  return repoCloneDirName(g.repo ?? "");
 }
 
 /** Where the daemon container lives relative to the TUI. `"ssh"` is

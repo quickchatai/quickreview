@@ -2,9 +2,10 @@
 // every lens must appear in (tests/freeze-fixes-2.test.ts holds it equal to
 // ALL_PASSES).
 //
-// No lens is removed or disabled for being expensive —
-// abstraction, placement and backcompat included; a profile's per-lens
-// `enabled` switch stays the only off switch. Instead each lens is planned
+// No lens is removed or disabled for being expensive — abstraction,
+// placement and backcompat included; the only off switches are the
+// operator's: a profile's per-lens `enabled` and config.toml's `[review]
+// skip_lenses` (both applied in buildPassPlan). Instead each lens is planned
 // where its concern is actually present, and every planned row says WHY
 // (dispatch.ts buildPassPlan → PassPlanEntry.why). A trigger is narrowed only
 // where stored runs show the lens planned with nothing to do, and never below

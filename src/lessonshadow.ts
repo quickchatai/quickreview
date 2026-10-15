@@ -1,5 +1,5 @@
 // The SHADOW LEDGER's half that reads outcomes: which posted findings a
-// delivered dont-raise lesson WOULD have touched, and what humans then did
+// selected dont-raise lesson WOULD have touched, and what humans then did
 // with those findings.
 //
 // WHY. Under `delivery = "on"` a curated dont-raise lesson has authority over
@@ -8,7 +8,8 @@
 // solid evidence too). Whether to grant that authority is decided on the
 // evidence this module produces in shadow: for every lesson, the findings it
 // would have touched that humans then FIXED (harm — a real finding hidden),
-// that humans refuted or set aside (help), and the ones still unknown — on
+// that were refuted (a human's reply, or the reviewer's own concession on
+// re-check) or set aside (help), and the ones still unknown — on
 // the CLASS tier (below) the ones it would have demoted, on the LENS tier
 // evidence the license does not reach.
 //
@@ -64,7 +65,7 @@
 // Nothing here writes memory or GitHub, and nothing here is on a round's path.
 import type { MemoryDelivery } from "./config.js";
 import { globMatcherOrNothing } from "./glob.js";
-import { findingClass, lensIdsOf } from "./learner/miner.js";
+import { findingClass, lensIdsOf, tableExists } from "./learner/miner.js";
 import type {
   LessonLedger,
   ShadowMark,
@@ -72,6 +73,9 @@ import type {
   ShadowMatchTier,
   StoredSelection,
 } from "./lessonledger.js";
+import { memoryLabel } from "./memory/delivery.js";
+import { classesRelated } from "./memory/lessons.js";
+import { parseCarriedTo } from "./outcomes.js";
 import { VALIDATOR_LENS, type RoleSelection, type SelectedLesson } from "./memory/selection.js";
 import type { LessonDeliveryStatus, LessonTierCounts } from "./memory/shadowstatus.js";
 import type { RoundFindingRow, StateStore } from "./state.js";
@@ -81,11 +85,6 @@ export type MatchFinding = Pick<
   RoundFindingRow,
   "finding_key" | "path" | "lens" | "lens_ids" | "kind" | "severity" | "disposition"
 >;
-
-/** `a` and `b` name the same class, or one refines the other. */
-export function classesRelated(a: string, b: string): boolean {
-  return a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`);
-}
 
 /**
  * Whether a dont-raise lesson can mark on the LENS tier: it must
@@ -105,8 +104,10 @@ export function strongerTier(a: ShadowMatchTier, b: ShadowMatchTier): ShadowMatc
   return a === "class" || b === "class" ? "class" : "lens";
 }
 
-/** Every dont-raise lesson a round's selection delivered, with where. */
-function deliveredDontRaise(
+/** Every dont-raise lesson a round's selection chose for a discovery row or
+ * the validator, with where — what was SELECTED, whether or not that round's
+ * delivery then carried it. */
+function selectedDontRaise(
   selections: ReadonlyArray<Pick<RoleSelection | StoredSelection, "role" | "row" | "lessons">>,
 ): Map<string, { lesson: SelectedLesson; via: string[] }> {
   const out = new Map<string, { lesson: SelectedLesson; via: string[] }>();
@@ -125,7 +126,7 @@ function deliveredDontRaise(
 }
 
 /**
- * The marks of one round: every POSTED finding a delivered dont-raise lesson
+ * The marks of one round: every POSTED finding a selected dont-raise lesson
  * would have touched — on its lens and path — with the tier it matched
  * on and why. Pure and deterministic (sorted by finding, then lesson).
  */
@@ -133,7 +134,7 @@ export function matchShadow(
   selections: ReadonlyArray<Pick<RoleSelection | StoredSelection, "role" | "row" | "lessons">>,
   findings: readonly MatchFinding[],
 ): ShadowMark[] {
-  const lessons = [...deliveredDontRaise(selections).entries()].sort((a, b) =>
+  const lessons = [...selectedDontRaise(selections).entries()].sort((a, b) =>
     a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0,
   );
   const marks: ShadowMark[] = [];
@@ -212,11 +213,10 @@ export function markRound(
   pr: number,
   roundNo: number,
 ): ShadowMark[] | null {
-  const round = ledger.roundFor(pr, roundNo);
-  if (!round || round.state === "lessons_off") return null;
-  const findings = store.findingsForRound(pr, roundNo);
-  const marks = matchShadow(ledger.selections(round.round_id), findings);
-  ledger.replaceMarks(pr, roundNo, round.round_id, marks);
+  const matched = ledger.matchRound(pr, roundNo);
+  if (!matched) return null;
+  const { marks } = matched;
+  ledger.replaceMarks(pr, roundNo, matched.round.round_id, marks);
   if (marks.length > 0)
     store.logEvent("lesson_shadow_marked", pr, {
       round_no: roundNo,
@@ -342,13 +342,6 @@ function parseFindingId(id: string): { round_no: number; key: string } {
   return { round_no: Number(id.slice(a + 1, b)), key: id.slice(b + 1) };
 }
 
-function tableExists(store: StateStore, name: string): boolean {
-  return (
-    store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !==
-    undefined
-  );
-}
-
 function median(xs: number[]): number | null {
   if (xs.length === 0) return null;
   const s = [...xs].sort((a, b) => a - b);
@@ -432,12 +425,10 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
         finding_key: string;
         carried_to: string;
       }>) {
-        // `<round>:<key>` — the key itself may hold ':'.
-        const cut = row.carried_to.indexOf(":");
-        const round = Number(row.carried_to.slice(0, cut));
-        if (cut <= 0 || !Number.isInteger(round)) continue;
+        const to = parseCarriedTo(row.carried_to);
+        if (!to) continue;
         carriedFrom.set(
-          findingId(pr, round, row.carried_to.slice(cut + 1)),
+          findingId(pr, to.round_no, to.finding_key),
           findingId(pr, row.round_no, row.finding_key),
         );
       }
@@ -666,11 +657,9 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
 }
 
 /** The memory-relative id of a lesson URI (`experiences/<file>`), for a
- * person to read; the URI itself when it is not under a memories root. */
-export function lessonLabel(uri: string): string {
-  const cut = uri.indexOf("/memories/");
-  return cut < 0 ? uri : uri.slice(cut + "/memories/".length);
-}
+ * person to read; the URI itself when it is not under a memories root — the
+ * label the delivered lessons carry (src/memory/delivery.ts). */
+export const lessonLabel: (uri: string) => string = memoryLabel;
 
 function bucketsLine(b: BucketCounts): string {
   return (
@@ -720,7 +709,7 @@ export function renderShadowReport(r: ShadowReport): string {
       `lens tier (evidence only) ${ft.lens.total} finding(s) (${r.marks_by_tier.lens} mark(s))`,
     ...tierLines("  ", r.findings, ft),
     "  class = the lesson's lens, class and path all held — what the validator's lesson-shape license needs; lens = lens and path held, the class differs or the lesson names none (lens-level matching) — evidence only. A finding both tiers touched counts on the class tier.",
-    "  harm = humans then FIXED it (the lesson would have hidden a real finding); help = humans refuted it, or set its review aside (a whole-review signal); P0 is never demoted.",
+    "  harm = humans then FIXED it (the lesson would have hidden a real finding); help = it was refuted and conceded (on a human's reply, or by the reviewer's own re-check), or its review was set aside (a whole-review signal); P0 is never demoted.",
   );
   out.push("", "Per lesson:");
   if (r.per_lesson.length === 0) out.push("  (no marks)");
@@ -784,10 +773,7 @@ export function lessonDeliveryStatus(
     rounds: r.rounds.total - r.rounds.lessons_off,
     timeouts: r.rounds.with_timeouts,
     unreadable: r.rounds.unreadable,
-    marks: r.findings.total,
-    harm: r.findings.harm,
-    help: r.findings.help_refuted + r.findings.help_set_aside,
-    unknown: r.findings.unknown,
+    ...tierCounts(r.findings),
     tiers: {
       class: tierCounts(r.findings_by_tier.class),
       lens: tierCounts(r.findings_by_tier.lens),

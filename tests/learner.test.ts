@@ -291,6 +291,19 @@ describe("the miner — human fates", () => {
     expect((await h.learner.mine()).added).toBe(0);
   });
 
+  it("quotes the thread's NEWEST reply by when it was written, not the last one captured", async () => {
+    const h = harness();
+    h.pr(11);
+    h.finding(11, { key: "F1" }, "refuted_conceded", { comment: 950, roundNo: 1 });
+    h.addMinutes(30);
+    h.comment({ pr: 11, id: 9502, author: "alice", body: "newer: still unreachable", inReplyTo: 950 });
+    // an older reply the sweep backfills after the newer one was captured
+    h.addMinutes(-20);
+    h.comment({ pr: 11, id: 9501, author: "alice", body: "older: not reachable", inReplyTo: 950 });
+    await h.learner.mine();
+    expect(h.learner.allCandidates()[0]!.quote).toBe("newer: still unreachable");
+  });
+
   it("follows a carried chain to its end, and roots never mint twice as the chain grows", () => {
     const rows = [
       {
@@ -410,6 +423,12 @@ describe("the miner — the feedback ledger and drained [feedback] comments", ()
       ["feedback-comment:review_comment:9100", "tagged_comment"],
     ]);
     expect(rows[1]!.summary).toContain("dropped during a drain");
+    // the ledger's draft keeps precedence on every later mine too: the relink
+    // never rewrites it with the tagged route's drain wording
+    expect(rows[0]!.summary).not.toContain("dropped during a drain");
+    const again = await h.learner.mine();
+    expect(again.relinked).toBe(0);
+    expect(h.learner.allCandidates()[0]!.summary).not.toContain("dropped during a drain");
   });
 });
 
@@ -1094,6 +1113,20 @@ describe("the EOD packet", () => {
     expect((await h.learner.prepareEod("2026-10-14")).lines).toContain("2 expired undecided");
   });
 
+  it("a build cut short after its expiry still lists those candidates when the day is rebuilt", async () => {
+    const h = await seeded(harness(), 1);
+    await h.learner.buildPacket("2026-10-07");
+    // what the 10-14 build's expiry committed before it stopped: the rows
+    // expired, no packet and no curation record of them
+    h.store.db
+      .prepare(
+        "UPDATE lesson_candidates SET status = 'expired', decided_at = ?, decided_day = '2026-10-14' WHERE status = 'open'",
+      )
+      .run(new Date().toISOString());
+    const rebuilt = await h.learner.buildPacket("2026-10-14");
+    expect(rebuilt.expired.map((e) => e.label)).toEqual(["c1", "c2"]);
+  });
+
   it("coverage and the balance read UNKNOWN when memory cannot be read — never 'none'", async () => {
     const h = await seeded(harness({ healthy: false }), 1);
     const p = await h.learner.buildPacket("2026-10-07");
@@ -1416,6 +1449,27 @@ describe("the curation receipt", () => {
       lesson_ids: '["experiences/20261007-one.md"]',
     });
   });
+
+  it("a late adoption never rewrites a settled candidate's reason or claimed lesson", async () => {
+    const h = await offered();
+    h.store.db
+      .prepare(
+        "UPDATE lesson_candidates SET status = 'withdrawn', reason = 'withdrawn: its fate is now fixed' WHERE id = 1",
+      )
+      .run();
+    expect(
+      h.learner.applyReceipt({
+        day: "2026-10-07",
+        decisions: [{ candidates: [1], decision: "adopted", lesson: "late-lesson", reason: "late" }],
+      }).ok,
+    ).toBe(true);
+    expect(h.learner.candidate(1)).toMatchObject({
+      status: "withdrawn",
+      reason: "withdrawn: its fate is now fixed",
+      claimed_lesson: null,
+      receipt_day: "2026-10-07",
+    });
+  });
 });
 
 describe("a missing receipt wakes a person", () => {
@@ -1464,6 +1518,59 @@ describe("a missing receipt wakes a person", () => {
     h.learner.checkMissing();
     expect(h.wakes).toEqual([]);
     expect(h.learner.status().state).toBe("nothing");
+  });
+
+  it("newer empty packets never crowd an older owed receipt out of the check", async () => {
+    const h = harness();
+    h.pr(80);
+    h.store.recordFeedbackSignal({
+      kind: "feedback_comment",
+      pr: 80,
+      comment_id: 8,
+      scope: "issue_comment",
+      author: "p",
+      body: "[feedback] x",
+      day: "2026-10-01",
+    });
+    await h.learner.mine();
+    await h.learner.buildPacket("2026-10-01");
+    h.learner.eodFired("2026-10-01");
+    const at = new Date().toISOString();
+    for (let d = 2; d <= 9; d++)
+      h.store.db
+        .prepare(
+          "INSERT INTO eod_curations (day, packet_at, offered, fired_at, updated_at) VALUES (?, ?, '[]', ?, ?)",
+        )
+        .run(`2026-10-0${d}`, at, at, at);
+    h.addMinutes(181);
+    h.learner.checkMissing();
+    expect(h.wakes.map((w) => [w.kind, w.detail.slice(0, 14)])).toEqual([
+      [LEARNER_WAKE.missing, "EOD 2026-10-01"],
+    ]);
+  });
+
+  it("wakes no missing receipt for a day a later day's receipt already made good", async () => {
+    const h = harness();
+    h.pr(80);
+    h.store.recordFeedbackSignal({
+      kind: "feedback_comment",
+      pr: 80,
+      comment_id: 8,
+      scope: "issue_comment",
+      author: "p",
+      body: "[feedback] x",
+      day: "2026-10-07",
+    });
+    await h.learner.mine();
+    await h.learner.buildPacket("2026-10-07");
+    h.learner.eodFired("2026-10-07");
+    await h.learner.buildPacket("2026-10-08");
+    h.learner.eodFired("2026-10-08");
+    expect(h.learner.applyReceipt({ day: "2026-10-08", decisions: [] }).ok).toBe(true);
+    h.addMinutes(181);
+    h.learner.checkMissing();
+    expect(h.wakes).toEqual([]);
+    expect(h.learner.status().unresolved ?? []).toEqual([]);
   });
 });
 
@@ -1751,6 +1858,50 @@ describe("the miner — recall bounds", () => {
     expect(row()).toEqual({ done: 0, attempts: 3, outcome: "unknown" });
     await h.learner.mine();
     expect(row()).toEqual({ done: 1, attempts: 4, outcome: "unknown: gave up" });
+  });
+
+  it("a closed window is marked done only together with its candidates — a failed store re-reads it", async () => {
+    const git: RecallGit = {
+      postMergeTouches: async () => ({
+        merge: "m".repeat(40),
+        shape: "squash",
+        checked: 1,
+        truncated: false,
+        tip_at: "2026-10-30T00:00:00Z",
+        touches: [
+          {
+            commit: "f".repeat(40),
+            subject: "Fix the tenant check (#45)",
+            committed_at: "2026-10-08T09:00:00Z",
+            path: "backend/api/orders.py",
+            start: 40,
+            end: 44,
+          },
+        ],
+      }),
+    };
+    const h = harness({ git });
+    h.pr(44);
+    h.verdict(44, "APPROVE");
+    h.addMinutes(1);
+    h.store.logEvent("pr_closed", 44, { merged: true, source: "webhook" });
+    h.setNow("2026-10-25T10:00:00.000Z"); // the window has passed
+    // the candidate cannot be stored (what a process dying before the
+    // insert would leave): the read must not be recorded as done either
+    h.store.db.exec(
+      "CREATE TRIGGER no_recall BEFORE INSERT ON lesson_candidates WHEN NEW.source = 'recall' BEGIN SELECT RAISE(ABORT, 'store gone'); END",
+    );
+    await h.learner.mine().catch(() => undefined);
+    const row = () =>
+      h.store.db.prepare("SELECT done FROM learner_recall_scans WHERE pr = 44").get() as {
+        done: number;
+      };
+    expect(row().done).toBe(0);
+    h.store.db.exec("DROP TRIGGER no_recall");
+    const r = await h.learner.mine();
+    expect(r.added_by_source.recall).toBe(1);
+    expect(row().done).toBe(1);
+    expect(h.learner.allCandidates().map((c) => c.kind)).toEqual(["post_merge_change"]);
   });
 
   it("a window the clone has not been fetched past stays pending — never read as 'nothing more touched'", async () => {
@@ -2112,6 +2263,32 @@ describe("qcr lessons [mine]", () => {
     expect(text).toMatch(/missed\.backend\s+look-for\s+0\s+1\s+1/);
     expect(text).toContain("EOD curation: no outcomes packet yet.");
     expect(text).toContain("lessons in force: the daemon reads memory for the balance");
+  });
+});
+
+describe("a failed read is logged with its cause, never read as a slow one", () => {
+  it("a lessons sweep that rejects logs why, and the packet still lands", async () => {
+    const logged: Array<[string, unknown]> = [];
+    const store = new StateStore(":memory:", () => new Date("2026-10-07T10:00:00.000Z"));
+    new OutcomeCapture({ store, botLogin: BOT });
+    const root = mkdtempSync(join(tmpdir(), "qcr-learner-"));
+    roots.push(root);
+    const learner = new Learner({
+      store,
+      root,
+      eodTime: "18:00",
+      timeZone: "Europe/Warsaw",
+      botLogin: BOT,
+      baseBranch: "main",
+      lessons: { sweep: () => Promise.reject(new Error("engine said no")) },
+      healthy: () => true,
+      now: () => new Date("2026-10-07T10:00:00.000Z"),
+      log: (msg, extra) => logged.push([msg, extra]),
+    });
+    const { packet } = await learner.prepareEod("2026-10-07");
+    expect(packet.day).toBe("2026-10-07");
+    const failure = logged.find(([m]) => /lessons read failed/.test(m));
+    expect((failure?.[1] as Error | undefined)?.message).toBe("engine said no");
   });
 });
 
