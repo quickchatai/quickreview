@@ -82,8 +82,13 @@ export function rgb(r: number, g: number, b: number): string {
   return `${ESC}38;2;${r};${g};${b}m`;
 }
 
-// CSI sequences plus OSC (hyperlinks etc., \x07- or ST-terminated).
-const ANSI_RE = /\x1b\[[0-9;?<]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+// One escape grammar for every display operation: CSI sequences (colon
+// parameters included — the mirror sanitizer keeps SGR such as `ESC[4:3m`)
+// plus OSC (hyperlinks etc., \x07- or ST-terminated). Each is zero-width.
+const ESCAPE_SRC = "\\x1b\\[[0-9;:?<]*[a-zA-Z]|\\x1b\\][^\\x07\\x1b]*(?:\\x07|\\x1b\\\\)";
+const ANSI_RE = new RegExp(ESCAPE_SRC, "g");
+/** The escape sequence at the start of `s`, if one starts there. */
+const ESCAPE_AT_START = new RegExp(`^(?:${ESCAPE_SRC})`);
 
 export function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, "");
@@ -102,8 +107,6 @@ export function displayWidth(s: string): number {
   return w;
 }
 
-const ANSI_AT_START = /^(?:\x1b\[[0-9;?<]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))/;
-
 /** Truncate to `width` cells with a `…` when cut. ANSI-aware: escape
  * sequences are zero-width and never sliced mid-sequence; a truncated
  * styled string gets a trailing reset so styling can't leak. */
@@ -114,7 +117,7 @@ export function truncate(s: string, width: number): string {
   let i = 0;
   let styled = false;
   while (i < s.length) {
-    const m = ANSI_AT_START.exec(s.slice(i));
+    const m = ESCAPE_AT_START.exec(s.slice(i));
     if (m) {
       out += m[0];
       styled = true;
@@ -342,10 +345,11 @@ export function spliceDisplay(line: string, at: number, overlay: string): string
   const width = displayWidth(overlay);
   const end = at + width;
   let out = "";
-  // Every SGR seen so far, in order — the ones already emitted before the span
-  // AND the ones swallowed by it. The overlay writes a reset, so the tail must
-  // be handed the whole run back to end up in the state it was written for;
-  // SGR is cumulative, so replaying it reproduces that state exactly.
+  // Every escape seen so far, in order — the ones already emitted before the
+  // span AND the ones swallowed by it (SGR, and OSC hyperlink opens/closes).
+  // The overlay writes a reset, so the tail must be handed the whole run back
+  // to end up in the state it was written for; both are cumulative, so
+  // replaying the run reproduces that state exactly.
   let sgrSoFar = "";
   let col = 0;
   let i = 0;
@@ -368,7 +372,7 @@ export function spliceDisplay(line: string, at: number, overlay: string): string
     restored = true;
   };
   while (i < line.length) {
-    const seq = /^\x1b\[[0-9;:?]*[A-Za-z]/.exec(line.slice(i))?.[0];
+    const seq = ESCAPE_AT_START.exec(line.slice(i))?.[0];
     if (seq !== undefined) {
       sgrSoFar += seq;
       if (!(col >= at && col < end)) out += seq;
@@ -432,7 +436,7 @@ export function accentFrameRect(
     // One pass per row: calling spliceDisplay once per horizontal-rule cell
     // would make every repaint quadratic in terminal width.
     while (i < line.length) {
-      const seq = /^\x1b\[[0-9;:?]*[A-Za-z]/.exec(line.slice(i))?.[0];
+      const seq = ESCAPE_AT_START.exec(line.slice(i))?.[0];
       if (seq !== undefined) {
         out += seq;
         if (seq.endsWith("m")) activeSgr = seq === `${ESC}0m` ? "" : `${activeSgr}${seq}`;
