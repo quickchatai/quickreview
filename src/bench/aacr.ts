@@ -1063,10 +1063,12 @@ function bulletsNaming(lines: readonly string[], path: string, line: number): nu
 /**
  * Where each posted record entry went (null: it has no path or line). An
  * entry the record puts in the body (`inline: false`) is in the body. Any
- * other is carried by the inline comment `pairWithInline` gives it; without
- * one it is in the body when no comment sits within NEAR_LINES of it or the
- * body names it with a bullet — else it was folded into the comment beside it
- * (a session that merged two findings into one comment).
+ * other is carried by the inline comment `pairWithInline` gives it. Without
+ * one, an entry the body names with a bullet is in the body. One the body
+ * does not name either is RECORD-ONLY: it is read as folded (`merged`) into
+ * any inline comment or earlier body entry within NEAR_LINES of it — a
+ * session that merged neighbouring findings into one posted comment — and as
+ * a body finding of its own only when it has no such neighbour.
  */
 export function placePosted(
   posted: readonly Record<string, unknown>[],
@@ -1083,20 +1085,22 @@ export function placePosted(
     sites.map((x, i) => (posted[i]!["inline"] === false ? null : x)),
     inline,
   );
+  const inBody: BenchSite[] = [];
+  const near = (site: BenchSite, x: BenchSite): boolean =>
+    x.path === site.path &&
+    site.line >= Math.min(x.start_line ?? x.line, x.line) - NEAR_LINES &&
+    site.line <= x.line + NEAR_LINES;
   return sites.map((site, i): PostedPlace | null => {
     if (!site) return null;
-    if (posted[i]!["inline"] === false) return { at: "body" };
     const c = pairs[i];
     if (c !== null && c !== undefined) return { at: "inline", comment: c };
-    const besideOne = inline.some(
-      (x) =>
-        x.path === site.path &&
-        site.line >= Math.min(x.start_line ?? x.line, x.line) - NEAR_LINES &&
-        site.line <= x.line + NEAR_LINES,
-    );
-    return !besideOne || bulletsNaming(lines, site.path, site.line).length > 0
-      ? { at: "body" }
-      : { at: "merged" };
+    const body =
+      posted[i]!["inline"] === false ||
+      bulletsNaming(lines, site.path, site.line).length > 0 ||
+      ![...inline, ...inBody].some((x) => near(site, x));
+    if (!body) return { at: "merged" };
+    inBody.push(site);
+    return { at: "body" };
   });
 }
 

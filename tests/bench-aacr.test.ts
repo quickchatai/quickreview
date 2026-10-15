@@ -603,6 +603,25 @@ describe("what the session wrote → what the scorer reads", () => {
     expect(bodyPostedFindings(record, "", inline)).toEqual([]);
   });
 
+  it("the handwritten route: record-only neighbours the session posted nowhere count ONCE, as they always did", () => {
+    // Three posted rows a line apart, in neither comments.json nor review.md.
+    const record = {
+      findings: [
+        { path: "m.go", line: 50, disposition: "posted", posted_as: "blocker", reason: "a" },
+        { path: "m.go", line: 51, disposition: "posted", posted_as: "blocker", reason: "b" },
+        { path: "m.go", line: 51, disposition: "posted", posted_as: "nit", reason: "c" },
+        { path: "m.go", line: 90, disposition: "posted", posted_as: "nit", reason: "far" },
+      ],
+    };
+    expect(bodyPostedFindings(record, "", []).map((c) => [c.line, c.body])).toEqual([
+      [50, "[blocker] a"],
+      [90, "[nit] far"],
+    ]);
+    // Named in the body, each is its own finding.
+    const md = ["- `m.go:50` — A", "- `m.go:51` — B"].join("\n");
+    expect(bodyPostedFindings(record, md, []).map((c) => c.line)).toEqual([50, 51, 51, 90]);
+  });
+
   it("a failed case still yields a file with zero comments — its references count against recall", () => {
     const r = toOcrResult([], { ...meta, status: "timeout", variant: "all" }) as {
       review: { comments: unknown[] };
