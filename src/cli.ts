@@ -1385,15 +1385,10 @@ export async function cmdMemory(rest: string[]): Promise<number> {
   const sub = rest[0];
   if (sub === "relayout") return cmdMemoryRelayout(rest.slice(1));
   if (sub !== "reembed") throw new Error(MEMORY_USAGE);
+  const named = parseReembedArgs(rest.slice(1));
   const cfg = loadConfig();
   const own = cfg.openviking.user;
-  const userIdx = rest.indexOf("--user");
-  const users =
-    userIdx >= 0
-      ? String(rest[userIdx + 1] ?? "")
-          .split(/[,\s]+/)
-          .filter(Boolean)
-      : cfg.openviking.provision_users.filter((u) => u !== own);
+  const users = named ?? cfg.openviking.provision_users.filter((u) => u !== own);
   if (users.length === 0)
     throw new Error(
       "usage: qcr memory reembed [--user <name>[,<name>…]] — no namespace to re-embed",
@@ -1417,16 +1412,7 @@ export async function cmdMemory(rest: string[]): Promise<number> {
     module: await loadReembedModule(sandboxRoot()),
     base,
     users,
-    keyFor: (user) => {
-      const names = (USER_KEY_ENV as Record<string, readonly string[]>)[user] ?? [
-        `OPENVIKING_${user.toUpperCase()}_KEY`,
-      ];
-      for (const name of names) {
-        const v = readKey(name);
-        if (v) return v;
-      }
-      return null;
-    },
+    keyFor: (user) => namespaceKey(user, USER_KEY_ENV, readKey).key,
     log: (line) => console.log(line),
   });
   for (const r of results) console.log(`  ${r.user}: ${r.status} — ${r.detail}`);
@@ -1446,6 +1432,41 @@ export async function cmdMemory(rest: string[]): Promise<number> {
 
 const MEMORY_USAGE =
   "usage: qcr memory reembed [--user <name>[,<name>…]] | qcr memory relayout [--plan|--apply] [--user <name>]";
+
+/** A plain memory namespace name — the only shape a `--user` may take. */
+const NAMESPACE_RE = /^[a-z][a-z0-9_-]*$/;
+
+/**
+ * The flags of `qcr memory reembed` (after the verb): the namespaces `--user`
+ * names, or null when it is absent (the caller's default set). An unknown
+ * token or a repeated or empty `--user` is refused rather than ignored — a
+ * mistyped flag must not quietly re-embed the default namespaces instead.
+ */
+export function parseReembedArgs(rest: readonly string[]): string[] | null {
+  let users: string[] | null = null;
+  for (let i = 0; i < rest.length; i += 1) {
+    if (rest[i] !== "--user" || users !== null) throw new Error(MEMORY_USAGE);
+    users = String(rest[i + 1] ?? "")
+      .split(/[,\s]+/)
+      .filter(Boolean);
+    i += 1;
+    if (users.length === 0) throw new Error(MEMORY_USAGE);
+  }
+  return users;
+}
+
+/** The keys-file names that may hold `user`'s key — a known user's own
+ * list, else `OPENVIKING_<USER>_KEY` — and the first one present. */
+function namespaceKey(
+  user: string,
+  known: Readonly<Record<string, readonly string[]>>,
+  readKey: (name: string) => string | null,
+): { names: readonly string[]; key: string | null } {
+  const names = Object.hasOwn(known, user)
+    ? known[user]!
+    : [`OPENVIKING_${user.toUpperCase()}_KEY`];
+  return { names, key: names.map((n) => readKey(n)).find((v) => v) ?? null };
+}
 
 /**
  * The flags of `qcr memory relayout`, or the usage error. `--plan` is the
@@ -1473,7 +1494,7 @@ export function parseRelayoutArgs(
   }
   if (apply && plan) throw new Error(MEMORY_USAGE);
   const name = user ?? defaultUser();
-  if (!/^[a-z][a-z0-9_-]*$/.test(name)) throw new Error(MEMORY_USAGE);
+  if (!NAMESPACE_RE.test(name)) throw new Error(MEMORY_USAGE);
   return { apply, user: name };
 }
 
@@ -1504,10 +1525,7 @@ export async function cmdMemoryRelayout(rest: string[]): Promise<number> {
   ]);
   const keysFile = keysFilePath(process.env);
   const readKey = keysFileReader(keysFile);
-  const names = (USER_KEY_ENV as Record<string, readonly string[]>)[user] ?? [
-    `OPENVIKING_${user.toUpperCase()}_KEY`,
-  ];
-  const key = names.map((n) => readKey(n)).find((v) => v) ?? null;
+  const { names, key } = namespaceKey(user, USER_KEY_ENV, readKey);
   if (!key) {
     console.log(`no key for the ${user} namespace in ${keysFile} (${names.join(" or ")})`);
     return 1;

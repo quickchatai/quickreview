@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   rebuildCompanion,
   cancellationsOn,
+  parseReembedArgs,
   parseRelayoutArgs,
   renderStatus,
   todayCancellationLine,
@@ -324,5 +325,25 @@ describe("qcr companion rebuild", () => {
     expect(lines.at(-1)).toBe(
       "companion qcr-companion: image rebuilt, created; pi session spawned",
     );
+  });
+});
+
+describe("qcr memory reembed — flags", () => {
+  it("names namespaces with --user, and leaves the default set to the caller without it", () => {
+    expect(parseReembedArgs([])).toBeNull();
+    expect(parseReembedArgs(["--user", "companion"])).toEqual(["companion"]);
+    expect(parseReembedArgs(["--user", "companion,reviewer"])).toEqual(["companion", "reviewer"]);
+  });
+
+  it("refuses an unknown token, an empty --user and a repeated one rather than re-embedding the defaults", () => {
+    for (const rest of [
+      ["--usr", "reviewer"],
+      ["reviewer"],
+      ["--user"],
+      ["--user", ""],
+      ["--user", "a", "--user", "b"],
+      ["--user", "a", "--force"],
+    ])
+      expect(() => parseReembedArgs(rest), rest.join(" ")).toThrow(/usage: qcr memory reembed/);
   });
 });
