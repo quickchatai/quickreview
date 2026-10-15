@@ -19,7 +19,7 @@
 // whatever the record claims (posting validates it as before), and every
 // problem the input has is returned rather than thrown, so a thin record still
 // renders the review the record describes.
-import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, postTag, type Severity } from "./severity.js";
+import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, ordinaryPostTag } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
 import { findingMarker, findingRecordKey } from "./findingkey.js";
 import {
@@ -74,7 +74,6 @@ const TAGS: readonly Tag[] = [
   "ask your human",
   "deferred",
 ];
-const SEVERITIES = new Set(["P0", "P1", "P2", "P3", "nit"]);
 
 interface Posted {
   id: string;
@@ -122,11 +121,7 @@ function severityTagOf(
   confidence: number | null,
   reachability: string | null,
 ): "blocker" | "question" | "nit" {
-  if (tag === "ask your human" || tag === "deferred")
-    return severity && SEVERITIES.has(severity)
-      ? postTag(severity as Severity, confidence ?? 1, reachability as never)
-      : "question";
-  return tag === "check this" ? "question" : tag;
+  return ordinaryPostTag(tag, severity, confidence, reachability)!;
 }
 
 /** A findings-record entry's ordinary tag (`severityTagOf`), whichever route

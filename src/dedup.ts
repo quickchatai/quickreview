@@ -15,14 +15,17 @@
 //   * `postCheckRecord` — the leftovers after the validator. Run by
 //     `renderPostedReview` (src/reviewrender.ts), which both the live render
 //     route (scripts/render-review.sh) and the bench runner call: two POSTED
-//     findings in the same file whose anchors overlap (±POST_CHECK_LINES),
+//     findings in the same file whose anchors overlap (±POST_CHECK_LINES, on
+//     the same diff side),
 //     that share a named identifier and that the validator judged in
 //     DIFFERENT groups are one root cause posted twice. Findings it judged in
-//     one group, or that carry no group, are never merged here: the
-//     validator's split stands. The
+//     one group, or that carry no group, are never merged here — not through
+//     a chain of merges either: the validator's split stands. The
 //     higher severity leads; the follower is recorded `merged` (word
 //     `post-check`, `merged_into` the lead) and its site is listed in the
 //     lead's body. Nothing is deleted: the record keeps every entry.
+
+import { ordinaryPostTag } from "./severity.js";
 
 /** Anchors this many lines apart (or fewer), in one file, form a group. */
 export const CLOSE_LINES = 10;
@@ -342,7 +345,7 @@ export function renderGroups(
 // ---- the post-check over a findings record ---------------------------------
 
 const SEV_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, nit: 4 };
-const TAG_RANK: Record<string, number> = { blocker: 0, question: 1, "check this": 1, nit: 2 };
+const TAG_RANK: Record<string, number> = { blocker: 0, question: 1, nit: 2 };
 
 function s(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
@@ -356,8 +359,21 @@ function tagOf(e: Record<string, unknown>): string {
     .toLowerCase()
     .replace(/^\[|\]$/g, "");
 }
+/** Ranked by the ORDINARY tag the entry posts under (`ordinaryPostTag`), so
+ * an `[ask your human]` or `[deferred]` P1 ranks as the blocker it is. */
 function rank(e: Record<string, unknown>): number {
-  return (TAG_RANK[tagOf(e)] ?? 3) * 10 + (SEV_RANK[s(e.severity)] ?? 5);
+  const confidence = typeof e.confidence === "number" ? e.confidence : null;
+  const tag = ordinaryPostTag(
+    tagOf(e),
+    s(e.severity) || null,
+    confidence,
+    s(e.reachability) || null,
+  );
+  return (TAG_RANK[tag ?? ""] ?? 3) * 10 + (SEV_RANK[s(e.severity)] ?? 5);
+}
+/** The diff side an anchor's line counts on (the renderer's default: RIGHT). */
+function sideOf(e: Record<string, unknown>): "LEFT" | "RIGHT" {
+  return s(e.side).toUpperCase() === "LEFT" ? "LEFT" : "RIGHT";
 }
 
 /** Both findings carry a validator group and the groups differ: the
@@ -377,8 +393,9 @@ export interface PostCheckMerge {
 
 /**
  * The deterministic post-check: over the record's POSTED
- * entries, two in the same file whose anchors are within POST_CHECK_LINES and
- * that share a named identifier are one root cause posted twice. Returns a
+ * entries, two in the same file whose anchors are within POST_CHECK_LINES on
+ * the same diff side, that share a named identifier and that speak for
+ * disjoint validator groups are one root cause posted twice. Returns a
  * NEW record (the input is not mutated) where each follower is `merged`
  * (word `post-check`, `merged_into` the lead, `withheld_as` its old tag) and
  * the lead's body names the follower's site. A follower row the session
@@ -408,6 +425,10 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
   // (and that follower's own absorbed lines) — so a lead later merged into a
   // stronger one hands all of them on, and the surviving comment names every site.
   const sites = posted.map((x) => [lineOf(x.e.line)!]);
+  // The validator groups each posted entry speaks for: its own, then every
+  // absorbed follower's — so a chain of merges never fuses two findings the
+  // validator judged in one group and kept apart.
+  const groupsOf = posted.map((x) => (s(x.e.group) ? [s(x.e.group)] : []));
   const merges: PostCheckMerge[] = [];
   for (let a = 0; a < posted.length; a++) {
     if (gone.has(a)) continue;
@@ -416,6 +437,8 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       const A = posted[a]!.e;
       const B = posted[b]!.e;
       if (s(A.path) !== s(B.path)) continue;
+      // LEFT lines number the base file, RIGHT lines the head: never compared.
+      if (sideOf(A) !== sideOf(B)) continue;
       if (Math.abs(lineOf(A.line)! - lineOf(B.line)!) > POST_CHECK_LINES) continue;
       if (![...ids[a]!].some((x) => ids[b]!.has(x))) continue;
       // Never undo the validator: two posted findings it judged in one group
@@ -423,6 +446,7 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       // be told apart from that — so the post-check merges only survivors of
       // different recorded groups, the leftovers the validator never compared.
       if (!distinctGroups(A, B)) continue;
+      if (groupsOf[a]!.some((g) => groupsOf[b]!.includes(g))) continue;
       // The higher severity leads; equal → the earlier entry.
       const [lead, fol, folIdx] = rank(B) < rank(A) ? [B, A, a] : [A, B, b];
       const leadIdx = folIdx === a ? b : a;
@@ -445,6 +469,8 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
         const body = s(lead.body);
         if (body && !body.includes(site)) lead.body = `${body}\n\nAlso at ${site}.`;
       }
+      for (const g of groupsOf[folIdx]!)
+        if (!groupsOf[leadIdx]!.includes(g)) groupsOf[leadIdx]!.push(g);
       merges.push({ follower: folId, lead: leadId, path: s(fol.path), line: folLine });
     }
   }

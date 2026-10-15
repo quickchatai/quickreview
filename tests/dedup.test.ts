@@ -235,4 +235,53 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
       { follower: "B", lead: "A", path: "a.ts", line: 11 },
     ]);
   });
+  it("ranks [ask your human] and [deferred] by the tag their severity posts under", () => {
+    for (const marker of ["ask your human", "[deferred]"]) {
+      const r = pair("G4", "G5");
+      Object.assign(r.findings[0]!, { posted_as: "nit", severity: "P3" });
+      Object.assign(r.findings[1]!, { posted_as: marker, severity: "P1" });
+      expect(postCheckRecord(r).merges).toEqual([
+        { follower: "A", lead: "B", path: "a.ts", line: 10 },
+      ]);
+    }
+  });
+  it("never compares a LEFT (base) line with a RIGHT (head) line", () => {
+    const r = pair("G4", "G5");
+    Object.assign(r.findings[0]!, { side: "LEFT" });
+    expect(postCheckRecord(r).merges).toEqual([]);
+    Object.assign(r.findings[1]!, { side: "left" });
+    expect(postCheckRecord(r).merges).toEqual([
+      { follower: "B", lead: "A", path: "a.ts", line: 11 },
+    ]);
+  });
+  it("a chain of merges never fuses two findings the validator kept apart in one group", () => {
+    const entry = (
+      id: string,
+      group: string,
+      posted_as: string,
+      severity: string,
+      line: number,
+    ) => ({
+      id,
+      disposition: "posted",
+      posted_as,
+      severity,
+      path: "a.ts",
+      line,
+      group,
+      title: "`retry` misbehaves",
+      body: `${id} body`,
+    });
+    const { record, merges } = postCheckRecord({
+      findings: [
+        entry("A", "G1", "nit", "P3", 10),
+        entry("B", "G2", "question", "P2", 11),
+        entry("C", "G1", "blocker", "P1", 12),
+      ],
+    });
+    // A folds into B; B (now speaking for G1 too) must not fold into C (G1).
+    expect(merges).toEqual([{ follower: "A", lead: "B", path: "a.ts", line: 10 }]);
+    const f = (record as { findings: Array<Record<string, unknown>> }).findings;
+    expect(f.map((e) => e.disposition)).toEqual(["merged", "posted", "posted"]);
+  });
 });
