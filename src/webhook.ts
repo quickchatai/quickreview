@@ -7,7 +7,7 @@
 // this path is only the fast one.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { captureFromEvent } from "./capture.js";
+import { captureFromEvent, recordCapturedComment } from "./capture.js";
 import type { Config } from "./config.js";
 import { interpretReviewEvent, isFeedbackBody } from "./feedback.js";
 import { applyEvent as applyEventFor } from "./statemachine.js";
@@ -593,15 +593,7 @@ function captureComment(
     isTrackedPr: (pr) => deps.store.getPr(pr) !== undefined,
   });
   if (!("captured" in outcome)) return;
-  const c = outcome.captured;
-  if (deps.store.recordPrComment({ ...c, captured_via: "webhook" }))
-    deps.store.logEvent("comment_captured", c.pr, {
-      source: c.source,
-      comment_id: c.comment_id,
-      author: c.author,
-      tagged: c.tagged,
-      via: "webhook",
-    });
+  recordCapturedComment(deps.store, outcome.captured, "webhook");
 }
 
 /** The PR an interpretation is about, when it is about one. */

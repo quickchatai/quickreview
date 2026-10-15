@@ -314,6 +314,64 @@ describe("reconcileOnce", () => {
     expect(store.getPr(38)!.trigger_provenance).toBe("human");
   });
 
+  // A webhook lost (during a drain, say) leaves the poll the only witness of a
+  // person's re-review request; a PR already queued by the system must still
+  // learn the request is a person's, or dispatch may skip it as trivial.
+  it("upgrades a system-queued PR to human provenance on a fresh trigger edge", async () => {
+    const { hooks } = recordingHooks();
+    seed(41, "tracked", { head: "sha41" });
+    gh.open = [ref(41)];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks }); // observed absent
+    applyEvent(store, 41, { type: "trigger", source: "reconcile" }, {}, { botLogin: "bot" });
+    expect(store.getPr(41)!.trigger_provenance).toBe("system");
+    const queuedAt = store.getPr(41)!.trigger_ts;
+
+    gh.labelTriggered = [item(41)];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(store.getPr(41)!.state).toBe("queued");
+    expect(store.getPr(41)!.trigger_provenance).toBe("human");
+    expect(store.getPr(41)!.trigger_ts).toBe(queuedAt);
+  });
+
+  // The label/team searches can lag the close by a pass.
+  it("a closed PR a lagging search still lists writes no correction and no transition", async () => {
+    const { hooks } = recordingHooks();
+    seed(42, "closed");
+    gh.open = [];
+    gh.labelTriggered = [item(42)];
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(report.corrections).toBe(0);
+    expect(corrections(store)).toEqual([]);
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS n FROM events WHERE pr = 42 AND kind = 'pr_transition'")
+        .get(),
+    ).toEqual({ n: 0 });
+    expect(store.getPr(42)!.state).toBe("closed");
+  });
+
+  // A pause defers a person's request; it must not acknowledge it away. With
+  // the head already push-rechecked, a consumed edge would read as standing
+  // residue after the resume and the request would never run.
+  it("a trigger that appears while a PR is paused is still a fresh request after the resume", async () => {
+    const { hooks } = recordingHooks();
+    seed(43, "tracked", { head: "layout-sha" });
+    store.recordReviewedHead(43, { head_sha: "approved-sha", verdict: "APPROVE", round_no: 1 });
+    store.claimRecheck(43, "push:layout-sha::", { head_sha: "layout-sha", trigger: "push" });
+    gh.open = [ref(43, { head_sha: "layout-sha" })];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks }); // observed absent
+
+    store.pausePr(43, { issuer: "operator", expires_at: null }, "hold");
+    gh.labelTriggered = [item(43)];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(store.getPr(43)!.state).toBe("tracked");
+
+    store.resumePr(43, "operator");
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(store.getPr(43)!.state).toBe("queued");
+    expect(store.getPr(43)!.trigger_provenance).toBe("human");
+  });
+
   // Push-trigger backstop: with webhooks dead, a post-review push would never
   // be rechecked and a withheld approval would have no path forward —
   // reconcile hands detected pushes to the same recheck route the webhook's

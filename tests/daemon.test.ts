@@ -95,7 +95,6 @@ describe("daemon wiring", () => {
       };
       const adapter = fakeAdapter([], join(root, "state", "dryrun"));
       adapter.searchLabelTriggered = async () => [];
-      adapter.getRequestedReviewers = async () => ({ users: [], teams: [] });
       adapter.createIssueComment = vi.fn(async () => ({
         executed: false,
         dryRunFile: "answer.json",

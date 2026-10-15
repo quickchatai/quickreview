@@ -9,6 +9,7 @@ import {
   capturedFromReview,
   capturedFromReviewComment,
   isHumanCapture,
+  recordCapturedComment,
   type CapturedComment,
 } from "./capture.js";
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
@@ -40,7 +41,6 @@ export interface ReconcileAdapter {
   listOpenPrs(): Promise<PrRef[]>;
   getPr(n: number): Promise<PrRef>;
   listBotReviewComments(n: number): Promise<number[]>;
-  getRequestedReviewers(n: number): Promise<{ users: string[]; teams: string[] }>;
   /** Checks at a ref — the withheld-approval backstop reads CI through this.
    * Optional: a stub-wired daemon without it simply has no backstop. */
   listChecks?(ref: string): Promise<CheckSummary[]>;
@@ -361,15 +361,27 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     }
 
     // Record both presence and absence. Remove→re-add is a fresh edge even
-    // when its webhook was lost; rows survive daemon restarts.
+    // when its webhook was lost; rows survive daemon restarts. A paused PR's
+    // presence is not recorded: the pause defers handling a fresh request, and
+    // acknowledging its level now would leave no edge to act on after the
+    // resume. Its absence is recorded — that only ever makes a later edge.
     for (const pr of open.keys()) {
-      if (!store.getPr(pr) && !grouped.has(pr)) continue;
-      for (const kind of kinds) store.observeTriggerLevel(pr, kind, current[kind].has(pr));
+      const row = store.getPr(pr);
+      if (!row && !grouped.has(pr)) continue;
+      for (const kind of kinds) {
+        const present = current[kind].has(pr);
+        if (row?.paused && present) continue;
+        store.observeTriggerLevel(pr, kind, present);
+      }
     }
 
     for (const [pr, group] of grouped) {
       const ref = open.get(pr);
       const local = store.getPr(pr);
+      // A search can lag the close: a PR closed with its trigger still on it
+      // is listed for a pass. Closed is terminal — nothing to queue, nothing
+      // to correct.
+      if (local?.state === "closed") continue;
       const meta = {
         title: ref?.title ?? group.item.title,
         head_sha: ref?.head_sha ?? local?.head_sha ?? "",
@@ -399,7 +411,19 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           });
         continue;
       }
-      if (local?.state === "queued") continue; // already handled
+      if (local?.state === "queued") {
+        // Already queued, but a fresh request upgrades a system-queued round
+        // to the person's ask, so dispatch never skips it as a trivial
+        // system re-trigger. The edge is recorded above and will not be seen
+        // again.
+        if (freshKind)
+          applyEvent(store, pr, { type: "trigger", source: freshKind }, meta, {
+            botLogin,
+            now,
+            reason: `reconcile:${freshKind}:queued`,
+          });
+        continue;
+      }
       const reviewed = store.reviewedHead(pr);
       const pushHandled =
         !freshKind &&
@@ -774,15 +798,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         }
         for (const c of rows) {
           if (!isHumanCapture(c, botLogin)) continue;
-          if (!store.recordPrComment({ ...c, captured_via: "reconcile" })) continue;
-          report.captured_comments++;
-          store.logEvent("comment_captured", n, {
-            source: c.source,
-            comment_id: c.comment_id,
-            author: c.author,
-            tagged: c.tagged,
-            via: "reconcile",
-          });
+          if (recordCapturedComment(store, c, "reconcile")) report.captured_comments++;
         }
         // ---- the exec boundary's OUTCOME layer ------------------------------
         // The bot's OWN reviews, which `isHumanCapture` discards above, are the
