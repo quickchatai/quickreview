@@ -153,27 +153,44 @@ function pingPongSimulation(cfg: Config, root: string) {
   };
 }
 
-/** ② The daemon's side of the queue comparison: the PRs whose trigger the
- * manual searches should still find. Live, dispatch consumes the label and
- * team request as the round starts, so only a `queued` row is owed one. In
- * dry-run nothing is consumed: a `reviewing` row still carries its trigger,
- * and so does a reviewed PR at the head its last verdict was applied to —
- * reconcile suppresses that standing trigger until the head moves, so it is
- * accounted for, not missing. */
+/** ② The daemon's side of the queue comparison: the PRs still OWED a trigger
+ * consumption. Live, dispatch consumes the label and team request as the round
+ * starts, so a `reviewing` row no longer shows in the manual searches; in
+ * dry-run nothing is consumed, so it still does. */
 export function derivedQueueOf(
-  rows: ReadonlyArray<{ number: number; state: string; head_sha?: string }>,
+  rows: ReadonlyArray<{ number: number; state: string }>,
   dryRun: boolean,
-  lastVerdictHead: (pr: number) => string | undefined = () => undefined,
 ): number[] {
   return rows
-    .filter(
-      (r) =>
-        r.state === "queued" ||
-        (dryRun &&
-          (r.state === "reviewing" ||
-            (r.state !== "closed" && !!r.head_sha && lastVerdictHead(r.number) === r.head_sha))),
-    )
+    .filter((r) => r.state === "queued" || (dryRun && r.state === "reviewing"))
     .map((r) => r.number);
+}
+
+/** ② The manual searches' side, with reconcile's dry-run suppression applied:
+ * dry-run never consumes a trigger, so a PR reviewed at the head its last
+ * verdict was applied to keeps its label or team request, and reconcile
+ * deliberately leaves it unqueued until the head moves. Such a PR is dropped
+ * from the search results — exactly as reconcile drops it, so only a row it
+ * would reach that check for (not queued, not reviewing, not closed). A PR
+ * whose trigger was withdrawn is in no search result, so it is never counted. */
+export function manualQueueOf(
+  found: readonly number[],
+  dryRun: boolean,
+  row: (pr: number) => { state: string; head_sha: string } | undefined,
+  lastVerdictHead: (pr: number) => string | undefined,
+): number[] {
+  if (!dryRun) return [...found];
+  return found.filter((pr) => {
+    const r = row(pr);
+    const suppressed =
+      r !== undefined &&
+      r.state !== "queued" &&
+      r.state !== "reviewing" &&
+      r.state !== "closed" &&
+      r.head_sha !== "" &&
+      lastVerdictHead(pr) === r.head_sha;
+    return !suppressed;
+  });
 }
 
 export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
@@ -198,10 +215,21 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
       },
     },
     queue: {
-      labelTriggered: async () => (await p.adapter.searchLabelTriggered()).map((i) => i.number),
-      teamTriggered: async () => (await p.adapter.searchTeamTriggered()).map((i) => i.number),
-      derivedQueue: () =>
-        derivedQueueOf(store.allPrs(), cfg.dry_run, (pr) => store.lastVerdictHead(pr)),
+      labelTriggered: async () =>
+        manualQueueOf(
+          (await p.adapter.searchLabelTriggered()).map((i) => i.number),
+          cfg.dry_run,
+          (pr) => store.getPr(pr),
+          (pr) => store.lastVerdictHead(pr),
+        ),
+      teamTriggered: async () =>
+        manualQueueOf(
+          (await p.adapter.searchTeamTriggered()).map((i) => i.number),
+          cfg.dry_run,
+          (pr) => store.getPr(pr),
+          (pr) => store.lastVerdictHead(pr),
+        ),
+      derivedQueue: () => derivedQueueOf(store.allPrs(), cfg.dry_run),
     },
     staleness: stalenessSimulation(cfg),
     pingPong: pingPongSimulation(cfg, root),

@@ -29,7 +29,7 @@ import {
 // Static, not `await import()` inside the tests: cliops pulls in a large
 // graph, and a mid-test import puts its transform on the test's clock — the
 // one step that stretches without bound when the machine is loaded.
-import { derivedQueueOf, stalenessSimulation } from "../src/cliops.js";
+import { derivedQueueOf, manualQueueOf, stalenessSimulation } from "../src/cliops.js";
 import { parseConfig } from "../src/config.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -210,18 +210,50 @@ describe("② derived queue (selfscan)", () => {
     expect(derivedQueueOf(rows, true)).toEqual([1, 2]);
   });
 
-  it("dry-run: a PR reviewed at its current head keeps a trigger reconcile suppresses, so it is accounted for", () => {
-    const rows = [
-      { number: 3, state: "tracked", head_sha: "h3" },
-      { number: 4, state: "awaiting_author", head_sha: "h4" },
-      { number: 5, state: "tracked", head_sha: "h5-new" },
-      { number: 6, state: "closed", head_sha: "h6" },
-    ];
-    const verdictHeads: Record<number, string> = { 3: "h3", 4: "h4", 5: "h5-old", 6: "h6" };
-    const at = (pr: number) => verdictHeads[pr];
-    expect(derivedQueueOf(rows, true, at)).toEqual([3, 4]);
-    // Live, dispatch consumed the trigger: a settled row is never owed one.
-    expect(derivedQueueOf(rows, false, at)).toEqual([]);
+  it("dry-run: a PR reviewed at its current head keeps a trigger reconcile suppresses — dropped from the manual side; a withdrawn trigger counts nowhere", async () => {
+    const rows: Record<number, { state: string; head_sha: string }> = {
+      1: { state: "queued", head_sha: "h1" },
+      2: { state: "reviewing", head_sha: "h2" },
+      3: { state: "tracked", head_sha: "h3" }, // reviewed at head, label still on
+      4: { state: "awaiting_author", head_sha: "h4" }, // reviewed at head, label removed
+      5: { state: "tracked", head_sha: "h5-new" }, // pushed since its review
+    };
+    const verdictHeads: Record<number, string> = { 2: "h2", 3: "h3", 4: "h4", 5: "h5-old" };
+    const derived = derivedQueueOf(
+      Object.entries(rows).map(([n, r]) => ({ number: Number(n), state: r.state })),
+      true,
+    );
+    expect(derived).toEqual([1, 2]);
+    const manual = (found: number[]) =>
+      manualQueueOf(
+        found,
+        true,
+        (pr) => rows[pr],
+        (pr) => verdictHeads[pr],
+      );
+    // 3 is suppressed; 2 is reviewing (reconcile never reaches the check), so it stays.
+    expect(manual([1, 2, 3])).toEqual([1, 2]);
+    const probe = (found: number[]) =>
+      probeQueueDiff({
+        labelTriggered: async () => manual(found),
+        teamTriggered: async () => [],
+        derivedQueue: () => derived,
+      });
+    expect((await probe([1, 2, 3])).pass).toBe(true);
+    // 4's label was withdrawn: no search finds it and nothing derives it.
+    expect((await probe([1, 2])).pass).toBe(true);
+    // 5 was pushed after its review: reconcile would re-queue it, so a 5
+    // still unqueued is a real disagreement.
+    expect((await probe([1, 2, 5])).pass).toBe(false);
+    // Live, nothing is suppressed.
+    expect(
+      manualQueueOf(
+        [1, 2, 3],
+        false,
+        (pr) => rows[pr],
+        (pr) => verdictHeads[pr],
+      ),
+    ).toEqual([1, 2, 3]);
   });
 });
 
