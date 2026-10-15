@@ -1526,18 +1526,21 @@ export const LEAN_ADDABLE_PASSES: readonly string[] = [...QUALITY_PASSES, STYLE_
  * The LEAN follow-up plan: the plan without its per-file
  * pass-sweep rows, and with the quality and style lenses moved to
  * `addable_lenses`. Every other row — baseline, the triggered risk lenses,
- * the validator — is kept as planned. No lens leaves the round: a session
- * that sees a quality or style question in the change adds the lens.
+ * the validator — is kept as planned, and so is a quality or style row the
+ * plan marks `required` (one the operator made a risk pass): a required row
+ * is an obligation, never an offer. No lens leaves the round: a session that
+ * sees a quality or style question in the change adds the lens.
  */
 export function leanFollowUpPlan(plan: PassPlan): PassPlan {
+  const movable = (p: PassPlanEntry): boolean =>
+    LEAN_ADDABLE_PASSES.includes(p.lens) && p.required !== true;
   const moved = plan.pass_plan
+    .filter(movable)
     .map((p) => p.lens)
-    .filter((l, i, all) => LEAN_ADDABLE_PASSES.includes(l) && all.indexOf(l) === i);
+    .filter((l, i, all) => all.indexOf(l) === i);
   return {
     ...plan,
-    pass_plan: plan.pass_plan.filter(
-      (p) => p.lens !== SWEEP_PASS && !LEAN_ADDABLE_PASSES.includes(p.lens),
-    ),
+    pass_plan: plan.pass_plan.filter((p) => p.lens !== SWEEP_PASS && !movable(p)),
     addable_lenses: [
       ...plan.addable_lenses,
       ...moved.filter((l) => !plan.addable_lenses.includes(l)),
