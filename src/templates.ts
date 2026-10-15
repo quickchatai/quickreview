@@ -17,7 +17,7 @@ import {
   type RoundMemory,
 } from "./memory/context.js";
 import { renderBleedNote, renderLessonsNote } from "./memory/delivery.js";
-import { codePath, flatControls, promptTitle } from "./codespan.js";
+import { backtickFence, codePath, flatControls, promptTitle } from "./codespan.js";
 import { isSplitBaselineRow } from "./heuristics.js";
 import { renderEscalationPromptNote } from "./escalation.js";
 import { renderPostingPolicyNote } from "./postingpolicy.js";
@@ -120,7 +120,7 @@ export function recheckVars(
  * Empty when the delta's merges were all clean. */
 export function renderConflictAuditNote(resolved: readonly string[]): string {
   if (resolved.length === 0) return "";
-  const list = resolved.map((f) => `- \`${f}\``).join("\n");
+  const list = resolved.map((f) => `- ${codePath(f)}`).join("\n");
   return (
     `\n**CONFLICT RESOLUTION AUDIT** — these files were hand-resolved inside a merge\n` +
     `commit (their content differs from git's own auto-merge of the parents):\n\n${list}\n\n` +
@@ -247,11 +247,7 @@ export function renderIntentNote(order: RoundOrder): string {
   const body = order.pr_body ?? "";
   // The body is untrusted markdown and may itself contain ``` runs — fence
   // with one backtick more than its longest run so the block never breaks.
-  const longestRun = Math.max(
-    2,
-    ...[...`${title}\n${body}`.matchAll(/`+/g)].map((m) => m[0].length),
-  );
-  const fence = "`".repeat(longestRun + 1);
+  const fence = backtickFence(`${title}\n${body}`);
   return [
     "",
     "**INTENT — the artifact for `pass-intent`.** The intent lens runs this round",
@@ -558,9 +554,9 @@ export function renderExtentNote(
     const f = files.find((t) => t.row === i);
     const focus = p.focus
       ? p.focus.length <= 3
-        ? p.focus.map((x) => `\`${x}\``).join(", ")
+        ? p.focus.map((x) => codePath(x, { table: true })).join(", ")
         : `${p.focus.length} files`
-      : (p.why ?? "");
+      : flatControls(p.why ?? "").replace(/\|/g, "\\|");
     return `| optional:${i + 1} | \`${p.agent}\` | ${focus} |${f ? ` \`${f.path}\` |` : ""}`;
   });
   return [
@@ -749,14 +745,6 @@ export function renderRoundRecoveryNote(order: RoundOrder): string {
   ].join("\n");
 }
 
-/** A fence longer than any backtick run in `body` (so a ledger that quotes
- * code cannot close the fence early). */
-function fenceAround(body: string): string {
-  let longest = 0;
-  for (const run of body.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
-  return "`".repeat(Math.max(3, longest + 1));
-}
-
 /**
  * `{{ledger_note}}`: the PR's ledger as ledger-pin last mirrored it, handed
  * back in every round order and saying where it came from. "" when the order
@@ -765,7 +753,8 @@ function fenceAround(body: string): string {
 export function renderLedgerNote(order: RoundOrder): string {
   const carry = order.ledger_carry;
   if (!carry || !carry.text.trim()) return "";
-  const fence = fenceAround(carry.text);
+  // A ledger that quotes code cannot close the fence early.
+  const fence = backtickFence(carry.text);
   const cut = carry.truncated
     ? [
         "",

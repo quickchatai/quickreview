@@ -13,6 +13,12 @@ export function longestBacktickRun(text: string): number {
   return best;
 }
 
+/** The backtick fence for a block of `text`: one longer than any backtick run
+ * inside it, and at least three, so nothing inside can close it. */
+export function backtickFence(text: string): string {
+  return "`".repeat(Math.max(3, longestBacktickRun(text) + 1));
+}
+
 /** Control characters (newlines included) as visible `\\uXXXX` escapes, so
  * author-controlled text can never start a new line of prompt. */
 export function flatControls(text: string): string {
