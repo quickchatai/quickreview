@@ -743,6 +743,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   let commands: CommandWatcher | null = null;
   let operatorCommands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
+  // onStart's own intervals (the overseer rotation, the agents day check),
+  // cleared at stop like every other timer.
+  const intervals: Array<ReturnType<typeof setInterval>> = [];
   // The [feedback] engine, built in onStart (it needs the memory store). A
   // signal arriving in the boot gap between the webhook binding and onStart
   // is ledgered, never dropped: its row starts `pending`, the backfill pump
@@ -1917,6 +1920,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           .catch((err) => log("overseer rotation failed", err));
       }, 3600_000);
       rotation.unref?.();
+      intervals.push(rotation);
 
       // Expire a stale same-day feedback addendum promptly on the
       // ops-day change — a 5-minute string compare, so yesterday's items
@@ -1930,6 +1934,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         }
       }, 300_000);
       dayCheck.unref?.();
+      intervals.push(dayCheck);
     },
 
     async onStop(reason = "shutdown") {
@@ -1954,6 +1959,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           new Promise<void>((r) => setTimeout(r, cfg.memory.delivery_budget_ms + 500).unref?.()),
         ]);
       }
+      for (const t of intervals) clearInterval(t);
+      intervals.length = 0;
       eod?.stop();
       // Its open window polls the pinned area; drop it before the server goes.
       pinWatch?.stop();
