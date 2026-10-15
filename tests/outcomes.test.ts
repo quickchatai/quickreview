@@ -788,7 +788,12 @@ describe("the fate table", () => {
 
     // Closed, a conflict still reads unknown — not open_at_close.
     const closed = threaded(undefined, "closed");
-    humanReply(closed.store, { id: 842, root: 800, body: "You are right, corrected.", at: closed.tick() });
+    humanReply(closed.store, {
+      id: 842,
+      root: 800,
+      body: "You are right, corrected.",
+      at: closed.tick(),
+    });
     closed.tick();
     resolvedThread(closed.store, 800, 842);
     closed.store.logEvent("pr_closed", PR, { merged: true, source: "webhook" });
@@ -852,8 +857,18 @@ describe("the fate table", () => {
     // The human argued on after the fix; the bot held: upheld, as before.
     const argued = threaded(fakeGit({}, { "432a199f79": true }));
     argued.push(H2);
-    humanReply(argued.store, { id: 852, root: 800, body: "Fixed in 432a199f79", at: argued.tick() });
-    humanReply(argued.store, { id: 853, root: 800, body: "And the rest is fine.", at: argued.tick() });
+    humanReply(argued.store, {
+      id: 852,
+      root: 800,
+      body: "Fixed in 432a199f79",
+      at: argued.tick(),
+    });
+    humanReply(argued.store, {
+      id: 853,
+      root: 800,
+      body: "And the rest is fine.",
+      at: argued.tick(),
+    });
     argued.tick();
     resolvedThread(argued.store, 800, 853, { resolution: "keep_open" });
     expect(await fate(argued)).toEqual([["F1", "upheld_after_reply", "kept_open"]]);
@@ -905,6 +920,29 @@ describe("the fate table", () => {
     expect(await fate(unchecked)).toEqual([
       ["F1", "unknown", "conflict:kept_open_after_unverified_sha"],
     ]);
+  });
+
+  it("a marker stamped twice keeps one link, and the later comment's thread is still the finding's evidence", async () => {
+    const twin = (h: ReturnType<typeof harness>) =>
+      h.capture.observeBotComments(PR, [
+        botComment({ id: 805, body: `[blocker] t\n\n${findingMarker(1, "F1")}` }),
+      ]);
+    // A reply citing a fix on the duplicate's thread.
+    const fixed = threaded(fakeGit({}, { "3f2a9c1": true }));
+    twin(fixed);
+    fixed.push(H2);
+    humanReply(fixed.store, { id: 806, root: 805, body: "Fixed in 3f2a9c1", at: fixed.tick() });
+    expect(await fate(fixed)).toEqual([["F1", "fixed", "sha_cited"]]);
+    expect(fixed.capture.outcomesFor(PR)[0]!.comment_id).toBe(800);
+    expect(fixed.capture.commentsFor(PR).find((c) => c.comment_id === 805)!.finding_key).toBe(null);
+
+    // The session's decision on the duplicate's thread.
+    const held = threaded();
+    twin(held);
+    humanReply(held.store, { id: 807, root: 805, body: "Not a bug.", at: held.tick() });
+    held.tick();
+    resolvedThread(held.store, 805, 807, { resolution: "keep_open", outcome: "held" });
+    expect(await fate(held)).toEqual([["F1", "upheld_after_reply", "pingpong_outcome"]]);
   });
 
   it("a resolve after a push that changed the anchored lines is fixed", async () => {
@@ -1116,7 +1154,9 @@ describe("the fate table", () => {
     const otherLens = harness({ git: fakeGit({}) });
     otherLens.round(H1, [posted({ key: "f1", line: 40 })]);
     otherLens.tick(5);
-    otherLens.round(H2, [posted({ key: "f1", line: 42, lens: "pass-security", raised_in_round: 1 })]);
+    otherLens.round(H2, [
+      posted({ key: "f1", line: 42, lens: "pass-security", raised_in_round: 1 }),
+    ]);
     await otherLens.capture.capturePr(PR);
     expect(otherLens.capture.outcomesFor(PR)[0]!.carried_to).toBeNull();
     // Same key nearby, same lens: carried, as before.
@@ -1279,6 +1319,18 @@ describe("the bounded pass", () => {
     expect(second).toMatchObject({ captured: 0, skipped: 1 });
     humanReply(h.store, { id: 1, root: 2, body: "hm", at: h.tick() });
     expect(await h.capture.sweep()).toMatchObject({ captured: 1 });
+  });
+
+  it("a bot comment whose anchor is corrected is recaptured at once — its counts alone do not move", async () => {
+    const h = harness();
+    h.round(H1, [posted({ key: "F1", line: 42 })]);
+    h.capture.observeBotComments(PR, [botComment({ id: 990, line: 7, original_line: 7 })]);
+    expect(await h.capture.sweep()).toMatchObject({ captured: 1 });
+    expect(h.capture.commentsFor(PR)[0]!.finding_key).toBe(null);
+    h.tick();
+    h.capture.observeBotComments(PR, [botComment({ id: 990 })]);
+    expect(await h.capture.sweep()).toMatchObject({ captured: 1, skipped: 0 });
+    expect(h.capture.commentsFor(PR)[0]).toMatchObject({ finding_key: "F1", via: "path_line" });
   });
 
   it("an unmoved PR is still re-captured once its capture is older than the recapture period", async () => {

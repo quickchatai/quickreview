@@ -141,7 +141,7 @@ export interface AnchorGit {
 }
 
 /** Bump when a rule changes, so every PR is re-captured once. */
-export const OUTCOME_RULES_VERSION = 2;
+export const OUTCOME_RULES_VERSION = 3;
 /** PRs captured per reconcile pass. */
 export const OUTCOME_SWEEP_MAX_PRS = 25;
 /** How long after a close a PR is still captured — the close is evidence. */
@@ -239,6 +239,7 @@ export interface FindingCommentRow {
   finding_key: string | null;
   via: LinkVia | null;
   linked_at: string | null;
+  /** When the row was first written or its facts last changed. */
   seen_at: string;
 }
 
@@ -450,6 +451,10 @@ interface PrFacts {
   recorded: Map<number, { at: number; head: string | null }>;
   rounds: RoundRow[];
   links: Map<string, FindingCommentRow>;
+  /** Comments carrying a linked finding's marker that lost the link to an
+   * earlier one (a retried posting stamped the marker twice): each is still
+   * that finding's thread, so its replies and decisions are its evidence. */
+  twins: Map<string, number[]>;
   replies: Map<number, PrCommentRow[]>;
   decisions: Array<{
     at: number;
@@ -555,6 +560,7 @@ export class OutcomeCapture {
          review_id = excluded.review_id, path = excluded.path, line = excluded.line,
          head = excluded.head, marker_round = excluded.marker_round,
          marker_key = excluded.marker_key, created_at = excluded.created_at, source = 'github',
+         seen_at = excluded.seen_at,
          round_no = CASE WHEN ${keep} THEN finding_comments.round_no ELSE NULL END,
          finding_key = CASE WHEN ${keep} THEN finding_comments.finding_key ELSE NULL END,
          via = CASE WHEN ${keep} THEN finding_comments.via ELSE NULL END,
@@ -748,7 +754,7 @@ export class OutcomeCapture {
       const hit =
         c.via === "marker" && c.round_no !== null && c.finding_key !== null
           ? (() => {
-              const f = byKey.get(fkey(c.round_no!, c.finding_key!));
+              const f = byKey.get(fkey(c.round_no, c.finding_key));
               return f ? { f, via: "marker" as LinkVia } : resolve(c);
             })()
           : resolve(c);
@@ -804,6 +810,16 @@ export class OutcomeCapture {
       .prepare("SELECT * FROM finding_comments WHERE pr = ? AND finding_key IS NOT NULL")
       .all(pr) as FindingCommentRow[])
       links.set(fkey(c.round_no!, c.finding_key!), c);
+    const twins = new Map<string, number[]>();
+    for (const c of this.store.db
+      .prepare(
+        "SELECT * FROM finding_comments WHERE pr = ? AND finding_key IS NULL AND marker_key IS NOT NULL ORDER BY comment_id",
+      )
+      .all(pr) as FindingCommentRow[]) {
+      const k = fkey(c.marker_round!, c.marker_key!);
+      if (links.get(k)?.via !== "marker") continue;
+      twins.set(k, [...(twins.get(k) ?? []), c.comment_id]);
+    }
     const replies = new Map<number, PrCommentRow[]>();
     for (const c of this.store.prComments(pr)) {
       if (c.source !== "review_comment" || c.in_reply_to_id === null) continue;
@@ -824,6 +840,7 @@ export class OutcomeCapture {
       recorded: this.recordedRounds(pr, rows),
       rounds: this.store.roundsFor(pr),
       links,
+      twins,
       replies,
       decisions: [],
       resolves: [],
@@ -877,14 +894,14 @@ export class OutcomeCapture {
   private continuations(
     f: RoundFindingRow,
     facts: PrFacts,
-    comment: number | null,
+    threads: readonly number[],
   ): { strong: RoundFindingRow[]; next: { round: number; weak: RoundFindingRow[] } | null } {
     const ownRound = facts.byRound.get(f.round_no) ?? [];
     const strong: RoundFindingRow[] = [];
     for (const e of facts.rows) {
       if (e.round_no <= f.round_no) continue;
       const word = (e.word ?? "").trim().toLowerCase();
-      if (comment !== null && (e.thread_id === comment || word === `settled:${comment}`)) {
+      if (threads.some((t) => e.thread_id === t || word === `settled:${t}`)) {
         strong.push(e);
         continue;
       }
@@ -993,9 +1010,20 @@ export class OutcomeCapture {
     const evidence: Evidence[] = [];
     const link = facts.links.get(fkey(f.round_no, f.finding_key)) ?? null;
     const thread = link?.comment_id ?? null;
+    /** Every thread of this finding: its linked comment's, and its twins'. */
+    const threads =
+      thread === null ? [] : [thread, ...(facts.twins.get(fkey(f.round_no, f.finding_key)) ?? [])];
     const postedAt =
       ms(link?.created_at) ?? facts.recorded.get(f.round_no)?.at ?? ms(f.recorded_at) ?? 0;
-    const replies = thread !== null ? (facts.replies.get(thread) ?? []) : [];
+    // One thread keeps its capture order; twins' replies interleave by time.
+    const replies =
+      threads.length > 1
+        ? threads
+            .flatMap((t) => facts.replies.get(t) ?? [])
+            .sort((a, b) => replyMs(a) - replyMs(b) || a.comment_id - b.comment_id)
+        : thread !== null
+          ? (facts.replies.get(thread) ?? [])
+          : [];
     /** A human reply in the thread, no later than `at`, that accepts the
      * point (`concedesPoint`) — the latest one, or null. */
     const humanConceded = (at: number): PrCommentRow | null =>
@@ -1018,7 +1046,7 @@ export class OutcomeCapture {
     // 2. The session's thread decisions.
     const decided = new Set<number>();
     if (thread !== null) {
-      for (const d of facts.decisions.filter((x) => x.thread_id === thread)) {
+      for (const d of facts.decisions.filter((x) => threads.includes(x.thread_id))) {
         const fate: DecisiveFate | null =
           d.outcome === "fixed"
             ? "fixed"
@@ -1070,7 +1098,7 @@ export class OutcomeCapture {
       //    thread a human had already resolved is still the session's resolve
       //    (it decided `resolve`), at the latest at the event's time.
       for (const r of facts.resolves.filter(
-        (x) => x.thread_id === thread && resolveCounts(x.skipped),
+        (x) => threads.includes(x.thread_id) && resolveCounts(x.skipped),
       )) {
         if (decided.has(r.comment_id)) continue;
         const who = r.skipped === "already-resolved" ? " (a human had resolved it first)" : "";
@@ -1116,7 +1144,7 @@ export class OutcomeCapture {
     }
 
     // 4. Later rounds. Only a strong match is this finding's evidence.
-    const { strong, next } = this.continuations(f, facts, thread);
+    const { strong, next } = this.continuations(f, facts, threads);
     const conceded = strong.filter((e) => e.disposition === "conceded");
     for (const e of conceded) {
       const head = facts.recorded.get(e.round_no)?.head ?? e.head_sha ?? null;
@@ -1353,7 +1381,9 @@ export class OutcomeCapture {
       ),
       get("SELECT COUNT(*) c, MAX(id) m FROM feedback_signals WHERE pr = ?"),
       get(
-        "SELECT COUNT(*) c, COUNT(finding_key) l, COUNT(marker_key) k, COUNT(review_id) v FROM finding_comments WHERE pr = ?",
+        // `seen_at` moves when a comment's facts change (its anchor or head
+        // corrected), which can re-link it with every count unchanged.
+        "SELECT COUNT(*) c, COUNT(finding_key) l, COUNT(marker_key) k, COUNT(review_id) v, MAX(seen_at) s FROM finding_comments WHERE pr = ?",
       ),
       get("SELECT COUNT(*) c FROM bot_comments WHERE pr = ?"),
       // a posting receipt landing later (gh_review_id) can settle a link
