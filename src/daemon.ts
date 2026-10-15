@@ -335,8 +335,8 @@ export async function serveAuthorReply(
   // `[memory] delivery = "on"`, so the wake is otherwise byte-identical.
   // The path rides the interpretation only, never the event: the wake's
   // own text does not change. Read before the claim, so the claim is
-  // still followed at once by its wake — a claimed message has no sweep
-  // to recover it.
+  // followed at once by its held wake — the claim refuses every
+  // redelivery, and the held row is what the stranded-wake sweep recovers.
   let facts = "";
   if (deps.repoFacts && reply.path) {
     const before = store.getPr(reply.pr);
@@ -374,8 +374,9 @@ export async function serveAuthorReply(
       facts,
     ),
     "author_reply",
-    // The message is already claimed: a failed injection must hold
-    // the wake, or no redelivery can ever answer it.
+    // The message is already claimed: the wake is held before the
+    // injection is awaited and stays held if it fails, or no redelivery
+    // can ever answer it.
     { holdOnFailure: true },
   );
   if (disposition === "held")
