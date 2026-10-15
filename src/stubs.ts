@@ -6,8 +6,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RoundOrder, SessionHooks } from "./types.js";
 
+let written = 0;
+
+/** A filename stamp: the time, then a per-process sequence, so two requests
+ * in one millisecond land in two files rather than one overwriting the other
+ * (and names still sort in write order). */
 function stamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
+  const seq = String(written++).padStart(6, "0");
+  return `${new Date().toISOString().replace(/[:.]/g, "-")}-${seq}`;
 }
 
 function writeJson(dir: string, name: string, data: unknown): string {
