@@ -2084,7 +2084,9 @@ export class VerdictWatcher {
     // the claim and the executed telemetry — before the pass
     // telemetry, which compares the sweep's passes only when it ran.
     const sweepStatus = round ? this.recordSweepTelemetry(v, round, proven !== undefined) : null;
-    if (round) await this.recordPassTelemetry(v, round, sweepStatus);
+    // The verdict's lifecycle event lands in the same turn as the claim above:
+    // nothing may await between them, or a round the pump starts meanwhile
+    // would be moved under its feet. The telemetry comes after.
     applyEvent(
       store,
       v.pr,
@@ -2092,6 +2094,7 @@ export class VerdictWatcher {
       { head_sha: v.head_sha },
       { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `verdict:${v.verdict}` },
     );
+    if (round) await this.recordPassTelemetry(v, round, sweepStatus);
     store.logEvent("verdict_applied", v.pr, {
       file: name,
       round_id: round?.id ?? null,
