@@ -1,0 +1,367 @@
+{
+ "aacr": {
+  "judge": {
+   "effort": "high",
+   "from": [
+    "data/aacr.json judge; every drawn run's judge dir"
+   ],
+   "model": "gpt-6-sol"
+  },
+  "key_seed": {
+   "builds": [
+    "1ad710b"
+   ],
+   "calls": {
+    "gpt-6-sol": 61897
+   },
+   "efforts": [
+    "medium",
+    "high"
+   ],
+   "models": [
+    "gpt-6-sol"
+   ],
+   "providers": [
+    "openai-codex"
+   ],
+   "runs": [
+    "all-default-rest145"
+   ]
+  },
+  "official_judge": {
+   "effort": "low",
+   "from": [
+    "all-claude-c1-rest145",
+    "all-claude-c2-rest145",
+    "all-claude-c3-rest145",
+    "all-claude-c4-rest145",
+    "all-claude-dev10",
+    "all-claude-fresh10",
+    "all-claude-holdout10",
+    "all-claude-smoke10",
+    "fair-pragent-g61-rest145",
+    "g61-145-codex-high-dev10",
+    "g61-145-codex-high-fresh10",
+    "g61-145-codex-high-holdout10",
+    "g61-145-codex-high-rest145",
+    "g61-145-codex-high-smoke10",
+    "g61-145-ocr-high-dev10",
+    "g61-145-ocr-high-fresh10",
+    "g61-145-ocr-high-holdout10",
+    "g61-145-ocr-high-rest145",
+    "g61-145-ocr-high-smoke10",
+    "g61-145-opencode-native-pr-dev10",
+    "g61-145-opencode-native-pr-fresh10",
+    "g61-145-opencode-native-pr-holdout10",
+    "g61-145-opencode-native-pr-rest145",
+    "g61-145-opencode-native-pr-smoke10",
+    "g61-145-pireview-panel-dev10",
+    "g61-145-pireview-panel-fresh10",
+    "g61-145-pireview-panel-holdout10",
+    "g61-145-pireview-panel-rest145",
+    "g61-145-pireview-panel-smoke10",
+    "g61-dev10",
+    "g61-fair-codex-high-rest145",
+    "g61-fair-ocr-high-rest145",
+    "g61-fair-opencode-native-pr-rest145",
+    "g61-fair-pireview-panel-rest145",
+    "g61-fresh10",
+    "g61-holdout10",
+    "g61-pragent-145-dev10",
+    "g61-pragent-145-fresh10",
+    "g61-pragent-145-holdout10",
+    "g61-pragent-145-rest145",
+    "g61-pragent-145-smoke10",
+    "g61-rest145",
+    "g61-smoke-smoke10"
+   ],
+   "model": "gpt-6-sol",
+   "rounds": 3
+  },
+  "reviewers": {
+   "claude-code": {
+    "efforts": [],
+    "models": [
+     "claude-opus-5-5"
+    ],
+    "providers": [],
+    "runs": [
+     "all-claude-smoke10",
+     "all-claude-dev10",
+     "all-claude-holdout10",
+     "all-claude-fresh10",
+     "all-claude-c1-rest145",
+     "all-claude-c2-rest145",
+     "all-claude-c3-rest145",
+     "all-claude-c4-rest145"
+    ]
+   },
+   "codex-cli": {
+    "efforts": [
+     "high"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "g61-fair-codex-high-rest145",
+     "g61-145-codex-high-dev10",
+     "g61-145-codex-high-fresh10",
+     "g61-145-codex-high-holdout10",
+     "g61-145-codex-high-rest145",
+     "g61-145-codex-high-smoke10"
+    ]
+   },
+   "open-code-review": {
+    "efforts": [
+     "high"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "g61-fair-ocr-high-rest145",
+     "g61-145-ocr-high-dev10",
+     "g61-145-ocr-high-fresh10",
+     "g61-145-ocr-high-holdout10",
+     "g61-145-ocr-high-rest145",
+     "g61-145-ocr-high-smoke10"
+    ]
+   },
+   "opencode": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "g61-fair-opencode-native-pr-rest145",
+     "g61-145-opencode-native-pr-dev10",
+     "g61-145-opencode-native-pr-fresh10",
+     "g61-145-opencode-native-pr-holdout10",
+     "g61-145-opencode-native-pr-rest145",
+     "g61-145-opencode-native-pr-smoke10"
+    ]
+   },
+   "pi-review": {
+    "efforts": [
+     "high"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "runs": [
+     "g61-fair-pireview-panel-rest145",
+     "g61-145-pireview-panel-dev10",
+     "g61-145-pireview-panel-fresh10",
+     "g61-145-pireview-panel-holdout10",
+     "g61-145-pireview-panel-rest145",
+     "g61-145-pireview-panel-smoke10"
+    ]
+   },
+   "pr-agent": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "fair-pragent-g61-rest145",
+     "g61-pragent-145-dev10",
+     "g61-pragent-145-fresh10",
+     "g61-pragent-145-holdout10",
+     "g61-pragent-145-rest145",
+     "g61-pragent-145-smoke10"
+    ]
+   },
+   "quickreview": {
+    "builds": [
+     "e32f0cf"
+    ],
+    "calls": {
+     "gpt-6.1-sol": 97905
+    },
+    "efforts": [
+     "medium",
+     "high"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "runs": [
+     "final1-smoke10",
+     "final1-dev10",
+     "final1-holdout10",
+     "final1-fresh10",
+     "final1-rest145"
+    ]
+   },
+   "quickreview-b2ce03a": {
+    "builds": [
+     "b2ce03a-dirty"
+    ],
+    "calls": {
+     "gpt-6.1-sol": 68795
+    },
+    "efforts": [
+     "medium",
+     "high"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "runs": [
+     "g61-smoke-smoke10",
+     "g61-dev10",
+     "g61-holdout10",
+     "g61-fresh10",
+     "g61-rest145"
+    ]
+   },
+   "quickreview-fast": {
+    "builds": [
+     "745f956"
+    ],
+    "calls": {
+     "gpt-6.1-sol": 59281
+    },
+    "efforts": [
+     "low"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "runs": [
+     "fast1-smoke10",
+     "fast1-dev10",
+     "fast1-holdout10",
+     "fast1-fresh10",
+     "fast1-rest145"
+    ]
+   }
+  }
+ },
+ "generated": "2026-10-15",
+ "martian": {
+  "judge": {
+   "effort": "low",
+   "from": [
+    "final1-martian50.martian"
+   ],
+   "model": "gpt-6.1-sol"
+  },
+  "reviewers": {
+   "quickreview": {
+    "builds": [
+     "e32f0cf"
+    ],
+    "calls": {
+     "gpt-6.1-sol": 34395
+    },
+    "efforts": [
+     "medium",
+     "high"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "runs": [
+     "final1-martian50"
+    ]
+   }
+  }
+ },
+ "qodo": {
+  "judge": {
+   "effort": "low",
+   "from": [
+    "ext-r6-qodo-pr100.qodo",
+    "final1-ocr-qodo-pr100.qodo",
+    "final1-opencode-qodo-pr100.qodo",
+    "final1-pragent-qodo-pr100.qodo",
+    "final1-qodo-pr100.qodo"
+   ],
+   "model": "gpt-6.1-sol"
+  },
+  "reviewers": {
+   "open-code-review": {
+    "efforts": [
+     "high"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "final1-ocr-qodo-pr100"
+    ]
+   },
+   "opencode": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "final1-opencode-qodo-pr100"
+    ]
+   },
+   "pr-agent": {
+    "efforts": [
+     "medium"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [],
+    "runs": [
+     "final1-pragent-qodo-pr100"
+    ]
+   },
+   "quickreview": {
+    "builds": [
+     "e32f0cf"
+    ],
+    "calls": {
+     "gpt-6.1-sol": 62912
+    },
+    "efforts": [
+     "medium",
+     "high"
+    ],
+    "models": [
+     "gpt-6.1-sol"
+    ],
+    "providers": [
+     "openai-codex"
+    ],
+    "runs": [
+     "final1-qodo-pr100"
+    ]
+   }
+  }
+ }
+}

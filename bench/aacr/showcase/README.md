@@ -5,6 +5,10 @@ closed-source products, made from code: change the data, re-run, every chart, nu
 title claim updates. Prototypes for a landing page, a launch post or slides; the paper's own
 figures stay in `../charts/`.
 
+**Which model.** QuickReview's results in this folder are its frozen build (e32f0cf) on GPT-6.1 Sol
+unless a line says otherwise. The newest set, `out/v5/`, names the model on every image; runs of
+QuickReview on other models are in MISSING-DATA.md §19.
+
 ```sh
 # 1. rebuild the generated data from the archived runs (AACR judge files, Qodo scores)
 QCR_BENCH_RUNS_DIR=<runs dir> uv run bench/aacr/showcase/refresh.py
@@ -235,7 +239,8 @@ The infographics' code is `infographics_v4.py` (the conventions, two exemplars) 
 `info_system_v4.py` and `info_platform_v4.py`, all built from the parts in `diagram_v4.py`. Every label was
 checked against the code and the bench docs; the counts on them come from the same data files as the charts.
 
-**To share:** `out/v4/index.html` (the whole library, about 6 MB) and `out/v4/bug-value.html` (the report) are
+**To share:** v5's pages (below) supersede these, since they name the model on every image.
+`out/v4/index.html` (the whole library, about 6 MB) and `out/v4/bug-value.html` (the report) are
 each one self-contained file. Every image is embedded as lossless WebP, in light and dark. Each page follows the
 viewer's theme or a switch, and enlarges an image on click. Send either file as it is; nothing else is needed.
 
@@ -258,6 +263,68 @@ viewer's theme or a switch, and enlarges an image on click. Send either file as 
 - **AACR-Bench's own score.** It ran on the Oct 1 build only, so `aacr-leaderboard` shows that build.
 - **Tuning.** QuickReview was tuned on misses from these AACR PRs, which every AACR image's source line says.
   The cuts that hold out of sample are in v3's `idea-robust`.
+
+## v5: the model named beside every QuickReview result
+
+```sh
+QCR_BENCH_RUNS_DIR=<runs dir> uv run bench/aacr/showcase/refresh_v5.py   # data/v5.json: which model each drawn run used
+uv run bench/aacr/showcase/make_charts_v5.py   # out/v5/ (images, NUMBERS.md, BUG-VALUE.md, bug-value.html, index.html)
+```
+
+QuickReview now runs on more than one model. The benchmark has an open-model arm: GLM-5.3 Flash's full run is
+in, and more open models are queued. So a bare "QuickReview" result no longer says enough. v5 is v4's library
+with the model named wherever QuickReview's results appear:
+- QuickReview's own label carries its model: "QuickReview (GPT-6.1 Sol)", "QuickReview fast (GPT-6.1 Sol)".
+  Where QuickReview has no label of its own (value-price, standings), the metric line names it.
+- The small print names every judge and every other reviewer we ran, e.g. "One judge (GPT-6 Sol, high
+  reasoning)" and "Reviewers: all on GPT-6.1 Sol except Claude Code (Claude Opus 5.5)". It also says which build
+  QuickReview's numbers are.
+- The same names appear in the Model column of AACR-Bench's own-score table, the infographics that name a
+  model or count from a run, the bug-value report and both pages (beside every image, and in each image's alt text).
+- `out/v5/NUMBERS.md` opens with every drawn run: its model, reasoning effort and build, and how many model records
+  its event logs hold.
+
+The models, as the runs record them:
+- Every drawn QuickReview result is on GPT-6.1 Sol: the frozen build at medium or high reasoning by lens, its fast
+  option (745f956: the frozen build plus a `fast` profile) at low, and the Oct 1 build behind AACR-Bench's own
+  score.
+- One QuickReview count comes from another model: how-key's "334 of the first 379" are comments of the run that
+  seeded the key, build 1ad710b on GPT-6 Sol. The image says so.
+- The other tools we ran are on GPT-6.1 Sol, except Claude Code (Claude Opus 5.5).
+- The judges:
+  - GPT-6 Sol at high reasoning for the AACR key;
+  - GPT-6 Sol at low reasoning, averaged over 3 rounds, for AACR-Bench's own score;
+  - ours, GPT-6.1 Sol at low reasoning, for Qodo and for QuickReview's Martian row;
+  - Martian's GPT-5.2 judge for its other rows.
+
+`refresh_v5.py` reads all of this from the runs:
+- a QuickReview run's configured models (run.json `models`, the model overrides, each case's per-lens pins), then
+  every model its event logs record, which must match;
+- a third-party tool's `model` and effort, and Claude Code's per-case `models`;
+- each judge's JUDGE.txt, judge.txt or judge directory.
+
+It stops in three cases: an arm's runs disagree, an effort is unknown, or a model has no display name in
+`data/models.json`. `make_charts_v5.py` stops if `data/v5.json` no longer describes the runs whose numbers are drawn.
+Two names come from elsewhere: Martian's judge from Martian's own dashboard (`data/v4.json`), and the key
+builders' (Claude Code subagents on Claude Opus 5.5) from the bench docs.
+
+The numbers, titles and ranks are v4's, with one correction: review-round's lens pill now prints the frozen
+build's median of 11 lenses per PR, where v4 printed 15. v5 also:
+- widens a name column wherever a label with its model needs the room, and sets the cost and time scatters'
+  QuickReview labels on two lines, so they stay clear of the frontier;
+- wraps the small print to the measured width (3–4 lines where the models need them), with the chart above making
+  room, and prints it a shade darker on the light theme (4.75:1 contrast, from 3.5:1);
+- calls the ladder's and the report's reading-time estimate an "estimate", so it is not read as an AI model;
+- adds layout checks: nothing left of the text margin, nothing running into the small print, no two texts covering
+  each other.
+
+**To share:** `out/v5/index.html` (the whole library, about 6.5 MB) and `out/v5/bug-value.html` (the report)
+are each one self-contained file, like v4's. On a phone, a tapped image now opens at full size and scrolls, and the
+report's tables scroll sideways instead of the page. v4's own pages and `BUG-VALUE.md` stay as they were.
+
+**Open models.** GLM-5.3 Flash's full run is scored but not drawn; MISSING-DATA.md §19 says why and what it
+needs. Its model already has a name in `data/models.json`, as do DeepSeek V4.1 Flash, Gemma 4 31B and Gemini 4
+Argon. A second QuickReview mark per chart, one per model, is the next version's work.
 
 The rest of this README describes v1 (the annotated versions in `out/`), the data and the gaps;
 all of it applies to v2 and v3.
@@ -290,8 +357,12 @@ all of it applies to v2 and v3.
 | `diagram_v4.py`, `infographics_v4.py`, `info_*_v4.py` | v4's infographics: the drawing parts, then the figures (benchmarks, the system, the platform). |
 | `CHART-RESEARCH.md` | what makes a benchmark chart readable, and the charts the vendors and benchmarks publish. |
 | `value_v4.py`, `data/value.json` | the "what a found bug is worth" charts and report; the hand-kept costs and assumptions, each with its source. |
-| `BUG-VALUE.md` | GENERATED: the mini report on recall-first review (also `out/v4/bug-value.html`). |
-| `out/` | the rendered figures and `NUMBERS.md`, the table view of every chart (v2 in `out/v2/`, v3 in `out/v3/`, v4 in `out/v4/` with its gallery `index.html`). |
+| `BUG-VALUE.md` | GENERATED by v4: the mini report on recall-first review (also `out/v4/bug-value.html`). v5's, with the models named, is `out/v5/BUG-VALUE.md`. |
+| `refresh_v5.py` | builds `data/v5.json`: which model, reasoning effort and build every drawn run used, and each benchmark's judge, read from the runs' own files. |
+| `data/v5.json` | GENERATED by `refresh_v5.py`. |
+| `data/models.json` | hand-kept: the display name of each model id the runs record. `refresh_v5.py` stops on an id missing here. |
+| `make_charts_v5.py`, `value_v5.py`, `infographics_v5.py` | v5: v4's images with every QuickReview result labelled by its model, into `out/v5/` with `NUMBERS.md`, `BUG-VALUE.md`, `bug-value.html` and `index.html`. v4's chart functions are reused where only a name changes. |
+| `out/` | the rendered figures and `NUMBERS.md`, the table view of every chart (v2 in `out/v2/`, v3 in `out/v3/`, v4 in `out/v4/` with its gallery `index.html`, v5 in `out/v5/` with its own). |
 
 Colour does one job: **QuickReview is blue; every other tool is grey** — darker for closed-source
 products, lighter for open-source tools, always with a legend. The blue/grey pair passes the dataviz

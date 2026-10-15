@@ -1,0 +1,12 @@
+{
+ "_doc": "How the showcase names a model. Keys are the ids the runs record: run.json `models` / `model` (provider prefix and :effort stripped), a Claude Code case's `models`, a judge's JUDGE.txt. refresh_v5.py stops on an id missing here, so no image prints a raw id or a guessed name. Add a row when a run uses a new model.",
+ "models": {
+  "gpt-6.1-sol":         {"name": "GPT-6.1 Sol"},
+  "gpt-6-sol":           {"name": "GPT-6 Sol"},
+  "claude-opus-5-5":     {"name": "Claude Opus 5.5"},
+  "glm-5.3-flash":       {"name": "GLM-5.3 Flash"},
+  "deepseek-v4.1-flash": {"name": "DeepSeek V4.1 Flash"},
+  "gemma-4-31B-it":      {"name": "Gemma 4 31B"},
+  "gemini-4-argon":      {"name": "Gemini 4 Argon"}
+ }
+}
