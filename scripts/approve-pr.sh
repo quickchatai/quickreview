@@ -252,6 +252,21 @@ fi
 # triggered with nothing left able to clear it. Guard 4 is only ever about
 # approvals, so it belongs here: no green CI at this head and the approval is
 # refused, whatever the findings.
+# Guard 4's refusal takes back the snapshot queued above: the session answers
+# it with a COMMENT under the same round key, which a pending APPROVE job would
+# refuse, and the daemon's outbox would deliver the refused approval once CI
+# went green. Only while no receipt exists (posting-receipt.py checks it again);
+# the receipt lock is still held here. A failure is loud and changes nothing:
+# the guard still refuses.
+guard_on_approval_refused() {
+  [[ -n "$POSTING_RECEIPT" ]] || return 0          # legacy round: nothing was queued
+  if python3 "$ROOT/scripts/posting-receipt.py" withdraw "$POSTING_RECEIPT" "$POSTING_KEY"; then
+    echo "approve-pr: withdrew the queued approval for $POSTING_KEY — nothing was posted" >&2
+  else
+    echo "approve-pr: WARNING — could not withdraw the queued approval for $POSTING_KEY; a COMMENT under the same key will be refused" >&2
+  fi
+}
+
 # shellcheck source=scripts/guards.sh
 . "$ROOT/scripts/guards.sh"
 

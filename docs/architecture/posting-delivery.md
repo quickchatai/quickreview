@@ -6,7 +6,12 @@ receipt-keyed review input **before the first GitHub read**. The snapshot lives
 next to its receipt at `state/posting-receipts/pr-<n>-round-<k>.outbox.json`.
 `scripts/posting-receipt.py` fsyncs the file, atomically renames it, and fsyncs
 the directory. Body and inline comments survive loss of session scratch files.
-Legacy unkeyed calls cannot be recovered automatically.
+Legacy unkeyed calls cannot be recovered automatically. A guard-4 refusal
+(APPROVE unavailable on red or pending CI) withdraws `approve-pr.sh`'s snapshot
+before the script exits — `posting-receipt.py withdraw`, only while no receipt
+exists — because the session answers it with a COMMENT under the same round
+key; the job is kept beside the receipts as `….outbox.json.withdrawn-<stamp>`,
+a name no outbox reader picks up.
 
 `src/posting-outbox.ts` processes due obligations independently of reconcile,
 round dispatch and model sessions. `src/daemon.ts` ticks it on startup and every

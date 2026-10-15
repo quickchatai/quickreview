@@ -36,6 +36,11 @@ const NOT_A_GUARD = new Set([
   // guarded-no-op record and gates nothing — the refusal is already decided
   // before it runs, and its failure never changes guard 2's answer.
   "guard_on_no_new_evidence",
+  // The hook guard 4 calls on refusal. Defined by approve-pr.sh, it withdraws
+  // the delivery snapshot the script queued before the guard read and gates
+  // nothing — the refusal is already decided before it runs, and its failure
+  // never changes guard 4's answer.
+  "guard_on_approval_refused",
   // The read after a review POST GitHub answered 5xx or not at all: did the
   // review land anyway? It decides between confirming and deferring the
   // posting to the daemon, and refuses nothing.

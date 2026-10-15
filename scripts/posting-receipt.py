@@ -200,6 +200,38 @@ def defer(path: Path, key: str, raw_pr: str, raw_round: str, head: str, intended
     atomic(path, value)
 
 
+def withdraw(path: Path, key: str) -> None:
+    """Take back this round's queued snapshot after a posting-time guard refused it.
+
+    The shell snapshots its input before the guard reads; a refusal that the
+    session answers with a different review (guard 4: APPROVE unavailable, so
+    a COMMENT follows under the same key) must not leave that snapshot
+    pending, or the next `enqueue` refuses the COMMENT and the daemon delivers
+    the refused input later. Allowed only while no receipt exists beside it —
+    a receipt of any status records an attempted, recorded or refused post,
+    which this never erases. The job is renamed aside (kept as evidence, under
+    a name no outbox reader picks up), never rewritten. Idempotent when there
+    is nothing queued.
+    """
+    if path.exists():
+        raise SystemExit("posting-receipt: refusing to withdraw — a posting was already attempted or recorded for this key")
+    queued_path = path.with_name(path.stem + ".outbox.json")
+    if not queued_path.exists():
+        return
+    queued = base(queued_path)
+    if queued.get("posting_key") != key:
+        raise SystemExit("posting-receipt: refusing to withdraw an unreadable or mismatched delivery snapshot")
+    if queued.get("status") != "pending":
+        raise SystemExit(f"posting-receipt: refusing to withdraw a {queued.get('status')} delivery snapshot")
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    os.replace(queued_path, queued_path.with_name(f"{queued_path.name}.withdrawn-{stamp}"))
+    fd = os.open(queued_path.parent, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def main() -> None:
     if len(sys.argv) == 4 and sys.argv[1] == "owner":
         pid = int(sys.argv[3])
@@ -221,6 +253,11 @@ def main() -> None:
         if len(sys.argv) != 11:
             raise SystemExit("usage: posting-receipt.py defer <path> <key> <pr> <round> <head> <intended> <actual> <payload-json> <reason>")
         defer(Path(sys.argv[2]), *sys.argv[3:11])
+        return
+    if len(sys.argv) >= 2 and sys.argv[1] == "withdraw":
+        if len(sys.argv) != 4:
+            raise SystemExit("usage: posting-receipt.py withdraw <path> <key>")
+        withdraw(Path(sys.argv[2]), sys.argv[3])
         return
     if len(sys.argv) >= 2 and sys.argv[1] == "skip":
         if len(sys.argv) != 10:
