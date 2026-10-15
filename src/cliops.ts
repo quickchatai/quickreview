@@ -10,7 +10,10 @@ import { zoneDateString } from "./eod.js";
 import type { GateResult } from "./gate.js";
 import type { GitHubAdapter, PrRef } from "./github.js";
 import { readDryrunDir, runCompare, type CompareDeps, type ReviewSnapshot } from "./compare.js";
+import { recheckFingerprint } from "./recheck.js";
 import { reconcileOnce } from "./reconcile.js";
+import { standingVerdict } from "./standing-review.js";
+import { isBotAuthor } from "./statemachine.js";
 import { StateStore } from "./state.js";
 import { stubSessionHooks } from "./stubs.js";
 import type { RoundOrder } from "./types.js";
@@ -166,31 +169,49 @@ export function derivedQueueOf(
     .map((r) => r.number);
 }
 
-/** ② The manual searches' side, with reconcile's dry-run suppression applied:
- * dry-run never consumes a trigger, so a PR reviewed at the head its last
- * verdict was applied to keeps its label or team request, and reconcile
- * deliberately leaves it unqueued until the head moves. Such a PR is dropped
- * from the search results — exactly as reconcile drops it, so only a row it
- * would reach that check for (not queued, not reviewing, not closed). A PR
- * whose trigger was withdrawn is in no search result, so it is never counted. */
+/** What the manual side reads to judge a search hit the way reconcile does. */
+export type TriggerEligibilityStore = Pick<
+  StateStore,
+  "getPr" | "lastVerdictHead" | "reviewedHead" | "hasRecheck" | "triggerLevel"
+>;
+
+/** ② The manual searches' side: every search hit reconcile would queue, with
+ * reconcile's own skips applied in its own order — a bot's PR, a closed row
+ * a lagging search still lists, a paused row, standing trigger residue at a
+ * head a push recheck already claimed after an approval, and (dry-run, where
+ * nothing is consumed) a PR reviewed at the head its last verdict was applied
+ * to. A queued or reviewing row is kept: it is already owed. A hit whose
+ * trigger level the store holds as absent is a fresh edge the next pass acts
+ * on, so residue suppression does not apply to it. A PR whose trigger was
+ * withdrawn is in no search result, so it is never counted. */
 export function manualQueueOf(
-  found: readonly number[],
+  found: ReadonlyArray<{ number: number; user?: { login?: string; type?: string } | null }>,
+  kind: "label" | "team_request",
   dryRun: boolean,
-  row: (pr: number) => { state: string; head_sha: string } | undefined,
-  lastVerdictHead: (pr: number) => string | undefined,
+  botLogin: string,
+  store: TriggerEligibilityStore,
 ): number[] {
-  if (!dryRun) return [...found];
-  return found.filter((pr) => {
-    const r = row(pr);
-    const suppressed =
-      r !== undefined &&
-      r.state !== "queued" &&
-      r.state !== "reviewing" &&
-      r.state !== "closed" &&
-      r.head_sha !== "" &&
-      lastVerdictHead(pr) === r.head_sha;
-    return !suppressed;
-  });
+  return found
+    .filter((item) => {
+      const pr = item.number;
+      if (isBotAuthor(item.user?.login ?? "", botLogin) || item.user?.type === "Bot") return false;
+      const r = store.getPr(pr);
+      if (r === undefined) return true;
+      if (r.state === "closed") return false;
+      if (r.state === "queued" || r.state === "reviewing") return true;
+      if (r.paused) return false;
+      const fresh = store.triggerLevel(pr, kind) === false;
+      const reviewed = store.reviewedHead(pr);
+      const pushHandled =
+        !fresh &&
+        reviewed !== undefined &&
+        standingVerdict(reviewed) === "APPROVE" &&
+        reviewed.head_sha !== r.head_sha &&
+        store.hasRecheck(pr, recheckFingerprint({ trigger: "push" }, r.head_sha));
+      if (pushHandled) return false;
+      return !(dryRun && r.head_sha !== "" && store.lastVerdictHead(pr) === r.head_sha);
+    })
+    .map((item) => item.number);
 }
 
 export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
@@ -217,17 +238,19 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
     queue: {
       labelTriggered: async () =>
         manualQueueOf(
-          (await p.adapter.searchLabelTriggered()).map((i) => i.number),
+          await p.adapter.searchLabelTriggered(),
+          "label",
           cfg.dry_run,
-          (pr) => store.getPr(pr),
-          (pr) => store.lastVerdictHead(pr),
+          cfg.github.bot_login,
+          store,
         ),
       teamTriggered: async () =>
         manualQueueOf(
-          (await p.adapter.searchTeamTriggered()).map((i) => i.number),
+          await p.adapter.searchTeamTriggered(),
+          "team_request",
           cfg.dry_run,
-          (pr) => store.getPr(pr),
-          (pr) => store.lastVerdictHead(pr),
+          cfg.github.bot_login,
+          store,
         ),
       derivedQueue: () => derivedQueueOf(store.allPrs(), cfg.dry_run),
     },
