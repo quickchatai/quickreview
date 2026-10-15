@@ -837,7 +837,9 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
     return {
       action: "recheck",
       class: classification.class,
-      evidence: `CI concluded ${input.ci?.conclusion}`,
+      evidence: classification.unread
+        ? `CI concluded ${input.ci?.conclusion}; the delta's files could not be read from GitHub — read the delta in the worktree yourself`
+        : `CI concluded ${input.ci?.conclusion}`,
       classification,
     };
   if (classification.class === "empty") return noop("empty-delta", classification);
@@ -845,11 +847,9 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
   return {
     action: "recheck",
     class: classification.class,
-    evidence: classification.unread
-      ? "GitHub could not list the delta's files — read the delta in the worktree yourself"
-      : classification.truncated
-        ? `GitHub truncated the delta at ${classification.files.length} file(s) — the unseen remainder may hold changes this review has not seen`
-        : `${classification.significant.length} changed file(s) this review has not seen`,
+    evidence: classification.truncated
+      ? `GitHub truncated the delta at ${classification.files.length} file(s) — the unseen remainder may hold changes this review has not seen`
+      : `${classification.significant.length} changed file(s) this review has not seen`,
     classification,
   };
 }
@@ -1111,10 +1111,13 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     // A read failure is not evidence of anything. A question the reconcile
     // push backstop asks again — a push, or a benign CI result at a new head,
     // whose push question is the same — upholds and is asked once the read
-    // recovers. An adverse CI result or a base advance is asked by nothing
-    // else: it goes on with the delta UNREAD, which is significant, so the
-    // session audits it in its worktree rather than the question being lost.
-    const askUnread = req.trigger === "base_advance" || ciIsAdverse(req.ci?.conclusion);
+    // recovers. An adverse CI result is asked whatever its delta holds, so it
+    // goes on with the delta UNREAD and the session is told so. A base advance
+    // is NOT asked unread: almost every one touches no PR-owned file, and
+    // waking a session on an advance nobody could classify is the delta-blind
+    // staleness check the recheck exists to avoid. It upholds, with this
+    // anomaly row as its record — nothing asks it again.
+    const askUnread = ciIsAdverse(req.ci?.conclusion);
     log(`recheck: #${req.pr} delta read failed`, err);
     store.logEvent("recheck_delta_failed", req.pr, {
       trigger: req.trigger,
@@ -1127,7 +1130,13 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       "recheck_delta_failed",
       req.pr,
       null,
-      `delta read failed (${req.trigger}): ${String(err)} — ${askUnread ? "asked with the delta unread" : "the reconcile push backstop asks again"}`,
+      `delta read failed (${req.trigger}): ${String(err)} — ${
+        askUnread
+          ? "asked with the delta unread"
+          : req.trigger === "base_advance"
+            ? "upheld unread; nothing asks this base advance again"
+            : "the reconcile push backstop asks again"
+      }`,
     );
     if (!askUnread) return done({ action: "noop", reason: "no-delta-source", class: "empty" });
     delta = unreadDelta();

@@ -798,11 +798,18 @@ describe("runRecheck", () => {
       ci: { conclusion: "failure" },
     });
     expect(out).toMatchObject({ action: "recheck", class: "significant", delivered: "injected" });
+    // The session is told the delta went unread, not shown an empty one.
+    expect(out.order?.evidence).toContain("CI concluded failure");
+    expect(out.order?.evidence).toContain("the delta's files could not be read");
     expect(h.injected).toHaveLength(1);
     expect(h.store.rechecksFor(PR)).toHaveLength(1);
   });
 
-  it("asks a base advance with the delta unread when the read fails", async () => {
+  // A base advance nobody could classify is NOT asked: almost every one
+  // touches no PR-owned file, and waking the session on it would be the
+  // delta-blind staleness check the recheck exists to avoid. It upholds, with
+  // the anomaly row as its record.
+  it("upholds a base advance whose delta read fails, waking nobody", async () => {
     const h = harness();
     h.store.recordReviewedHead(PR, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
     h.adapter.compareFiles = async () => {
@@ -813,10 +820,11 @@ describe("runRecheck", () => {
       trigger: "base_advance",
       base: { branch: "master", before: "b0", after: "b1" },
     });
-    expect(out).toMatchObject({ action: "recheck", class: "significant" });
-    expect(out.classification).toMatchObject({ unread: true });
-    expect(out.order?.evidence).toContain("could not list the delta");
-    expect(h.injected).toHaveLength(1);
+    expect(out).toMatchObject({ action: "noop", reason: "no-delta-source" });
+    expect(h.injected).toHaveLength(0);
+    expect(h.store.rechecksFor(PR)).toHaveLength(0);
+    expect(h.store.heldWakes(PR)).toHaveLength(0);
+    expect(h.store.anomalies().map((a) => a.kind)).toContain("recheck_delta_failed");
   });
 
   // A push question the reconcile backstop asks again: a failed read upholds.
