@@ -299,6 +299,30 @@ describe("guard 2 — the same head is never reviewed twice", () => {
     expect((await gate.execute(reviewIntent("REQUEST_CHANGES"))).blocked).toBe("no-new-evidence");
   });
 
+  // The deferred retry's softening is the designed path (verdicts.ts
+  // `retrySoftenedApproval`): CI went red again since the head was stamped,
+  // so the retry posts the withheld COMMENT that says so and re-records the
+  // withheld mark — CI going green retries again. Refusing it instead would
+  // exhaust the deferred job and fail the round loud.
+  it("a deferred APPROVE red CI softens at a stamped head posts its withheld COMMENT and keeps the retry promise", async () => {
+    const { gate, adapter, executor } = harness();
+    await gate.execute(reviewIntent("COMMENT"));
+    executor.mockClear();
+    (adapter as FakeGuardAdapter & { listChecks: GuardAdapter["listChecks"] }).listChecks =
+      async () => [{ name: "ci", source: "check_run", status: "completed", conclusion: "failure" }];
+
+    const key = `v1:5180:2:${HEAD}`;
+    const result = await gate.execute({
+      ...reviewIntent("APPROVE", HEAD, `Approved\n\n<!-- qcr-post:${key} -->`),
+      postingRetry: key,
+    });
+
+    expect(result.executed).toBe(true);
+    const sent = executor.mock.calls[0]![0] as MutationIntent;
+    expect((sent.body as { event: string }).event).toBe("COMMENT");
+    expect(store.approvalWithheld(5180)).toMatchObject({ head_sha: HEAD, ci_state: "red" });
+  });
+
   it("lets the review through again after an author reply", async () => {
     const { gate, executor } = harness();
     await gate.execute(reviewIntent("REQUEST_CHANGES"));
