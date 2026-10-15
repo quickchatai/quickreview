@@ -33,6 +33,7 @@
 // COMPLETED run's summary (what makes a re-survey a re-survey) and the rate
 // measured from finished cases (what later previews price with).
 import type { Refusal, SetupPorts } from "./engine.js";
+import { openedFocus, unreadFocus } from "./scanrun.js";
 import {
   REFERENCE_RATE,
   SURVEY_AGENT,
@@ -84,6 +85,10 @@ export interface SurveyCaseState {
   notes_truncated: number;
   /** The lens answered NONE. */
   none: boolean;
+  /** Focus files the lens never opened — the unit keeps its earlier notes.
+   * Absent when it opened them all, or when the runner cannot tell. */
+  unopened?: string[];
+  /** What the case spent, done or not; null when the runner cannot tell. */
   cost_usd: number | null;
   error: string | null;
   started_at: string | null;
@@ -515,9 +520,11 @@ export class SurveyRunner {
     // it: it is not complete, so a plain start may run it again once memory
     // answers, rather than a "re-survey" leaving two generations live.
     // Likewise a retire memory refused: the old generation is still live
-    // beside the new one, so the run is partial, never "complete".
+    // beside the new one, so the run is partial, never "complete". And a
+    // case that left files unopened read its unit only in part.
     let complete =
-      earlier !== null && run.cases.every((c) => c.status === "done" && c.notes_failed === 0);
+      earlier !== null &&
+      run.cases.every((c) => c.status === "done" && c.notes_failed === 0 && !c.unopened?.length);
     if (complete) {
       // Whatever earlier survey memory is still live belongs to a unit this
       // cut no longer has (or to @repo parts that no longer exist).
@@ -588,13 +595,35 @@ export class SurveyRunner {
       outcome = { ok: false as const, reason: `the case runner threw: ${clean(err)}` };
     }
     c.finished_at = this.ports.clock().toISOString();
+    // A failed or stopped case may have spent money too: what it spent counts.
+    c.cost_usd = outcome.cost_usd ?? null;
     if (!outcome.ok) {
       c.status = signal.aborted ? "stopped" : "failed";
       c.error = outcome.reason;
       this.store(file);
       return null;
     }
-    c.cost_usd = outcome.cost_usd;
+    // A lens that opened none of its files read nothing, whatever it
+    // answered: its notes are not drawn from the code, and it must never
+    // authorize retiring the unit's earlier notes.
+    const focus = plan.files.map((f) => f.path);
+    const unread = unreadFocus(outcome.reads, focus, this.opts.repoRoot);
+    if (unread !== null) {
+      c.status = "failed";
+      c.error = unread;
+      this.store(file);
+      return null;
+    }
+    // Opened some of its files and not others: its notes stand, but the
+    // unit's earlier notes stay — the reading was partial.
+    const opened = openedFocus(outcome.reads, focus, this.opts.repoRoot);
+    const unopened = opened === null ? [] : focus.filter((p) => !opened.has(p));
+    if (unopened.length > 0) {
+      c.unopened = unopened;
+      run.problems.push(
+        `case ${plan.id} opened ${focus.length - unopened.length} of its ${focus.length} files — not opened: ${unopened.join(", ")}; ${plan.unit} keeps its earlier notes`,
+      );
+    }
     const parsed = parseSurveyNotes(outcome.output);
     c.none = parsed.none;
     c.notes_dropped = parsed.dropped;
@@ -622,10 +651,10 @@ export class SurveyRunner {
     c.status = "done";
     this.store(file);
 
-    // Supersede the unit's earlier entries once all of its cases are in and
-    // every note landed; a partial read keeps them.
+    // Supersede the unit's earlier entries once all of its cases are in,
+    // every file was opened and every note landed; a partial read keeps them.
     const mine = run.cases.filter((x) => x.unit === plan.unit);
-    if (mine.every((x) => x.status === "done" && x.notes_failed === 0)) {
+    if (mine.every((x) => x.status === "done" && x.notes_failed === 0 && !x.unopened?.length)) {
       if (!(await this.supersede(run, ctx.earlier, (unit) => unit === plan.unit)))
         ctx.retireFailed = true;
       this.store(file);

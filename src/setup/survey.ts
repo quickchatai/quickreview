@@ -195,8 +195,13 @@ export function planSurvey(input: PlanInput): SurveyPlan {
     if (readable.has(f) && !reasonOf.has(f)) reasonOf.set(f, "design doc");
 
   const cases: SurveyCasePlan[] = [];
-  // Stage 1: read in full, so split to fit — every part under `@repo`.
-  for (const part of splitUnit(REPO_SCOPE, [...reasonOf.keys()], input.linesOf, input.budget)) {
+  // Stage 1: read in full, so split to fit — every part under `@repo`. A
+  // repo with no directive file and no design doc has no stage 1 at all.
+  const repoParts =
+    reasonOf.size === 0
+      ? []
+      : splitUnit(REPO_SCOPE, [...reasonOf.keys()], input.linesOf, input.budget);
+  for (const part of repoParts) {
     const files = part.files
       .map((p) => ({ path: p, lines: Math.max(0, input.linesOf(p)), reason: reasonOf.get(p)! }))
       // Directive files before design docs, as the survey reads them.
