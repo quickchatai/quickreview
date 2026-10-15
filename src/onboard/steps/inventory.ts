@@ -162,7 +162,10 @@ export function inventoryTargetMismatch(root: string, alias: string): string | n
   const path = inventoryPath(root);
   const existing = readTextOrNull(path);
   if (existing === null) {
-    return `${path} does not exist — Fix: run the ${VM_INVENTORY_STEP_ID} step; the deploy has nothing to target without it`;
+    return (
+      `${path} does not exist yet — Fix: run the ${VM_INVENTORY_STEP_ID} step; it fills it from your answers ` +
+      "(the deploy has nothing to target without it)"
+    );
   }
   const host = parseInventoryHost(existing);
   return host === alias
@@ -359,24 +362,16 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
           `, ${f.pythonInterpreter}. This is the file scripts/deploy.sh reads by default — no environment override, no second copy`,
       });
     } else {
-      const existing = readTextOrNull(path) ?? "";
-      const host = parseInventoryHost(existing);
+      // The same target check every deploy runs before it mutates anything.
+      const mismatch = inventoryTargetMismatch(root, f.host);
       checks.push(
-        host === f.host
+        mismatch === null
           ? {
               name: "inventory",
               ok: true,
-              detail: `${path} targets ${host}${cloudflaredNote(existing)} — the deploy has an inventory to run against`,
+              detail: `${path} targets ${f.host}${cloudflaredNote(readTextOrNull(path) ?? "")} — the deploy has an inventory to run against`,
             }
-          : {
-              name: "inventory",
-              ok: false,
-              detail:
-                existing === ""
-                  ? `${path} does not exist yet — Fix: run the ${VM_INVENTORY_STEP_ID} step; it fills it from your answers`
-                  : `${path} targets "${host || "(nothing)"}", not the recorded alias "${f.host}" — Fix: run the ` +
-                    `${VM_INVENTORY_STEP_ID} step, or edit the file if the inventory is right and the alias is wrong`,
-            },
+          : { name: "inventory", ok: false, detail: mismatch },
       );
     }
 
@@ -444,10 +439,14 @@ function ansibleBool(value: string): boolean {
   return ["y", "yes", "on", "1", "true", "t", "1.0"].includes(v);
 }
 
+/** `cloudflared_enabled` in the tracked group_vars/all.yml — what the deploy
+ * uses when the inventory sets no host var (a test holds the two equal). */
+export const GROUP_VARS_CLOUDFLARED_ENABLED = true;
+
 /** Verify's ingress check reads what the FILE holds — the deploy consumes the
  * file, not the choice. An absent host var falls back to the tracked
- * group_vars/all.yml default, which is true. An absent file is the inventory
- * check's red already; this one stays quiet about it. */
+ * group_vars/all.yml default. An absent file is the inventory check's red
+ * already; this one stays quiet about it. */
 function ingressVerifyCheck(
   text: string,
   ingressId: string | null,
@@ -456,7 +455,7 @@ function ingressVerifyCheck(
   const note = ingressNoteFor(ingressId, webhookPort);
   if (text === "") return { name: "ingress", ok: true, detail: note };
   const raw = parseInventoryHostVars(text).cloudflared_enabled;
-  const effective = ansibleBool(raw ?? "true");
+  const effective = raw === undefined ? GROUP_VARS_CLOUDFLARED_ENABLED : ansibleBool(raw);
   const wanted = cloudflaredEnabledFor(ingressId);
   if (effective === wanted) return { name: "ingress", ok: true, detail: note };
   return {

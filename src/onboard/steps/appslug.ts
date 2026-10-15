@@ -51,7 +51,7 @@ import {
   type TomlEdit,
 } from "./configfill.js";
 import { CHOICE_KEYS, botLoginFor } from "../choices.js";
-import { readCredentials } from "./githubapp.js";
+import { api, readCredentials } from "./githubapp.js";
 
 export const APP_SLUG_STEP_ID = "app_slug_reconcile";
 
@@ -102,28 +102,14 @@ async function liveIdentity(
     };
   }
   const jwt = mintAppJwt(creds.appId!, creds.pem!, () => ctx.adapters.clock().getTime());
-  let status = 0;
-  let body: unknown = null;
-  try {
-    const res = await ctx.adapters.fetch(`${apiBase}/app`, {
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${jwt}`,
-        "user-agent": "quickreview-onboarding",
-      },
-    });
-    status = res.status;
-    const text = await res.text();
-    try {
-      body = text ? (JSON.parse(text) as unknown) : null;
-    } catch {
-      body = null;
-    }
-  } catch (err) {
+  const { status, body, text } = await api(ctx.adapters.fetch, `${apiBase}/app`, {
+    headers: { authorization: `Bearer ${jwt}` },
+  });
+  if (status === 0) {
     return {
       ok: false,
       slug: "",
-      detail: `could not reach GitHub to ask the App who it is (${String(err)}) — Fix: check this machine's network, then run this step again`,
+      detail: `could not reach GitHub to ask the App who it is (${text}) — Fix: check this machine's network, then run this step again`,
     };
   }
   if (status !== 200) {

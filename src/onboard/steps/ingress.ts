@@ -28,6 +28,7 @@
 // config.toml, the project `.env`'s COMPOSE_PROFILES line, and nothing else.
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { INGRESS_DEFAULTS } from "../../config.js";
 import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, type IngressChoice } from "../choices.js";
 import { topologyOf } from "./topology.js";
@@ -170,28 +171,35 @@ export function ingressBlock(option: IngressOption): string {
     "# URL when it changes (the one mutation class that executes in dry-run).",
     'shape = "tunnel-file"',
     'hostname_file = ""',
-    "debounce_ms = 3000",
-    "sweep_interval_s = 300",
+    `debounce_ms = ${INGRESS_DEFAULTS.debounce_ms}`,
+    `sweep_interval_s = ${INGRESS_DEFAULTS.sweep_interval_s}`,
     "",
   ].join("\n");
+}
+
+/** Where `[section]` sits in a document: its header line's start, its body's
+ * start (after the header line) and its end (the next table header, or EOF).
+ * Indentation is valid TOML before a header, and the loader (smol-toml)
+ * accepts it — so this does too: a missed `  [ingress]` would be appended a
+ * second time (a duplicate table the loader rejects), and a missed `  [next]`
+ * boundary would be overwritten. null when the table is not there. */
+function sectionSpan(
+  toml: string,
+  section: string,
+): { header: number; body: number; end: number } | null {
+  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
+  if (header?.index === undefined) return null;
+  const body = header.index + header[0].length;
+  const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(toml.slice(body));
+  return { header: header.index, body, end: body + (nextTable?.index ?? toml.length - body) };
 }
 
 /** Replace `[section]`…(next top-level table) with `body`; insert before the
  * anchor (or append) when the section does not exist. Commented-out template
  * blocks (`#[ingress]`) are left exactly as they are — they are documentation. */
 export function patchTomlSection(toml: string, section: string, body: string): string {
-  // Indented headers are found the way readTomlKey finds them: a missed
-  // `  [ingress]` would be appended a second time (a duplicate table the
-  // loader rejects), and a missed `  [next]` boundary would be overwritten.
-  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m");
-  const start = header.exec(toml);
-  if (start?.index !== undefined) {
-    const from = start.index;
-    const rest = toml.slice(from + start[0].length);
-    const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(rest);
-    const to = from + start[0].length + (nextTable?.index ?? rest.length);
-    return `${toml.slice(0, from)}${body}${toml.slice(to)}`;
-  }
+  const span = sectionSpan(toml, section);
+  if (span !== null) return `${toml.slice(0, span.header)}${body}${toml.slice(span.end)}`;
   const anchor = INGRESS_ANCHOR.exec(toml);
   if (anchor?.index !== undefined)
     return `${toml.slice(0, anchor.index)}${body}\n${toml.slice(anchor.index)}`;
@@ -203,11 +211,9 @@ export function patchTomlSection(toml: string, section: string, body: string): s
  * (smol-toml) accepts it — so this does too, or a reader here disagrees with
  * the daemon about the same file. */
 export function readTomlKey(toml: string, section: string, key: string): string | null {
-  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
-  if (header?.index === undefined) return null;
-  const rest = toml.slice(header.index + header[0].length);
-  const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(rest);
-  const body = rest.slice(0, nextTable?.index ?? rest.length);
+  const span = sectionSpan(toml, section);
+  if (span === null) return null;
+  const body = toml.slice(span.body, span.end);
   const line = new RegExp(`^[ \\t]*${key}\\s*=\\s*(.+)$`, "m").exec(body);
   if (!line?.[1]) return null;
   return tomlScalarText(line[1]);
@@ -271,12 +277,9 @@ export function setTomlKey(
 ): string | null {
   // Indentation is accepted exactly as readTomlKey accepts it: a key this
   // misses would be written a second time, and the loader rejects duplicates.
-  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
-  if (header?.index === undefined) return null;
-  const bodyStart = header.index + header[0].length;
-  const rest = toml.slice(bodyStart);
-  const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(rest);
-  const bodyEnd = bodyStart + (nextTable?.index ?? rest.length);
+  const span = sectionSpan(toml, section);
+  if (span === null) return null;
+  const { body: bodyStart, end: bodyEnd } = span;
   const body = toml.slice(bodyStart, bodyEnd);
   const line = new RegExp(`^([ \\t]*)${key}\\s*=\\s*[^\\n]*$`, "m");
   const replacement = `${key} = ${JSON.stringify(value)}`;

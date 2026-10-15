@@ -546,13 +546,20 @@ export const nodeCallbackServer: CallbackServerFactory = async (o) => {
 
 // ---- GitHub calls -----------------------------------------------------------
 
-interface ApiResult {
+export interface ApiResult {
+  /** The HTTP status; 0 when the request itself failed (`text` says why). */
   status: number;
   body: unknown;
   text: string;
 }
 
-async function api(fetchFn: typeof fetch, url: string, init?: RequestInit): Promise<ApiResult> {
+/** One GitHub REST call with the wizard's headers, the body decoded
+ * tolerantly. Total: a network failure is status 0, never a throw. */
+export async function api(
+  fetchFn: typeof fetch,
+  url: string,
+  init?: RequestInit,
+): Promise<ApiResult> {
   try {
     const res = await fetchFn(url, {
       ...init,

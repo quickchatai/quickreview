@@ -39,6 +39,7 @@ import { SECRET_FILES } from "../src/onboard/steps/githubapp.js";
 import { INGRESS_CHOICE_KEY, setTomlKey } from "../src/onboard/steps/ingress.js";
 import {
   DEFAULT_PYTHON_INTERPRETER,
+  GROUP_VARS_CLOUDFLARED_ENABLED,
   VM_INVENTORY_STEP_ID,
   cloudflaredEnabledFor,
   ingressNoteFor,
@@ -283,6 +284,15 @@ describe("the inventory is filled from the interview", () => {
     expect(all.results[0]!.failures.join(" ")).toMatch(
       /embedder: the inventory renders openviking_embedding_provider=local.*config\.toml declares openviking_embedding_provider=openai/,
     );
+  });
+
+  it("verify's fallback for an absent cloudflared host var is the tracked group_vars value", () => {
+    const groupVars = readFileSync(
+      join(repoRoot, "deploy", "ansible", "group_vars", "all.yml"),
+      "utf8",
+    );
+    const line = /^cloudflared_enabled:\s*(\S+)\s*$/m.exec(groupVars);
+    expect(line?.[1]).toBe(String(GROUP_VARS_CLOUDFLARED_ENABLED));
   });
 
   it("only the named tunnel means cloudflared on the server; the others stay selectable and say what they mean", () => {
