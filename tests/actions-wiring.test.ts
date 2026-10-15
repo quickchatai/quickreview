@@ -201,6 +201,19 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(app.selectedSession()).toBe("pr-5049");
   });
 
+  // MUTATION: store the requested PR before reselect falls back — red (the
+  // highlighted row and the mirrored session part ways).
+  it("selecting a PR the board does not list is refused; the selection stays on one PR", () => {
+    const { app, driver } = makeRig();
+    driver.selectPr(5100);
+    driver.setBoardFilter({ author: "alice" });
+    expect(() => driver.selectPr(5049)).toThrow(/not on the board/);
+    expect(app.view.noticeLine).toContain("#5049 is not on the board");
+    expect(app.currentPr()).toBe(5100);
+    expect(app.selectedPrNumber()).toBe(5100);
+    expect(app.selectedSession()).toBe("pr-5100");
+  });
+
   it("a filter that hides the selected PR moves the selection to a listed one", () => {
     const { app, driver } = makeRig();
     driver.selectPr(5049);

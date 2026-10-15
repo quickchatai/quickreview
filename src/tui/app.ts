@@ -683,14 +683,27 @@ export class App {
 
   /** Point the board selection at a PR (the companion's `select_pr` action and
    * the events overlay land here). */
-  selectPr(pr: number): void {
-    this.selectedPr = pr;
+  /**
+   * Point the board at `pr`. Once the board has loaded, a PR it does not list
+   * (closed, or outside the filter) is refused with a notice and the
+   * selection stays where it is — the highlighted row, the detail and the
+   * mirrored session never point at different PRs. Before the first snapshot
+   * the request is kept (a `qcr tui <pr>` deep link), and the first poll
+   * settles it. False when refused.
+   */
+  selectPr(pr: number): boolean {
     const sorted = visiblePrs(this.view);
+    if (this.view.snapshot !== undefined && !sorted.some((p) => p.number === pr)) {
+      this.notice(`#${pr} is not on the board (closed, or outside the filter)`);
+      return false;
+    }
+    this.selectedPr = pr;
     this.view.selected = reselect(sorted, pr, this.view.selected);
     if (this.view.progress?.pr !== pr) this.view.progress = undefined;
     void this.refreshDetail();
     void this.refreshProgress();
     this.followSelection();
+    return true;
   }
 
   /** Narrow (or, with null, clear) the board. The selection stays on the

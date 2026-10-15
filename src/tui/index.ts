@@ -155,7 +155,8 @@ export function buildTuiDriver(
     selectPr: (pr) => {
       prep();
       app.tab = "board";
-      app.selectPr(pr); // public App API — selects + refreshes detail
+      // public App API — selects + refreshes detail
+      if (!app.selectPr(pr)) throw new Error(`#${pr} is not on the board`);
       app.repaint();
     },
     metricsWindow: (w) => {
