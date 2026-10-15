@@ -83,6 +83,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { caseName } from "../cases.js";
 import { canonicalLensIds } from "../lensids.js";
 import { cleanQuotedText } from "../memory/datafence.js";
 import { LESSON_CLASS_RE } from "../memory/lessons.js";
@@ -452,7 +453,7 @@ function fateDraft(
   const f = findingRow(store, pr, root.round_no, root.finding_key);
   const lensIds = f ? lensIdsOf(f.lens_ids, f.lens) : [];
   const refuted = end.fate === "refuted_conceded";
-  const caseName = `case-${Math.trunc(pr)}-r${Math.trunc(root.round_no)}-${createHash("sha256").update(root.finding_key).digest("hex").slice(0, 16)}`;
+  const caseRef = caseName(pr, root.round_no, root.finding_key);
   return {
     ref: `fate:${pr}:${root.round_no}:${sha16(root.finding_key)}`,
     source: "fate",
@@ -474,7 +475,7 @@ function fateDraft(
     quote: quoteOf(latestReply(store, pr, end.comment_id ?? root.comment_id)),
     evidence: [
       `pr:${pr}`,
-      `case:${caseName}`,
+      `case:${caseRef}`,
       ...(root.comment_id !== null ? [`comment:${root.comment_id}`] : []),
     ],
     occurred_at: at,
