@@ -178,6 +178,15 @@ function lastSentence(p: string): string {
   return parts[parts.length - 1] ?? flat;
 }
 
+/** A whole paragraph's say, unlike `judge` on one sentence: a count of issues
+ * anywhere in it wins over any negative wording. */
+function paragraphSays(p: string): Verdict {
+  const flat = p.replace(/\s+/g, " ");
+  if (POS.test(flat)) return "findings";
+  if (STRONG_NEG.test(flat) || WEAK_NEG.test(flat)) return "not-findings";
+  return null;
+}
+
 /** Is the list after this lead-in a list of findings? A lead-in whose last
  * sentence introduces the list ("…chose not to report:") decides by that
  * sentence; otherwise, or if it says nothing, the whole paragraph (a count of
@@ -188,21 +197,9 @@ export function leadInSaysFindings(leadIn: string | null, opening: string | null
   if (leadIn !== null) {
     const last = lastSentence(leadIn);
     if (/:\W*$/.test(last)) steps.push(() => judge(last));
-    steps.push(() => {
-      const flat = leadIn.replace(/\s+/g, " ");
-      if (POS.test(flat)) return "findings";
-      if (STRONG_NEG.test(flat) || WEAK_NEG.test(flat)) return "not-findings";
-      return null;
-    });
+    steps.push(() => paragraphSays(leadIn));
   }
-  if (opening !== null && opening !== leadIn) {
-    steps.push(() => {
-      const flat = opening.replace(/\s+/g, " ");
-      if (POS.test(flat)) return "findings";
-      if (WEAK_NEG.test(flat) || STRONG_NEG.test(flat)) return "not-findings";
-      return null;
-    });
-  }
+  if (opening !== null && opening !== leadIn) steps.push(() => paragraphSays(opening));
   for (const s of steps) {
     const v = s();
     if (v) return v === "findings";
