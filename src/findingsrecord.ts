@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findingRecordKey } from "./findingkey.js";
 import { WITHHOLD_WORDS } from "./postingpolicy.js";
-import { isSanctionedTag } from "./severity.js";
+import { bareTag, isSanctionedTag } from "./severity.js";
 import type { StateStore } from "./state.js";
 import { wakeOrHold } from "./wakes.js";
 
@@ -512,11 +512,7 @@ export function parseFindingsRecord(
     if (disposition === "posted") {
       const postedAs = str(e.posted_as);
       if (postedAs !== null && !isSanctionedTag(postedAs)) conformance.ungrammatical_tags.push(key);
-      const bare = (postedAs ?? "")
-        .trim()
-        .replace(/^\[|\]$/g, "")
-        .trim()
-        .toLowerCase();
+      const bare = bareTag(postedAs);
       // `request` is the field the nit rule asks a lens for: the concrete
       // change the nit asks for. Its ABSENCE is the defect — a nit that names
       // no change is a remark. Alternate spellings are accepted, as everywhere

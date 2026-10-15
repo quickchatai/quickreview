@@ -369,17 +369,23 @@ export const SANCTIONED_TAGS: readonly string[] = [
  * for a tag. */
 const LEADING_TAG_RE = /^\s*\[([^\]\n]{1,40})\]\s*/;
 
-/** Is `raw` — with or without brackets, in any case, with internal whitespace
- * collapsed — one of the sanctioned tags? */
-export function isSanctionedTag(raw: string | null | undefined): boolean {
-  if (!raw) return false;
-  const inner = raw
+/** A tag's bare word as every reader compares it: no brackets, lowercase,
+ * internal whitespace collapsed (`"[Ask  your human]"` → `"ask your human"`).
+ * "" for null or empty. */
+export function bareTag(raw: string | null | undefined): string {
+  return (raw ?? "")
     .trim()
     .replace(/^\[|\]$/g, "")
     .trim()
     .replace(/\s+/g, " ")
     .toLowerCase();
-  return SANCTIONED_TAGS.includes(`[${inner}]`);
+}
+
+/** Is `raw` — with or without brackets, in any case, with internal whitespace
+ * collapsed — one of the sanctioned tags? */
+export function isSanctionedTag(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  return SANCTIONED_TAGS.includes(`[${bareTag(raw)}]`);
 }
 
 /**

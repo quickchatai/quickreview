@@ -19,7 +19,14 @@
 // whatever the record claims (posting validates it as before), and every
 // problem the input has is returned rather than thrown, so a thin record still
 // renders the review the record describes.
-import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, postTag, type Severity } from "./severity.js";
+import {
+  ASK_HUMAN_TAG,
+  bareTag,
+  CHECK_THIS_TAG,
+  DEFERRED_TAG,
+  postTag,
+  type Severity,
+} from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
 import { findingMarker, findingRecordKey } from "./findingkey.js";
 import { normalizeDisposition } from "./findingsrecord.js";
@@ -142,7 +149,7 @@ function severityTagOf(
 export function postedSeverityTag(
   raw: Record<string, unknown>,
 ): "blocker" | "question" | "nit" | null {
-  const tag = (str(raw.posted_as) ?? "").toLowerCase().replace(/^\[|\]$/g, "") as Tag;
+  const tag = bareTag(str(raw.posted_as)) as Tag;
   if (!TAGS.includes(tag)) return null;
   return severityTagOf(tag, str(raw.severity), num(raw.confidence), str(raw.reachability));
 }
@@ -154,7 +161,7 @@ function readPosted(
   recordKey: string,
 ): Posted {
   const id = str(raw.id) ?? `#${i + 1}`;
-  const rawTag = (str(raw.posted_as) ?? "").toLowerCase().replace(/^\[|\]$/g, "") as Tag;
+  const rawTag = bareTag(str(raw.posted_as)) as Tag;
   const tag: Tag = TAGS.includes(rawTag) ? rawTag : "question";
   if (!TAGS.includes(rawTag))
     problems.push(
@@ -409,7 +416,7 @@ export function postedClassOf(
   entry: Record<string, unknown>,
   tagField: "posted_as" | "withheld_as" = "posted_as",
 ): PolicyClass {
-  const tag = (str(entry[tagField]) ?? "").toLowerCase().replace(/^\[|\]$/g, "") as Tag;
+  const tag = bareTag(str(entry[tagField])) as Tag;
   if (tag === "check this") return "check";
   if (!TAGS.includes(tag)) return "question";
   return severityTagOf(tag, str(entry.severity), num(entry.confidence), str(entry.reachability));

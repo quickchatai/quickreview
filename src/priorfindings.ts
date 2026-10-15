@@ -35,6 +35,7 @@ import {
 import { canonicalLensIds } from "./lensids.js";
 import { fenceAsData } from "./memory/datafence.js";
 import { predecessorOf } from "./outcomes.js";
+import { bareTag } from "./severity.js";
 import type { PriorFindingCheckRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
 
 /** At most this many findings in the prompt; the sidecar holds them all. */
@@ -100,15 +101,6 @@ export interface PriorFindingsList {
 
 /** One finding's identity across rounds. */
 const rkey = (round: number, key: string): string => `${round}:${key}`;
-
-function bareTag(postedAs: string | null): string {
-  return (postedAs ?? "")
-    .trim()
-    .replace(/^\[|\]$/g, "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
 
 function idsOf(row: RoundFindingRow): string[] {
   if (row.lens_ids) {
