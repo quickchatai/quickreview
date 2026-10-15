@@ -21,10 +21,7 @@ import { blockedPrAuthor } from "./pr-conversation.js";
  * unequal lengths — we must not let that leak as a 500). */
 export function verifySignature(raw: Buffer, header: string | undefined, secret: string): boolean {
   if (!header || !header.startsWith("sha256=")) return false;
-  const expected = Buffer.from(
-    `sha256=${createHmac("sha256", secret).update(raw).digest("hex")}`,
-    "utf8",
-  );
+  const expected = Buffer.from(signBody(raw, secret), "utf8");
   const given = Buffer.from(header, "utf8");
   if (given.length !== expected.length) return false;
   return timingSafeEqual(given, expected);
@@ -54,8 +51,6 @@ export type Interpretation =
       in_reply_to_id: number | null;
       body: string;
       author: string;
-      via: "thread_reply";
-      scope: "review_comment";
       /** The file the replied thread sits on (the review comment's `path`),
        * when GitHub sent one — the repo facts' touched path.
        * Never part of the wake's own text. */
@@ -96,8 +91,10 @@ export type Interpretation =
   /** A human took the bot off the PR (trigger label removed / team review
    * request withdrawn) before the review completed. */
   | { kind: "trigger_withdrawn"; pr: number; by: string }
-  /** CI finished at a head (check_suite / workflow_run). No lifecycle meaning:
-   * the only consumer is the post-approval delta recheck. A suite can
+  /** CI finished at a head (check_suite / workflow_run). Never a transition
+   * here; its consumers are the post-approval delta recheck and the
+   * withheld-approval retry, which re-queues a PR whose approval red CI held
+   * back once CI at its head is green (`cigate.ts`). A suite can
    * hang off more than one PR (shared head), so `prs` is the honest list and
    * `pr` is its first entry, for the event log. */
   | { kind: "ci_completed"; pr: number; prs: number[]; head_sha: string; conclusion: string | null }
@@ -116,15 +113,6 @@ export interface InterpretDeps {
   botCommentPr: (id: number) => number | undefined;
   /** Known PR author, only while a substantive bot blocking review stands. */
   blockedPrAuthor?: (pr: number) => string | undefined;
-}
-
-/** The configured bot (`[github] bot_login`, e.g. `some-app[bot]`) is
- * @-mentioned as the login without its `[bot]` suffix (`@some-app`). */
-export function mentionsBot(body: string, botLogin: string): boolean {
-  const handle = botLogin.replace(/\[bot\]$/, "");
-  if (!handle) return false;
-  const esc = handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`@${esc}(\\[bot\\])?\\b`, "i").test(body);
 }
 
 function prMeta(pr: any): EventPrMeta {
@@ -300,8 +288,6 @@ function interpretReviewComment(
       in_reply_to_id: inReplyTo,
       body: comment.body ?? "",
       author: comment.user?.login ?? "",
-      via: "thread_reply",
-      scope: "review_comment",
       ...(typeof comment.path === "string" && comment.path !== "" ? { path: comment.path } : {}),
     };
   return { kind: "ignored", reason: "not a reply in this PR's bot thread", pr };
@@ -783,8 +769,9 @@ export async function applyInterpretation(
       return;
     }
     case "ci_completed":
-      // Recorded, never a transition: CI is evidence for the recheck, not a
-      // trigger for a round.
+      // Recorded, never a transition here. CI is evidence for the recheck,
+      // and the withheld-approval retry behind `onCiCompleted` may re-queue a
+      // PR whose approval red CI held back (`cigate.ts`).
       for (const pr of i.prs)
         store.logEvent("ci_completed", pr, { head_sha: i.head_sha, conclusion: i.conclusion });
       await deps.onCiCompleted?.(i);

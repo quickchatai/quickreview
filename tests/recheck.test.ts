@@ -1401,8 +1401,6 @@ describe("webhook interpretation of the recheck triggers", () => {
       in_reply_to_id: 8,
       body: "fixed",
       author: "alice",
-      via: "thread_reply",
-      scope: "review_comment",
     };
     await applyInterpretation(
       {
