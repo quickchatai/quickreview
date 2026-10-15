@@ -109,10 +109,6 @@ describe("① tunnel + HMAC probe", () => {
     expect(verifySignature(Buffer.from(first.body), first.sig, SECRET)).toBe(true);
     expect(first.sig).toBe(`sha256=${createHmac("sha256", SECRET).update(first.body).digest("hex")}`);
   });
-    expect(signed).not.toBeNull();
-    expect(verifySignature(Buffer.from(signed!.body), signed!.sig, SECRET)).toBe(true);
-    expect(signed!.sig).toBe(`sha256=${createHmac("sha256", SECRET).update(signed!.body).digest("hex")}`);
-  });
 });
 
 describe("② reconcile queue diff", () => {
