@@ -34,8 +34,10 @@
 // secrets dir. This step only reports which of that wizard's required files
 // exist yet, reading the `deploy_shape` marker the wizard itself writes.
 //
-// I/O: answers come through the engine's `prompter` adapter (or from choices a
-// sibling step already recorded); config reads/writes are plain files under the
+// I/O: answers come as the tool's arguments (`ctx.input`, one string per
+// question id — the pi-driven wizard has no prompter), through the engine's
+// `prompter` adapter (the non-LLM fallback entry), or from choices a sibling
+// step already recorded; config reads/writes are plain files under the
 // sandbox root derived from `adapters.paths.stateDir`. Tests point stateDir at
 // a temp dir and fake the prompter — no network, no docker, no real repo write.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -492,19 +494,18 @@ export const DERIVABLES: readonly Derivable[] = [
     id: "clone_dir",
     path: "[github] clone_dir",
     explain:
-      'left empty so the base clone directory derives from the repo slug ("owner/name" ⇒ "name")',
+      'left empty so the base clone directory derives from the repo slug ("owner/name" ⇒ "name"); a clone_dir you ' +
+      "set yourself (deploy.sh asks for one when the repo's name collides with a sandbox directory) is kept",
     write: (_f, fresh) =>
       fresh ? { section: "github", key: "clone_dir", value: tomlString("") } : null,
     stable: true,
+    // The loader's own resolution (an explicit clone_dir wins, else the repo's
+    // basename) must name ONE plain directory — the same test deploy.sh applies.
     holds: (cfg) => {
-      const expected =
-        cfg.github.repo
-          .replace(/\.git$/, "")
-          .split("/")
-          .pop() || "repo";
-      return githubCloneDir(cfg.github) === expected
+      const dir = githubCloneDir(cfg.github);
+      return /^[A-Za-z0-9._-]+$/.test(dir) && dir !== "." && dir !== ".."
         ? null
-        : `the clone dir resolves to "${githubCloneDir(cfg.github)}", not the repo's "${expected}"`;
+        : `the clone dir resolves to "${dir}", which is not one plain directory name — set [github] clone_dir to one`;
     },
   },
   {
@@ -705,12 +706,29 @@ function currentConfig(path: string): Config | null {
 
 export interface CollectResult {
   facts: FillFacts;
-  /** Questions with no answer at all (no prompter, nothing recorded). */
+  /** Questions with no answer at all (no argument, no prompter, nothing
+   * recorded or configured). */
   missing: Array<{ id: AnswerKey; title: string; guidance: string }>;
-  /** Answers rejected by validation until the attempt budget ran out. */
+  /** Answers rejected by validation (an argument, a kept value, or a prompted
+   * answer once the attempt budget ran out). */
   rejected: Array<{ id: AnswerKey; guidance: string }>;
   /** Questions that were actually put to the operator this run. */
   asked: AnswerKey[];
+  /** Arguments that were not used because a sibling step's recorded value
+   * settles the question — said out loud, never dropped silently. */
+  ignored: Array<{ id: AnswerKey; given: string; kept: string }>;
+}
+
+/** The tool argument for one question: a string the operator gave, or null
+ * when the call did not carry one. */
+function inputAnswer(ctx: StepContext, id: AnswerKey): string | null {
+  const v = ctx.input[id];
+  return typeof v === "string" ? v.trim() : null;
+}
+
+/** How an unanswered question is answered on the pi-driven route. */
+function argumentHint(q: Question): string {
+  return `${q.prompt} — pass the answer as the \`${q.id}\` argument`;
 }
 
 /** How many times one question may be re-asked before the step fails with the
@@ -720,10 +738,12 @@ export const MAX_ATTEMPTS = 3;
 
 /**
  * Run the interview. Precedence per question: a value a sibling step already
- * recorded in the checklist > this step's own previous answer / the current
- * config value (offered as the default, Enter keeps it) > a fresh answer. With
- * no prompter the recorded/current values stand alone and anything genuinely
- * unanswered is reported — never guessed.
+ * recorded in the checklist > a fresh answer (the tool argument, else the
+ * prompter's) > this step's own previous answer / the current config value
+ * (the default a blank answer keeps). With neither an argument nor a prompter
+ * the recorded/current values stand alone, and anything genuinely unanswered
+ * is reported — never guessed. Every value that lands, whatever its source,
+ * passes the question's validator.
  */
 export async function collectAnswers(
   ctx: StepContext,
@@ -736,19 +756,32 @@ export async function collectAnswers(
   const missing: CollectResult["missing"] = [];
   const rejected: CollectResult["rejected"] = [];
   const asked: AnswerKey[] = [];
+  const ignored: CollectResult["ignored"] = [];
 
   for (const q of QUESTIONS) {
     if (!questionAsked(q, choices)) continue;
+    const given = inputAnswer(ctx, q.id);
     const recorded = (q.from ?? []).map((k) => str(choices, k)).find((v) => v.length > 0) ?? "";
     if (recorded && q.validate(recorded) === null) {
       answers[q.id] = recorded;
+      if (given && given !== recorded) ignored.push({ id: q.id, given, kept: recorded });
       continue;
     }
     const fallback = previous[q.id] ?? (cfg ? q.read(cfg) : "") ?? "";
-    if (!prompter) {
-      if (fallback) answers[q.id] = fallback;
-      else if (q.optional) answers[q.id] = "";
-      else missing.push({ id: q.id, title: q.title, guidance: q.prompt });
+    if (given !== null || !prompter) {
+      const value = given || fallback;
+      if (!value) {
+        if (q.optional) answers[q.id] = "";
+        else missing.push({ id: q.id, title: q.title, guidance: argumentHint(q) });
+        continue;
+      }
+      const reason = q.validate(value);
+      if (reason === null) answers[q.id] = value;
+      else
+        rejected.push({
+          id: q.id,
+          guidance: `${given ? "" : `the kept value "${value}" no longer holds: `}${reason} — pass a corrected \`${q.id}\` argument`,
+        });
       continue;
     }
     let settled = false;
@@ -798,7 +831,7 @@ export async function collectAnswers(
     topology: str(choices, CHOICE_KEYS.topology),
     ingress: str(choices, CHOICE_KEYS.ingress),
   };
-  return { facts, missing, rejected, asked };
+  return { facts, missing, rejected, asked, ignored };
 }
 
 /** Every edit the fill would make — answers first, then the derivations. The
@@ -906,6 +939,19 @@ function previousAnswers(ctx: StepContext): Partial<Record<AnswerKey, string>> {
   return out;
 }
 
+/** The tool's argument schema: one optional string per interview question,
+ * described by its title, prompt and the concept it teaches. */
+function configFillParameters(): unknown {
+  const properties: Record<string, { type: "string"; description: string }> = {};
+  for (const q of QUESTIONS) {
+    properties[q.id] = {
+      type: "string",
+      description: `${q.title}. ${q.prompt}${q.optional ? " Optional." : ""} ${q.teach}`,
+    };
+  }
+  return { type: "object", properties };
+}
+
 export function configFillStep(): OnboardingStep {
   return {
     id: CONFIG_FILL_STEP_ID,
@@ -915,8 +961,12 @@ export function configFillStep(): OnboardingStep {
       "who you are, your timezone, the default branch — and computes everything else (the bot login, the clone " +
       "directory, the timezone cascade, the defect sink). It patches the shipped template in place, so every comment " +
       "in your config survives, and it re-runs as targeted edits over your own file rather than a rewrite. The review " +
-      "flag `dry_run` stays TRUE: nothing here can go live, that is a separate, explicit act later.",
+      "flag `dry_run` is never written here: a fresh config ships the template's true, an existing one keeps exactly " +
+      "the value it has, and going live is a separate, explicit act later. Pass the operator's answers as the " +
+      "arguments (one per question; an omitted or blank one keeps the current value); a run that still lacks a " +
+      "required answer names it and writes nothing.",
     order: 35,
+    parameters: configFillParameters(),
     async run(ctx): Promise<StepReport> {
       const root = rootFromStateDir(ctx.adapters.paths.stateDir);
       const configPath = ctx.adapters.paths.configPath;
@@ -953,7 +1003,11 @@ export function configFillStep(): OnboardingStep {
 
       const cfg = currentConfig(configPath);
       const collected = await collectAnswers(ctx, cfg, previousAnswers(ctx));
-      const checks: CheckResult[] = [];
+      const checks: CheckResult[] = collected.ignored.map((i) => ({
+        name: `answer:${i.id}`,
+        ok: true,
+        detail: `kept "${i.kept}", which an earlier step recorded — the argument "${i.given}" was not used (re-run the step that owns it to change it)`,
+      }));
       if (collected.missing.length || collected.rejected.length) {
         for (const m of collected.missing) {
           checks.push({

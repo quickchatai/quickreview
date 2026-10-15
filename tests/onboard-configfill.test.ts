@@ -141,6 +141,8 @@ interface RunOpts {
   noPrompter?: boolean;
   /** The install locator's answer handed to the adapters. */
   configPath?: string;
+  /** The tool call's arguments (the pi-driven route). */
+  input?: Record<string, unknown>;
 }
 
 function askedIds(choices: Record<string, unknown>): AnswerKey[] {
@@ -156,7 +158,7 @@ async function runStep(opts: RunOpts = {}) {
   const prompter = opts.noPrompter ? undefined : scriptedPrompter(answers, askedIds(choices), log);
   const ctx: StepContext = {
     adapters: adapters(prompter, opts.configPath),
-    input: {},
+    input: opts.input ?? {},
     choices,
     data: opts.data ?? {},
     recordChoice: (k, v) => {
@@ -783,5 +785,102 @@ describe("edit plumbing", () => {
 
   it("renders a hostile answer as data, never as TOML structure", () => {
     expect(tomlString('a"\nb = 1')).toBe('"a\\"\\nb = 1"');
+  });
+});
+
+// ---- the pi-driven route: answers as tool arguments ---------------------------
+
+describe("answers given as the tool's arguments (no prompter)", () => {
+  it("declares one string argument per interview question", () => {
+    const params = configFillStep().parameters as {
+      properties: Record<string, { type: string }>;
+    };
+    expect(Object.keys(params.properties).sort()).toEqual(QUESTIONS.map((q) => q.id).sort());
+    for (const p of Object.values(params.properties)) expect(p.type).toBe("string");
+  });
+
+  it("fills a fresh config from the arguments alone", async () => {
+    const { report } = await runStep({ noPrompter: true, input: fullAnswers() });
+    expect(failed(report)).toBe("");
+    const cfg = producedConfig();
+    expect(cfg.github.repo).toBe("acme/web-app");
+    expect(cfg.ops.timezone).toBe("Europe/Warsaw");
+    expect(cfg.dry_run).toBe(true);
+  });
+
+  it("names the argument a required question still needs", async () => {
+    const { report } = await runStep({
+      noPrompter: true,
+      input: { ...fullAnswers(), timezone: "" },
+    });
+    expect(report.ok).toBe(false);
+    expect(failed(report)).toMatch(/answer:timezone.*`timezone` argument/);
+    expect(existsSync(join(root, "config.toml"))).toBe(false);
+  });
+
+  it("refuses a malformed argument with the validator's guidance", async () => {
+    const { report } = await runStep({
+      noPrompter: true,
+      input: { ...fullAnswers(), timezone: "CEST" },
+    });
+    expect(report.ok).toBe(false);
+    expect(failed(report)).toMatch(/answer:timezone.*IANA name/);
+    expect(existsSync(join(root, "config.toml"))).toBe(false);
+  });
+
+  it("keeps a value a sibling step recorded, and says the argument was not used", async () => {
+    const { report } = await runStep({
+      noPrompter: true,
+      input: { ...fullAnswers(), app_slug: "other-app" },
+      choices: { [CHOICE_KEYS.appSlug]: "acme-reviewer" },
+    });
+    expect(failed(report)).toBe("");
+    expect(producedConfig().github.app_slug).toBe("acme-reviewer");
+    const note = report.checks.find((c) => c.name === "answer:app_slug")!;
+    expect(note.ok).toBe(true);
+    expect(note.detail).toContain('"other-app" was not used');
+  });
+
+  it("changes a kept value when the argument names a new one", async () => {
+    await runStep({ noPrompter: true, input: fullAnswers() });
+    const { report } = await runStep({
+      noPrompter: true,
+      input: { timezone: "America/New_York" },
+    });
+    expect(failed(report)).toBe("");
+    expect(producedConfig().ops.timezone).toBe("America/New_York");
+  });
+});
+
+describe("a kept value passes the same validator as a fresh one", () => {
+  it("refuses an existing config's checkout path that no longer exists", async () => {
+    await runStep();
+    rmSync(checkout, { recursive: true, force: true });
+    const { report } = await runStep({ noPrompter: true });
+    expect(report.ok).toBe(false);
+    expect(failed(report)).toMatch(/answer:reviewed_repo_dir.*nothing exists at/);
+  });
+});
+
+describe("an explicit clone_dir is the operator's", () => {
+  it("run and verify both accept a clone_dir set to a free name", async () => {
+    await runStep({ answers: { repo: "acme/state" } });
+    const path = join(root, "config.toml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(/^clone_dir = ""/m, 'clone_dir = "reviewed-state"'),
+    );
+    expect(loadConfig(path).github.clone_dir).toBe("reviewed-state");
+    const { report } = await runStep({ noPrompter: true });
+    expect(failed(report)).toBe("");
+    const ctx: StepContext = {
+      adapters: adapters(),
+      input: {},
+      choices: {},
+      data: {},
+      recordChoice: () => {},
+    };
+    const verified = await configFillStep().verify(ctx);
+    expect(failed(verified)).toBe("");
   });
 });
