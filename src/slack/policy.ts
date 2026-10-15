@@ -19,10 +19,8 @@
 // per cause per cooldown, repeats inside the window fold into a counter, and a
 // genuine escalation may break the cooldown exactly once per policy day.
 import type { Config, SlackCausePolicy } from "../config.js";
-import { localWallClockToInstant, zoneDateString, zonedParts } from "../eod.js";
+import { zoneDateString, zoneDayBounds, zonedParts } from "../eod.js";
 import type { SlackPostKind, StateStore } from "../state.js";
-
-const DAY_MS = 86_400_000;
 
 export interface DayWindow {
   /** "YYYY-MM-DD" in the policy timezone — the cooldown table's day key. */
@@ -38,16 +36,7 @@ export interface DayWindow {
  */
 export function dayWindow(now: Date, timeZone: string): DayWindow {
   const p = zonedParts(now, timeZone);
-  const start = localWallClockToInstant(p.year, p.month, p.day, 0, 0, timeZone);
-  const nextCal = new Date(Date.UTC(p.year, p.month - 1, p.day) + DAY_MS);
-  const end = localWallClockToInstant(
-    nextCal.getUTCFullYear(),
-    nextCal.getUTCMonth() + 1,
-    nextCal.getUTCDate(),
-    0,
-    0,
-    timeZone,
-  );
+  const { start, end } = zoneDayBounds(p.year, p.month, p.day, timeZone);
   return {
     day: zoneDateString(now, timeZone),
     startIso: start.toISOString(),
@@ -112,14 +101,27 @@ export function decideTurn(
   return { ...base, allow: true };
 }
 
+/**
+ * The budget a turn refusal announces in the channel, or null when it
+ * announces none. Only the channel-wide budget is channel news: a per-user
+ * cap leaves everyone else free to ask, so telling the channel "questions
+ * resume at midnight" — and spending the day's one cap announcement on it —
+ * would be false.
+ */
+export function announcedCap(cfg: Config, decision: TurnDecision): number | null {
+  return decision.cap === "daily_turns" ? cfg.slack.policy.daily_turns : null;
+}
+
 // ---- reply admission (at the slack_reply path) ---------------------------
 
 export type ReplyCap = "daily_posts" | "thread_replies_per_day" | "idempotent";
 
 // The post taxonomy, in one place: `kind = 'reply'` is the ONLY conversational
 // post (a model turn stands behind it) and the only one the reply budgets
-// count. `pickup` / `verdict` / `announce` are daemon-authored, cost nothing,
-// and are bounded by `announcements_per_hour` instead.
+// count. `pickup` / `verdict` / `announce` are daemon-authored and cost
+// nothing; an unprompted `announce` is bounded by `announcements_per_hour`,
+// while the thread-lifecycle posts (pickup, verdict, re-round, superseded)
+// answer one PR's real event and are bounded only by their idem key.
 
 /**
  * Successful `kind = 'reply'` posts into one thread inside the window — the
@@ -165,8 +167,9 @@ export interface ReplyDecision {
  * BOTH budgets count `kind = 'reply'` ONLY. Lifecycle posts are labelled
  * `pickup` / `verdict` / `announce`; letting them in would mean a PR that runs
  * `thread_replies_per_day` rounds silently loses the ability to answer a human
- * in its own thread for the rest of the day. Daemon-authored posts are bounded
- * by `announcements_per_hour` instead (see decideAnnouncement).
+ * in its own thread for the rest of the day. Unprompted daemon announcements
+ * are bounded by `announcements_per_hour` instead (see decideAnnouncement);
+ * the thread-lifecycle posts by their idem key alone.
  */
 export function decideReply(
   store: StateStore,
@@ -241,11 +244,12 @@ export interface AnnouncementDecision {
 
 /**
  * The rolling-hour announcement ceiling, read from the claimed `slack_posts`
- * rows. EVERY daemon-authored post counts here — `pickup` and `verdict` are as
- * visible in the channel as an `announce`, and this ceiling is their only
- * back-stop, since they do not count against the conversational budget.
- * Expressed as "all posts minus replies" so a kind added later is bounded by
- * default rather than silently exempt. Read at admission (decideAnnouncement)
+ * rows. EVERY daemon-authored post COUNTS here — `pickup` and `verdict` are as
+ * visible in the channel as an `announce` — but only an unprompted
+ * announcement is REFUSED by it: the thread-lifecycle posts answer one PR's
+ * real event and are never held back (announce.ts header). Expressed as "all
+ * posts minus replies" so a kind added later is counted by default rather
+ * than silently exempt. Read at admission (decideAnnouncement)
  * AND again when an admitted announcement claims its row (announce.ts
  * postNow): admission does not reserve a slot, so two announcements admitted
  * before either claims would otherwise both post at cap-1.

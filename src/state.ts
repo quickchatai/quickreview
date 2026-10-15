@@ -383,6 +383,23 @@ export function cancellationOrder(a: CancellationTally, b: CancellationTally): n
   return Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause);
 }
 
+/** Spend and measured tokens summed over `rounds`. Expired rounds count:
+ * they blew a deadline, they did not get a refund — excluding them would
+ * erase real token cost (see StateStore.totalSpend). */
+export function roundUsage(
+  rounds: readonly Pick<RoundRow, "est_usd" | "tokens_in" | "tokens_out">[],
+): {
+  spend_usd: number;
+  tokens_in: number;
+  tokens_out: number;
+} {
+  return {
+    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
+    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
+  };
+}
+
 /** The cancelled rounds among `rounds`, grouped by cause (an unclassified
  * one is `unknown`) and in `cancellationOrder`. */
 export function tallyCancellations(
@@ -537,6 +554,7 @@ export type SlackDisposition =
   | "injected"
   | "dropped_echo"
   | "dropped_stale"
+  | "dropped_delivery_failed"
   | "dropped_cap"
   | "dropped_subtype"
   | "dropped_dupe"
@@ -6641,6 +6659,31 @@ export class StateStore {
     return info.changes === 1;
   }
 
+  /**
+   * Claim a FAILED post again for a retry: the row becomes a fresh claim
+   * (ok = 1, no ts, stamped now), so the rolling-hour ceiling counts the new
+   * attempt exactly as it counts a first one. False when the row is not a
+   * failure — delivered, or claimed and not yet settled.
+   */
+  reclaimSlackPost(
+    idemKey: string,
+    row: { thread_ts?: string | null; chars?: number } = {},
+  ): boolean {
+    const info = this.db
+      .prepare(
+        `UPDATE slack_posts SET ok = 1, ts = NULL, error = NULL, posted_at = @posted_at,
+           thread_ts = @thread_ts, chars = @chars
+         WHERE idem_key = @idem_key AND ok = 0`,
+      )
+      .run({
+        idem_key: idemKey,
+        posted_at: this.ts(),
+        thread_ts: row.thread_ts ?? null,
+        chars: row.chars ?? 0,
+      });
+    return info.changes === 1;
+  }
+
   /** Fill in the Slack-assigned message ts (and outcome) after the API call. */
   settleSlackPost(
     idemKey: string,
@@ -7177,9 +7220,7 @@ export function buildStatusSnapshot(
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
     total_spend_usd: store.totalSpend(),
-    // Expired rounds COUNT: a round that blew its deadline still burned its
-    // tokens — same rule as totalSpend/cli/metrics.
-    today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    today_spend_usd: roundUsage(store.roundsOn(today)).spend_usd,
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth
       ? {

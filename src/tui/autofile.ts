@@ -14,17 +14,10 @@
 // Both keys are stable across pin and across the stamp itself — `memoryKey`
 // normalizes exactly those two mutations away.
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
-  closeSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseEventTags } from "../memory/eventtags.js";
+import { claimTrackerId } from "../trackerid.js";
 import { refOf, type MemoryEntry, type MemoryStore } from "./memory.js";
 
 export const MEMORY_KEY_LINE = "Memory-key:";
@@ -107,23 +100,7 @@ export function filedKeys(paths: TrackerPaths): Set<string> {
 /** Claim the next free FT id via exclusive-create of `.ids/<NNNN>` (the
  * tracker's claim-is-the-lock protocol). Returns the zero-padded number. */
 export function claimNextId(root: string, ticketRelPath: (n: string) => string): string {
-  const idsDir = join(root, ".ids");
-  const taken = readdirSync(idsDir)
-    .filter((f) => /^\d{4}$/.test(f))
-    .map((f) => Number(f));
-  let candidate = (taken.length > 0 ? Math.max(...taken) : 0) + 1;
-  for (let tries = 0; tries < 50; tries++, candidate++) {
-    const n = String(candidate).padStart(4, "0");
-    try {
-      const fd = openSync(join(idsDir, n), "wx");
-      writeFileSync(fd, `${ticketRelPath(n)}\n`);
-      closeSync(fd);
-      return n;
-    } catch {
-      /* raced by a concurrent claimer — try the next number */
-    }
-  }
-  throw new Error("could not claim a tracker id (50 collisions)");
+  return claimTrackerId(root, ticketRelPath);
 }
 
 function slugify(text: string): string {

@@ -22,6 +22,7 @@ import { memoryStatusLine } from "./memory/health.js";
 import {
   cancelCauseLabel,
   parseExecutedPasses,
+  roundUsage,
   StateStore,
   tallyCancellations,
   type CancellationTally,
@@ -701,21 +702,6 @@ function keptFinding(f: DoubtedFinding): DoubtedFinding {
     severity: f.severity,
     word: f.word,
     reason: f.reason,
-  };
-}
-
-/** Spend and measured tokens summed over `rounds`. Expired rounds count:
- * they blew a deadline, they did not get a refund — excluding them would
- * erase real token cost (see StateStore.totalSpend). */
-function roundUsage(rounds: readonly RoundRow[]): {
-  spend_usd: number;
-  tokens_in: number;
-  tokens_out: number;
-} {
-  return {
-    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
-    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
-    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
   };
 }
 

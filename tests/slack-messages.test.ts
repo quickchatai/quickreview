@@ -50,6 +50,8 @@ describe("escaping and refs", () => {
     expect(ownerRef(cfg)).toBe("<@U_MAT>");
     cfg.owner.slack_id = "";
     expect(ownerRef(cfg)).toBe("Example Owner"); // fixture [owner] name
+    cfg.owner.name = "Ops <&> Team";
+    expect(ownerRef(cfg)).toBe("Ops &lt;&amp;&gt; Team");
     cfg.owner.name = "";
     expect(ownerRef(cfg)).toBe("the owner");
   });
@@ -130,6 +132,21 @@ describe("verdict (in-thread)", () => {
       "<@U_ALICE> ✅ *APPROVED* — round 2, 14 min\n" +
         "Nothing blocking; the retry loop is bounded now.\n" +
         "<https://github.com/exampleorg/example-app/pull/5263|review on GitHub>",
+    );
+  });
+
+  it("an APPROVE whose approval CI withheld never reads as APPROVED", () => {
+    const text = verdictMessage(cfg, {
+      pr: 1,
+      author: "alice",
+      round_no: 1,
+      verdict: "APPROVE",
+      approval_withheld: true,
+      summary: "s",
+      duration_min: 3,
+    });
+    expect(text.split("\n")[0]).toBe(
+      "<@U_ALICE> ⏳ *APPROVAL WITHHELD (CI not green)* — round 1, 3 min",
     );
   });
 

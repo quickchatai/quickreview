@@ -398,6 +398,21 @@ describe("profile write tools: validate, diff, commit", () => {
     expect(existsSync(join(dir, "state", "setup", "commits"))).toBe(false);
   });
 
+  it("a commit-request lookup that cannot be read refuses the write — never a hang", () => {
+    liveConfig("acme");
+    // `setup/commits` is a file: every lookup under it fails, not just one.
+    write(join(dir, "state", "setup", "commits"), "not a directory\n");
+    const r = engine().profileApply({
+      priorities: answers({ security: "critical" }),
+      goals: "g",
+      write: true,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok)
+      expect(r.errors[0]).toMatch(/commit requests .* cannot be read .* nothing was written/);
+    expect(existsSync(join(profileDir("acme"), "profile.toml"))).toBe(false);
+  });
+
   it("never writes a generic example; with no profile named, one must be given", () => {
     liveConfig("default");
     const r = engine().profileApply({ priorities: answers(), goals: "g", write: true });

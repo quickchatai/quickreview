@@ -350,6 +350,8 @@ export interface EventLoopStatus {
     busy_share: number | null;
     detail: string;
   } | null;
+  /** When the stall wake was last RAISED — the anomaly, which the wake policy
+   * may dedupe and whose injection is best-effort; not a delivery receipt. */
   last_wake_at: string | null;
 }
 
@@ -600,7 +602,11 @@ export class DaemonLoadMonitor {
     const stall = next.event_loop.stall;
     if (
       stall &&
-      (this.lastWakeAt === null || nowMs - this.lastWakeAt >= this.deps.policy.cooldownMs)
+      (this.lastWakeAt === null ||
+        // A wake stamped after now is from before a BACKWARD wall-clock step:
+        // like a sample from "the future", it cannot hold the cooldown.
+        this.lastWakeAt > nowMs ||
+        nowMs - this.lastWakeAt >= this.deps.policy.cooldownMs)
     ) {
       this.lastWakeAt = nowMs;
       try {
@@ -948,7 +954,7 @@ function readEventLoop(v: unknown): { ok: true; view: EventLoopView } | { ok: fa
               busy_share: s.busy_share as number | null,
               detail: s.detail as string,
             },
-      last_wake_at: v.last_wake_at as string | null,
+      last_wake_at: v.last_wake_at,
     },
   };
 }
@@ -1019,7 +1025,7 @@ export function daemonLoadLine(d: unknown): string {
       ? `p50 ${fmtMs(e.p50_ms)} · p99 ${fmtMs(e.p99_ms)} · max ${fmtMs(e.max_ms)} over ${fmtMs(e.covered_s * 1000)} (${e.samples} samples)`
       : "";
   if (e.state === "stalled")
-    return `daemon event loop: STALLED since ${e.since} — ${e.stall?.detail ?? figures}${longest}${e.last_wake_at ? `; overseer woken ${e.last_wake_at}` : ""}`;
+    return `daemon event loop: STALLED since ${e.since} — ${e.stall?.detail ?? figures}${longest}${e.last_wake_at ? `; stall wake raised ${e.last_wake_at}` : ""}`;
   if (e.state === "ok") return `daemon event loop: ok — ${figures}${longest}; ${cpu}`;
   return `daemon event loop: UNKNOWN — no sample in the window yet${longest}; ${cpu}`;
 }

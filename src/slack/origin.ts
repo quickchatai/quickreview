@@ -23,15 +23,38 @@
 // Slack record at boot, but no Slack turn survives a restart for the belt to
 // hold anyway: the container restart takes the overseer's turn with it).
 //
-// Attribution: a command in `commands/slack/` is attributed to
-// the most recent UNEXPIRED origin. The window is short by design — an origin
-// is a "a human is mid-conversation with you right now" marker, not a
-// session-long grant, and no origin means no rights (fail closed).
+// Attribution follows the turn being SERVED, never the newest record. The
+// overseer runs one wake at a time: the inject bridge offers a wake only
+// while pi is idle, takes pending wakes in FILE-NAME order, and moves a file
+// to `.done/` when pi accepts it, so a wake written while another turn runs
+// waits behind it. A record is bound to the wake file it was written for, and
+// the order that matters is the bridge's: the record whose wake comes LAST in
+// name order among the accepted ones is the running turn's. Write order is
+// not that order — a writer records first and names its wake file only after
+// an await, so two writers can finish in either order. Every record not yet
+// accepted (unbound, or bound to a wake still pending) describes a turn still
+// to come. The rights a command gets are the MOST RESTRICTIVE of the running
+// record and every one still to come: a queued owner message or daemon wake
+// never lends its rights to the guest turn still running, and a queued guest
+// message restricts a running owner turn (fail closed). A record whose wake
+// left the queue without being accepted, before the running one, describes no
+// turn and drops out. Acceptance is read from disk only as "the wake left
+// the pending queue AND landed in `.done/`": both live in the overseer's
+// inject dir, which the bash guard refuses every session's write to, and a
+// session has no program that removes or moves a file. Built without the
+// delivery directory, the store sees no acceptance and the newest record is
+// in force at once.
+//
+// A command in `commands/slack/` is attributed to an UNEXPIRED origin. The
+// window is short by design — an origin is a "a human is mid-conversation
+// with you right now" marker, not a session-long grant, and no origin means
+// no rights (fail closed).
 //
 // The legacy `commands/` belt asks a DIFFERENT question — "who caused the turn
 // I am serving?" — and answers it from `latestAny()`, ignoring expiry: waiting
 // out a TTL must never turn a guest's turn into an owner-tier one. Only a
-// daemon wake (`writeLocal`) supersedes a Slack origin there.
+// daemon wake (`writeLocal`) that pi has accepted supersedes a Slack origin
+// there.
 import {
   existsSync,
   mkdirSync,
@@ -42,7 +65,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { foldSlackTier, type SlackTier } from "../state.js";
 
 /**
@@ -118,16 +141,70 @@ export function parseOriginRecord(raw: unknown): OriginRecord | null {
  * never read a half-written record. The file is the audit copy; the grant the
  * gate consults is the in-memory one (see PROVENANCE at the top).
  *
- * The file NAME is the inject file the router dropped, which is what makes the
- * record auditable against the overseer's transcript. Lookup, however, is
- * time-ordered, not name-keyed: `latest()` returns the most recent unexpired
- * record this process wrote, because the overseer's command file carries no back-reference to the
- * inject that prompted it.
+ * The file NAME is the inject file the record was bound to, which is what
+ * makes the record auditable against the overseer's transcript. The overseer's
+ * command file carries no back-reference to the inject that prompted it, so
+ * lookup is by delivery order: the turn being served is the one whose inject
+ * pi accepted last (see "Attribution" at the top).
  */
+/** One record this process wrote, with what it knows of its wake's delivery. */
+interface Held {
+  rec: OriginRecord;
+  seq: number;
+  /** The wake file's name without `.md`, once the record is bound to one. */
+  stem: string | null;
+  /** pi accepted the bound wake (sticky once seen). */
+  accepted: boolean;
+}
+
+/** Rights order, least first: the most restrictive record wins a tie-break. */
+const TIER_RANK: Record<SlackTier, number> = {
+  ignored: 0,
+  anyone: 1,
+  author: 2,
+  owner: 3,
+  system: 4,
+};
+
+/**
+ * The rights several candidate records leave: the lowest tier among them, and
+ * for `author` only the PRs every author-tier candidate is authorised on.
+ * `cands` comes latest first; the audit fields are those of the lowest-tier
+ * record nearest the running turn.
+ */
+function mostRestrictive(cands: readonly OriginRecord[]): OriginRecord | null {
+  if (cands.length === 0) return null;
+  const low = Math.min(...cands.map((c) => TIER_RANK[c.tier]));
+  const lowest = cands.filter((c) => TIER_RANK[c.tier] === low);
+  const pick = lowest[lowest.length - 1]!;
+  if (pick.tier !== "author") return pick;
+  const prs = pick.authorized_prs.filter((n) => lowest.every((c) => c.authorized_prs.includes(n)));
+  return { ...pick, authorized_prs: prs };
+}
+
+/**
+ * The bridge's delivery order, latest first: unbound records (their wake
+ * files will be named after every existing one), newest write first; then
+ * bound ones by wake name, descending — the reverse of the bridge's own
+ * `sort()`.
+ */
+function byDeliveryDesc(a: Held, b: Held): number {
+  if (a.stem === null || b.stem === null) {
+    if (a.stem === null && b.stem === null) return b.seq - a.seq;
+    return a.stem === null ? -1 : 1;
+  }
+  return a.stem < b.stem ? 1 : a.stem > b.stem ? -1 : b.seq - a.seq;
+}
+
 export class OriginStore {
   private seq = 0;
   /** The records THIS process wrote, keyed by file path — the only authority. */
-  private readonly authority = new Map<string, { rec: OriginRecord; seq: number }>();
+  private readonly authority = new Map<string, Held>();
+  /** Where the bridge moves an accepted wake (`<inject dir>/.done`); null when
+   * this store sees no delivery, and every record is in force at once. */
+  private readonly deliveredDir: string | null;
+  /** The bridge's pending queue — the directory `.done/` sits in. */
+  private readonly pendingDir: string | null;
   /**
    * The belt's answer before this process has written anything: the newest
    * record left on disk by a previous run, kept ONLY when it restricts (a
@@ -139,7 +216,10 @@ export class OriginStore {
   constructor(
     private readonly dir: string,
     private readonly now: () => Date = () => new Date(),
+    opts: { deliveredDir?: string } = {},
   ) {
+    this.deliveredDir = opts.deliveredDir ?? null;
+    this.pendingDir = this.deliveredDir === null ? null : dirname(this.deliveredDir);
     const newest = this.onDisk()[0] ?? null;
     this.bootCause = newest && newest.source === "slack" && newest.tier !== "owner" ? newest : null;
   }
@@ -197,28 +277,55 @@ export class OriginStore {
     const tmp = `${path}.tmp-${process.pid}-${seq}`;
     writeFileSync(tmp, `${JSON.stringify(full, null, 2)}\n`);
     renameSync(tmp, path);
-    this.authority.set(path, { rec: full, seq });
+    this.authority.set(path, { rec: full, seq, stem: null, accepted: this.deliveredDir === null });
     this.prune();
     return full;
   }
 
-  /** Move a record to its final name (the router binds it to the inject file
-   * only once that file exists). Missing source ⇒ no-op. */
+  /**
+   * Bind a record to the wake file written for it, and move the audit file to
+   * that name (the router and the daemon's own wakes bind once the file
+   * exists). Until it is bound, and until pi accepts that wake, the record
+   * describes a queued turn: it restricts the running one, and lends it
+   * nothing. The binding is held in memory, so a failed file move still binds.
+   */
   rename(fromBasename: string, toBasename: string): void {
     const from = this.path(fromBasename);
     const to = this.path(toBasename);
+    const held = this.authority.get(from);
+    if (held) held.stem = toBasename.replace(/\.md$/, "");
     if (from === to || !existsSync(from)) return;
     try {
       renameSync(from, to);
     } catch {
-      /* best effort — the record under the old name still carries the rights */
+      /* best effort — the binding above is what counts */
       return;
     }
-    const held = this.authority.get(from);
     if (held) {
       this.authority.delete(from);
       this.authority.set(to, held);
     }
+  }
+
+  /** Bind a record `writeLocal` returned to the wake file written for it. */
+  bind(rec: OriginRecord, injectPath: string): void {
+    const basename = this.basenameOf(rec);
+    if (basename !== null) this.rename(basename, injectPath.split("/").pop() ?? injectPath);
+  }
+
+  /** Drop a record `writeLocal` returned (the wake it was written for never
+   * landed). */
+  forget(rec: OriginRecord): void {
+    const basename = this.basenameOf(rec);
+    if (basename !== null) this.remove(basename);
+  }
+
+  /** The basename a held record is filed under, or null if not held. */
+  private basenameOf(rec: OriginRecord): string | null {
+    for (const [path, h] of this.authority) {
+      if (h.rec === rec) return path.slice(this.dir.length + 1).replace(/\.json$/, "");
+    }
+    return null;
   }
 
   /** Drop a record (the inject it was written for never landed). */
@@ -231,22 +338,86 @@ export class OriginStore {
   /** Every unexpired record this process wrote, newest first. */
   all(): OriginRecord[] {
     const now = this.now().getTime();
-    return this.held().filter((rec) => Date.parse(rec.expires_at) > now);
-  }
-
-  /** The most recent unexpired origin, or null when no Slack turn is live. */
-  latest(): OriginRecord | null {
-    return this.all()[0] ?? null;
+    return this.held()
+      .map((h) => h.rec)
+      .filter((rec) => Date.parse(rec.expires_at) > now);
   }
 
   /**
-   * The most recent origin REGARDLESS OF AGE — "what caused the last overseer
-   * turn", not "is a turn live". The legacy-dir belt reads this one: expiry
-   * must not be an escalation, so an old Slack origin keeps the belt on until a
-   * daemon wake (a `local` record) supersedes it.
+   * The origin of the turn being served, while it is live: the most
+   * restrictive of the accepted wake's record and every record queued behind
+   * it. Null when any of them has expired — the running turn's origin then
+   * has, and an expired turn authorises nothing — or when no record exists.
+   */
+  latest(): OriginRecord | null {
+    const now = this.now().getTime();
+    const cands = this.serving().map((h) => h.rec);
+    if (cands.some((rec) => Date.parse(rec.expires_at) <= now)) return null;
+    return mostRestrictive(cands);
+  }
+
+  /**
+   * The same origin REGARDLESS OF AGE — "what caused the turn being served",
+   * not "is a turn live". The legacy-dir belt reads this one: expiry must not
+   * be an escalation, so an old Slack origin keeps the belt on until a daemon
+   * wake (a `local` record) pi has accepted supersedes it. Before this process
+   * has seen any wake accepted, the restricting record a previous run left
+   * (`bootCause`) is a candidate too.
    */
   latestAny(): OriginRecord | null {
-    return this.held()[0] ?? this.bootCause;
+    const serving = this.serving();
+    const cands = serving.map((h) => h.rec);
+    if (this.bootCause && !serving.some((h) => this.isAccepted(h))) cands.push(this.bootCause);
+    return mostRestrictive(cands);
+  }
+
+  /**
+   * pi accepted the wake this record is bound to (always, with no delivery
+   * view): the wake file is in `.done/` AND no longer pending. The bridge
+   * moves it with one rename, so a real acceptance shows both; a file planted
+   * in `.done/` beside a wake still queued is not an acceptance. Sticky once
+   * seen.
+   */
+  private isAccepted(h: Held): boolean {
+    if (h.accepted) return true;
+    if (this.deliveredDir === null || h.stem === null) return false;
+    const name = `${h.stem}.md`;
+    if (existsSync(join(this.deliveredDir, name)) && !existsSync(join(this.pendingDir!, name))) {
+      h.accepted = true;
+    }
+    return h.accepted;
+  }
+
+  /**
+   * The records that may describe the turn being served, latest in the
+   * bridge's delivery order first: every record not yet accepted (the unbound
+   * ones ahead of the rest — their wake files do not exist yet), then the
+   * running turn's — the accepted record whose wake comes last in name order.
+   * Every record when none was accepted yet. Without a delivery view, the
+   * newest record alone.
+   */
+  private serving(): Held[] {
+    const held = this.held();
+    if (this.deliveredDir === null) return held.slice(0, 1);
+    let running: Held | null = null;
+    for (const h of held) {
+      if (this.isAccepted(h) && (running === null || h.stem! > running.stem!)) running = h;
+    }
+    const cands =
+      running === null
+        ? held
+        : held.filter((h) => h === running || (!this.isAccepted(h) && this.toCome(h, running)));
+    return cands.sort(byDeliveryDesc);
+  }
+
+  /**
+   * A record not accepted is still to come unless its wake already left the
+   * queue unaccepted ahead of the running one — the bridge takes wakes in
+   * name order, so such a wake is never served.
+   */
+  private toCome(h: Held, running: Held): boolean {
+    if (h.stem === null || h.stem > running.stem!) return true;
+    return existsSync(join(this.pendingDir!, `${h.stem}.md`));
   }
 
   /**
@@ -259,13 +430,11 @@ export class OriginStore {
   }
 
   /** The in-memory records, newest first (expiry, then write order). */
-  private held(): OriginRecord[] {
-    return [...this.authority.values()]
-      .sort((a, b) => {
-        const e = Date.parse(b.rec.expires_at) - Date.parse(a.rec.expires_at);
-        return e !== 0 ? e : b.seq - a.seq;
-      })
-      .map((h) => h.rec);
+  private held(): Held[] {
+    return [...this.authority.values()].sort((a, b) => {
+      const e = Date.parse(b.rec.expires_at) - Date.parse(a.rec.expires_at);
+      return e !== 0 ? e : b.seq - a.seq;
+    });
   }
 
   /** Newest-first scan of every parseable record on disk. */
@@ -304,23 +473,17 @@ export class OriginStore {
   /**
    * Best-effort removal of expired records (opportunistic, never throws).
    *
-   * The NEWEST record is always kept, expired or not: `latestAny()` is what the
-   * legacy-dir belt consults, and deleting the last expired Slack origin would
-   * silently release the belt — waiting would buy rights.
+   * Every record that may describe the turn being served is kept, expired or
+   * not — the accepted one and those queued behind it: `latestAny()` is what
+   * the legacy-dir belt consults, and deleting the last expired Slack origin
+   * would silently release the belt — waiting would buy rights.
    */
   prune(): void {
     const now = this.now().getTime();
-    // Memory first: the newest held record stays (it is the belt's answer).
-    let newestHeld: string | null = null;
-    let newestSeq = -1;
-    for (const [path, h] of this.authority) {
-      if (h.seq > newestSeq) {
-        newestSeq = h.seq;
-        newestHeld = path;
-      }
-    }
+    // Memory first: the records the belt answers from stay.
+    const keepHeld = new Set(this.serving());
     for (const [path, h] of [...this.authority]) {
-      if (path !== newestHeld && Date.parse(h.rec.expires_at) <= now) this.authority.delete(path);
+      if (!keepHeld.has(h) && Date.parse(h.rec.expires_at) <= now) this.authority.delete(path);
     }
     if (!existsSync(this.dir)) return;
     const keep = this.scan()[0]?.name;

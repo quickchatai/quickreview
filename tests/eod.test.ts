@@ -226,6 +226,7 @@ describe("startEodTimer", () => {
     let clock = new Date("2026-08-13T09:00:00Z");
     const timers: Array<{ cb: () => void; ms: number }> = [];
     const injected: string[] = [];
+    const missing: string[] = [];
     let boom = false;
     const timer = startEodTimer({
       timeHHMM: "18:00",
@@ -236,6 +237,7 @@ describe("startEodTimer", () => {
         if (boom) throw new Error("db gone");
         return `cancelled: none (${d})`;
       },
+      onContextMissing: (d, why) => missing.push(`${d}: ${String(why)}`),
       injectOverseer: async (m) => {
         injected.push(m);
       },
@@ -259,6 +261,7 @@ describe("startEodTimer", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(injected).toHaveLength(2); // still fired
     expect(injected[1]).toBe("sweep 2026-08-14");
+    expect(missing).toEqual(["2026-08-14: Error: db gone"]);
     timer.stop();
   });
 
@@ -318,10 +321,11 @@ describe("startEodTimer", () => {
     timer.stop();
   });
 
-  it("a dayContext that never answers costs its context, never the sweep", async () => {
+  it("a dayContext that never answers costs its context, never the sweep — and says so", async () => {
     let clock = new Date("2026-08-13T09:00:00Z");
     const timers: Array<{ cb: () => void; ms: number }> = [];
     const injected: string[] = [];
+    const missing: string[] = [];
     const timer = startEodTimer({
       timeHHMM: "18:00",
       timeZone: TZ,
@@ -329,6 +333,7 @@ describe("startEodTimer", () => {
       readPrompt: () => "sweep {{date}}",
       dayContext: () => new Promise<string>(() => {}),
       dayContextTimeoutMs: 20,
+      onContextMissing: (d, why) => missing.push(`${d}: ${String(why)}`),
       injectOverseer: async (m) => {
         injected.push(m);
       },
@@ -342,6 +347,7 @@ describe("startEodTimer", () => {
     timers[0]!.cb();
     await new Promise((r) => setTimeout(r, 60));
     expect(injected).toEqual(["sweep 2026-08-13"]);
+    expect(missing).toEqual(["2026-08-13: no answer within 20 ms"]);
     timer.stop();
   });
 });

@@ -1597,6 +1597,66 @@ describe("a drain DEFERS the EOD sweep — it fires once the drain lifts", () =>
     s.close();
   });
 
+  it("a shutdown during an ORDINARY day's retries keeps it owed — the next boot fires it", async () => {
+    const clock = { now: new Date("2026-10-06T09:00:00Z") };
+    const s = new StateStore(":memory:");
+    const h = eodHarness({
+      draining: () => false,
+      clock,
+      inject: async () => {
+        throw new Error("overseer not up yet");
+      },
+      deferred: { load: () => s.eodDeferredDates(), save: (d) => s.recordEodDeferred(d) },
+    });
+    clock.now = new Date("2026-10-06T16:00:00Z"); // 18:00 CEST
+    await h.fire(); // the daily timer: the inject fails, a retry waits
+    expect(h.events).toEqual(["error"]);
+    expect(s.eodDeferredDates()).toEqual(["2026-10-06"]);
+    h.timer.stop(); // the daemon shuts down inside the backoff
+    for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 0));
+    expect(s.eodDeferredDates()).toEqual(["2026-10-06"]);
+    const next = eodHarness({
+      draining: () => false,
+      clock,
+      deferred: { load: () => s.eodDeferredDates(), save: (d) => s.recordEodDeferred(d) },
+    });
+    await next.fire(EOD_DEFAULTS.deferPollMs);
+    expect(next.injected).toEqual(["sweep 2026-10-06"]);
+    expect(s.eodDeferredDates()).toEqual([]);
+    next.timer.stop();
+    s.close();
+  });
+
+  it("an ordinary day leaves the owed set once delivered, and once its retries are exhausted", async () => {
+    const clock = { now: new Date("2026-10-06T09:00:00Z") };
+    const s = new StateStore(":memory:");
+    const h = eodHarness({
+      draining: () => false,
+      clock,
+      deferred: { load: () => s.eodDeferredDates(), save: (d) => s.recordEodDeferred(d) },
+    });
+    clock.now = new Date("2026-10-06T16:00:00Z");
+    await h.fire();
+    expect(h.injected).toEqual(["sweep 2026-10-06"]);
+    expect(s.eodDeferredDates()).toEqual([]);
+    h.timer.stop();
+    const failing = eodHarness({
+      draining: () => false,
+      clock,
+      retryBackoffMs: [],
+      inject: async () => {
+        throw new Error("down");
+      },
+      deferred: { load: () => s.eodDeferredDates(), save: (d) => s.recordEodDeferred(d) },
+    });
+    clock.now = new Date("2026-10-07T16:00:00Z");
+    await failing.fire(failing.timers.find((t) => !t.cleared)!.ms);
+    expect(failing.events).toEqual(["error", "failed 2026-10-07 after 1"]);
+    expect(s.eodDeferredDates()).toEqual([]);
+    failing.timer.stop();
+    s.close();
+  });
+
   it("wire.ts persists the deferred day in state.db and no longer skips it", async () => {
     const { readFileSync } = await import("node:fs");
     const wire = readFileSync(join(process.cwd(), "src", "wire.ts"), "utf8");

@@ -40,7 +40,11 @@
 //     mutation path.
 import { codePath } from "./codespan.js";
 import type { GateResult } from "./gate.js";
-import { migrationGate as djangoMigrationGate, type PrFile } from "./heuristics.js";
+import {
+  isMigrationPath,
+  migrationGate as djangoMigrationGate,
+  type PrFile,
+} from "./heuristics.js";
 import type { CollisionCommentRecord } from "./state.js";
 import {
   collisionFingerprint,
@@ -303,7 +307,7 @@ async function djangoPreCheck(
   round: EcosystemRound,
 ): Promise<EcosystemPreCheckOutcome> {
   const log = io.log ?? (() => {});
-  const touchesMigrations = round.files.some((f) => /(^|\/)migrations\//.test(f.filename));
+  const touchesMigrations = round.files.some((f) => isMigrationPath(f.filename));
   if (!io.listBaseMigrations || !round.base_sha) {
     // Not a silent pass: the check is ~15% of all blockers and nothing else in
     // the pipeline catches the class, so a round that could not run it says so.

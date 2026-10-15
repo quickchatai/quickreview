@@ -24,9 +24,8 @@ import {
   bareTag,
   CHECK_THIS_TAG,
   DEFERRED_TAG,
-  postTag,
+  ordinaryPostTag,
   SANCTIONED_TAGS,
-  type Severity,
 } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
 import { findingMarker, findingRecordKey, recordNumber } from "./findingkey.js";
@@ -78,7 +77,6 @@ export interface RenderedReview {
 type Tag = "blocker" | "question" | "nit" | "check this" | "ask your human" | "deferred";
 /** The closed tag grammar (`severity.ts` `SANCTIONED_TAGS`), bare. */
 const TAGS = SANCTIONED_TAGS.map(bareTag) as readonly Tag[];
-const SEVERITIES = new Set(["P0", "P1", "P2", "P3", "nit"]);
 
 interface Posted {
   id: string;
@@ -130,11 +128,7 @@ function severityTagOf(
   confidence: number | null,
   reachability: string | null,
 ): "blocker" | "question" | "nit" {
-  if (tag === "ask your human" || tag === "deferred")
-    return severity && SEVERITIES.has(severity)
-      ? postTag(severity as Severity, confidence ?? 1, reachability as never)
-      : "question";
-  return tag === "check this" ? "question" : tag;
+  return ordinaryPostTag(tag, severity, confidence, reachability)!;
 }
 
 /** A findings-record entry's ordinary tag (`severityTagOf`), whichever route
@@ -144,7 +138,7 @@ export function postedSeverityTag(
 ): "blocker" | "question" | "nit" | null {
   const tag = bareTag(str(raw.posted_as)) as Tag;
   if (!TAGS.includes(tag)) return null;
-  return severityTagOf(tag, str(raw.severity), num(raw.confidence), str(raw.reachability));
+  return severityTagOf(tag, str(raw.severity), recordNumber(raw.confidence), str(raw.reachability));
 }
 
 function readPosted(
@@ -161,7 +155,7 @@ function readPosted(
       `${id}: posted_as ${JSON.stringify(raw.posted_as)} is outside the grammar — rendered as a question`,
     );
   const severity = str(raw.severity);
-  const confidence = num(raw.confidence);
+  const confidence = recordNumber(raw.confidence);
   const reachability = str(raw.reachability);
   const sevTag = severityTagOf(tag, severity, confidence, reachability);
   const reason = str(raw.reason) ?? "";
@@ -169,8 +163,8 @@ function readPosted(
   if (!str(raw.title)) problems.push(`${id}: no title — the reason's first sentence stands in`);
   const body = str(raw.body) ?? reason;
   if (!str(raw.body)) problems.push(`${id}: no body — the reason stands in`);
-  const line = num(raw.line);
-  const start = num(raw.start_line);
+  const line = recordNumber(raw.line);
+  const start = recordNumber(raw.start_line);
   return {
     id,
     recordKey,

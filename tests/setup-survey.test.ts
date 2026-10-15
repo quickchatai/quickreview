@@ -336,6 +336,15 @@ describe("the plan", () => {
     );
   });
 
+  it("a repo with no directive file and no design doc has no repo-wide case", () => {
+    const plan = planSurvey({ ...input, agentFiles: [], guides: [] });
+    expect(plan.cases.some((c) => c.stage === "repo")).toBe(false);
+    // …and with nothing to sample either, the plan is empty: the runner's
+    // "nothing to survey" refusal is what answers.
+    const empty = planSurvey({ ...input, files: ["package.json"], agentFiles: [], guides: [] });
+    expect(empty.cases).toEqual([]);
+  });
+
   it("the preview key names the plan, the head AND the price", () => {
     const plan = planSurvey(input);
     const R = REFERENCE_RATE;
@@ -711,6 +720,63 @@ describe("a survey run", () => {
       error: "pi exited 1",
     });
     expect(onDisk().last_complete).toBeNull(); // not completed: a plain start may run again
+  });
+
+  it("a failed case keeps what it spent", async () => {
+    const fake = new FakeCases((spec) =>
+      spec.unit === "web"
+        ? { ok: false, reason: "pi exited 1", cost_usd: 0.07 }
+        : answer(`[convention] ${spec.unit} v2`),
+    );
+    const { engine } = await started({ cases: fake });
+    await engine.surveyIdle();
+    expect(engine.surveyStatus().run!.cases.find((c) => c.id === "web")).toMatchObject({
+      status: "failed",
+      cost_usd: 0.07,
+    });
+  });
+
+  it("a lens that opened none of its files read nothing: the unit keeps its earlier entries", async () => {
+    const mem = new FakeMemory(["#survey kind=convention unit=web run=survey-old — web v1"]);
+    const fake = new FakeCases((spec) =>
+      spec.unit === "web"
+        ? { ok: true, output: "NONE", cost_usd: 0.01, reads: [] }
+        : answer(`[convention] ${spec.unit} v2`),
+    );
+    const { engine } = await started({ cases: fake, memory: mem });
+    await engine.surveyIdle();
+    expect(mem.live().map((e) => e.text.split(" — ")[1])).toContain("web v1");
+    const s = engine.surveyStatus().run!;
+    expect(s.state).toBe("partial");
+    expect(s.cases.find((c) => c.id === "web")).toMatchObject({
+      status: "failed",
+      cost_usd: 0.01,
+      error: expect.stringMatching(/read none of its/),
+    });
+  });
+
+  it("a lens that opened only some of its files keeps its notes, and the unit its earlier ones", async () => {
+    const mem = new FakeMemory(["#survey kind=convention unit=@repo run=survey-old — repo v1"]);
+    const fake = new FakeCases((spec) =>
+      spec.unit === REPO_SCOPE
+        ? {
+            ok: true,
+            output: "[convention] repo v2",
+            cost_usd: 0.01,
+            reads: [`/reviewed-repo/${spec.files[0]!}`],
+          }
+        : answer(`[convention] ${spec.unit} v2`),
+    );
+    const { engine } = await started({ cases: fake, memory: mem });
+    await engine.surveyIdle();
+    const live = mem.live().map((e) => e.text.split(" — ")[1]);
+    expect(live).toContain("repo v1");
+    expect(live).toContain("repo v2");
+    const s = engine.surveyStatus().run!;
+    expect(s.state).toBe("partial");
+    expect(s.cases.find((c) => c.id === REPO_SCOPE)).toMatchObject({ status: "done" });
+    expect(s.cases.find((c) => c.id === REPO_SCOPE)!.unopened!.length).toBeGreaterThan(0);
+    expect(s.problems).toEqual([expect.stringMatching(/@repo keeps its earlier notes/)]);
   });
 
   it("notes memory refused are counted, and that unit is not superseded", async () => {

@@ -233,6 +233,53 @@ describe("reconnect", () => {
     await client.stopSocket();
   });
 
+  it("a stalled apps.connections.open is abandoned at its deadline and the ladder reconnects", async () => {
+    let n = 0;
+    const sockets: FakeWs[] = [];
+    const fetchFn = (async (_url: string | URL, init: RequestInit = {}) => {
+      n += 1;
+      if (n === 1) {
+        // Headers arrive; the body never does.
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) =>
+              init.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+            ),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, url: "wss://fake/2" }),
+      } as unknown as Response;
+    }) as unknown as SlackFetchFn;
+    const logs: string[] = [];
+    const client = new SlackSocketClient({
+      appToken: "xapp-test",
+      fetchFn,
+      apiBase: "https://slack.test/api",
+      webSocketFactory: (url) => {
+        const ws = new FakeWs(url);
+        sockets.push(ws);
+        return ws;
+      },
+      backoffMs: [1000],
+      random: () => 1,
+      openTimeoutMs: 5_000,
+      log: (m) => void logs.push(m),
+    });
+    const started = client.startSocket(() => {});
+    await vi.advanceTimersByTimeAsync(5_000);
+    await started; // startup is not held by the stalled open
+    expect(logs).toContain("slack.socket.open_threw");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(n).toBe(2);
+    expect(sockets.map((w) => w.url)).toEqual(["wss://fake/2"]);
+    await client.stopSocket();
+  });
+
   it("stopSocket halts reconnection", async () => {
     const h = harness();
     await h.client.startSocket(() => {});

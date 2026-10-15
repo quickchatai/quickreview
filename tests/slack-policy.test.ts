@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseConfig, type Config } from "../src/config.js";
 import { StateStore } from "../src/state.js";
 import {
+  announcedCap,
   announcementKey,
   causePolicy,
   claimPost,
@@ -106,6 +107,19 @@ describe("decideTurn", () => {
     inject("a", "U1");
     expect(decideTurn(store, cfg, { slackUser: "U1" }, clock).cap).toBe("per_user_daily_turns");
     expect(decideTurn(store, cfg, { slackUser: "U2" }, clock).allow).toBe(true);
+  });
+
+  it("only the channel-wide cap is announced to the channel — a per-user one is not", () => {
+    cfg.slack.policy.daily_turns = 2;
+    cfg.slack.policy.per_user_daily_turns = 1;
+    inject("a", "U1");
+    const user = decideTurn(store, cfg, { slackUser: "U1" }, clock);
+    expect(user.cap).toBe("per_user_daily_turns");
+    expect(announcedCap(cfg, user)).toBeNull();
+    inject("b", "U2");
+    const channel = decideTurn(store, cfg, { slackUser: "U3" }, clock);
+    expect(channel.cap).toBe("daily_turns");
+    expect(announcedCap(cfg, channel)).toBe(2);
   });
 
   it("counts only injected events — drops are free", () => {

@@ -57,7 +57,8 @@ export function userRef(cfg: Config, githubLogin: string): string {
 export function ownerRef(cfg: Config): string {
   const id = cfg.owner.slack_id.trim();
   if (id) return mention(id);
-  return cfg.owner.name.trim() || "the owner";
+  const name = cfg.owner.name.trim();
+  return name ? escapeMrkdwn(name) : "the owner";
 }
 
 export function prUrl(cfg: Config, pr: number): string {
@@ -119,11 +120,18 @@ const VERDICT_RENDER: Record<VerdictName, { glyph: string; label: string }> = {
   NEEDS_HUMAN: { glyph: "🚨", label: "UNDECIDED (legacy verdict)" },
 };
 
+/** An APPROVE whose approval CI withheld: the review posted as a COMMENT,
+ * and the approval follows only once CI is green at the head. */
+const APPROVAL_WITHHELD_RENDER = { glyph: "⏳", label: "APPROVAL WITHHELD (CI not green)" };
+
 export interface VerdictMessageInput {
   pr: number;
   author: string;
   round_no: number;
   verdict: VerdictName;
+  /** The verdict was APPROVE, but CI was not green at the head, so the review
+   * posted as a COMMENT and no approval exists yet. */
+  approval_withheld?: boolean;
   /** `rounds.summary`, VERBATIM. Null ⇒ the line is dropped, never filled in. */
   summary: string | null;
   duration_min: number;
@@ -132,7 +140,10 @@ export interface VerdictMessageInput {
 }
 
 export function verdictMessage(cfg: Config, m: VerdictMessageInput): string {
-  const { glyph, label } = VERDICT_RENDER[m.verdict];
+  const { glyph, label } =
+    m.verdict === "APPROVE" && m.approval_withheld
+      ? APPROVAL_WITHHELD_RENDER
+      : VERDICT_RENDER[m.verdict];
   const lines = [
     `${userRef(cfg, m.author)} ${glyph} *${label}* — round ${m.round_no}, ${m.duration_min} min`,
   ];
