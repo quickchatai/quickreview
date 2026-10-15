@@ -545,7 +545,21 @@ export function daemonOriginWakes(opts: {
       await hooks.injectOverseer(message);
       return;
     }
-    const path = await opts.injectOverseerFile(message);
+    let path: string;
+    try {
+      path = await opts.injectOverseerFile(message);
+    } catch (err) {
+      // No wake landed, so no turn will be the stamped record's: drop it, as
+      // the router drops a Slack record whose inject failed.
+      if (stamped) {
+        try {
+          origins.forget(stamped);
+        } catch (e) {
+          log("slack: could not drop the local origin of a failed wake", e);
+        }
+      }
+      throw err;
+    }
     if (stamped) {
       try {
         origins.bind(stamped, path);
@@ -646,6 +660,22 @@ export function routeCurationReceipt(
       reason: "the learner is not running on this daemon ([openviking] enabled = false)",
     };
   return learner.applyReceipt(receipt);
+}
+
+/**
+ * The daemon's origin store: it reads the overseer's accepted wakes (the
+ * inject bridge's `.done/` beside the overseer's pending queue), so a
+ * command's rights are those of the turn being served. A store built without
+ * that view puts the newest record in force at once.
+ */
+export function overseerOriginStore(
+  root: string,
+  sessions: Pick<PiSessionManager, "injectDir">,
+  now?: () => Date,
+): OriginStore {
+  return new OriginStore(join(root, "state", "slack", "origin"), now, {
+    deliveredDir: join(sessions.injectDir(OVERSEER_SESSION), ".done"),
+  });
 }
 
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
@@ -795,12 +825,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // The origin store is built here, before the daemon, because both halves of
   // "who caused this turn" write to it: the router (Slack turns) and every
   // daemon-originated overseer wake below (local turns).
-  // It reads the overseer's accepted wakes (the bridge's `.done/`), so a
-  // command's rights are those of the turn being served, never of a wake
-  // still queued behind it.
-  const origins = new OriginStore(join(root, "state", "slack", "origin"), undefined, {
-    deliveredDir: join(sessions.injectDir(OVERSEER_SESSION), ".done"),
-  });
+  const origins = overseerOriginStore(root, sessions);
 
   // The daemon sees a wrapped SessionHooks (see `daemonOriginWakes`): every
   // autonomous overseer wake stamps a `local` origin, bound to its wake file,

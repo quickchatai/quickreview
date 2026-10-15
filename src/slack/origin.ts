@@ -25,14 +25,23 @@
 //
 // Attribution follows the turn being SERVED, never the newest record. The
 // overseer runs one wake at a time: the inject bridge offers a wake only
-// while pi is idle and moves its file to `.done/` when pi accepts it, so a
-// wake written while another turn runs waits behind it. A record is bound to
-// the wake file it was written for, and the record whose wake pi accepted
-// last is the running turn's — records written after it describe wakes still
-// queued. The rights a command gets are the MOST RESTRICTIVE of that record
-// and every record queued behind it: a queued owner message or daemon wake
+// while pi is idle, takes pending wakes in FILE-NAME order, and moves a file
+// to `.done/` when pi accepts it, so a wake written while another turn runs
+// waits behind it. A record is bound to the wake file it was written for, and
+// the order that matters is the bridge's: the record whose wake comes LAST in
+// name order among the accepted ones is the running turn's. Write order is
+// not that order — a writer records first and names its wake file only after
+// an await, so two writers can finish in either order. Every record not yet
+// accepted (unbound, or bound to a wake still pending) describes a turn still
+// to come. The rights a command gets are the MOST RESTRICTIVE of the running
+// record and every one still to come: a queued owner message or daemon wake
 // never lends its rights to the guest turn still running, and a queued guest
-// message restricts a running owner turn (fail closed). Built without the
+// message restricts a running owner turn (fail closed). A record whose wake
+// left the queue without being accepted, before the running one, describes no
+// turn and drops out. Acceptance is read from disk only as "the wake left
+// the pending queue AND landed in `.done/`": both live in the overseer's
+// inject dir, which the bash guard refuses every session's write to, and a
+// session has no program that removes or moves a file. Built without the
 // delivery directory, the store sees no acceptance and the newest record is
 // in force at once.
 //
@@ -56,7 +65,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { foldSlackTier, type SlackTier } from "../state.js";
 
 /**
@@ -159,9 +168,9 @@ const TIER_RANK: Record<SlackTier, number> = {
 
 /**
  * The rights several candidate records leave: the lowest tier among them, and
- * for `author` only the PRs every author-tier candidate is authorised on. The
- * audit fields are the oldest lowest-tier record's (the one nearest the
- * running turn).
+ * for `author` only the PRs every author-tier candidate is authorised on.
+ * `cands` comes latest first; the audit fields are those of the lowest-tier
+ * record nearest the running turn.
  */
 function mostRestrictive(cands: readonly OriginRecord[]): OriginRecord | null {
   if (cands.length === 0) return null;
@@ -173,6 +182,20 @@ function mostRestrictive(cands: readonly OriginRecord[]): OriginRecord | null {
   return { ...pick, authorized_prs: prs };
 }
 
+/**
+ * The bridge's delivery order, latest first: unbound records (their wake
+ * files will be named after every existing one), newest write first; then
+ * bound ones by wake name, descending — the reverse of the bridge's own
+ * `sort()`.
+ */
+function byDeliveryDesc(a: Held, b: Held): number {
+  if (a.stem === null || b.stem === null) {
+    if (a.stem === null && b.stem === null) return b.seq - a.seq;
+    return a.stem === null ? -1 : 1;
+  }
+  return a.stem < b.stem ? 1 : a.stem > b.stem ? -1 : b.seq - a.seq;
+}
+
 export class OriginStore {
   private seq = 0;
   /** The records THIS process wrote, keyed by file path — the only authority. */
@@ -180,6 +203,8 @@ export class OriginStore {
   /** Where the bridge moves an accepted wake (`<inject dir>/.done`); null when
    * this store sees no delivery, and every record is in force at once. */
   private readonly deliveredDir: string | null;
+  /** The bridge's pending queue — the directory `.done/` sits in. */
+  private readonly pendingDir: string | null;
   /**
    * The belt's answer before this process has written anything: the newest
    * record left on disk by a previous run, kept ONLY when it restricts (a
@@ -194,6 +219,7 @@ export class OriginStore {
     opts: { deliveredDir?: string } = {},
   ) {
     this.deliveredDir = opts.deliveredDir ?? null;
+    this.pendingDir = this.deliveredDir === null ? null : dirname(this.deliveredDir);
     const newest = this.onDisk()[0] ?? null;
     this.bootCause = newest && newest.source === "slack" && newest.tier !== "owner" ? newest : null;
   }
@@ -283,12 +309,23 @@ export class OriginStore {
 
   /** Bind a record `writeLocal` returned to the wake file written for it. */
   bind(rec: OriginRecord, injectPath: string): void {
+    const basename = this.basenameOf(rec);
+    if (basename !== null) this.rename(basename, injectPath.split("/").pop() ?? injectPath);
+  }
+
+  /** Drop a record `writeLocal` returned (the wake it was written for never
+   * landed). */
+  forget(rec: OriginRecord): void {
+    const basename = this.basenameOf(rec);
+    if (basename !== null) this.remove(basename);
+  }
+
+  /** The basename a held record is filed under, or null if not held. */
+  private basenameOf(rec: OriginRecord): string | null {
     for (const [path, h] of this.authority) {
-      if (h.rec !== rec) continue;
-      const name = injectPath.split("/").pop() ?? injectPath;
-      this.rename(path.slice(this.dir.length + 1).replace(/\.json$/, ""), name);
-      return;
+      if (h.rec === rec) return path.slice(this.dir.length + 1).replace(/\.json$/, "");
     }
+    return null;
   }
 
   /** Drop a record (the inject it was written for never landed). */
@@ -334,25 +371,53 @@ export class OriginStore {
     return mostRestrictive(cands);
   }
 
-  /** pi accepted the wake this record is bound to (always, with no delivery
-   * view). Sticky: the bridge's `.done/` is read until it says yes. */
+  /**
+   * pi accepted the wake this record is bound to (always, with no delivery
+   * view): the wake file is in `.done/` AND no longer pending. The bridge
+   * moves it with one rename, so a real acceptance shows both; a file planted
+   * in `.done/` beside a wake still queued is not an acceptance. Sticky once
+   * seen.
+   */
   private isAccepted(h: Held): boolean {
     if (h.accepted) return true;
     if (this.deliveredDir === null || h.stem === null) return false;
-    if (existsSync(join(this.deliveredDir, `${h.stem}.md`))) h.accepted = true;
+    const name = `${h.stem}.md`;
+    if (existsSync(join(this.deliveredDir, name)) && !existsSync(join(this.pendingDir!, name))) {
+      h.accepted = true;
+    }
     return h.accepted;
   }
 
   /**
-   * The records that may describe the turn being served, newest first: the
-   * newest one whose wake pi accepted, and every one written after it (their
-   * wakes are still queued, or their acceptance cannot be seen). All of them
-   * when none was accepted yet.
+   * The records that may describe the turn being served, latest in the
+   * bridge's delivery order first: every record not yet accepted (the unbound
+   * ones ahead of the rest — their wake files do not exist yet), then the
+   * running turn's — the accepted record whose wake comes last in name order.
+   * Every record when none was accepted yet. Without a delivery view, the
+   * newest record alone.
    */
   private serving(): Held[] {
     const held = this.held();
-    const i = held.findIndex((h) => this.isAccepted(h));
-    return i === -1 ? held : held.slice(0, i + 1);
+    if (this.deliveredDir === null) return held.slice(0, 1);
+    let running: Held | null = null;
+    for (const h of held) {
+      if (this.isAccepted(h) && (running === null || h.stem! > running.stem!)) running = h;
+    }
+    const cands =
+      running === null
+        ? held
+        : held.filter((h) => h === running || (!this.isAccepted(h) && this.toCome(h, running)));
+    return cands.sort(byDeliveryDesc);
+  }
+
+  /**
+   * A record not accepted is still to come unless its wake already left the
+   * queue unaccepted ahead of the running one — the bridge takes wakes in
+   * name order, so such a wake is never served.
+   */
+  private toCome(h: Held, running: Held): boolean {
+    if (h.stem === null || h.stem > running.stem!) return true;
+    return existsSync(join(this.pendingDir!, `${h.stem}.md`));
   }
 
   /**

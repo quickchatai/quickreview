@@ -344,6 +344,91 @@ describe("OriginStore", () => {
       expect(served.latestAny()).toMatchObject({ slack_user: "U0GUEST" });
     });
 
+    // The writers record first and name the wake only after an await, so a
+    // record written earlier can get the LATER wake name. The bridge serves
+    // by name; so must the rights.
+    // MUTATION: order `serving()` by write order (`held()` alone) — the
+    // owner/daemon rights below leak into the guest's turn.
+    it("follows the bridge's wake-name order, not the order records were written", () => {
+      served.write("event-EvG", {
+        event_id: "EvG",
+        slack_user: "U0GUEST",
+        tier: "anyone",
+        authorized_prs: [],
+      });
+      at(1_000);
+      served.write("event-EvO", {
+        event_id: "EvO",
+        slack_user: "U0MAT",
+        tier: "owner",
+        authorized_prs: [],
+      });
+      writeFileSync(join(inject, "0001.md"), "owner\n");
+      served.rename("event-EvO", "0001.md");
+      writeFileSync(join(inject, "0002.md"), "guest\n");
+      served.rename("event-EvG", "0002.md");
+      accept("0001.md");
+      // The owner's turn runs with the guest's message queued behind it.
+      expect(served.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+      accept("0002.md");
+      // The guest's turn runs: the owner's older-named wake is over.
+      expect(served.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+      expect(served.latestAny()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+    });
+
+    it("a daemon wake named before a guest's never lifts the belt off the guest's turn", () => {
+      served.write("event-EvG", {
+        event_id: "EvG",
+        slack_user: "U0GUEST",
+        tier: "anyone",
+        authorized_prs: [],
+      });
+      at(1_000);
+      const local = served.writeLocal("anomaly");
+      writeFileSync(join(inject, "0001.md"), "wake\n");
+      served.bind(local, join(inject, "0001.md"));
+      writeFileSync(join(inject, "0002.md"), "guest\n");
+      served.rename("event-EvG", "0002.md");
+      accept("0001.md");
+      accept("0002.md");
+      expect(served.latestAny()).toMatchObject({ source: "slack", tier: "anyone" });
+    });
+
+    // MUTATION: drop the pending-file check from `isAccepted` — the planted
+    // `.done/` file hands the queued owner's rights to the guest's turn.
+    it("a file planted in .done/ beside a wake still pending is no acceptance", () => {
+      accept(slackTurn(1, "U0GUEST", "anyone"));
+      at(30_000);
+      const owner = slackTurn(2, "U0MAT", "owner");
+      writeFileSync(join(done, owner), "forged\n");
+      expect(served.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+      const local = served.writeLocal("eod-sweep");
+      writeFileSync(join(inject, "wake-3.md"), "wake\n");
+      served.bind(local, join(inject, "wake-3.md"));
+      writeFileSync(join(done, "wake-3.md"), "forged\n");
+      expect(served.latestAny()).toMatchObject({ source: "slack", tier: "anyone" });
+      // The real move still counts.
+      rmSync(join(done, owner));
+      accept(owner);
+      expect(served.latest()).toMatchObject({ slack_user: "U0MAT", tier: "owner" });
+      rmSync(join(done, "wake-3.md"));
+      accept("wake-3.md");
+      expect(served.latestAny()).toMatchObject({ source: "local", tier: "system" });
+    });
+
+    it("a wake that left the queue unaccepted ahead of the running one describes no turn", () => {
+      const guest = slackTurn(1, "U0GUEST", "anyone");
+      at(30_000);
+      const owner = slackTurn(2, "U0MAT", "owner");
+      accept(owner);
+      // Still pending: the bridge serves it next, so it restricts.
+      expect(served.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+      // Quarantined without being served: it no longer does.
+      mkdirSync(join(inject, ".terminal"), { recursive: true });
+      renameSync(join(inject, guest), join(inject, ".terminal", `${guest}.failed`));
+      expect(served.latest()).toMatchObject({ slack_user: "U0MAT", tier: "owner" });
+    });
+
     it("a failed audit-file move still binds the record to its wake", () => {
       served.write("event-Ev1", {
         event_id: "Ev1",
