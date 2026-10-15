@@ -4,12 +4,29 @@
 // plan row (the template's own rule), and each task file carries its row's
 // findings, with the one-line `PRIOR` answer the lens writes back.
 //
-// A LEAF: types and the data fence only. `passtasks.ts` imports it, and
-// `priorfindings.ts` reaches `passtasks.ts` back through the findings record,
-// so nothing here may import either.
+// A LEAF: types and the data fence only. `passtasks.ts` and `priorfindings.ts`
+// import it, and `priorfindings.ts` reaches `passtasks.ts` back through the
+// findings record, so nothing here may import either at runtime.
 import { fenceAsData } from "./memory/datafence.js";
 import type { PriorFindingsList } from "./priorfindings.js";
 import type { PassPlanEntry, PriorAssignment, PriorTaskEntry } from "./types.js";
+
+/** How a listed prior finding is shown, in the round note
+ * (`renderPriorFindingsNote`) and in a lens task file alike. */
+export function priorFindingFields(f: PriorFindingsList["findings"][number]): {
+  where: string;
+  tag: string;
+  lens: string;
+  title: string;
+} {
+  const tag = f.posted_as.startsWith("[") ? f.posted_as : `[${f.posted_as}]`;
+  return {
+    where: f.path ? `${f.path}${f.line !== null ? `:${f.line}` : ""}` : "(no anchor)",
+    tag: `${tag}${f.severity ? ` ${f.severity}` : ""}`,
+    lens: f.lens_ids.length > 0 ? f.lens_ids.join(",") : f.lens || "?",
+    title: f.title ?? "(none recorded)",
+  };
+}
 
 /** The row of `rows` (plan indices) whose focus holds `path`, else null. */
 function rowHolding(
@@ -64,16 +81,12 @@ export function assignPriorFindings(
     if (row === null && baseline.length > 0)
       row = rowHolding(plan, baseline, f.path) ?? baseline[0]!;
     if (row === null) continue;
-    const tag = f.posted_as.startsWith("[") ? f.posted_as : `[${f.posted_as}]`;
     const prev = list.round_no - 1;
     out.set(row, [
       ...(out.get(row) ?? []),
       {
         ref: f.ref,
-        where: f.path ? `${f.path}${f.line !== null ? `:${f.line}` : ""}` : "(no anchor)",
-        tag: `${tag}${f.severity ? ` ${f.severity}` : ""}`,
-        lens: f.lens_ids.length > 0 ? f.lens_ids.join(",") : f.lens || "?",
-        title: f.title ?? "(none recorded)",
+        ...priorFindingFields(f),
         unchanged: f.path !== null && !deltaPaths.has(f.path),
         held_last_round:
           f.round_no === prev || (f.last_status === "open" && f.last_status_round === prev),

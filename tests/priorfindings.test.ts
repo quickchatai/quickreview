@@ -222,6 +222,29 @@ describe("collectPriorFindings — what is still open", () => {
     expect(list.incomplete).toEqual([]);
   });
 
+  it("an un-ingested record with no head_sha takes the round's own head, as ingestion would", () => {
+    const id = store.startRound(7, "first", ["pass-baseline"], 60, { head_sha: HEAD });
+    store.finishRound(id, "REQUEST_CHANGES", null);
+    const r1 = store.roundsFor(7).find((r) => r.id === id)!.round_no;
+    writeRecord(7, r1, {
+      pr: 7,
+      round_no: r1,
+      findings: [
+        {
+          id: "b1",
+          path: "src/x.py",
+          line: 3,
+          lens: "pass-baseline",
+          severity: "P1",
+          disposition: "posted",
+          posted_as: "blocker",
+        },
+      ],
+    });
+    const list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r1 + 1);
+    expect(list.findings.map((f) => [f.ref, f.head_sha])).toEqual([[`${r1}:b1`, HEAD]]);
+  });
+
   it("marks a delivered round with no readable record INCOMPLETE — never an empty list", () => {
     const r1 = deliveredRound(7);
     const list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r1 + 1);
