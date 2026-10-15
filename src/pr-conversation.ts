@@ -6,6 +6,7 @@ import type { GateResult } from "./gate.js";
 import type { StateStore } from "./state.js";
 import { standingVerdict } from "./standing-review.js";
 import { isFeedbackBody } from "./feedback.js";
+import { DEFAULT_PARTIAL_WRITE_POLICY } from "./settledread.js";
 import { wakeOrHold } from "./wakes.js";
 
 export function blockedPrAuthor(store: StateStore, pr: number): string | undefined {
@@ -51,6 +52,29 @@ const RESPONSE_RE = /^pr-(\d+)-conversation-comment-(\d+)\.json$/;
 const RESPONSE_WAIT_MS = 5 * 60_000;
 const RECOVERY_WINDOW_MS = 24 * 60 * 60_000;
 const BODY_LIMIT = 12_000;
+/** An answer file that does not parse (or names the wrong obligation) is
+ * rejected only once its bytes have sat unchanged for this long under our
+ * own observation: a session's write can stall mid-file on a CPU-starved
+ * container, and two sweeps may land milliseconds apart. */
+const ANSWER_SETTLE_MS = DEFAULT_PARTIAL_WRITE_POLICY.settleMs;
+
+/** Author prose as a markdown blockquote: quoted evidence, never instructions. */
+function blockquote(body: string): string {
+  return body
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+}
+
+/** The decided verdict of the latest finished round of `pr` at or before
+ * `at`: the historical-block test shared by intake (`accept`) and the
+ * recovery prefilter (`sweep`), which runs it per captured comment. The two
+ * arguments are SQL expressions (`?` placeholders or correlated columns). */
+function lastDecidedVerdictSql(pr: string, at: string): string {
+  return `(SELECT r.verdict FROM rounds r WHERE r.pr = ${pr} AND r.status = 'done'
+    AND r.finished_at <= ${at} AND r.verdict IN ('REQUEST_CHANGES', 'APPROVE')
+    ORDER BY r.finished_at DESC, r.id DESC LIMIT 1)`;
+}
 
 /** Durable per-message obligations survive wake eviction, daemon/session
  * restart and lost POST responses. Capture is still passive; this separate
@@ -110,13 +134,9 @@ export class PrConversation {
     // pre-review chatter. The round history survives mark re-stamping.
     if (created < Date.parse(mark.reviewed_at)) {
       const previous = this.deps.store.db
-        .prepare(
-          `SELECT verdict FROM rounds
-        WHERE pr = ? AND status = 'done' AND finished_at <= ?
-          AND verdict IN ('REQUEST_CHANGES', 'APPROVE') ORDER BY finished_at DESC, id DESC LIMIT 1`,
-        )
-        .get(comment.pr, new Date(created).toISOString()) as { verdict: string } | undefined;
-      if (previous?.verdict !== "REQUEST_CHANGES") return false;
+        .prepare(`SELECT ${lastDecidedVerdictSql("?", "?")} AS verdict`)
+        .get(comment.pr, new Date(created).toISOString()) as { verdict: string | null };
+      if (previous.verdict !== "REQUEST_CHANGES") return false;
     }
     const at = this.now().toISOString();
     const added = this.deps.store.db.transaction(() => {
@@ -153,16 +173,11 @@ export class PrConversation {
       pr,
     );
     if (!rows.length) return "";
-    const quote = (body: string): string =>
-      body
-        .split("\n")
-        .map((line) => `> ${line}`)
-        .join("\n");
     const text = rows
       .map(
         (o) =>
-          `Author comment ${o.comment_id} (reviewed head ${o.head_sha}; ${o.state}):\n${quote(o.body)}\n` +
-          (o.reply ? `Reviewer's answer:\n${quote(o.reply)}\n` : "No answer recorded yet.\n"),
+          `Author comment ${o.comment_id} (reviewed head ${o.head_sha}; ${o.state}):\n${blockquote(o.body)}\n` +
+          (o.reply ? `Reviewer's answer:\n${blockquote(o.reply)}\n` : "No answer recorded yet.\n"),
       )
       .join("\n");
     return (
@@ -193,11 +208,7 @@ export class PrConversation {
       this.fail(o, "no structured answer after three deliveries");
       return;
     }
-    const quoted = o.body
-      .slice(0, BODY_LIMIT)
-      .split("\n")
-      .map((l) => `> ${l}`)
-      .join("\n");
+    const quoted = blockquote(o.body.slice(0, BODY_LIMIT));
     const message = [
       `# PR conversation response — PR #${o.pr}`,
       "",
@@ -273,7 +284,7 @@ export class PrConversation {
           this.invalid.set(name, { body, at: this.now().getTime() });
           continue;
         }
-        if (this.now().getTime() - prior.at < 250) continue;
+        if (this.now().getTime() - prior.at < ANSWER_SETTLE_MS) continue;
         this.invalid.delete(name);
         this.deps.store.logEvent("pr_conversation_decision_rejected", Number(m[1]), {
           file: name,
@@ -333,11 +344,8 @@ export class PrConversation {
           AND c.source = 'issue_comment' AND c.tagged = 0 AND c.author_type != 'Bot'
           AND lower(c.author) = lower(p.author) AND p.state != 'closed' AND o.comment_id IS NULL
           AND c.created_at >= ? AND c.created_at <= ?
-          AND (c.created_at >= m.reviewed_at OR (
-            SELECT r.verdict FROM rounds r WHERE r.pr = c.pr AND r.status = 'done'
-              AND r.finished_at <= c.created_at AND r.verdict IN ('REQUEST_CHANGES', 'APPROVE')
-            ORDER BY r.finished_at DESC, r.id DESC LIMIT 1
-          ) = 'REQUEST_CHANGES')
+          AND (c.created_at >= m.reviewed_at
+            OR ${lastDecidedVerdictSql("c.pr", "c.created_at")} = 'REQUEST_CHANGES')
           AND length(trim(c.body)) > 0
         ORDER BY c.created_at, c.comment_id LIMIT 25`,
             )
