@@ -49,6 +49,15 @@ export type ValidityView = Validity | "unknown";
 /** Display order: confirmed first, unknown last. */
 export const VALIDITY_ORDER: readonly ValidityView[] = [...VALIDITIES, "unknown"];
 
+/** The longest dismissal reason triage takes. The TUI checks it before
+ * asking, so an over-long reason is refused where it is typed. */
+export const DISMISS_REASON_MAX = 500;
+
+/** A dismissed finding a re-scan settled as no longer reported (findings.ts
+ * `unreported`): out of play, as a fixed one is, until a scan reports it again. */
+export const goneDismissal = (f: Pick<ScanFinding, "state" | "unreported">): boolean =>
+  f.state === "dismissed" && f.unreported != null;
+
 /** A finding's tier as stored — `unknown` when it carries none. */
 export function validityOf(f: { validity?: Validity | null }): ValidityView {
   return f.validity !== undefined &&
@@ -227,6 +236,11 @@ export interface ScanStopResult {
   at: string;
   ok: boolean;
   errors: string[];
+  /** The run the answering companion was driving when it answered — `null`
+   * when it drove none. Absent from an answer that does not say. A run the
+   * record still calls running that the companion says it is not driving was
+   * interrupted (a companion restart loses the run in flight). */
+  in_flight?: string | null;
 }
 
 /** Parse a stop request, or null when it is not one. */
@@ -267,6 +281,9 @@ export function parseStopResult(text: string): ScanStopResult | null {
       errors: Array.isArray(r.errors)
         ? r.errors.filter((e): e is string => typeof e === "string")
         : [],
+      ...(typeof r.in_flight === "string" || r.in_flight === null
+        ? { in_flight: r.in_flight }
+        : {}),
     };
   } catch {
     return null;
@@ -321,17 +338,23 @@ export function clickStopScan(
   };
 }
 
-/** What became of the stop `request`: the companion's answer, or null while
- * it has not answered (a companion that is down stops nothing — and runs
- * nothing either). */
-export function scanStopOutcome(home: string, request: string): string | null {
+/** The companion's latest stop answer, or null when there is none or it
+ * cannot be read (a reader of it learns nothing then — never a throw). */
+export function readStopResult(home: string): ScanStopResult | null {
   let text: string | null;
   try {
     text = readText(join(home, SCAN_STOP_RESULT_FILE));
   } catch {
     return null;
   }
-  const r = text === null ? null : parseStopResult(text);
+  return text === null ? null : parseStopResult(text);
+}
+
+/** What became of the stop `request`: the companion's answer, or null while
+ * it has not answered (a companion that is down stops nothing — and runs
+ * nothing either). */
+export function scanStopOutcome(home: string, request: string): string | null {
+  const r = readStopResult(home);
   if (r === null || r.request !== request) return null;
   return r.ok
     ? `scan ${r.run} stopped — what finished is in the ledger`

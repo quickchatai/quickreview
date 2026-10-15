@@ -108,6 +108,30 @@ describe("the report", () => {
     expect(text).toContain("● nit style ×3 (rule 4.2)");
   });
 
+  it("a style group with no new member is marked by its members' state — promoted or fixed, never dismissed by default", () => {
+    const style = (n: number, state: ScanFinding["state"]): ScanFinding =>
+      scanFinding({
+        fingerprint: `s${n}`.padEnd(64, "0"),
+        path: `billing/views${n}.py`,
+        start: n,
+        end: n,
+        lens: "pass-style",
+        kind: "style",
+        severity: "nit",
+        claim: `breaks rule 4.2 (${n})`,
+        state,
+      });
+    expect(rig({ findings: [style(1, "promoted"), style(2, "promoted")] }).screen()).toContain(
+      "⇡ nit style ×2 (rule 4.2)",
+    );
+    expect(rig({ findings: [style(1, "fixed"), style(2, "fixed")] }).screen()).toContain(
+      "✓ nit style ×2 (rule 4.2)",
+    );
+    expect(rig({ findings: [style(1, "fixed"), style(2, "dismissed")] }).screen()).toContain(
+      "– nit style ×2 (rule 4.2)",
+    );
+  });
+
   it("the detail pane says what a finding claims, its state and the validator's doubt", async () => {
     const { app, type, screen } = rig();
     await driving(app, () => {
@@ -205,6 +229,56 @@ describe("honest unknown — never 'no scan' for a record that was not read", ()
     expect(barLabels(app)).not.toContain("x stop");
   });
 
+  it("a known-down companion's run paints its running unit interrupted too, never the green running mark", () => {
+    const { screen } = rig({ companionUp: false });
+    const text = screen();
+    expect(text).toMatch(/⏸ auth\s+3/);
+    expect(text).not.toMatch(/▶ auth/);
+  });
+
+  it("a run the companion answers it is not driving reads interrupted while the companion is up — and the tab offers what a finished run does", async () => {
+    const { app, s, type, screen } = rig({ companionUp: true });
+    await driving(app, () => {
+      expect(barLabels(app)).toContain("x stop");
+      expect(barLabels(app)).not.toContain("D delta");
+      type("x");
+      const req = JSON.parse(readFileSync(join(s.home, SCAN_STOP_FILE), "utf8"));
+      // The companion restarted: it holds no run in flight.
+      writeFileSync(
+        join(s.home, SCAN_STOP_RESULT_FILE),
+        JSON.stringify({
+          request: req.id,
+          run: "scan-2",
+          at: "",
+          ok: false,
+          errors: ["no scan is running in this companion"],
+          in_flight: null,
+        }),
+      );
+      app.hooks.onPoll?.(app);
+      const text = screen();
+      expect(text).toContain(
+        "⏸ interrupted — the companion is not driving it; the ledger resumes it",
+      );
+      expect(text).toMatch(/⏸ auth\s+3/);
+      expect(barLabels(app)).not.toContain("x stop");
+      expect(barLabels(app)).toContain("D delta");
+    });
+  });
+
+  it("an answer for another run, or one that does not say what is in flight, leaves the run running", () => {
+    for (const answer of [
+      { request: "r", run: "scan-1", at: "", ok: false, errors: [], in_flight: null },
+      { request: "r", run: "scan-2", at: "", ok: false, errors: [] },
+      { request: "r", run: "scan-2", at: "", ok: true, errors: [], in_flight: "scan-2" },
+    ]) {
+      const { s, screen } = rig({ companionUp: true });
+      writeFileSync(join(s.home, SCAN_STOP_RESULT_FILE), JSON.stringify(answer));
+      s.store.reload();
+      expect(screen()).toMatch(/stage 1 ▶ running/);
+    }
+  });
+
   it("no records: none yet; an unreadable findings store: could not read, with the count unknown", () => {
     const a = rig();
     rmSync(join(a.s.home, "scan"), { recursive: true, force: true });
@@ -220,6 +294,9 @@ describe("honest unknown — never 'no scan' for a record that was not read", ()
     expect(text).toMatch(
       /could not read — scan\/findings\.json is not a record this version reads/,
     );
+    // The run still names its units; their counts are as unknown as the store.
+    expect(text).toMatch(/▶ auth\s+—/);
+    expect(text).not.toMatch(/· widget\s+0/);
     expect(barLabels(b.app)).not.toContain("f filter");
     expect(barLabels(b.app)).not.toContain("p promote");
   });
