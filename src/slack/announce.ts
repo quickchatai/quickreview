@@ -265,8 +265,9 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   /**
    * Claim, post, settle. Returns the message ts on success, undefined on any
-   * refusal or failure. Every NEW message goes through here; the heartbeat's
-   * edit and pin of its own message are the only other Slack calls.
+   * refusal or failure. Every NEW message goes through here; the only other
+   * Slack calls are edits and a pin of messages already posted: the
+   * heartbeat's own, and an incident's (its recovery, and its reopening).
    */
   private async post(req: PostRequest): Promise<string | undefined> {
     if (!this.deps.cfg.slack.enabled) return undefined;
@@ -487,16 +488,13 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * (never a park) and neither implies an approval. A
    * round-less anomaly has nothing to say and stays silent. */
   async anomaly(a: AnomalyAnnouncement): Promise<void> {
-    if (a.round_no === null) return;
+    if (a.round_no === null || !this.enabled) return;
     const cause =
       a.kind === "overdue"
         ? "round.overdue"
         : a.kind === "failed_loud"
           ? "review.failed_loud"
           : "round.malformed_verdict";
-    // An anomaly is a genuine escalation: it may spend the day's one bypass.
-    const admitted = this.announcementAllowed(cause, a.pr, true);
-    if (!admitted) return;
     const text =
       a.kind === "overdue"
         ? causeMessage(this.deps.cfg, {
@@ -512,6 +510,19 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
               pr: a.pr,
               round_no: a.round_no,
             });
+    // An incident already announced is announced again when it reopens (or
+    // fails again before it recovered): its one message — which a recovery
+    // corrected to "recovered" — is edited to say work is owed again, where a
+    // second post would be refused by the ledger and leave it claiming
+    // recovery.
+    const prior = a.incident_id ? this.deps.store.slackPost(a.incident_id) : undefined;
+    if (a.incident_id && prior?.ok === 1 && prior.ts) {
+      await this.editIncident(a.incident_id, prior.ts, text, "reopening");
+      return;
+    }
+    // An anomaly is a genuine escalation: it may spend the day's one bypass.
+    const admitted = this.announcementAllowed(cause, a.pr, true);
+    if (!admitted) return;
     await this.post({
       idemKey: a.incident_id ?? `${cause}:${a.pr}:${a.round_no}`,
       kind: "announce",
@@ -519,6 +530,26 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       pr: a.pr,
       text,
     });
+  }
+
+  /** Edit an incident's message; true when Slack accepted the edit. A refusal
+   * is logged with the incident and the message, and owed to the caller. */
+  private async editIncident(
+    incidentId: string,
+    ts: string,
+    text: string,
+    what: "recovery" | "reopening",
+  ): Promise<boolean> {
+    const { cfg, slack } = this.deps;
+    try {
+      const res = await slack.updateMessage({ channel: cfg.slack.channel, ts, text });
+      if (!res.ok)
+        this.log(`slack: failure ${what} update failed (${incidentId}, ts ${ts})`, res.error);
+      return res.ok;
+    } catch (err) {
+      this.log(`slack: failure ${what} update threw (${incidentId}, ts ${ts})`, err);
+      return false;
+    }
   }
 
   /** A PR still waiting for a slot. This may be the FIRST event on the PR, in
@@ -679,17 +710,13 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       if (this.correctedIncidents.has(recoveryKey(recovered))) continue;
       const incidentPost = store.slackPost(recovered.incident_id);
       if (!incidentPost?.ts) continue;
-      try {
-        const res = await slack.updateMessage({
-          channel: cfg.slack.channel,
-          ts: incidentPost.ts,
-          text: `✓ #${recovered.pr} review failure recovered via ${recovered.recovery ?? "operator action"} — ${recovered.incident_id}`,
-        });
-        if (res.ok) this.correctedIncidents.add(recoveryKey(recovered));
-        else this.log("slack: failure recovery update failed", res.error);
-      } catch (err) {
-        this.log("slack: failure recovery update threw", err);
-      }
+      const edited = await this.editIncident(
+        recovered.incident_id,
+        incidentPost.ts,
+        `✓ #${recovered.pr} review failure recovered via ${recovered.recovery ?? "operator action"} — ${recovered.incident_id}`,
+        "recovery",
+      );
+      if (edited) this.correctedIncidents.add(recoveryKey(recovered));
     }
     const recovered = recoveries[0];
     const text = heartbeatMessage({
