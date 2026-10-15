@@ -1270,6 +1270,11 @@ describe("read-only programs with write/exec modes", () => {
       "sed -n ':x\ne' f",
       "sed -n 'b x\ne' f",
       'sed -n "1i x\ne" f',
+      // A label ends at whitespace: what follows is the next command.
+      "sed -n ':x;bx e cmd' f",
+      "sed -n ':x;bx w out' f",
+      "sed -n 't x r /etc/passwd' f",
+      "sed -n 'T x\ts/a/b/w out' f",
     ]) {
       block(c, "reads code");
     }

@@ -614,6 +614,13 @@ const CORPUS = [
     outcome: null,
     note: "a newline ends the a text, so the e after it is a command",
   },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n ':x;bx e cmd' f",
+    outcome: null,
+    note: "a label ends at whitespace, so the e after it is the next command",
+  },
 ] as const;
 
 /**
@@ -1833,6 +1840,8 @@ describe("the audit does not fire on the reads that ARE the job", () => {
       "sed --expression=w/tmp/x f",
       "sed -n 'p' f -e e",
       "sed -n '1a x\ne' f",
+      "sed -n ':x;bx w out' a.py",
+      "sed -n 't x e' f",
     ])
       expect(kindOf(c), c).toBe("reader_write_or_exec");
     // An env prefix in front of a reader is its environment, not a pattern.
@@ -1862,6 +1871,8 @@ describe("the audit does not fire on the reads that ARE the job", () => {
       "sed -n '/x = w + 1/p' f",
       "sed -n '/ e /p' f",
       "sed -n 1p e w",
+      "sed -n 'b e' f",
+      "sed -n '/t e/p' f",
     ])
       expect(kindOf(c), c).toBeUndefined();
     expect(kindOf("sort -k1,1 -t: names")).toBeUndefined();

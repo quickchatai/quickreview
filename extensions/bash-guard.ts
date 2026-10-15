@@ -2459,12 +2459,17 @@ export function sedScriptDanger(script: string): string | null {
         while (/[0-9]/.test(at())) i++;
         break;
       case "#":
+        // A comment runs to the end of the line.
+        while (i < s.length && at() !== "\n") i++;
+        break;
       case ":":
       case "b":
       case "t":
       case "T":
-        // A comment or a label runs to the end of the line (a label also to `;`).
-        while (i < s.length && at() !== "\n" && (cmd === "#" || at() !== ";")) i++;
+        // A label ends at whitespace, `;`, `}` or a newline, and what follows
+        // is the NEXT command — GNU reads `bx e cmd` as a branch, then `e`.
+        skipBlank();
+        while (i < s.length && !/[\s;}]/.test(at())) i++;
         break;
       case "a":
       case "i":

@@ -809,12 +809,29 @@ function sedScripts(segment: string): { writes: boolean; scripts: string[] } {
 }
 
 /** A sed address run: numbers, `first~step`, `$`, `/re/` and `\cREc` (with
- * their I/M flags), `,`, `+N` and `!`. */
-const SED_ADDR = String.raw`(?:\s*(?:[0-9]+|\$|~[0-9]*|\+[0-9]*|[,!]|\/(?:\\.|[^/\\\n])*\/[IM]*|\\([^\n\\])(?:\\.|(?!\1)[^\\\n])*\1[IM]*))*`;
-/** A w/W/e command where a command starts: the script's start or after `;`,
- * `{`, `}` or a newline, behind any address. A `w` glued to its file (`wout`)
- * is one too. */
-const SED_VERB_RE = new RegExp(String.raw`(?:^|[;{}\n])` + SED_ADDR + String.raw`\s*[wWe]`);
+ * their I/M flags), `,`, `+N` and `!`. `group` numbers the `\cREc`
+ * delimiter's capture, so the run can appear twice in one pattern. */
+const sedAddr = (group: number): string => {
+  const ref = `\\${group}`;
+  return (
+    String.raw`(?:\s*(?:[0-9]+|\$|~[0-9]*|\+[0-9]*|[,!]|\/(?:\\.|[^/\\\n])*\/[IM]*|\\([^\n\\])(?:\\.|(?!` +
+    ref +
+    String.raw`)[^\\\n])*` +
+    ref +
+    String.raw`[IM]*))*`
+  );
+};
+/** A w/W/e command where a command starts: the script's start, after `;`,
+ * `{`, `}` or a newline, or after a branch or label and the whitespace that
+ * ends it (`bx e cmd` is a branch, then `e`) — behind any address. A `w`
+ * glued to its file (`wout`) is one too. */
+const SED_VERB_RE = new RegExp(
+  String.raw`(?:^|[;{}\n])(?:` +
+    sedAddr(1) +
+    String.raw`\s*[:btT][ \t]*[^\s;}]+[ \t]+)*` +
+    sedAddr(2) +
+    String.raw`\s*[wWe]`,
+);
 /** An s command whose flags carry `e` (runs the pattern space) or `w` (writes),
  * with any delimiter and the flags in any order. */
 const SED_SFLAG_RE = /s([^\\\n])(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1[gpiImMnN0-9]*[ew]/;

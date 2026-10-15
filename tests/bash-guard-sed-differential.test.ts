@@ -86,6 +86,11 @@ function* scripts(): Generator<string> {
   // most easily disagree about where the next command starts.
   for (const lead of ["1a foo", "1a\\\nfoo", "1i\\", ":lbl", "b lbl", "#c", "1{p", "s/x/y/g"])
     for (const j of [...JOINS, "\n\n", "}\n"]) for (const verb of VERBS) yield `${lead}${j}${verb}`;
+  // Whitespace alone after a command: GNU ends a label there and reads what
+  // follows as the next command (`bx e cmd`), so every command is tried
+  // before every verb with only a space or a tab between them.
+  for (const lead of [...COMMANDS, ":x;bx", "1t x", "T y"])
+    for (const j of [" ", "\t", "  "]) for (const verb of VERBS) yield `${lead}${j}${verb}`;
 }
 
 describe.skipIf(!gnuSandbox)("the guard's sed parser against GNU sed --sandbox", () => {
