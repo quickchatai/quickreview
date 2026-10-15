@@ -34,7 +34,7 @@
 //   4. the DB PHASE (src/archive/dbmove.ts): the reader-less event rows
 //      and old webhook deliveries into `archive/db/`;
 //   5. the plan;
-//   6. the FILE PHASE: the plan's eligible PRs, oldest close first, each
+//   6. the FILE PHASE: the plan's eligible PRs, oldest window first, each
 //      through `prarchive.ts` — at most `max_prs_per_tick`, no new file after
 //      `tick_budget_s`, the disk checked before every file (§7.7);
 //   7. the STORES that belong to no PR: the overseer's non-current
@@ -63,7 +63,7 @@
 // come back; its session is born anyway, and the receipt guard keeps the
 // archived window unknown).
 import { statfs as fsStatfs } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { ArchiveConfig } from "../config.js";
 import type { FileOutcome } from "../improvements.js";
@@ -74,6 +74,7 @@ import { withinBudget } from "../budget.js";
 import { yieldToLoop } from "../yieldloop.js";
 import { ArchiveDb, ManifestUnreadable, archiveDbDir } from "./archivedb.js";
 import { DbMover, type DbMoveResult } from "./dbmove.js";
+import { atNearestExisting } from "./fsutil.js";
 import type { OutsideFacts } from "./eligibility.js";
 import { removeRestorePartial, sweepPartials, type StepFn } from "./gzfile.js";
 import {
@@ -232,18 +233,8 @@ export async function freeBytes(
   path: string,
   statfs: (p: string) => Promise<StatfsLike>,
 ): Promise<number> {
-  let p = resolve(path);
-  for (;;) {
-    try {
-      const s = await statfs(p);
-      return Number(s.bavail) * Number(s.bsize);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-      const up = dirname(p);
-      if (up === p) throw err;
-      p = up;
-    }
-  }
+  const s = await atNearestExisting(path, statfs);
+  return Number(s.bavail) * Number(s.bsize);
 }
 
 /**
@@ -1073,8 +1064,9 @@ export class Archiver {
   }
 
   /**
-   * The plan's eligible PRs, oldest close first. Returns a failure (the live
-   * tree could not be listed), or the hold that stopped it, or neither.
+   * The plan's eligible PRs, oldest window first (the later of the close
+   * and a restore). Returns a failure (the live tree could not be listed),
+   * or the hold that stopped it, or neither.
    */
   private async filePhase(
     at: Date,

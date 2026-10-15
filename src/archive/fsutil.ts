@@ -11,7 +11,7 @@
 import { createHash, type Hash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { link, lstat, open, rename, unlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Transform, Writable, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
@@ -75,6 +75,26 @@ export async function writeTextAtomic(path: string, text: string): Promise<void>
   }
   await rename(tmp, path);
   await fsyncDir(dirname(path));
+}
+
+/** `query` of the nearest existing ancestor of `path` (itself first): a
+ * directory not created yet will be created on that one's filesystem. Any
+ * failure but a missing path is thrown, and so is a missing root. */
+export async function atNearestExisting<T>(
+  path: string,
+  query: (p: string) => Promise<T>,
+): Promise<T> {
+  let p = resolve(path);
+  for (;;) {
+    try {
+      return await query(p);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      const up = dirname(p);
+      if (up === p) throw err;
+      p = up;
+    }
+  }
 }
 
 /** Codes for a filesystem that cannot make a hard link. */
