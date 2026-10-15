@@ -2981,7 +2981,7 @@ export const fsSecretReader: SecretReader = (path) => {
     v = readFileSync(path, "utf8").trim();
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw new Error(`cannot read secret file '${path}': ${(err as Error).message}`);
+    throw new Error(`cannot read secret file '${path}': ${(err as Error).message}`, { cause: err });
   }
   return v.length > 0 ? v : undefined;
 };
