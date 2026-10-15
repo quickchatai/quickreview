@@ -156,7 +156,9 @@ export const COUNT_BUCKETS: Bucket[] = [
   { label: "5+", max: Number.POSITIVE_INFINITY },
 ];
 
-/** 0,1,2,3,4,5+ — review depth, where "no comments" is a real observation. */
+/** 0,1,2,3,4,5+ — review depth. Its sample is the rounds with linked bot
+ * comments (a gap metric that fills as comments are recorded), so the "0"
+ * bucket stays empty until a round can be known to have posted none. */
 export const DEPTH_BUCKETS: Bucket[] = [{ label: "0", max: 0 }, ...COUNT_BUCKETS];
 
 /** Nearest-rank percentile (p in 0..1) over an unsorted numeric sample. */
