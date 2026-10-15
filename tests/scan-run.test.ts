@@ -340,6 +340,19 @@ describe("first-scan calibration, then previews from the ledger", () => {
     expect((await s.start({ key: p.key })).ok).toBe(false);
   });
 
+  it("a calibration case nothing priced stops the run: no further case starts blind", async () => {
+    const r = runner({ perFile: null });
+    const s = new ScanRunner(ports(r, { concurrency: 1 }));
+    const p = await previewOf(s);
+    expect(p.mode).toBe("calibration");
+    expect(p.cases.length).toBeGreaterThan(1);
+    const { run } = await runToEnd(s);
+    expect(r.specs).toHaveLength(1);
+    expect(run.state).toBe("capped");
+    expect(run.cases.filter((c) => c.status === "skipped")).toHaveLength(p.cases.length - 1);
+    expect(run.problems.some((x) => /nothing priced it/.test(x))).toBe(true);
+  });
+
   it("a change of settings is a new price: back to calibration", async () => {
     const s = new ScanRunner(ports(runner()));
     await runToEnd(s);

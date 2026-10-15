@@ -1536,11 +1536,13 @@ export class ScanRunner {
     // May a case with this estimate start? Within the cap counting what is in
     // flight; a case with no estimate (calibration) only while the cap is not
     // yet reached. A zero cap is a free run (the runner prices at zero).
+    let unknownSpend = false;
     const within = (extra: number): boolean =>
-      run.cap_usd <= EPS ||
-      (extra > 0
-        ? run.spent_usd + reserved + extra <= run.cap_usd + EPS
-        : run.spent_usd + reserved < run.cap_usd - EPS);
+      !unknownSpend &&
+      (run.cap_usd <= EPS ||
+        (extra > 0
+          ? run.spent_usd + reserved + extra <= run.cap_usd + EPS
+          : run.spent_usd + reserved < run.cap_usd - EPS));
     const lane = async (): Promise<void> => {
       while (next < jobs.length && !signal.aborted) {
         const job = jobs[next]!;
@@ -1559,6 +1561,25 @@ export class ScanRunner {
         live.delete(plan.id);
         reserved -= est;
         run.spent_usd += spent;
+        // A case with no estimate (calibration) that ended with no price and
+        // no live report spent an UNKNOWN amount — never read as free. Under
+        // a cap, nothing more starts: the hard stop cannot be held blind.
+        const done = run.cases.find((x) => x.id === plan.id);
+        if (
+          run.cap_usd > EPS &&
+          !signal.aborted &&
+          plan.estimate_usd === null &&
+          spent === 0 &&
+          done?.started_at != null &&
+          done.cost_usd === null &&
+          !unknownSpend
+        ) {
+          unknownSpend = true;
+          capHit = true;
+          run.problems.push(
+            `case ${plan.id} ended and nothing priced it — what it spent is unknown, so no further case starts (the cap cannot be held without prices)`,
+          );
+        }
         this.store(file);
         // The hard stop: once spending reaches the cap, nothing in flight may
         // add to it.
