@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { parseConfig, type Config } from "../src/config.js";
+import { parseConfig, sandboxRoot, type Config } from "../src/config.js";
 import {
   ALL_PASSES,
   buildPassPlan,
@@ -250,6 +250,41 @@ describe("the pump spends a slot only on a round that went running", () => {
       await dispatchOnce({ cfg: threeSlots, store, adapter: racing, hooks });
       expect(orders.map((o) => o.order.pr)).toEqual([208]);
       expect(store.getPr(209)?.state).toBe("queued");
+    },
+  );
+});
+
+describe("the round's context pack", () => {
+  // MUTATION: only log when the pack write fails — the earlier attempt's pack
+  // stays beside the task files, and every child reads it as this round's.
+  it(
+    "a pack that cannot be written leaves no earlier attempt's pack behind",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg: Config = {
+        ...baseCfg,
+        review: { ...baseCfg.review, task_files: true, context_pack: "pack-first" },
+        pi: { ...baseCfg.pi, subagent_cache_group: 1 },
+      };
+      const passesDir = join(sandboxRoot(), "state", "pr-9301-round-1-passes");
+      const packPath = join(passesDir, "context-pack.md");
+      try {
+        mkdirSync(passesDir, { recursive: true });
+        writeFileSync(packPath, "STALE PACK from an earlier attempt");
+        // The write's temp path is taken: the pack cannot be written.
+        mkdirSync(`${packPath}.tmp`, { recursive: true });
+        queue(9301, "2026-08-13T09:00:00Z");
+        adapter.files.set(9301, [file("a.py")]);
+        const { hooks, orders } = recordingHooks();
+
+        await dispatchOnce({ cfg, store, adapter, hooks });
+
+        expect(orders).toHaveLength(1);
+        expect(orders[0]!.order.context_pack_file).toBeUndefined();
+        expect(existsSync(packPath)).toBe(false);
+      } finally {
+        rmSync(passesDir, { recursive: true, force: true });
+      }
     },
   );
 });

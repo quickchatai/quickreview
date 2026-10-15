@@ -2609,6 +2609,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // earlier attempt of this round number never survives into it.
       const passesDir = resolve(sandboxRoot(), "state", `pr-${row.number}-round-${roundNo}-passes`);
       const packPath = join(passesDir, CONTEXT_PACK_FILE);
+      const removeStalePack = (): void => {
+        try {
+          rmSync(packPath, { force: true });
+        } catch (err) {
+          log(`dispatch: #${row.number} stale context pack not removed`, err);
+        }
+      };
       let packed: RoundOrder = built;
       if (
         cfg.review.task_files &&
@@ -2638,25 +2645,20 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           });
         } catch (err) {
           log(`dispatch: #${row.number} context pack not written`, err);
+          // A child finds the pack beside its task file, not through the
+          // order — an earlier attempt's pack left here would be read as
+          // this round's.
+          removeStalePack();
         }
       } else {
-        try {
-          rmSync(packPath, { force: true });
-        } catch (err) {
-          log(`dispatch: #${row.number} stale context pack not removed`, err);
-        }
+        removeStalePack();
       }
 
       let order = packed;
       let rowsDelivered = false;
       if (cfg.review.task_files) {
         try {
-          const dir = resolve(
-            sandboxRoot(),
-            "state",
-            `pr-${row.number}-round-${roundNo}-passes`,
-            "tasks",
-          );
+          const dir = join(passesDir, "tasks");
           const tasks = writePassTasks(
             dir,
             packed,
@@ -2682,12 +2684,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // them: lesson selection covers `pass_plan` rows only. Total, as above.
         // With no sweep owed, an earlier attempt's sweep dir is removed, so
         // nothing stale can be launched from it.
-        const sweepDir = resolve(
-          sandboxRoot(),
-          "state",
-          `pr-${row.number}-round-${roundNo}-passes`,
-          "tasks-sweep",
-        );
+        const sweepDir = join(passesDir, "tasks-sweep");
         if (!built.sweep_plan || built.sweep_plan.length === 0) {
           try {
             rmSync(sweepDir, { recursive: true, force: true });
@@ -2699,12 +2696,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // row index (`row` indexes `optional_plan`), rendered from the
         // follow-up order itself, so they carry the change since the last
         // review exactly as the core rows do. Total, as above.
-        const optionalDir = resolve(
-          sandboxRoot(),
-          "state",
-          `pr-${row.number}-round-${roundNo}-passes`,
-          "tasks-optional",
-        );
+        const optionalDir = join(passesDir, "tasks-optional");
         if (!built.optional_plan || built.optional_plan.length === 0) {
           try {
             rmSync(optionalDir, { recursive: true, force: true });
@@ -2757,7 +2749,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // A row's lessons travel only in its task file: none written, none
         // delivered — the index must not say otherwise.
         delivery: delivery && !rowsDelivered ? { ...delivery, rows: [] } : delivery,
-        dir: resolve(sandboxRoot(), "state", `pr-${row.number}-round-${roundNo}-passes`, "lessons"),
+        dir: join(passesDir, "lessons"),
       });
 
       // The round is provisional until the worktree/session/prompt handoff
