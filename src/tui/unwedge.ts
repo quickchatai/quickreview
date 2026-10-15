@@ -21,6 +21,7 @@
 //   `rerun-round`     — cancel the running round and re-queue (the default).
 //   `restart-session` — the same, plus kill the tmux session first, for a
 //                       session that is genuinely wedged rather than idle.
+import { randomUUID } from "node:crypto";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import { sanitizeText } from "./paint.js";
@@ -51,9 +52,13 @@ export function operatorCommandDirFor(cfg: TuiConfig): string {
   return `${commandDirFor(cfg)}/operator`;
 }
 
-export function commandFileName(now: Date, seq: number): string {
+/** A command file's name: the stamp, then — when given — the sender's own
+ * id, then its sequence. Two senders each count from zero, so a sender that
+ * shares the operator directory with another names itself: two commands in
+ * one millisecond never land on one path (and never share one result). */
+export function commandFileName(now: Date, seq: number, client?: string): string {
   const ts = now.toISOString().replace(/[:.]/g, "-");
-  return `${ts}-tui-${String(seq).padStart(4, "0")}.json`;
+  return `${ts}-tui-${client ? `${client}-` : ""}${String(seq).padStart(4, "0")}.json`;
 }
 
 /**
@@ -171,6 +176,7 @@ export interface UnwedgeSender {
 
 export class CommandFileSender implements UnwedgeSender {
   private seq = 0;
+  private readonly clientId = `unwedge-${randomUUID().slice(0, 8)}`;
 
   constructor(
     private readonly cfg: TuiConfig,
@@ -189,32 +195,47 @@ export class CommandFileSender implements UnwedgeSender {
       onState("failed", `✖ ${command} refused (bad PR number)`);
       return;
     }
-    const name = commandFileName(this.now(), this.seq++);
+    const name = commandFileName(this.now(), this.seq++, this.clientId);
     onState("pending", `→ ${command} #${pr} pending…`);
     const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), {
       stdin: commandPayload(command, pr),
     });
     if (!write.ok) {
-      onState("failed", `✖ ${command} #${pr} failed (write failed)`);
+      // The write script's own refusal (no commands dir, a symlinked operator
+      // dir) or the transport's failure — the operator acts on which.
+      const why = write.stderr.trim().split("\n").at(-1) ?? "";
+      onState(
+        "failed",
+        `✖ ${command} #${pr} failed (write failed: ${resultReason(why, `exit ${write.code ?? "?"}`)})`,
+      );
       return;
     }
     // Read the daemon's own verdict on the request rather than assuming the
     // write was the outcome. A refusal (tier belt, unknown PR) is a real
     // answer and the operator must see it, not a silent success.
     const deadline = this.now().getTime() + this.cfg.msg_timeout_s * 1000;
+    // The daemon writes its result in place, so a read can land mid-write: an
+    // unreadable result is read again until the deadline, and only then said.
+    let unreadable = false;
     while (this.now().getTime() < deadline) {
       await this.sleep(2000);
       const probe = await this.ssh(this.cfg.ssh_host, commandResultArgv(this.cfg, name));
       if (!probe.ok) continue;
       const body = probe.stdout.trim();
       if (body === "pending" || body === "") continue;
-      let result: { ok?: unknown; reason?: unknown; cancelled_rounds?: unknown };
+      let parsed: unknown;
       try {
-        result = JSON.parse(body) as typeof result;
+        parsed = JSON.parse(body);
       } catch {
-        onState("failed", `✖ ${command} #${pr} failed (unreadable result)`);
-        return;
+        unreadable = true;
+        continue;
       }
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        unreadable = true;
+        continue;
+      }
+      unreadable = false;
+      const result = parsed as { ok?: unknown; reason?: unknown; cancelled_rounds?: unknown };
       if (result.ok === true) {
         const cancelled = Array.isArray(result.cancelled_rounds)
           ? result.cancelled_rounds.length
@@ -231,7 +252,12 @@ export class CommandFileSender implements UnwedgeSender {
       );
       return;
     }
-    onState("failed", `✖ ${command} #${pr} — no result (daemon down?)`);
+    onState(
+      "failed",
+      unreadable
+        ? `✖ ${command} #${pr} failed (unreadable result)`
+        : `✖ ${command} #${pr} — no result (daemon down?)`,
+    );
   }
 }
 
