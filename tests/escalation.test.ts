@@ -391,6 +391,17 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     expect(normalizeSessionEscalations(undefined).entries).toEqual([]);
     expect(normalizeSessionEscalations("nope").note).toMatch(/not an array/);
   });
+
+  it("names entries past the cap as truncated, never as malformed", () => {
+    const eleven = Array.from({ length: 11 }, () => ({ target: "x" }));
+    const capped = normalizeSessionEscalations(eleven);
+    expect(capped.entries).toHaveLength(10);
+    expect(capped.note).toBe("1 escalation entr(ies) past the first 10 — ignored");
+    const mixed = normalizeSessionEscalations([7, ...eleven]);
+    expect(mixed.note).toBe(
+      "1 escalation entr(ies) were not objects — ignored; 1 escalation entr(ies) past the first 10 — ignored",
+    );
+  });
 });
 
 // ===========================================================================
@@ -1386,6 +1397,36 @@ describe("delivery", () => {
     );
     expect(again.reviews).toHaveLength(0);
     expect(second[0]).toMatchObject({ refused: "already-delivered" });
+  });
+
+  it("a comment POST that throws fails that candidate alone — the next one is still delivered, nothing is recorded for the first", async () => {
+    const adapter = fakeAdapter();
+    let calls = 0;
+    const flaky = {
+      ...adapter,
+      async createReview(...a: Parameters<typeof adapter.createReview>): Promise<GateResult> {
+        if (calls++ === 0) throw new Error("POST /reviews → 502");
+        return adapter.createReview(...a);
+      },
+    };
+    const outcomes = await deliverEscalations(
+      { cfg: on(), store, adapter: flaky },
+      {
+        pr: 16,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: [
+          request({ origin: "rule" }),
+          request({ origin: "rule", scope: { kind: "code", path: "a/x.py" } }),
+        ],
+      },
+    );
+    expect(outcomes.map((o) => o.comment_executed)).toEqual([false, true]);
+    expect(outcomes[0]!.refused).toBeNull();
+    expect(adapter.reviews).toHaveLength(1);
+    expect(store.escalationCount(16)).toBe(1);
+    expect(store.escalationDelivered(16, `teammate-one|${outcomes[0]!.scope_key}`)).toBe(false);
   });
 
   it("a guard refusal stops the review request too — and records nothing, so a later round retries", async () => {
