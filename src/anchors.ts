@@ -108,11 +108,11 @@ export function runsByPath(patches: Record<string, string>): Record<string, Chan
   );
 }
 
-export interface AnchorCheck {
-  ok: boolean;
-  reason?: "unknown-path" | "no-runs" | "outside-changed-run" | "inverted-range";
-  run?: ChangedRun;
-}
+/** Why an anchor cannot be placed on the diff. */
+export type AnchorRejectReason =
+  "unknown-path" | "no-runs" | "outside-changed-run" | "inverted-range";
+
+export type AnchorCheck = { ok: true } | { ok: false; reason: AnchorRejectReason };
 
 /** Validate one anchor against the runs of its claimed path. */
 export function checkAnchor(runs: Record<string, ChangedRun[]>, req: AnchorRequest): AnchorCheck {
@@ -123,13 +123,14 @@ export function checkAnchor(runs: Record<string, ChangedRun[]>, req: AnchorReque
   const end = req.line;
   const start = req.start_line ?? req.line;
   if (start > end) return { ok: false, reason: "inverted-range" };
-  const run = fileRuns.find((r) => r.side === req.side && start >= r.start && end <= r.end);
-  return run ? { ok: true, run } : { ok: false, reason: "outside-changed-run" };
+  return fileRuns.some((r) => r.side === req.side && start >= r.start && end <= r.end)
+    ? { ok: true }
+    : { ok: false, reason: "outside-changed-run" };
 }
 
 export interface AnchorPartition<T extends AnchorRequest> {
   accepted: T[];
-  rejected: Array<{ comment: T; reason: NonNullable<AnchorCheck["reason"]> }>;
+  rejected: Array<{ comment: T; reason: AnchorRejectReason }>;
 }
 
 /**
@@ -147,12 +148,12 @@ export function partitionByAnchor<T extends AnchorRequest>(
   for (const c of comments) {
     const check = checkAnchor(runs, c);
     if (check.ok) accepted.push(c);
-    else rejected.push({ comment: c, reason: check.reason ?? "outside-changed-run" });
+    else rejected.push({ comment: c, reason: check.reason });
   }
   return { accepted, rejected };
 }
 
-export const ANCHOR_REASON_TEXT: Record<NonNullable<AnchorCheck["reason"]>, string> = {
+export const ANCHOR_REASON_TEXT: Record<AnchorRejectReason, string> = {
   "unknown-path": "path is not in this PR's diff",
   "no-runs": "file has no changed lines in this PR",
   "outside-changed-run": "line is outside any changed-line run on that side",
