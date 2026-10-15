@@ -3086,19 +3086,44 @@ export class VerdictWatcher {
    * caller escalates.
    */
   private async recoverNeverDelivered(round: RoundRow): Promise<boolean> {
+    return (await this.redeliverPrompt(round, "deadline")) === "redelivered";
+  }
+
+  /**
+   * Re-deliver a round's own dispatched order — same round, same session,
+   * the exact bytes — bounded by `max_prompt_redeliveries`. The one
+   * redelivery of both the deadline path and the pre-deadline lost-prompt
+   * net. A delivered order gets a fresh deadline from now, wherever it was
+   * caught: the review has not started, so none of the elapsed time was spent
+   * reviewing, and a prompt caught minutes before its deadline must not be
+   * judged overdue before the session could have finished. The silent mark
+   * is cleared, so the next escalation must be re-earned.
+   *
+   * `unavailable`: no hook, or the budget is spent — nothing attempted.
+   * `failed`: attempted (the attempt counted), nothing delivered.
+   */
+  private async redeliverPrompt(
+    round: RoundRow,
+    at: "deadline" | "before_deadline",
+  ): Promise<"redelivered" | "failed" | "unavailable"> {
     const { cfg, store } = this.deps;
     const hooks = this.deps.hooks;
     const cap = cfg.daemon.max_prompt_redeliveries ?? DEFAULT_MAX_PROMPT_REDELIVERIES;
-    if (!hooks.redeliverRound || round.redeliveries >= cap) return false;
+    if (!hooks.redeliverRound || round.redeliveries >= cap) return "unavailable";
     const attempt = store.countRedelivery(round.id);
     let redelivered = false;
     try {
       redelivered = await hooks.redeliverRound.call(hooks, round.pr, round.round_no);
     } catch (err) {
-      this.log(`verdicts: #${round.pr} round ${round.round_no} deadline redelivery failed`, err);
-      return false;
+      this.log(`verdicts: #${round.pr} round ${round.round_no} redelivery (${at}) failed`, err);
+      return "failed";
     }
-    if (!redelivered) return false;
+    if (!redelivered) {
+      this.log(
+        `verdicts: #${round.pr} round ${round.round_no} has no saved prompt to redeliver (${at})`,
+      );
+      return "failed";
+    }
     store.extendRoundDeadline(round.id, cfg.daemon.round_deadline_min);
     store.clearRoundSilent(round.id);
     store.logEvent("round_prompt_redelivered", round.pr, {
@@ -3106,13 +3131,13 @@ export class VerdictWatcher {
       round_no: round.round_no,
       attempt,
       cap,
-      at: "deadline",
+      at,
       deadline_extended_min: cfg.daemon.round_deadline_min,
     });
     this.log(
-      `verdicts: REDELIVER (deadline) #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — the session was alive and idle because the order never arrived; nothing cancelled, nothing killed`,
+      `verdicts: REDELIVER (${at}) #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — the prompt never reached the session; same round, same session, nothing cancelled or killed`,
     );
-    return true;
+    return "redelivered";
   }
 
   /**
@@ -3696,7 +3721,7 @@ export class VerdictWatcher {
         : mode === "alive_stuck"
           ? `round ${round.round_no} passed its deadline (${round.deadline_at}) with no verdict; its session was alive but wedged and has been killed for a fresh rebirth`
           : mode === "lost_prompt"
-            ? `round ${round.round_no}'s prompt was consumed from the inject dir but the session shows no activity since the round started (${round.started_at}) — the prompt was dropped in delivery; redispatching`
+            ? `round ${round.round_no}'s prompt left the inject dir but its receipt never appeared in the session transcript since the round started (${round.started_at}) — the prompt was dropped in delivery and redelivery is spent or impossible; redispatching`
             : mode === "required_pass_missing"
               ? `round ${round.round_no} ended with a required pass (pass-baseline or a risk lens) failed and never completed — the session posted nothing; redispatching`
               : mode === "head_moved"
@@ -3903,33 +3928,7 @@ export class VerdictWatcher {
       redeliveries: round.redeliveries,
     });
     // ---- cheap recovery first: deliver the same order again ----------------
-    const cap = cfg.daemon.max_prompt_redeliveries ?? DEFAULT_MAX_PROMPT_REDELIVERIES;
-    if (hooks.redeliverRound && round.redeliveries < cap) {
-      const attempt = store.countRedelivery(round.id);
-      let redelivered = false;
-      try {
-        redelivered = await hooks.redeliverRound.call(hooks, round.pr, round.round_no);
-      } catch (err) {
-        this.log(`verdicts: #${round.pr} round ${round.round_no} redelivery failed`, err);
-      }
-      if (redelivered) {
-        // A fresh window: the mark must be re-earned before the next escalation.
-        store.clearRoundSilent(round.id);
-        store.logEvent("round_prompt_redelivered", round.pr, {
-          round_id: round.id,
-          round_no: round.round_no,
-          attempt,
-          cap,
-        });
-        this.log(
-          `verdicts: REDELIVER #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — the prompt never reached the session; same round, same session, nothing cancelled`,
-        );
-        return;
-      }
-      this.log(
-        `verdicts: #${round.pr} round ${round.round_no} has no saved prompt to redeliver — escalating`,
-      );
-    }
+    if ((await this.redeliverPrompt(round, "before_deadline")) === "redelivered") return;
     // ---- redelivery is spent or impossible: the expensive path -------------
     await this.selfRequeue(round, "lost_prompt");
   }

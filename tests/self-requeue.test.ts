@@ -845,6 +845,40 @@ describe("lost-prompt net — a round with no prompt receipt", () => {
     expect(silentSince(roundId)).toBeNull();
   });
 
+  // MUTATION: drop the deadline extension from the pre-deadline redelivery —
+  // the round caught near its deadline is judged overdue minutes later.
+  it("a prompt redelivered just before the deadline gets a fresh deadline, as one caught at it does", async () => {
+    const roundId = reviewingRound(315);
+    const deadlineOf = (): number =>
+      Date.parse(
+        (
+          store.db.prepare("SELECT deadline_at FROM rounds WHERE id = ?").get(roundId) as {
+            deadline_at: string;
+          }
+        ).deadline_at,
+      );
+    // Three minutes before the original deadline, the grace long blown.
+    clock = new Date(deadlineOf() - 3 * 60_000);
+    const { hooks, redelivered } = netHooksDelivering({ accepted: false });
+    const w = watcher(hooks);
+
+    await w.checkDeadlines(); // marks
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines(); // redelivers
+    expect(redelivered).toEqual([{ pr: 315, round: 1 }]);
+    expect(deadlineOf()).toBe(clock.getTime() + baseCfg.daemon.round_deadline_min * 60_000);
+    expect(events("round_prompt_redelivered")[0]!.payload).toMatchObject({
+      at: "before_deadline",
+      deadline_extended_min: baseCfg.daemon.round_deadline_min,
+    });
+
+    // Past the ORIGINAL deadline the redelivered round is still reviewing.
+    clock = new Date(clock.getTime() + 5 * 60_000);
+    expect(await w.checkDeadlines()).toEqual([]);
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
   it("escalates to a self-requeue only once redelivery is exhausted", async () => {
     const roundId = reviewingRound(320);
     pastGrace();
