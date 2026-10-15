@@ -1274,17 +1274,31 @@ function cmdEvents(tail: number, json: boolean): void {
   }
 }
 
-/** `qcr companion up|down|status` — thin over CompanionLifecycle. */
+/** What starting the companion needs from CompanionLifecycle. */
+interface CompanionStarter {
+  ensureUp(log?: (line: string) => void): Promise<string>;
+  spawnPi(): Promise<boolean>;
+}
+
+/** Start the companion the one way `up` and `rebuild` both do: the token and
+ * config mirror refreshed before the container starts, so it never mounts a
+ * stale mirror or an expired token — then the container, then pi. */
+async function startCompanion(
+  lc: CompanionStarter,
+  refreshInputs: () => Promise<void>,
+  log?: (line: string) => void,
+): Promise<{ outcome: string; born: boolean }> {
+  await refreshInputs();
+  const outcome = await lc.ensureUp(log);
+  return { outcome, born: await lc.spawnPi() };
+}
+
 /** `qcr companion rebuild`: replace the container and image, then start the
- * new one exactly as `up` does — the token and config mirror refreshed
- * before the container starts, so the rebuilt companion never mounts a stale
- * mirror or an expired token. The pihome volume is untouched. */
+ * new one exactly as `up` does. The pihome volume is untouched. */
 export async function rebuildCompanion(
-  lc: {
+  lc: CompanionStarter & {
     removeContainer(): Promise<unknown>;
     buildImage(log: (line: string) => void): Promise<unknown>;
-    ensureUp(log: (line: string) => void): Promise<string>;
-    spawnPi(): Promise<boolean>;
   },
   name: string,
   refreshInputs: () => Promise<void>,
@@ -1292,14 +1306,13 @@ export async function rebuildCompanion(
 ): Promise<void> {
   await lc.removeContainer();
   await lc.buildImage(log);
-  await refreshInputs();
-  const outcome = await lc.ensureUp(log);
-  const born = await lc.spawnPi();
+  const { outcome, born } = await startCompanion(lc, refreshInputs, log);
   log(
     `companion ${name}: image rebuilt, ${outcome}; pi session ${born ? "spawned" : "already running"}`,
   );
 }
 
+/** `qcr companion up|down|status|rebuild` — thin over CompanionLifecycle. */
 export async function cmdCompanion(sub: string | undefined): Promise<void> {
   const { CompanionLifecycle, companionStateWord, realDockerRunner } =
     await import("./tui/companion.js");
@@ -1325,9 +1338,7 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
   };
   switch (sub) {
     case "up": {
-      await refreshInputs();
-      const outcome = await lc.ensureUp();
-      const born = await lc.spawnPi();
+      const { outcome, born } = await startCompanion(lc, refreshInputs);
       console.log(
         `companion ${cfg.container_name}: ${outcome}; pi session ${born ? "spawned" : "already running"}`,
       );
