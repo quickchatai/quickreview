@@ -17,7 +17,7 @@ import {
   type RoundMemory,
 } from "./memory/context.js";
 import { renderBleedNote, renderLessonsNote } from "./memory/delivery.js";
-import { codePath, flatControls, promptTitle } from "./codespan.js";
+import { codePath, flatControls, longestBacktickRun, promptTitle } from "./codespan.js";
 import { isSplitBaselineRow } from "./heuristics.js";
 import { renderEscalationPromptNote } from "./escalation.js";
 import { renderPostingPolicyNote } from "./postingpolicy.js";
@@ -247,10 +247,7 @@ export function renderIntentNote(order: RoundOrder): string {
   const body = order.pr_body ?? "";
   // The body is untrusted markdown and may itself contain ``` runs — fence
   // with one backtick more than its longest run so the block never breaks.
-  const longestRun = Math.max(
-    2,
-    ...[...`${title}\n${body}`.matchAll(/`+/g)].map((m) => m[0].length),
-  );
+  const longestRun = Math.max(2, longestBacktickRun(`${title}\n${body}`));
   const fence = "`".repeat(longestRun + 1);
   return [
     "",

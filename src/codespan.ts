@@ -13,13 +13,17 @@ export function longestBacktickRun(text: string): number {
   return best;
 }
 
+/** The characters that could end or break a line of prompt text: C0
+ * controls (newlines included), DEL and the Unicode line/paragraph
+ * separators. One class, so the two renderers below can never disagree. */
+const LINE_BREAKERS = "[\\u0000-\\u001f\\u007f\\u2028\\u2029]";
+const LINE_BREAKER = new RegExp(LINE_BREAKERS, "g");
+const LINE_BREAKER_RUN = new RegExp(`${LINE_BREAKERS}+`, "g");
+
 /** Control characters (newlines included) as visible `\\uXXXX` escapes, so
  * author-controlled text can never start a new line of prompt. */
 export function flatControls(text: string): string {
-  return text.replace(
-    /[\u0000-\u001f\u007f\u2028\u2029]/g,
-    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
+  return text.replace(LINE_BREAKER, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 
 /**
@@ -55,7 +59,7 @@ export function codePath(path: string, opts: { table?: boolean } = {}): string {
  * must not silently cut what the daemon actually asked).
  */
 export function promptQuoted(text: string): string {
-  return text.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/"/g, "'");
+  return text.replace(LINE_BREAKER_RUN, " ").replace(/"/g, "'");
 }
 
 /**
