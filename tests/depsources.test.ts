@@ -1939,6 +1939,65 @@ describe("selfscan2: the version a file actually runs against", () => {
     });
   });
 
+  it("pnpm: a package resolved from a tarball off the public registry is skipped, never swapped for npm's", () => {
+    const lock = [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "",
+      "  .:",
+      "    dependencies:",
+      "      x:",
+      "        specifier: ^1.0.0",
+      "        version: 1.2.0",
+      "      y:",
+      "        specifier: ^2.0.0",
+      "        version: 2.0.0",
+      "      z:",
+      "        specifier: ^3.0.0",
+      "        version: 3.0.0",
+      "",
+      "packages:",
+      "",
+      "  x@1.2.0:",
+      "    resolution: {integrity: sha512-x, tarball: https://npm.internal.example/x/-/x-1.2.0.tgz}",
+      "",
+      "  y@2.0.0:",
+      "    resolution:",
+      "      tarball: https://registry.npmjs.org/y/-/y-2.0.0.tgz",
+      "",
+      "  z@3.0.0:",
+      "    resolution:",
+      "      integrity: sha512-z",
+      "      tarball: 'https://git.example/z.tgz'",
+      "",
+      "snapshots:",
+      "",
+      "  x@1.2.0: {}",
+      "  y@2.0.0: {}",
+      "  z@3.0.0: {}",
+    ].join("\n");
+    const l = parsePnpmLock(lock);
+    expect(l.entries.get("x")).toEqual([{ version: "1.2.0", specs: ["^1.0.0"], foreign: true }]);
+    expect(l.entries.get("y")).toEqual([{ version: "2.0.0", specs: ["^2.0.0"] }]);
+    const root = tree({
+      "package.json": JSON.stringify({ dependencies: { x: "^1.0.0", y: "^2.0.0", z: "^3.0.0" } }),
+      "pnpm-lock.yaml": lock,
+      "src/a.js": "import x from 'x';\nimport y from 'y';\nimport z from 'z';\n",
+    });
+    expect(
+      planDependencyRequests(root, [{ filename: "src/a.js" }]).map((r) => [
+        r.name,
+        r.version,
+        r.range,
+      ]),
+    ).toEqual([
+      ["x", null, "@ non-npmjs source"],
+      ["y", "2.0.0", "^2.0.0"],
+      ["z", null, "@ non-npmjs source"],
+    ]);
+  });
+
   it("pnpm v5: the single-project dependencies section pins the direct dependency", () => {
     const lock = [
       "lockfileVersion: 5.4",

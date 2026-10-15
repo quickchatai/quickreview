@@ -845,7 +845,9 @@ function splitPnpmKey(key: string): { name: string; version: string } | null {
  * own pin (`importers:` in v6+/workspaces, the top-level `dependencies:` of a
  * v5 single project). Those pins are recorded with their specifier (and the
  * importer dir as scope), so pickLocked takes the importer's resolution rather
- * than the newest copy some transitive dependency pulled in.
+ * than the newest copy some transitive dependency pulled in. A package whose
+ * `resolution` names a tarball off the public registry is foreign, and so is
+ * every importer pin at its name and version.
  */
 export function parsePnpmLock(text: string): NpmLock {
   const lock = emptyLock();
@@ -864,9 +866,35 @@ export function parsePnpmLock(text: string): NpmLock {
     return p;
   };
   const unquote = (x: string): string => x.trim().replace(/^['"]|['"]$/g, "");
+  /** A dependency's own line: an inline value (v5: the version, or under
+   * `specifiers` the spec) is recorded; a bare `name:` opens its v6 block. */
+  const depHead = (imp: string, name: string, inline: string, specs: boolean): string | null => {
+    if (!inline) return name;
+    const p = pin(imp, name);
+    if (specs) p.spec = inline;
+    else p.version = inline;
+    return null;
+  };
+  /** A `specifier:` / `version:` line inside a dependency's v6 block. */
+  const depField = (imp: string, name: string, field: string, value: string): void => {
+    const p = pin(imp, name);
+    if (field === "specifier") p.spec = unquote(value);
+    else p.version = unquote(value);
+  };
+  /** The `packages:` block being read, and the name@version of every one whose
+   * resolution is a tarball off the public registry. */
+  let pkg: { name: string; version: string; foreign: boolean } | null = null;
+  const foreignPkgs = new Set<string>();
+  const flushPkg = (): void => {
+    if (!pkg) return;
+    addLock(lock, pkg.name, { version: pkg.version, ...(pkg.foreign ? { foreign: true } : {}) });
+    if (pkg.foreign) foreignPkgs.add(`${pkg.name}@${pkg.version}`);
+    pkg = null;
+  };
   const DEP_GROUP = /^(dependencies|devDependencies|optionalDependencies|specifiers):\s*$/;
   for (const raw of text.split(/\r?\n/)) {
     if (/^\S/.test(raw)) {
+      flushPkg();
       const g = DEP_GROUP.exec(raw);
       section = /^(packages|snapshots):\s*$/.test(raw)
         ? "packages"
@@ -880,36 +908,33 @@ export function parsePnpmLock(text: string): NpmLock {
       continue;
     }
     if (section === "packages") {
+      // `  key:` opens a package; its deeper lines are its fields.
       const m = /^ {2}(\S.*?):\s*$/.exec(raw);
-      if (!m) continue;
+      if (!m) {
+        // `resolution: {…, tarball: <url>}`, inline or as its own line.
+        const tarball = /\btarball:\s*['"]?([^,'"}\s]+)/.exec(raw);
+        if (pkg && tarball && /^ {4}/.test(raw) && isForeignResolved(tarball[1]))
+          pkg.foreign = true;
+        continue;
+      }
+      flushPkg();
       let key = unquote(m[1] ?? "");
       if (key.startsWith("/")) key = key.slice(1);
       const paren = key.indexOf("(");
       if (paren > 0) key = key.slice(0, paren);
       const nv = splitPnpmKey(key);
       if (nv && nv.name && VERSION_LIKE.test(nv.version))
-        addLock(lock, nv.name, { version: nv.version });
+        pkg = { name: nv.name, version: nv.version, foreign: false };
     } else if (section === "root") {
       // v5 single project: `  name: value` directly under the section;
       // v6 single project: `  name:` then `    specifier:` / `    version:`.
       const head = /^ {2}(\S.*?):\s*(.*?)\s*$/.exec(raw);
       if (head) {
-        const name = unquote(head[1] ?? "");
-        const inline = unquote(head[2] ?? "");
-        dep = inline ? null : name;
-        if (inline) {
-          const p = pin(".", name);
-          if (rootGroup === "specs") p.spec = inline;
-          else p.version = inline;
-        }
+        dep = depHead(".", unquote(head[1] ?? ""), unquote(head[2] ?? ""), rootGroup === "specs");
         continue;
       }
       const kv = /^ {4}(specifier|version):\s*(.*?)\s*$/.exec(raw);
-      if (kv && dep && rootGroup === "deps") {
-        const p = pin(".", dep);
-        if (kv[1] === "specifier") p.spec = unquote(kv[2] ?? "");
-        else p.version = unquote(kv[2] ?? "");
-      }
+      if (kv && dep && rootGroup === "deps") depField(".", dep, kv[1] ?? "", kv[2] ?? "");
     } else if (section === "importers") {
       const imp = /^ {2}(\S.*?):\s*$/.exec(raw);
       if (imp) {
@@ -926,27 +951,17 @@ export function parsePnpmLock(text: string): NpmLock {
         continue;
       }
       if (!group) continue;
+      // v5 workspace form: `      name: 1.2.3` / specifiers `      name: ^1`.
       const d = /^ {6}(\S.*?):\s*(.*?)\s*$/.exec(raw);
       if (d) {
-        const name = unquote(d[1] ?? "");
-        const inline = unquote(d[2] ?? "");
-        dep = inline ? null : name;
-        if (inline) {
-          // v5 workspace form: `      name: 1.2.3` / specifiers `      name: ^1`.
-          const p = pin(importer, name);
-          if (group === "specs") p.spec = inline;
-          else p.version = inline;
-        }
+        dep = depHead(importer, unquote(d[1] ?? ""), unquote(d[2] ?? ""), group === "specs");
         continue;
       }
       const kv = /^ {8}(specifier|version):\s*(.*?)\s*$/.exec(raw);
-      if (kv && dep && group === "deps") {
-        const p = pin(importer, dep);
-        if (kv[1] === "specifier") p.spec = unquote(kv[2] ?? "");
-        else p.version = unquote(kv[2] ?? "");
-      }
+      if (kv && dep && group === "deps") depField(importer, dep, kv[1] ?? "", kv[2] ?? "");
     }
   }
+  flushPkg();
   for (const [imp, deps] of pins) {
     for (const [name, p] of deps) {
       // `1.2.0(react@18)` (v6+) / `1.2.0_react@18` (v5): the peer suffix is not the version.
@@ -954,6 +969,7 @@ export function parsePnpmLock(text: string): NpmLock {
       if (!VERSION_LIKE.test(version)) continue;
       const entry: LockEntry = { version };
       if (p.spec) entry.specs = [p.spec];
+      if (foreignPkgs.has(`${name}@${version}`)) entry.foreign = true;
       const scope = imp.replace(/^\.\//, "").replace(/\/$/, "");
       if (scope && scope !== ".") entry.scope = scope;
       addLock(lock, name, entry);
