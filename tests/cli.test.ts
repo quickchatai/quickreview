@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cancellationsOn,
   main,
+  parseBackfillArgs,
+  parseDrainArgs,
   parseReembedArgs,
   parseRelayoutArgs,
   rebuildCompanion,
@@ -346,6 +348,39 @@ describe("qcr memory reembed — flags", () => {
       ["--user", "a", "--force"],
     ])
       expect(() => parseReembedArgs(rest), rest.join(" ")).toThrow(/usage: qcr memory reembed/);
+  });
+});
+
+describe("qcr drain / qcr backfill arguments", () => {
+  it("drain takes exactly one of on|off and an optional --local; anything else is refused", () => {
+    expect(parseDrainArgs(["on"])).toEqual({ on: true, local: false });
+    expect(parseDrainArgs(["off", "--local"])).toEqual({ on: false, local: true });
+    expect(parseDrainArgs(["--local", "on"])).toEqual({ on: true, local: true });
+    for (const rest of [
+      [],
+      ["off", "--locl"],
+      ["on", "off"],
+      ["on", "on"],
+      ["on", "--local", "--local"],
+      ["of"],
+    ])
+      expect(() => parseDrainArgs(rest), rest.join(" ")).toThrow(/usage: qcr drain/);
+  });
+
+  it("backfill takes --dry-run and --limit <n> only; a mistyped flag never reads as an import", () => {
+    expect(parseBackfillArgs([])).toEqual({ dryRun: false, limit: undefined });
+    expect(parseBackfillArgs(["--dry-run", "--limit", "5"])).toEqual({ dryRun: true, limit: 5 });
+    expect(parseBackfillArgs(["--limit", "0"])).toEqual({ dryRun: false, limit: 0 });
+    for (const rest of [
+      ["--dryrun"],
+      ["--dry-run", "--dry-run"],
+      ["--limit"],
+      ["--limit", "x"],
+      ["--limit", "-1"],
+      ["--limit", "2", "--limit", "3"],
+      ["extra"],
+    ])
+      expect(() => parseBackfillArgs(rest), rest.join(" ")).toThrow(/usage: qcr backfill/);
   });
 });
 

@@ -871,6 +871,28 @@ async function cmdMetrics(pr: number | null, json: boolean): Promise<void> {
   }
 }
 
+const BACKFILL_USAGE = "usage: qcr backfill [--dry-run] [--limit <n>] [--json]";
+
+/** `qcr backfill`'s arguments (`--json` is taken off before). An unknown or
+ * repeated token is refused: a mistyped `--dry-run` must not run the import. */
+export function parseBackfillArgs(rest: readonly string[]): {
+  dryRun: boolean;
+  limit: number | undefined;
+} {
+  let dryRun = false;
+  let limit: number | undefined;
+  for (let i = 0; i < rest.length; i += 1) {
+    const a = rest[i];
+    if (a === "--dry-run" && !dryRun) dryRun = true;
+    else if (a === "--limit" && limit === undefined && rest[i + 1] !== undefined) {
+      limit = Number(rest[i + 1]);
+      i += 1;
+      if (!Number.isInteger(limit) || limit < 0) throw new Error(BACKFILL_USAGE);
+    } else throw new Error(BACKFILL_USAGE);
+  }
+  return { dryRun, limit };
+}
+
 /** `qcr backfill [--dry-run] [--limit N]` — the one-shot pre-daemon history
  * import. Read-only against GitHub: it opens the adapter purely for
  * its search/GraphQL reads and never reaches a mutation surface. */
@@ -1121,11 +1143,26 @@ function runDrainLocal(on: boolean): number {
   return 0;
 }
 
+const DRAIN_USAGE = "usage: qcr drain <on|off> [--local]";
+
+/** `qcr drain`'s arguments: exactly one of `on`/`off`, optionally `--local`.
+ * Anything else is refused before a transport is picked or a command file
+ * written — a mistyped `--local` must not send the drain over ssh instead. */
+export function parseDrainArgs(rest: readonly string[]): { on: boolean; local: boolean } {
+  let sub: "on" | "off" | undefined;
+  let local = false;
+  for (const a of rest) {
+    if ((a === "on" || a === "off") && sub === undefined) sub = a;
+    else if (a === "--local" && !local) local = true;
+    else throw new Error(DRAIN_USAGE);
+  }
+  if (sub === undefined) throw new Error(DRAIN_USAGE);
+  return { on: sub === "on", local };
+}
+
 async function cmdDrain(rest: string[]): Promise<number> {
-  const sub = rest.find((a) => a === "on" || a === "off");
-  if (!sub) throw new Error("usage: qcr drain <on|off> [--local]");
-  const on = sub === "on";
-  if (rest.includes("--local")) return runDrainLocal(on);
+  const { on, local } = parseDrainArgs(rest);
+  if (local) return runDrainLocal(on);
   // Honour [tui] target — on the laptop topology the same command
   // file write runs against local docker instead of ssh.
   const { runnerFor } = await import("./tui/remote.js");
@@ -1769,12 +1806,8 @@ export async function main(argv: string[]): Promise<void> {
       return cmdMetrics(pr, json);
     }
     case "backfill": {
-      const limitIdx = rest.indexOf("--limit");
-      const limit = limitIdx >= 0 ? Number(rest[limitIdx + 1]) : undefined;
-      if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
-        throw new Error("usage: qcr backfill [--dry-run] [--limit <n>] [--json]");
-      }
-      return cmdBackfill(rest.includes("--dry-run"), limit, json);
+      const { dryRun, limit } = parseBackfillArgs(rest);
+      return cmdBackfill(dryRun, limit, json);
     }
     case "history": {
       process.exitCode = await cmdHistory(rest);
