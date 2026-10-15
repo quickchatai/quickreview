@@ -29,7 +29,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { inRoot, MAX_READ_BYTES } from "./adapters.js";
 import type { ScanSource, ScanTree } from "./scanrun.js";
 import type { UnreadableReason } from "./scan.js";
@@ -57,15 +57,27 @@ export function gitScanSource(
   opts: { treesDir?: string; batchBytes?: number } = {},
 ): ScanSource {
   const batchBytes = opts.batchBytes ?? BYTES_PER_BATCH;
+  // Why the last git call failed — its stderr's first line, or the error
+  // (a buffer overrun, git missing) — so a refusal names the cause.
+  let lastFailure = "";
+  const failed = (err: unknown): null => {
+    const e = err as { stderr?: Buffer | string; message?: string };
+    const stderr = (
+      Buffer.isBuffer(e.stderr) ? e.stderr.toString("utf8") : (e.stderr ?? "")
+    ).trim();
+    lastFailure = (stderr.split("\n")[0] || e.message || String(err)).slice(0, 300);
+    return null;
+  };
+  const because = (): string => (lastFailure ? ` (${lastFailure})` : "");
   const git = (args: string[], maxBuffer = 64 * 1024 * 1024): string | null => {
     try {
       return execFileSync("git", ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, ...args], {
         encoding: "utf8",
         maxBuffer,
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
-    } catch {
-      return null;
+    } catch (err) {
+      return failed(err);
     }
   };
   const gitBytes = (args: string[], input: string, maxBuffer: number): Buffer | null => {
@@ -73,10 +85,10 @@ export function gitScanSource(
       return execFileSync("git", ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, ...args], {
         input,
         maxBuffer,
-        stdio: ["pipe", "pipe", "ignore"],
+        stdio: ["pipe", "pipe", "pipe"],
       });
-    } catch {
-      return null;
+    } catch (err) {
+      return failed(err);
     }
   };
   /** Write every listed file's blob, raw, under `root`. False when git
@@ -163,8 +175,10 @@ export function gitScanSource(
     open: (sha, keep) => {
       if (!SHA_RE.test(sha))
         return { ok: false, reason: `not a commit sha: ${JSON.stringify(sha)}` };
+      lastFailure = "";
       const files = list(sha);
-      if (files === null) return { ok: false, reason: "git cannot list that commit's tree" };
+      if (files === null)
+        return { ok: false, reason: `git cannot list that commit's tree${because()}` };
       const root = join(treesDir, sha);
       const marker = `${root}${COMPLETE_SUFFIX}`;
       try {
@@ -180,7 +194,7 @@ export function gitScanSource(
           rmSync(root, { recursive: true, force: true });
           mkdirSync(root, { recursive: true });
           if (!materialise(root, files))
-            return { ok: false, reason: "git cannot read that commit's blobs" };
+            return { ok: false, reason: `git cannot read that commit's blobs${because()}` };
           writeFileSync(marker, `${sha}\n`);
         }
       } catch (err) {
