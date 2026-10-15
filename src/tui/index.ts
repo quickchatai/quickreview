@@ -171,10 +171,15 @@ export function buildTuiDriver(
       app.repaint();
       // Drive the tab's own PR-entry state machine so the timeline FETCH runs
       // (drillTo is closure-private): # opens entry, digits accumulate, ⏎ drills.
-      // A half-typed operator entry would swallow the "#" and prefix our
-      // digits — clear entry mode first so the sequence starts clean.
+      // The sequence starts from the dashboard: a half-typed operator entry
+      // would swallow the "#" and prefix our digits, and an open timeline
+      // answers to Esc only, so its "#" would reach the companion column.
       metricsView.prEntry = undefined;
+      metricsView.drill = undefined;
+      metricsView.scroll = 0;
       app.pressKey("#");
+      if (metricsView.prEntry !== "")
+        throw new Error(`metrics pr ${pr} refused — the metrics tab did not open its PR entry`);
       for (const d of String(pr)) app.pressKey(d);
       app.pressKey("\r");
     },

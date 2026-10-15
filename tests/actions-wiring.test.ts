@@ -308,6 +308,19 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(metricsView.drill?.pr).toBe(5012);
   });
 
+  it("metrics pr opens the requested timeline when another one is already open", async () => {
+    const { metricsView, metrics, driver } = makeRig();
+    driver.metricsPr(5012);
+    await settle();
+    const dir = actionDir();
+    drop(dir, "p.json", { verb: "metrics", params: { pr: 5049 } });
+    const [r] = await processTuiActions(dir, driver);
+    await settle();
+    expect(r!.ok).toBe(true);
+    expect(metrics.timelineCalls).toEqual([5012, 5049]);
+    expect(metricsView.drill?.pr).toBe(5049);
+  });
+
   it("deploy_tab stop/start refuses a request mismatching the observed container state — as a FAILED result", async () => {
     const { deployState, driver } = makeRig();
     deployState.containerStatus = "Exited (0) 2 hours ago";
