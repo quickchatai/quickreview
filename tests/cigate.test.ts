@@ -837,7 +837,10 @@ describe("the CI-completed trigger reaches the retry", () => {
       {
         cfg,
         store,
-        // Exactly the daemon's wiring (daemon.ts onCiCompleted).
+        // A stand-in for the daemon's onCiCompleted (src/daemon.ts), which
+        // makes the same call per PR beside the recheck and pumps on a
+        // requeue. This test pins the webhook → retry half only; the
+        // daemon's own forwarding is not exercised here.
         onCiCompleted: async (ci) => {
           for (const pr of ci.prs)
             await retryWithheldApproval(

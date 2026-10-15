@@ -24,15 +24,17 @@ Every later re-review round is a **follow-up round** (a staleness round never is
    - The plan is built from the delta's files, with intent text arms off. The tier is still chosen from the whole PR, so a small fix push keeps the PR's tier.
    - `pass-baseline` is always planned. It carries every prior finding no other planned lens owns. On a delta over `baseline_split_lines` (2000) it is split into 2–3 rows by file group (`baselineGroups`, docs/architecture/lifecycle.md); a prior finding that falls to it goes to exactly one row — the one whose files hold its path, else the first — as the plan table's note says.
    - When the whole PR trips the migration gate, the full plan's `pass-data-safety` row rides the delta plan even if no migration is in the delta: the gate note and a degraded pre-check name that lens. It takes its launch-order place, as every row does (slowest first, `slowestFirst` in dispatch.ts).
-   - A delta of at most `follow_up_small_delta_lines` (150) lines gets the **lean plan** (`leanFollowUpPlan`): no per-file `pass-sweep` rows, because pass-baseline reads a small change whole, and the quality and style lenses moved to the addable list instead of planned. They judged the PR in round 1, and on a fix push they mostly re-raise nits. No lens leaves the round: the session adds one when the change shows its shape. In replays, a follow-up round's time tracked its agent count, and 138-line deltas fanned out to 15–20 agents under the full plan.
+   - **Who sizes the round** is `follow_up_extent`. Under `"session"` (the default) every follow-up round plans the lean core below, and the rows it leaves out — the per-file `pass-sweep` rows and the quality and style lenses — are offered as OPTIONAL rows the main session runs, partly runs or skips, with a one-line reason (`extent` = `ran` | `partial` | `skipped` and `extent_reason` in the verdict); the small-delta threshold does not apply. Under `"rules"` the threshold decides, as the next bullet says.
+   - Under `"rules"`, a delta of at most `follow_up_small_delta_lines` (150) lines gets the **lean plan** (`leanFollowUpPlan`): no per-file `pass-sweep` rows, because pass-baseline reads a small change whole, and the quality and style lenses moved to the addable list instead of planned. They judged the PR in round 1, and on a fix push they mostly re-raise nits. No lens leaves the round: the session adds one when the change shows its shape. In replays, a follow-up round's time tracked its agent count, and 138-line deltas fanned out to 15–20 agents under the full plan.
    - Each delta-plan task file (`[review] task_files`) carries the change since the last review as the lens's review scope — its files, ranges and patch — with the whole PR as context; the session hands each lens its assigned prior findings through `launch_plan`'s `extra`, keyed by row.
 3. **Validate new candidates only.** When there are none, the validator is not run (the summary says so); prior-finding statuses never go to it.
 4. **Pre-approval sweep.** The order carries a sweep plan (`{{sweep_note}}`) when the sweep is owed. It runs only when steps 1–4 lead to APPROVE (approval withheld for CI counts): the full round-1-style plan over the whole PR, then one validator over its candidates, then the decision.
+   - Under `follow_up_extent = "session"`, whether an owed sweep runs is the session's decision (`{{sweep_decision_note}}`): it skips one only when it can say why the sweep adds nothing, and records `sweep: "skipped"` with a one-line `sweep_reason`. A skipped sweep is never a full look, so a later round that owes it still owes it. Under `"rules"` an owed sweep always runs when the round would approve.
    - The sweep never starts early, beside the delta review: in replays an early start ran in 6 of 10 rounds and only 1–2 of them approved, so most paid for a full sweep the round never needed (up to 40 agents, 2–3× the cost).
    - The sweep is owed when the standing verdict is not APPROVE (an approval withheld for CI does not count as one: GitHub never saw it) and no full look has happened since the first round. A full look is a legacy full re-review, a full-scope re-review round, or a round whose sweep ran — never a staleness round.
    - The sweep note lists the full plan's files left over the per-round sweep cap, as round 1 does.
    - After a posted approval it is owed only when the PR-owned change since then reaches `follow_up_post_approval_sweep_lines` (500), whatever full looks came before. A smaller push after an approval is delta-only. In the live data, the blockers that post-approval re-reviews found outside the change sat behind 618–1204-line pushes; 47 of the 69 post-approval rounds changed fewer than 500 lines. Three tiny pushes (19–36 lines) on large PRs also drew such blockers; the floor deliberately does not chase those.
-5. **Decide, post, verdict.** Unchanged fences. The verdict carries `"sweep": "ran" | "not_owed" | "not_reached"`, and each pass entry carries `"phase": "delta" | "sweep"`. An APPROVE claiming `not_reached` or `not_owed` beside an owed sweep is a contradiction, recorded `unknown`.
+5. **Decide, post, verdict.** Unchanged fences. The verdict carries `"sweep": "ran" | "not_owed" | "not_reached"` — or `"skipped"` under `follow_up_extent = "session"` — and each pass entry carries `"phase": "delta" | "sweep"`. An APPROVE claiming `not_reached` or `not_owed` beside an owed sweep is a contradiction, recorded `unknown` (`src/sweepstatus.ts`).
 
 ## Fallback to a full round (today's re-review, unchanged template)
 
@@ -57,7 +59,8 @@ A full round counts as a full look.
 | `follow_up` | `"delta"` | `"full"` runs every later round as a full re-review (`round-re-review.md`), byte-for-byte |
 | `follow_up_max_delta_ratio` | 0.6 | Above this share of the PR's diff lines, the round falls back to a full re-review |
 | `follow_up_sweep` | true | false never plans the pre-approval sweep |
-| `follow_up_small_delta_lines` | 150 | A delta of at most this many lines gets the lean plan; 0 never |
+| `follow_up_extent` | `"session"` | `"session"`: the main session sizes every follow-up round (optional rows, and whether an owed sweep runs) with a stated reason; `"rules"`: the small-delta threshold and an always-run owed sweep |
+| `follow_up_small_delta_lines` | 150 | Under `follow_up_extent = "rules"`, a delta of at most this many lines gets the lean plan; 0 never |
 | `baseline_split_lines` | 2000 | Over this many changed lines (the delta's, on a follow-up) pass-baseline is planned as 2–3 rows by file group; 0 never |
 | `follow_up_post_approval_sweep_lines` | 500 | After a posted approval, the sweep is owed only from this many changed lines; 0 never owes it |
 
@@ -66,7 +69,7 @@ A full round counts as a full look.
 `rounds` gains these columns:
 - `head_sha`, `merge_base`, `scope` (`full|delta`) and `delta_base_sha`;
 - `delta_lines`, `delta_files` and `sweep_owed` (0/1);
-- `sweep_plan` (JSON) and `sweep_status` (`ran|not_owed|not_reached|unknown`).
+- `sweep_plan` (JSON) and `sweep_status` (`ran|not_owed|not_reached|skipped|unknown`).
 
 A new table, `prior_finding_checks`, holds the daemon's listings (each prior finding a round was handed: status NULL, `listed_at`) and the session-reported statuses.
 

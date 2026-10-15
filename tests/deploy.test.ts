@@ -318,6 +318,9 @@ describe("deploy.sh --dry-run", () => {
     const r = run(env, ["--dry-run", "rebuild"]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("-e rebuild_image=true");
+    // An image that comes out identical recreates nothing, and the code and
+    // config are bind mounts: only a restart puts the shipped tree to work.
+    expect(r.stdout).toContain("-e force_restart=true");
   });
 
   it("plans ssh-only checks in verify mode (cloudflared + container + heartbeat)", () => {
@@ -327,6 +330,31 @@ describe("deploy.sh --dry-run", () => {
     expect(r.stdout).toContain("systemctl is-active cloudflared");
     expect(r.stdout).toContain("status.json");
     expect(r.stdout).not.toContain("ansible-playbook");
+  });
+
+  it("checks cloudflared only when the inventory enables it — the playbook installs it on that condition alone", () => {
+    const withInventory = (line: string) => {
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        inventory: `[quickreview]\n${line}\n\n[quickreview:vars]\nansible_user=mat\n`,
+      });
+      const r = run(env, ["--dry-run", "verify"]);
+      rmSync(env.dir, { recursive: true, force: true });
+      return r;
+    };
+    const off = withInventory("quickreview-vm cloudflared_enabled=false");
+    expect(off.code).toBe(0);
+    expect(off.stdout).not.toContain("systemctl is-active cloudflared");
+    expect(off.stdout).toContain("cloudflared not checked — cloudflared_enabled=false");
+    expect(off.stdout).toContain("systemctl is-active docker");
+    // Ansible's `| bool` reading: a hand-edited quoted or capitalised yes is
+    // true, and no host var at all is the tracked default (true).
+    for (const on of ['cloudflared_enabled="True"', "cloudflared_enabled=yes", ""]) {
+      const r = withInventory(`quickreview-vm ${on}`.trim());
+      expect(r.code, on).toBe(0);
+      expect(r.stdout, on).toContain("systemctl is-active cloudflared");
+    }
   });
 
   it("refuses a dirty working tree", () => {
@@ -1522,11 +1550,14 @@ describe("deploy — the stale-image outage", () => {
   });
 
   /** verify for real against a stub ssh on PATH — nothing leaves the machine. */
-  function verifyWith(probe: string): { code: number; stdout: string; stderr: string } {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+  function verifyWith(
+    probe: string,
+    opts: { inventory?: string; ssh?: string } = {},
+  ): { code: number; stdout: string; stderr: string } {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", inventory: opts.inventory });
     const bin = join(env.dir, "bin");
     mkdirSync(bin);
-    writeFileSync(join(bin, "ssh"), "#!/bin/sh\necho stub-ok\n", { mode: 0o755 });
+    writeFileSync(join(bin, "ssh"), opts.ssh ?? "#!/bin/sh\necho stub-ok\n", { mode: 0o755 });
     return run(env, ["verify"], {
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       QC_HEARTBEAT_PROBE_CMD: probe,
@@ -1544,6 +1575,26 @@ describe("deploy — the stale-image outage", () => {
 
   it("verify FAILS when the heartbeat cannot be read at all", () => {
     expect(verifyWith("exit 255").code).toBe(1);
+  });
+
+  it("verify passes on a polling-only VM (cloudflared_enabled=false), where no cloudflared service exists", () => {
+    const fresh = `printf '%s\\n%s\\n%s' '${STARTED}' '${NOW}' '${status("2026-10-03T09:56:50.000Z")}'`;
+    // The stub ssh answers every probe but a cloudflared one, as that host does.
+    const ssh =
+      '#!/bin/sh\ncase "$*" in *cloudflared*) echo inactive; exit 3 ;; esac\necho stub-ok\n';
+    const polling = verifyWith(fresh, {
+      inventory: "[quickreview]\nquickreview-vm cloudflared_enabled=false\n",
+      ssh,
+    });
+    expect(polling.code).toBe(0);
+    rmSync(env.dir, { recursive: true, force: true });
+    // The same host with the tunnel enabled fails on the missing service.
+    const tunnel = verifyWith(fresh, {
+      inventory: "[quickreview]\nquickreview-vm cloudflared_enabled=true\n",
+      ssh,
+    });
+    expect(tunnel.code).toBe(1);
+    expect(tunnel.stderr).toContain("CHECK FAILED: systemctl is-active cloudflared");
   });
 
   it("verify passes on a heartbeat from this boot", () => {
