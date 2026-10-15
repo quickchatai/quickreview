@@ -447,10 +447,16 @@ const endsWithSegs = (a: string[], b: string[]): boolean =>
  * (`tests/`, `__tests__/`, `src/test` vs `src/main`, …) are set aside — the
  * code's own directory, a `tests/` beside or under it, or a top-level tests
  * tree mirroring its package. The nearest (most shared leading directories)
- * win, at most `MAX_PAIRED_PER_FILE`. A heuristic, deliberately: a pair is
- * reading context for the lens, never a claim about coverage.
+ * win, at most `MAX_PAIRED_PER_FILE` of those `eligible` says a lens may read
+ * — so a test it may not never takes a nearer one's place. A heuristic,
+ * deliberately: a pair is reading context for the lens, never a claim about
+ * coverage.
  */
-export function pairTests(code: string, tree: readonly string[]): string[] {
+export function pairTests(
+  code: string,
+  tree: readonly string[],
+  eligible: (path: string) => boolean = () => true,
+): string[] {
   const stem = codeStem(code);
   if (stem === "" || isTestFile(code)) return [];
   const fam = family(code);
@@ -459,6 +465,7 @@ export function pairTests(code: string, tree: readonly string[]): string[] {
   const scored: Array<{ path: string; score: number }> = [];
   for (const t of tree) {
     if (t === code || !isTestFile(t) || family(t) !== fam || testStem(t) !== stem) continue;
+    if (!eligible(t)) continue;
     const tDir = dirSegs(t);
     const tNorm = tDir.filter((s) => !TEST_DIRS.has(s.toLowerCase()));
     if (!(endsWithSegs(cNorm, tNorm) || endsWithSegs(tNorm, cNorm))) continue;
@@ -540,14 +547,15 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     const tests: ScanCaseFile[] = [];
     const unpaired: string[] = [];
     const taken = new Set(sorted);
+    // A paired test obeys the named files' rules: never an unreadable kind
+    // (generated, vendored, a lockfile), never excluded, readable as text.
+    const pairable = (t: string): boolean =>
+      !isSweepSkipped(t) && !excluded(t) && input.linesOf(t) !== null;
     for (const code of spec.pair ? sorted : []) {
-      for (const t of pairTests(code, treePaths)) {
+      for (const t of pairTests(code, treePaths, pairable)) {
         if (taken.has(t)) continue;
         taken.add(t);
-        // An excluded file is never scanned — paired or named.
-        if (excluded(t)) continue;
-        const n = input.linesOf(t);
-        if (n === null) continue;
+        const n = input.linesOf(t)!;
         if (tests.length + 1 > testFiles || pairedLines + n > testLines) {
           unpaired.push(t);
           continue;
