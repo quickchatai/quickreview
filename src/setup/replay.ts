@@ -24,6 +24,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import type { PrFileEntry } from "../github.js";
+import { splitFrontmatter } from "../include.js";
 import type { PassTier } from "../types.js";
 import { SEVERITIES, type ScanCandidate } from "./scan.js";
 
@@ -100,8 +101,8 @@ export const REFERENCE_BASIS =
  * which is what a measured rate is keyed by (a profile's `effort` changes
  * the spec, and the price with it). */
 export function modelOf(agentText: string): string | null {
-  const fm = /^---\n([\s\S]*?)\n---/.exec(agentText.replace(/\r\n/g, "\n"));
-  const m = fm ? /^model:[ \t]*(.+?)[ \t]*$/m.exec(fm[1]!) : null;
+  const fm = splitFrontmatter(agentText.replace(/\r\n/g, "\n"));
+  const m = fm.hasFrontmatter ? /^model:[ \t]*(.+?)[ \t]*$/m.exec(fm.frontmatter) : null;
   return m ? m[1]! : null;
 }
 

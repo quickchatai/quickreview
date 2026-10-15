@@ -1180,6 +1180,27 @@ describe("gitReplaySource (a scratch git repo — git is the thing under test)",
     expect(t.lines("app/a.py")).toBe(3);
   });
 
+  it("a non-ASCII or quoted path in the diff is the tree's own filename", () => {
+    git("checkout", "-qb", "feature");
+    write(join(repo, "app/café.py"), "x\n");
+    write(join(repo, 'app/say "hi".py'), "y\n");
+    git("add", "-A");
+    git("commit", "-qm", "names");
+    const head = git("rev-parse", "HEAD");
+    git("checkout", "-q", "-");
+    const src = gitReplaySource({
+      github: github({}),
+      repo: "acme/app",
+      repoRoot: repo,
+      stateRoot: stateRoot(),
+    });
+    const opened = src.open({ ...pr(), head_sha: head, base_sha: git("rev-parse", "HEAD") }, []);
+    if (!opened.ok) throw new Error(opened.reason);
+    const names = opened.tree.files.map((f) => f.filename).sort();
+    expect(names).toEqual(["app/café.py", 'app/say "hi".py'].sort());
+    for (const n of names) expect(opened.tree.lines(n)).toBe(1);
+  });
+
   it("two PRs from one head into different bases each keep their own diff", () => {
     const main = git("rev-parse", "HEAD");
     git("checkout", "-qb", "feature");
