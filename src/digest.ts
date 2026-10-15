@@ -6,6 +6,7 @@ import { sandboxRoot } from "./config.js";
 import { zoneDayBounds } from "./eod.js";
 import {
   cancelCauseLabel,
+  roundUsage,
   tallyCancellations,
   type CancellationTally,
   type StateStore,
@@ -93,13 +94,8 @@ export interface DailyUsage {
  */
 export function dailyUsage(store: StateStore, date: string): DailyUsage {
   const rounds = store.roundsOn(date);
-  return {
-    date,
-    rounds: rounds.length,
-    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
-    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
-    est_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
-  };
+  const { spend_usd, tokens_in, tokens_out } = roundUsage(rounds);
+  return { date, rounds: rounds.length, tokens_in, tokens_out, est_usd: spend_usd };
 }
 
 /** One digest-ready line, e.g. "usage: 3 rounds — 120000 in / 4000 out tokens — est $1.23". */
