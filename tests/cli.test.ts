@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  archivedLedgerText,
   cancellationsOn,
   main,
   parseBackfillArgs,
@@ -129,6 +130,22 @@ describe("renderStatus", () => {
     });
     expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
     expect(out).toContain("#1421 paused by a session — flaky [2J CI 2Kdone");
+  });
+});
+
+describe("model-written text on the operator's terminal", () => {
+  it("status prints the digest headline on one line with no control bytes", () => {
+    const out = renderStatus({
+      ...snapshot,
+      digest_headline: "calm\x1b]0;pwned\x07day\n\x9b2Kend",
+    });
+    expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(out).toContain("digest: calm ]0;pwned day 2Kend");
+  });
+
+  it("why's archived ledger keeps its lines and loses its control bytes", () => {
+    const text = archivedLedgerText("# Ledger\n- F1 \x1b[2Jopen\x1b]0;x\x07\n- F2 done\x9b\n");
+    expect(text).toBe("# Ledger\n- F1 [2Jopen]0;x\n- F2 done\n");
   });
 });
 

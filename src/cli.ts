@@ -57,6 +57,7 @@ import {
   strandedLegacySecrets,
   type InstallEnv,
 } from "./install.js";
+import { sanitizeText } from "./tui/paint.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
 import { transportOf } from "./tui/remote.js";
 import { MutationGate } from "./gate.js";
@@ -435,11 +436,18 @@ function oneLine(s: string): string {
   return s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim();
 }
 
+/** A session-written ledger (the archived copy) headed for the operator's
+ * terminal: its lines kept, its control bytes gone — the board's LEDGER
+ * section reads it the same way. */
+export function archivedLedgerText(raw: string): string {
+  return sanitizeText(raw);
+}
+
 export function renderStatus(snapshot: StatusSnapshot): string {
   const lines: string[] = [];
   const mode = snapshot.dry_run ? "DRY-RUN" : "LIVE";
   lines.push(`quickreview — ${mode} — snapshot ${snapshot.written_at}`);
-  if (snapshot.digest_headline) lines.push(`digest: ${snapshot.digest_headline}`);
+  if (snapshot.digest_headline) lines.push(`digest: ${oneLine(snapshot.digest_headline)}`);
   lines.push(
     `rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`,
   );
@@ -823,7 +831,7 @@ function cmdWhy(n: number): void {
       const ledger = join(archiveDir, "ledger.md");
       if (existsSync(ledger)) {
         console.log("--- archived ledger ---");
-        console.log(readFileSync(ledger, "utf8"));
+        console.log(archivedLedgerText(readFileSync(ledger, "utf8")));
       }
     } else if (!pr && rounds.length === 0) {
       console.log(`nothing known about #${n}`);

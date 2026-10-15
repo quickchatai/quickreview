@@ -611,6 +611,32 @@ describe("qcr drain over the unwedge command channel", () => {
     expect(lines.join("\n")).toContain("2 round(s) still finishing");
   });
 
+  it("prints a session-bounded drain's expiry without its control bytes", async () => {
+    const lines: string[] = [];
+    const ssh = async (
+      _h: string,
+      _a: string[],
+      opts?: { stdin?: string },
+    ): Promise<RemoteResult> =>
+      opts?.stdin !== undefined
+        ? ok()
+        : ok(
+            JSON.stringify({
+              ok: true,
+              draining: true,
+              running_rounds: 0,
+              issuer: "session",
+              expires_at: "2026-10-15T12:00:00Z\x1b]0;pwned\x07\n\x1b[2J",
+            }),
+          );
+    expect(
+      await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} }),
+    ).toBe(0);
+    const out = lines.join("\n");
+    expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(out).toContain("lapses 2026-10-15T12:00:00Z]0;pwned [2J");
+  });
+
   it("reports the drop count on drain off", async () => {
     const lines: string[] = [];
     const ssh = async (
