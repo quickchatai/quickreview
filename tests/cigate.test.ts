@@ -22,6 +22,7 @@ import { MutationGate, type GateResult, type MutationIntent } from "../src/gate.
 import { makePostingGuard, type GuardAdapter } from "../src/guards.js";
 import { GitHubAdapter, type PrFileEntry } from "../src/github.js";
 import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
+import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { applyInterpretation, interpretEvent } from "../src/webhook.js";
@@ -963,6 +964,75 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
       });
       expect(orders).toHaveLength(1);
       expect(orders[0]!.head_sha).toBe(HEAD);
+      expect(store.approvalWithheld(5180)).toBeUndefined();
+    },
+  );
+
+  // MUTATION: drop restoreInterruptedApprovalRetry from dispatch — the
+  // requeued round is skipped as no new evidence and the approval the
+  // withheld note promised never posts.
+  it(
+    "a retry round a restart cancelled before it decided still owes the approval: the requeued round runs",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      tracked(5180, HEAD);
+      store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
+      store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+      await retryWithheldApproval(
+        { cfg, store, adapter: new CiFake() },
+        { pr: 5180, head_sha: HEAD },
+      );
+      const h = hooks();
+      await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks });
+      expect(store.approvalWithheld(5180)).toBeUndefined();
+
+      // Restart before the session posted: the orphan sweep cancels the round
+      // and requeues the PR at the same head.
+      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      expect(store.getPr(5180)?.state).toBe("queued");
+
+      const orders = await dispatchOnce({
+        cfg,
+        store,
+        adapter: new DispatchFake(),
+        hooks: h.hooks,
+      });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.head_sha).toBe(HEAD);
+      expect(
+        store.db
+          .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_restored'")
+          .get(),
+      ).toEqual({ c: 1 });
+      // Spent again by the round that now owns it.
+      expect(store.approvalWithheld(5180)).toBeUndefined();
+    },
+  );
+
+  it(
+    "a retry round that decided — or that guard 2 settled — owes nothing more",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      tracked(5180, HEAD);
+      store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
+      store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+      await retryWithheldApproval(
+        { cfg, store, adapter: new CiFake() },
+        { pr: 5180, head_sha: HEAD },
+      );
+      const h = hooks();
+      await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks });
+      const round = store.runningRounds()[0]!;
+      store.markRoundCancelled(round.id, "guard 2", "no_new_evidence");
+      store.upsertPr({
+        ...store.getPr(5180)!,
+        state: "queued",
+        trigger_ts: "2026-08-18T11:00:00Z",
+      });
+
+      expect(
+        await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks }),
+      ).toEqual([]);
       expect(store.approvalWithheld(5180)).toBeUndefined();
     },
   );

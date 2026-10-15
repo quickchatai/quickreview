@@ -92,7 +92,7 @@ import { renderGateNotes } from "./templates.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
-import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
+import type { ApprovalWithheldRow, PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
 import { PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
 import { ALL_PASSES } from "./passes.js";
@@ -854,6 +854,53 @@ async function consumeTriggers(
     }
   }
   return consumed;
+}
+
+/**
+ * A withheld approval's retry round that ended without deciding anything —
+ * cancelled by a restart's orphan sweep, a self-requeue or an operator, or
+ * held FAILED_LOUD until the operator's `u` — still owes the approval:
+ * dispatch spent the mark at that round's handoff, and the round that would
+ * have re-decided it never did. The mark is re-recorded here from the spend's
+ * own record (`approval_retry_dispatched`), so the round that replaces it
+ * runs instead of being skipped as no new evidence. A round that decided (a
+ * verdict, a guard-2 no-op) or is still running owes nothing; neither does a
+ * spend at another head or one a later round has overtaken.
+ */
+function restoreInterruptedApprovalRetry(
+  store: DispatchDeps["store"],
+  row: Pick<PrStateRow, "number" | "head_sha">,
+): ApprovalWithheldRow | undefined {
+  const spent = store.db
+    .prepare(
+      "SELECT payload FROM events WHERE pr = ? AND kind = 'approval_retry_dispatched' ORDER BY id DESC LIMIT 1",
+    )
+    .get(row.number) as { payload: string } | undefined;
+  if (!spent) return undefined;
+  let record: { head_sha?: unknown; round_id?: unknown; ci_state?: unknown; reason?: unknown };
+  try {
+    record = JSON.parse(spent.payload) as typeof record;
+  } catch {
+    return undefined;
+  }
+  if (record.head_sha !== row.head_sha || typeof record.round_id !== "number") return undefined;
+  const round = store.roundsFor(row.number).find((r) => r.id === record.round_id);
+  if (!round || round.status === "running" || round.status === "done") return undefined;
+  if (round.status === "cancelled" && round.cancel_cause === "no_new_evidence") return undefined;
+  if (store.hasLaterRound(row.number, round.round_no)) return undefined;
+  store.recordApprovalWithheld(row.number, {
+    head_sha: row.head_sha,
+    ci_state: typeof record.ci_state === "string" ? record.ci_state : null,
+    reason: typeof record.reason === "string" ? record.reason : "red-ci",
+  });
+  store.logEvent("approval_retry_restored", row.number, {
+    head_sha: row.head_sha,
+    round_id: round.id,
+    round_no: round.round_no,
+    round_status: round.status,
+    cancel_cause: round.cancel_cause ?? null,
+  });
+  return store.approvalWithheld(row.number);
 }
 
 /**
@@ -1980,7 +2027,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
     // The round's memory window (opened before the seed, below).
     let endMemoryWindow: () => void = () => {};
     // Spends the withheld-approval mark this round inherits (set below).
-    let spendWithholding: () => void = () => {};
+    let spendWithholding: (roundId: number) => void = () => {};
     // Whether this dispatch painted the PR "in progress" (trigger consumption
     // for a round, below): a failure before any round owns the review takes
     // the label off again.
@@ -2016,7 +2063,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // person. Skipping here would leave that PR waiting for a verdict that is
       // never re-attempted, which is the stuck-PR failure the gate must not
       // create.
-      const withheld = store.approvalWithheld(row.number);
+      const withheld =
+        store.approvalWithheld(row.number) ?? restoreInterruptedApprovalRetry(store, row);
       const withheldHere = withheld?.head_sha === row.head_sha;
       // The round about to run re-decides the verdict from scratch, so the
       // withholding it inherits is spent — once the round has a durable owner
@@ -2027,7 +2075,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // withheld again (guards.ts guard 4, or the verdict's
       // `approval_withheld`).
       let withholdingSpent = false;
-      spendWithholding = () => {
+      spendWithholding = (roundId) => {
         if (!withheld || withholdingSpent) return;
         withholdingSpent = true;
         const current = store.approvalWithheld(row.number);
@@ -2037,8 +2085,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           current.created_at === withheld.created_at
         )
           store.clearApprovalWithheld(row.number);
+        // The spend's own record: what `restoreInterruptedApprovalRetry`
+        // re-records should this round end without deciding.
         if (withheldHere)
-          store.logEvent("approval_retry_dispatched", row.number, { head_sha: row.head_sha });
+          store.logEvent("approval_retry_dispatched", row.number, {
+            head_sha: row.head_sha,
+            round_id: roundId,
+            ci_state: withheld.ci_state,
+            reason: withheld.reason,
+          });
       };
       if (cfg.guards.skip_unchanged_head && !withheldHere && !hasNewEvidence(mark, row.head_sha)) {
         // Captured BEFORE the transition below clears them: current PR state
@@ -2848,7 +2903,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // asserts that a prompt bearing it was written, and a dispatch that
       // threw wrote nothing.
       store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
-      spendWithholding();
+      spendWithholding(roundId);
       // The head this round reviews is the next follow-up round's
       // baseline — pin it against gc so a force-push cannot take it away.
       // Best-effort: an unpinned head is re-fetched, or the round runs in full.
@@ -2972,7 +3027,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           // The retained round owns the review now: the withholding it
           // inherited is spent, exactly as on a clean handoff.
           try {
-            spendWithholding();
+            spendWithholding(provisionalRoundId);
           } catch (spendError) {
             log(`dispatch: #${row.number} withheld-approval mark not spent`, spendError);
           }
