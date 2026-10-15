@@ -39,7 +39,7 @@ function actionLine(a: RelayoutAction): string {
     case "retire":
       return `  retire  ${a.id}   ${a.why}`;
     case "rewrite":
-      return `  rewrite ${a.id}   ${a.why} (header fixed in place)`;
+      return `  rewrite ${a.id}   ${a.why} (header fixed in place)${a.note ? ` — ${a.note}` : ""}`;
     case "blocked":
       return `  BLOCKED ${a.id} → ${a.to}   ${a.why}`;
     case "stay":
