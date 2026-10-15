@@ -17,7 +17,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
 import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
-import { PASS_ADDENDA, buildAgents } from "../src/include.js";
+import { PASS_ADDENDA, VALIDATE_PASS, buildAgents, composeAddendum } from "../src/include.js";
 import { configHome, type InstallEnv } from "../src/install.js";
 import {
   applyProfileTuning,
@@ -291,6 +291,21 @@ describe("a profile may point pass-style at a guide in the config home", () => {
     expect(built.get("pass-baseline--sol-med")).not.toContain("House style");
     // An untuned build is untouched by the feature.
     expect(agents(tuned("")).get("pass-style--sol-med")).not.toContain("profile style guide");
+  });
+
+  it("a scan build states when the guide applies outright — it has no plan row to name it", () => {
+    profile("drafted", GUIDED, { "style-guide.md": GUIDE });
+    const registry = lensTuningAddenda(tuned("drafted").lenses);
+    const pr = composeAddendum("pass-style", registry, "none", "pr");
+    const scan = composeAddendum("pass-style", registry, "none", "scan");
+    expect(pr).toContain('plan row names "this repo\'s profile style guide"');
+    expect(pr).not.toContain("whole-repo scan");
+    expect(scan).toContain("whole-repo scan, which has no plan row");
+    expect(scan).not.toContain("plan row names");
+    expect(scan).toContain("Name booleans is_/has_.");
+    expect(composeAddendum(VALIDATE_PASS, registry, "none", "scan")).toContain(
+      "whole-repo scan, which has no plan row",
+    );
   });
 
   it("switching the style lens off beats the guide", () => {

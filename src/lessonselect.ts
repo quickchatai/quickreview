@@ -488,8 +488,7 @@ export class RoundLessonSelector implements RoundLessonHook {
           this.log(`lessons: #${order.pr} round ${order.round_no} selection failed (ignored)`, err);
         },
       );
-      this.pending.add(run);
-      void run.finally(() => this.pending.delete(run));
+      this.track(run);
     } catch (err) {
       this.log(`lessons: #${order.pr} selection not started (ignored)`, err);
     }
@@ -528,8 +527,7 @@ export class RoundLessonSelector implements RoundLessonHook {
         () => undefined,
         () => undefined,
       );
-      this.pending.add(tracked);
-      void tracked.finally(() => this.pending.delete(tracked));
+      this.track(tracked);
       const selections = await run;
       return { selections, texts };
     } catch (err) {
@@ -633,6 +631,12 @@ export class RoundLessonSelector implements RoundLessonHook {
     } catch (err) {
       this.log(`lessons: round ${roundId} discarded, but its selection record could not be dropped (ignored)`, err);
     }
+  }
+
+  /** Hold `p` (which never rejects) in the set `idle` waits on until it settles. */
+  private track(p: Promise<void>): void {
+    this.pending.add(p);
+    void p.finally(() => this.pending.delete(p));
   }
 
   /** Resolves when every selection started so far has settled — for tests

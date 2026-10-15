@@ -43,6 +43,7 @@ import { join } from "node:path";
 import { MEMORY_DEFAULTS } from "../config.js";
 import { localWallClockToInstant, zoneDateString, zonedParts, parseHHMM } from "../eod.js";
 import type { FileOutcome } from "../improvements.js";
+import { jsonColumn } from "../lessonledger.js";
 import { EXPERIENCES_AREA, areaOfId } from "../memory/layout.js";
 import {
   coveringLessons,
@@ -63,6 +64,7 @@ import {
   mineTaggedComments,
   RECALL_SCAN_LIMITS,
   reviewFateCandidates,
+  tableExists,
   type CandidateDraft,
   type CandidateKind,
   type CandidateSource,
@@ -74,6 +76,7 @@ import {
   dayDiff,
   majorityPolarity,
   packetPointer,
+  packetMarkdownRel,
   packetRelDir,
   renderCurationSection,
   renderPacketMarkdown,
@@ -349,15 +352,6 @@ const LESSON_REFRESH_MS = 30 * 60_000;
 /** How many curation days back the status looks for an unresolved failure. */
 const UNRESOLVED_SCAN_DAYS = 30;
 
-function json<T>(raw: string | null | undefined, fallback: T): T {
-  try {
-    const v = JSON.parse(raw ?? "") as unknown;
-    return (v ?? fallback) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 /** `p`, or "timeout" once `ms` passed. A rejection reads as "timeout" too —
  * the caller's fallback is the same — but its cause goes to `onReject`, so a
  * failure is never mistaken for a slow answer in the log. */
@@ -491,7 +485,7 @@ export class Learner {
 
   private async mineOnce(): Promise<MineReport> {
     const now = this.now();
-    const since = new Date(now.getTime() - this.cfg.lessons_mine_days * DAY_MS).toISOString();
+    const since = this.mineSince(now);
     const report: MineReport = {
       added: 0,
       seen: {},
@@ -627,11 +621,21 @@ export class Learner {
     return n;
   }
 
+  /** The oldest event a mine reads: `lessons_mine_days` before `now`. */
+  private mineSince(now: Date): string {
+    return new Date(now.getTime() - this.cfg.lessons_mine_days * DAY_MS).toISOString();
+  }
+
+  /** The start of the recurrence window a cluster counts over. */
+  private recurrenceSince(): string {
+    return new Date(this.now().getTime() - this.cfg.lessons_recurrence_days * DAY_MS).toISOString();
+  }
+
   /** What post-merge recall reads — the same for the day's mine and the
    * ticks between mines, which differ only in their budgets. */
   private recallScope(now: Date, git: RecallGit) {
     return {
-      sinceIso: new Date(now.getTime() - this.cfg.lessons_mine_days * DAY_MS).toISOString(),
+      sinceIso: this.mineSince(now),
       now,
       windowDays: this.cfg.lessons_recall_window_days,
       baseBranch: this.deps.baseBranch,
@@ -701,6 +705,8 @@ export class Learner {
       d.summary,
       d.quote,
       JSON.stringify(d.evidence),
+      d.path,
+      d.line,
       // The event's time moves only with its fate: a recurrence window
       // counts the human outcome, not the capture's re-reading of it.
       d.kind !== c.kind ? d.occurred_at : c.occurred_at,
@@ -725,7 +731,7 @@ export class Learner {
             `UPDATE lesson_candidates SET status = 'open', decided_at = NULL, decided_day = NULL, reason = ?,
                reopened_day = CASE WHEN offered_day IS NULL THEN NULL ELSE ? END,
                kind = ?, polarity = ?, class = ?, lens_ids = ?, summary = ?, quote = ?, evidence = ?,
-               occurred_at = ?, updated_at = ?
+               path = ?, line = ?, occurred_at = ?, updated_at = ?
              WHERE id = ? AND status = 'withdrawn'`,
           ).run(`reinstated: its fate is ${d.kind} again`, day, ...refresh(c, d), at, c.id);
           out.reinstated += 1;
@@ -737,12 +743,14 @@ export class Learner {
           d.polarity === c.polarity &&
           d.class === c.class &&
           d.summary === c.summary &&
-          d.quote === c.quote
+          d.quote === c.quote &&
+          d.path === c.path &&
+          d.line === c.line
         )
           continue;
         db.prepare(
           `UPDATE lesson_candidates SET kind = ?, polarity = ?, class = ?, lens_ids = ?, summary = ?, quote = ?,
-             evidence = ?, occurred_at = ?, updated_at = ?
+             evidence = ?, path = ?, line = ?, occurred_at = ?, updated_at = ?
            WHERE id = ? AND status = 'open'`,
         ).run(...refresh(c, d), at, c.id);
         out.revised += 1;
@@ -803,10 +811,7 @@ export class Learner {
    * window — the counterweight a cluster shows. */
   private counterweights(sinceIso: string): Map<string, { fixed: number; ignored: number }> {
     const out = new Map<string, { fixed: number; ignored: number }>();
-    const has = this.store.db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'finding_outcomes'")
-      .get();
-    if (!has) return out;
+    if (!tableExists(this.store, "finding_outcomes")) return out;
     const rows = this.store.db
       .prepare(
         `SELECT o.fate, f.lens_ids, f.lens, f.kind FROM finding_outcomes o
@@ -870,7 +875,7 @@ export class Learner {
     // the ones its record lists, and the ones its expiry committed before
     // that build was cut short (the rows say so: expired on this day).
     const prior = this.curation(day);
-    const priorExpired = prior ? json<number[]>(prior.expired, []) : [];
+    const priorExpired = prior ? jsonColumn<number[]>(prior.expired, []) : [];
     const expiredOnDay = this.candidates("status = 'expired' AND decided_day = ? ORDER BY id", day);
     for (const id of [...priorExpired, ...expiredOnDay.map((c) => c.id)]) {
       if (expired.some((e) => e.id === id)) continue;
@@ -935,9 +940,7 @@ export class Learner {
     ).n;
 
     // Cluster, with recurrence, the counterweight and coverage.
-    const since = new Date(
-      this.now().getTime() - this.cfg.lessons_recurrence_days * DAY_MS,
-    ).toISOString();
+    const since = this.recurrenceSince();
     const recurrence = this.recurrence(since);
     const weights = this.counterweights(since);
     const read = await this.readLessons();
@@ -950,13 +953,13 @@ export class Learner {
       source: c.source,
       polarity: c.polarity,
       class: c.class,
-      lens_ids: json<string[]>(c.lens_ids, []),
+      lens_ids: jsonColumn<string[]>(c.lens_ids, []),
       pr: c.pr,
       path: c.path,
       line: c.line,
       summary: c.summary,
       quote: c.quote,
-      evidence: json<string[]>(c.evidence, []),
+      evidence: jsonColumn<string[]>(c.evidence, []),
       occurred_at: c.occurred_at,
       offered_day: c.offered_day!,
       expires_after: addDays(clockDay(c), this.cfg.lessons_expiry_ops_days - 1),
@@ -971,7 +974,7 @@ export class Learner {
       return read.complete || found.length > 0 ? found : null;
     };
     const clusters: PacketCluster[] = [...byClass.entries()].map(([cls, rows]) => {
-      const lensIds = [...new Set(rows.flatMap((r) => json<string[]>(r.lens_ids, [])))];
+      const lensIds = [...new Set(rows.flatMap((r) => jsonColumn<string[]>(r.lens_ids, [])))];
       const w = weights.get(cls) ?? { fixed: 0, ignored: 0 };
       return {
         class: cls,
@@ -1103,7 +1106,7 @@ export class Learner {
     if (!row?.packet_at)
       return { ok: false, reason: `no outcomes packet was written for ${receipt.day}` };
     const ids = receipt.decisions.flatMap((d) => d.candidates);
-    const offered = new Set(json<number[]>(row.offered, []));
+    const offered = new Set(jsonColumn<number[]>(row.offered, []));
     const known = new Set(
       ids.length === 0
         ? []
@@ -1155,7 +1158,7 @@ export class Learner {
                  receipt_day = ?, receipt_at = ?, updated_at = ? WHERE id = ? AND status IN ('open', 'adopting')`,
             ).run(at, receipt.day, d.reason ?? null, receipt.day, at, at, id);
             db.prepare(
-              "UPDATE lesson_candidates SET receipt_day = ?, receipt_at = ?, updated_at = ? WHERE id = ? AND status NOT IN ('open', 'adopting', 'declined')",
+              "UPDATE lesson_candidates SET receipt_day = ?, receipt_at = ?, updated_at = ? WHERE id = ? AND status NOT IN ('open', 'adopting')",
             ).run(receipt.day, at, at, id);
             counts.declined += 1;
           } else {
@@ -1205,11 +1208,11 @@ export class Learner {
    * the list names something no earlier wake named. */
   private notPersisted(day: string, items: Array<{ id: number; why: string }>): void {
     const row = this.curation(day);
-    const prev = json<Array<{ id: number; why: string }>>(row?.not_persisted, []);
+    const prev = jsonColumn<Array<{ id: number; why: string }>>(row?.not_persisted, []);
     const merged = [...prev];
     for (const i of items)
       if (!merged.some((m) => m.id === i.id && m.why === i.why)) merged.push(i);
-    const woken = new Set(json<string[]>(row?.not_persisted_woken, []));
+    const woken = new Set(jsonColumn<string[]>(row?.not_persisted_woken, []));
     const key = (m: { id: number; why: string }) => `${m.id}:${m.why}`;
     const fresh = merged.filter((m) => !woken.has(key(m)));
     const at = this.ts();
@@ -1298,7 +1301,7 @@ export class Learner {
       )
       .all() as CurationRow[];
     for (const r of rows) {
-      const offered = json<number[]>(r.offered, []);
+      const offered = jsonColumn<number[]>(r.offered, []);
       if (offered.length === 0) continue;
       const fired = Date.parse(r.fired_at!);
       if (!Number.isFinite(fired) || now - fired < waitMs) continue;
@@ -1310,7 +1313,7 @@ export class Learner {
         LEARNER_WAKE.missing,
         `EOD ${r.day}: no curation receipt ${this.cfg.lessons_receipt_wait_min} min after the sweep`,
         [
-          `EOD CURATION MISSING — the EOD sweep for ${r.day} was delivered at ${r.fired_at}, its outcomes packet offered ${offered.length} candidate(s) (\`${packetRelDir(r.day)}/outcomes.md\`), and no \`eod-curation-receipt\` arrived within ${this.cfg.lessons_receipt_wait_min} minutes.`,
+          `EOD CURATION MISSING — the EOD sweep for ${r.day} was delivered at ${r.fired_at}, its outcomes packet offered ${offered.length} candidate(s) (\`${packetMarkdownRel(r.day)}\`), and no \`eod-curation-receipt\` arrived within ${this.cfg.lessons_receipt_wait_min} minutes.`,
           "Nothing says the day's outcomes were curated. The candidates stay open and ride the next packet; undecided, they expire (recorded). Check the overseer session, then curate the packet and write the receipt.",
         ].join("\n"),
       );
@@ -1421,7 +1424,7 @@ export class Learner {
     for (const row of db
       .prepare("SELECT day, not_persisted FROM eod_curations WHERE not_persisted <> '[]'")
       .all() as Array<{ day: string; not_persisted: string }>) {
-      const list = json<Array<{ id: number; why: string }>>(row.not_persisted, []);
+      const list = jsonColumn<Array<{ id: number; why: string }>>(row.not_persisted, []);
       const kept = list.filter((m) => !settled.has(m.id));
       if (kept.length !== list.length)
         db.prepare(
@@ -1462,7 +1465,7 @@ export class Learner {
       .prepare("SELECT * FROM eod_curations ORDER BY day DESC LIMIT ?")
       .all(UNRESOLVED_SCAN_DAYS) as CurationRow[];
     const lists = new Map(
-      rows.map((r) => [r.day, json<Array<{ id: number; why: string }>>(r.not_persisted, [])]),
+      rows.map((r) => [r.day, jsonColumn<Array<{ id: number; why: string }>>(r.not_persisted, [])]),
     );
     const ids = [...new Set([...lists.values()].flatMap((l) => l.map((m) => m.id)))];
     const settled = new Set(
@@ -1491,7 +1494,7 @@ export class Learner {
           count: open.size,
           since: r.not_persisted_since ?? r.updated_at,
         });
-      const offered = json<number[]>(r.offered, []);
+      const offered = jsonColumn<number[]>(r.offered, []);
       const fired = Date.parse(r.fired_at ?? "");
       if (
         !laterReceipt &&
@@ -1554,7 +1557,7 @@ export class Learner {
         unresolved,
         incident,
       };
-    const offered = json<number[]>(row.offered, []);
+    const offered = jsonColumn<number[]>(row.offered, []);
     let state: CurationStatus["state"];
     if (head) state = head.state;
     else if (row.receipt_at !== null) state = "received";
@@ -1570,7 +1573,7 @@ export class Learner {
       verifying: count("receipt_day = ? AND status = 'adopting'", row.day),
       not_persisted:
         unresolved.find((u) => u.day === row.day && u.state === "not_persisted")?.count ?? 0,
-      expired_today: json<unknown[]>(row.expired, []).length,
+      expired_today: jsonColumn<unknown[]>(row.expired, []).length,
       open,
       queued,
       receipt_at: row.receipt_at,
@@ -1588,9 +1591,7 @@ export class Learner {
     queued: number;
     recurrence: number;
   }> {
-    const since = new Date(
-      this.now().getTime() - this.cfg.lessons_recurrence_days * DAY_MS,
-    ).toISOString();
+    const since = this.recurrenceSince();
     const rows = this.candidates("status = 'open' ORDER BY class, id");
     const out = new Map<string, { rows: CandidateRow[]; queued: number }>();
     for (const r of rows) {

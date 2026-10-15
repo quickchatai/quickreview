@@ -1033,10 +1033,20 @@ export function withThinking(spec: string, level: ThinkingLevel): string {
   return `${splitModelSpec(spec).model}:${level}`;
 }
 
+/** The thinking level an effort setting names: `high` is the model's
+ * ceiling (`[models] effort_max`) — the one reading of `[models] effort`, a
+ * lens's profile `effort` and `[scan] effort` alike. */
+export function effortLevel(
+  effort: Exclude<ReviewEffort, "">,
+  effortMax: ThinkingLevel,
+): ThinkingLevel {
+  return effort === "high" ? effortMax : effort;
+}
+
 /** Apply `[models] effort` to every spec the review runs on. Pure. */
 export function applyReviewEffort(models: ModelsConfig): ModelsConfig {
   if (models.effort === "") return models;
-  const level: ThinkingLevel = models.effort === "high" ? models.effort_max : models.effort;
+  const level = effortLevel(models.effort, models.effort_max);
   const tiers = Object.fromEntries(
     Object.entries(models.tiers).map(([t, spec]) => [t, withThinking(spec, level)]),
   ) as Record<PassTier, string>;

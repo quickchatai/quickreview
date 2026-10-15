@@ -11,9 +11,10 @@
 // re-mine of the same event is the same row):
 //
 //   human fates (src/outcomes.ts)      one per finding CHAIN whose fate is
-//       `refuted_conceded` (a human argued and the bot conceded — dont-raise)
-//       or `upheld_after_reply` (a human pushed back and the bot held —
-//       either way). The chain's ROOT (its first posting) names the candidate,
+//       `refuted_conceded` (the bot conceded — after a human's reply, or on
+//       its own re-check — dont-raise) or `upheld_after_reply` (a human
+//       replied and the bot kept it standing — either way; `fateSummary`
+//       says which the record supports). The chain's ROOT (its first posting) names the candidate,
 //       so a reposting never mints a second one. The outcome capture
 //       re-decides fates and may join a posting to an earlier chain later, so
 //       every mine re-reads the undecided fate candidates
@@ -86,9 +87,11 @@ import { join } from "node:path";
 import { isBotIdentity } from "../capture.js";
 import { caseName } from "../cases.js";
 import { FEEDBACK_PREFIX_RE } from "../feedback.js";
+import { recheckHead12, recheckKeyPrefix } from "../findingkey.js";
 import { canonicalLensIds, storedLensIds } from "../lensids.js";
 import { cleanQuotedText } from "../memory/datafence.js";
 import { LESSON_CLASS_RE } from "../memory/lessons.js";
+import { carriedToRef } from "../outcomes.js";
 import type { StateStore } from "../state.js";
 import type { PostMergeScan } from "../worktrees.js";
 
@@ -373,11 +376,11 @@ interface OutcomeRow {
 export function chainRoots(
   rows: readonly OutcomeRow[],
 ): Array<{ root: OutcomeRow; end: OutcomeRow }> {
-  const byKey = new Map(rows.map((r) => [`${r.round_no}:${r.finding_key}`, r]));
+  const byKey = new Map(rows.map((r) => [carriedToRef(r.round_no, r.finding_key), r]));
   const pointed = new Set(rows.map((r) => r.carried_to).filter((c): c is string => !!c));
   const out: Array<{ root: OutcomeRow; end: OutcomeRow }> = [];
   for (const r of rows) {
-    if (pointed.has(`${r.round_no}:${r.finding_key}`)) continue;
+    if (pointed.has(carriedToRef(r.round_no, r.finding_key))) continue;
     let end = r;
     const seen = new Set<string>();
     while (end.carried_to && byKey.has(end.carried_to) && !seen.has(end.carried_to)) {
@@ -415,11 +418,11 @@ function outcomeRows(store: StateStore, pr: number): OutcomeRow[] {
 
 /** Did a human reply anywhere along the chain from `root` to `end`? */
 function chainHasHumanReply(rows: readonly OutcomeRow[], root: OutcomeRow): boolean {
-  const byKey = new Map(rows.map((r) => [`${r.round_no}:${r.finding_key}`, r]));
+  const byKey = new Map(rows.map((r) => [carriedToRef(r.round_no, r.finding_key), r]));
   const seen = new Set<string>();
   let at: OutcomeRow | undefined = root;
   while (at) {
-    const k = `${at.round_no}:${at.finding_key}`;
+    const k = carriedToRef(at.round_no, at.finding_key);
     if (seen.has(k)) break;
     seen.add(k);
     if ((at.human_replies ?? 0) > 0) return true;
@@ -491,9 +494,9 @@ export function mineFates(store: StateStore, sinceIso: string): CandidateDraft[]
     store.db
       .prepare(
         `SELECT DISTINCT pr FROM finding_outcomes
-          WHERE fate IN ('refuted_conceded', 'upheld_after_reply') AND COALESCE(decided_at, fate_changed_at) >= ?`,
+          WHERE fate IN (${CANDIDATE_FATES.map(() => "?").join(", ")}) AND COALESCE(decided_at, fate_changed_at) >= ?`,
       )
-      .all(sinceIso) as Array<{ pr: number }>
+      .all(...CANDIDATE_FATES, sinceIso) as Array<{ pr: number }>
   ).map((r) => r.pr);
   const out: CandidateDraft[] = [];
   for (const pr of prs) {
@@ -540,8 +543,10 @@ export function reviewFateCandidates(
       entry = { rows, chains: chainRoots(rows) };
       chainsOf.set(c.pr, entry);
     }
-    const key = `${c.round_no}:${c.finding_key}`;
-    const chain = entry.chains.find((ch) => `${ch.root.round_no}:${ch.root.finding_key}` === key);
+    const key = carriedToRef(c.round_no, c.finding_key);
+    const chain = entry.chains.find(
+      (ch) => carriedToRef(ch.root.round_no, ch.root.finding_key) === key,
+    );
     if (chain) {
       out.set(
         c.id,
@@ -551,17 +556,17 @@ export function reviewFateCandidates(
       );
       continue;
     }
-    if (!entry.rows.some((r) => `${r.round_no}:${r.finding_key}` === key)) {
+    if (!entry.rows.some((r) => carriedToRef(r.round_no, r.finding_key) === key)) {
       out.set(c.id, { kind: "gone", why: "its finding has no outcome row any more" });
       continue;
     }
     // Not a root any more: some earlier posting carries to it.
-    const byKey = new Map(entry.rows.map((r) => [`${r.round_no}:${r.finding_key}`, r]));
+    const byKey = new Map(entry.rows.map((r) => [carriedToRef(r.round_no, r.finding_key), r]));
     const holder = entry.chains.find((ch) => {
       let at: OutcomeRow | undefined = ch.root;
       const seen = new Set<string>();
       while (at) {
-        const k = `${at.round_no}:${at.finding_key}`;
+        const k = carriedToRef(at.round_no, at.finding_key);
         if (k === key) return true;
         if (seen.has(k) || !at.carried_to) return false;
         seen.add(k);
@@ -635,7 +640,8 @@ function feedbackCommentDraft(
     quote: quoteOf((c.body ?? "").replace(FEEDBACK_PREFIX_RE, "").replace(/^\s+/, "")),
     evidence: [
       `pr:${c.pr}`,
-      `comment:${c.comment_id}`,
+      // A review body's id is a review's, never a comment's.
+      `${c.scope === "review" ? "review" : "comment"}:${c.comment_id}`,
       ...(c.in_reply_to_id !== null ? [`comment:${c.in_reply_to_id}`] : []),
     ],
     occurred_at: c.at,
@@ -823,12 +829,11 @@ export function mineHumanRecall(
 
 // ---- 3b. recheck reversals: the REVIEWER's own conclusion ----------------------
 
-/** A recheck head as the recheck's own key (`recheck:<head12>:` in
- * src/recheck.ts): the first 12 hex characters, lowercased — so a full sha
- * and its prefix are one head. Null for anything that is not a sha. */
+/** A recheck head as the recheck's own key (`recheckHead12`). Null for
+ * anything that is not a sha. */
 export function recheckHeadKey(head: unknown): string | null {
   if (typeof head !== "string" || !/^[0-9a-f]{7,40}$/i.test(head)) return null;
-  return head.slice(0, 12).toLowerCase();
+  return recheckHead12(head);
 }
 
 /** The posted rows of the recheck's own findings record at that head (the
@@ -839,7 +844,7 @@ function recheckFindings(
   pr: number,
   head12: string,
 ): { lens_ids: string[]; path: string | null; line: number | null } {
-  const prefix = `recheck:${head12}:`;
+  const prefix = recheckKeyPrefix(head12);
   try {
     const rows = store.db
       .prepare(
@@ -1035,7 +1040,7 @@ export async function minePostMerge(
     /** The wall clock the budget is measured on (tests inject one). */
     clock?: () => number;
     /** Store one PR's drafts; runs inside the transaction recording its read. */
-    persist?: (drafts: CandidateDraft[]) => void;
+    persist: (drafts: CandidateDraft[]) => void;
   },
 ): Promise<{ drafts: CandidateDraft[]; scanned: number; unknown: number }> {
   const merges = store.db
@@ -1163,7 +1168,7 @@ export async function minePostMerge(
       );
     const done = closed && fetchedPast && !unreadRetry;
     store.db.transaction(() => {
-      if (prDrafts.length > 0) opts.persist?.(prDrafts);
+      if (prDrafts.length > 0) opts.persist(prDrafts);
       finish.run(
         row.attempts + 1,
         nowIso,

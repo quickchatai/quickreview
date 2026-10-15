@@ -49,4 +49,19 @@ describe("migrateProfiles across filesystems", () => {
     expect(readlinkSync(join(to, "profile.toml"))).toBe("settings.toml");
     expect(readFileSync(join(to, "profile.toml"), "utf8")).toBe("s = 1\n");
   });
+
+  it("re-points an ABSOLUTE link inside the profile at the copy, not the deleted source", () => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-install-exdev-"));
+    const root = join(dir, "checkout");
+    const env = { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg-config") };
+    const from = join(root, "profiles", "house");
+    mkdirSync(join(from, "addenda"), { recursive: true });
+    writeFileSync(join(from, "rule.md"), "r\n");
+    symlinkSync(join(from, "rule.md"), join(from, "addenda", "10-rule.md"));
+
+    const to = join(configHome(env), "profiles", "house");
+    expect(migrateProfiles({ root, env })).toEqual([{ kind: "moved", name: "house", from, to }]);
+    expect(readlinkSync(join(to, "addenda", "10-rule.md"))).toBe(join(to, "rule.md"));
+    expect(readFileSync(join(to, "addenda", "10-rule.md"), "utf8")).toBe("r\n");
+  });
 });
