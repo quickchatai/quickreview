@@ -984,9 +984,13 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   const row = store.getPr(req.pr);
   if (!row || row.state === "closed")
     return done({ action: "noop", reason: "pr-not-open", class: "empty" });
-  // A pause stops this PR's review work, a nudge included. A push question is
-  // asked again by the reconcile backstop once the pause lifts.
-  if (row.paused) return done({ action: "noop", reason: "paused", class: "empty" });
+  // A pause stops this PR's review work, a nudge included — it defers the
+  // question, never loses it. A push question is asked again by the reconcile
+  // backstop once the pause lifts; a CI or base-advance question has no such
+  // sweep, so it goes on to its claim and its nudge is held until the resume
+  // (`deferWhilePaused` below).
+  if (row.paused && req.trigger === "push")
+    return done({ action: "noop", reason: "paused", class: "empty" });
 
   const head = req.head_sha || row.head_sha;
   const lastReviewed = mark!.head_sha;
@@ -1172,8 +1176,9 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       `recheck:${req.trigger}`,
       // A push question the reconcile backstop asks again; a CI or base-advance
       // question has no such sweep, so its claim stays and the wake is held
-      // for the flush paths rather than released on a failed injection.
-      { holdOnFailure: req.trigger !== "push" },
+      // for the flush paths rather than released on a failed injection — and
+      // held, not delivered, while the PR is paused.
+      { holdOnFailure: req.trigger !== "push", deferWhilePaused: req.trigger !== "push" },
     );
   } catch (err) {
     // A claim must not outlive a nudge that never reached the session — the

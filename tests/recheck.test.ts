@@ -31,6 +31,7 @@ import {
   type RecheckDeps,
 } from "../src/recheck.js";
 import { hasNewEvidence } from "../src/guards.js";
+import { flushHeldWakes } from "../src/wakes.js";
 import { standingVerdict } from "../src/standing-review.js";
 import { StateStore } from "../src/state.js";
 import { applyInterpretation, interpretEvent, type Interpretation } from "../src/webhook.js";
@@ -683,6 +684,33 @@ describe("runRecheck", () => {
     expect(h.injected).toHaveLength(0);
     expect(h.adapter.calls).toEqual([]);
     expect(h.store.rechecksFor(PR)).toHaveLength(0);
+  });
+
+  // Nothing asks a CI question again, so a pause must defer it, not drop it:
+  // held while paused, asked once the pause lifts.
+  it("defers a CI recheck on a paused PR and asks it after the resume", async () => {
+    const h = harness();
+    h.store.pausePr(PR, { issuer: "operator", expires_at: null }, "hold");
+    const out = await runRecheck(h.deps, {
+      pr: PR,
+      trigger: "ci",
+      head_sha: OLD,
+      ci: { conclusion: "failure" },
+    });
+    expect(out).toMatchObject({ action: "recheck", delivered: "held" });
+    expect(h.injected).toHaveLength(0);
+    expect(h.store.rechecksFor(PR)).toHaveLength(1);
+    const wakeDeps = { store: h.store, inject: h.deps.inject };
+    // The flush paths deliver nothing while the pause stands.
+    expect(await flushHeldWakes(wakeDeps, PR)).toBe(0);
+    expect(h.injected).toHaveLength(0);
+    expect(h.store.heldWakes(PR).map((w) => w.reason)).toEqual(["recheck:ci"]);
+
+    h.store.resumePr(PR, "operator");
+    expect(await flushHeldWakes(wakeDeps, PR)).toBe(1);
+    expect(h.injected).toHaveLength(1);
+    expect(h.injected[0]?.message).toContain(out.order!.decision_file);
+    expect(h.store.heldWakes(PR)).toHaveLength(0);
   });
 
   // Nothing asks a CI or base-advance question again, so a failed injection

@@ -60,10 +60,18 @@ export async function wakeOrHold(
      * injection leaves the wake held for the flush paths. Callers that
      * release their own claim on failure leave this off. */
     holdOnFailure?: boolean;
+    /** A recheck nudge (`recheck:*`) on a paused PR is held, not delivered:
+     * the pause defers the question until it lifts (`pauseDefersHeldWakes`). */
+    deferWhilePaused?: boolean;
   } = {},
 ): Promise<WakeDisposition> {
   const { store } = deps;
   const log = deps.log ?? ((): void => {});
+  if (opts.deferWhilePaused && store.getPr(pr)?.paused) {
+    hold(deps, pr, message, reason);
+    store.logEvent("wake_deferred_paused", pr, { reason });
+    return "held";
+  }
   if (!store.hasRunningRound(pr) && !store.blockingSessionCommand(`pr-${pr}`)) {
     // An existing backlog goes first (arrival order): queue behind it and
     // flush oldest-first, rather than letting this wake take the slot ahead of
@@ -168,6 +176,19 @@ export const AUTHOR_REPLY_DROPPED_KIND = "author_reply_wake_dropped";
  * `anomalies.ts`, read at the daily heartbeat). */
 export const RECHECK_WAKE_DROPPED_KIND = "recheck_wake_dropped";
 
+/**
+ * Does a pause hold this PR's backlog? Only while the oldest held wake is a
+ * recheck nudge: a pause stops the PR's review work and a recheck is review
+ * work, deferred to the resume, never dropped. Wakes behind it keep their
+ * arrival order and wait with it; with no recheck at the head of the backlog
+ * a pause holds nothing back. The flush and the stranded-wake sweep both ask.
+ */
+export function pauseDefersHeldWakes(store: StateStore, pr: number): boolean {
+  if (!store.getPr(pr)?.paused) return false;
+  const oldest = store.heldWakes(pr)[0];
+  return oldest !== undefined && oldest.reason.startsWith("recheck:");
+}
+
 function isOwedWakeReason(wake: EvictedWake): boolean {
   return (
     wake.reason === AUTHOR_REPLY_WAKE_REASON ||
@@ -247,6 +268,7 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
   while (true) {
     if (store.hasRunningRound(pr)) break;
     if (store.blockingSessionCommand(`pr-${pr}`)) break;
+    if (pauseDefersHeldWakes(store, pr)) break;
     const queued = store.heldWakes(pr);
     const batchSize = leadingDeliveryCount(queued);
     if (batchSize === 0) break;

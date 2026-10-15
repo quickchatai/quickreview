@@ -680,6 +680,21 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(store.heldWakes(7)).toHaveLength(0);
   });
 
+  // A pause defers a recheck nudge; wakes behind it keep their order and wait
+  // with it, while a pause with no deferred recheck holds nothing back.
+  it("a pause holds the backlog only behind a deferred recheck", async () => {
+    store.pausePr(7, { issuer: "operator", expires_at: null }, "hold");
+    expect(await wakeOrHold(deps(), 7, "plain reply", "author_reply")).toBe("injected");
+    expect(
+      await wakeOrHold(deps(), 7, "ci question", "recheck:ci", { deferWhilePaused: true }),
+    ).toBe("held");
+    expect(await wakeOrHold(deps(), 7, "later reply", "author_reply")).toBe("held");
+    expect(injected.map((w) => w.message)).toEqual(["plain reply"]);
+    store.resumePr(7, "operator");
+    expect(await flushHeldWakes(deps(), 7)).toBe(2);
+    expect(injected.map((w) => w.message)).toEqual(["plain reply", "ci question", "later reply"]);
+  });
+
   it("does not hold a wake for a different PR's round", async () => {
     store.upsertPr({
       number: 8,
