@@ -619,16 +619,17 @@ export class App {
     return !c || Date.now() - c.fetched_at >= App.DETAIL_TTL_MS;
   }
 
-  async refreshDetail(): Promise<void> {
+  /** Read the selected PR's detail. Served from cache at once; the fetch is
+   * skipped while the cache is fresh, unless `force` (the operator's `r`). */
+  async refreshDetail(opts: { force?: boolean } = {}): Promise<void> {
     const pr = this.selectedPr;
     if (pr === undefined) return;
-    // Serve from cache immediately; skip the fetch entirely while fresh.
     const cached = this.detailCache.get(pr);
     const now = Date.now();
     if (cached) {
       this.view.detail = cached.payload;
       this.repaint();
-      if (now - cached.fetched_at < App.DETAIL_TTL_MS) return;
+      if (!opts.force && now - cached.fetched_at < App.DETAIL_TTL_MS) return;
     }
     const seq = ++this.detailSeq;
     this.detailPending.set(pr, seq);
@@ -681,10 +682,9 @@ export class App {
 
   // ---- input -------------------------------------------------------------
 
-  /** Point the board selection at a PR (the companion's `select_pr` action and
-   * the events overlay land here). */
   /**
-   * Point the board at `pr`. Once the board has loaded, a PR it does not list
+   * Point the board at `pr` (the companion's `select_pr` action, a row click
+   * and the events overlay land here). Once the board has loaded, a PR it does not list
    * (closed, or outside the filter) is refused with a notice and the
    * selection stays where it is — the highlighted row, the detail and the
    * mirrored session never point at different PRs. Before the first snapshot
@@ -697,13 +697,25 @@ export class App {
       this.notice(`#${pr} is not on the board (closed, or outside the filter)`);
       return false;
     }
-    this.selectedPr = pr;
     this.view.selected = reselect(sorted, pr, this.view.selected);
+    this.selectionMoved(pr);
+    return true;
+  }
+
+  /** The selection now points at `pr`: everything that shows the selected PR
+   * follows it — the progress panel (another PR's is never shown), the
+   * detail, and the mirrored session. */
+  private selectionMoved(pr: number | undefined): void {
+    this.selectedPr = pr;
     if (this.view.progress?.pr !== pr) this.view.progress = undefined;
     void this.refreshDetail();
     void this.refreshProgress();
     this.followSelection();
-    return true;
+  }
+
+  /** Move the events overlay's scroll, clamped to its lines. */
+  private scrollEvents(delta: number): void {
+    this.view.eventsScroll = moveSelection(this.view.eventsScroll, delta, this.view.events.length);
   }
 
   /** Narrow (or, with null, clear) the board. The selection stays on the
@@ -716,11 +728,7 @@ export class App {
     this.view.selected = reselect(sorted, this.selectedPr, this.view.selected);
     const pr = sorted[this.view.selected]?.number;
     if (pr === this.selectedPr) return;
-    this.selectedPr = pr;
-    if (this.view.progress?.pr !== pr) this.view.progress = undefined;
-    void this.refreshDetail();
-    void this.refreshProgress();
-    this.followSelection();
+    this.selectionMoved(pr);
   }
 
   selectedSession(): string | undefined {
@@ -1007,19 +1015,20 @@ export class App {
         return;
       }
     }
+    // The KEYS overlay covers the tab, the board included (see repaint): what
+    // it hides is not on screen, so a click must not reach it (a hidden [url]
+    // or row would fire unseen) and the wheel must not move a hidden
+    // selection. A click dismisses help, as any key does; the wheel is
+    // swallowed.
+    if (this.view.help) {
+      if (ev.kind === "click") {
+        this.view.help = false;
+        this.repaint();
+      }
+      return;
+    }
     const tab = this.tabHooks();
     if (this.tab !== "board") {
-      // The KEYS overlay covers the tab (see repaint): its zones are not on
-      // screen, so a click must not reach them (a hidden [url] or row would
-      // fire unseen). A click dismisses help, as any key does; the wheel is
-      // swallowed.
-      if (this.view.help) {
-        if (ev.kind === "click") {
-          this.view.help = false;
-          this.repaint();
-        }
-        return;
-      }
       // An installed surface: clicks hit its own zones (rows select, buttons
       // act); the wheel is handed over as a key that says it was a wheel.
       if (ev.kind === "click") tab?.click?.(this, ev.x, ev.y);
@@ -1039,16 +1048,11 @@ export class App {
       // The events overlay owns the wheel while it is up; otherwise the wheel
       // moves the selection (and the mirror follows it).
       if (this.view.eventsFocus) {
-        this.view.eventsScroll = Math.max(
-          0,
-          Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)),
-        );
+        this.scrollEvents(delta);
       } else {
         const sorted = visiblePrs(this.view);
         this.view.selected = moveSelection(this.view.selected, delta, sorted.length);
-        this.selectedPr = sorted[this.view.selected]?.number;
-        void this.refreshDetail();
-        this.followSelection();
+        this.selectionMoved(sorted[this.view.selected]?.number);
       }
       this.repaint();
       return;
@@ -1213,24 +1217,15 @@ export class App {
         break;
       case "up":
       case "down": {
+        const delta = key.kind === "down" ? 1 : -1;
         if (this.view.eventsFocus) {
-          const delta = key.kind === "down" ? 1 : -1;
-          this.view.eventsScroll = Math.max(
-            0,
-            Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)),
-          );
+          this.scrollEvents(delta);
           break;
         }
         const sorted = visiblePrs(this.view);
-        this.view.selected = moveSelection(
-          this.view.selected,
-          key.kind === "down" ? 1 : -1,
-          sorted.length,
-        );
-        this.selectedPr = sorted[this.view.selected]?.number;
+        this.view.selected = moveSelection(this.view.selected, delta, sorted.length);
         this.msgDraft = ""; // board navigation drops a cancelled draft
-        void this.refreshDetail();
-        this.followSelection();
+        this.selectionMoved(sorted[this.view.selected]?.number);
         break;
       }
       case "escape":
@@ -1243,7 +1238,7 @@ export class App {
         break;
       case "refresh":
         void this.poller.tick();
-        void this.refreshDetail();
+        void this.refreshDetail({ force: true });
         void this.pi.refresh(this.panePr());
         break;
       case "reconnect":
