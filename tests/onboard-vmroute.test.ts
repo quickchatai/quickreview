@@ -429,6 +429,42 @@ describe("the deploy composes the real script, at full strictness", () => {
     expect(asked.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
   });
 
+  it("a later deploy is a rebuild when the inventory's host settings changed since — a sync skips host provisioning", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS} cloudflared_enabled=true\n`);
+    const changed = deployHarness({
+      choices: {
+        ...VM_CHOICES,
+        [VM_DEPLOY_CHOICE_KEY]: {
+          mode: "rebuild",
+          at: "2026-08-30T10:00:00Z",
+          host: ALIAS,
+          host_vars: { cloudflared_enabled: "false" },
+        },
+      },
+    });
+    const result = await changed.engine.runStep(VM_DEPLOY_STEP_ID);
+    expect(changed.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
+    expect(result.checks.find((c) => c.name === "mode")!.detail).toMatch(/cloudflared_enabled/);
+    // What it deployed with is recorded, so the next run compares against it.
+    expect(changed.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({
+      host_vars: { cloudflared_enabled: "true" },
+    });
+
+    const same = deployHarness({
+      choices: {
+        ...VM_CHOICES,
+        [VM_DEPLOY_CHOICE_KEY]: {
+          mode: "rebuild",
+          at: "2026-08-30T10:00:00Z",
+          host: ALIAS,
+          host_vars: { cloudflared_enabled: "true" },
+        },
+      },
+    });
+    await same.engine.runStep(VM_DEPLOY_STEP_ID);
+    expect(same.runs.map((r) => r.at(-1))).toEqual(["sync", "sync"]);
+  });
+
   it("a deploy recorded for another host does not make a fresh host's first deploy a sync", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     for (const record of [
