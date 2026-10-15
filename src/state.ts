@@ -9,6 +9,7 @@ import type { ArchiveStatus } from "./archive/status.js";
 import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
 import type { RoundStageSupervisorHealth } from "./session-command-supervisor.js";
+import type { SweepStatus } from "./sweepstatus.js";
 import {
   holdActive,
   mayLift,
@@ -1557,7 +1558,7 @@ export interface RoundStartMeta {
   delta_files?: number | null;
   sweep_owed?: boolean | null;
   sweep_plan?: PassPlanEntry[] | null;
-  sweep_status?: "ran" | "not_owed" | "not_reached" | "skipped" | "unknown" | null;
+  sweep_status?: SweepStatus | null;
 }
 
 /** One recheck claim, as `rechecksFor` reads it. */
