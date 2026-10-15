@@ -42,6 +42,7 @@ import { join } from "node:path";
 import type { Config } from "./config.js";
 import { readFindingsRecord } from "./findingsrecord.js";
 import type { PrFileEntry } from "./github.js";
+import { isMigrationPath } from "./heuristics.js";
 import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
@@ -123,10 +124,6 @@ function baseName(path: string): string {
   return path.split("/").pop() ?? path;
 }
 
-function isMigration(path: string): boolean {
-  return /(^|\/)migrations\//.test(path);
-}
-
 /**
  * Split a migration filename into its number and the rest: `0042_add_foo.py`
  * → `{ num: "0042", rest: "add_foo.py" }`. Null when the file is not a
@@ -134,7 +131,7 @@ function isMigration(path: string): boolean {
  */
 export function migrationName(path: string): { num: string; rest: string } | null {
   const m = /^(\d+)[_-](.+)$/.exec(baseName(path));
-  if (!m || !isMigration(path)) return null;
+  if (!m || !isMigrationPath(path)) return null;
   return { num: m[1] as string, rest: m[2] as string };
 }
 
@@ -145,21 +142,71 @@ export function isMigrationRenumber(from: string, to: string): boolean {
   return a !== null && b !== null && a.rest === b.rest && a.num !== b.num;
 }
 
-interface PatchLines {
+/** One hunk of a unified diff: the text git prints after its `@@ … @@`
+ * header (often the enclosing function or table) and its lines in order. */
+interface Hunk {
+  section: string;
+  lines: Array<{ kind: " " | "+" | "-"; text: string }>;
+}
+
+/**
+ * The hunks of a unified diff. File headers (`---`/`+++`) are recognised only
+ * before the first hunk — inside one, `--- x` is a removed line that reads
+ * `-- x`. A patch with no `@@` line is one hunk.
+ */
+function parseHunks(patch: string): Hunk[] {
+  const hunks: Hunk[] = [];
+  let cur: Hunk | null = null;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) {
+      cur = { section: /^@@[^@]*@@ ?(.*)$/.exec(line)?.[1] ?? "", lines: [] };
+      hunks.push(cur);
+      continue;
+    }
+    if (cur === null && (line.startsWith("+++") || line.startsWith("---"))) continue;
+    const kind = line.charAt(0);
+    if (kind !== " " && kind !== "+" && kind !== "-") continue;
+    if (cur === null) {
+      cur = { section: "", lines: [] };
+      hunks.push(cur);
+    }
+    cur.lines.push({ kind, text: line.slice(1) });
+  }
+  return hunks;
+}
+
+/** One change block: a maximal run of added/removed lines between context
+ * lines. A line that moved across unchanged code lands in two blocks, so
+ * comparing block by block keeps a reordering around unchanged statements
+ * from reading as formatting. */
+interface ChangeBlock {
   added: string[];
   removed: string[];
 }
 
-/** Added/removed lines of a unified diff, headers excluded. */
-export function patchLines(patch: string): PatchLines {
-  const added: string[] = [];
-  const removed: string[] = [];
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
-    if (line.startsWith("+")) added.push(line.slice(1));
-    else if (line.startsWith("-")) removed.push(line.slice(1));
+function changeBlocks(hunk: Hunk): ChangeBlock[] {
+  const blocks: ChangeBlock[] = [];
+  let cur: ChangeBlock | null = null;
+  for (const line of hunk.lines) {
+    if (line.kind === " ") {
+      cur = null;
+      continue;
+    }
+    if (cur === null) {
+      cur = { added: [], removed: [] };
+      blocks.push(cur);
+    }
+    (line.kind === "+" ? cur.added : cur.removed).push(line.text);
   }
-  return { added, removed };
+  return blocks;
+}
+
+/** Every line of one kind in a patch, prefix kept — a whole added or removed
+ * file's text. */
+function changedLines(patch: string, kind: "+" | "-"): string[] {
+  return parseHunks(patch).flatMap((h) =>
+    h.lines.filter((l) => l.kind === kind).map((l) => `${kind}${l.text}`),
+  );
 }
 
 /** A quoted literal on one line. Whitespace inside one is content, never
@@ -302,19 +349,67 @@ function tokenSeams(lines: string[]): string {
   return out;
 }
 
+/** Style sheets: whitespace between two selector tokens is a combinator
+ * (`a .child` is a descendant, `a.child` a compound), so no whitespace that
+ * separates two tokens there may vanish or appear, whatever their classes. */
+function selectorWhitespace(path: string | undefined): boolean {
+  return path !== undefined && /\.(css|scss|sass|less|styl)$/i.test(baseName(path));
+}
+
+/** Every whitespace run inside a line collapsed to one space and the lines
+ * joined by one: a re-indent and a re-flow compare equal, a gap that opens or
+ * closes between two tokens does not. */
+function collapsed(lines: string[]): string {
+  return lines
+    .map((l) => l.trim().replace(/\s+/g, " "))
+    .filter((l) => l !== "")
+    .join(" ");
+}
+
+/** A heredoc opener: `<<EOF`, `<<-'EOF'`, `<< "EOF"` (shell) and `<<~SQL`
+ * (Ruby, no space — `a << b` appends). */
+const SHELL_HEREDOC = /<<-?\s*(['"]?)[A-Za-z_]\w*\1/;
+const RUBY_HEREDOC = /<<[-~]?(['"]?)[A-Za-z_]\w*\1/;
+/** A YAML block scalar indicator closing its line (`key: |`, `- >-`). */
+const YAML_BLOCK_SCALAR = /(?:^|:|-)\s*[|>][-+1-9]{0,2}\s*(?:#.*)?$/;
+
 /**
- * Whitespace-only change: the added and removed text are identical once
- * insignificant whitespace is dropped (see `squash` — never inside a quoted
- * literal, never leading indentation of a whitespace-significant language),
- * and no line's whitespace changed between its first and last `/` (see
- * `slashSpans` — a regex literal's whitespace is content), and no whitespace
- * that separates two tokens appeared or vanished (see `tokenSeams`).
- * Concatenation (not a per-line set) is the comparison, so a re-indent or a
- * re-flow passes while a reordering of real lines does not.
+ * May this hunk's changed lines sit inside a literal that spans lines — a
+ * template literal, a triple-quoted string, a heredoc, a YAML block scalar?
+ * Whitespace inside one is content, and the per-line `QUOTED` rule cannot see
+ * a literal that opens or closes on another line. Judged from what the hunk
+ * shows (its section text, its context and its changed lines): an unbalanced
+ * backtick, any triple quote, or the language's own opener. A literal whose
+ * delimiters both lie outside the hunk is beyond what the patch shows.
  */
-export function formattingOnly(patch: string, path?: string): boolean {
-  const { added, removed } = patchLines(patch);
-  if (added.length === 0 && removed.length === 0) return false;
+function mayTouchMultilineLiteral(hunk: Hunk, path: string | undefined): boolean {
+  const base = path === undefined ? "" : baseName(path);
+  const shell = /\.(sh|bash|zsh|ksh)$/i.test(base) || base === "Dockerfile";
+  const ruby = /\.rb$/i.test(base) || base === "Gemfile";
+  const yaml = /\.ya?ml$/i.test(base);
+  return [hunk.section, ...hunk.lines.map((l) => l.text)].some(
+    (text) =>
+      text.includes('"""') ||
+      text.includes("'''") ||
+      (text.replace(/\\./g, "").split("`").length - 1) % 2 === 1 ||
+      (shell && SHELL_HEREDOC.test(text)) ||
+      (ruby && RUBY_HEREDOC.test(text)) ||
+      (yaml && YAML_BLOCK_SCALAR.test(text)),
+  );
+}
+
+/**
+ * One change block is whitespace-only: the added and removed text are
+ * identical once insignificant whitespace is dropped (see `squash` — never
+ * inside a quoted literal, never leading indentation of a
+ * whitespace-significant language), and no line's whitespace changed between
+ * its first and last `/` (see `slashSpans` — a regex literal's whitespace is
+ * content), and no whitespace that separates two tokens appeared or vanished
+ * (see `tokenSeams`; in a style sheet, `collapsed`).
+ */
+function sameModuloFormatting(block: ChangeBlock, path: string | undefined): boolean {
+  const { added, removed } = block;
+  if (selectorWhitespace(path) && collapsed(added) !== collapsed(removed)) return false;
   return (
     squash(added, path) === squash(removed, path) &&
     slashSpans(added) === slashSpans(removed) &&
@@ -322,22 +417,47 @@ export function formattingOnly(patch: string, path?: string): boolean {
   );
 }
 
+/**
+ * Whitespace-only change, judged change block by change block (see
+ * `changeBlocks`): within a block, concatenation (not a per-line set) is the
+ * comparison, so a re-indent or a re-flow passes while a reordering of real
+ * lines does not — and a line moved across unchanged code is two blocks that
+ * each differ. A hunk that may touch a multi-line literal is never
+ * formatting.
+ */
+export function formattingOnly(patch: string, path?: string): boolean {
+  const hunks = parseHunks(patch);
+  const blocks = hunks.flatMap(changeBlocks);
+  if (blocks.length === 0) return false;
+  if (hunks.some((h) => mayTouchMultilineLiteral(h, path))) return false;
+  return blocks.every((b) => sameModuloFormatting(b, path));
+}
+
+/** A migration number: a digit run that starts a token and is followed by `_`
+ * and a letter — the `NNNN_name` shape a migration filename or `dependencies`
+ * entry carries. `1_000` (a numeric literal) is not one. */
+const MIGRATION_NUMBER = /(?<![A-Za-z0-9_])\d+(?=_[A-Za-z])/g;
+
 /** Same text once every MIGRATION-NUMBER run is masked — the renumber's
  * content edit (`dependencies = [("app", "0042_x")]` → `"0043_x"`) and nothing
- * else. Only a digit run immediately followed by `_` (the `NNNN_name` shape a
- * migration filename or `dependencies` entry carries) is masked: a semantic
- * numeric change inside a renamed migration — a batch size, a timeout, a
- * default — does NOT mask away, so it classifies significant. */
+ * else. Only the migration-number shape is masked (`MIGRATION_NUMBER`): a
+ * semantic numeric change inside a renamed migration — a batch size, a
+ * timeout, a default, `1_000` → `2_000` — does NOT mask away, so it
+ * classifies significant. Judged block by block like `formattingOnly`; in a
+ * hunk that may touch a multi-line literal the raw lines are compared, so only
+ * the numbers may differ there. */
 export function digitsOnly(patch: string, path?: string): boolean {
-  const { added, removed } = patchLines(patch);
-  const mask = (lines: string[]): string => squash(lines, path).replace(/\d+(?=_)/g, "#");
-  const maskSpans = (lines: string[]): string => slashSpans(lines).replace(/\d+(?=_)/g, "#");
-  const maskSeams = (lines: string[]): string => tokenSeams(lines).replace(/\d+(?=_)/g, "#");
-  return (
-    mask(added) === mask(removed) &&
-    maskSpans(added) === maskSpans(removed) &&
-    maskSeams(added) === maskSeams(removed)
-  );
+  const masked = (text: string): string => text.replace(MIGRATION_NUMBER, "#");
+  return parseHunks(patch).every((hunk) => {
+    const literal = mayTouchMultilineLiteral(hunk, path);
+    return changeBlocks(hunk).every(({ added, removed }) =>
+      literal
+        ? masked(added.join("\n")) === masked(removed.join("\n"))
+        : masked(squash(added, path)) === masked(squash(removed, path)) &&
+          masked(slashSpans(added)) === masked(slashSpans(removed)) &&
+          masked(tokenSeams(added)) === masked(tokenSeams(removed)),
+    );
+  });
 }
 
 /** One release-version line and nothing else on it: `"version": "1.2.3",`
@@ -349,13 +469,39 @@ export function digitsOnly(patch: string, path?: string): boolean {
 const RELEASE_VERSION_LINE =
   /^\s*(?:"version"\s*:\s*"v?\d[^"\s]*"\s*,?|version\s*=\s*(?:"v?\d[^"\s]*"|'v?\d[^'\s]*'))\s*$/i;
 
+/** A TOML table header line, its name with surrounding space dropped:
+ * `[package]` → `package`; an array table (`[[bin]]`) keeps its brackets. */
+const TOML_TABLE = /^\s*(\[?\[[^\]]+\]\]?)\s*(?:#.*)?$/;
+
+/** The TOML tables whose `version` key is the package's own release. */
+const RELEASE_TABLES = new Set(["package", "workspace.package", "project", "tool.poetry"]);
+
+function tomlTable(text: string): string | null {
+  const m = TOML_TABLE.exec(text);
+  if (!m) return null;
+  const header = m[1] as string;
+  return header.startsWith("[[") ? header : header.slice(1, -1).replace(/\s+/g, "");
+}
+
 /** Every changed line is the release-version key itself — the release-bump
- * shape. */
-export function versionOnly(patch: string): boolean {
-  const { added, removed } = patchLines(patch);
-  const lines = [...added, ...removed];
-  if (lines.length === 0) return false;
-  return lines.every((l) => RELEASE_VERSION_LINE.test(l));
+ * shape. In a TOML manifest the key must also sit in a release table
+ * (`RELEASE_TABLES`) that the hunk shows: `version = "2"` under
+ * `[dependencies.serde]` is a dependency requirement, and a line whose table
+ * the patch does not show is not proven to be the release. */
+export function versionOnly(patch: string, path?: string): boolean {
+  const toml = path !== undefined && /\.toml$/i.test(path);
+  let changed = 0;
+  for (const hunk of parseHunks(patch)) {
+    let table = tomlTable(hunk.section);
+    for (const line of hunk.lines) {
+      table = tomlTable(line.text) ?? table;
+      if (line.kind === " ") continue;
+      changed++;
+      if (!RELEASE_VERSION_LINE.test(line.text)) return false;
+      if (toml && (table === null || !RELEASE_TABLES.has(table))) return false;
+    }
+  }
+  return changed > 0;
 }
 
 export interface ClassifyOpts {
@@ -417,7 +563,7 @@ export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClas
   if (file.previous_filename && churn === 0) return trivial("pure-rename");
 
   if (LOCKFILES.has(baseName(name))) return trivial("version-bump");
-  if (VERSION_MANIFESTS.has(baseName(name)) && patch && versionOnly(patch))
+  if (VERSION_MANIFESTS.has(baseName(name)) && patch && versionOnly(patch, name))
     return trivial("version-bump");
 
   if (patch && formattingOnly(patch, name)) return trivial("formatting");
@@ -452,10 +598,10 @@ export function classifyDelta(files: DeltaList, opts: ClassifyOpts = {}): DeltaC
     // file's text differ by migration numbers alone. A missing patch (GitHub
     // omits it on large files) proves nothing, so it is not a renumber.
     if (!f.patch || !partner.patch) continue;
-    const gone = patchLines(partner.patch).removed.map((l) => `-${l}`);
-    const came = patchLines(f.patch).added.map((l) => `+${l}`);
+    const gone = changedLines(partner.patch, "-");
+    const came = changedLines(f.patch, "+");
     if (gone.length === 0 && came.length === 0) continue;
-    if (!digitsOnly([...gone, ...came].join("\n"), f.filename)) continue;
+    if (!digitsOnly(["@@", ...gone, ...came].join("\n"), f.filename)) continue;
     renumbered.add(f.filename);
     renumbered.add(partner.filename);
   }

@@ -173,6 +173,70 @@ describe("trivial-delta classifier", () => {
     expect(formattingOnly("@@\n-a()\n-b()\n+b()\n+a()")).toBe(false);
   });
 
+  it("does not call a line moved across unchanged code formatting", () => {
+    // The changed text alone is identical on both sides; the order around the
+    // unchanged call is not.
+    const moved = "@@\n-  authorize();\n   charge();\n+  authorize();";
+    expect(formattingOnly(moved, "src/pay.ts")).toBe(false);
+    const d = classifyDelta([file({ filename: "src/pay.ts", patch: moved })], {
+      prFiles: new Set(["src/pay.ts"]),
+    });
+    expect(d.class).toBe("significant");
+    expect(
+      digitsOnly(
+        '@@\n-    run("0042_x")\n     migrate()\n+    run("0043_x")',
+        "app/migrations/0043_x.py",
+      ),
+    ).toBe(false);
+    // …while re-spacing on both sides of an unchanged line is still formatting.
+    expect(formattingOnly("@@\n-a(x,y)\n+a(x, y)\n \n-b(x,y)\n+b(x, y)", "src/x.ts")).toBe(
+      true,
+    );
+  });
+
+  it("keeps a whitespace change in a style sheet selector significant", () => {
+    // A descendant selector becomes a compound one.
+    expect(
+      formattingOnly("@@\n-a .child { color: red; }\n+a.child { color: red; }", "web/app.css"),
+    ).toBe(false);
+    expect(formattingOnly("@@\n-.a > .b{}\n+.a>.b {}", "web/app.scss")).toBe(false);
+    // …while a re-indent or a re-flow of a rule is still formatting.
+    expect(formattingOnly("@@\n-  a .child {\n+a .child {", "web/app.css")).toBe(true);
+    expect(formattingOnly("@@\n-a,\n-b {\n+a, b {", "web/app.less")).toBe(true);
+  });
+
+  it("keeps a whitespace change inside a multi-line literal significant", () => {
+    // Trailing whitespace inside a template literal is part of the string.
+    expect(
+      formattingOnly("@@ -1,4 +1,4 @@\n const msg = `hello\n-world \n+world\n `;", "src/x.ts"),
+    ).toBe(false);
+    // SQL inside a template: indentation and spacing are the query text.
+    expect(
+      formattingOnly("@@\n const q = sql`\n   SELECT a\n-  FROM t , u\n+FROM t,u\n `;", "src/q.ts"),
+    ).toBe(false);
+    // An indent change inside a template literal changes the string.
+    expect(
+      formattingOnly("@@\n const doc = `\n root:\n-  child: 1\n+    child: 1\n `;", "src/doc.ts"),
+    ).toBe(false);
+    // The opener in the hunk header's section text counts too.
+    expect(
+      formattingOnly(
+        "@@ -9,3 +9,3 @@ const q = sql`\n   SELECT a\n-  FROM t , u\n+  FROM t,u",
+        "src/q.ts",
+      ),
+    ).toBe(false);
+    expect(formattingOnly('@@\n q = """\n-  FROM t , u\n+  FROM t,u\n """', "app/q.py")).toBe(false);
+    expect(formattingOnly("@@\n cat <<EOF\n-a  b\n+a b\n EOF", "scripts/x.sh")).toBe(false);
+    expect(formattingOnly("@@\n script: |\n-  echo a  b\n+  echo a b", "ci/x.yaml")).toBe(false);
+    expect(
+      digitsOnly('@@\n sql = """\n-  FROM t , u\n+  FROM t,u\n """', "app/migrations/0043_x.py"),
+    ).toBe(false);
+    // …while a one-line template literal is held verbatim and the code around
+    // it may still be re-spaced.
+    expect(formattingOnly("@@\n-const s =   `a b`;\n+const s = `a b`;", "src/x.ts")).toBe(true);
+    expect(formattingOnly("@@\n-x = a  <<  2;\n+x = a << 2;", "src/x.ts")).toBe(true);
+  });
+
   it("calls a lockfile and a version bump trivial", () => {
     const d = classifyDelta([
       file({ filename: "package-lock.json", additions: 400, deletions: 380 }),
@@ -209,12 +273,34 @@ describe("trivial-delta classifier", () => {
   it("still calls a bare release-version bump trivial in every manifest", () => {
     const cases: Array<[string, string]> = [
       ["package.json", '@@\n-  "version": "1.2.3",\n+  "version": "1.2.4",'],
-      ["pyproject.toml", '@@\n-version = "0.4.1"\n+version = "0.4.2"'],
-      ["Cargo.toml", "@@\n-version = '0.4.1'\n+version = '0.5.0'"],
+      ["pyproject.toml", '@@\n [project]\n name = "x"\n-version = "0.4.1"\n+version = "0.4.2"'],
+      ["Cargo.toml", "@@\n [package]\n name = 'x'\n-version = '0.4.1'\n+version = '0.5.0'"],
+      ["pyproject.toml", '@@ -3,6 +3,6 @@ [tool.poetry]\n-version = "0.4.1"\n+version = "0.4.2"'],
     ];
     for (const [filename, patch] of cases) {
       const d = classifyDelta([file({ filename, patch })]);
       expect(d.files[0]?.reason, `${filename}: ${patch}`).toBe("version-bump");
+    }
+  });
+
+  it("keeps a TOML version key outside the package's own release table significant", () => {
+    const cases: Array<[string, string]> = [
+      // A dependency requirement in table form, not the package's release.
+      ["Cargo.toml", '@@\n [dependencies.serde]\n-version = "1"\n+version = "2"'],
+      [
+        "Cargo.toml",
+        '@@\n [package]\n name = "x"\n [dependencies.serde]\n-version = "1"\n+version = "2"',
+      ],
+      [
+        "pyproject.toml",
+        '@@\n [tool.poetry.dependencies.requests]\n-version = "2.0"\n+version = "3.0"',
+      ],
+      // No table in view: not proven to be the release.
+      ["Cargo.toml", '@@\n-version = "1"\n+version = "2"'],
+    ];
+    for (const [filename, patch] of cases) {
+      const d = classifyDelta([file({ filename, patch })]);
+      expect(d.class, `${filename}: ${patch}`).toBe("significant");
     }
   });
 
@@ -276,6 +362,22 @@ describe("trivial-delta classifier", () => {
     ]);
     expect(d.class).toBe("significant");
     expect(d.files[0]?.reason).toBe("content");
+  });
+
+  it("keeps a renamed migration significant when an underscored numeric literal changed", () => {
+    expect(
+      digitsOnly("@@\n-    BATCH_SIZE = 1_000\n+    BATCH_SIZE = 2_000", "app/migrations/0043_x.py"),
+    ).toBe(false);
+    const d = classifyDelta([
+      file({
+        filename: "app/migrations/0043_add_col.py",
+        previous_filename: "app/migrations/0042_add_col.py",
+        status: "renamed",
+        patch:
+          '@@\n-    dependencies = [("app", "0041_prev")]\n+    dependencies = [("app", "0042_prev")]\n@@\n-    BATCH_SIZE = 1_000\n+    BATCH_SIZE = 2_000',
+      }),
+    ]);
+    expect(d.class).toBe("significant");
   });
 
   it("calls a migration renumber trivial — as a delete + add pair", () => {
