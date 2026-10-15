@@ -432,7 +432,7 @@ describe("detailLines", () => {
       ...why,
       rounds: [{ ...why.rounds[1]!, deadline_at: "2026-08-27T10:49:54Z" }],
     };
-    const done = { ...snapshot.prs[0]!, state: "awaiting_author" };
+    const done = { ...snapshot.prs[0]!, state: "awaiting_author" as const };
     const lines = detailLines(live, done, 76, new Date("2026-08-27T10:04:54Z")).map(stripAnsi);
     expect(lines.some((l) => l.includes("CURRENT REVIEW"))).toBe(false);
   });
