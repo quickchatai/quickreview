@@ -29,9 +29,10 @@
 // stays marked after any restart, on any checkout, even if this file is deleted
 // — the durability of record lives in the repository, and the JSON is a cache
 // that makes the tab paint instantly and remembers when we first saw a change.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { LocalRunner } from "./deploytab.js";
+import { errText, readJsonFile, writeJsonFile } from "./jsonfile.js";
 import type { RemoteResult } from "./remote.js";
 
 // ---- the trailer convention ---------------------------------------------------
@@ -302,29 +303,15 @@ export class ChangeRegisterStore {
    * there is deliberately no `load()` returning `ChangeRegister | undefined`
    * beside this (that accessor is what a merge-and-save reaches for). */
   read(): RegisterRead {
-    let raw: string;
-    try {
-      raw = readFileSync(this.path, "utf8");
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return { state: "absent" };
-      return { state: "unreadable", reason: code ?? errText(err) };
-    }
-    try {
-      const parsed = JSON.parse(raw) as ChangeRegister;
-      if (!Array.isArray(parsed?.entries))
-        return { state: "unreadable", reason: "no entries array" };
-      return { state: "register", register: parsed };
-    } catch (err) {
-      return { state: "unreadable", reason: errText(err) };
-    }
+    const read = readJsonFile(this.path);
+    if (read.state !== "parsed") return read;
+    const parsed = read.value as ChangeRegister | null;
+    if (!Array.isArray(parsed?.entries)) return { state: "unreadable", reason: "no entries array" };
+    return { state: "register", register: parsed };
   }
 
   save(register: ChangeRegister): void {
-    this.ensure();
-    const tmp = `${this.path}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(register, null, 2)}\n`);
-    renameSync(tmp, this.path);
+    writeJsonFile(this.path, register);
   }
 }
 
@@ -513,8 +500,4 @@ function firstLine(text: string): string {
       .find((l) => l.trim() !== "")
       ?.trim() ?? "no output"
   );
-}
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

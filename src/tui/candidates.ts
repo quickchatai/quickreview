@@ -41,16 +41,10 @@
 // does not come back through a write from the companion: it is read out of the
 // `#adjudication` memory entries `adjudicate` already mandates. One record, one
 // direction.
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { CapturedComment } from "../capture.js";
+import { readJsonFile, writeJsonFile } from "./jsonfile.js";
 import { parseEventTags } from "../memory/eventtags.js";
 import { normalizeTag } from "../memory/store.js";
 import type { StatusSnapshot } from "../state.js";
@@ -388,10 +382,6 @@ export type CandidateRead =
   | { state: "absent" }
   | { state: "unreadable"; reason: string };
 
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 /**
  * The store. Same shape as `EvidenceStore`: a plain file, written atomically
  * (temp + rename) so a reader never sees half a list. The sweeper reads it
@@ -421,22 +411,12 @@ export class CandidateStore {
    * that truncation over the history.
    */
   read(): CandidateRead {
-    let raw: string;
-    try {
-      raw = readFileSync(this.path, "utf8");
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException | undefined)?.code;
-      if (code === "ENOENT") return { state: "absent" };
-      return { state: "unreadable", reason: code ?? errText(err) };
-    }
-    try {
-      const parsed = JSON.parse(raw) as CandidateList;
-      if (!Array.isArray(parsed?.candidates))
-        return { state: "unreadable", reason: "no candidates array" };
-      return { state: "list", list: parsed };
-    } catch (err) {
-      return { state: "unreadable", reason: errText(err) };
-    }
+    const read = readJsonFile(this.path);
+    if (read.state !== "parsed") return read;
+    const parsed = read.value as CandidateList | null;
+    if (!Array.isArray(parsed?.candidates))
+      return { state: "unreadable", reason: "no candidates array" };
+    return { state: "list", list: parsed };
   }
 
   // There is deliberately no `load(): CandidateList | undefined` here: an
@@ -446,10 +426,7 @@ export class CandidateStore {
   // over the `/evidence:ro` mount, which parses the JSON itself.
 
   save(list: CandidateList): void {
-    this.ensure();
-    const tmp = `${this.path}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(list, null, 2)}\n`);
-    renameSync(tmp, this.path);
+    writeJsonFile(this.path, list);
   }
 }
 
