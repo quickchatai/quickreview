@@ -399,19 +399,11 @@ export async function sealFile(deps: SealDeps, entry: DbFileEntry): Promise<Seal
   }
   await fsyncDir(deps.adb.dir);
   const gzFile = `${entry.file}.gz`;
-  await deps.adb.updateEntry(entry.file, {
-    state: "sealed",
-    tables,
-    bytes: gz.bytes,
-    sha256: gz.sha256,
-    gz_file: gzFile,
-    gz_bytes: gz.gzBytes,
-    sealed_at: deps.now().toISOString(),
-  });
-  await unlinkIfPresent(path);
-  await unlinkIfPresent(`${path}-wal`);
-  await unlinkIfPresent(`${path}-shm`);
-  await fsyncDir(deps.adb.dir);
+  await deps.adb.updateEntry(
+    entry.file,
+    sealedPatch(tables, gz.bytes, gz.sha256, gzFile, gz.gzBytes, deps.now()),
+  );
+  await removeSqliteFiles(deps.adb.dir, path);
   deps.log?.(
     `archive: sealed ${entry.file} → ${gzFile} (${gz.bytes} → ${gz.gzBytes} bytes; ` +
       Object.entries(tables)
@@ -420,6 +412,36 @@ export async function sealFile(deps: SealDeps, entry: DbFileEntry): Promise<Seal
       `; longest synchronous span ${Math.round(maxSpan * 10) / 10} ms)`,
   );
   return { file: entry.file, outcome: "sealed", gz_file: gzFile, tables };
+}
+
+/** The manifest patch that records a file sealed — by a seal, or by the
+ * recovery that finishes one a crash cut short. */
+function sealedPatch(
+  tables: Record<string, DbFileTable>,
+  bytes: number,
+  sha256: string,
+  gzFile: string,
+  gzBytes: number,
+  at: Date,
+) {
+  return {
+    state: "sealed" as const,
+    tables,
+    bytes,
+    sha256,
+    gz_file: gzFile,
+    gz_bytes: gzBytes,
+    sealed_at: at.toISOString(),
+  };
+}
+
+/** A sealed file's SQLite file and sidecars go once its `.gz` is verified
+ * and recorded — then the directory, durably. */
+async function removeSqliteFiles(dir: string, path: string): Promise<void> {
+  await unlinkIfPresent(path);
+  await unlinkIfPresent(`${path}-wal`);
+  await unlinkIfPresent(`${path}-shm`);
+  await fsyncDir(dir);
 }
 
 /**
@@ -503,14 +525,21 @@ export async function recoverSeals(
       if (leftovers.length === 0) continue;
       const kept = `${leftovers.join(", ")} left as found`;
       const gzName = entry.gz_file ?? `${entry.file}.gz`;
-      const gzBack = names.includes(gzName)
-        ? await gunzipDigest(join(dir, gzName), rate).catch(() => null)
-        : null;
+      // A stop is never a verdict on the .gz; a read error is named.
+      let gzBack: { bytes: number; sha256: string } | null = null;
+      let why = names.includes(gzName) ? "" : " (it is missing)";
+      if (!why)
+        try {
+          gzBack = await gunzipDigest(join(dir, gzName), rate);
+        } catch (err) {
+          if (deps.signal?.aborted) throw err;
+          why = ` (${err instanceof Error ? err.message : String(err)})`;
+        }
       if (!gzBack || gzBack.bytes !== entry.bytes || gzBack.sha256 !== entry.sha256) {
         problem(
           entry.file,
           "sealed_gz_unverified",
-          `${entry.file} is recorded sealed, but ${gzName} does not reproduce the recorded bytes — ${kept}`,
+          `${entry.file} is recorded sealed, but ${gzName} does not reproduce the recorded bytes${why} — ${kept}`,
         );
         continue;
       }
@@ -541,10 +570,7 @@ export async function recoverSeals(
         }
       }
       deps.adb.closeFile(entry.file);
-      await unlinkIfPresent(path);
-      await unlinkIfPresent(`${path}-wal`);
-      await unlinkIfPresent(`${path}-shm`);
-      await fsyncDir(dir);
+      await removeSqliteFiles(dir, path);
       note(`removed ${leftovers.join(", ")}: verified duplicates of the sealed ${gzName}`);
       continue;
     }
@@ -596,19 +622,11 @@ export async function recoverSeals(
         );
         continue;
       }
-      await deps.adb.updateEntry(entry.file, {
-        state: "sealed",
-        tables,
-        bytes: file.bytes,
-        sha256: file.sha256,
-        gz_file: gzName,
-        gz_bytes: gz?.size ?? 0,
-        sealed_at: deps.now().toISOString(),
-      });
-      await unlinkIfPresent(path);
-      await unlinkIfPresent(`${path}-wal`);
-      await unlinkIfPresent(`${path}-shm`);
-      await fsyncDir(dir);
+      await deps.adb.updateEntry(
+        entry.file,
+        sealedPatch(tables, file.bytes, file.sha256, gzName, gz?.size ?? 0, deps.now()),
+      );
+      await removeSqliteFiles(dir, path);
       note(`finished sealing ${entry.file} (verified ${gzName})`);
     } else {
       await unlinkIfPresent(gzPath);

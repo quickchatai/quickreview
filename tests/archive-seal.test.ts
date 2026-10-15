@@ -596,6 +596,56 @@ describe("seal crash recovery", () => {
       expect(existsSync(join(r.dir, `${AUG}.gz`))).toBe(true);
     }
   });
+
+  /** A sealed AUG with its .sqlite back beside the .gz (the crash between
+   * the manifest write and the unlink), the archive db reopened. */
+  async function sealedWithLeftover(): Promise<{ r: Rig; adb: ArchiveDb }> {
+    const r = await moved();
+    expect((await sealFile(deps(r), r.adb.entry(AUG)!)).outcome).toBe("sealed");
+    writeFileSync(join(r.dir, AUG), gunzipSync(readFileSync(join(r.dir, `${AUG}.gz`))));
+    r.adb.close();
+    return { r, adb: await r.reopen() };
+  }
+
+  it("a stop while a SEALED month's .gz is verified is a stop, never a verify problem", async () => {
+    const { r, adb } = await sealedWithLeftover();
+    const ac = new AbortController();
+    ac.abort();
+    const log: string[] = [];
+    await expect(
+      recoverSeals({
+        adb,
+        maxBytesPerS: 1e12,
+        signal: ac.signal,
+        now: () => new Date(T0),
+        log: (s) => log.push(s),
+      }),
+    ).rejects.toThrow();
+    expect(log.filter((l) => l.includes("does not reproduce"))).toEqual([]);
+    expect(existsSync(join(r.dir, AUG))).toBe(true);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "a SEALED month's .gz that cannot be read: the problem names the read error, everything left as found",
+    async () => {
+      const { r, adb } = await sealedWithLeftover();
+      const gzPath = join(r.dir, `${AUG}.gz`);
+      chmodSync(gzPath, 0o000);
+      try {
+        const rec = await recoverSeals({ adb, maxBytesPerS: 1e12, now: () => new Date(T0) });
+        expect(rec.problems).toEqual([
+          expect.objectContaining({
+            file: AUG,
+            code: "sealed_gz_unverified",
+            detail: expect.stringContaining("EACCES"),
+          }),
+        ]);
+        expect(existsSync(join(r.dir, AUG))).toBe(true);
+      } finally {
+        chmodSync(gzPath, 0o644);
+      }
+    },
+  );
 });
 
 describe("the manifest", () => {
