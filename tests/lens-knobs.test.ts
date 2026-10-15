@@ -272,6 +272,24 @@ describe("[models.pass_tiers]", () => {
     expect(passTierModels({}, tiers, overrides)).toEqual(overrides);
   });
 
+  it("a profile min_tier floors a pin in the build as the plan floors it", () => {
+    const cfg = withPins({ "pass-baseline": "terra-med" });
+    cfg.lenses = { "pass-baseline": { min_tier: "sol-high" } };
+    const files = Array.from({ length: 3 }, (_, i) => file(`src/m${i}.py`, 40));
+    const row = buildPassPlan(cfg, files).pass_plan.find((p) => p.lens === "pass-baseline")!;
+    expect(row.agent).toBe("pass-baseline--sol-high");
+    const models = passTierModels(cfg.models.pass_tiers, cfg.models.tiers, {}, {}, [], cfg.lenses);
+    // the variant the plan names runs at the tier the plan records
+    expect(models[row.agent]).toBe(cfg.models.tiers["sol-high"]);
+    for (const t of ["terra-med", "sol-med", "sol-high"])
+      expect(models[`pass-baseline--${t}`]).toBe(cfg.models.tiers["sol-high"]);
+    // a floor below the pin changes nothing
+    const low = passTierModels(cfg.models.pass_tiers, cfg.models.tiers, {}, {}, [], {
+      "pass-baseline": { min_tier: "terra-med" },
+    });
+    expect(low["pass-baseline--sol-high"]).toBe(cfg.models.tiers["terra-med"]);
+  });
+
   it("parses from config, and refuses unknown passes, unknown tiers, the validator and risk passes", () => {
     const ok = parseConfig(
       fixture + `\n[models.pass_tiers]\n"pass-sweep" = "sol-high"\n"pass-baseline" = "sol-high"\n`,

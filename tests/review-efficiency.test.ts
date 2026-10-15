@@ -150,6 +150,27 @@ describe("H2 — `[review] sweep_light_tier` (off by default)", () => {
     expect(models["pass-sweep--terra-med"]).toBe(cfg.models.tiers["sol-high"]);
   });
 
+  it("a profile floor on the sweep moves the exempt variant to the floored light tier the plan names", () => {
+    const cfg = withReview({ sweep_light_tier: "terra-med" });
+    cfg.models.pass_tiers = { ...cfg.models.pass_tiers, [SWEEP_PASS]: "sol-high" };
+    cfg.lenses = { [SWEEP_PASS]: { min_tier: "sol-med" } };
+    const plan = buildPassPlan(cfg, files).pass_plan.filter((p) => p.lens === SWEEP_PASS);
+    const light = plan.find((p) => p.why?.includes("sweep_light_tier"))!;
+    expect(light.agent).toBe("pass-sweep--sol-med");
+    expect(sweepLightVariants(cfg.review, cfg.lenses)).toEqual(["pass-sweep--sol-med"]);
+    const models = passTierModels(
+      cfg.models.pass_tiers,
+      cfg.models.tiers,
+      {},
+      {},
+      sweepLightVariants(cfg.review, cfg.lenses),
+      cfg.lenses,
+    );
+    // the light row's variant runs at its own (floored) tier, not the pin's
+    expect(models[light.agent]).toBeUndefined();
+    expect(models["pass-sweep--sol-high"]).toBe(cfg.models.tiers["sol-high"]);
+  });
+
   it("refuses a tier that does not exist, and the bench records the lever", () => {
     expect(() =>
       parseConfig(`${fixture}\n`.replace("[review]\n", '[review]\nsweep_light_tier = "cheap"\n')),

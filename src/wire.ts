@@ -1133,7 +1133,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               cfg.models.tiers,
               lensModelOverrides(cfg.models, cfg.lenses),
               cfg.models.pass_models,
-              sweepLightVariants(cfg.review),
+              sweepLightVariants(cfg.review, cfg.lenses),
+              cfg.lenses,
             ),
             addenda: [
               ...PASS_ADDENDA,
