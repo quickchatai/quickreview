@@ -1391,12 +1391,26 @@ export class VerdictWatcher {
           };
         if (matches.length === 1) {
           const match = matches[0]!;
-          const actualEvent: PostingReceipt["actual_event"] =
-            match.state.toUpperCase() === "APPROVED"
+          // Only the three submitted states say what was posted. Any other —
+          // a review a person retracted, whose state no longer says whether
+          // it approved or blocked, or one still pending — is evidence the
+          // round's posting cannot be read off, never a COMMENT (the posting
+          // outbox reads them the same way).
+          const state = match.state.toUpperCase();
+          const actualEvent: PostingReceipt["actual_event"] | undefined =
+            state === "APPROVED"
               ? "APPROVE"
-              : match.state.toUpperCase() === "CHANGES_REQUESTED"
+              : state === "CHANGES_REQUESTED"
                 ? "REQUEST_CHANGES"
-                : "COMMENT";
+                : state === "COMMENTED"
+                  ? "COMMENT"
+                  : undefined;
+          if (!actualEvent)
+            return {
+              kind: "failed",
+              detail: `GitHub review ${match.id} carries ${round.posting_key} in state ${match.state}, which does not say what was posted`,
+              failure: "contradicted",
+            };
           const synthetic: PostingReceipt = {
             version: 1,
             posting_key: round.posting_key,

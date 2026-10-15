@@ -1316,6 +1316,34 @@ describe("confirmed round posting receipts", () => {
     ).toMatchObject({ c: 1 });
   });
 
+  // MUTATION: read every state but APPROVED/CHANGES_REQUESTED as COMMENT —
+  // a dismissed review proves a withheld approval it may never have been.
+  it("a marker review in a state that hides what was posted (DISMISSED) is contradicting evidence, never a COMMENT", async () => {
+    reviewingRound(189);
+    const { key } = stampPosting(189, 1);
+    adapter.listReviewsFull = async () => [
+      {
+        id: 778,
+        user: cfg.github.bot_login,
+        user_type: "Bot",
+        state: "DISMISSED",
+        body: `review body\n\n${postingMarker(key)}`,
+        commit_id: "abc123",
+        submitted_at: "2026-08-13T11:59:59Z",
+      },
+    ];
+
+    expect(
+      await watcher({ cfg: { ...cfg, dry_run: false }, postingReceiptGraceS: 0 }).handleFile(
+        write(189, 1, verdictFile({ pr: 189, verdict: "APPROVE", approval_withheld: true })),
+      ),
+    ).toBe(true);
+
+    expect(store.roundsFor(189)[0]).toMatchObject({ status: "cancelled", verdict: null });
+    expect(store.openReviewFailure(189)).toMatchObject({ stage: "posting_receipt" });
+    expect(store.approvalWithheld(189)).toBeUndefined();
+  });
+
   // The posted review is the evidence, so a round whose session stopped
   // without its verdict file is settled from the receipt — never requeued
   // (that would post twice), and never FAILED_LOUD over a review that stands
