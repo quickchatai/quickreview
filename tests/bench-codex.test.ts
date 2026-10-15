@@ -202,7 +202,6 @@ describe("Codex runs as the harness's reviewers/codex.py runs it", () => {
     const argv = codexDriverArgv(
       CASE,
       {
-        python: "/py",
         driver: "/d.py",
         dataset: "/ds.jsonl",
         tree: "/wt/x",
@@ -354,6 +353,54 @@ describe("the result file: the harness's payload + the OCR-shaped view", () => {
     writeFileSync(join(t, "run.json"), JSON.stringify({ reviewer: "codex", pr_text: true }));
     expect(reviewerLine()).toContain("PR title/description appended to the /review instructions");
     expect(reviewerLine()).not.toContain("no PR title/description");
+  });
+
+  it("the report names the endpoint the run recorded; a run from before the record reads as the login", () => {
+    const set = { name: "s", dataset: { commit: "c".repeat(40) } } as unknown as CaseSet;
+    const modelLine = () =>
+      renderCodexReport(set, t, [CASE])
+        .split("\n")
+        .find((l) => l.startsWith("- Model:")) ?? "";
+    const endpoint =
+      "the public OpenAI API, an API key through the harness's own CODEX_API_KEY route";
+    writeFileSync(join(t, "run.json"), JSON.stringify({ reviewer: "codex", endpoint }));
+    expect(modelLine()).toContain(endpoint);
+    expect(modelLine()).not.toContain("ChatGPT login");
+    writeFileSync(join(t, "run.json"), JSON.stringify({ reviewer: "codex" }));
+    expect(modelLine()).toContain("Codex's native ChatGPT login");
+  });
+
+  it("the report shows each case's recorded error and warnings", () => {
+    const set = { name: "s", dataset: { commit: "c".repeat(40) } } as unknown as CaseSet;
+    writeFileSync(join(t, "run.json"), JSON.stringify({ reviewer: "codex" }));
+    mkdirSync(join(t, "cases", CASE.instance_id), { recursive: true });
+    writeFileSync(
+      join(t, "cases", CASE.instance_id, "case-summary.json"),
+      JSON.stringify({
+        instance_id: CASE.instance_id,
+        arm: "codex",
+        status: "failed",
+        error: "result check failed: readers disagree",
+        duration_seconds: 60,
+        comments: 0,
+        tokens: null,
+        merge_base_ok: true,
+        warnings: ["merge-base(aaaaaaa, head) = x, prefetched y"],
+      }),
+    );
+    const md = renderCodexReport(set, t, [CASE]);
+    expect(md).toContain("## Warnings (case errors)");
+    expect(md).toContain(`- \`${CASE.instance_id}\`: result check failed: readers disagree`);
+    expect(md).toContain(`- \`${CASE.instance_id}\`: merge-base(aaaaaaa, head) = x, prefetched y`);
+  });
+
+  it("a result that records no token usage has unknown tokens, never zero", () => {
+    const { token_usage: _drop, ...noUsage } = harness;
+    const s = summarizeCodexRun({ exitCode: 0, timedOut: false, result: noUsage });
+    expect(s.status).toBe("ok");
+    expect(s.tokens).toBeNull();
+    expect(s.usage).toBeNull();
+    expect(s.bridge).toBeNull();
   });
 
   it("a Codex run dir is its own arm: quickreviewd commands refuse it", () => {
@@ -522,6 +569,8 @@ describe("codex-review --resume with a changed configuration", () => {
       );
       writeFileSync(join(out, "results", "all", `${c.instance_id}.json`), "{}");
     }
+    // The run had been evaluated: its metrics scored the old-configuration case too.
+    writeFileSync(join(out, "results", "all", "metrics_ocr_round_1.json"), "{}");
     const flags: Record<string, string> = {
       "--out": out,
       "--model": "new",
@@ -568,5 +617,7 @@ describe("codex-review --resume with a changed configuration", () => {
     // the old-configuration case is no longer a result of this run
     expect(existsSync(join(out, "cases", stale.instance_id, "case-summary.json"))).toBe(false);
     expect(existsSync(join(out, "results", "all", `${stale.instance_id}.json`))).toBe(false);
+    // …and no report can print the old results' scores beside the new label.
+    expect(existsSync(join(out, "results", "all", "metrics_ocr_round_1.json"))).toBe(false);
   });
 });

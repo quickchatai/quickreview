@@ -83,15 +83,24 @@ import {
 import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
 import {
+  aacrScoreTable,
+  caseWarningsSection,
+  checkMergeBase,
+  harnessProcessTimeoutMs,
+  prepareArmCases,
+  runLifecycle,
+} from "./armrun.js";
+import {
   authFingerprint,
   AuthExpiring,
   benchAuthMode,
   DISABLED_REFRESH,
   syncBenchAuth,
 } from "./auth.js";
-import { jwtAccount } from "./codex.js";
-import { run } from "./exec.js";
-import { bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
+import { codexFindingNote, sandboxChatgptLogin } from "./codex.js";
+import { piUsageFromInclusive } from "./cost.js";
+import { GIT_ISOLATION_ENV, run } from "./exec.js";
+import { bridgeCall, bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
 import { prTextFor } from "./prtext.js";
 import { roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
@@ -102,9 +111,9 @@ import { prepareTree } from "./runner.js";
  * `apply_defaults` (timeout None → 30). */
 export const OPENCODE_HARNESS_DEFAULTS = { timeoutMin: 30 } as const;
 
-/** reviewers/codex.py `run_codex_review`: `process_timeout = timeout_minutes * 60 + 60`. */
+/** reviewers/codex.py `run_codex_review`'s process timeout. */
 export function opencodeProcessTimeoutMs(timeoutMin: number): number {
-  return (timeoutMin * 60 + 60) * 1000;
+  return harnessProcessTimeoutMs(timeoutMin);
 }
 
 /** The MCP server's name in OpenCode's config; its `report` tool is exposed
@@ -235,6 +244,19 @@ export function opencodeRunArgv(o: {
   ];
 }
 
+/** What both providers' configs fix: no auto-update, no sharing, no
+ * snapshots, and the small model (titles, summaries) pinned to the reviewing
+ * model, so no call picks another. */
+function isolated(model: string): {
+  autoupdate: false;
+  share: "disabled";
+  snapshot: false;
+  model: string;
+  small_model: string;
+} {
+  return { autoupdate: false, share: "disabled", snapshot: false, model, small_model: model };
+}
+
 /**
  * OpenCode's whole configuration for one case (written to a per-case file and
  * named by OPENCODE_CONFIG; project config is disabled, so the reviewed repo
@@ -270,16 +292,11 @@ export function opencodeConfig(o: {
   if (o.provider === "native") {
     // OpenCode's own ChatGPT provider and its built-in `review` command as
     // shipped (subtask: true) — no provider block, no command override. The
-    // small model is pinned to the same model: the ChatGPT login serves only
-    // an allow-set of models, and a title/summary call must not pick another.
-    const model = `${NATIVE_PROVIDER}/${o.model}`;
+    // pinned small model matters most here: the ChatGPT login serves only an
+    // allow-set of models.
     const entry = nativeModelEntry(o.model);
     return {
-      autoupdate: false,
-      share: "disabled",
-      snapshot: false,
-      model,
-      small_model: model,
+      ...isolated(`${NATIVE_PROVIDER}/${o.model}`),
       enabled_providers: [NATIVE_PROVIDER],
       // A model newer than OpenCode's bundled catalog is DECLARED on the same
       // built-in provider (config `provider.<id>.models`, OpenCode's documented
@@ -289,13 +306,8 @@ export function opencodeConfig(o: {
       mcp: findingsMcp,
     };
   }
-  const model = `${BRIDGE_PROVIDER}/${o.model}`;
   return {
-    autoupdate: false,
-    share: "disabled",
-    snapshot: false,
-    model,
-    small_model: model,
+    ...isolated(`${BRIDGE_PROVIDER}/${o.model}`),
     enabled_providers: [BRIDGE_PROVIDER],
     provider: {
       [BRIDGE_PROVIDER]: {
@@ -337,20 +349,9 @@ export function opencodeConfig(o: {
  * feed OpenCode, never the companion's real login.
  */
 export function opencodeAuthFrom(benchAuthRaw: string): string {
-  const parsed = JSON.parse(benchAuthRaw) as Record<string, unknown>;
-  const cred = parsed["openai-codex"] as Record<string, unknown> | undefined;
-  if (!cred || cred["type"] !== "oauth" || typeof cred["access"] !== "string" || !cred["access"])
-    throw new Error("no openai-codex OAuth login in the sandbox's token copy");
-  if (cred["refresh"] !== DISABLED_REFRESH)
-    throw new Error(
-      "refusing a pi login whose refresh token is not the disabled sentinel — only the sandbox's refresh-disabled copy (src/bench/auth.ts) may feed OpenCode",
-    );
+  const { cred, access, account } = sandboxChatgptLogin(benchAuthRaw, "OpenCode");
   if (typeof cred["expires"] !== "number")
     throw new Error("the pi login carries no expiry — OpenCode would refresh it at once");
-  const access = cred["access"];
-  const account =
-    (typeof cred["accountId"] === "string" && cred["accountId"]) || jwtAccount(access);
-  if (!account) throw new Error("the pi login carries no ChatGPT account id");
   return (
     JSON.stringify(
       {
@@ -444,7 +445,9 @@ export function opencodeUsage(rowsJson: string): BridgeUsage | null {
 /** The environment OpenCode runs with: a fresh HOME and XDG tree per case (its
  * auth.json, sessions DB and caches live there and die with the case), the
  * per-case config, every phone-home off, git without any system/global
- * config. No pi agent dir, no token — the credential stays in the bridge. */
+ * config. No pi agent dir and no token in the environment: on the bridge the
+ * credential stays in the bridge; on the native provider it is the per-case
+ * auth.json under that HOME (opencodeAuthFrom). */
 export function opencodeEnv(o: {
   path: string;
   home: string;
@@ -469,10 +472,7 @@ export function opencodeEnv(o: {
     OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
     OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
     OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_TERMINAL_PROMPT: "0",
+    ...GIT_ISOLATION_ENV,
   };
   // The ChatGPT login is an internal DEFAULT plugin: the native path needs it.
   if (o.provider === "native") delete env["OPENCODE_DISABLE_DEFAULT_PLUGINS"];
@@ -651,9 +651,7 @@ export function toOcrShapedComments(reviewOutput: unknown): OcrShapedComment[] {
   for (const f of reviewOutput) {
     if (typeof f !== "object" || f === null) continue;
     const r = f as Record<string, unknown>;
-    const summary = typeof r["summary"] === "string" ? r["summary"].trim() : "";
-    const description = typeof r["description"] === "string" ? r["description"].trim() : "";
-    const note = [summary, description].filter(Boolean).join("\n").trim();
+    const note = codexFindingNote(r);
     if (!note) continue;
     out.push({
       path: typeof r["file"] === "string" ? r["file"] : "",
@@ -812,24 +810,6 @@ export interface OpencodeRunnerOptions {
   prText?: boolean;
 }
 
-async function bridgeCall(
-  o: Pick<OpencodeRunnerOptions, "bridgeUrl" | "fetchImpl">,
-  path: string,
-  body?: unknown,
-): Promise<Record<string, unknown> | null> {
-  try {
-    const res = await (o.fetchImpl ?? fetch)(`${o.bridgeUrl.replace(/\/+$/, "")}${path}`, {
-      method: body === undefined ? "GET" : "POST",
-      headers: { "content-type": "application/json" },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    return res.ok ? ((await res.json()) as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
 function emptySummary(c: BenchCase, fingerprint: OpencodeFingerprint): OpencodeCaseSummary {
   return {
     instance_id: c.instance_id,
@@ -869,6 +849,7 @@ export async function reviewCaseOpencode(
   const partialDir = join(scratch, "findings");
   const native = o.flags.provider === "native";
   mkdirSync(caseDir, { recursive: true });
+  clearOpencodeAttempt(caseDir);
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const summary = emptySummary(c, o.fingerprint);
@@ -912,12 +893,9 @@ export async function reviewCaseOpencode(
       configPath,
       provider: o.flags.provider ?? "bridge",
     });
-    const mb = await exec("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
-    summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
-    if (!summary.merge_base_ok)
-      summary.warnings.push(
-        `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
-      );
+    const mb = await checkMergeBase(exec, tree, c, meta, env);
+    summary.merge_base_ok = mb.ok;
+    if (mb.warning) summary.warnings.push(mb.warning);
     const prText = prTextFor(meta, o.prText === true);
     if (o.prText) summary.pr_text = prText !== null;
     const argv = opencodeRunArgv({
@@ -1009,13 +987,7 @@ export async function reviewCaseOpencode(
   }
   summary.duration_seconds = Math.round((Date.now() - started) / 1000);
   const b = summary.bridge;
-  summary.usage = b
-    ? {
-        input: b.input_tokens - Math.min(b.cached_tokens, b.input_tokens),
-        cacheRead: Math.min(b.cached_tokens, b.input_tokens),
-        output: b.output_tokens,
-      }
-    : null;
+  summary.usage = b ? piUsageFromInclusive(b.input_tokens, b.cached_tokens, b.output_tokens) : null;
   writeFileSync(join(caseDir, "opencode-events.jsonl"), stdout);
   writeFileSync(join(caseDir, "opencode-stderr.log"), stderr);
   const payload = opencodeResultPayload({
@@ -1051,6 +1023,22 @@ export async function reviewCaseOpencode(
   return summary;
 }
 
+/** The files an attempt leaves in its case dir, cleared before every attempt:
+ * one that fails early writes only some of them, and an earlier attempt's
+ * must never stand beside this one's outcome. */
+const OPENCODE_ATTEMPT_FILES = [
+  "opencode-config.json",
+  "opencode-argv.json",
+  "opencode-result.txt",
+  "opencode.log",
+  "opencode-events.jsonl",
+  "opencode-stderr.log",
+] as const;
+
+function clearOpencodeAttempt(caseDir: string): void {
+  for (const f of OPENCODE_ATTEMPT_FILES) rmSync(join(caseDir, f), { force: true });
+}
+
 /** A case with no prefetched store: failed WITH an empty result file, so its
  * references count against recall instead of vanishing from both
  * denominators. */
@@ -1063,6 +1051,7 @@ export function unprefetchedOpencodeCase(
   const summary = { ...emptySummary(c, fingerprint), error };
   const caseDir = join(outDir, "cases", safeId(c.instance_id));
   mkdirSync(caseDir, { recursive: true });
+  clearOpencodeAttempt(caseDir);
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writeOpencodeResult(
     outDir,
@@ -1137,22 +1126,17 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
   const previous = existsSync(runFile)
     ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
     : null;
-  // run.json is about to carry THIS configuration, so no case reviewed under
-  // another may stay a result of the run: without --resume every case goes;
-  // with it, every case whose fingerprint differs goes now, not when the loop
-  // reaches it — a stop partway (AuthExpiring) must leave those cases
-  // incomplete, never scored under the new model/flags label.
-  for (const c of r.cases) {
-    const prior = r.resume ? readOpencodeSummary(r.outDir, c) : null;
-    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
-      continue;
-    if (prior)
-      r.log(
-        `opencode: ${c.instance_id} was reviewed by a different OpenCode/model/verbosity/flags — its result is dropped`,
-      );
-    rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-    rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
-  }
+  // run.json is about to carry THIS configuration (prepareArmCases).
+  const prep = prepareArmCases({
+    outDir: r.outDir,
+    cases: r.cases,
+    resume: r.resume,
+    fingerprint,
+    readSummary: readOpencodeSummary,
+    log: r.log,
+    arm: "opencode",
+    differs: "a different OpenCode/model/verbosity/flags",
+  });
   const runRecord = {
     reviewer: "opencode",
     set: r.set.name,
@@ -1182,15 +1166,7 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
     flags: { timeout_min: r.flags.timeoutMin },
     qcr_commit: r.qcrCommit,
     cases: r.cases.map((c) => c.instance_id),
-    started_at:
-      (r.resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
-      new Date().toISOString(),
-    resumes: [
-      ...(r.resume && Array.isArray(previous?.["resumes"])
-        ? (previous["resumes"] as unknown[])
-        : []),
-      ...(r.resume && previous ? [{ at: new Date().toISOString(), fingerprint }] : []),
-    ],
+    ...runLifecycle(r.resume, previous, fingerprint),
     finished_at: null as string | null,
   };
   writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
@@ -1218,6 +1194,7 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
       r.log(`opencode: STOPPED — ${err.message}`);
       break;
     }
+    prep.beforeReview();
     let meta: PrefetchMeta;
     try {
       meta = r.readMeta(c);
@@ -1258,14 +1235,6 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
 
 // ---- the report ---------------------------------------------------------------------
 
-function n(v: number | undefined): string {
-  return v === undefined
-    ? "?"
-    : Number.isInteger(v)
-      ? String(v)
-      : String(Math.round(v * 100) / 100);
-}
-
 /** The OpenCode arm's report: the harness's numbers (average and every
  * round), then per case what OpenCode did and what it cost at the bridge. */
 export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
@@ -1296,14 +1265,7 @@ export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchC
   L.push("");
   L.push("## Scores (the AACR harness, OCR reader over the same comments)");
   L.push("");
-  L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
-  L.push("|---|---|---|---|---|---|---|---|---|");
-  const row = (label: string, s: Record<string, number>): string =>
-    `| ${label} | ${n(s["evaluated_instances"])}/${cases.length} | ${n(s["generated_notes"])} | ${n(s["matched_semantic_notes"])}/${n(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
-  const { rounds, average } = roundMetrics(join(outDir, "results", "all"));
-  if (average) L.push(row("**average**", average));
-  for (const r of rounds) L.push(row(String(r.round), r.summary));
-  if (!average && rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  L.push(...aacrScoreTable(roundMetrics(join(outDir, "results", "all")), cases.length));
   L.push("");
   L.push("## Per case");
   L.push("");
@@ -1311,14 +1273,14 @@ export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchC
     "| Case | Lang | Refs | Status | Comments (source) | Minutes | Model calls (failed) | Backend tokens in (cached) / out (reasoning) | Tools |",
   );
   L.push("|---|---|---|---|---|---|---|---|---|");
-  const warned: Array<{ c: BenchCase; s: OpencodeCaseSummary }> = [];
+  const reviewed: OpencodeCaseSummary[] = [];
   for (const c of cases) {
     const s = readOpencodeSummary(outDir, c);
     if (!s) {
       L.push(`| ${c.instance_id} | ${c.language} | ${c.references} | not run | | | | | |`);
       continue;
     }
-    if (s.warnings.length || s.error || !s.merge_base_ok) warned.push({ c, s });
+    reviewed.push(s);
     const b = s.bridge;
     const tools = Object.entries(s.tools)
       .sort((x, y) => y[1] - x[1])
@@ -1328,23 +1290,10 @@ export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchC
       `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status} | ${s.comments} (${s.review_output_source ?? "?"}) | ${(s.duration_seconds / 60).toFixed(1)} | ${b ? `${b.requests} (${b.errors})` : "?"} | ${b ? `${k(b.input_tokens)} (${k(b.cached_tokens)}) / ${k(b.output_tokens)} (${k(b.reasoning_tokens)})` : "?"} | ${tools} |`,
     );
   }
-  if (warned.length) {
-    L.push("");
-    L.push("## Warnings (case errors)");
-    L.push("");
-    for (const { c, s } of warned) {
-      if (!s.merge_base_ok && s.status !== "failed")
-        L.push(`- \`${c.instance_id}\`: merge-base check failed — see case-summary.json`);
-      for (const w of [
-        ...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []),
-        ...s.warnings,
-      ])
-        L.push(`- \`${c.instance_id}\`: ${w}`);
-    }
-  }
+  L.push(...caseWarningsSection(reviewed));
   L.push("");
   L.push(
-    "Reading the numbers: the findings carry the harness's codex severities (Critical…Info), not our blocker/nit tags, so only the `all` variant exists for this arm. The Tools column counts the session's tool calls (a `task` is a subagent OpenCode chose to spawn, whose own calls are not listed); the backend columns are the bridge's count of every call, subagents included.",
+    `Reading the numbers: the findings carry the harness's codex severities (Critical…Info), not our blocker/nit tags, so only the \`all\` variant exists for this arm. The Tools column counts the session's tool calls (a \`task\` is a subagent OpenCode chose to spawn, whose own calls are not listed); ${run["provider"] === "native" ? "the backend columns are OpenCode's own per-step records from its session store (subagents included), not a count at a bridge: a step that failed left no record, so the failed count reads 0." : "the backend columns are the bridge's count of every call, subagents included."}`,
   );
   L.push("");
   return L.join("\n");

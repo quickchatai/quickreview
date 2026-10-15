@@ -532,6 +532,42 @@ describe("one case end to end, OpenCode stubbed", () => {
   });
 });
 
+describe("a replacement attempt", () => {
+  it("leaves no earlier attempt's OpenCode log or diagnostics beside a case that failed early", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-opencode-attempt-"));
+    try {
+      const outDir = join(tmp, "out");
+      const caseDir = join(outDir, "cases", CASE.instance_id);
+      mkdirSync(caseDir, { recursive: true });
+      const earlier = [
+        "opencode.log",
+        "opencode-result.txt",
+        "opencode-argv.json",
+        "opencode-config.json",
+      ];
+      for (const f of earlier) writeFileSync(join(caseDir, f), "earlier attempt\n");
+      // No prefetched store: the tree cannot be prepared, nothing runs.
+      const s = await reviewCaseOpencode(CASE, { merge_base: BASE } as unknown as PrefetchMeta, {
+        root: join(tmp, "root"),
+        store: join(tmp, "no-store"),
+        outDir,
+        opencodeBin: "/nonexistent/opencode",
+        bridgeUrl: "http://127.0.0.1:9",
+        model: "gpt-6-sol",
+        mcpPython: "/py",
+        mcpScript: "/mcp.py",
+        flags: { timeoutMin: 30, variant: "medium" },
+        fingerprint: FP,
+        runImpl: async () => ({ code: 1, stdout: "", stderr: "", timedOut: false }),
+      });
+      expect(s.status).toBe("failed");
+      for (const f of earlier) expect(existsSync(join(caseDir, f)), f).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the credential: the bridge's refresh-disabled copy, never a refresher", () => {
   it("each case re-takes the copy with the refresh token disabled and never writes the source", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "bench-opencode-auth-"));
@@ -793,6 +829,14 @@ describe("the report describes the run it reads", () => {
     expect(api).toContain(key);
     expect(api).not.toContain("ChatGPT Codex backend");
     expect(line(render({}), "- Model:")).toContain("endpoint ?");
+  });
+
+  it("says where the backend columns come from: the bridge, or natively OpenCode's own step records", () => {
+    const reading = (md: string) => line(md, "Reading the numbers:");
+    expect(reading(render({ provider: "bridge" }))).toContain("the bridge's count of every call");
+    const native = reading(render({ provider: "native" }));
+    expect(native).toContain("OpenCode's own per-step records");
+    expect(native).not.toContain("the bridge's count");
   });
 
   it("says whether the PR title/description was supplied", () => {

@@ -45,15 +45,9 @@ import type { RoundFindingRow } from "../state.js";
 import type { ExecFn } from "../tmux.js";
 import { WorktreeManager, type PrOwnedDelta } from "../worktrees.js";
 import type { BenchCase, PrefetchMeta } from "./aacr.js";
-import { run } from "./exec.js";
+import { GIT_ISOLATION_ENV, run } from "./exec.js";
 
-const GIT_ENV = {
-  ...process.env,
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-};
+const GIT_ENV = { ...process.env, ...GIT_ISOLATION_ENV };
 
 /** The bench's subprocess helper in the shape `WorktreeManager` takes —
  * never the daemon's exec plumbing (src/bench/exec.ts header). */
