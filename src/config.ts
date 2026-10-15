@@ -1091,6 +1091,11 @@ export const DEFAULT_PASS_TIERS: Readonly<Record<string, PassTier>> = Object.fre
  * ever cuts a stalled one. */
 export const DEFAULT_SUBAGENT_PASS_DEADLINE_MIN = 8;
 
+/** `[pi] subagent_cache_stagger_ms`'s default — every reader's fallback too.
+ * The glue extension keeps its own copy (`DEFAULT_CACHE_STAGGER_MS`, it
+ * imports nothing from the daemon), pinned equal by a test. */
+export const DEFAULT_SUBAGENT_CACHE_STAGGER_MS = 2500;
+
 /** Refuse a per-pass deadline that is not a number of minutes in 0..240
  * (0 = off). A typo must not silently become "no deadline". */
 function parsePiPassDeadline<T extends { subagent_pass_deadline_min: unknown }>(pi: T): T {
@@ -2648,7 +2653,7 @@ export function parseConfig(toml: string): Config {
     pi: parsePiPassDeadline({
       subagent_max_concurrency: 4,
       subagent_cache_group: 5,
-      subagent_cache_stagger_ms: 2500,
+      subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
       subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
       ...(req(raw, "pi") as Omit<
         Config["pi"],

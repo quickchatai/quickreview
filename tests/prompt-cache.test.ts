@@ -30,7 +30,7 @@ import {
   readWorktreeFileForPack,
   renderContextPack,
 } from "../src/contextpack.js";
-import { REVIEW_DEFAULTS } from "../src/config.js";
+import { DEFAULT_SUBAGENT_CACHE_STAGGER_MS, REVIEW_DEFAULTS } from "../src/config.js";
 import type { PrFileEntry } from "../src/github.js";
 
 /** Native's own child argv shape (pi 1.0.0 runSingleAgent), with the node
@@ -75,7 +75,7 @@ describe("cache groups", () => {
     expect(resolveCacheGroup({ QCR_SUBAGENT_CACHE_GROUP: "5" })).toBe(5);
     expect(resolveCacheGroup({ QCR_SUBAGENT_CACHE_GROUP: "-1" })).toBe(0);
     expect(resolveCacheGroup({ QCR_SUBAGENT_CACHE_GROUP: "x" })).toBe(0);
-    expect(resolveCacheStagger({})).toBe(2500);
+    expect(resolveCacheStagger({})).toBe(DEFAULT_SUBAGENT_CACHE_STAGGER_MS);
     expect(resolveCacheStagger({ QCR_SUBAGENT_CACHE_STAGGER_MS: "0" })).toBe(0);
   });
 });
