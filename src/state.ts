@@ -1548,20 +1548,11 @@ export class StateStore {
     // preserving a finite failure that supervisor health can expose.
     this.db.pragma("busy_timeout = 2000");
     this.db.exec(SCHEMA);
-    // Additive migration for stores created before pause-pr existed.
-    try {
-      this.db.exec("ALTER TABLE pr_state ADD COLUMN paused INTEGER NOT NULL DEFAULT 0");
-    } catch {
-      /* column already present */
-    }
-    try {
-      this.db.exec("ALTER TABLE rounds ADD COLUMN summary TEXT");
-    } catch {
-      /* column already present */
-    }
     // Additive columns. Each ALTER is independent so a
     // partially-migrated store converges; re-running is a no-op.
     for (const ddl of [
+      "ALTER TABLE pr_state ADD COLUMN paused INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE rounds ADD COLUMN summary TEXT",
       "ALTER TABLE rounds ADD COLUMN additions INTEGER",
       "ALTER TABLE rounds ADD COLUMN deletions INTEGER",
       "ALTER TABLE rounds ADD COLUMN changed_files INTEGER",
@@ -1695,16 +1686,29 @@ export class StateStore {
       // and a review captured before the column is unknown — the miner then
       // never reads it as a request for changes.
       "ALTER TABLE pr_comments ADD COLUMN review_state TEXT",
-    ]) {
-      try {
-        this.db.exec(ddl);
-      } catch {
-        /* column already present */
-      }
-    }
+    ])
+      this.addColumn(ddl);
     this.migrateRecheckReceipts();
     this.migrateSessionCommandCancelledStatus();
     this.runDataMigrations();
+  }
+
+  /**
+   * Run one additive `ALTER TABLE … ADD COLUMN`: true when it added the
+   * column, false when the column was already there. Any other failure (a
+   * full disk, a locked database, a malformed DDL) is thrown naming the DDL,
+   * so an upgrade that did not apply stops the boot rather than surfacing
+   * later as a missing-column error with the cause gone.
+   */
+  private addColumn(ddl: string): boolean {
+    try {
+      this.db.exec(ddl);
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/duplicate column name/i.test(message)) return false;
+      throw new Error(`state.db migration failed: ${ddl}: ${message}`, { cause: err });
+    }
   }
 
   /**
@@ -1722,27 +1726,13 @@ export class StateStore {
    *     undecided; the sweep visits the least recently asked first, so a
    *     per-pass budget never starves the same tail.
    * Additive and idempotent; the backfill runs only in the boot that adds
-   * `nudged`, from the reason the claim was written with.
+   * `nudged`, from the reason the claim was written with, and commits with
+   * the column — a boot cut short between the two leaves neither.
    */
   private migrateRecheckReceipts(): void {
-    let added = false;
-    try {
-      this.db.exec("ALTER TABLE rechecks ADD COLUMN nudged INTEGER NOT NULL DEFAULT 1");
-      added = true;
-    } catch {
-      /* column already present */
-    }
-    for (const ddl of [
-      "ALTER TABLE rechecks ADD COLUMN receipt_at TEXT",
-      "ALTER TABLE rechecks ADD COLUMN receipt_checked_at TEXT",
-    ]) {
-      try {
-        this.db.exec(ddl);
-      } catch {
-        /* column already present */
-      }
-    }
-    if (added) {
+    this.db.transaction(() => {
+      if (!this.addColumn("ALTER TABLE rechecks ADD COLUMN nudged INTEGER NOT NULL DEFAULT 1"))
+        return;
       const info = this.db
         .prepare(
           `UPDATE rechecks SET nudged = 0
@@ -1751,7 +1741,9 @@ export class StateStore {
         .run();
       if (info.changes > 0)
         this.logEvent("recheck_claims_unnudged_backfilled", null, { count: info.changes });
-    }
+    })();
+    this.addColumn("ALTER TABLE rechecks ADD COLUMN receipt_at TEXT");
+    this.addColumn("ALTER TABLE rechecks ADD COLUMN receipt_checked_at TEXT");
   }
 
   /** Existing databases carry a CHECK constraint that predates operator
@@ -1771,11 +1763,11 @@ export class StateStore {
         CREATE TABLE session_commands ${SESSION_COMMAND_COLUMNS_SQL};
         INSERT INTO session_commands
           (id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
-           status, owner_token, attempt, recovery_attempts, unknown_checks, created_at, updated_at,
-           next_check_at, started_at, settled_at, failed_at, failure)
+           status, owner_token, attempt, recovery_attempts, unknown_checks, redeliveries,
+           created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure)
         SELECT id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
-           status, owner_token, attempt, recovery_attempts, unknown_checks, created_at, updated_at,
-           next_check_at, started_at, settled_at, failed_at, failure
+           status, owner_token, attempt, recovery_attempts, unknown_checks, redeliveries,
+           created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure
           FROM session_commands_before_cancelled;
         DROP TABLE session_commands_before_cancelled;
         ${SESSION_COMMAND_INDEXES_SQL}

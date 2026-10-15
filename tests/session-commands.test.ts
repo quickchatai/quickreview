@@ -359,6 +359,45 @@ describe("durable PR-session command slot", () => {
     }
   });
 
+  it("the status-constraint rebuild keeps a row's spent redeliveries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-session-command-redeliveries-"));
+    try {
+      const path = join(dir, "state.db");
+      const old = new Database(path);
+      old.exec(`
+        CREATE TABLE session_commands (
+          id TEXT PRIMARY KEY, pr INTEGER NOT NULL, session TEXT NOT NULL,
+          kind TEXT NOT NULL, round_no INTEGER, payload_sha256 TEXT NOT NULL,
+          payload_path TEXT NOT NULL, inject_path TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending','running','acked','failed')),
+          owner_token TEXT, attempt INTEGER NOT NULL DEFAULT 0,
+          recovery_attempts INTEGER NOT NULL DEFAULT 0,
+          unknown_checks INTEGER NOT NULL DEFAULT 0,
+          redeliveries INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL, next_check_at TEXT NOT NULL,
+          started_at TEXT, settled_at TEXT, failed_at TEXT, failure TEXT
+        );
+      `);
+      old
+        .prepare(
+          `INSERT INTO session_commands
+        (id,pr,session,kind,round_no,payload_sha256,payload_path,inject_path,status,owner_token,attempt,redeliveries,created_at,updated_at,next_check_at)
+        VALUES ('cmd-old',5408,'pr-5408','round',20,?,?,?,'pending',NULL,1,2,?,?,?)`,
+        )
+        .run("a".repeat(64), "/state/old.md", "/inject/old.md", T0, T0, "2026-08-27T20:02:00.000Z");
+      old.close();
+
+      const migrated = open(path);
+      expect(migrated.getSessionCommand("cmd-old")).toMatchObject({
+        status: "pending",
+        attempt: 1,
+        redeliveries: 2,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reconstructs the same active slot after a store restart", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-session-command-"));
     try {

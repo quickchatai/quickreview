@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import Database from "better-sqlite3";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -228,6 +229,38 @@ describe("rounds", () => {
     expect(store.roundsOn("2026-08-13").map((r) => r.pr)).toEqual([7]);
     expect(store.roundsOn("2026-08-14").map((r) => r.pr)).toEqual([8]);
     expect(store.roundsOn("2026-08-15")).toEqual([]);
+  });
+});
+
+describe("additive schema migrations", () => {
+  it("a column ALTER that fails for any reason but 'already present' stops the boot, naming the DDL", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-state-migration-"));
+    try {
+      const path = join(dir, "state.db");
+      new StateStore(path).close();
+      // An older store missing one additive column, on a file the boot
+      // cannot write: the ALTER fails, and not because the column exists.
+      const raw = new Database(path);
+      raw.exec("ALTER TABLE rounds DROP COLUMN merge_base");
+      raw.close();
+      chmodSync(path, 0o444);
+      expect(() => new StateStore(path)).toThrow(
+        /state\.db migration failed: ALTER TABLE rounds ADD COLUMN merge_base TEXT: .*readonly/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("re-opening a current store adds nothing and throws nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-state-migration-"));
+    try {
+      const path = join(dir, "state.db");
+      new StateStore(path).close();
+      expect(() => new StateStore(path).close()).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
