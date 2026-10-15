@@ -273,6 +273,45 @@ describe("readiness and the restart ladder", () => {
     expect(h.lines.join("\n")).toMatch(/stopped answering/);
   });
 
+  it("a probe answered after its child was replaced neither readies the replacement nor re-arms its polling", async () => {
+    // The first probe hangs until released; the child it probed dies and is
+    // replaced meanwhile.
+    let release: (ok: boolean) => void = () => undefined;
+    let held = true;
+    const clock = new FakeClock();
+    const children: FakeChild[] = [];
+    let pid = 700;
+    const sup = new LocalEmbedderSupervisor({
+      cfg: cfg(),
+      repoRoot: "/opt/quickreview/sandbox",
+      log: () => undefined,
+      spawn: () => {
+        const c = new FakeChild(pid++);
+        children.push(c);
+        return c;
+      },
+      fetchFn: async () => {
+        const ok = held ? await new Promise<boolean>((r) => (release = r)) : false;
+        return { ok, status: ok ? 200 : 503, json: async () => ({}) };
+      },
+      exists: () => true,
+      readOvConf: () => RENDERED_LOCAL,
+      schedule: clock.schedule,
+      now: () => new Date("2026-10-07T10:00:00Z"),
+    });
+    sup.start();
+    clock.fireMs(EMBEDDER_FAST_POLL_MS); // the probe of child 0 is now in flight
+    children[0]!.emit("exit", 1, null);
+    clock.fireMs(cfg().restart_backoff_ms[0]!); // child 1, with its own fast probe armed
+    expect(children).toHaveLength(2);
+    held = false;
+    release(true); // child 0's probe answers 200 — about a process that is gone
+    await flush();
+    expect(sup.isReady()).toBe(false);
+    // Only child 1's own fast probe is armed, never a slow one from the stale answer.
+    expect(clock.live().map((p) => p.ms)).toEqual([EMBEDDER_FAST_POLL_MS]);
+  });
+
   it("folds the service's own lines into the daemon log", () => {
     const h = harness();
     h.sup.start();
@@ -588,7 +627,11 @@ describe("memoryServing — does memory serve search?", () => {
 
   it("ONE failed /ready poll is unknown — a busy embedder answering slowly is no verdict; the second decides", () => {
     expect(
-      memoryServing("local", server({ ready: false, not_ready_polls: 1, last_error: "timeout" }), emb()),
+      memoryServing(
+        "local",
+        server({ ready: false, not_ready_polls: 1, last_error: "timeout" }),
+        emb(),
+      ),
     ).toEqual({ ok: null });
     const two = memoryServing(
       "local",
@@ -599,7 +642,11 @@ describe("memoryServing — does memory serve search?", () => {
     expect(two.reason).toMatch(/\/ready fails \(timeout\)/);
     // A dead embedder is still not serving at once, whatever the count.
     expect(
-      memoryServing("local", server({ ready: false, not_ready_polls: 1 }), emb({ state: "unavailable", running: false, ready: false })).ok,
+      memoryServing(
+        "local",
+        server({ ready: false, not_ready_polls: 1 }),
+        emb({ state: "unavailable", running: false, ready: false }),
+      ).ok,
     ).toBe(false);
   });
 
