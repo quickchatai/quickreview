@@ -8,7 +8,8 @@
 // solid evidence too). Whether to grant that authority is decided on the
 // evidence this module produces in shadow: for every lesson, the findings it
 // would have touched that humans then FIXED (harm — a real finding hidden),
-// that humans refuted or set aside (help), and the ones still unknown — on
+// that were refuted (a human's reply, or the reviewer's own concession on
+// re-check) or set aside (help), and the ones still unknown — on
 // the CLASS tier (below) the ones it would have demoted, on the LENS tier
 // evidence the license does not reach.
 //
@@ -64,7 +65,7 @@
 // Nothing here writes memory or GitHub, and nothing here is on a round's path.
 import type { MemoryDelivery } from "./config.js";
 import { globMatcherOrNothing } from "./glob.js";
-import { findingClass, lensIdsOf } from "./learner/miner.js";
+import { findingClass, lensIdsOf, tableExists } from "./learner/miner.js";
 import type {
   LessonLedger,
   ShadowMark,
@@ -72,6 +73,7 @@ import type {
   ShadowMatchTier,
   StoredSelection,
 } from "./lessonledger.js";
+import { classesRelated } from "./memory/lessons.js";
 import { VALIDATOR_LENS, type RoleSelection, type SelectedLesson } from "./memory/selection.js";
 import type { LessonDeliveryStatus, LessonTierCounts } from "./memory/shadowstatus.js";
 import type { RoundFindingRow, StateStore } from "./state.js";
@@ -81,11 +83,6 @@ export type MatchFinding = Pick<
   RoundFindingRow,
   "finding_key" | "path" | "lens" | "lens_ids" | "kind" | "severity" | "disposition"
 >;
-
-/** `a` and `b` name the same class, or one refines the other. */
-export function classesRelated(a: string, b: string): boolean {
-  return a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`);
-}
 
 /**
  * Whether a dont-raise lesson can mark on the LENS tier: it must
@@ -340,13 +337,6 @@ function parseFindingId(id: string): { round_no: number; key: string } {
   const a = id.indexOf("\u0000");
   const b = id.indexOf("\u0000", a + 1);
   return { round_no: Number(id.slice(a + 1, b)), key: id.slice(b + 1) };
-}
-
-function tableExists(store: StateStore, name: string): boolean {
-  return (
-    store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !==
-    undefined
-  );
 }
 
 function median(xs: number[]): number | null {
@@ -720,7 +710,7 @@ export function renderShadowReport(r: ShadowReport): string {
       `lens tier (evidence only) ${ft.lens.total} finding(s) (${r.marks_by_tier.lens} mark(s))`,
     ...tierLines("  ", r.findings, ft),
     "  class = the lesson's lens, class and path all held — what the validator's lesson-shape license needs; lens = lens and path held, the class differs or the lesson names none (lens-level matching) — evidence only. A finding both tiers touched counts on the class tier.",
-    "  harm = humans then FIXED it (the lesson would have hidden a real finding); help = humans refuted it, or set its review aside (a whole-review signal); P0 is never demoted.",
+    "  harm = humans then FIXED it (the lesson would have hidden a real finding); help = it was refuted and conceded (on a human's reply, or by the reviewer's own re-check), or its review was set aside (a whole-review signal); P0 is never demoted.",
   );
   out.push("", "Per lesson:");
   if (r.per_lesson.length === 0) out.push("  (no marks)");
@@ -784,10 +774,7 @@ export function lessonDeliveryStatus(
     rounds: r.rounds.total - r.rounds.lessons_off,
     timeouts: r.rounds.with_timeouts,
     unreadable: r.rounds.unreadable,
-    marks: r.findings.total,
-    harm: r.findings.harm,
-    help: r.findings.help_refuted + r.findings.help_set_aside,
-    unknown: r.findings.unknown,
+    ...tierCounts(r.findings),
     tiers: {
       class: tierCounts(r.findings_by_tier.class),
       lens: tierCounts(r.findings_by_tier.lens),

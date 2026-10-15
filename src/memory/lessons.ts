@@ -414,6 +414,13 @@ export function balancePhrase(b: LessonBalance): string {
   return `look-for:dont-raise ${b.look_for}:${b.dont_raise}${b.ratio === null ? "" : ` (${b.ratio.toFixed(2)})`}`;
 }
 
+/** `a` and `b` name the same class, or one refines the other by a dot
+ * segment (`baseline` and `baseline.authz`) — the learner's coverage rule,
+ * which the shadow matcher's class tier applies too. */
+export function classesRelated(a: string, b: string): boolean {
+  return a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`);
+}
+
 /**
  * The lessons already covering a candidate class: a typed lesson whose class
  * is the class, or one a dot-segment above or below it (`baseline` covers
@@ -428,12 +435,10 @@ export function coveringLessons(
   max = 5,
 ): string[] {
   const out: string[] = [];
-  const related = (a: string, b: string): boolean =>
-    a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`);
   for (const l of lessons) {
     const hit =
       l.class !== null
-        ? related(l.class, cls)
+        ? classesRelated(l.class, cls)
         : lensIds.length > 0 && l.lens.some((id) => lensIds.includes(id));
     if (hit && !out.includes(l.id)) out.push(l.id);
     if (out.length >= max) break;

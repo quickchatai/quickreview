@@ -228,7 +228,8 @@ function oneLine(s: string, cap = 300): string {
   return t.length > cap ? `${t.slice(0, cap - 1)}…` : t;
 }
 
-function tableExists(store: StateStore, name: string): boolean {
+/** Whether state.db holds table `name` (an optional source's tables may be absent). */
+export function tableExists(store: StateStore, name: string): boolean {
   return (
     store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !==
     undefined
