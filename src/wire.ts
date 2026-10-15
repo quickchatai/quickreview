@@ -1845,7 +1845,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         },
         onDeferredFire: (date) => {
           d.store.logEvent("eod_deferred_fired", null, { date });
-          log(`EOD sweep for ${date} firing — the drain that deferred it has lifted`);
+          // A day is deferred behind a drain or an earlier sweep; it fires
+          // only once neither holds, and the timer does not say which held it.
+          log(`EOD sweep for ${date} firing — deferred earlier; no drain or sweep holds it now`);
         },
         injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
         onFire: (date) => {
