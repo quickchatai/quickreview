@@ -140,6 +140,7 @@ describe("deferred review posting", () => {
       delivered_by: "daemon_retry",
     });
     expect(store.postingRetry(key)).toMatchObject({ status: "confirmed", attempts: 1 });
+    expect(jobFile()).toMatchObject({ status: "done", attempts: 1 }); // the ledger's count
     expect(pendingPosting(dir, 12, 1, key)).toBe(false);
   });
 
@@ -205,7 +206,7 @@ describe("deferred review posting", () => {
     }
     expect(store.postingRetry(key)).toMatchObject({ status: "exhausted", attempts: 3 });
     expect(onExhausted).toHaveBeenCalledTimes(1);
-    expect(jobFile().status).toBe("failed");
+    expect(jobFile()).toMatchObject({ status: "failed", attempts: 3 });
     at(59);
     await worker().tick();
     expect(deliver).toHaveBeenCalledTimes(3);

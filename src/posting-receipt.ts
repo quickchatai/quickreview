@@ -34,10 +34,11 @@ export interface PostingReceipt {
    * first failure, from which the retry schedule runs. */
   deferred_at?: string;
   defer_reason?: string;
-  /** Set on a receipt the daemon's deferred-posting retry confirmed
-   *. The session was gone when the gate's guards ran, so a guard 4
-   * softening (APPROVE posted as a COMMENT, approval withheld for red CI) is
-   * something the verdict file cannot know: see `retrySoftenedApproval`. */
+  /** Set on a receipt the daemon's deferred-posting retry confirmed, and on
+   * any daemon delivery of an APPROVE that GitHub holds as a COMMENT. The
+   * session was gone when the gate's guards ran, so a guard 4 softening
+   * (APPROVE posted as a COMMENT, approval withheld for red CI) is something
+   * the verdict file cannot know: see `retrySoftenedApproval`. */
   delivered_by?: "daemon_retry";
   /** In memory only, never written by the posting scripts: the
    * daemon SYNTHESISED this receipt from a bot review carrying the round's
@@ -241,7 +242,8 @@ export function parsePostingReceipt(raw: string): PostingOutcome | undefined {
   }
 }
 
-/** An approval the daemon's deferred-posting retry delivered as a COMMENT:
+/** An approval the daemon's delivery (the deferred-posting retry, or the
+ * outbox's ordinary delivery) posted as a COMMENT:
  * guard 4 (no green CI at the head) softened it on the gate, as it softens
  * any approval there. The session that wrote the verdict file had finished
  * long before, so its verdict says APPROVE without `approval_withheld` — and
