@@ -411,6 +411,13 @@ export class PiSessionManager implements SessionHooks {
     return ov ? openVikingBaseUrl(ov) : OV_DEFAULT_BASE_URL;
   }
 
+  /** The OpenViking user the sessions act as: `[openviking] user`, the same
+   * identity the daemon's own clients use with the same confined key; a
+   * hand-rolled config without it falls back to the reviewer default. */
+  ovUser(): string {
+    return this.cfg.openviking?.user || OV_REVIEWER_USER;
+  }
+
   /** The reviewer credential file every session resolves its key from. */
   ovcliConfPath(): string {
     return ovcliConfPathIn(this.piHome);
@@ -442,7 +449,7 @@ export class PiSessionManager implements SessionHooks {
       {
         url: this.ovBaseUrl(),
         apiKey: this.secret(OV_REVIEWER_KEY_SECRET) ?? "",
-        user: OV_REVIEWER_USER,
+        user: this.ovUser(),
       },
       {
         serverConfigPath: this.cfg.openviking?.config_file,
@@ -572,7 +579,7 @@ export class PiSessionManager implements SessionHooks {
       env,
       openVikingSessionEnv({
         baseUrl: this.ovBaseUrl(),
-        user: OV_REVIEWER_USER,
+        user: this.ovUser(),
         peerId: session,
         cliConfigPath: this.ovcliConfPath(),
         serverConfigPath: this.cfg.openviking?.config_file,

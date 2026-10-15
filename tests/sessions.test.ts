@@ -578,6 +578,22 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
     expect(newSession.join(" ")).not.toContain("ov-reviewer-key");
   });
 
+  it("acts as the configured [openviking] user, on argv and in ovcli.conf alike", async () => {
+    const base = cfg();
+    const config = {
+      ...base,
+      openviking: { ...base.openviking, user: "alice" },
+    } as unknown as Config;
+    writeFileSync(join(secrets, "openviking_reviewer_key"), "ov-reviewer-key\n");
+    const m = manager(undefined, undefined, config);
+    await m.ensurePrSession(42, "T", "wt/pr-42");
+
+    const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
+    expect(newSession).toContain("OPENVIKING_USER=alice");
+    expect(newSession).not.toContain("OPENVIKING_USER=reviewer");
+    expect(JSON.parse(readFileSync(m.ovcliConfPath(), "utf8")).user).toBe("alice");
+  });
+
   it("the overseer gets the identity but owns no raw tier", async () => {
     const m = manager();
     await m.ensureOverseerSession();
