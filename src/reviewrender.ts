@@ -28,8 +28,13 @@ import {
   SANCTIONED_TAGS,
 } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
-import { findingMarker, findingRecordKey, recordNumber } from "./findingkey.js";
-import { normalizeDisposition } from "./findingsrecord.js";
+import {
+  findingMarker,
+  findingRecordKey,
+  normalizeDisposition,
+  recordNumber,
+  recordSide,
+} from "./findingkey.js";
 import {
   firstSentence as policyFirstSentence,
   isDefaultPosting,
@@ -109,7 +114,7 @@ function str(v: unknown): string | null {
 const num = recordNumber;
 
 /** Is this findings-record entry `posted`, under every spelling the record
- * parser folds onto it (src/findingsrecord.ts `normalizeDisposition`)? The
+ * parser folds onto it (src/findingkey.ts `normalizeDisposition`)? The
  * one test the posting cut and the renderer both apply. */
 function isPostedEntry(e: unknown): e is Record<string, unknown> {
   return (
@@ -171,7 +176,7 @@ function readPosted(
     path: str(raw.path),
     line,
     start_line: start !== null && line !== null && start < line ? start : null,
-    side: str(raw.side)?.toUpperCase() === "LEFT" ? "LEFT" : "RIGHT",
+    side: recordSide(raw.side),
     tag,
     sevTag,
     title,

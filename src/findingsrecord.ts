@@ -21,90 +21,24 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DOUBT_WORDS } from "./doubtwords.js";
-import { findingRecordKey, recordNumber, recordString } from "./findingkey.js";
+import {
+  findingRecordKey,
+  normalizeDisposition,
+  recordNumber,
+  recordString,
+  type FindingDisposition,
+} from "./findingkey.js";
 import { WITHHOLD_WORDS } from "./postingpolicy.js";
 import { bareTag, isSanctionedTag } from "./severity.js";
 import type { StateStore } from "./state.js";
 import { wakeOrHold } from "./wakes.js";
 
-/**
- * What happened to a candidate finding. Closed set — the record is only
- * countable if the disposition is.
- *
- * - `posted` — it survived validation and went out on the PR (the RAISE side,
- *   the half adjudication actually needs).
- * - `killed` / `downgraded` — the validator vetoed or moved it.
- * - `doubted` — the validator could not stand behind the CLAIM (`DOUBT_WORDS`:
- *   refuted, unverifiable, bad anchor). A validity veto is a mark, not a
- *   deletion — kept here as "may not be valid", never posted on the PR,
- *   shown in the TUI for the operator to judge.
- * - `merged` / `folded` — merge-stage attrition: the same defect
- *   collapsed into another finding, or a different defect carried as a
- *   paragraph under one. Attrition here counts like a kill; it must never
- *   vanish silently.
- * - `withheld` — the session itself dropped it before the validator saw it,
- *   or the profile's `[posting]` policy kept a survivor off the PR (a word
- *   from `WITHHOLD_WORDS`: `over-budget`, `nits-off`, …) — kept, never posted.
- * - `conceded` — REFUTED AND CONCEDED: previously posted, the author refuted
- *   it and the reviewer accepted the refutation. This is the state that lets a
- *   later round tell "escalating an open finding" (legitimate — blocking late
- *   beats never) from "resurrecting a settled one" (not legitimate). Nothing
- *   else in the system records it.
- */
-export type FindingDisposition =
-  | "posted"
-  | "killed"
-  | "doubted"
-  | "downgraded"
-  | "merged"
-  | "folded"
-  | "withheld"
-  | "conceded"
-  | "unknown";
-
-const DISPOSITIONS: ReadonlySet<string> = new Set([
-  "posted",
-  "killed",
-  "doubted",
-  "downgraded",
-  "merged",
-  "folded",
-  "withheld",
-  "conceded",
-]);
-
-/** Spellings a session plausibly writes, folded onto the closed set. Tolerant
- * input, exactly like the verdict file's digit-string coercion — never a
- * rejection reason. */
-const DISPOSITION_ALIASES: Readonly<Record<string, FindingDisposition>> = {
-  post: "posted",
-  survive: "posted",
-  survived: "posted",
-  kill: "killed",
-  vetoed: "killed",
-  doubt: "doubted",
-  "may-not-be-valid": "doubted",
-  downgrade: "downgraded",
-  demoted: "downgraded",
-  capped: "downgraded",
-  merge: "merged",
-  fold: "folded",
-  withhold: "withheld",
-  dropped: "withheld",
-  concede: "conceded",
-  "refuted-and-conceded": "conceded",
-  refuted_and_conceded: "conceded",
-};
-
 /** The validator's validity vetoes (src/doubtwords.ts). */
 export { DOUBT_WORDS };
 
-export function normalizeDisposition(raw: unknown): FindingDisposition {
-  if (typeof raw !== "string") return "unknown";
-  const v = raw.trim().toLowerCase().replace(/\s+/g, "-");
-  if (DISPOSITIONS.has(v)) return v as FindingDisposition;
-  return DISPOSITION_ALIASES[v] ?? "unknown";
-}
+/** The disposition vocabulary lives in the leaf `findingkey.ts`, so the
+ * renderer and the post-check read "posted" exactly as this parser does. */
+export { normalizeDisposition, type FindingDisposition };
 
 /** The axis a downgrade moved. `pass-validate`'s addendum requires a downgrade
  * to name one; the record carries it so the move is auditable. */

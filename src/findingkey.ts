@@ -3,6 +3,8 @@
 // session's record into `round_findings` rows keyed by `(pr, round_no,
 // finding_key)`, and the live RENDER route, which stamps that key into every
 // inline comment it renders so the comment can be linked back to its row.
+// Beside it, the readings of a record entry every consumer must share: its
+// numbers and strings, its disposition (is it `posted`?) and its diff side.
 //
 // A leaf on purpose — no imports. `src/reviewrender.ts` is also the bench's
 // render step, and the bench must not pull the daemon's modules in with it.
@@ -25,6 +27,90 @@ export function recordNumber(val: unknown): number | null {
 
 const str = recordString;
 const num = recordNumber;
+
+/** The diff side a record entry's anchor counts on: `LEFT` in any case, else
+ * `RIGHT` (the default). The renderer posts on it and the post-check compares
+ * by it, so both read one side. */
+export function recordSide(val: unknown): "LEFT" | "RIGHT" {
+  return recordString(val)?.toUpperCase() === "LEFT" ? "LEFT" : "RIGHT";
+}
+
+/**
+ * What happened to a candidate finding. Closed set — the record is only
+ * countable if the disposition is.
+ *
+ * - `posted` — it survived validation and went out on the PR (the RAISE side,
+ *   the half adjudication actually needs).
+ * - `killed` / `downgraded` — the validator vetoed or moved it.
+ * - `doubted` — the validator could not stand behind the CLAIM (`DOUBT_WORDS`:
+ *   refuted, unverifiable, bad anchor). A validity veto is a mark, not a
+ *   deletion — kept here as "may not be valid", never posted on the PR,
+ *   shown in the TUI for the operator to judge.
+ * - `merged` / `folded` — merge-stage attrition: the same defect
+ *   collapsed into another finding, or a different defect carried as a
+ *   paragraph under one. Attrition here counts like a kill; it must never
+ *   vanish silently.
+ * - `withheld` — the session itself dropped it before the validator saw it,
+ *   or the profile's `[posting]` policy kept a survivor off the PR (a word
+ *   from `WITHHOLD_WORDS`: `over-budget`, `nits-off`, …) — kept, never posted.
+ * - `conceded` — REFUTED AND CONCEDED: previously posted, the author refuted
+ *   it and the reviewer accepted the refutation. This is the state that lets a
+ *   later round tell "escalating an open finding" (legitimate — blocking late
+ *   beats never) from "resurrecting a settled one" (not legitimate). Nothing
+ *   else in the system records it.
+ */
+export type FindingDisposition =
+  | "posted"
+  | "killed"
+  | "doubted"
+  | "downgraded"
+  | "merged"
+  | "folded"
+  | "withheld"
+  | "conceded"
+  | "unknown";
+
+const DISPOSITIONS: ReadonlySet<string> = new Set([
+  "posted",
+  "killed",
+  "doubted",
+  "downgraded",
+  "merged",
+  "folded",
+  "withheld",
+  "conceded",
+]);
+
+/** Spellings a session plausibly writes, folded onto the closed set. Tolerant
+ * input, exactly like the verdict file's digit-string coercion — never a
+ * rejection reason. */
+const DISPOSITION_ALIASES: Readonly<Record<string, FindingDisposition>> = {
+  post: "posted",
+  survive: "posted",
+  survived: "posted",
+  kill: "killed",
+  vetoed: "killed",
+  doubt: "doubted",
+  "may-not-be-valid": "doubted",
+  downgrade: "downgraded",
+  demoted: "downgraded",
+  capped: "downgraded",
+  merge: "merged",
+  fold: "folded",
+  withhold: "withheld",
+  dropped: "withheld",
+  concede: "conceded",
+  "refuted-and-conceded": "conceded",
+  refuted_and_conceded: "conceded",
+};
+
+/** A disposition as the closed set, under every spelling the aliases fold. */
+export function normalizeDisposition(raw: unknown): FindingDisposition {
+  if (typeof raw !== "string") return "unknown";
+  const v = raw.trim().toLowerCase().replace(/\s+/g, "-");
+  if (DISPOSITIONS.has(v)) return v as FindingDisposition;
+  return DISPOSITION_ALIASES[v] ?? "unknown";
+}
 
 /**
  * The per-round key of the record entry at `index` of its `findings` array:

@@ -291,5 +291,43 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     expect(merges).toEqual([{ follower: "A", lead: "B", path: "a.ts", line: 10 }]);
     const f = (record as { findings: Array<Record<string, unknown>> }).findings;
     expect(f.map((e) => e.disposition)).toEqual(["merged", "posted", "posted"]);
+    // Rendering the written-back record again protects the same split.
+    const again = postCheckRecord(record);
+    expect(again.merges).toEqual([]);
+    expect(again.record).toBe(record);
+  });
+  it("ranks a tag as the renderer reads it, whitespace inside the brackets too", () => {
+    const r = pair("G4", "G5");
+    Object.assign(r.findings[0]!, { posted_as: "nit", severity: "P3" });
+    Object.assign(r.findings[1]!, { posted_as: "[ Blocker ]", severity: "P1" });
+    expect(postCheckRecord(r).merges).toEqual([
+      { follower: "A", lead: "B", path: "a.ts", line: 10 },
+    ]);
+  });
+  it("reads every spelling of `posted` the record parser folds", () => {
+    for (const disposition of ["survived", "Posted", " post "]) {
+      const r = pair("G4", "G5");
+      for (const e of r.findings) e.disposition = disposition;
+      expect(postCheckRecord(r).merges).toEqual([
+        { follower: "B", lead: "A", path: "a.ts", line: 11 },
+      ]);
+    }
+  });
+  it("names a lead with no id by its record key (`key`, else the parser's fallback)", () => {
+    const r = pair("G4", "G5") as { findings: Array<Record<string, unknown>> };
+    delete r.findings[0]!.id;
+    r.findings[0]!.key = "L";
+    delete r.findings[1]!.id;
+    r.findings[1]!.lens = "pass-x";
+    const { record, merges } = postCheckRecord(r);
+    expect(merges).toEqual([{ follower: "pass-x@a.ts:11#1", lead: "L", path: "a.ts", line: 11 }]);
+    expect((record as typeof r).findings[1]!.merged_into).toBe("L");
+  });
+  it("a lead with no body gets the follower's site on the reason it posts", () => {
+    const r = pair("G4", "G5") as { findings: Array<Record<string, unknown>> };
+    delete r.findings[0]!.body;
+    r.findings[0]!.reason = "The cache never shrinks.";
+    const f = (postCheckRecord(r).record as typeof r).findings;
+    expect(f[0]!.body).toBe("The cache never shrinks.\n\nAlso at `a.ts:11`.");
   });
 });
