@@ -16,7 +16,7 @@
 //
 // Pure: the cut is a value, validation and the adjust ops are functions over
 // it and a file listing. The engine persists it (src/setup/engine.ts).
-import { UNIT_NAME_RE, type UnitKind } from "./facts.js";
+import { UNIT_KINDS, UNIT_NAME_RE, type UnitKind } from "./facts.js";
 
 export interface Unit {
   name: string;
@@ -202,16 +202,7 @@ export function normalizeCut(
   return errors.length > 0 ? { ok: false, errors } : { ok: true, cut: { units, ignored } };
 }
 
-const KINDS = new Set<UnitKind>([
-  "django-app",
-  "js-package",
-  "python-package",
-  "go-module",
-  "rust-crate",
-  "directory",
-  "rest",
-  "custom",
-]);
+const KINDS = new Set<UnitKind>(UNIT_KINDS);
 
 function normalizeRoots(raw: readonly string[], owner: string, errors: string[]): string[] {
   const out: string[] = [];
