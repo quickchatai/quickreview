@@ -826,6 +826,48 @@ describe("list reads are paginated", () => {
     expect(await adapter.listReviewCommentsFull(7)).toHaveLength(205);
   });
 
+  it("listReviews has no page bound — a human approval past 3,000 reviews still counts for guard 1", async () => {
+    const { adapter } = build((url) =>
+      page(url, 3_001, (i) => ({
+        id: i,
+        user: { login: i === 3_000 ? "alex" : "example-review[bot]" },
+        state: i === 3_000 ? "APPROVED" : "COMMENTED",
+        commit_id: "head",
+      })),
+    );
+    const reviews = await adapter.listReviews(7);
+    expect(reviews).toHaveLength(3_001);
+    expect(reviews.at(-1)).toMatchObject({ user: "alex", state: "APPROVED" });
+  });
+
+  it("an inline-comment list past the page bound throws — never a partial list the sweep would watermark", async () => {
+    const { adapter } = build((url) =>
+      page(url, 3_001, (i) => ({ id: i, user: { login: "alice", type: "User" }, body: `c${i}` })),
+    );
+    await expect(adapter.listReviewCommentsFull(7)).rejects.toThrow(
+      /exceeded the pagination bound/,
+    );
+  });
+
+  it("the newest-first reply lookup reads back to the comment it was given, not one page", async () => {
+    // 250 comments, newest first: ids 249 … 0. The reply answers comment 10.
+    const { adapter, calls } = build((url) =>
+      page(url, 250, (i) => ({ id: 249 - i, user: { login: "alice" }, body: `c${249 - i}` })),
+    );
+    const all = await adapter.listRecentReviewComments(7, 10);
+    expect(all.map((c) => c.id)).toContain(11);
+    expect(calls).toHaveLength(3);
+    // Without an id: the newest page only.
+    expect(await adapter.listRecentReviewComments(7)).toHaveLength(100);
+  });
+
+  it("the reply lookup throws when its page bound ends before the comment it was given", async () => {
+    const { adapter } = build((url) =>
+      page(url, 5_000, (i) => ({ id: 10_000 - i, user: { login: "alice" }, body: "x" })),
+    );
+    await expect(adapter.listRecentReviewComments(7, 10)).rejects.toThrow(/exceeded 10 pages/);
+  });
+
   it("the registry backfill sees the bot's newest inline comments too (6796b994)", async () => {
     const { adapter } = build((url) =>
       page(url, 150, (i) => ({
@@ -945,6 +987,25 @@ describe("the history GraphQL reads follow pageInfo (990c4c6a, 47b3d525)", () =>
     expect(h!.timeline.map((t) => t.created_at)).toEqual(["1", "2"]);
   });
 
+  it("a connection still going after the page bound throws rather than answer part of the history", async () => {
+    let n = 0;
+    const { adapter } = graphqlPages(() => ({
+      repository: {
+        pullRequest: {
+          number: 7,
+          reviews: {
+            // 60 pages in all: past the bound, but finite.
+            pageInfo: { hasNextPage: ++n < 60, endCursor: `r${n}` },
+            nodes: [{ databaseId: n, state: "COMMENTED" }],
+          },
+          timelineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+        },
+      },
+    }));
+    await expect(adapter.prReviewHistory(7, "bot")).rejects.toThrow(/exceeded 50 pages/);
+    expect(n).toBe(50);
+  });
+
   it("prReviews reads every review, and every inline comment of a long review", async () => {
     const { adapter } = graphqlPages((query, vars) => {
       if (/node\(id:/.test(query)) {
@@ -987,5 +1048,68 @@ describe("the history GraphQL reads follow pageInfo (990c4c6a, 47b3d525)", () =>
     const r = await adapter.prReviews(7);
     expect(r!.reviews.map((x) => x.body)).toEqual(["oldest", "newest"]);
     expect(r!.reviews[0]!.comments.map((c) => c.body)).toEqual(["first", "second"]);
+  });
+});
+
+describe("GraphQL rides REST's transport rules", () => {
+  function graphqlSequence(responses: Array<{ status: number; payload: unknown }>) {
+    const signals: Array<AbortSignal | null | undefined> = [];
+    let invalidated = 0;
+    let index = 0;
+    const fetchFn = (async (_url: string | URL, init: RequestInit = {}) => {
+      signals.push(init.signal);
+      const r = responses[Math.min(index++, responses.length - 1)]!;
+      return {
+        ok: r.status >= 200 && r.status < 300,
+        status: r.status,
+        json: async () => r.payload,
+        text: async () => JSON.stringify(r.payload),
+      } as Response;
+    }) as unknown as FetchFn;
+    const counting = {
+      appJwt: () => "jwt.fake.token",
+      installationToken: async () => "ghs_installation",
+      invalidate: () => {
+        invalidated++;
+      },
+    } as unknown as TokenMinter;
+    let adapter!: GitHubAdapter;
+    const gate = new MutationGate(true, dryrunDir, (intent) => adapter.executeMutation(intent));
+    adapter = new GitHubAdapter(cfg, counting, gate, fetchFn, "https://api.github.com");
+    return { adapter, signals, invalidated: () => invalidated };
+  }
+  const history = {
+    data: {
+      repository: {
+        pullRequest: {
+          number: 7,
+          reviews: { pageInfo: { hasNextPage: false }, nodes: [] },
+          timelineItems: { pageInfo: { hasNextPage: false }, nodes: [] },
+        },
+      },
+    },
+  };
+
+  it("carries a deadline, like every REST request", async () => {
+    const { adapter, signals } = graphqlSequence([{ status: 200, payload: history }]);
+    await adapter.prReviewHistory(7, "bot");
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("a 401 drops the cached token and retries once", async () => {
+    const { adapter, invalidated } = graphqlSequence([
+      { status: 401, payload: { message: "Bad credentials" } },
+      { status: 200, payload: history },
+    ]);
+    expect((await adapter.prReviewHistory(7, "bot"))?.number).toBe(7);
+    expect(invalidated()).toBe(1);
+  });
+
+  it("a second 401 fails, and a failure keeps GitHub's own words", async () => {
+    const twice = graphqlSequence([{ status: 401, payload: { message: "Bad credentials" } }]);
+    await expect(twice.adapter.prReviewHistory(7, "bot")).rejects.toThrow(
+      /graphql → 401: .*Bad credentials/,
+    );
+    expect(twice.invalidated()).toBe(1);
   });
 });

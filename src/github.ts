@@ -89,16 +89,37 @@ export interface ReviewCommentFull {
   user_type?: string;
   body: string;
   path: string;
+  /** GitHub's `line`, which follows the diff as the branch moves and goes
+   * null once the comment is outdated — then this adapter's fallback,
+   * `original_line`. So a non-null `line` does not mean the comment is
+   * current. */
   line: number | null;
   pull_request_review_id: number | null;
   in_reply_to_id: number | null;
   /** When GitHub authored it. Optional for the same reason. */
   created_at?: string | null;
-  /** The line in the commit the comment was posted on. `line` follows the
-   * diff as the branch moves (and goes null once outdated); this does not, so
-   * it is what the outcome capture matches a finding's anchor by. Optional:
-   * not every caller reads it. */
+  /** The line in the commit the comment was posted on. Unlike GitHub's
+   * `line` it does not move with the diff, so it is what the outcome capture
+   * matches a finding's anchor by. Optional: not every caller reads it. */
   original_line?: number | null;
+}
+
+/** A pulls-endpoint PR as a `PrRef`. `merged` is the caller's: the single-PR
+ * read carries it, the open-PR list does not. */
+function toPrRef(pr: any, merged: boolean): PrRef {
+  return {
+    number: pr.number,
+    title: pr.title,
+    author: pr.user.login,
+    head_sha: pr.head.sha,
+    base_ref: pr.base?.ref ?? "",
+    body: pr.body ?? "",
+    updated_at: pr.updated_at,
+    state: pr.state,
+    draft: pr.draft,
+    merged,
+    labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
+  };
 }
 
 function toReviewCommentFull(c: any): ReviewCommentFull {
@@ -180,22 +201,32 @@ interface Connection<N> {
   pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } | null;
 }
 
+/** How many newest-first pages `listRecentReviewComments` reads to reach the
+ * comment a lost reply answered. */
+const RECENT_COMMENTS_MAX_PAGES = 10;
+
 /** Hard stop for a connection walk — a server that keeps answering
  * hasNextPage with a cursor that never ends cannot loop forever. */
 const MAX_CONNECTION_PAGES = 50;
 
 /** Every node of a connection: the first page as already fetched, then each
- * `next(cursor)` until GitHub says there is no next page. */
+ * `next(cursor)` until GitHub says there is no next page. A connection still
+ * going after `MAX_CONNECTION_PAGES` throws rather than answer a partial
+ * history as the whole of it. */
 async function walkConnection<N>(
   first: Connection<N> | null | undefined,
   next: (after: string) => Promise<Connection<N> | null | undefined>,
 ): Promise<N[]> {
   const out: N[] = [];
   let conn = first;
-  for (let page = 0; conn && page < MAX_CONNECTION_PAGES; page++) {
+  for (let page = 1; conn; page++) {
     out.push(...(conn.nodes ?? []).filter((n): n is N => n !== null && n !== undefined));
     const info = conn.pageInfo;
     if (!info?.hasNextPage || !info.endCursor) break;
+    if (page >= MAX_CONNECTION_PAGES)
+      throw new Error(
+        `connection exceeded ${MAX_CONNECTION_PAGES} pages — history would be partial`,
+      );
     conn = await next(info.endCursor);
   }
   return out;
@@ -341,14 +372,32 @@ export class GitHubAdapter {
     return (await res.json()) as T;
   }
 
-  private async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  /** One GraphQL query, with REST's deadline and its one re-mint on a 401. */
+  private async graphql<T>(
+    query: string,
+    variables: Record<string, unknown>,
+    retried = false,
+  ): Promise<T> {
     const token = await this.minter.installationToken();
     const res = await this.fetchFn(`${this.apiBase}/graphql`, {
       method: "POST",
+      signal: AbortSignal.timeout(60_000),
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ query, variables }),
     });
-    if (!res.ok) throw new Error(`graphql → ${res.status}`);
+    if (res.status === 401 && !retried) {
+      this.minter.invalidate();
+      return this.graphql(query, variables, true);
+    }
+    if (!res.ok) {
+      let detail = "";
+      try {
+        detail = (await res.text()).slice(0, 300);
+      } catch {
+        // No readable body: the status alone.
+      }
+      throw new Error(`graphql → ${res.status}${detail ? `: ${detail}` : ""}`);
+    }
     const payload = (await res.json()) as { data?: T; errors?: unknown[] };
     if (payload.errors?.length)
       throw new Error(`graphql errors: ${JSON.stringify(payload.errors).slice(0, 300)}`);
@@ -423,9 +472,10 @@ export class GitHubAdapter {
     return out;
   }
 
-  /** One read-only GraphQL query per PR: the reviews `author` submitted plus
-   * the timeline items the backfill importer reconstructs triggers from.
-   * Returns null when the PR is gone. */
+  /** Read-only GraphQL per PR: the reviews `author` submitted plus the
+   * timeline items the backfill importer reconstructs triggers from — one
+   * query, then one more per further page of either connection. Returns null
+   * when the PR is gone. */
   async prReviewHistory(n: number, author: string): Promise<PrReviewHistory | null> {
     const data = await this.graphql<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
       `query ($owner: String!, $repo: String!, $number: Int!, $author: String!) {
@@ -499,10 +549,11 @@ export class GitHubAdapter {
     };
   }
 
-  /** One read-only GraphQL query per PR for the review history digest:
-   * every author's reviews, each with its inline comments, and the
-   * author's type so the digest can keep people and drop Apps. Returns null
-   * when the PR is gone. */
+  /** Read-only GraphQL per PR for the review history digest: every author's
+   * reviews, each with its inline comments, and the author's type so the
+   * digest can keep people and drop Apps — one query, then one more per
+   * further page of reviews or of one review's comments. Returns null when
+   * the PR is gone. */
   async prReviews(n: number): Promise<PrReviews | null> {
     interface RawAuthor {
       __typename?: string;
@@ -610,19 +661,7 @@ export class GitHubAdapter {
 
   async getPr(n: number): Promise<PrRef> {
     const pr = await this.request<any>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}`);
-    return {
-      number: pr.number,
-      title: pr.title,
-      author: pr.user.login,
-      head_sha: pr.head.sha,
-      base_ref: pr.base?.ref ?? "",
-      body: pr.body ?? "",
-      updated_at: pr.updated_at,
-      state: pr.state,
-      draft: pr.draft,
-      merged: Boolean(pr.merged),
-      labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
-    };
+    return toPrRef(pr, Boolean(pr.merged));
   }
 
   /** Authoritative terminality read for operator debt cleanup. A PR-endpoint
@@ -705,19 +744,8 @@ export class GitHubAdapter {
     const { rows: prs } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls?state=open&per_page=100`,
     );
-    return prs.map((pr) => ({
-      number: pr.number,
-      title: pr.title,
-      author: pr.user.login,
-      head_sha: pr.head.sha,
-      base_ref: pr.base?.ref ?? "",
-      body: pr.body ?? "",
-      updated_at: pr.updated_at,
-      state: pr.state,
-      draft: pr.draft,
-      merged: false,
-      labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
-    }));
+    // An open PR is not merged; the list endpoint does not carry `merged`.
+    return prs.map((pr) => toPrRef(pr, false));
   }
 
   async getRequestedReviewers(n: number): Promise<RequestedReviewers> {
@@ -808,11 +836,13 @@ export class GitHubAdapter {
   async listReviews(
     n: number,
   ): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>> {
-    // Every page: reviews are oldest-first and every thread reply is one, so
-    // on a long PR the human approval at the head is exactly what page one
-    // misses — and guard 1 would then not soften over it.
+    // Every page, with no page bound: reviews are oldest-first and every
+    // thread reply is one, so on a long PR the human approval at the head is
+    // exactly what a bounded read misses — and guard 1 would then not soften
+    // over it. A short page ends the read, as for listReviewsFull.
     const { rows } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100`,
+      Number.POSITIVE_INFINITY,
     );
     return rows.map((r) => ({
       id: r.id,
@@ -859,24 +889,40 @@ export class GitHubAdapter {
     }));
   }
 
-  /** Full inline review comments — read-only, for the compare harness. */
+  /** Every inline review comment, oldest first — read-only: the reconcile
+   * comment sweep, the case writer's backfill, the compare harness. A list
+   * past the pagination bound throws rather than answer its oldest part as
+   * the whole: a sweep that read a partial list would stamp its watermark and
+   * never look for the newer comments again. */
   async listReviewCommentsFull(n: number): Promise<ReviewCommentFull[]> {
-    const { rows: res } = await this.pagedArray<any>(
+    const { rows: res, truncated } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?per_page=100`,
     );
+    if (truncated) throw new Error(`inline comments on #${n} exceeded the pagination bound`);
     return res.map(toReviewCommentFull);
   }
 
   /** The NEWEST inline review comments, newest first — read-only. The
    * ping-pong retry path reads this to learn whether a reply whose POST
-   * response was lost actually landed; the plain listing above returns the
-   * OLDEST page, which on a busy PR never reaches a just-posted reply. */
-  async listRecentReviewComments(n: number): Promise<ReviewCommentFull[]> {
-    const res = await this.request<any[]>(
-      "GET",
-      `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?sort=created&direction=desc&per_page=100`,
+   * response was lost actually landed, so the newest comments are the ones
+   * it needs. With `newerThan`, pages continue until one reaches a comment at
+   * or below that id (ids grow with creation, so every comment created after
+   * it has then been read) — or throw past `RECENT_COMMENTS_MAX_PAGES`, never
+   * answer a window that may have missed the reply. Without it, one page. */
+  async listRecentReviewComments(n: number, newerThan?: number): Promise<ReviewCommentFull[]> {
+    const out: ReviewCommentFull[] = [];
+    for (let page = 1; page <= RECENT_COMMENTS_MAX_PAGES; page++) {
+      const res = await this.request<any[]>(
+        "GET",
+        `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?sort=created&direction=desc&per_page=100&page=${page}`,
+      );
+      out.push(...res.map(toReviewCommentFull));
+      if (newerThan === undefined || res.length < 100) return out;
+      if (res.some((c) => typeof c.id === "number" && c.id <= newerThan)) return out;
+    }
+    throw new Error(
+      `inline comments on #${n} newer than ${newerThan} exceeded ${RECENT_COMMENTS_MAX_PAGES} pages`,
     );
-    return res.map(toReviewCommentFull);
   }
 
   /** Review comments the bot authored on a PR — the registry backfill source. */

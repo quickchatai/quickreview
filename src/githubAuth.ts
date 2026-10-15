@@ -1,7 +1,10 @@
 // GitHub App authentication: RS256 app JWTs and cached installation tokens.
-// Same semantics as scripts/mint-token.sh: iat −60s, exp +9 min, cache keyed
-// by installation off `expires_at` with a ~5 min proactive refresh window,
-// single-flight refresh, one re-mint on 401.
+// The JWT is backdated 60 s against clock skew and lives 600 s from that iat
+// (9 min from now); scripts/mint-token.sh signs its own with a 540 s life
+// (8 min from now). Both stay under GitHub's 10-minute ceiling. Tokens are
+// cached per installation off `expires_at` with a ~5 min proactive refresh
+// window, refreshed single-flight, re-minted once on a 401 (by the caller's
+// `invalidate`). Every request carries the adapter's 60 s deadline.
 // The app PEM is the only credential anywhere — no personal token code path.
 import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -33,6 +36,10 @@ export interface InstallationToken {
 
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
+/** The deadline on each request — the same as the adapter's REST calls, so a
+ * stalled mint cannot hold every caller waiting on its shared promise. */
+const REQUEST_TIMEOUT_MS = 60_000;
+
 export class TokenMinter {
   private cache = new Map<number, InstallationToken>();
   private inflight = new Map<number, Promise<string>>();
@@ -61,6 +68,7 @@ export class TokenMinter {
   async resolveInstallationId(): Promise<number> {
     if (this.installationId !== null) return this.installationId;
     const res = await this.fetchFn(`${this.apiBase}/app/installations`, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: { authorization: `Bearer ${this.appJwt()}`, accept: "application/vnd.github+json" },
     });
     if (!res.ok) throw new Error(`GET /app/installations failed: ${res.status}`);
@@ -90,6 +98,7 @@ export class TokenMinter {
   private async mint(id: number): Promise<string> {
     const res = await this.fetchFn(`${this.apiBase}/app/installations/${id}/access_tokens`, {
       method: "POST",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: { authorization: `Bearer ${this.appJwt()}`, accept: "application/vnd.github+json" },
     });
     if (!res.ok) throw new Error(`token mint failed for installation ${id}: ${res.status}`);

@@ -1142,7 +1142,8 @@ export class ThreadDecisionWatcher {
     const list = this.deps.adapter.listRecentReviewComments;
     if (!list || !this.deps.botLogin) return undefined;
     try {
-      const comments = await list.call(this.deps.adapter, pr);
+      // Everything newer than the author message: the reply cannot be older.
+      const comments = await list.call(this.deps.adapter, pr, commentId);
       return comments.find(
         (c) =>
           c.in_reply_to_id === threadId &&
