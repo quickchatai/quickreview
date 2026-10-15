@@ -43,13 +43,20 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
+  ESCALATION_LOGIN_RE as LOGIN_RE,
   assertIanaTimeZone,
   expandHome,
   githubCloneDir,
   loadConfig,
   type Config,
 } from "../../config.js";
-import { CHOICE_KEYS, ingressChoiceOf, type IngressChoice } from "../choices.js";
+import {
+  CHOICE_KEYS,
+  REPO_SLUG_RE,
+  botLoginFor,
+  ingressChoiceOf,
+  type IngressChoice,
+} from "../choices.js";
 import {
   readTextOrNull,
   sandboxRoot,
@@ -238,7 +245,6 @@ export interface Question {
 }
 
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
-const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 
 function oneLine(v: string): string | null {
   return /[\r\n]/.test(v) ? "that must be a single line" : null;
@@ -271,7 +277,7 @@ export const QUESTIONS: readonly Question[] = [
     from: [CHOICE_KEYS.repo],
     read: (cfg) => cfg.github.repo,
     validate: (v) =>
-      /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v)
+      REPO_SLUG_RE.test(v)
         ? null
         : 'a repository is "owner/name" — e.g. "acme/web-app" (no URL, no trailing .git)',
   },
@@ -490,13 +496,13 @@ export const DERIVABLES: readonly Derivable[] = [
     write: (f) => ({
       section: "github",
       key: "bot_login",
-      value: tomlString(`${f.app_slug}[bot]`),
+      value: tomlString(botLoginFor(f.app_slug)),
     }),
     stable: true,
     holds: (cfg) =>
-      cfg.github.bot_login === `${cfg.github.app_slug}[bot]`
+      cfg.github.bot_login === botLoginFor(cfg.github.app_slug)
         ? null
-        : `[github] bot_login is "${cfg.github.bot_login}" but the App slug "${cfg.github.app_slug}" implies "${cfg.github.app_slug}[bot]"`,
+        : `[github] bot_login is "${cfg.github.bot_login}" but the App slug "${cfg.github.app_slug}" implies "${botLoginFor(cfg.github.app_slug)}"`,
   },
   {
     id: "clone_dir",
@@ -589,10 +595,9 @@ export const DERIVABLES: readonly Derivable[] = [
     write: (_f, fresh) =>
       fresh ? { section: "sink", key: "kind", value: tomlString("github") } : null,
     stable: false,
-    holds: (cfg) =>
-      ["github", "wayfinder", "none"].includes(cfg.sink.kind)
-        ? null
-        : `[sink] kind "${cfg.sink.kind}" is not a known sink`,
+    // The loader's parseSink refuses an unknown kind before any derivation is
+    // checked, so a parsed config always holds this.
+    holds: () => null,
   },
   {
     id: "tui_ssh_host",

@@ -50,7 +50,7 @@ import {
   tomlString,
   type TomlEdit,
 } from "./configfill.js";
-import { CHOICE_KEYS } from "../choices.js";
+import { CHOICE_KEYS, botLoginFor } from "../choices.js";
 import { readCredentials } from "./githubapp.js";
 
 export const APP_SLUG_STEP_ID = "app_slug_reconcile";
@@ -65,10 +65,7 @@ export interface AppSlugStepOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** The bot login GitHub gives an App with this slug. One rule, one place. */
-export function botLoginFor(slug: string): string {
-  return `${slug}[bot]`;
-}
+export { botLoginFor };
 
 /**
  * The edits that make config.toml agree with the App's real slug. Empty when

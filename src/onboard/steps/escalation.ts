@@ -26,7 +26,12 @@
 import { readFileSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { parseConfig } from "../../config.js";
+import {
+  ESCALATION_DEFAULTS,
+  ESCALATION_LOGIN_RE as LOGIN_RE,
+  ESCALATION_SEVERITY_FLOORS as SEVERITIES,
+  parseConfig,
+} from "../../config.js";
 import { interviewConfigPath, writeAtomic } from "./compose.js";
 
 export const ESCALATION_STEP_ID = "escalation";
@@ -52,9 +57,6 @@ export function interviewRuleName(login: string): string {
 export function isInterviewRule(name: string): boolean {
   return name === INTERVIEW_RULE_PREFIX || name.startsWith(`${INTERVIEW_RULE_PREFIX}:`);
 }
-
-const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
-const SEVERITIES = ["P0", "P1", "P2", "P3"] as const;
 
 /** Split a comma/whitespace-separated answer into trimmed, non-empty items. */
 export function splitList(raw: unknown): string[] {
@@ -228,7 +230,7 @@ export function foreignRuleTargets(foreign: readonly string[]): string[] {
  * interview target is ever refused as capped. */
 export function interviewMaxPerPr(a: EscalationAnswers, foreign: readonly string[]): number {
   const rules = (a.enabled ? a.targets.length : 0) + foreign.length;
-  return Math.max(2, rules + 1);
+  return Math.max(ESCALATION_DEFAULTS.max_per_pr, rules + 1);
 }
 
 function tomlList(values: readonly string[]): string {
@@ -247,14 +249,22 @@ export interface EscalationAnswers {
   why: string;
 }
 
+/** The `targets` the section carries: the interview's, then every hand rule's
+ * recipient it does not already name (`parseEscalation` refuses a rule
+ * pointing outside `targets`). */
+export function effectiveTargets(a: EscalationAnswers, foreign: readonly string[]): string[] {
+  const targets = [...a.targets];
+  for (const t of foreignRuleTargets(foreign)) if (!targets.includes(t)) targets.push(t);
+  return targets;
+}
+
 /** Render the whole `[escalation]` section — the switched-off form when the
  * operator declined, the full form otherwise. */
 export function renderEscalationSection(
   a: EscalationAnswers,
   foreign: readonly string[] = [],
 ): string {
-  const targets = [...a.targets];
-  for (const t of foreignRuleTargets(foreign)) if (!targets.includes(t)) targets.push(t);
+  const targets = effectiveTargets(a, foreign);
   const head = [
     "[escalation]",
     "# Optional escalation. The reviewer ALWAYS decides on the merits and",
@@ -321,7 +331,7 @@ export function answerProblems(a: EscalationAnswers): string[] {
       "no trigger given — set at least one of `paths`, `labels`, `min_severity`, `failing_checks`, or a rule that can never fire is all this writes",
     );
   }
-  if (a.min_severity && !SEVERITIES.includes(a.min_severity as (typeof SEVERITIES)[number])) {
+  if (a.min_severity && !SEVERITIES.includes(a.min_severity)) {
     bad.push(`\`min_severity\` must be one of ${SEVERITIES.join(", ")} (got "${a.min_severity}")`);
   }
   return bad;
@@ -385,7 +395,7 @@ export function escalationStep(): OnboardingStep {
         labels: { type: "string", description: "Comma-separated PR labels that warrant a look." },
         min_severity: {
           type: "string",
-          enum: ["", "P0", "P1", "P2", "P3"],
+          enum: ["", ...SEVERITIES],
           description: "Escalate when the round posted a finding at or above this severity.",
         },
         failing_checks: {
@@ -446,8 +456,8 @@ export function escalationStep(): OnboardingStep {
         };
       }
       const foreign = foreignRuleBlocks(toml);
-      const handTargets = foreignRuleTargets(foreign).filter((t) => !answers.targets.includes(t));
-      const allTargets = [...answers.targets, ...handTargets];
+      const allTargets = effectiveTargets(answers, foreign);
+      const handTargets = allTargets.slice(answers.targets.length);
       const maxPerPr = interviewMaxPerPr(answers, foreign);
       const patched = patchEscalationSection(toml, renderEscalationSection(answers, foreign));
       // Parse BEFORE writing: `parseEscalation` is the same lock the loader

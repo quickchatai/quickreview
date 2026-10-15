@@ -102,6 +102,8 @@ interface GhState {
   labels: Set<string>;
   repoStatus: number;
   appStatus: number;
+  /** A non-200 makes GET /app/installations fail. */
+  installationsStatus?: number;
   appBody: { id: number; slug: string };
   ownerType: string;
   calls: string[];
@@ -161,7 +163,9 @@ function ghFetch(s: GhState): typeof fetch {
         : json(s.appStatus, { message: "bad credentials" });
     }
     if (method === "GET" && path.startsWith("/app/installations?"))
-      return json(200, s.installations);
+      return s.installationsStatus && s.installationsStatus !== 200
+        ? json(s.installationsStatus, { message: "Service Unavailable" })
+        : json(200, s.installations);
     if (method === "POST" && /^\/app\/installations\/\d+\/access_tokens$/.test(path)) {
       return json(201, { token: "ghs_installation", expires_at: "2026-08-30T13:00:00Z" });
     }
@@ -593,6 +597,9 @@ describe("expired / stale / single-use codes", () => {
     expect(report.ok).toBe(false);
     expect(detail(report.checks, "manifest exchange")).toMatch(/no callback within 600s/);
     expect(detail(report.checks, "manifest exchange")).toMatch(/fresh one-time code/);
+    // GitHub may have created the App before the redirect failed: never claimed otherwise.
+    expect(detail(report.checks, "manifest exchange")).not.toMatch(/nothing was created/);
+    expect(detail(report.checks, "manifest exchange")).toMatch(/no credentials were saved/);
     expect(existsSync(join(secretsDir, SECRET_FILES.appId))).toBe(false);
   });
 });
@@ -625,6 +632,19 @@ describe("declined or missing installation", () => {
     // A non-installation blocker is not something a wait can fix: one pass only.
     expect(s.calls.filter((c) => c === "GET /app/installations?per_page=100")).toHaveLength(1);
     expect(server.started).toBe(0);
+  });
+
+  it("an installation-listing error returns at once with its own cause, never polled as 'not installed'", async () => {
+    const s = ghState({ installationsStatus: 503 });
+    landCredentials();
+    const server = fakeServer({ code: "unused" });
+    const { report } = await runStep(s, server.factory);
+    expect(report.ok).toBe(false);
+    expect(s.calls.filter((c) => c === "GET /app/installations?per_page=100")).toHaveLength(1);
+    expect(detail(report.checks, "installation lookup")).toMatch(
+      /GET \/app\/installations failed \(HTTP 503/,
+    );
+    expect(report.checks.some((c) => c.name === "installation")).toBe(false);
   });
 
   it("a listing error is reported as itself, never as 'not installed'", async () => {

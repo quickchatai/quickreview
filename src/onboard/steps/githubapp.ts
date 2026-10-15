@@ -48,7 +48,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
 import { mintAppJwt } from "../../githubAuth.js";
-import { CHOICE_KEYS } from "../choices.js";
+import { CHOICE_KEYS, REPO_SLUG_RE, botLoginFor } from "../choices.js";
 import { CONFIG_FILL_STEP_ID } from "./configfill.js";
 import { secretsDirFor } from "./ingress.js";
 import {
@@ -237,7 +237,7 @@ export interface RepoSlug {
 
 export function parseRepoSlug(value: unknown): RepoSlug | null {
   if (typeof value !== "string") return null;
-  const m = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(value.trim());
+  const m = REPO_SLUG_RE.exec(value.trim());
   return m ? { owner: m[1]!, name: m[2]! } : null;
 }
 
@@ -955,13 +955,16 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
     });
     if (typeof meta.slug === "string" && meta.slug) {
       ctx.recordChoice(CHOICE_KEYS.appSlug, meta.slug);
-      ctx.recordChoice(CHOICE_KEYS.botLogin, `${meta.slug}[bot]`);
+      ctx.recordChoice(CHOICE_KEYS.botLogin, botLoginFor(meta.slug));
     }
     ctx.recordChoice(CHOICE_KEYS.appId, creds.appId);
 
     const found = await findInstallation(ctx.adapters.fetch, r.apiBase, jwt, r.repo.owner);
     if (found.status === "error") {
-      checks.push({ name: "installation", ok: false, detail: found.detail });
+      // Its own name, never "installation": a lookup that failed is not an
+      // App that is not installed, and waiting for an Install click cannot
+      // fix it — the install poll returns on it at once, cause intact.
+      checks.push({ name: "installation lookup", ok: false, detail: found.detail });
       return checks;
     }
     if (found.status === "none") {
@@ -1127,8 +1130,10 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
             name: "manifest exchange",
             ok: false,
             detail:
-              `${arrival.detail} — nothing was created and nothing was written. Run this step again: it serves a fresh page ` +
-              "with a fresh one-time code (GitHub's codes are single-use and expire after an hour).",
+              `${arrival.detail} — no credentials were saved. Whether GitHub created the App is not known from here: if ` +
+              "you clicked Create on GitHub's page, check your GitHub App settings and delete an App this run left behind " +
+              "before retrying. Run this step again: it serves a fresh page with a fresh one-time code (GitHub's codes are " +
+              "single-use and expire after an hour).",
           },
         ];
       }
@@ -1155,7 +1160,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       ctx.recordChoice(CHOICE_KEYS.appId, String(converted.app.id));
       if (converted.app.slug) {
         ctx.recordChoice(CHOICE_KEYS.appSlug, converted.app.slug);
-        ctx.recordChoice(CHOICE_KEYS.botLogin, `${converted.app.slug}[bot]`);
+        ctx.recordChoice(CHOICE_KEYS.botLogin, botLoginFor(converted.app.slug));
       }
       if (converted.app.html_url) ctx.recordChoice(CHOICE_KEYS.appHtmlUrl, converted.app.html_url);
       log(
