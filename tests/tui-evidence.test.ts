@@ -254,7 +254,10 @@ describe("EvidenceCopier", () => {
     // A half-copy leaves NO manifest — that is the whole of the idempotence
     // story, and it is what makes the retry safe.
     expect(store.has(5306, 1)).toBe(false);
-    expect(notices).toEqual(["evidence: pr-5306 round 1 — transcript fetch failed"]);
+    // The notice carries the remote's own cause (status + last stderr line).
+    expect(notices).toEqual([
+      "evidence: pr-5306 round 1 — transcript fetch failed: no exit status — ssh: connect timed out",
+    ]);
 
     // Still down: the failure is not announced again (a 3-second poll would
     // otherwise bury the notice line).
@@ -264,6 +267,44 @@ describe("EvidenceCopier", () => {
     flaky.down = false;
     await c.sweep(snap);
     expect(store.has(5306, 1)).toBe(true);
+  });
+
+  it("a round-list outage after a recovery is announced again", async () => {
+    const notices: string[] = [];
+    const vm = { down: true, rounds: [round(1)] };
+    const ssh: SshRunner = async (h, a, o) =>
+      vm.down && a.join(" ").includes("cli.js") ? FAIL : fakeVm(vm.rounds).ssh(h, a, o);
+    const c = copier(ssh, notices);
+    await c.sweep(snapshot([{ number: 5306, rounds: 1 }]));
+    expect(notices.filter((n) => n.includes("round list"))).toHaveLength(1);
+    vm.down = false;
+    await c.sweep(snapshot([{ number: 5306, rounds: 1 }]));
+    expect(store.has(5306, 1)).toBe(true);
+    // A second round finishes; the VM goes away again while it is read.
+    vm.down = true;
+    vm.rounds = [round(1), round(2)];
+    await c.sweep(snapshot([{ number: 5306, rounds: 2 }]));
+    expect(notices.filter((n) => n.includes("round list"))).toHaveLength(2);
+  });
+
+  it("a PR whose rounds all expired is asked once — `why` still lists them", async () => {
+    // The snapshot's count leaves expired rounds out: 1 while running, 0 once
+    // the round expired.
+    const vm = { rounds: [round(1, "running")] };
+    const scripts: string[] = [];
+    const ssh: SshRunner = async (h, a, o) => {
+      scripts.push(a.join(" "));
+      return fakeVm(vm.rounds).ssh(h, a, o);
+    };
+    const c = copier(ssh);
+    await c.sweep(snapshot([{ number: 5306, rounds: 1 }]));
+    expect(store.has(5306, 1)).toBe(false); // still running: nothing to copy
+    vm.rounds = [round(1, "expired")];
+    await c.sweep(snapshot([{ number: 5306, rounds: 0 }]));
+    expect(store.has(5306, 1)).toBe(true);
+    const whys = scripts.filter((x) => x.includes("cli.js")).length;
+    await c.sweep(snapshot([{ number: 5306, rounds: 0 }]));
+    expect(scripts.filter((x) => x.includes("cli.js")).length).toBe(whys); // asked once
   });
 
   it("a failed round leaves the PR unreconciled, so it is retried unchanged", async () => {
