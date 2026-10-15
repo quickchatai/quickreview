@@ -424,6 +424,67 @@ describe("detailLines", () => {
     expect(lines).toContain("  ? pass-validate · unknown");
   });
 
+  // The snapshot says the round is over (no current_round, no longer
+  // reviewing) while the cached `why` still holds it `running`: no CURRENT
+  // REVIEW. MUTATION: fall back to the cached running row whatever the state — red.
+  it("a cached running round never paints CURRENT REVIEW once the snapshot moved on", () => {
+    const live: WhyPayload = {
+      ...why,
+      rounds: [{ ...why.rounds[1]!, deadline_at: "2026-08-27T10:49:54Z" }],
+    };
+    const done = { ...snapshot.prs[0]!, state: "awaiting_author" };
+    const lines = detailLines(live, done, 76, new Date("2026-08-27T10:04:54Z")).map(stripAnsi);
+    expect(lines.some((l) => l.includes("CURRENT REVIEW"))).toBe(false);
+  });
+
+  // A lens planned twice (two task rows) shows both executions: the finished
+  // one never hides its running sibling. MUTATION: one row per lens name — red.
+  it("shows every execution of a lens planned more than once", () => {
+    const pr = {
+      ...snapshot.prs[0]!,
+      current_round: {
+        round_no: 14,
+        round_type: "re-review",
+        status: "running",
+        started_at: "2026-08-27T09:34:54Z",
+        deadline_at: "2026-08-27T10:49:54Z",
+        lenses: "pass-sweep,pass-sweep",
+        validate_tier: null,
+        command_id: "cmd-14",
+        command_sha256: "a".repeat(64),
+        head_sha: "head-5012",
+      },
+    };
+    const run = (id: string, status: "running" | "completed", ms: number) => ({
+      execution_id: id,
+      agent: "pass-sweep",
+      status,
+      duration_ms: ms,
+      tool_count: 3,
+      started_at: "2026-08-27T09:35:00Z",
+      ...(status === "completed" ? { finished_at: "2026-08-27T09:36:00Z" } : {}),
+    });
+    const lines = detailLines(why, pr, 76, new Date("2026-08-27T10:04:54Z"), {
+      version: 2,
+      pr: 5012,
+      session: "pr-5012",
+      command_id: "cmd-14",
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-27T09:34:55Z",
+      preparing_at: "2026-08-27T09:34:55Z",
+      round_no: 14,
+      head_sha: "head-5012",
+      run_started_at: "2026-08-27T09:34:55Z",
+      updated_at: "2026-08-27T10:04:53Z",
+      parent_status: "active",
+      last_activity_at: "2026-08-27T10:04:50Z",
+      last_activity: "sweep",
+      agents: [run("a", "running", 30_000), run("b", "completed", 60_000)],
+    }).map(stripAnsi);
+    expect(lines).toContain("  ⟳ pass-sweep · running 30s");
+    expect(lines).toContain("  ✓ pass-sweep · done in 1m · 3 tools");
+  });
+
   // A cancelled round is told apart from every other verdictless round: it
   // says which kind of cancellation it was.
   describe("cancelled rounds name their cause", () => {
@@ -555,6 +616,35 @@ describe("adaptive layout", () => {
     expect(w).toBeGreaterThanOrEqual(43);
     expect(w).toBeLessThanOrEqual(Math.floor(120 * 0.45));
     expect(listWidth(prs, 60)).toBe(27); // clamp: 45% of 60
+  });
+
+  // The list is sized to the row as painted: a FAILED_LOUD chip (or any
+  // verdict the chip table does not abbreviate) is part of it. MUTATION: a
+  // second chip table in the width measure that drops them — red.
+  it("measures the chip the row paints, failure and unabbreviated verdicts included", async () => {
+    const { listWidth } = await import("../src/tui/board.js");
+    const base = { ...snapshot.prs[0]!, title: "t".repeat(80), last_verdict: null };
+    const plain = listWidth([base], 400);
+    const failed = listWidth(
+      [{ ...base, review_failure: { detail: "x" } } as unknown as typeof base],
+      400,
+    );
+    expect(failed).toBe(plain + " FAILED_LOUD".length);
+    expect(listWidth([{ ...base, last_verdict: "COMMENT" }], 400)).toBe(plain + " COMMENT".length);
+  });
+
+  // A PR title is the author's text: control bytes never reach the terminal
+  // from a list row. MUTATION: truncate the raw title — red.
+  it("paints a PR title as one inert line", () => {
+    const evil = {
+      ...snapshot,
+      prs: [{ ...snapshot.prs[0]!, title: "fix\x1b[2J\x1b[Hcleared\rover\nnext" }],
+    };
+    const frame = renderBoard(view({ snapshot: evil }), 120, 30);
+    const text = frame.lines.join("\n");
+    expect(text).not.toContain("\x1b[2J");
+    expect(text).not.toContain("\r");
+    expect(stripAnsi(text)).toContain("fix[2J[Hcleared over next");
   });
 
   it("gives the live pi mirror half the screen, never starving the body", async () => {
@@ -1013,5 +1103,24 @@ describe("the mirrored pi session gets the board's real geometry", () => {
         "8",
       ]);
     });
+  });
+});
+
+describe("the DOUBTED overflow", () => {
+  // `qcr why` text prints no findings; only its JSON carries the rest.
+  // MUTATION: point the hint at plain `qcr why` — red.
+  it("points at the view that actually lists the findings it cut", async () => {
+    const { doubtedLines } = await import("../src/tui/board.js");
+    const doubted = Array.from({ length: 10 }, (_, i) => ({
+      round_no: i,
+      lens: "pass-baseline",
+      path: null,
+      line: null,
+      severity: null,
+      word: "refuted",
+      reason: null,
+    }));
+    const lines = doubtedLines(doubted, 80).map(stripAnsi);
+    expect(lines.at(-1)).toBe("  … 2 more (qcr why <pr> --json)");
   });
 });
