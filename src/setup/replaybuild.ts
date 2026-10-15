@@ -43,7 +43,7 @@ import {
   PROFILES_DIR,
   type InstallEnv,
 } from "../install.js";
-import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "../lenstuning.js";
+import { applyProfileTuning, lensTuningAddenda, roundAgentModels } from "../lenstuning.js";
 import { applyProfilePosting, postingPolicyAddenda } from "../postingpolicy.js";
 import {
   loadProfileAddenda,
@@ -356,7 +356,7 @@ function buildSide(deps: SidesDeps, name: SideName, src: SideSource, parsed: Con
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
     ecosystem: ecosystemName,
-    models: lensModelOverrides(cfg.models, cfg.lenses),
+    models: roundAgentModels(cfg),
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),

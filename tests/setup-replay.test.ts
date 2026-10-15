@@ -432,6 +432,21 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     );
   });
 
+  it("each side builds its models the way the daemon does: a [models.pass_models] move included", () => {
+    tune({ security: "critical" });
+    const path = join(configHome(env), "config.toml");
+    write(
+      path,
+      `${readFileSync(path, "utf8")}\n[models.pass_models]\n"pass-baseline" = "openai-codex/moved-model"\n`,
+    );
+    const r = sides();
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    for (const side of ["old", "new"] as const)
+      expect(
+        /^model:\s*(.*)$/m.exec(r.sides[side].agentText("pass-baseline--sol-med")!)?.[1],
+      ).toMatch(/^openai-codex\/moved-model/);
+  });
+
   it("old may name a write, another profile, or none; anything else is refused with the choices", () => {
     const first = tune({ security: "critical" });
     tune({ security: "critical", tests: "ignore" });
