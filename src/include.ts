@@ -46,9 +46,30 @@ const INCLUDE_RE = /\{\{include:([^}\r\n]+)\}\}/g;
 // (src/templates.ts, src/eod.ts). An unknown `{{…}}` fails the build loudly —
 // a variable that survives to a session is a bug, never prose.
 
-/** Variable pattern shared with templates.ts: bare word, no `:` — include
- * directives (`{{include:path}}`) never match. */
-const VARIABLE_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+/** The `{{name}}` grammar the agent build and the prompt renderer
+ * (src/templates.ts) share: bare word, no `:` — include directives
+ * (`{{include:path}}`) never match. */
+export const VARIABLE_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+
+/** Substitute every `{{name}}` in `text` from `vars` — the strict core of
+ * `expandVariables` and the renderer's `render`, each throwing its own error
+ * on `unknown`. A name `vars` does not itself hold is unknown, so an
+ * inherited property (`{{constructor}}`) never substitutes function text. */
+export function substituteVariables(
+  text: string,
+  vars: Readonly<Record<string, string>>,
+): { out: string; unknown: string[] } {
+  const unknown = new Set<string>();
+  const out = text.replace(VARIABLE_RE, (match, name: string) => {
+    const v = Object.hasOwn(vars, name) ? vars[name] : undefined;
+    if (v === undefined) {
+      unknown.add(name);
+      return match;
+    }
+    return v;
+  });
+  return { out, unknown: [...unknown] };
+}
 
 /**
  * The neutral fallback values: empty config values degrade to role wording,
@@ -79,19 +100,9 @@ export function identityVars(cfg: {
  * must fail loudly rather than ship a literal `{{…}}` to a session.
  */
 export function expandVariables(text: string, vars: Readonly<Record<string, string>>): string {
-  const unknown = new Set<string>();
-  const out = text.replace(VARIABLE_RE, (match, name: string) => {
-    const v = vars[name];
-    if (v === undefined) {
-      unknown.add(name);
-      return match;
-    }
-    return v;
-  });
-  if (unknown.size > 0) {
-    throw new Error(
-      `unknown build-time variable(s): ${[...unknown].map((n) => `{{${n}}}`).join(", ")}`,
-    );
+  const { out, unknown } = substituteVariables(text, vars);
+  if (unknown.length > 0) {
+    throw new Error(`unknown build-time variable(s): ${unknown.map((n) => `{{${n}}}`).join(", ")}`);
   }
   return out;
 }
@@ -216,15 +227,25 @@ const AGENT_SPAWN_TOOLS = new Set([
  * rather than left empty (an empty list is not the same statement as no list).
  */
 export function stripAgentSpawnTools(frontmatter: string): string {
-  const re = /^tools:[ \t]*(.*)$/m;
-  const m = re.exec(frontmatter);
-  if (!m) return frontmatter;
-  const kept = (m[1] ?? "")
+  const tools = toolsList(frontmatter);
+  if (tools === null) return frontmatter;
+  const kept = tools.filter((t) => !AGENT_SPAWN_TOOLS.has(t.toLowerCase()));
+  if (kept.length === 0) return frontmatter.replace(TOOLS_LINE_RE, "").replace(/\n{2,}/g, "\n");
+  return frontmatter.replace(TOOLS_LINE_RE, `tools: ${kept.join(", ")}`);
+}
+
+/** A frontmatter's `tools:` line. */
+const TOOLS_LINE_RE = /^tools:[ \t]*(.*)$/m;
+
+/** The names on a frontmatter's `tools:` line, trimmed, empties dropped;
+ * null when there is no such line (no allowlist, not an empty one). */
+function toolsList(frontmatter: string): string[] | null {
+  const m = TOOLS_LINE_RE.exec(frontmatter);
+  if (!m) return null;
+  return (m[1] ?? "")
     .split(",")
     .map((t) => t.trim())
-    .filter((t) => t.length > 0 && !AGENT_SPAWN_TOOLS.has(t.toLowerCase()));
-  if (kept.length === 0) return frontmatter.replace(re, "").replace(/\n{2,}/g, "\n");
-  return frontmatter.replace(re, `tools: ${kept.join(", ")}`);
+    .filter((t) => t.length > 0);
 }
 
 /**
@@ -269,14 +290,10 @@ export function applyMemoryTools(
   frontmatter: string,
   tools: readonly string[] = LEAF_MEMORY_TOOLS,
 ): string {
-  const re = /^tools:[ \t]*(.*)$/m;
-  const m = re.exec(frontmatter);
-  if (!m) return frontmatter;
-  const kept = (m[1] ?? "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0 && !MEMORY_TOOL_RE.test(t));
-  return frontmatter.replace(re, `tools: ${[...kept, ...tools].join(", ")}`);
+  const listed = toolsList(frontmatter);
+  if (listed === null) return frontmatter;
+  const kept = listed.filter((t) => !MEMORY_TOOL_RE.test(t));
+  return frontmatter.replace(TOOLS_LINE_RE, `tools: ${[...kept, ...tools].join(", ")}`);
 }
 
 /** Split a "provider/model:thinking" spec into its model and thinking halves.

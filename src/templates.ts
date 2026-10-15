@@ -21,11 +21,9 @@ import { codePath, flatControls, promptTitle } from "./codespan.js";
 import { isSplitBaselineRow } from "./heuristics.js";
 import { renderEscalationPromptNote } from "./escalation.js";
 import { renderPostingPolicyNote } from "./postingpolicy.js";
-import { NEUTRAL_IDENTITY_VARS } from "./include.js";
+import { NEUTRAL_IDENTITY_VARS, substituteVariables, VARIABLE_RE } from "./include.js";
 import type { FileClass, RecheckOrder } from "./recheck.js";
 import type { PassPlanEntry, RoundOrder, RoundType } from "./types.js";
-
-const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
 export type TemplateVars = Record<string, string>;
 
@@ -38,22 +36,14 @@ export class UnknownPlaceholderError extends Error {
 
 /** Substitute {{name}} occurrences; unknown placeholder => throw. */
 export function render(templateText: string, vars: TemplateVars): string {
-  const unknown = new Set<string>();
-  const out = templateText.replace(PLACEHOLDER, (match, name: string) => {
-    const v = vars[name];
-    if (v === undefined) {
-      unknown.add(name);
-      return match;
-    }
-    return v;
-  });
-  if (unknown.size > 0) throw new UnknownPlaceholderError([...unknown]);
+  const { out, unknown } = substituteVariables(templateText, vars);
+  if (unknown.length > 0) throw new UnknownPlaceholderError(unknown);
   return out;
 }
 
 /** Placeholder names a template text uses (diagnostics / tests). */
 export function placeholdersIn(templateText: string): string[] {
-  return [...new Set([...templateText.matchAll(PLACEHOLDER)].map((m) => m[1] as string))];
+  return [...new Set([...templateText.matchAll(VARIABLE_RE)].map((m) => m[1] as string))];
 }
 
 export const ROUND_TEMPLATE_FILES: Record<RoundType, string> = {

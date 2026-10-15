@@ -421,6 +421,12 @@ describe("build-time identity variables", () => {
     );
   });
 
+  it("an inherited property is unknown too, never its function text", () => {
+    expect(() => expandVariables("{{constructor}} {{toString}}", NEUTRAL_IDENTITY_VARS)).toThrow(
+      /unknown build-time variable\(s\): \{\{constructor\}\}, \{\{toString\}\}/,
+    );
+  });
+
   it("identityVars reads config and degrades every empty/missing value to role wording", () => {
     expect(
       identityVars({ owner: { name: "Ada" }, github: { repo: "org/app", bot_login: "bot[bot]" } }),
