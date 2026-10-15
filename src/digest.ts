@@ -132,7 +132,13 @@ export function dailyCancellations(
    * the UTC date prefix, as every other `roundsOn` reader does. */
   timeZone?: string,
 ): DailyCancellations {
-  return { date, ...tallyCancellations(roundsOnDay(store, date, timeZone)) };
+  const byCause = tallyCancellations(roundsOnDay(store, date, timeZone));
+  return {
+    date,
+    total: byCause.reduce((n, c) => n + c.count, 0),
+    loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
+    by_cause: byCause,
+  };
 }
 
 /** The rounds started on `date` — a zone-local calendar day when `timeZone`

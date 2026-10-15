@@ -38,7 +38,15 @@ import {
   writeAtomic,
 } from "./compose.js";
 import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
-import { declaredEmbedderOf, embedderHostVars, type DeclaredEmbedder } from "./embeddings.js";
+import { OPENVIKING_DEFAULTS } from "../../config.js";
+import {
+  declaredEmbedderOf,
+  embedderHostVars,
+  localEmbedderHostVars,
+  localEmbedderRuntimeOf,
+  type DeclaredEmbedder,
+  type LocalEmbedderRuntime,
+} from "./embeddings.js";
 import { readTomlKey } from "./ingress.js";
 import { SSH_USER_CHOICE_KEY } from "./ssh.js";
 import { SSH_ALIAS_RE, TOPOLOGY_STEP_ID, sshAliasOf, topologyOf } from "./topology.js";
@@ -67,6 +75,30 @@ export interface InventoryFacts {
    * host line as host vars (the tracked group_vars say local); the local
    * default writes nothing. */
   embedder: DeclaredEmbedder;
+  /** The local embedder's port and threads config.toml declares; a value
+   * other than the shipped default rides the host line too. Absent ⇒ the
+   * defaults. */
+  localEmbedder?: LocalEmbedderRuntime;
+}
+
+/** Every host var this step may write, with the value the deploy uses when
+ * the inventory sets none: the tracked group_vars default, which the loader's
+ * own defaults mirror (tests hold the two equal). */
+const HOST_VAR_DEFAULTS: Readonly<Record<string, string>> = {
+  openviking_embedding_provider: OPENVIKING_DEFAULTS.embedding_provider,
+  openviking_embedding_model: OPENVIKING_DEFAULTS.embedding_model,
+  openviking_embedding_dimension: String(OPENVIKING_DEFAULTS.embedding_dimension),
+  openviking_embedding_key_file: OPENVIKING_DEFAULTS.embedding_key_file,
+  openviking_local_embedder_port: String(OPENVIKING_DEFAULTS.local_embedder_port),
+  openviking_local_embedder_threads: String(OPENVIKING_DEFAULTS.local_embedder_threads),
+};
+
+/** The embedder host vars the facts call for. */
+function embedderVarsFor(f: InventoryFacts): Array<[string, string]> {
+  return [
+    ...embedderHostVars(f.embedder),
+    ...(f.localEmbedder ? localEmbedderHostVars(f.localEmbedder) : []),
+  ];
 }
 
 export const DEFAULT_PYTHON_INTERPRETER = "/usr/bin/python3";
@@ -82,13 +114,14 @@ export function renderInventory(f: InventoryFacts): string {
     "# cloudflared_enabled rides the HOST line as a host var on purpose: host",
     "# vars outrank the tracked group_vars/all.yml, so your ingress choice wins",
     "# without editing a committed file (a dirty tree is a deploy refusal).",
-    "# A hosted-embeddings opt-in (config.toml [openviking] embedding_provider)",
-    "# rides the same line the same way; the local default needs no host var.",
+    "# A hosted-embeddings opt-in (config.toml [openviking] embedding_provider),",
+    "# and a local embedder port or thread count other than the default, ride",
+    "# the same line the same way; the shipped defaults need no host var.",
     "",
     `[${INVENTORY_GROUP}]`,
     [
       `${f.host} cloudflared_enabled=${f.cloudflaredEnabled ? "true" : "false"}`,
-      ...embedderHostVars(f.embedder).map(([k, v]) => `${k}=${v}`),
+      ...embedderVarsFor(f).map(([k, v]) => `${k}=${v}`),
     ].join(" "),
     "",
     `[${INVENTORY_GROUP}:vars]`,
@@ -102,15 +135,21 @@ export function renderInventory(f: InventoryFacts): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** The first host of the group, the way deploy.sh's own awk reads it. */
-export function parseInventoryHost(text: string): string {
+/** The first host line, the way deploy.sh's own awk reads it: the first line
+ * that is not blank, a comment or a group header. */
+function firstHostLine(text: string): string | null {
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (line === "" || line.startsWith("#") || line.startsWith(";") || line.startsWith("["))
       continue;
-    return line.split(/\s+/)[0] ?? "";
+    return line;
   }
-  return "";
+  return null;
+}
+
+/** The first host of the group, the way deploy.sh's own awk reads it. */
+export function parseInventoryHost(text: string): string {
+  return firstHostLine(text)?.split(/\s+/)[0] ?? "";
 }
 
 /**
@@ -123,7 +162,10 @@ export function inventoryTargetMismatch(root: string, alias: string): string | n
   const path = inventoryPath(root);
   const existing = readTextOrNull(path);
   if (existing === null) {
-    return `${path} does not exist — Fix: run the ${VM_INVENTORY_STEP_ID} step; the deploy has nothing to target without it`;
+    return (
+      `${path} does not exist yet — Fix: run the ${VM_INVENTORY_STEP_ID} step; it fills it from your answers ` +
+      "(the deploy has nothing to target without it)"
+    );
   }
   const host = parseInventoryHost(existing);
   return host === alias
@@ -135,15 +177,9 @@ export function inventoryTargetMismatch(root: string, alias: string): string | n
 /** Host vars on that first host line, as written above. */
 export function parseInventoryHostVars(text: string): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (line === "" || line.startsWith("#") || line.startsWith(";") || line.startsWith("["))
-      continue;
-    for (const token of line.split(/\s+/).slice(1)) {
-      const eq = token.indexOf("=");
-      if (eq > 0) out[token.slice(0, eq)] = token.slice(eq + 1);
-    }
-    return out;
+  for (const token of firstHostLine(text)?.split(/\s+/).slice(1) ?? []) {
+    const eq = token.indexOf("=");
+    if (eq > 0) out[token.slice(0, eq)] = token.slice(eq + 1);
   }
   return out;
 }
@@ -170,8 +206,10 @@ export function ingressNoteFor(ingressId: string | null, webhookPort: number): s
       );
     case "polling":
       return (
-        "cloudflared_enabled=false — you chose polling-only, so nothing is exposed and nothing needs to be: the reconcile " +
-        "poll is the trigger path. Nothing else has to change if you add a tunnel later."
+        "cloudflared_enabled=false — you chose polling-only, so the deploy installs no tunnel and nothing needs one: the " +
+        "reconcile poll is the trigger path. A cloudflared service an earlier deploy installed is NOT stopped by this " +
+        "(the deploy never stops one) — `sudo systemctl disable --now cloudflared` on the server if it is yours. " +
+        "Nothing else has to change if you add a tunnel later."
       );
     case null:
       return (
@@ -256,7 +294,8 @@ export interface VmInventoryOptions {
 export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
   const pythonInterpreter = opts.pythonInterpreter ?? DEFAULT_PYTHON_INTERPRETER;
 
-  function facts(ctx: StepContext, _root: string): InventoryFacts {
+  function facts(ctx: StepContext): InventoryFacts {
+    const configText = readConfigText(ctx.adapters) ?? "";
     const typedUser =
       typeof ctx.input.ansible_user === "string" ? ctx.input.ansible_user.trim() : "";
     const recordedUser =
@@ -273,7 +312,8 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
           ? ctx.input.python.trim()
           : pythonInterpreter,
       cloudflaredEnabled: cloudflaredEnabledFor(ingressOptionOf(ctx.choices)?.id ?? null),
-      embedder: declaredEmbedderOf(readConfigText(ctx.adapters) ?? ""),
+      embedder: declaredEmbedderOf(configText),
+      localEmbedder: localEmbedderRuntimeOf(configText),
     };
   }
 
@@ -306,7 +346,7 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
       };
     }
 
-    const f = facts(ctx, root);
+    const f = facts(ctx);
     const rendered = renderInventory(f);
     const checks: CheckResult[] = [];
     const ingressId = ingressOptionOf(ctx.choices)?.id ?? null;
@@ -322,24 +362,16 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
           `, ${f.pythonInterpreter}. This is the file scripts/deploy.sh reads by default — no environment override, no second copy`,
       });
     } else {
-      const existing = readTextOrNull(path) ?? "";
-      const host = parseInventoryHost(existing);
+      // The same target check every deploy runs before it mutates anything.
+      const mismatch = inventoryTargetMismatch(root, f.host);
       checks.push(
-        host === f.host
+        mismatch === null
           ? {
               name: "inventory",
               ok: true,
-              detail: `${path} targets ${host}${cloudflaredNote(existing)} — the deploy has an inventory to run against`,
+              detail: `${path} targets ${f.host}${cloudflaredNote(readTextOrNull(path) ?? "")} — the deploy has an inventory to run against`,
             }
-          : {
-              name: "inventory",
-              ok: false,
-              detail:
-                existing === ""
-                  ? `${path} does not exist yet — Fix: run the ${VM_INVENTORY_STEP_ID} step; it fills it from your answers`
-                  : `${path} targets "${host || "(nothing)"}", not the recorded alias "${f.host}" — Fix: run the ` +
-                    `${VM_INVENTORY_STEP_ID} step, or edit the file if the inventory is right and the alias is wrong`,
-            },
+          : { name: "inventory", ok: false, detail: mismatch },
       );
     }
 
@@ -352,6 +384,10 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
           }
         : ingressVerifyCheck(readTextOrNull(path) ?? "", ingressId, webhookPortOf(ctx.adapters)),
     );
+    if (!write) {
+      const embedder = embedderVerifyCheck(readTextOrNull(path) ?? "", f);
+      if (embedder) checks.push(embedder);
+    }
     checks.push(...tuiChecks(ctx.adapters, alias, write));
     return {
       ok: checks.every((c) => c.ok),
@@ -403,10 +439,14 @@ function ansibleBool(value: string): boolean {
   return ["y", "yes", "on", "1", "true", "t", "1.0"].includes(v);
 }
 
+/** `cloudflared_enabled` in the tracked group_vars/all.yml — what the deploy
+ * uses when the inventory sets no host var (a test holds the two equal). */
+export const GROUP_VARS_CLOUDFLARED_ENABLED = true;
+
 /** Verify's ingress check reads what the FILE holds — the deploy consumes the
  * file, not the choice. An absent host var falls back to the tracked
- * group_vars/all.yml default, which is true. An absent file is the inventory
- * check's red already; this one stays quiet about it. */
+ * group_vars/all.yml default. An absent file is the inventory check's red
+ * already; this one stays quiet about it. */
 function ingressVerifyCheck(
   text: string,
   ingressId: string | null,
@@ -415,7 +455,7 @@ function ingressVerifyCheck(
   const note = ingressNoteFor(ingressId, webhookPort);
   if (text === "") return { name: "ingress", ok: true, detail: note };
   const raw = parseInventoryHostVars(text).cloudflared_enabled;
-  const effective = ansibleBool(raw ?? "true");
+  const effective = raw === undefined ? GROUP_VARS_CLOUDFLARED_ENABLED : ansibleBool(raw);
   const wanted = cloudflaredEnabledFor(ingressId);
   if (effective === wanted) return { name: "ingress", ok: true, detail: note };
   return {
@@ -426,6 +466,34 @@ function ingressVerifyCheck(
       `${raw === undefined ? " (no host var — the tracked group_vars default)" : ""}, but your recorded ingress ` +
       `choice ${ingressId === null ? "(none yet)" : `"${ingressId}"`} means cloudflared_enabled=${wanted ? "true" : "false"} ` +
       `— the deploy reads the file. Fix: run the ${VM_INVENTORY_STEP_ID} step; it rewrites it from your answers`,
+  };
+}
+
+/** Verify's embedder check: the effective value of every embedder host var
+ * the deploy renders (the inventory's host var, else the group_vars default)
+ * against what config.toml now declares — deploy.sh refuses the same drift.
+ * null for an absent file, which the inventory check is red about already. */
+function embedderVerifyCheck(text: string, f: InventoryFacts): CheckResult | null {
+  if (text === "") return null;
+  const have = parseInventoryHostVars(text);
+  const want = Object.fromEntries(embedderVarsFor(f));
+  const drift = Object.entries(HOST_VAR_DEFAULTS).filter(
+    ([key, fallback]) => (have[key] ?? fallback) !== (want[key] ?? fallback),
+  );
+  if (drift.length === 0) {
+    return {
+      name: "embedder",
+      ok: true,
+      detail: "the inventory renders the embedder config.toml declares",
+    };
+  }
+  return {
+    name: "embedder",
+    ok: false,
+    detail:
+      `the inventory renders ${drift.map(([k, d]) => `${k}=${have[k] ?? d}`).join(", ")}, but config.toml declares ` +
+      `${drift.map(([k, d]) => `${k}=${want[k] ?? d}`).join(", ")} — scripts/deploy.sh refuses that drift. Fix: run the ` +
+      `${VM_INVENTORY_STEP_ID} step; it rewrites the host line from config.toml`,
   };
 }
 

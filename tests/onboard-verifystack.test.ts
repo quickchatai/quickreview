@@ -99,6 +99,10 @@ function harness(
     health?: { status: number; body: string } | "refused";
     hookConfigStatus?: number;
     deliveries?: Delivery[] | "error";
+    /** The delivery log as GitHub pages it: page N+1 is linked from page N. */
+    pages?: Delivery[][];
+    /** Answer every delivery-log read AFTER a redelivery with this status. */
+    afterRedeliveryStatus?: number;
     /** Deliveries returned AFTER a redelivery is requested. */
     afterRedelivery?: Delivery[];
     attemptStatus?: number;
@@ -130,6 +134,20 @@ function harness(
     if (url.startsWith(`${API}/app/hook/deliveries?`)) {
       if (o.deliveries === "error")
         return new Response(JSON.stringify({ message: "not found" }), { status: 404 });
+      if (redelivered && o.afterRedeliveryStatus)
+        return new Response(JSON.stringify({ message: "rate limited" }), {
+          status: o.afterRedeliveryStatus,
+        });
+      if (o.pages) {
+        const n = Number(/[?&]cursor=(\d+)/.exec(url)?.[1] ?? "0");
+        const headers: Record<string, string> =
+          n + 1 < o.pages.length
+            ? {
+                link: `<${API}/app/hook/deliveries?per_page=50&cursor=${n + 1}>; rel="next"`,
+              }
+            : {};
+        return new Response(JSON.stringify(o.pages[n] ?? []), { status: 200, headers });
+      }
       const rows =
         redelivered && o.afterRedelivery ? o.afterRedelivery : (o.deliveries ?? [ping()]);
       return new Response(JSON.stringify(rows), { status: 200 });
@@ -401,6 +419,64 @@ describe("the ping layer", () => {
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(/Advanced tab/);
     expect(result.failures.join(" ")).toMatch(/reconcile poll/);
+  });
+
+  it("a ping pushed off the first page by ordinary traffic is still found — the log is paged", async () => {
+    const traffic = Array.from({ length: 50 }, (_, i) => ({
+      ...ping(),
+      id: 200 - i,
+      event: "pull_request",
+    }));
+    const h = harness({ pages: [traffic, [ping({ id: 100 })]] });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(h.urls.filter((u) => u.includes("/app/hook/deliveries?"))).toHaveLength(2);
+    expect(h.urls.filter((u) => u.startsWith("POST"))).toEqual([]);
+  });
+
+  it("a newer failure on a later page still invalidates the ping it sits above", async () => {
+    const traffic = [
+      { ...ping(), id: 300, event: "pull_request", status_code: 502 },
+      ...Array.from({ length: 49 }, (_, i) => ({ ...ping(), id: 299 - i, event: "push" })),
+    ];
+    const h = harness({ pages: [traffic, [ping({ id: 100 })]], redeliver: false });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(" ")).toMatch(/newer pull_request delivery was not/);
+  });
+
+  it("the redelivered ping does not certify the path when a newer delivery already failed beside it", async () => {
+    const h = harness({
+      deliveries: [ping({ id: 7, status_code: 502 })],
+      afterRedelivery: [
+        { ...ping(), id: 9, event: "pull_request", status_code: 502 },
+        ping({ id: 8, redelivery: true }),
+        ping({ id: 7, status_code: 502 }),
+      ],
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(" ")).toMatch(/newer pull_request delivery was not/);
+  });
+
+  it("a delivery log that cannot be read AFTER a redelivery says so, not the older ping's diagnosis", async () => {
+    const h = harness({
+      deliveries: [ping({ id: 7, status_code: 502 })],
+      afterRedeliveryStatus: 403,
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(false);
+    const detail = result.failures.join(" ");
+    expect(detail).toMatch(/reading the delivery log again failed/);
+    expect(detail).toMatch(/HTTP 403/);
+    expect(detail).not.toMatch(/① the webhook URL/);
+  });
+
+  it("no ping says that redelivering another event cannot make one", async () => {
+    const h = harness({ deliveries: [{ ...ping(), event: "pull_request", id: 3 }] });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.failures.join(" ")).toMatch(/never a ping/);
+    expect(result.failures.join(" ")).not.toMatch(/"Redeliver" on any delivery/);
   });
 
   it("a delivery log GitHub will not show is red, not silently green", async () => {

@@ -12,6 +12,8 @@ import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const PREFLIGHT_STEP_ID = "preflight";
+/** The daemon's Node floor — package.json `engines.node` says the same
+ * (tests/onboard-engine.test.ts holds the two equal). */
 export const MIN_NODE_MAJOR = 22;
 /** The choice key later steps read the captured uid from (QCR_UID input). */
 export const UID_CHOICE_KEY = CHOICE_KEYS.uid;
@@ -79,7 +81,7 @@ export function preflightStep(): OnboardingStep {
     id: PREFLIGHT_STEP_ID,
     title: "Preflight: Node, Docker, Compose, uid",
     explain:
-      "Checks that this machine can run QuickReview at all: Node 22 or newer, Docker, and the Compose plugin. " +
+      `Checks that this machine can run QuickReview at all: Node ${MIN_NODE_MAJOR} or newer, Docker, and the Compose plugin. ` +
       "It also captures your user id so the containers built later run as you and can share files with your checkout.",
     order: 10,
     async run(ctx): Promise<StepReport> {

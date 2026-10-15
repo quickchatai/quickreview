@@ -28,14 +28,23 @@ export interface LoosenedHit {
 
 const ASSERT_RE =
   /\b(assert\w*|expect|should|require\.\w+|t\.(Error|Fatal|Fail)\w*|XCTAssert\w*|assert_eq!|assert_ne!|assert!|verify|check)\b|\.(toBe|toEqual|toStrictEqual|toHaveLength|toHaveBeenCalledTimes|toMatch|toContain|toThrow)\b/;
+// `assert_eq!` ends in a non-word character, so it sits outside the `\b…\b`
+// group: a trailing `\b` between `!` and `(` never matches.
 const EXACT_RE =
-  /==|\b(assertEqual|assertEquals|assert_eq!|toBe|toEqual|toStrictEqual|toHaveLength|toHaveBeenCalledTimes|XCTAssertEqual|Equal|Equals|is)\b/;
-const BOUND_RE =
-  />=|<=|(?<![=!<>])[<>](?!=)|\b(assertGreater\w*|assertLess\w*|toBeGreaterThan\w*|toBeLessThan\w*|XCTAssertGreaterThan\w*|XCTAssertLessThan\w*|GreaterOrEqual|LessOrEqual|atLeast|atMost)\b/;
+  /==|\bassert_eq!|\b(assertEqual|assertEquals|toBe|toEqual|toStrictEqual|toHaveLength|toHaveBeenCalledTimes|XCTAssertEqual|Equal|Equals|is)\b/;
+/** Named lower-bound matchers: lowering their N relaxes them. */
+const LOWER_NAMED =
+  "assertGreater\\w*|toBeGreaterThan\\w*|XCTAssertGreaterThan\\w*|GreaterOrEqual|atLeast";
+/** Named upper-bound matchers: raising their N relaxes them. */
+const UPPER_NAMED = "assertLess\\w*|toBeLessThan\\w*|XCTAssertLessThan\\w*|LessOrEqual|atMost";
+const BOUND_RE = new RegExp(`>=|<=|(?<![=!<>])[<>](?!=)|\\b(${LOWER_NAMED}|${UPPER_NAMED})\\b`);
 const CONTAINS_RE =
   /\b(assertIn|assertContains|toContain|toMatch|stringContaining|objectContaining|arrayContaining|Contains|contains|includes|startswith|endswith|startsWith|endsWith|XCTAssertTrue)\b|\bin\b/;
 const TOLERANCE_RE =
-  /\b(tol|tolerance|delta|places|epsilon|eps|atol|rtol|approx|abs_tol|rel_tol|within|closeTo|toBeCloseTo|accuracy|margin)\b/i;
+  /\b(tol|tolerance|delta|places|epsilon|eps|atol|rtol|approx|abs_tol|rel_tol|within|closeTo|toBeCloseTo|accuracy|margin|decimal|numDigits)\b/i;
+/** A PRECISION argument (digits or places to agree on): unlike a tolerance,
+ * LOWERING it is what loosens the check. */
+const PRECISION_RE = /\b(places|decimal|numDigits|toBeCloseTo)\b/i;
 const TIMEOUT_RE =
   /\b(timeout|time_out|sleep|wait|deadline|retries|retry|attempts|max_wait|waitFor|patience)\w*\b/i;
 const COUNT_RE =
@@ -44,18 +53,18 @@ const SKIP_RE =
   /@pytest\.mark\.(skip|xfail)|pytest\.(skip|xfail)\(|@unittest\.skip|\bt\.Skip(f|Now)?\(|\b(it|test|describe)\.(skip|todo)\(|\bx(it|describe|test)\(|@(Ignore|Disabled)\b|#\[ignore\]|\bXCTSkip\w*|\.skip\(|@skip\b|\bpending\(/;
 const CHECK_OP_RE = /==|!=|>=|<=/;
 /** `x >= N` / `x > N` / `assertGreater…` / `toBeGreaterThan…`: lowering N relaxes it. */
-const LOWER_BOUND_RE =
-  />=?\s*-?\d|\b(assertGreater\w*|toBeGreaterThan\w*|XCTAssertGreaterThan\w*|GreaterOrEqual|atLeast)\b/;
+const LOWER_BOUND_RE = new RegExp(`>=?\\s*-?\\d|\\b(${LOWER_NAMED})\\b`);
 /** `x <= N` / `x < N` / `assertLess…` / `toBeLessThan…`: raising N relaxes it. */
-const UPPER_BOUND_RE =
-  /<=?\s*-?\d|\b(assertLess\w*|toBeLessThan\w*|XCTAssertLessThan\w*|LessOrEqual|atMost)\b/;
+const UPPER_BOUND_RE = new RegExp(`<=?\\s*-?\\d|\\b(${UPPER_NAMED})\\b`);
 const isCheck = (s: string): boolean => ASSERT_RE.test(s) || CHECK_OP_RE.test(s);
 const COMMENT_PREFIX_RE = /^\s*(#|\/\/|\/\*|\*|--)\s*/;
 
-const nums = (s: string): number[] => (s.match(/-?\d+(\.\d+)?(e-?\d+)?/gi) ?? []).map(Number);
+/** A number literal, as both the extraction and the shape mask read it. */
+const NUMBER_RE = /-?\d+(\.\d+)?(e-?\d+)?/gi;
+const nums = (s: string): number[] => (s.match(NUMBER_RE) ?? []).map(Number);
 const norm = (s: string): string => s.replace(/\s+/g, " ").trim();
 /** The line with every number masked: two lines that differ only in numbers match. */
-const shape = (s: string): string => norm(s).replace(/-?\d+(\.\d+)?(e-?\d+)?/gi, "#");
+const shape = (s: string): string => norm(s).replace(NUMBER_RE, "#");
 
 function numberGrew(oldL: string, newL: string): boolean | null {
   const a = nums(oldL);
@@ -88,7 +97,8 @@ function hunks(patch: string): Hunk[] {
       newLn = Number(h[2]);
       continue;
     }
-    if (!cur || raw.startsWith("---") || raw.startsWith("+++") || raw.startsWith("\\")) continue;
+    // Inside a hunk every line is content: a removed `--x` arrives as `---x`.
+    if (!cur || raw.startsWith("\\")) continue;
     if (raw.startsWith("-")) cur.removed.push({ text: raw.slice(1), line: oldLn++ });
     else if (raw.startsWith("+")) cur.added.push({ text: raw.slice(1), line: newLn++ });
     else {
@@ -134,7 +144,8 @@ export function detectLoosenedAssertions(files: readonly PrFile[]): LoosenedHit[
         if (a && shape(a.text) === shape(r.text)) {
           const grew = numberGrew(r.text, a.text);
           const shrank = numberGrew(a.text, r.text);
-          if (grew === true && TOLERANCE_RE.test(r.text))
+          const loosened = PRECISION_RE.test(r.text) ? shrank : grew;
+          if (loosened === true && TOLERANCE_RE.test(r.text))
             hits.push({ file: f.filename, line: a.line, kind: "tolerance-widened" });
           else if (grew === true && TIMEOUT_RE.test(r.text))
             hits.push({ file: f.filename, line: a.line, kind: "timeout-lengthened" });
@@ -153,7 +164,9 @@ export function detectLoosenedAssertions(files: readonly PrFile[]): LoosenedHit[
             hits.push({ file: f.filename, line: a.line, kind: "exact-to-contains" });
           continue;
         }
-        if (isAssert && !a && !h.added.some((x) => isCheck(x.text)))
+        // only an UNUSED added check can stand in for this one: an addition
+        // another removal already paired with does not
+        if (isAssert && !a && !h.added.some((x, i) => !usedAdded.has(i) && isCheck(x.text)))
           hits.push({ file: f.filename, line: r.line, kind: "assert-removed" });
       }
       for (const a of h.added) {

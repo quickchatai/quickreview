@@ -356,6 +356,19 @@ export function cancelCauseLabel(cause: string | null | undefined): string {
   return CANCEL_CAUSE_LABEL[key] ?? key;
 }
 
+/** A round's stored `executed_passes`, parsed; null = unknown (absent or
+ * unparseable — an unparseable stored value reads as unknown, matching the
+ * input side). */
+export function parseExecutedPasses(raw: string | null | undefined): VerdictPassEntry[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as VerdictPassEntry[]) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** One cause's tally, as every cancellation surface reports it. */
 export interface CancellationTally {
   cause: CancelCause;
@@ -364,38 +377,30 @@ export interface CancellationTally {
   loud: boolean;
 }
 
-/** Every cancellation surface's order: loud first, then by count, then by
- * cause — so the surface that renders a tally never has to know the policy. */
-export function compareCancellationTallies(a: CancellationTally, b: CancellationTally): number {
+/** The one cancellation order: loud causes first, then by count, then by
+ * cause — so a surface renders in order and never has to know the policy. */
+export function cancellationOrder(a: CancellationTally, b: CancellationTally): number {
   return Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause);
 }
 
-/** The cancelled rounds among `rounds`, tallied by cause (a missing cause is
- * `unknown`), in `compareCancellationTallies` order, with the total and the
- * loud subset. */
-export function tallyCancellations(rounds: Iterable<Pick<RoundRow, "status" | "cancel_cause">>): {
-  total: number;
-  loud: number;
-  by_cause: CancellationTally[];
-} {
+/** The cancelled rounds among `rounds`, grouped by cause (an unclassified
+ * one is `unknown`) and in `cancellationOrder`. */
+export function tallyCancellations(
+  rounds: Iterable<{ status: string; cancel_cause: string | null }>,
+): CancellationTally[] {
   const counts = new Map<string, number>();
   for (const r of rounds) {
     if (r.status !== "cancelled") continue;
     const cause = r.cancel_cause ?? "unknown";
     counts.set(cause, (counts.get(cause) ?? 0) + 1);
   }
-  const byCause = [...counts.entries()]
+  return [...counts.entries()]
     .map(([cause, count]) => ({
       cause: cause as CancelCause,
       count,
       loud: isLoudCancelCause(cause),
     }))
-    .sort(compareCancellationTallies);
-  return {
-    total: byCause.reduce((n, c) => n + c.count, 0),
-    loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
-    by_cause: byCause,
-  };
+    .sort(cancellationOrder);
 }
 
 /** One parsed row of the durable reasoning record. */
@@ -2394,18 +2399,11 @@ export class StateStore {
       .run(JSON.stringify(passes), id);
   }
 
-  /** Parsed executed-pass telemetry; null = unknown (absent or unparseable —
-   * an unparseable stored value reads as unknown, matching the input side). */
+  /** Parsed executed-pass telemetry; null = unknown (`parseExecutedPasses`). */
   executedPasses(id: number): VerdictPassEntry[] | null {
     const row = this.db.prepare("SELECT executed_passes FROM rounds WHERE id = ?").get(id) as
       { executed_passes: string | null } | undefined;
-    if (!row?.executed_passes) return null;
-    try {
-      const parsed = JSON.parse(row.executed_passes);
-      return Array.isArray(parsed) ? (parsed as VerdictPassEntry[]) : null;
-    } catch {
-      return null;
-    }
+    return parseExecutedPasses(row?.executed_passes);
   }
 
   // ---- the durable reasoning record ---------------------------------------
@@ -2684,7 +2682,7 @@ export class StateStore {
       .all({ since }) as Array<{ cause: string; c: number }>;
     return rows
       .map((r) => ({ cause: r.cause as CancelCause, count: r.c, loud: isLoudCancelCause(r.cause) }))
-      .sort(compareCancellationTallies);
+      .sort(cancellationOrder);
   }
 
   /** The cancelled rounds a human should look at — loud causes only. */

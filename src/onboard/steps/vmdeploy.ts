@@ -35,9 +35,9 @@
 // can always ask for it by name.
 import { existsSync } from "node:fs";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { nodeStreamRunner, rootOf, type StreamRunner } from "./compose.js";
+import { nodeStreamRunner, readTextOrNull, rootOf, type StreamRunner } from "./compose.js";
 import { deployArgv, deployCommandLine, deployScriptPath, type DeployMode } from "./deploysh.js";
-import { inventoryTargetMismatch } from "./inventory.js";
+import { inventoryPath, inventoryTargetMismatch, parseInventoryHostVars } from "./inventory.js";
 import { SSH_PREFLIGHT_STEP_ID } from "./ssh.js";
 import { SSH_ALIAS_RE, TOPOLOGY_STEP_ID, sshAliasOf, topologyOf } from "./topology.js";
 import { stackTransportFor } from "./transport.js";
@@ -52,6 +52,9 @@ export interface VmDeployRecord {
   /** The ssh alias it deployed to. `null` on a record that names no host —
    * never trusted as "this host was deployed". */
   host: string | null;
+  /** The inventory's host vars it deployed with (cloudflared_enabled, the
+   * embedder's) — absent on a record from before they were kept. */
+  host_vars?: Record<string, string>;
 }
 
 export function parseDeployRecord(value: unknown): VmDeployRecord | null {
@@ -60,7 +63,33 @@ export function parseDeployRecord(value: unknown): VmDeployRecord | null {
   const mode = r.mode;
   if (mode !== "sync" && mode !== "rebuild") return null;
   if (typeof r.at !== "string" || r.at === "") return null;
-  return { mode, at: r.at, host: typeof r.host === "string" && r.host !== "" ? r.host : null };
+  const vars = r.host_vars;
+  const hostVars =
+    typeof vars === "object" &&
+    vars !== null &&
+    Object.values(vars).every((v) => typeof v === "string")
+      ? { host_vars: { ...(vars as Record<string, string>) } }
+      : {};
+  return {
+    mode,
+    at: r.at,
+    host: typeof r.host === "string" && r.host !== "" ? r.host : null,
+    ...hostVars,
+  };
+}
+
+/** The host vars the inventory on disk carries now. */
+function currentHostVars(root: string): Record<string, string> {
+  return parseInventoryHostVars(readTextOrNull(inventoryPath(root)) ?? "");
+}
+
+/** The host vars whose value differs between the last deploy and now. */
+export function changedHostVars(
+  before: Readonly<Record<string, string>>,
+  now: Readonly<Record<string, string>>,
+): string[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(now)]);
+  return [...keys].filter((k) => before[k] !== now[k]).sort();
 }
 
 /** The deploy recorded for THIS alias, or null: a sync only makes sense on a
@@ -183,17 +212,34 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
 
       const alias = sshAliasOf(ctx.choices);
       const previous = deployRecordFor(ctx.choices[VM_DEPLOY_CHOICE_KEY], alias);
-      const mode: DeployMode = modeOf(ctx.input) ?? (previous === null ? "rebuild" : "sync");
+      const hostVars = currentHostVars(root);
+      // A sync starts past the host provisioning (cloudflared, packages), so
+      // an ingress or embedder choice that changed the inventory's host vars
+      // since the last deploy is applied only by a rebuild.
+      const changed =
+        previous?.host_vars !== undefined ? changedHostVars(previous.host_vars, hostVars) : [];
+      const asked = modeOf(ctx.input);
+      const mode: DeployMode =
+        asked ?? (previous === null || changed.length > 0 ? "rebuild" : "sync");
       checks.push({
         name: "mode",
         ok: true,
         detail:
           mode === "rebuild"
             ? `\`${deployCommandLine("rebuild")}\` — the image is (re)built on the server against the pinned versions` +
-              `${previous === null ? ", which is what a first deploy needs" : ", as you asked"}`
+              (asked !== null
+                ? ", as you asked"
+                : previous === null
+                  ? ", which is what a first deploy needs"
+                  : `, because the inventory's host settings changed since the last deploy (${changed.join(", ")}) and only a ` +
+                    "rebuild re-runs the host provisioning that applies them")
             : `\`${deployCommandLine("sync")}\` — the working copy is mirrored to the server and the container recreated; the ` +
               "pinned image is left alone (deployed before, at " +
-              `${previous?.at ?? "an unrecorded time"})`,
+              `${previous?.at ?? "an unrecorded time"})` +
+              (changed.length > 0
+                ? `. The inventory's host settings changed since then (${changed.join(", ")}) and a sync does NOT apply ` +
+                  'them — run with mode "rebuild" for that'
+                : ""),
       });
 
       // 1. THE PLAN. The same --dry-run the manual path reads, and where a
@@ -215,7 +261,9 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       checks.push({
         name: "plan",
         ok: true,
-        detail: `the plan, and every preflight passed:\n${plan.tail}`,
+        detail:
+          "the plan, and the deploy script's own preflights on this machine passed. The playbook's checks on the server " +
+          `and the post-deploy checks run with the real deploy below:\n${plan.tail}`,
       });
 
       // 2. The warning goes out BEFORE the long wait, never after it.
@@ -231,9 +279,10 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
           ok: false,
           detail:
             `\`${deployCommandLine(mode)}\` exited ${run.code}. Its last output:\n${run.tail}\n\n` +
-            "Fix: the message above is the script's or Ansible's own. Re-running this step is always safe — the playbook is " +
-            "idempotent, and a failed run leaves the previous container where it was. If the POST-DEPLOY checks are what failed, " +
-            "the system may well be up: run the verification step, which asks the same questions in layers.",
+            "Fix: the message above is the script's or Ansible's own. Re-running this step is safe — the playbook is " +
+            "idempotent. A run that failed before the container task left the previous container as it was; one that failed " +
+            "later (the container recreate, or the POST-DEPLOY checks) may already have replaced it — there is no rollback — " +
+            "so run the verification step, which asks what is actually running, in layers.",
         });
         return { ok: false, checks };
       }
@@ -250,7 +299,12 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       checks.push(...(await transport.containerChecks(null)));
 
       const ok = checks.every((c) => c.ok);
-      const record: VmDeployRecord = { mode, at: ctx.adapters.clock().toISOString(), host: alias };
+      const record: VmDeployRecord = {
+        mode,
+        at: ctx.adapters.clock().toISOString(),
+        host: alias,
+        host_vars: hostVars,
+      };
       if (ok) ctx.recordChoice(VM_DEPLOY_CHOICE_KEY, record);
       return { ok, checks, data: { deploy: record } };
     },

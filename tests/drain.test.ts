@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { drainManualSshCommand, drainPayload, renderStatus, runDrain } from "../src/cli.js";
+import { drainManualCommand, drainPayload, renderStatus, runDrain } from "../src/cli.js";
 import {
   authorizeCommand,
   executeCommand,
@@ -645,7 +645,7 @@ describe("qcr drain over the unwedge command channel", () => {
         now: () => now,
       }),
     ).toBe(1);
-    const manual = drainManualSshCommand(cfg.tui, true, now);
+    const manual = drainManualCommand(cfg.tui, true, now);
     expect(lines.join("\n")).toContain(manual);
     expect(manual).toContain(`ssh ${cfg.tui.ssh_host}`);
     expect(manual).toContain('{"command":"drain","on":true}');

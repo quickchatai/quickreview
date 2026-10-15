@@ -84,11 +84,8 @@ export function deliveryCounts(d: RoundLessonDelivery | null | undefined): {
   cases: number;
 } {
   if (!d) return { lessons: 0, cases: 0 };
-  const uris = new Set<string>();
-  for (const r of d.rows) for (const l of r.lessons) uris.add(l.uri);
-  for (const a of d.addable) for (const l of a.lessons) uris.add(l.uri);
-  for (const l of d.validator?.lessons ?? []) uris.add(l.uri);
-  return { lessons: uris.size, cases: d.cases.length };
+  // One walk of the destinations: the index's.
+  return { lessons: receivers(d).size, cases: d.cases.length };
 }
 
 /** Is anything at all delivered? The one test the bleed rule's wording, the
@@ -360,7 +357,8 @@ export function renderBleedNote(d: RoundLessonDelivery | null | undefined): stri
   return deliversAnything(d) ? BLEED_RULE_DELIVERED : BLEED_RULE_VERBATIM;
 }
 
-/** Who received a lesson, for the index. */
+/** Who received a lesson, for the index — and, by its size, how many
+ * distinct lessons the delivery carries. Every destination is walked here. */
 function receivers(d: RoundLessonDelivery): Map<string, { lesson: DeliveredLesson; to: string[] }> {
   const out = new Map<string, { lesson: DeliveredLesson; to: string[] }>();
   const add = (l: DeliveredLesson, to: string): void => {

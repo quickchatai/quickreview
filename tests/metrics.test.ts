@@ -6,6 +6,7 @@ import { StateStore } from "../src/state.js";
 import { PingPongLedger } from "../src/pingpong.js";
 import { parseBuildSha } from "../src/tui/deploytab.js";
 import {
+  COUNT_BUCKETS,
   EVENT_KIND_CAP,
   computeMetrics,
   computeTimeline,
@@ -270,6 +271,15 @@ describe("statistics", () => {
     expect(dist([]).n).toBe(0);
     expect(dist([]).median).toBeNull();
   });
+
+  it("puts an exact time boundary in the bucket its '<' label admits", () => {
+    const h = dist([59, 60, 86_400]).histogram;
+    expect(h.find((b) => b.label === "<1m")!.count).toBe(1);
+    expect(h.find((b) => b.label === "<5m")!.count).toBe(1);
+    expect(h.find((b) => b.label === ">=1d")!.count).toBe(1);
+    // count buckets stay inclusive: 1 round is the "1" bucket
+    expect(dist([1], COUNT_BUCKETS).histogram[0]).toEqual({ label: "1", count: 1 });
+  });
 });
 
 // ---- the payload -----------------------------------------------------------
@@ -353,6 +363,70 @@ describe("computeMetrics", () => {
       "4",
       "5+",
     ]);
+  });
+
+  it("keeps the queue and review legs free of backfilled rows", () => {
+    // Imported rounds start at their reconstructed trigger: queue 0 s, review
+    // = the whole trigger-to-verdict interval. Neither leg was measured.
+    for (const pr of [300, 301])
+      insertRound(store, {
+        pr,
+        round_no: 0,
+        round_type: "backfill",
+        lenses: "",
+        verdict: "APPROVE",
+        started_at: "2026-08-02T09:00:00.000Z",
+        finished_at: "2026-08-02T10:00:00.000Z",
+        backfilled: 1,
+        trigger_ts: "2026-08-02T09:00:00.000Z",
+      });
+    const all = computeMetrics(store, { now }).windows.all.ttfv;
+    expect(all.queue_median_s).toBe(300); // live [300, 300, 600]
+    expect(all.review_median_s).toBe(1800); // live [900, 1800, 2700]
+    expect(all.n).toBe(5); // the imported rounds still count in ttfv itself
+  });
+
+  it("counts a time-in-state interval entered before the window", () => {
+    // #102 has been awaiting its author for 8 days; #103 left review before
+    // the 7-day window opened.
+    const at = (daysAgo: number): string =>
+      new Date(NOW.getTime() - daysAgo * 86_400_000).toISOString();
+    insertEvent(store, at(8), "pr_transition", 102, { to: "awaiting_author", event: "verdict" });
+    insertEvent(store, at(10), "pr_transition", 103, { to: "reviewing", event: "dispatched" });
+    insertEvent(store, at(9), "pr_transition", 103, { to: "closed", event: "closed" });
+    const byState = new Map(
+      computeMetrics(store, { now }).windows.d7.time_in_state.map((r) => [r.state, r]),
+    );
+    // inside the window: #100's 2700 s plus the 7 days #102 spent in it
+    expect(byState.get("awaiting_author")!.total_s).toBe(2700 + 7 * 86_400);
+    // the median is over whole dwells: [2700, 8 days], nearest rank
+    expect(byState.get("awaiting_author")!.median_s).toBe(2700);
+    // #103's review ended before the window: reviewing is #100's alone
+    expect(byState.get("reviewing")!.total_s).toBe(900 + 1800);
+  });
+
+  it("resolves an imported closed PR that never got an approval", () => {
+    insertRound(store, {
+      pr: 300,
+      round_no: 0,
+      round_type: "backfill",
+      lenses: "",
+      verdict: "REQUEST_CHANGES",
+      started_at: "2026-08-03T09:00:00.000Z",
+      finished_at: "2026-08-03T10:00:00.000Z",
+      backfilled: 1,
+    });
+    store.upsertBackfillPrMeta({
+      pr: 300,
+      title: "closed unapproved",
+      author: "dan",
+      created_at: "2026-08-03T08:00:00.000Z",
+      merged_at: null,
+      closed_at: "2026-08-04T08:00:00.000Z",
+      merged: 0,
+    });
+    // #100 (2 rounds), #200 (approved import, 1), #300 (closed import, 1)
+    expect(computeMetrics(store, { now }).windows.all.rounds_until_resolution.n).toBe(3);
   });
 
   it("keeps duration, overruns and spend free of backfilled rows", () => {
@@ -762,12 +836,26 @@ describe("ops", () => {
     const ops = computeMetrics(store, { now }).ops;
     expect(ops).toEqual({
       heartbeat: null,
-      dry_run: false,
+      dry_run: null,
       running_rounds: 0,
-      max_concurrent_rounds: 0,
+      max_concurrent_rounds: null,
       build: null,
     });
     expect(emptyOps()).toEqual(ops);
+  });
+
+  it("an unread mode or concurrency cap is unknown, never LIVE or a zero cap", () => {
+    const text = renderMetrics(computeMetrics(store, { now }));
+    expect(text).toContain("mode unknown");
+    expect(text).toContain("rounds 0/?");
+    // a snapshot with a heartbeat but no mode still claims no mode
+    const noMode = {
+      readFile: () => JSON.stringify({ heartbeat: "2026-08-14T11:59:30Z" }),
+      parseBuildSha,
+    };
+    const ops = readOps({ statusPath: "/s", buildShaPath: "/b" }, noMode);
+    expect(ops.dry_run).toBeNull();
+    expect(renderMetrics({ ...computeMetrics(store, { now }), ops })).toContain("mode unknown");
   });
 
   it("readOps decorates from status.json and the BUILD_SHA marker", () => {
@@ -828,7 +916,7 @@ describe("ops", () => {
       heartbeat: "2026-08-14T11:00:00Z",
       dry_run: true,
       running_rounds: 0,
-      max_concurrent_rounds: 0,
+      max_concurrent_rounds: null,
       build: { sha: "abc1234", at: "", mode: "" },
     });
   });

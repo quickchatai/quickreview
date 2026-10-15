@@ -32,10 +32,10 @@ import {
   parseConfig,
   parseOpenViking,
   type EmbeddingProvider,
+  type OpenVikingConfig,
 } from "../../config.js";
-import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { readTextOrNull, secretsDirFor, writeAtomic } from "./compose.js";
+import { interviewConfigPath, readTextOrNull, secretsDirFor, writeAtomic } from "./compose.js";
 import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
 import { readTomlKey } from "./ingress.js";
 import { topologyOf } from "./topology.js";
@@ -51,6 +51,34 @@ export interface DeclaredEmbedder {
   keyFile: string;
 }
 
+/** The loader's own reading of a config text's `[openviking]` block —
+ * defaults filled, `1_536` read as 1536, a hosted opt-in that omits its
+ * model/dimension given the HOSTED defaults — or null when the text does not
+ * parse or the loader refuses the block. */
+function loaderOpenViking(configText: string): OpenVikingConfig | null {
+  try {
+    const doc = parseToml(configText) as Record<string, unknown>;
+    const block = doc.openviking;
+    return parseOpenViking(
+      typeof block === "object" && block !== null && !Array.isArray(block)
+        ? (block as Record<string, unknown>)
+        : {},
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** The embedder an `[openviking]` block declares. */
+export function embedderOf(ov: OpenVikingConfig): DeclaredEmbedder {
+  return {
+    provider: ov.embedding_provider,
+    model: ov.embedding_model,
+    dimension: ov.embedding_dimension,
+    keyFile: ov.embedding_key_file,
+  };
+}
+
 /**
  * Read `[openviking] embedding_*` out of a config.toml text, defaults filled
  * exactly as the loader fills them — so a config that omits the block (an
@@ -58,28 +86,11 @@ export interface DeclaredEmbedder {
  * not as "unknown".
  */
 export function declaredEmbedderOf(configText: string): DeclaredEmbedder {
-  // The loader's own reading first: parse the document and hand the block to
-  // the loader's own [openviking] parser, so a hosted opt-in that omits its
-  // model/dimension resolves to the HOSTED defaults and `1_536` reads as 1536
-  // — exactly what the daemon will run. Only a text that does not parse (or a
-  // block the loader refuses) falls back to the tolerant line reader below.
-  try {
-    const doc = parseToml(configText) as Record<string, unknown>;
-    const block = doc.openviking;
-    const ov = parseOpenViking(
-      typeof block === "object" && block !== null && !Array.isArray(block)
-        ? (block as Record<string, unknown>)
-        : {},
-    );
-    return {
-      provider: ov.embedding_provider,
-      model: ov.embedding_model,
-      dimension: ov.embedding_dimension,
-      keyFile: ov.embedding_key_file,
-    };
-  } catch {
-    /* fall through to the tolerant reader */
-  }
+  // The loader's own reading first, which is exactly what the daemon will
+  // run. Only a text that does not parse (or a block the loader refuses)
+  // falls back to the tolerant line reader below.
+  const ov = loaderOpenViking(configText);
+  if (ov !== null) return embedderOf(ov);
   const get = (key: string): string | null =>
     readTomlKey(configText, "openviking", key)?.trim() ?? null;
   const dimensionRaw = get("embedding_dimension");
@@ -114,25 +125,40 @@ export function embedderEnvEntries(e: DeclaredEmbedder): Array<[string, string]>
  * shipped defaults, exactly as the daemon would refuse to start on it.
  */
 export function localEmbedderEnvEntries(configText: string): Array<[string, string]> {
-  let port = OPENVIKING_DEFAULTS.local_embedder_port;
-  let threads = OPENVIKING_DEFAULTS.local_embedder_threads;
-  try {
-    const doc = parseToml(configText) as Record<string, unknown>;
-    const block = doc.openviking;
-    const ov = parseOpenViking(
-      typeof block === "object" && block !== null && !Array.isArray(block)
-        ? (block as Record<string, unknown>)
-        : {},
-    );
-    port = ov.local_embedder_port;
-    threads = ov.local_embedder_threads;
-  } catch {
-    /* the defaults — the daemon will not run on a config it cannot load */
-  }
+  const { port, threads } = localEmbedderRuntimeOf(configText);
   return [
     ["QCR_OPENVIKING_LOCAL_EMBEDDER_PORT", String(port)],
     ["QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS", String(threads)],
   ];
+}
+
+/** The local embedder's two runtime knobs. */
+export interface LocalEmbedderRuntime {
+  port: number;
+  threads: number;
+}
+
+/** The loader's own reading of the local embedder's port and threads; a
+ * config it cannot read gives the shipped defaults, exactly as the daemon
+ * would refuse to start on it. */
+export function localEmbedderRuntimeOf(configText: string): LocalEmbedderRuntime {
+  const ov = loaderOpenViking(configText);
+  return {
+    port: ov?.local_embedder_port ?? OPENVIKING_DEFAULTS.local_embedder_port,
+    threads: ov?.local_embedder_threads ?? OPENVIKING_DEFAULTS.local_embedder_threads,
+  };
+}
+
+/** The inventory HOST VARS for local embedder knobs that differ from the
+ * shipped defaults (which the tracked group_vars carry) — scripts/deploy.sh
+ * refuses a config.toml whose port or threads the deploy would not render. */
+export function localEmbedderHostVars(rt: LocalEmbedderRuntime): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  if (rt.port !== OPENVIKING_DEFAULTS.local_embedder_port)
+    out.push(["openviking_local_embedder_port", String(rt.port)]);
+  if (rt.threads !== OPENVIKING_DEFAULTS.local_embedder_threads)
+    out.push(["openviking_local_embedder_threads", String(rt.threads)]);
+  return out;
 }
 
 /** The inventory HOST VARS for a hosted opt-in — nothing for the local
@@ -189,11 +215,6 @@ export function keyFileCheck(secretsDir: string, keyFile: string): CheckResult {
   };
 }
 
-function configPathOf(ctx: StepContext): string {
-  const recorded = ctx.choices[CHOICE_KEYS.configPath];
-  return typeof recorded === "string" && recorded ? recorded : ctx.adapters.paths.configPath;
-}
-
 function propagationNote(ctx: StepContext, e: DeclaredEmbedder): CheckResult {
   const vm = topologyOf(ctx.choices) === "vm";
   return {
@@ -224,7 +245,8 @@ export function embeddingsStep(): OnboardingStep {
       "Decides where the memory engine computes its vectors. The shipped default is LOCAL: a small English embedding model " +
       `(${LOCAL_EMBEDDING.model}, pinned in the image) served on loopback inside the daemon ` +
       "container, so nothing but the model call ever leaves the machine — memory text included — and no key is needed. Calling this " +
-      'step with no arguments confirms that default. The alternative is OpenAI\'s hosted embeddings (`provider: "openai"`): every memory ' +
+      "step with no arguments keeps whatever the config already declares (the local default on a fresh install); moving an " +
+      'installation back to local takes an explicit `provider: "local"`. The alternative is OpenAI\'s hosted embeddings (`provider: "openai"`): every memory ' +
       "entry's text is then sent to OpenAI, and the credential is its OWN secrets file (openai_embeddings_api_key, via " +
       "deploy/collect-secrets.sh) — pi's openai_api_key is never used for it. Do not offer the hosted option as an upgrade; offer it " +
       "only if the operator asks, and say plainly what leaves the machine.",
@@ -236,7 +258,7 @@ export function embeddingsStep(): OnboardingStep {
           type: "string",
           enum: [...EMBEDDING_PROVIDERS],
           description:
-            '"local" (the default; omit to confirm it) or "openai" (hosted; sends memory text to OpenAI).',
+            '"local" (the shipped default) or "openai" (hosted; sends memory text to OpenAI). Omit to keep what config.toml declares.',
         },
         model: {
           type: "string",
@@ -252,7 +274,7 @@ export function embeddingsStep(): OnboardingStep {
     },
 
     async run(ctx): Promise<StepReport> {
-      const path = configPathOf(ctx);
+      const path = interviewConfigPath(ctx);
       const text = readTextOrNull(path);
       if (text === null) {
         return {
@@ -360,7 +382,7 @@ export function embeddingsStep(): OnboardingStep {
     },
 
     async verify(ctx): Promise<StepReport> {
-      const path = configPathOf(ctx);
+      const path = interviewConfigPath(ctx);
       const text = readTextOrNull(path);
       if (text === null)
         return {
@@ -369,13 +391,7 @@ export function embeddingsStep(): OnboardingStep {
         };
       let declared: DeclaredEmbedder;
       try {
-        const ov = parseConfig(text).openviking;
-        declared = {
-          provider: ov.embedding_provider,
-          model: ov.embedding_model,
-          dimension: ov.embedding_dimension,
-          keyFile: ov.embedding_key_file,
-        };
+        declared = embedderOf(parseConfig(text).openviking);
       } catch (err) {
         return {
           ok: false,

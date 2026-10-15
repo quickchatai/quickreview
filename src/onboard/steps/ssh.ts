@@ -128,6 +128,15 @@ export function classifySshFailure(stderr: string): SshFailure {
   return "unknown";
 }
 
+/** The commands that load a key into the agent, run in the operator's own
+ * shell — starting an agent first when there is none. One rendering for every
+ * check that hands them out. */
+export function agentLoadCommands(agent: AgentState): string {
+  return agent.kind === "no-agent"
+    ? '    eval "$(ssh-agent -s)"\n    ssh-add ~/.ssh/id_ed25519'
+    : "    ssh-add ~/.ssh/id_ed25519";
+}
+
 /**
  * The remedy, in the operator's own shell, for a failed connection. `agent`
  * shapes it because the same "Permission denied (publickey)" means two very
@@ -157,9 +166,7 @@ export function connectionAdvice(failure: SshFailure, agent: AgentState, alias: 
             `another way. ${batch}`
         : `your ssh agent has no usable key (${agent.detail}), so ${alias} had nothing to authenticate with. THIS IS THE ` +
             "PASSPHRASE CASE, and it is the one that would otherwise hang a deploy halfway through:\n\n" +
-            (agent.kind === "no-agent"
-              ? '    eval "$(ssh-agent -s)"\n    ssh-add ~/.ssh/id_ed25519\n'
-              : "    ssh-add ~/.ssh/id_ed25519\n") +
+            `${agentLoadCommands(agent)}\n` +
             "\nRun that IN YOUR OWN SHELL — the passphrase prompt belongs to your terminal and this wizard must never try to " +
             `type into it. (Use the path of your own key if it is not id_ed25519.) Then run this step again. ${batch}`;
     case "timeout":
@@ -264,9 +271,7 @@ export function sshPreflightStep(opts: SshPreflightOptions = {}): OnboardingStep
             ? `${agent.detail}, and the connection below still succeeded — so your key has no passphrase and needs no agent`
             : `${agent.detail}. If your key has a passphrase this fails the connection below rather than prompting, which is ` +
               "deliberate. Load it in your own shell:\n" +
-              (agent.kind === "no-agent"
-                ? '    eval "$(ssh-agent -s)"\n    ssh-add ~/.ssh/id_ed25519'
-                : "    ssh-add ~/.ssh/id_ed25519"),
+              agentLoadCommands(agent),
     });
     if (!connected) {
       const failure = classifySshFailure(connect.stderr || connect.stdout);

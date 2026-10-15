@@ -30,13 +30,19 @@
 /** Where the reviewer runs. Absent ⇒ "local" (see `topologyOf`). */
 export type Topology = "local" | "vm";
 
-/** The webhook ingress shape. These four ids are also the operator-facing
+/** The webhook ingress shapes. These four ids are also the operator-facing
  * names in `INGRESS_OPTIONS` and in docs/onboarding.md. */
-export type IngressChoice = "quick" | "ngrok" | "named" | "polling";
+export const INGRESS_CHOICES = ["quick", "ngrok", "named", "polling"] as const;
+export type IngressChoice = (typeof INGRESS_CHOICES)[number];
 
-/** The LLM auth route. "api" is the API-key route — not "api_key": the value
+/** The LLM auth routes. "api" is the API-key route — not "api_key": the value
  * the LLM step writes is the value every reader must test for. */
-export type AuthRoute = "oauth" | "api";
+export const AUTH_ROUTES = ["oauth", "api"] as const;
+export type AuthRoute = (typeof AUTH_ROUTES)[number];
+
+/** "owner/name" — the reviewed repo as the interview records it and the App
+ * step parses it: no URL, no trailing `.git`. */
+export const REPO_SLUG_RE = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
 
 /** Whether the operator set memory up or declined it (a supported answer). */
 export type MemoryChoice = "configure" | "declined";
@@ -88,7 +94,7 @@ export const CHOICE_KEYS = {
   /** The App slug. Written by the interview (the operator's answer), then
    * corrected by the App step and the slug reconcile from GitHub itself. */
   appSlug: "github_app_slug",
-  /** `<slug>[bot]` — how the daemon recognises its own reviews. */
+  /** `botLoginFor(slug)` — how the daemon recognises its own reviews. */
   botLogin: "github_bot_login",
   /** Numeric App id. */
   appId: "github_app_id",
@@ -174,6 +180,12 @@ export const PRIVATE_CHOICE_KEYS: Readonly<Record<string, string>> = {
   go_live_decision: "go_live",
 };
 
+/** The bot login GitHub gives an App with this slug. One rule, one place —
+ * every step that writes or checks `[github] bot_login` derives it here. */
+export function botLoginFor(slug: string): string {
+  return `${slug}[bot]`;
+}
+
 // ---- typed readers -----------------------------------------------------------
 // The few places a value vocabulary is tested. Each is total: an absent or
 // unrecognised value is the documented default, never a throw.
@@ -183,14 +195,17 @@ function raw(choices: Readonly<Record<string, unknown>>, key: ChoiceKey): string
   return typeof v === "string" ? v.trim() : "";
 }
 
+/** `value` when it is a member of `vocabulary`, else null. */
+export function memberOf<T extends string>(vocabulary: readonly T[], value: string): T | null {
+  return (vocabulary as readonly string[]).includes(value) ? (value as T) : null;
+}
+
 /** The recorded auth route, or null when the LLM step has not run. */
 export function authRouteOf(choices: Readonly<Record<string, unknown>>): AuthRoute | null {
-  const v = raw(choices, CHOICE_KEYS.authRoute);
-  return v === "oauth" || v === "api" ? v : null;
+  return memberOf(AUTH_ROUTES, raw(choices, CHOICE_KEYS.authRoute));
 }
 
 /** The recorded ingress shape, or null when the ingress step has not run. */
 export function ingressChoiceOf(choices: Readonly<Record<string, unknown>>): IngressChoice | null {
-  const v = raw(choices, CHOICE_KEYS.ingress);
-  return v === "quick" || v === "ngrok" || v === "named" || v === "polling" ? v : null;
+  return memberOf(INGRESS_CHOICES, raw(choices, CHOICE_KEYS.ingress));
 }

@@ -289,10 +289,7 @@ function wire(server: OvServer): { client: OpenVikingClient; store: OpenVikingSt
 }
 
 /** A store over any fetch (a wrapper around the server's), same settings as `wire`. */
-function storeOver(
-  fetchFn: HttpFetch,
-  opts: { cacheTtlMs?: number } = {},
-): OpenVikingStore {
+function storeOver(fetchFn: HttpFetch, opts: { cacheTtlMs?: number } = {}): OpenVikingStore {
   return new OpenVikingStore({
     client: new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn }),
     now: () => NOW,
@@ -803,7 +800,10 @@ describe("pin and unpin MOVE an entry through the one seam", () => {
     const dropping: HttpFetch = (url, init) => {
       if (batchRoot(url, init.body) === `${ROOT}/experiences` && dropped === 0) {
         dropped += 1;
-        s3.files.set(`${ROOT}/experiences/20260901T000000-n.md`, "#refuted a third lesson, edited\n");
+        s3.files.set(
+          `${ROOT}/experiences/20260901T000000-n.md`,
+          "#refuted a third lesson, edited\n",
+        );
         return err(502, "BAD_GATEWAY", "the forward dropped the request");
       }
       return s3.fetch(url, init);
@@ -1071,6 +1071,11 @@ describe("the round context block searches experiences/ only", () => {
     expect(inRoundSearchScope(`${ROOT}/experiences/x.md`)).toBe(true);
     expect(inRoundSearchScope(`${ROOT}/events/x.md`)).toBe(false);
     expect(inRoundSearchScope("viking://resources")).toBe(false);
+    // The engine's folder blurbs and anything nested are not entries.
+    expect(inRoundSearchScope(`${ROOT}/experiences/.abstract.md`)).toBe(false);
+    expect(inRoundSearchScope(`${ROOT}/experiences/.overview.md`)).toBe(false);
+    expect(inRoundSearchScope(`${ROOT}/experiences/sub/x.md`)).toBe(false);
+    expect(inRoundSearchScope(`${ROOT}/experiences/`)).toBe(false);
   });
 
   it("keeps the retired list fresh on its own — the head no longer sweeps the store", async () => {
@@ -1167,7 +1172,10 @@ describe("the relayout plan over a fixture shaped like the live store", () => {
   it("a #bug line quoted inside a fence is somebody else's text: no move, no kind=bug (integration review)", () => {
     const lesson =
       "#refuted #eod-learning\n\ntype: refuted — the author explained it.\n\nThe reply:\n```text\n#bug\nkind=bug filed=FT-1\n```\n";
-    const plan = planRelayout({ entries: [entryFrom("experiences/l.md", lesson, "")], retired: [] });
+    const plan = planRelayout({
+      entries: [entryFrom("experiences/l.md", lesson, "")],
+      retired: [],
+    });
     expect(plan.actions).toMatchObject([{ kind: "stay", id: "experiences/l.md" }]);
     expect(looseTags(lesson).hash.has("bug")).toBe(false);
     expect(looseTags(lesson).kv["kind"]).toBeUndefined();
@@ -1288,6 +1296,45 @@ describe("the relayout plan over a fixture shaped like the live store", () => {
       kind: "rewrite",
       text: "#operations #bug kind=bug area=operations an ops note already in events",
     });
+  });
+
+  it("an adjudication the curation retires supersedes no needs-attention note", () => {
+    const plan = planRelayout({
+      entries: [
+        entryFrom(
+          "experiences/adj.md",
+          "#adjudication #feedback pr=5359 episode=comment-9 attribution=accepted-policy-cost changed=no Complaint: carve-out rejected.\n",
+          "",
+        ),
+        entryFrom(
+          "experiences/na.md",
+          "#feedback-review #feedback pr=5359 episode=comment-9 status=needs-attention Reason: open.\n",
+          "",
+        ),
+      ],
+      retired: [],
+    });
+    expect(plan.actions.find((a) => a.id === "experiences/adj.md")).toMatchObject({
+      kind: "retire",
+    });
+    // the needs-attention note is a feedback event, moved — not retired as answered
+    expect(plan.actions.find((a) => a.id === "experiences/na.md")).toMatchObject({
+      kind: "move",
+      to: "events/na.md",
+    });
+  });
+
+  it("an entry rewritten in place keeps the hand-decision note a move would carry", () => {
+    const plan = planRelayout({
+      entries: [entryFrom("events/z.md", "# Title\n\nTags: #bug #operations\n", "")],
+      retired: [],
+    });
+    const z = plan.actions.find((a) => a.id === "events/z.md")!;
+    expect(z).toMatchObject({ kind: "rewrite" });
+    expect(z.kind === "rewrite" && z.note).toMatch(/make it kind=bug by hand/);
+    expect(renderRelayoutPlan(plan, ROOT).join("\n")).toMatch(
+      /rewrite events\/z\.md .*header fixed in place\) — its tag lines say bug/,
+    );
   });
 
   it("the tolerant reader takes tag LINES, never a tag quoted in prose", () => {

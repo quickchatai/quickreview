@@ -50,8 +50,8 @@ import {
   tomlString,
   type TomlEdit,
 } from "./configfill.js";
-import { CHOICE_KEYS } from "../choices.js";
-import { readCredentials } from "./githubapp.js";
+import { CHOICE_KEYS, botLoginFor } from "../choices.js";
+import { api, readCredentials } from "./githubapp.js";
 
 export const APP_SLUG_STEP_ID = "app_slug_reconcile";
 
@@ -65,10 +65,7 @@ export interface AppSlugStepOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** The bot login GitHub gives an App with this slug. One rule, one place. */
-export function botLoginFor(slug: string): string {
-  return `${slug}[bot]`;
-}
+export { botLoginFor };
 
 /**
  * The edits that make config.toml agree with the App's real slug. Empty when
@@ -105,28 +102,14 @@ async function liveIdentity(
     };
   }
   const jwt = mintAppJwt(creds.appId!, creds.pem!, () => ctx.adapters.clock().getTime());
-  let status = 0;
-  let body: unknown = null;
-  try {
-    const res = await ctx.adapters.fetch(`${apiBase}/app`, {
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${jwt}`,
-        "user-agent": "quickreview-onboarding",
-      },
-    });
-    status = res.status;
-    const text = await res.text();
-    try {
-      body = text ? (JSON.parse(text) as unknown) : null;
-    } catch {
-      body = null;
-    }
-  } catch (err) {
+  const { status, body, text } = await api(ctx.adapters.fetch, `${apiBase}/app`, {
+    headers: { authorization: `Bearer ${jwt}` },
+  });
+  if (status === 0) {
     return {
       ok: false,
       slug: "",
-      detail: `could not reach GitHub to ask the App who it is (${String(err)}) — Fix: check this machine's network, then run this step again`,
+      detail: `could not reach GitHub to ask the App who it is (${text}) — Fix: check this machine's network, then run this step again`,
     };
   }
   if (status !== 200) {

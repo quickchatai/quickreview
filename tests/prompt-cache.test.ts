@@ -24,7 +24,9 @@ import {
 } from "../extensions/subagents.js";
 import { appendedPromptPath, packFirstPayload } from "../extensions/leaf-cache.js";
 import {
+  CHARS_PER_TOKEN,
   mustSeeCandidates,
+  omittedNote,
   readWorktreeFileForPack,
   renderContextPack,
 } from "../src/contextpack.js";
@@ -321,6 +323,80 @@ describe("the context pack (daemon side)", () => {
     expect(one.diffFiles).toEqual(["a.py"]);
     expect(one.diffOmitted).toEqual(["b.py", "c.bin"]);
     expect(one.text).toContain("`b.py`, `c.bin`");
+  });
+
+  it("full text skips generated, vendored and fixture files and conftest — and still reads prose and build sources", () => {
+    const files = [
+      f("app/core.py", 5, "@@ +1 @@\n+c"),
+      f("dist/bundle.js", 900, "@@ +1 @@\n+d"),
+      f("generated/schema.ts", 800, "@@ +1 @@\n+g"),
+      f("fixtures/data.ts", 700, "@@ +1 @@\n+f"),
+      f("backend/conftest.py", 600, "@@ +1 @@\n+t"),
+      f("vendor/lib.go", 500, "@@ +1 @@\n+v"),
+      f("spec/models/user_spec.rb", 400, "@@ +1 @@\n+s"),
+      f("app/migrations/0042_x.py", 300, "@@ +1 @@\n+m"),
+      f("README.md", 200, "@@ +1 @@\n+r"),
+      f("build/gen.py", 100, "@@ +1 @@\n+b"),
+      f("app/locales/en.json", 50, "@@ +1 @@\n+l"),
+    ];
+    expect(mustSeeCandidates(files).map((x) => x.filename)).toEqual([
+      "README.md",
+      "build/gen.py",
+      "app/locales/en.json",
+      "app/core.py",
+    ]);
+  });
+
+  it("stays within its budget however many files the note has to name", () => {
+    const files = [
+      f("a.py", 1, "x".repeat(2400)),
+      ...Array.from({ length: 400 }, (_, i) => f(`pkg/module_${i}/very_long_file_name_${i}.py`, 1)),
+    ];
+    const pack = renderContextPack({
+      pr: 1,
+      headSha: "h",
+      mergeBase: "m",
+      files,
+      readFile: (p) => `# ${p}\n${"z".repeat(200)}\n`,
+      maxTokens: 1000,
+    });
+    expect(pack.chars).toBeLessThanOrEqual(1000 * CHARS_PER_TOKEN);
+    expect(pack.diffOmitted).toHaveLength(400);
+    // The note names what fits and counts the rest.
+    expect(pack.text).toMatch(/and \d+ more \(the PR's file list names them\)\.\n$/);
+  });
+
+  it("names every omitted file whenever the budget holds the list, however long", () => {
+    const files = [
+      f("a.py", 1, "x".repeat(100)),
+      ...Array.from({ length: 30 }, (_, i) => f(`pkg/module_${i}/file_name_${i}.py`, 1)),
+    ];
+    const pack = renderContextPack({
+      pr: 1,
+      headSha: "h",
+      mergeBase: "m",
+      files,
+      readFile: () => undefined,
+      maxTokens: 10_000,
+    });
+    const note = pack.text.slice(pack.text.indexOf("## Not in this pack"));
+    expect(note.length).toBeGreaterThan(600);
+    expect(note).not.toContain("more (the PR's file list names them)");
+    for (const p of pack.diffOmitted) expect(note).toContain(`\`${p}\``);
+  });
+
+  it("names every omitted file when the list fits, and counts them when none fits", () => {
+    expect(omittedNote(["b.py", "c.bin"], 600)).toBe(
+      "## Not in this pack\n\nRead these files' changes yourself: `b.py`, `c.bin`.\n",
+    );
+    const long = ["x".repeat(700)];
+    expect(omittedNote(long, 600)).toBe(
+      "## Not in this pack\n\nRead these files' changes yourself: 1 file (the PR's file list names them).\n",
+    );
+    for (const n of [1, 5, 50, 500]) {
+      const paths = Array.from({ length: n }, (_, i) => `dir/file_${i}.ts`);
+      expect(omittedNote(paths, 600).length).toBeLessThanOrEqual(600);
+    }
   });
 
   it("reads only regular files inside the worktree — never a symlink a PR planted", () => {
