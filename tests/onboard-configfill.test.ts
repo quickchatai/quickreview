@@ -852,6 +852,55 @@ describe("answers given as the tool's arguments (no prompter)", () => {
   });
 });
 
+describe("re-runs that carry the checklist forward", () => {
+  it("an argument changes an answer this step recorded itself on an earlier run", async () => {
+    const first = await runStep({
+      noPrompter: true,
+      input: { ...fullAnswers(), base_branch: "mian" },
+    });
+    expect(failed(first.report)).toBe("");
+    expect(first.choices[CHOICE_KEYS.baseBranch]).toBe("mian");
+    const second = await runStep({
+      noPrompter: true,
+      input: { base_branch: "main", repo: "acme/other" },
+      choices: first.choices,
+      data: first.report.data,
+    });
+    expect(failed(second.report)).toBe("");
+    const cfg = producedConfig();
+    expect(cfg.github.base_branch).toBe("main");
+    expect(cfg.github.repo).toBe("acme/other");
+    expect(second.choices[CHOICE_KEYS.baseBranch]).toBe("main");
+    expect(second.report.checks.some((c) => /was not used/.test(c.detail))).toBe(false);
+  });
+
+  it("a hand edit of config.toml survives a re-run with no argument for it", async () => {
+    const first = await runStep({ noPrompter: true, input: fullAnswers() });
+    const path = join(root, "config.toml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(/^base_branch = "main"/m, 'base_branch = "develop"'),
+    );
+    const second = await runStep({
+      noPrompter: true,
+      choices: first.choices,
+      data: first.report.data,
+    });
+    expect(failed(second.report)).toBe("");
+    expect(producedConfig().github.base_branch).toBe("develop");
+  });
+
+  it("says so when an argument answers a question the recorded shape does not ask", async () => {
+    const { report } = await runStep({ noPrompter: true, input: fullAnswers() });
+    expect(failed(report)).toBe("");
+    const note = report.checks.find((c) => c.name === "answer:ssh_host")!;
+    expect(note.ok).toBe(true);
+    expect(note.detail).toMatch(
+      /"review-vm" was not used — the recorded topology\/ingress does not ask/,
+    );
+  });
+});
+
 describe("a kept value passes the same validator as a fresh one", () => {
   it("refuses an existing config's checkout path that no longer exists", async () => {
     await runStep();

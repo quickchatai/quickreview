@@ -52,7 +52,9 @@ import {
 } from "../../config.js";
 import {
   CHOICE_KEYS,
+  CHOICE_WRITERS,
   REPO_SLUG_RE,
+  type ChoiceName,
   botLoginFor,
   ingressChoiceOf,
   type IngressChoice,
@@ -712,10 +714,20 @@ export interface CollectResult {
   rejected: Array<{ id: AnswerKey; guidance: string }>;
   /** Questions that were actually put to the operator this run. */
   asked: AnswerKey[];
-  /** Arguments that were not used because a sibling step's recorded value
-   * settles the question — said out loud, never dropped silently. */
-  ignored: Array<{ id: AnswerKey; given: string; kept: string }>;
+  /** Arguments that were not used — a sibling step's recorded value settles
+   * the question, or the recorded shape does not ask it — said out loud,
+   * never dropped silently. */
+  ignored: Array<{ id: AnswerKey; detail: string }>;
 }
+
+/** Choice keys this step alone writes. A value recorded under one is this
+ * step's OWN earlier answer — never a sibling's word — so it ranks with the
+ * previous answers a fresh argument overrides, not above them. */
+const OWN_ANSWER_KEYS: ReadonlySet<string> = new Set(
+  (Object.keys(CHOICE_WRITERS) as ChoiceName[])
+    .filter((n) => CHOICE_WRITERS[n].length === 1 && CHOICE_WRITERS[n][0] === CONFIG_FILL_STEP_ID)
+    .map((n) => CHOICE_KEYS[n]),
+);
 
 /** The tool argument for one question: a string the operator gave, or null
  * when the call did not carry one. */
@@ -735,13 +747,14 @@ function argumentHint(q: Question): string {
 export const MAX_ATTEMPTS = 3;
 
 /**
- * Run the interview. Precedence per question: a value a sibling step already
- * recorded in the checklist > a fresh answer (the tool argument, else the
- * prompter's) > this step's own previous answer / the current config value
- * (the default a blank answer keeps). With neither an argument nor a prompter
- * the recorded/current values stand alone, and anything genuinely unanswered
- * is reported — never guessed. Every value that lands, whatever its source,
- * passes the question's validator.
+ * Run the interview. Precedence per question: a value a SIBLING step recorded
+ * in the checklist (a key some other step writes) > a fresh answer (the tool
+ * argument, else the prompter's) > the default a blank answer keeps: the
+ * current config value when the config parses (the file wins, as verify says),
+ * else this step's own previous answer. With neither an argument nor a
+ * prompter the recorded/current values stand alone, and anything genuinely
+ * unanswered is reported — never guessed. Every value that lands, whatever
+ * its source, passes the question's validator.
  */
 export async function collectAnswers(
   ctx: StepContext,
@@ -757,15 +770,35 @@ export async function collectAnswers(
   const ignored: CollectResult["ignored"] = [];
 
   for (const q of QUESTIONS) {
-    if (!questionAsked(q, choices)) continue;
     const given = inputAnswer(ctx, q.id);
-    const recorded = (q.from ?? []).map((k) => str(choices, k)).find((v) => v.length > 0) ?? "";
-    if (recorded && q.validate(recorded) === null) {
-      answers[q.id] = recorded;
-      if (given && given !== recorded) ignored.push({ id: q.id, given, kept: recorded });
+    if (!questionAsked(q, choices)) {
+      if (given)
+        ignored.push({
+          id: q.id,
+          detail: `the argument "${given}" was not used — the recorded topology/ingress does not ask this question`,
+        });
       continue;
     }
-    const fallback = previous[q.id] ?? (cfg ? q.read(cfg) : "") ?? "";
+    const from = q.from ?? [];
+    const recorded =
+      from
+        .filter((k) => !OWN_ANSWER_KEYS.has(k))
+        .map((k) => str(choices, k))
+        .find((v) => v.length > 0) ?? "";
+    if (recorded && q.validate(recorded) === null) {
+      answers[q.id] = recorded;
+      if (given && given !== recorded)
+        ignored.push({
+          id: q.id,
+          detail: `kept "${recorded}", which an earlier step recorded — the argument "${given}" was not used (re-run the step that owns it to change it)`,
+        });
+      continue;
+    }
+    const ownRecorded = from
+      .filter((k) => OWN_ANSWER_KEYS.has(k))
+      .map((k) => str(choices, k))
+      .find((v) => v.length > 0);
+    const fallback = cfg ? q.read(cfg) : (previous[q.id] ?? ownRecorded ?? "");
     if (given !== null || !prompter) {
       const value = given || fallback;
       if (!value) {
@@ -1001,7 +1034,7 @@ export function configFillStep(): OnboardingStep {
       const checks: CheckResult[] = collected.ignored.map((i) => ({
         name: `answer:${i.id}`,
         ok: true,
-        detail: `kept "${i.kept}", which an earlier step recorded — the argument "${i.given}" was not used (re-run the step that owns it to change it)`,
+        detail: i.detail,
       }));
       if (collected.missing.length || collected.rejected.length) {
         for (const m of collected.missing) {
