@@ -45,13 +45,19 @@
 import { createPrivateKey, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { dirname, isAbsolute, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
 import { mintAppJwt } from "../../githubAuth.js";
-import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS } from "../choices.js";
 import { CONFIG_FILL_STEP_ID } from "./configfill.js";
-import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import { secretsDirFor } from "./ingress.js";
+import {
+  sandboxRoot,
+  type CheckResult,
+  type OnboardingStep,
+  type StepContext,
+  type StepReport,
+} from "../engine.js";
 
 export const GITHUB_APP_STEP_ID = "github_app";
 
@@ -848,15 +854,10 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
         "and records it for this step."
       );
     }
-    const choiceDir =
-      typeof ctx.choices[CHOICE_KEYS.secretsDir] === "string"
-        ? (ctx.choices[CHOICE_KEYS.secretsDir] as string).trim()
-        : "";
-    // The install locator decides whatever the choice does not name.
-    const secretsDir =
-      opts.secretsDir ??
-      locateSecrets({ configured: choiceDir, override: process.env.QC_SECRETS_DIR }).path;
-    const root = opts.repoRoot ?? dirname(ctx.adapters.paths.stateDir);
+    // The one resolution every step uses: config.toml, then the recorded
+    // choice, then $QC_SECRETS_DIR, then the install locator.
+    const secretsDir = opts.secretsDir ?? secretsDirFor(ctx.adapters, ctx.choices);
+    const root = opts.repoRoot ?? sandboxRoot(ctx.adapters.paths);
     return {
       root,
       secretsDir: isAbsolute(secretsDir) ? secretsDir : join(root, secretsDir),

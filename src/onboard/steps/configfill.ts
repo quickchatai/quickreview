@@ -40,8 +40,8 @@
 // step already recorded; config reads/writes are plain files under the
 // sandbox root derived from `adapters.paths.stateDir`. Tests point stateDir at
 // a temp dir and fake the prompter — no network, no docker, no real repo write.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
   assertIanaTimeZone,
   expandHome,
@@ -49,9 +49,17 @@ import {
   loadConfig,
   type Config,
 } from "../../config.js";
-import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, ingressChoiceOf, type IngressChoice } from "../choices.js";
-import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import {
+  readTextOrNull,
+  sandboxRoot,
+  writeAtomic,
+  type CheckResult,
+  type OnboardingStep,
+  type StepContext,
+  type StepReport,
+} from "../engine.js";
+import { secretsDirFor } from "./ingress.js";
 
 export const CONFIG_FILL_STEP_ID = "config_fill";
 
@@ -648,7 +656,7 @@ export const DERIVABLES: readonly Derivable[] = [
 // ---- fill ------------------------------------------------------------------
 
 export function rootFromStateDir(stateDir: string): string {
-  return resolve(stateDir, "..");
+  return sandboxRoot({ stateDir });
 }
 
 export function templatePathFor(root: string): string {
@@ -664,22 +672,7 @@ export const DEFAULT_SECRETS_DIR = "";
 export const REQUIRED_SECRETS: readonly string[] = ["app_id", "app.pem", "webhook_secret"];
 export const TUNNEL_SHAPE_SECRET = "tunnel_token";
 
-function writeAtomic(path: string, content: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = join(dirname(path), `.${path.split("/").at(-1)}.tmp`);
-  writeFileSync(tmp, content);
-  renameSync(tmp, path);
-}
-
-function readIfPresent(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-}
-
-/** Like `readIfPresent`, but only ABSENCE is null: a file that exists and
+/** Unlike `readTextOrNull`, only ABSENCE is null: a file that exists and
  * cannot be read is an error, never "no config" — the template must not be
  * renamed over an operator's file (and its dry_run) we could not even see. */
 function readExisting(path: string): { text: string | null; error: string | null } {
@@ -879,11 +872,8 @@ export function changedEdits(text: string, edits: readonly TomlEdit[]): TomlEdit
   });
 }
 
-function secretsReport(secretsDir: string): CheckResult {
-  const dir = locateSecrets({
-    configured: secretsDir,
-    override: process.env.QC_SECRETS_DIR,
-  }).path;
+/** What the secrets dir holds, at the one resolution every step uses. */
+function secretsReport(dir: string): CheckResult {
   if (!existsSync(dir)) {
     return {
       name: "secrets",
@@ -891,7 +881,7 @@ function secretsReport(secretsDir: string): CheckResult {
       detail: `${dir} does not exist yet — the App credential lands there (the manifest step writes it, or run \`bash deploy/collect-secrets.sh\`)`,
     };
   }
-  const shape = (readIfPresent(join(dir, "deploy_shape")) ?? "").trim();
+  const shape = (readTextOrNull(join(dir, "deploy_shape")) ?? "").trim();
   const required = [...REQUIRED_SECRETS, ...(shape === "tunnel" ? [TUNNEL_SHAPE_SECRET] : [])];
   const missing = required.filter((f) => !existsSync(join(dir, f)));
   return {
@@ -987,7 +977,7 @@ export function configFillStep(): OnboardingStep {
         };
       }
       const existing = current.text;
-      const source = existing ?? readIfPresent(templatePath);
+      const source = existing ?? readTextOrNull(templatePath);
       if (source === null) {
         return {
           ok: false,
@@ -1108,7 +1098,8 @@ export function configFillStep(): OnboardingStep {
           `ingress ${facts.ingress || "(unrecorded — filled for an ingress that assigns its own hostname, so [server] hostname stays empty)"}` +
           `${str(ctx.choices, CHOICE_KEYS.authRoute) ? `, auth route ${str(ctx.choices, CHOICE_KEYS.authRoute)}` : ""}`,
       });
-      checks.push(secretsReport(facts.secrets_dir));
+      // Read after the write, so the dir is the one the written config names.
+      checks.push(secretsReport(secretsDirFor(ctx.adapters, ctx.choices)));
 
       const ok = checks.every((c) => c.ok);
       if (ok) recordChoices(ctx, facts, configPath, parsed);

@@ -22,26 +22,32 @@
 // only step that may touch `dry_run` is golive.ts, and it is the only
 // onboarding file that writes that key at all (root CLAUDE.md rule 1).
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { locateSecrets } from "../../install.js";
-import { CHOICE_KEYS } from "../choices.js";
-import type {
-  CheckResult,
-  OnboardAdapters,
-  ProcessResult,
-  ProcessRunner,
-  StepContext,
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import {
+  readTextOrNull,
+  sandboxRoot,
+  writeAtomic,
+  type CheckResult,
+  type OnboardAdapters,
+  type ProcessResult,
+  type ProcessRunner,
+  type StepContext,
 } from "../engine.js";
 import {
   INGRESS_CHOICE_KEY,
+  isUp,
   optionFor,
   parseComposePs,
   readEnvKey,
-  readTomlKey,
+  secretsDirFor,
   type IngressOption,
   type RunningService,
 } from "./ingress.js";
+
+// The wizard's shared file helpers, re-exported for the steps that reach them
+// through this module.
+export { isUp, readTextOrNull, secretsDirFor, writeAtomic };
 
 /** The compose service that runs the daemon (docker-compose.yml). */
 export const DAEMON_SERVICE = "daemon";
@@ -53,7 +59,7 @@ export const CONTAINER_DRYRUN_DIR = `${CONTAINER_STATE_DIR}/dryrun`;
 
 /** `<sandbox root>` — the engine's contract is stateDir = `<root>/state`. */
 export function rootOf(adapters: OnboardAdapters): string {
-  return resolve(adapters.paths.stateDir, "..");
+  return sandboxRoot(adapters.paths);
 }
 
 /** The live config.toml — the install locator's answer, captured on the
@@ -62,58 +68,12 @@ export function configPath(adapters: OnboardAdapters): string {
   return adapters.paths.configPath;
 }
 
-export function readTextOrNull(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-}
-
 export function readConfigText(adapters: OnboardAdapters): string | null {
   return readTextOrNull(configPath(adapters));
 }
 
-/** tmp+rename, the convention every other wizard writer uses: a reader (the
- * daemon's own loader, one bind mount away) never sees a half-written file. */
-export function writeAtomic(path: string, content: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = join(dirname(path), `.${path.split(sep).at(-1)}.onboard.tmp`);
-  writeFileSync(tmp, content);
-  renameSync(tmp, path);
-}
-
 export function readEnvText(root: string): string {
   return readTextOrNull(join(root, ".env")) ?? "";
-}
-
-/**
- * The daemon-side secrets dir. config.toml is the truth once the config step
- * has run (it is what the daemon itself reads); a recorded choice and
- * `$QC_SECRETS_DIR` cover the earlier states, and the install locator
- * has the last word: `<config home>/secrets` — the same answer the
- * daemon's loader reaches.
- */
-export function secretsDirFor(
-  adapters: OnboardAdapters,
-  choices: Readonly<Record<string, unknown>>,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  const root = rootOf(adapters);
-  const configText = readConfigText(adapters);
-  const fromConfig = (configText ? readTomlKey(configText, "github", "secrets_dir") : null)?.trim();
-  const raw = choices[CHOICE_KEYS.secretsDir];
-  const choice = typeof raw === "string" ? raw.trim() : "";
-  const located = locateSecrets({
-    configured: fromConfig || choice,
-    override: env.QC_SECRETS_DIR,
-    env,
-  });
-  return absolutize(root, located.path);
-}
-
-function absolutize(root: string, path: string): string {
-  return isAbsolute(path) ? path : join(root, path);
 }
 
 /** The ingress shape the operator picked, or null when none is recorded. */
@@ -158,10 +118,6 @@ export async function composePs(runner: ProcessRunner, root: string): Promise<Ps
     };
   }
   return { ok: true, rows: parseComposePs(ps.stdout), detail: "" };
-}
-
-export function isUp(row: RunningService | undefined): boolean {
-  return row !== undefined && /running|up/i.test(row.state);
 }
 
 export function serviceRow(
