@@ -20,6 +20,7 @@ import {
   memoryOrder,
   memoryRows,
   pinnedBudget,
+  pinnedOverrun,
 } from "../src/tui/memtab.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
 import { FakeMemory, SAMPLE, learningRig, settle, type Rig } from "./helpers/tui-rig.js";
@@ -182,6 +183,24 @@ describe("the reading pane", () => {
       `${raw.ts}|reviewer:${raw.id}#${raw.block}`,
     ]);
     expect(screenOf(rig, 140, 40)).toContain("☆ 1 proposed pin");
+  });
+
+  it("a timeline filter that hides the pins does not hide their overrun", async () => {
+    const md = `<!-- 2026-08-20 08:00:00 [aa] -->\n#pinned ${"x".repeat(2000)}\n\n${SAMPLE}`;
+    const rig = await loaded({ mem: new FakeMemory(md) });
+    rig.learning.memory.filter = "bug";
+    expect(screenOf(rig)).toContain("⚠ pinned");
+  });
+
+  it("pins are priced per user head, never summed across the merged timeline", () => {
+    const pin = (user: string, n: number): MemoryEntry => ({
+      ...parseMemory(`<!-- 2026-08-20 08:00:00 [aa] -->\n#pinned ${"x".repeat(n)}\n`)[0]!,
+      id: `${user}:preferences/pinned/a.md`,
+    });
+    expect(pinnedOverrun([pin("reviewer", 1200), pin("companion", 1200)])).toBeUndefined();
+    expect(pinnedOverrun([pin("reviewer", 2000), pin("companion", 1200)])).toMatchObject({
+      user: "reviewer",
+    });
   });
 
   it("tags are not printed twice in the list line", async () => {

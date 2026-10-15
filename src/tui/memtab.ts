@@ -193,6 +193,27 @@ export function dayJump(ordered: MemoryEntry[], sel: number, dir: 1 | -1): numbe
  * against the same one. */
 export { pinnedBudget };
 
+/**
+ * The worst pinned-head overrun among `entries`, if any. Each user's pinned
+ * area is the head of that user's own sessions, so pins are priced per user
+ * (the namespace in the TUI's id), never summed across the merged timeline;
+ * and the caller passes every loaded entry, since a timeline filter narrows
+ * the view, never the head.
+ */
+export function pinnedOverrun(entries: MemoryEntry[]): { user: string; chars: number } | undefined {
+  const byUser = new Map<string, MemoryEntry[]>();
+  for (const e of entries) {
+    const user = splitNsId(e.id).user;
+    byUser.set(user, [...(byUser.get(user) ?? []), e]);
+  }
+  let worst: { user: string; chars: number } | undefined;
+  for (const [user, mine] of byUser) {
+    const b = pinnedBudget(mine);
+    if (b.over && (worst === undefined || b.chars > worst.chars)) worst = { user, chars: b.chars };
+  }
+  return worst;
+}
+
 /** Every click target on the memory tab. */
 export type MemAction =
   { t: "key"; key: string } | { t: "mem"; i: number } | { t: "url"; url: string };
@@ -304,8 +325,10 @@ export function renderMemoryTab(
     left.push(`${MUTED}nothing below is memory — the store did not answer.${RESET}`);
     left.push(`${MUTED}r retries; verbs will refuse until it is back.${RESET}`);
   } else {
-    const budget = pinnedBudget(ordered);
-    const budgetNote = budget.over ? ` ${WARN}⚠ pinned ${budget.chars}ch${RESET}` : "";
+    const overrun = pinnedOverrun(store.entries);
+    const budgetNote = overrun
+      ? ` ${WARN}⚠ pinned ${overrun.chars}ch${overrun.user ? ` (${overrun.user})` : ""}${RESET}`
+      : "";
     const fl = memoryFilterLabel(st.filter);
     const proposals = store.pinProposals.size;
     const proposalNote =
