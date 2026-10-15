@@ -9,6 +9,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
 } from "node:fs";
@@ -693,6 +694,16 @@ export function ensureLocallyIgnored(root: string, dirName: string): boolean {
   }
 }
 
+/** Do two paths name the same directory? Both resolved through symlinks; one
+ * that does not resolve names nothing. */
+function samePath(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
+}
+
 export class WorktreeManager {
   readonly root: string;
   readonly basePath: string;
@@ -785,13 +796,35 @@ export class WorktreeManager {
     await this.ensureBaseClone();
     mkdirSync(this.wtRoot, { recursive: true });
     const path = this.worktreePath(pr);
-    if (existsSync(path)) {
+    if (existsSync(path) && (await this.isOwnWorktree(path))) {
       await this.git(["reset", "--hard", sha], path);
       await this.git(["clean", "-fdx"], path);
+    } else if (existsSync(path)) {
+      // Not this clone's registered worktree — an interrupted `worktree add`,
+      // a lost gitfile, a stray directory. Git run inside it would discover
+      // whatever repository encloses the sandbox, so it is rebuilt instead.
+      // `--force` twice re-adds a path still registered (even locked, as an
+      // interrupted add leaves it) whose checkout is gone.
+      rmSync(path, { recursive: true, force: true });
+      await this.git(["worktree", "add", "--force", "--force", "--detach", path, sha]);
     } else {
       await this.git(["worktree", "add", "--detach", path, sha]);
     }
     return path;
+  }
+
+  /** Is `path` a linked worktree of the base clone — its own top level, its
+   * common git dir the clone's? Anything else, or a git that cannot say, is
+   * not. */
+  private async isOwnWorktree(path: string): Promise<boolean> {
+    if (!existsSync(join(path, ".git"))) return false;
+    const res = await this.run("git", ["rev-parse", "--show-toplevel", "--git-common-dir"], {
+      cwd: path,
+    });
+    if (res.code !== 0) return false;
+    const [top, common] = res.stdout.trim().split("\n");
+    if (!top || !common) return false;
+    return samePath(top, path) && samePath(resolve(path, common), join(this.basePath, ".git"));
   }
 
   /**

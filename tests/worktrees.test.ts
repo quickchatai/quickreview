@@ -199,6 +199,35 @@ describe("WorktreeManager", () => {
     expect(await m.headSha(7)).toBe(first);
   });
 
+  it("a wt/pr-<n> directory that is not the registered worktree is rebuilt, never reset in the enclosing checkout", async () => {
+    // The sandbox root is itself a checkout (the dev box), so git run inside
+    // a directory with no `.git` of its own discovers THAT repository.
+    git(root, "init", "-q", "-b", "master");
+    writeFileSync(join(root, "app.txt"), "sandbox\n");
+    git(root, "add", "app.txt");
+    git(root, "commit", "-q", "-m", "sandbox");
+    const sandboxHead = git(root, "rev-parse", "HEAD").trim();
+
+    const sha = commit("feature.txt", "v1\n");
+    publishPullHead(7, sha);
+    const m = mgr();
+    // An interrupted `worktree add`: the directory exists, its gitfile not.
+    mkdirSync(join(root, "wt", "pr-7"), { recursive: true });
+    writeFileSync(join(root, "wt", "pr-7", "partial.txt"), "x\n");
+
+    const facts = await m.ensureWorktree(7);
+    expect(readFileSync(join(facts.path, "feature.txt"), "utf8")).toBe("v1\n");
+    expect(existsSync(join(facts.path, "partial.txt"))).toBe(false);
+    expect(await m.headSha(7)).toBe(sha);
+    expect(git(root, "rev-parse", "HEAD").trim()).toBe(sandboxHead);
+
+    // A registered worktree whose gitfile was lost is rebuilt the same way.
+    rmSync(join(facts.path, ".git"));
+    await m.checkoutAt(7, sha);
+    expect(await m.headSha(7)).toBe(sha);
+    expect(git(root, "rev-parse", "HEAD").trim()).toBe(sandboxHead);
+  });
+
   it("hasCommit distinguishes a fetched sha from an unknown one", async () => {
     const sha = commit("a.txt", "x\n");
     publishPullHead(7, sha);
