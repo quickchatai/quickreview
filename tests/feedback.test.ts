@@ -132,13 +132,35 @@ describe("dayScopedRebuild — the day-change agents rebuild wire.ts runs", () =
     today = "2026-01-15";
     fail = true;
     expect(() => r.tick()).toThrow("ENOSPC");
-    // Yesterday's addendum must not be treated as today's build.
-    expect(r.builtDay()).toBe("2026-01-14");
+    // Yesterday's addendum must not be treated as today's build: the build
+    // that started never landed, so no day is built.
+    expect(r.builtDay()).toBeNull();
 
     fail = false;
     r.tick(); // the next 5-minute tick retries and lands today's build
     expect(built).toEqual(["2026-01-14", "2026-01-15"]);
     expect(r.builtDay()).toBe("2026-01-15");
+  });
+
+  it("a SAME-DAY rebuild that throws (a [feedback] comment's) is retried by the next tick", () => {
+    let fail = false;
+    const built: string[] = [];
+    const r = dayScopedRebuild(
+      () => "2026-01-15",
+      (day) => {
+        if (fail) throw new Error("ENOSPC writing state/agents");
+        built.push(day);
+      },
+    );
+    r.rebuild(); // the boot build
+    fail = true;
+    expect(() => r.rebuild("2026-01-15")).toThrow("ENOSPC"); // the comment's rebuild
+    fail = false;
+    r.tick(); // same day — but the agents on disk miss the comment, so it builds
+    expect(built).toEqual(["2026-01-15", "2026-01-15"]);
+    expect(r.builtDay()).toBe("2026-01-15");
+    r.tick(); // landed: nothing more
+    expect(built).toHaveLength(2);
   });
 
   it("an explicit day (the [feedback] ingest path) builds that day", () => {

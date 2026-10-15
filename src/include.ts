@@ -654,6 +654,11 @@ export function configAddenda(review: {
 // built body is shared by every round in flight, so it carries the rule and
 // never one PR's lessons.
 export const LESSON_VALIDATE_ADDENDUM_ID = "lesson-validate";
+
+/** The id of the same-day `[feedback]` validator addendum
+ * (`feedbackDayAddendum`, src/feedback.ts), composed beside the lesson one —
+ * reserved against profile packs by the same name (src/profiles.ts). */
+export const FEEDBACK_DAY_ADDENDUM_ID = "feedback-day-validate";
 /** The one downgrade word a dont-raise lesson licenses (src/findingsrecord.ts
  * DOWNGRADE_WORDS). */
 export const LESSON_SHAPE_WORD = "lesson-shape";

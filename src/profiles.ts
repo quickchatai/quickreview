@@ -68,7 +68,13 @@ import type { EcosystemName } from "./ecosystem.js";
 import { ALL_PASSES } from "./dispatch.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
-import { LESSON_VALIDATE_ADDENDUM_ID, PASS_ADDENDA, SCAN_PASS, splitFrontmatter } from "./include.js";
+import {
+  FEEDBACK_DAY_ADDENDUM_ID,
+  LESSON_VALIDATE_ADDENDUM_ID,
+  PASS_ADDENDA,
+  SCAN_PASS,
+  splitFrontmatter,
+} from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
 import {
   locateProfile,
@@ -248,7 +254,7 @@ export function resolveProfileChain(
 export function reservedAddendumIds(): Set<string> {
   return new Set([
     ...PASS_ADDENDA.map((a) => a.id),
-    "feedback-day-validate",
+    FEEDBACK_DAY_ADDENDUM_ID,
     // The lesson addendum wire.ts composes beside it under `[memory]
     // delivery = "on"` (src/include.ts lessonAddenda).
     LESSON_VALIDATE_ADDENDUM_ID,

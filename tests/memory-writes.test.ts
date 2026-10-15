@@ -34,6 +34,7 @@ import {
   ledgerFeedbackSignal,
   memoryEntryFor,
   memoryEntryForRow,
+  writeFeedbackMemory,
   type FeedbackEvent,
 } from "../src/feedback.js";
 import {
@@ -613,6 +614,30 @@ describe("feedback_signals records the memory write (memory_state/attempts/last_
       memory_last_error: null,
     });
   });
+
+  it("an attempt that fails AFTER another attempt wrote the row says nothing and gives nothing up", async () => {
+    const row = store.recordFeedbackSignalRow({
+      kind: "merged_over_block",
+      pr: 1,
+      day: "2026-10-06",
+    })!;
+    // The pump's attempt lands while the ingest's (holding the same pending
+    // row) is still out; the ingest's then fails, at what would be its cap.
+    expect(store.markFeedbackMemory(row.id, { state: "written", uri: "u" })).toBe(true);
+    const memory = new FakeMemory();
+    memory.refuse = "memory write timed out after 4000ms";
+    const gaveUp = vi.fn();
+    const outcome = await writeFeedbackMemory(
+      { store, memory, maxAttempts: 1, onGaveUp: gaveUp },
+      row,
+    );
+    expect(outcome).toBe("written");
+    expect(gaveUp).not.toHaveBeenCalled();
+    expect(store.recentEvents(10).some((e) => e.kind === "feedback_memory_write_failed")).toBe(
+      false,
+    );
+    expect(store.feedbackSignal(row.id)).toMatchObject({ memory_state: "written" });
+  });
 });
 
 describe("every signal kind renders the same entry from its ledger row as from its event", () => {
@@ -859,6 +884,10 @@ describe("the backfill pump", () => {
     expect(giveUps).toHaveLength(1);
     expect(giveUps[0]![1]).toContain("gave up on 2 feedback signal(s)");
     expect(giveUps[0]![2]).toContain("memory_state = failed");
+    // The wake claims no count of refusals it cannot know: a kind this build
+    // cannot render is given up on at once, with no write at all.
+    expect(giveUps[0]![2]).not.toMatch(/Memory refused each of them/);
+    expect(giveUps[0]![2]).toContain("the errors above say why");
     // A given-up row is not retried by this pump before a day has passed.
     memory.refuse = null;
     expect(await pump.tick()).toMatchObject({ attempted: 0 });
@@ -1332,7 +1361,7 @@ describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () =>
       legacyFeedbackEntry(row, [
         mk(
           "experiences/a.md",
-          "#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment … comment 55 …",
+          '#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (inline thread, comment 55): "too picky" — …',
         ),
       ])?.id,
     ).toBe("experiences/a.md");
@@ -1341,7 +1370,16 @@ describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () =>
       legacyFeedbackEntry(row, [
         mk(
           "experiences/b.md",
-          "#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment … comment 550 …",
+          '#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (inline thread, comment 550): "too picky" — …',
+        ),
+      ]),
+    ).toBeNull();
+    // …nor is one whose QUOTED words mention this one's id.
+    expect(
+      legacyFeedbackEntry(row, [
+        mk(
+          "experiences/q.md",
+          '#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (inline thread, comment 56): "same as comment 55): " too" — …',
         ),
       ]),
     ).toBeNull();

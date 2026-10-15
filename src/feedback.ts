@@ -39,9 +39,10 @@
 // from the LEDGER (`feedbackCommentsForDay`), never from memory — it therefore
 // survives a memory outage untouched.
 import { opsDay } from "./eod.js";
-import { VALIDATE_PASS, type PassAddendum } from "./include.js";
+import { FEEDBACK_DAY_ADDENDUM_ID, VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { FEEDBACK_FULL_TEXT_LABEL, cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags } from "./memory/eventtags.js";
+import { EVENTS_AREA } from "./memory/layout.js";
 import type { MemoryEntry, MemoryStore, MemoryWriteResult } from "./memory/store.js";
 import type { FeedbackSignalRow, StateStore } from "./state.js";
 
@@ -256,10 +257,11 @@ export function memoryEntryFor(e: FeedbackEvent, day: string): string {
 
 /**
  * The day bookkeeping behind wire.ts's agents rebuild. `builtDay` names the
- * day whose build LANDED — it is assigned only after `build` returns, so a
- * build that throws on the day-change tick leaves the old day in place and
- * the next `tick` retries, rather than every later tick seeing "already
- * built" while yesterday's feedback addendum stays in force.
+ * day whose LATEST build landed: it is cleared when a build starts and set
+ * only after `build` returns. So a build that throws — the day-change tick's,
+ * or a same-day rebuild a [feedback] comment asked for — leaves the day
+ * unbuilt and the next `tick` retries it, rather than every later tick seeing
+ * "already built" while the agents on disk miss the addendum.
  */
 export function dayScopedRebuild(
   today: () => string,
@@ -268,6 +270,7 @@ export function dayScopedRebuild(
   let builtDay: string | null = null;
   const rebuild = (day?: string): void => {
     const target = day ?? today();
+    builtDay = null;
     build(target);
     builtDay = target;
   };
@@ -308,7 +311,7 @@ export function feedbackDayAddendum(items: FeedbackSignalRow[], day: string): Pa
       ? `\n- (${omitted} earlier item${omitted === 1 ? "" : "s"} today omitted for size)`
       : "");
   return {
-    id: "feedback-day-validate",
+    id: FEEDBACK_DAY_ADDENDUM_ID,
     scope: [VALIDATE_PASS],
     text:
       `\n## Same-day human feedback — demotion-only scrutiny (sandbox rule, regenerated daily; today: ${day})\n` +
@@ -324,7 +327,7 @@ export function feedbackDayAddendum(items: FeedbackSignalRow[], day: string): Pa
  * directory, beside `kind=bug`/ops signals. Not `experiences/`: that is the
  * curator's, and a batch-write locks the directory it writes into, so a
  * feedback write landing during the EOD sweep would make one of them busy. */
-export const FEEDBACK_EVENTS_CATEGORY = "events";
+export const FEEDBACK_EVENTS_CATEGORY = EVENTS_AREA;
 
 /** How many failed writes the pump spends on one row (while memory is
  * healthy) before it gives up on it — loudly. Giving up is not forever: the
@@ -403,25 +406,51 @@ export function memoryEntryForRow(row: FeedbackSignalRow): string | null {
  * landed — its row was ledgered as a failure. So
  * before backfilling such a row the pump looks for its entry among what the
  * store holds: the same `signal`/`pr`/`day` event tags (header-only, so a
- * quoted comment cannot fake them) and, for a signal with an id, that id in
- * the text. Without this check the backfill would duplicate exactly the
+ * quoted comment cannot fake them) and, for a signal with an id, that id
+ * where the entry's own sentence names it (`ownIdSpelling`) — never anywhere
+ * in the text, where a quoted comment mentioning another signal's id would
+ * pass for it. Without this check the backfill would duplicate exactly the
  * entries whose answer was lost.
  */
 export function legacyFeedbackEntry(
   row: FeedbackSignalRow,
   entries: readonly MemoryEntry[],
 ): MemoryEntry | null {
-  const id = row.comment_id ?? row.review_id;
-  const idRe = id !== null ? new RegExp(`(^|\\D)${id}(\\D|$)`) : null;
+  const spelling = ownIdSpelling(row);
   for (const e of entries) {
     const tags = parseEventTags(e.text);
     if (tags["kind"] !== FEEDBACK_EVENT_KIND) continue;
     if (tags["signal"] !== row.kind || tags["pr"] !== String(row.pr) || tags["day"] !== row.day)
       continue;
-    if (idRe && !idRe.test(e.text)) continue;
+    if (spelling !== null && !beforeQuote(e.text).includes(spelling)) continue;
     return e;
   }
   return null;
+}
+
+/** How the entry's sentence names its own signal's id (`proseFor`), or null
+ * for a signal with no id. Each spelling ends in the text that follows the
+ * id, so `comment 55` never matches `comment 550`. */
+function ownIdSpelling(row: FeedbackSignalRow): string | null {
+  switch (row.kind) {
+    case "feedback_comment":
+      return row.comment_id !== null ? `comment ${row.comment_id}): "` : null;
+    case "review_set_aside":
+      return row.review_id !== null ? `bot review ${row.review_id} on PR #` : null;
+    case "bot_comment_deleted":
+      return row.comment_id !== null ? `bot comment ${row.comment_id} on PR #` : null;
+    default: {
+      const id = row.comment_id ?? row.review_id;
+      return id !== null ? ` ${id} ` : null;
+    }
+  }
+}
+
+/** An entry's text up to and including its first `"` — the header and the
+ * sentence's own words, before any quoted human text begins. */
+function beforeQuote(text: string): string {
+  const q = text.indexOf('"');
+  return q === -1 ? text : text.slice(0, q + 1);
 }
 
 /** What `ledgerFeedbackSignal` did with one event. */
@@ -515,7 +544,14 @@ export async function writeFeedbackMemory(
   const fail = (error: string): FeedbackWriteOutcome => {
     const attempts = row.memory_attempts + 1;
     const gaveUp = text === null || attempts >= max;
-    deps.store.markFeedbackMemory(row.id, { state: gaveUp ? "failed" : "pending", error });
+    if (!deps.store.markFeedbackMemory(row.id, { state: gaveUp ? "failed" : "pending", error })) {
+      // The row already left `pending`: another attempt at it (the ingest's
+      // and the pump's can overlap) settled it first. That attempt's outcome
+      // stands — no failure event, no give-up, for a row this one did not move.
+      const settled = deps.store.feedbackSignal(row.id)?.memory_state;
+      log(`feedback: signal #${row.id} was settled (${settled ?? "?"}) by another attempt`, error);
+      return settled === "written" ? "written" : "failed";
+    }
     log(`feedback: memory write for signal #${row.id} failed (attempt ${attempts})`, error);
     deps.store.logEvent("feedback_memory_write_failed", row.pr, {
       kind: row.kind,
@@ -879,8 +915,8 @@ export class FeedbackMemoryPump {
             (r) =>
               `- #${r.row.id} (PR #${r.row.pr}, ${r.row.kind}, ${r.row.day}): ${r.error.slice(0, 200)}`,
           ),
-        `Memory refused each of them ${this.deps.maxAttempts ?? FEEDBACK_MEMORY_MAX_ATTEMPTS} times while it read healthy.`,
-        "The signals themselves are safe in the feedback_signals ledger (memory_state = failed); the entries they should have produced are not in memory — find out why memory refuses them.",
+        `Each was given up on at its last failed attempt — after ${this.deps.maxAttempts ?? FEEDBACK_MEMORY_MAX_ATTEMPTS} refused writes while memory read healthy, or at once when this build cannot render its kind (the error above says which).`,
+        "The signals themselves are safe in the feedback_signals ledger (memory_state = failed); the entries they should have produced are not in memory — the errors above say why.",
         "Once the cause is fixed nothing else is needed: given-up signals go back in the queue on the daemon's next start and once a day.",
       ].join("\n"),
     );
