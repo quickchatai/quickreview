@@ -15,6 +15,7 @@ import {
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExecFn, ExecResult } from "./tmux.js";
 import { nodeExec, runOrThrow } from "./tmux.js";
+import { parseHunkHeader } from "./hunkheader.js";
 
 export interface WorktreeManagerOptions {
   /** Sandbox root — the clone lives at <root>/<cloneDir>, worktrees at <root>/wt. */
@@ -41,8 +42,10 @@ export interface DiffHunk {
  * headers are read). */
 export function parseDiffHunks(diff: string): DiffHunk[] {
   const out: DiffHunk[] = [];
-  for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/gm))
-    out.push({ old_start: Number(m[1]), old_count: m[2] === undefined ? 1 : Number(m[2]) });
+  for (const line of diff.split("\n")) {
+    const h = parseHunkHeader(line);
+    if (h) out.push({ old_start: h.old_start, old_count: h.old_count });
+  }
   return out;
 }
 
@@ -91,10 +94,10 @@ export function parseDiffHunksByFile(diff: string): Map<string, DiffHunk[]> {
     }
     if (line.startsWith("@@")) inHeader = false;
     if (current === null) continue;
-    const h = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/.exec(line);
+    const h = parseHunkHeader(line);
     if (!h) continue;
     const list = out.get(current) ?? [];
-    list.push({ old_start: Number(h[1]), old_count: h[2] === undefined ? 1 : Number(h[2]) });
+    list.push({ old_start: h.old_start, old_count: h.old_count });
     out.set(current, list);
   }
   return out;
@@ -151,14 +154,13 @@ export function parseNewSideRanges(hunks: string): NewSideParse {
     const inHunk = oldLeft > 0 || newLeft > 0;
     if (!inHunk) {
       flush();
-      const h = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      const h = parseHunkHeader(line);
       if (!h) continue;
       sawHunk = true;
-      oldLeft = h[1] === undefined ? 1 : Number(h[1]);
-      const c = Number(h[2]);
-      newLeft = h[3] === undefined ? 1 : Number(h[3]);
+      oldLeft = h.old_count;
+      newLeft = h.new_count;
       // An empty new side names the line BEFORE the hunk.
-      newLine = newLeft === 0 ? c + 1 : c;
+      newLine = newLeft === 0 ? h.new_start + 1 : h.new_start;
       continue;
     }
     const ch = line[0];
