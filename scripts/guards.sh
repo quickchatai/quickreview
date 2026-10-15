@@ -195,11 +195,12 @@ PY
 # ---- guard 1: a human already approved this head ---------------------------
 
 guard_array_pages() { # guard_array_pages <path?per_page=100> — every page of a bare-array list as ONE JSON array, "" when unreadable
-  # Mirrors pagedArray in src/github.ts: a short page ends it, 30 pages bound
-  # it, and any page that is not an array makes the whole read unreadable —
-  # a truncated list is never passed off as the list.
+  # Mirrors the review reads in src/github.ts (listReviews, listReviewsFull:
+  # pagedArray with no page bound): only a short page ends it, and any page
+  # that is not an array makes the whole read unreadable — a truncated list is
+  # never passed off as the list.
   local path="$1" page body rows="" n
-  for ((page = 1; page <= 30; page++)); do
+  for ((page = 1; ; page++)); do
     body="$(guard_api_get "${path}&page=${page}")"
     body="$(printf '%s' "$body" | jq -c 'select(type == "array")' 2>/dev/null)" || body=""
     [[ -n "$body" ]] || return 0

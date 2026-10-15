@@ -4,7 +4,13 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PostingOutbox, pendingPosting, type PostingJob } from "../src/posting-outbox.js";
-import { roundPostingKey, postingMarker, readPostingReceipt } from "../src/posting-receipt.js";
+import {
+  roundPostingKey,
+  postingMarker,
+  readPostingReceipt,
+  retrySoftenedApproval,
+  type PostingReceipt,
+} from "../src/posting-receipt.js";
 
 let dir: string;
 let clock: number;
@@ -102,6 +108,25 @@ describe("durable review delivery", () => {
     await worker().tick();
     expect(createReview).toHaveBeenCalledTimes(1);
     expect(readPostingReceipt(dir, 12, 1)).toMatchObject({ status: "confirmed", gh_review_id: 77 });
+  });
+  it("an APPROVE the gate softened to a COMMENT confirms as a withheld approval", async () => {
+    // CI turned red between the delivery's preflight and guard 4's own read.
+    job.intended_event = "APPROVE";
+    job.payload = { ...job.payload, event: "APPROVE" };
+    save();
+    await worker().tick();
+    const receipt = readPostingReceipt(dir, 12, 1) as PostingReceipt;
+    expect(receipt).toMatchObject({
+      status: "confirmed",
+      intended_event: "APPROVE",
+      actual_event: "COMMENT",
+      delivered_by: "daemon_retry",
+    });
+    expect(retrySoftenedApproval(receipt)).toBe(true);
+  });
+  it("a delivered COMMENT that was asked for carries no delivery provenance", async () => {
+    await worker().tick();
+    expect((readPostingReceipt(dir, 12, 1) as PostingReceipt).delivered_by).toBeUndefined();
   });
   it("survives restart and an unreadable GitHub longer than the round deadline", async () => {
     listReviewsFull.mockRejectedValue(new Error("offline"));

@@ -1131,6 +1131,19 @@ describe("replay rules", () => {
     ]);
   });
 
+  it("a path's own trailing space survives; only git's tab after it goes", () => {
+    const diff = [
+      "diff --git a/notes  b/notes ",
+      "--- a/notes \t",
+      "+++ b/notes \t",
+      "@@ -1 +1 @@",
+      "-a",
+      "+b",
+      "",
+    ].join("\n");
+    expect(parseUnifiedDiff(diff).map((f) => f.filename)).toEqual(["notes "]);
+  });
+
   it("reads GitHub's pull answer, and refuses one without a head or base", () => {
     const ok = parsePull(3, {
       number: 3,

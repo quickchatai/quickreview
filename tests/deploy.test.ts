@@ -1338,6 +1338,7 @@ describe("deploy.sh — base clone name", () => {
       { repo: "https://github.com/acme/widgets.git" },
       { repo: "git@github.com:acme/gadgets.git" },
       { repo: "acme/trailing/" },
+      { repo: "https://github.com/acme/slashed.git/" },
       { repo: "acme/acme-api", cloneDir: "base" },
       { repo: "acme/acme-api", cloneDir: "  " },
       {},

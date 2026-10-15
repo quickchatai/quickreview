@@ -211,6 +211,41 @@ export interface PostingRetryLedger {
   ): boolean;
 }
 
+/** The event a submitted GitHub review state says was posted; undefined for
+ * any other state (PENDING, DISMISSED), which says nothing. */
+function postedEventOf(state: string): PostingReceipt["actual_event"] | undefined {
+  const s = state.toUpperCase();
+  return s === "APPROVED"
+    ? "APPROVE"
+    : s === "CHANGES_REQUESTED"
+      ? "REQUEST_CHANGES"
+      : s === "COMMENTED"
+        ? "COMMENT"
+        : undefined;
+}
+
+/** A POST response that names the review it created. */
+type ReviewIdentity = { id: number; commit_id: string; state: string };
+function reviewIdentityOf(response: unknown): ReviewIdentity | undefined {
+  const r = response as Partial<ReviewIdentity> | undefined;
+  return r && typeof r.commit_id === "string" && typeof r.state === "string"
+    ? (r as ReviewIdentity)
+    : undefined;
+}
+
+type HttpError = { status?: number; retryAfterMs?: number; message?: string };
+/** GitHub's rate limiting: a 429, or a 403 that says it is one. */
+function rateLimited(e: HttpError): boolean {
+  return (
+    e.status === 429 || (e.status === 403 && /rate limit|abuse|secondary/i.test(e.message ?? ""))
+  );
+}
+/** An explicit client rejection: a 4xx that is neither a timeout nor rate
+ * limiting. Retrying it would only be refused again. */
+function permanentRejection(e: HttpError): boolean {
+  return !!e.status && e.status >= 400 && e.status < 500 && e.status !== 408 && !rateLimited(e);
+}
+
 /** The deferred receipt of this job, when its receipt says `deferred`. */
 function deferredReceipt(dir: string, j: PostingJob): PostingReceipt | undefined {
   const r = readPostingReceipt(dir, j.pr, j.round_no);
@@ -284,6 +319,18 @@ export class PostingOutbox {
     writePostingFile(path, j);
     this.deps.log(`posting failed: ${reason}`, j);
   }
+  /** The bot's reviews at the job's head that carry its posting marker. */
+  private markedReviews<T extends { user: string; commit_id: string; body: string }>(
+    reviews: readonly T[],
+    j: PostingJob,
+  ): T[] {
+    return reviews.filter(
+      (r) =>
+        this.deps.botLogins.includes(r.user) &&
+        r.commit_id.toLowerCase() === j.head_sha.toLowerCase() &&
+        r.body.includes(postingMarker(j.posting_key)),
+    );
+  }
   private confirm(
     path: string,
     j: PostingJob,
@@ -291,14 +338,7 @@ export class PostingOutbox {
     deliveredBy?: "daemon_retry",
   ): boolean {
     const state = review.state.toUpperCase();
-    const event =
-      state === "APPROVED"
-        ? "APPROVE"
-        : state === "CHANGES_REQUESTED"
-          ? "REQUEST_CHANGES"
-          : state === "COMMENTED"
-            ? "COMMENT"
-            : undefined;
+    const event = postedEventOf(state);
     if (
       !event ||
       (event !== j.intended_event && event !== "COMMENT") ||
@@ -325,7 +365,12 @@ export class PostingOutbox {
       gh_review_id: review.id,
       gh_commit_id: review.commit_id,
       gh_state: state,
-      ...(deliveredBy ? { delivered_by: deliveredBy } : {}),
+      // An APPROVE that GitHub holds as a COMMENT was softened by guard 4 on
+      // the gate, which only the daemon's delivery passes through (the shell
+      // route refuses a red-CI approval): the withheld-approval shape.
+      ...(deliveredBy || (j.intended_event === "APPROVE" && event === "COMMENT")
+        ? { delivered_by: "daemon_retry" as const }
+        : {}),
     } satisfies PostingReceipt);
     j.status = "done";
     writePostingFile(path, j);
@@ -391,6 +436,7 @@ export class PostingOutbox {
       const lastChance = offset === undefined || this.now().getTime() >= windowEnd;
       if (!d.ledger.beginPostingRetryAttempt(j.posting_key, row.attempts, iso())) return false;
       row = d.ledger.postingRetry(j.posting_key) ?? row;
+      j.attempts = row.attempts; // every outcome below persists and logs the ledger's count
       const exhaust = (detail: string): void => {
         if (!d.ledger.settlePostingRetry(j.posting_key, "exhausted", detail, iso())) return;
         this.fail(path, j, `deferred posting exhausted: ${detail}`);
@@ -404,7 +450,6 @@ export class PostingOutbox {
           return;
         }
         d.ledger.notePostingRetryError(j.posting_key, detail, iso());
-        j.attempts = row.attempts;
         j.last_error = detail;
         const next = d.offsetsMs[row.attempts];
         j.next_attempt_at = new Date(first + (next ?? d.windowMs)).toISOString();
@@ -419,12 +464,7 @@ export class PostingOutbox {
         failed(`marker read failed: ${String(error)}`);
         return true;
       }
-      const matches = reviews.filter(
-        (r) =>
-          this.deps.botLogins.includes(r.user) &&
-          r.commit_id.toLowerCase() === j.head_sha.toLowerCase() &&
-          r.body.includes(postingMarker(j.posting_key)),
-      );
+      const matches = this.markedReviews(reviews, j);
       if (matches.length > 1) {
         exhaust("multiple reviews carry this posting key");
         return true;
@@ -466,13 +506,8 @@ export class PostingOutbox {
           exhaust("the gate did not execute the delivery (dry-run)");
           return true;
         }
-        const response = result.response as
-          { id: number; commit_id: string; state: string } | undefined;
-        if (
-          !response ||
-          typeof response.commit_id !== "string" ||
-          typeof response.state !== "string"
-        ) {
+        const response = reviewIdentityOf(result.response);
+        if (!response) {
           // Executed but unreadable: the next attempt's marker read decides.
           failed("POST response lacks a review identity");
           return true;
@@ -481,15 +516,7 @@ export class PostingOutbox {
           d.ledger.settlePostingRetry(j.posting_key, "confirmed", null, iso());
         else exhaust("GitHub returned a contradictory review identity");
       } catch (error) {
-        const e = error as { status?: number; message?: string };
-        if (
-          e.status &&
-          e.status >= 400 &&
-          e.status < 500 &&
-          e.status !== 408 &&
-          e.status !== 429 &&
-          !(e.status === 403 && /rate limit|abuse|secondary/i.test(e.message ?? ""))
-        )
+        if (permanentRejection(error as HttpError))
           exhaust(`GitHub rejected the review: ${String(error)}`);
         else failed(String(error));
       }
@@ -613,12 +640,7 @@ export class PostingOutbox {
         this.schedule(path, j, String(error));
         return;
       }
-      const matches = reviews.filter(
-        (r) =>
-          this.deps.botLogins.includes(r.user) &&
-          r.commit_id.toLowerCase() === j.head_sha.toLowerCase() &&
-          r.body.includes(postingMarker(j.posting_key)),
-      );
+      const matches = this.markedReviews(reviews, j);
       if (matches.length > 1) {
         this.fail(path, j, "multiple reviews carry this posting key");
         return;
@@ -682,29 +704,21 @@ export class PostingOutbox {
           this.fail(path, j, "live delivery was not executed");
           return;
         }
-        const response = result.response as
-          { id: number; commit_id: string; state: string } | undefined;
-        if (
-          !response ||
-          typeof response.commit_id !== "string" ||
-          typeof response.state !== "string"
-        ) {
+        const response = reviewIdentityOf(result.response);
+        if (!response) {
           this.schedule(path, j, "POST response lacks a review identity");
           return;
         }
         this.confirm(path, j, response);
       } catch (error) {
-        const e = error as { status?: number; retryAfterMs?: number; message?: string };
+        const e = error as HttpError;
         // Explicit client rejection is not ambiguous acceptance. Rate-limit
         // responses retain delivery debt; permission/validation errors are loud.
-        if (
-          e.status === 429 ||
-          (e.status === 403 && /rate limit|abuse|secondary/i.test(e.message ?? ""))
-        ) {
+        if (rateLimited(e)) {
           delete j.attempted_at;
           rmSync(postingReceiptPath(this.deps.dir, j.pr, j.round_no)); // explicit rate-limit rejection
           this.schedule(path, j, String(error), e.retryAfterMs ?? 60_000);
-        } else if (e.status && e.status >= 400 && e.status < 500 && e.status !== 408) {
+        } else if (permanentRejection(e)) {
           this.fail(path, j, String(error));
         } else this.schedule(path, j, String(error));
       }

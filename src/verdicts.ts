@@ -29,7 +29,7 @@ import {
   watch,
   type FSWatcher,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { checkOutcome, classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
 import {
   deliverEscalations,

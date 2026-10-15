@@ -3,11 +3,11 @@
 // configuration, the run record's lifecycle fields, the harness's time
 // budget, the prepared tree's merge-base check and the AACR score table.
 
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
 import type { ExecOptions, ExecResult } from "./exec.js";
-import { dropMetricsFiles, type roundMetrics } from "./report.js";
+import { caseWarningLines, dropMetricsFiles, type CaseDiagnostics } from "./report.js";
 
 /** pipeline.py `apply_defaults`: `--timeout-minutes` None → 30 — the review
  * budget the harness gives every reviewer it runs, which the arms run in the
@@ -46,7 +46,8 @@ export interface ArmCasePrep {
   /** Call before a case is reviewed (again): its result file is about to be
    * rewritten, so the run's metrics go — once. */
   beforeReview(): void;
-  /** The cases whose earlier review was dropped for another configuration. */
+  /** The cases whose earlier review was dropped for another configuration, or
+   * for a summary that could not be read. */
   dropped: string[];
 }
 
@@ -56,8 +57,13 @@ export interface ArmCasePrep {
  * --resume every case goes; with it, every case whose recorded fingerprint
  * differs goes now, not when the loop reaches it — a stop partway
  * (AuthExpiring) must leave those cases incomplete, never scored under the new
- * label. The run's metrics go with the first result removed or rewritten; a
- * resume that keeps every case keeps them.
+ * label. A case with no summary of this arm (an interrupted review: its
+ * result is written before its summary) is re-reviewed by the loop, so any
+ * result or judge input it left goes now too — nothing unverified is scored
+ * under the new label; so does a case whose summary cannot be read (no proof
+ * of this run's fingerprint). The run's metrics go BEFORE the first file is
+ * removed (and with the first result rewritten), so no stop can leave a score
+ * of findings already gone; a resume that keeps every case keeps them.
  */
 export function prepareArmCases(o: {
   outDir: string;
@@ -80,19 +86,38 @@ export function prepareArmCases(o: {
   };
   const want = JSON.stringify(o.fingerprint);
   const dropped: string[] = [];
+  const clear: string[][] = [];
   for (const c of o.cases) {
-    const prior = o.resume ? o.readSummary(o.outDir, c) : null;
-    if (o.resume && (!prior || JSON.stringify(prior.fingerprint) === want)) continue;
-    if (prior) {
-      o.log(`${o.arm}: ${c.instance_id} was reviewed by ${o.differs} — its result is dropped`);
-      dropped.push(c.instance_id);
-    }
     const caseDir = join(o.outDir, "cases", safeId(c.instance_id));
-    rmSync(join(caseDir, "case-summary.json"), { force: true });
-    for (const f of JUDGE_INPUT_FILES) rmSync(join(caseDir, f), { force: true });
-    rmSync(join(resultsDir, `${safeId(c.instance_id)}.json`), { force: true });
+    const files = [
+      join(caseDir, "case-summary.json"),
+      ...JUDGE_INPUT_FILES.map((f) => join(caseDir, f)),
+      join(resultsDir, `${safeId(c.instance_id)}.json`),
+    ];
+    if (o.resume) {
+      let prior: { fingerprint: unknown } | null;
+      try {
+        prior = o.readSummary(o.outDir, c);
+      } catch {
+        // An unreadable summary is no proof of this run's fingerprint.
+        prior = { fingerprint: undefined };
+      }
+      if (prior) {
+        if (JSON.stringify(prior.fingerprint) === want) continue;
+        o.log(`${o.arm}: ${c.instance_id} was reviewed by ${o.differs} — its result is dropped`);
+        dropped.push(c.instance_id);
+      } else {
+        const left = files.slice(1).filter((f) => existsSync(f));
+        if (!left.length) continue;
+        o.log(
+          `${o.arm}: ${c.instance_id} left a result without a case summary (an interrupted review) — dropped; it is reviewed again`,
+        );
+      }
+    }
+    clear.push(files);
   }
-  if (!o.resume || dropped.length) dropMetrics();
+  if (!o.resume || clear.length) dropMetrics();
+  for (const files of clear) for (const f of files) rmSync(f, { force: true });
   return { beforeReview: dropMetrics, dropped };
 }
 
@@ -136,29 +161,9 @@ export async function checkMergeBase(
 /** The AACR score table, report.ts's: the arms render it from there. */
 export { aacrScoreTable } from "./report.js";
 
-/** What a case summary says went wrong, for the report's warnings section. */
-export interface CaseDiagnostics {
-  instance_id: string;
-  status: string;
-  merge_base_ok: boolean;
-  error?: string;
-  warnings: string[];
-}
-
 /** The report's "Warnings (case errors)" section: every case with an error,
  * a warning or a failed merge-base check; nothing when there is none. */
 export function caseWarningsSection(cases: readonly CaseDiagnostics[]): string[] {
-  const warned = cases.filter((s) => s.warnings.length || s.error || !s.merge_base_ok);
-  if (!warned.length) return [];
-  const L = ["", "## Warnings (case errors)", ""];
-  for (const s of warned) {
-    if (!s.merge_base_ok && s.status !== "failed")
-      L.push(`- \`${s.instance_id}\`: merge-base check failed — see case-summary.json`);
-    for (const w of [
-      ...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []),
-      ...s.warnings,
-    ])
-      L.push(`- \`${s.instance_id}\`: ${w}`);
-  }
-  return L;
+  const lines = caseWarningLines(cases);
+  return lines.length ? ["", "## Warnings (case errors)", "", ...lines] : [];
 }

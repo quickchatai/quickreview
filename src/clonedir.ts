@@ -7,8 +7,8 @@
  * stripped; "repo" when nothing is left ("owner/name" ⇒ "name"). */
 export function repoCloneDirName(repo: string): string {
   const tail = repo
-    .replace(/\.git$/, "")
     .replace(/\/+$/, "")
+    .replace(/\.git$/, "")
     .split("/")
     .pop();
   return tail || "repo";

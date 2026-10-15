@@ -115,7 +115,9 @@ describe("① tunnel + HMAC probe", () => {
     });
     const first = sent[0]!;
     expect(verifySignature(Buffer.from(first.body), first.sig, SECRET)).toBe(true);
-    expect(first.sig).toBe(`sha256=${createHmac("sha256", SECRET).update(first.body).digest("hex")}`);
+    expect(first.sig).toBe(
+      `sha256=${createHmac("sha256", SECRET).update(first.body).digest("hex")}`,
+    );
   });
 });
 
@@ -329,7 +331,6 @@ function hit(number: number, login = "alice"): ReconcileSearchItem {
     title: `PR ${number}`,
     user: { login, type: login.endsWith("[bot]") ? "Bot" : "User" },
     updated_at: "2026-08-13T09:05:00Z",
-    created_at: "2026-08-13T08:00:00Z",
   };
 }
 

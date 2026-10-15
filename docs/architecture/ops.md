@@ -452,7 +452,10 @@ at boot (`validateSlackConfig`).
   Node's global `WebSocket` (the only inbound transport — there is no HTTP
   events endpoint), and `api.ts` is the Web API poster with one serialized post
   queue and a minimum interval. Slack failures never throw into callers: a post
-  is retried twice, then logged and dropped.
+  is retried twice, then logged and dropped. A new message
+  (`chat.postMessage`) whose attempt may have reached Slack — the connection
+  failed after sending, or the answer was unreadable — is not retried, so it
+  can never post twice.
 - `router.ts` turns one inbound message into at most one overseer turn, with a
   fixed check order (channel, echo, subtype, dedupe, staleness, turn cap) and
   **a row per drop** in `slack_events`, so "why did the bot ignore me?" is

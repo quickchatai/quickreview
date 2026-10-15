@@ -170,9 +170,13 @@ companion container. Each is guided where it happens, and each is verified to
 have landed on that container's *persistent* pi-home volume, so a later
 container recreate never silently costs you the login.
 
-**An OpenAI API key.** One paste covers all three immediately: it lands as the
-`openai_api_key` file in your secrets dir, `0600`, and both container
-entrypoints export it as `OPENAI_API_KEY`. The wizard then rewrites all six
+**An OpenAI API key.** One paste covers the daemon and its review sessions at
+once: it lands as the `openai_api_key` file in your secrets dir, `0600`, and the
+daemon container's entrypoint exports it as `OPENAI_API_KEY` for every pi
+process in it. It reaches no other process: the companion container is never
+handed the key file, so the companion keeps its own login (its model is on the
+OAuth provider by default), and this wizard's own pi reads `OPENAI_API_KEY`
+only from its own environment. The wizard then rewrites all six
 model strings in `config.toml` from the `openai-codex/` provider prefix to
 `openai/` — comment-preserving, idempotent, and reversible, so switching routes
 later is just re-running this step. Model strings already pointing at some other
@@ -279,7 +283,9 @@ The shipped default is **local**: a small English embedding model
 (`bge-small-en-v1.5`, its file pinned in the image) is served on
 loopback inside the daemon container, so nothing but the model call ever leaves
 the machine — memory text included — and no key is needed. Calling the step with no
-arguments confirms that default and writes nothing.
+arguments keeps whatever `config.toml` already declares — the local default on a
+fresh install, but a hosted provider an installation already chose stays hosted.
+Moving an installation back to local takes an explicit `provider: "local"`.
 
 The alternative is OpenAI's hosted embeddings (`provider: "openai"`, optionally
 `model` and `dimension`; the defaults are `text-embedding-3-small` / `1536`).
@@ -724,8 +730,12 @@ build are all fine places to stop.
 It doubles as a diagnostic. Every claimed-done step is re-verified against
 reality — containers, health endpoint, GitHub's delivery log, the memory
 confinement matrix, the config's own invariants — and anything that no longer
-holds is demoted with the reason. `verify` never writes: a re-run on a healthy
-installation changes nothing. Running a step tool again is different: a step
+holds is demoted with the reason. `verify` never writes to the installation or
+the reviewed repo: a re-run on a healthy installation changes nothing. Its one
+outward act is the stack check's: when GitHub's delivery log shows the newest
+webhook ping failed (or deliveries since it did), it asks GitHub to redeliver
+that ping — on the App's own hook, never a review, label, branch or comment.
+Running a step tool again is different: a step
 that succeeds has acted on the installation, so it withdraws the completion
 claim until `finish_and_exit` runs green again.
 

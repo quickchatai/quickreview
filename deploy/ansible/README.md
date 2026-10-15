@@ -159,6 +159,6 @@ rebuilds — required for the sticky per-PR conversations, not just for auth.
 - Image pins: pi and node are pinned in `group_vars/all.yml`; bumping them is
   a deliberate edit + `rebuild_image=true`, never automatic.
 - Jump-in from your own machine: `ssh -t <vm> docker exec -it quickreview-sandbox
-  tmux attach -t <pr-N|overseer>` — `scripts/qcr attach <n>` wraps it, and the
-  operator TUI (`scripts/qcr tui`, with `[tui] target = "ssh"`) embeds the same
+  tmux attach -t <pr-N|overseer>` — `scripts/qcr attach <n>` prints that
+  command (it never attaches itself), and the operator TUI (`scripts/qcr tui`, with `[tui] target = "ssh"`) embeds the same
   session in a pane.

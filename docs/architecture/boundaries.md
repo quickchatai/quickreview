@@ -136,12 +136,14 @@ any kind but `push_branch`, and re-checks both after the guard step.
 
 **`src/guards.ts`,** installed on the one gate as a `MutationGuard`. Five
 refusals, each fired seconds before a review reaches GitHub, on the mutation
-kinds in `POSTING_KINDS` (`create_review`, `create_review_comment_reply`).
+kinds in `POSTING_KINDS` (`create_review`, `create_review_comment_reply`,
+`create_issue_comment`). Guard 3 binds all three; the other four bind
+`create_review` only.
 
 | # | Condition | Effect | Knob (`[guards]`) |
 |---|---|---|---|
 | 1 | A non-author human's standing `APPROVED` review sits at this head | REQUEST_CHANGES rewritten to COMMENT, findings intact, with a note naming the approver | `downgrade_on_human_approval` |
-| 2 | The `reviewed_heads` mark is on this head and no author reply since | Refuse: post nothing | `skip_unchanged_head` |
+| 2 | The `reviewed_heads` mark is on this head and no author reply since (an APPROVE and the escalation note are exempt) | Refuse: post nothing | `skip_unchanged_head` |
 | 3 | The PR is merged or closed (re-read immediately before the write) | Refuse | `recheck_pr_state_before_post` |
 | 4 | CI is not green at this head | APPROVE rewritten to COMMENT with the approval withheld | `block_approve_on_red_ci` |
 | 5 | The PR's live head is not the head the review's `commit_id` names | Refuse: the review is stale | `refuse_on_head_drift` |
@@ -164,6 +166,10 @@ Details worth knowing before editing:
 - The escalation note (`reviewPurpose: "escalation"`) is exempt from guard 2
   and **only** guard 2 — it carries no verdict and by design lands right after
   the round's own review. Guards 3 and 5 ran before that exemption is reached.
+- An **APPROVE** is exempt from guard 2 too, as on the shell route
+  (`approve-pr.sh` runs guards 3, 4 and 5 only): the approval that meets an
+  already-stamped head is the CI-green retry of a withheld approval, whose
+  COMMENT stamped the head. Guard 4 still binds it.
 - The **after-step** stamps `reviewed_heads` only for a substantive review that
   really executed. It is keyed on the *presence* of a `reviewPurpose`, not on
   each spelling, so a future mechanical purpose cannot claim a head by being
@@ -371,7 +377,10 @@ yourself" note, that note un-muzzles the withdrawn collision rule in
 `pass-data-safety` for exactly that round (`MIGRATION_NUMBERING_ADDENDUM` in
 `src/include.ts`), and an overseer anomaly is raised. A *withheld* comment (the
 ledger holds a collision-comment row it cannot read, so a duplicate cannot be
-ruled out) gets the same treatment, with the anomaly raised once per PR.
+ruled out) is different: the check DID run, so nothing is un-muzzled. The
+gate note hands the collisions' remedy to the session, which puts it in its
+review body as mechanics — never a finding, never a blocker — and the overseer
+anomaly is raised once per PR.
 
 ### Not guaranteed
 

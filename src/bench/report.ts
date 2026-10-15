@@ -4,7 +4,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { datasetPin, safeId, VARIANTS, type BenchCase, type CaseSet } from "./aacr.js";
-import { readOcrSummary, type OcrCaseSummary } from "./ocr.js";
+import { readOcrSummary } from "./ocr.js";
 import type { CaseSummary } from "./runner.js";
 
 interface Metrics {
@@ -164,6 +164,33 @@ const n = metricNumber;
 /** A token count in thousands, for a report cell. */
 export function kTokens(x: number): string {
   return `${Math.round(x / 1000)}k`;
+}
+
+/** What a case summary says went wrong, for a report's warnings section. */
+export interface CaseDiagnostics {
+  instance_id: string;
+  status: string;
+  merge_base_ok: boolean;
+  error?: string;
+  warnings: string[];
+}
+
+/** A warnings section's lines: every case with an error, a warning or a
+ * failed merge-base check (a failed case's merge-base is not news), its error
+ * flattened and capped. Nothing when there is none. */
+export function caseWarningLines(cases: readonly CaseDiagnostics[]): string[] {
+  const L: string[] = [];
+  for (const s of cases) {
+    if (!s.warnings.length && !s.error && s.merge_base_ok) continue;
+    if (!s.merge_base_ok && s.status !== "failed")
+      L.push(`- \`${s.instance_id}\`: merge-base check failed — see case-summary.json`);
+    for (const w of [
+      ...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []),
+      ...s.warnings,
+    ])
+      L.push(`- \`${s.instance_id}\`: ${w}`);
+  }
+  return L;
 }
 
 /** The scores table's header, then one row per variant or round. */
@@ -469,24 +496,10 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
     L.push(
       `| **total** | | ${cases.reduce((a, c) => a + c.references, 0)} | | ${summaries.reduce((a, x) => a + (x.s?.comments ?? 0), 0)} | | ${(tot.secs / 60).toFixed(1)} (avg ${(tot.secs / 60 / ran).toFixed(1)}) | ${total(`${k(tot.oin)}/${k(tot.oout)}`, tot.noOcr)} | ${total(`${tot.calls} (${tot.errors})`, tot.noBridge)} | ${total(`${k(tot.inp)} (${k(tot.cached)}) / ${k(tot.out)} (${k(tot.reasoning)})`, tot.noBridge)} |`,
     );
-  const warned = summaries.filter(
-    (x): x is { c: BenchCase; s: OcrCaseSummary } =>
-      x.s !== null && (x.s.warnings.length > 0 || Boolean(x.s.error) || !x.s.merge_base_ok),
+  const warnings = caseWarningLines(
+    summaries.flatMap((x) => (x.s ? [{ ...x.s, instance_id: x.c.instance_id }] : [])),
   );
-  if (warned.length) {
-    L.push("");
-    L.push("## Warnings (OCR warnings, case errors)");
-    L.push("");
-    for (const { c, s } of warned) {
-      if (!s.merge_base_ok && s.status !== "failed")
-        L.push(`- \`${c.instance_id}\`: merge-base check failed — see case-summary.json`);
-      for (const w of [
-        ...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []),
-        ...s.warnings,
-      ])
-        L.push(`- \`${c.instance_id}\`: ${w}`);
-    }
-  }
+  if (warnings.length) L.push("", "## Warnings (OCR warnings, case errors)", "", ...warnings);
   L.push("");
   L.push(
     "Reading the numbers: OCR's comments carry no severity tag, so only the `all` variant exists for this arm — compare it with the QuickReview arm's `all` row. OCR tokens are OCR's own summary (prompt tokens, cached included); the backend columns are the bridge's count of the same calls from the backend's usage (reasoning tokens are part of output). Precision counts every comment against the dataset's references, so a real issue the annotators did not record scores as a false positive.",

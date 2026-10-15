@@ -998,7 +998,7 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
 
       // Restart before the session posted: the orphan sweep cancels the round
       // and requeues the PR at the same head.
-      reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+      reconcileOrphanedRounds(store, [], {});
       expect(store.getPr(5180)?.state).toBe("queued");
 
       const orders = await dispatchOnce({
@@ -1055,7 +1055,7 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
           else writeFileSync(join(receipts, `pr-5180-round-${roundNo}.json`), "{ not json");
 
           // Restart before the verdict file: the orphan sweep requeues the head.
-          reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+          reconcileOrphanedRounds(store, [], {});
           const again = await dispatchOnce({
             cfg,
             store,

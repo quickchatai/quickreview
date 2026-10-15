@@ -58,6 +58,23 @@ describe("scripts/post-review.sh — guard 1 (human approval at this head)", () 
     expect(record().body.body).toContain("@mhale");
   });
 
+  it("reads every page, with no page bound, as listReviews does", async () => {
+    // 3,050 earlier reviews fill 30 full pages; the approval is on page 31.
+    s.reviews = [
+      ...Array.from({ length: 3050 }, (_, i) => ({
+        id: i + 1,
+        user: { login: "example-review[bot]" },
+        state: "COMMENTED",
+        commit_id: "0ldhead",
+      })),
+      { id: 5000, user: { login: "mhale" }, state: "APPROVED", commit_id: HEAD },
+    ];
+    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(record().body.event).toBe("COMMENT");
+    expect(record().body.body).toContain("@mhale");
+  });
+
   it("ignores an approval the same human has since retired", async () => {
     s.reviews = [
       { id: 1, user: { login: "mhale" }, state: "APPROVED", commit_id: HEAD },
