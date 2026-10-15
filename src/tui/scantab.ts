@@ -33,8 +33,9 @@
 //
 // Honest unknown: a record not read yet is `(—)`, one that could
 // not be read says why, and a run the record calls running while the
-// companion is down is shown as interrupted — never as "no scan", and no
-// action is offered from a value that was not read.
+// companion is down — or that the companion answered it is not driving — is
+// shown as interrupted, never as "no scan"; no action is offered from a value
+// that was not read.
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import {
@@ -64,11 +65,14 @@ import {
 } from "./panes.js";
 import {
   clickStopScan,
+  DISMISS_REASON_MAX,
   dismissedLookalike,
+  goneDismissal,
   isOpenFinding,
   lookalikeRank,
   readScanFindings,
   readScanRuns,
+  readStopResult,
   scanStopOutcome,
   type FindingState,
   type RecordRead,
@@ -76,6 +80,7 @@ import {
   type ScanRun,
   type ScanRunSummary,
   type ScanSeverity,
+  type ScanStopResult,
   type ValidityView,
   VALIDITY_ORDER,
   validityOf,
@@ -94,8 +99,6 @@ import {
 
 const SEVERITY_ORDER: readonly ScanSeverity[] = ["P0", "P1", "P2", "P3", "nit"];
 const STATES: readonly FindingState[] = ["new", "promoted", "dismissed", "fixed"];
-/** triage.ts REASON_MAX — a longer reason would only be refused there. */
-export const DISMISS_REASON_MAX = 500;
 
 export interface ScanFilter {
   state?: FindingState;
@@ -341,7 +344,7 @@ export function unitRows(
 export function promotable(item: ReportItem | undefined): ScanFinding[] {
   // A dismissal a re-scan no longer reports is out of play (triage.ts refuses it).
   return members(item).filter(
-    (f) => f.state === "new" || (f.state === "dismissed" && f.unreported == null),
+    (f) => f.state === "new" || (f.state === "dismissed" && !goneDismissal(f)),
   );
 }
 
@@ -436,11 +439,17 @@ export class ScanReportStore {
   findings:
     RecordRead<{ findings: ScanFinding[]; question: { unreported: string[] } | null }> | undefined;
   proposal: ProposalRead | undefined;
+  /** The companion's latest answer to a stop click — null when there is none
+   * or it cannot be read. */
+  stopAnswer: ScanStopResult | null = null;
   constructor(readonly home: string) {}
 
   reload(): void {
     this.runs = readScanRuns(this.home);
     this.findings = readScanFindings(this.home);
+    // An unreadable answer is no answer here: it never infers an interruption.
+    const stop = readStopResult(this.home);
+    this.stopAnswer = stop.kind === "read" ? stop.result : null;
     const p = readStage2Proposal(this.home);
     this.proposal = p.ok
       ? { kind: "read", proposal: p.proposal }
@@ -508,11 +517,23 @@ function view(deps: ScanTabDeps, st: ScanTabState) {
   return { all, run, units, unit, items, item };
 }
 
-/** Running as far as the record says — and, when the companion is known to
- * be down, not running at all: nobody is driving it. */
+/** Why a run the record calls running is not running, or null when nothing
+ * says it is not: the companion is known down, or the companion answered a
+ * stop for that run saying it drives no such run (a companion restart loses
+ * the run in flight, and nothing else ever rewrites the record). */
+function interruption(run: ScanRun, deps: ScanTabDeps): string | null {
+  if (run.state !== "running") return null;
+  if (deps.companionUp?.() === false) return "the companion is down";
+  const a = deps.store.stopAnswer;
+  if (a !== null && a.run === run.id && a.in_flight !== undefined && a.in_flight !== run.id)
+    return "the companion is not driving it";
+  return null;
+}
+
+/** Running as far as the record says — and not running at all when nobody
+ * is driving it (`interruption`). */
 function runDisplay(run: ScanRun, deps: ScanTabDeps): ScanRun["state"] | "interrupted" {
-  if (run.state === "running" && deps.companionUp?.() === false) return "interrupted";
-  return run.state;
+  return interruption(run, deps) !== null ? "interrupted" : run.state;
 }
 
 const isRunning = (deps: ScanTabDeps): ScanRun | null => {
@@ -550,10 +571,11 @@ export function scanKeys(deps: ScanTabDeps, st: ScanTabState): LiveKeys {
   }
   bar.push({ key: "P", label: "P plan" });
   if (running) bar.push({ key: "x", label: "x stop" });
+  const shown = v.run === null ? null : runDisplay(v.run, deps);
   const finished =
     deps.store.runs?.kind === "read" &&
-    (deps.store.runs.value.history.length > 0 || (v.run !== null && v.run.state !== "running"));
-  if (deps.ask && !running && v.run?.state !== "running" && finished)
+    (deps.store.runs.value.history.length > 0 || (shown !== null && shown !== "running"));
+  if (deps.ask && !running && shown !== "running" && finished)
     bar.push({ key: "D", label: "D delta" });
   if (Math.min(st.unit, v.units.length - 1) > 0) bar.push({ key: "[", label: "[ prev unit" });
   if (st.unit < v.units.length - 1) bar.push({ key: "]", label: "] next unit" });
@@ -579,7 +601,7 @@ const MODE_LABEL: Record<ScanRun["mode"], string> = {
   stage2: "stage 2",
 };
 
-function stateWord(state: ScanRun["state"] | "interrupted"): string {
+function stateWord(state: ScanRun["state"] | "interrupted", why: string | null): string {
   switch (state) {
     case "running":
       return `${OK}▶ running${RESET}`;
@@ -592,7 +614,7 @@ function stateWord(state: ScanRun["state"] | "interrupted"): string {
     case "capped":
       return `${WARN}■ capped at the hard stop${RESET}`;
     case "interrupted":
-      return `${WARN}⏸ interrupted — the companion is down; the ledger resumes it${RESET}`;
+      return `${WARN}⏸ interrupted — ${why ?? "nobody is driving it"}; the ledger resumes it${RESET}`;
   }
 }
 
@@ -618,7 +640,7 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
   const pct = run.cases.length === 0 ? 0 : Math.round((100 * done) / run.cases.length);
   const line1 = [
     `${HEADING}SCAN${RESET}${repo ? ` ${repo}` : ""} @${short(run.sha)}`,
-    `${STRONG}${MODE_LABEL[run.mode] ?? run.mode}${run.settings?.depth === "deep" ? " (deep)" : ""}${RESET} ${stateWord(runDisplay(run, deps))}`,
+    `${STRONG}${MODE_LABEL[run.mode] ?? run.mode}${run.settings?.depth === "deep" ? " (deep)" : ""}${RESET} ${stateWord(runDisplay(run, deps), interruption(run, deps))}`,
     `${done}/${run.cases.length} cases (${pct}%)`,
   ].join("  ");
   const fs = deps.store.findings;
@@ -676,10 +698,12 @@ function validityLines(f: ScanFinding, width: number): string[] {
   ];
 }
 
+/** A style group's mark is the first state in `STATES` order (new, promoted,
+ * dismissed, fixed) any member is in, so the group reads as its members do. */
 function itemLabel(i: ReportItem): string {
   if (i.t === "finding") return findingTitle(i.finding);
-  const open = i.findings.filter((f) => f.state === "new").length;
-  return `${open > 0 ? STATE_GLYPH.new : STATE_GLYPH.dismissed} ${i.severity} style ×${i.findings.length} (${i.rule})`;
+  const state = STATES.find((s) => i.findings.some((f) => f.state === s)) ?? "new";
+  return `${STATE_GLYPH[state]} ${i.severity} style ×${i.findings.length} (${i.rule})`;
 }
 
 function detailLines(i: ReportItem | undefined, width: number): string[] {
@@ -881,6 +905,8 @@ export function renderScanTab(
   if (left.length > 1) leftActions.push(undefined);
   const visible = Math.max(1, bodyRows - left.length);
   const ustart = windowStart(st.unit, v.units.length, visible);
+  // A case the record calls running is not running when nobody drives the run.
+  const interrupted = v.run !== null && runDisplay(v.run, deps) === "interrupted";
   if (v.units.length > 1)
     v.units.slice(ustart, ustart + visible).forEach((u, k) => {
       const i = ustart + k;
@@ -888,14 +914,18 @@ export function renderScanTab(
         u.progress === "done"
           ? `${OK}✓${RESET}`
           : u.progress === "running"
-            ? `${OK}▶${RESET}`
+            ? interrupted
+              ? `${WARN}⏸${RESET}`
+              : `${OK}▶${RESET}`
             : u.progress === "failed"
               ? `${BAD}✗${RESET}`
               : u.progress === "pending"
                 ? `${MUTED}·${RESET}`
                 : " ";
       const name = truncate(u.unit ?? "all", Math.max(4, leftW - 14));
-      const label = `${prog} ${name.padEnd(Math.max(4, leftW - 14))} ${String(u.count).padStart(4)}${u.hotspot ? ` ${WARN}▲${RESET}` : ""}`;
+      // Counts come from the findings store: unknown when it was not read.
+      const count = known ? String(u.count) : "—";
+      const label = `${prog} ${name.padEnd(Math.max(4, leftW - 14))} ${count.padStart(4)}${u.hotspot ? ` ${WARN}▲${RESET}` : ""}`;
       left.push(i === st.unit ? selectedLine(label) : label);
       leftActions.push({ t: "unit", i });
     });

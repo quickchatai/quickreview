@@ -553,6 +553,74 @@ const CORPUS = [
     outcome: null,
     note: "a pattern onto the bridge's .done/ from a sibling inject dir",
   },
+  // Round 13. sed's `e` runs the pattern space as a shell command: the `e`
+  // command at any address, and the `e` flag of `s` with any delimiter and
+  // the flags in any order. The rules here were patterns keyed on a `/`
+  // delimiter and a trailing flag, so `s|..|..|e` and `s/../../ep` ran a
+  // command. sed is now PARSED, and what the parser cannot read is refused.
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed 's|.*|cmd|e' f",
+    outcome: null,
+    note: "the e flag behind a non-`/` delimiter",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n 's/.*/cmd/ep' f",
+    outcome: null,
+    note: "the e flag not last",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n 's#.*#cmd#e;p' f",
+    outcome: null,
+    note: "the e flag, then another command",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -es/.*/cmd/e f",
+    outcome: null,
+    note: "the script glued to a short -e",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n '1!e' f",
+    outcome: null,
+    note: "the e command behind a negated address",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed '1~2e' f",
+    outcome: null,
+    note: "the e command behind a step address",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed --expr='s/.*/cmd/e' f",
+    outcome: null,
+    note: "an abbreviated --expression",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n '1a x\ne' f",
+    outcome: null,
+    note: "a newline ends the a text, so the e after it is a command",
+  },
+  {
+    round: 13,
+    via: "bash",
+    chain: "sed -n ':x;bx e cmd' f",
+    outcome: null,
+    note: "a label ends at whitespace, so the e after it is the next command",
+  },
 ] as const;
 
 /**
@@ -1716,6 +1784,98 @@ describe("the audit does not fire on the reads that ARE the job", () => {
     expect(kindOf("sort -u names.txt | uniq -c")).toBeUndefined();
     expect(kindOf("find src -name '*.ts' -maxdepth 3")).toBeUndefined();
     expect(kindOf("cut -d: -f1 /etc/passwd")).toBeUndefined();
+  });
+
+  it("sees the attached spellings and the s/// flags the guard refuses, and a code-loading prefix on a reader", () => {
+    const kindOf = (c: string): string | undefined =>
+      auditExecViolationDetails([bashLine(c)])[0]?.kind;
+    // sort's output file glued to its flag.
+    expect(kindOf("sort -o/tmp/out data")).toBe("reader_write_or_exec");
+    expect(kindOf("sort -uo/tmp/out data")).toBe("reader_write_or_exec");
+    // s///e runs the pattern space; s///w writes a file.
+    expect(kindOf("sed 's/.*/id/e' input.txt")).toBe("reader_write_or_exec");
+    expect(kindOf("sed -n 's/a/b/gw out.txt' f")).toBe("reader_write_or_exec");
+    expect(kindOf("sed '3s/a\\/b/c/e' f")).toBe("reader_write_or_exec");
+    // e anywhere in the flag cluster, w at its end, any delimiter, a script
+    // glued to its flag, and the bare e command.
+    for (const c of [
+      "sed 's/.*/id/ep' f",
+      "sed 's/.*/id/ew out' f",
+      "sed 's/x/y/eg' f",
+      "sed 's/x/y/eI' f",
+      "sed 's|a|b|e' f",
+      "sed -n 's#.*#id#e;p' f",
+      "sed --expression=s/.*/id/e f",
+      "sed -es/.*/id/e f",
+      "sed 'e' f",
+      "sed -n '1e' f",
+      "sed 'p;e' f",
+      "sed -e'w out' f",
+      "echo id | sed e",
+      "sed -n /x/e",
+      `sed "s'.*'id'e" f`,
+      // Adjacent quoted and unquoted pieces are ONE word to bash, so the
+      // script is read as sed receives it, never from where a quote sits.
+      `sed -n "/it's/"'w out' f`,
+      `sed -n "1"'w out' f`,
+      `sed -n 'p;'"w out" f`,
+      "sed -n $'w out' f",
+      "sed -n '1'e f",
+      "sed -n 1'e' f",
+      "sed -n 'p'\\;'e' f",
+      "sed -n $'e' f",
+      // Glued file names, every address form, and the -e value spellings.
+      "sed '1eid' f",
+      "sed -n '$!e' f",
+      "sed -ee f",
+      "sed --expression=e f",
+      "sed -n 'w/tmp/x' f",
+      "sed -n 'wout' f",
+      "sed 's/.*/x/w/tmp/o' f",
+      "sed -n -e w\\ out f",
+      "sed -n '1!w out' f",
+      "sed -n '0~3w out' f",
+      "sed -n '/a/,+2w out' f",
+      "sed -n '\\%x%w out' f",
+      "sed --expression=w/tmp/x f",
+      "sed -n 'p' f -e e",
+      "sed -n '1a x\ne' f",
+      "sed -n ':x;bx w out' a.py",
+      "sed -n 't x e' f",
+    ])
+      expect(kindOf(c), c).toBe("reader_write_or_exec");
+    // An env prefix in front of a reader is its environment, not a pattern.
+    expect(kindOf("LD_PRELOAD=/tmp/hook.so cat README.md")).toBe("git_config_injection");
+    expect(kindOf("env PAGER=/tmp/x head -5 f")).toBe("git_config_injection");
+    expect(kindOf("2>/dev/null LD_PRELOAD=x cat f")).toBe("git_config_injection");
+    // …while the reads stay silent: a pattern naming the variable, ordinary
+    // substitutions and prints, and a path that merely ends like a flag.
+    expect(kindOf("grep -rn LD_PRELOAD= src")).toBeUndefined();
+    expect(kindOf("rg -n 'PAGER=' docs")).toBeUndefined();
+    expect(kindOf("sed -n 's/foo/bar/gp' f")).toBeUndefined();
+    expect(kindOf("sed -n '/^def /p' home/me")).toBeUndefined();
+    expect(kindOf("sed -n 1,5p a/ne")).toBeUndefined();
+    expect(kindOf("sed 's/e/f/g' f")).toBeUndefined();
+    expect(kindOf("sed -n 's|e|w|p' f")).toBeUndefined();
+    expect(kindOf("sed -n 's/x\\/e/y/p' f")).toBeUndefined();
+    expect(kindOf("sed -E 's/(a)(b)/\\2\\1/g' f")).toBeUndefined();
+    // A quoted `'w'`/`"w"`/`'e'` inside a pattern is no command position, and
+    // a last FILE operand named `e` is no script.
+    for (const c of [
+      `sed -n "/name = 'e'/p" f`,
+      `sed -n '/mode="w"/p' f`,
+      `sed -n "s/'w'/'a'/p" f`,
+      `sed -n "/open(path, 'w')/p" src/io.py`,
+      "sed -n '/x/p' /tmp/e",
+      "sed -n 1,5p some.file e",
+      "sed -n '/x = w + 1/p' f",
+      "sed -n '/ e /p' f",
+      "sed -n 1p e w",
+      "sed -n 'b e' f",
+      "sed -n '/t e/p' f",
+    ])
+      expect(kindOf(c), c).toBeUndefined();
+    expect(kindOf("sort -k1,1 -t: names")).toBeUndefined();
   });
 });
 

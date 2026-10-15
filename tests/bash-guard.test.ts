@@ -114,7 +114,7 @@ describe("checkBashCommand — gh mutating verbs", () => {
 
   it("refuses $'…' / $\"…\" quoting on gh and git words, but not a literal $' inside quotes", () => {
     block("gh api repos/x/pulls/5/reviews --in$'p'ut body.json");
-    block("gh api repos/x/pulls/5/reviews --in$\"p\"ut body.json");
+    block('gh api repos/x/pulls/5/reviews --in$"p"ut body.json');
     block("git --up$'load'-pack=x fetch");
     allow(`gh api repos/x/pulls/5/comments --jq '.[] | select(.body | test("x$"))'`);
     allow(`gh api repos/x/pulls/5/comments --jq ".[] | .body | test(\\"x$\\")"`);
@@ -754,7 +754,7 @@ describe("checkWritePath / this system's own policy surface", () => {
     block("install -m 755 /tmp/evil scripts/guards.sh");
     block("sort -o config.toml payload", "writes a file"); // reader-mode
     block("find . -maxdepth 0 -fprintf config.toml x", "writes a file");
-    block("sed -n 'w config.toml' payload", "w/r/e command");
+    block("sed -n 'w config.toml' payload", "a w command");
     block("echo f | xargs sed -i 's/a/b/' config.toml", "policy surface");
   });
 
@@ -1218,8 +1218,107 @@ describe("read-only programs with write/exec modes", () => {
   });
 
   it("is asked the same question through xargs", () => {
-    block("echo x | xargs sed -i 's/a/b/'", "writes a file or runs a command");
-    allow("git diff --name-only | xargs sed -n '1p'");
+    block("echo x | xargs sed -i 's/a/b/' --", "writes a file or runs a command");
+    allow("git diff --name-only | xargs sed -n '1p' --");
+    allow("git diff --name-only | xargs -r sed -n '1,20p' --");
+    // Without the closing `--`, a file name on stdin is read as an option or a
+    // script: a PR can add a file named `-es/.*/cmd/e`.
+    block("git diff --name-only | xargs sed -n '1p'", "closing '--'");
+    block("git diff --name-only | xargs -I{} sed -n 1p {} --", "closing '--'");
+    block("git diff --name-only | xargs --replace sed -n 1p --", "closing '--'");
+  });
+
+  // sed is PARSED (`checkSedInvocation`), not matched: its `e` command and the
+  // `e` flag of `s` run the pattern space as a shell command, at any address,
+  // with any `s` delimiter and with the flags in any order.
+  it("refuses every spelling of sed's exec and file verbs", () => {
+    for (const c of [
+      "sed 's|.*|id|e' f",
+      "sed -n 's#.*#id#e;p' f",
+      "sed -n 's/.*/id/ep' f",
+      "sed 's/.*/id/eg' f",
+      "sed 's/x/y/eI' f",
+      "sed -n 's/a/b/2e' f",
+      "sed -n 's/a\\/b/c/e' f",
+      "sed -n s/a/b/e f",
+      'sed -n "s/a/b/e" f',
+      "sed --expression='s/a/b/e' f",
+      "sed --expr='s/a/b/e' f",
+      "sed -es/a/b/e f",
+      "sed -nes/a/b/e f",
+      "sed -n -e 1p -e 's/a/b/e' f",
+      "sed 'e' f",
+      "sed -n '1e' f",
+      "sed -n '1!e' f",
+      "sed '1~2e' f",
+      "sed -n '$e' f",
+      "sed -n '/x/e' f",
+      "sed -n '\\,x,e' f",
+      "sed -n '1,+2e' f",
+      "sed -n '1,/x/e' f",
+      "sed -n 'p;e' f",
+      "sed -n '1{e}' f",
+      "sed -n 'y/a/b/;s/a/b/e' f",
+      "sed 's/a/b/w out' f",
+      "sed 'W out' f",
+      "sed 'r /etc/passwd' f",
+      "sed 'R other' f",
+      // A newline inside the quoted script ends an a/i/c text, a comment or a
+      // label — the command after it runs.
+      "sed -n '1a x\ne' f",
+      "sed -n '#x\ne' f",
+      "sed -n ':x\ne' f",
+      "sed -n 'b x\ne' f",
+      'sed -n "1i x\ne" f',
+      // A label ends at whitespace: what follows is the next command.
+      "sed -n ':x;bx e cmd' f",
+      "sed -n ':x;bx w out' f",
+      "sed -n 't x r /etc/passwd' f",
+      "sed -n 'T x\ts/a/b/w out' f",
+    ]) {
+      block(c, "reads code");
+    }
+  });
+
+  it("refuses a sed it cannot read: expansions, unknown options and commands, abbreviations", () => {
+    block("sed $'s/a/b/e' f", "cannot read as words");
+    block('sed "s/a/b/$X" f', "cannot read as words");
+    block("sed --in x f", "in place");
+    block("sed --fi=x f", "in place");
+    block("sed --s='p' f", "cannot classify"); // ambiguous: --silent, --separate, --sandbox
+    block("sed -K f", "cannot classify");
+    block("sed 'K' f", "cannot classify");
+    block("sed -n 's/a/b' f", "cannot read");
+  });
+
+  it("still allows the reads a reviewer makes with sed", () => {
+    for (const c of [
+      "sed -n '10,20p' f",
+      "sed -n '$p' f",
+      "sed -n '1,5p;10q' f",
+      "sed -n '1~3p' f",
+      "sed -n '/a/,/b/p' f",
+      "sed -n '/a/!p' f",
+      "sed -n '/^export /{p}' f",
+      "sed -n -e '1p' -e '$p' f",
+      "sed --quiet '1p' f",
+      "sed -n 's/x/y/Ip' f",
+      "sed -E -n 's/(a+)/\\1/gp' f",
+      "sed 'y/abc/xyz/' f",
+      "sed = f",
+      // a letter that names a verb, inside a pattern or a file name, is data
+      "sed -n \"/name = 'e'/p\" f",
+      "sed -n '/mode=\"w\"/p' f",
+      "sed -n \"s/'w'/'a'/p\" f",
+      "sed -n '/e/p' f",
+      "sed -n 's/e/w/gp' f",
+      "sed -n '/x/p' /tmp/e",
+      "sed -n 1,5p some.file e",
+      "sed -n '1p\n10p' f",
+      "sed -n '/a  b/p' f",
+    ]) {
+      allow(c);
+    }
   });
 
   it("checkReaderModes is inert for every other program", () => {

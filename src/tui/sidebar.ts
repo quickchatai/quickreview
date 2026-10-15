@@ -3,10 +3,13 @@
 // its full height, and the mirror is wide enough to carry a conversation.
 //
 // Geometry (the binding half of docs/sidebar-contract.md): the sidebar owns its
-// own LEFT border, so the inner tab Frame keeps its right border and the two
-// simply concatenate — `cols = inner.cols + sidebarWidth(cols, state)`. Row 0
-// and row `rows-1` carry the junction glyphs that continue the inner frame's
-// top and bottom rules; the compositor never patches corners.
+// own LEFT border, and the two halves SHARE that one cell. The tab renders at
+// `innerWidth(cols) = cols - sidebarWidth(cols, state) + 1` with its own right
+// border; the compositor (`composeColumn` in paint.ts) drops that border cell
+// and the column's left border becomes the divider, so
+// `cols = inner.cols - 1 + sidebarWidth(cols, state)`. Row 0 and row `rows-1`
+// carry the junction glyphs (`┬`/`┴`) that continue the inner frame's top and
+// bottom rules.
 //
 // Capture is `-e` (SGR kept — the whole point of the restyle: the mirror shows
 // pi's own colors) and `-J`, through the same local DockerRunner seam the
@@ -29,6 +32,7 @@ import type { DockerRunner } from "./companion.js";
 import { ACCENT, BAD, MUTED, OK, RESET, SEP, WARN } from "./design.js";
 import { displayWidth, fit } from "./paint.js";
 import { clampScrollback, keysToTmux, SCROLL_STEP, splitCapture } from "./pipane.js";
+import { scrolledRange, tmuxCaptureArgs } from "./remote.js";
 
 /** Marks the paste-buffer lines appended after the capture (see `onCopy`). A
  * capture line would have to start with this exact text to be mistaken for
@@ -356,9 +360,10 @@ export function sidebarHit(
 const SEND_FAST_MS = 5_000;
 /** Focused/fresh-send capture cadence — the board pi pane's focus-poll twin. */
 const FAST_POLL_MS = 500;
-/** Extra history a scrolled capture asks for beyond the offset itself, so the
- * area above the parked window is filled rather than blank (pipane's twin). */
-const SCROLL_PAD = 200;
+/** How many reads of one new paste buffer may fail before it is given up on —
+ * a transient docker stall retries on the next poll, a buffer that can never
+ * be read does not cost a docker exec on every poll forever. */
+const BUFFER_READ_TRIES = 3;
 
 /**
  * The sidebar's state + I/O. A failed capture KEEPS the last good mirror (a transient docker hiccup must not
@@ -420,9 +425,17 @@ export class CompanionSidebar {
     } = {},
   ) {}
 
-  /** The newest paste buffer seen (`name created size`), "" when there was
-   * none; undefined until the first listing — the baseline. */
+  /** The newest paste buffer handled (`name created size`) — delivered, or
+   * the baseline; "" when there was none; undefined until the first listing. */
   private lastBuffer: string | undefined;
+  /** The buffer whose read is in flight, so a poll does not start a second. */
+  private bufferReading: string | undefined;
+  /** Failed reads of the newest buffer, by its listing line. */
+  private bufferFailures = { buffer: "", count: 0 };
+  /** Read generations: started, and the newest one that delivered — an older
+   * read landing late never overwrites a newer copy. */
+  private bufferReadStarted = 0;
+  private bufferReadDelivered = 0;
 
   /** The companion is up and can take keystrokes. */
   available(): boolean {
@@ -496,23 +509,13 @@ export class CompanionSidebar {
     // older one can never rewind the mirror past a newer one.
     const seq = ++this.refreshStarted;
     const offset = this.offset;
-    const argv = ["exec", this.cfg.container_name, "tmux"];
-    if (this.paneSize) {
-      argv.push(
-        "resize-window",
-        "-t",
-        this.cfg.session,
-        "-x",
-        String(this.paneSize.cols),
-        "-y",
-        String(this.paneSize.rows),
-        ";",
-      );
-    }
-    argv.push("capture-pane", "-e", "-p", "-J");
     // Parked in scrollback: ask for history above the window, as pipane does.
-    if (offset > 0) argv.push("-S", `-${offset + SCROLL_PAD}`);
-    argv.push("-t", this.cfg.session);
+    const argv = [
+      "exec",
+      this.cfg.container_name,
+      "tmux",
+      ...tmuxCaptureArgs(this.cfg.session, scrolledRange(offset), this.paneSize),
+    ];
     if (this.opts.onCopy)
       argv.push(
         ";",
@@ -543,21 +546,41 @@ export class CompanionSidebar {
     this.opts.onUpdate?.();
   }
 
-  /** Act on one buffer listing (newest first): see `opts.onCopy`. */
+  /** Act on one buffer listing (newest first): see `opts.onCopy`. A new
+   * buffer is handled only once its read SUCCEEDS — a failed read leaves it
+   * new, so the next poll reads it again (up to `BUFFER_READ_TRIES`). */
   private noticeBuffers(buffers: string[]): void {
     const newest = buffers[0] ?? "";
-    const seen = this.lastBuffer;
-    this.lastBuffer = newest;
-    if (seen === undefined || newest === "" || newest === seen) return;
+    if (this.lastBuffer === undefined) {
+      this.lastBuffer = newest; // the baseline: never re-copy a stale buffer
+      return;
+    }
+    if (newest === "" || newest === this.lastBuffer || newest === this.bufferReading) return;
+    if (this.bufferFailures.buffer === newest && this.bufferFailures.count >= BUFFER_READ_TRIES)
+      return;
     const name = newest.split(" ")[0]!;
     const onCopy = this.opts.onCopy;
+    const seq = ++this.bufferReadStarted;
+    this.bufferReading = newest;
+    const settle = (ok: boolean, text: string): void => {
+      if (this.bufferReading === newest) this.bufferReading = undefined;
+      if (!ok) {
+        this.bufferFailures =
+          this.bufferFailures.buffer === newest
+            ? { buffer: newest, count: this.bufferFailures.count + 1 }
+            : { buffer: newest, count: 1 };
+        return;
+      }
+      if (seq < this.bufferReadDelivered) return; // a newer copy already landed
+      this.bufferReadDelivered = seq;
+      this.lastBuffer = newest;
+      if (text.length > 0) onCopy?.(text);
+    };
     void this.docker(["exec", this.cfg.container_name, "tmux", "show-buffer", "-b", name], {
       timeoutMs: 5_000,
     })
-      .then((r) => {
-        if (r.ok && r.stdout.length > 0) onCopy?.(r.stdout);
-      })
-      .catch(() => undefined);
+      .then((r) => settle(r.ok, r.stdout))
+      .catch(() => settle(false, ""));
   }
 
   /** Literal text (`send-keys -l`) then Enter — two invocations, because `-l`

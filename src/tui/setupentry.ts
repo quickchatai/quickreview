@@ -20,10 +20,16 @@ export const SETUP_REQUEST_TEXT = [
   "start with `setup_profile`, then tell him in two or three lines what is done, what is next, and what it costs.",
 ].join("\n");
 
-/** The inject file's name: an ISO stamp (the bridge drains oldest name
- * first, and this sorts after the same day's day-open), never a `.tmp`. */
+/** An ask's inject file name: an ISO stamp (the bridge drains oldest name
+ * first) and the ask's `suffix`, never a `.tmp`. */
+export function companionAskName(now: Date, suffix: string): string {
+  return `${now.toISOString().replace(/[:.]/g, "-")}-${suffix}.md`;
+}
+
+/** The setup request's inject file name (it sorts after the same day's
+ * day-open). */
 export function setupRequestName(now: Date): string {
-  return `${now.toISOString().replace(/[:.]/g, "-")}-setup.md`;
+  return companionAskName(now, "setup");
 }
 
 /** Drop the setup request into the companion's host inject dir (tmp+rename:
@@ -54,8 +60,7 @@ export function writeCompanionAsk(opts: {
   text: string;
   now?: Date;
 }): string {
-  const stamp = (opts.now ?? new Date()).toISOString().replace(/[:.]/g, "-");
-  const name = `${stamp}-${opts.suffix}.md`;
+  const name = companionAskName(opts.now ?? new Date(), opts.suffix);
   mkdirSync(opts.injectDir, { recursive: true });
   const target = join(opts.injectDir, name);
   const tmp = join(opts.injectDir, `.${name}.tmp`);

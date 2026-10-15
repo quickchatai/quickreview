@@ -190,6 +190,7 @@ describe("stopping a scan from the TUI", () => {
     expect(fresh.consumeStopRequest()).toMatchObject({
       ok: false,
       errors: [expect.stringMatching(/no scan is running in this companion/)],
+      in_flight: null,
     });
     expect(JSON.parse(readFileSync(join(dir, SCAN_STOP_RESULT_FILE), "utf8")).ok).toBe(false);
     // Stale request naming another run, while one IS in flight here.
@@ -200,6 +201,7 @@ describe("stopping a scan from the TUI", () => {
     expect(s.consumeStopRequest()).toMatchObject({
       ok: false,
       errors: [expect.stringMatching(/in flight is .*, not scan-older/)],
+      in_flight: run,
     });
     expect(s.status().run).toMatchObject({ state: "running" });
     s.stop();

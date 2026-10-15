@@ -28,23 +28,10 @@ export interface StartupStep {
 /** After this long a running step is flagged as overdue rather than working. */
 export const STALL_AFTER_MS = 20_000;
 
-/** Every step key the bring-up may address. A union rather than bare strings:
- * `set()` has to ignore an unknown key (a progress reporter must never break
- * the startup it reports on), which makes a typo INVISIBLE at runtime — so it
- * is caught at compile time instead. */
-export type StartupStepKey =
-  | "ssh"
-  | "poll"
-  | "memory-forward"
-  | "memory-namespaces"
-  | "container"
-  | "rollover"
-  | "companion-pi";
-
 /** The bring-up, in the order it runs. Declared here so the column shows every
  * step from the first frame — a step nobody has reached yet is `pending`, which
  * is a different thing from one that failed. */
-export const STARTUP_STEPS: ReadonlyArray<{ key: StartupStepKey; label: string }> = [
+export const STARTUP_STEPS = [
   { key: "ssh", label: "VM ssh" },
   { key: "poll", label: "daemon status" },
   { key: "memory-forward", label: "memory forward" },
@@ -52,7 +39,14 @@ export const STARTUP_STEPS: ReadonlyArray<{ key: StartupStepKey; label: string }
   { key: "container", label: "companion container" },
   { key: "rollover", label: "day rollover" },
   { key: "companion-pi", label: "companion pi" },
-];
+] as const satisfies ReadonlyArray<{ key: string; label: string }>;
+
+/** Every step key the bring-up may address — derived from `STARTUP_STEPS`, so
+ * a key cannot exist without the step it names. A union rather than bare
+ * strings: `set()` has to ignore an unknown key (a progress reporter must
+ * never break the startup it reports on), which makes a typo INVISIBLE at
+ * runtime — so it is caught at compile time instead. */
+export type StartupStepKey = (typeof STARTUP_STEPS)[number]["key"];
 
 /** What a reporter is allowed to read — structural, so `StartupOpts` does not
  * have to be generic over the step keys. */
@@ -140,7 +134,14 @@ export class StartupProgress<K extends string = StartupStepKey> {
     this.ticker = undefined;
   }
 
+  /** Start (or restart) a step: what a previous attempt said — a failure's
+   * detail, its end time — is cleared, never carried into this one. */
   begin(key: K, detail?: string): void {
+    const step = this.byKey.get(key);
+    if (step) {
+      delete step.detail;
+      delete step.endedAt;
+    }
     this.set(key, {
       state: "running",
       startedAt: this.now(),

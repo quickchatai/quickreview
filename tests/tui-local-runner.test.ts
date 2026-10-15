@@ -128,6 +128,35 @@ describe("realLocalCommandRunner", () => {
     await expect(done).resolves.toMatchObject({ ok: false, stderr: "permission denied", code: 1 });
   });
 
+  it("names a spawn error and a timeout in stderr — a missing binary prints nothing of its own", async () => {
+    const missing = fakeChild();
+    spawnMock.mockReturnValueOnce(missing);
+    const gone = realLocalCommandRunner("x", ["docker", "ps"]);
+    missing.emit("error", Object.assign(new Error("spawn docker ENOENT"), { code: "ENOENT" }));
+    await expect(gone).resolves.toMatchObject({
+      ok: false,
+      stderr: "spawn docker ENOENT",
+      code: null,
+    });
+
+    vi.useFakeTimers();
+    try {
+      const slow = fakeChild();
+      spawnMock.mockReturnValueOnce(slow);
+      const late = realLocalCommandRunner("x", ["docker", "ps"], { timeoutMs: 50 });
+      slow.stderr.emit("data", Buffer.from("still trying"));
+      vi.advanceTimersByTime(60);
+      await expect(late).resolves.toMatchObject({
+        ok: false,
+        stderr: "still trying\ndocker: timed out after 50ms",
+        code: null,
+      });
+      expect(slow.kill).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("refuses an empty argv without spawning anything", async () => {
     await expect(realLocalCommandRunner("x", [])).resolves.toMatchObject({ ok: false });
     expect(spawnMock).not.toHaveBeenCalled();

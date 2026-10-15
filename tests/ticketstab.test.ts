@@ -187,6 +187,44 @@ describe("the list and the pane", () => {
   });
 });
 
+describe("the bar a paint shows is the bar it registers", () => {
+  it("the FIRST paint of a long ticket already shows the scroll button the keys offer", () => {
+    const rig = learningRig({ readTickets: () => [ticket("FT-0302", "open", 60)] });
+    rig.app.tab = "tickets";
+    rig.learning.store.reloadTickets();
+    expect(rig.learning.tickets.scrollMax).toBe(0); // nothing painted yet
+    const screen = screenOf(rig, 120, 24);
+    expect(screen).toContain("] scroll down");
+    expect(ticketsKeys(rig.learning.store, rig.learning.tickets).bar.map((b) => b.label)).toContain(
+      "] scroll down",
+    );
+  });
+
+  it("a resize that fits the whole body scrolls it back — no dead scroll-up key", () => {
+    const rig = learningRig({ readTickets: () => [ticket("FT-0302", "open", 20)] });
+    rig.app.tab = "tickets";
+    rig.learning.store.reloadTickets();
+    screenOf(rig, 120, 12);
+    for (let i = 0; i < 3; i++) key(rig, { kind: "down", wheel: true });
+    expect(rig.learning.tickets.scroll).toBeGreaterThan(0);
+    const screen = screenOf(rig, 120, 60); // the terminal grows: the body fits
+    expect(rig.learning.tickets.scroll).toBe(0);
+    expect(screen).not.toContain("[ scroll up");
+    expect(key(rig, { kind: "older" })).toBe(false);
+  });
+
+  it("tracker text paints with its control bytes stripped", () => {
+    const evil = { ...ticket("FT-0302"), title: "fine\x1b[2J title", role: "x\x1b]0;x\x07" };
+    const rig = learningRig({ readTickets: () => [evil] });
+    rig.app.tab = "tickets";
+    rig.learning.store.reloadTickets();
+    const raw = rig.app.hooks.tabs.tickets!.screen(rig.app, 120, 24).render();
+    expect(stripAnsi(raw)).toContain("fine[2J title"); // painted, its ESC dropped
+    expect(raw).not.toContain("\x1b[2J");
+    expect(raw).not.toContain("\x1b]0;");
+  });
+});
+
 describe("a short terminal", () => {
   it("scrolling all the way down brings the body's last line into view", () => {
     const rig = learningRig({ readTickets: () => [ticket("FT-0302", "open", 20)] });

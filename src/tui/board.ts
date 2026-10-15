@@ -45,7 +45,16 @@ import {
   type RoundProgressSnapshot,
 } from "../round-progress.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
-import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
+import {
+  FG,
+  RESET,
+  fmtAge,
+  legendLine,
+  osc8,
+  prUrl,
+  stateColor,
+  verdictChip,
+} from "./theme.js";
 
 /** Every clickable thing the board declares. */
 export type BoardAction =

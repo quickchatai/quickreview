@@ -48,6 +48,11 @@ function dockerPrefix(cfg: TuiConfig): string[] {
   return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec"];
 }
 
+/** In-container `qcr <args…>` — the daemon's CLI entry point, spelled once. */
+function cliArgv(cfg: TuiConfig, ...args: string[]): string[] {
+  return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", ...args];
+}
+
 /** A shell script run inside the container: `[sudo] docker exec <container> sh -c <script>`. */
 export function dockerShArgv(cfg: TuiConfig, script: string): string[] {
   return [...dockerPrefix(cfg), cfg.container, "sh", "-c", script];
@@ -60,15 +65,7 @@ export function statusArgv(cfg: TuiConfig): string[] {
 
 /** In-container `qcr why <n> --json`. */
 export function whyArgv(cfg: TuiConfig, pr: number): string[] {
-  return [
-    ...dockerPrefix(cfg),
-    cfg.container,
-    "node",
-    "dist/src/cli.js",
-    "why",
-    String(pr),
-    "--json",
-  ];
+  return cliArgv(cfg, "why", String(pr), "--json");
 }
 
 /**
@@ -82,56 +79,35 @@ export function progressArgv(cfg: TuiConfig, pr: number): string[] {
 
 /** In-container `qcr events --tail <k> --json`. */
 export function eventsArgv(cfg: TuiConfig, tail: number): string[] {
-  return [
-    ...dockerPrefix(cfg),
-    cfg.container,
-    "node",
-    "dist/src/cli.js",
-    "events",
-    "--tail",
-    String(tail),
-    "--json",
-  ];
+  return cliArgv(cfg, "events", "--tail", String(tail), "--json");
 }
 
 /** In-container `qcr today --json` (digest tab's spend/rounds source). */
 export function todayArgv(cfg: TuiConfig): string[] {
-  return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "today", "--json"];
+  return cliArgv(cfg, "today", "--json");
 }
 
 /** In-container `qcr metrics --json` (the metrics tab's aggregate source). */
 export function metricsArgv(cfg: TuiConfig): string[] {
-  return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "metrics", "--json"];
+  return cliArgv(cfg, "metrics", "--json");
 }
 
 /** In-container `qcr history digest --json`: the review history
  * digest, printed — the VM keeps no copy; `historypull.ts` writes it into the
  * PC's state home. Read-only against GitHub and the box. */
 export function historyDigestArgv(cfg: TuiConfig, months?: number): string[] {
-  return [
-    ...dockerPrefix(cfg),
-    cfg.container,
-    "node",
-    "dist/src/cli.js",
+  return cliArgv(
+    cfg,
     "history",
     "digest",
     ...(months !== undefined ? ["--months", String(months)] : []),
     "--json",
-  ];
+  );
 }
 
 /** In-container `qcr metrics --pr <n> --json` (the per-PR timeline). */
 export function metricsPrArgv(cfg: TuiConfig, pr: number): string[] {
-  return [
-    ...dockerPrefix(cfg),
-    cfg.container,
-    "node",
-    "dist/src/cli.js",
-    "metrics",
-    "--pr",
-    String(pr),
-    "--json",
-  ];
+  return cliArgv(cfg, "metrics", "--pr", String(pr), "--json");
 }
 
 /**
@@ -184,6 +160,33 @@ export function captureArgv(
   range?: CaptureRange,
   size?: { cols: number; rows: number },
 ): string[] {
+  return [...dockerPrefix(cfg), cfg.container, "tmux", ...tmuxCaptureArgs(session, range, size)];
+}
+
+/** Extra history a scrolled capture asks for beyond the offset itself, so the
+ * area above the parked window is filled rather than blank. One value for both
+ * embedded terminals (the board's PR pane and the companion column). */
+export const CAPTURE_SCROLL_PAD = 200;
+
+/** The capture range of a mirror parked `offset` lines above its live tail —
+ * none at the tail. */
+export function scrolledRange(offset: number): CaptureRange | undefined {
+  return offset > 0 ? { startBack: offset + CAPTURE_SCROLL_PAD } : undefined;
+}
+
+/**
+ * The tmux arguments of one embedded-terminal capture, after `tmux` and
+ * before any transport: an optional `resize-window` to the painted rectangle,
+ * then `capture-pane -e -p -J` over `range`. Both embedded terminals build
+ * their capture from this — the board's PR pane through `captureArgv`, the
+ * companion column through its local docker runner — so the capture protocol
+ * is spelled once.
+ */
+export function tmuxCaptureArgs(
+  session: string,
+  range?: CaptureRange,
+  size?: { cols: number; rows: number },
+): string[] {
   const window: string[] = [];
   if (range && range.startBack > 0) {
     window.push("-S", `-${range.startBack}`);
@@ -192,19 +195,7 @@ export function captureArgv(
   const resize: string[] = size
     ? ["resize-window", "-t", session, "-x", String(size.cols), "-y", String(size.rows), ";"]
     : [];
-  return [
-    ...dockerPrefix(cfg),
-    cfg.container,
-    "tmux",
-    ...resize,
-    "capture-pane",
-    "-e",
-    "-p",
-    "-J",
-    ...window,
-    "-t",
-    session,
-  ];
+  return [...resize, "capture-pane", "-e", "-p", "-J", ...window, "-t", session];
 }
 
 /**
@@ -317,20 +308,27 @@ function runChild(
     // decoder carries the partial sequence across chunks.
     const outDec = new StringDecoder("utf8");
     const errDec = new StringDecoder("utf8");
-    const settle = (ok: boolean, code: number | null) => {
+    // `cause` is the runner's own last stderr line when the child never
+    // exited on its own — a spawn error (a missing binary prints nothing) or
+    // the timeout — so a caller's "last stderr line" names it rather than
+    // reading as a bare `exit ?`.
+    const settle = (ok: boolean, code: number | null, cause?: string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       inFlightSsh.delete(child);
-      resolvePromise({ ok, stdout: stdout + outDec.end(), stderr: stderr + errDec.end(), code });
+      let err = stderr + errDec.end();
+      if (cause !== undefined) err += `${err === "" || err.endsWith("\n") ? "" : "\n"}${cause}`;
+      resolvePromise({ ok, stdout: stdout + outDec.end(), stderr: err, code });
     };
+    const timeoutMs = opts?.timeoutMs ?? 15_000;
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      settle(false, null);
-    }, opts?.timeoutMs ?? 15_000);
+      settle(false, null, `${bin}: timed out after ${timeoutMs}ms`);
+    }, timeoutMs);
     child.stdout.on("data", (d: Buffer) => (stdout += outDec.write(d)));
     child.stderr.on("data", (d: Buffer) => (stderr += errDec.write(d)));
-    child.on("error", () => settle(false, null));
+    child.on("error", (e: Error) => settle(false, null, e.message));
     child.on("close", (code) => settle(code === 0, code));
     if (opts?.stdin !== undefined) child.stdin.end(opts.stdin);
     else child.stdin.end();

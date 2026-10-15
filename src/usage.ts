@@ -31,6 +31,7 @@
 import {
   normalizeRedirections,
   redirectTargets,
+  sedWords,
   splitShellSegments,
 } from "../extensions/bash-guard.js";
 
@@ -423,7 +424,30 @@ const GIT_CONFIG_SURFACE_WRITE_RE =
  * and reads these paths all day, and auditing a read would be the routine false
  * line that teaches an operator to skip the event. Mirrors `isPolicySurface` in
  * the guard, kept an independent implementation on purpose. */
-const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:(?:config\.toml|AGENTS\.override\.md|AGENTS\.MD|AGENTS\.md|CLAUDE\.MD|CLAUDE\.md)|(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\/\S+)`;
+const POLICY_SURFACE_FILES = [
+  "config.toml",
+  "AGENTS.override.md",
+  "AGENTS.MD",
+  "AGENTS.md",
+  "CLAUDE.MD",
+  "CLAUDE.md",
+] as const;
+const POLICY_SURFACE_DIRS = [
+  "scripts",
+  "dist",
+  "extensions",
+  "prompts",
+  "agents",
+  "seeds",
+  ".pi",
+] as const;
+/** The names above as one regex alternation — the one vocabulary the shell
+ * rule, the write-tool path rule and the pattern expansion below all read. */
+const reAlt = (names: readonly string[]): string =>
+  names.map((n) => n.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")).join("|");
+const POLICY_FILES_ALT = reAlt(POLICY_SURFACE_FILES);
+const POLICY_DIRS_ALT = reAlt(POLICY_SURFACE_DIRS);
+const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:(?:${POLICY_FILES_ALT})|(?:${POLICY_DIRS_ALT})\/\S+)`;
 const POLICY_SURFACE_WRITE_RE = new RegExp(
   String.raw`(?:` +
     WRITE_OPERATOR +
@@ -436,8 +460,9 @@ const POLICY_SURFACE_WRITE_RE = new RegExp(
 /** The same policy surface as a WRITE-TOOL target path: `config.toml`
  * or an agent-context file at any depth, or anything under scripts/dist/extensions/prompts/agents/seeds/.pi
  * (the built `state/agents/…` included — `agents/` follows a slash). */
-const POLICY_SURFACE_PATH_RE =
-  /(?:^|\/)(?:config\.toml|AGENTS\.override\.md|AGENTS\.MD|AGENTS\.md|CLAUDE\.MD|CLAUDE\.md)$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\//;
+const POLICY_SURFACE_PATH_RE = new RegExp(
+  String.raw`(?:^|\/)(?:${POLICY_FILES_ALT})$|(?:^|\/)(?:${POLICY_DIRS_ALT})\/`,
+);
 
 /**
  * A write landing on a MEMORY-SCOPE file — the same SHAPE again:
@@ -507,19 +532,8 @@ const SURFACE_COMPONENT_NAMES: readonly string[] = [
   "git",
   "config",
   ".gitattributes",
-  "config.toml",
-  "AGENTS.override.md",
-  "AGENTS.md",
-  "AGENTS.MD",
-  "CLAUDE.md",
-  "CLAUDE.MD",
-  "scripts",
-  "dist",
-  "extensions",
-  "prompts",
-  "agents",
-  "seeds",
-  ".pi",
+  ...POLICY_SURFACE_FILES,
+  ...POLICY_SURFACE_DIRS,
   "recall-hints",
   "retired-uris.json",
   "retired-uris.json.tmp-1",
@@ -670,8 +684,10 @@ const AUDIT_READERS: ReadonlySet<string> = new Set([
  */
 const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
   find: /(?:^|\s)-(?:exec|execdir|ok|okdir|delete|fprintf|fprint|fprint0|fls)(?:\s|$)/,
-  sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o(?:\s|$))/,
-  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|['"\s](?:[0-9$,]|\/[^/]*\/)*\s*[wWe]\s/,
+  // `o` is unambiguous in sort's short options, so a cluster carrying it —
+  // its value attached (`-o/tmp/out`) or not — is an output redirect.
+  sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o)/,
+  // sed has no pattern here: `sedAuditHit` reads its words as bash hands them over.
   // The diff options' `--output=<file>` on any verb, and
   // `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O<cmd>` (any unique
   // abbreviation of the long form; `-O` ending a short cluster).
@@ -708,6 +724,24 @@ function segmentProgram(segment: string): string | null {
   return sawXargs ? "xargs" : null; // bare `xargs` runs echo
 }
 
+/** The `VAR=val` prefixes in front of a segment's program (and of `env`),
+ * space-joined — what `segmentProgram` skips to find the program. */
+function assignmentPrefix(segment: string): string {
+  const out: string[] = [];
+  for (const raw of segment.trim().split(/\s+/)) {
+    const t = raw.replace(/^['"(]+|['")]+$/g, "");
+    if (t.length === 0) continue;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
+      out.push(t);
+      continue;
+    }
+    if (t === "env" || (t.startsWith("-") && t.length <= 3)) continue;
+    if (/^\d*[<>]/.test(t)) continue; // a redirection remnant, as segmentProgram skips
+    break;
+  }
+  return out.join(" ");
+}
+
 /** Whether `segment` opens ANSI-C (`$'…'`) or locale (`$"…"`) quoting
  * outside quotes — where it can spell any option; inside quotes `$'`/`$"` is
  * literal. */
@@ -728,6 +762,84 @@ function opensAnsiOrLocaleQuote(segment: string): boolean {
     }
   }
   return false;
+}
+
+/** sed's script words in a segment: every `-e X`/`-eX`/`--e…=X`/`--e… X`
+ * value, else its first operand — with an `-i`/`-f` (or `--in-place`/`--file`
+ * by any prefix) reported as `writes`. Read from the words bash hands sed, so
+ * adjacent quoted pieces are one word (`"1"'w out'` is `1w out`), and a word
+ * whose value the text does not fix (`$'…'`, `$X`, a backtick) is read with
+ * its quoting stripped — coarse on purpose, never "no script". */
+function sedScripts(segment: string): { writes: boolean; scripts: string[] } {
+  let after: string | null = null;
+  for (const m of segment.matchAll(/\S+/g)) {
+    const t = m[0].replace(/^[\\'"(]+|['")]+$/g, "");
+    if (t.slice(t.lastIndexOf("/") + 1) === "sed") {
+      after = segment.slice(m.index + m[0].length);
+      break;
+    }
+  }
+  if (after === null) return { writes: false, scripts: [] };
+  const words =
+    sedWords(after) ??
+    after
+      .replace(/[$'"`\\]/g, "")
+      .split(/\s+/)
+      .filter((w) => w.length > 0);
+  const scripts: string[] = [];
+  let operand: string | null = null;
+  let writes = false;
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k]!;
+    if (w === "--") {
+      if (operand === null && words[k + 1] !== undefined) operand = words[k + 1]!;
+      break;
+    }
+    if (/^--(?:i|f)[a-z-]*(?:=|$)/.test(w)) writes = true;
+    else if (/^--e[a-z-]*=/.test(w)) scripts.push(w.slice(w.indexOf("=") + 1));
+    else if (/^--e[a-z-]*$/.test(w)) scripts.push(words[++k] ?? "");
+    else if (/^-[^-]/.test(w)) {
+      const short = /^-([a-zA-Z0-9]*?)([eif])(.*)$/s.exec(w);
+      if (short?.[2] === "e") scripts.push(short[3] !== "" ? short[3]! : (words[++k] ?? ""));
+      else if (short !== null) writes = true;
+    } else if (operand === null) operand = w;
+  }
+  if (scripts.length === 0 && operand !== null) scripts.push(operand);
+  return { writes, scripts };
+}
+
+/** A sed address run: numbers, `first~step`, `$`, `/re/` and `\cREc` (with
+ * their I/M flags), `,`, `+N` and `!`. `group` numbers the `\cREc`
+ * delimiter's capture, so the run can appear twice in one pattern. */
+const sedAddr = (group: number): string => {
+  const ref = `\\${group}`;
+  return (
+    String.raw`(?:\s*(?:[0-9]+|\$|~[0-9]*|\+[0-9]*|[,!]|\/(?:\\.|[^/\\\n])*\/[IM]*|\\([^\n\\])(?:\\.|(?!` +
+    ref +
+    String.raw`)[^\\\n])*` +
+    ref +
+    String.raw`[IM]*))*`
+  );
+};
+/** A w/W/e command where a command starts: the script's start, after `;`,
+ * `{`, `}` or a newline, or after a branch or label and the whitespace that
+ * ends it (`bx e cmd` is a branch, then `e`) — behind any address. A `w`
+ * glued to its file (`wout`) is one too. */
+const SED_VERB_RE = new RegExp(
+  String.raw`(?:^|[;{}\n])(?:` +
+    sedAddr(1) +
+    String.raw`\s*[:btT][ \t]*[^\s;}]+[ \t]+)*` +
+    sedAddr(2) +
+    String.raw`\s*[wWe]`,
+);
+/** An s command whose flags carry `e` (runs the pattern space) or `w` (writes),
+ * with any delimiter and the flags in any order. */
+const SED_SFLAG_RE = /s([^\\\n])(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1[gpiImMnN0-9]*[ew]/;
+
+/** Whether this segment's sed writes a file or runs a command. */
+function sedAuditHit(segment: string): boolean {
+  const { writes, scripts } = sedScripts(segment);
+  return writes || scripts.some((sc) => SED_VERB_RE.test(sc) || SED_SFLAG_RE.test(sc));
 }
 
 /** Which rule, if any, this ONE segment trips. */
@@ -758,10 +870,20 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
     // Checked BEFORE the reader skip below: these programs are readers by
     // default and writers on a flag, and the flag is the whole point. git's
     // rule reads the DEQUOTED segment, as git receives its options
-    // (`--out"put"=…` is `--output=…`).
-    if (READER_MODE_AUDIT[prog]?.test(prog === "git" ? bare : segment))
-      return "reader_write_or_exec";
-    if (AUDIT_READERS.has(prog)) return null;
+    // (`--out"put"=…` is `--output=…`); sed's reads it with a quote nested in
+    // the other kind masked (`maskNestedQuotes`).
+    const hit =
+      prog === "sed"
+        ? sedAuditHit(segment)
+        : READER_MODE_AUDIT[prog]?.test(prog === "git" ? bare : segment);
+    if (hit === true) return "reader_write_or_exec";
+    // A reader's ARGUMENTS are patterns, but an assignment PREFIX in front
+    // of it is the environment it runs in — `LD_PRELOAD=… cat f` loads code
+    // whatever cat then reads.
+    if (AUDIT_READERS.has(prog))
+      return GIT_CONFIG_INJECTION_RE.test(assignmentPrefix(segment))
+        ? "git_config_injection"
+        : null;
   }
   // A policy-relocation env prefix (`QCR_CONFIG=` and kin) — checked AFTER the
   // reader skip so `grep QCR_CONFIG=x file` (a read of a config) does not trip
@@ -810,26 +932,39 @@ export function execViolationKind(cmd: string): ExecViolationKind | null {
   return null;
 }
 
-/** Pull every bash toolCall command out of a record, wherever it nests. */
-function bashCommandsIn(value: unknown, out: string[], depth = 8): void {
+/**
+ * Every tool call in a record, wherever it nests (eight levels deep): its
+ * tool name (`toolName`, `name` or `tool`) and the objects its arguments may
+ * ride in — each argument envelope (`arguments`, `input`, `args`, `params`)
+ * that is an object, then the call itself. The ONE reading of the transcript's
+ * tool-call shape; what to pull out of the arguments is the caller's.
+ */
+function forEachToolCall(
+  value: unknown,
+  visit: (toolName: unknown, argObjects: Array<Record<string, unknown>>) => void,
+  depth = 8,
+): void {
   if (depth < 0 || typeof value !== "object" || value === null) return;
   if (Array.isArray(value)) {
-    for (const item of value) bashCommandsIn(item, out, depth - 1);
+    for (const item of value) forEachToolCall(item, visit, depth - 1);
     return;
   }
   const obj = value as Record<string, unknown>;
-  const toolName = obj.toolName ?? obj.name ?? obj.tool;
-  if (toolName === "bash") {
-    for (const argsKey of ["arguments", "input", "args", "params"]) {
-      const args = obj[argsKey];
-      if (typeof args === "object" && args !== null) {
-        const cmd = (args as Record<string, unknown>).command;
-        if (typeof cmd === "string") out.push(cmd);
-      }
-    }
-    if (typeof obj.command === "string") out.push(obj.command);
+  const envelopes: Array<Record<string, unknown>> = [];
+  for (const argsKey of ["arguments", "input", "args", "params"]) {
+    const args = obj[argsKey];
+    if (typeof args === "object" && args !== null) envelopes.push(args as Record<string, unknown>);
   }
-  for (const v of Object.values(obj)) bashCommandsIn(v, out, depth - 1);
+  visit(obj.toolName ?? obj.name ?? obj.tool, [...envelopes, obj]);
+  for (const v of Object.values(obj)) forEachToolCall(v, visit, depth - 1);
+}
+
+/** Pull every bash toolCall command out of a record, wherever it nests. */
+function bashCommandsIn(value: unknown, out: string[]): void {
+  forEachToolCall(value, (toolName, argObjects) => {
+    if (toolName !== "bash") return;
+    for (const a of argObjects) if (typeof a.command === "string") out.push(a.command);
+  });
 }
 
 /** Tool names that write a file, as recorded in the transcript. Mirrors
@@ -851,31 +986,15 @@ const WRITE_TOOL_NAMES = new Set([
  * they ran was innocent, and the payload was a file written with the ordinary
  * write tool, which never appears in a bash command at all.
  */
-function writeTargetsIn(value: unknown, out: string[], depth = 8): void {
-  if (depth < 0 || typeof value !== "object" || value === null) return;
-  if (Array.isArray(value)) {
-    for (const item of value) writeTargetsIn(item, out, depth - 1);
-    return;
-  }
-  const obj = value as Record<string, unknown>;
-  const toolName = obj.toolName ?? obj.name ?? obj.tool;
-  if (typeof toolName === "string" && WRITE_TOOL_NAMES.has(toolName)) {
-    for (const argsKey of ["arguments", "input", "args", "params"]) {
-      const args = obj[argsKey];
-      if (typeof args === "object" && args !== null) {
-        const a = args as Record<string, unknown>;
-        for (const pathKey of ["path", "file_path", "filePath"]) {
-          const p = a[pathKey];
-          if (typeof p === "string") out.push(p);
-        }
+function writeTargetsIn(value: unknown, out: string[]): void {
+  forEachToolCall(value, (toolName, argObjects) => {
+    if (typeof toolName !== "string" || !WRITE_TOOL_NAMES.has(toolName)) return;
+    for (const a of argObjects)
+      for (const pathKey of ["path", "file_path", "filePath"]) {
+        const p = a[pathKey];
+        if (typeof p === "string") out.push(p);
       }
-    }
-    for (const pathKey of ["path", "file_path", "filePath"]) {
-      const p = obj[pathKey];
-      if (typeof p === "string") out.push(p);
-    }
-  }
-  for (const v of Object.values(obj)) writeTargetsIn(v, out, depth - 1);
+  });
 }
 
 export interface ExecViolation {
@@ -920,8 +1039,10 @@ export function auditExecViolationDetails(lines: string[]): ExecViolation[] {
   return [...seen].map(([command, kind]) => ({ command, kind }));
 }
 
-/** Bash commands in the given JSONL lines that ran a forbidden executor.
- * Deduplicated, order-preserving; malformed lines skipped. */
+/** The audit items of the given JSONL lines, by their key alone: a bash
+ * command that trips any rule (an executor, a GitHub or git write, a
+ * protected-surface write, …) or `write <path>` for a write-tool target on a
+ * protected surface. Deduplicated, order-preserving; malformed lines skipped. */
 export function auditExecViolations(lines: string[]): string[] {
   return auditExecViolationDetails(lines).map((v) => v.command);
 }

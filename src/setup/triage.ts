@@ -36,7 +36,7 @@ import { dehash, formatEventTags } from "../memory/eventtags.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { Refusal, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
 import { goneDismissal, settled, type FindingsStore, type ScanFinding } from "./findings.js";
-import { validityOf } from "./scanreport.js";
+import { DISMISS_REASON_MAX, validityOf } from "./scanreport.js";
 
 export const SCAN_TAG = "scan";
 export const SCAN_MEMORY_FILE = "scan/memory.json";
@@ -47,7 +47,7 @@ export const SCAN_MEMORY_VERSION = 1;
 export const MAX_PATTERNS_PER_SCAN = 20;
 
 export const MEMORY_TEXT_MAX = 400;
-export const REASON_MAX = 500;
+export const REASON_MAX = DISMISS_REASON_MAX;
 export const TITLE_MAX = 120;
 export const NOTE_MAX = 2000;
 /** A claim this short is too generic to count as quoted. */
