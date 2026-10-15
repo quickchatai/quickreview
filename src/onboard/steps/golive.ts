@@ -60,23 +60,57 @@ export function isGoLiveConfirmation(value: unknown): boolean {
   return typeof value === "string" && value.trim().toUpperCase() === GO_LIVE_CONFIRMATION;
 }
 
-/** What dry-run is and what going live means — the teach text, offered once. */
-export const GO_LIVE_EXPLANATION = [
-  "One decision is left, and it is yours alone.",
-  "",
-  "Right now `dry_run = true` in your config.toml. Everything runs — a labelled PR starts a round, the",
-  "lenses read the diff, the session writes a review — but the single gate every GitHub write passes",
-  "through records what it WOULD have done into state/dryrun/ instead of doing it. You just read one of",
-  "those records. Nothing this system has ever done has reached your repository.",
-  "",
-  "Going live sets that flag to false. From then on the reviewer posts for real: reviews and inline",
-  "comments on labelled pull requests, its own status labels, and replies to the author. It still never",
-  "dismisses anyone's review, never nominates a human reviewer, and never touches your default branch.",
-  "",
-  "Declining is a completely normal answer, and not a lesser one. A dry-run installation is a fully",
-  "working installation: you get every review, in files, and you can flip whenever you like by re-running",
-  "this step or by editing that one line yourself. Plenty of people run it this way for a week first.",
-].join("\n");
+/** The opening paragraph of the explanation: where the installation stands
+ * NOW, read off config.toml — true, already live, or unreadable. */
+function posture(dryRun: boolean | null): string[] {
+  if (dryRun === false) {
+    return [
+      "Right now `dry_run = false` in your config.toml: this installation is already LIVE, and its reviews",
+      "are posted to GitHub. In dry-run everything would still run, but the single gate every GitHub write",
+      "passes through would record what it WOULD have done into state/dryrun/ instead of doing it.",
+    ];
+  }
+  if (dryRun === null) {
+    return [
+      "Right now your config.toml cannot be read, so whether this installation is in dry-run is unknown —",
+      "fix the file before deciding. In dry-run everything runs, but the single gate every GitHub write",
+      "passes through records what it WOULD have done into state/dryrun/ instead of doing it.",
+    ];
+  }
+  return [
+    "Right now `dry_run = true` in your config.toml. Everything runs — a labelled PR starts a round, the",
+    "lenses read the diff, the session writes a review — but the single gate every GitHub write passes",
+    "through records what it WOULD have done into state/dryrun/ instead of doing it. You just read one of",
+    "those records. Nothing this system has ever done has reached your repository.",
+  ];
+}
+
+/** What dry-run is and what going live means — the teach text, offered once,
+ * opening on the installation's current posture. */
+export function goLiveExplanation(dryRun: boolean | null): string {
+  return [
+    "One decision is left, and it is yours alone.",
+    "",
+    ...posture(dryRun),
+    "",
+    "Going live sets that flag to false. From then on the reviewer posts for real: reviews and inline",
+    "comments on labelled pull requests, its own status labels, and replies to the author. It still never",
+    "dismisses anyone's review and never touches your default branch. It nominates a human reviewer only",
+    "if you turned escalation on at step 36 — and then only the people you named, beside a verdict it has",
+    "already decided.",
+    "",
+    "Declining is a completely normal answer, and not a lesser one. A dry-run installation is a fully",
+    "working installation: you get every review, in files, and you can flip whenever you like by re-running",
+    "this step or by editing that one line yourself. Plenty of people run it this way for a week first.",
+  ].join("\n");
+}
+
+/** The explanation as offered on an installation still in dry-run. */
+export const GO_LIVE_EXPLANATION = goLiveExplanation(true);
+
+/** Step data: the flag is on disk as false, but the restart that makes the
+ * daemon read it did not complete — kept until a run pays it. */
+const RESTART_OWED_KEY = "restart_owed";
 
 /**
  * What comes after onboarding, said at its end whichever way the operator
@@ -254,7 +288,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
               name: "offer",
               ok: false,
               detail:
-                `${GO_LIVE_EXPLANATION}\n\n` +
+                `${goLiveExplanation(currentDryRun(ctx.adapters))}\n\n` +
                 `You watched #${proof.pr} reviewed (round ${proof.round_no}, verdict ${proof.verdict}).\n` +
                 `Ask them, then call this tool again: decision: "stay_dry_run", or decision: "go_live" with ` +
                 `confirm: "${GO_LIVE_CONFIRMATION}".`,
@@ -393,13 +427,24 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
             "From the daemon's next start, reviews are posted to GitHub for real. To go back, set it to true and restart.",
         },
       ];
-      const running = await transport.running();
-      checks.push(
-        await transport.restart(
-          (line) => ctx.adapters.log?.(`${GO_LIVE_STEP_ID}: ${line}`),
-          running,
-        ),
-      );
+      // A probe that could not ask the host is not a daemon that is down: the
+      // restart stays owed rather than being discharged as "nothing to restart".
+      const state = await transport.daemonState();
+      const restarted: CheckResult =
+        state.state === "unknown"
+          ? {
+              name: "daemon-restart",
+              ok: false,
+              detail:
+                `could not tell whether the daemon is running ${transport.where} (${state.detail}), so it was not restarted ` +
+                "onto dry_run = false — a running daemon is still in dry-run. Fix: make the host reachable, then run this " +
+                `step again with decision: "go_live" and confirm: "${GO_LIVE_CONFIRMATION}"`,
+            }
+          : await transport.restart(
+              (line) => ctx.adapters.log?.(`${GO_LIVE_STEP_ID}: ${line}`),
+              state.state === "running",
+            );
+      checks.push(restarted);
       const now = currentDryRun(ctx.adapters);
       checks.push(
         now === false
@@ -421,13 +466,34 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
       return {
         ok: checks.every((c) => c.ok),
         checks,
-        data: { decision: "live", flipped_at: ctx.adapters.clock().toISOString() },
+        data: {
+          decision: "live",
+          flipped_at: ctx.adapters.clock().toISOString(),
+          [RESTART_OWED_KEY]: !restarted.ok,
+        },
       };
     },
 
     async verify(ctx): Promise<StepReport> {
       const recorded = ctx.choices[GO_LIVE_CHOICE_KEY];
       const dryRun = currentDryRun(ctx.adapters);
+      // The wizard's own flip whose restart failed: the file says live, the
+      // daemon was never made to read it. Owed until a run restarts it.
+      if (ctx.data[RESTART_OWED_KEY] === true && dryRun === false) {
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "daemon-restart",
+              ok: false,
+              detail:
+                "dry_run = false is on disk, but the restart that makes the daemon read it did not complete, so a running " +
+                `daemon may still be in dry-run. Fix: run this step again with decision: "go_live" and confirm: ` +
+                `"${GO_LIVE_CONFIRMATION}" — it restarts the daemon`,
+            },
+          ],
+        };
+      }
       if (recorded !== "live" && recorded !== "dry_run") {
         return {
           ok: false,
@@ -451,7 +517,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
                 name: "decision",
                 ok: true,
                 detail:
-                  "LIVE — dry-run was declined here once, but config.toml now has dry_run = false, so reviews are posted " +
+                  "LIVE — dry-run was chosen here once, but config.toml now has dry_run = false, so reviews are posted " +
                   "to GitHub. A finished installation.",
               },
             ],

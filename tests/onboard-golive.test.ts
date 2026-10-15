@@ -85,12 +85,17 @@ function harness(
     rounds?: Array<{ round_no: number; status: string; verdict: string | null }>;
     whyCode?: number;
     daemonRunning?: boolean;
+    /** `docker compose ps` fails — the daemon's state is unknown. */
+    psFails?: boolean;
+    /** Exit code of the restart. */
+    restartCode?: number;
   } = {},
 ): Harness {
   const restarts: string[][] = [];
   const runner = {
     run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
       if (args.includes("ps")) {
+        if (o.psFails) return { code: 1, stdout: "", stderr: "Cannot connect to the Docker daemon" };
         const rows = (o.daemonRunning ?? true) ? [{ Service: "daemon", State: "running" }] : [];
         return { code: 0, stdout: JSON.stringify(rows), stderr: "" };
       }
@@ -109,7 +114,9 @@ function harness(
   const stream: StreamRunner = {
     run: async (cmd, args) => {
       restarts.push([cmd, ...args]);
-      return { code: 0, stdout: "", stderr: "" };
+      return o.restartCode
+        ? { code: o.restartCode, stdout: "", stderr: "restart failed" }
+        : { code: 0, stdout: "", stderr: "" };
     },
   };
   const adapters: OnboardAdapters = {
@@ -436,5 +443,57 @@ describe("nothing else in this slice may write the flag", () => {
         /assertNoDryRunEdit\(/,
       );
     }
+  });
+});
+
+describe("the restart that makes the flip real is never forgotten", () => {
+  it("an unknown daemon state is not a stopped daemon — the restart stays owed", async () => {
+    seedChoices({ [PROOF_CHOICE_KEY]: PROOF });
+    // The proof re-check runs (exec answers), but the state probe cannot.
+    const h = harness({ psFails: true });
+    const result = await h.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(" ")).toMatch(/daemon-restart: could not tell whether the daemon is running/);
+    expect(h.restarts).toEqual([]);
+  });
+
+  it("a failed restart after a recorded decline keeps verify red until a run pays it", async () => {
+    seedChoices({ [PROOF_CHOICE_KEY]: PROOF, [GO_LIVE_CHOICE_KEY]: "dry_run" });
+    const failing = harness({ restartCode: 1 });
+    const flip = await failing.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
+    expect(flip.ok).toBe(false);
+    expect(dryRunOnDisk()).toBe(false);
+    const red = await failing.engine.finish();
+    expect(red.ok).toBe(false);
+    if (!red.ok) expect(red.results[0]!.failures.join(" ")).toMatch(/restart .* did not complete/);
+
+    const healthy = harness();
+    const paid = await healthy.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
+    expect(paid.ok).toBe(true);
+    expect(healthy.restarts).toHaveLength(1);
+    expect((await healthy.engine.finish()).ok).toBe(true);
+  });
+
+  it("re-offering on a LIVE installation says it is live, not that dry_run is true", async () => {
+    writeFileSync(join(root, "config.toml"), exampleConfig.replace(/^dry_run = true/m, "dry_run = false"));
+    seedChoices({ [PROOF_CHOICE_KEY]: PROOF });
+    const result = await harness().engine.runStep(GO_LIVE_STEP_ID, {});
+    const offer = result.checks.map((c) => c.detail).join(" ");
+    expect(offer).toMatch(/already LIVE/);
+    expect(offer).not.toMatch(/Right now `dry_run = true`/);
+  });
+
+  it("names the escalation exception rather than promising never to nominate a reviewer", () => {
+    expect(GO_LIVE_EXPLANATION).not.toMatch(/never nominates a human reviewer/);
+    expect(GO_LIVE_EXPLANATION).toMatch(/nominates a human reviewer only/);
   });
 });
