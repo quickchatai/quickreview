@@ -820,13 +820,14 @@ export interface CommandTierGate {
   /**
    * What this gate reads, and it differs by dir — both directions fail closed:
    *
-   *   `slack` — the most recent UNEXPIRED origin (`OriginStore.latest()`).
+   *   `slack` — the origin of the turn being served, while it is live
+   *             (`OriginStore.latest()`; never a queued wake's rights).
    *             Null ⇒ deny: rights need a live turn.
-   *   `local` — the most recent origin REGARDLESS OF AGE
+   *   `local` — the same origin REGARDLESS OF AGE
    *             (`OriginStore.latestAny()`). Expiry is not an escalation: a
    *             Slack turn that simply ran long must not gain owner rights
-   *             here, and only a daemon wake (a `local` record) clears the
-   *             belt.
+   *             here, and only a daemon wake (a `local` record) pi has
+   *             accepted clears the belt.
    */
   currentOrigin(): OriginRecord | null;
 }

@@ -451,7 +451,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
  * The gate reads `latestAny()`, not `latest()`: the belt must not lift merely
  * because a turn ran past the 15-minute TTL (text in the channel can ask for
  * exactly that — "take your time"). Only a daemon wake, which stamps a `local`
- * origin, supersedes a Slack origin here.
+ * origin, supersedes a Slack origin here — once pi has accepted that wake.
  */
 export function buildLocalCommandWatcher(opts: {
   root: string;
