@@ -129,6 +129,7 @@ import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
 import type { RoundRow, StateStore } from "./state.js";
 import { deliverablePosting } from "./posting-outbox.js";
+import { readPostingReceipt } from "./posting-receipt.js";
 import type { RecheckOrder } from "./recheck.js";
 import {
   RECHECK_TEMPLATE_FILE,
@@ -705,22 +706,36 @@ export function roundMemorySeed(
 }
 
 /**
- * The startup orphan sweep's posting debt: a round whose outbox job is still
- * pending owes its review, and the outbox delivers it with no session. Only a
- * job the outbox will actually process counts — live mode, this repo
- * (`outboxProcesses`): a pending dry-run snapshot left over a flip to live is
- * never delivered, so keeping its round would hold it until the operator's
- * `u`. A dry run never owes one.
+ * The startup orphan sweep's posting debt. Two rounds are no phantom:
+ *   - one whose outbox job is still pending owes its review, and the outbox
+ *     delivers it with no session. Only a job the outbox will actually process
+ *     counts — live mode, this repo (`outboxProcesses`): a pending dry-run
+ *     snapshot left over a flip to live is never delivered, so keeping its
+ *     round would hold it until the operator's `u`. A dry run never owes one;
+ *   - one whose review is already on GitHub (a `confirmed` receipt for exactly
+ *     this round and posting key) but whose verdict never landed: its stage
+ *     limit settles it from the receipt, where a cancel and requeue would run
+ *     the lenses again for a review already posted.
  */
 export function orphanPostingOwed(
   receiptDir: string,
   dryRun: boolean,
   repo: string,
 ): (round: Pick<RoundRow, "pr" | "round_no" | "posting_key">) => boolean {
-  return (round) =>
-    !dryRun &&
-    round.posting_key !== null &&
-    deliverablePosting(receiptDir, round.pr, round.round_no, round.posting_key, repo);
+  return (round) => {
+    if (round.posting_key === null) return false;
+    const receipt = readPostingReceipt(receiptDir, round.pr, round.round_no);
+    if (
+      receipt?.status === "confirmed" &&
+      receipt.posting_key === round.posting_key &&
+      receipt.pr === round.pr &&
+      receipt.round_no === round.round_no
+    )
+      return true;
+    return (
+      !dryRun && deliverablePosting(receiptDir, round.pr, round.round_no, round.posting_key, repo)
+    );
+  };
 }
 
 /**

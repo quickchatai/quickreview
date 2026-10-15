@@ -166,9 +166,11 @@ function correction(
  *
  * A round that still owes a POSTING is no phantom: its review is finished and
  * the outbox delivers it without any session (docs/architecture/
- * posting-delivery.md). Cancelling it would make the outbox abandon the
- * review and the requeue would run the lenses again, so it is left running
- * (`postingOwed`) and settles from its receipt like any delivered round. */
+ * posting-delivery.md). Nor is one whose review is already posted but not yet
+ * settled. Cancelling either would make the outbox abandon the review or the
+ * requeue run the lenses again for a review already on GitHub, so it is left
+ * running (`postingOwed`) and settles from its receipt like any delivered
+ * round. */
 export function reconcileOrphanedRounds(
   store: StateStore,
   adoptedPrs: Iterable<number>,
@@ -177,7 +179,7 @@ export function reconcileOrphanedRounds(
     now?: () => Date;
     log?: (msg: string, extra?: unknown) => void;
     /** Does this round still owe a review posting the outbox delivers on its
-     * own? Absent ⇒ no round does. */
+     * own, or the settlement of one already posted? Absent ⇒ no round does. */
     postingOwed?: (round: RoundRow) => boolean;
   },
 ): { cancelled: number[]; requeued: number[]; kept_for_posting: number[] } {
@@ -203,7 +205,7 @@ export function reconcileOrphanedRounds(
       });
       keptForPosting.push(round.pr);
       log(
-        `startup: #${round.pr} round ${round.round_no} kept — session lost, but its review posting is still owed`,
+        `startup: #${round.pr} round ${round.round_no} kept — session lost, but its review posting is still owed or unsettled`,
       );
       continue;
     }

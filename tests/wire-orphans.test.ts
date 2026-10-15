@@ -118,6 +118,52 @@ describe("startup orphan sweep with the production posting-debt predicate", () =
     ).toBe(false);
   });
 
+  it("keeps a sessionless round whose review is posted (confirmed receipt) but unsettled, in either mode", () => {
+    upsertReviewing(60);
+    const id = store.startRound(60, "first", ["pass-baseline"], 75);
+    const key = roundPostingKey(60, 1, head);
+    store.stampPostingKey(id, key);
+    writeJob(60, 1, key, "done");
+    const receipt = (over: Record<string, unknown> = {}) =>
+      writeFileSync(
+        join(dir, "pr-60-round-1.json"),
+        JSON.stringify({
+          version: 1,
+          posting_key: key,
+          marker: postingMarker(key),
+          pr: 60,
+          round_no: 1,
+          head_sha: head,
+          intended_event: "REQUEST_CHANGES",
+          actual_event: "REQUEST_CHANGES",
+          status: "confirmed",
+          payload_sha256: "c".repeat(64),
+          prepared_at: "2026-10-12T10:00:00.000Z",
+          confirmed_at: "2026-10-12T10:00:05.000Z",
+          gh_review_id: 9001,
+          gh_commit_id: head,
+          gh_state: "CHANGES_REQUESTED",
+          ...over,
+        }),
+      );
+    const owed = orphanPostingOwed(dir, false, "org/repo");
+    receipt({ status: "prepared", confirmed_at: undefined, gh_review_id: undefined });
+    expect(owed({ pr: 60, round_no: 1, posting_key: key })).toBe(false);
+    receipt({ posting_key: roundPostingKey(60, 1, "b".repeat(40)) });
+    expect(owed({ pr: 60, round_no: 1, posting_key: key })).toBe(false);
+    receipt();
+    expect(owed({ pr: 60, round_no: 1, posting_key: key })).toBe(true);
+    expect(
+      orphanPostingOwed(dir, true, "org/repo")({ pr: 60, round_no: 1, posting_key: key }),
+    ).toBe(true);
+
+    const res = reconcileOrphanedRounds(store, [], { botLogin: "bot[bot]", postingOwed: owed });
+    expect(res.kept_for_posting).toEqual([60]);
+    expect(res.cancelled).toEqual([]);
+    expect(res.requeued).toEqual([]);
+    expect(store.runningRounds().map((r) => r.id)).toEqual([id]);
+  });
+
   // The outbox processes only live jobs of its own repo. A pending job outside
   // that — a dry-run snapshot left over a flip to live, another repo's — is
   // never delivered, so its round is an ordinary orphan: cancelled and
