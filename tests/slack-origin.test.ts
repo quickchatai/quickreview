@@ -1,8 +1,18 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ORIGIN_TTL_MS, OriginStore, parseOriginRecord } from "../src/slack/origin.js";
+import type { SlackTier } from "../src/state.js";
 
 const T0 = new Date("2026-08-17T09:00:00.000Z");
 let clock = T0;
@@ -258,6 +268,97 @@ describe("OriginStore", () => {
       // A daemon wake in this process supersedes the boot cause.
       booted.writeLocal("eod-sweep");
       expect(booted.latestAny()).toMatchObject({ source: "local", tier: "system" });
+    });
+  });
+
+  describe("authority follows the turn being served, never a queued wake", () => {
+    let inject: string;
+    let done: string;
+    let served: OriginStore;
+    beforeEach(() => {
+      inject = join(dir, "inject");
+      done = join(inject, ".done");
+      mkdirSync(done, { recursive: true });
+      served = new OriginStore(join(dir, "origin"), now, { deliveredDir: done });
+    });
+    /** The router's sequence: provisional record, wake file, bind. */
+    const slackTurn = (n: number, user: string, tier: SlackTier, prs: number[] = []) => {
+      served.write(`event-Ev${n}`, {
+        event_id: `Ev${n}`,
+        slack_user: user,
+        tier,
+        authorized_prs: prs,
+      });
+      const wake = `wake-${n}.md`;
+      writeFileSync(join(inject, wake), "turn\n");
+      served.rename(`event-Ev${n}`, wake);
+      return wake;
+    };
+    const accept = (wake: string) => renameSync(join(inject, wake), join(done, wake));
+
+    it("a queued owner message never lends its rights to the running guest turn", () => {
+      accept(slackTurn(1, "U0GUEST", "anyone"));
+      at(30_000);
+      const owner = slackTurn(2, "U0MAT", "owner");
+      expect(served.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+      expect(served.latestAny()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+      // Once pi takes the owner's wake, the guest's turn is over.
+      accept(owner);
+      expect(served.latest()).toMatchObject({ slack_user: "U0MAT", tier: "owner" });
+    });
+
+    it("a queued daemon wake does not lift the belt off the running guest turn", () => {
+      accept(slackTurn(1, "U0GUEST", "anyone"));
+      at(30_000);
+      const local = served.writeLocal("anomaly");
+      // Before its wake file exists, and after, until pi accepts it.
+      expect(served.latestAny()).toMatchObject({ source: "slack", tier: "anyone" });
+      writeFileSync(join(inject, "wake-local.md"), "wake\n");
+      served.bind(local, join(inject, "wake-local.md"));
+      expect(served.latestAny()).toMatchObject({ source: "slack", tier: "anyone" });
+      expect(existsSync(join(dir, "origin", "wake-local.json"))).toBe(true);
+      accept("wake-local.md");
+      expect(served.latestAny()).toMatchObject({ source: "local", tier: "system" });
+    });
+
+    it("a queued guest message restricts a running owner turn (fail closed)", () => {
+      accept(slackTurn(1, "U0MAT", "owner"));
+      at(30_000);
+      slackTurn(2, "U0GUEST", "anyone");
+      expect(served.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+    });
+
+    it("two authors overlapping keep only the PRs both are authorised on", () => {
+      accept(slackTurn(1, "U0ALICE", "author", [1, 2]));
+      slackTurn(2, "U0BOB", "author", [2, 3]);
+      expect(served.latest()).toMatchObject({ slack_user: "U0ALICE", authorized_prs: [2] });
+    });
+
+    it("an expired running turn authorises nothing, whatever is queued behind it", () => {
+      accept(slackTurn(1, "U0GUEST", "anyone"));
+      at(ORIGIN_TTL_MS + 1);
+      slackTurn(2, "U0MAT", "owner");
+      expect(served.latest()).toBeNull();
+      // The belt still names the guest, and prune keeps its record.
+      served.prune();
+      expect(served.latestAny()).toMatchObject({ slack_user: "U0GUEST" });
+    });
+
+    it("a failed audit-file move still binds the record to its wake", () => {
+      served.write("event-Ev1", {
+        event_id: "Ev1",
+        slack_user: "U0GUEST",
+        tier: "anyone",
+        authorized_prs: [],
+      });
+      rmSync(join(dir, "origin", "event-Ev1.json"));
+      writeFileSync(join(done, "wake-1.md"), "turn\n");
+      served.rename("event-Ev1", "wake-1.md");
+      at(30_000);
+      const owner = slackTurn(2, "U0MAT", "owner");
+      expect(served.latest()).toMatchObject({ slack_user: "U0GUEST" });
+      accept(owner);
+      expect(served.latest()).toMatchObject({ slack_user: "U0MAT" });
     });
   });
 

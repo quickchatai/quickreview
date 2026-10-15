@@ -515,18 +515,33 @@ export function daemonOriginWakes(opts: {
   origins: OriginStore;
   enabled: boolean;
   log?: (msg: string, extra?: unknown) => void;
+  /** The wake path that names the file it wrote, so the stamped record is
+   * bound to its wake (an accepted wake is what supersedes a Slack origin). */
+  injectOverseerFile?: (message: string) => Promise<string>;
 }): { hooks: SessionHooks; wake: (reason: string, message: string) => Promise<void> } {
   const { hooks, origins, enabled } = opts;
   const log = opts.log ?? (() => {});
   const wake = async (reason: string, message: string): Promise<void> => {
+    let stamped: ReturnType<OriginStore["writeLocal"]> | null = null;
     if (enabled) {
       try {
-        origins.writeLocal(reason);
+        stamped = origins.writeLocal(reason);
       } catch (err) {
         log("slack: could not stamp a local origin for a daemon wake", err);
       }
     }
-    await hooks.injectOverseer(message);
+    if (!opts.injectOverseerFile) {
+      await hooks.injectOverseer(message);
+      return;
+    }
+    const path = await opts.injectOverseerFile(message);
+    if (stamped) {
+      try {
+        origins.bind(stamped, path);
+      } catch (err) {
+        log("slack: could not bind a local origin to its wake", err);
+      }
+    }
   };
   return {
     wake,
@@ -769,16 +784,22 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // The origin store is built here, before the daemon, because both halves of
   // "who caused this turn" write to it: the router (Slack turns) and every
   // daemon-originated overseer wake below (local turns).
-  const origins = new OriginStore(join(root, "state", "slack", "origin"));
+  // It reads the overseer's accepted wakes (the bridge's `.done/`), so a
+  // command's rights are those of the turn being served, never of a wake
+  // still queued behind it.
+  const origins = new OriginStore(join(root, "state", "slack", "origin"), undefined, {
+    deliveredDir: join(sessions.injectDir(OVERSEER_SESSION), ".done"),
+  });
 
   // The daemon sees a wrapped SessionHooks (see `daemonOriginWakes`): every
-  // autonomous overseer wake stamps a `local` origin, so the legacy-dir belt
-  // knows the turn is the daemon's own.
+  // autonomous overseer wake stamps a `local` origin, bound to its wake file,
+  // so the legacy-dir belt knows the turn is the daemon's own once pi takes it.
   const { hooks, wake: wakeOverseerAsDaemon } = daemonOriginWakes({
     hooks: sessions,
     origins,
     enabled: cfg.slack.enabled,
     log,
+    injectOverseerFile: (m) => sessions.injectOverseerFile(m),
   });
 
   // The profile's lens-heuristics extension, loaded once here so a
