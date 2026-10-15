@@ -243,8 +243,45 @@ describe("the inventory is filled from the interview", () => {
     expect(parseInventoryHostVars(readFileSync(inventoryPath(root), "utf8"))).toEqual({
       cloudflared_enabled: "false",
     });
-    expect(result.checks.find((c) => c.name === "ingress")!.detail).toMatch(
-      /nothing is exposed and nothing needs to be/,
+    const note = result.checks.find((c) => c.name === "ingress")!.detail;
+    expect(note).toMatch(/installs no tunnel and nothing needs one/);
+    // It describes the configuration, never the server: a cloudflared an
+    // earlier deploy installed is still running there.
+    expect(note).not.toMatch(/nothing is exposed/);
+    expect(note).toMatch(/NOT stopped by this/);
+  });
+
+  it("a local embedder port or thread count off the default rides the host line, so deploy.sh renders it", async () => {
+    const e = inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" });
+    writeFileSync(
+      join(root, "config.toml"),
+      readFileSync(join(root, "config.toml"), "utf8")
+        .replace(/^local_embedder_port\s*=.*$/m, "local_embedder_port = 1940")
+        .replace(/^local_embedder_threads\s*=.*$/m, "local_embedder_threads = 2"),
+    );
+    await e.runStep(VM_INVENTORY_STEP_ID);
+    expect(parseInventoryHostVars(readFileSync(inventoryPath(root), "utf8"))).toEqual({
+      cloudflared_enabled: "true",
+      openviking_local_embedder_port: "1940",
+      openviking_local_embedder_threads: "2",
+    });
+  });
+
+  it("verify goes red when config.toml's embedder moved after the inventory was written", async () => {
+    const e = inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" });
+    expect((await e.runStep(VM_INVENTORY_STEP_ID)).ok).toBe(true);
+    expect((await e.verifyAll()).ok).toBe(true);
+    writeFileSync(
+      join(root, "config.toml"),
+      readFileSync(join(root, "config.toml"), "utf8").replace(
+        /^embedding_provider\s*=.*$/m,
+        'embedding_provider = "openai"',
+      ),
+    );
+    const all = await e.verifyAll();
+    expect(all.ok).toBe(false);
+    expect(all.results[0]!.failures.join(" ")).toMatch(
+      /embedder: the inventory renders openviking_embedding_provider=local.*config\.toml declares openviking_embedding_provider=openai/,
     );
   });
 

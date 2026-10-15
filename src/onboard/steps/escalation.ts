@@ -25,10 +25,9 @@
 // the `onboarding:<login>` family).
 import { readFileSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
-import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { parseConfig } from "../../config.js";
-import { writeAtomic } from "./compose.js";
+import { interviewConfigPath, writeAtomic } from "./compose.js";
 
 export const ESCALATION_STEP_ID = "escalation";
 
@@ -349,11 +348,6 @@ function answersFrom(ctx: StepContext, enabled: boolean): EscalationAnswers {
   };
 }
 
-function configPathOf(ctx: StepContext): string {
-  const recorded = ctx.choices[CHOICE_KEYS.configPath];
-  return typeof recorded === "string" && recorded ? recorded : ctx.adapters.paths.configPath;
-}
-
 export function escalationStep(): OnboardingStep {
   return {
     id: ESCALATION_STEP_ID,
@@ -435,7 +429,7 @@ export function escalationStep(): OnboardingStep {
         };
       }
 
-      const path = configPathOf(ctx);
+      const path = interviewConfigPath(ctx);
       let toml: string;
       try {
         toml = readFileSync(path, "utf8");
@@ -529,7 +523,7 @@ export function escalationStep(): OnboardingStep {
     },
 
     async verify(ctx): Promise<StepReport> {
-      const path = configPathOf(ctx);
+      const path = interviewConfigPath(ctx);
       let cfg;
       try {
         cfg = parseConfig(readFileSync(path, "utf8"));
