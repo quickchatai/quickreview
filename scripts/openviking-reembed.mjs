@@ -345,6 +345,7 @@ export function settle({ home, user, detail = "", now = () => new Date() }) {
  * records a reset interrupted before its move: that collection is still the
  * old one, and the reset is finished rather than refused.
  */
+/** @param {{ stored: (Embedder & { model_identity?: string }) | null, metaPresent: boolean, expected: Embedder, journal: any, movedAsidePresent?: boolean }} args */
 export function planPrepare({ stored, metaPresent, expected, journal, movedAsidePresent }) {
   if (!metaPresent)
     return {
