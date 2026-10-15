@@ -30,7 +30,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
-import { MAX_READ_BYTES } from "./adapters.js";
+import { inRoot, MAX_READ_BYTES } from "./adapters.js";
 import type { ScanSource, ScanTree } from "./scanrun.js";
 import type { UnreadableReason } from "./scan.js";
 import { isBinaryContent } from "./textsniff.js";
@@ -44,6 +44,8 @@ const COMPLETE_SUFFIX = ".complete";
 const BLOBS_PER_BATCH = 256;
 const BYTES_PER_BATCH = 64 * 1024 * 1024;
 const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+/** A full commit sha (SHA-1 or SHA-256) — the only spelling a tree is opened at. */
+export const isFullSha = (s: string): boolean => SHA_RE.test(s);
 
 /** `treesDir` (relative to the state home) is where this source keeps its
  * trees — the scan's own by default; another reader of trees (the PR
@@ -191,13 +193,6 @@ export function gitScanSource(
     },
     list,
   };
-}
-
-/** Does `back` (a `relative(root, …)`) stay under the root? A parent
- * traversal is the `..` COMPONENT, never a name that merely begins with two
- * dots — a tracked `..fixtures/a.ts` is an ordinary in-root file. */
-function inRoot(back: string): boolean {
-  return back !== "" && back !== ".." && !back.startsWith(".." + sep) && !isAbsolute(back);
 }
 
 /** A materialised tree as the runner reads it: text within the reader's

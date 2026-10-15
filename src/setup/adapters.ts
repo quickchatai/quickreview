@@ -45,17 +45,18 @@ const WALK_SKIP = new Set([
   "build",
 ]);
 
-/** Is `back` (a `relative()` answer) a path that stays below its base? A
- * parent COMPONENT leaves it; a name that merely starts with two dots
- * (`..fixtures/`) does not. */
-function below(back: string): boolean {
+/** Does `back` (a `relative(root, …)`) stay under the root? A parent
+ * traversal is the `..` COMPONENT, never a name that merely begins with two
+ * dots — a tracked `..fixtures/a.ts` is an ordinary in-root file. The scan's
+ * tree reader holds the same rule. */
+export function inRoot(back: string): boolean {
   return back !== "" && back !== ".." && !back.startsWith(`..${sep}`) && !isAbsolute(back);
 }
 
 function inside(root: string, rel: string): string | null {
   if (isAbsolute(rel)) return null;
   const full = normalize(join(root, rel));
-  return below(relative(root, full)) ? full : null;
+  return inRoot(relative(root, full)) ? full : null;
 }
 
 /**
@@ -135,7 +136,7 @@ export function checkoutReader(root: string): RepoReader {
       // The lexical check above cannot see a symlink: a tracked link to a
       // file outside the checkout is not the checkout's content.
       const top = resolvedRoot();
-      if (top === null || !below(relative(top, realpathSync(full)))) return null;
+      if (top === null || !inRoot(relative(top, realpathSync(full)))) return null;
       const st = statSync(full);
       if (!st.isFile() || st.size > MAX_READ_BYTES) return null;
       const buf = readFileSync(full);

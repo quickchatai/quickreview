@@ -18,7 +18,7 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GitHubReader } from "./engine.js";
 import { parseUnifiedDiff, type ReplayPr, type ReplayTree } from "./replay.js";
-import { gitScanSource } from "./scantree.js";
+import { gitScanSource, isFullSha } from "./scantree.js";
 
 /** Where replay trees and diffs live, under the state home. */
 export const REPLAY_TREES_DIR = "replay/tree";
@@ -26,8 +26,6 @@ export const REPLAY_DIFFS_DIR = "replay/diff";
 
 /** The biggest diff a replay reads (git's output buffer). */
 const MAX_DIFF_BYTES = 64 * 1024 * 1024;
-
-const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /** The PR and its code, as the replay runner needs them. */
 export interface ReplaySource {
@@ -49,7 +47,7 @@ export function parsePull(
   const d = (data ?? {}) as Record<string, unknown>;
   const head = (d.head ?? {}) as Record<string, unknown>;
   const base = (d.base ?? {}) as Record<string, unknown>;
-  const sha = (v: unknown): string | null => (typeof v === "string" && SHA_RE.test(v) ? v : null);
+  const sha = (v: unknown): string | null => (typeof v === "string" && isFullSha(v) ? v : null);
   const headSha = sha(head.sha);
   const baseSha = sha(base.sha);
   if (d.number !== n || headSha === null || baseSha === null) {
@@ -151,7 +149,7 @@ export function gitReplaySource(opts: {
             `are not in the reviewed checkout at ${opts.repoRoot} — pull it on the host (the companion mounts it read-only and fetches nothing)`,
         };
       }
-      if (base === null || !SHA_RE.test(base)) {
+      if (base === null || !isFullSha(base)) {
         return {
           ok: false,
           reason: `PR #${pr.number}: no base to diff ${sha.slice(0, 12)} against in the reviewed checkout — pull its base branch on the host`,
