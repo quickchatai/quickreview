@@ -295,19 +295,41 @@ export class App {
     }
     // One queue for every keystroke into a pane: each chunk is its own ssh
     // round trip, and unqueued a slow "a" lets the Enter typed after it reach
-    // tmux first and submit pi's input without it.
+    // tmux first and submit pi's input without it. For the same reason a
+    // chunk that did not arrive drops everything queued behind it — an Enter
+    // must never submit input with a hole in it — and says so; the next
+    // keystroke typed once the queue has drained starts afresh.
+    if (this.paneSendsQueued === 0) this.paneSendDropped = false;
+    this.paneSendsQueued++;
     this.paneSendTail = this.paneSendTail
       .then(async () => {
         for (const parts of groups) {
-          await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), {
+          if (this.paneSendDropped) return;
+          const res = await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), {
             timeoutMs: 5_000,
           });
+          if (!res.ok) {
+            this.paneSendDropped = true;
+            this.notice(
+              `✖ pr-${pr}: keys not delivered (${res.stderr.trim() || `exit ${res.code}`}) — input after them dropped`,
+            );
+            return;
+          }
         }
-        void this.pi.refresh(pr);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        this.paneSendDropped = true;
+      })
+      .finally(() => {
+        this.paneSendsQueued--;
+        void this.pi.refresh(pr);
+      });
   }
   private paneSendTail: Promise<void> = Promise.resolve();
+  /** Sends queued and not yet finished. */
+  private paneSendsQueued = 0;
+  /** A send in the current queue failed: the rest of it is not sent. */
+  private paneSendDropped = false;
 
   /** Wheel over the pane: move its scrollback window, re-capture with history.
    * Wheeling back to the bottom returns it to the live tail. */
