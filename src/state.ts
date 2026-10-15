@@ -8,6 +8,7 @@ import type { OpenVikingStatus } from "./openviking/types.js";
 import type { ArchiveStatus } from "./archive/status.js";
 import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
+import type { RoundStageSupervisorHealth } from "./session-command-supervisor.js";
 import {
   holdActive,
   mayLift,
@@ -19,8 +20,13 @@ import {
   type LeverKind,
 } from "./levers.js";
 import { parseRecheckPromptMarker, type PassPlanEntry, type VerdictPassEntry } from "./types.js";
-import { standingVerdict as standingReviewVerdict } from "./standing-review.js";
+import {
+  standingLifecycleState,
+  standingVerdict as standingReviewVerdict,
+} from "./standing-review.js";
 import { canonicalLensIds } from "./lensids.js";
+import { postingKeyHead } from "./posting-receipt.js";
+import { WITHHOLD_WORDS } from "./postingpolicy.js";
 
 /** The lifecycle states a PR can occupy. There is no "awaiting human" member:
  * the review is never handed to a human, so nothing produces or holds such a
@@ -685,6 +691,43 @@ const BLOCKING_SESSION_COMMAND_SQL = `(
   )
 )`;
 
+/** Does any once-per-key mark row (an events payload `{key, …}`) carry
+ * `key`? An empty or unparseable payload carries none. */
+function someMarkHasKey(rows: ReadonlyArray<{ payload: string | null }>, key: string): boolean {
+  return rows.some((r) => {
+    if (!r.payload) return false;
+    try {
+      return (JSON.parse(r.payload) as { key?: unknown }).key === key;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** A lever hold as stored (a pause on a PR row, the drain row): null when
+ * not engaged. A hold with no issuer recorded predates issuers and reads as
+ * the operator's with no expiry — the only shape it could have been, and the
+ * fail-safe one: nothing lapses that nobody bounded. */
+function storedHold(
+  engaged: boolean,
+  issuer: LeverIssuer | null,
+  expiresAt: string | null,
+): LeverHold | null {
+  if (!engaged) return null;
+  return { issuer: issuer ?? "operator", expires_at: issuer ? expiresAt : null };
+}
+
+/** When an `overdue` round may be buried as `expired` (the boot's one-shot
+ * expiry and the recurring sweep apply it under their own age cut-offs): its
+ * PR has closed, or a later-or-equal round of that PR delivered a verdict.
+ * A round a rerun could still service (open PR, nothing decided since) never
+ * matches. */
+const OVERDUE_ROUND_BURIABLE_SQL = `(
+  EXISTS (SELECT 1 FROM pr_state p WHERE p.number = rounds.pr AND p.state = 'closed')
+  OR EXISTS (SELECT 1 FROM rounds r2 WHERE r2.pr = rounds.pr AND r2.id != rounds.id
+               AND r2.backfilled = 0 AND r2.verdict IS NOT NULL AND r2.round_no >= rounds.round_no)
+)`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS pr_state (
   number INTEGER PRIMARY KEY,
@@ -1298,12 +1341,6 @@ export interface ReviewedHeadRow {
   last_author_reply_at: string | null;
 }
 
-/**
- * An approval withheld for red CI. The row says: this head was
- * reviewed, nothing blocked, and the approval is waiting on CI and nothing
- * else. Read by the `ci_completed` retry (cigate.ts) and by dispatch, which
- * treats a standing withholding as new evidence at the same head.
- */
 /** One deferred review posting the daemon owes. */
 export interface PostingRetryRow {
   posting_key: string;
@@ -1318,6 +1355,12 @@ export interface PostingRetryRow {
   updated_at: string;
 }
 
+/**
+ * An approval withheld for red CI. The row says: this head was
+ * reviewed, nothing blocked, and the approval is waiting on CI and nothing
+ * else. Read by the `ci_completed` retry (cigate.ts) and by dispatch, which
+ * treats a standing withholding as new evidence at the same head.
+ */
 export interface ApprovalWithheldRow {
   pr: number;
   head_sha: string;
@@ -1804,11 +1847,7 @@ export class StateStore {
         `UPDATE rounds SET status = 'expired', finished_at = COALESCE(finished_at, @now)
           WHERE status = 'overdue'
             AND started_at < '2026-08-15'
-            AND (
-              EXISTS (SELECT 1 FROM pr_state p WHERE p.number = rounds.pr AND p.state = 'closed')
-              OR EXISTS (SELECT 1 FROM rounds r2 WHERE r2.pr = rounds.pr AND r2.id != rounds.id
-                           AND r2.backfilled = 0 AND r2.verdict IS NOT NULL AND r2.round_no >= rounds.round_no)
-            )`,
+            AND ${OVERDUE_ROUND_BURIABLE_SQL}`,
       )
       .run({ now: this.ts() });
     if (info.changes > 0)
@@ -1982,11 +2021,7 @@ export class StateStore {
   }
 
   private pauseHold(row: PrStateRow): LeverHold | null {
-    if (!row.paused) return null;
-    return {
-      issuer: row.pause_issuer ?? "operator",
-      expires_at: row.pause_issuer ? row.pause_expires_at : null,
-    };
+    return storedHold(Boolean(row.paused), row.pause_issuer, row.pause_expires_at);
   }
 
   /**
@@ -2096,12 +2131,17 @@ export class StateStore {
   ): number {
     const started = this.now();
     const deadline = new Date(started.getTime() + deadlineMin * 60_000);
-    const nextNo =
-      ((
-        this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr = ?").get(pr) as {
-          m: number | null;
-        }
-      ).m ?? 0) + 1;
+    const nextNo = this.nextRoundNo(pr);
+    const {
+      additions,
+      deletions,
+      changed_files,
+      trigger_ts,
+      validate_tier,
+      pass_plan,
+      addable_passes,
+      ...followUp
+    } = meta;
     const info = this.db
       .prepare(
         `INSERT INTO rounds (pr, round_no, round_type, lenses, started_at, deadline_at, status,
@@ -2116,29 +2156,30 @@ export class StateStore {
         lenses.join(","),
         started.toISOString(),
         deadline.toISOString(),
-        meta.additions ?? null,
-        meta.deletions ?? null,
-        meta.changed_files ?? null,
-        meta.trigger_ts ?? null,
-        meta.validate_tier ?? null,
-        meta.pass_plan ? JSON.stringify(meta.pass_plan) : null,
-        meta.addable_passes ? JSON.stringify(meta.addable_passes) : null,
+        additions ?? null,
+        deletions ?? null,
+        changed_files ?? null,
+        trigger_ts ?? null,
+        validate_tier ?? null,
+        pass_plan ? JSON.stringify(pass_plan) : null,
+        addable_passes ? JSON.stringify(addable_passes) : null,
       );
     const id = Number(info.lastInsertRowid);
     // The follow-up columns ride the same meta, written only when
     // given, so a round started without them keeps them NULL.
-    this.setRoundMeta(id, {
-      ...(meta.head_sha !== undefined ? { head_sha: meta.head_sha } : {}),
-      ...(meta.merge_base !== undefined ? { merge_base: meta.merge_base } : {}),
-      ...(meta.scope !== undefined ? { scope: meta.scope } : {}),
-      ...(meta.delta_base_sha !== undefined ? { delta_base_sha: meta.delta_base_sha } : {}),
-      ...(meta.delta_lines !== undefined ? { delta_lines: meta.delta_lines } : {}),
-      ...(meta.delta_files !== undefined ? { delta_files: meta.delta_files } : {}),
-      ...(meta.sweep_owed !== undefined ? { sweep_owed: meta.sweep_owed } : {}),
-      ...(meta.sweep_plan !== undefined ? { sweep_plan: meta.sweep_plan } : {}),
-      ...(meta.sweep_status !== undefined ? { sweep_status: meta.sweep_status } : {}),
-    });
+    this.setRoundMeta(id, followUp);
     return id;
+  }
+
+  /** The number the PR's next round takes: one past its highest. */
+  private nextRoundNo(pr: number): number {
+    return (
+      ((
+        this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr = ?").get(pr) as {
+          m: number | null;
+        }
+      ).m ?? 0) + 1
+    );
   }
 
   /** Diffstat/trigger stamp for a round that already exists (late arrival). */
@@ -2221,7 +2262,7 @@ export class StateStore {
         .run(startedAt, id).changes === 1;
     if (changed) {
       const head = row.posting_key
-        ? new RegExp(`^v1:${row.pr}:${row.round_no}:([^:]+)$`).exec(row.posting_key)?.[1]
+        ? postingKeyHead(row.posting_key, row.pr, row.round_no)
         : undefined;
       this.logEvent("round_fanout_started", row.pr, {
         round_id: id,
@@ -2537,9 +2578,10 @@ export class StateStore {
   withheldFindings(pr: number): RoundFindingRow[] {
     return this.db
       .prepare(
-        "SELECT * FROM round_findings WHERE pr = ? AND disposition = 'withheld' AND word IN ('over-budget','nits-off','questions-off','question-not-blocking','repeat-site') ORDER BY round_no, id",
+        `SELECT * FROM round_findings WHERE pr = ? AND disposition = 'withheld'
+          AND word IN (${WITHHOLD_WORDS.map(() => "?").join(", ")}) ORDER BY round_no, id`,
       )
-      .all(pr) as RoundFindingRow[];
+      .all(pr, ...WITHHOLD_WORDS) as RoundFindingRow[];
   }
 
   /**
@@ -2636,14 +2678,7 @@ export class StateStore {
     const rows = this.db
       .prepare("SELECT payload FROM events WHERE kind = 'findings_record_nudged' AND pr = ?")
       .all(pr) as Array<{ payload: string | null }>;
-    return rows.some((r) => {
-      if (!r.payload) return false;
-      try {
-        return (JSON.parse(r.payload) as { key?: unknown }).key === key;
-      } catch {
-        return false;
-      }
-    });
+    return someMarkHasKey(rows, key);
   }
 
   /** A dispatch attempt creates its round row before handing the order to the
@@ -3695,23 +3730,25 @@ export class StateStore {
       .prepare(
         `SELECT id, pr, round_no FROM rounds
           WHERE status = 'overdue' AND deadline_at < ?
-            AND (
-              EXISTS (SELECT 1 FROM pr_state p WHERE p.number = rounds.pr AND p.state = 'closed')
-              OR EXISTS (SELECT 1 FROM rounds r2 WHERE r2.pr = rounds.pr AND r2.id != rounds.id
-                           AND r2.backfilled = 0 AND r2.verdict IS NOT NULL AND r2.round_no >= rounds.round_no)
-            )`,
+            AND ${OVERDUE_ROUND_BURIABLE_SQL}`,
       )
       .all(cutoff) as Array<{ id: number; pr: number; round_no: number }>;
     if (rows.length === 0) return [];
-    const stamp = this.db.prepare(
-      "UPDATE rounds SET status = 'expired', finished_at = COALESCE(finished_at, ?) WHERE id = ? AND status = 'overdue'",
-    );
-    for (const r of rows) stamp.run(this.ts(), r.id);
+    this.expireOverdue(rows.map((r) => r.id));
     this.logEvent("rounds_expired", null, {
       count: rows.length,
       rounds: rows.map((r) => ({ id: r.id, pr: r.pr, round_no: r.round_no })),
     });
     return rows.map((r) => r.id);
+  }
+
+  /** Move these `overdue` rounds to terminal `expired`, keeping a finish
+   * time already recorded. A round no longer overdue is left as it is. */
+  private expireOverdue(ids: readonly number[]): void {
+    const stamp = this.db.prepare(
+      "UPDATE rounds SET status = 'expired', finished_at = COALESCE(finished_at, ?) WHERE id = ? AND status = 'overdue'",
+    );
+    for (const id of ids) stamp.run(this.ts(), id);
   }
 
   /**
@@ -3748,10 +3785,7 @@ export class StateStore {
   expireStrandedRounds(horizonHours: number = STRANDED_ROUND_HORIZON_H): RoundRow[] {
     const rows = this.strandedOverdueRounds(horizonHours);
     if (rows.length === 0) return [];
-    const stamp = this.db.prepare(
-      "UPDATE rounds SET status = 'expired', finished_at = COALESCE(finished_at, ?) WHERE id = ? AND status = 'overdue'",
-    );
-    for (const r of rows) stamp.run(this.ts(), r.id);
+    this.expireOverdue(rows.map((r) => r.id));
     this.logEvent("rounds_stranded", null, {
       count: rows.length,
       horizon_h: horizonHours,
@@ -3933,8 +3967,10 @@ export class StateStore {
     return this.botCommentPr(commentId) !== undefined;
   }
 
-  /** When a registered bot comment was posted (the outcome linker's posting
-   * time for a comment it knows only from a reply or a record). */
+  /** When the daemon REGISTERED a bot comment (the outcome linker's posting
+   * time for a comment it knows only from a reply or a record). For a comment
+   * the daemon posted, or saw arrive by webhook, that is its posting time;
+   * one the reconcile backfill found later was posted earlier than this. */
   botCommentPostedAt(commentId: number): string | null {
     const row = this.db
       .prepare("SELECT posted_at FROM bot_comments WHERE comment_id = ?")
@@ -4242,7 +4278,7 @@ export class StateStore {
             RoundRow | undefined);
     const postingHead =
       round?.posting_key && arg.round_no !== null && arg.round_no !== undefined
-        ? new RegExp(`^v1:${arg.pr}:${arg.round_no}:([^:]+)$`).exec(round.posting_key)?.[1]
+        ? postingKeyHead(round.posting_key, arg.pr, arg.round_no)
         : undefined;
     const exactPreFanout =
       arg.stage === "first_pass_start" &&
@@ -4522,8 +4558,7 @@ export class StateStore {
       if (!row) throw new Error(`cannot publish recovery for missing PR #${input.pr}`);
       const successor = this.successorFor(input.pr);
       const targetHead = successor?.head_sha ?? input.fallback_head_sha;
-      const targetRoundNo =
-        Math.max(0, ...this.roundsFor(input.pr).map((round) => round.round_no)) + 1;
+      const targetRoundNo = this.nextRoundNo(input.pr);
       const ts = this.ts();
       const cancelled = this.db
         .prepare(
@@ -4533,25 +4568,18 @@ export class StateStore {
         .run({ ...input, ts }).changes;
       if (cancelled !== 1) return undefined;
       if (input.recovery && row.state !== "closed") {
-        this.db
-          .prepare(
-            `INSERT INTO round_recovery_instructions
-             (pr, target_round_no, target_head_sha, stage, source_incident_id,
-              source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
-           VALUES (@pr, @target_round_no, @target_head_sha, @stage, NULL,
-              @source_command_id, @source_round_no, @immediate_attempt, @retry_epoch, @created_at)`,
-          )
-          .run({
-            pr: input.pr,
-            target_round_no: targetRoundNo,
-            target_head_sha: targetHead,
-            stage: input.recovery.stage,
-            source_command_id: input.recovery.source_command_id,
-            source_round_no: input.round_no,
-            immediate_attempt: input.recovery.immediate_attempt,
-            retry_epoch: input.recovery.retry_epoch,
-            created_at: ts,
-          });
+        this.insertRecoveryInstruction({
+          pr: input.pr,
+          target_round_no: targetRoundNo,
+          target_head_sha: targetHead,
+          stage: input.recovery.stage,
+          source_incident_id: null,
+          source_command_id: input.recovery.source_command_id,
+          source_round_no: input.round_no,
+          immediate_attempt: input.recovery.immediate_attempt,
+          retry_epoch: input.recovery.retry_epoch,
+          created_at: ts,
+        });
       }
       if (row.state === "closed")
         return { target_round_no: targetRoundNo, target_head_sha: targetHead, queued: false };
@@ -4579,6 +4607,13 @@ export class StateStore {
   recordRoundRecoveryInstruction(
     input: Omit<RoundRecoveryInstructionRow, "created_at">,
   ): RoundRecoveryInstructionRow {
+    this.insertRecoveryInstruction({ ...input, created_at: this.ts() });
+    return this.roundRecoveryInstruction(input.pr, input.target_round_no)!;
+  }
+
+  /** The one writer of a recovery-instruction row; callers own the
+   * transaction it lands in. A second row for the same target throws. */
+  private insertRecoveryInstruction(row: RoundRecoveryInstructionRow): void {
     this.db
       .prepare(
         `INSERT INTO round_recovery_instructions
@@ -4587,8 +4622,25 @@ export class StateStore {
        VALUES (@pr, @target_round_no, @target_head_sha, @stage, @source_incident_id,
           @source_command_id, @source_round_no, @immediate_attempt, @retry_epoch, @created_at)`,
       )
-      .run({ ...input, created_at: this.ts() });
-    return this.roundRecoveryInstruction(input.pr, input.target_round_no)!;
+      .run(row);
+  }
+
+  /** Put a due automatic retry off by one initial interval without
+   * activating it, and say why. Only a failure still waiting on its retry
+   * moves. */
+  private deferAutoRetry(failure: ReviewFailureRow, at: string, reason: string): void {
+    const next = new Date(Date.parse(at) + AUTO_REVIEW_RETRY_INITIAL_MIN * 60_000).toISOString();
+    this.db
+      .prepare(
+        `UPDATE review_failures SET next_retry_at=?, updated_at=?
+        WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'`,
+      )
+      .run(next, this.ts(), failure.incident_id);
+    this.logEvent("review_failure_auto_retry_deferred", failure.pr, {
+      incident_id: failure.incident_id,
+      reason,
+      next_retry_at: next,
+    });
   }
 
   /**
@@ -4655,24 +4707,15 @@ export class StateStore {
           // A close is handled by the exact terminal-failure path; a pause is
           // an explicit operator hold. Both retain a finite re-check rather
           // than falling into an actionless state here.
-          const next = new Date(
-            Date.parse(at) + AUTO_REVIEW_RETRY_INITIAL_MIN * 60_000,
-          ).toISOString();
-          this.db
-            .prepare(
-              `UPDATE review_failures SET next_retry_at=?, updated_at=?
-              WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'`,
-            )
-            .run(next, this.ts(), failure.incident_id);
-          this.logEvent("review_failure_auto_retry_deferred", failure.pr, {
-            incident_id: failure.incident_id,
-            reason: !pr
+          this.deferAutoRetry(
+            failure,
+            at,
+            !pr
               ? "pr-state-absent"
               : pr.state === "closed"
                 ? "terminal-resolution-not-ready"
                 : "operator-paused",
-            next_retry_at: next,
-          });
+          );
           return undefined;
         }
         const command = this.getSessionCommand(failure.command_id);
@@ -4697,35 +4740,21 @@ export class StateStore {
         ) {
           // Contradictory/live ownership is never bulldozed. Keep the exact
           // debt visible and schedule another finite inspection.
-          const next = new Date(
-            Date.parse(at) + AUTO_REVIEW_RETRY_INITIAL_MIN * 60_000,
-          ).toISOString();
-          this.db
-            .prepare(
-              `UPDATE review_failures SET next_retry_at=?, updated_at=?
-              WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'`,
-            )
-            .run(next, this.ts(), failure.incident_id);
-          this.logEvent("review_failure_auto_retry_deferred", failure.pr, {
-            incident_id: failure.incident_id,
-            reason: active
+          this.deferAutoRetry(
+            failure,
+            at,
+            active
               ? `active-command:${active.id}`
               : this.hasRunningRound(failure.pr)
                 ? "running-round"
                 : "identity-mismatch",
-            next_retry_at: next,
-          });
+          );
           return undefined;
         }
 
         const successor = this.successorFor(failure.pr);
         const targetHead = successor?.head_sha || pr.head_sha || failure.head_sha;
-        const targetRoundNo =
-          ((
-            this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr=?").get(failure.pr) as {
-              m: number | null;
-            }
-          ).m ?? 0) + 1;
+        const targetRoundNo = this.nextRoundNo(failure.pr);
         // A new authoritative head is new work and gets its own fast-retry /
         // backoff generation. The delayed wake still carries the predecessor
         // identity, but old-head failures do not punish the new head's rate.
@@ -4736,24 +4765,18 @@ export class StateStore {
         const provenance =
           successor?.provenance ?? (pr.trigger_provenance === "human" ? "human" : "system");
 
-        this.db
-          .prepare(
-            `INSERT INTO round_recovery_instructions
-             (pr, target_round_no, target_head_sha, stage, source_incident_id,
-              source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
-           VALUES (?, ?, ?, 'first_pass_start', ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            failure.pr,
-            targetRoundNo,
-            targetHead,
-            failure.incident_id,
-            failure.command_id,
-            failure.round_no,
-            failure.attempts,
-            retryEpoch,
-            this.ts(),
-          );
+        this.insertRecoveryInstruction({
+          pr: failure.pr,
+          target_round_no: targetRoundNo,
+          target_head_sha: targetHead,
+          stage: "first_pass_start",
+          source_incident_id: failure.incident_id,
+          source_command_id: failure.command_id,
+          source_round_no: failure.round_no,
+          immediate_attempt: failure.attempts,
+          retry_epoch: retryEpoch,
+          created_at: this.ts(),
+        });
         const commandChanged = this.db
           .prepare(
             `UPDATE session_commands
@@ -4874,7 +4897,7 @@ export class StateStore {
             kind: "resolved",
             incident_id: input.incident_id,
             command_id: input.command_id,
-            restored_state: standingVerdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked",
+            restored_state: standingLifecycleState(standingVerdict),
             standing_verdict: standingVerdict,
             already_resolved: true,
           };
@@ -5004,7 +5027,7 @@ export class StateStore {
       if (failureChanged !== 1)
         throw new Error(`exact-head failure CAS lost for ${input.incident_id}`);
 
-      const restoredState = standingVerdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
+      const restoredState = standingLifecycleState(standingVerdict);
       const prChanged = this.db
         .prepare(
           `UPDATE pr_state
@@ -5266,30 +5289,19 @@ export class StateStore {
         round.round_no === current.round_no &&
         round.status !== "running"
       ) {
-        const targetRoundNo =
-          ((
-            this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr=?").get(pr) as {
-              m: number | null;
-            }
-          ).m ?? 0) + 1;
-        this.db
-          .prepare(
-            `INSERT INTO round_recovery_instructions
-             (pr, target_round_no, target_head_sha, stage, source_incident_id,
-              source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
-           VALUES (?, ?, ?, 'first_pass_start', ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            pr,
-            targetRoundNo,
-            targetHead,
-            current.incident_id,
-            current.command_id,
-            current.round_no,
-            current.attempts,
-            targetHead === current.head_sha ? current.retry_epoch : 0,
-            ts,
-          );
+        const targetRoundNo = this.nextRoundNo(pr);
+        this.insertRecoveryInstruction({
+          pr,
+          target_round_no: targetRoundNo,
+          target_head_sha: targetHead,
+          stage: "first_pass_start",
+          source_incident_id: current.incident_id,
+          source_command_id: current.command_id,
+          source_round_no: current.round_no,
+          immediate_attempt: current.attempts,
+          retry_epoch: targetHead === current.head_sha ? current.retry_epoch : 0,
+          created_at: ts,
+        });
       }
       if (row && row.state !== "closed") {
         this.db
@@ -5551,7 +5563,8 @@ export class StateStore {
       .run(this.ts(), pr, fingerprint);
   }
 
-  /** Every recheck nudge sent for a PR, oldest first (TUI/audit). */
+  /** Every recheck claim for a PR, oldest first (TUI/audit) — the nudges
+   * sent and the claims answered without one (`nudged = 0`). */
   rechecksFor(pr: number): RecheckClaimRow[] {
     return this.db
       .prepare("SELECT * FROM rechecks WHERE pr = ? ORDER BY created_at")
@@ -5953,11 +5966,7 @@ export class StateStore {
     issued_by: LeverIssuer | null;
     expires_at: string | null;
   }): LeverHold | null {
-    if (row.draining !== 1) return null;
-    return {
-      issuer: row.issued_by ?? "operator",
-      expires_at: row.issued_by ? row.expires_at : null,
-    };
+    return storedHold(row.draining === 1, row.issued_by, row.expires_at);
   }
 
   /**
@@ -6188,19 +6197,13 @@ export class StateStore {
    * opens a fresh one on its next measurement — a duplicate ticket at worst,
    * never a silenced outage). */
   memoryIncident(): MemoryIncident | null {
-    const row = this.db
-      .prepare("SELECT payload FROM events WHERE kind = 'memory_incident' ORDER BY id DESC LIMIT 1")
-      .get() as { payload: string | null } | undefined;
-    if (!row?.payload) return null;
-    try {
-      const p = JSON.parse(row.payload) as { kind?: unknown; since?: unknown; closed?: unknown };
-      if (p.closed === true) return null;
-      if ((p.kind === "auth_failed" || p.kind === "down") && typeof p.since === "string")
-        return { kind: p.kind, since: p.since };
-      return null;
-    } catch {
-      return null;
-    }
+    const p = this.lastEventPayload("memory_incident");
+    if (!p || p["closed"] === true) return null;
+    const kind = p["kind"];
+    const since = p["since"];
+    if ((kind === "auth_failed" || kind === "down") && typeof since === "string")
+      return { kind, since };
+    return null;
   }
 
   /** Record the open incident (or its close, with null). */
@@ -6252,18 +6255,8 @@ export class StateStore {
   /** The last local date the heartbeat fired, or null. Events-table backed, so
    * it survives restarts — the boot catch-up's at-most-once guard. */
   lastHeartbeatDate(): string | null {
-    const row = this.db
-      .prepare(
-        "SELECT payload FROM events WHERE kind = 'overseer_heartbeat' ORDER BY id DESC LIMIT 1",
-      )
-      .get() as { payload: string | null } | undefined;
-    if (!row?.payload) return null;
-    try {
-      const p = JSON.parse(row.payload) as { date?: unknown };
-      return typeof p.date === "string" ? p.date : null;
-    } catch {
-      return null;
-    }
+    const date = this.lastEventPayload("overseer_heartbeat")?.["date"];
+    return typeof date === "string" ? date : null;
   }
 
   /**
@@ -6283,14 +6276,7 @@ export class StateStore {
     const rows = this.db
       .prepare("SELECT payload FROM events WHERE kind = 'ledger_stale_nudged' AND pr = ?")
       .all(pr) as Array<{ payload: string | null }>;
-    return rows.some((r) => {
-      if (!r.payload) return false;
-      try {
-        return (JSON.parse(r.payload) as { key?: unknown }).key === key;
-      } catch {
-        return false;
-      }
-    });
+    return someMarkHasKey(rows, key);
   }
 
   /**
@@ -6947,14 +6933,7 @@ export interface StatusSnapshot {
   drain_failed_loud?: number;
   /** Local correctness supervisor. A fresh process heartbeat with a
    * stale/failed scan is pipeline-unhealthy, not healthy. */
-  round_stage_supervisor?: {
-    healthy: boolean;
-    stale_after_s: number;
-    last_attempt_at: string | null;
-    last_success_at: string | null;
-    last_error_at: string | null;
-    last_error: string | null;
-  };
+  round_stage_supervisor?: RoundStageSupervisorHealth;
   /** Review-pipeline health, separate from process liveness. Cause
    * keys are stable alert/dedupe identities, never prose or timestamps. */
   pipeline?: {
@@ -7046,28 +7025,18 @@ function pipelineFrom(
     }),
   );
   if (roundStageSupervisor && !roundStageSupervisor.healthy) {
+    const since =
+      roundStageSupervisor.last_error_at ??
+      roundStageSupervisor.last_attempt_at ??
+      at.toISOString();
     pipelineCauses.push({
       key: "round-stage-supervisor",
       pr: null,
-      since:
-        roundStageSupervisor.last_error_at ??
-        roundStageSupervisor.last_attempt_at ??
-        at.toISOString(),
+      since,
       stage: "supervisor",
       detail: roundStageSupervisor.last_error ?? "round-stage supervisor lease is stale",
       next_action: "inspect-supervisor",
-      age_s: Math.max(
-        0,
-        Math.floor(
-          (at.getTime() -
-            Date.parse(
-              roundStageSupervisor.last_error_at ??
-                roundStageSupervisor.last_attempt_at ??
-                at.toISOString(),
-            )) /
-            1000,
-        ),
-      ),
+      age_s: Math.max(0, Math.floor((at.getTime() - Date.parse(since)) / 1000)),
     });
   }
   pipelineCauses.sort((a, b) => a.key.localeCompare(b.key));
@@ -7162,9 +7131,7 @@ export function buildStatusSnapshot(
                 const round = runningByPr.get(p.number)!;
                 const command = store.sessionCommandForRound(p.number, round.round_no);
                 const postingHead = round.posting_key
-                  ? new RegExp(`^v1:${p.number}:${round.round_no}:([^:]+)$`).exec(
-                      round.posting_key,
-                    )?.[1]
+                  ? postingKeyHead(round.posting_key, p.number, round.round_no)
                   : undefined;
                 const identity = command
                   ? {
