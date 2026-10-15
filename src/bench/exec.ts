@@ -4,6 +4,11 @@
 
 import { spawn } from "node:child_process";
 
+/** pipeline.py `apply_defaults`: `--timeout-minutes` None → 30 — the review
+ * budget the harness gives every reviewer it runs, which the arms run in the
+ * shape of. */
+export const HARNESS_TIMEOUT_MIN = 30;
+
 /** Git without any system or global config and never prompting: every
  * environment the bench hands a reviewer or a git call carries it. */
 export const GIT_ISOLATION_ENV = {
