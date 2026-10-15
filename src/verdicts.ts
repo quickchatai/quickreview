@@ -23,7 +23,6 @@ import {
   watch,
   type FSWatcher,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { checkOutcome, classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
 import {
@@ -46,6 +45,7 @@ import {
   fingerprintRoundIntegrity,
   gitConfigChangeMessage,
   INTEGRITY_BUDGET_MS,
+  roundIntegrityOpts,
   integrityChanges,
   policySurfaceChangeMessage,
   splitIntegrityChanges,
@@ -66,6 +66,7 @@ import {
   ingestRepairedFindingsRecords,
   readFindingsRecord,
 } from "./findingsrecord.js";
+import { piGlobalSessionsDir } from "./archive/piglobal.js";
 import {
   normalizeVerdict,
   type RecordedAddablePass,
@@ -416,7 +417,6 @@ export function tailPlannedLenses(
  * plan, or a follow-up round's pre-approval sweep. Pure. */
 interface PlanComparison {
   planned: string[];
-  executed: string[];
   missing: string[];
   unknownAdditions: string[];
   missingReason: string[];
@@ -436,7 +436,6 @@ function comparePlan(
   const executed = passes.map((p) => p.name);
   const out: PlanComparison = {
     planned: legacyPlanned,
-    executed,
     missing: [],
     unknownAdditions: [],
     missingReason: [],
@@ -494,6 +493,12 @@ function comparePlan(
 }
 
 export const VERDICT_FILE_RE = /^pr-(\d+)-round-(\d+)\.json$/;
+
+/** A round's verdict file name — the one spelling VERDICT_FILE_RE reads,
+ * the watcher's slot key and every presence check use. */
+export function verdictFileName(pr: number, roundNo: number): string {
+  return `pr-${pr}-round-${roundNo}.json`;
+}
 
 export interface ParsedVerdict {
   ok: boolean;
@@ -874,7 +879,13 @@ export class VerdictWatcher {
   private ignoreAfterCancel(
     round: RoundRow,
     name: string,
-    detail: { malformed?: string; reason?: string } = {},
+    detail: {
+      malformed?: string;
+      reason?: string;
+      head_sha?: string;
+      outcome?: string | null;
+      verdict?: string | null;
+    } = {},
   ): void {
     this.deps.store.logEvent("verdict_after_cancel_ignored", round.pr, {
       round_id: round.id,
@@ -1143,7 +1154,7 @@ export class VerdictWatcher {
     roundNo: number,
     fn: () => Promise<T>,
   ): Promise<T | undefined> {
-    const name = `pr-${pr}-round-${roundNo}.json`;
+    const name = verdictFileName(pr, roundNo);
     if (this.inFlight.has(name)) return undefined;
     this.inFlight.add(name);
     try {
@@ -1154,7 +1165,7 @@ export class VerdictWatcher {
   }
 
   private verdictFilePresent(pr: number, roundNo: number): boolean {
-    return existsSync(join(this.deps.verdictDir, `pr-${pr}-round-${roundNo}.json`));
+    return existsSync(join(this.deps.verdictDir, verdictFileName(pr, roundNo)));
   }
 
   /**
@@ -1244,7 +1255,7 @@ export class VerdictWatcher {
     this.log(
       `verdicts: #${round.pr} round ${round.round_no} settled from its posting receipt (${posted}) as ${decision.verdict}${decision.approval_withheld ? " (approval withheld)" : ""} — ${plain}`,
     );
-    await this.apply(v, `pr-${round.pr}-round-${round.round_no}.json`, { via, gh_review_id: ghId });
+    await this.apply(v, verdictFileName(round.pr, round.round_no), { via, gh_review_id: ghId });
     return "applied";
   }
 
@@ -1303,7 +1314,7 @@ export class VerdictWatcher {
     this.log(
       `verdicts: #${round.pr} round ${round.round_no} — resuming its interrupted receipt settlement (${started.via})`,
     );
-    await this.apply(started.verdict, `pr-${round.pr}-round-${round.round_no}.json`, {
+    await this.apply(started.verdict, verdictFileName(round.pr, round.round_no), {
       via: started.via,
       gh_review_id: started.gh_review_id,
     });
@@ -1923,18 +1934,11 @@ export class VerdictWatcher {
       round.cancel_cause !== "no_new_evidence" &&
       !this.orphanVerdictOwed(round)
     ) {
-      store.logEvent("verdict_after_cancel_ignored", v.pr, {
-        round_id: round.id,
-        round_no: v.round_no,
-        cancel_cause: round.cancel_cause,
+      this.ignoreAfterCancel(round, name, {
         head_sha: v.head_sha,
         outcome: v.outcome ?? null,
         verdict: v.verdict ?? null,
-        file: name,
       });
-      this.log(
-        `verdicts: #${v.pr} round ${v.round_no} was already cancelled (${round.cancel_cause ?? "unknown"}) — ${name} is not applied over it`,
-      );
       return "applied";
     }
 
@@ -2463,9 +2467,10 @@ export class VerdictWatcher {
         // waving it through — the safe direction, same as every other fact.
         changed_paths: facts.changed_paths,
         // Whether the round's own review actually reached GitHub, from the
-        // posting receipt. The note must not claim a posting that a guard
-        // refused — and the escalation note is precisely the one that still
-        // goes out in that case.
+        // posting receipt: the note must not claim a posting no confirmed
+        // receipt shows (a dry run, a legacy round, a review the marker
+        // reconcile proved without a local receipt). A guard-2 refusal never
+        // gets here — it settles as a guarded no-op, with no escalation.
         review_posted: this.roundReviewConfirmed(v.pr, v.round_no, v.head_sha),
         ruleRequests,
         sessionCandidates,
@@ -2835,7 +2840,7 @@ export class VerdictWatcher {
     if (configured === null) return undefined;
     // The subagent tool's isolated children skip --session-dir → pi HOME
     // global store (in-container /home/review/.pi/agent/sessions). Best-effort.
-    return configured ?? join(homedir(), ".pi", "agent", "sessions");
+    return configured ?? piGlobalSessionsDir();
   }
 
   /**
@@ -2873,12 +2878,9 @@ export class VerdictWatcher {
       const root = this.deps.root ?? sandboxRoot();
       const budgetMs = Math.max(0, this.deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
       const rehash = await withinBudget(
-        (this.deps.integrityFingerprint ?? fingerprintRoundIntegrity)({
-          clonePath: githubCloneDir(cfg.github),
-          worktreePath: resolve(root, `wt/pr-${pr}`),
-          piHome: join(root, "pihome"),
-          sandboxRoot: root,
-        }),
+        (this.deps.integrityFingerprint ?? fingerprintRoundIntegrity)(
+          roundIntegrityOpts(githubCloneDir(cfg.github), root, `wt/pr-${pr}`),
+        ),
         budgetMs,
       );
       if (rehash.kind === "budget") {
@@ -3643,7 +3645,7 @@ export class VerdictWatcher {
     // sweep's, whatever the receipt says.
     if (
       this.verdictFilePresent(round.pr, round.round_no) ||
-      this.inFlight.has(`pr-${round.pr}-round-${round.round_no}.json`)
+      this.inFlight.has(verdictFileName(round.pr, round.round_no))
     )
       return "retryable";
     const proof = await this.postingProof(round);

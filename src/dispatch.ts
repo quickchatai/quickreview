@@ -21,6 +21,7 @@ import { githubCloneDir, REVIEW_DEFAULTS, sandboxRoot } from "./config.js";
 import {
   fingerprintRoundIntegrity,
   INTEGRITY_BUDGET_MS,
+  roundIntegrityOpts,
   type IntegrityFingerprint,
   type RoundIntegrityOpts,
 } from "./execboundary.js";
@@ -287,6 +288,16 @@ export interface DispatchDeps {
  * rows, the sweep, once). */
 export function lensesOf(plan: readonly PassPlanEntry[]): string[] {
   return [...new Set(plan.map((p) => p.lens))];
+}
+
+/** The head a round reviews: the prepared tree's, else the PR row's (a
+ * caller with no worktree seam). The one rule the round row, the posting key
+ * and the prompt all name their head by. */
+export function reviewedHeadOf(
+  tree: Pick<PreparedTree, "head_sha"> | undefined,
+  row: Pick<PrStateRow, "head_sha">,
+): string {
+  return tree?.head_sha || row.head_sha;
 }
 
 export function defaultWorktree(pr: number): string {
@@ -1801,7 +1812,7 @@ export function buildRoundOrder(args: {
       args.styleGuide ?? [],
       args.ciLinters ?? [],
     );
-  const headSha = args.tree?.head_sha || args.row.head_sha;
+  const headSha = reviewedHeadOf(args.tree, args.row);
   // An addable lens the profile floors above the add rule's own
   // variant is named with its variant in the prompt.
   const addable_tiers = Object.fromEntries(
@@ -2284,7 +2295,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // The head this round reviews — the prepared tree's, else the row's —
       // decided once, so the round row, the prior findings, the pre-check,
       // the recovery identity and the order all name the same one.
-      const preparedHead = tree?.head_sha || row.head_sha;
+      const preparedHead = reviewedHeadOf(tree, row);
 
       const files = await deps.adapter.listPrFiles(row.number);
       const gate = eco.migrationGate(files);
@@ -2514,12 +2525,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       try {
         const budgetMs = Math.max(0, deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
         const baseline = await withinBudget(
-          (deps.integrityFingerprint ?? fingerprintRoundIntegrity)({
-            clonePath: githubCloneDir(cfg.github),
-            worktreePath: resolve(sandboxRoot(), worktreeFor(row.number)),
-            piHome: join(sandboxRoot(), "pihome"),
-            sandboxRoot: sandboxRoot(),
-          }),
+          (deps.integrityFingerprint ?? fingerprintRoundIntegrity)(
+            roundIntegrityOpts(githubCloneDir(cfg.github), sandboxRoot(), worktreeFor(row.number)),
+          ),
           budgetMs,
         );
         if (baseline.kind === "done") {
@@ -2929,7 +2937,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // recovery paths can tell "delivered" from "never arrived" instead of
       // inferring it. Stamped only AFTER dispatchRound resolved: the marker
       // asserts that a prompt bearing it was written, and a dispatch that
-      // threw wrote nothing.
+      // threw may not have written it (one that persisted its durable
+      // command first is retained by the catch below, unstamped).
       store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
       spendWithholding(roundId);
       // The head this round reviews is the next follow-up round's

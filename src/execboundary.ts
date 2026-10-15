@@ -40,6 +40,7 @@
 
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { POLICY_SURFACE_DIRS, POLICY_SURFACE_FILES } from "../extensions/bash-guard.js";
 import { homeProfileDirs, locateConfig, type InstallEnv } from "./install.js";
 import { yieldToLoop } from "./yieldloop.js";
@@ -289,6 +290,25 @@ export interface RoundIntegrityOpts {
    * `process.env`. Only read when `sandboxRoot` is given — the located config
    * is part of the policy half. */
   installEnv?: InstallEnv | undefined;
+}
+
+/**
+ * The round's watched surface, from the base clone, the sandbox root and the
+ * round's worktree (relative to the root, or absolute) — the one assembly the
+ * dispatch baseline and the round-end re-hash both hand
+ * `fingerprintRoundIntegrity`.
+ */
+export function roundIntegrityOpts(
+  clonePath: string,
+  root: string,
+  worktree: string,
+): RoundIntegrityOpts {
+  return {
+    clonePath,
+    worktreePath: resolve(root, worktree),
+    piHome: join(root, "pihome"),
+    sandboxRoot: root,
+  };
 }
 
 /**
