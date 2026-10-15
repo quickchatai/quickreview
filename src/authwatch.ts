@@ -69,7 +69,8 @@ function readFrom(path: string, from: number, bytes: number): { text: string; ne
 
 /** Scan *.jsonl files modified at/after `sinceMs` (dir + one sublevel) for
  * auth-error signatures. Unreadable files are skipped — observation must
- * never throw into the daemon tick.
+ * never throw into the daemon tick — and counted (`scanPiAuth`'s `unread`),
+ * so a caller keeps them inside its next window.
  *
  * `seen` (path → byte offset, updated in place) makes the scan read only what
  * was appended since the last scan, so an old error still inside the tail
@@ -86,7 +87,19 @@ export function scanPiAuthErrors(
   sinceMs: number,
   seen?: Map<string, number>,
 ): AuthScanHit[] {
+  return scanPiAuth(sessionsDir, sinceMs, seen).hits;
+}
+
+/** `scanPiAuthErrors`, with how many observations failed (a directory that
+ * could not be listed, an entry that could not be stat'd, a file that could
+ * not be read): those were not seen, so they are not "quiet". */
+function scanPiAuth(
+  sessionsDir: string,
+  sinceMs: number,
+  seen?: Map<string, number>,
+): { hits: AuthScanHit[]; unread: number } {
   const hits: AuthScanHit[] = [];
+  let unread = 0;
   /** Every path the listing showed, and the dirs it could not list. */
   const present = new Set<string>();
   const unlisted: string[] = [];
@@ -95,7 +108,10 @@ export function scanPiAuthErrors(
     try {
       names = readdirSync(dir);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") unlisted.push(dir);
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        unlisted.push(dir);
+        unread++;
+      }
       return;
     }
     for (const name of names) {
@@ -104,7 +120,13 @@ export function scanPiAuthErrors(
       let st;
       try {
         st = statSync(path);
-      } catch {
+      } catch (err) {
+        // Gone since the listing: nothing to see. Anything else is unknown —
+        // its offsets (a directory's, or the file's own) are kept.
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          unlisted.push(path);
+          unread++;
+        }
         continue;
       }
       if (st.isDirectory()) {
@@ -118,7 +140,7 @@ export function scanPiAuthErrors(
         seen?.set(path, next);
         if (text.split("\n").some(lineHasAuthError)) hits.push({ file: path, mtimeMs: st.mtimeMs });
       } catch {
-        // skip
+        unread++;
       }
     }
   };
@@ -131,7 +153,7 @@ export function scanPiAuthErrors(
       seen.delete(path);
     }
   }
-  return hits;
+  return { hits, unread };
 }
 
 /** How long a detection keeps the status flag up with no fresh errors. */
@@ -176,11 +198,14 @@ export class PiAuthWatch {
   /** Returns the NEW hits found this scan (empty array when quiet). */
   scan(): AuthScanHit[] {
     const started = this.now().getTime();
-    const hits = this.sessionsDirs.flatMap((dir) => scanPiAuthErrors(dir, this.sinceMs, this.seen));
+    const scans = this.sessionsDirs.map((dir) => scanPiAuth(dir, this.sinceMs, this.seen));
+    const hits = scans.flatMap((x) => x.hits);
     // Next scan starts at this scan's start, minus a minute of overlap so a
     // write racing the scan is never missed; the per-file offsets keep the
-    // overlap from re-reading (and re-counting) bytes already scanned.
-    this.sinceMs = started - 60 * 1000;
+    // overlap from re-reading (and re-counting) bytes already scanned. A scan
+    // that could not read something keeps its window: what it missed stays
+    // eligible until a scan reads it (the offsets still stop a re-count).
+    if (scans.every((x) => x.unread === 0)) this.sinceMs = started - 60 * 1000;
     if (hits.length > 0) {
       this.lastErrorAt = started;
       this.totalHits += hits.length;

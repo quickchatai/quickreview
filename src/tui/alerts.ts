@@ -24,6 +24,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { AUTH_FLAG_FRESH_MS } from "../authwatch.js";
 import { zoneDateString } from "../eod.js";
 import { curationNeedsAttention } from "../learner/status.js";
 import { memoryStatusLine, type MemoryStatus } from "../memory/health.js";
@@ -455,7 +456,7 @@ export function maybeWritePiAuthAlert(
   if (!flag || !flag.last_at) return undefined;
   if (mem.lastWritten === flag.last_at) return undefined;
   // Stale flags (e.g. a TUI opening hours later) are history, not an alert.
-  if (now().getTime() - new Date(flag.last_at).getTime() > 30 * 60 * 1000) return undefined;
+  if (now().getTime() - new Date(flag.last_at).getTime() > AUTH_FLAG_FRESH_MS) return undefined;
   const name = `${now().toISOString().replace(/[:.]/g, "-")}-pi-auth-expired.json`;
   mkdirSync(alertsDir, { recursive: true });
   writeFileSync(
