@@ -9,9 +9,16 @@ import type { LearningTabs } from "./learning.js";
 import type { MetricsView } from "./metricstab.js";
 import { ensureSshMaster } from "./connect.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
+import { isFreshHealth } from "./poll.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
 import { storeHealth } from "./memory.js";
-import { findMemoryEntry, memoryOrder, memoryRefUnread } from "./memtab.js";
+import {
+  entryKey,
+  findMemoryEntry,
+  memoryOrder,
+  memoryRefUnread,
+  setTimelineFilter,
+} from "./memtab.js";
 import { refOf } from "../memory/store.js";
 import { isTab } from "./tabs.js";
 import {
@@ -47,7 +54,7 @@ export function parseTarget(
   return { kind: "bad", reason: `unknown target '${arg}' — expected a PR number` };
 }
 
-export const TUI_HELP = `qcr tui — live board for the review daemon (over ssh, read-only)
+export const TUI_HELP = `qcr tui — live board and operator console for the review daemon (over ssh)
 
 usage: qcr tui [<pr>] [--no-companion] [--no-reload]
 
@@ -145,6 +152,24 @@ export function buildTuiDriver(
     app.sidebar?.blur();
     if (app.isBusy()) throw new Error("operator input open / terminal in use — action refused");
   };
+  /** Press a deploy-tab run key twice (arm + confirm) and answer whether a
+   * run started: the tab refuses a press with a result on screen, a drain
+   * still owned, or a target not yet loaded, and a refused printable would
+   * otherwise fall through to the companion column while the action read as
+   * done. */
+  const startDeployRun = (key: "D" | "S", kind: "deploy" | "stop" | "start"): void => {
+    if (deployState.run)
+      throw new Error(
+        `deploy_tab ${kind} refused — ${deployState.run.running ? "a run is in flight" : "the previous result is still on screen (x closes it)"}`,
+      );
+    app.pressKey(key);
+    app.pressKey(key);
+    const started = (): string | undefined => deployState.run?.kind; // read after the presses
+    if (started() !== kind)
+      throw new Error(
+        `deploy_tab ${kind} refused by the tab${app.view.noticeLine ? ` — ${app.view.noticeLine}` : ""}`,
+      );
+  };
   const driver: TuiDriver = {
     switchTab: (tab) => {
       prep();
@@ -171,10 +196,15 @@ export function buildTuiDriver(
       app.repaint();
       // Drive the tab's own PR-entry state machine so the timeline FETCH runs
       // (drillTo is closure-private): # opens entry, digits accumulate, ⏎ drills.
-      // A half-typed operator entry would swallow the "#" and prefix our
-      // digits — clear entry mode first so the sequence starts clean.
+      // The sequence starts from the dashboard: a half-typed operator entry
+      // would swallow the "#" and prefix our digits, and an open timeline
+      // answers to Esc only, so its "#" would reach the companion column.
       metricsView.prEntry = undefined;
+      metricsView.drill = undefined;
+      metricsView.scroll = 0;
       app.pressKey("#");
+      if (metricsView.prEntry !== "")
+        throw new Error(`metrics pr ${pr} refused — the metrics tab did not open its PR entry`);
       for (const d of String(pr)) app.pressKey(d);
       app.pressKey("\r");
     },
@@ -197,11 +227,7 @@ export function buildTuiDriver(
       prep();
       app.tab = "memory";
       const mem = learning.memory;
-      if (opts.tag !== undefined) {
-        mem.filter = opts.tag;
-        mem.sel = 0; // old ordinal may exceed the narrowed list
-        mem.selKey = undefined;
-      }
+      if (opts.tag !== undefined) setTimelineFilter(mem, opts.tag);
       if (opts.day !== undefined) {
         // The day is a JUMP in the day-grouped timeline: land on its first
         // entry. A day with no entry under the current filter is a failed
@@ -213,7 +239,7 @@ export function buildTuiDriver(
             `no memory entries on ${opts.day}${mem.filter ? ` under #${mem.filter}` : ""}`,
           );
         mem.sel = i;
-        mem.selKey = `${ordered[i]!.ts}|${ordered[i]!.id}#${ordered[i]!.block}`;
+        mem.selKey = entryKey(ordered[i]!);
       }
       app.repaint();
     },
@@ -259,9 +285,7 @@ export function buildTuiDriver(
     setMemoryFilter: (tag) => {
       prep();
       app.tab = "memory";
-      learning.memory.filter = tag;
-      learning.memory.sel = 0;
-      learning.memory.selKey = undefined;
+      setTimelineFilter(learning.memory, tag);
       app.repaint();
     },
     msgSession: (session, text) => app.hooks.sendMessage?.(session, text, app),
@@ -276,8 +300,7 @@ export function buildTuiDriver(
         return;
       }
       if (action === "deploy") {
-        app.pressKey("D");
-        app.pressKey("D"); // arm+confirm inside the window = instant
+        startDeployRun("D", "deploy"); // arm+confirm inside the window = instant
         return;
       }
       // stop/start: the tab's S button computes its own kind from the observed
@@ -295,8 +318,7 @@ export function buildTuiDriver(
         throw new Error(
           `deploy_tab ${action} refused — container is ${deployState.containerStatus}`,
         );
-      app.pressKey("S");
-      app.pressKey("S");
+      startDeployRun("S", action);
     },
   };
   return driver;
@@ -603,7 +625,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // forward that is already listening (the unit, or another qcr tui) and stops
   // only one it started — see memforward.ts for why that split matters.
   // Constructed here, started in the bring-up: `ensure()` probes over HTTP.
-  const { MemoryForward } = await import("./memforward.js");
+  const { MemoryForward, forwardUsable } = await import("./memforward.js");
   const memForward = new MemoryForward({
     baseUrl: tuiMemoryBaseUrl(),
     repoRoot: sandboxRoot(),
@@ -611,6 +633,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // daemon container's loopback engine via plain docker exec.
     local: transportOf(cfg) === "local",
     sudoDocker: cfg.sudo_docker,
+    sshHost: cfg.ssh_host,
+    container: cfg.container,
     log: (line) => app.notice(line),
   });
   const { buildIssueSink, ticketProjection } = await import("./issuesink.js");
@@ -647,6 +671,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     configPath: liveConfigPath(),
     sink: buildIssueSink(full, app.ssh, memStore),
     issueLabel: full.github.issue_label,
+    eod: { time: full.eod.time, timezone: full.eod.timezone },
     changes: new ChangeLog(
       new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")),
       localRunner,
@@ -832,50 +857,50 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     full.sink.kind === "wayfinder" && full.sink.root && full.sink.effort && full.sink.parent
       ? { root: full.sink.root, effort: full.sink.effort, parent: full.sink.parent }
       : undefined;
-  let incidentNotice = "";
+  /** One incident filer's notices: a filing, a missing tracker, a failure —
+   * each distinct line once, so a tracker that keeps failing does not repaint
+   * the notice every poll. */
+  const incidentNotifier = (
+    what: string,
+  ): ((a: App, out: ReturnType<typeof maybeFileMemoryIncident>) => void) => {
+    let last = "";
+    return (a, out) => {
+      const line =
+        out.kind === "filed"
+          ? `${what} filed as ${out.ticketId} (${out.file})`
+          : out.kind === "no-tracker" || out.kind === "failed"
+            ? out.line
+            : "";
+      if (line !== "" && line !== last) {
+        last = line;
+        a.notice(line);
+      }
+    };
+  };
+  const incidentNotice = incidentNotifier("memory incident");
   chainOnPoll(app, (a) => {
     const out = maybeFileMemoryIncident(incidentTracker, a.view.snapshot?.memory, {
-      fresh: a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+      fresh: isFreshHealth(a.view.health),
       now: new Date(),
       afterMs: full.memory.incident_ticket_after_min * 60_000,
       memo: incidentMemo,
     });
-    const line =
-      out.kind === "filed"
-        ? `memory incident filed as ${out.ticketId} (${out.file})`
-        : out.kind === "no-tracker" || out.kind === "failed"
-          ? out.line
-          : "";
-    // Each distinct line once: a tracker that keeps failing must not repaint
-    // the notice every poll.
-    if (line !== "" && line !== incidentNotice) {
-      incidentNotice = line;
-      a.notice(line);
-    }
+    incidentNotice(a, out);
   });
   // The learner's EOD curation that did not reach memory (no receipt, or
   // lessons memory does not hold) — the same person path: one
   // ticket per curation incident (its oldest unresolved failure) older than
   // the same threshold, from status.json `memory.curation`.
   const curationMemo = newIncidentFilerMemo();
-  let curationNotice = "";
+  const curationNotice = incidentNotifier("EOD curation incident");
   chainOnPoll(app, (a) => {
     const out = maybeFileCurationIncident(incidentTracker, a.view.snapshot?.memory, {
-      fresh: a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+      fresh: isFreshHealth(a.view.health),
       now: new Date(),
       afterMs: full.memory.incident_ticket_after_min * 60_000,
       memo: curationMemo,
     });
-    const line =
-      out.kind === "filed"
-        ? `EOD curation incident filed as ${out.ticketId} (${out.file})`
-        : out.kind === "no-tracker" || out.kind === "failed"
-          ? out.line
-          : "";
-    if (line !== "" && line !== curationNotice) {
-      curationNotice = line;
-      a.notice(line);
-    }
+    curationNotice(a, out);
   });
 
   // ---- the connection triage ------------------------------------------------
@@ -934,7 +959,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       const fwd = await memForward.ensure();
       if (fwd.state === "failed") progress.fail("memory-forward", fwd.detail);
       else progress.done("memory-forward", fwd.state);
-      if (fwd.state === "adopted" || fwd.state === "owned") {
+      if (forwardUsable(fwd)) {
         progress.begin("memory-namespaces");
         const notes = await memStore.ensureNamespaces();
         for (const note of notes) app.notice(`memory: ${note}`);
@@ -972,6 +997,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       });
       companionContainerStarted = true;
       progress.done("container");
+      // The container's memory network exists now: a forward we started
+      // before it (a cold host) binds the bridge address it could not.
+      await memForward.rebindMissing();
       // Daily rollover — strictly between "container is up" and
       // "pi is spawned": on the first start of a new ops day it archives
       // yesterday, kills the session and queues the opening context, so the
@@ -1049,7 +1077,6 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     wire: () => wireCompanionChannels(),
   });
   installCompanionTabHooks(app, {
-    lifecycle: companion,
     available: () => companionUp,
     failure: () => companionError,
     retry: companionOn ? startAndWire : undefined,
@@ -1068,9 +1095,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // and the companion reads it on demand through the `tui_*` tools.
     const publishView = (): void => {
       try {
+        // One read of the frame for both: the view's screen metadata (rows,
+        // chars, truncation) describes the text written beside it.
+        const screen = app.screenText();
         feed.writeView(
           buildTuiView({
             now: new Date(),
+            screen,
             tab: app.tab,
             snapshot: app.view.snapshot,
             health: app.view.health,
@@ -1081,7 +1112,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
             deploy: deployState,
             tuiMemoryRequests: memStore.requestCounts(),
           }),
-          app.screenText(),
+          screen,
         );
       } catch {
         // Publishing the view is a side effect of painting it — a failure here
@@ -1148,7 +1179,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         maybeWriteMemoryAlert(
           full.companion.alerts_dir,
           a.view.snapshot?.memory,
-          a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+          isFreshHealth(a.view.health),
           memoryAlertMem,
         );
       } catch {
@@ -1165,7 +1196,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         maybeWriteCurationAlert(
           full.companion.alerts_dir,
           a.view.snapshot?.memory,
-          a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+          isFreshHealth(a.view.health),
           curationAlertMem,
         );
       } catch {

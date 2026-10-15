@@ -26,6 +26,7 @@ import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { HEAD_ARGV, logArgv, type LocalRunner } from "./deploytab.js";
 import { keyChar, type BoardKey } from "./keys.js";
+import { hitTest, type Zone } from "./mouse.js";
 // `MUTED` is used (it paints the TIME IN STATE card's retired-state rows),
 // though it is easy to mistake for an unused import.
 import {
@@ -66,17 +67,23 @@ function dim(s: string): string {
   return `${FG.dim}${s}${RESET}`;
 }
 
+/** The first series index of bucket `b` when `len` values are averaged into
+ * `n` buckets — the ONE partition `bucketize` averages over and `bucketOf`
+ * inverts, so an axis tick always sits under the bar its day was averaged
+ * into. */
+function bucketStart(b: number, len: number, n: number): number {
+  return Math.floor(b * (len / n));
+}
+
 /** Average `values` down to exactly `n` buckets (oldest first is the contract). */
 function bucketize(values: number[], n: number): number[] {
   if (n <= 0 || values.length === 0) return [];
   if (values.length <= n) return [...values];
-  const per = values.length / n;
+  const len = values.length;
   const out: number[] = [];
   for (let i = 0; i < n; i++) {
-    const slice = values.slice(
-      Math.floor(i * per),
-      Math.max(Math.floor((i + 1) * per), Math.floor(i * per) + 1),
-    );
+    const start = bucketStart(i, len, n);
+    const slice = values.slice(start, Math.max(bucketStart(i + 1, len, n), start + 1));
     out.push(slice.reduce((a, b) => a + b, 0) / slice.length);
   }
   return out;
@@ -205,10 +212,9 @@ function columnGeometry(len: number, width: number): { slot: number; n: number }
 /** The bucket `bucketize(len → n)` averages series index `i` into. */
 function bucketOf(i: number, len: number, n: number): number {
   if (len <= n) return i;
-  const per = len / n;
-  let b = Math.min(n - 1, Math.floor(i / per));
-  while (b + 1 < n && Math.floor((b + 1) * per) <= i) b++;
-  while (b > 0 && Math.floor(b * per) > i) b--;
+  let b = Math.min(n - 1, Math.floor(i / (len / n)));
+  while (b + 1 < n && bucketStart(b + 1, len, n) <= i) b++;
+  while (b > 0 && bucketStart(b, len, n) > i) b--;
   return b;
 }
 
@@ -398,6 +404,16 @@ function barsFromRecord(
 /** Heartbeats older than this read as a stalled daemon, not a slow tick. */
 export const HEARTBEAT_STALE_S = 300;
 
+/** The daemon's mode as the ops card states it: unknown without a snapshot
+ * or a mode in it — "live" is the one label that must never be guessed. The
+ * subtitle and the body both read it here, so they cannot disagree. */
+export function opsMode(
+  ops: Pick<OpsInfo, "heartbeat" | "dry_run">,
+): "unknown" | "dry-run" | "live" {
+  if (ops.heartbeat === null || ops.dry_run === null) return "unknown";
+  return ops.dry_run ? "dry-run" : "live";
+}
+
 /**
  * The operations card body: how the daemon is running (mode, heartbeat,
  * concurrency), which commit it is running (BUILD_SHA marker) with an accented
@@ -419,10 +435,8 @@ export function opsLines(
   if (!ops) {
     lines.push(dim("no ops data in this payload (older daemon?)"));
   } else {
-    // No snapshot at all means we cannot claim a mode — "LIVE" is the one
-    // label that must never be guessed.
-    const mode =
-      ops.heartbeat === null || ops.dry_run === null ? dim("mode unknown") : modeBadge(ops.dry_run);
+    const known = opsMode(ops);
+    const mode = known === "unknown" ? dim("mode unknown") : modeBadge(known === "dry-run");
     const beatS = ops.heartbeat
       ? Math.max(0, Math.floor((now.getTime() - new Date(ops.heartbeat).getTime()) / 1000))
       : null;
@@ -525,7 +539,7 @@ export function metricsCards(
   const chartH = activityChartHeight(rows);
   const now = extra.now ?? new Date();
   const opsSubtitle = extra.ops
-    ? `${extra.ops.heartbeat === null || extra.ops.dry_run === null ? "mode unknown" : extra.ops.dry_run ? "dry-run" : "live"} · ${extra.ops.build ? extra.ops.build.sha : "build unknown"}`
+    ? `${opsMode(extra.ops) === "unknown" ? "mode unknown" : opsMode(extra.ops)} · ${extra.ops.build ? extra.ops.build.sha : "build unknown"}`
     : "daemon health · version · event traffic";
   return [
     {
@@ -1042,7 +1056,11 @@ export function installMetricsHooks(
     app.repaint();
   };
 
+  /** Bumped per drill: only the newest request's answer may land — a refresh
+   * pressed while a read is out must not be overwritten by the older read. */
+  let drillSeq = 0;
   const drillTo = (pr: number, force = false): void => {
+    const seq = ++drillSeq;
     const cached = timelineCache.get(pr);
     view.drill = { pr, payload: cached?.payload, loading: true };
     view.scroll = 0;
@@ -1053,7 +1071,7 @@ export function installMetricsHooks(
     }
     void (async () => {
       const res = await f.timeline(pr);
-      if (view.drill?.pr !== pr) return;
+      if (seq !== drillSeq || view.drill?.pr !== pr) return;
       if (res.payload) {
         timelineCache.set(pr, { payload: res.payload, fetched_at: Date.now() });
         view.drill = { pr, payload: res.payload, loading: false };
@@ -1078,19 +1096,12 @@ export function installMetricsHooks(
 
   const click = (theApp: App, x: number, y: number): boolean => {
     if (!lastFrame) return false;
-    for (let i = lastFrame.zones.length - 1; i >= 0; i--) {
-      const z = lastFrame.zones[i]!;
-      if (x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2) {
-        const action = z.action as MetricsAction;
-        if (action.t === "window") {
-          view.window = action.window;
-          view.scroll = 0;
-          theApp.repaint();
-          return true;
-        }
-      }
-    }
-    return false;
+    const action = hitTest(lastFrame.zones as Zone<MetricsAction>[], x, y);
+    if (action?.t !== "window") return false;
+    view.window = action.window;
+    view.scroll = 0;
+    theApp.repaint();
+    return true;
   };
 
   const onKey = (theApp: App, key: BoardKey): boolean => {

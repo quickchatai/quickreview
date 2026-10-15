@@ -23,7 +23,8 @@
 // checkout at boot) and lives outside `tsconfig`'s `include`, so a static
 // import would either drag it into the build or fork the logic. Config comes
 // from that script's own `parseArgs`, so both entrypoints honour the same
-// flags and `QCR_*` env vars and cannot drift.
+// flags and `QCR_*` env vars and cannot drift; the TUI hands it its own
+// `[tui]` target as those flags, so memory reaches the daemon the board reads.
 //
 // Nothing here holds a VM credential: the ssh runs on the operator's PC as
 // the operator, exactly as the unit runs it (root CLAUDE.md rule 8). The
@@ -101,6 +102,11 @@ export type ForwardState =
   /** Not started (never called, or explicitly disabled). */
   | "off";
 
+/** The working states — adopted and owned are the same degree of health. */
+export function forwardUsable(status: Pick<ForwardStatus, "state">): boolean {
+  return status.state === "adopted" || status.state === "owned";
+}
+
 export interface ForwardStatus {
   state: ForwardState;
   /** One line, operator-facing: why it is in this state / what to do. */
@@ -138,6 +144,13 @@ export interface MemForwardDeps {
    * `--no-sudo` flag. Ignored in ssh mode (the script's own defaults rule).
    * Default true. */
   sudoDocker?: boolean;
+  /** `[tui] ssh_host` — the box the board reads, so the forward reaches the
+   * same daemon (the script's `--ssh-host`). SSH mode only; absent = the
+   * script's own default and env. */
+  sshHost?: string;
+  /** `[tui] container` — the daemon container the board reads (the script's
+   * `--container`). Absent = the script's own default and env. */
+  container?: string;
 }
 
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500;
@@ -166,8 +179,15 @@ async function httpProbe(baseUrl: string, timeoutMs: number): Promise<boolean> {
  * that cannot start must cost the operator a red status line, never the TUI.
  */
 export class MemoryForward {
-  private readonly deps: Required<Omit<MemForwardDeps, "env">> & { env: NodeJS.ProcessEnv };
+  private readonly deps: Required<Omit<MemForwardDeps, "env" | "sshHost" | "container">> & {
+    env: NodeJS.ProcessEnv;
+    sshHost?: string;
+    container?: string;
+  };
   private handle: ForwarderHandle | null = null;
+  /** How many of its addresses our forward bound, kept with the handle so
+   * every re-check reports a partial bind, not only the first start. */
+  private binds: { bound: number; wanted: number } | null = null;
   private status: ForwardStatus;
 
   constructor(deps: MemForwardDeps) {
@@ -187,6 +207,8 @@ export class MemoryForward {
       probeTimeoutMs: deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       local: deps.local ?? false,
       sudoDocker: deps.sudoDocker ?? true,
+      ...(deps.sshHost ? { sshHost: deps.sshHost } : {}),
+      ...(deps.container ? { container: deps.container } : {}),
     };
     this.status = {
       state: "off",
@@ -216,7 +238,7 @@ export class MemoryForward {
 
   /** True once the forward is usable — adopted or owned. */
   get up(): boolean {
-    return this.status.state === "adopted" || this.status.state === "owned";
+    return forwardUsable(this.status);
   }
 
   /**
@@ -242,7 +264,9 @@ export class MemoryForward {
       const alive = await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs);
       return this.settle(
         alive ? "owned" : "failed",
-        alive ? this.ownedDetail() : "the forward we started stopped answering — r retries",
+        alive
+          ? this.ownedDetail(this.binds?.bound, this.binds?.wanted)
+          : "the forward we started stopped answering — r retries",
       );
     }
     if (await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs)) {
@@ -266,12 +290,18 @@ export class MemoryForward {
     }
     let bound = 0;
     try {
-      // Local mode rides the script's own flags — the same argv the
+      // The TUI's target rides the script's own flags — the same argv the
       // standalone runner would take — so both entrypoints keep one config
-      // parser and cannot drift. ssh mode passes no flags.
+      // parser and cannot drift, and the forward reaches the daemon the
+      // board reads: the configured host (ssh mode) and container.
       const runArgs = [
         "run",
-        ...(this.deps.local ? ["--local", ...(this.deps.sudoDocker ? [] : ["--no-sudo"])] : []),
+        ...(this.deps.local
+          ? ["--local", ...(this.deps.sudoDocker ? [] : ["--no-sudo"])]
+          : this.deps.sshHost
+            ? ["--ssh-host", this.deps.sshHost]
+            : []),
+        ...(this.deps.container ? ["--container", this.deps.container] : []),
       ];
       const { cfg } = mod.parseArgs(runArgs, this.deps.env);
       const handle = mod.createForwarder(cfg, {
@@ -299,6 +329,7 @@ export class MemoryForward {
         );
       }
       this.handle = handle;
+      this.binds = { bound, wanted: cfg.binds.length };
       // A bound socket is not memory: the relay only reaches upstream when a
       // connection arrives, so ssh auth, the VM container and OpenViking are
       // all still unproven. Probe through it, exactly as a re-check of an owned
@@ -314,6 +345,30 @@ export class MemoryForward {
     } catch (err) {
       return this.settle("failed", `forward failed to start: ${errText(err)}`);
     }
+  }
+
+  /**
+   * Bind again when our forward holds only some of its addresses. The
+   * docker-bridge address exists only once the companion's network does, and
+   * on a cold host the forward starts before the container bring-up creates
+   * it: loopback serves the TUI, the bridge stays unbound, and re-checks only
+   * probe loopback. The bring-up calls this once the network is up. A forward
+   * we did not start, or one holding every address, is left alone.
+   */
+  async rebindMissing(): Promise<ForwardStatus> {
+    const run = async (): Promise<ForwardStatus> => {
+      if (!this.handle || !this.binds || this.binds.bound >= this.binds.wanted) return this.view();
+      try {
+        this.handle.close();
+      } catch {
+        /* already gone — start() binds afresh either way */
+      }
+      this.handle = null;
+      this.binds = null;
+      return this.start();
+    };
+    this.inFlight = (this.inFlight ?? Promise.resolve()).then(run);
+    return this.inFlight;
   }
 
   /** A partial bind is a working state, not a failure: loopback alone serves
@@ -349,6 +404,7 @@ export class MemoryForward {
       /* already gone — the process is exiting anyway */
     }
     this.handle = null;
+    this.binds = null;
     this.status = { ...this.status, state: "off", detail: "stopped with the TUI" };
   }
 }

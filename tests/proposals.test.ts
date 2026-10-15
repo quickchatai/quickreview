@@ -91,6 +91,19 @@ describe("local proposal store (state/rubric/ in THIS repo — the companion wri
     expect(() => readRubricFile(root, "../x", "PROPOSAL.md")).toThrow(/bad rubric slug/);
   });
 
+  it("a rubric directory that cannot be listed throws — it is not an empty one", () => {
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(join(root, "state", "rubric"), "a file where the directory should be");
+    expect(() => listRubricProposals(root)).toThrow(/ENOTDIR/);
+  });
+
+  it("reads changes.patch whole — never a prefix — while PROPOSAL.md stays capped", () => {
+    const big = `${"x".repeat(70_000)}\n`;
+    seed("big-slug", { "PROPOSAL.md": big, "changes.patch": big });
+    expect(readRubricFile(root, "big-slug", "changes.patch")).toBe(big);
+    expect(readRubricFile(root, "big-slug", "PROPOSAL.md")!.length).toBe(65536);
+  });
+
   it("removes a decided dir, slug-validated", () => {
     seed("done", { "PROPOSAL.md": "x" });
     removeRubricDir(root, "done");

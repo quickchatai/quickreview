@@ -82,6 +82,29 @@ function list(dir: string): string[] {
   }
 }
 
+/** Which lines sit inside a fenced code block (the fences included): a
+ * `# comment` in a shell example is code, not a heading. A fence opens on
+ * three or more backticks or tildes (indented at most three spaces) and
+ * closes on a run of the same character at least as long; one left open runs
+ * to the end of the file, as Markdown renders it. */
+function fencedLines(lines: readonly string[]): boolean[] {
+  const out: boolean[] = [];
+  let open: { char: string; len: number } | null = null;
+  for (const line of lines) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (open === null) {
+      if (m && !(m[1]![0] === "`" && m[2]!.includes("`")))
+        open = { char: m[1]![0]!, len: m[1]!.length };
+      out.push(open !== null);
+    } else {
+      out.push(true);
+      if (m && m[1]![0] === open.char && m[1]!.length >= open.len && m[2]!.trim() === "")
+        open = null;
+    }
+  }
+  return out;
+}
+
 /** The style section of a CONTRIBUTING file as 1-based [from, to] lines, when
  * it is substantial enough to be a guide. Markdown headings only. */
 export function styleSection(text: string): [number, number] | null {
@@ -93,14 +116,15 @@ export function styleSection(text: string): [number, number] | null {
  * already taken is part of it, not a section of its own. */
 function styleSections(text: string, isStyle: (heading: string) => boolean): [number, number][] {
   const lines = text.split("\n");
+  const fenced = fencedLines(lines);
   const out: [number, number][] = [];
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i]!;
-    if (!HEADING_RE.test(l) || !isStyle(l)) continue;
+    if (fenced[i] || !HEADING_RE.test(l) || !isStyle(l)) continue;
     const level = /^#+/.exec(l)![0].length;
     let end = lines.length;
     for (let j = i + 1; j < lines.length; j++) {
-      const m = /^(#{1,6})\s+\S/.exec(lines[j]!);
+      const m = fenced[j] ? null : /^(#{1,6})\s+\S/.exec(lines[j]!);
       if (m && m[1]!.length <= level) {
         end = j;
         break;
@@ -140,15 +164,23 @@ function directiveStyleRules(
       /\.(md|markdown)$/i.test(parts[2]!)
     );
   });
+  const named = (rel: string): boolean =>
+    rel.startsWith(".github/instructions/") && DIRECTIVE_NAME_RE.test(rel);
+  // A file named for style is read first, so an alias of it that sorts
+  // earlier (base.md → code-style.instructions.md) cannot claim the file's
+  // identity and read it by headings alone.
+  const ordered = [...new Set(files)].sort(
+    (a, b) => Number(named(b)) - Number(named(a)) || (a < b ? -1 : a > b ? 1 : 0),
+  );
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const rel of [...new Set(files)].sort()) {
+  for (const rel of ordered) {
     const real = identity(rel);
     if (real === null || seen.has(real)) continue;
     seen.add(real);
     const text = read(rel);
     if (text === null) continue;
-    if (rel.startsWith(".github/instructions/") && DIRECTIVE_NAME_RE.test(rel)) {
+    if (named(rel)) {
       if (contentLines(text) >= SECTION_MIN_LINES) out.push(rel);
       continue;
     }

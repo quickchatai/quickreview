@@ -94,7 +94,18 @@ describe("durable PR-session command slot", () => {
 
   it("retries a terminal command under the same id and exact payload evidence", () => {
     const store = open();
-    store.createSessionCommand(input("cmd-a"));
+    store.upsertPr({
+      number: 5408,
+      state: "reviewing",
+      head_sha: "abc",
+      title: "PR 5408",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.startRound(5408, "first", ["pass-baseline"], 75);
+    store.createSessionCommand({ ...input("cmd-a"), round_no: 1 });
     store.claimSessionCommand("cmd-a", "bridge-a", "2026-08-27T20:30:00.000Z");
     expect(
       store.finishSessionCommand("cmd-a", "bridge-a", "failed", "no correlated run message"),
@@ -202,6 +213,33 @@ describe("durable PR-session command slot", () => {
 
     store.markRoundCancelled(roundId, "infrastructure recovery", "infrastructure_failure");
     expect(store.blockingSessionCommand("pr-5408")).toBeUndefined();
+  });
+
+  it("never hands a round prompt back once its round has ended", () => {
+    const store = open();
+    store.upsertPr({
+      number: 5408,
+      state: "reviewing",
+      head_sha: "abc",
+      title: "PR 5408",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const roundId = store.startRound(5408, "first", ["pass-baseline"], 75);
+    store.createSessionCommand({ ...input("cmd-a"), round_no: 1 });
+    store.claimSessionCommand("cmd-a", "bridge-a", "2026-08-27T20:02:00.000Z");
+    store.finishSessionCommand("cmd-a", "bridge-a", "failed", "no start");
+    store.markRoundCancelled(roundId, "operator recovery", "infrastructure_failure");
+
+    expect(
+      store.retrySessionCommand("cmd-a", {
+        inject_path: "/inject/pr-5408/wake--cmd-cmd-a.md",
+        next_check_at: "2026-08-27T20:04:00.000Z",
+      }),
+    ).toBe(false);
+    expect(store.getSessionCommand("cmd-a")?.status).toBe("failed");
   });
 
   it("migrates the pre-supervisor command table without losing its active row", () => {
@@ -354,6 +392,45 @@ describe("durable PR-session command slot", () => {
           .cancelled_command_ids,
       ).toEqual(["cmd-old"]);
       expect(second.getSessionCommand("cmd-old")?.status).toBe("cancelled");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the status-constraint rebuild keeps a row's spent redeliveries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-session-command-redeliveries-"));
+    try {
+      const path = join(dir, "state.db");
+      const old = new Database(path);
+      old.exec(`
+        CREATE TABLE session_commands (
+          id TEXT PRIMARY KEY, pr INTEGER NOT NULL, session TEXT NOT NULL,
+          kind TEXT NOT NULL, round_no INTEGER, payload_sha256 TEXT NOT NULL,
+          payload_path TEXT NOT NULL, inject_path TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending','running','acked','failed')),
+          owner_token TEXT, attempt INTEGER NOT NULL DEFAULT 0,
+          recovery_attempts INTEGER NOT NULL DEFAULT 0,
+          unknown_checks INTEGER NOT NULL DEFAULT 0,
+          redeliveries INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL, next_check_at TEXT NOT NULL,
+          started_at TEXT, settled_at TEXT, failed_at TEXT, failure TEXT
+        );
+      `);
+      old
+        .prepare(
+          `INSERT INTO session_commands
+        (id,pr,session,kind,round_no,payload_sha256,payload_path,inject_path,status,owner_token,attempt,redeliveries,created_at,updated_at,next_check_at)
+        VALUES ('cmd-old',5408,'pr-5408','round',20,?,?,?,'pending',NULL,1,2,?,?,?)`,
+        )
+        .run("a".repeat(64), "/state/old.md", "/inject/old.md", T0, T0, "2026-08-27T20:02:00.000Z");
+      old.close();
+
+      const migrated = open(path);
+      expect(migrated.getSessionCommand("cmd-old")).toMatchObject({
+        status: "pending",
+        attempt: 1,
+        redeliveries: 2,
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

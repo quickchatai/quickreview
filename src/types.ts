@@ -3,6 +3,7 @@
 import type { MigrationCollision } from "./migrations.js";
 import type { PostingPolicy } from "./postingpolicy.js";
 import type { SessionBridgeCompaction } from "./session-bridge.js";
+import type { SweepClaim } from "./sweepstatus.js";
 
 export type RoundType = "first" | "re-review" | "staleness";
 
@@ -470,10 +471,10 @@ export interface MeritsVerdictFile {
    * withholding and re-queues the PR when CI goes green there.
    */
   approval_withheld?: boolean;
-  /** What became of a follow-up round's pre-approval sweep —
-   * `ran`, `not_owed` (the order carried none) or `not_reached` (the round
-   * decided REQUEST_CHANGES first). Session-written; absent on other rounds. */
-  sweep?: "ran" | "not_owed" | "not_reached" | "skipped";
+  /** What became of a follow-up round's pre-approval sweep (`SweepClaim`:
+   * `ran`, `not_owed`, `not_reached` or `skipped`). Session-written; absent
+   * on other rounds. */
+  sweep?: SweepClaim;
   /** Why the session skipped an owed pre-approval sweep. */
   sweep_reason?: string;
   /** What the session did with the follow-up plan's optional rows —
