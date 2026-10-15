@@ -24,6 +24,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { checkAnchor, runsByPath, type Side } from "./anchors.js";
 import { MUTATION_KINDS, type MutationKind } from "./gate.js";
+import { parseHunkHeader } from "./hunkheader.js";
 
 // ---- shapes ------------------------------------------------------------------
 
@@ -433,9 +434,9 @@ export function hunkLineNumbers(patch: string, side: Side = "RIGHT"): Set<number
   const other = side === "RIGHT" ? "-" : "+";
   let lineNo = 0;
   for (const line of patch.split("\n")) {
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    const hunk = parseHunkHeader(line);
     if (hunk) {
-      lineNo = Number(side === "RIGHT" ? hunk[2] : hunk[1]);
+      lineNo = side === "RIGHT" ? hunk.new_start : hunk.old_start;
       continue;
     }
     if (line.startsWith(other) || line.startsWith("\\")) continue;
