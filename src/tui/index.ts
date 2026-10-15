@@ -1079,9 +1079,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // and the companion reads it on demand through the `tui_*` tools.
     const publishView = (): void => {
       try {
+        // One read of the frame for both: the view's screen metadata (rows,
+        // chars, truncation) describes the text written beside it.
+        const screen = app.screenText();
         feed.writeView(
           buildTuiView({
             now: new Date(),
+            screen,
             tab: app.tab,
             snapshot: app.view.snapshot,
             health: app.view.health,
@@ -1092,7 +1096,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
             deploy: deployState,
             tuiMemoryRequests: memStore.requestCounts(),
           }),
-          app.screenText(),
+          screen,
         );
       } catch {
         // Publishing the view is a side effect of painting it — a failure here
