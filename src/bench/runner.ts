@@ -21,7 +21,14 @@
 //     rules would be noise on a Rust PR. `--profile <config.toml [review]
 //     profile>` measures production as deployed.
 
-import { isSweepClaim, sweepStatusOf, type SweepClaim, type SweepStatus } from "../sweepstatus.js";
+import {
+  normalizePassPhase,
+  normalizeSweepClaim,
+  sweepSkippedOnApprove,
+  sweepStatusOf,
+  type SweepClaim,
+  type SweepStatus,
+} from "../sweepstatus.js";
 import { renderPassTasks } from "../passtasks.js";
 import {
   postedRenderOptions,
@@ -47,6 +54,7 @@ import {
   parseConfig,
   parseEffort,
   parsePreset,
+  REVIEW_DEFAULTS,
   validateLensKnobs,
   type Config,
   type ReviewPreset,
@@ -112,10 +120,8 @@ import {
   CASE_FILES,
   filesFromGitDiff,
   bodyPostedFindings,
+  modelErrorKind,
   modelErrorsFromEvents,
-  OVERLOAD_RE,
-  RATE_LIMIT_RE,
-  USAGE_LIMIT_RE,
   type ModelErrors,
   parseSessionComments,
   reanchorLeftComments,
@@ -328,6 +334,9 @@ function fingerprintLenses(
 }
 
 export function runFingerprint(cfg: Config, profile: string, overrides = ""): RunFingerprint {
+  // A lever at its shipped default is left out, so a run fingerprints the
+  // same as one from before the lever existed.
+  const D = REVIEW_DEFAULTS;
   return {
     qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
     profile,
@@ -363,14 +372,17 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       validate_demote: cfg.review.validate_demote,
       skip_lenses: [...(cfg.review.skip_lenses ?? [])],
       validate_consequence_rule: cfg.review.validate_consequence_rule ?? false,
-      ...((cfg.review.follow_up ?? "delta") !== "delta" ? { follow_up: cfg.review.follow_up } : {}),
-      ...((cfg.review.follow_up_max_delta_ratio ?? 0.6) !== 0.6
+      ...((cfg.review.follow_up ?? D.follow_up) !== D.follow_up
+        ? { follow_up: cfg.review.follow_up }
+        : {}),
+      ...((cfg.review.follow_up_max_delta_ratio ?? D.follow_up_max_delta_ratio) !==
+      D.follow_up_max_delta_ratio
         ? { follow_up_max_delta_ratio: cfg.review.follow_up_max_delta_ratio }
         : {}),
-      ...((cfg.review.follow_up_sweep ?? true) !== true
+      ...((cfg.review.follow_up_sweep ?? D.follow_up_sweep) !== D.follow_up_sweep
         ? { follow_up_sweep: cfg.review.follow_up_sweep }
         : {}),
-      ...((cfg.review.baseline_split_lines ?? 2000) !== 2000
+      ...((cfg.review.baseline_split_lines ?? D.baseline_split_lines) !== D.baseline_split_lines
         ? { baseline_split_lines: cfg.review.baseline_split_lines }
         : {}),
       ...(cfg.review.sweep_light_tier ? { sweep_light_tier: cfg.review.sweep_light_tier } : {}),
@@ -846,9 +858,8 @@ export function followUpOutcomeOf(
     ? (outcome["passes"] as Array<Record<string, unknown>>)
     : null;
   const phaseOf = (p: Record<string, unknown>): "delta" | "sweep" | null =>
-    p["phase"] === "delta" || p["phase"] === "sweep" ? p["phase"] : null;
-  const rawClaim = outcome["sweep"];
-  const claim = isSweepClaim(rawClaim) ? rawClaim : null;
+    normalizePassPhase(p["phase"]);
+  const claim = normalizeSweepClaim(outcome["sweep"]);
   const sweepPasses = passes ? passes.filter((p) => phaseOf(p) === "sweep").length : null;
   const owed = fu.sweep_owed === true;
   const { status, note } = sweepStatusOf({
@@ -873,7 +884,7 @@ export function followUpOutcomeOf(
       status,
       ...(note ? { note } : {}),
       sweep_passes: sweepPasses,
-      skipped: verdict === "APPROVE" && owed && status !== "ran" && status !== "skipped",
+      skipped: sweepSkippedOnApprove(verdict, owed, status),
     },
   };
 }
@@ -1294,14 +1305,19 @@ export function jsonProblem(path: string): string | undefined {
   }
 }
 
-/** The BENCHMARK MODE files the session wrote that do not parse — the ones a
- * scorer reads as JSON (the outcome always; the findings record when the bench
- * renders the posted review from it, else the session's own comments). A
- * missing file is not listed here. */
-export function unparseableOutputs(caseDir: string, renderOutputs: boolean): string[] {
-  const names = renderOutputs
+/** The BENCHMARK MODE files a scorer reads as JSON: the outcome always; the
+ * findings record when the bench renders the posted review from it, else the
+ * session's own comments. */
+function scoredOutputs(renderOutputs: boolean): string[] {
+  return renderOutputs
     ? [CASE_FILES.findings, CASE_FILES.outcome]
     : [CASE_FILES.comments, CASE_FILES.outcome];
+}
+
+/** The scored BENCHMARK MODE files the session wrote that do not parse. A
+ * missing file is not listed here (`missingOutputs` lists it). */
+export function unparseableOutputs(caseDir: string, renderOutputs: boolean): string[] {
+  const names = scoredOutputs(renderOutputs);
   const out: string[] = [];
   for (const n of names) {
     const p = jsonProblem(join(caseDir, n));
@@ -1310,11 +1326,32 @@ export function unparseableOutputs(caseDir: string, renderOutputs: boolean): str
   return out;
 }
 
+/** The scored BENCHMARK MODE files the session has not written. */
+export function missingOutputs(caseDir: string, renderOutputs: boolean): string[] {
+  return scoredOutputs(renderOutputs).filter((n) => !existsSync(join(caseDir, n)));
+}
+
 /** The session's event stream and stderr in a case dir. */
 const PI_RUN_FILES = ["pi-events.jsonl", "pi-stderr.log"] as const;
 
-/** Review one case end to end and write its scored result files. Never throws
- * for a case that fails — a failure is a recorded outcome. */
+/** An attempt starts by removing what an earlier attempt wrote into the case
+ * dir — the session's files, the posting policy's originals, the kept
+ * patches, the event stream (the cost reader prices it whatever the
+ * attempt's outcome) — so nothing this attempt did not produce is read as
+ * its review, by the scorer, a results rebuild or the defect judge. */
+function clearAttemptFiles(caseDir: string): void {
+  for (const f of [
+    ...Object.values(CASE_FILES),
+    ...POLICED_ORIGINALS,
+    HEAD_PATCHES_FILE,
+    ...PI_RUN_FILES,
+  ])
+    rmSync(join(caseDir, f), { force: true });
+}
+
+/** Review one case end to end and write its scored result files. A case that
+ * fails is a recorded outcome, never a throw; only the case dir itself being
+ * unwritable (its creation, the result and summary writes) throws. */
 export async function reviewCase(
   c: BenchCase,
   meta: PrefetchMeta,
@@ -1329,11 +1366,8 @@ export async function reviewCase(
   // wt volume — not in /tmp, a tmpfs charged to the container's memory cap.
   const tmpDir = join(o.root, "wt", `${safe}.tmp`);
   mkdirSync(caseDir, { recursive: true });
-  for (const f of [...Object.values(CASE_FILES), ...POLICED_ORIGINALS, HEAD_PATCHES_FILE])
-    rmSync(join(caseDir, f), { force: true });
-  // Before anything can fail: the cost reader prices the events file
-  // (src/bench/cost.ts) whatever this attempt's outcome.
-  for (const f of PI_RUN_FILES) rmSync(join(caseDir, f), { force: true });
+  // Before anything can fail.
+  clearAttemptFiles(caseDir);
   const started = Date.now();
   const summary: CaseSummary = {
     ...emptyCaseSummary(c, ctx.fingerprint),
@@ -1523,16 +1557,20 @@ export async function reviewCase(
     // starts a NEW session that would review with no round order at all.
     // A round whose files are there but do not parse stopped short too (a
     // model that broke its own JSON escaping): the same one continuation,
-    // told which file and what the parser said.
+    // told which file and what the parser said. So did one that wrote its
+    // outcome (the file written last) without a file the scorer reads.
     const broken = existsSync(outcomePath)
       ? unparseableOutputs(caseDir, ctx.cfg.review.render_outputs)
+      : [];
+    const missing = existsSync(outcomePath)
+      ? missingOutputs(caseDir, ctx.cfg.review.render_outputs)
       : [];
     const resumable =
       existsSync(sessionDir) && readdirSync(sessionDir).some((f) => f.endsWith(".jsonl"));
     if (!r.timedOut && !r.streamError && !existsSync(outcomePath) && !resumable) {
       summary.error = `pi exited ${String(r.code)} before any assistant message — nothing to continue`;
     }
-    const stoppedShort = !existsSync(outcomePath) || broken.length > 0;
+    const stoppedShort = !existsSync(outcomePath) || broken.length > 0 || missing.length > 0;
     if (!r.timedOut && !r.streamError && stoppedShort && resumable) {
       const left = o.timeoutMs - (Date.now() - started);
       if (left > 120_000) {
@@ -1540,7 +1578,9 @@ export async function reviewCase(
         log(
           broken.length
             ? `review: ${c.instance_id} — ${broken.join("; ")}, one continuation`
-            : `review: ${c.instance_id} — no outcome.json yet, one continuation`,
+            : missing.length
+              ? `review: ${c.instance_id} — ${missing.join(", ")} not written, one continuation`
+              : `review: ${c.instance_id} — no outcome.json yet, one continuation`,
         );
         r = await runPi(
           [
@@ -1584,10 +1624,11 @@ export async function reviewCase(
       // pi's own stderr reports what never reached a message (a refused
       // connection, a 429 before the first token).
       for (const w of summary.warnings) {
-        if (USAGE_LIMIT_RE.test(w))
+        const kind = modelErrorKind(w);
+        if (kind === "usage_limit")
           summary.model_errors.usage_limit = (summary.model_errors.usage_limit ?? 0) + 1;
-        else if (RATE_LIMIT_RE.test(w)) summary.model_errors.rate_limited++;
-        else if (OVERLOAD_RE.test(w)) summary.model_errors.overloaded++;
+        else if (kind === "rate_limited") summary.model_errors.rate_limited++;
+        else if (kind === "overloaded") summary.model_errors.overloaded++;
       }
     } catch (err) {
       summary.warnings.push(`usage unreadable: ${String(err).slice(0, 200)}`);
@@ -1863,10 +1904,11 @@ export function recordUnprefetched(
   fingerprint: RunFingerprint,
 ): CaseSummary {
   const s: CaseSummary = { ...emptyCaseSummary(c, fingerprint), error };
-  mkdirSync(join(outDir, "cases", safeId(c.instance_id)), { recursive: true });
-  // No session ran: an earlier attempt's event stream is not this one's cost.
-  for (const f of PI_RUN_FILES)
-    rmSync(join(outDir, "cases", safeId(c.instance_id), f), { force: true });
+  const caseDir = join(outDir, "cases", safeId(c.instance_id));
+  mkdirSync(caseDir, { recursive: true });
+  // No session ran: nothing an earlier attempt wrote is this one's review or
+  // cost, and a results rebuild must find the same empty case.
+  clearAttemptFiles(caseDir);
   writeResults(outDir, c, [], s);
   writeFileSync(
     join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
@@ -1976,8 +2018,9 @@ export function rebuildResults(
       body: collected.body,
       reanchored: collected.reanchored,
     };
-    writeFileSync(sPath, JSON.stringify(s, null, 2) + "\n");
+    // The summary vouches for the result files, so it is written after them.
     logDroppedMetrics(writeResults(outDir, c, collected.comments, s), log, "results");
+    writeFileSync(sPath, JSON.stringify(s, null, 2) + "\n");
   }
 }
 

@@ -186,6 +186,16 @@ describe("raw lens candidates from pi's event stream", () => {
     expect(parseFindingsBlock("FINDINGS intent PR#1 @abc\nNONE", WHO).candidates).toEqual([]);
   });
 
+  it("a range written into the path anchors at its END, as a `line:` range does", () => {
+    const embedded = parseFindingsBlock("- path: src/a.ts:10-30\n  claim: The cap is never read.", WHO);
+    const field = parseFindingsBlock(
+      "- path: src/a.ts\n  line: 10-30\n  claim: The cap is never read.",
+      WHO,
+    );
+    expect(embedded.candidates[0]).toMatchObject({ path: "src/a.ts", line: 30 });
+    expect(field.candidates[0]).toMatchObject({ path: "src/a.ts", line: 30 });
+  });
+
   it("normalises lens names from agents, records and headers alike", () => {
     expect(normalizeLens("pass-security--sol-high")).toBe("pass-security");
     expect(normalizeLens("baseline")).toBe("pass-baseline");
@@ -342,6 +352,16 @@ describe("the variants", () => {
       "5:different wording, same defect",
       "6:same",
     ]);
+  });
+
+  it("dedupe keeps the head-side copy when the first one sits on the old side", () => {
+    const base = { ...WHO, index: 0, path: "a.ts", line: 5, severity: "P2", claim: "same" };
+    const extras = allCandidateExtras([
+      { ...base, side: "LEFT" as const },
+      { ...base, side: "RIGHT" as const, lens: "pass-intent" },
+    ]);
+    expect(extras.map((x) => x.side)).toEqual(["RIGHT"]);
+    expect(toOcrComments(extras).comments).toHaveLength(1);
   });
 
   it("dedupe never drops the one duplicate the record anchors", () => {
@@ -694,6 +714,13 @@ describe("the record reader agrees with the production findings-record reader", 
     expect(rows.map((r) => r.disposition)).toEqual(["killed", "folded", "whatever"]);
   });
 
+  it("reads `name` as the lens, as the production reader does", () => {
+    const rows = parseFindingsRecord({
+      findings: [{ name: "pass-security", path: "a.py", line: 3, disposition: "killed" }],
+    });
+    expect(rows[0]!.lenses).toEqual(["pass-security"]);
+  });
+
   it("a vetoed row is added by posted+killed like a killed one", () => {
     const cand: RawCandidate = {
       ...WHO,
@@ -741,6 +768,55 @@ describe("the report on control comments and missing inputs", () => {
     expect(md).toContain(`the judge accepted it in 1/3 control rounds): ${a}`);
     expect(md).toContain(`the judge accepted it in 1/3 control rounds): ${b}`);
     expect(md).not.toContain("accepted it in 2/3");
+  });
+
+  it("counts record evidence only among the comments a variant adds — never an excluded one", () => {
+    const out = mkdtempSync(join(tmpdir(), "whatif-evidence-"));
+    cpSync(FIX, join(out, "source"), { recursive: true });
+    const recPath = join(out, "source", "cases", COMFY, "findings-record.json");
+    const before = buildWhatifCase(join(out, "source"), CASES.find((c) => c.instance_id === COMFY)!);
+    const rec = JSON.parse(readFileSync(recPath, "utf8")) as { findings: unknown[] };
+    // A killed row no lens candidate fits, with evidence but no line: its
+    // extra is excluded (no anchor), so it adds nothing.
+    rec.findings.push({
+      lens: "pass-nowhere",
+      path: "nowhere/at/all.py",
+      disposition: "killed",
+      evidence: "an unanchored claim",
+    });
+    writeFileSync(recPath, JSON.stringify(rec));
+    const after = buildWhatifCase(join(out, "source"), CASES.find((c) => c.instance_id === COMFY)!);
+    const k = (b: typeof before) => b.summary.variants["posted+killed"];
+    expect(k(after).excluded.no_line).toBe(k(before).excluded.no_line + 1);
+    expect(k(after).from_record_evidence).toBe(k(before).from_record_evidence);
+  });
+
+  it("a rebuild that changes a variant's result drops that variant's metrics, and only its", () => {
+    const out = mkdtempSync(join(tmpdir(), "whatif-metrics-"));
+    cpSync(FIX, join(out, "source"), { recursive: true });
+    writeWhatifRun(out, CASES);
+    for (const v of WHATIF_VARIANTS)
+      writeFileSync(join(out, "results", v, "metrics_ocr_2026_round_1.json"), "{}\n");
+    // The same inputs again: every score stands.
+    writeWhatifRun(out, CASES);
+    for (const v of WHATIF_VARIANTS)
+      expect(existsSync(join(out, "results", v, "metrics_ocr_2026_round_1.json"))).toBe(true);
+    // A killed row the record gains changes posted+killed alone.
+    const recPath = join(out, "source", "cases", COMFY, "findings-record.json");
+    const rec = JSON.parse(readFileSync(recPath, "utf8")) as { findings: unknown[] };
+    rec.findings.push({
+      lens: "pass-nowhere",
+      path: "nowhere/at/all.py",
+      line: 4,
+      disposition: "killed",
+      evidence: "a new killed claim",
+    });
+    writeFileSync(recPath, JSON.stringify(rec));
+    writeWhatifRun(out, CASES);
+    expect(existsSync(join(out, "results", "posted+killed", "metrics_ocr_2026_round_1.json"))).toBe(
+      false,
+    );
+    expect(existsSync(join(out, "results", "posted", "metrics_ocr_2026_round_1.json"))).toBe(true);
   });
 
   it("names a case whose zero counts come from a missing event stream or record", () => {

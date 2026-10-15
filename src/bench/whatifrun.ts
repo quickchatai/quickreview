@@ -13,8 +13,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { safeId, type BenchCase, type CaseSet } from "./aacr.js";
-import { latestMetrics, metricsFiles } from "./report.js";
+import { CASE_FILES, safeId, type BenchCase, type CaseSet } from "./aacr.js";
+import { dropMetricsFiles, latestMetrics, metricsFiles } from "./report.js";
 import { collectComments } from "./runner.js";
 import {
   ADDED_DISPOSITIONS,
@@ -25,6 +25,7 @@ import {
   parseFindingsRecord,
   rawCandidatesFromEvents,
   recordExtras,
+  refKey,
   refOutcomes,
   whatifResult,
   WHATIF_VARIANTS,
@@ -88,6 +89,16 @@ function scoredTuples(result: unknown): Array<[string, number, string]> {
   });
 }
 
+/** The comments a variant's result file adds to the control (every one but
+ * the posted comments it carries over). */
+function addedComments(result: unknown): Array<{ qcr_whatif?: Record<string, unknown> }> {
+  const comments = (result as { review?: { comments?: unknown } } | undefined)?.review?.comments;
+  if (!Array.isArray(comments)) return [];
+  return (comments as Array<{ qcr_whatif?: Record<string, unknown> }>).filter(
+    (c) => c.qcr_whatif?.["origin"] !== "posted",
+  );
+}
+
 /**
  * One case: raw candidates from the copied event stream, the record linked
  * onto them, and the four variants' result files. The control is the run's
@@ -116,7 +127,7 @@ export function buildWhatifCase(
   const raw = events
     ? rawCandidatesFromEvents(readFileSync(eventsPath, "utf8").split("\n"))
     : { candidates: [], passes: [], dropped: 0 };
-  const recordPath = join(caseDir, "findings-record.json");
+  const recordPath = join(caseDir, CASE_FILES.findings);
   const recordRaw = readJson(recordPath);
   const recordInput: "read" | "missing" | "unreadable" =
     recordRaw !== undefined ? "read" : existsSync(recordPath) ? "unreadable" : "missing";
@@ -138,15 +149,17 @@ export function buildWhatifCase(
       comments: scoredTuples(r.result).length,
       added: r.added,
       excluded: r.excluded,
-      from_record_evidence: extras[v].filter((x) => x.prov.text_source === "record-evidence")
-        .length,
+      // Of the comments the variant ADDS — an excluded extra is not one.
+      from_record_evidence: addedComments(r.result).filter(
+        (x) => x.qcr_whatif?.["text_source"] === "record-evidence",
+      ).length,
     };
   }
 
   // Does the current reader still rebuild the control from the case files? If
   // not, the control is still the run's own file — but the report says so.
   let rebuilds: boolean | null = null;
-  if (existsSync(join(caseDir, "comments.json"))) {
+  if (existsSync(join(caseDir, CASE_FILES.comments))) {
     const collected = collectComments(caseDir).comments.filter((x) => x.side !== "LEFT");
     const want = collected.map((x) => [x.path, x.line, x.body] as [string, number, string]);
     rebuilds = JSON.stringify(want) === JSON.stringify(scoredTuples(posted));
@@ -195,7 +208,10 @@ export function buildWhatifCase(
   };
 }
 
-/** Build every variant for the set's cases from `<outDir>/source`. */
+/** Build every variant for the set's cases from `<outDir>/source`. A
+ * variant whose result file for a case is about to hold different bytes
+ * first loses its metrics (they scored the old bytes), as a review run's
+ * `writeResults` does. */
 export function writeWhatifRun(outDir: string, cases: readonly BenchCase[]): WhatifCaseSummary[] {
   const src = join(outDir, SOURCE_DIR);
   if (!existsSync(join(src, "results", "all"))) {
@@ -208,10 +224,16 @@ export function writeWhatifRun(outDir: string, cases: readonly BenchCase[]): Wha
     const built = buildWhatifCase(src, c);
     const id = safeId(c.instance_id);
     for (const v of WHATIF_VARIANTS) {
-      writeFileSync(
-        join(outDir, "results", v, `${id}.json`),
-        JSON.stringify(built.results[v], null, 2) + "\n",
-      );
+      const file = join(outDir, "results", v, `${id}.json`);
+      const text = JSON.stringify(built.results[v], null, 2) + "\n";
+      let before: string | null = null;
+      try {
+        before = readFileSync(file, "utf8");
+      } catch {
+        // no earlier result for this case
+      }
+      if (before !== text) dropMetricsFiles(join(outDir, "results", v));
+      writeFileSync(file, text);
     }
     writeFileSync(
       join(outDir, "extract", `${id}.json`),
@@ -346,12 +368,9 @@ export function renderWhatifReport(
   const rows = refOutcomes(rounds);
   // The source run's own per-reference matches, for the control-noise column.
   const ownRows = new Map(
-    refOutcomes({ posted: roundMetrics(join(src, "results", "all")) }).map((r) => [
-      `${r.instance_id}#${r.ref}`,
-      r,
-    ]),
+    refOutcomes({ posted: roundMetrics(join(src, "results", "all")) }).map((r) => [refKey(r), r]),
   );
-  const ownOf = (r: RefOutcome): RefOutcome | undefined => ownRows.get(`${r.instance_id}#${r.ref}`);
+  const ownOf = (r: RefOutcome): RefOutcome | undefined => ownRows.get(refKey(r));
 
   const L: string[] = [];
   L.push(`# AACR-Bench what-if — ${set.name}, source run \`${origin}\``);
@@ -363,7 +382,7 @@ export function renderWhatifReport(
   for (const w of judge.slice(1)) L.push(`  ${w}`);
   L.push(`- Judge (the source run's own scoring): ${srcJudge}`);
   L.push(
-    "- Variants: `posted` = the run's own results/all, byte-for-byte (the control); `posted+killed` = + every validator-KILLED candidate; `posted+merged` = + every MERGED/FOLDED candidate as its own comment; `all-candidates` = every raw lens candidate alone (validator excluded; deduped only on identical path, line and claim). Extra comments carry the lens's own `claim:` sentence at the lens's own anchor, single-line, RIGHT side only.",
+    "- Variants: `posted` = the run's own results/all comments, unchanged and in order (the control); `posted+killed` = + every validator-KILLED candidate; `posted+merged` = + every MERGED/FOLDED candidate as its own comment; `all-candidates` = every raw lens candidate alone (validator excluded; deduped only on identical path, line and claim). Extra comments carry the lens's own `claim:` sentence at the lens's own anchor, single-line, RIGHT side only.",
   );
   L.push("");
   L.push("## Scores (semantic, the AACR harness, line-k 1)");

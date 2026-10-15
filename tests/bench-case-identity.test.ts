@@ -269,6 +269,58 @@ describe("a round whose output files do not parse", () => {
   });
 });
 
+describe("a round that wrote its outcome without a file the scorer reads", () => {
+  it("gets the one continuation, told to finish the files, and is read once written", async () => {
+    const c = mkCase(B1);
+    const cstore = join(tmp, "store-missing");
+    execFileSync("git", ["clone", "--quiet", "--bare", join(tmp, "work"), storeDir(cstore, c)]);
+    const root = join(tmp, "root-missing");
+    mkdirSync(root);
+    for (const e of readdirSync(ROOT))
+      if (!["wt", ".git", "state"].includes(e)) symlinkSync(join(ROOT, e), join(root, e));
+    const outDir = join(tmp, "out-missing");
+    const calls = join(tmp, "pi-calls-missing.log");
+    const piBin = join(tmp, "fake-pi-missing");
+    // The first turn writes outcome.json and no findings record; the
+    // continuation writes the record.
+    writeFileSync(
+      piBin,
+      [
+        "#!/bin/sh",
+        "cat >/dev/null",
+        `echo "$*" >> ${JSON.stringify(calls)}`,
+        'sd=""; prev=""; for a in "$@"; do [ "$prev" = "--session-dir" ] && sd="$a"; prev="$a"; done',
+        'mkdir -p "$sd"; echo \'{"type":"session"}\' > "$sd/s.jsonl"; cd="$(dirname "$sd")"',
+        'case "$*" in',
+        `  *--continue*) printf '%s' '{"findings": []}' > "$cd/findings-record.json" ;;`,
+        `  *) printf '%s' '{"verdict": "REQUEST_CHANGES", "passes": []}' > "$cd/outcome.json" ;;`,
+        "esac",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(piBin, 0o755);
+    const s = await reviewCase(
+      c,
+      metaFor(c),
+      {
+        root,
+        store: cstore,
+        outDir,
+        agentDir: join(tmp, "agent"),
+        timeoutMs: 10 * 60_000,
+        piBin,
+      },
+      { cfg: benchConfig(""), ecosystem: ecosystemFor("none"), fingerprint: {} as never },
+    );
+    const invocations = readFileSync(calls, "utf8").trim().split("\n");
+    expect(invocations).toHaveLength(2);
+    expect(invocations[1]).toMatch(/--continue/);
+    expect(invocations[1]).toMatch(/You stopped before the BENCHMARK MODE files were complete/);
+    expect(s.continued).toBe(true);
+    expect(s.status).not.toBe("no-output");
+  });
+});
+
 describe("a round that renders nothing: the session's own comments are a scorer input", () => {
   it("an unreadable comments.json gets the one continuation, and a no-output that names it", async () => {
     const c = mkCase(B1);

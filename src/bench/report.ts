@@ -189,9 +189,13 @@ const REFERENCE_REPORT_PREAMBLE =
  * population, for an AACR-Bench set; the plain reference-matching caveat for
  * any other. */
 export function reportPreamble(set: CaseSet): string {
-  return datasetPin(set.dataset)?.id === "aacr-v1"
-    ? AACR_REPORT_PREAMBLE
-    : REFERENCE_REPORT_PREAMBLE;
+  return isAacrSet(set) ? AACR_REPORT_PREAMBLE : REFERENCE_REPORT_PREAMBLE;
+}
+
+/** Is the set AACR-Bench's own — the one reference population the reports'
+ * AACR facts (who wrote the references, what they are about) describe? */
+function isAacrSet(set: CaseSet): boolean {
+  return datasetPin(set.dataset)?.id === "aacr-v1";
 }
 
 /** What an AACR-Bench report measures — opens every report over an
@@ -259,10 +263,7 @@ export function renderReport(
       L.push(`| ${v} | — | — | — | — | — | — | — | — |`);
       continue;
     }
-    const s = m.summary;
-    L.push(
-      `| ${v} | ${n(s["evaluated_instances"])}/${cases.length} | ${n(s["generated_notes"])} | ${n(s["matched_semantic_notes"])}/${n(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`,
-    );
+    L.push(scoreRow(v, m.summary, cases.length));
   }
   if (labels) {
     const ids = cases.map((c) => c.instance_id);
@@ -332,7 +333,7 @@ export function renderReport(
   }
   L.push("");
   L.push(
-    `Reading the numbers: precision counts every posted head-side comment against the dataset's references, so a real issue the annotators did not record scores as a false positive. ${reanchored} comment(s) anchored on a deleted line were moved to the head side of their hunk and scored there; ${left} LEFT-side (old-code) comment(s) that could not be moved were excluded — the harness forces every generated comment to the right side, so an old-side anchor could only score wrong. The references are 74% AI-authored and 42% maintainability/readability — compare variants, not just the headline. Published leaderboard rows used an undisclosed judge; only a baseline re-run under this judge is a like-for-like comparison.`,
+    `Reading the numbers: precision counts every posted head-side comment against the dataset's references, so a real issue the annotators did not record scores as a false positive. ${reanchored} comment(s) anchored on a deleted line were moved to the head side of their hunk and scored there; ${left} LEFT-side (old-code) comment(s) that could not be moved were excluded — the harness forces every generated comment to the right side, so an old-side anchor could only score wrong. ${isAacrSet(set) ? "The references are 74% AI-authored and 42% maintainability/readability — compare" : "Compare"} variants, not just the headline. Published leaderboard rows used an undisclosed judge; only a baseline re-run under this judge is a like-for-like comparison.`,
   );
   L.push("");
   return L.join("\n");
@@ -363,6 +364,16 @@ export function roundMetrics(
 /** One scores-table row: a variant or a judge round. */
 export function scoreRow(label: string, s: Record<string, number>, cases: number): string {
   return `| ${label} | ${n(s["evaluated_instances"])}/${cases} | ${n(s["generated_notes"])} | ${n(s["matched_semantic_notes"])}/${n(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
+}
+
+/** The AACR score table of an arm's run: the header, the average, then every
+ * judge round (from `roundMetrics`); one dash row when nothing was scored. */
+export function aacrScoreTable(m: ReturnType<typeof roundMetrics>, cases: number): string[] {
+  const L: string[] = [...SCORE_TABLE_HEAD];
+  if (m.average) L.push(scoreRow("**average**", m.average, cases));
+  for (const r of m.rounds) L.push(scoreRow(String(r.round), r.summary, cases));
+  if (!m.average && m.rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  return L;
 }
 
 /** The OCR arm's report: the harness's numbers (average and every round),
@@ -402,11 +413,7 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
   L.push("");
   L.push("## Scores (the AACR harness, OCR reader)");
   L.push("");
-  L.push(...SCORE_TABLE_HEAD);
-  const { rounds, average } = roundMetrics(join(outDir, "results", "all"));
-  if (average) L.push(scoreRow("**average**", average, cases.length));
-  for (const r of rounds) L.push(scoreRow(String(r.round), r.summary, cases.length));
-  if (!average && rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  L.push(...aacrScoreTable(roundMetrics(join(outDir, "results", "all")), cases.length));
   L.push("");
   L.push("## Per case");
   L.push("");

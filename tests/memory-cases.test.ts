@@ -309,6 +309,22 @@ describe("which posted findings get a case", () => {
     expect(h.capture.outcomesFor(PR).find((o) => o.finding_key === "F2")?.fate).toBe("unknown");
   });
 
+  it("a marker posted twice: a reply on the twin's thread is the finding's response, quoted in its case", async () => {
+    const h = harness();
+    const r = h.round(H1, [posted({ key: "F1" })]);
+    // A retried posting stamped F1's marker on two comments: 900 keeps the
+    // link, 905 is its twin — the outcome capture reads both threads.
+    h.capture.observeBotComments(PR, [
+      h.botComment({ id: 900, round: r, key: "F1" }),
+      h.botComment({ id: 905, round: r, key: "F1", created_at: "2026-10-01T10:00:40.000Z" }),
+    ]);
+    h.reply({ id: 9051, root: 905, author: "bob", body: "Is this reachable?", at: h.tick(5) });
+    await h.capture.capturePr(PR);
+    const { cases } = prCases(h.store, h.capture, { pr: PR, repo: REPO, botLogin: BOT });
+    expect(cases.map((c) => c.name)).toEqual([caseName(PR, r, "F1")]);
+    expect(cases[0]!.replies.map((x) => x.comment_id)).toEqual([9051]);
+  });
+
   it("a decided fate alone is enough (no reply): fixed by the session's own judgement", async () => {
     const h = harness();
     const r = h.round(H1, [posted({ key: "F1" })]);
@@ -1361,6 +1377,30 @@ describe("the backfill: 60 days, state.db plus one adapter read, resumable, rate
       replies: "1",
       thread: `https://github.com/${REPO}/pull/4002#discussion_r40020`,
     });
+  });
+
+  it("a reply recorded while the backfill's capture runs stays beyond the watermark", async () => {
+    const { h, read } = aged();
+    const capture = h.capture.capturePr.bind(h.capture);
+    h.capture.capturePr = async (n: number) => {
+      const out = await capture(n);
+      // Recorded after the capture read its facts, before the sync.
+      h.reply({ id: n * 10 + 2, root: n * 10, author: "bob", body: "Late.", at: h.at(), n });
+      return out;
+    };
+    const { w } = writer(h, { read, backfillDays: 60, backfillPrsPerTick: 1 });
+    expect((await w.tick()).backfilled).toEqual([4003]);
+    const maxId = (where: string): number =>
+      (
+        h.store.db
+          .prepare(`SELECT MAX(id) AS id FROM pr_comments WHERE pr = 4003 AND ${where}`)
+          .get() as { id: number }
+      ).id;
+    const mark = h.store.db
+      .prepare("SELECT comments_max FROM case_activity_marks WHERE pr = 4003")
+      .get() as { comments_max: number };
+    expect(mark.comments_max).toBe(maxId("comment_id = 40031"));
+    expect(mark.comments_max).toBeLessThan(maxId("comment_id = 40032"));
   });
 
   it("is gated on memory health: no read, no capture, no write while it is not healthy", async () => {

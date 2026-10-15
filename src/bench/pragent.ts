@@ -49,24 +49,26 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
-import { authFingerprint, AuthExpiring, benchAuthMode, syncBenchAuth } from "./auth.js";
-import { run } from "./exec.js";
-import { bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
-import type { OcrShapedComment } from "./opencode.js";
 import {
-  datasetLine,
-  dropMetricsFiles,
-  kTokens,
-  reportPreamble,
-  roundMetrics,
-  SCORE_TABLE_HEAD,
-  scoreRow,
-} from "./report.js";
+  aacrScoreTable,
+  checkMergeBase,
+  HARNESS_TIMEOUT_MIN,
+  harnessProcessTimeoutMs,
+  prepareArmCases,
+  runLifecycle,
+} from "./armrun.js";
+import { authFingerprint, AuthExpiring, benchAuthMode, syncBenchAuth } from "./auth.js";
+import { piUsageFromInclusive } from "./cost.js";
+import { GIT_ISOLATION_ENV, run } from "./exec.js";
+import { bridgeCall, bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
+import type { OcrShapedComment } from "./opencode.js";
+import { datasetLine, kTokens, reportPreamble, roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
 
 /** The harness's CLI-runner budget (reviewers/codex.py: 30 min + 60 s), per
- * PR-Agent command. */
-export const PRAGENT_DEFAULTS = { timeoutMin: 30, model: "gpt-6.1-sol" } as const;
+ * PR-Agent command. The model is not a default of this arm: it is what the
+ * bridge's /health says it serves (`PragentReviewRun.model`). */
+export const PRAGENT_DEFAULTS = { timeoutMin: HARNESS_TIMEOUT_MIN } as const;
 
 /** PR-Agent's commands, in the order the GitHub App runs them on a new PR
  * (`pr_commands`). /describe produces no findings; its published description
@@ -75,7 +77,7 @@ export const PRAGENT_COMMANDS = ["describe", "review", "improve"] as const;
 export type PragentCommand = (typeof PRAGENT_COMMANDS)[number];
 
 export function pragentProcessTimeoutMs(timeoutMin: number): number {
-  return (timeoutMin * 60 + 60) * 1000;
+  return harnessProcessTimeoutMs(timeoutMin);
 }
 
 /** Where the target branch of the local provider points: the PR's base commit,
@@ -142,10 +144,7 @@ export function pragentEnv(o: { path: string; home: string; tmpDir: string }): N
     all_proxy: dead,
     NO_PROXY: "127.0.0.1,localhost",
     no_proxy: "127.0.0.1,localhost",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_TERMINAL_PROMPT: "0",
+    ...GIT_ISOLATION_ENV,
   };
 }
 
@@ -401,24 +400,6 @@ export interface PragentRunnerOptions {
   runImpl?: typeof run;
 }
 
-async function bridgeCall(
-  o: Pick<PragentRunnerOptions, "bridgeUrl" | "fetchImpl">,
-  path: string,
-  body?: unknown,
-): Promise<Record<string, unknown> | null> {
-  try {
-    const res = await (o.fetchImpl ?? fetch)(`${o.bridgeUrl.replace(/\/+$/, "")}${path}`, {
-      method: body === undefined ? "GET" : "POST",
-      headers: { "content-type": "application/json" },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    return res.ok ? ((await res.json()) as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
 function emptySummary(c: BenchCase, fingerprint: PragentFingerprint): PragentCaseSummary {
   const none = { status: "not-run" as CommandStatus, exit: null, seconds: 0 };
   return {
@@ -560,12 +541,9 @@ export async function reviewCasePragent(
       tmpDir,
     });
     const git = (...args: string[]) => exec("git", ["-C", tree, ...args], { env });
-    const mb = await git("merge-base", c.base_commit, c.head_commit);
-    summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
-    if (!summary.merge_base_ok)
-      summary.warnings.push(
-        `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
-      );
+    const mb = await checkMergeBase(exec, tree, c, meta, env);
+    summary.merge_base_ok = mb.ok;
+    if (mb.warning) summary.warnings.push(mb.warning);
     // The local provider's target: a LOCAL branch at the PR's base commit,
     // named like the PR's base branch when git takes the name.
     let target = meta.base_ref;
@@ -663,13 +641,7 @@ export async function reviewCasePragent(
   }
   summary.duration_seconds = Math.round((Date.now() - started) / 1000);
   const b = summary.bridge;
-  summary.usage = b
-    ? {
-        input: b.input_tokens - Math.min(b.cached_tokens, b.input_tokens),
-        cacheRead: Math.min(b.cached_tokens, b.input_tokens),
-        output: b.output_tokens,
-      }
-    : null;
+  summary.usage = b ? piUsageFromInclusive(b.input_tokens, b.cached_tokens, b.output_tokens) : null;
   const review = reviewFindings(caps.review);
   const improve = improveFindings(caps.improve);
   const { comments, unlocated } = splitFindings([...review, ...improve]);
@@ -788,35 +760,21 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
   const previous = existsSync(runFile)
     ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
     : null;
-  // Every result file this run removes or rewrites was scored by the run's
-  // metrics, so they go before the first one changes; a resume that skips
-  // every case keeps them.
-  let metricsDropped = false;
-  const dropMetricsOnce = (): void => {
-    if (metricsDropped) return;
-    metricsDropped = true;
-    const gone = dropMetricsFiles(join(r.outDir, "results", "all"));
-    if (gone.length)
-      r.log(
-        `pragent: ${gone.length} metrics file(s) scored the old results — removed; re-run eval to score the new reviews`,
-      );
-  };
   // run.json is about to carry THIS configuration: a case reviewed under
-  // another goes now (not when the loop reaches it), so a stop partway can
-  // never leave it scored under this run's label.
-  for (const c of r.cases) {
-    const prior = r.resume ? readPragentSummary(r.outDir, c) : null;
-    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
-      continue;
-    if (prior)
-      r.log(
-        `pragent: ${c.instance_id} was reviewed by a different PR-Agent/model/verbosity/flags — its result is dropped`,
-      );
-    const result = join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`);
-    if (existsSync(result)) dropMetricsOnce();
-    rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-    rmSync(result, { force: true });
-  }
+  // another goes now (not when the loop reaches it), its judge inputs with
+  // it, so a stop partway can never leave it scored under this run's label.
+  // The run's metrics go before the first result changes; a resume that
+  // skips every case keeps them.
+  const prep = prepareArmCases({
+    outDir: r.outDir,
+    cases: r.cases,
+    resume: r.resume,
+    fingerprint,
+    readSummary: readPragentSummary,
+    log: r.log,
+    arm: "pragent",
+    differs: "a different PR-Agent/model/verbosity/flags",
+  });
   const runRecord = {
     reviewer: "pragent",
     set: r.set.name,
@@ -836,15 +794,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
     flags: { timeout_min: r.timeoutMin },
     qcr_commit: r.qcrCommit,
     cases: r.cases.map((c) => c.instance_id),
-    started_at:
-      (r.resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
-      new Date().toISOString(),
-    resumes: [
-      ...(r.resume && Array.isArray(previous?.["resumes"])
-        ? (previous["resumes"] as unknown[])
-        : []),
-      ...(r.resume && previous ? [{ at: new Date().toISOString(), fingerprint }] : []),
-    ],
+    ...runLifecycle(r.resume, previous, fingerprint),
     finished_at: null as string | null,
   };
   writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
@@ -872,7 +822,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
       break;
     }
     // This case's result is about to be rewritten.
-    dropMetricsOnce();
+    prep.beforeReview();
     let meta: PrefetchMeta;
     try {
       meta = r.readMeta(c);
@@ -943,13 +893,7 @@ export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCa
   L.push("");
   L.push("## Scores (the AACR harness, OCR reader)");
   L.push("");
-  L.push(...SCORE_TABLE_HEAD);
-  const row = (label: string, s: Record<string, number>): string =>
-    scoreRow(label, s, cases.length);
-  const { rounds, average } = roundMetrics(join(outDir, "results", "all"));
-  if (average) L.push(row("**average**", average));
-  for (const r of rounds) L.push(row(String(r.round), r.summary));
-  if (!average && rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  L.push(...aacrScoreTable(roundMetrics(join(outDir, "results", "all")), cases.length));
   L.push("");
   L.push("## Per case");
   L.push("");

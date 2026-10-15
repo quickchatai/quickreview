@@ -799,6 +799,70 @@ describe("the run", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("a run stopped before reviewing a dropped case leaves none of its judge inputs behind", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-stop-"));
+    try {
+      const src = join(tmp, "src");
+      mkdirSync(src);
+      const jwtPayload = Buffer.from(
+        JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acc" } }),
+      ).toString("base64url");
+      // A login that expires before one case could finish: the run stops first.
+      writeFileSync(
+        join(src, "auth.json"),
+        JSON.stringify({
+          "openai-codex": {
+            type: "oauth",
+            access: `h.${jwtPayload}.s`,
+            refresh: "R",
+            expires: Date.now() + 60_000,
+          },
+        }),
+      );
+      const out = join(tmp, "out");
+      const caseDir = join(out, "cases", CASE.instance_id);
+      mkdirSync(caseDir, { recursive: true });
+      writeFileSync(
+        join(caseDir, "case-summary.json"),
+        JSON.stringify({ arm: "pragent", status: "ok", fingerprint: { ...FP, model: "gpt-6-sol" } }),
+      );
+      // A body-only review: its saved judgement keys on the body alone.
+      writeFileSync(join(caseDir, "review.md"), "the other model's body-only finding\n");
+      const lines: string[] = [];
+      const code = await runPragentReview({
+        set: SET,
+        cases: [CASE],
+        outDir: out,
+        root: join(tmp, "root"),
+        store: join(tmp, "store"),
+        authSrc: src,
+        agentDir: join(tmp, "agent"),
+        python: "py",
+        driver: "d",
+        pragentVersion: "0.46.0",
+        bridgeUrl: "http://127.0.0.1:1",
+        model: "gpt-6.1-sol",
+        effort: "medium",
+        verbosity: "medium",
+        timeoutMin: 30,
+        prText: true,
+        qcrCommit: "c",
+        keepTree: false,
+        resume: true,
+        readMeta: () => {
+          throw new Error("not prefetched");
+        },
+        log: (l) => lines.push(l),
+      });
+      expect(code).toBe(1);
+      expect(lines.some((l) => l.includes("STOPPED"))).toBe(true);
+      expect(readdirSync(caseDir)).not.toContain("case-summary.json");
+      expect(readdirSync(caseDir)).not.toContain("review.md");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the report", () => {

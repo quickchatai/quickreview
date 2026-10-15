@@ -180,11 +180,13 @@ function cleanPath(v: string): { path: string; line?: number } {
     .trim()
     .replace(/^`+|`+$/g, "")
     .replace(/^\.?\/+/, "");
-  // `path: src/x.ts:42` with no separate line field.
-  const m = /^(.*\S):(\d+)(?:-\d+)?$/.exec(p);
+  // `path: src/x.ts:42` (or `:10-30`) with no separate line field: the line
+  // as `lineOf` reads a `line:` field, a range anchored at its end.
+  const m = /^(.*\S):(\d+(?:\s*[-–]\s*\d+)?)$/.exec(p);
   if (m && !/^[a-z]+:\/\//i.test(p)) {
     p = m[1]!;
-    return { path: p, line: Number(m[2]) };
+    const line = lineOf(m[2]).line;
+    return line !== undefined ? { path: p, line } : { path: p };
   }
   return { path: p };
 }
@@ -356,9 +358,10 @@ export function parseFindingsRecord(raw: unknown): RecordFinding[] {
       const v = r[k];
       return typeof v === "string" && v.trim() ? v.trim() : undefined;
     };
+    // `name` is the production reader's older spelling of `lens`.
     const lensRaw = Array.isArray(r["lens"])
       ? (r["lens"] as unknown[]).filter((x): x is string => typeof x === "string").join(",")
-      : (str("lens") ?? "");
+      : (str("lens") ?? str("name") ?? "");
     const line = recInt(r["line"]);
     const evidence = str("evidence");
     const reason = str("reason");
@@ -426,8 +429,10 @@ export function linkRecord(
   const cWords = candidates.map((c) =>
     words([c.claim, c.detail, c.evidence, c.kind].filter(Boolean).join(" ")),
   );
+  // What a record row says it claimed, for both phases: its evidence and kind.
+  const rWords = record.map((f) => words([f.evidence, f.kind].filter(Boolean).join(" ")));
   record.forEach((f, ri) => {
-    const fWords = words([f.evidence, f.kind].filter(Boolean).join(" "));
+    const fWords = rWords[ri]!;
     candidates.forEach((c, ci) => {
       if (!f.path || c.path !== f.path) return;
       const sameLens = f.lenses.length === 0 || f.lenses.includes(c.lens);
@@ -475,7 +480,7 @@ export function linkRecord(
   const textPairs: Array<{ r: number; c: number; score: number }> = [];
   record.forEach((f, ri) => {
     if (takenR.has(ri) || f.lenses.length === 0) return;
-    const fWords = words([f.evidence, f.kind].filter(Boolean).join(" "));
+    const fWords = rWords[ri]!;
     candidates.forEach((c, ci) => {
       if (takenC.has(ci) || !f.lenses.includes(c.lens)) return;
       const score = jaccard(fWords, cWords[ci]!);
@@ -661,16 +666,23 @@ export function allCandidateExtras(
     const x = candidateExtra(c, "candidate");
     borrowRecordLine(x, recordLine.get(i));
     const at = seen.get(key);
-    // A duplicate is dropped — unless it carries the record anchor the kept
-    // one lacks: the lineless copy would be excluded, losing the finding.
+    // A duplicate is dropped — unless it is scoreable where the kept one is
+    // not (a line the kept copy lacks, the head side where it sits on the
+    // old): the kept copy would be excluded, losing the finding.
     if (at !== undefined) {
-      if (out[at]!.line === undefined && x.line !== undefined) out[at] = x;
+      if (!scoreable(out[at]!) && scoreable(x)) out[at] = x;
       return;
     }
     seen.set(key, out.length);
     out.push(x);
   });
   return out;
+}
+
+/** Whether the scorer gets an extra at all (`toOcrComments`): a line, on the
+ * head side. */
+function scoreable(x: ExtraCandidate): boolean {
+  return x.side !== "LEFT" && x.line !== undefined;
 }
 
 export interface WhatifExcluded {
@@ -708,9 +720,10 @@ export function toOcrComments(extras: readonly ExtraCandidate[]): {
 
 /**
  * One case's result file for one variant. `posted` is the run's own
- * results/all file, parsed; its comments are carried over byte-for-byte in
- * their original order (and are the whole file for `posted`), and its token
- * and duration fields are kept so the harness's cost columns stay the run's.
+ * results/all file, parsed; its comments are carried over unchanged in their
+ * original order, each tagged `qcr_whatif.origin = posted` (and are the whole
+ * file for `posted`), and its token and duration fields are kept so the
+ * harness's cost columns stay the run's.
  */
 export function whatifResult(
   posted: unknown,
@@ -780,6 +793,12 @@ export interface RefOutcome {
   >;
 }
 
+/** A reference's identity across metrics files: its instance and its
+ * position in the instance's reference list. */
+export function refKey(r: { instance_id: string; ref: number }): string {
+  return `${r.instance_id}#${r.ref}`;
+}
+
 /** Fold every variant's per-round metrics into one row per reference. The
  * reference list is the dataset's, so its order is identical in every file. */
 export function refOutcomes(
@@ -792,7 +811,7 @@ export function refOutcomes(
     for (const round of rs) {
       for (const inst of round.eval_res) {
         inst.comments.forEach((c, i) => {
-          const key = `${inst.instance_id}#${i}`;
+          const key = refKey({ instance_id: inst.instance_id, ref: i });
           let row = byKey.get(key);
           if (!row) {
             row = {

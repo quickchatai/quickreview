@@ -30,13 +30,14 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, normalize } from "node:path";
 import {
+  BASE_REF_RE,
   leakproofCommitText,
   parsePrefetchMeta,
   safeId,
   type BenchCase,
   type PrefetchMeta,
 } from "./aacr.js";
-import { must, run } from "./exec.js";
+import { GIT_ISOLATION_ENV, must, run } from "./exec.js";
 
 export interface PrefetchOptions {
   store: string;
@@ -69,14 +70,9 @@ export function mirrorOnlyFromEnv(env: NodeJS.ProcessEnv = process.env): boolean
 
 const mirrorOnlyOf = (o: PrefetchOptions): boolean => o.mirrorOnly ?? mirrorOnlyFromEnv();
 
-const GIT_ENV = {
-  ...process.env,
-  GIT_TERMINAL_PROMPT: "0",
-  // No credential helper can ever be consulted, and no system/global config
-  // (a host's `url.insteadOf` or credential store) leaks into the sandbox.
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-};
+// No credential helper can ever be consulted, and no system/global config
+// (a host's `url.insteadOf` or credential store) leaks into the sandbox.
+const GIT_ENV = { ...process.env, ...GIT_ISOLATION_ENV };
 
 export function storeDir(store: string, c: BenchCase): string {
   return join(store, safeId(c.instance_id));
@@ -265,10 +261,6 @@ async function prFromApi(c: BenchCase, o: PrefetchOptions): Promise<PrApi | "rat
   }
   return null;
 }
-
-/** The branch names a store's metadata takes as `base_ref` (prepareTree
- * installs it as `origin/<base_ref>`). */
-export const BASE_REF_RE = /^[A-Za-z0-9._/-]+$/;
 
 /** The PR text a set carries (no API call), or undefined when it carries none. */
 function setText(c: BenchCase): PrApi | undefined {

@@ -56,13 +56,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
-import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import {
   aacrScoreTable,
   checkMergeBase,
   dropStaleMetrics,
+  HARNESS_TIMEOUT_MIN,
   harnessProcessTimeoutMs,
+  prepareArmCases,
+  runLifecycle,
 } from "./armrun.js";
+import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import { datasetLine, reportPreamble, roundMetrics } from "./report.js";
 import { claudeRowsForJudge, claudeScoredFindings } from "./claudeshape.js";
 import { parseClaudeProse, PROSE_PARSER_VERSION } from "./claudeprose.js";
@@ -71,7 +74,7 @@ import { prepareTree } from "./runner.js";
 export { claudeRowsForJudge, claudeScoredFindings } from "./claudeshape.js";
 
 /** pipeline.py `apply_defaults`: `--timeout-minutes` None → 30. */
-export const CLAUDE_HARNESS_DEFAULTS = { timeoutMin: 30 } as const;
+export const CLAUDE_HARNESS_DEFAULTS = { timeoutMin: HARNESS_TIMEOUT_MIN } as const;
 
 /** reviewers/claude.py: `process_timeout = timeout_minutes * 60 + 60` — the
  * budget the harness gives every CLI reviewer. Our outer bound on the driver
@@ -916,29 +919,23 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
     throw new Error(
       `${o.outDir} holds another arm's run (reviewer ${JSON.stringify(previous["reviewer"] ?? "QuickReview")}) — pick a new --run`,
     );
-  // Every case reviewed again rewrites its result file, so the run's metrics
-  // go before the first one does; a resume that skips every case keeps them.
-  let metricsDropped = false;
-  const dropMetricsOnce = (): void => {
-    if (metricsDropped) return;
-    metricsDropped = true;
-    dropStaleMetrics(join(o.outDir, "results", "all"), o.log, "claude-review", "the new reviews");
-  };
   // run.json is about to carry THIS configuration, so no case reviewed under
   // another may stay a result of the run: without --resume every case goes;
-  // with it, every case whose fingerprint differs goes now, not when the loop
-  // reaches it — a stop partway (an auth failure) must leave those cases
-  // unreviewed, never scored under the new label.
-  for (const c of cases) {
-    const prior = o.resume ? readClaudeSummary(o.outDir, c) : null;
-    if (o.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
-      continue;
-    dropMetricsOnce();
-    if (prior)
-      o.log(`claude: ${c.instance_id} was reviewed by a different build/version — re-running`);
-    rmSync(join(o.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-    rmSync(join(o.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
-  }
+  // with it, every case whose fingerprint differs goes now (its judge inputs
+  // with it), not when the loop reaches it — a stop partway (an auth failure)
+  // must leave those cases unreviewed, never scored under the new label. The
+  // run's metrics go before the first result changes; a resume that skips
+  // every case keeps them.
+  const prep = prepareArmCases({
+    outDir: o.outDir,
+    cases,
+    resume: o.resume,
+    fingerprint,
+    readSummary: readClaudeSummary,
+    log: o.log,
+    arm: "claude",
+    differs: "a different build/version",
+  });
   const runRecord = {
     reviewer: "claude",
     set: o.set.name,
@@ -954,9 +951,7 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
     flags: { timeout_min: o.timeoutMin },
     qcr_commit: fingerprint.qcr_commit,
     cases: cases.map((c) => c.instance_id),
-    started_at:
-      (o.resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
-      new Date().toISOString(),
+    ...runLifecycle(o.resume, previous ?? null, fingerprint),
     finished_at: null as string | null,
   };
   writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
@@ -969,7 +964,7 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
       summaries.push(prior);
       continue;
     }
-    dropMetricsOnce();
+    prep.beforeReview();
     let meta: PrefetchMeta;
     try {
       meta = o.readMeta(c);

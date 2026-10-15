@@ -9,9 +9,10 @@
 // here opens a socket, spawns a process or touches GitHub by itself.
 //
 // Exit code = 0 only when every automated probe passed.
-import { createHmac, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { signBody } from "./webhook.js";
 
 export interface ProbeResult {
   /** The checklist item marker: ①…⑨. */
@@ -70,10 +71,6 @@ export interface TunnelProbeDeps {
   hostname?: string;
 }
 
-export function signBody(secret: string, body: string): string {
-  return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
-}
-
 /** ① A signed test delivery is accepted (2xx); a bad-signature one is rejected
  * (401/403 — 400 accepted as a rejection too). Both must hold. */
 export async function probeTunnelHmac(deps: TunnelProbeDeps): Promise<ProbeResult> {
@@ -92,7 +89,7 @@ export async function probeTunnelHmac(deps: TunnelProbeDeps): Promise<ProbeResul
 
   const good = await deps.post(
     deps.url,
-    { ...base(randomUUID()), "x-hub-signature-256": signBody(deps.webhookSecret, body) },
+    { ...base(randomUUID()), "x-hub-signature-256": signBody(body, deps.webhookSecret) },
     body,
   );
   const forged = await deps.post(

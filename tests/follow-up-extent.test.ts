@@ -23,14 +23,14 @@ import {
 import { DJANGO_ECOSYSTEM } from "../src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
 import { SWEEP_PASS } from "../src/heuristics.js";
-import { sweepStatusOf } from "../src/sweepstatus.js";
+import { normalizeSweepClaim, sweepStatusOf } from "../src/sweepstatus.js";
 import {
   renderExtentNote,
   renderExtentVerdictNote,
   renderSweepDecisionNote,
 } from "../src/templates.js";
 import type { PassPlanEntry, RoundOrder } from "../src/types.js";
-import { normalizeExtentClaim, normalizeSweepClaim, validateVerdict } from "../src/verdicts.js";
+import { normalizeExtentClaim, validateVerdict } from "../src/verdicts.js";
 import type { PrOwnedDeltaFile } from "../src/worktrees.js";
 
 const baseCfg: Config = parseConfig(

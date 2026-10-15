@@ -21,11 +21,9 @@ export function harnessProcessTimeoutMs(timeoutMin: number): number {
   return (timeoutMin * 60 + 60) * 1000;
 }
 
-/** The harness scored the result files as they were; a rewritten or removed
- * one makes every metrics file beside them a score of findings that no longer
- * exist. They go (as the eval step's own `rm -f metrics_*.json` does), so a
- * report before the next eval shows no score rather than a stale one.
- * Returns how many went. */
+/** `dropMetricsFiles` (report.ts) with the line that says so: the metrics
+ * beside rewritten or removed result files scored findings that no longer
+ * exist. Returns how many went. */
 export function dropStaleMetrics(
   resultsDir: string,
   log: (line: string) => void,
@@ -135,28 +133,8 @@ export async function checkMergeBase(
   };
 }
 
-/** A harness metric: `?` when absent, an integer as is, else two decimals. */
-function fmtMetric(v: number | undefined): string {
-  return v === undefined
-    ? "?"
-    : Number.isInteger(v)
-      ? String(v)
-      : String(Math.round(v * 100) / 100);
-}
-
-/** The AACR score table (average, then every round) from `roundMetrics`. */
-export function aacrScoreTable(m: ReturnType<typeof roundMetrics>, cases: number): string[] {
-  const row = (label: string, s: Record<string, number>): string =>
-    `| ${label} | ${fmtMetric(s["evaluated_instances"])}/${cases} | ${fmtMetric(s["generated_notes"])} | ${fmtMetric(s["matched_semantic_notes"])}/${fmtMetric(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
-  const L = [
-    "| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |",
-    "|---|---|---|---|---|---|---|---|---|",
-  ];
-  if (m.average) L.push(row("**average**", m.average));
-  for (const r of m.rounds) L.push(row(String(r.round), r.summary));
-  if (!m.average && m.rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
-  return L;
-}
+/** The AACR score table, report.ts's: the arms render it from there. */
+export { aacrScoreTable } from "./report.js";
 
 /** What a case summary says went wrong, for the report's warnings section. */
 export interface CaseDiagnostics {

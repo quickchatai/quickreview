@@ -83,6 +83,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isBotIdentity } from "../capture.js";
 import { caseName } from "../cases.js";
 import { FEEDBACK_PREFIX_RE } from "../feedback.js";
 import { canonicalLensIds, storedLensIds } from "../lensids.js";
@@ -787,7 +788,7 @@ export function mineHumanRecall(
   }>;
   const out: CandidateDraft[] = [];
   for (const c of rows) {
-    if (c.author_type === "Bot" || c.author === botLogin || /\[bot\]$/i.test(c.author)) continue;
+    if (isBotIdentity(c.author, c.author_type, botLogin)) continue;
     const author = prAuthor(store, c.pr);
     // Unknown author: kept (a reviewer's comment must not be lost to a
     // missing record); the PR's own author commenting is a note, not a miss.

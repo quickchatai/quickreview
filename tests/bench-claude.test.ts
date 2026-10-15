@@ -604,7 +604,7 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     // A resume without the pin is a different configuration: the case re-runs.
     const lines: string[] = [];
     expect(await claudeReviewRun({ ...opts, resume: true, env, log: (l) => lines.push(l) })).toBe(0);
-    expect(lines.some((l) => /different build\/version — re-running/.test(l))).toBe(true);
+    expect(lines.some((l) => /different build\/version — its result is dropped/.test(l))).toBe(true);
     expect(readClaudeSummary(out, c)!.fingerprint.model).toBeUndefined();
   });
 
@@ -763,6 +763,8 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     );
     writeFileSync(join(all, `${second.instance_id}.json`), "{}\n");
     writeFileSync(join(all, "metrics_ocr_average.json"), "{}\n");
+    // Its body, which the defect judge reads beside the result.
+    writeFileSync(join(out, "cases", second.instance_id, "review.md"), "the old model's body\n");
     const code = await claudeReviewRun({
       set: { ...set, cases: [c, second] },
       outDir: out,
@@ -783,6 +785,7 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     // Never reached, yet gone: no old result stays beside the new run.json.
     expect(readClaudeSummary(out, second)).toBeNull();
     expect(existsSync(join(all, `${second.instance_id}.json`))).toBe(false);
+    expect(existsSync(join(out, "cases", second.instance_id, "review.md"))).toBe(false);
     expect(existsSync(join(all, "metrics_ocr_average.json"))).toBe(false);
   });
 

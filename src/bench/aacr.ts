@@ -232,6 +232,11 @@ export function datasetPin(ds: unknown): DatasetPin | null {
 }
 
 const SHA_RE = /^[0-9a-f]{40}$/;
+
+/** The branch names a case's `base_ref` may carry, from the set or from the
+ * prefetched store's metadata (prepareTree installs it as
+ * `origin/<base_ref>`). */
+export const BASE_REF_RE = /^[A-Za-z0-9._/-]+$/;
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 /** The synthetic commit a leak-proof store holds (BenchCase.leakproof). Fixed
@@ -332,8 +337,7 @@ function caseOf(raw: unknown, where: string): BenchCase {
   }
   if (r["base_ref"] !== undefined) {
     const v = r["base_ref"];
-    if (typeof v !== "string" || !/^[A-Za-z0-9._/-]+$/.test(v))
-      throw new Error(`${where}: bad base_ref`);
+    if (typeof v !== "string" || !BASE_REF_RE.test(v)) throw new Error(`${where}: bad base_ref`);
     c.base_ref = v;
   }
   if (r["leakproof"] !== undefined) {
@@ -1549,6 +1553,18 @@ export const USAGE_LIMIT_RE =
 export const RATE_LIMIT_RE = /\b429\b|rate[ _-]?limit|too many requests|usage[ _-]?limit|quota/i;
 export const OVERLOAD_RE = /overloaded|\b50[23]\b|\b529\b|capacity/i;
 
+/** A model error message's kind: a spent usage window first (its words would
+ * also read as a rate limit), then a rate limit, then an overload. One
+ * reading for pi's event stream and its stderr. */
+export function modelErrorKind(
+  message: string,
+): "usage_limit" | "rate_limited" | "overloaded" | "other" {
+  if (USAGE_LIMIT_RE.test(message)) return "usage_limit";
+  if (RATE_LIMIT_RE.test(message)) return "rate_limited";
+  if (OVERLOAD_RE.test(message)) return "overloaded";
+  return "other";
+}
+
 /**
  * Count the failed model calls in pi's `--mode json` stream: every assistant
  * message with `stopReason: "error"`, the parent's and the lens children's
@@ -1571,13 +1587,14 @@ export function modelErrorsFromEvents(lines: Iterable<string>): ModelErrors {
       const key = `${String(r["timestamp"] ?? "")}|${msg}`;
       if (!seen.has(key)) {
         seen.add(key);
-        if (USAGE_LIMIT_RE.test(msg)) {
+        const kind = modelErrorKind(msg);
+        if (kind === "usage_limit") {
           out.usage_limit = (out.usage_limit ?? 0) + 1;
           out.sample = msg.slice(0, 200);
-        } else if (RATE_LIMIT_RE.test(msg)) {
+        } else if (kind === "rate_limited") {
           out.rate_limited++;
           if (!out.usage_limit) out.sample = msg.slice(0, 200);
-        } else if (OVERLOAD_RE.test(msg)) {
+        } else if (kind === "overloaded") {
           out.overloaded++;
           if (!out.rate_limited && !out.usage_limit) out.sample = msg.slice(0, 200);
         } else {

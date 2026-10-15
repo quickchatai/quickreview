@@ -21,11 +21,11 @@ import {
   renderTable,
   runChecklist,
   safeProbe,
-  signBody,
   type ChecklistDeps,
   type HttpPost,
   type ProbeResult,
 } from "../src/checklist.js";
+import { verifySignature } from "../src/webhook.js";
 // Static, not `await import()` inside the tests: cliops pulls in a large
 // graph, and a mid-test import puts its transform on the test's clock — the
 // one step that stretches without bound when the machine is loaded.
@@ -95,10 +95,19 @@ describe("① tunnel + HMAC probe", () => {
     expect(r.detail).toContain("signed -> 502");
   });
 
-  it("signBody matches GitHub's sha256= scheme", () => {
-    expect(signBody("k", "body")).toBe(
-      `sha256=${createHmac("sha256", "k").update("body").digest("hex")}`,
-    );
+  it("signs as the daemon verifies: its signed delivery passes the webhook's own check", async () => {
+    const sent: Array<{ sig: string; body: string }> = [];
+    await probeTunnelHmac({
+      url: "http://127.0.0.1:8787/webhook",
+      webhookSecret: SECRET,
+      post: async (_u, h, b) => {
+        sent.push({ sig: h["x-hub-signature-256"] ?? "", body: b });
+        return { status: 200 };
+      },
+    });
+    const first = sent[0]!;
+    expect(verifySignature(Buffer.from(first.body), first.sig, SECRET)).toBe(true);
+    expect(first.sig).toBe(`sha256=${createHmac("sha256", SECRET).update(first.body).digest("hex")}`);
   });
 });
 
