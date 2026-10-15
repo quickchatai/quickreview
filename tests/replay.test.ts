@@ -361,6 +361,17 @@ describe("one case, end to end", () => {
     expect(order).toContain("pass-placement");
   });
 
+  it("logs a scratch link it could not make, and still runs the case", async () => {
+    const io = fakeIo({ answer: { findings: [] } });
+    io.linkDir = (t, l) => (l.endsWith("agents") ? "EPERM: operation not permitted" : undefined);
+    const lines: string[] = [];
+    await replayer(io, { baseClone: REPO, log: (l) => lines.push(l) }).replay(c());
+    expect(lines.filter((l) => l.includes("could not link"))).toEqual([
+      `replay: could not link ${join(SCRATCH, "state", "agents")} -> ${join(SANDBOX, "state", "agents")} (EPERM: operation not permitted)`,
+    ]);
+    expect(io.spawned).toHaveLength(1);
+  });
+
   it("gives the session the pass agents and the exec guard, and no scripts/", async () => {
     const io = fakeIo({ answer: { findings: [] } });
     await replayer(io, { baseClone: REPO }).replay(c());

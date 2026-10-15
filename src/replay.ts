@@ -114,7 +114,9 @@ export interface ReplayIo {
   writeFile(path: string, body: string): void;
   mkdirp(path: string): void;
   rm(path: string): void;
-  linkDir(target: string, link: string): void;
+  /** Link `link` to `target`; a failure is not fatal and comes back as its
+   * reason, for the replay's log. */
+  linkDir(target: string, link: string): string | void;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -357,11 +359,18 @@ export class ScratchReplay {
    * deliberately NOT — see layer 4 in the module header.
    */
   private ensureLayout(): void {
-    const { io, scratchRoot, sandboxRoot } = this.o;
+    const { io, scratchRoot, sandboxRoot, log } = this.o;
     io.mkdirp(scratchRoot);
     io.mkdirp(join(scratchRoot, "state"));
-    io.linkDir(join(sandboxRoot, "extensions"), join(scratchRoot, "extensions"));
-    io.linkDir(join(sandboxRoot, "state", "agents"), join(scratchRoot, "state", "agents"));
+    for (const [target, link] of [
+      [join(sandboxRoot, "extensions"), join(scratchRoot, "extensions")],
+      [join(sandboxRoot, "state", "agents"), join(scratchRoot, "state", "agents")],
+    ] as const) {
+      const failed = io.linkDir(target, link);
+      // The session still starts, under-equipped: the log is what tells an
+      // unproductive reviewer from one that never had its agents.
+      if (failed) log(`replay: could not link ${link} -> ${target} (${failed})`);
+    }
   }
 
   private async git(args: string[], cwd: string): Promise<ExecOut> {
@@ -594,10 +603,11 @@ export async function nodeReplayIo(opts: {
       mkdirSync(dirname(link), { recursive: true });
       try {
         symlinkSync(target, link, "dir");
-      } catch {
+      } catch (err) {
         // A filesystem without symlinks leaves the session under-equipped
         // rather than unstartable — the same degradation rule the entrypoints
         // follow for a missing skills dir.
+        return err instanceof Error ? err.message : String(err);
       }
     },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
