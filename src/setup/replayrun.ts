@@ -64,6 +64,7 @@ import {
 import type { ReplaySide, SideRequest } from "./replaybuild.js";
 import type { ReplaySource } from "./replaysource.js";
 import {
+  drainLanes,
   parseScanAnswer,
   parseValidatorAnswer,
   survivorSource,
@@ -294,6 +295,9 @@ export function parseReplayRequest(raw: {
 
 export class ReplayRunner {
   private active: { id: string; abort: AbortController; done: Promise<void> } | null = null;
+  /** A start is planning (it awaits GitHub): a second start must not pass
+   * the active check meanwhile and launch — and pay for — a second run. */
+  private starting = false;
   private readonly concurrency: number;
 
   constructor(private readonly ports: ReplayPorts) {
@@ -630,6 +634,11 @@ export class ReplayRunner {
         ok: false,
         errors: [`replay ${this.active.id} is still running — stop it or wait for it`],
       };
+    if (this.starting)
+      return {
+        ok: false,
+        errors: ["a replay is already starting — wait for it, then check its status"],
+      };
     if (typeof args.key !== "string" || args.key === "") {
       return {
         ok: false,
@@ -638,14 +647,22 @@ export class ReplayRunner {
         ],
       };
     }
+    const key = args.key;
+    this.starting = true;
+    try {
+      return await this.startPlanned(key);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async startPlanned(key: string): Promise<{ ok: true; run: ReplayRun } | Refusal> {
     const { file, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
-    if (file.preview === null || file.preview.key !== args.key) {
+    if (file.preview === null || file.preview.key !== key) {
       return {
         ok: false,
-        errors: [
-          `no stored preview has key ${args.key} — preview again and show the operator the cost`,
-        ],
+        errors: [`no stored preview has key ${key} — preview again and show the operator the cost`],
       };
     }
     let p;
@@ -656,11 +673,11 @@ export class ReplayRunner {
     }
     if (!p.ok) return p;
     const planned = p.planned;
-    if (planned.key !== args.key) {
+    if (planned.key !== key) {
       return {
         ok: false,
         errors: [
-          `the replay changed since that preview (key ${args.key}, now ${planned.key}: a profile, a PR or a price moved) — preview again and show the operator the new cost`,
+          `the replay changed since that preview (key ${key}, now ${planned.key}: a profile, a PR or a price moved) — preview again and show the operator the new cost`,
         ],
       };
     }
@@ -697,9 +714,9 @@ export class ReplayRunner {
     const abort = new AbortController();
     const done = this.drive(file, run, planned.jobs, abort)
       .catch((err: unknown) => {
-        // One lane's failure rejects the whole drive while the other lanes'
-        // cases are still running: abort them, or they would go on spending
-        // past `settle` with no run left to count them against the cap.
+        // One lane's failure rejects the drive once every lane has stopped
+        // (drainLanes aborted the others); the abort here stops anything
+        // the drive had not yet started.
         abort.abort();
         run.problems.push(`the replay stopped on an internal error: ${clean(err)}`);
         this.settle(file, run, "partial");
@@ -792,9 +809,7 @@ export class ReplayRunner {
           }
         }
       };
-      await Promise.all(
-        Array.from({ length: Math.max(1, Math.min(this.concurrency, list.length)) }, lane),
-      );
+      await drainLanes(Math.max(1, Math.min(this.concurrency, list.length)), lane, abort);
     };
     await phase(jobs.filter((j) => j.state.kind === "lens"));
     if (!signal.aborted && !capHit) await phase(jobs.filter((j) => j.state.kind === "validate"));
@@ -809,7 +824,8 @@ export class ReplayRunner {
   }
 
   /** One case, start to finish. Resolves with what it cost (its estimate
-   * when the runner could not price it), never rejects. */
+   * when the runner could not price it); a runner failure is an outcome, so
+   * it rejects only when the run record cannot be written. */
   private async runCase(
     file: ReplayFile,
     run: ReplayRun,

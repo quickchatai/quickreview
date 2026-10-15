@@ -912,6 +912,15 @@ describe("replay: cost first, subagents, side by side", () => {
     await rr.idle();
   });
 
+  it("two starts issued together launch one run: the second is refused while the first plans", async () => {
+    const rr = runner([]);
+    const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    const [a, b] = await Promise.all([rr.start({ key: p.key }), rr.start({ key: p.key })]);
+    expect([a.ok, b.ok]).toEqual([true, false]);
+    expect(!b.ok && b.errors[0]).toMatch(/already starting/);
+    await rr.idle();
+  });
+
   it("the companion's tools: preview states the cost, start takes its key, status shows the comparison", async () => {
     const rr = runner([]);
     const tools = new Map(replayToolDefinitions(rr).map((t) => [t.name, t]));
