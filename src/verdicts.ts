@@ -9,7 +9,13 @@
 // inject the overseer. There is no path here that touches an existing review:
 // the invariant against retracting an approval is structural, not prompted
 // (CLAUDE.md rule 2).
-import { isSweepClaim, sweepStatusOf, type SweepClaim, type SweepStatus } from "./sweepstatus.js";
+import {
+  normalizePassPhase,
+  normalizeSweepClaim,
+  sweepSkippedOnApprove,
+  sweepStatusOf,
+  type SweepStatus,
+} from "./sweepstatus.js";
 import { pendingPosting } from "./posting-outbox.js";
 
 export { sweepStatusOf, type SweepStatus };
@@ -546,29 +552,6 @@ export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; no
     badPhase > 0 ? `${badPhase} unusable phase${badPhase === 1 ? "" : "s"} ignored` : "",
   ].filter(Boolean);
   return { passes, ...(notes.length > 0 ? { note: notes.join("; ") } : {}) };
-}
-
-/** A pass entry's `phase`: `delta` | `sweep`, case and separators
- * forgiven; anything else is unusable (null). */
-function normalizePassPhase(raw: unknown): "delta" | "sweep" | null {
-  if (typeof raw !== "string") return null;
-  const word = raw.trim().toLowerCase();
-  if (word === "delta") return "delta";
-  if (word === "sweep" || word === "pre-approval-sweep" || word === "pre_approval_sweep")
-    return "sweep";
-  return null;
-}
-
-/** The verdict's top-level `sweep`: `ran` | `not_owed` | `not_reached` |
- * `skipped`, case forgiven and `-`/space read as `_`; anything else is
- * unusable (null). */
-export function normalizeSweepClaim(raw: unknown): SweepClaim | null {
-  if (typeof raw !== "string") return null;
-  const word = raw
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
-  return isSweepClaim(word) ? word : null;
 }
 
 /** The verdict's `extent`: what the session did with the follow-up
@@ -2573,7 +2556,7 @@ export class VerdictWatcher {
         });
       // A sweep the session decided to skip is a decision, not an anomaly:
       // only an owed sweep left un-run without one is.
-      if (v.verdict === "APPROVE" && owed && status !== "ran" && status !== "skipped") {
+      if (sweepSkippedOnApprove(v.verdict, owed, status)) {
         store.logAnomaly(
           "followup_sweep_skipped",
           v.pr,

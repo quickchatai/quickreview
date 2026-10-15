@@ -244,6 +244,27 @@ export interface FindingCommentRow {
   seen_at: string;
 }
 
+/**
+ * A retried posting can stamp one finding's marker on two comments: the
+ * earliest keeps the link (`via = marker`), every later one stays unlinked
+ * with the marker. Per linked comment, its twins' ids, ascending — the other
+ * threads that are the same finding's. One rule for the outcome capture and
+ * the finding cases.
+ */
+export function markerTwins(rows: readonly FindingCommentRow[]): Map<number, number[]> {
+  const linked = new Map<string, FindingCommentRow>();
+  for (const c of rows)
+    if (c.round_no !== null && c.finding_key !== null) linked.set(fkey(c.round_no, c.finding_key), c);
+  const out = new Map<number, number[]>();
+  for (const c of [...rows].sort((a, b) => a.comment_id - b.comment_id)) {
+    if (c.finding_key !== null || c.marker_round === null || c.marker_key === null) continue;
+    const root = linked.get(fkey(c.marker_round, c.marker_key));
+    if (root?.via !== "marker") continue;
+    out.set(root.comment_id, [...(out.get(root.comment_id) ?? []), c.comment_id]);
+  }
+  return out;
+}
+
 /** A `finding_outcomes.carried_to` address: `<round>:<key>`. */
 export function carriedToRef(roundNo: number, findingKey: string): string {
   return `${roundNo}:${findingKey}`;
@@ -459,10 +480,9 @@ interface PrFacts {
   recorded: Map<number, { at: number; head: string | null }>;
   rounds: RoundRow[];
   links: Map<string, FindingCommentRow>;
-  /** Comments carrying a linked finding's marker that lost the link to an
-   * earlier one (a retried posting stamped the marker twice): each is still
+  /** Per linked comment, its marker twins (`markerTwins`): each is still
    * that finding's thread, so its replies and decisions are its evidence. */
-  twins: Map<string, number[]>;
+  twins: Map<number, number[]>;
   replies: Map<number, PrCommentRow[]>;
   decisions: Array<{
     at: number;
@@ -813,21 +833,11 @@ export class OutcomeCapture {
     const posted = rows.filter((r) => r.disposition === "posted");
     const byRound = new Map<number, RoundFindingRow[]>();
     for (const r of rows) byRound.set(r.round_no, [...(byRound.get(r.round_no) ?? []), r]);
+    const comments = this.commentsFor(pr);
     const links = new Map<string, FindingCommentRow>();
-    for (const c of this.store.db
-      .prepare("SELECT * FROM finding_comments WHERE pr = ? AND finding_key IS NOT NULL")
-      .all(pr) as FindingCommentRow[])
-      links.set(fkey(c.round_no!, c.finding_key!), c);
-    const twins = new Map<string, number[]>();
-    for (const c of this.store.db
-      .prepare(
-        "SELECT * FROM finding_comments WHERE pr = ? AND finding_key IS NULL AND marker_key IS NOT NULL ORDER BY comment_id",
-      )
-      .all(pr) as FindingCommentRow[]) {
-      const k = fkey(c.marker_round!, c.marker_key!);
-      if (links.get(k)?.via !== "marker") continue;
-      twins.set(k, [...(twins.get(k) ?? []), c.comment_id]);
-    }
+    for (const c of comments)
+      if (c.round_no !== null && c.finding_key !== null) links.set(fkey(c.round_no, c.finding_key), c);
+    const twins = markerTwins(comments);
     const replies = new Map<number, PrCommentRow[]>();
     for (const c of this.store.prComments(pr)) {
       if (c.source !== "review_comment" || c.in_reply_to_id === null) continue;
@@ -1019,8 +1029,7 @@ export class OutcomeCapture {
     const link = facts.links.get(fkey(f.round_no, f.finding_key)) ?? null;
     const thread = link?.comment_id ?? null;
     /** Every thread of this finding: its linked comment's, and its twins'. */
-    const threads =
-      thread === null ? [] : [thread, ...(facts.twins.get(fkey(f.round_no, f.finding_key)) ?? [])];
+    const threads = thread === null ? [] : [thread, ...(facts.twins.get(thread) ?? [])];
     const postedAt =
       ms(link?.created_at) ?? facts.recorded.get(f.round_no)?.at ?? ms(f.recorded_at) ?? 0;
     // One thread keeps its capture order; twins' replies interleave by time.

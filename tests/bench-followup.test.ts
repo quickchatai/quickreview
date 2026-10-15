@@ -663,4 +663,23 @@ describe("a follow-up case's outcome report", () => {
       scope: "full",
     });
   });
+
+  it("reads the spellings production's verdict tail forgives: `RAN`, `pre-approval-sweep`", () => {
+    const ran = followUpOutcomeOf(
+      fu,
+      {
+        sweep: "RAN",
+        passes: [
+          { name: "pass-baseline", tier: "sol-med", phase: "Delta" },
+          { name: "pass-security", tier: "sol-high", phase: "pre-approval-sweep" },
+        ],
+      },
+      "APPROVE",
+    );
+    expect(ran.executed_phases).toEqual([
+      { agent: "pass-baseline--sol-med", phase: "delta" },
+      { agent: "pass-security--sol-high", phase: "sweep" },
+    ]);
+    expect(ran.sweep).toMatchObject({ claim: "ran", status: "ran", skipped: false });
+  });
 });

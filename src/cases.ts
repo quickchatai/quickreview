@@ -120,7 +120,9 @@ import { CASES_AREA } from "./memory/layout.js";
 import type { RoundActivityGate } from "./memory/roundactivity.js";
 import type { DocumentPut, DocumentPutResult, MemoryStore } from "./memory/store.js";
 import {
+  FINDING_FATES,
   inCaptureWindow,
+  markerTwins,
   parseCarriedTo,
   type FindingCommentRow,
   type FindingFate,
@@ -138,17 +140,13 @@ export const CASE_KIND = "case";
  * how this writer knows a retired case at its address is its own. */
 export const CASE_WITHDRAWN = "withdrawn";
 
-/** The fates a finding REACHES — every fate but `unknown`, which is the PR
- * still being open. `open_at_close` is one: the PR closed with the
+/** The fates a finding REACHES — every fate but `unknown`, which no
+ * evidence settles yet (the PR still open, or its latest evidence a
+ * conflict, open or closed). `open_at_close` is one: the PR closed with the
  * finding unanswered and no evidence either way, which is what became of it
  * all the same ("ignored, then merged"). A finding whose fate is still
  * `unknown` gets a case only once a human answers it. */
-export const REACHED_FATES: readonly FindingFate[] = [
-  "fixed",
-  "refuted_conceded",
-  "upheld_after_reply",
-  "open_at_close",
-];
+export const REACHED_FATES: readonly FindingFate[] = FINDING_FATES.filter((f) => f !== "unknown");
 
 /**
  * The precondition a WITHDRAWAL is sent under when this writer may have put
@@ -406,10 +404,16 @@ export function withoutMentions(text: string, logins: ReadonlyMap<string, string
   return text.replace(
     /(^|[^A-Za-z0-9_`@])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?)(?![A-Za-z0-9_-])/g,
     (m, pre: string, login: string) => {
-      const who = logins.get(login.toLowerCase().replace(/\[bot\]$/, ""));
+      const who = logins.get(loginKey(login));
       return who === undefined ? m : `${pre}@<${who}>`;
     },
   );
+}
+
+/** A login as `knownLogins` keys it and `withoutMentions` looks it up:
+ * lowercased, without an app's `[bot]` suffix. */
+function loginKey(login: string): string {
+  return login.toLowerCase().replace(/\[bot\]$/, "");
 }
 
 /** Every login the PR's record knows, lowercased, to the role it holds:
@@ -421,7 +425,7 @@ function knownLogins(
 ): Map<string, string> {
   const out = new Map<string, string>();
   const add = (login: string, role: string): void => {
-    const l = login.toLowerCase().replace(/\[bot\]$/, "");
+    const l = loginKey(login);
     if (l !== "" && !out.has(l)) out.set(l, role);
   };
   if (prAuthor) add(prAuthor, "author");
@@ -472,6 +476,20 @@ export type CaseOutcomeReads = Pick<
 
 const fkey = (round: number, key: string): string => `${round}\u0000${key}`;
 
+/** A PR's activity watermark, as SQL over the PR expression `pr`: the newest
+ * `pr_comments` and `feedback_signals` row ids. One spelling for the mark a
+ * sync records and the late-activity check that compares against it. */
+const ACTIVITY_SQL = {
+  comments: (pr: string): string => `(SELECT COALESCE(MAX(id), 0) FROM pr_comments WHERE pr = ${pr})`,
+  signals: (pr: string): string =>
+    `(SELECT COALESCE(MAX(id), 0) FROM feedback_signals WHERE pr = ${pr})`,
+};
+
+/** A `finding_cases` row the writer may send: owed, with its bytes rendered.
+ * Every batch takes the oldest first. */
+const WRITABLE_CASE = "state = 'pending' AND content IS NOT NULL";
+const OWED_ORDER = "owed_since, name";
+
 /** The PR's author's login, from the live row or the backfill's — null when
  * neither knows (every reply then reads "a human"). */
 function prAuthorOf(store: StateStore, pr: number): string | null {
@@ -496,9 +514,14 @@ export function prCases(
   const byKey = new Map(posted.map((r) => [fkey(r.round_no, r.finding_key), r]));
   const fates = new Map(outcomes.outcomesFor(pr).map((o) => [fkey(o.round_no, o.finding_key), o]));
   const links = new Map<string, FindingCommentRow>();
-  for (const c of outcomes.commentsFor(pr))
+  const findingComments = outcomes.commentsFor(pr);
+  for (const c of findingComments)
     if (c.round_no !== null && c.finding_key !== null)
       links.set(fkey(c.round_no, c.finding_key), c);
+  // A twin of a linked comment (one marker posted twice) is the same
+  // finding's thread too: the outcome capture reads its replies as evidence,
+  // so the case quotes them.
+  const twins = markerTwins(findingComments);
   const next = new Map<string, string>();
   const carriedInto = new Set<string>();
   for (const [k, o] of fates) {
@@ -543,10 +566,12 @@ export function prCases(
     for (const m of members) {
       const thread = m.comment?.comment_id ?? null;
       if (thread === null) continue;
+      const threads = [thread, ...(twins.get(thread) ?? [])];
+      const inThread = (id: number | null): boolean => id !== null && threads.includes(id);
       for (const c of comments) {
         if (c.source !== "review_comment" || c.author === opts.botLogin) continue;
-        if (c.in_reply_to_id !== thread && c.thread_id !== thread) continue;
-        if (c.comment_id === thread) continue;
+        if (!inThread(c.in_reply_to_id) && !inThread(c.thread_id)) continue;
+        if (inThread(c.comment_id)) continue;
         replies.push({
           round_no: m.row.round_no,
           comment_id: c.comment_id,
@@ -1242,8 +1267,7 @@ export class CaseWriter {
   private activityOf(pr: number): { comments: number; signals: number } {
     const row = this.store.db
       .prepare(
-        `SELECT (SELECT COALESCE(MAX(id), 0) FROM pr_comments WHERE pr = @pr) AS comments,
-                (SELECT COALESCE(MAX(id), 0) FROM feedback_signals WHERE pr = @pr) AS signals`,
+        `SELECT ${ACTIVITY_SQL.comments("@pr")} AS comments, ${ACTIVITY_SQL.signals("@pr")} AS signals`,
       )
       .get({ pr }) as { comments: number; signals: number };
     return row;
@@ -1266,8 +1290,7 @@ export class CaseWriter {
       .prepare(
         `SELECT pr FROM (
            SELECT a.pr AS pr, a.comments_max AS c0, a.signals_max AS s0,
-             (SELECT COALESCE(MAX(id), 0) FROM pr_comments c WHERE c.pr = a.pr) AS c1,
-             (SELECT COALESCE(MAX(id), 0) FROM feedback_signals f WHERE f.pr = a.pr) AS s1
+             ${ACTIVITY_SQL.comments("a.pr")} AS c1, ${ACTIVITY_SQL.signals("a.pr")} AS s1
            FROM case_activity_marks a)
          WHERE c1 > c0 OR s1 > s0 ORDER BY pr DESC`,
       )
@@ -1374,11 +1397,14 @@ export class CaseWriter {
       }
       try {
         if (comments) this.deps.outcomes.observeBotComments(pr, comments);
+        // The activity the capture is about to read, as for late activity: a
+        // reply arriving while it runs stays beyond the watermark.
+        const activity = this.activityOf(pr);
         const r = await this.deps.outcomes.capturePr(pr);
         const mark0 = this.store.db
           .prepare("SELECT captured_at FROM outcome_capture_marks WHERE pr = ?")
           .get(pr) as { captured_at: string } | undefined;
-        const owed = this.syncPr(pr, mark0?.captured_at, "backfill");
+        const owed = this.syncPr(pr, mark0?.captured_at, "backfill", activity);
         mark.run({
           pr,
           done: 1,
@@ -1672,7 +1698,7 @@ export class CaseWriter {
     return (
       this.store.db
         .prepare(
-          "SELECT 1 AS one FROM finding_cases WHERE state = 'pending' AND content IS NOT NULL LIMIT 1",
+          `SELECT 1 AS one FROM finding_cases WHERE ${WRITABLE_CASE} LIMIT 1`,
         )
         .get() !== undefined
     );
@@ -1682,7 +1708,7 @@ export class CaseWriter {
   private owedRows(): FindingCaseRow[] {
     return this.store.db
       .prepare(
-        "SELECT * FROM finding_cases WHERE state = 'pending' AND content IS NOT NULL ORDER BY owed_since, name LIMIT ?",
+        `SELECT * FROM finding_cases WHERE ${WRITABLE_CASE} ORDER BY ${OWED_ORDER} LIMIT ?`,
       )
       .all(this.cfg.batch) as FindingCaseRow[];
   }
@@ -1692,7 +1718,7 @@ export class CaseWriter {
   private liveOwedRows(): FindingCaseRow[] {
     return this.store.db
       .prepare(
-        "SELECT * FROM finding_cases WHERE state = 'pending' AND content IS NOT NULL AND origin = 'sync' ORDER BY owed_since, name LIMIT ?",
+        `SELECT * FROM finding_cases WHERE ${WRITABLE_CASE} AND origin = 'sync' ORDER BY ${OWED_ORDER} LIMIT ?`,
       )
       .all(this.cfg.batch) as FindingCaseRow[];
   }

@@ -13,9 +13,42 @@ export function isSweepClaim(word: unknown): word is SweepClaim {
   return (SWEEP_CLAIMS as readonly unknown[]).includes(word);
 }
 
+/** A pass entry's `phase`: `delta` | `sweep`, case and separators
+ * forgiven; anything else is unusable (null). */
+export function normalizePassPhase(raw: unknown): "delta" | "sweep" | null {
+  if (typeof raw !== "string") return null;
+  const word = raw.trim().toLowerCase();
+  if (word === "delta") return "delta";
+  if (word === "sweep" || word === "pre-approval-sweep" || word === "pre_approval_sweep")
+    return "sweep";
+  return null;
+}
+
+/** The verdict's top-level `sweep`: `ran` | `not_owed` | `not_reached` |
+ * `skipped`, case forgiven and `-`/space read as `_`; anything else is
+ * unusable (null). */
+export function normalizeSweepClaim(raw: unknown): SweepClaim | null {
+  if (typeof raw !== "string") return null;
+  const word = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return isSweepClaim(word) ? word : null;
+}
+
 /** What became of a follow-up round's pre-approval sweep
  * (`rounds.sweep_status`). */
 export type SweepStatus = SweepClaim | "unknown";
+
+/** An APPROVE that left its owed sweep un-run: neither ran nor decided not
+ * needed (`followup_sweep_skipped`). */
+export function sweepSkippedOnApprove(
+  verdict: string | null | undefined,
+  owed: boolean,
+  status: SweepStatus,
+): boolean {
+  return verdict === "APPROVE" && owed && status !== "ran" && status !== "skipped";
+}
 
 /**
  * The sweep status a follow-up round's verdict earns. `ran` only

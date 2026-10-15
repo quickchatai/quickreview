@@ -1739,6 +1739,11 @@ describe("report and result bookkeeping", () => {
       expect(ext).not.toContain("74% AI-written");
       expect(ext).toContain("_What this measures: how closely the review reproduces the dataset's");
       expect(renderReport(martian, tmp, [c])).not.toContain("AACR-Bench v1.0");
+      // The closing note's reference-population facts are AACR-Bench's alone.
+      expect(renderReport(set, tmp, [c])).toContain("The references are 74% AI-authored");
+      const extFull = renderReport(martian, tmp, [c]);
+      expect(extFull).not.toContain("74% AI-authored");
+      expect(extFull).toContain("Compare variants, not just the headline.");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1889,6 +1894,52 @@ describe("report and result bookkeeping", () => {
         metrics: 1,
       });
       expect(readdirSync(all).filter((n) => n.startsWith("metrics_"))).toEqual([]);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("an unprefetched attempt leaves none of an earlier attempt's review — a rebuild finds the same empty case", () => {
+    const out = mkdtempSync(join(tmpdir(), "bench-unprefetched-clear-"));
+    try {
+      const caseDir = join(out, "cases", safeId(c.instance_id));
+      mkdirSync(caseDir, { recursive: true });
+      // An earlier attempt's review, on a case whose store is now gone.
+      writeFileSync(
+        join(caseDir, "comments.json"),
+        JSON.stringify([{ path: "f.ts", line: 12, body: "[blocker] the earlier attempt's finding" }]),
+      );
+      writeFileSync(join(caseDir, "review.md"), "the earlier attempt's body\n");
+      writeFileSync(join(caseDir, "findings-record.json"), JSON.stringify({ findings: [] }));
+      recordUnprefetched(out, c, "no store", { qcr_commit: "x" } as unknown as RunFingerprint);
+      for (const f of ["comments.json", "review.md", "findings-record.json"])
+        expect(existsSync(join(caseDir, f))).toBe(false);
+      rebuildResults(out, [c], () => {});
+      const result = JSON.parse(
+        readFileSync(join(out, "results", "all", `${safeId(c.instance_id)}.json`), "utf8"),
+      );
+      expect(result.review.comments).toEqual([]);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("a rebuild writes a case's summary only after its result files", () => {
+    const out = mkdtempSync(join(tmpdir(), "bench-rebuild-summary-last-"));
+    try {
+      const fp = { qcr_commit: "x" } as unknown as RunFingerprint;
+      recordUnprefetched(out, c, "no store", fp);
+      const caseDir = join(out, "cases", safeId(c.instance_id));
+      writeFileSync(
+        join(caseDir, "comments.json"),
+        JSON.stringify([{ path: "f.ts", line: 12, body: "[blocker] guard removed" }]),
+      );
+      // A result dir that cannot be written: the rebuild of the scorer input fails.
+      rmSync(join(out, "results", "all"), { recursive: true, force: true });
+      writeFileSync(join(out, "results", "all"), "not a dir");
+      expect(() => rebuildResults(out, [c], () => {})).toThrow();
+      const s = JSON.parse(readFileSync(join(caseDir, "case-summary.json"), "utf8"));
+      expect(s.comments.total).toBe(0);
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
