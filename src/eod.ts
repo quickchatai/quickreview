@@ -363,6 +363,10 @@ export interface EodTimerDeps {
    * a restart (wire.ts: state.db). Without it they live as long as this
    * timer. */
   deferred?: { load(): string[]; save(dates: string[]): void };
+  /** `deferred` threw: on `load` (`dates` null — what was owed is unknown) or
+   * on `save` (the set it was writing). Scheduling carries on in memory; only
+   * a restart could lose or repeat those days. */
+  onDeferredStoreFailed?: (op: "load" | "save", dates: string[] | null, err: unknown) => void;
   /** How often a deferred sweep re-checks the drain. */
   deferPollMs?: number;
   /** Called when an owed day fires from the set — deferred, or loaded at boot
@@ -454,8 +458,9 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
   let deferred: string[] = [];
   try {
     deferred = [...new Set(deps.deferred?.load() ?? [])].sort();
-  } catch {
+  } catch (err) {
     deferred = [];
+    safely(() => deps.onDeferredStoreFailed?.("load", null, err));
   }
   /** A fire (the day's own, or a deferred one) is in flight — injecting or
    * waiting out a retry. One at a time. */
@@ -464,9 +469,28 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
   const persist = (): void => {
     try {
       deps.deferred?.save(deferred);
-    } catch {
+    } catch (err) {
       // The in-memory set still fires it; only a restart could lose it.
+      safely(() => deps.onDeferredStoreFailed?.("save", [...deferred], err));
     }
+  };
+
+  /** The day is owed until its fire settles. */
+  const owe = (date: string): void => {
+    if (deferred.includes(date)) return;
+    deferred = [...deferred, date].sort();
+    persist();
+  };
+
+  /** A fire finished: a settled day leaves the owed set and the next owed day
+   * may fire. Stopped before it settled (a shutdown during the retries), it
+   * stays in the persisted set, so the next boot fires it again. */
+  const settle = (date: string, outcome: "delivered" | "failed" | "stopped"): void => {
+    firing = false;
+    if (outcome === "stopped") return;
+    deferred = deferred.filter((d) => d !== date);
+    persist();
+    armPoll();
   };
 
   const held = (): boolean => {
@@ -576,15 +600,7 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
     const date = deferred[0]!;
     firing = true;
     safely(() => deps.onDeferredFire?.(date));
-    void fireSettled(date).then((outcome) => {
-      firing = false;
-      // Stopped before the day was settled (a shutdown during the retries):
-      // it stays in the persisted set, so the next boot fires it again.
-      if (outcome === "stopped") return;
-      deferred = deferred.filter((d) => d !== date);
-      persist();
-      armPoll();
-    });
+    void fireSettled(date).then((outcome) => settle(date, outcome));
   };
 
   const tick = (): void => {
@@ -596,10 +612,7 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
     const date = zoneDateString(target, deps.timeZone);
     const why: EodHoldReason | null = held() ? "draining" : busy() ? "sweep_in_flight" : null;
     if (why !== null) {
-      if (!deferred.includes(date)) {
-        deferred = [...deferred, date].sort();
-        persist();
-      }
+      owe(date);
       safely(() => deps.onHeld?.(date, why));
       armPoll();
       target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
@@ -609,18 +622,20 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
     // The day is OWED until its fire settles: it rides the persisted set
     // with the deferred days, so a restart while its context is built or its
     // inject retries fires it again rather than never.
-    if (!deferred.includes(date)) {
-      deferred = [...deferred, date].sort();
-      persist();
+    owe(date);
+    if (deferred[0] !== date) {
+      // An older day is still owed: oldest first, so it fires now and this
+      // day is deferred behind its sweep.
+      if (pollHandle !== null) clearT(pollHandle);
+      poll();
+      safely(() => deps.onHeld?.(date, "sweep_in_flight"));
+      target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
+      arm();
+      return;
     }
     firing = true;
     void fireSettled(date).then((outcome) => {
-      firing = false;
-      if (outcome !== "stopped") {
-        deferred = deferred.filter((d) => d !== date);
-        persist();
-        armPoll();
-      }
+      settle(date, outcome);
       if (!stopped) {
         target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
         arm();

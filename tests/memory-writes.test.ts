@@ -1714,6 +1714,70 @@ describe("deferred days fire oldest first, ONE SWEEP at a time", () => {
     h.timer.stop();
   });
 
+  it("the day's own hour never overtakes an older owed day", async () => {
+    const clock = { now: new Date("2026-10-06T07:00:00Z") };
+    const attempts: string[] = [];
+    const h = eodHarness({
+      draining: () => false,
+      clock,
+      inject: async (m) => {
+        attempts.push(m);
+      },
+      deferred: { load: () => ["2026-10-05"], save: () => {} },
+    });
+    // 18:00 comes up before the boot's poll has fired 10-05.
+    clock.now = new Date("2026-10-06T16:00:00Z");
+    await h.fire(9 * 3_600_000);
+    expect(attempts).toEqual(["sweep 2026-10-05"]);
+    expect(h.events).toEqual([
+      "deferred-fire 2026-10-05",
+      "held 2026-10-06 behind a sweep",
+      "fired 2026-10-05",
+    ]);
+    expect(h.timer.deferredDates()).toEqual(["2026-10-06"]);
+    await h.fire(EOD_DEFAULTS.deferPollMs);
+    expect(attempts).toEqual(["sweep 2026-10-05", "sweep 2026-10-06"]);
+    expect(h.timer.deferredDates()).toEqual([]);
+    h.timer.stop();
+  });
+
+  it("a store that cannot save or load the owed days is reported, with the days", () => {
+    const failures: Array<[string, string[] | null]> = [];
+    const clock = { now: new Date("2026-10-06T15:00:00Z") };
+    const timers: Array<() => void> = [];
+    const timer = startEodTimer({
+      timeHHMM: "18:00",
+      timeZone: TZ,
+      now: () => clock.now,
+      readPrompt: () => "sweep {{date}}",
+      shouldHold: () => true,
+      deferred: {
+        load: () => {
+          throw new Error("db locked");
+        },
+        save: () => {
+          throw new Error("disk full");
+        },
+      },
+      onDeferredStoreFailed: (op, dates) => failures.push([op, dates]),
+      injectOverseer: async () => {},
+      setTimer: (cb) => {
+        timers.push(cb);
+        return timers.length - 1;
+      },
+      clearTimer: () => {},
+    });
+    expect(failures).toEqual([["load", null]]);
+    clock.now = new Date("2026-10-06T16:00:00Z");
+    timers[0]!(); // 18:00, drained: the day is owed and the save throws
+    expect(failures).toEqual([
+      ["load", null],
+      ["save", ["2026-10-06"]],
+    ]);
+    expect(timer.deferredDates()).toEqual(["2026-10-06"]);
+    timer.stop();
+  });
+
   it("waits out the last sweep's pinned-area window, which is named after ITS day", async () => {
     const clock = { now: new Date("2026-10-06T07:00:00Z") };
     const watchTimers: Array<{ cb: () => void; ms: number; cleared: boolean }> = [];
