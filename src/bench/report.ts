@@ -1,9 +1,9 @@
 // The AACR-Bench run report: the scorer's numbers per variant, then per case
 // what the reviewer did — so a number is never read without what produced it.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { safeId, VARIANTS, type BenchCase, type CaseSet } from "./aacr.js";
+import { datasetPin, safeId, VARIANTS, type BenchCase, type CaseSet } from "./aacr.js";
 import { readOcrSummary, type OcrCaseSummary } from "./ocr.js";
 import type { CaseSummary } from "./runner.js";
 
@@ -11,13 +11,53 @@ interface Metrics {
   summary: Record<string, number>;
 }
 
+/** One variant dir's metrics files as the harness names them: one per judge
+ * round (`_round_<r>`, or bare when the eval ran a single round — round 1),
+ * plus an `_average` file when it ran several. Rounds first round first. The
+ * one reader of the naming, for every report. */
+export function metricsFiles(
+  dir: string,
+  /** The harness reader the eval ran with (`--reviewer`): ocr, or claude for
+   * the Claude Code arm. */
+  reviewer = "ocr",
+): { rounds: Array<{ round: number; file: string }>; average: string | null } {
+  if (!existsSync(dir)) return { rounds: [], average: null };
+  const names = readdirSync(dir)
+    .filter((n) => n.startsWith(`metrics_${reviewer}_`) && n.endsWith(".json"))
+    .sort();
+  let average: string | null = null;
+  const rounds: Array<{ round: number; file: string }> = [];
+  for (const n of names) {
+    if (n.includes("average")) {
+      average ??= join(dir, n);
+      continue;
+    }
+    const r = /_round_(\d+)\.json$/.exec(n);
+    rounds.push({ round: r ? Number(r[1]) : 1, file: join(dir, n) });
+  }
+  rounds.sort((a, b) => a.round - b.round || a.file.localeCompare(b.file));
+  return { rounds, average };
+}
+
+/** The number to report for a variant: the multi-round average, else the
+ * last round's. */
 export function latestMetrics(dir: string): Metrics | null {
-  if (!existsSync(dir)) return null;
-  const files = readdirSync(dir).filter((n) => n.startsWith("metrics_ocr_") && n.endsWith(".json"));
-  // Multi-round evals write an `_average` file — that is the number to report.
-  const pick = files.find((n) => n.includes("average")) ?? files.sort().at(-1);
+  const { rounds, average } = metricsFiles(dir);
+  const pick = average ?? rounds.at(-1)?.file;
   if (!pick) return null;
-  return JSON.parse(readFileSync(join(dir, pick), "utf8")) as Metrics;
+  return JSON.parse(readFileSync(pick, "utf8")) as Metrics;
+}
+
+/** The harness scored the result files as they were: once one changes or
+ * goes, every metrics file beside it is a score of findings that no longer
+ * exist. They go (as the eval step's own `rm -f metrics_*.json` does), so a
+ * report before the next eval shows no score rather than a stale one.
+ * Returns the names removed. */
+export function dropMetricsFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const stale = readdirSync(dir).filter((n) => n.startsWith("metrics_") && n.endsWith(".json"));
+  for (const f of stale) rmSync(join(dir, f), { force: true });
+  return stale;
 }
 
 /** Agent-produced reference labels (`sets/<set>.labels.json`, no human check): per instance, one
@@ -75,11 +115,10 @@ export function recallByQuality(
   instances: string[],
 ): { cls: QualityClass; total: number; matched: number }[] | null {
   if (!existsSync(dir)) return null;
-  const rounds = readdirSync(dir)
-    // One file per round: `_round_<r>` when the eval ran several, bare when
-    // it ran one (eval_shards.py); the average file is not a round.
-    .filter((f) => /^metrics_ocr_.*\.json$/.test(f) && !f.includes("average"))
-    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as RoundFile);
+  // One file per round; the average file is not a round.
+  const rounds = metricsFiles(dir).rounds.map(
+    (r) => JSON.parse(readFileSync(r.file, "utf8")) as RoundFile,
+  );
   if (!rounds.length) return null;
   const total = new Map<QualityClass, number>();
   const matched = new Map<QualityClass, number>();
@@ -110,16 +149,53 @@ function readSummary(outDir: string, c: BenchCase): CaseSummary | null {
   return existsSync(p) ? (JSON.parse(readFileSync(p, "utf8")) as CaseSummary) : null;
 }
 
-/** An averaged count is written as a float (`10.0`); show it as the integer. */
-function n(v: number | undefined): string {
+/** A scorer count for a report cell: an averaged count is written as a float
+ * (`10.0`) and shows as the integer, a fraction to two places, a missing one
+ * as `?`. */
+export function metricNumber(v: number | undefined): string {
   return v === undefined
     ? "?"
     : Number.isInteger(v)
       ? String(v)
       : String(Math.round(v * 100) / 100);
 }
+const n = metricNumber;
 
-/** What an AACR-Bench report measures — opens every one (bench/aacr/METRICS.md). */
+/** A token count in thousands, for a report cell. */
+export function kTokens(x: number): string {
+  return `${Math.round(x / 1000)}k`;
+}
+
+/** The scores table's header, then one row per variant or round. */
+export const SCORE_TABLE_HEAD = [
+  "| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |",
+  "|---|---|---|---|---|---|---|---|---|",
+] as const;
+
+/** The report's dataset line: what the set's registered pin denominates its
+ * numbers in (an unregistered dataset says so), its commit, and the cases
+ * and references this report covers. */
+export function datasetLine(set: CaseSet, cases: readonly BenchCase[]): string {
+  const pin = datasetPin(set.dataset);
+  return `- Dataset: ${pin ? pin.denomination : "an unregistered dataset"} (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`;
+}
+
+/** What a report over any other dataset measures: the same reference-matching
+ * score, without AACR-Bench's own reference population. */
+const REFERENCE_REPORT_PREAMBLE =
+  "_What this measures: how closely the review reproduces the dataset's reference comments at the same lines (±1), as judged by a model. A comment that is not a reference counts against precision even when it is a real bug. It is not a defect count. Details: bench/aacr/METRICS.md and bench/aacr/EXTERNAL-BENCHMARKS.md._";
+
+/** The preamble that opens a run report: AACR-Bench's, with its reference
+ * population, for an AACR-Bench set; the plain reference-matching caveat for
+ * any other. */
+export function reportPreamble(set: CaseSet): string {
+  return datasetPin(set.dataset)?.id === "aacr-v1"
+    ? AACR_REPORT_PREAMBLE
+    : REFERENCE_REPORT_PREAMBLE;
+}
+
+/** What an AACR-Bench report measures — opens every report over an
+ * AACR-Bench set (bench/aacr/METRICS.md). */
 export const AACR_REPORT_PREAMBLE =
   "_What this measures: how closely the review reproduces AACR-Bench's reference comments (74% AI-written; 47% code defect, 42% maintainability and readability) at the same lines (±1), as judged by a model. A comment that is not a reference counts against precision even when it is a real bug, and most references are not defects — in a hand check of 253 on 30 PRs, 11% were real defects and 8% real maintainability issues. It is the cross-check against published numbers, not a defect count: the defect benchmark (`bench.sh judge`) is. Details: bench/aacr/METRICS.md._";
 
@@ -142,11 +218,9 @@ export function renderReport(
   const summaries = cases.map((c) => ({ c, s: readSummary(outDir, c) }));
   L.push(`# AACR-Bench run — ${set.name}`);
   L.push("");
-  L.push(AACR_REPORT_PREAMBLE);
+  L.push(reportPreamble(set));
   L.push("");
-  L.push(
-    `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
-  );
+  L.push(datasetLine(set, cases));
   L.push(
     `- Reviewer: QuickReview \`${String(run.qcr_commit ?? "?").slice(0, 10)}\`, profile \`${run.profile || "(generic)"}\`, conversation model \`${run.models?.conversation ?? "?"}\`, pi ${run.pi ?? "?"}`,
   );
@@ -230,12 +304,14 @@ export function renderReport(
   );
   L.push("|---|---|---|---|---|---|---|---|---|---|---|");
   let left = 0;
+  let reanchored = 0;
   for (const { c, s } of summaries) {
     if (!s) {
       L.push(`| ${c.instance_id} | ${c.language} | ${c.references} | not run | | | | | | | |`);
       continue;
     }
     left += s.comments.left_side;
+    reanchored += s.comments.reanchored ?? 0;
     const t = s.comments.by_tag;
     L.push(
       `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status}${s.continued ? " (continued)" : ""} | ${s.verdict ?? "—"} | ${t["blocker"] ?? 0}/${t["question"] ?? 0}/${t["nit"] ?? 0}/${t["other"] ?? 0} | ${s.comments.body ?? 0} | ${s.comments.left_side} | ${s.planned_lenses.length} → ${s.executed_passes.length} | ${(s.duration_seconds / 60).toFixed(1)} | ${Math.round((s.usage.input + s.usage.cacheRead) / 1000)}k/${Math.round(s.usage.output / 1000)}k |`,
@@ -256,7 +332,7 @@ export function renderReport(
   }
   L.push("");
   L.push(
-    `Reading the numbers: precision counts every posted head-side comment against the dataset's references, so a real issue the annotators did not record scores as a false positive. ${left} LEFT-side (old-code) comment(s) were excluded — the harness forces every generated comment to the right side, so an old-side anchor could only score wrong. The references are 74% AI-authored and 42% maintainability/readability — compare variants, not just the headline. Published leaderboard rows used an undisclosed judge; only a baseline re-run under this judge is a like-for-like comparison.`,
+    `Reading the numbers: precision counts every posted head-side comment against the dataset's references, so a real issue the annotators did not record scores as a false positive. ${reanchored} comment(s) anchored on a deleted line were moved to the head side of their hunk and scored there; ${left} LEFT-side (old-code) comment(s) that could not be moved were excluded — the harness forces every generated comment to the right side, so an old-side anchor could only score wrong. The references are 74% AI-authored and 42% maintainability/readability — compare variants, not just the headline. Published leaderboard rows used an undisclosed judge; only a baseline re-run under this judge is a like-for-like comparison.`,
   );
   L.push("");
   return L.join("\n");
@@ -275,26 +351,17 @@ export function roundMetrics(
   rounds: Array<{ round: number; summary: Record<string, number> }>;
   average: Record<string, number> | null;
 } {
-  if (!existsSync(dir)) return { rounds: [], average: null };
-  const files = readdirSync(dir).filter(
-    (n) => n.startsWith(`metrics_${reviewer}_`) && n.endsWith(".json"),
-  );
-  const rounds: Array<{ round: number; summary: Record<string, number> }> = [];
-  let average: Record<string, number> | null = null;
-  for (const f of files.sort()) {
-    const m = JSON.parse(readFileSync(join(dir, f), "utf8")) as Metrics;
-    if (f.includes("average")) {
-      average = m.summary;
-      continue;
-    }
-    const r = /_round_(\d+)\.json$/.exec(f);
-    rounds.push({ round: r ? Number(r[1]) : rounds.length + 1, summary: m.summary });
-  }
-  rounds.sort((a, b) => a.round - b.round);
-  return { rounds, average };
+  const files = metricsFiles(dir, reviewer);
+  const read = (f: string): Record<string, number> =>
+    (JSON.parse(readFileSync(f, "utf8")) as Metrics).summary;
+  return {
+    rounds: files.rounds.map((r) => ({ round: r.round, summary: read(r.file) })),
+    average: files.average === null ? null : read(files.average),
+  };
 }
 
-function scoreRow(label: string, s: Record<string, number>, cases: number): string {
+/** One scores-table row: a variant or a judge round. */
+export function scoreRow(label: string, s: Record<string, number>, cases: number): string {
   return `| ${label} | ${n(s["evaluated_instances"])}/${cases} | ${n(s["generated_notes"])} | ${n(s["matched_semantic_notes"])}/${n(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
 }
 
@@ -313,11 +380,9 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
   const flags = run.flags ?? {};
   L.push(`# AACR-Bench run — ${set.name} — open-code-review baseline`);
   L.push("");
-  L.push(AACR_REPORT_PREAMBLE);
+  L.push(reportPreamble(set));
   L.push("");
-  L.push(
-    `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
-  );
+  L.push(datasetLine(set, cases));
   L.push(
     `- Reviewer: ${run.ocr_version ?? "open-code-review ?"}, run as the AACR harness's reviewers/ocr.py runs it: \`ocr review --from <base_commit> --to <head_commit> --format json --audience agent --concurrency ${flags.concurrency ?? "?"} --timeout ${flags.timeout_min ?? "?"} --max-tools ${flags.max_tools ?? "?"}${run.pr_text === true ? " --background <PR title/description>" : ""}\` (range = merge-base..head; ${run.pr_text === true ? "PR title/description through --background, the equal-inputs switch — the harness itself passes none" : "no PR title/description — the harness passes none"})`,
   );
@@ -337,8 +402,7 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
   L.push("");
   L.push("## Scores (the AACR harness, OCR reader)");
   L.push("");
-  L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
-  L.push("|---|---|---|---|---|---|---|---|---|");
+  L.push(...SCORE_TABLE_HEAD);
   const { rounds, average } = roundMetrics(join(outDir, "results", "all"));
   if (average) L.push(scoreRow("**average**", average, cases.length));
   for (const r of rounds) L.push(scoreRow(String(r.round), r.summary, cases.length));
@@ -350,7 +414,7 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
     "| Case | Lang | Refs | Status | Comments | Files reviewed | Minutes | OCR tokens in/out | Model calls (failed) | Backend tokens in (cached) / out (reasoning) |",
   );
   L.push("|---|---|---|---|---|---|---|---|---|---|");
-  const k = (x: number): string => `${Math.round(x / 1000)}k`;
+  const k = kTokens;
   const tot = {
     calls: 0,
     errors: 0,
@@ -361,6 +425,9 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
     secs: 0,
     oin: 0,
     oout: 0,
+    /** Ran cases whose OCR tokens / bridge counts were not measured. */
+    noOcr: 0,
+    noBridge: 0,
   };
   for (const { c, s } of summaries) {
     if (!s) {
@@ -372,7 +439,8 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
     if (s.ocr_tokens) {
       tot.oin += s.ocr_tokens.input;
       tot.oout += s.ocr_tokens.output;
-    }
+    } else tot.noOcr++;
+    if (!b) tot.noBridge++;
     if (b) {
       tot.calls += b.requests;
       tot.errors += b.errors;
@@ -386,9 +454,13 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
     );
   }
   const ran = summaries.filter((x) => x.s).length;
+  // A total over cases some of which were never measured is a lower bound,
+  // and says so; over none, it is unknown — never a zero.
+  const total = (cell: string, unmeasured: number): string =>
+    unmeasured === ran ? "?" : unmeasured ? `≥ ${cell} (${unmeasured} unmeasured)` : cell;
   if (ran)
     L.push(
-      `| **total** | | ${cases.reduce((a, c) => a + c.references, 0)} | | ${summaries.reduce((a, x) => a + (x.s?.comments ?? 0), 0)} | | ${(tot.secs / 60).toFixed(1)} (avg ${(tot.secs / 60 / ran).toFixed(1)}) | ${k(tot.oin)}/${k(tot.oout)} | ${tot.calls} (${tot.errors}) | ${k(tot.inp)} (${k(tot.cached)}) / ${k(tot.out)} (${k(tot.reasoning)}) |`,
+      `| **total** | | ${cases.reduce((a, c) => a + c.references, 0)} | | ${summaries.reduce((a, x) => a + (x.s?.comments ?? 0), 0)} | | ${(tot.secs / 60).toFixed(1)} (avg ${(tot.secs / 60 / ran).toFixed(1)}) | ${total(`${k(tot.oin)}/${k(tot.oout)}`, tot.noOcr)} | ${total(`${tot.calls} (${tot.errors})`, tot.noBridge)} | ${total(`${k(tot.inp)} (${k(tot.cached)}) / ${k(tot.out)} (${k(tot.reasoning)})`, tot.noBridge)} |`,
     );
   const warned = summaries.filter(
     (x): x is { c: BenchCase; s: OcrCaseSummary } =>

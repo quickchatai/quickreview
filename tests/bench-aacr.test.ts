@@ -68,8 +68,9 @@ import {
   type BridgeStats,
   type OcrCaseSummary,
 } from "../src/bench/ocr.js";
-import { renderOcrReport, roundMetrics } from "../src/bench/report.js";
+import { latestMetrics, metricsFiles, renderOcrReport, roundMetrics } from "../src/bench/report.js";
 import {
+  applyConfigOverrides,
   boundBody,
   buildBenchAgents,
   benchConfig,
@@ -81,6 +82,9 @@ import {
   renderCasePrompts,
   resultLine,
   retryable,
+  runFingerprint,
+  withPresetInToml,
+  writeResults,
   type CaseSummary,
   type RunFingerprint,
 } from "../src/bench/runner.js";
@@ -1574,5 +1578,253 @@ describe("prepareReviewCases: what a review run keeps of an earlier invocation",
       );
       for (const c of cases) expect(has(out, c), c.instance_id).toEqual([false, false]);
     });
+  });
+});
+
+describe("report and result bookkeeping", () => {
+  const set = parseCaseSet(SMOKE);
+  const c = set.cases[0]!;
+  const martian = {
+    ...set,
+    dataset: {
+      ...set.dataset,
+      commit: "e616e849755441da38f18bf3adba2c9583b03803",
+      sha256: "0265909b9ebe206e9b8e28f548f0a3ffa145c9b28d317da522ef1034186269ee",
+    },
+  };
+  const ocrSummary = (over: Partial<OcrCaseSummary>): OcrCaseSummary =>
+    ({
+      instance_id: c.instance_id,
+      arm: "ocr",
+      status: "ok",
+      fingerprint: {},
+      ocr_status: "success",
+      exit_code: 0,
+      duration_seconds: 60,
+      comments: 1,
+      files_reviewed: 1,
+      ocr_tokens: null,
+      bridge: null,
+      merge_base_ok: true,
+      warnings: [],
+      ...over,
+    }) as unknown as OcrCaseSummary;
+
+  it("a report names the dataset its set is pinned to, and the AACR preamble opens only an AACR-Bench report", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-report-ds-"));
+    try {
+      const aacr = renderOcrReport(set, tmp, [c]);
+      expect(aacr).toContain("- Dataset: AACR-Bench v1.0 (1,505 references)");
+      expect(aacr).toContain("AACR-Bench's reference comments (74% AI-written");
+      const ext = renderOcrReport(martian, tmp, [c]);
+      expect(ext).toContain("- Dataset: Martian offline code-review benchmark @ e616e84");
+      expect(ext).not.toContain("AACR-Bench v1.0");
+      expect(ext).not.toContain("74% AI-written");
+      expect(ext).toContain("_What this measures: how closely the review reproduces the dataset's");
+      expect(renderReport(martian, tmp, [c])).not.toContain("AACR-Bench v1.0");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("the OCR total row says unknown for measurements no case has, and a lower bound for a partial one", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-report-tot-"));
+    try {
+      const c2 = set.cases[1]!;
+      const write = (cs: BenchCase, s: OcrCaseSummary): void => {
+        mkdirSync(join(tmp, "cases", safeId(cs.instance_id)), { recursive: true });
+        writeFileSync(
+          join(tmp, "cases", safeId(cs.instance_id), "case-summary.json"),
+          JSON.stringify({ ...s, instance_id: cs.instance_id }),
+        );
+      };
+      write(c, ocrSummary({}));
+      write(c2, ocrSummary({}));
+      const none = renderOcrReport(set, tmp, [c, c2]);
+      const totalOf = (md: string): string =>
+        md.split("\n").find((l) => l.startsWith("| **total**"))!;
+      expect(totalOf(none)).toMatch(/\| \? \| \? \| \? \|$/);
+      write(
+        c2,
+        ocrSummary({
+          ocr_tokens: { input: 4000, output: 1000, total: 5000 },
+          bridge: {
+            requests: 3,
+            ok: 3,
+            errors: 0,
+            upstream_refusals: 0,
+            input_tokens: 4000,
+            cached_tokens: 0,
+            output_tokens: 1000,
+            reasoning_tokens: 0,
+            by_status: { "200": 3 },
+          },
+        }),
+      );
+      const partial = totalOf(renderOcrReport(set, tmp, [c, c2]));
+      expect(partial).toContain("≥ 4k/1k (1 unmeasured)");
+      expect(partial).toContain("≥ 3 (0) (1 unmeasured)");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("the closing note counts the deleted-line comments that were moved and scored", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-report-left-"));
+    try {
+      const s: CaseSummary = {
+        instance_id: c.instance_id,
+        status: "ok",
+        verdict: "APPROVE",
+        duration_seconds: 1,
+        usage: { input: 0, output: 0, cacheRead: 0, children: 0 },
+        planned_lenses: [],
+        executed_passes: [],
+        comments: { total: 3, by_tag: {}, left_side: 1, reanchored: 2, unparseable: 0, body: 0 },
+        pr_meta: { title: true, body: true, base_ref_source: "set" },
+        diff: { files: 1, additions: 1, deletions: 1 },
+        continued: false,
+        warnings: [],
+      };
+      mkdirSync(join(tmp, "cases", safeId(c.instance_id)), { recursive: true });
+      writeFileSync(
+        join(tmp, "cases", safeId(c.instance_id), "case-summary.json"),
+        JSON.stringify(s),
+      );
+      const md = renderReport(set, tmp, [c]);
+      expect(md).toContain(
+        "2 comment(s) anchored on a deleted line were moved to the head side of their hunk and scored there; 1 LEFT-side (old-code) comment(s) that could not be moved were excluded",
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("the latest metrics are the average's, else the highest round's — round 10 after round 9", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-report-rounds-"));
+    try {
+      const m = (x: number) => JSON.stringify({ summary: { matched_semantic_notes: x } });
+      writeFileSync(join(tmp, "metrics_ocr_round_9.json"), m(9));
+      writeFileSync(join(tmp, "metrics_ocr_round_10.json"), m(10));
+      expect(latestMetrics(tmp)?.summary["matched_semantic_notes"]).toBe(10);
+      expect(metricsFiles(tmp).rounds.map((r) => r.round)).toEqual([9, 10]);
+      writeFileSync(join(tmp, "metrics_ocr_20260925_100000.json"), m(1));
+      expect(metricsFiles(tmp).rounds.map((r) => r.round)).toEqual([1, 9, 10]);
+      writeFileSync(join(tmp, "metrics_ocr_average.json"), m(7));
+      expect(latestMetrics(tmp)?.summary["matched_semantic_notes"]).toBe(7);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("a fresh review run drops the metrics that scored the result files it clears; a resume of the same configuration keeps them", () => {
+    const out = mkdtempSync(join(tmpdir(), "bench-prepare-metrics-"));
+    try {
+      const fp = { qcr_commit: "same" } as unknown as RunFingerprint;
+      const all = join(out, "results", "all");
+      const seed = (): void => {
+        mkdirSync(join(out, "cases", safeId(c.instance_id)), { recursive: true });
+        writeFileSync(
+          join(out, "cases", safeId(c.instance_id), "case-summary.json"),
+          JSON.stringify({ instance_id: c.instance_id, status: "ok", fingerprint: fp }),
+        );
+        mkdirSync(all, { recursive: true });
+        writeFileSync(join(all, `${safeId(c.instance_id)}.json`), "{}\n");
+        writeFileSync(join(all, "metrics_ocr_round_1.json"), "{}\n");
+      };
+      seed();
+      prepareReviewCases(out, [c], { resume: true, fingerprint: fp }, () => {});
+      expect(existsSync(join(all, "metrics_ocr_round_1.json"))).toBe(true);
+      const lines: string[] = [];
+      prepareReviewCases(out, [c], { resume: false, fingerprint: fp }, (l) => lines.push(l));
+      expect(readdirSync(all).filter((n) => n.startsWith("metrics_"))).toEqual([]);
+      expect(lines.join("\n")).toMatch(/all: 1 metrics file\(s\) scored the old results/);
+      // A resume under ANOTHER configuration drops the case and its score.
+      seed();
+      prepareReviewCases(
+        out,
+        [c],
+        { resume: true, fingerprint: { qcr_commit: "other" } as unknown as RunFingerprint },
+        () => {},
+      );
+      expect(readdirSync(all).filter((n) => n.startsWith("metrics_"))).toEqual([]);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("a review that rewrites a scored result drops that variant's metrics before the new bytes land", () => {
+    const out = mkdtempSync(join(tmpdir(), "bench-write-metrics-"));
+    try {
+      const fp = { qcr_commit: "x" } as unknown as RunFingerprint;
+      const all = join(out, "results", "all");
+      recordUnprefetched(out, c, "first", fp);
+      writeFileSync(join(all, "metrics_ocr_round_1.json"), "{}\n");
+      // Same bytes again: the score still stands.
+      recordUnprefetched(out, c, "first", fp);
+      expect(existsSync(join(all, "metrics_ocr_round_1.json"))).toBe(true);
+      // The scorer input changes (a status the result file records):
+      // the old score goes.
+      const s = recordUnprefetched(out, c, "x", fp);
+      expect(s.status).toBe("failed");
+      expect(writeResults(out, c, [], { ...s, status: "ok", duration_seconds: 9 })).toContainEqual({
+        variant: "all",
+        metrics: 1,
+      });
+      expect(readdirSync(all).filter((n) => n.startsWith("metrics_"))).toEqual([]);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("an unprefetched case's summary is written only after its result files", () => {
+    const out = mkdtempSync(join(tmpdir(), "bench-summary-last-"));
+    try {
+      mkdirSync(join(out, "results"), { recursive: true });
+      // A result dir that cannot be made: the write of the scorer input fails.
+      writeFileSync(join(out, "results", "all"), "not a dir");
+      expect(() =>
+        recordUnprefetched(out, c, "no store", { qcr_commit: "x" } as unknown as RunFingerprint),
+      ).toThrow();
+      expect(existsSync(join(out, "cases", safeId(c.instance_id), "case-summary.json"))).toBe(
+        false,
+      );
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("the fingerprint tells apart configurations that differ only in a setting no named field records", () => {
+    const base = loadConfig(join(ROOT, "tests", "fixtures", "config.toml"));
+    const fp = (mut: (cfg: typeof base) => void) => {
+      const cfg = structuredClone(base);
+      mut(cfg);
+      return runFingerprint(cfg, "");
+    };
+    const same = fp(() => {});
+    expect(same).toEqual(runFingerprint(structuredClone(base), ""));
+    expect(fp((x) => (x.review.render_outputs = !x.review.render_outputs))).not.toEqual(same);
+    expect(fp((x) => (x.review.task_files = !x.review.task_files))).not.toEqual(same);
+    expect(
+      fp((x) => (x.review.context_pack = x.review.context_pack === "off" ? "pack-first" : "off")),
+    ).not.toEqual(same);
+    expect(fp((x) => (x.review.lint_conformance = !x.review.lint_conformance))).not.toEqual(same);
+    expect(fp((x) => (x.pi.subagent_max_concurrency += 1))).not.toEqual(same);
+  });
+
+  it("`--config models.effort` takes the config file's spellings", () => {
+    const cfg = loadConfig(join(ROOT, "tests", "fixtures", "config.toml"));
+    expect(applyConfigOverrides(cfg, "models.effort=HIGH").models.effort).toBe("high");
+    expect(applyConfigOverrides(cfg, "models.effort=med").models.effort).toBe("medium");
+    expect(() => applyConfigOverrides(cfg, "models.effort=extreme")).toThrow(
+      /--config: .*effort must be/,
+    );
+  });
+
+  it("`review.preset` finds a [review] header that carries a comment", () => {
+    const toml = '[review] # review settings\nnits = "strict"\n\n[models]\neffort = ""\n';
+    const out = withPresetInToml(toml, "max");
+    expect(out.match(/^\[review\]/gm)).toHaveLength(1);
+    expect(out).toContain('[review] # review settings\npreset = "max"\nnits = "strict"');
   });
 });

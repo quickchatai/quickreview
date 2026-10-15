@@ -38,7 +38,7 @@ const { safeId } = await import("../src/bench/aacr.js");
 type BenchCase = import("../src/bench/aacr.js").BenchCase;
 type PrefetchMeta = import("../src/bench/aacr.js").PrefetchMeta;
 const { prefetchCase, storeDir } = await import("../src/bench/prefetch.js");
-const { benchConfig, reviewCase } = await import("../src/bench/runner.js");
+const { benchConfig, changedFiles, reviewCase } = await import("../src/bench/runner.js");
 const { ecosystemFor } = await import("../src/ecosystem.js");
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -185,7 +185,6 @@ describe("a retried case's continuation", () => {
         store: cstore,
         outDir,
         agentDir: join(tmp, "agent"),
-        profile: "",
         timeoutMs: 10 * 60_000,
         piBin,
       },
@@ -244,7 +243,6 @@ describe("a round whose output files do not parse", () => {
         store: cstore,
         outDir,
         agentDir: join(tmp, "agent"),
-        profile: "",
         timeoutMs: 10 * 60_000,
         piBin,
       },
@@ -268,5 +266,82 @@ describe("a round whose output files do not parse", () => {
     expect(s.continued).toBe(true);
     expect(s.status).toBe("no-output");
     expect(s.error).toMatch(/findings-record\.json is not valid JSON/);
+  });
+});
+
+describe("a round that renders nothing: the session's own comments are a scorer input", () => {
+  it("an unreadable comments.json gets the one continuation, and a no-output that names it", async () => {
+    const c = mkCase(B1);
+    const cstore = join(tmp, "store-comments");
+    execFileSync("git", ["clone", "--quiet", "--bare", join(tmp, "work"), storeDir(cstore, c)]);
+    const root = join(tmp, "root-comments");
+    mkdirSync(root);
+    for (const e of readdirSync(ROOT))
+      if (!["wt", ".git", "state"].includes(e)) symlinkSync(join(ROOT, e), join(root, e));
+    const outDir = join(tmp, "out-comments");
+    const calls = join(tmp, "pi-calls-comments.log");
+    const piBin = join(tmp, "fake-pi-comments");
+    writeFileSync(
+      piBin,
+      [
+        "#!/bin/sh",
+        "cat >/dev/null",
+        `echo "$*" >> ${JSON.stringify(calls)}`,
+        'sd=""; prev=""; for a in "$@"; do [ "$prev" = "--session-dir" ] && sd="$a"; prev="$a"; done',
+        'mkdir -p "$sd"; echo \'{"type":"session"}\' > "$sd/s.jsonl"; cd="$(dirname "$sd")"',
+        `printf '%s' '[{\\"path\\": \\"b.ts\\"}]' > "$cd/comments.json"`,
+        `printf '%s' '{"verdict": "REQUEST_CHANGES", "passes": []}' > "$cd/outcome.json"`,
+        "",
+      ].join("\n"),
+    );
+    chmodSync(piBin, 0o755);
+    const cfg = benchConfig("");
+    cfg.review.render_outputs = false;
+    const s = await reviewCase(
+      c,
+      metaFor(c),
+      {
+        root,
+        store: cstore,
+        outDir,
+        agentDir: join(tmp, "agent"),
+        timeoutMs: 10 * 60_000,
+        piBin,
+      },
+      { cfg, ecosystem: ecosystemFor("none"), fingerprint: {} as never },
+    );
+    const invocations = readFileSync(calls, "utf8").trim().split("\n");
+    expect(invocations).toHaveLength(2);
+    expect(invocations[1]).toMatch(/comments\.json is not valid JSON/);
+    expect(s.status).toBe("no-output");
+    expect(s.error).toMatch(/comments\.json is not valid JSON/);
+  });
+});
+
+describe("the changed files' hunks", () => {
+  it("a renamed file with one edited line gets that hunk, not the whole file as added", async () => {
+    const repo = join(tmp, "rename");
+    mkdirSync(repo);
+    git(repo, "init", "--quiet", "-b", "main");
+    const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+    writeFileSync(join(repo, "old.ts"), lines.join("\n") + "\n");
+    git(repo, "add", "old.ts");
+    git(repo, "commit", "--quiet", "-m", "base");
+    const base = git(repo, "rev-parse", "HEAD");
+    git(repo, "mv", "old.ts", "new.ts");
+    lines[14] = "line 15 changed";
+    writeFileSync(join(repo, "new.ts"), lines.join("\n") + "\n");
+    git(repo, "add", "new.ts");
+    git(repo, "commit", "--quiet", "-m", "rename");
+    const head = git(repo, "rev-parse", "HEAD");
+    const files = await changedFiles(repo, {
+      merge_base: base,
+      head_commit: head,
+    } as PrefetchMeta);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ filename: "new.ts", previous_filename: "old.ts" });
+    const patch = files[0]!.patch!;
+    expect(patch).toContain("-line 15\n+line 15 changed");
+    expect(patch).not.toContain("+line 1\n");
   });
 });
