@@ -96,6 +96,7 @@
 // `APP_SELF_CONFIG_KINDS`.
 import type { EscalationConfig, EscalationRule, EscalationSeverityFloor } from "./config.js";
 import { codePath } from "./codespan.js";
+import { severityRank } from "./severityrank.js";
 import type { GateResult } from "./gate.js";
 
 // ---- what to look at ------------------------------------------------------
@@ -463,13 +464,11 @@ export const NO_FACTS: EscalationFacts = {
   failing_checks: [],
 };
 
-const SEVERITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, NIT: 4 };
-
 /** Is `severity` at or above `floor`? Unknown spellings never satisfy a floor
  * — a rule must not fire on a severity nobody can read. */
 export function severityAtLeast(severity: string, floor: EscalationSeverityFloor): boolean {
-  const s = SEVERITY_ORDER[severity.trim().toUpperCase()];
-  return s !== undefined && s <= SEVERITY_ORDER[floor]!;
+  const s = severityRank(severity);
+  return s !== undefined && s <= severityRank(floor)!;
 }
 
 /**

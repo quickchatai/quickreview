@@ -26,6 +26,7 @@
 //     lead's body. Nothing is deleted: the record keeps every entry.
 
 import { ordinaryPostTag } from "./severity.js";
+import { severityRank } from "./severityrank.js";
 
 /** Anchors this many lines apart (or fewer), in one file, form a group. */
 export const CLOSE_LINES = 10;
@@ -344,13 +345,14 @@ export function renderGroups(
 
 // ---- the post-check over a findings record ---------------------------------
 
-const SEV_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, nit: 4 };
 const TAG_RANK: Record<string, number> = { blocker: 0, question: 1, nit: 2 };
 
 function s(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
-function lineOf(v: unknown): number | null {
+/** A findings-record number field as the post-check and the renderer both
+ * read it: a finite number, or a string of digits; null otherwise. */
+export function recordNumber(v: unknown): number | null {
   const n = typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : v;
   return typeof n === "number" && Number.isFinite(n) ? n : null;
 }
@@ -362,14 +364,14 @@ function tagOf(e: Record<string, unknown>): string {
 /** Ranked by the ORDINARY tag the entry posts under (`ordinaryPostTag`), so
  * an `[ask your human]` or `[deferred]` P1 ranks as the blocker it is. */
 function rank(e: Record<string, unknown>): number {
-  const confidence = typeof e.confidence === "number" ? e.confidence : null;
+  const confidence = recordNumber(e.confidence);
   const tag = ordinaryPostTag(
     tagOf(e),
     s(e.severity) || null,
     confidence,
     s(e.reachability) || null,
   );
-  return (TAG_RANK[tag ?? ""] ?? 3) * 10 + (SEV_RANK[s(e.severity)] ?? 5);
+  return (TAG_RANK[tag ?? ""] ?? 3) * 10 + (severityRank(s(e.severity)) ?? 5);
 }
 /** The diff side an anchor's line counts on (the renderer's default: RIGHT). */
 function sideOf(e: Record<string, unknown>): "LEFT" | "RIGHT" {
@@ -417,14 +419,14 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
         s((x.e as Record<string, unknown>).disposition) === "posted" &&
         !s((x.e as Record<string, unknown>).same_as) &&
         !!s((x.e as Record<string, unknown>).path) &&
-        lineOf((x.e as Record<string, unknown>).line) !== null,
+        recordNumber((x.e as Record<string, unknown>).line) !== null,
     );
   const ids = posted.map((x) => identifiersOf(`${s(x.e.title)}\n${s(x.e.body)}\n${s(x.e.reason)}`));
   const gone = new Set<number>();
   // Lines each posted entry carries as a lead: its own, then every follower's
   // (and that follower's own absorbed lines) — so a lead later merged into a
   // stronger one hands all of them on, and the surviving comment names every site.
-  const sites = posted.map((x) => [lineOf(x.e.line)!]);
+  const sites = posted.map((x) => [recordNumber(x.e.line)!]);
   // The validator groups each posted entry speaks for: its own, then every
   // absorbed follower's — so a chain of merges never fuses two findings the
   // validator judged in one group and kept apart.
@@ -439,7 +441,7 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       if (s(A.path) !== s(B.path)) continue;
       // LEFT lines number the base file, RIGHT lines the head: never compared.
       if (sideOf(A) !== sideOf(B)) continue;
-      if (Math.abs(lineOf(A.line)! - lineOf(B.line)!) > POST_CHECK_LINES) continue;
+      if (Math.abs(recordNumber(A.line)! - recordNumber(B.line)!) > POST_CHECK_LINES) continue;
       if (![...ids[a]!].some((x) => ids[b]!.has(x))) continue;
       // Never undo the validator: two posted findings it judged in one group
       // were kept distinct on purpose, and two with no group recorded cannot
@@ -460,8 +462,8 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       fol.merged_into = leadId;
       fol.reason =
         `Merged by the post-check into ${leadId}: same file, anchors within ${POST_CHECK_LINES} lines, a shared identifier. ${s(fol.reason)}`.trim();
-      const folLine = lineOf(fol.line)!;
-      const leadLine = lineOf(lead.line)!;
+      const folLine = recordNumber(fol.line)!;
+      const leadLine = recordNumber(lead.line)!;
       for (const line of sites[folIdx]!) {
         if (line === leadLine || sites[leadIdx]!.includes(line)) continue;
         sites[leadIdx]!.push(line);

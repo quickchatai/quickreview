@@ -20,7 +20,7 @@
 // problem the input has is returned rather than thrown, so a thin record still
 // renders the review the record describes.
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, ordinaryPostTag } from "./severity.js";
-import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
+import { postCheckRecord, recordNumber, type PostCheckMerge } from "./dedup.js";
 import { findingMarker, findingRecordKey } from "./findingkey.js";
 import {
   firstSentence as policyFirstSentence,
@@ -102,11 +102,6 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
-function num(v: unknown): number | null {
-  const n = typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : v;
-  return typeof n === "number" && Number.isFinite(n) ? n : null;
-}
-
 function firstSentence(text: string): string {
   const m = /^(.+?[.!?])(\s|$)/s.exec(text.trim());
   return (m ? m[1]! : text.trim()).replace(/\s+/g, " ");
@@ -131,7 +126,7 @@ export function postedSeverityTag(
 ): "blocker" | "question" | "nit" | null {
   const tag = (str(raw.posted_as) ?? "").toLowerCase().replace(/^\[|\]$/g, "") as Tag;
   if (!TAGS.includes(tag)) return null;
-  return severityTagOf(tag, str(raw.severity), num(raw.confidence), str(raw.reachability));
+  return severityTagOf(tag, str(raw.severity), recordNumber(raw.confidence), str(raw.reachability));
 }
 
 function readPosted(
@@ -148,7 +143,7 @@ function readPosted(
       `${id}: posted_as ${JSON.stringify(raw.posted_as)} is outside the grammar — rendered as a question`,
     );
   const severity = str(raw.severity);
-  const confidence = num(raw.confidence);
+  const confidence = recordNumber(raw.confidence);
   const reachability = str(raw.reachability);
   const sevTag = severityTagOf(tag, severity, confidence, reachability);
   const reason = str(raw.reason) ?? "";
@@ -156,8 +151,8 @@ function readPosted(
   if (!str(raw.title)) problems.push(`${id}: no title — the reason's first sentence stands in`);
   const body = str(raw.body) ?? reason;
   if (!str(raw.body)) problems.push(`${id}: no body — the reason stands in`);
-  const line = num(raw.line);
-  const start = num(raw.start_line);
+  const line = recordNumber(raw.line);
+  const start = recordNumber(raw.start_line);
   return {
     id,
     recordKey,

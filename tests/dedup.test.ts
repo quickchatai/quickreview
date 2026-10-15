@@ -245,6 +245,14 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
       ]);
     }
   });
+  it("reads a severity in any case, as the posting policy does", () => {
+    const r = pair("G4", "G5");
+    Object.assign(r.findings[0]!, { posted_as: "question", severity: "P2" });
+    Object.assign(r.findings[1]!, { posted_as: "question", severity: " p1 " });
+    expect(postCheckRecord(r).merges).toEqual([
+      { follower: "A", lead: "B", path: "a.ts", line: 10 },
+    ]);
+  });
   it("never compares a LEFT (base) line with a RIGHT (head) line", () => {
     const r = pair("G4", "G5");
     Object.assign(r.findings[0]!, { side: "LEFT" });

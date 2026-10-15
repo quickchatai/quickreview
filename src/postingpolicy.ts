@@ -39,6 +39,7 @@
 // out of them), and nothing a policy withholds is deleted from the findings
 // record.
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
+import { severityRank } from "./severityrank.js";
 
 export type NitsPolicy = "post" | "off";
 export type QuestionsPolicy = "post" | "blocking" | "off";
@@ -305,10 +306,8 @@ export interface PolicyView {
 const changedRank = (c: boolean | undefined): number => (c === true ? 0 : c === undefined ? 1 : 2);
 
 const CLASS_RANK: Record<PolicyClass, number> = { blocker: 0, question: 1, check: 2, nit: 3 };
-const SEVERITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, NIT: 4 };
-
 function sevRank(s: string | null): number {
-  return s === null ? 5 : (SEVERITY_RANK[s.trim().toUpperCase()] ?? 5);
+  return severityRank(s) ?? 5;
 }
 
 /** Normalise a finding title into a repeat-site key: no tags, no markers, no
