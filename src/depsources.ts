@@ -2099,11 +2099,14 @@ export function planDependencyRequests(
   // Keyed by package, one Acc per distinct resolved VERSION: two workspaces can
   // lock one package at different versions, and each importer must be shown the
   // sources it actually runs against. An unresolved (null) sighting joins the
-  // package's first registry entry whose range it shares (`*` or no range
-  // shares any; an unresolved `*` entry a specific range joins narrows to that
-  // range, whichever was seen first), and a later resolution fills in a null
-  // one of a shared range — so an importer is never credited with a version
-  // its own declared range was not resolved against. A sighting preparation SKIPS (a git / URL / private-registry source)
+  // package's first registry entry it is compatible with — another unresolved
+  // entry whose range it shares (`*` or no range shares any; an unresolved `*`
+  // entry a specific range joins narrows to that range, whichever was seen
+  // first), or a resolved entry of the same range or whose version its range
+  // admits — and a later resolution fills in a null entry on the same terms,
+  // narrowing a `*` or range-less one to its own range. So an importer is never
+  // credited with a version its own declared range was not resolved against.
+  // A sighting preparation SKIPS (a git / URL / private-registry source)
   // stays apart from every registry entry and joins only one of the same
   // source, so its importers are never credited with the registry's release
   // and a registry pin never turns it into a fetch.
@@ -2119,18 +2122,25 @@ export function planDependencyRequests(
     const key = `${eco}:${r.name}`;
     const same = accs.get(key) ?? [];
     const registry = same.filter((x) => !unfetchable(x));
+    const anyRange = (range: string | undefined): boolean => range === undefined || range === "*";
     const shared = (x: { range?: string }): boolean =>
-      x.range === undefined ||
-      r.range === undefined ||
-      x.range === "*" ||
-      r.range === "*" ||
-      x.range === r.range;
+      anyRange(x.range) || anyRange(r.range) || x.range === r.range;
+    // A resolved version joins an unresolved range only where that range was
+    // the one resolved, or admits the version.
+    const admits = (range: string | undefined, version: string): boolean =>
+      anyRange(range) ||
+      (eco === "npm" ? satisfiesRange(version, range!) : pyVersionMatches(version, range!));
+    const compatible = (x: Acc): boolean =>
+      x.version === null && r.version === null
+        ? shared(x)
+        : x.range === r.range ||
+          (x.version === null ? admits(x.range, r.version!) : admits(r.range, x.version));
     let a = unfetchable(r)
       ? same.find((x) => unfetchable(x) && x.range === r.range)
       : r.version === null
-        ? registry.find(shared)
+        ? registry.find(compatible)
         : (registry.find((x) => x.version === r.version) ??
-          registry.find((x) => x.version === null && shared(x)));
+          registry.find((x) => x.version === null && compatible(x)));
     if (!a) {
       a = {
         ecosystem: eco,
@@ -2144,16 +2154,10 @@ export function planDependencyRequests(
       same.push(a);
       accs.set(key, same);
     } else {
-      // A `*` or range-less entry a specific range joins is narrowed to that
-      // range, so a `*` seen first never bridges two incompatible ranges.
-      if (
-        a.version === null &&
-        r.version === null &&
-        r.range !== undefined &&
-        r.range !== "*" &&
-        (a.range === undefined || a.range === "*")
-      )
-        a.range = r.range;
+      // A `*` or range-less unresolved entry a specific range joins — or a
+      // resolution fills in — is narrowed to that range, so a `*` seen first
+      // never bridges two incompatible ranges.
+      if (a.version === null && !anyRange(r.range) && anyRange(a.range)) a.range = r.range;
       if (a.version === null && r.version !== null) a.version = r.version;
     }
     if (why.manifest && !a.manifestWhys.includes(why.manifest)) a.manifestWhys.push(why.manifest);

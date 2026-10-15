@@ -1100,6 +1100,54 @@ describe("planDependencyRequests", () => {
     ]);
   });
 
+  it("an unresolved range never joins a resolved entry whose version it does not admit", () => {
+    const lock = (version: string): string =>
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: { "": {}, "node_modules/lodash": { version } },
+      });
+    const plan = (files: Record<string, string>, order: string[]) =>
+      planDependencyRequests(
+        tree(files),
+        order.map((filename) => ({ filename, status: "modified" })),
+      ).map((r) => [r.version, r.range, r.why]);
+    // A `*` declaration locked at 1.0.0, then an unlocked `^2.0.0`.
+    expect(
+      plan(
+        {
+          "a/package.json": JSON.stringify({ dependencies: { lodash: "*" } }),
+          "a/package-lock.json": lock("1.0.0"),
+          "b/package.json": JSON.stringify({ dependencies: { lodash: "^2.0.0" } }),
+          "a/x.js": "import _ from 'lodash';",
+          "b/y.js": "import _ from 'lodash';",
+        },
+        ["a/x.js", "b/y.js"],
+      ),
+    ).toEqual([
+      ["1.0.0", "*", "imported by a/x.js"],
+      [null, "^2.0.0", "imported by b/y.js"],
+    ]);
+    // An unlocked `*`, then `^1.0.0` locked at 1.0.0 (it fills the `*` entry in
+    // and narrows it), then an unlocked `^2.0.0`.
+    expect(
+      plan(
+        {
+          "c/package.json": JSON.stringify({ dependencies: { lodash: "*" } }),
+          "b/package.json": JSON.stringify({ dependencies: { lodash: "^1.0.0" } }),
+          "b/package-lock.json": lock("1.0.0"),
+          "a/package.json": JSON.stringify({ dependencies: { lodash: "^2.0.0" } }),
+          "c/z.js": "import _ from 'lodash';",
+          "b/y.js": "import _ from 'lodash';",
+          "a/x.js": "import _ from 'lodash';",
+        },
+        ["c/z.js", "b/y.js", "a/x.js"],
+      ),
+    ).toEqual([
+      ["1.0.0", "^1.0.0", "imported by c/z.js, b/y.js"],
+      [null, "^2.0.0", "imported by a/x.js"],
+    ]);
+  });
+
   it("names at most three importing files, then +N more", () => {
     const files: Record<string, string> = {
       "package.json": JSON.stringify({ dependencies: { lodash: "^4" } }),
