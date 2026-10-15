@@ -54,14 +54,6 @@ export function stalenessSimulation(
     searchTeamTriggered: async () => [],
     listOpenPrs: async () => [prRef],
     getPr: async () => prRef,
-    stalenessScan: async () => [
-      {
-        number: fixture.number,
-        head_sha: fixture.head_sha,
-        approved_sha: fixture.approved_sha,
-        approved_at: "",
-      },
-    ],
     listBotReviewComments: async () => [],
     listPrFiles: async () => [
       { filename: "src/x.ts", additions: 1, deletions: 0, status: "modified" },
