@@ -132,6 +132,19 @@ export const sameIdentity = (a: FileIdentity | null, b: FileIdentity | null): bo
   a.size === b.size &&
   a.mtimeMs === b.mtimeMs;
 
+/** Does a recorded identity (a manifest entry's fields) name exactly this
+ * live file? An unrecorded dev or ino never matches. */
+export const sameRecordedIdentity = (
+  rec: { dev: number | null; ino: number | null; bytes: number; mtime_ms: number } | undefined,
+  id: FileIdentity | null,
+): boolean =>
+  rec !== undefined &&
+  id !== null &&
+  rec.dev === id.dev &&
+  rec.ino === id.ino &&
+  rec.bytes === id.size &&
+  rec.mtime_ms === id.mtimeMs;
+
 /** A pass-through that hashes and counts what flows by. */
 export class HashTap extends Transform {
   private readonly hash: Hash = createHash("sha256");
@@ -193,6 +206,27 @@ export class RateLimit extends Transform {
   }
 }
 
+/** A pass-through that hashes the first `limit` bytes it sees. */
+class PrefixTap extends Transform {
+  private readonly hash: Hash = createHash("sha256");
+  private seen = 0;
+  constructor(private readonly limit: number) {
+    super();
+  }
+  override _transform(chunk: Buffer, _enc: BufferEncoding, cb: TransformCallback): void {
+    if (this.seen < this.limit) {
+      const take = Math.min(chunk.length, this.limit - this.seen);
+      this.hash.update(take === chunk.length ? chunk : chunk.subarray(0, take));
+      this.seen += take;
+    }
+    cb(null, chunk);
+  }
+  /** The prefix's sha256, or null when fewer than `limit` bytes passed. */
+  digest(): string | null {
+    return this.seen === this.limit ? this.hash.digest("hex") : null;
+  }
+}
+
 /** A sink that drops what it is handed (the verify read needs only the tap). */
 const discard = (): Writable =>
   new Writable({
@@ -205,33 +239,65 @@ export interface GzipResult {
   /** The source's length and sha256, as read. */
   bytes: number;
   sha256: string;
+  /** sha256 of the source's first `prefixBytes` bytes (null when the source
+   * is shorter or none was asked for). */
+  prefixSha256: string | null;
   /** The gzip file's length. */
   gzBytes: number;
 }
 
 /**
- * Stream `src` through the rate cap, a sha256 tap and gzip into `dest`, then
- * fsync `dest`. Every byte is read and compressed on the threadpool in 1 MiB
- * chunks; the signal destroys the streams (the partial is the caller's to
- * remove).
+ * Stream `src` through the rate cap, a sha256 tap (and, with `prefixBytes`, a
+ * sha256 of its first bytes) and gzip into `dest`, then fsync `dest`. Every
+ * byte is read and compressed on the threadpool in 1 MiB chunks; the signal
+ * destroys the streams (the partial is the caller's to remove).
  */
 export async function gzipFile(
   src: string,
   dest: string,
-  opts: { level: number; bytesPerS: number; signal?: AbortSignal },
+  opts: { level: number; bytesPerS: number; signal?: AbortSignal; prefixBytes?: number },
 ): Promise<GzipResult> {
   const tap = new HashTap();
+  const prefix = opts.prefixBytes !== undefined ? new PrefixTap(opts.prefixBytes) : null;
+  const stages: Transform[] = [new RateLimit(opts.bytesPerS, opts.signal), tap];
+  if (prefix) stages.push(prefix);
   await pipeline(
     createReadStream(src, { highWaterMark: CHUNK_BYTES }),
-    new RateLimit(opts.bytesPerS, opts.signal),
-    tap,
+    ...(stages as [Transform, ...Transform[]]),
     createGzip({ level: opts.level }),
     createWriteStream(dest),
     { signal: opts.signal },
   );
   await fsyncFile(dest);
   const gz = await identityOf(dest);
-  return { bytes: tap.bytes, sha256: tap.digest(), gzBytes: gz?.size ?? 0 };
+  return {
+    bytes: tap.bytes,
+    sha256: tap.digest(),
+    prefixSha256: prefix?.digest() ?? null,
+    gzBytes: gz?.size ?? 0,
+  };
+}
+
+/** Stream a file — decompressed first with `gz` — through the rate cap and
+ * report the length and sha256 of its bytes, and (with `prefixBytes`) the
+ * sha256 of their first `prefixBytes`. */
+export async function fileDigestWithPrefix(
+  path: string,
+  opts: { bytesPerS: number; signal?: AbortSignal; prefixBytes?: number; gz?: boolean },
+): Promise<{ bytes: number; sha256: string; prefixSha256: string | null }> {
+  const tap = new HashTap();
+  const prefix = opts.prefixBytes !== undefined ? new PrefixTap(opts.prefixBytes) : null;
+  const stages: Transform[] = [new RateLimit(opts.bytesPerS, opts.signal)];
+  if (opts.gz) stages.push(createGunzip());
+  stages.push(tap);
+  if (prefix) stages.push(prefix);
+  await pipeline(
+    createReadStream(path, { highWaterMark: CHUNK_BYTES }),
+    ...(stages as [Transform, ...Transform[]]),
+    discard(),
+    { signal: opts.signal },
+  );
+  return { bytes: tap.bytes, sha256: tap.digest(), prefixSha256: prefix?.digest() ?? null };
 }
 
 /** Stream-decompress `gz` and report the length and sha256 of what came out. */
@@ -239,16 +305,8 @@ export async function gunzipDigest(
   gz: string,
   opts: { bytesPerS: number; signal?: AbortSignal },
 ): Promise<{ bytes: number; sha256: string }> {
-  const tap = new HashTap();
-  await pipeline(
-    createReadStream(gz, { highWaterMark: CHUNK_BYTES }),
-    new RateLimit(opts.bytesPerS, opts.signal),
-    createGunzip(),
-    tap,
-    discard(),
-    { signal: opts.signal },
-  );
-  return { bytes: tap.bytes, sha256: tap.digest() };
+  const { bytes, sha256 } = await fileDigestWithPrefix(gz, { ...opts, gz: true });
+  return { bytes, sha256 };
 }
 
 /** Stream a plain file's length and sha256. */
@@ -256,15 +314,15 @@ export async function fileDigest(
   path: string,
   opts: { bytesPerS: number; signal?: AbortSignal },
 ): Promise<{ bytes: number; sha256: string }> {
-  const tap = new HashTap();
-  await pipeline(
-    createReadStream(path, { highWaterMark: CHUNK_BYTES }),
-    new RateLimit(opts.bytesPerS, opts.signal),
-    tap,
-    discard(),
-    { signal: opts.signal },
-  );
-  return { bytes: tap.bytes, sha256: tap.digest() };
+  const { bytes, sha256 } = await fileDigestWithPrefix(path, opts);
+  return { bytes, sha256 };
+}
+
+/** Is `err` zlib refusing the stream (a `Z_*` code: bad header, bad data, a
+ * truncated end) — as opposed to the file not being readable? */
+export function isZlibError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" && code.startsWith("Z_");
 }
 
 /** `<dir>/<name>` → `<dir>/<name>.partial`. */

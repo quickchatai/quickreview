@@ -24,28 +24,33 @@
 // decompress at all — `adoptOrphan`).
 // No temporary name ends in `.jsonl`, so neither the receipt scan nor
 // authwatch ever reads a half-written file.
-import { createHash, type Hash } from "node:crypto";
+import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { lstat, mkdir, readdir, rename, unlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { Transform, Writable, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createGunzip, createGzip } from "node:zlib";
+import { createGunzip } from "node:zlib";
 import {
   CHUNK_BYTES,
   HashTap,
   PARTIAL_SUFFIX,
   RateLimit,
+  fileDigestWithPrefix,
   fsyncDir,
   fsyncFile,
   gunzipDigest,
+  gzipFile,
   identityOf,
+  isZlibError,
   partialOf,
   renameNoReplace,
   sameIdentity,
+  sameRecordedIdentity,
   unlinkIfPresent,
   type FileIdentity,
 } from "./fsutil.js";
+
+export { fileDigestWithPrefix };
 
 /** The suffix a file being RESTORED carries in its live directory. It does
  * not end in `.jsonl`, so the receipt scan and authwatch never read it. It
@@ -56,27 +61,6 @@ export const restorePartialOf = (path: string): string => `${path}${RESTORE_PART
 
 /** A step the protocol announces (a test seam for crash injection). */
 export type StepFn = (name: string, info: Record<string, unknown>) => void | Promise<void>;
-
-/** A pass-through that hashes the first `limit` bytes it sees. */
-class PrefixTap extends Transform {
-  private readonly hash: Hash = createHash("sha256");
-  private seen = 0;
-  constructor(private readonly limit: number) {
-    super();
-  }
-  override _transform(chunk: Buffer, _enc: BufferEncoding, cb: TransformCallback): void {
-    if (this.seen < this.limit) {
-      const take = Math.min(chunk.length, this.limit - this.seen);
-      this.hash.update(take === chunk.length ? chunk : chunk.subarray(0, take));
-      this.seen += take;
-    }
-    cb(null, chunk);
-  }
-  /** The prefix's sha256, or null when fewer than `limit` bytes passed. */
-  digest(): string | null {
-    return this.seen === this.limit ? this.hash.digest("hex") : null;
-  }
-}
 
 export interface ArchiveFileOk {
   kind: "ok";
@@ -111,20 +95,12 @@ export async function archiveFile(
 ): Promise<ArchiveFileResult> {
   const partial = partialOf(dest);
   await mkdir(dirname(dest), { recursive: true });
-  const tap = new HashTap();
-  const prefix = opts.prefixBytes !== undefined ? new PrefixTap(opts.prefixBytes) : null;
-  const stages: NodeJS.ReadWriteStream[] = [new RateLimit(opts.bytesPerS, opts.signal), tap];
-  if (prefix) stages.push(prefix);
-  await pipeline(
-    createReadStream(src, { highWaterMark: CHUNK_BYTES }),
-    ...(stages as [Transform, ...Transform[]]),
-    createGzip({ level: opts.level }),
-    createWriteStream(partial),
-    { signal: opts.signal },
-  );
-  await fsyncFile(partial);
-  const bytes = tap.bytes;
-  const sha256 = tap.digest();
+  const { bytes, sha256, prefixSha256 } = await gzipFile(src, partial, {
+    level: opts.level,
+    bytesPerS: opts.bytesPerS,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.prefixBytes !== undefined ? { prefixBytes: opts.prefixBytes } : {}),
+  });
   await opts.step?.("partial_written", { src, dest, partial });
   // Step 3: the partial decompresses to exactly what was read. A gzip that
   // does not even decompress (a corrupt byte trips its CRC) is the same
@@ -167,7 +143,7 @@ export async function archiveFile(
     bytes,
     sha256,
     gzBytes: gz.size,
-    prefixSha256: prefix?.digest() ?? null,
+    prefixSha256,
     identity: opts.identity,
   };
 }
@@ -183,38 +159,6 @@ export async function identityOrNull(path: string): Promise<FileIdentity | null>
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
-}
-
-/** Stream a plain file's length, sha256 and (optionally) its prefix's. */
-export async function fileDigestWithPrefix(
-  path: string,
-  opts: { bytesPerS: number; signal?: AbortSignal; prefixBytes?: number; gz?: boolean },
-): Promise<{ bytes: number; sha256: string; prefixSha256: string | null }> {
-  const tap = new HashTap();
-  const prefix = opts.prefixBytes !== undefined ? new PrefixTap(opts.prefixBytes) : null;
-  const stages: Transform[] = [new RateLimit(opts.bytesPerS, opts.signal)];
-  if (opts.gz) stages.push(createGunzip());
-  stages.push(tap);
-  if (prefix) stages.push(prefix);
-  const sink = new Writable({
-    write(_chunk, _enc, cb) {
-      cb();
-    },
-  });
-  await pipeline(
-    createReadStream(path, { highWaterMark: CHUNK_BYTES }),
-    ...(stages as [Transform, ...Transform[]]),
-    sink,
-    { signal: opts.signal },
-  );
-  return { bytes: tap.bytes, sha256: tap.digest(), prefixSha256: prefix?.digest() ?? null };
-}
-
-/** Is `err` zlib refusing the stream (a `Z_*` code: bad header, bad data, a
- * truncated end) — as opposed to the file not being readable? */
-function isZlibError(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null)?.code;
-  return typeof code === "string" && code.startsWith("Z_");
 }
 
 /** What an orphan gzip turned out to be (`adoptOrphan`). */
@@ -394,17 +338,16 @@ export async function unlinkIfIdentity(
   path: string,
   identity: { dev: number | null; ino: number | null; bytes: number; mtime_ms: number },
 ): Promise<"removed" | "gone" | "changed"> {
-  const now = await identityOrNull(path);
-  if (!now) return "gone";
-  if (
-    identity.dev === null ||
-    identity.ino === null ||
-    now.dev !== identity.dev ||
-    now.ino !== identity.ino ||
-    now.size !== identity.bytes ||
-    now.mtimeMs !== identity.mtime_ms
-  )
-    return "changed";
+  let now: FileIdentity | null;
+  try {
+    now = await identityOf(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return "gone";
+    throw err;
+  }
+  // Something else at the path (a directory, a link) is a change, never
+  // "gone": the path still exists and was not removed.
+  if (!sameRecordedIdentity(identity, now)) return "changed";
   try {
     await unlink(path);
     return "removed";

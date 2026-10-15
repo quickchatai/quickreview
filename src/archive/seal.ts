@@ -60,6 +60,7 @@ import {
   gunzipDigest,
   gzipFile,
   identityOf,
+  isZlibError,
   renameNoReplace,
   sameIdentity,
   unlinkIfPresent,
@@ -553,7 +554,7 @@ export async function recoverSeals(
       // that cannot be READ is not known to be anything (the error).
       gunzipDigest(gzPath, rate).catch((err: NodeJS.ErrnoException) => {
         if (deps.signal?.aborted) throw err;
-        return typeof err.code === "string" && err.code.startsWith("Z_") ? null : err;
+        return isZlibError(err) ? null : err;
       }),
     ]);
     if (back instanceof Error) {

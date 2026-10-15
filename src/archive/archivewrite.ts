@@ -12,7 +12,13 @@
 //     (`placeArchive`) — the per-file protocol (`gzfile.ts`) after that.
 import { lstat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fsyncDir, unlinkIfPresent, PARTIAL_SUFFIX, type FileIdentity } from "./fsutil.js";
+import {
+  fsyncDir,
+  sameRecordedIdentity,
+  unlinkIfPresent,
+  PARTIAL_SUFFIX,
+  type FileIdentity,
+} from "./fsutil.js";
 import { adoptOrphan, archiveFile, type ArchiveFileOk, type ArchiveFileOpts } from "./gzfile.js";
 import type { ManifestEntry, SettledRecord } from "./manifest.js";
 
@@ -39,13 +45,7 @@ export const identityFields = (
 export const sameRecorded = (
   rec: Pick<SettledRecord, "dev" | "ino" | "bytes" | "mtime_ms"> | undefined,
   id: FileIdentity | null,
-): boolean =>
-  rec !== undefined &&
-  id !== null &&
-  rec.dev === id.dev &&
-  rec.ino === id.ino &&
-  rec.bytes === id.size &&
-  rec.mtime_ms === id.mtimeMs;
+): boolean => sameRecordedIdentity(rec, id);
 
 /** Is `rel` (relative to `dir`) an existing regular file? Its size, or null. */
 export async function archiveFileSize(dir: string, rel: string): Promise<number | null> {
