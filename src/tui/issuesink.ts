@@ -182,7 +182,11 @@ export class GithubIssueSink implements IssueSink {
     const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), {
       stdin: `${JSON.stringify(payload, null, 2)}\n`,
     });
-    if (!write.ok) return { ok: false, reason: "command write failed (ssh unreachable?)" };
+    if (!write.ok)
+      return {
+        ok: false,
+        reason: `command write failed (${resultReason(write.stderr, `exit ${write.code}`).slice(0, 200)})`,
+      };
     // Read the daemon's verdict, not the write's: a cap or dedup refusal is a
     // real answer, and only a receipt may stamp the entry as filed.
     const deadline = this.now().getTime() + this.cfg.msg_timeout_s * 1000;

@@ -219,6 +219,7 @@ describe("github sink", () => {
     const report = await githubSink(deadSsh, recordingStore()).file([entry()], NOW_ISO);
     expect(report.filed).toEqual([]);
     expect(report.refused).toContain("command write failed");
+    expect(report.refused).toContain("no route"); // the cause, not a guess at one
   });
 
   it("title/body derivation strips the header run and keeps the entry verbatim in the body", () => {

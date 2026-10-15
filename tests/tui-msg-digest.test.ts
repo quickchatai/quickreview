@@ -117,6 +117,22 @@ describe("InjectSender", () => {
     await sender.send("pr-5012", "x", record);
     expect(states.map(([s]) => s)).toEqual(["pending", "undelivered"]);
     expect(states[1]![1]).toContain("write failed");
+    expect(states[1]![1]).toContain("exit 1"); // no stderr: the exit code
+  });
+
+  it("names the failed write's cause, one line, control bytes stripped", async () => {
+    const { sender, states, record } = senderWith([
+      {
+        ok: false,
+        stdout: "",
+        stderr: "Error: No such container\u001b[2J\nquickreview-sandbox",
+        code: 1,
+      },
+    ]);
+    await sender.send("pr-5012", "x", record);
+    expect(states[1]![1]).toBe(
+      "✖ msg pr-5012 undelivered (write failed: Error: No such container[2J quickreview-sandbox)",
+    );
   });
 
   it("times out to undelivered (session down?) — never silent", async () => {
