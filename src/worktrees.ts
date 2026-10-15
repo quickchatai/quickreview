@@ -72,6 +72,10 @@ export function hunksTouchLine(
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 
+/** A file diff git renders without text hunks although the content changed:
+ * a binary file, or a file deleted while empty. */
+const WHOLE_FILE_CHANGE = /^(Binary files .* differ|deleted file mode )/m;
+
 /** One file's zero-context hunks, keyed by the file's OLD path (the side a
  * blame of the parent reads) as the repository spells it — git's quoting of a
  * special or non-ASCII path undone, the tab it appends to a path with a space
@@ -1002,8 +1006,9 @@ export class WorktreeManager {
     return null;
   }
 
-  /** Memo for `anchorTouched`: a diff between two commits never changes. */
-  private readonly hunkMemo = new Map<string, DiffHunk[]>();
+  /** Memo for `anchorTouched`: a diff between two commits never changes.
+   * `"whole"` is a change git shows without text hunks. */
+  private readonly hunkMemo = new Map<string, DiffHunk[] | "whole">();
   /** Commits `anchorTouched` has seen in the clone (only a present one is
    * remembered: a missing one may be fetched by the next round). */
   private readonly presentCommits = new Set<string>();
@@ -1020,8 +1025,9 @@ export class WorktreeManager {
    * a guess — and so does a `path` that `from` does not hold (a left-side
    * anchor on a file the PR deletes, an imprecise body-only path): an empty
    * diff of a file that is not there proves nothing about an anchor in it.
-   * A file `to` deletes is touched. Answers are memoised — commits are
-   * immutable.
+   * A file `to` deletes is touched, and so is one changed with no text hunks
+   * to read (a binary edit, an empty file deleted): the whole file changed.
+   * Answers are memoised — commits are immutable.
    */
   async anchorTouched(
     path: string,
@@ -1053,7 +1059,8 @@ export class WorktreeManager {
             "--",
             path,
           ]);
-          hunks = parseDiffHunks(res.stdout);
+          const parsed = parseDiffHunks(res.stdout);
+          hunks = parsed.length === 0 && WHOLE_FILE_CHANGE.test(res.stdout) ? "whole" : parsed;
         }
       } catch {
         return null;
@@ -1061,7 +1068,7 @@ export class WorktreeManager {
       if (this.hunkMemo.size >= 5000) this.hunkMemo.clear();
       this.hunkMemo.set(key, hunks);
     }
-    return hunksTouchLine(hunks, line, window);
+    return hunks === "whole" || hunksTouchLine(hunks, line, window);
   }
 
   /**

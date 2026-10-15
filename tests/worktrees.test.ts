@@ -595,6 +595,21 @@ describe("anchorTouched", () => {
     // Present and untouched is still a definite no.
     expect(await m.anchorTouched("gone.py", 4, base, base)).toBe(false);
   });
+  it("a change with no text hunks — a binary edit, an empty file deleted — touches the file", async () => {
+    const png = commit("logo.png", "\x89PNG\0\x01\x02");
+    const png2 = commit("logo.png", "\x89PNG\0\x03\x04");
+    const empty = commit("empty.py", "");
+    git(origin, "rm", "-q", "empty.py");
+    git(origin, "commit", "-q", "-m", "delete empty.py");
+    const gone = git(origin, "rev-parse", "HEAD").trim();
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.anchorTouched("logo.png", null, png, png2)).toBe(true);
+    expect(await m.anchorTouched("logo.png", 1, png, png2)).toBe(true);
+    expect(await m.anchorTouched("empty.py", null, empty, gone)).toBe(true);
+    // Unchanged is still a definite no.
+    expect(await m.anchorTouched("logo.png", null, png2, gone)).toBe(false);
+  });
 });
 
 // A reply's "Fixed in <sha>" counts only when <sha> is a commit
