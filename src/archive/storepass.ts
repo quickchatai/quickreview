@@ -164,7 +164,6 @@ export async function settleStore(deps: StorePassDeps): Promise<StorePassResult>
   return emptyStoreResult("none");
 }
 
-
 /** A pending unlink: the live path and the identity hashed. */
 export interface StoreUnlink {
   path: string;
