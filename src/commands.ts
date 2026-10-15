@@ -1139,15 +1139,18 @@ export class CommandWatcher {
    * the daemon's, so a session can swap the directory between two syscalls).
    * `version` is the handled-ledger key of those same bytes
    * (`operatorCommandVersion`'s), so a file replaced during a parse retry is
-   * recorded as the version that ran, not the one first seen. A failed read
-   * still names the version it last opened, when it opened one. The
+   * recorded as the version that ran, not the one first seen. The descriptor
+   * is stat'ed before AND after the read, and a read the two disagree on (a
+   * writer's write landed in between) is retried like a partial one — so the
+   * version always names the bytes parsed. `text` is those bytes; a failed
+   * read still returns the last text it read, when it read one. The
    * operator directory is opened without following a symlink.
    */
   private async readCommandFile(
     path: string,
   ): Promise<
-    | { ok: true; value: unknown; identity: string; version: string }
-    | { ok: false; reason: string; version: string | null }
+    | { ok: true; value: unknown; identity: string; version: string; text: string }
+    | { ok: false; reason: string; version: string | null; text: string | null }
   > {
     const attempts = this.opts.parseAttempts ?? 3;
     const delay = this.opts.parseRetryMs ?? 40;
@@ -1156,26 +1159,33 @@ export class CommandWatcher {
       : fsConstants.O_RDONLY;
     let lastError = "unreadable";
     let lastVersion: string | null = null;
+    let lastText: string | null = null;
     for (let i = 0; i < attempts; i++) {
-      if (!existsSync(path)) return { ok: false, reason: "file disappeared", version: null };
+      if (!existsSync(path))
+        return { ok: false, reason: "file disappeared", version: null, text: null };
       try {
         const fd = openSync(path, flags);
         let text: string;
         let identity: string;
         let version: string;
+        let stable: boolean;
         try {
           const st = fstatSync(fd, { bigint: true });
           identity = `${st.dev}:${st.ino}`;
-          version = commandVersionOf(path, st);
-          lastVersion = version;
           text = readFileSync(fd, "utf8");
+          version = commandVersionOf(path, fstatSync(fd, { bigint: true }));
+          stable = version === commandVersionOf(path, st);
         } finally {
           closeSync(fd);
         }
-        if (text.trim().length === 0) {
+        lastVersion = version;
+        lastText = text;
+        if (!stable) {
+          lastError = "changed while it was read";
+        } else if (text.trim().length === 0) {
           lastError = "empty file";
         } else {
-          return { ok: true, value: JSON.parse(text) as unknown, identity, version };
+          return { ok: true, value: JSON.parse(text) as unknown, identity, version, text };
         }
       } catch (err) {
         // A partially-written file is expected transiently — retry before rejecting.
@@ -1183,7 +1193,12 @@ export class CommandWatcher {
       }
       if (i < attempts - 1) await new Promise((r) => setTimeout(r, delay));
     }
-    return { ok: false, reason: `malformed JSON: ${lastError}`, version: lastVersion };
+    return {
+      ok: false,
+      reason: `malformed JSON: ${lastError}`,
+      version: lastVersion,
+      text: lastText,
+    };
   }
 
   /**
@@ -1244,7 +1259,7 @@ export class CommandWatcher {
           path,
           name,
           version,
-          read.version,
+          read.text,
           null,
           issuer,
           { ok: false, reason: read.reason },
@@ -1258,7 +1273,7 @@ export class CommandWatcher {
           path,
           name,
           version,
-          read.version,
+          read.text,
           typeof attempted === "string" ? attempted : null,
           issuer,
           { ok: false, reason: validation.reason },
@@ -1274,7 +1289,7 @@ export class CommandWatcher {
           path,
           name,
           version,
-          read.version,
+          read.text,
           validation.command.command,
           issuer,
           { ok: false, reason: denial },
@@ -1290,7 +1305,7 @@ export class CommandWatcher {
         path,
         name,
         version,
-        read.version,
+        read.text,
         validation.command.command,
         issuer,
         outcome,
@@ -1339,9 +1354,8 @@ export class CommandWatcher {
     name: string,
     /** The operator file's version key (`operatorCommandVersion`); null for a session dir. */
     version: string | null,
-    /** The version (`operatorCommandVersion`'s key) of the bytes that were
-     * read; null when no file was opened. */
-    readVersion: string | null,
+    /** The bytes that were read; null when no file was read. */
+    readText: string | null,
     command: string | null,
     issuer: CommandIssuer,
     outcome: FileOutcome,
@@ -1375,12 +1389,18 @@ export class CommandWatcher {
     if (version !== null) {
       this.opts.store.markOperatorCommandHandled(version, result.file);
     } else {
-      const atPath = operatorCommandVersion(path);
-      if (readVersion !== null && atPath !== null && atPath !== readVersion) {
-        // A newer command took this name while this one ran. It is not the
-        // file this result describes, so it is not archived under it: it is
-        // queued to run next (the watch event it raised found this one in
+      let atPath: string | null = null;
+      try {
+        atPath = readFileSync(path, "utf8");
+      } catch {
+        /* gone — nothing to archive or to run */
+      }
+      if (readText !== null && atPath !== null && atPath !== readText) {
+        // A different command took this name while this one ran. It is not
+        // the file this result describes, so it is not archived under it: it
+        // is queued to run next (the watch event it raised found this one in
         // flight, and a session dir has no periodic sweep to find it later).
+        // The same bytes written again are the same command, already run.
         this.log(`[commands] ${result.file} was replaced while it ran — running the new one next`);
         void this.enqueue(path);
       } else {
