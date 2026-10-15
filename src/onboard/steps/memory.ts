@@ -78,13 +78,14 @@ import { pathToFileURL } from "node:url";
 import { OPENVIKING_DEFAULTS, parseConfig } from "../../config.js";
 import { configHome, locateKeysFile, locateSecrets } from "../../install.js";
 import { tuiMemoryBaseUrl } from "../../tui/memory.js";
+import { shellQuote } from "../../tui/remote.js";
 import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
 import { configMountOf } from "./bringup.js";
-import { readTextOrNull, rootOf, writeAtomic } from "./compose.js";
+import { DAEMON_SERVICE, readTextOrNull, rootOf, writeAtomic } from "./compose.js";
 import { assertNoDryRunEdit, patchToml, type TomlEdit } from "./configfill.js";
 import { readTomlKey } from "./ingress.js";
 import { topologyOf } from "./topology.js";
-import { stackTransportFor } from "./transport.js";
+import { remoteFactsFor, stackTransportFor } from "./transport.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const MEMORY_STEP_ID = "memory";
@@ -636,21 +637,50 @@ function daemonMounts(ctx: StepContext): string[] {
   return [configMountOf(ctx.adapters.paths.configPath).dir, rootOf(ctx.adapters)];
 }
 
+/**
+ * The forward's own flags for THIS install: the alias, container and sudo the
+ * transport reads from config.toml ([tui] container / sudo_docker), on the
+ * laptop route the compose daemon's container name. Rendered in full — the
+ * script's built-in defaults name the maintainers' own host, never yours —
+ * and `install` writes the same flags into the systemd unit.
+ */
+export function forwardFlags(ctx: StepContext): string {
+  const facts = remoteFactsFor(ctx.adapters, ctx.choices);
+  const sudo = facts.sudo ? [] : ["--no-sudo"];
+  if (topologyOf(ctx.choices) === "vm") {
+    return [
+      "--ssh-host",
+      shellQuote(facts.alias || "<your-ssh-alias>"),
+      "--container",
+      shellQuote(facts.container),
+      ...sudo,
+    ].join(" ");
+  }
+  // The compose container's NAME (stable across a recreate, unlike its id),
+  // resolved by the operator's shell from the repo root.
+  return [
+    "--local",
+    "--container",
+    `"$(docker compose ps --format '{{.Name}}' ${DAEMON_SERVICE})"`,
+    ...sudo,
+  ].join(" ");
+}
+
 /** Why nothing answered at `base`, and the one thing that makes it answer: the
- * memory forward, in the mode this topology needs. The engine listens on the
- * daemon container's own loopback on both routes and is never published. */
+ * memory forward, in the mode this topology needs, with this install's own
+ * flags. The engine listens on the daemon container's own loopback on both
+ * routes and is never published. */
 function serverUnreachableDetail(ctx: StepContext, base: string, why: string): string {
-  const forward =
-    topologyOf(ctx.choices) === "vm"
-      ? "`node scripts/companion-memory-forward.mjs run` (it reaches the server's container over ssh)"
-      : '`node scripts/companion-memory-forward.mjs run --local --container "$(docker compose ps -q daemon)"` ' +
-        "(add --no-sudo when docker runs without sudo here)";
+  const root = shellQuote(rootOf(ctx.adapters));
+  const flags = forwardFlags(ctx);
+  const cmd = (sub: string): string =>
+    `\`cd ${root} && node scripts/companion-memory-forward.mjs ${sub} ${flags}\``;
   return (
     `no OpenViking answering at ${base} (${why}). The root key is in place, which is what the daemon needs at boot. ` +
     "The memory engine listens only on the daemon container's own loopback, so this machine reaches it through the memory " +
-    `forward: bring the stack up if it is not, then start the forward in another terminal — ${forward}, or ` +
-    "`node scripts/companion-memory-forward.mjs install` for the systemd unit, or open `qcr tui`, which starts one — and run " +
-    "this step again: the two user keys are minted and placed. Nothing is lost by waiting."
+    "forward: bring the stack up if it is not, then start the forward in another terminal, from the repo root — " +
+    `${cmd("run")} — or install it as the systemd unit with the same flags, ${cmd("install")}, or open \`qcr tui\`, which ` +
+    "starts one — and run this step again: the two user keys are minted and placed. Nothing is lost by waiting."
   );
 }
 

@@ -1050,7 +1050,32 @@ describe("reaching the server", () => {
     const result = await runStep(engineWith(fakeServer({ ready: false }).fetchFn));
     const detail = detailOf(result, "memory-server")?.detail ?? "";
     expect(detail).toMatch(/memory forward/);
-    expect(detail).toMatch(/companion-memory-forward\.mjs run --local/);
+    expect(detail).toMatch(/from the repo root/);
+    expect(detail).toContain(
+      `cd ${dirname(stateDir)} && node scripts/companion-memory-forward.mjs run --local`,
+    );
+    expect(detail).toContain(`--container "$(docker compose ps --format '{{.Name}}' daemon)"`);
+  });
+
+  it("on the server route the forward command carries THIS install's alias, container and sudo — never the script's defaults", async () => {
+    writeFileSync(
+      join(dirname(stateDir), "config.toml"),
+      '[tui]\ncontainer = "my-reviewer"\nsudo_docker = false\n',
+    );
+    const step = memoryStep(stepOptions());
+    const report = await step.run({
+      adapters: adapters(fakeServer({ ready: false }).fetchFn),
+      input: {},
+      choices: { topology: "vm", vm_ssh_alias: "review-box" },
+      data: {},
+      recordChoice: () => {},
+    });
+    const detail = report.checks.find((c) => c.name === "memory-server")?.detail ?? "";
+    for (const sub of ["run", "install"])
+      expect(detail).toContain(
+        `node scripts/companion-memory-forward.mjs ${sub} --ssh-host review-box --container my-reviewer --no-sudo`,
+      );
+    expect(detail).not.toMatch(/my-vm/);
   });
 });
 
