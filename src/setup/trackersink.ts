@@ -99,6 +99,47 @@ function setField(text: string, key: string, value: string): string {
   return text.replace(new RegExp(`^${key}: .*$`, "m"), `${key}: ${value}`);
 }
 
+/** A ticket title as its H1: one line, trimmed. */
+function titleLine(title: string): string {
+  return title.replace(/[\r\n]+/g, " ").trim();
+}
+
+/** How many successive ids one claim tries past the highest taken. */
+const CLAIM_TRIES = 50;
+
+/**
+ * Claim the next free FT id by exclusive create of `.ids/<NNNN>` — the
+ * tracker's one allocation mechanism (claim-is-the-lock), shared by every
+ * writer here and in the TUI. Ids are at least four digits, so the highest
+ * taken one is read across every width. Only a collision (another claimer
+ * took the number) moves to the next; any other failure is the tracker's
+ * answer and is thrown as it is. Returns the zero-padded number.
+ */
+export function claimTrackerId(root: string, relPath: (n: string) => string): string {
+  const idsDir = join(root, ".ids");
+  const taken = readdirSync(idsDir)
+    .filter((f) => /^\d{4,}$/.test(f))
+    .map(Number);
+  let candidate = (taken.length > 0 ? Math.max(...taken) : 0) + 1;
+  for (let tries = 0; tries < CLAIM_TRIES; tries++, candidate++) {
+    const n = String(candidate).padStart(4, "0");
+    let fd: number;
+    try {
+      fd = openSync(join(idsDir, n), "wx");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw err;
+    }
+    try {
+      writeFileSync(fd, `${relPath(n)}\n`);
+    } finally {
+      closeSync(fd);
+    }
+    return n;
+  }
+  throw new Error(`could not claim a tracker id (${CLAIM_TRIES} collisions)`);
+}
+
 // ---- the issue tracker ------------------------------------------------------------
 
 export interface IssueTrackerOptions {
@@ -144,8 +185,8 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
     }
   };
 
-  /** Every ticket file, live and archived: `[path, text]`. */
-  const tickets = function* (): Generator<[string, string]> {
+  /** Every ticket directory, live and archived, with the names in it. */
+  const ticketDirs = function* (): Generator<[string, string[]]> {
     for (const e of efforts()) {
       for (const dir of [
         join(root, "efforts", e, "tickets"),
@@ -157,14 +198,21 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
         } catch {
           continue;
         }
-        for (const n of names) {
-          if (!n.endsWith(".md")) continue;
-          const p = join(dir, n);
-          try {
-            yield [p, readFileSync(p, "utf8")];
-          } catch {
-            /* mid-rename or unreadable: not a stamp we can see */
-          }
+        yield [dir, names];
+      }
+    }
+  };
+
+  /** Every ticket file, live and archived: `[path, text]`. */
+  const tickets = function* (): Generator<[string, string]> {
+    for (const [dir, names] of ticketDirs()) {
+      for (const n of names) {
+        if (!n.endsWith(".md")) continue;
+        const p = join(dir, n);
+        try {
+          yield [p, readFileSync(p, "utf8")];
+        } catch {
+          /* mid-rename or unreadable: not a stamp we can see */
         }
       }
     }
@@ -180,45 +228,12 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
     }
   };
 
-  /** Claim the next free id by exclusive create of `.ids/<NNNN>` (the
-   * tracker's one allocation mechanism, as `tui/autofile.ts` claims one). */
-  const claimId = (relPath: (n: string) => string): string => {
-    const idsDir = join(root, ".ids");
-    const taken = readdirSync(idsDir)
-      .filter((f) => /^\d{4,}$/.test(f))
-      .map(Number);
-    let candidate = (taken.length > 0 ? Math.max(...taken) : 0) + 1;
-    for (let tries = 0; tries < 50; tries++, candidate++) {
-      const n = String(candidate).padStart(4, "0");
-      try {
-        const fd = openSync(join(idsDir, n), "wx");
-        writeFileSync(fd, `${relPath(n)}\n`);
-        closeSync(fd);
-        return n;
-      } catch {
-        /* raced by another claimer — the next number */
-      }
-    }
-    throw new Error("could not claim a tracker id (50 collisions)");
-  };
-
   const findTicket = (ref: string): string | null => {
     const m = /^FT-(\d{4,})$/.exec(ref);
     if (!m) return null;
-    for (const e of efforts()) {
-      for (const dir of [
-        join(root, "efforts", e, "tickets"),
-        join(root, "efforts", e, "tickets", "archive"),
-      ]) {
-        let names: string[];
-        try {
-          names = readdirSync(dir);
-        } catch {
-          continue;
-        }
-        const hit = names.find((n) => n.startsWith(`${ref}-`) && n.endsWith(".md"));
-        if (hit) return join(dir, hit);
-      }
+    for (const [dir, names] of ticketDirs()) {
+      const hit = names.find((n) => n.startsWith(`${ref}-`) && n.endsWith(".md"));
+      if (hit) return join(dir, hit);
     }
     return null;
   };
@@ -289,11 +304,10 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
         }
         const slug = slugify(t.title);
         const rel = (n: string): string => `efforts/${t.effort}/tickets/FT-${n}-${slug}.md`;
-        const n = claimId(rel);
+        const n = claimTrackerId(root, rel);
         const ts = now();
-        const title = t.title.replace(/[\r\n]+/g, " ").trim();
         const content = [
-          `# ${title}`,
+          `# ${titleLine(t.title)}`,
           "",
           `Id: FT-${n}`,
           `Effort: ${t.effort}`,
@@ -391,7 +405,7 @@ export function markdownFindingSink(state: StateFs, clock: () => Date): TrackerS
         }
         const ts = clock().toISOString();
         const content = [
-          `# ${t.title.replace(/[\r\n]+/g, " ").trim()}`,
+          `# ${titleLine(t.title)}`,
           "",
           "Status: open",
           `Effort: ${t.effort}`,

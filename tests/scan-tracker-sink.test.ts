@@ -5,6 +5,7 @@
 // when the companion filed it and nobody has claimed it — plus the markdown
 // fallback for an install without a tracker.
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -18,10 +19,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stateHomeFs } from "../src/setup/adapters.js";
+import { claimNextId } from "../src/tui/autofile.js";
 import type { TrackerTicket } from "../src/setup/engine.js";
 import {
   FINGERPRINT_LINE,
   PROMOTED_DIR,
+  claimTrackerId,
   issueTrackerSink,
   isIssueTracker,
   markdownFindingSink,
@@ -69,6 +72,26 @@ const ticketPath = (id: string): string => {
   }
   throw new Error(`no ${id}`);
 };
+
+describe("the tracker id claim", () => {
+  it("reads past four digits: the next id above a five-digit one", () => {
+    for (let n = 9998; n <= 10_049; n++) writeFileSync(join(root, ".ids", String(n)), "x\n");
+    expect(claimTrackerId(root, (n) => `t/${n}.md`)).toBe("10050");
+    // The TUI's filer claims through the same allocator.
+    expect(claimNextId(root, (n) => `t/${n}.md`)).toBe("10051");
+  });
+
+  it("a failure that is not a collision is the tracker's answer, never '50 collisions'", () => {
+    // An unwritable `.ids/`: every create fails, and none of them is a collision.
+    const ids = join(root, ".ids");
+    chmodSync(ids, 0o500);
+    try {
+      expect(() => claimTrackerId(root, (n) => `t/${n}.md`)).toThrow(/EACCES|EPERM/);
+    } finally {
+      chmodSync(ids, 0o700);
+    }
+  });
+});
 
 describe("the issue tracker sink: filing", () => {
   it("files an impl ticket with the next id, the header grammar in order, Parent = the effort's map, and the fingerprint stamp", async () => {
