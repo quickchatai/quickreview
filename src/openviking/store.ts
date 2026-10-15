@@ -107,7 +107,6 @@ export function sha256Prefixed(body: string): string {
   return `sha256:${createHash("sha256").update(Buffer.from(body, "utf8")).digest("hex")}`;
 }
 
-
 /** An id is a relative path of one to three safe segments ending in a text
  * extension — `<file>`, `<area>/<file>` or `preferences/pinned/<file>`. Anything else is refused rather than turned
  * into a URI: an id ultimately comes back from a caller that got it from us,
