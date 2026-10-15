@@ -475,11 +475,11 @@ describe("the shadow report's tiers over a fixture joined with fates", () => {
     expect(text).toContain(
       "Dont-raise lessons neither tier can check (no class, no paths=, and not exactly one discovery lens — they mark nothing): experiences/20261001T000000-dr-unmeasurable.md",
     );
-    // Under `on` only the CLASS tier is what the validator was licensed to
+    // Under `on` only the CLASS tier is within the validator's license to
     // demote: the lens tier widens the evidence, never the authority.
     const on = renderShadowReport(shadowReport(ledger, { days: 7, mode: "on", now: () => clock }));
     expect(on).toContain(
-      "the CLASS-tier marks below are what the validator was LICENSED to demote",
+      "the CLASS-tier marks below are the matches within the validator's license to demote",
     );
     expect(on).toContain("the lens tier is outside that license");
   });

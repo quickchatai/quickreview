@@ -9,9 +9,10 @@
 // Stale/missing/wrong-PR ⇒ a queryable anomaly (`ledger_stale`) AND exactly
 // ONE re-nudge wake through `wakeOrHold` telling the session to ONLY rewrite
 // its ledger — no review work, no posting, no verdict file. A second stale
-// detection for the same round logs the anomaly again but never nudges again:
-// the once-mark is persisted BEFORE the inject, so even a crashed inject can
-// never turn into a nudge loop.
+// detection for the same round never nudges again: it logs
+// `ledger_stale_unresolved`, the grade that wakes the overseer (the session
+// ignored its one nudge). The once-mark is persisted BEFORE the inject, so
+// even a crashed inject can never turn into a nudge loop.
 import { readFileSync } from "node:fs";
 import type { StateStore } from "./state.js";
 import { wakeOrHold } from "./wakes.js";

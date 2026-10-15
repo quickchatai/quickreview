@@ -104,6 +104,22 @@ export function strongerTier(a: ShadowMatchTier, b: ShadowMatchTier): ShadowMatc
   return a === "class" || b === "class" ? "class" : "lens";
 }
 
+/** The selection roles the shadow evidence measures: the discovery rows and
+ * the validator (an addable lens's selection is never a mark's or a report's). */
+function isMeasuredRole(role: string): boolean {
+  return role === "row" || role === "validator";
+}
+
+/** A set of marks counted per tier. */
+function marksByTier(
+  marks: ReadonlyArray<{ match: ShadowMatchTier }>,
+): Record<ShadowMatchTier, number> {
+  return {
+    class: marks.filter((m) => m.match === "class").length,
+    lens: marks.filter((m) => m.match === "lens").length,
+  };
+}
+
 /** Every dont-raise lesson a round's selection chose for a discovery row or
  * the validator, with where — what was SELECTED, whether or not that round's
  * delivery then carried it. */
@@ -112,7 +128,7 @@ function selectedDontRaise(
 ): Map<string, { lesson: SelectedLesson; via: string[] }> {
   const out = new Map<string, { lesson: SelectedLesson; via: string[] }>();
   for (const s of selections) {
-    if (s.role !== "row" && s.role !== "validator") continue;
+    if (!isMeasuredRole(s.role)) continue;
     const via = s.role === "validator" ? "validator" : `row:${s.row}`;
     for (const l of s.lessons) {
       if (l.kind !== "dont-raise") continue;
@@ -222,10 +238,7 @@ export function markRound(
       round_no: roundNo,
       marks: marks.length,
       findings: new Set(marks.map((m) => m.finding_key)).size,
-      by_tier: {
-        class: marks.filter((m) => m.match === "class").length,
-        lens: marks.filter((m) => m.match === "lens").length,
-      },
+      by_tier: marksByTier(marks),
     });
   return marks;
 }
@@ -243,6 +256,20 @@ export interface BucketCounts {
   ignored: number;
   unknown: number;
   exempt_p0: number;
+}
+
+/** A per-lesson or per-lens count: the buckets, the marks, and both per tier. */
+type TieredCount = BucketCounts & {
+  marks: number;
+  by_tier: Record<ShadowMatchTier, BucketCounts & { marks: number }>;
+};
+
+/** One more marked finding on `c`, in bucket `b` and tier `tier`. */
+function countMark(c: TieredCount, b: ShadowBucket, tier: ShadowMatchTier): void {
+  c.marks += 1;
+  c[b] += 1;
+  c.by_tier[tier].marks += 1;
+  c.by_tier[tier][b] += 1;
 }
 
 function zero(): BucketCounts {
@@ -495,10 +522,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
     t[b] += 1;
     t.total += 1;
   }
-  const marksByTier: ShadowReport["marks_by_tier"] = {
-    class: marks.filter((m) => m.match === "class").length,
-    lens: marks.filter((m) => m.match === "lens").length,
-  };
+  const tierMarks: ShadowReport["marks_by_tier"] = marksByTier(marks);
   const tierZero = (): Record<ShadowMatchTier, BucketCounts & { marks: number }> => ({
     class: { ...zero(), marks: 0 },
     lens: { ...zero(), marks: 0 },
@@ -510,7 +534,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
   const firstSelected = new Map<string, string>();
   const lessonInfo = new Map<string, SelectedLesson>();
   for (const s of selections) {
-    if (s.role !== "row" && s.role !== "validator") continue;
+    if (!isMeasuredRole(s.role)) continue;
     for (const l of s.lessons) {
       if (!lessonInfo.has(l.uri)) lessonInfo.set(l.uri, l);
       if (!selectedRounds.has(l.uri)) selectedRounds.set(l.uri, new Set());
@@ -547,10 +571,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
       marks: 0,
       by_tier: tierZero(),
     };
-    pl.marks += 1;
-    pl[b] += 1;
-    pl.by_tier[p.tier].marks += 1;
-    pl.by_tier[p.tier][b] += 1;
+    countMark(pl, b, p.tier);
     perLesson.set(p.uri, pl);
   }
   // Per lens: one count per (finding chain, lens) — a finding two lenses
@@ -577,10 +598,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
   for (const p of lensPairs.values()) {
     const b = bucketFor.get(p.chain)!;
     const pl = perLens.get(p.lens) ?? { ...zero(), lens: p.lens, marks: 0, by_tier: tierZero() };
-    pl.marks += 1;
-    pl[b] += 1;
-    pl.by_tier[p.tier].marks += 1;
-    pl.by_tier[p.tier][b] += 1;
+    countMark(pl, b, p.tier);
     perLens.set(p.lens, pl);
   }
 
@@ -643,7 +661,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
     findings,
     findings_by_tier: findingsByTier,
     marks: marks.length,
-    marks_by_tier: marksByTier,
+    marks_by_tier: tierMarks,
     per_lesson: [...perLesson.values()].sort(
       (a, b) => b.marks - a.marks || (a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0),
     ),
@@ -661,9 +679,14 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
  * label the delivered lessons carry (src/memory/delivery.ts). */
 export const lessonLabel: (uri: string) => string = memoryLabel;
 
+/** The help a count shows: refutations and set-aside reviews together. */
+function helpOf(b: BucketCounts): number {
+  return b.help_refuted + b.help_set_aside;
+}
+
 function bucketsLine(b: BucketCounts): string {
   return (
-    `harm ${b.harm} · help ${b.help_refuted + b.help_set_aside} (refuted ${b.help_refuted}, set aside ${b.help_set_aside}) · ` +
+    `harm ${b.harm} · help ${helpOf(b)} (refuted ${b.help_refuted}, set aside ${b.help_set_aside}) · ` +
     `upheld ${b.upheld} · ignored ${b.ignored} · unknown ${b.unknown} · P0 exempt ${b.exempt_p0}`
   );
 }
@@ -686,7 +709,7 @@ export function renderShadowReport(r: ShadowReport): string {
   const out: string[] = [];
   out.push(
     `Lesson shadow report — the last ${r.days} day(s) (${r.since.slice(0, 16)}Z → ${r.until.slice(0, 16)}Z)`,
-    `delivery: ${r.mode}${r.mode === "on" ? " (lessons reach the review; the CLASS-tier marks below are what the validator was LICENSED to demote — its findings record says what it did; the lens tier is outside that license)" : ""}; kill switch: ${r.lessons_off ? "LESSONS OFF" : "lessons on"}; ${r.suppressed} suppressed`,
+    `delivery: ${r.mode}${r.mode === "on" ? " (lessons reach the review; the CLASS-tier marks below are the matches within the validator's license to demote — a selected lesson's lens, class and paths matched; whether the validator received it and what it did, its findings record says; the lens tier is outside that license)" : ""}; kill switch: ${r.lessons_off ? "LESSONS OFF" : "lessons on"}; ${r.suppressed} suppressed`,
   );
   const rr = r.rounds;
   out.push(
@@ -786,7 +809,7 @@ function tierCounts(b: BucketCounts & { total: number }): LessonTierCounts {
   return {
     marks: b.total,
     harm: b.harm,
-    help: b.help_refuted + b.help_set_aside,
+    help: helpOf(b),
     unknown: b.unknown,
   };
 }
