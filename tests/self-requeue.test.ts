@@ -1283,6 +1283,30 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     expect(events("round_self_requeued")).toHaveLength(1);
   });
 
+  // MUTATION: restore the "investigate why its sessions die mid-round" line
+  // — a healthy head_moved requeue sends the overseer after dying sessions.
+  it("the overseer's note names the requeue's own cause, never dying sessions, for a healthy session", async () => {
+    reviewingRound(344, "fresh-head");
+    const { hooks, overseer } = hooksWith(true);
+    headMovedFile(344, 1);
+    await watcher(hooks).sweep();
+    const note = overseer.find((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #344"))!;
+    expect(note).toContain("the session is healthy and was not killed");
+    expect(note).not.toMatch(/die mid-round|dead round|reborn/);
+  });
+
+  // MUTATION: log head_moved_reported before the not-running check — a
+  // replay on a round that ended reports a movement nobody handled.
+  it("a head_moved file reaching a round that already ended reports nothing new", async () => {
+    const roundId = reviewingRound(345, "fresh-head");
+    store.finishRound(roundId, "APPROVE", null);
+    const { hooks } = hooksWith(true);
+    headMovedFile(345, 1);
+    await watcher(hooks).sweep();
+    expect(events("head_moved_reported")).toHaveLength(0);
+    expect(events("verdict_replay_ignored")).toHaveLength(1);
+  });
+
   it("respects the self-requeue cap: past it the round terminalizes through the anomaly path, never loops", async () => {
     const { hooks } = hooksWith(true);
     const w = watcher(hooks);

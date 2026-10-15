@@ -58,13 +58,7 @@ import { withinBudget } from "./budget.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
-import {
-  isLoudCancelCause,
-  type CancelCause,
-  type RoundRow,
-  type SelfRequeueSpend,
-  type StateStore,
-} from "./state.js";
+import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import {
   enforceFindingsRecord,
@@ -710,17 +704,6 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
     verdict: raw as unknown as VerdictFile,
     ...(notes ? { passes_note: notes } : {}),
   };
-}
-
-/**
- * How much of a PR's self-requeue budget is gone. A row whose head cannot be
- * read still records a requeue that happened, so it counts — the budget can
- * be tightened by a corrupt payload, never widened by one. Exhausting it this
- * way ends in FAILED_LOUD and `u`, which is the recoverable direction; the
- * other direction is a loop past the cap.
- */
-function selfRequeuesSpent(spend: SelfRequeueSpend): number {
-  return spend.at_head + spend.unattributed;
 }
 
 export class VerdictWatcher {
@@ -1978,14 +1961,9 @@ export class VerdictWatcher {
     // is stamped (nothing was reviewed-and-decided at the live head). Past
     // the cap the anomaly path terminalizes — never an approve.
     if (v.outcome === "head_moved") {
-      store.logEvent("head_moved_reported", v.pr, {
-        round_id: round?.id ?? null,
-        round_no: v.round_no,
-        reviewed_head: v.head_sha,
-        file: name,
-      });
       // The round already ended — this file is a replay of a report that was
-      // handled (or of a round some other path closed). Nothing is owed.
+      // handled (or of a round some other path closed). Nothing is owed, and
+      // nothing is reported again.
       if (round.status !== "running") {
         store.logEvent("verdict_replay_ignored", v.pr, {
           round_id: round.id,
@@ -1996,6 +1974,12 @@ export class VerdictWatcher {
         });
         return "applied";
       }
+      store.logEvent("head_moved_reported", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        reviewed_head: v.head_sha,
+        file: name,
+      });
       if (await this.selfRequeue(round, "head_moved")) {
         await this.safe(
           () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
@@ -3527,7 +3511,7 @@ export class VerdictWatcher {
     });
     const head = this.deps.store.getPr(pr)?.head_sha ?? "";
     const cap = this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
-    if (selfRequeuesSpent(this.deps.store.selfRequeueSpend(pr, head)) >= cap) {
+    if (this.deps.store.selfRequeueCount(pr, head) >= cap) {
       const mode =
         stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active";
       if (mode === "infrastructure_active" && !this.deps.hooks.killSession) return "retryable";
@@ -4007,7 +3991,7 @@ export class VerdictWatcher {
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
     const cap = cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
-    const attempt = selfRequeuesSpent(store.selfRequeueSpend(round.pr, head)) + 1;
+    const attempt = store.selfRequeueCount(round.pr, head) + 1;
     const exhausted = attempt > cap;
     const infrastructure = mode === "infrastructure_active" || mode === "infrastructure_settled";
     if (exhausted) {
@@ -4129,8 +4113,8 @@ export class VerdictWatcher {
           [
             `SELF-REQUEUE (recovery) — PR #${round.pr} round ${round.round_no}, attempt ${attempt}/${cap}`,
             reason,
-            "The daemon cancelled the dead round and re-queued the PR for a fresh dispatch through the normal path; the session is reborn at dispatch. No GitHub state was touched.",
-            "This is a recovery path, not a normal one — if it recurs on the same PR, investigate why its sessions die mid-round.",
+            "The daemon cancelled the round and re-queued the PR for a fresh dispatch through the normal path. No GitHub state was touched.",
+            "This is a recovery path, not a normal one — if it recurs on the same PR, investigate the cause the line above names.",
           ].join("\n"),
         ),
       "inject overseer self-requeue",
