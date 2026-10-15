@@ -51,7 +51,7 @@ import {
   type AuditedReview,
 } from "../src/execboundary.js";
 import { auditExecViolationDetails } from "../src/usage.js";
-import { profileSearchDirs } from "../src/install.js";
+import { profileSearchDirs, type InstallEnv } from "../src/install.js";
 import { sessionGitConfigPins } from "../src/sessions.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -1138,11 +1138,12 @@ describe("the write class that no command string can show", () => {
     });
 
     it("watches every place the profile locator reads outside the checkout — the locator's own list", () => {
-      for (const env of [
+      const envs: InstallEnv[] = [
         vmEnv,
         { XDG_CONFIG_HOME: "/x", QCR_INSTALL: "work", HOME: "/h" },
         { QCR_CONFIG: "/sb/config.toml", HOME: "/h" },
-      ]) {
+      ];
+      for (const env of envs) {
         const external = profileSearchDirs({ root: "/sb", env }).filter(
           (d) => d !== "/sb/profiles" || env.QCR_CONFIG === "/sb/config.toml",
         );
