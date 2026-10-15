@@ -311,10 +311,13 @@ export const realProbeRunner: ProbeRunner = (cmd, argv, timeoutMs) =>
         const e = err as
           (Error & { code?: number | string; killed?: boolean; signal?: string }) | null;
         const timedOut = Boolean(e?.killed) || e?.signal === "SIGTERM";
+        // A string code is a failure to RUN the probe (`ENOENT`: no such
+        // program) — it printed nothing, so its own message is the evidence.
+        const runError = e && typeof e.code === "string" && !timedOut ? e.message : "";
         resolve({
           status: e ? (typeof e.code === "number" ? e.code : null) : 0,
           stdout: String(stdout ?? ""),
-          stderr: String(stderr ?? "") || (timedOut ? `timed out after ${timeoutMs}ms` : ""),
+          stderr: String(stderr ?? "") || (timedOut ? `timed out after ${timeoutMs}ms` : runError),
           timedOut,
         });
       },
@@ -340,13 +343,17 @@ export function expandControlPath(
   home: string,
 ): string {
   if (raw === "" || raw.toLowerCase() === "none") return "";
-  let out = raw.startsWith("~/") ? `${home}/${raw.slice(2)}` : raw;
-  out = out
+  return expandHome(raw, home)
     .replace(/%h/g, tokens.host ?? "%h")
     .replace(/%n/g, tokens.host ?? "%n")
     .replace(/%r/g, tokens.user ?? "%r")
     .replace(/%p/g, tokens.port ?? "%p");
-  return out;
+}
+
+/** A leading `~/` against `home` — the one home-prefix spelling ssh's
+ * config paths (IdentityFile, ControlPath) are read with here. */
+export function expandHome(path: string, home: string): string {
+  return path.startsWith("~/") ? `${home}/${path.slice(2)}` : path;
 }
 
 /** True when SOMETHING is multiplexing at that path. An unexpandable token
@@ -412,7 +419,6 @@ export interface TriageDeps {
   run?: ProbeRunner;
   exists?: (path: string) => boolean;
   home?: string;
-  expand?: (p: string) => string;
 }
 
 const CONFIG_TIMEOUT_MS = 5_000;
@@ -471,9 +477,7 @@ export async function triageConnection(
   const host = cfg.ssh_host;
 
   const dump = parseSshConfigDump((await run("ssh", ["-G", host], CONFIG_TIMEOUT_MS)).stdout);
-  const identityFiles = dump.identityFiles.map((p) =>
-    p.startsWith("~/") ? `${home}/${p.slice(2)}` : p,
-  );
+  const identityFiles = dump.identityFiles.map((p) => expandHome(p, home));
   const identity = identityFiles.find((p) => exists(p)) ?? identityFiles[0];
   const controlPath = expandControlPath(dump.controlPath, dump, home);
 

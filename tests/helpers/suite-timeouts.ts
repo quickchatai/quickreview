@@ -37,7 +37,9 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  *   companion-memory — the forward's ssh probe (fails fast, no VM);
  *   onboard-streamrunner — a node child under the wizard's streaming runner;
  *   tui-deploy-process — a node child under the deploy tab's runner;
- *   tui-openurl — a launcher that does not exist.
+ *   tui-openurl — a launcher that does not exist;
+ *   tui-sshtriage-probe — the triage's probe runner over `sh` and a program
+ *     that does not exist.
  */
 export const PROCESS_SUITES: readonly string[] = [
   "tests/archive-evidence-shell.test.ts",
@@ -108,6 +110,8 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/temp-root.test.ts",
   "tests/tui-deploy-process.test.ts",
   "tests/tui-openurl.test.ts",
+  "tests/tui-rollover.test.ts",
+  "tests/tui-sshtriage-probe.test.ts",
   "tests/tui-startup.test.ts",
   "tests/worktrees.test.ts",
 ];
