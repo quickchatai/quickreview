@@ -65,8 +65,11 @@ const INTENT = {
 };
 
 const plan = (cfg: Config = cfgOf()) => buildPassPlan(cfg, FILES, INTENT, NONE_ECOSYSTEM);
+// `required` (the rows a round may not post without) post-dates the launch
+// order and is pinned by tests/required-passes.test.ts; the rows as this
+// lever found them are compared without it.
 const canon = (rows: readonly PassPlanEntry[]): string[] =>
-  rows.map((r) => JSON.stringify(r)).sort();
+  rows.map(({ required: _required, ...r }) => JSON.stringify(r)).sort();
 const sha = (v: unknown): string => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 
 describe("the plan lists its rows slowest first", () => {
