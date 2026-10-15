@@ -79,6 +79,13 @@ export function zoneDateString(instant: Date, timeZone: string): string {
   return `${String(p.year).padStart(4, "0")}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
 }
 
+/** The digest files among `names` (`<YYYY-MM-DD>.md`, the sweep's own
+ * naming), oldest first — lexicographic is chronological. The one reading the
+ * daemon's headline and the TUI's digest tab share. */
+export function digestFiles(names: Iterable<string>): string[] {
+  return [...names].filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).sort();
+}
+
 /**
  * The operations-day token: "YYYY-MM-DD" in the configured
  * operations timezone (`[ops] timezone`, `cfg.ops.timezone`). The ONE

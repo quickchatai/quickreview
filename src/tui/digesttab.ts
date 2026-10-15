@@ -10,7 +10,7 @@
 // are different facts: the fetcher's `list` is undefined when the
 // listing itself failed, and the tab says so instead of showing an empty day.
 import type { TuiConfig } from "../config.js";
-import { zoneDateString } from "../eod.js";
+import { digestFiles, zoneDateString } from "../eod.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type LiveKeys } from "./cmdbar.js";
 import { HEADING, MUTED, RESET, modeBadge } from "./design.js";
@@ -35,11 +35,7 @@ export function digestCatArgv(cfg: TuiConfig, file: string): string[] {
 
 /** Digest file names are `<YYYY-MM-DD>.md`; anything else is ignored. */
 export function parseDigestList(stdout: string): string[] {
-  return stdout
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => /^\d{4}-\d{2}-\d{2}\.md$/.test(l))
-    .sort(); // lexicographic == chronological
+  return digestFiles(stdout.split("\n").map((l) => l.trim()));
 }
 
 /** Light markdown styling: headings accent, bullets kept, everything else raw. */

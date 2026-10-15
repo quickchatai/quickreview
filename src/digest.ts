@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
-import { zoneDayBounds } from "./eod.js";
+import { digestFiles, zoneDayBounds } from "./eod.js";
 import {
   cancelCauseLabel,
   roundUsage,
@@ -56,9 +56,7 @@ export function digestHeadline(content: string): string | undefined {
 /** Newest digest/<date>.md file name (lexicographic == chronological). */
 export function latestDigestFile(digestDir: string = defaultDigestDir()): string | undefined {
   if (!existsSync(digestDir)) return undefined;
-  const files = readdirSync(digestDir)
-    .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-    .sort();
+  const files = digestFiles(readdirSync(digestDir));
   const last = files[files.length - 1];
   return last === undefined ? undefined : join(digestDir, last);
 }
