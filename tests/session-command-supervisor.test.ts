@@ -661,6 +661,48 @@ describe("bounded round-stage supervision", () => {
     );
   });
 
+  it.each(["retryable", "posted_wait"] as const)(
+    "honors an early-stage %s recovery check across supervisor restarts",
+    async (disposition) => {
+      clock = new Date("2026-08-27T20:00:00.000Z");
+      const { id, pr } = seedRoundCommand({
+        status: "running",
+        started: true,
+        nextCheckAt: "2026-08-27T20:45:00.000Z",
+      });
+      const cfg = {
+        ...baseCfg,
+        daemon: { ...baseCfg.daemon, session_command_unknown_grace_s: 180 },
+      };
+      const onRoundFailure = vi.fn(async () => disposition);
+      const progress = () => ({
+        version: 2 as const,
+        pr,
+        session: `pr-${pr}`,
+        run_started_at: "2026-08-27T20:00:00.000Z",
+        updated_at: clock.toISOString(),
+        parent_status: "active" as const,
+        command_id: id,
+        command_sha256: "a".repeat(64),
+        command_accepted_at: "2026-08-27T20:00:01.000Z",
+        last_activity_at: clock.toISOString(),
+        last_activity: "preparing",
+        agents: [],
+      });
+      const fresh = () => supervisor(hooks(), onRoundFailure, cfg, progress).supervisor;
+      clock = new Date("2026-08-27T20:05:00.000Z");
+      await fresh().scan();
+      expect(onRoundFailure).toHaveBeenCalledTimes(1);
+      expect(store.getSessionCommand(id)!.next_check_at).toBe("2026-08-27T20:08:00.000Z");
+      clock = new Date("2026-08-27T20:06:00.000Z");
+      await fresh().scan();
+      expect(onRoundFailure).toHaveBeenCalledTimes(1);
+      clock = new Date("2026-08-27T20:08:00.000Z");
+      await fresh().scan();
+      expect(onRoundFailure).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("does not reopen exhausted debt when operator u wins while the recovery callback returns", async () => {
     clock = new Date("2026-08-27T20:00:00.000Z");
     const seeded = seedRoundCommand({
@@ -1105,29 +1147,38 @@ describe("bounded round-stage supervision", () => {
     expect(s.health()).toMatchObject({ last_success_at: clock.toISOString() });
   });
 
-  it("leaves the session's tail alone after its verdict ended the round, then fences it past the grace", async () => {
-    const { id, pr, roundId } = seedRoundCommand({
-      status: "running",
-      started: true,
-      nextCheckAt: "2026-08-27T20:45:00.000Z",
-    });
-    store.finishRound(roundId, "APPROVE", null);
-    const killed: number[] = [];
-    const h = hooks({
-      killSession: async (n) => {
-        killed.push(n);
-      },
-    });
+  it.each(["done", "guarded-noop"] as const)(
+    "leaves the session's %s tail alone after its verdict ended the round, then fences it past the grace",
+    async (outcome) => {
+      const { id, pr, roundId } = seedRoundCommand({
+        status: "running",
+        started: true,
+        nextCheckAt: "2026-08-27T20:45:00.000Z",
+      });
+      if (outcome === "done") store.finishRound(roundId, "APPROVE", null);
+      else
+        store.markRoundCancelled(
+          roundId,
+          "guard 2 refused the duplicate review",
+          "no_new_evidence",
+        );
+      const killed: number[] = [];
+      const h = hooks({
+        killSession: async (n) => {
+          killed.push(n);
+        },
+      });
 
-    await supervisor(h).supervisor.scan();
-    expect(killed).toEqual([]);
-    expect(store.getSessionCommand(id)?.status).toBe("running");
+      await supervisor(h).supervisor.scan();
+      expect(killed).toEqual([]);
+      expect(store.getSessionCommand(id)?.status).toBe("running");
 
-    clock = new Date(clock.getTime() + (baseCfg.daemon.round_finalize_grace_min ?? 5) * 60_000);
-    await supervisor(h).supervisor.scan();
-    expect(killed).toEqual([pr]);
-    expect(store.getSessionCommand(id)?.status).toBe("acked");
-  });
+      clock = new Date(clock.getTime() + (baseCfg.daemon.round_finalize_grace_min ?? 5) * 60_000);
+      await supervisor(h).supervisor.scan();
+      expect(killed).toEqual([pr]);
+      expect(store.getSessionCommand(id)?.status).toBe("acked");
+    },
+  );
 
   it("rejects stale settled progress without exact command identity", async () => {
     const { id, pr } = seedRoundCommand({ status: "running", started: true });

@@ -10,11 +10,24 @@ import {
   progressLogPath,
   roundExecutionStage,
 } from "../src/round-progress.js";
+import { PASS_TIER_ORDER } from "../src/types.js";
 import type { PiEventHandler } from "@earendil-works/pi-coding-agent";
 
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("the posting boundary tier vocabulary", () => {
+  // MUTATION: replace sol-high by sol-low in the Python suffix — this fails.
+  it("keeps the Python suffix mirror equal to the authoritative tier registry", () => {
+    const source = readFileSync(
+      join(import.meta.dirname, "..", "scripts", "required-passes.py"),
+      "utf8",
+    );
+    const suffix = source.match(/TIER_SUFFIX = re\.compile\(r"--\(\?:([^)]*)\)\$"\)/)?.[1];
+    expect(suffix?.split("|")).toEqual([...PASS_TIER_ORDER]);
+  });
 });
 
 describe("round progress extension", () => {

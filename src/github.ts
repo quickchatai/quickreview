@@ -2,6 +2,7 @@
 // mutation is expressed as a MutationIntent and pushed through the gate
 // (dry-run writes it to state/dryrun/ instead of executing). There is no
 // review-dismissal function in this adapter, by design — never add one.
+import { ThreadResolutionRefusal } from "./thread-resolution-refusal.js";
 import type { CheckSummary } from "./cigate.js";
 import { reviewTeamSlug, type Config } from "./config.js";
 import { CHECK_THIS_RE, DEFERRED_RE } from "./severity.js";
@@ -1244,7 +1245,10 @@ export class GitHubAdapter {
       after = threads.pageInfo.endCursor;
     } while (after);
 
-    if (!found) throw new Error(`comment ${rootCommentId} is not a review-thread root on #${n}`);
+    if (!found)
+      throw new ThreadResolutionRefusal(
+        `comment ${rootCommentId} is not a review-thread root on #${n}`,
+      );
     // GitHub exposes the same App actor with two spellings: review-author
     // filters use the `[bot]` login, while review-thread GraphQL actors use the
     // bare App slug. Both values are independently configured; recognize
@@ -1255,7 +1259,7 @@ export class GitHubAdapter {
       [this.cfg.github.bot_login, bareAppActor].filter((v): v is string => v !== undefined),
     );
     if (!ownActors.has(found.author)) {
-      throw new Error(
+      throw new ThreadResolutionRefusal(
         `refusing to resolve thread ${rootCommentId} on #${n}: root author is ${found.author || "unknown"}`,
       );
     }

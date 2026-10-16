@@ -190,6 +190,12 @@ describe("collectReviewHistory", () => {
     s.close();
   });
 
+  it("clamps calendar-month boundaries to shorter months without losing the time", () => {
+    expect(windowStart(new Date("2026-03-31T12:34:56.789Z"), 1)).toBe("2026-02-28T12:34:56.789Z");
+    expect(windowStart(new Date("2024-03-31T12:34:56.789Z"), 1)).toBe("2024-02-29T12:34:56.789Z");
+    expect(windowStart(new Date("2026-01-31T00:00:00Z"), 2)).toBe("2025-11-30T00:00:00.000Z");
+  });
+
   it("enumerates merged PRs in the window with the App's own excluded", async () => {
     const h = harness([]);
     const s = new StateStore(":memory:", () => NOW);

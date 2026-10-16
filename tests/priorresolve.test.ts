@@ -9,6 +9,7 @@
 // the sidecar), only that round's reports, and that every outcome — resolved,
 // skipped by the adapter, not executed (dry-run), failed, no known comment — is
 // an event and never a throw.
+import { ThreadResolutionRefusal } from "../src/thread-resolution-refusal.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -95,6 +96,27 @@ describe("which threads a round resolves", () => {
     ]);
   });
 
+  it("a delayed fixed report cannot supersede a newer open report", () => {
+    const store = setup();
+    store.recordPriorReports(7, 4, HEAD, [
+      { round_no: 1, finding_key: "fixed1", status: "open", evidence: "still present" },
+    ]);
+    expect(priorThreadsToResolve(store, 7, 3).threads.map((t) => t.comment_id)).not.toContain(101);
+  });
+
+  it("a newer assignment without a report does not supersede a verified fix", () => {
+    const store = setup();
+    store.recordPriorListing(7, 4, HEAD, [{ round_no: 1, finding_key: "fixed1", blocking: false }]);
+    expect(priorThreadsToResolve(store, 7, 3).threads.map((t) => t.comment_id)).toContain(101);
+  });
+
+  it("a carried chain names each posting whose comment is missing", () => {
+    const store = setup();
+    const plan = priorThreadsToResolve(store, 7, 3, new Map([["1:fixed1", ["0:missing"]]]));
+    expect(plan.threads.map((t) => t.comment_id)).toContain(101);
+    expect(plan.unlinked).toContain("0:missing");
+  });
+
   it("an unreadable sidecar names no earlier postings", () => {
     expect(earlierRefsFromSidecar(undefined).size).toBe(0);
     expect(earlierRefsFromSidecar("{not json").size).toBe(0);
@@ -111,7 +133,7 @@ describe("resolving them", () => {
         expect(n).toBe(7);
         if (id === 101) return { skipped: null, result: { executed: true } };
         if (id === 102) return { skipped: "check-this-human-only" as const };
-        if (id === 104) throw new Error("refusing: root author is someone-else");
+        if (id === 104) throw new ThreadResolutionRefusal("refusing: root author is someone-else");
         return { skipped: null };
       },
     };
@@ -131,6 +153,33 @@ describe("resolving them", () => {
     });
   });
 
+  it("revalidates an older fixed report before retrying a failed resolution", async () => {
+    const store = setup();
+    let attempts = 0;
+    const adapter = {
+      resolveOwnReviewThread: async (_pr: number, id: number) => {
+        if (id === 101) {
+          attempts++;
+          store.recordPriorReports(7, 4, HEAD, [
+            { round_no: 1, finding_key: "fixed1", status: "open", evidence: "still present" },
+          ]);
+          throw new Error("temporary connection failure");
+        }
+        return { skipped: null };
+      },
+    };
+    const result = await resolveVerifiedPriorThreads(
+      { store, adapter, sleep: async () => {} },
+      7,
+      3,
+    );
+    expect(attempts).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(events(store, "prior_thread_resolve_skipped").map((e) => e.reason)).toContain(
+      "superseded-prior-report",
+    );
+  });
+
   it("a gated write that did not execute (dry-run, a guard) is a skip, not a resolution", async () => {
     const store = setup();
     const adapter = {
@@ -145,6 +194,33 @@ describe("resolving them", () => {
     expect(events(store, "prior_thread_resolved")).toEqual([]);
   });
 
+  it.each([
+    { error: new ThreadResolutionRefusal("ownership mismatch"), attempts: 1 },
+    { error: new Error("refusing transport proxy connection"), attempts: 3 },
+  ])(
+    "classifies retryability by the refusal type ($attempts attempts)",
+    async ({ error, attempts }) => {
+      const store = setup();
+      const calls: number[] = [];
+      await resolveVerifiedPriorThreads(
+        {
+          store,
+          adapter: {
+            resolveOwnReviewThread: async (_pr, id) => {
+              calls.push(id);
+              throw error;
+            },
+          },
+          retryDelaysMs: [0, 0],
+          sleep: async () => {},
+        },
+        7,
+        3,
+      );
+      expect(calls.filter((id) => id === 101)).toHaveLength(attempts);
+    },
+  );
+
   it("a transient failure is tried again before it is recorded failed; a refusal is not", async () => {
     const store = setup();
     const calls: number[] = [];
@@ -156,7 +232,9 @@ describe("resolving them", () => {
         if (id === 101 && flaky-- > 0) throw new Error("graphql → 502");
         if (id === 102) throw new Error("graphql → 503");
         if (id === 104)
-          throw new Error("refusing to resolve thread 104 on #7: root author is someone-else");
+          throw new ThreadResolutionRefusal(
+            "refusing to resolve thread 104 on #7: root author is someone-else",
+          );
         return { skipped: null, result: { executed: true } };
       },
     };

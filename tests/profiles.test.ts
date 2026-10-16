@@ -373,7 +373,7 @@ describe("parseProfileHeuristics", () => {
       /not an extendable lens/,
     );
     expect(() => parseProfileHeuristics(F, `[pass-concurrency]\npaths = ['x']\n`)).toThrow(
-      /addable-only/,
+      /pass-concurrency is content-triggered only/,
     );
     expect(() => parseProfileHeuristics(F, `[pass-nope]\npaths = ['x']\n`)).toThrow(/pass-nope/);
     expect(() => parseProfileHeuristics(F, `[pass-validate]\npaths = ['x']\n`)).toThrow(

@@ -336,6 +336,173 @@ describe("the posting cut and the renderer read one posted set and one class", (
   });
 });
 
+describe("record aliases and root-cause rendering", () => {
+  const policy = {
+    max_comments: 1,
+    nits: "off" as const,
+    questions: "post" as const,
+    repeat_sites: true,
+    body: "full" as const,
+    comment_style: "full" as const,
+  };
+
+  it.each([
+    {
+      label: "a chain",
+      lead: entry({ id: "a", severity: "nit", posted_as: "nit", title: "Root" }),
+      first: "a",
+      second: "b",
+    },
+    {
+      label: "a withheld chain lead",
+      lead: entry({
+        id: "a",
+        disposition: "withheld",
+        severity: "nit",
+        posted_as: "nit",
+        title: "Root",
+      }),
+      first: "a",
+      second: "b",
+    },
+    { label: "a missing lead", lead: undefined, first: "missing", second: "b" },
+    {
+      label: "a cycle",
+      lead: entry({ id: "a", same_as: "c", severity: "nit", posted_as: "nit", title: "Root" }),
+      first: "a",
+      second: "b",
+    },
+  ])("counts $label as one strongest root", ({ lead, first, second }) => {
+    const findings = [
+      ...(lead ? [lead] : []),
+      entry({ id: "b", same_as: first, severity: "P1", posted_as: "blocker", title: "Strongest" }),
+      entry({ id: "c", same_as: second, severity: "P2", posted_as: "question", title: "Follower" }),
+    ];
+    const out = renderReviewFromRecord(record(findings));
+    expect(out.body).toContain("— 1 blocker");
+    expect(out.body).not.toContain("1 question");
+    expect(out.body.match(/^- /gm)).toHaveLength(1);
+    expect(out.body).toContain("Strongest");
+  });
+
+  it.each(["chain", "missing", "cycle"] as const)(
+    "keeps one budget slot and stable output for a %s root",
+    (shape) => {
+      const lead =
+        shape === "missing"
+          ? []
+          : [
+              entry({
+                id: "a",
+                same_as: shape === "cycle" ? "c" : undefined,
+                disposition: "withheld",
+                title: "Root",
+              }),
+            ];
+      const initial = record([
+        ...lead,
+        entry({
+          id: "b",
+          same_as: shape === "missing" ? "missing" : "a",
+          title: "First site",
+          severity: "P2",
+          posted_as: "question",
+        }),
+        entry({
+          id: "c",
+          same_as: "b",
+          title: "Second site",
+          severity: "P2",
+          posted_as: "question",
+        }),
+      ]);
+      const first = renderPostedReview(initial, { policy: { ...policy, nits: "post" } });
+      expect(first.withheld).toEqual([]);
+      expect(first.rendered.comments).toHaveLength(2);
+      const second = renderPostedReview(first.record, { policy: { ...policy, nits: "post" } });
+      expect(second.rendered).toEqual(first.rendered);
+      expect(second.withheld).toEqual([]);
+    },
+  );
+
+  it("renders and policy-cuts legacy candidates, retaining the name lens alias", () => {
+    const legacy = record([], {
+      findings: undefined,
+      candidates: [
+        entry({
+          id: "q",
+          lens: undefined,
+          name: "pass-data-safety",
+          severity: "P2",
+          posted_as: "question",
+        }),
+        entry({ id: "n", severity: "nit", posted_as: "nit" }),
+      ],
+      lenses_applied: undefined,
+    });
+    expect(renderReviewFromRecord(legacy).comments).toHaveLength(2);
+    const out = renderPostedReview(legacy, { policy });
+    expect(out.rendered.comments).toHaveLength(1);
+    expect(out.rendered.comments[0]!.body).toContain("lens pass-data-safety");
+    expect(out.rendered.body).toContain("Lenses applied: pass-data-safety");
+    expect(out.withheld.map((w) => w.id)).toEqual(["n"]);
+  });
+
+  it("counts the strongest surviving site, whether its lead or another follower posts", () => {
+    for (const leadPosted of [true, false]) {
+      const out = renderReviewFromRecord(
+        record([
+          entry({
+            id: "L",
+            disposition: leadPosted ? "posted" : "withheld",
+            posted_as: "nit",
+            severity: "nit",
+          }),
+          entry({ id: "Q", same_as: "L", posted_as: "question", severity: "P2" }),
+          entry({ id: "B", same_as: "L", posted_as: "blocker", severity: "P1" }),
+        ]),
+      );
+      expect(out.body).toContain("— 1 blocker.");
+      expect(out.body).toContain("### Blockers");
+      expect(out.body).not.toContain("### Nits");
+      expect(out.body).not.toContain("### Questions");
+    }
+  });
+
+  it("keeps one root-cause budget identity when a withheld lead is persisted", () => {
+    const rec = record([
+      entry({ id: "L", posted_as: "nit", severity: "nit", title: "The cause" }),
+      entry({
+        id: "A",
+        same_as: "L",
+        posted_as: "question",
+        severity: "P2",
+        title: "First occurrence",
+      }),
+      entry({
+        id: "B",
+        same_as: "L",
+        posted_as: "question",
+        severity: "P2",
+        title: "Second occurrence",
+      }),
+    ]);
+    const first = renderPostedReview(rec, { policy });
+    expect(first.rendered.comments).toHaveLength(2);
+    const again = renderPostedReview(first.record, { policy });
+    expect(again.rendered.comments).toEqual(first.rendered.comments);
+    expect(again.withheld).toEqual([]);
+  });
+
+  it("withheld reports use the same numeric-string anchor as inline rendering", () => {
+    const out = renderPostedReview(
+      record([entry({ posted_as: "nit", severity: "nit", line: "42" })]),
+      { policy },
+    );
+    expect(out.withheld[0]).toMatchObject({ line: 42, inline: true });
+  });
+});
+
 describe("the footer", () => {
   it("is posting.ts's reviewFooter, word for word", () => {
     expect(renderedFooter("qc-bot")).toBe(reviewFooter("qc-bot"));

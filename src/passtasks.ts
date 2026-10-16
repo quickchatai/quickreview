@@ -32,7 +32,7 @@ import {
   type RoundLessonDelivery,
 } from "./memory/delivery.js";
 import { VALIDATOR_LENS } from "./memory/selection.js";
-import { renderPriorTaskSection } from "./priortasks.js";
+import { renderPriorTaskSection, LENS_PRIOR_STATUSES } from "./priortasks.js";
 import type { PassPlanEntry, RoundOrder } from "./types.js";
 
 /** A rendered task: the file name (row-ordered, so two rows of one agent stay
@@ -206,7 +206,7 @@ export function renderPassTask(
     L.push(renderDeltaNote(delta, order.worktree));
     L.push("");
     L.push(
-      "The launch message may name prior findings assigned to you: verify each one mechanically at this head and report its status (`fixed`, `open`, `obsolete`, `unverifiable`) with evidence BEFORE looking for anything new.",
+      `The launch message may name prior findings assigned to you: verify each one mechanically at this head and report its status (${LENS_PRIOR_STATUSES.map((status) => `\`${status}\``).join(", ")}) with evidence BEFORE looking for anything new.`,
     );
     L.push("");
     // The daemon's assignment — this row's prior findings.

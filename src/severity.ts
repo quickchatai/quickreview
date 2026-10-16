@@ -370,11 +370,13 @@ export const POSTING_TAG_WORDS: readonly PostTag[] = ["blocker", "question", "ni
 
 /** Every sanctioned tag, bracketed, in one list: the three posting tags plus
  * the marker prefixes. This is THE grammar — a tag not on it is not one. */
+const MARKER_TAGS = [CHECK_THIS_TAG, ASK_HUMAN_TAG, DEFERRED_TAG] as const;
+type BareMarker<T> = T extends `[${infer Word}]` ? Word : never;
+export type SanctionedTagWord = PostTag | BareMarker<(typeof MARKER_TAGS)[number]>;
+
 export const SANCTIONED_TAGS: readonly string[] = [
   ...POSTING_TAG_WORDS.map((t) => `[${t}]`),
-  CHECK_THIS_TAG,
-  ASK_HUMAN_TAG,
-  DEFERRED_TAG,
+  ...MARKER_TAGS,
 ];
 
 /** Every sanctioned bracketed tag, regardless of case. */

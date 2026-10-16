@@ -14,12 +14,13 @@
 //      against whatever the PR ref points at today;
 //   5. the session is always killed and the scratch tree always removed.
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
+import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import { parseUnifiedDiff } from "../src/unifieddiff.js";
 import {
   ReplayRefused,
@@ -131,6 +132,13 @@ function fakeIo(
     async killSession(name) {
       killed.push(name);
     },
+    exists: () => opts.hasClone !== false,
+    planningInputs: () => ({
+      ecosystem: DJANGO_ECOSYSTEM,
+      heuristics: { paths: {}, addedLines: {} },
+      styleGuide: [],
+      ciLinters: [],
+    }),
     readFile: (p) => files.get(p) ?? null,
     writeFile: (p, b) => void files.set(p, b),
     mkdirp: () => {},
@@ -161,9 +169,8 @@ function replayer(
   });
 }
 
-// The clone existence check is real fs; point the base clone at this repo's own
-// .git so `prepareTree` gets past it in tests that are about something else.
-const REPO = resolve(process.cwd());
+// Clone availability comes from the injected I/O, never this checkout.
+const REPO = "/fake/reviewed-clone";
 
 /** The module's source with every comment removed. The bans below are about
  * what the CODE can do; the header prose has to be free to NAME the things it
@@ -298,7 +305,7 @@ describe("the safety assertions bind per case", () => {
   });
 
   it("says where to run it when there is no base clone", async () => {
-    const io = fakeIo();
+    const io = fakeIo({ hasClone: false });
     await expect(
       replayer(io, { baseClone: "/nope/clone" }).replay(set.cases[0]!),
     ).rejects.toBeInstanceOf(ReplayUnavailable);
@@ -322,6 +329,44 @@ describe("one case, end to end", () => {
   // A merge-committed PR's head is an ancestor of today's base branch, so the
   // merge-base IS the head and the diff is empty. That is not "this PR changed
   // nothing" — the session must be told the base could not be resolved.
+  it("uses the injected clone availability rather than this checkout's filesystem", async () => {
+    const io = fakeIo({ answer: { findings: [] } });
+    await replayer(io, { baseClone: "/injected/clone" }).replay(c());
+    expect(io.spawned).toHaveLength(1);
+  });
+
+  it("plans from the same profile and tree inputs as production", async () => {
+    const io = fakeIo({ answer: { findings: [] } });
+    io.planningInputs = () => ({
+      ecosystem: NONE_ECOSYSTEM,
+      heuristics: { paths: { "pass-delivery": [/./] }, addedLines: {} },
+      styleGuide: ["STYLE.md"],
+      ciLinters: [
+        {
+          tool: "ruff",
+          configs: ["ruff.toml"],
+          ci: [".github/workflows/lint.yml"],
+          covers: /\.py$/,
+        },
+      ],
+    });
+    await replayer(io, { baseClone: REPO }).replay(c());
+    const order = io.files.get(join(SCRATCH, "run-t1", `pr-${c().pr}`, "order.md"))!;
+    const inputs = io.planningInputs("tree");
+    const plan = buildPassPlan(
+      cfg,
+      parseUnifiedDiff(HANDLER_DIFF),
+      undefined,
+      inputs.ecosystem,
+      inputs.heuristics,
+      inputs.styleGuide,
+      inputs.ciLinters,
+    ).pass_plan;
+    expect(plan.some((row) => row.lens === "pass-delivery")).toBe(true);
+    for (const row of plan) expect(order).toContain(`\`${row.agent}\``);
+    expect(order).toContain("pass-delivery");
+  });
+
   it("marks the diff degraded when the recorded head is already merged into today's base", async () => {
     const io = fakeIo({ answer: { findings: [] }, mergeBase: c().headSha, diff: "" });
     await replayer(io, { baseClone: REPO }).replay(c());
@@ -458,6 +503,15 @@ describe("selfscan2: replay harness faults and isolation", () => {
     expect(io.calls.filter((k) => k.startsWith("git worktree remove")).length).toBe(2);
   });
 
+  it("reports the findings path and last parse error when malformed output never settles", async () => {
+    const io = fakeIo();
+    io.readFile = (path) => (path.endsWith(FINDINGS_FILE) ? "{broken json" : null);
+    const lines: string[] = [];
+    await replayer(io, { baseClone: REPO, log: (line) => lines.push(line) }).replay(c());
+    expect(lines.join("\n")).toMatch(/invalid.*findings\.json|findings\.json.*invalid/);
+    expect(lines.join("\n")).toMatch(/JSON|position|property/i);
+  });
+
   it("two runs never share a case's tree, order or findings file", () => {
     const a = replayer(fakeIo(), { runId: "a" });
     const b = replayer(fakeIo(), { runId: "b" });
@@ -469,6 +523,9 @@ describe("selfscan2: replay harness faults and isolation", () => {
   it("the replay's pi loads no memory extension and runs with QCR_REPLAY=1", async () => {
     const base = mkdtempSync(join(tmpdir(), "qcr-replay-io-"));
     try {
+      const conf = join(base, "sandbox", "pihome", ".openviking", "ovcli.conf");
+      mkdirSync(dirname(conf), { recursive: true });
+      writeFileSync(conf, "live credentials stay untouched");
       const argvs: string[][] = [];
       const io = await nodeReplayIo({
         cfg,
@@ -484,6 +541,7 @@ describe("selfscan2: replay harness faults and isolation", () => {
       expect(argv.some((a) => a.endsWith("inject-bridge.ts"))).toBe(true);
       expect(argv.some((a) => a.includes("openviking-pi"))).toBe(false);
       expect(argv).toContain("QCR_REPLAY=1");
+      expect(readFileSync(conf, "utf8")).toBe("live credentials stay untouched");
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

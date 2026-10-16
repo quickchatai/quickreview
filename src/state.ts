@@ -1,6 +1,8 @@
 // SQLite state store (state/state.db) + the atomic status.json snapshot.
 // Core tables: pr_state, rounds, bot_comments (registry), deliveries
 // (webhook dedupe), events (append log).
+import { findingRowFields } from "./finding-row.js";
+import { roundStageDeadlines } from "./round-stage-deadlines.js";
 import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -2535,11 +2537,7 @@ export class StateStore {
           round_id: round.round_id,
           round_no: round.round_no,
           head_sha: round.head_sha ?? "",
-          finding_key: f.key,
-          path: f.path ?? null,
-          line: f.line ?? null,
-          lens: f.lens ?? "",
-          tier: f.tier ?? null,
+          ...findingRowFields(f),
           // Unknown-lens entries are never called "unplanned": that would
           // assert a fact about a lens the record does not name. A spelling
           // that names known lenses (`pass-baseline + pass-sweep`,
@@ -2551,21 +2549,7 @@ export class StateStore {
             (lensIds.length > 0 ? lensIds.some((id) => !plan.has(id)) : !plan.has(f.lens))
               ? 1
               : 0,
-          severity: f.severity ?? null,
-          confidence: f.confidence ?? null,
-          reachability: f.reachability ?? null,
-          kind: f.kind ?? null,
-          disposition: f.disposition ?? "unknown",
-          axis: f.axis ?? null,
-          word: f.word ?? null,
-          reason: f.reason ?? null,
-          evidence: f.evidence ?? null,
-          posted_as: f.posted_as ?? null,
-          raised_in_round: f.raised_in_round ?? null,
-          thread_id: f.thread_id ?? null,
           recorded_at: at,
-          title: f.title ?? null,
-          lens_ids: JSON.stringify(lensIds),
         });
       }
     });
@@ -7168,20 +7152,17 @@ export function buildStatusSnapshot(
                 if (!command?.started_at || !roundStageBounds) return identity;
                 const started = Date.parse(command.started_at);
                 if (!Number.isFinite(started)) return identity;
-                const sweepExtra =
-                  round.sweep_owed === 1 ? (roundStageBounds.follow_up_sweep_extra_min ?? 0) : 0;
+                const deadlines = roundStageDeadlines(
+                  started,
+                  roundStageBounds,
+                  round.sweep_owed === 1,
+                );
                 return {
                   ...identity,
                   stage_deadlines: {
-                    first_pass_start: new Date(
-                      started + roundStageBounds.first_pass_max_min * 60_000,
-                    ).toISOString(),
-                    passes_complete: new Date(
-                      started + (roundStageBounds.passes_max_min + sweepExtra) * 60_000,
-                    ).toISOString(),
-                    running_hard_bound: new Date(
-                      started + (roundStageBounds.running_max_min + sweepExtra) * 60_000,
-                    ).toISOString(),
+                    first_pass_start: new Date(deadlines.first_pass_start).toISOString(),
+                    passes_complete: new Date(deadlines.passes_complete).toISOString(),
+                    running_hard_bound: new Date(deadlines.running_hard_bound).toISOString(),
                   },
                 };
               })(),

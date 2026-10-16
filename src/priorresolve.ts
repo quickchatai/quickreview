@@ -36,6 +36,7 @@
 // nothing later re-raises a fixed finding's thread. It never unresolves anything and never touches another identity's
 // thread.
 
+import { ThreadResolutionRefusal } from "./thread-resolution-refusal.js";
 import { readFileSync } from "node:fs";
 import { parsePriorRef } from "./findingsrecord.js";
 import type { GitHubAdapter } from "./github.js";
@@ -124,8 +125,18 @@ export function priorThreadsToResolve(
   const threads: PriorThread[] = [];
   const unlinked: string[] = [];
   const seen = new Set<number>();
-  for (const c of store.priorFindingChecks(pr)) {
+  const checks = store.priorFindingChecks(pr);
+  const newer = (round: number, key: string) =>
+    checks.some(
+      (c) =>
+        c.round_no === round &&
+        c.finding_key === key &&
+        c.checked_round > checkedRound &&
+        c.status !== null,
+    );
+  for (const c of checks) {
     if (c.checked_round !== checkedRound || c.status === null) continue;
+    if (newer(c.round_no, c.finding_key)) continue;
     if (!RESOLVABLE_PRIOR_STATUSES.has(c.status)) continue;
     const ref = `${c.round_no}:${c.finding_key}`;
     const postings = [
@@ -134,10 +145,11 @@ export function priorThreadsToResolve(
         .map(parsePriorRef)
         .filter((p): p is NonNullable<typeof p> => p !== null),
     ];
-    let linked = false;
     for (const p of postings) {
-      for (const id of commentIdsOf(store, pr, p.round_no, p.finding_key)) {
-        linked = true;
+      if (newer(p.round_no, p.finding_key)) continue;
+      const ids = commentIdsOf(store, pr, p.round_no, p.finding_key);
+      if (ids.length === 0) unlinked.push(`${p.round_no}:${p.finding_key}`);
+      for (const id of ids) {
         if (seen.has(id)) continue;
         seen.add(id);
         threads.push({
@@ -148,7 +160,6 @@ export function priorThreadsToResolve(
         });
       }
     }
-    if (!linked) unlinked.push(ref);
   }
   return { threads, unlinked };
 }
@@ -170,20 +181,21 @@ const RETRY_DELAYS_MS: readonly number[] = [2_000, 8_000];
 /** The adapter's own refusals (`resolveOwnReviewThread`): not this bot's
  * thread, or no thread at all. A retry cannot change either answer. */
 function isRefusal(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /^refusing\b|is not a review-thread root/.test(msg);
+  return err instanceof ThreadResolutionRefusal;
 }
 
-/** Resolve the bot's own threads of every prior finding `roundNo` verified
- * fixed or obsolete. Total: never throws; each thread's outcome is an event. */
+/** Retry a transient resolve failure; refusal or exhausted attempts reject
+ * to the caller, which records the thread's outcome. */
 async function resolveWithRetry(
   deps: PriorResolveDeps,
   pr: number,
   commentId: number,
-): ReturnType<PriorResolveDeps["adapter"]["resolveOwnReviewThread"]> {
+  stillCurrent: () => boolean,
+): Promise<Awaited<ReturnType<PriorResolveDeps["adapter"]["resolveOwnReviewThread"]>> | undefined> {
   const delays = deps.retryDelaysMs ?? RETRY_DELAYS_MS;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   for (let attempt = 0; ; attempt++) {
+    if (!stillCurrent()) return undefined;
     try {
       return await deps.adapter.resolveOwnReviewThread(pr, commentId);
     } catch (err) {
@@ -245,8 +257,18 @@ export async function resolveVerifiedPriorThreads(
       status: t.status,
     };
     try {
-      const r = await resolveWithRetry(deps, pr, t.comment_id);
-      if (r.skipped) {
+      const r = await resolveWithRetry(deps, pr, t.comment_id, () =>
+        priorThreadsToResolve(deps.store, pr, roundNo, earlier).threads.some(
+          (current) => current.comment_id === t.comment_id && current.status === t.status,
+        ),
+      );
+      if (r === undefined) {
+        tally.skipped += 1;
+        deps.store.logEvent("prior_thread_resolve_skipped", pr, {
+          ...base,
+          reason: "superseded-prior-report",
+        });
+      } else if (r.skipped) {
         tally.skipped += 1;
         deps.store.logEvent("prior_thread_resolve_skipped", pr, { ...base, reason: r.skipped });
       } else if (r.result && r.result.executed === false) {
