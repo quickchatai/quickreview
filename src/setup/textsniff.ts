@@ -86,3 +86,10 @@ export function escapeControls(text: string): string {
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
 }
+
+/** Source line bounds: an empty file has none; a terminal newline adds no line. */
+export function textLineCount(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) count++;
+  return text !== "" && !text.endsWith("\n") ? count + 1 : count;
+}

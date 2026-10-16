@@ -26,6 +26,7 @@
 // never touched by a propose or an adjust — only `save` replaces it. An
 // unreadable file is reported and refuses every write: it may hold the
 // operator's saved cut, and silently starting fresh over it would lose that.
+import { isSampleable } from "./survey.js";
 import type { MemoryStore } from "../memory/store.js";
 import { isSweepSkipped } from "../heuristics.js";
 import {
@@ -227,8 +228,8 @@ export interface SetupPorts {
    * memory write then answers a refusal naming why. */
   memory: MemoryStore | null;
   cases: CaseRunner;
-  tracker: TrackerSink;
-  github: GitHubReader;
+  tracker?: TrackerSink;
+  github?: GitHubReader;
   log?: (line: string) => void;
 }
 
@@ -277,19 +278,19 @@ export interface UnitSummary {
   kind: string;
   roots: string[];
   note: string;
-  files: number;
+  files: number | null;
   /** Files a pass would actually read (lockfiles, binaries, prose skipped). */
-  reviewable: number;
-  lines: number;
+  reviewable: number | null;
+  lines: number | null;
   /** One per case; a unit that fits is one case under its own name. */
-  cases: Array<{ id: string; files: number; lines: number; over_budget: boolean }>;
+  cases: Array<{ id: string; files: number; lines: number; over_budget: boolean }> | null;
 }
 
 export interface CutView {
   units: UnitSummary[];
   ignored: string[];
-  ignored_files: number;
-  unassigned: string[];
+  ignored_files: number | null;
+  unassigned: string[] | null;
   /** Structural refusals — should never appear on a stored cut; shown if a
    * hand-edited file carries one. */
   errors: string[];
@@ -456,10 +457,18 @@ export class SetupEngine {
     // A cut with structural errors (a hand-edited file) still gets a
     // best-effort view, with the errors beside it.
     const a = assign(cut, files);
+    const sizeErrors: string[] = [];
     const units: UnitSummary[] = cut.units.map((u) => {
       const owned = a.byUnit.get(u.name) ?? [];
       const reviewable = owned.filter((f) => !isSweepSkipped(f));
-      const cases = splitUnit(u.name, reviewable, lines, this.budget);
+      let cases: CasePlan[] = [];
+      let unavailable = false;
+      try {
+        cases = splitUnit(u.name, reviewable, lines, this.budget);
+      } catch (err) {
+        unavailable = true;
+        sizeErrors.push(String(err));
+      }
       return {
         name: u.name,
         kind: u.kind,
@@ -467,13 +476,15 @@ export class SetupEngine {
         note: u.note,
         files: owned.length,
         reviewable: reviewable.length,
-        lines: cases.reduce((n, c) => n + c.lines, 0),
-        cases: cases.map((c) => ({
-          id: c.id,
-          files: c.files.length,
-          lines: c.lines,
-          over_budget: c.over_budget,
-        })),
+        lines: unavailable ? null : cases.reduce((n, c) => n + c.lines, 0),
+        cases: unavailable
+          ? null
+          : cases.map((c) => ({
+              id: c.id,
+              files: c.files.length,
+              lines: c.lines,
+              over_budget: c.over_budget,
+            })),
       };
     });
     return {
@@ -481,7 +492,7 @@ export class SetupEngine {
       ignored: cut.ignored,
       ignored_files: a.ignored.length,
       unassigned: a.unassigned,
-      errors,
+      errors: [...errors, ...sizeErrors],
       blocking_save,
     };
   }
@@ -491,7 +502,12 @@ export class SetupEngine {
     return (p) => {
       let n = cache.get(p);
       if (n === undefined) {
-        n = this.ports.repo.lines(p) ?? 0;
+        const measured = this.ports.repo.lines(p);
+        if (measured === null)
+          throw new Error(
+            `line count UNKNOWN for ${p} — unreadable, binary or too large; no case or price can be inferred`,
+          );
+        n = measured;
         cache.set(p, n);
       }
       return n;
@@ -511,10 +527,16 @@ export class SetupEngine {
     const see = (cut: UnitCut): CutView =>
       files === null
         ? {
-            units: [],
+            units: cut.units.map((u) => ({
+              ...u,
+              files: null,
+              reviewable: null,
+              lines: null,
+              cases: null,
+            })),
             ignored: cut.ignored,
-            ignored_files: 0,
-            unassigned: [],
+            ignored_files: null,
+            unassigned: null,
             errors: [],
             blocking_save: [],
           }
@@ -666,9 +688,13 @@ export class SetupEngine {
     const a = assign(file.saved, files);
     const lines = this.lineCounter();
     const cases: CasePlan[] = [];
-    for (const u of file.saved.units) {
-      const owned = (a.byUnit.get(u.name) ?? []).filter((f) => !isSweepSkipped(f) && include(f));
-      if (owned.length > 0) cases.push(...splitUnit(u.name, owned, lines, this.budget));
+    try {
+      for (const u of file.saved.units) {
+        const owned = (a.byUnit.get(u.name) ?? []).filter((f) => !isSweepSkipped(f) && include(f));
+        if (owned.length > 0) cases.push(...splitUnit(u.name, owned, lines, this.budget));
+      }
+    } catch (err) {
+      return { ok: false, errors: [String(err)] };
     }
     return { ok: true, cases };
   }
@@ -750,6 +776,18 @@ export class SetupEngine {
         ],
       };
     const facts = repoFacts(files, (p) => this.ports.repo.read(p));
+    const lines = this.lineCounter();
+    const assigned = assign(file.saved, files);
+    const candidates = new Set([
+      ...facts.agent_files,
+      ...facts.guides,
+      ...[...assigned.byUnit.values()].flat().filter(isSampleable),
+    ]);
+    try {
+      for (const path of candidates) if (!assigned.ignored.includes(path)) lines(path);
+    } catch (err) {
+      return { ok: false, errors: [String(err)] };
+    }
     let changes: Record<string, number> | null = null;
     try {
       changes = this.ports.repo.changeCounts?.() ?? null;
@@ -764,7 +802,7 @@ export class SetupEngine {
         files,
         agentFiles: facts.agent_files,
         guides: facts.guides,
-        linesOf: this.lineCounter(),
+        linesOf: lines,
         changes,
         budget: this.budget,
       },
@@ -842,7 +880,7 @@ export class SetupEngine {
             files: u.files,
             reviewable: u.reviewable,
             lines: u.lines,
-            cases: u.cases.length,
+            cases: u.cases?.length ?? null,
           })),
           ignored: cut.ignored,
         },

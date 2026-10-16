@@ -79,7 +79,7 @@ import {
   type SectionDiff,
 } from "../src/setup/portrait.js";
 import { resolveMaxConcurrency } from "./subagents.js";
-import type { RepoFacts } from "../src/setup/facts.js";
+import { ciText, displayRoot, evidenceText, type RepoFacts } from "../src/setup/facts.js";
 import { ADJUST_OPS } from "../src/setup/unitcut.js";
 import {
   CONCERNS,
@@ -125,7 +125,7 @@ function refused(what: string, r: Refusal): PiToolResult {
 
 export function renderFacts(facts: RepoFacts, head: string | null): string {
   const ev = (xs: Array<{ name: string; evidence: string }>): string =>
-    xs.length === 0 ? "  (none found)" : xs.map((x) => `  - ${x.name} — ${x.evidence}`).join("\n");
+    xs.length === 0 ? "  (none found)" : xs.map((x) => `  - ${evidenceText(x)}`).join("\n");
   const list = (xs: readonly string[]): string =>
     xs.length === 0 ? "  (none found)" : xs.map((x) => `  - ${x}`).join("\n");
   return [
@@ -133,16 +133,13 @@ export function renderFacts(facts: RepoFacts, head: string | null): string {
     `Languages:\n${facts.languages.length === 0 ? "  (none recognised)" : facts.languages.map((l) => `  - ${l.language}: ${l.files} files`).join("\n")}`,
     `Manifests:\n${ev(facts.manifests)}`,
     `Frameworks:\n${ev(facts.frameworks)}`,
-    `CI:\n${facts.ci.length === 0 ? "  (none found)" : facts.ci.map((c) => `  - ${c.system} — ${c.path}${c.name ? ` ("${c.name}")` : ""}`).join("\n")}`,
+    `CI:\n${facts.ci.length === 0 ? "  (none found)" : facts.ci.map((c) => `  - ${ciText(c)}`).join("\n")}`,
     `Linters / formatters:\n${ev(facts.linters)}`,
     `Design docs:\n${list(facts.guides)}`,
     `Style guides:\n${list(facts.style_guides)}`,
     `Agent-directive files:\n${list(facts.agent_files)}`,
     `Unit candidates (a first guess — propose your own cut from these):\n${facts.unit_candidates
-      .map(
-        (u) =>
-          `  - ${u.name} [${u.kind}] ${u.roots.map((r) => r || "(repo root)").join(", ")} — ${u.reason}`,
-      )
+      .map((u) => `  - ${u.name} [${u.kind}] ${u.roots.map(displayRoot).join(", ")} — ${u.reason}`)
       .join("\n")}`,
   ].join("\n\n");
 }
@@ -150,17 +147,19 @@ export function renderFacts(facts: RepoFacts, head: string | null): string {
 export function renderCut(title: string, v: CutView): string {
   const rows = v.units.map((u) => {
     const split =
-      u.cases.length > 1
-        ? ` — split into ${u.cases.length} cases (${u.cases.map((c) => `${c.id}: ${c.files}f/${c.lines}l`).join(", ")})`
-        : "";
-    const over = u.cases.some((c) => c.over_budget)
+      u.cases === null
+        ? " — case coverage UNKNOWN"
+        : u.cases.length > 1
+          ? ` — split into ${u.cases.length} cases (${u.cases.map((c) => `${c.id}: ${c.files}f/${c.lines}l`).join(", ")})`
+          : "";
+    const over = u.cases?.some((c) => c.over_budget)
       ? " [a file alone exceeds one case — a scan reads it in line ranges]"
       : "";
-    return `  - ${u.name} [${u.kind}] ${u.roots.map((r) => r || "(repo root)").join(", ")}: ${u.files} files, ${u.reviewable} reviewable, ${u.lines} lines${split}${over}${u.note ? ` — ${u.note}` : ""}`;
+    return `  - ${u.name} [${u.kind}] ${u.roots.map(displayRoot).join(", ")}: ${u.files ?? "UNKNOWN"} files, ${u.reviewable ?? "UNKNOWN"} reviewable, ${u.lines ?? "UNKNOWN"} lines${split}${over}${u.note ? ` — ${u.note}` : ""}`;
   });
   const lines = [`${title}:`, ...rows];
   if (v.ignored.length > 0)
-    lines.push(`  ignored: ${v.ignored.join(", ")} (${v.ignored_files} files)`);
+    lines.push(`  ignored: ${v.ignored.join(", ")} (${v.ignored_files ?? "UNKNOWN"} files)`);
   for (const e of v.errors) lines.push(`  ✗ ${e}`);
   for (const b of v.blocking_save) lines.push(`  ! ${b}`);
   return lines.join("\n");
@@ -370,8 +369,8 @@ export function renderPortraitFacts(v: FactsVersion): string {
   );
   const units = f.units.units.map(
     (u) =>
-      `${u.name} [${u.kind}] ${u.roots.map((r) => r || "(repo root)").join(", ")}: ${u.files} files, ${u.lines} lines` +
-      `${u.cases > 1 ? `, ${u.cases} cases` : ""}${u.note ? ` — ${u.note}` : ""}`,
+      `${u.name} [${u.kind}] ${u.roots.map(displayRoot).join(", ")}: ${u.files ?? "UNKNOWN"} files, ${u.lines ?? "UNKNOWN"} lines` +
+      `${u.cases === null ? ", case coverage UNKNOWN" : u.cases > 1 ? `, ${u.cases} cases` : ""}${u.note ? ` — ${u.note}` : ""}`,
   );
   const cut =
     f.units.source === "saved"

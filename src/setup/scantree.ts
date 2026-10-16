@@ -33,7 +33,7 @@ import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { inRoot, MAX_READ_BYTES } from "./adapters.js";
 import type { ScanSource, ScanTree } from "./scanrun.js";
 import type { UnreadableReason } from "./scan.js";
-import { isBinaryContent } from "./textsniff.js";
+import { isBinaryContent, textLineCount } from "./textsniff.js";
 import type { TreeFile } from "./scan.js";
 
 /** Where materialised trees live, under the state home. */
@@ -251,12 +251,7 @@ export function treeAt(sha: string, root: string, files: TreeFile[]): ScanTree {
     lines: (rel) => {
       if (cache.has(rel)) return cache.get(rel)!;
       const text = read(rel);
-      let n: number | null = null;
-      if (text !== null) {
-        n = 0;
-        for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
-        if (text !== "" && !text.endsWith("\n")) n++;
-      }
+      const n = text === null ? null : textLineCount(text);
       cache.set(rel, n);
       return n;
     },

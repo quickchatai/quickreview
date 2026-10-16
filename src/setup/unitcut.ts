@@ -17,7 +17,7 @@
 // Pure: the cut is a value, validation and the adjust ops are functions over
 // it and a file listing. The engine persists it (src/setup/engine.ts).
 import { SCAN_DEFAULTS } from "../config.js";
-import { UNIT_KINDS, UNIT_NAME_MAX, UNIT_NAME_RE, type UnitKind } from "./facts.js";
+import { displayRoot, UNIT_KINDS, UNIT_NAME_MAX, UNIT_NAME_RE, type UnitKind } from "./facts.js";
 
 export interface Unit {
   name: string;
@@ -126,7 +126,7 @@ export function checkCut(cut: UnitCut, files: readonly string[]): CutProblems {
     for (const r of u.roots) {
       const owner = roots.get(r);
       if (owner !== undefined)
-        errors.push(`root "${r || "(repo root)"}" is claimed by both "${owner}" and "${u.name}"`);
+        errors.push(`root "${displayRoot(r)}" is claimed by both "${owner}" and "${u.name}"`);
       roots.set(r, u.name);
     }
   }

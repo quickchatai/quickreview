@@ -100,6 +100,7 @@ import {
   FINDINGS_VERSION,
   VALIDITY_ORDER,
   dismissedLookalike,
+  goneDismissal,
   lookalikeRank,
   parseFindingsFile,
   validityOf,
@@ -487,7 +488,7 @@ function aggregateSeverity(own: ScanSeverity, merged: readonly MergedSighting[])
 /** Fold reported near-duplicate `r` into stored `into`. It is a sighting at
  * the content `r` read, so the content hash moves with it. */
 function absorb(into: ScanFinding, r: ReportedFinding): ScanFinding {
-  const lenses = [...new Set([...(into.lenses ?? [into.lens]), r.lens])];
+  const lenses = [...new Set([...lensesOf(into), r.lens])];
   const merged = [
     ...(into.merged ?? []).filter((m) => m.fingerprint !== r.fingerprint),
     sightingOf(r),
@@ -600,11 +601,7 @@ function returnedState(f: ScanFinding): FindingState {
   return "new";
 }
 
-/** A dismissed finding a re-scan settled as no longer reported
- * (`settleUnreported`): out of play, as a fixed one is, until a scan reports
- * it again. */
-export const goneDismissal = (f: ScanFinding): boolean =>
-  f.state === "dismissed" && f.unreported != null;
+export { goneDismissal } from "./scanreport.js";
 
 /** Is `f` already settled — fixed, or a gone dismissal? A settled finding is
  * out of play until a scan reports it again. */
@@ -1107,9 +1104,7 @@ export class FindingsStore {
         first_seen: o.first_seen,
         seen: o.seen + n.seen,
         aliases: [...new Set([...(o.aliases ?? []), old, ...(n.aliases ?? [])])],
-        ...(o.lenses || n.lenses
-          ? { lenses: [...new Set([...(o.lenses ?? [o.lens]), ...(n.lenses ?? [n.lens])])] }
-          : {}),
+        ...(o.lenses || n.lenses ? { lenses: [...new Set([...lensesOf(o), ...lensesOf(n)])] } : {}),
         ...(merged ? { merged } : {}),
         dismissal: o.dismissal ?? n.dismissal ?? null,
         ticket: triaged.ticket ?? null,

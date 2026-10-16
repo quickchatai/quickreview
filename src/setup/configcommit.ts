@@ -31,7 +31,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { PROFILES_DIR } from "../install.js";
 
 /** Where requests and results live, relative to the state home. */
@@ -133,12 +133,16 @@ function parseRequest(text: string): CommitRequest | string {
 }
 
 /** Is `configHome` the top of its own git work tree? */
-function ownRepo(configHome: string, git: GitRun): { ok: true } | { ok: false; detail: string } {
+function ownRepo(
+  configHome: string,
+  git: GitRun,
+): { ok: true } | { ok: false; detail: string; failed?: boolean } {
   const top = git(["rev-parse", "--show-toplevel"], configHome);
   if (top.code !== 0)
     return {
       ok: false,
-      detail: `${configHome} is not a git repository — the profile is written, not committed`,
+      detail: `git repository probe: ${(top.stderr || top.stdout).trim() || `exit ${top.code}`}`,
+      failed: !/not a git repository/i.test(top.stderr || top.stdout),
     };
   let same = false;
   try {
@@ -160,7 +164,7 @@ function commitOne(
   git: GitRun,
 ): Omit<CommitResult, "id" | "at"> {
   const repo = ownRepo(configHome, git);
-  if (!repo.ok) return { state: "not-a-repo", detail: repo.detail };
+  if (!repo.ok) return { state: repo.failed ? "failed" : "not-a-repo", detail: repo.detail };
   const add = git(["add", "-A", "--", ...req.paths], configHome);
   if (add.code !== 0)
     return { state: "failed", detail: `git add: ${(add.stderr || add.stdout).trim()}` };
@@ -265,8 +269,9 @@ function processLocked(
   for (const name of names.filter((n) => n.endsWith(".request.json")).sort()) {
     const id = name.slice(0, -".request.json".length);
     // Re-read, not the listing: a result may have landed since it was taken.
-    if (names.includes(`${id}.result.json`) || existsSync(join(dir, `${id}.result.json`))) {
-      if (!retryFailed || answeredState(join(dir, `${id}.result.json`)) !== "failed") continue;
+    const priorResult = join(stateHome, resultFile(id));
+    if (names.includes(basename(priorResult)) || existsSync(priorResult)) {
+      if (!retryFailed || answeredState(priorResult) !== "failed") continue;
     }
     let text: string;
     try {

@@ -81,6 +81,24 @@ describe("repoFacts", () => {
     expect(names.Vue).toBeUndefined();
   });
 
+  it("uses Python dependency declarations rather than quoted project metadata", () => {
+    for (const [name, text] of Object.entries({
+      "pyproject.toml":
+        '[project]\nname = "flask"\ndescription = "django"\n[tool.poetry.dependencies]\nfastapi = "*"\n',
+      Pipfile: '[metadata]\nname = "flask"\n[packages]\nfastapi = "*"\n',
+      "setup.cfg": "[metadata]\nname = flask\n[options]\ninstall_requires =\n  fastapi>=1\n",
+      "setup.py":
+        'setup(name="flask", description="django", install_requires=["fastapi"], extras_require={"django": ["fastapi"]})',
+    })) {
+      expect(repoFacts([name], () => text).frameworks.map((f) => f.name)).toEqual(["FastAPI"]);
+    }
+  });
+
+  it("generated names admit paths with consecutive dots", () => {
+    const f = repoFacts(["api..legacy/main.ts"], () => "");
+    expect(f.unit_candidates.every((u) => !u.name.includes(".."))).toBe(true);
+  });
+
   it("reads an INLINE dependency array as well as one per line — still exact names", () => {
     const text: Record<string, string> = {
       "pyproject.toml":

@@ -14,6 +14,7 @@
 // it, so the operator can check the facts and the companion can cite them.
 // Nothing is inferred from absence — a repo with no CI config has `ci: []`,
 // which says "no config file found", not "no CI".
+import { parse as parseToml } from "smol-toml";
 import { DEFAULT_DIRECTIVE_VOCABULARY } from "../severity.js";
 import { styleGuideRefsIn } from "../styleguide.js";
 import { escapeControls } from "./textsniff.js";
@@ -78,6 +79,12 @@ export interface RepoFacts {
   /** The deterministic first guess at the unit cut — the companion's input. */
   unit_candidates: UnitCandidate[];
 }
+
+/** Stable item text shared by facts and portrait renderers. */
+export const evidenceText = (item: Evidence): string => `${item.name} — ${item.evidence}`;
+export const ciText = (item: CiFact): string =>
+  `${item.system} — ${item.path}${item.name ? ` ("${item.name}")` : ""}`;
+export const displayRoot = (root: string): string => root || "(repo root)";
 
 // ---- helpers -----------------------------------------------------------------
 
@@ -183,11 +190,14 @@ const MANIFESTS: Record<string, string> = {
   "Package.swift": "swiftpm",
 };
 
+const isRequirementsName = (name: string): boolean =>
+  /^requirements([-_.][\w.-]*)?\.txt$/.test(name);
+
 function manifests(files: readonly string[]): Evidence[] {
   const out: Evidence[] = [];
   for (const f of files) {
     const b = base(f);
-    const eco = MANIFESTS[b] ?? (/^requirements[-_.][\w.-]*\.txt$/.test(b) ? "python (pip)" : null);
+    const eco = MANIFESTS[b] ?? (isRequirementsName(b) ? "python (pip)" : null);
     if (eco) out.push({ name: eco, evidence: f });
   }
   return out;
@@ -231,11 +241,13 @@ const JS_FRAMEWORKS: Array<[string, string]> = [
   ["React Native", "react-native"],
 ];
 
+const SPRING_SIGNATURE = /spring-boot|springframework/;
+
 const OTHER_FRAMEWORKS: Array<[string, string, RegExp]> = [
   ["Rails", "Gemfile", /^\s*gem\s+["']rails["']/m],
-  ["Spring", "pom.xml", /spring-boot|springframework/],
-  ["Spring", "build.gradle", /spring-boot|springframework/],
-  ["Spring", "build.gradle.kts", /spring-boot|springframework/],
+  ["Spring", "pom.xml", SPRING_SIGNATURE],
+  ["Spring", "build.gradle", SPRING_SIGNATURE],
+  ["Spring", "build.gradle.kts", SPRING_SIGNATURE],
   ["Laravel", "composer.json", /"laravel\/framework"/],
   ["Phoenix", "mix.exs", /:phoenix\b/],
   ["Gin", "go.mod", /github\.com\/gin-gonic\/gin/],
@@ -258,6 +270,78 @@ function packageDeps(text: string): Set<string> {
   }
 }
 
+/** Python dependency declarations only; project metadata is never evidence. */
+function pythonDependencies(name: string, text: string): string {
+  if (isRequirementsName(name)) return text;
+  if (name === "setup.py") {
+    const declarations = [
+      ...text.matchAll(
+        /\b(install_requires|tests_require|extras_require)\s*=\s*(\[[\s\S]*?\]|\{[\s\S]*?\})/g,
+      ),
+    ];
+    return declarations
+      .flatMap((m) => {
+        const lists =
+          m[1] === "extras_require"
+            ? [...m[2]!.matchAll(/:\s*(\[[\s\S]*?\])/g)].map((v) => v[1]!)
+            : [m[2]!];
+        return lists.flatMap((list) => [...list.matchAll(/["']([^"'\n]+)["']/g)].map((v) => v[1]!));
+      })
+      .join("\n");
+  }
+  if (name === "setup.cfg") {
+    let section = "";
+    let collecting = false;
+    const out: string[] = [];
+    for (const line of text.split("\n")) {
+      const header = /^\s*\[([^\]]+)\]/.exec(line);
+      if (header) {
+        section = header[1]!;
+        collecting = false;
+        continue;
+      }
+      const key = /^([\w.-]+)\s*=\s*(.*)$/.exec(line);
+      if (key) {
+        collecting =
+          section === "options.extras_require" ||
+          (section === "options" && ["install_requires", "tests_require"].includes(key[1]!));
+        if (collecting) out.push(key[2]!);
+      } else if (collecting && /^\s+/.test(line)) out.push(line.trim());
+    }
+    return out.join("\n");
+  }
+  try {
+    const table = (v: unknown): Record<string, unknown> =>
+      v !== null && typeof v === "object" && !Array.isArray(v)
+        ? (v as Record<string, unknown>)
+        : {};
+    const doc = table(parseToml(text));
+    const out: string[] = [];
+    const strings = (v: unknown): void => {
+      if (Array.isArray(v)) for (const item of v) if (typeof item === "string") out.push(item);
+    };
+    const tableNames = (v: unknown): void => {
+      out.push(...Object.keys(table(v)));
+    };
+    if (name === "Pipfile") {
+      tableNames(doc.packages);
+      tableNames(doc["dev-packages"]);
+    } else {
+      const project = table(doc.project);
+      strings(project.dependencies);
+      for (const values of Object.values(table(project["optional-dependencies"]))) strings(values);
+      for (const values of Object.values(table(doc["dependency-groups"]))) strings(values);
+      const poetry = table(table(doc.tool).poetry);
+      tableNames(poetry.dependencies);
+      tableNames(poetry["dev-dependencies"]);
+      for (const group of Object.values(table(poetry.group))) tableNames(table(group).dependencies);
+    }
+    return out.join("\n");
+  } catch {
+    return "";
+  }
+}
+
 function frameworks(files: readonly string[], read: RepoRead): Evidence[] {
   const seen = new Map<string, string>();
   const note = (name: string, evidence: string): void => {
@@ -273,16 +357,11 @@ function frameworks(files: readonly string[], read: RepoRead): Evidence[] {
       b === "Pipfile" ||
       b === "setup.py" ||
       b === "setup.cfg" ||
-      /^requirements([-_.][\w.-]*)?\.txt$/.test(b)
+      isRequirementsName(b)
     ) {
       const text = read(f);
       if (text === null) continue;
-      // pyproject/setup.py list deps inside quoted arrays — one per line, or
-      // inline (`dependencies = ["fastapi", "django>=4"]`); strip a leading
-      // quote and put every quoted string on a line of its own, so the
-      // line-anchored patterns see `django>=4` either way.
-      const quoted = [...text.matchAll(/["']([^"'\n]+)["']/g)].map((m) => m[1]!);
-      const lines = [text.replace(/^\s*["']/gm, ""), ...quoted].join("\n");
+      const lines = pythonDependencies(b, text);
       for (const [name, re] of PY_FRAMEWORKS) if (re.test(lines)) note(name, f);
     } else if (b === "package.json") {
       const text = read(f);
@@ -445,7 +524,10 @@ export const UNIT_NAME_MAX = 64;
 export const UNIT_NAME_RE = new RegExp(`^[A-Za-z0-9][A-Za-z0-9._-]{0,${UNIT_NAME_MAX - 1}}$`);
 
 function slug(path: string): string {
-  const s = path.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+|-+$/g, "");
+  const s = path
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/\.{2,}/g, "-")
+    .replace(/^[-._]+|-+$/g, "");
   return (s || "root").slice(0, UNIT_NAME_MAX);
 }
 

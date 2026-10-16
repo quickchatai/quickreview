@@ -812,7 +812,15 @@ describe("the pass-survey agent and the case runner", () => {
 describe("checkoutReader", () => {
   it("lists what git tracks — ignored build output is not the repo", () => {
     const repo = join(dir, "git");
-    tree(repo, { "a.py": "x\ny\n", ".gitignore": "out/\n", "out/gen.js": "x\n", "sub/b.py": "z" });
+    tree(repo, {
+      "a.py": "x\ny\n",
+      ".gitignore": "out/\n",
+      "out/gen.js": "x\n",
+      "sub/b.py": "z",
+      "café.ts": "x",
+      " trail .ts ": "x",
+      "two\nlines.ts": "x",
+    });
     const git = (...args: string[]) =>
       execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
     git("init", "-q");
@@ -829,10 +837,22 @@ describe("checkoutReader", () => {
       "init",
     );
     const r = checkoutReader(repo);
-    expect(r.listFiles()?.sort()).toEqual([".gitignore", "a.py", "sub/b.py"]);
+    expect(r.listFiles()?.sort()).toEqual([
+      " trail .ts ",
+      ".gitignore",
+      "a.py",
+      "café.ts",
+      "sub/b.py",
+      "two\nlines.ts",
+    ]);
     expect(r.head()).toMatch(/^[0-9a-f]{40}$/);
     expect(r.lines("a.py")).toBe(2);
     expect(r.lines("sub/b.py")).toBe(1);
+    expect(r.changeCounts?.()).toMatchObject({
+      "café.ts": 1,
+      " trail .ts ": 1,
+      "two\nlines.ts": 1,
+    });
     // The survey's most-changed count: commits per file over recent history.
     writeFileSync(join(repo, "a.py"), "x\ny\nz\n");
     git(
@@ -846,7 +866,14 @@ describe("checkoutReader", () => {
       "-qam",
       "two",
     );
-    expect(r.changeCounts?.()).toEqual({ ".gitignore": 1, "a.py": 2, "sub/b.py": 1 });
+    expect(r.changeCounts?.()).toEqual({
+      ".gitignore": 1,
+      "a.py": 2,
+      "sub/b.py": 1,
+      "café.ts": 1,
+      " trail .ts ": 1,
+      "two\nlines.ts": 1,
+    });
   });
 
   it("falls back to a walk without git, and never reads outside the root or a binary", () => {
@@ -901,6 +928,18 @@ describe("checkoutReader's edges", () => {
     expect(r.read("leak.ts")).toBeNull();
     expect(r.read("elsewhere/secret.ts")).toBeNull();
     expect(r.read("alias.ts")).toBe("in\n");
+  });
+
+  it("a child whose metadata is inaccessible makes the fallback listing UNKNOWN", () => {
+    if (process.getuid?.() === 0) return;
+    const repo = join(dir, "metadata-denied");
+    tree(repo, { "a.ts": "a\n", "sealed/b.ts": "b\n" });
+    chmodSync(join(repo, "sealed"), 0o444);
+    try {
+      expect(checkoutReader(repo).listFiles()).toBeNull();
+    } finally {
+      chmodSync(join(repo, "sealed"), 0o755);
+    }
   });
 
   it("a directory it cannot list makes the listing unknown, never a shorter one", () => {
