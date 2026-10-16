@@ -20,6 +20,7 @@ import type { App } from "./app.js";
 import type { IssueSink } from "./issuesink.js";
 import type { ForwardStatus } from "./memforward.js";
 import {
+  MEMORY_USERS,
   defectEntries,
   splitNsId,
   storeHealth,
@@ -245,7 +246,7 @@ export class LearningStore {
       const e = this.entries.find((x) => {
         const { user, id } = splitNsId(x.id);
         return (
-          (user === "" || user === "reviewer") &&
+          (user === "" || user === MEMORY_USERS[0]) &&
           proposalKey({ id, ts: x.ts, block: x.block }) === proposalKey(p)
         );
       });

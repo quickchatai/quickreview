@@ -18,11 +18,11 @@
 // Acts only on fresh data (the caller passes the poller's verdict): a stale
 // snapshot may describe an outage that already ended. Never throws — a broken
 // tracker must not take down the TUI poll loop.
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CurationStatus } from "../learner/status.js";
 import { credentialPhrase, fmtDuration, type MemoryStatus } from "../memory/health.js";
-import { claimNextId, type TrackerPaths } from "./autofile.js";
+import { claimNextId, filedKeys, type TrackerPaths } from "./autofile.js";
 
 export const MEMORY_INCIDENT_LINE = "Memory-incident:";
 
@@ -34,27 +34,6 @@ export function incidentKey(m: MemoryStatus): string | undefined {
 /** Incident keys already filed in the effort's tickets. */
 export function filedIncidentKeys(paths: TrackerPaths): Set<string> {
   return filedKeys(paths, MEMORY_INCIDENT_LINE);
-}
-
-/** The values of a dedup line (`<marker> <key>`, the spelling the ticket
- * bodies write) across the effort's tickets. A ticket that cannot be read
- * throws: a scan that could not see every ticket cannot prove an incident
- * unfiled, and the caller's retry path handles the failure. */
-function filedKeys(paths: TrackerPaths, marker: string): Set<string> {
-  const line = new RegExp(`^${escapeRegExp(marker)} (.+)$`, "gm");
-  const keys = new Set<string>();
-  const dir = join(paths.root, "efforts", paths.effort, "tickets");
-  if (!existsSync(dir)) return keys;
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith(".md")) continue;
-    const body = readFileSync(join(dir, f), "utf8");
-    for (const m of body.matchAll(line)) keys.add(m[1]!.trim());
-  }
-  return keys;
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** One incident, as the shared filing protocol needs it. */

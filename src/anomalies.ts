@@ -276,6 +276,7 @@ export class AnomalyWakePolicy {
   /** Retries armed and not yet run. */
   private readonly retries = new Set<unknown>();
   private stopped = false;
+  private readonly chains = new Map<string, { retry?: unknown }>();
 
   constructor(private readonly deps: AnomalyWakePolicyDeps) {
     this.now = deps.now ?? (() => new Date());
@@ -293,7 +294,7 @@ export class AnomalyWakePolicy {
   }
 
   onAnomaly(signal: AnomalySignal): void {
-    if (anomalySeverity(signal.kind) !== "wake") return;
+    if (this.stopped || anomalySeverity(signal.kind) !== "wake") return;
     const key = `${signal.kind}#${signal.pr ?? "-"}${DETAIL_KEYED_KINDS.has(signal.kind) ? `#${signal.detail}` : ""}`;
     const nowMs = this.now().getTime();
     const prev = this.lastInject.get(key);
@@ -307,7 +308,14 @@ export class AnomalyWakePolicy {
         `ANOMALY (${signal.kind})${signal.pr !== null ? ` — PR #${signal.pr}` : ""}${signal.round_no !== null ? ` round ${signal.round_no}` : ""}`,
         signal.detail,
       ].join("\n");
-    this.deliver(key, message, 0);
+    const prior = this.chains.get(key);
+    if (prior?.retry !== undefined) {
+      this.clearTimer(prior.retry);
+      this.retries.delete(prior.retry);
+    }
+    const chain = {};
+    this.chains.set(key, chain);
+    this.deliver(key, message, 0, chain);
   }
 
   /** Disarm every pending retry (daemon shutdown). */
@@ -315,6 +323,7 @@ export class AnomalyWakePolicy {
     this.stopped = true;
     for (const h of this.retries) this.clearTimer(h);
     this.retries.clear();
+    this.chains.clear();
   }
 
   /** Inject one wake, holding the dedup window from now. A failed inject —
@@ -322,7 +331,8 @@ export class AnomalyWakePolicy {
    * releases the window (the next identical signal injects again) and is
    * retried after `backoff[attempt]` unless a later identical signal has
    * taken the key meanwhile. */
-  private deliver(key: string, message: string, attempt: number): void {
+  private deliver(key: string, message: string, attempt: number, chain: { retry?: unknown }): void {
+    if (this.stopped || this.chains.get(key) !== chain) return;
     const stampMs = this.now().getTime();
     this.lastInject.set(key, stampMs);
     let sent: Promise<void>;
@@ -331,24 +341,33 @@ export class AnomalyWakePolicy {
     } catch (err) {
       sent = Promise.reject(err instanceof Error ? err : new Error(String(err)));
     }
-    sent.catch((err: unknown) => {
-      if (this.lastInject.get(key) === stampMs) this.lastInject.delete(key);
-      const wait = this.backoff[attempt];
-      if (this.stopped || wait === undefined) {
-        this.log(`anomaly wake inject failed (${key}) — row is written, wake lost`, err);
-        return;
-      }
-      this.log(
-        `anomaly wake inject failed (${key}) — retried in ${Math.round(wait / 1000)} s`,
-        err,
-      );
-      const handle = this.setTimer(() => {
-        this.retries.delete(handle);
-        if (this.stopped || this.lastInject.has(key)) return;
-        this.deliver(key, message, attempt + 1);
-      }, wait);
-      this.retries.add(handle);
-    });
+    sent.then(
+      () => {
+        if (this.chains.get(key) === chain) this.chains.delete(key);
+      },
+      (err: unknown) => {
+        if (this.chains.get(key) !== chain) return;
+        if (this.lastInject.get(key) === stampMs) this.lastInject.delete(key);
+        const wait = this.backoff[attempt];
+        if (this.stopped || wait === undefined) {
+          this.chains.delete(key);
+          this.log(`anomaly wake inject failed (${key}) — row is written, wake lost`, err);
+          return;
+        }
+        this.log(
+          `anomaly wake inject failed (${key}) — retried in ${Math.round(wait / 1000)} s`,
+          err,
+        );
+        const handle = this.setTimer(() => {
+          this.retries.delete(handle);
+          delete chain.retry;
+          if (this.stopped || this.chains.get(key) !== chain || this.lastInject.has(key)) return;
+          this.deliver(key, message, attempt + 1, chain);
+        }, wait);
+        chain.retry = handle;
+        this.retries.add(handle);
+      },
+    );
   }
 }
 
