@@ -1,3 +1,4 @@
+import { parseSshConfigDump } from "../src/tui/sshtriage.js";
 // The ssh preflight, and above all the passphrase trap.
 //
 // The failure this exists to prevent is specific: a passphrase-protected key
@@ -325,4 +326,30 @@ describe("the pure helpers", () => {
     );
     expect(parseSshConfig("")).toEqual({ hostname: "", user: "", port: "" });
   });
+});
+
+it("uses first-value SSH scalar semantics and tabs on both diagnostic surfaces", () => {
+  const text =
+    "hostname\tfirst.example\nhostname second.example\nuser deploy\nport 2222\nidentityfile key1\nidentityfile key2\n";
+  expect(parseSshConfig(text)).toMatchObject({
+    hostname: "first.example",
+    user: "deploy",
+    port: "2222",
+  });
+  expect(parseSshConfigDump(text)).toMatchObject({
+    host: "first.example",
+    user: "deploy",
+    port: "2222",
+    identityFiles: ["key1", "key2"],
+  });
+});
+
+it("verify repeats the real noninteractive SSH proof and refuses a host that stopped answering", async () => {
+  const first = harness({});
+  expect((await first.engine.runStep(SSH_PREFLIGHT_STEP_ID)).ok).toBe(true);
+  const down = harness({ connect: { code: 255, stdout: "", stderr: "Connection refused" } });
+  expect((await down.engine.verifyAll()).ok).toBe(false);
+  expect(down.calls.some((args) => args.includes("BatchMode=yes") && args.at(-1) === "true")).toBe(
+    true,
+  );
 });

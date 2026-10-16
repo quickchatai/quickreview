@@ -11,6 +11,15 @@
 // carries all the judgment; `triageConnection` only collects the probes. Every
 // probe is local-ish, bounded and non-interactive (BatchMode), so a triage can
 // never hang the TUI and never prompts for a passphrase behind the alt screen.
+import {
+  sshIdentityLines,
+  sshAgentUnavailable,
+  sshConfigRows,
+  SSH_HOST_KEY_FAILURE,
+  SSH_DNS_FAILURE,
+  SSH_TIMEOUT_FAILURE,
+  SSH_ROUTE_FAILURE,
+} from "../ssh-observation.js";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -111,20 +120,15 @@ const MUX_PATTERNS = [/control socket connect/i, /mux_client/i, /multiplexing/i,
  * it, and the fallback below would otherwise report "no usable key is loaded"
  * — a confidently wrong remedy for a host-identity problem. */
 const HOST_KEY_PATTERNS = [
-  /host key verification failed/i,
+  SSH_HOST_KEY_FAILURE,
   /no matching host key/i,
-  /remote host identification has changed/i,
   /host key for .* has changed/i,
 ];
 
 const NETWORK_PATTERNS = [
-  /could not resolve hostname/i,
-  /name or service not known/i,
-  /connection timed out/i,
-  /operation timed out/i,
-  /no route to host/i,
-  /network is unreachable/i,
-  /connection refused/i,
+  SSH_DNS_FAILURE,
+  SSH_TIMEOUT_FAILURE,
+  SSH_ROUTE_FAILURE,
   /connection closed by/i,
   /kex_exchange_identification/i,
   /broken pipe/i,
@@ -379,17 +383,12 @@ export function parseSshConfigDump(text: string): {
   let host: string | undefined;
   let user: string | undefined;
   let port: string | undefined;
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    const sp = line.indexOf(" ");
-    if (sp <= 0) continue;
-    const key = line.slice(0, sp).toLowerCase();
-    const value = line.slice(sp + 1).trim();
+  for (const [key, value] of sshConfigRows(text)) {
     if (key === "identityfile") identityFiles.push(value);
-    else if (key === "controlpath") controlPath = value;
-    else if (key === "hostname") host = value;
-    else if (key === "user") user = value;
-    else if (key === "port") port = value;
+    else if (key === "controlpath" && controlPath === "") controlPath = value;
+    else if (key === "hostname") host ??= value;
+    else if (key === "user") user ??= value;
+    else if (key === "port") port ??= value;
   }
   return {
     identityFiles,
@@ -402,16 +401,8 @@ export function parseSshConfigDump(text: string): {
 
 /** `ssh-add -l` → the agent probe. Exit 1 = no identities, 2 = no agent. */
 export function parseAgentList(res: ProbeResult): AgentProbe {
-  if (
-    res.status === 2 ||
-    /error connecting to agent|could not open a connection/i.test(res.stderr)
-  ) {
-    return { reachable: false, identities: [] };
-  }
-  const identities = res.stdout
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !/the agent has no identities/i.test(l));
+  if (sshAgentUnavailable(res.status, res.stderr)) return { reachable: false, identities: [] };
+  const identities = sshIdentityLines(res.stdout);
   return { reachable: true, identities };
 }
 

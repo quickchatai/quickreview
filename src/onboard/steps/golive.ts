@@ -45,6 +45,7 @@ import {
   PROOF_STEP_ID,
   parseProofRecord,
   parseWhy,
+  completedRound,
   type ProofRecord,
 } from "./proof.js";
 import { stackTransportFor, type StackTransport, type TransportOptions } from "./transport.js";
@@ -233,7 +234,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
       };
     }
     const round = obs.rounds.find((x) => x.round_no === recorded.round_no);
-    if (!round || round.status !== "done" || !round.verdict) {
+    if (!completedRound(round)) {
       return {
         proof: null,
         detail:

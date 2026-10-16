@@ -80,6 +80,10 @@ interface FakeState {
 function fakeModule(state: FakeState): ReembedModule {
   return {
     journalStatus: () => state.journal,
+    sameEmbedder: (a, b) =>
+      a.provider === b.provider &&
+      a.model === b.model &&
+      Number(a.dimension) === Number(b.dimension),
     configuredEmbedder: (conf) => {
       const dense = (conf as { embedding?: { dense?: typeof LOCAL } })?.embedding?.dense ?? LOCAL;
       return { provider: dense.provider, model: dense.model, dimension: dense.dimension };

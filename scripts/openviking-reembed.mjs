@@ -146,7 +146,8 @@ export const DEFAULTS = {
 /** @typedef {"pending" | "failed" | "completed" | "operator"} NamespaceState */
 /** @typedef {{ state: NamespaceState, at?: string, attempts?: number, detail?: string, task_id?: string, scanned_records?: number, rebuilt_records?: number, failed_records?: number, unsupported_records?: number, settled_by?: string }} NamespaceRow */
 /** @typedef {{ state: "none" | "pending" | "failed" | "completed" | "unreadable", embedder?: Embedder, previous?: Embedder | null, reset_at?: string, moved_to?: string, awaiting_operator?: string[], namespaces?: Record<string, NamespaceRow> }} JournalStatus */
-/** @typedef {{ status: "completed" | "failed" | "busy" | "timeout", uri: string, detail?: string, task_id?: string, scanned_records?: number, rebuilt_records?: number, failed_records?: number, unsupported_records?: number }} ReindexResult */
+/** @typedef {{ scanned_records: number, rebuilt_records: number, failed_records: number, unsupported_records: number }} ReindexCounts */
+/** @typedef {{ uri: string, detail?: string, task_id?: string } & (({ status: "completed" } & ReindexCounts) | ({ status: "failed" | "busy" | "timeout" } & Partial<ReindexCounts>))} ReindexResult */
 /** @typedef {(line: string) => void} Log */
 /** @typedef {(url: string, init?: { method?: string, headers?: Record<string, string>, body?: string, signal?: AbortSignal }) => Promise<{ status: number, json?: () => Promise<unknown> }>} OvFetch */
 

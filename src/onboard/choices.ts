@@ -45,7 +45,8 @@ export type AuthRoute = (typeof AUTH_ROUTES)[number];
 export const REPO_SLUG_RE = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
 
 /** Whether the operator set memory up or declined it (a supported answer). */
-export type MemoryChoice = "configure" | "declined";
+export const MEMORY_CHOICE_IDS = ["configure", "declined"] as const;
+export type MemoryChoice = (typeof MEMORY_CHOICE_IDS)[number];
 
 // ---- the keys ----------------------------------------------------------------
 

@@ -50,6 +50,7 @@ describe("classifyProbe", () => {
     // The 0.4.15 server has wrapped a bad key in an HTTP-200 error envelope.
     [false, 200, "UNKNOWN", "Invalid API Key", "auth_failed"],
     [false, 404, "NOT_FOUND", "no such directory", "ok"],
+    [false, 404, "http_404", "proxy route missing", "error"],
     [false, 0, "no_key", "", "no_key"],
     [false, 0, "transport", "connect ECONNREFUSED", "unreachable"],
     [false, 503, "http_503", "HTTP 503", "error"],

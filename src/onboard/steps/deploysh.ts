@@ -25,6 +25,13 @@ import { join } from "node:path";
 
 export type DeployMode = "sync" | "rebuild" | "verify";
 
+/** Match the deploy script's inherited inventory overrides without changing them. */
+export function effectiveInventoryPath(root: string, env: NodeJS.ProcessEnv = process.env): string {
+  return (
+    env.QC_INVENTORY || join(env.QC_ANSIBLE_DIR || join(root, "deploy", "ansible"), "inventory.ini")
+  );
+}
+
 export const DEPLOY_SCRIPT_REL = "scripts/deploy.sh";
 
 export function deployScriptPath(root: string): string {

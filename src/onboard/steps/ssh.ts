@@ -25,6 +25,15 @@
 // knows, the controller must have ansible-playbook (the deploy dies without
 // it), and remote sudo must be passwordless (the playbook runs `become: true`,
 // and a sudo password prompt is the same hang wearing a different hat).
+import {
+  sshIdentityLines,
+  sshAgentUnavailable,
+  sshConfigRows,
+  SSH_HOST_KEY_FAILURE,
+  SSH_DNS_FAILURE,
+  SSH_TIMEOUT_FAILURE,
+  SSH_ROUTE_FAILURE,
+} from "../../ssh-observation.js";
 import { CHOICE_KEYS } from "../choices.js";
 import type {
   CheckResult,
@@ -80,10 +89,7 @@ export interface AgentState {
 export function parseSshAddList(code: number, stdout: string, stderr: string): AgentState {
   const text = `${stdout}\n${stderr}`;
   if (code === 0) {
-    const lines = stdout
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l !== "" && !/has no identities/i.test(l));
+    const lines = sshIdentityLines(stdout);
     return {
       kind: "keys",
       count: lines.length,
@@ -92,10 +98,7 @@ export function parseSshAddList(code: number, stdout: string, stderr: string): A
   }
   if (/no identities/i.test(text))
     return { kind: "empty", count: 0, detail: "the agent is running but holds no keys" };
-  if (
-    code === 2 ||
-    /could not open a connection|error connecting to agent|agent refused/i.test(text)
-  ) {
+  if (sshAgentUnavailable(code, text)) {
     return { kind: "no-agent", count: 0, detail: "no ssh agent is reachable from this shell" };
   }
   return {
@@ -113,18 +116,16 @@ export type SshFailure = "no-such-host" | "auth" | "host-key" | "timeout" | "ref
  * advice, and the tests drive every branch without an ssh anywhere. */
 export function classifySshFailure(stderr: string): SshFailure {
   const t = stderr.toLowerCase();
-  if (/could not resolve hostname|name or service not known|nodename nor servname/.test(t))
-    return "no-such-host";
-  if (/host key verification failed|remote host identification has changed/.test(t))
-    return "host-key";
+  if (SSH_DNS_FAILURE.test(t) || /nodename nor servname/.test(t)) return "no-such-host";
+  if (SSH_HOST_KEY_FAILURE.test(t)) return "host-key";
   if (
     /permission denied|no supported authentication|too many authentication failures|publickey/.test(
       t,
     )
   )
     return "auth";
-  if (/timed out|timeout/.test(t)) return "timeout";
-  if (/connection refused|no route to host|network is unreachable/.test(t)) return "refused";
+  if (SSH_TIMEOUT_FAILURE.test(t) || /timed out|timeout/.test(t)) return "timeout";
+  if (SSH_ROUTE_FAILURE.test(t)) return "refused";
   return "unknown";
 }
 
@@ -368,11 +369,9 @@ export interface SshConfigFacts {
 /** `ssh -G <alias>` prints one lowercase `key value` per line. */
 export function parseSshConfig(stdout: string): SshConfigFacts {
   const facts: SshConfigFacts = { hostname: "", user: "", port: "" };
-  for (const line of stdout.split("\n")) {
-    const m = /^(hostname|user|port)\s+(.+)$/i.exec(line.trim());
-    if (!m) continue;
-    const key = m[1]!.toLowerCase() as keyof SshConfigFacts;
-    if (facts[key] === "") facts[key] = m[2]!.trim();
+  for (const [key, value] of sshConfigRows(stdout)) {
+    if (key !== "hostname" && key !== "user" && key !== "port") continue;
+    if (facts[key] === "") facts[key] = value;
   }
   return facts;
 }

@@ -36,8 +36,14 @@
 import { existsSync } from "node:fs";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { nodeStreamRunner, readTextOrNull, rootOf, type StreamRunner } from "./compose.js";
-import { deployArgv, deployCommandLine, deployScriptPath, type DeployMode } from "./deploysh.js";
-import { inventoryPath, inventoryTargetMismatch, parseInventoryHostVars } from "./inventory.js";
+import {
+  effectiveInventoryPath,
+  deployArgv,
+  deployCommandLine,
+  deployScriptPath,
+  type DeployMode,
+} from "./deploysh.js";
+import { inventoryTargetMismatch, parseInventoryHostVars } from "./inventory.js";
 import { SSH_PREFLIGHT_STEP_ID } from "./ssh.js";
 import { SSH_ALIAS_RE, TOPOLOGY_STEP_ID, sshAliasOf, topologyOf } from "./topology.js";
 import { stackTransportFor } from "./transport.js";
@@ -45,6 +51,13 @@ import { stackTransportFor } from "./transport.js";
 export const VM_DEPLOY_STEP_ID = "vm_deploy";
 /** Recorded once a deploy has actually succeeded (mode + when + where). */
 export const VM_DEPLOY_CHOICE_KEY = "vm_deployed";
+
+export const ONBOARD_DEPLOY_MODES = ["sync", "rebuild"] as const;
+type OnboardDeployMode = (typeof ONBOARD_DEPLOY_MODES)[number];
+const deployMode = (raw: unknown): OnboardDeployMode | null =>
+  typeof raw === "string" && (ONBOARD_DEPLOY_MODES as readonly string[]).includes(raw)
+    ? (raw as OnboardDeployMode)
+    : null;
 
 export interface VmDeployRecord {
   mode: DeployMode;
@@ -61,7 +74,7 @@ export function parseDeployRecord(value: unknown): VmDeployRecord | null {
   if (typeof value !== "object" || value === null) return null;
   const r = value as Record<string, unknown>;
   const mode = r.mode;
-  if (mode !== "sync" && mode !== "rebuild") return null;
+  if (deployMode(mode) === null) return null;
   if (typeof r.at !== "string" || r.at === "") return null;
   const vars = r.host_vars;
   const hostVars =
@@ -71,7 +84,7 @@ export function parseDeployRecord(value: unknown): VmDeployRecord | null {
       ? { host_vars: { ...(vars as Record<string, string>) } }
       : {};
   return {
-    mode,
+    mode: deployMode(mode)!,
     at: r.at,
     host: typeof r.host === "string" && r.host !== "" ? r.host : null,
     ...hostVars,
@@ -80,7 +93,7 @@ export function parseDeployRecord(value: unknown): VmDeployRecord | null {
 
 /** The host vars the inventory on disk carries now. */
 function currentHostVars(root: string): Record<string, string> {
-  return parseInventoryHostVars(readTextOrNull(inventoryPath(root)) ?? "");
+  return parseInventoryHostVars(readTextOrNull(effectiveInventoryPath(root)) ?? "");
 }
 
 /** The host vars whose value differs between the last deploy and now. */
@@ -117,7 +130,7 @@ function modeOf(input: Readonly<Record<string, unknown>>): DeployMode | null {
   const raw = String(input.mode ?? "")
     .trim()
     .toLowerCase();
-  return raw === "sync" || raw === "rebuild" ? raw : null;
+  return deployMode(raw);
 }
 
 export interface VmDeployStepOptions {
@@ -153,7 +166,7 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       });
       return checks;
     }
-    const mismatch = inventoryTargetMismatch(root, alias);
+    const mismatch = inventoryTargetMismatch(root, alias, effectiveInventoryPath(root));
     if (mismatch !== null) checks.push({ name: "inventory", ok: false, detail: mismatch });
     return checks;
   }
@@ -198,7 +211,7 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       properties: {
         mode: {
           type: "string",
-          enum: ["sync", "rebuild"],
+          enum: [...ONBOARD_DEPLOY_MODES],
           description:
             'Omit it: the first deploy picks "rebuild" (the image must exist) and later ones pick "sync". Pass "rebuild" by name after bumping a pinned version.',
         },
@@ -303,7 +316,11 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
         mode,
         at: ctx.adapters.clock().toISOString(),
         host: alias,
-        host_vars: hostVars,
+        ...(mode === "rebuild"
+          ? { host_vars: hostVars }
+          : previous?.host_vars !== undefined
+            ? { host_vars: previous.host_vars }
+            : {}),
       };
       if (ok) ctx.recordChoice(VM_DEPLOY_CHOICE_KEY, record);
       return { ok, checks, data: { deploy: record } };
@@ -336,6 +353,16 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
               detail: `last deployed with \`${deployCommandLine(record.mode)}\` at ${record.at}`,
             },
       );
+      const drift =
+        record?.host_vars === undefined
+          ? []
+          : changedHostVars(record.host_vars, currentHostVars(root));
+      if (drift.length > 0)
+        checks.push({
+          name: "host-settings",
+          ok: false,
+          detail: `inventory host settings changed since the last rebuild (${drift.join(", ")}); run ${VM_DEPLOY_STEP_ID} with mode "rebuild"`,
+        });
       checks.push(...(await stackTransportFor(ctx).containerChecks(null)));
       return { ok: checks.every((c) => c.ok), checks };
     },

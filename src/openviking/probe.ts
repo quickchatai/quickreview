@@ -54,7 +54,7 @@ export function probeKeyFrom(source: KeySource): () => ProbeKey {
  *
  *   * 2xx → `ok`;
  *   * `NOT_FOUND` with a key → `ok` too: the server authenticates before it
- *     resolves a path, so a 404 proves the key works and only says nothing has
+ *     resolves a path, so that envelope proves the key works and only says nothing has
  *     created the root yet (a fresh server: empty is not degraded);
  *   * 401/403, an auth code or "Invalid API Key" → `auth_failed`;
  *   * `no_key` (nothing to send) → `no_key`;

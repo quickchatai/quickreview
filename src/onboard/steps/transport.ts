@@ -32,7 +32,6 @@ import { TUI_DEFAULTS } from "../../config.js";
 import type { CheckResult, OnboardAdapters, ProcessResult, StepContext } from "../engine.js";
 import {
   DAEMON_SERVICE,
-  composeArgs,
   composePs,
   containerStateCheck,
   daemonExecArgs,
@@ -45,11 +44,13 @@ import {
   serviceRow,
   type StreamRunner,
 } from "./compose.js";
-import { deployArgv, deployCommandLine } from "./deploysh.js";
+import { effectiveInventoryPath, deployArgv, deployCommandLine } from "./deploysh.js";
 import { readTomlKey, type IngressOption } from "./ingress.js";
 import { inventoryTargetMismatch } from "./inventory.js";
 import { sshArgv, sshCommandLine } from "./ssh.js";
 import { sshAliasOf, topologyOf } from "./topology.js";
+
+export const DEFAULT_HEALTH_TIMEOUT_MS = 10_000;
 
 export type TransportKind = "compose" | "ssh";
 
@@ -113,7 +114,7 @@ export function stackTransportFor(ctx: StepContext, opts: TransportOptions = {})
 function composeTransport(ctx: StepContext, opts: TransportOptions): StackTransport {
   const root = rootOf(ctx.adapters);
   const stream = opts.stream ?? nodeStreamRunner;
-  const healthTimeoutMs = opts.healthTimeoutMs ?? 10_000;
+  const healthTimeoutMs = opts.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS;
   const daemonState = async (): Promise<DaemonState> => {
     const ps = await composePs(ctx.adapters.runner, root);
     if (!ps.ok) return { state: "unknown", detail: ps.detail };
@@ -210,7 +211,10 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
   const root = rootOf(ctx.adapters);
   const facts = remoteFactsFor(ctx.adapters, ctx.choices);
   const stream = opts.stream ?? nodeStreamRunner;
-  const healthTimeoutS = Math.max(1, Math.ceil((opts.healthTimeoutMs ?? 10_000) / 1000));
+  const healthTimeoutS = Math.max(
+    1,
+    Math.ceil((opts.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS) / 1000),
+  );
   const dockerPrefix = facts.sudo ? ["sudo", "docker"] : ["docker"];
   const remote = (argv: readonly string[]): Promise<ProcessResult> =>
     ctx.adapters.runner.run("ssh", sshArgv(facts.alias, argv));
@@ -303,11 +307,16 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
       // The VM route's ingress is cloudflared as a HOST service (the playbook
       // installs it), never a compose sidecar — so this is the only ingress
       // shape there is anything to check for here.
-      if (ingress?.id === "named") {
+      const cloudflared = async () => {
         const unit = await remote(["systemctl", "is-active", "cloudflared"]);
+        const status = (unit.stdout || unit.stderr).trim();
+        return { ...unit, status, active: unit.code === 0 && status.startsWith("active") };
+      };
+      if (ingress?.id === "named") {
+        const unit = await cloudflared();
         const status = (unit.stdout || unit.stderr).trim() || `exit ${unit.code}`;
         checks.push(
-          unit.code === 0 && status.startsWith("active")
+          unit.active
             ? {
                 name: "ingress-sidecar",
                 ok: true,
@@ -329,10 +338,10 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
         // A warning, never a failure and never a stop: on a shared box the
         // service may be someone else's tunnel, which this wizard must not
         // touch (the playbook's foreign-cloudflared caution).
-        const unit = await remote(["systemctl", "is-active", "cloudflared"]);
-        const status = (unit.stdout || unit.stderr).trim();
+        const unit = await cloudflared();
+        const status = unit.status;
         checks.push(
-          unit.code === 0 && status.startsWith("active")
+          unit.active
             ? {
                 name: "ingress-sidecar",
                 ok: true,
@@ -468,7 +477,7 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
       }
       // The deploy ships to whatever the inventory names; everything above
       // checked facts.alias. Refuse rather than ship to a host never looked at.
-      const mismatch = inventoryTargetMismatch(root, facts.alias);
+      const mismatch = inventoryTargetMismatch(root, facts.alias, effectiveInventoryPath(root));
       if (mismatch !== null) {
         return {
           name: "daemon-restart",
@@ -551,10 +560,4 @@ async function probeHealthOverHttp(
       detail: `nothing answered ${url} (${String(err)}) — ${fixes.unreachable}`,
     };
   }
-}
-
-/** `docker compose …` argv, exported so a caller that must show the command it
- * ran can render it the same way the transport built it. */
-export function composeCommandLine(root: string, rest: readonly string[]): string {
-  return `docker ${composeArgs(root, rest).join(" ")}`;
 }

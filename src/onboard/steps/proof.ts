@@ -22,6 +22,7 @@
 // Nothing here writes anything anywhere. It reads the state store, reads the
 // dry-run directory, and records what it saw on the checklist — the record the
 // go-live step later demands before it will even offer the flip.
+import { loadConfig } from "../../config.js";
 import { CHOICE_KEYS } from "../choices.js";
 import type {
   CheckResult,
@@ -30,7 +31,12 @@ import type {
   StepContext,
   StepReport,
 } from "../engine.js";
-import { sandboxReviewFrom, type DryrunRecord, type ReviewSnapshot } from "../../compare.js";
+import {
+  decodeDryrunRecord,
+  sandboxReviewFrom,
+  type DryrunRecord,
+  type ReviewSnapshot,
+} from "../../compare.js";
 import { CONTAINER_DRYRUN_DIR, configPath, readConfigText } from "./compose.js";
 import { readTomlKey } from "./ingress.js";
 import { DEFAULT_LABELS } from "./githubapp.js";
@@ -75,6 +81,13 @@ export interface ObservedRound {
   verdict: string | null;
   summary: string | null;
   started_at: string;
+}
+
+/** A merits verdict on a completed round, shared with go-live admission. */
+export function completedRound(
+  round: ObservedRound | undefined,
+): round is ObservedRound & { verdict: string } {
+  return round !== undefined && round.status === "done" && !!round.verdict;
 }
 
 export interface RoundObservation {
@@ -129,7 +142,7 @@ export function classifyRounds(obs: RoundObservation): RoundOutcome {
         : "the daemon has not seen the PR yet",
     };
   }
-  if (round.status === "done" && round.verdict) return { kind: "done", round };
+  if (completedRound(round)) return { kind: "done", round };
   if (round.status === "running") return { kind: "running", round };
   if (round.status === "done") return { kind: "running", round };
   return { kind: "failed", round };
@@ -162,13 +175,13 @@ export function dryrunFileTime(name: string): number | null {
  *
  * `since` narrows the listing to files written at or after it (by the time in
  * their name) BEFORE the limit applies, and the review files are read apart
- * from the rest, each up to `limit` — so other PRs' traffic recorded after the
- * round cannot push the round's own review out of the window.
+ * from the rest. With a target PR, review files are decoded before its limit
+ * applies — unrelated reviews cannot push its readable evidence out of view.
  */
 export async function readContainerDryrun(
   transport: StackTransport,
   limit = 40,
-  opts: { since?: number } = {},
+  opts: { since?: number; pr?: number } = {},
 ): Promise<DryrunRead> {
   const list = await transport.exec(["ls", "-1", CONTAINER_DRYRUN_DIR]);
   if (list.code !== 0) {
@@ -194,7 +207,7 @@ export async function readContainerDryrun(
   const newest = (xs: string[]): string[] => xs.slice(Math.max(0, xs.length - limit));
   const isReview = (name: string): boolean => name.endsWith("-create_review.json");
   const wanted = new Set([
-    ...newest(names.filter(isReview)),
+    ...(opts.pr === undefined ? newest(names.filter(isReview)) : names.filter(isReview)),
     ...newest(names.filter((n) => !isReview(n))),
   ]);
   const records: DryrunRecord[] = [];
@@ -207,19 +220,17 @@ export async function readContainerDryrun(
       );
       continue;
     }
-    try {
-      records.push({ ...(JSON.parse(cat.stdout) as DryrunRecord), file: name });
-    } catch {
-      records.push({
-        kind: "unparseable",
-        method: "?",
-        path: "?",
-        note: `could not parse ${name}`,
-        file: name,
-      });
-    }
+    const record = decodeDryrunRecord(cat.stdout, name);
+    if (opts.pr === undefined || record.kind !== "create_review" || recordForPr(record, opts.pr))
+      records.push(record);
   }
-  return { records, problem: "", unread };
+  const reviews = records.filter((record) => record.kind === "create_review");
+  const retained = new Set(reviews.slice(Math.max(0, reviews.length - limit)));
+  return {
+    records: records.filter((record) => record.kind !== "create_review" || retained.has(record)),
+    problem: "",
+    unread,
+  };
 }
 
 /** Does this dry-run record belong to PR `pr`? */
@@ -338,6 +349,18 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       const label = triggerLabelOf(ctx.adapters);
       const pr = prFrom(ctx.input, ctx.choices);
       if (pr === null) {
+        let posture: string | null = null;
+        try {
+          posture = String(loadConfig(configPath(ctx.adapters)).dry_run);
+        } catch {
+          /* Unknown posture stays explicit. */
+        }
+        const assurance =
+          posture === "true"
+            ? "Nothing will be posted to GitHub: dry_run is on, so every would-be comment and review is written to a file instead, and you will read it here before deciding anything."
+            : posture === "false"
+              ? "This installation is LIVE (dry_run = false): adding the label can post the review to GitHub. The flag belongs to you; these instructions do not change it."
+              : "The dry_run posture could not be read, so posting is unknown. Check the live config before adding the trigger label.";
         return {
           ok: false,
           checks: [
@@ -348,8 +371,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
                 `Read this out, then call this tool again with the PR number.\n\n` +
                 `Pick a real, open pull request of yours in ${repo} — one you would actually want reviewed. Add the label ` +
                 `"${label}" to it. That label IS the trigger: the reviewer never reviews anything on its own initiative.\n` +
-                `Nothing will be posted to GitHub: dry_run is on, so every would-be comment and review is written to a file ` +
-                `instead, and you will read it here before deciding anything.`,
+                assurance,
             },
           ],
         };
@@ -440,7 +462,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
         };
       }
       const round = obs.rounds.find((r) => r.round_no === proof.round_no);
-      return round && round.status === "done" && round.verdict
+      return completedRound(round)
         ? {
             ok: true,
             checks: [
@@ -484,6 +506,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
     ];
     const read = await readContainerDryrun(transport, dryrunLimit, {
       since: Date.parse(round.started_at),
+      pr,
     });
     const { problem, unread } = read;
     const records = roundRecords(read.records, round).filter((r) => recordForPr(r, pr));

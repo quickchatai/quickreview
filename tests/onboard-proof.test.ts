@@ -291,6 +291,16 @@ describe("reading the daemon's own state", () => {
 });
 
 describe("asking for the PR", () => {
+  it("states the live posture before giving trigger instructions", async () => {
+    writeFileSync(
+      join(root, "config.toml"),
+      exampleConfig.replace(/dry_run\s*=\s*true/, "dry_run = false"),
+    );
+    const result = await harness().engine.runStep(PROOF_STEP_ID);
+    expect(result.checks[0]!.detail).toContain("LIVE");
+    expect(result.checks[0]!.detail).not.toContain("Nothing will be posted");
+  });
+
   it("with no PR number it says exactly what to do, and that nothing can post", async () => {
     const h = harness();
     const result = await h.engine.runStep(PROOF_STEP_ID);
@@ -503,6 +513,30 @@ describe("the two paths that actually happen", () => {
     expect(later.records.some((r) => r.kind === "create_review")).toBe(false);
     expect(seen.every((p) => p.includes("11-59-"))).toBe(true);
     expect(seen).toHaveLength(15);
+  });
+
+  it("finds the requested PR review despite newer reviews from unrelated PRs", async () => {
+    const old = "2026-08-30T11-00-00-000Z-0000-create_review.json";
+    const newer = Array.from(
+      { length: 45 },
+      (_, i) => `2026-08-30T11-59-${String(i).padStart(2, "0")}-000Z-1000-create_review.json`,
+    );
+    const runner = {
+      run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
+        if (args.includes("ls")) return { code: 0, stdout: [old, ...newer].join("\n"), stderr: "" };
+        return {
+          code: 0,
+          stdout: JSON.stringify(
+            args.at(-1)?.endsWith(old)
+              ? REVIEW_RECORD
+              : { ...REVIEW_RECORD, pr: 23, path: "/repos/acme/web/pulls/23/reviews" },
+          ),
+          stderr: "",
+        };
+      },
+    };
+    const read = await readContainerDryrun(transportFor(runner, {}), 40, { pr: 17 });
+    expect(read.records.some((r) => r.kind === "create_review" && r.pr === 17)).toBe(true);
   });
 
   it("a missing dry-run directory is explained rather than crashed on", async () => {

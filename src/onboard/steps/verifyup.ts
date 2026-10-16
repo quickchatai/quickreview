@@ -32,13 +32,19 @@
 // server, a curl on the box). Layer 3 needs no transport at all: it reads
 // GitHub's OWN delivery log, which is the same record wherever the daemon
 // runs, and that is exactly why it is the layer that proves the path.
+import { CHOICE_KEYS } from "../choices.js";
 import { mintAppJwt } from "../../githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { ingressOptionOf, secretsDirFor } from "./compose.js";
-import { readCredentials } from "./githubapp.js";
+import { ingressOptionOf, secretsDirFor, readConfigText } from "./compose.js";
+import { api as githubApi, readCredentials } from "./githubapp.js";
+import { readTomlKey, WEBHOOK_PATH } from "./ingress.js";
 import { sshCommandLine } from "./ssh.js";
 import { sshAliasOf, topologyOf } from "./topology.js";
-import { stackTransportFor, type TransportOptions } from "./transport.js";
+import {
+  DEFAULT_HEALTH_TIMEOUT_MS,
+  stackTransportFor,
+  type TransportOptions,
+} from "./transport.js";
 
 export const VERIFY_STACK_STEP_ID = "verify_stack";
 
@@ -69,7 +75,6 @@ export interface HookDelivery {
   status: string;
   status_code: number;
   delivered_at: string;
-  redelivery: boolean;
 }
 
 /** Parse `GET /app/hook/deliveries` totally: junk yields no rows. */
@@ -86,7 +91,6 @@ export function parseDeliveries(body: unknown): HookDelivery[] {
       status: typeof row.status === "string" ? row.status : "",
       status_code: typeof row.status_code === "number" ? row.status_code : 0,
       delivered_at: typeof row.delivered_at === "string" ? row.delivered_at : "",
-      redelivery: row.redelivery === true,
     });
   }
   return out;
@@ -147,27 +151,16 @@ async function api(
   jwt: string,
   init?: RequestInit,
 ): Promise<ApiAnswer> {
-  try {
-    const res = await ctx.adapters.fetch(url, {
-      ...init,
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${jwt}`,
-        "user-agent": "quickreview-onboarding",
-        ...(init?.headers ?? {}),
-      },
-    });
-    const text = await res.text();
-    let body: unknown = null;
-    try {
-      body = text ? (JSON.parse(text) as unknown) : null;
-    } catch {
-      body = null;
-    }
-    return { status: res.status, body, error: "", link: res.headers?.get?.("link") ?? null };
-  } catch (err) {
-    return { status: 0, body: null, error: String(err), link: null };
-  }
+  const result = await githubApi(ctx.adapters.fetch, url, {
+    ...init,
+    headers: { authorization: `Bearer ${jwt}`, ...(init?.headers ?? {}) },
+  });
+  return {
+    status: result.status,
+    body: result.body,
+    error: result.status === 0 ? result.text : "",
+    link: result.link ?? null,
+  };
 }
 
 export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingStep {
@@ -176,7 +169,7 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
   const pingPollAttempts = opts.pingPollAttempts ?? 6;
   const pingPollIntervalMs = opts.pingPollIntervalMs ?? 5_000;
   const redeliver = opts.redeliver ?? true;
-  const healthTimeoutMs = opts.healthTimeoutMs ?? 10_000;
+  const healthTimeoutMs = opts.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS;
 
   /** Layer 3 — GitHub's own record that a webhook reached the daemon. */
   async function pingLayer(ctx: StepContext): Promise<CheckResult[]> {
@@ -209,6 +202,29 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
             "private key must belong to the same App; re-run the github_app step",
     });
     if (config.status !== 200) return checks;
+    if (ingressOptionOf(ctx.choices)?.id === "named") {
+      const host =
+        ctx.choices[CHOICE_KEYS.ingressHostname] ??
+        readTomlKey(readConfigText(ctx.adapters) ?? "", "server", "hostname");
+      const expected =
+        ctx.choices[CHOICE_KEYS.webhookUrl] ??
+        (typeof host === "string" && host ? `https://${host}${WEBHOOK_PATH}` : null);
+      const normalize = (url: unknown): string | null => {
+        try {
+          return typeof url === "string" ? new URL(url).href : null;
+        } catch {
+          return null;
+        }
+      };
+      if (normalize(expected) === null || normalize(hookUrl) !== normalize(expected)) {
+        checks[checks.length - 1] = {
+          name: "webhook-url",
+          ok: false,
+          detail: `GitHub webhook endpoint ${typeof hookUrl === "string" ? hookUrl : "unknown"} does not match the selected fixed endpoint ${typeof expected === "string" ? expected : "unknown"}; update the App webhook URL, then run this step again`,
+        };
+        return checks;
+      }
+    }
 
     // Newest first, page by page until a ping turns up: the deliveries
     // above it are exactly the ones `newerFailure` must see, and ordinary

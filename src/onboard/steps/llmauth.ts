@@ -49,7 +49,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { COMPANION_DEFAULTS, TUI_DEFAULTS } from "../../config.js";
 import { locateSecrets } from "../../install.js";
-import { CHOICE_KEYS, authRouteOf, type AuthRoute } from "../choices.js";
+import { CHOICE_KEYS, AUTH_ROUTES, authRouteOf, type AuthRoute } from "../choices.js";
 import type {
   CheckResult,
   OnboardAdapters,
@@ -208,7 +208,7 @@ export interface ModelAudit {
  * null for any other provider (not ours to touch). The one classification the
  * audit and the rewrite share. */
 export function managedModel(value: string): { route: AuthRoute; rest: string } | null {
-  for (const route of ["oauth", "api"] as const) {
+  for (const route of AUTH_ROUTES) {
     const prefix = prefixFor(route);
     if (value.startsWith(prefix)) return { route, rest: value.slice(prefix.length) };
   }

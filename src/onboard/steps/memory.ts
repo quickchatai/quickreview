@@ -79,19 +79,26 @@ import { OPENVIKING_DEFAULTS, parseConfig } from "../../config.js";
 import { configHome, locateKeysFile, locateSecrets } from "../../install.js";
 import { tuiMemoryBaseUrl } from "../../tui/memory.js";
 import { shellQuote } from "../../tui/remote.js";
-import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
+import { CHOICE_KEYS, MEMORY_CHOICE_IDS, type MemoryChoice } from "../choices.js";
+import { deliverConfigChange } from "./configdelivery.js";
 import { configMountOf } from "./bringup.js";
-import { DAEMON_SERVICE, readTextOrNull, rootOf, writeAtomic } from "./compose.js";
+import {
+  DAEMON_SERVICE,
+  interviewConfigPath,
+  readTextOrNull,
+  rootOf,
+  writeAtomic,
+} from "./compose.js";
 import { assertNoDryRunEdit, patchToml, type TomlEdit } from "./configfill.js";
 import { readTomlKey } from "./ingress.js";
 import { topologyOf } from "./topology.js";
-import { remoteFactsFor, stackTransportFor } from "./transport.js";
+import { remoteFactsFor, stackTransportFor, type TransportOptions } from "./transport.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const MEMORY_STEP_ID = "memory";
 /** Recorded choice: "configure" (default) | "declined". */
 export const MEMORY_CHOICE_KEY = CHOICE_KEYS.memory;
-/** Recorded so later steps / the TUI launch know where the key file went. */
+/** Private placement bookkeeping; verification follows the current locator. */
 export const KEYS_FILE_CHOICE_KEY = "openviking_keys_file";
 
 export const REVIEWER_USER = "reviewer";
@@ -172,6 +179,7 @@ export interface MemoryStepOptions {
   account?: string;
   env?: NodeJS.ProcessEnv;
   home?: string;
+  transport?: TransportOptions;
   loadProvision?: () => Promise<ProvisionModule>;
   loadMatrix?: () => Promise<MatrixModule>;
 }
@@ -423,7 +431,7 @@ export type { MemoryChoice };
 
 /** The two answers — the tool schema's enum, the guards and the refusal text
  * all read this one list. */
-const MEMORY_CHOICE_IDS = ["configure", "declined"] as const satisfies readonly MemoryChoice[];
+export { MEMORY_CHOICE_IDS } from "../choices.js";
 
 function isMemoryChoice(value: unknown): value is MemoryChoice {
   return (MEMORY_CHOICE_IDS as readonly unknown[]).includes(value);
@@ -471,13 +479,6 @@ export const DECLINED_CHECKS: readonly CheckResult[] = [
 /** The check row that reports the daemon's on/off switch. */
 export const MEMORY_SWITCH_CHECK = "memory-switch";
 
-/** The config.toml the memory switch lives in: the path the interview
- * recorded writing, else the adapters'. */
-function configPathOf(ctx: StepContext): string {
-  const recorded = ctx.choices[CHOICE_KEYS.configPath];
-  return typeof recorded === "string" && recorded ? recorded : ctx.adapters.paths.configPath;
-}
-
 /**
  * Tell the DAEMON the operator's answer: `[openviking] enabled =
  * false` on a decline — its word for "off", under which memory health reports
@@ -489,7 +490,7 @@ function configPathOf(ctx: StepContext): string {
  * nothing to say (configuring an install that is already on).
  */
 function switchMemory(ctx: StepContext, on: boolean): CheckResult | null {
-  const path = configPathOf(ctx);
+  const path = interviewConfigPath(ctx);
   const text = readTextOrNull(path);
   if (text === null) {
     return on
@@ -530,16 +531,16 @@ function switchMemory(ctx: StepContext, on: boolean): CheckResult | null {
     name: MEMORY_SWITCH_CHECK,
     ok: true,
     detail: on
-      ? `[openviking] enabled = true written to ${path} (it said false from an earlier decline) — memory is monitored again`
+      ? `[openviking] enabled = true written to ${path} (it said false from an earlier decline) — ready for the daemon to reload`
       : `[openviking] enabled = false written to ${path} — the daemon's word for "off": memory health reports "not monitored" ` +
-        "and raises no memory alert. Ship it with the next deploy sync on the server route",
+        "and raises no memory alert after the daemon reloads it",
   };
 }
 
 /** Verify's half of the switch for a configured install: the daemon must not
  * have been told memory is OFF since. */
 function switchStillOn(ctx: StepContext): CheckResult | null {
-  const path = configPathOf(ctx);
+  const path = interviewConfigPath(ctx);
   const text = readTextOrNull(path);
   if (text === null || readTomlKey(text, "openviking", "enabled") !== "false") return null;
   return {
@@ -553,7 +554,7 @@ function switchStillOn(ctx: StepContext): CheckResult | null {
 
 /** Verify's half of the switch: a declined install must still SAY off. */
 function switchStillOff(ctx: StepContext): CheckResult {
-  const path = configPathOf(ctx);
+  const path = interviewConfigPath(ctx);
   const text = readTextOrNull(path);
   const current = text === null ? null : readTomlKey(text, "openviking", "enabled");
   return current === "false"
@@ -593,12 +594,27 @@ function defaultLoaders(root: string): {
 async function serverReady(
   fetchFn: typeof fetch,
   base: string,
-): Promise<{ ok: boolean; detail: string }> {
+): Promise<{ ok: boolean; detail: string; answering: boolean }> {
   try {
     const res = await fetchFn(`${base}/ready`, { signal: AbortSignal.timeout(10_000) });
-    return { ok: res.status >= 200 && res.status < 300, detail: `HTTP ${res.status}` };
+    const ok = res.status >= 200 && res.status < 300;
+    let detail = `HTTP ${res.status}`;
+    if (!ok) {
+      try {
+        const text =
+          typeof res.text === "function" ? await res.text() : JSON.stringify(await res.json());
+        if (text.trim()) detail += `: ${text.trim().slice(0, 500)}`;
+      } catch {
+        /* The HTTP answer still establishes reachability. */
+      }
+    }
+    return { ok, detail, answering: true };
   } catch (err) {
-    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+      answering: false,
+    };
   }
 }
 
@@ -661,7 +677,7 @@ export function forwardFlags(ctx: StepContext): string {
   return [
     "--local",
     "--container",
-    `"$(docker compose ps --format '{{.Name}}' ${DAEMON_SERVICE})"`,
+    `"$(${facts.sudo ? "sudo " : ""}docker compose ps --format '{{.Name}}' ${DAEMON_SERVICE})"`,
     ...sudo,
   ].join(" ");
 }
@@ -898,134 +914,164 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
     },
 
     async run(ctx): Promise<StepReport> {
-      const choice = await askChoice(ctx);
-      if (typeof choice !== "string") return { ok: false, checks: [memoryChoiceOfferCheck(choice.unrecognised)] };
-      ctx.recordChoice(CHOICE_KEYS.memory, choice);
-      const switched = switchMemory(ctx, choice === "configure");
-      if (choice === "declined") {
-        const declined = [...DECLINED_CHECKS, ...(switched ? [switched] : [])];
-        return { ok: declined.every((c) => c.ok), checks: declined, data: { declined: true } };
-      }
-
-      const { secretsDir, keys, base, account } = resolvePaths(opts, ctx);
-      // A failed switch-on stays in `checks` and turns the step red at the end;
-      // the keys are still worth placing.
-      const checks: CheckResult[] = switched ? [switched] : [];
-      if (keys.unsafe) {
-        checks.push({ name: "key-file-location", ok: false, detail: keys.note });
-        return { ok: false, checks };
-      }
-      ctx.recordChoice(KEYS_FILE_CHOICE_KEY, keys.path);
-
-      // --- phase A: the root key (offline; needed before the daemon boots) ---
-      const rootPath = join(secretsDir, ROOT_KEY_FILE);
-      let rootKey = readSecretFile(rootPath);
-      const { provision, matrix } = loaders(ctx);
-      let prov: ProvisionModule;
-      try {
-        prov = await provision();
-      } catch (err) {
-        checks.push({
-          name: "provisioning-machinery",
-          ok: false,
-          detail: `could not load scripts/openviking-provision.mjs: ${String(err)}`,
-        });
-        return { ok: false, checks };
-      }
-      const rootUnreadable = rootKey === "" ? unreadableReason(rootPath) : null;
-      if (rootUnreadable !== null) {
-        checks.push(unreadableCheck("root-key", rootPath, rootUnreadable));
-        return { ok: false, checks };
-      }
-      if (rootKey === "") {
-        rootKey = prov.mintRootKey();
-        mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
-        writePrivate(rootPath, `${rootKey}\n`);
-        checks.push({
-          name: "root-key",
-          ok: true,
-          detail: `minted the server root key and wrote ${rootPath} (0600). It is the SERVER's credential: never a client's, never in the key file.`,
-        });
-      } else {
-        checks.push({
-          name: "root-key",
-          ok: true,
-          detail: `${rootPath} already holds a root key — left untouched (nothing is ever rotated)`,
-        });
-      }
-
-      // --- phase B: the two USER keys (the server mints them) ---
-      const ready = await serverReady(ctx.adapters.fetch, base);
-      if (!ready.ok) {
-        checks.push({
-          name: "memory-server",
-          ok: false,
-          detail: serverUnreachableDetail(ctx, base, ready.detail),
-        });
-        return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
-      }
-
-      const minted = await prov.mintUserKeys({
-        base,
-        account,
-        users: [REVIEWER_USER, COMPANION_USER],
-        rootKey,
-        fetchFn: ctx.adapters.fetch,
-        log: (line) => ctx.adapters.log?.(line),
-      });
-      const reviewerKey = minted.keys[REVIEWER_USER] ?? "";
-      const companionKey = minted.keys[COMPANION_USER] ?? "";
-      checks.push({
-        name: "user-keys",
-        ok: minted.ok && reviewerKey !== "" && companionKey !== "",
-        detail:
-          minted.ok && reviewerKey && companionKey
-            ? `${minted.created.length > 0 ? `minted ${minted.created.join(", ")}` : "no user needed creating"}` +
-              `${minted.kept.length > 0 ? `; kept the existing key for ${minted.kept.join(", ")} (never rotated)` : ""}`
-            : `could not obtain a key for ${minted.missing.join(", ") || "every user"}${minted.detail ? ` (${minted.detail})` : ""} — ` +
-              "nothing was rotated. Check that the daemon restarted after the root key landed (the server reads it at boot, and " +
-              "without it runs auth_mode=dev), then run this step again.",
-      });
-      if (!reviewerKey || !companionKey)
-        return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
-
-      checks.push(
-        ...placeKeys({ secretsDir, keysFile: keys.path, rootKey, reviewerKey, companionKey }),
-      );
-      if (!checks.every((c) => c.ok))
-        return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
-
-      // --- the proof ---
-      checks.push(
-        ...(await matrixChecks(
-          matrix,
-          base,
-          { companion: companionKey, reviewer: reviewerKey },
+      let restartOwed = ctx.data.restart_owed === true;
+      const perform = async (): Promise<StepReport> => {
+        const choice = await askChoice(ctx);
+        if (typeof choice !== "string")
+          return { ok: false, checks: [memoryChoiceOfferCheck(choice.unrecognised)] };
+        ctx.recordChoice(CHOICE_KEYS.memory, choice);
+        const before = readTextOrNull(interviewConfigPath(ctx));
+        const switched = switchMemory(ctx, choice === "configure");
+        if (switched?.ok && before !== readTextOrNull(interviewConfigPath(ctx))) restartOwed = true;
+        const switchChecks: CheckResult[] = switched ? [switched] : [];
+        const delivery = await deliverConfigChange(
           ctx,
-          opts,
-        )),
-      );
-      // --- the daemon's own copy, where it is not this machine's file ---
-      const onServer = await daemonReviewerCopyCheck(ctx, join(secretsDir, REVIEWER_KEY_FILE));
-      if (onServer) checks.push(onServer);
-      return {
-        ok: checks.every((c) => c.ok),
-        checks,
-        data: {
-          root_key_placed: true,
-          keys_file: keys.path,
+          opts.transport,
+          restartOwed,
+          MEMORY_STEP_ID,
+        );
+        restartOwed = delivery.restartOwed;
+        switchChecks.push(...delivery.checks);
+        if (choice === "declined") {
+          const declined = [...DECLINED_CHECKS, ...switchChecks];
+          return { ok: declined.every((c) => c.ok), checks: declined, data: { declined: true } };
+        }
+
+        const { secretsDir, keys, base, account } = resolvePaths(opts, ctx);
+        // A failed switch-on stays in `checks` and turns the step red at the end;
+        // the keys are still worth placing.
+        const checks: CheckResult[] = [...switchChecks];
+        if (keys.unsafe) {
+          checks.push({ name: "key-file-location", ok: false, detail: keys.note });
+          return { ok: false, checks };
+        }
+        ctx.recordChoice(KEYS_FILE_CHOICE_KEY, keys.path);
+
+        // --- phase A: the root key (offline; needed before the daemon boots) ---
+        const rootPath = join(secretsDir, ROOT_KEY_FILE);
+        let rootKey = readSecretFile(rootPath);
+        const { provision, matrix } = loaders(ctx);
+        let prov: ProvisionModule;
+        try {
+          prov = await provision();
+        } catch (err) {
+          checks.push({
+            name: "provisioning-machinery",
+            ok: false,
+            detail: `could not load scripts/openviking-provision.mjs: ${String(err)}`,
+          });
+          return { ok: false, checks };
+        }
+        const rootUnreadable = rootKey === "" ? unreadableReason(rootPath) : null;
+        if (rootUnreadable !== null) {
+          checks.push(unreadableCheck("root-key", rootPath, rootUnreadable));
+          return { ok: false, checks };
+        }
+        if (rootKey === "") {
+          rootKey = prov.mintRootKey();
+          mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+          writePrivate(rootPath, `${rootKey}\n`);
+          checks.push({
+            name: "root-key",
+            ok: true,
+            detail: `minted the server root key and wrote ${rootPath} (0600). It is the SERVER's credential: never a client's, never in the key file.`,
+          });
+        } else {
+          checks.push({
+            name: "root-key",
+            ok: true,
+            detail: `${rootPath} already holds a root key — left untouched (nothing is ever rotated)`,
+          });
+        }
+
+        // --- phase B: the two USER keys (the server mints them) ---
+        const ready = await serverReady(ctx.adapters.fetch, base);
+        if (!ready.ok) {
+          checks.push({
+            name: "memory-server",
+            ok: false,
+            detail: ready.answering
+              ? `OpenViking answers at ${base} but is not ready (${ready.detail}). Check the engine and embedder logs, then run this step again; the memory forward already reaches it.`
+              : serverUnreachableDetail(ctx, base, ready.detail),
+          });
+          return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
+        }
+
+        const minted = await prov.mintUserKeys({
+          base,
+          account,
           users: [REVIEWER_USER, COMPANION_USER],
-        },
+          rootKey,
+          fetchFn: ctx.adapters.fetch,
+          log: (line) => ctx.adapters.log?.(line),
+        });
+        const reviewerKey = minted.keys[REVIEWER_USER] ?? "";
+        const companionKey = minted.keys[COMPANION_USER] ?? "";
+        checks.push({
+          name: "user-keys",
+          ok: minted.ok && reviewerKey !== "" && companionKey !== "",
+          detail:
+            minted.ok && reviewerKey && companionKey
+              ? `${minted.created.length > 0 ? `minted ${minted.created.join(", ")}` : "no user needed creating"}` +
+                `${minted.kept.length > 0 ? `; kept the existing key for ${minted.kept.join(", ")} (never rotated)` : ""}`
+              : `could not obtain a key for ${minted.missing.join(", ") || "every user"}${minted.detail ? ` (${minted.detail})` : ""} — ` +
+                "nothing was rotated. Check that the daemon restarted after the root key landed (the server reads it at boot, and " +
+                "without it runs auth_mode=dev), then run this step again.",
+        });
+        if (!reviewerKey || !companionKey)
+          return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
+
+        checks.push(
+          ...placeKeys({ secretsDir, keysFile: keys.path, rootKey, reviewerKey, companionKey }),
+        );
+        if (!checks.every((c) => c.ok))
+          return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
+
+        // --- the proof ---
+        checks.push(
+          ...(await matrixChecks(
+            matrix,
+            base,
+            { companion: companionKey, reviewer: reviewerKey },
+            ctx,
+            opts,
+          )),
+        );
+        // --- the daemon's own copy, where it is not this machine's file ---
+        const onServer = await daemonReviewerCopyCheck(ctx, join(secretsDir, REVIEWER_KEY_FILE));
+        if (onServer) checks.push(onServer);
+        return {
+          ok: checks.every((c) => c.ok),
+          checks,
+          data: {
+            root_key_placed: true,
+            keys_file: keys.path,
+            users: [REVIEWER_USER, COMPANION_USER],
+          },
+        };
       };
+      const report = await perform();
+      return { ...report, data: { ...report.data, restart_owed: restartOwed } };
     },
 
     async verify(ctx): Promise<StepReport> {
       // The recorded choice is authoritative: a run's data is merged into the
       // step record, so an earlier decline's `declined` flag outlives a later
       // configure. The flag counts only when no choice is recorded.
+      const delivery: CheckResult[] =
+        ctx.data.restart_owed === true
+          ? [
+              {
+                name: "daemon-restart",
+                ok: false,
+                detail:
+                  "memory config is on disk but its daemon restart is still owed; run this step again",
+              },
+            ]
+          : [];
       const recorded = ctx.choices[MEMORY_CHOICE_KEY];
       if (recorded === "declined" || (recorded === undefined && ctx.data.declined === true)) {
-        const declined = [...DECLINED_CHECKS, switchStillOff(ctx)];
+        const declined = [...DECLINED_CHECKS, switchStillOff(ctx), ...delivery];
         return { ok: declined.every((c) => c.ok), checks: declined };
       }
       const { secretsDir, keys, base, env, home, mounted } = resolvePaths(opts, ctx);
@@ -1044,7 +1090,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
         placedPath !== null && existsSync(placedPath)
           ? keysFileConfinement(placedPath, secretsDir, env, home, mounted)
           : null;
-      const checks: CheckResult[] = [];
+      const checks: CheckResult[] = [...delivery];
       const switched = switchStillOn(ctx);
       if (switched) checks.push(switched);
 
