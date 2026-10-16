@@ -3,6 +3,7 @@
 // and the pass tier. Consumed by dispatch; unit-tested directly.
 
 import type { PrFileEntry } from "./github.js";
+import { packByBudget } from "./packing.js";
 
 export interface PrFile {
   filename: string;
@@ -362,17 +363,18 @@ export function selectLenses(
   // wrong-layer changes hide. Docs/config/asset adds, test-only PRs and
   // small edits-in-place skip it — pure spend otherwise.
   const code = files.filter((f) => !isTestFile(f.filename) && CODE_FILE_RE.test(f.filename));
+  const crossCutting = code.length >= (tuning.placementMinCodeFiles ?? PLACEMENT_MIN_PROD_FILES);
   if (
     code.some(
       (f) =>
         PLACEMENT_STATUSES.has(f.status ?? "") &&
         f.additions >= (tuning.placementMinNewFileLines ?? PLACEMENT_MIN_NEW_FILE_LINES),
     ) ||
-    code.length >= (tuning.placementMinCodeFiles ?? PLACEMENT_MIN_PROD_FILES)
+    crossCutting
   )
     pick(
       PLACEMENT_PASS,
-      code.length >= (tuning.placementMinCodeFiles ?? PLACEMENT_MIN_PROD_FILES)
+      crossCutting
         ? `the diff touches ${code.length} code files`
         : "the diff adds or moves a code file that needs a home",
     );
@@ -380,8 +382,9 @@ export function selectLenses(
   // Simplicity: complexity signals — a large code diff, deep
   // nesting in added lines, or a file gaining a pile of branches.
   const codeLines = code.reduce((n, f) => n + f.additions + f.deletions, 0);
+  const largeCodeDiff = codeLines >= SIMPLICITY_MIN_PROD_LINES;
   if (
-    codeLines >= SIMPLICITY_MIN_PROD_LINES ||
+    largeCodeDiff ||
     code.some((f) => f.patch !== undefined && SIMPLICITY_DEEP_INDENT_RE.test(f.patch)) ||
     code.some(
       (f) => (f.patch?.match(SIMPLICITY_BRANCH_RE)?.length ?? 0) >= SIMPLICITY_MIN_ADDED_BRANCHES,
@@ -389,7 +392,7 @@ export function selectLenses(
   )
     pick(
       SIMPLICITY_PASS,
-      codeLines >= SIMPLICITY_MIN_PROD_LINES
+      largeCodeDiff
         ? `the code diff is ${codeLines} lines`
         : "added code nests deeply or piles up branches",
     );
@@ -903,29 +906,7 @@ function packGroups(
   maxFiles: number,
   maxLines: number,
 ): { groups: string[][]; left: string[] } {
-  const groups: string[][] = [];
-  const left: string[] = [];
-  let cur: string[] = [];
-  let lines = 0;
-  for (const f of files) {
-    const n = size(f);
-    if (cur.length > 0 && (cur.length >= maxFiles || lines + n > maxLines)) {
-      groups.push(cur);
-      cur = [];
-      lines = 0;
-    }
-    if (groups.length >= maxGroups) {
-      left.push(f.filename);
-      continue;
-    }
-    cur.push(f.filename);
-    lines += n;
-  }
-  if (cur.length > 0) {
-    if (groups.length < maxGroups) groups.push(cur);
-    else left.push(...cur);
-  }
-  return { groups, left };
+  return packByBudget(files, { maxGroups, maxFiles, maxLines }, (file) => file.filename, size);
 }
 
 /** The tests lens (agents/pass-tests.md). */

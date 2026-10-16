@@ -30,6 +30,7 @@ import {
   SWEEP_MAX_LINES_PER_GROUP,
   type PrFile,
 } from "./heuristics.js";
+import { packByBudget } from "./packing.js";
 
 /** At most this many coverage rows per round. */
 export const COVERAGE_MAX_GROUPS = 2;
@@ -113,27 +114,12 @@ export function coverageGaps(
   );
   const covered = addressedPaths(eligible, seen);
   const uncovered = eligible.filter((f) => !covered.has(f.path));
-  const groups: string[][] = [];
-  const unchecked: string[] = [];
-  let cur: string[] = [];
-  let lines = 0;
-  for (const f of uncovered) {
-    if (cur.length > 0 && lines + f.lines > maxLines) {
-      groups.push(cur);
-      cur = [];
-      lines = 0;
-    }
-    if (groups.length >= maxGroups) {
-      unchecked.push(f.path);
-      continue;
-    }
-    cur.push(f.path);
-    lines += f.lines;
-  }
-  if (cur.length > 0) {
-    if (groups.length < maxGroups) groups.push(cur);
-    else unchecked.push(...cur);
-  }
+  const { groups, left: unchecked } = packByBudget(
+    uncovered,
+    { maxGroups, maxLines },
+    (file) => file.path,
+    (file) => file.lines,
+  );
   return { uncovered: uncovered.map((f) => f.path), groups, unchecked };
 }
 
