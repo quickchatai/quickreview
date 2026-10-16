@@ -410,3 +410,31 @@ describe("keyFileCheck", () => {
     expect(existsSync(join(secretsDir, "openai_api_key"))).toBe(false);
   });
 });
+
+describe("current install config and local key mirrors", () => {
+  it("edits the live locator config when a persisted interview path points elsewhere", async () => {
+    const old = join(root, "old-config.toml");
+    const before = config();
+    writeFileSync(old, before);
+    writeFileSync(join(secretsDir, "openai_embeddings_api_key"), "sk-test-embeddings-key");
+    const report = await embeddingsStep().run(
+      ctx({ provider: "openai" }, { [CHOICE_KEYS.configPath]: old }),
+    );
+    expect(report.ok).toBe(true);
+    expect(parseConfig(config()).openviking.embedding_provider).toBe("openai");
+    expect(readFileSync(old, "utf8")).toBe(before);
+  });
+
+  it("mirrors a nondefault key filename even when embedding locally", () => {
+    expect(
+      embedderHostVars({ ...declaredEmbedderOf(""), keyFile: "custom_embedding_key" }),
+    ).toEqual([["openviking_embedding_key_file", "custom_embedding_key"]]);
+  });
+
+  it("names the collector default and configured destination for custom credential recovery", () => {
+    const detail = keyFileCheck(secretsDir, "custom_embedding_key").detail;
+    expect(detail).toContain("openai_embeddings_api_key");
+    expect(detail).toContain(join(secretsDir, "custom_embedding_key"));
+    expect(detail).not.toContain("at the custom_embedding_key prompt");
+  });
+});

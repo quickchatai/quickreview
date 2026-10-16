@@ -38,9 +38,9 @@ import {
   writeAtomic,
 } from "./compose.js";
 import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
-import { OPENVIKING_DEFAULTS } from "../../config.js";
 import {
   declaredEmbedderOf,
+  EMBEDDER_HOST_DEFAULTS,
   embedderHostVars,
   localEmbedderHostVars,
   localEmbedderRuntimeOf,
@@ -84,14 +84,7 @@ export interface InventoryFacts {
 /** Every host var this step may write, with the value the deploy uses when
  * the inventory sets none: the tracked group_vars default, which the loader's
  * own defaults mirror (tests hold the two equal). */
-const HOST_VAR_DEFAULTS: Readonly<Record<string, string>> = {
-  openviking_embedding_provider: OPENVIKING_DEFAULTS.embedding_provider,
-  openviking_embedding_model: OPENVIKING_DEFAULTS.embedding_model,
-  openviking_embedding_dimension: String(OPENVIKING_DEFAULTS.embedding_dimension),
-  openviking_embedding_key_file: OPENVIKING_DEFAULTS.embedding_key_file,
-  openviking_local_embedder_port: String(OPENVIKING_DEFAULTS.local_embedder_port),
-  openviking_local_embedder_threads: String(OPENVIKING_DEFAULTS.local_embedder_threads),
-};
+const HOST_VAR_DEFAULTS = EMBEDDER_HOST_DEFAULTS;
 
 /** The embedder host vars the facts call for. */
 function embedderVarsFor(f: InventoryFacts): Array<[string, string]> {
@@ -309,11 +302,20 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
       host: sshAliasOf(ctx.choices),
       // The ssh config's own answer is the right default: it is what plain
       // `ssh <alias>` uses, so ansible and the operator agree by construction.
-      ansibleUser: typedUser !== "" ? typedUser : recordedUser,
+      ansibleUser:
+        typeof ctx.input.ansible_user === "string"
+          ? typedUser !== ""
+            ? typedUser
+            : recordedUser
+          : typeof ctx.data.ansible_user === "string"
+            ? ctx.data.ansible_user
+            : recordedUser,
       pythonInterpreter:
         typeof ctx.input.python === "string" && ctx.input.python.trim() !== ""
           ? ctx.input.python.trim()
-          : pythonInterpreter,
+          : typeof ctx.data.python === "string"
+            ? ctx.data.python
+            : pythonInterpreter,
       cloudflaredEnabled: cloudflaredEnabledFor(ingressOptionOf(ctx.choices)?.id ?? null),
       embedder: declaredEmbedderOf(configText),
       localEmbedder: localEmbedderRuntimeOf(configText),
@@ -395,7 +397,13 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
     return {
       ok: checks.every((c) => c.ok),
       checks,
-      data: { inventory: path, host: f.host, cloudflared: f.cloudflaredEnabled },
+      data: {
+        inventory: path,
+        host: f.host,
+        cloudflared: f.cloudflaredEnabled,
+        ansible_user: f.ansibleUser,
+        python: f.pythonInterpreter,
+      },
     };
   }
 

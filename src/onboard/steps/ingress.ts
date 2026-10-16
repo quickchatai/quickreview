@@ -26,11 +26,14 @@
 //
 // The step is deliberately self-contained: it owns the `[ingress]` section of
 // config.toml, the project `.env`'s COMPOSE_PROFILES line, and nothing else.
+import type { StreamRunner } from "./compose.js";
+import { splitTail, tomlValueAt } from "../toml.js";
+import { parse as parseToml } from "smol-toml";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { INGRESS_DEFAULTS } from "../../config.js";
 import { locateSecrets } from "../../install.js";
-import { CHOICE_KEYS, type IngressChoice } from "../choices.js";
+import { CHOICE_KEYS, INGRESS_CHOICES, type IngressChoice } from "../choices.js";
 import { topologyOf } from "./topology.js";
 import {
   readTextOrNull,
@@ -68,9 +71,8 @@ export interface IngressOption {
   service: string | null;
 }
 
-export const INGRESS_OPTIONS: readonly IngressOption[] = [
-  {
-    id: "quick",
+const INGRESS_OPTION_METADATA = {
+  quick: {
     headline: "Cloudflare quick tunnel (default) — no account, nothing to sign up for",
     tradeoffs: [
       "no account, no credential, no DNS: it works within seconds of `docker compose up`",
@@ -83,8 +85,7 @@ export const INGRESS_OPTIONS: readonly IngressOption[] = [
     secret: null,
     service: "tunnel-quick",
   },
-  {
-    id: "ngrok",
+  ngrok: {
     headline: "ngrok — a stable hostname, at the price of an account",
     tradeoffs: [
       "needs an ngrok account and an authtoken; with a reserved domain the hostname never changes",
@@ -97,8 +98,7 @@ export const INGRESS_OPTIONS: readonly IngressOption[] = [
     secret: "ngrok_authtoken",
     service: "tunnel-ngrok",
   },
-  {
-    id: "named",
+  named: {
     headline: "Named Cloudflare tunnel — your own domain (what the VM route uses)",
     tradeoffs: [
       "a permanent hostname on a domain you own, with Cloudflare's SLA behind it",
@@ -111,8 +111,7 @@ export const INGRESS_OPTIONS: readonly IngressOption[] = [
     secret: "tunnel_token",
     service: "tunnel-named",
   },
-  {
-    id: "polling",
+  polling: {
     headline: "Polling only — no tunnel, nothing exposed",
     tradeoffs: [
       "nothing to install, nothing reachable from the internet: the daemon only makes outbound calls",
@@ -125,7 +124,12 @@ export const INGRESS_OPTIONS: readonly IngressOption[] = [
     secret: null,
     service: null,
   },
-];
+} satisfies Record<IngressChoice, Omit<IngressOption, "id">>;
+
+export const INGRESS_OPTIONS: readonly IngressOption[] = INGRESS_CHOICES.map((id) => ({
+  id,
+  ...INGRESS_OPTION_METADATA[id],
+}));
 
 export function optionFor(choice: string): IngressOption | null {
   return INGRESS_OPTIONS.find((o) => o.id === choice) ?? null;
@@ -211,6 +215,12 @@ export function patchTomlSection(toml: string, section: string, body: string): s
  * (smol-toml) accepts it — so this does too, or a reader here disagrees with
  * the daemon about the same file. */
 export function readTomlKey(toml: string, section: string, key: string): string | null {
+  try {
+    const value = tomlValueAt(parseToml(toml), section, key);
+    if (typeof value === "string") return value;
+  } catch {
+    // Incomplete interview templates still use the tolerant scalar reader.
+  }
   const span = sectionSpan(toml, section);
   if (span === null) return null;
   const body = toml.slice(span.body, span.end);
@@ -281,10 +291,13 @@ export function setTomlKey(
   if (span === null) return null;
   const { body: bodyStart, end: bodyEnd } = span;
   const body = toml.slice(bodyStart, bodyEnd);
-  const line = new RegExp(`^([ \\t]*)${key}\\s*=\\s*[^\\n]*$`, "m");
+  const line = new RegExp(`^([ \\t]*)${key}\\s*=\\s*([^\\n]*)$`, "m");
   const replacement = `${key} = ${JSON.stringify(value)}`;
   const patched = line.test(body)
-    ? body.replace(line, (_m, indent: string) => `${indent}${replacement}`)
+    ? body.replace(line, (original, indent: string, tail: string) => {
+        const parts = splitTail(tail);
+        return parts === null ? original : `${indent}${replacement}${parts.gap}${parts.comment}`;
+      })
     : `${replacement}\n${body}`;
   return `${toml.slice(0, bodyStart)}${patched}${toml.slice(bodyEnd)}`;
 }
@@ -432,7 +445,11 @@ function offerCheck(topology: string): CheckResult {
   };
 }
 
-export function ingressStep(): OnboardingStep {
+function credentialPresent(file: string): boolean {
+  return existsSync(file) && readFileSync(file, "utf8").trim() !== "";
+}
+
+export function ingressStep(opts: { stream?: StreamRunner } = {}): OnboardingStep {
   return {
     id: INGRESS_STEP_ID,
     title: "Webhook ingress: how GitHub reaches your daemon",
@@ -507,7 +524,7 @@ export function ingressStep(): OnboardingStep {
       const secretsDir = secretsDirFor(ctx.adapters, ctx.choices);
       if (option.secret) {
         const file = join(secretsDir, option.secret);
-        const present = existsSync(file) && readFileSync(file, "utf8").trim() !== "";
+        const present = credentialPresent(file);
         checks.push({
           name: "credential",
           ok: present,
@@ -525,7 +542,7 @@ export function ingressStep(): OnboardingStep {
         checks.push({
           name: "config",
           ok: false,
-          detail: `${configPath} does not exist yet — create it (cp config.example.toml config.toml) and run this step again`,
+          detail: `${configPath} does not exist yet — run the config_fill step to create the located installation config, then run this step again`,
         });
         return { ok: false, checks };
       }
@@ -613,11 +630,30 @@ export function ingressStep(): OnboardingStep {
           });
         }
         ctx.recordChoice(CHOICE_KEYS.webhookUrl, url);
+      } else {
+        ctx.recordChoice(CHOICE_KEYS.ingressHostname, null);
+        ctx.recordChoice(CHOICE_KEYS.webhookUrl, null);
       }
+      // Resolve lazily: the topology transport imports this module's pure
+      // ingress readers through compose, so startup must not form a cycle.
+      const { deliverConfigChange } = await import("./configdelivery.js");
+      const delivery = await deliverConfigChange(
+        ctx,
+        opts,
+        patched !== configToml || ctx.data.restart_owed === true,
+        INGRESS_STEP_ID,
+      );
+      checks.push(...delivery.checks);
       return {
         ok: checks.every((c) => c.ok),
         checks,
-        data: { choice, profile: option.profile, shape: option.shape, hostname },
+        data: {
+          choice,
+          profile: option.profile,
+          shape: option.shape,
+          hostname,
+          restart_owed: delivery.restartOwed,
+        },
       };
     },
 
@@ -663,7 +699,7 @@ export function ingressStep(): OnboardingStep {
 
       if (option.secret) {
         const file = join(secretsDirFor(ctx.adapters, ctx.choices), option.secret);
-        const present = existsSync(file) && readFileSync(file, "utf8").trim() !== "";
+        const present = credentialPresent(file);
         checks.push({
           name: "credential",
           ok: present,
@@ -732,6 +768,12 @@ export function ingressStep(): OnboardingStep {
         checks.push(...(await runningShapeChecks(ctx, root, option)));
       }
 
+      if (ctx.data.restart_owed === true)
+        checks.push({
+          name: "daemon-restart",
+          ok: false,
+          detail: `ingress config is on disk but delivery remains owed — make Docker or the server reachable, then run the ${INGRESS_STEP_ID} step again`,
+        });
       return { ok: checks.every((c) => c.ok), checks };
     },
   };
@@ -762,7 +804,7 @@ async function runningShapeChecks(
       {
         name: "running",
         ok: true,
-        detail: `could not inspect the running stack (docker compose ps exited ${ps.code}) — configuration checked only`,
+        detail: `could not inspect the running stack (docker compose ps exited ${ps.code}: ${(ps.stderr || ps.stdout).trim().slice(0, 500)}) — configuration checked only`,
       },
     ];
   }

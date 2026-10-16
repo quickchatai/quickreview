@@ -58,7 +58,7 @@ import { UID_CHOICE_KEY } from "./preflight.js";
 import { topologyOf } from "./topology.js";
 
 export const BRINGUP_STEP_ID = "bringup";
-/** Recorded so the later steps know the stack was actually started once. */
+/** Recorded timestamp of this step's successful bring-up. */
 export const BROUGHT_UP_CHOICE_KEY = "stack_brought_up_at";
 
 /**
@@ -160,14 +160,14 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       // is created or written.
       const mount = configMountOf(ctx.adapters.paths.configPath);
       const secretsDir = secretsDirFor(ctx.adapters, ctx.choices);
-      const uninterpolable = [mount.dir, mount.name, secretsDir].filter((p) => /[$\n]/.test(p));
+      const uninterpolable = [mount.dir, mount.name, secretsDir].filter((p) => /[$\n]|\s#/.test(p));
       if (uninterpolable.length > 0) {
         checks.push({
           name: "mount-paths",
           ok: false,
           detail:
-            `${uninterpolable.join(", ")} cannot be passed to Docker Compose through .env: Compose expands \`$\` in it, ` +
-            "so it would mount a different directory than the one you chose — Fix: move it to a path without `$` " +
+            `${uninterpolable.join(", ")} cannot be passed to Docker Compose through .env: Compose expands \`$\` and treats whitespace followed by # as a comment, ` +
+            "so it would mount a different directory than the one you chose — Fix: move it to a path without `$`, newlines or whitespace followed by # " +
             "(the config's [github] secrets_dir, or where QCR_CONFIG points) and run this step again",
         });
         return { ok: false, checks };

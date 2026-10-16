@@ -40,6 +40,9 @@
 // step already recorded; config reads/writes are plain files under the
 // sandbox root derived from `adapters.paths.stateDir`. Tests point stateDir at
 // a temp dir and fake the prompter — no network, no docker, no real repo write.
+import { parse as parseToml } from "smol-toml";
+import { splitTail, tomlValueAt } from "../toml.js";
+export { splitTail } from "../toml.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
@@ -97,35 +100,14 @@ export function tomlString(v: string): string {
   return JSON.stringify(v);
 }
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function validateGithubLogin(value: string): string | null {
+  return LOGIN_RE.test(value)
+    ? null
+    : "a GitHub login is letters, digits and single dashes — no @, no URL";
 }
 
-/** Split an assignment tail into its value and its trailing `#` comment,
- * ignoring `#` inside quotes. Returns null when the tail cannot be split
- * confidently (an unterminated quote), so the caller leaves the line alone. */
-export function splitTail(tail: string): { value: string; gap: string; comment: string } | null {
-  let quote: '"' | "'" | null = null;
-  for (let i = 0; i < tail.length; i++) {
-    const ch = tail[i]!;
-    if (quote) {
-      if (ch === "\\" && quote === '"') i++;
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === "#") {
-      const value = tail.slice(0, i);
-      const trimmed = value.replace(/\s+$/, "");
-      return { value: trimmed, gap: value.slice(trimmed.length), comment: tail.slice(i) };
-    }
-  }
-  if (quote) return null;
-  const trimmed = tail.replace(/\s+$/, "");
-  return { value: trimmed, gap: "", comment: "" };
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** `← FILL (3): …` has done its job once the value is filled. Rewrite the
@@ -386,10 +368,7 @@ export const QUESTIONS: readonly Question[] = [
     optional: true,
     from: [CHOICE_KEYS.ownerLogin],
     read: (cfg) => cfg.owner.github_login,
-    validate: (v) =>
-      LOGIN_RE.test(v)
-        ? null
-        : "a GitHub login is letters, digits and single dashes — no @, no URL",
+    validate: validateGithubLogin,
   },
   {
     id: "owner_slack_id",
@@ -420,10 +399,7 @@ export const QUESTIONS: readonly Question[] = [
       "Which GitHub login should that fallback mention? (Enter uses your login, or leave both empty for no @)",
     optional: true,
     read: (cfg) => cfg.review.escalation_mention_default,
-    validate: (v) =>
-      LOGIN_RE.test(v)
-        ? null
-        : "a GitHub login is letters, digits and single dashes — no @, no URL",
+    validate: validateGithubLogin,
   },
   {
     id: "ssh_host",
@@ -923,9 +899,25 @@ export function buildEdits(
  * re-run TARGETED rather than a rewrite (and byte-identical when nothing
  * changed). Comparison is on the rendered value, so formatting never counts. */
 export function changedEdits(text: string, edits: readonly TomlEdit[]): TomlEdit[] {
+  let parsed: unknown;
+  try {
+    parsed = parseToml(text);
+  } catch {
+    parsed = undefined;
+  }
   const lines = text.split("\n");
   const sections = sectionAt(lines);
   return edits.filter((edit) => {
+    if (parsed !== undefined) {
+      try {
+        const before = tomlValueAt(parsed, edit.section, edit.key);
+        const after = parseToml(`value = ${edit.value}`)["value"];
+        if (before !== undefined && typeof before !== "object" && Object.is(before, after))
+          return false;
+      } catch {
+        /* The line reader below decides whether a malformed value needs repair. */
+      }
+    }
     const re = new RegExp(`^\\s*(${escapeRe(edit.key)})(\\s*=\\s*)(.*)$`);
     for (let i = 0; i < lines.length; i++) {
       if (sections[i] !== edit.section) continue;
@@ -933,7 +925,14 @@ export function changedEdits(text: string, edits: readonly TomlEdit[]): TomlEdit
       if (!m) continue;
       const parts = splitTail(m[3]!);
       if (!parts) return true;
-      return parts.value !== edit.value;
+      if (parts.value === edit.value) return false;
+      try {
+        const before = parseToml(`value = ${parts.value}`)["value"];
+        const after = parseToml(`value = ${edit.value}`)["value"];
+        return typeof before === "object" || !Object.is(before, after);
+      } catch {
+        return true;
+      }
     }
     return true;
   });
@@ -1252,17 +1251,10 @@ export function configFillStep(): OnboardingStep {
       // Only the STABLE derivations are invariants; the rest are fill-time
       // defaults the operator is free to change afterwards.
       const facts: FillFacts = {
-        repo: cfg.github.repo,
-        app_slug: cfg.github.app_slug,
-        reviewed_repo_dir: cfg.companion.reviewed_repo_dir,
-        owner_name: cfg.owner.name,
-        owner_github_login: cfg.owner.github_login,
-        owner_slack_id: cfg.owner.slack_id,
-        timezone: cfg.ops.timezone,
-        base_branch: cfg.github.base_branch,
-        escalation_mention: cfg.review.escalation_mention_default,
-        ssh_host: cfg.tui.ssh_host,
-        webhook_hostname: cfg.server.hostname,
+        ...(Object.fromEntries(QUESTIONS.map((q) => [q.id, q.read(cfg)])) as Record<
+          AnswerKey,
+          string
+        >),
         secrets_dir: cfg.github.secrets_dir,
         topology: str(ctx.choices, CHOICE_KEYS.topology),
         ingress: str(ctx.choices, CHOICE_KEYS.ingress),

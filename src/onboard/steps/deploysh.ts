@@ -35,7 +35,7 @@ export function effectiveInventoryPath(root: string, env: NodeJS.ProcessEnv = pr
 export const DEPLOY_SCRIPT_REL = "scripts/deploy.sh";
 
 export function deployScriptPath(root: string): string {
-  return join(root, "scripts", "deploy.sh");
+  return join(root, DEPLOY_SCRIPT_REL);
 }
 
 /** `<root>/scripts/deploy.sh [--dry-run] <mode>`. */
@@ -49,5 +49,5 @@ export function deployArgv(
 
 /** How the same invocation reads when the operator types it themselves. */
 export function deployCommandLine(mode: DeployMode, opts: { dryRun?: boolean } = {}): string {
-  return `${DEPLOY_SCRIPT_REL}${opts.dryRun ? " --dry-run" : ""} ${mode}`;
+  return deployArgv("", mode, opts).join(" ");
 }

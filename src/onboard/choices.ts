@@ -28,7 +28,8 @@
 // type error rather than a conditional that never fires.
 
 /** Where the reviewer runs. Absent ⇒ "local" (see `topologyOf`). */
-export type Topology = "local" | "vm";
+export const TOPOLOGY_CHOICES = ["vm", "local"] as const;
+export type Topology = (typeof TOPOLOGY_CHOICES)[number];
 
 /** The webhook ingress shapes. These four ids are also the operator-facing
  * names in `INGRESS_OPTIONS` and in docs/onboarding.md. */

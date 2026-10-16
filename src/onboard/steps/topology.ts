@@ -34,7 +34,7 @@
 // demoted if it no longer holds. Nothing is torn down behind the operator's
 // back: a stack on the machine they are switching away from keeps running
 // until they stop it, and this step says so.
-import { CHOICE_KEYS, type Topology } from "../choices.js";
+import { CHOICE_KEYS, TOPOLOGY_CHOICES, memberOf, type Topology } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepReport } from "../engine.js";
 
 export const TOPOLOGY_STEP_ID = "topology";
@@ -60,7 +60,7 @@ export function topologyOf(choices: Readonly<Record<string, unknown>>): Topology
  * not — switching has to be able to tell "unset" from "local".) */
 export function topologyRecorded(choices: Readonly<Record<string, unknown>>): Topology | null {
   const raw = choices[TOPOLOGY_CHOICE_KEY];
-  return raw === "vm" || raw === "local" ? raw : null;
+  return typeof raw === "string" ? memberOf(TOPOLOGY_CHOICES, raw) : null;
 }
 
 export function sshAliasOf(choices: Readonly<Record<string, unknown>>): string {
@@ -78,9 +78,8 @@ export interface TopologyOption {
   tradeoffs: readonly string[];
 }
 
-export const TOPOLOGY_OPTIONS: readonly TopologyOption[] = [
-  {
-    id: "vm",
+const TOPOLOGY_OPTION_METADATA = {
+  vm: {
     headline:
       "A VM or server over ssh — RECOMMENDED, because a reviewer that is asleep reviews nothing",
     tradeoffs: [
@@ -91,8 +90,7 @@ export const TOPOLOGY_OPTIONS: readonly TopologyOption[] = [
       "the recommended webhook ingress here is a named Cloudflare tunnel on your own domain: a permanent hostname, no rotation",
     ],
   },
-  {
-    id: "local",
+  local: {
     headline: "This computer — everything in Docker on the machine you are sitting at",
     tradeoffs: [
       "nothing else to own: `docker compose up` and the whole system is here — daemon, memory engine, tunnel",
@@ -102,7 +100,12 @@ export const TOPOLOGY_OPTIONS: readonly TopologyOption[] = [
       "you can switch to a server later by re-running this step — the answers you gave (repo, App, keys) are kept",
     ],
   },
-];
+} satisfies Record<Topology, Omit<TopologyOption, "id">>;
+
+export const TOPOLOGY_OPTIONS: readonly TopologyOption[] = TOPOLOGY_CHOICES.map((id) => ({
+  id,
+  ...TOPOLOGY_OPTION_METADATA[id],
+}));
 
 /** The offer text — what the guide reads out when nothing is recorded yet. */
 export function renderTopologyOptions(): string {
@@ -190,7 +193,7 @@ export function topologyStep(): OnboardingStep {
       properties: {
         choice: {
           type: "string",
-          enum: ["vm", "local"],
+          enum: TOPOLOGY_CHOICES,
           description:
             'Where the reviewer will run: "vm" (a VM/server over ssh) or "local" (this computer). Omit to read out both options.',
         },

@@ -50,9 +50,10 @@ import type { Socket } from "node:net";
 import { mintAppJwt } from "../../githubAuth.js";
 import { CHOICE_KEYS, REPO_SLUG_RE, botLoginFor } from "../choices.js";
 import { CONFIG_FILL_STEP_ID } from "./configfill.js";
-import { secretsDirFor } from "./ingress.js";
+import { readTomlKey, secretsDirFor } from "./ingress.js";
 import {
   sandboxRoot,
+  readTextOrNull,
   type CheckResult,
   type OnboardingStep,
   type StepContext,
@@ -664,17 +665,35 @@ export async function findInstallation(
   jwt: string,
   owner: string,
 ): Promise<InstallationLookup> {
-  const r = await api(fetchFn, `${apiBase}/app/installations?per_page=100`, {
-    headers: { authorization: `Bearer ${jwt}` },
-  });
-  if (r.status !== 200)
-    return { status: "error", detail: `GET /app/installations failed (${apiError(r)})` };
-  const list = Array.isArray(r.body)
-    ? (r.body as Array<{ id?: number; account?: { login?: string } }>)
-    : [];
-  const match = list.find((i) => (i.account?.login ?? "").toLowerCase() === owner.toLowerCase());
-  if (match && typeof match.id === "number") return { status: "found", id: match.id };
-  return { status: "none" };
+  const seen = new Set<string>();
+  for (let page = 1; page <= 100; page++) {
+    const r = await api(
+      fetchFn,
+      `${apiBase}/app/installations?per_page=100${page === 1 ? "" : `&page=${page}`}`,
+      {
+        headers: { authorization: `Bearer ${jwt}` },
+      },
+    );
+    if (r.status !== 200)
+      return { status: "error", detail: `GET /app/installations failed (${apiError(r)})` };
+    if (!Array.isArray(r.body))
+      return { status: "error", detail: "GET /app/installations returned an unreadable page" };
+    const list = r.body as Array<{ id?: number; account?: { login?: string } }>;
+    const match = list.find((i) => (i.account?.login ?? "").toLowerCase() === owner.toLowerCase());
+    if (match && typeof match.id === "number") return { status: "found", id: match.id };
+    if (list.length < 100) return { status: "none" };
+    const signature = JSON.stringify(list.map((i) => i.id).sort((a, b) => (a ?? 0) - (b ?? 0)));
+    if (seen.has(signature))
+      return {
+        status: "error",
+        detail: "GET /app/installations repeated a full page; lookup remains incomplete",
+      };
+    seen.add(signature);
+  }
+  return {
+    status: "error",
+    detail: "GET /app/installations exceeded the page budget; lookup remains incomplete",
+  };
 }
 
 async function installationToken(
@@ -819,12 +838,19 @@ interface Resolved {
   labels: Array<{ name: string; color: string; description: string }>;
 }
 
-function resolveLabels(choices: Readonly<Record<string, unknown>>): Resolved["labels"] {
-  const recorded = (choices[CHOICE_KEYS.labels] ?? {}) as Partial<
+function resolveLabels(ctx: StepContext): Resolved["labels"] {
+  const config = readTextOrNull(ctx.adapters.paths.configPath);
+  const recorded = (ctx.choices[CHOICE_KEYS.labels] ?? {}) as Partial<
     Record<keyof typeof DEFAULT_LABELS, unknown>
   >;
   return LABEL_META.map((meta) => {
-    const override = recorded[meta.key];
+    const configKey = {
+      trigger: "trigger_label",
+      in_progress: "in_progress_label",
+      reviewed: "reviewed_label",
+    }[meta.key];
+    const override =
+      (config !== null ? readTomlKey(config, "github", configKey) : null) ?? recorded[meta.key];
     return {
       name:
         typeof override === "string" && override.trim()
@@ -872,7 +898,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       apiBase,
       githubBase,
       repo,
-      labels: resolveLabels(ctx.choices),
+      labels: resolveLabels(ctx),
     };
   }
 
@@ -894,6 +920,13 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
    * (only the review-TEAM trigger needs it), so onboarding never blocks on an
    * organization owner's approval. */
   function orgCaveat(target: AppTarget | null): CheckResult {
+    if (target === null)
+      return {
+        name: "org approval",
+        ok: true,
+        detail:
+          "App target is unknown (not recorded) — check its settings for organization approval; the label trigger works without the optional members:read permission",
+      };
     if (target?.kind !== "org") {
       return {
         name: "org approval",

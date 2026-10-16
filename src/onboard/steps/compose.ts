@@ -24,7 +24,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { CHOICE_KEYS } from "../choices.js";
 import {
   readTextOrNull,
   sandboxRoot,
@@ -69,12 +68,9 @@ export function configPath(adapters: OnboardAdapters): string {
   return adapters.paths.configPath;
 }
 
-/** The config.toml a step that runs after the interview edits: the path the
- * interview recorded writing, else the adapters' — one precedence for every
- * such step. */
+/** The live install locator owns the config path on every resumed step. */
 export function interviewConfigPath(ctx: StepContext): string {
-  const recorded = ctx.choices[CHOICE_KEYS.configPath];
-  return typeof recorded === "string" && recorded ? recorded : ctx.adapters.paths.configPath;
+  return configPath(ctx.adapters);
 }
 
 export function readConfigText(adapters: OnboardAdapters): string | null {

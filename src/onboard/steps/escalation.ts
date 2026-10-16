@@ -55,7 +55,8 @@ export function interviewRuleName(login: string): string {
 
 /** Is this a rule THIS STEP owns (and may therefore rewrite)? */
 export function isInterviewRule(name: string): boolean {
-  return name === INTERVIEW_RULE_PREFIX || name.startsWith(`${INTERVIEW_RULE_PREFIX}:`);
+  const normalized = name.trim();
+  return normalized === INTERVIEW_RULE_PREFIX || normalized.startsWith(`${INTERVIEW_RULE_PREFIX}:`);
 }
 
 /** Split a comma/whitespace-separated answer into trimmed, non-empty items. */
@@ -124,25 +125,39 @@ export function offerCheck(): CheckResult {
 
 // ---- config surgery -------------------------------------------------------
 
-/** A `[[escalation.rules]]` header line, in any valid TOML spelling (leading
- * whitespace, whitespace inside the brackets, a trailing comment). */
-const RULE_HEADER_RE = /^[ \t]*\[\[[ \t]*escalation[ \t]*\.[ \t]*rules[ \t]*\]\][^\n]*$/;
-
-/** `toml` with every `[[escalation.rules]]` block removed — wherever it sits,
- * not only right after `[escalation]`. A block runs from its header to the next
- * line that opens a table, the same extent `foreignRuleBlocks` reads. */
-function withoutRuleBlocks(toml: string): string {
-  const out: string[] = [];
-  let inRule = false;
-  for (const line of toml.split("\n")) {
-    if (RULE_HEADER_RE.test(line)) {
-      inRule = true;
-      continue;
-    }
-    if (inRule && /^[ \t]*\[/.test(line)) inRule = false;
-    if (!inRule) out.push(line);
+/** Recognize a rules table through TOML's own quoted-key grammar. */
+function isRuleHeader(line: string): boolean {
+  if (!/^[ \t]*\[\[/.test(line)) return false;
+  try {
+    const doc = parseToml(`${line}\n__qcr_rule_header__ = true\n`) as {
+      escalation?: { rules?: Array<Record<string, unknown>> };
+    };
+    return doc.escalation?.rules?.[0]?.["__qcr_rule_header__"] === true;
+  } catch {
+    return false;
   }
-  return out.join("\n");
+}
+
+/** The shared block boundaries used by removal and foreign-rule preservation. */
+function ruleBlocks(toml: string): Array<{ start: number; end: number; text: string }> {
+  const blocks: Array<{ start: number; end: number; text: string }> = [];
+  let start: number | null = null;
+  let offset = 0;
+  for (const line of toml.split("\n")) {
+    if (/^[ \t]*\[/.test(line)) {
+      if (start !== null) blocks.push({ start, end: offset, text: toml.slice(start, offset) });
+      start = isRuleHeader(line) ? offset : null;
+    }
+    offset += line.length + 1;
+  }
+  if (start !== null) blocks.push({ start, end: toml.length, text: toml.slice(start) });
+  return blocks;
+}
+
+function withoutRuleBlocks(toml: string): string {
+  return ruleBlocks(toml)
+    .reverse()
+    .reduce((text, block) => text.slice(0, block.start) + text.slice(block.end), toml);
 }
 
 /**
@@ -158,7 +173,7 @@ function withoutRuleBlocks(toml: string): string {
  */
 export function patchEscalationSection(original: string, body: string): string {
   const toml = withoutRuleBlocks(original);
-  const header = /^[ \t]*\[[ \t]*escalation[ \t]*\][^\n]*\n/m.exec(toml);
+  const header = /^[ \t]*\[[ \t]*escalation[ \t]*\][^\n]*(?:\n|$)/m.exec(toml);
   // TOML allows whitespace before a header, inside its brackets and a comment
   // after it — every spelling of the next table ends the section, or the
   // rewrite would swallow it.
@@ -195,16 +210,10 @@ function ruleField(block: string, field: "name" | "to"): unknown {
  * rendered back verbatim (its header line included, comment and all) — so a
  * re-run never eats a hand-written rule. */
 export function foreignRuleBlocks(toml: string): string[] {
-  const out: string[] = [];
-  const re =
-    /^([ \t]*\[\[[ \t]*escalation[ \t]*\.[ \t]*rules[ \t]*\]\][^\n]*)\n?((?:(?![ \t]*\[)[^\n]*\n?)*)/gm;
-  for (let m = re.exec(toml); m; m = re.exec(toml)) {
-    const block = `${m[1]!.trim()}\n${(m[2] ?? "").replace(/\n*$/, "\n")}`;
-    const name = ruleField(block, "name");
-    if (typeof name === "string" && isInterviewRule(name)) continue;
-    out.push(block);
-  }
-  return out;
+  return ruleBlocks(toml).flatMap(({ text }) => {
+    const name = ruleField(text, "name");
+    return typeof name === "string" && isInterviewRule(name) ? [] : [text.replace(/\n*$/, "\n")];
+  });
 }
 
 /** The `to` login of each hand-written rule block, in order, deduplicated.

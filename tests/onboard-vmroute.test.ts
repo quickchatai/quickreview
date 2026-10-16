@@ -235,6 +235,22 @@ describe("the inventory is filled from the interview", () => {
     expect(inventoryPath(root)).toBe(join(root, "deploy", "ansible", "inventory.ini"));
   });
 
+  it("keeps prior explicit inventory overrides while repairing unrelated settings", async () => {
+    const engine = inventoryEngine(VM_CHOICES);
+    expect(
+      (
+        await engine.runStep(VM_INVENTORY_STEP_ID, {
+          ansible_user: "deploy",
+          python: "/opt/python/bin/python3",
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await engine.runStep(VM_INVENTORY_STEP_ID)).ok).toBe(true);
+    const text = readFileSync(inventoryPath(root), "utf8");
+    expect(text).toContain("ansible_user=deploy");
+    expect(text).toContain("ansible_python_interpreter=/opt/python/bin/python3");
+  });
+
   it("the ingress answer rides the host line — the tracked group_vars is never edited", async () => {
     const e = inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" });
     await e.runStep(VM_INVENTORY_STEP_ID);

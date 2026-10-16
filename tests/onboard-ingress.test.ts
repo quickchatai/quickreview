@@ -72,7 +72,7 @@ function adapters(
     runner: {
       run: async (cmd, args) => {
         calls.push([cmd, ...args]);
-        return runner ? runner(cmd, args) : { code: 1, stdout: "", stderr: "no docker in tests" };
+        return runner ? runner(cmd, args) : { code: 0, stdout: "[]", stderr: "" };
       },
     },
     clock: () => new Date("2026-08-30T12:00:00Z"),
@@ -83,7 +83,13 @@ function adapters(
 
 function fake(runner?: (cmd: string, args: string[]) => ProcessResult): Fake {
   const calls: string[][] = [];
-  return { engine: new OnboardingEngine([ingressStep()], adapters(runner, calls)), calls };
+  return {
+    engine: new OnboardingEngine(
+      [ingressStep({ stream: { run: async () => ({ code: 0, stdout: "", stderr: "" }) } })],
+      adapters(runner, calls),
+    ),
+    calls,
+  };
 }
 
 const configText = (): string => readFileSync(join(root, "config.toml"), "utf8");
@@ -113,6 +119,21 @@ describe("deterministic file surgery", () => {
     expect(twice.match(/^\[ingress\]/gm)).toHaveLength(1);
     expect(twice.length).toBeLessThan(once.length + 10);
     expect(readTomlKey(twice, "github", "trigger_label")).toBe("AI review requested");
+  });
+
+  it("reads valid multiline TOML strings as their semantic value", () => {
+    expect(readTomlKey('[owner]\nname = """Dana"""\n', "owner", "name")).toBe("Dana");
+  });
+
+  it("setTomlKey preserves an operator comment while changing the assignment", () => {
+    expect(
+      setTomlKey(
+        '[server]\nhostname = "old.example.com"  # our endpoint\n',
+        "server",
+        "hostname",
+        "new.example.com",
+      ),
+    ).toBe('[server]\nhostname = "new.example.com"  # our endpoint\n');
   });
 
   it("setTomlKey rewrites one key in one table, and refuses a table that is not there", () => {
@@ -353,7 +374,7 @@ describe("choosing a shape", () => {
     rmSync(join(root, "config.toml"));
     const result = await fake().engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
     expect(result.ok).toBe(false);
-    expect(result.failures.join(" ")).toMatch(/cp config\.example\.toml config\.toml/);
+    expect(result.failures.join(" ")).toMatch(/config_fill/);
   });
 });
 
@@ -452,10 +473,13 @@ describe("resume and verify", () => {
     expect(all.ok).toBe(true);
   });
 
-  it("docker missing entirely is a note, never a false failure", async () => {
+  it("an unknown daemon state keeps delivery owed until Docker becomes reachable", async () => {
     const f = fake(() => ({ code: 127, stdout: "", stderr: "docker: not found" }));
     await f.engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
-    expect((await f.engine.verifyAll()).ok).toBe(true);
+    expect((await f.engine.verifyAll()).ok).toBe(false);
+    expect(readChecklist(join(root, "state"))!.steps[INGRESS_STEP_ID]!.data!["restart_owed"]).toBe(
+      true,
+    );
   });
 
   it("verify reads the RUNNING shape: daemon up, sidecar up, hostname published", async () => {
@@ -542,9 +566,10 @@ describe("resume and verify", () => {
     (
       f.engine as unknown as { checklist: { choices: Record<string, unknown> } }
     ).checklist.choices.topology = "vm";
+    const beforeVerify = f.calls.length;
     const all = await f.engine.verifyAll();
     expect(all.ok).toBe(true);
-    expect(f.calls.some((c) => c.includes("ps"))).toBe(false);
+    expect(f.calls.slice(beforeVerify).some((c) => c.includes("ps"))).toBe(false);
   });
 
   it("verify with nothing recorded refuses instead of inventing a shape", async () => {
@@ -606,7 +631,38 @@ describe("the secrets dir is the one every step resolves", () => {
   });
 });
 
+describe("delivery of ingress changes", () => {
+  it("restarts a running daemon and retries a failed delivery even when the config is already written", async () => {
+    let attempts = 0;
+    const step = ingressStep({
+      stream: { run: async () => ({ code: ++attempts === 1 ? 1 : 0, stdout: "", stderr: "" }) },
+    });
+    const engine = new OnboardingEngine(
+      [step],
+      adapters(fakeDocker([["daemon", "running"]], null)),
+    );
+    const first = await engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
+    expect(first.ok).toBe(false);
+    expect(readChecklist(join(root, "state"))!.steps[INGRESS_STEP_ID]!.data!["restart_owed"]).toBe(
+      true,
+    );
+    const second = await engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
+    expect(second.ok).toBe(true);
+    expect(attempts).toBe(2);
+  });
+});
+
 describe("a hostname belongs to the shape it was given for", () => {
+  it("clears a previous named endpoint before a hostname-free ingress choice can create an App", async () => {
+    writeFileSync(join(secretsDir, "tunnel_token"), "connector-token\n");
+    const f = fake();
+    await f.engine.runStep(INGRESS_STEP_ID, { choice: "named", hostname: "review.example.com" });
+    await f.engine.runStep(INGRESS_STEP_ID, { choice: "polling" });
+    const choices = readChecklist(join(root, "state"))!.choices;
+    expect(choices["ingress_hostname"]).toBeNull();
+    expect(choices["webhook_url"]).toBeNull();
+  });
+
   it("ignores a hostname argument for the quick tunnel, as the schema says", async () => {
     const before = readTomlKey(configText(), "server", "hostname");
     const result = await fake().engine.runStep(INGRESS_STEP_ID, {
