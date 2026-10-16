@@ -248,6 +248,26 @@ describe("parseFindingsRecord", () => {
     ]);
   });
 
+  it("overflowing decimal strings never become infinite record fields", () => {
+    const overflow = "9".repeat(400);
+    const parsed = parseFindingsRecord(
+      {
+        findings: [
+          {
+            lens: "pass-ui",
+            disposition: "posted",
+            path: "a.ts",
+            line: overflow,
+            confidence: `-${overflow}`,
+          },
+        ],
+      },
+      7,
+      1,
+    );
+    expect(parsed.record?.findings[0]).toMatchObject({ line: null, confidence: null });
+  });
+
   it("readFindingsRecord distinguishes missing from unparseable", () => {
     expect(readFindingsRecord(join(findingsDir(), "nope.json"), 7, 2).status).toBe("missing");
     writeRecord("pr-7-round-2.json", "{ not json");

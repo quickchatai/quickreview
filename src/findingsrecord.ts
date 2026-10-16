@@ -168,16 +168,16 @@ export interface FindingsRecordFile {
 
 /** The status a follow-up round reports for one prior finding.
  * Closed set; `unverifiable` is honest-unknown and counts as unresolved. */
-export type PriorStatus = "fixed" | "open" | "conceded" | "settled" | "obsolete" | "unverifiable";
-
-export const PRIOR_STATUSES: readonly PriorStatus[] = [
+export const PRIOR_STATUSES = [
   "fixed",
   "open",
   "conceded",
   "settled",
   "obsolete",
   "unverifiable",
-];
+] as const;
+
+export type PriorStatus = (typeof PRIOR_STATUSES)[number];
 
 /** The statuses that take a prior finding off the next round's list. */
 export const PRIOR_RESOLVED_STATUSES: readonly PriorStatus[] = [
