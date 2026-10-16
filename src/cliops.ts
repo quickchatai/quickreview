@@ -325,7 +325,8 @@ export async function cmdCompare(prs: number[], parts?: ProductionParts): Promis
         `compare: not dispatching #${pr} — collect-only (trigger rounds via the daemon on the VM first)`,
       );
     },
-    readRecords: (pr) => readDryrunDir(dryrunDir).filter((r) => r.pr === pr),
+    readRecords: (pr) =>
+      readDryrunDir(dryrunDir).filter((r) => r.pr === pr || r.kind === "unparseable"),
     fetchOldReview: oldReviewFetcher(p.adapter, cfg.github.bot_login),
     fetchPatches: async (pr) =>
       (await p.adapter.listPrFiles(pr))
