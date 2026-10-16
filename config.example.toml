@@ -234,7 +234,7 @@ small_diff_lines = 150
 # "gpt-6-sol" = { input_per_mtok = 0.0, output_per_mtok = 0.0 }
 
 [tui]
-# qcr tui — the operator TUI on the owner's PC, polling the VM over ssh.
+# qcr tui — the operator TUI on the owner's PC, polling the review VM over ssh.
 # Read-only against the VM except the user's own keystrokes + inject files.
 #
 # target — where the daemon container lives relative to this TUI:
@@ -255,7 +255,7 @@ ssh_host = ""                                # ← FILL (7): ssh alias of the VM
 container = "quickreview-sandbox"
 remote_state_dir = "/opt/quickreview/state"
 remote_sandbox_root = "/opt/quickreview/sandbox"
-sudo_docker = true                # docker on VM needs sudo (root-owned socket)
+sudo_docker = true                # docker on the VM needs sudo (root-owned socket)
 poll_interval_s = 3
 stale_after_s = 90                # DATA STALE banner past this written_at age
                                   # (the daemon rewrites status.json every ~30s)

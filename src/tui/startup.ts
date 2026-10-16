@@ -32,7 +32,7 @@ export const STALL_AFTER_MS = 20_000;
  * step from the first frame — a step nobody has reached yet is `pending`, which
  * is a different thing from one that failed. */
 export const STARTUP_STEPS = [
-  { key: "ssh", label: "VM ssh" },
+  { key: "ssh", label: "vm ssh" },
   { key: "poll", label: "daemon status" },
   { key: "memory-forward", label: "memory forward" },
   { key: "memory-namespaces", label: "memory namespaces" },

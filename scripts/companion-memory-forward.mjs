@@ -3,7 +3,7 @@
 //
 // WHY THIS EXISTS
 // ---------------
-// The local pi companion must read and write memory that lives on the VM,
+// The local pi companion must read and write memory that lives on the review VM,
 // while holding no VM credential (root CLAUDE.md rule 8). So the ssh runs
 // here, on the operator's PC, as a systemd --user service the operator owns:
 //
@@ -101,7 +101,7 @@ export const DEFAULTS = {
 };
 
 /** OpenSSH's default sshd `MaxSessions`: session channels per connection.
- * The VM runs it (`sshd -T | grep maxsessions` → 10). */
+ * A stock VM runs it (`sshd -T | grep maxsessions` → 10). */
 export const SSHD_DEFAULT_MAX_SESSIONS = 10;
 
 /**
@@ -1362,7 +1362,7 @@ export function unitText(cfg, env = process.env) {
     ...unitLimitArgs(cfg),
   ].join(" ");
   // Name the transport truthfully — a local unit that claimed to
-  // forward "OpenViking on my-vm" is the line an operator reads first in
+  // forward "OpenViking on <ssh host>" is the line an operator reads first in
   // `systemctl --user status` when the laptop route misbehaves.
   const where = cfg.local ? "local docker" : cfg.sshHost;
   return `[Unit]
