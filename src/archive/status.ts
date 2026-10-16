@@ -6,6 +6,7 @@
 // `backlog` is null until the first plan completes — never 0.
 import type { ArchiveMode } from "../config.js";
 import { ARCHIVE_MODES } from "../config.js";
+import { describeValue as shown } from "../diagnostics.js";
 
 /** How long an operator's `archive-run` / `archive-restore` waits for
  * its tick or restore before it answers "still running". The operator
@@ -219,14 +220,6 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const isStr = (v: unknown): v is string => typeof v === "string";
-
-/** A value from the block, as a reason names it: short, quoted, escaped. */
-function shown(v: unknown): string {
-  if (isStr(v)) return JSON.stringify(v.slice(0, 40));
-  if (v === null || v === undefined || typeof v === "number" || typeof v === "boolean")
-    return String(v);
-  return Array.isArray(v) ? "an array" : `a${typeof v === "object" ? "n" : ""} ${typeof v}`;
-}
 
 class Unreadable extends Error {}
 const bad = (why: string): never => {

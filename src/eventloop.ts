@@ -56,6 +56,7 @@
 
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
+import { describeValue as shown } from "./diagnostics.js";
 
 /** The wake kind (listed in `src/anomalies.ts` WAKE_KINDS). */
 export const EVENT_LOOP_WAKE_KIND = "daemon_event_loop_stalled";
@@ -608,10 +609,12 @@ export class DaemonLoadMonitor {
         this.lastWakeAt > nowMs ||
         nowMs - this.lastWakeAt >= this.deps.policy.cooldownMs)
     ) {
+      const previousWake = this.lastWakeAt;
       this.lastWakeAt = nowMs;
       try {
         this.deps.raise(stall.detail, this.wakeMessage(next));
       } catch (err) {
+        this.lastWakeAt = previousWake;
         this.log("event-loop watch: raising the stall wake failed", err);
       }
     }
@@ -649,16 +652,22 @@ export class DaemonLoadMonitor {
     const p50 = n > 0 ? percentile(lags, 50) : null;
     const p99 = n > 0 ? percentile(lags, 99) : null;
     const max = maxSample?.lag ?? null;
-    // How much of the window the samples COVER: each spans the sampler's
-    // interval plus its delay, back to the previous tick. Time since start is
-    // not it — after a FORWARD wall-clock step (a resume, an NTP step) the
-    // window holds only the samples since, and a "p99 over the last 5m" from
-    // two of them would be their max.
-    let coverStart = nowMs;
-    for (const s of this.samples)
-      coverStart = Math.min(coverStart, s.at - (s.spanMs ?? s.lag + SAMPLE_INTERVAL_MS));
-    const coveredMs = n > 0 ? Math.max(0, Math.min(p.windowMs, nowMs - coverStart)) : 0;
-    const fullWindow = n > 0 && nowMs - coverStart >= p.windowMs - COVERAGE_SLACK_MS;
+    // Coverage is the union of measured spans inside the window. Wall-clock
+    // gaps contribute nothing; overlapping spans count only once.
+    const spans = this.samples
+      .map((s) => ({
+        start: Math.max(windowStart, s.at - (s.spanMs ?? s.lag + SAMPLE_INTERVAL_MS)),
+        end: s.at,
+      }))
+      .sort((a, b) => a.start - b.start || a.end - b.end);
+    let coveredMs = 0;
+    let coveredUntil = windowStart;
+    for (const span of spans) {
+      if (span.end <= coveredUntil) continue;
+      coveredMs += span.end - Math.max(coveredUntil, span.start);
+      coveredUntil = span.end;
+    }
+    const fullWindow = n > 0 && coveredMs >= p.windowMs - COVERAGE_SLACK_MS;
 
     let state: EventLoopState = "unknown";
     let stall: EventLoopStatus["stall"] = null;
@@ -851,14 +860,6 @@ const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFin
 const isStr = (v: unknown): v is string => typeof v === "string";
 const EVENT_LOOP_STATES: readonly EventLoopState[] = ["unknown", "ok", "stalled"];
 
-/** A value from the block, as a reason names it: short, quoted, escaped. */
-function shown(v: unknown): string {
-  if (isStr(v)) return JSON.stringify(v.slice(0, 40));
-  if (v === null || v === undefined || typeof v === "number" || typeof v === "boolean")
-    return String(v);
-  return Array.isArray(v) ? "an array" : `a${typeof v === "object" ? "n" : ""} ${typeof v}`;
-}
-
 /** The block's `cpu` as a reader may render it: the figures when they are all
  * there, else UNKNOWN with why. */
 export function readCpuThrottle(v: unknown): CpuThrottleStatus {
@@ -983,8 +984,8 @@ export function stallShortPhrase(d: unknown): string {
   const { event_loop: e, cpu } = r.view;
   const what =
     e.stall?.trigger === "p99"
-      ? `DAEMON LOOP SLOW p99 ${fmtMs(e.p99_ms ?? 0)}`
-      : `DAEMON LOOP STALLED ${fmtMs(e.max_ms ?? 0)}`;
+      ? `DAEMON LOOP SLOW p99 ${e.p99_ms === null ? "?" : fmtMs(e.p99_ms)}`
+      : `DAEMON LOOP STALLED ${e.max_ms === null ? "?" : fmtMs(e.max_ms)}`;
   const throttled = cpu.state === "measured" ? ` (${pct(cpu.throttled_ratio)} throttled)` : "";
   const busy = typeof e.stall?.busy_share === "number" ? `on CPU ${pct(e.stall.busy_share)}` : null;
   const cause =

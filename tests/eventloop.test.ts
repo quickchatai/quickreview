@@ -612,8 +612,9 @@ describe("the watch: figures, state, thresholds", () => {
     const slowRig = (lagMs: number): Rig => {
       const r = rig({ knobs: { event_loop_window_s: 120 } });
       r.monitor.start();
-      for (let t = 0; t < 120 * S; t += 3_000) {
-        r.advance(3_000);
+      // A 2 s delay spans 2.5 s on the 500 ms sampler.
+      for (let t = 0; t < 120 * S; t += 2_500) {
+        r.advance(2_500);
         r.sample(lagMs);
       }
       return r;
@@ -662,6 +663,34 @@ describe("the watch: figures, state, thresholds", () => {
     expect(again.stall?.trigger).toBe("p99");
     expect(again.covered_s).toBe(300);
     expect(r.raised).toHaveLength(1);
+  });
+
+  it("a forward step retaining older samples cannot turn a short hiccup into sustained p99", () => {
+    const r = rig();
+    r.monitor.start();
+    steady(r, 6 * MIN);
+    r.advance(4 * MIN);
+    r.sample(2_100);
+    r.advance(2_600);
+    r.sample(2_100);
+    const e = r.monitor.evaluate().event_loop;
+    expect(e.p99_ms).toBe(2_100);
+    expect(e.samples).toBeGreaterThan(100);
+    expect(e.covered_s).toBeLessThan(90);
+    expect(e.state).toBe("ok");
+    expect(e.stall).toBeNull();
+    expect(r.raised).toEqual([]);
+  });
+
+  it("overlapping sample spans count their covered time once", () => {
+    const r = rig();
+    r.monitor.start();
+    r.advance(4 * MIN);
+    for (let i = 0; i < 200; i++) r.sample(2_100);
+    const e = r.monitor.evaluate().event_loop;
+    expect(e.covered_s).toBe(3);
+    expect(e.state).toBe("ok");
+    expect(r.raised).toEqual([]);
   });
 
   it("a BACKWARD wall-clock step: a sample stamped after now is dropped — an old stall does not stand for the length of the step", () => {
@@ -765,6 +794,22 @@ describe("the wake — at most once per cooldown", () => {
     r.sample(30_000);
     expect(() => r.monitor.evaluate()).not.toThrow();
     expect(r.monitor.status().event_loop.state).toBe("stalled");
+  });
+
+  it("a failed durable raise remains retryable without spending its cooldown", () => {
+    let attempts = 0;
+    const r = rig({
+      raise: () => {
+        if (++attempts === 1) throw new Error("temporary anomaly write failure");
+      },
+    });
+    r.monitor.start();
+    r.advance(30 * S);
+    r.sample(30_000);
+    expect(r.monitor.evaluate().event_loop.last_wake_at).toBeNull();
+    expect(r.monitor.evaluate().event_loop.last_wake_at).not.toBeNull();
+    r.monitor.evaluate();
+    expect(attempts).toBe(2);
   });
 
   it("stop() stops the sampler and the evaluation timer", () => {
@@ -1497,6 +1542,19 @@ describe("the TUI board — a top-bar banner, the way memory incidents are", () 
     expect(stallShortPhrase({})).toBe("DAEMON LOOP ? · unreadable block");
     expect(stallShortPhrase(undefined)).toBe("DAEMON LOOP ? · not reported");
   });
+
+  it.each(["max", "p99"] as const)(
+    "an unknown %s duration stays unknown on the compact banner",
+    (trigger) => {
+      const block = stalledBlock();
+      block.event_loop.stall!.trigger = trigger;
+      if (trigger === "max") block.event_loop.max_ms = null;
+      else block.event_loop.p99_ms = null;
+      const phrase = stallShortPhrase(block);
+      expect(phrase).toContain(trigger === "max" ? "STALLED ?" : "SLOW p99 ?");
+      expect(phrase).not.toContain("0ms");
+    },
+  );
 
   it("neither the banner nor the quiet mark shifts the alert badge's click zone", () => {
     const badge: AlertBadge = {
