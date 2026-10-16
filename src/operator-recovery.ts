@@ -2,9 +2,10 @@
 // making progress. This is deliberately outside dispatch: it fences
 // the one sticky Pi first, repairs only that PR's command slot, then asks the
 // ordinary pump to decide what work is actually eligible.
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, renameSync, rmSync } from "node:fs";
 import { ovSessionIdForPr } from "./memory/ovsession.js";
+import { verifiedPayload } from "./session-command-payload.js";
 import type { StateStore } from "./state.js";
 
 export type OperatorRecoveryMode = "rerun-round" | "restart-session";
@@ -99,22 +100,9 @@ export async function recoverPrForOperator(
 
     const payloads: Array<{ command: (typeof blockers)[number]; text: string }> = [];
     for (const command of blockers) {
-      let payload: Buffer;
-      try {
-        payload = readFileSync(command.payload_path);
-      } catch (error) {
-        return {
-          ok: false,
-          reason: `session command ${command.id} payload unreadable: ${String(error)}`,
-        };
-      }
-      const actual = createHash("sha256").update(payload).digest("hex");
-      if (actual !== command.payload_sha256) {
-        return {
-          ok: false,
-          reason: `session command ${command.id} payload hash ${actual} != ${command.payload_sha256}`,
-        };
-      }
+      const read = verifiedPayload(command, `session command ${command.id} payload`);
+      if (!read.ok) return { ok: false, reason: read.why };
+      const payload = read.payload;
       const text = payload.toString("utf8");
       if (!Buffer.from(text, "utf8").equals(payload)) {
         return {

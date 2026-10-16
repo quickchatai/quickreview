@@ -37,7 +37,14 @@
 import { createHash } from "node:crypto";
 import { PORTRAIT_DIR } from "../install.js";
 import type { StateFs } from "./engine.js";
-import type { CiFact, Evidence, LanguageCount } from "./facts.js";
+import {
+  ciText,
+  displayRoot,
+  evidenceText,
+  type CiFact,
+  type Evidence,
+  type LanguageCount,
+} from "./facts.js";
 import { leakChecker, readDigest, type HistoryTheme } from "./history.js";
 
 export const PORTRAIT_FACTS_FILE = "setup/portrait-facts.json";
@@ -55,10 +62,10 @@ export interface PortraitUnit {
   kind: string;
   roots: string[];
   note: string;
-  files: number;
-  reviewable: number;
-  lines: number;
-  cases: number;
+  files: number | null;
+  reviewable: number | null;
+  lines: number | null;
+  cases: number | null;
 }
 
 export interface PortraitFacts {
@@ -167,8 +174,7 @@ export type PortraitSection = (typeof PORTRAIT_SECTIONS)[number];
  */
 export function shapeLines(f: PortraitFacts): Record<PortraitSection, string[]> {
   const ev = (what: string, xs: readonly Evidence[]): string[] =>
-    xs.map((x) => `${what} ${x.name} — ${x.evidence}`);
-  const root = (r: string): string => r || "(repo root)";
+    xs.map((x) => `${what} ${evidenceText(x)}`);
   return {
     stack: [
       // By name, not the facts' by-count ranking: one language overtaking
@@ -179,7 +185,9 @@ export function shapeLines(f: PortraitFacts): Record<PortraitSection, string[]> 
     ],
     units: [
       `cut: ${f.units.source === "saved" ? "saved" : "none saved — candidates"}`,
-      ...f.units.units.map((u) => `unit ${u.name} [${u.kind}] ${u.roots.map(root).join(", ")}`),
+      ...f.units.units.map(
+        (u) => `unit ${u.name} [${u.kind}] ${u.roots.map(displayRoot).join(", ")}`,
+      ),
       ...f.units.ignored.map((r) => `ignored ${r}`),
     ],
     conventions: [
@@ -187,10 +195,7 @@ export function shapeLines(f: PortraitFacts): Record<PortraitSection, string[]> 
       ...f.conventions.style_guides.map((g) => `style guide ${g}`),
       ...f.conventions.agent_files.map((a) => `agent file ${a}`),
     ],
-    enforced: [
-      ...f.enforced.ci.map((c) => `CI ${c.system} — ${c.path}${c.name ? ` ("${c.name}")` : ""}`),
-      ...ev("tool", f.enforced.linters),
-    ],
+    enforced: [...f.enforced.ci.map((c) => `CI ${ciText(c)}`), ...ev("tool", f.enforced.linters)],
     history:
       f.history.state === "ok"
         ? f.history.themes.map((t) => `theme ${t.title} [${t.source}] — ${t.summary}`)

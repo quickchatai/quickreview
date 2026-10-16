@@ -21,6 +21,7 @@
 // and `y` runs it. Any other key cancels, the same grammar the quit prompt
 // uses. The register itself (what counts as one, how reverts are read back)
 // lives in `changelog-store.ts`.
+import { proposalKey } from "../setup/pins.js";
 import { FEEDBACK_FULL_TEXT_LABEL, readFencedData } from "../memory/datafence.js";
 import { parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import { lessonHeadline, lessonTierLine } from "../memory/shadowstatus.js";
@@ -364,7 +365,7 @@ export type FeedbackAction =
   | { t: "url"; url: string };
 
 function entryKey(e: MemoryEntry): string {
-  return `${e.ts}|${e.id}#${e.block}`;
+  return proposalKey(e);
 }
 
 /** What the feedback tab answers to on this frame: the verbs of the FOCUSED

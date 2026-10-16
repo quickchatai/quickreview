@@ -830,6 +830,7 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
       const store = new StateStore(":memory:");
       pr(store, 7, "closed");
       liveSessions.add("pr-7");
+      keepKilledSession = true;
       const { m, removed } = sweeper(store, ["pr-7"]);
       expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: [], deferred: 1 });
       expect(removed).toEqual([]);
@@ -1878,6 +1879,7 @@ describe("durable command ownership", () => {
       store.claimSessionCommand(wake.id, "bridge-old", "2026-08-13T10:02:00Z");
       store.markSessionCommandStarted(wake.id, "bridge-old", "2026-08-13T10:45:00Z");
 
+      store.setPrState(42, "closed");
       await m.archiveAndClose(42);
 
       expect(store.getSessionCommand(wake.id)?.status).toBe("cancelled");
@@ -2406,6 +2408,40 @@ describe("overseer rotation", () => {
     expect(liveSessions.has(OVERSEER_SESSION)).toBe(true);
   });
 
+  it("rotation does not join a birth flight whose probe still describes the killed overseer", async () => {
+    const m = manager();
+    await m.ensureOverseerSession();
+    let entered!: () => void;
+    const probing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const finishProbe = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(m.tmux, "hasSession").mockImplementationOnce(async () => {
+      entered();
+      await finishProbe;
+      return true;
+    });
+    const olderBirth = m.ensureOverseerSession();
+    await probing;
+    // Let the rotation run every continuation after its kill before the old
+    // probe finishes. It must spawn without borrowing that stale flight.
+    onKillSession = () => {
+      setImmediate(release);
+    };
+    try {
+      await Promise.all([olderBirth, m.rotateOverseer()]);
+      expect(liveSessions.has(OVERSEER_SESSION)).toBe(true);
+      expect(tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === "overseer")).toHaveLength(
+        2,
+      );
+    } finally {
+      release();
+    }
+  });
+
   it("an overseer that survives the rotation kill is not reported rotated", async () => {
     const m = manager();
     await m.ensureOverseerSession();
@@ -2523,5 +2559,292 @@ describe("killSession — the fence needs tmux's affirmative answer", () => {
     liveSessions.add("pr-42");
     keepKilledSession = true;
     await expect(manager().killSession(42)).rejects.toThrow(/pr-42 not proven gone after kill/);
+  });
+});
+
+describe("closed PR lifecycle across awaited session work", () => {
+  function tracked(store: StateStore): void {
+    store.upsertPr({
+      number: 42,
+      state: "tracked",
+      head_sha: "abc",
+      title: "T",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+  }
+  function deferred() {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { promise, release };
+  }
+
+  it("a close during wake worktree preparation refuses both birth and delivery", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      tracked(store);
+      const m = manager(undefined, store);
+      m.setTitleResolver(() => "T");
+      const entered = deferred();
+      const finish = deferred();
+      vi.spyOn(m.worktrees, "ensureWorktree").mockImplementation(async () => {
+        entered.release();
+        await finish.promise;
+        return { path: "wt/pr-42", head_sha: "abc", base_ref: "", base_sha: "", merge_base: "" };
+      });
+      const wake = m.inject(42, "late wake");
+      const rejected = expect(wake).rejects.toThrow(/closed/);
+      await entered.promise;
+      store.setPrState(42, "closed");
+      await m.archiveAndClose(42);
+      finish.release();
+      await rejected;
+      expect(liveSessions.has("pr-42")).toBe(false);
+      expect(store.activeSessionCommand("pr-42")).toBeUndefined();
+      expect(tmuxArgs().some((args) => args[0] === "new-session")).toBe(false);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("a close while tmux birth awaits kills that completed birth before returning", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      tracked(store);
+      const m = manager(undefined, store);
+      const entered = deferred();
+      const finish = deferred();
+      const spawn = m.tmux.newSession.bind(m.tmux);
+      vi.spyOn(m.tmux, "newSession").mockImplementation(async (...args) => {
+        entered.release();
+        await finish.promise;
+        return spawn(...args);
+      });
+      const birth = m.ensurePrSession(42, "T", "wt/pr-42");
+      await entered.promise;
+      store.setPrState(42, "closed");
+      const close = m.archiveAndClose(42);
+      finish.release();
+      await Promise.all([birth, close]);
+      expect(liveSessions.has("pr-42")).toBe(false);
+      expect(ovCalls).toEqual(["create pr-42", "delete pr-42"]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("a reopened PR is spared the old close kill and raw-tier deletion", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      tracked(store);
+      const m = manager(undefined, store);
+      await m.ensurePrSession(42, "T", "wt/pr-42");
+      store.setPrState(42, "closed");
+      const entered = deferred();
+      const finish = deferred();
+      vi.spyOn(m.worktrees, "remove").mockImplementation(async () => {
+        entered.release();
+        await finish.promise;
+      });
+      const close = m.archiveAndClose(42);
+      await entered.promise;
+      store.setPrState(42, "tracked");
+      finish.release();
+      await close;
+      expect(liveSessions.has("pr-42")).toBe(true);
+      expect(ovCalls).toEqual(["create pr-42"]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it.each(["close", "sweep"])(
+    "a reopened birth waits for %s raw-tier deletion before recreating memory",
+    async (cleanup) => {
+      const store = new StateStore(":memory:");
+      const finish = deferred();
+      try {
+        tracked(store);
+        const base = manager(undefined, store);
+        const lifecycle = {
+          ...ovSessions,
+          list: async () => ({ ok: true as const, ids: ["pr-42"] }),
+        };
+        const m = new PiSessionManager({
+          cfg: base.cfg,
+          root,
+          tmux: base.tmux,
+          worktrees: base.worktrees,
+          ovSessions: lifecycle,
+          commandStore: store,
+          piHome: join(root, "pihome"),
+        });
+        const entered = deferred();
+        let rawExists = false;
+        vi.spyOn(lifecycle, "create").mockImplementation(async (id) => {
+          ovCalls.push(`create ${id}`);
+          rawExists = true;
+          return true;
+        });
+        vi.spyOn(lifecycle, "remove").mockImplementation(async (id) => {
+          ovCalls.push(`delete ${id}`);
+          entered.release();
+          await finish.promise;
+          rawExists = false;
+          return true;
+        });
+        await m.ensurePrSession(42, "T", "wt/pr-42");
+        store.setPrState(42, "closed");
+        if (cleanup === "sweep") liveSessions.delete("pr-42");
+        const close = cleanup === "close" ? m.archiveAndClose(42) : m.sweepStaleOvSessions();
+        await entered.promise;
+        store.setPrState(42, "tracked");
+        const replacement = m.ensurePrSession(42, "Reopened", "wt/pr-42");
+        const birthStartedDuringClose = m.birthInFlight(42);
+        if (birthStartedDuringClose) await replacement;
+        finish.release();
+        await Promise.all([close, replacement]);
+        expect(rawExists).toBe(true);
+        expect(liveSessions.has("pr-42")).toBe(true);
+        expect(birthStartedDuringClose).toBe(false);
+        expect(ovCalls).toEqual(["create pr-42", "delete pr-42", "create pr-42"]);
+      } finally {
+        finish.release();
+        store.close();
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it.each(["close", "sweep"])(
+    "a reopened birth waits for %s awaited tmux kill",
+    async (cleanup) => {
+      const store = new StateStore(":memory:");
+      const finish = deferred();
+      try {
+        tracked(store);
+        const m = manager(undefined, store);
+        await m.ensurePrSession(42, "T", "wt/pr-42");
+        const entered = deferred();
+        const kill = m.tmux.killSession.bind(m.tmux);
+        vi.spyOn(m.tmux, "killSession").mockImplementation(async (name) => {
+          entered.release();
+          await finish.promise;
+          await kill(name);
+        });
+        store.setPrState(42, "closed");
+        const close = cleanup === "close" ? m.archiveAndClose(42) : m.sweepStaleOvSessions();
+        await entered.promise;
+        store.setPrState(42, "tracked");
+        const replacement = m.ensurePrSession(42, "Reopened", "wt/pr-42");
+        const birthStartedDuringClose = m.birthInFlight(42);
+        if (birthStartedDuringClose) await replacement;
+        finish.release();
+        await Promise.all([close, replacement]);
+        expect(liveSessions.has("pr-42")).toBe(true);
+        expect(birthStartedDuringClose).toBe(false);
+      } finally {
+        finish.release();
+        store.close();
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it("a close begun during the wake readiness probe cannot lend its dying consumer to a reopen", async () => {
+    const store = new StateStore(":memory:");
+    const finishProbe = deferred();
+    const finishKill = deferred();
+    try {
+      tracked(store);
+      const m = manager(undefined, store);
+      m.setTitleResolver(() => "T");
+      markExistingSessionReady(m, "pr-42");
+      const probeEntered = deferred();
+      const killEntered = deferred();
+      vi.spyOn(m.tmux, "hasSession").mockImplementationOnce(async () => {
+        probeEntered.release();
+        await finishProbe.promise;
+        return true;
+      });
+      const kill = m.tmux.killSession.bind(m.tmux);
+      vi.spyOn(m.tmux, "killSession").mockImplementationOnce(async (name) => {
+        killEntered.release();
+        await finishKill.promise;
+        await kill(name);
+      });
+      const wake = m.inject(42, "reopened author reply");
+      await probeEntered.promise;
+      store.setPrState(42, "closed");
+      const close = m.archiveAndClose(42);
+      await killEntered.promise;
+      store.setPrState(42, "tracked");
+      finishProbe.release();
+      finishKill.release();
+      await Promise.all([wake, close]);
+      expect(liveSessions.has("pr-42")).toBe(true);
+      expect(store.activeSessionCommand("pr-42")).toMatchObject({
+        kind: "wake",
+        status: "pending",
+      });
+      expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(1);
+    } finally {
+      finishProbe.release();
+      finishKill.release();
+      store.close();
+    }
+  });
+
+  it("a close queued behind a sweep kill still performs its archive and raw-tier cleanup", async () => {
+    const store = new StateStore(":memory:");
+    const finish = deferred();
+    try {
+      tracked(store);
+      const m = manager(undefined, store);
+      await m.ensurePrSession(42, "T", "wt/pr-42");
+      store.setPrState(42, "closed");
+      const entered = deferred();
+      const kill = m.tmux.killSession.bind(m.tmux);
+      vi.spyOn(m.tmux, "killSession").mockImplementationOnce(async (name) => {
+        entered.release();
+        await finish.promise;
+        await kill(name);
+      });
+      const remove = vi.spyOn(m.worktrees, "remove").mockResolvedValue();
+      const sweep = m.sweepStaleOvSessions();
+      await entered.promise;
+      const close = m.archiveAndClose(42);
+      finish.release();
+      await Promise.all([sweep, close]);
+      expect(remove).toHaveBeenCalledWith(42);
+      expect(ovCalls).toEqual(["create pr-42", "delete pr-42"]);
+    } finally {
+      finish.release();
+      store.close();
+    }
+  });
+
+  it("reconcile retries a surviving closed session even with memory disabled", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      tracked(store);
+      const config = cfg();
+      config.openviking.enabled = false;
+      const m = manager(undefined, store, config);
+      markExistingSessionReady(m, "pr-42");
+      store.setPrState(42, "closed");
+      keepKilledSession = true;
+      await m.archiveAndClose(42);
+      expect(liveSessions.has("pr-42")).toBe(true);
+      keepKilledSession = false;
+      await expect(m.sweepStaleOvSessions()).resolves.toBeNull();
+      expect(liveSessions.has("pr-42")).toBe(false);
+    } finally {
+      store.close();
+    }
   });
 });

@@ -19,9 +19,9 @@
 // Persistence: `<state home>/setup/history-themes.json` — the saved themes and
 // the ones they replaced. Memory: a save RETIRES the earlier unpinned
 // `#history` entries and writes the new ones, so a re-run supersedes rather
-// than piles up (the survey's rule); a pinned or `#manual` one is the
+// than piles up (the survey's rule); a pinned, `#manual` or `source=manual` one is the
 // operator's and is left alone.
-import { dehash, parseHashTags } from "../memory/eventtags.js";
+import { dehash, parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import { normalizeTag, refOf, type MemoryStore } from "../memory/store.js";
 import { parseDigest, type ReviewHistoryDigest } from "../reviewhistory.js";
 import type { StateFs } from "./engine.js";
@@ -361,10 +361,29 @@ export async function saveHistoryThemes(
     // but only the HEADER says what an entry is: a feedback comment reading
     // "keep #history out of billing" is not an earlier theme to retire, and
     // a theme that mentions "#manual" is not the owner's own entry.
-    const old = (await deps.memory.search("", { tag: HISTORY_TAG })).filter((e) => {
-      const header = parseHashTags(e.text).map(normalizeTag);
-      return header.includes(HISTORY_TAG) && !e.pinned && !header.includes("manual");
-    });
+    const sweeper = deps.memory as MemoryStore & {
+      sweep?: () => Promise<{
+        entries: Awaited<ReturnType<MemoryStore["read"]>>;
+        unread: string[];
+      }>;
+    };
+    const snapshot = typeof sweeper.sweep === "function" ? await sweeper.sweep() : null;
+    const incomplete = snapshot !== null && snapshot.unread.length > 0;
+    if (incomplete)
+      memory.problems.push(
+        "earlier history themes UNKNOWN — memory enumeration is incomplete; supersession cannot be confirmed",
+      );
+    const old = (snapshot?.entries ?? (await deps.memory.search("", { tag: HISTORY_TAG }))).filter(
+      (e) => {
+        const header = parseHashTags(e.text).map(normalizeTag);
+        return (
+          header.includes(HISTORY_TAG) &&
+          !e.pinned &&
+          !header.includes("manual") &&
+          parseEventTags(e.text).source !== "manual"
+        );
+      },
+    );
     // The new themes land BEFORE the old ones go: a write memory refuses (or
     // a stop between the two) leaves the earlier themes live, never neither.
     for (const t of n.themes) {
@@ -372,9 +391,9 @@ export async function saveHistoryThemes(
       if (r.ok) memory.written++;
       else memory.problems.push(`could not write "${t.title}": ${r.message}`);
     }
-    if (memory.written < n.themes.length) {
+    if (incomplete || memory.written < n.themes.length) {
       memory.problems.push(
-        `the earlier #${HISTORY_TAG} entries are kept — not every new theme was written; the next save replaces them`,
+        `the earlier #${HISTORY_TAG} entries are kept — ${incomplete ? "earlier themes could not all be read" : "not every new theme was written"}; the next save replaces them`,
       );
     } else {
       for (const e of old) {

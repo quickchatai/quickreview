@@ -324,6 +324,37 @@ describe("saving themes", () => {
     expect(parseEventTags(text)).toEqual({ source: "human", weight: "3" });
   });
 
+  it("incomplete memory enumeration cannot report complete theme supersession", async () => {
+    const mem = new MemFake();
+    mem.add("#history earlier theme");
+    const memory = Object.assign(mem, {
+      sweep: async () => ({ entries: [], unread: ["unreachable"] }),
+    });
+    const { e, put } = engine(memory);
+    put(digest());
+    const r = await e.saveHistoryThemes([]);
+    expect(r).toMatchObject({
+      ok: true,
+      memory: {
+        retired: 0,
+        problems: expect.arrayContaining([expect.stringContaining("UNKNOWN")]),
+      },
+    });
+    expect(mem.entries).toHaveLength(1);
+  });
+
+  it("history supersession protects source=manual in the header without trusting body metadata", async () => {
+    const mem = new MemFake();
+    mem.add("#history source=manual Theme: operator note");
+    mem.add("#history source=human Theme: earlier automatic note mentions source=manual");
+    const { e, put } = engine(mem);
+    put(digest());
+    expect(await e.saveHistoryThemes([])).toMatchObject({ ok: true, memory: { retired: 1 } });
+    expect(mem.entries.map((entry) => entry.text)).toEqual([
+      "#history source=manual Theme: operator note",
+    ]);
+  });
+
   it("a re-save supersedes the earlier unpinned #history entries and keeps the operator's", async () => {
     const mem = new MemFake();
     mem.add("#history #manual the operator's own note");

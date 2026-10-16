@@ -27,7 +27,7 @@ import type { MemoryStore } from "../memory/store.js";
 import { OpenVikingClient } from "../openviking/client.js";
 import { openVikingStore } from "../openviking/store.js";
 import { EXPIRES_VAR, TOKEN_VAR } from "../tui/ghread.js";
-import { isBinaryContent } from "./textsniff.js";
+import { isBinaryContent, textLineCount } from "./textsniff.js";
 import type { GitHubReader, RepoReader, StateFs, TrackerSink } from "./engine.js";
 
 /** Files over this are not read for facts or counted line by line — a
@@ -102,7 +102,8 @@ export function checkoutReader(root: string): RepoReader {
             continue;
           }
           st = l.isSymbolicLink() ? statSync(full) : l;
-        } catch {
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") return false;
           continue; // a dangling link names no file
         }
         if (st.isFile()) out.push(relative(root, full).split(sep).join("/"));
@@ -157,10 +158,7 @@ export function checkoutReader(root: string): RepoReader {
     lines: (rel) => {
       const text = readText(rel);
       if (text === null) return null;
-      if (text === "") return 0;
-      let n = 0;
-      for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
-      return text.endsWith("\n") ? n : n + 1;
+      return textLineCount(text);
     },
     head: () => git(["rev-parse", "HEAD"])?.trim() || null,
     changeCounts: () => {
@@ -173,12 +171,12 @@ export function checkoutReader(root: string): RepoReader {
         "-n",
         String(CHANGE_LOG_COMMITS),
         "--name-only",
+        "-z",
         "--format=",
       ]);
       if (log === null) return null;
       const counts: Record<string, number> = {};
-      for (const line of log.split("\n")) {
-        const p = line.trim();
+      for (const p of log.split("\0")) {
         if (p !== "") counts[p] = (counts[p] ?? 0) + 1;
       }
       return counts;

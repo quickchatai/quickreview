@@ -306,7 +306,7 @@ describe("cases — the saved cut split to fit, names kept", () => {
     expect(r.cases.filter((c) => c.unit === "rest")).toEqual([]);
     // The status view shows the same split.
     const view = e.status().saved!.units.find((u) => u.name === "big")!;
-    expect(view.cases.map((c) => c.id)).toEqual(["big#1", "big#2", "big#3"]);
+    expect(view.cases!.map((c) => c.id)).toEqual(["big#1", "big#2", "big#3"]);
     // A caller's filter narrows the files (a scan's stage 1 drops tests).
     const only0 = e.cases((p) => p.includes("/mod0/"));
     expect(only0.ok && only0.cases.map((c) => c.id)).toEqual(["big"]);
@@ -325,6 +325,42 @@ describe("the later slices' ports are injected and honest", () => {
     ).toEqual({
       ok: false,
       reason: "the tracker sink is not wired yet",
+    });
+  });
+});
+
+describe("unknown checkout measurements", () => {
+  it("retains saved unit metadata with unknown coverage when the checkout vanishes", () => {
+    const repo = fakeRepo({ "src/main.ts": "x\n" });
+    const e = engine(repo);
+    expect(e.propose({ units: [{ name: "src", roots: [""] }] })).toMatchObject({ ok: true });
+    expect(e.save()).toMatchObject({ ok: true });
+    repo.files = null;
+    const status = e.status();
+    expect(status.saved?.units).toEqual([
+      expect.objectContaining({
+        name: expect.any(String),
+        files: null,
+        reviewable: null,
+        lines: null,
+        cases: null,
+      }),
+    ]);
+    expect(status.saved?.ignored_files).toBeNull();
+    expect(status.saved?.unassigned).toBeNull();
+  });
+
+  it("refuses survey prices for unavailable line counts instead of calling them zero", async () => {
+    const repo = fakeRepo({ "src/main.ts": "x\n" });
+    const e = engine(repo);
+    e.propose({ units: [{ name: "src", roots: [""] }] });
+    expect(e.save().ok).toBe(true);
+    repo.lines = () => null;
+    expect(e.status().saved?.units[0]?.lines).toBeNull();
+    const preview = await e.surveyPreview();
+    expect(preview).toMatchObject({
+      ok: false,
+      errors: [expect.stringContaining("line count UNKNOWN")],
     });
   });
 });

@@ -696,6 +696,34 @@ describe("the commit hand-off (processProfileCommits)", () => {
     expect(existsSync(join(commits, ".processing.lock"))).toBe(false);
   });
 
+  it("a repository probe failure carries its cause and can be retried", () => {
+    const stateHome = join(dir, "state");
+    write(
+      join(stateHome, "setup", "commits", "a.request.json"),
+      JSON.stringify({ id: "a", message: "m", paths: ["profiles/acme/profile.toml"] }),
+    );
+    mkdirSync(home(), { recursive: true });
+    let denied = true;
+    const git: GitRun = (args) => {
+      if (args[0] === "rev-parse" && args[1] === "--show-toplevel")
+        return denied
+          ? { code: 128, stdout: "", stderr: "fatal: dubious ownership" }
+          : { code: 0, stdout: home(), stderr: "" };
+      if (args[0] === "diff") return { code: 0, stdout: "", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    expect(processProfileCommits({ stateHome, configHome: home(), git })).toEqual([
+      expect.objectContaining({
+        state: "failed",
+        detail: expect.stringContaining("dubious ownership"),
+      }),
+    ]);
+    denied = false;
+    expect(
+      processProfileCommits({ stateHome, configHome: home(), git, retryFailed: true }),
+    ).toEqual([expect.objectContaining({ state: "nothing-to-commit" })]);
+  });
+
   it("a commit whose git step failed is not re-run by the timer, and is by the operator's retry", () => {
     const stateHome = join(dir, "state");
     const commits = join(stateHome, "setup", "commits");

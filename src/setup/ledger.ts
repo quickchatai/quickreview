@@ -47,7 +47,7 @@ export interface LedgerEntry {
   range?: FileRange | null;
   tier: string;
   effort: string;
-  /** Whether the validator ran over the case (it is part of the price). */
+  /** Whether validation was enabled for this case; a lens returning NONE needs no validator run. */
   validator: boolean;
   /** `"deep"` for a deep scan's reading; absent = standard. */
   depth?: ScanDepth;
