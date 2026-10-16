@@ -2,9 +2,9 @@
 """Export the benchmark's tables to a Hugging Face dataset directory.
 
     uv run --no-project --with pyarrow --with datasets python bench/aacr/hf_export.py \\
-        --runs-dir ~/qcr-bench-runs/runs \\
+        --runs-dir <runs dir>/runs \\
         --aacr-dataset <AACR-Bench v1.0 dataset/positive_samples.json> \\
-        --out ~/qcr-bench-runs/release/hf-dataset \\
+        --out <runs dir>/release/hf-dataset \\
         --repo-id <org>/<name> [--archive-url URL] [--no-figures] [--no-load-check]
 
 What it writes (no model call, nothing uploaded; the run dirs are only read):
@@ -71,11 +71,19 @@ JUDGE_LABELS = {PRIMARY: "gpt-6-sol-high", SECOND: "claude-opus-5-5", SELFCONS: 
 
 # the exporting host's home directory: $QCR_SCRUB_HOME, default this user's home
 _HOME_RX = re.escape(os.environ.get("QCR_SCRUB_HOME", os.path.expanduser("~")).rstrip("/"))
+# the repo checkout and the bench runs dir: $QCR_SCRUB_REPO_DIR (default: this
+# checkout, a worktree resolved to its main checkout) and $QCR_SCRUB_RUNS_DIR
+# (default: `qcr-bench-runs` beside that checkout)
+_REPO_DIR = os.environ.get(
+    "QCR_SCRUB_REPO_DIR",
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).split("/.claude/worktrees/")[0],
+).rstrip("/")
+_RUNS_DIR = os.environ.get("QCR_SCRUB_RUNS_DIR", os.path.join(os.path.dirname(_REPO_DIR), "qcr-bench-runs")).rstrip("/")
 
 SCRUB_RULES: list[tuple[str, str, str]] = [
     # (label, regex, replacement)
-    ("host path: runs dir", _HOME_RX + r"/qcr-bench-runs", "<runs>"),
-    ("host path: repo checkout", _HOME_RX + r"/src/quickreview", "<repo>"),
+    ("host path: runs dir", re.escape(_RUNS_DIR), "<runs>"),
+    ("host path: repo checkout", re.escape(_REPO_DIR), "<repo>"),
     ("host path: home", _HOME_RX + r"\b", "<home>"),
     ("host volume: pi login", r"companion-pihome", "<pi-login-volume>"),
     ("review bot", r"example-review\[bot\]", "<review-bot>"),

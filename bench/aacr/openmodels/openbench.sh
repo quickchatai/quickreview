@@ -25,7 +25,7 @@
 #                          is ~250–800 MB and nearly idle CPU — DigitalOcean's capacity is.
 #   TIMEOUT_MIN=N          each review's time limit (default 180). The published GPT-6.1 runs used
 #                          75; the open models take 54–66 min on the largest AACR PRs.
-#   EXT_CACHE / EXT_DATA   the external benchmarks' caches (default: ~/qcr-bench-runs/)
+#   EXT_CACHE / EXT_DATA   the external benchmarks' caches (default: qcr-bench-runs/ beside the main checkout)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,8 +35,8 @@ OUT="$MAIN/bench/aacr/artifacts/open-models"
 cd "$SRC"
 
 export QCR_BENCH_RUNS_DIR="$OUT/runs"
-export EXT_CACHE="${EXT_CACHE:-$HOME/qcr-bench-runs/ext-cache}"
-export EXT_DATA="${EXT_DATA:-$HOME/qcr-bench-runs/ext-data}"
+export EXT_CACHE="${EXT_CACHE:-$(dirname "$MAIN")/qcr-bench-runs/ext-cache}"
+export EXT_DATA="${EXT_DATA:-$(dirname "$MAIN")/qcr-bench-runs/ext-data}"
 export QCR_BENCH_PRIVATE_SETS="$SRC/bench/aacr/sets"
 
 MODEL="${MODEL:-glm-5.3-flash}"
