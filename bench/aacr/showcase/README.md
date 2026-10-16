@@ -38,14 +38,7 @@ Two choices v2 makes that the images do not spell out:
 - **`every-benchmark`** plots one measure per benchmark: all verified defects (AACR-Bench), the
   audited real bugs (Martian), the functional bugs (Qodo).
 
-| | |
-|---|---|
-| ![](out/v2/headline.png) | ![](out/v2/headline-missed.png) |
-| ![](out/v2/one-vs-six.png) | ![](out/v2/head-to-head.png) |
-| ![](out/v2/clean-catch.png) | ![](out/v2/every-benchmark.png) |
-| ![](out/v2/qodo-functional.png) | ![](out/v2/martian-real-bugs.png) |
-| ![](out/v2/same-model.png) | ![](out/v2/by-kind.png) |
-| ![](out/v2/by-size.png) | |
+The rendered images are not tracked in git; run the command above to draw them into `out/`.
 
 ## v3: area charts, the honest set, each benchmark's own score, ten new angles
 
@@ -134,19 +127,7 @@ caveat behind an image is in `out/v3/NUMBERS.md`.
   - Martian: 29% real, 3 of 139 wrong.
   These are earlier builds, on 10 Qodo and 20 Martian PRs.
 
-| | |
-|---|---|
-| ![](out/v3/radar-kinds.png) | ![](out/v3/radar-cards.png) |
-| ![](out/v3/radar-tradeoffs.png) | ![](out/v3/honest-comments.png) |
-| ![](out/v3/honest-cost.png) | ![](out/v3/honest-time.png) |
-| ![](out/v3/honest-cost-by-kind.png) | ![](out/v3/honest-time-by-kind.png) |
-| ![](out/v3/official-aacr.png) | ![](out/v3/official-martian.png) |
-| ![](out/v3/official-qodo.png) | ![](out/v3/official-combined.png) |
-| ![](out/v3/idea-rare-finds.png) | ![](out/v3/idea-best-of-six.png) |
-| ![](out/v3/idea-record.png) | ![](out/v3/idea-languages.png) |
-| ![](out/v3/idea-commercial-misses.png) | ![](out/v3/idea-robust.png) |
-| ![](out/v3/idea-skip-nits.png) | ![](out/v3/idea-funnel.png) |
-| ![](out/v3/idea-price-per-bug.png) | ![](out/v3/idea-uncredited.png) |
+The rendered images are not tracked in git; run the command above to draw them into `out/`.
 
 ## v4: the publishers' own chart formats, and an infographic library
 
@@ -407,52 +388,41 @@ palette validator in both themes; grey never competes with the accent.
    real bugs (more than any of 17 other reviewers). Cost and time are in the small print. **My pick
    for the headline:** one number, instantly readable, every competitor visible, three independent
    benchmarks behind it.
-   ![headline](out/headline.png)
 2. **`headline-missed`** — *"QuickReview let 13 serious bugs through. The next best let 36."* A unit
    chart: one square per high- or medium-severity defect a reviewer missed. The same result as (1),
    framed as risk instead of recall; the visual gap (13 squares against 36–110) is the strongest
    on the page.
-   ![headline-missed](out/headline-missed.png)
 
 **Supporting graphics**
 
 3. **`one-vs-six`** — *"One QuickReview finds more than six other reviewers combined."* Pool every
    defect any of the six third-party reviewers found: 446. QuickReview alone: 461, and 47 defects
    none of the six found. (On high + medium severity alone it is a tie, 222 each — in the footer.)
-   ![one-vs-six](out/one-vs-six.png)
 4. **`head-to-head`** — *"The gap runs one way."* Against each tool: what QuickReview found that
    the other missed (123–273) against the reverse (3–25).
-   ![head-to-head](out/head-to-head.png)
 5. **`clean-catch`** — *"Every serious bug caught on 89% of pull requests."* Not a benchmark metric:
    of the 122 PRs carrying a high- or medium-severity defect, on how many did the reviewer flag
    every one of them (QuickReview 109; others 52–90). This is the property a team actually feels.
-   ![clean-catch](out/clean-catch.png)
 6. **`qodo-functional`** — *"The most functional bugs found among 13 code reviewers."* The
    closed-source comparison: Qodo, Augment, Copilot, Cursor Bugbot, Greptile, OpenAI's Codex
    reviewer, CodeRabbit and Sentry, all graded by one judge.
-   ![qodo-functional](out/qodo-functional.png)
 7. **`martian-real-bugs`** — *"87% of Martian's real bugs, more than any other reviewer."* 18
    reviewers, 14 of them commercial. Where a tool has both, our judge and Martian's published judge
    are drawn as a dumbbell: the published judge is the more generous one, so QuickReview beating
    every published number is a conservative claim.
-   ![martian-real-bugs](out/martian-real-bugs.png)
 8. **`same-model`** — *"Same model, better reviewer."* Six tools that all ran on gpt-6.1-sol,
    across three benchmarks: 89/87/45% against at most 67/78/29%. The design is the moat, not
    the model. "Not run" cells are drawn as gaps.
-   ![same-model](out/same-model.png)
 9. **`by-kind`** — *"Ahead on every kind of defect."* Eight kinds of defect, QuickReview's lead
    over the next best from +5 (compatibility) to +35 points (maintainability).
-   ![by-kind](out/by-kind.png)
 10. **`by-size`** — *"No drop-off on big pull requests."* 87 / 87 / 90% from small to large PRs.
     The title switches to "the bigger the PR, the bigger the lead" only if the lead grows by
     5 points or more; today it grows by 3 (+20 → +23), so it does not claim that.
-    ![by-size](out/by-size.png)
 11. **`scorecard`** — *"First in recall on 4 of 5 measures across three benchmarks."* Every
     reviewer we have a number for, every benchmark, gaps drawn as dashes: the honest overview, and
     a map of the data gaps below.
-    ![scorecard](out/scorecard.png)
 
-Dark-theme versions sit beside each as `<name>-dark.png`.
+Each figure is drawn into `out/` (not tracked in git), with a dark-theme version beside it as `<name>-dark.png`.
 
 ## Flagged: ideas that need data we do not have
 
