@@ -16,7 +16,7 @@ clone** — that property is part of the spec, because a stranger's first
 command is the suite. Tests mock all I/O (fake fetch/adapters, in-memory
 SQLite, temp dirs); the few tests that touch the real world (scratch git
 repos, shell scripts against a loopback HTTP stub, local subprocesses) are
-listed in `tests/CLAUDE.md`.
+listed in `tests/AGENTS.md`.
 
 Conventions: TypeScript strict, ESM (`"type": "module"`, NodeNext — local
 imports use the `.js` suffix), Node ≥ 22, minimal dependencies.
@@ -54,7 +54,7 @@ imports use the `.js` suffix), Node ≥ 22, minimal dependencies.
 ## Submitting changes
 
 - Keep PRs small and behaviour-focused; every behaviour change needs a test
-  at the seam it changes (see `tests/CLAUDE.md` for the house test style).
+  at the seam it changes (see `tests/AGENTS.md` for the house test style).
 - Run `npm test && npm run build` before pushing.
 - Reference the issue you're addressing. FT-#### ids you'll find in test
   names, data strings and commit messages are the project's internal

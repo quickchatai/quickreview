@@ -9,7 +9,7 @@ import { PROCESS_SUITES, PROCESS_TIMEOUT_MS } from "./tests/helpers/suite-timeou
 // checkout's seeds against another branch's expectations.
 const ALL = ["tests/**/*.test.ts"];
 
-// Two projects, one run (tests/CLAUDE.md "Timeouts under load"): the files
+// Two projects, one run (tests/AGENTS.md "Timeouts under load"): the files
 // that spawn real processes get PROCESS_TIMEOUT_MS, because under load a
 // child's wall time belongs to the scheduler; everything else keeps vitest's
 // 5s default so an in-process hang still fails fast. The names matter: vitest

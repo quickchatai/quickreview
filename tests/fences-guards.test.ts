@@ -1,6 +1,6 @@
 // [T10] — guard coverage derived from the call sites, never asserted in prose.
 //
-// `scripts/CLAUDE.md` states which posting-time guards each posting script
+// `scripts/AGENTS.md` states which posting-time guards each posting script
 // calls. It is a documentation claim about a safety invariant, the worst kind
 // of claim to let drift, so the sentence is checked against what is derivable
 // and a drift fails a test instead of surviving a read. Nothing here is
@@ -118,7 +118,7 @@ describe("[T10] guard coverage is derived from the call sites", () => {
   });
 
   /**
-   * The derived truth, per script. This is the sentence `scripts/CLAUDE.md`
+   * The derived truth, per script. This is the sentence `scripts/AGENTS.md`
    * tries to state, computed instead.
    *
    * MUTATION: delete the `guard_require_green_ci` call from
@@ -154,28 +154,28 @@ describe("[T10] guard coverage is derived from the call sites", () => {
   });
 
   /**
-   * The doc comparison. `scripts/CLAUDE.md` states the coverage per script in
+   * The doc comparison. `scripts/AGENTS.md` states the coverage per script in
    * prose, and prose about a safety invariant drifts, so the comparison is
    * direct: whatever the doc claims must equal what the call sites do.
    *
    * MUTATION: change "approve-pr.sh 3+4+5" to "approve-pr.sh 3+4" in
-   * scripts/CLAUDE.md — this fails.
+   * scripts/AGENTS.md — this fails.
    */
   it("the documented coverage equals the coverage derived from the call sites", () => {
-    const doc = read("scripts/CLAUDE.md");
+    const doc = read("scripts/AGENTS.md");
     const claimed: Record<string, number[]> = {};
     for (const s of POSTING_SCRIPTS) {
       const m = new RegExp(`${s.replace(".", "\\.")}\\s+(?:guards?\\s+)?([\\d+]+)`).exec(doc);
       expect(
         m?.[1],
-        `scripts/CLAUDE.md no longer states coverage for ${s} in the shape this fence reads`,
+        `scripts/AGENTS.md no longer states coverage for ${s} in the shape this fence reads`,
       ).toBeTruthy();
       claimed[s] = m![1]!.split("+").map(Number).sort();
     }
 
     expect(
       claimed,
-      "scripts/CLAUDE.md's guard-coverage sentence disagrees with the posting scripts. It is a published claim " +
+      "scripts/AGENTS.md's guard-coverage sentence disagrees with the posting scripts. It is a published claim " +
         "about a safety invariant: fix the prose to match the call sites, never the other way round.",
     ).toEqual(derived());
   });

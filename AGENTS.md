@@ -62,7 +62,7 @@ All three must be green before you commit. Notes that will bite otherwise:
   a loopback HTTP stub, the CLI and deploy preflight); the current set is
   `PROCESS_SUITES` in `tests/helpers/suite-timeouts.ts`.
 - **Every behaviour change needs a test at the seam it changes.** See
-  [`tests/CLAUDE.md`](tests/CLAUDE.md) for the house style.
+  [`tests/AGENTS.md`](tests/AGENTS.md) for the house style.
 - **Fences are verified by mutation.** A structural test that cannot be made to
   fail is not a fence, so each one names, in its own comment, the exact mutation
   that proves it bites (`MUTATION: add "retract_review" to MUTATION_KINDS — this
@@ -170,6 +170,10 @@ the fence.
 | Operator surfaces | `src/tui/` (board, tabs, companion column), `src/cli.ts` (`qcr`), `src/slack/`, `src/commands.ts` + `src/levers.ts` |
 | Assembly | `src/daemon.ts` (stub-wired core, test-friendly) vs `src/wire.ts` (production wiring) |
 | Onboarding | `src/onboard/`, `extensions/onboarding.ts`, [`docs/onboarding.md`](docs/onboarding.md) |
+
+`agents/`, `prompts/`, `skills/companion/` and `extensions/` are shipped bot
+content (what the reviewer and companion sessions load); `.claude/` is
+contributor tooling for working on this repo.
 
 Per-concern architecture documents — one mechanism per page, each naming the
 modules it describes — live under

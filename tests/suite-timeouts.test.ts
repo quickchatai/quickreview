@@ -1,5 +1,5 @@
 // The suite has to stay green on a loaded machine without hiding a real hang
-// (tests/CLAUDE.md, "Timeouts under load"). Two budgets, and this file pins
+// (tests/AGENTS.md, "Timeouts under load"). Two budgets, and this file pins
 // which test gets which:
 //
 //   - a test file that spawns real processes (shell scripts, git, tsc, node

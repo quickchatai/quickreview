@@ -1,4 +1,4 @@
-// Test budgets under machine load — the rule is in tests/CLAUDE.md
+// Test budgets under machine load — the rule is in tests/AGENTS.md
 // ("Timeouts under load") and pinned by tests/suite-timeouts.test.ts.
 //
 // Measured on a 16-core dev PC with the AACR benchmark running
