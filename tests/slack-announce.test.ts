@@ -606,6 +606,95 @@ describe("pinned heartbeat", () => {
     const corrections = (ts: string) =>
       slack.updates.filter((u) => u.ts === ts && u.text.includes("recovered via"));
 
+    it.each([
+      { first: "recovery", superseded: false },
+      { first: "reopening", superseded: false },
+      { first: "recovery", superseded: true },
+      { first: "reopening", superseded: true },
+    ] as const)(
+      "keeps the latest incident state with $first in flight and queued edit superseded=$superseded",
+      async ({ first, superseded }) => {
+        const a = announcer();
+        const ts = await recoveredIncident(a);
+        if (first === "reopening") await a.heartbeat();
+        const reopen = () => {
+          store.openReviewFailure({
+            pr: 5410,
+            command_id: "cmd-5410",
+            round_id: null,
+            round_no: 1,
+            head_sha: "abc",
+            stage: "command_start",
+            detail: "again",
+            attempts: 2,
+            retry_cap: 2,
+          });
+          return a.anomaly({
+            pr: 5410,
+            round_no: 1,
+            kind: "failed_loud",
+            deadline_min: 75,
+            incident_id: "review-failure:cmd-5410",
+          });
+        };
+        let release!: () => void;
+        let entered!: () => void;
+        const started = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const update = slack.updateMessage.bind(slack);
+        let held = false;
+        slack.updateMessage = async (args) => {
+          if (args.ts === ts && !held) {
+            held = true;
+            entered();
+            await gate;
+          }
+          return update(args);
+        };
+        const before = slack.updates.length;
+        const earlier = first === "recovery" ? a.heartbeat() : reopen();
+        await started;
+        let later: Promise<unknown>;
+        if (first === "recovery") later = reopen();
+        else {
+          at("2026-08-17T09:03:00.000Z");
+          store.recoverReviewFailure(5410, "operator-unwedge");
+          later = a.heartbeat();
+        }
+        let newest: Promise<unknown> = Promise.resolve();
+        if (superseded) {
+          if (first === "recovery") {
+            at("2026-08-17T09:04:00.000Z");
+            store.recoverReviewFailure(5410, "operator-unwedge");
+            newest = a.heartbeat();
+          } else newest = reopen();
+        }
+        // Let an unqueued second update finish before the earlier response.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        release();
+        await Promise.all([earlier, later, newest]);
+        const edits = slack.updates.slice(before).filter((u) => u.ts === ts);
+        if (superseded) {
+          // A queued edit whose state changed again never reaches Slack.
+          expect(edits).toHaveLength(2);
+          expect(edits.every((u) => u.text.startsWith("✓"))).toBe(first === "recovery");
+        }
+        const last = edits.at(-1)!.text;
+        if ((first === "recovery") !== superseded) {
+          expect(store.openReviewFailure(5410)).toBeDefined();
+          expect(last).toMatch(/^⛔/);
+        } else {
+          expect(store.openReviewFailure(5410)).toBeUndefined();
+          expect(last).toContain("recovered via operator-unwedge");
+        }
+        expect(slack.posts.filter((p) => p.text.startsWith("⛔"))).toHaveLength(1);
+      },
+    );
+
     it("reaches the incident message on a long heartbeat interval", async () => {
       cfg.slack.policy.heartbeat_interval_min = 15;
       const a = announcer();
