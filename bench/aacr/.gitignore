@@ -7,3 +7,7 @@ openai.env
 
 # Local benchmark logs, results, and launch metadata on durable disk.
 artifacts/
+
+# Generated chart outputs (working files, kept locally only).
+showcase/out/
+brief/figs/
