@@ -23,11 +23,15 @@ const tmp = mkdtempSync(join(tmpdir(), "hf-export-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 function py(code: string, ...args: string[]): unknown {
-  const out = execFileSync("python3", [
-    "-c",
-    `import sys, json; sys.path.insert(0, 'bench/aacr'); import hf_export as h\n${code}`,
-    ...args,
-  ]);
+  const out = execFileSync(
+    "python3",
+    [
+      "-c",
+      `import sys, json; sys.path.insert(0, 'bench/aacr'); import hf_export as h\n${code}`,
+      ...args,
+    ],
+    { env: { ...process.env, QCR_SCRUB_HOME: "/home/alice" } },
+  );
   return JSON.parse(out.toString());
 }
 
@@ -35,7 +39,7 @@ describe("hf_export.scrub", () => {
   it("rewrites every listed name to its placeholder and counts each rule", () => {
     const text =
       "Automated review by `example-review[bot]` (quickreviewd). Tell the owner; example-review is the app. " +
-      "Logs: /home/user/qcr-bench-runs/runs/x and /home/user/.config, volume companion-pihome; OWNER.";
+      "Logs: /home/alice/qcr-bench-runs/runs/x and /home/alice/.config, volume companion-pihome; OWNER.";
     const r = py(
       "import collections; c = collections.Counter(); print(json.dumps([h.scrub(sys.argv[1], c), dict(c)]))",
       text,

@@ -26,9 +26,9 @@ nothing else in it changes:
   * `example-review[bot]` (and the bare app slug `example-review`) -> `<review-bot>`,
     then `the owner` (any case) -> `<owner>`;
   * `quickreviewd` -> `quickreview` (the product's internal name);
-  * host paths: `/home/user/qcr-bench-runs` -> `<runs>`,
-    `/home/user/src/quickreview` -> `<repo>`, any other
-    `/home/user` -> `<home>`, the docker volume `companion-pihome` -> `<pi-login-volume>`
+  * host paths: `$HOME/qcr-bench-runs` -> `<runs>`,
+    `$HOME/src/quickreview` -> `<repo>`, any other
+    `$HOME` -> `<home>` (the home scrubbed is $QCR_SCRUB_HOME, default `~`), the docker volume `companion-pihome` -> `<pi-login-volume>`
     (the same spellings as the Hugging Face dataset export, hf_export.py);
   * encrypted reasoning blobs are blanked, the record kept: the value of every
     `encrypted_content` (OpenAI), every base64 `thinkingSignature` and
@@ -79,6 +79,18 @@ QODO_VENDORS = {"qodo-exhaustive", "qodo-precise", "augment", "copilot", "cursor
 
 # ---------------------------------------------------------------- the rewrite
 
+# the exporting host's home directory and hostnames, scrubbed from every file
+# and re-grepped afterwards: $QCR_SCRUB_HOME (default: this user's home) and
+# $QCR_SCRUB_HOSTS (comma-separated, default none)
+SCRUB_HOME = os.environ.get("QCR_SCRUB_HOME", os.path.expanduser("~")).rstrip("/")
+SCRUB_HOSTS = [h for h in os.environ.get("QCR_SCRUB_HOSTS", "").split(",") if h.strip()]
+HOME_B = SCRUB_HOME.encode()
+HOME_RX = re.escape(HOME_B)
+HOME_DASHED = HOME_B.replace(b"/", b"-")  # Claude Code's project-dir spelling
+HOME_DASHED_RX = re.escape(HOME_DASHED)
+HOME_ESC = HOME_B.replace(b"/", b"\\/")  # JSON-escaped slashes
+HOME_ESC_RX = re.escape(HOME_ESC)
+
 B64 = rb"[A-Za-z0-9+/=_\-]"
 ESCQ = rb'\\*"\s*:\s*\\*"'  # `":"` at any JSON escaping depth
 BOT = rb"(?:\[bot\]|\\\[bot\\\]|\\\\\[bot\\\\\]|%5Bbot%5D)?"  # [bot], escaped once or twice, or URL-encoded
@@ -97,13 +109,13 @@ RULES = [
     ("owner", re.compile(rb"the owner"), b"<owner>", b"the owner"),
     ("owner-other-case", re.compile(rb"(?i:<owner>)"), b"<owner>", ("low", b"owner_legacy")),
     ("quickreviewd", re.compile(rb"quickreviewd"), b"quickreview", b"quickreviewd"),
-    ("runs", re.compile(rb"(?:/home/user/src|~/src)/qcr-bench-runs"), b"<runs>", b"qcr-bench-runs"),
-    ("repo", re.compile(rb"(?:/home/user/src|~/src)/review-sandbox"), b"<repo>", b"src/quickreview"),
-    ("scratchpad", re.compile(rb"/tmp/claude-\d+/-home-user-[A-Za-z0-9\-]*/[0-9a-f\-]{36}(?:/scratchpad)?"), b"<scratchpad>", b"/-home-user-"),
-    ("claude-project", re.compile(rb"\.claude/projects/<project>[A-Za-z0-9\-]*"), b".claude/projects/<project>", b"/-home-user-"),
-    ("home", re.compile(rb"/home/user(?![A-Za-z0-9_\-])"), b"<home>", b"/home/user"),
-    ("home-dashed", re.compile(rb"-home-user(?=[-/])"), b"-<home>", b"-home-user"),
-    ("home-escaped", re.compile(rb"\\/home\\/mat(?![A-Za-z0-9_\-])"), b"<home>", b"\\/home\\/mat"),
+    ("runs", re.compile(rb"(?:" + HOME_RX + rb"/src|~/src)/qcr-bench-runs"), b"<runs>", b"qcr-bench-runs"),
+    ("repo", re.compile(rb"(?:" + HOME_RX + rb"/src|~/src)/review-sandbox"), b"<repo>", b"src/quickreview"),
+    ("scratchpad", re.compile(rb"/tmp/claude-\d+/" + HOME_DASHED_RX + rb"-[A-Za-z0-9\-]*/[0-9a-f\-]{36}(?:/scratchpad)?"), b"<scratchpad>", b"/" + HOME_DASHED + b"-"),
+    ("claude-project", re.compile(rb"\.claude/projects/" + HOME_DASHED_RX + rb"-[A-Za-z0-9\-]*"), b".claude/projects/<project>", b"/" + HOME_DASHED + b"-"),
+    ("home", re.compile(HOME_RX + rb"(?![A-Za-z0-9_\-])"), b"<home>", HOME_B),
+    ("home-dashed", re.compile(HOME_DASHED_RX + rb"(?=[-/])"), b"-<home>", HOME_DASHED),
+    ("home-escaped", re.compile(HOME_ESC_RX + rb"(?![A-Za-z0-9_\-])"), b"<home>", HOME_ESC),
     ("pi-login-volume", re.compile(rb"companion-pihome"), b"<pi-login-volume>", b"companion-pihome"),
     ("blob-encrypted_content", re.compile(rb"(encrypted_content" + ESCQ + rb")" + B64 + rb"+"), rb"\1", b"encrypted_content"),
     ("blob-thinkingSignature", re.compile(rb"(thinkingSignature" + ESCQ + rb")" + B64 + rb"{40,}"), rb"\1", b"thinkingSignature"),
@@ -657,11 +669,11 @@ def _write_manifest(out: Path, src: Path, results: list, a):
         "volume_cap_bytes": a.cap,
         "rewrites_applied": [r[0] for r in RULES],
         "placeholders": {"the owner": "<owner>", "example-review[bot]": "<review-bot>", "quickreviewd": "quickreview",
-                         "/home/user/qcr-bench-runs": "<runs>",
-                         "/home/user/src/quickreview": "<repo>",
-                         "/home/user": "<home>", "companion-pihome": "<pi-login-volume>",
-                         "/tmp/claude-<uid>/-home-user-<project>/<session>/scratchpad": "<scratchpad>",
-                         ".claude/projects/<project><project>": ".claude/projects/<project>"},
+                         "<home>/qcr-bench-runs": "<runs>",
+                         "<home>/src/quickreview": "<repo>",
+                         "the exporting user's home directory": "<home>", "companion-pihome": "<pi-login-volume>",
+                         "/tmp/claude-<uid>/-<home>-<project>/<session>/scratchpad": "<scratchpad>",
+                         ".claude/projects/-<home>-<project>": ".claude/projects/<project>"},
     })
     tmp = man_path.with_suffix(".json.partial")
     tmp.write_text(json.dumps(prior, indent=1, sort_keys=False) + "\n")
@@ -762,9 +774,9 @@ packed. Nothing else in the text changed.
 - **The product's old name.** `quickreviewd` became `quickreview`. It is the
   product's earlier name, not a person, so it gets the public name rather
   than a placeholder.
-- **Host paths** in driver logs and analysis: `/home/user/qcr-bench-runs`
-  became `<runs>`, `/home/user/src/quickreview` `<repo>`, any
-  other `/home/user` `<home>` (so the Claude Code credential file's path reads
+- **Host paths** in driver logs and analysis: `<home>/qcr-bench-runs`
+  became `<runs>`, `<home>/src/quickreview` `<repo>`, any
+  other path under the exporting user's home `<home>` (so the Claude Code credential file's path reads
   `<home>/.config/qcr-bench/claude.env`; its value never appeared), and the
   docker volume `companion-pihome` `<pi-login-volume>`. No model saw these.
   An agent's scratch directory (`/tmp/claude-<uid>/-home-…/<session>/scratchpad`)
@@ -1011,22 +1023,24 @@ the modified-work statement and the citations).
 
 REGREP = {
     "the owner": rb"the owner", "owner_legacy (any case)": rb"(?i:<owner>)", "example-review": rb"(?i:example-review)",
-    "quickreviewd": rb"quickreviewd", "/home/user": rb"/home/user", "src": rb"src",
+    "quickreviewd": rb"quickreviewd", "home directory": HOME_RX, "src": rb"src",
     "companion-pihome": rb"companion-pihome", "claude.env path": rb"[./\w-]*claude\.env",
     "sk- (substring)": rb"sk-", "ghp_ (substring)": rb"ghp_", "ghs_ (substring)": rb"ghs_", "gho_ (substring)": rb"gho_",
     "sk- key-shaped": rb"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}",
     "gh?_ token-shaped": rb"(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])",
     "Fernet blob (gAAAAA, 100+)": rb"gAAAAA[A-Za-z0-9_\-=]{100,}",
-    "home-mat (dashed path)": rb"home-mat", "mhale": rb"(?i:mhale)", "issue-tracker": rb"issue-tracker",
-    "my-vm": rb"my-vm", "your-dev-project": rb"your-dev-project", "quickchat (any case)": rb"(?i:quickchat)",
+    "home directory (dashed path)": HOME_DASHED_RX.lstrip(b"\\-"), "mhale": rb"(?i:mhale)", "issue-tracker": rb"issue-tracker",
+    **{f"host {h}": re.escape(h.strip().encode()) for h in SCRUB_HOSTS},
+    "your-dev-project": rb"your-dev-project", "quickchat (any case)": rb"(?i:quickchat)",
 }
 
 
 # one PCRE pass over the decompressed stream (tar headers included, so member
 # names are searched too); every match is classified afterwards by REGREP
 REGREP_SCAN = (rb"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}|(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])|gAAAAA[A-Za-z0-9_\-=]{100,}"
-               rb"|(?i:<owner>)(?:-review)?|quickreviewd|/home/user|src|companion-pihome|[./\w-]*claude\.env"
-               rb"|home-mat|(?i:mhale)|issue-tracker|my-vm|your-dev-project|(?i:quickchat)|sk-|gh[psor]_")
+               rb"|(?i:<owner>)(?:-review)?|quickreviewd|" + HOME_RX + rb"|src|companion-pihome|[./\w-]*claude\.env"
+               rb"|" + HOME_DASHED_RX.lstrip(b"\\-") + rb"|(?i:mhale)|issue-tracker"
+               + b"".join(b"|" + re.escape(h.strip().encode()) for h in SCRUB_HOSTS) + rb"|your-dev-project|(?i:quickchat)|sk-|gh[psor]_")
 
 
 def regrep_stream(cmd: list[str]) -> tuple[collections.Counter, list]:

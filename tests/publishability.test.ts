@@ -409,7 +409,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "bench/aacr/hf_export.py",
-    tokens: ["owner_legacy", "/home/user", "quickchat"],
+    tokens: ["owner_legacy", "quickchat"],
     reason:
       "the HF dataset export's scrub rules name the strings they rewrite, and its NOTICE names the copyright holder",
   },
@@ -423,10 +423,8 @@ const ALLOWLIST: AllowlistEntry[] = [
     path: "bench/aacr/export_runs.py",
     tokens: [
       "owner_legacy",
-      "/home/user",
       "quickchat",
       "mhale",
-      "my-vm",
       "your-dev-project",
       "issue-tracker",
     ],
@@ -440,7 +438,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "tests/hf-export.test.ts",
-    tokens: ["owner_legacy", "/home/user"],
+    tokens: ["owner_legacy"],
     reason:
       "scrub tripwire: plants the rewritten names and asserts none survives the export's scrub",
   },

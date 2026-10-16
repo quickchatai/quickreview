@@ -69,11 +69,14 @@ JUDGE_LABELS = {PRIMARY: "gpt-6-sol-high", SECOND: "claude-opus-5-5", SELFCONS: 
 # matters: the longer spellings first. One name, one placeholder, everywhere.
 # ---------------------------------------------------------------------------
 
+# the exporting host's home directory: $QCR_SCRUB_HOME, default this user's home
+_HOME_RX = re.escape(os.environ.get("QCR_SCRUB_HOME", os.path.expanduser("~")).rstrip("/"))
+
 SCRUB_RULES: list[tuple[str, str, str]] = [
     # (label, regex, replacement)
-    ("host path: runs dir", r"/home/user/qcr-bench-runs", "<runs>"),
-    ("host path: repo checkout", r"/home/user/src/quickreview", "<repo>"),
-    ("host path: home", r"/home/user\b", "<home>"),
+    ("host path: runs dir", _HOME_RX + r"/qcr-bench-runs", "<runs>"),
+    ("host path: repo checkout", _HOME_RX + r"/src/quickreview", "<repo>"),
+    ("host path: home", _HOME_RX + r"\b", "<home>"),
     ("host volume: pi login", r"companion-pihome", "<pi-login-volume>"),
     ("review bot", r"example-review\[bot\]", "<review-bot>"),
     ("review bot (bare)", r"example-review\b", "<review-bot>"),
