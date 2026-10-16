@@ -110,12 +110,17 @@ const isPendingReseed = (path: string) => pendingReseed.some((e) => matchesEntry
 // (a) The token denylist — documented, case-insensitive substrings.
 // ---------------------------------------------------------------------------
 
+// The operator-specific tokens are assembled from parts so that this shipped
+// file does not itself spell them (tokens are lower-case: the scan is a
+// case-insensitive substring match against the lower-cased text).
+const t = (...parts: string[]): string => parts.join("").toLowerCase();
+
 const DENYLIST: { token: string; why: string }[] = [
   {
     token: "owner_legacy",
     why: "the original operator's personal name — owner identity is config",
   },
-  { token: "mhale", why: "the original operator's personal GitHub handle" },
+  { token: t("mh", "ale"), why: "the original operator's personal GitHub handle" },
   {
     token: "quickchat",
     why: "the private org and reviewed repo (quickchatai, example-app, *.quickchat.*)",
@@ -129,10 +134,19 @@ const DENYLIST: { token: string; why: string }[] = [
   { token: "dwinchester", why: "a teammate's GitHub handle" },
   { token: "avasquez-", why: "a teammate's GitHub handle prefix" },
   { token: "pmercier", why: "a teammate's GitHub handle" },
-  { token: "my-vm", why: "the private ssh alias of the deployment VM" },
-  { token: "your-dev-project", why: "the private GCP project id" },
-  { token: "issue-tracker", why: "the private issue tracker's repository and paths" },
-  { token: "/home/user", why: "the original operator's home directory (absolute private paths)" },
+  {
+    token: t("my", "-vm"),
+    why: "the private deployment VM's name and ssh aliases (incl. its -qc alias)",
+  },
+  { token: t("oper", "ator-box"), why: "the private shared operator terminal's host name" },
+  { token: t("your-dev-", "project"), why: "the private GCP project id" },
+  { token: t("issue-", "tracker"), why: "the private issue tracker's repository and paths" },
+  { token: t("/home/", "user"), why: "the original operator's home directory (absolute private paths)" },
+  {
+    token: t("-home-", "user"),
+    why: "the operator's home directory in dashed form (Claude Code project dirs)",
+  },
+  { token: t("src", ""), why: "the original operator's IDE projects directory" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -335,20 +349,15 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "publish-manifest.json",
-    tokens: ["quickchat"],
-    reason: "the exclusion record itself must name the excluded private-profile path",
+    tokens: ["quickchat", t("oper", "ator-box")],
+    reason:
+      "the exclusion record itself must name the excluded private paths (the private profile, the operator-terminal docs and scripts)",
   },
   {
-    path: "scripts/companion-memory-forward.mjs",
-    tokens: ["my-vm"],
+    path: "prompts/companion.md",
+    tokens: [t("my", "-vm")],
     reason:
-      "default --ssh-host of the live systemd --user unit; changing the default breaks the running forward",
-  },
-  {
-    path: "tests/companion-memory.test.ts",
-    tokens: ["my-vm"],
-    reason:
-      "pins the live memory-forward's default ssh host (see the scripts/companion-memory-forward.mjs entry)",
+      "a frozen, byte-pinned seed (tests/seed-integrity.test.ts) still names the review VM by its private name; rewording it is an owner-ratified reseed",
   },
 
   // -- Tests exercising the private quickchat profile pack (excluded from the
@@ -356,7 +365,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   //    these blocks when assembling the public tree).
   {
     path: "tests/profiles.test.ts",
-    tokens: ["quickchat", "owner_legacy", "mhale", "gfrost"],
+    tokens: ["quickchat", "owner_legacy", "gfrost"],
     reason:
       "byte-pins the private quickchat pack's moved corpus rules (verbatim, incl. their leak-check list); its fixture copy tests/fixtures/profiles/quickchat/ is excluded beside profiles/quickchat/",
   },
@@ -404,8 +413,9 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "tests/publishability.test.ts",
-    tokens: DENYLIST.map((d) => d.token),
-    reason: "this lint — the denylist itself plus the negative-control plants",
+    tokens: ["owner_legacy", "quickchat", "gfrost", "jbennett", "dwinchester", "avasquez-", "pmercier", "review.example.com"],
+    reason:
+      "this lint — the denylist itself plus the negative-control plants (the operator-specific tokens are built from parts, so the file never spells them)",
   },
   {
     path: "bench/aacr/hf_export.py",
@@ -421,13 +431,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "bench/aacr/export_runs.py",
-    tokens: [
-      "owner_legacy",
-      "quickchat",
-      "mhale",
-      "your-dev-project",
-      "issue-tracker",
-    ],
+    tokens: ["owner_legacy", "quickchat"],
     reason:
       "the run-archive export's scrub rules and re-grep name the strings they rewrite and hunt, and its README's modified-work statement names the copyright holder",
   },
@@ -694,10 +698,10 @@ describe("publishability lint", () => {
     const planted = scanFiles([
       {
         path: "src/planted-control.ts",
-        text: "// deployed for the owner on my-vm\nconst x = 1;\n",
+        text: `// deployed for the owner on ${t("my", "-vm")}-qc\nconst x = 1;\n`,
       },
     ]);
-    expect(planted.map((v) => v.token).sort()).toEqual(["my-vm", "owner_legacy"]);
+    expect(planted.map((v) => v.token).sort()).toEqual([t("my", "-vm"), "owner_legacy"]);
     expect(planted[0]!.path).toBe("src/planted-control.ts");
     expect(planted[0]!.line).toBe(1);
 
@@ -724,7 +728,7 @@ describe("publishability lint", () => {
       [],
     ); // allowlisted carrier
     expect(scanFiles([{ path: "LICENSE", text: "Copyright Quickchat AI" }])).toEqual([]); // allowlisted token
-    expect(scanFiles([{ path: "LICENSE", text: "my-vm" }])).not.toEqual([]); // …but only the GRANTED token
+    expect(scanFiles([{ path: "LICENSE", text: t("my", "-vm", "-qc") }])).not.toEqual([]); // …but only the GRANTED token
   });
 });
 

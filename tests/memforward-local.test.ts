@@ -65,7 +65,7 @@ describe("relaySpawnCommand — the transport decision in one place", () => {
     // The same bridge program, as a real argv element (no shell re-parse).
     expect(cmd[cmd.length - 1]).toBe(forward.remoteBridgeJs("127.0.0.1", 1933));
     expect(cmd).not.toContain("ssh");
-    expect(cmd.some((w: string) => w.includes("VM"))).toBe(false);
+    expect(cmd.some((w: string) => w.includes("my-vm"))).toBe(false);
   });
 
   it("honours --no-sudo locally", () => {
@@ -168,7 +168,7 @@ describe("MemoryForward hands the transport to the ONE script (argv-level)", () 
           cfg: {
             binds: ["127.0.0.1"],
             port: 1933,
-            sshHost: "VM",
+            sshHost: "my-vm",
             container: "quickreview-sandbox",
           },
         };

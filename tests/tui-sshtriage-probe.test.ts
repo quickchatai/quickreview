@@ -6,13 +6,13 @@ import { classifyConnection, realProbeRunner } from "../src/tui/sshtriage.js";
 
 describe("realProbeRunner", () => {
   it("a program that cannot be run says why in stderr — not an empty failure", async () => {
-    const r = await realProbeRunner("/nonexistent/qcr-no-such-probe", ["-G", "VM"], 5_000);
+    const r = await realProbeRunner("/nonexistent/qcr-no-such-probe", ["-G", "my-vm"], 5_000);
     expect(r.timedOut).toBe(false);
     expect(r.status).toBeNull();
     expect(r.stderr).toMatch(/ENOENT/);
     // …and the triage line carries it as its evidence.
     const d = classifyConnection({
-      host: "VM",
+      host: "my-vm",
       masterAlive: false,
       controlSocketExists: false,
       identityFiles: [],

@@ -38,8 +38,8 @@ describe("in-flight ssh children", () => {
     const b = hangingChild();
     spawnMock.mockReturnValueOnce(a).mockReturnValueOnce(b);
 
-    void realSshRunner("VM", ["cat", "/x"]);
-    void realSshRunner("VM", ["cat", "/y"]);
+    void realSshRunner("my-vm", ["cat", "/x"]);
+    void realSshRunner("my-vm", ["cat", "/y"]);
 
     expect(killInFlightSsh()).toBe(2);
     expect(a.kill).toHaveBeenCalledWith("SIGKILL");
@@ -50,7 +50,7 @@ describe("in-flight ssh children", () => {
     const child = hangingChild();
     spawnMock.mockReturnValueOnce(child);
 
-    const done = realSshRunner("VM", ["cat", "/x"]);
+    const done = realSshRunner("my-vm", ["cat", "/x"]);
     child.stdout.emit("data", Buffer.from("ok"));
     child.emit("close", 0);
     await expect(done).resolves.toMatchObject({ ok: true, stdout: "ok" });

@@ -103,7 +103,7 @@ describe("realLocalCommandRunner", () => {
     const child = fakeChild();
     spawnMock.mockReturnValueOnce(child);
     const done = realLocalCommandRunner(
-      "VM-ignored",
+      "my-vm-ignored",
       ["sudo", "docker", "exec", "quickreview-sandbox", "cat", "/x"],
       { stdin: "hi" },
     );
@@ -115,7 +115,7 @@ describe("realLocalCommandRunner", () => {
     expect(args).toEqual(["docker", "exec", "quickreview-sandbox", "cat", "/x"]);
     // The host param is transport detail — never a spawned word, never ssh.
     expect(bin).not.toBe("ssh");
-    expect(args).not.toContain("VM-ignored");
+    expect(args).not.toContain("my-vm-ignored");
     expect(child.stdin.end).toHaveBeenCalledWith("hi");
   });
 
@@ -175,7 +175,7 @@ describe("powerSpawnArgv", () => {
   it("ssh mode is the remote shell line, exactly as before", () => {
     expect(powerSpawnArgv(TUI_DEFAULTS, "stop")).toEqual([
       "ssh",
-      "VM",
+      "my-vm",
       powerCommand(TUI_DEFAULTS, "stop"),
     ]);
   });

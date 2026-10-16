@@ -372,7 +372,7 @@ describe("the first frame (structural, not timed)", () => {
     // The companion column is there at its config width from the very first
     // frame — the container has not been asked about, and the bring-up reports
     // into it.
-    expect(frame).toMatch(/VM ssh|memory forward|companion container/);
+    expect(frame).toMatch(/vm ssh|memory forward|companion container/);
     await h.stop();
   });
 
@@ -406,11 +406,11 @@ describe("the first frame (structural, not timed)", () => {
       await h.press("\x00"); // a byte nothing is bound to — forces a repaint pass
       // An empty read is a repaint that has not landed yet, never a frame.
       frame = h.frame() || frame;
-      return /[✗✓–] VM ssh/.test(frame);
+      return /[✗✓–] vm ssh/.test(frame);
     });
     const plain = frame.replace(/\x1b\[[0-9;?<]*[a-zA-Z]/g, "");
     expect(plain).toContain("PRS (?)");
-    expect(plain, "the bring-up's live state never reached the column").toMatch(/[✗✓–] VM ssh/);
+    expect(plain, "the bring-up's live state never reached the column").toMatch(/[✗✓–] vm ssh/);
     // The column is on the frame (its junction glyph joins the top rule) and
     // names the reason it is empty rather than claiming to be starting.
     expect(plain).toContain("┬");
@@ -437,7 +437,7 @@ describe("the first frame (structural, not timed)", () => {
     // A duration is printed only when the step actually STARTED, so this
     // distinguishes "ran, then failed" from "was failed from `pending`".
     expect(stripAnsi(h.frame()), "the ssh step never entered running on the startup path").toMatch(
-      /[✗✓⚠] VM ssh · \d+m?s/,
+      /[✗✓⚠] vm ssh · \d+m?s/,
     );
 
     // `s` re-runs it and reports the new outcome — no restart, and nothing

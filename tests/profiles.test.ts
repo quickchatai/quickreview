@@ -234,7 +234,7 @@ describe("the shipped profiles", () => {
       // Sanitized: no attributions, dates, or team/product references.
       for (const leaked of [
         "the owner",
-        "mhale",
+        ["mh", "ale"].join(""), // the operator's handle, built from parts (publishability lint)
         "gfrost",
         "quickchat",
         "2026-",

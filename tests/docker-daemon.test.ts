@@ -659,7 +659,7 @@ describe("ansible decoupling", () => {
   it("sandbox_src is an ACTIVE variable with a repo-relative default, not a hardcoded home path", () => {
     // deploy.sh's preflight greps for an active (uncommented) sandbox_src.
     expect(groupVars).toMatch(/^sandbox_src:\s*"\{\{ playbook_dir/m);
-    expect(groupVars).not.toMatch(/^sandbox_src:.*src/m);
+    expect(groupVars).not.toMatch(/^sandbox_src:.*\/home\//m);
   });
 
   it("every cloudflared task is behind cloudflared_enabled (default true — the live tunnel stays)", () => {

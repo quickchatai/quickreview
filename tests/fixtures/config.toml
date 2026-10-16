@@ -141,7 +141,7 @@ ssh_host = "example-vm"
 container = "quickreview-sandbox"
 remote_state_dir = "/opt/quickreview/state"
 remote_sandbox_root = "/opt/quickreview/sandbox"
-sudo_docker = true                # docker on VM needs sudo (root-owned socket)
+sudo_docker = true                # docker on the VM needs sudo (root-owned socket)
 poll_interval_s = 3
 stale_after_s = 90                # DATA STALE banner past this written_at age
                                   # (the daemon rewrites status.json every ~30s)
