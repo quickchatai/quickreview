@@ -204,7 +204,9 @@ export function pinnedOverrun(entries: MemoryEntry[]): { user: string; chars: nu
   const byUser = new Map<string, MemoryEntry[]>();
   for (const e of entries) {
     const user = splitNsId(e.id).user;
-    byUser.set(user, [...(byUser.get(user) ?? []), e]);
+    const mine = byUser.get(user);
+    if (mine) mine.push(e);
+    else byUser.set(user, [e]);
   }
   let worst: { user: string; chars: number } | undefined;
   for (const [user, mine] of byUser) {

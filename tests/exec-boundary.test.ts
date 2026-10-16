@@ -553,6 +553,18 @@ const CORPUS = [
     outcome: null,
     note: "a pattern onto the bridge's .done/ from a sibling inject dir",
   },
+  ...[
+    "sed 's/a/b/ e' f",
+    "sed 's/a/b/g\tw out' f",
+    "sed -n '1r input' f",
+    "sed -n '/x/R input' f",
+  ].map((chain) => ({
+    round: 13,
+    chain,
+    via: "bash" as const,
+    outcome: null,
+    note: "GNU sed --sandbox refuses these read/exec/write verbs; telemetry must retain the attempted mode",
+  })),
   // Round 13. sed's `e` runs the pattern space as a shell command: the `e`
   // command at any address, and the `e` flag of `s` with any delimiter and
   // the flags in any order. The rules here were patterns keyed on a `/`
@@ -1784,6 +1796,16 @@ describe("the audit does not fire on the reads that ARE the job", () => {
     expect(kindOf("sort -u names.txt | uniq -c")).toBeUndefined();
     expect(kindOf("find src -name '*.ts' -maxdepth 3")).toBeUndefined();
     expect(kindOf("cut -d: -f1 /etc/passwd")).toBeUndefined();
+  });
+
+  it.each([
+    "sed 's/a/b/ e' f",
+    "sed 's/a/b/g\tw out' f",
+    "sed -n '1r input' f",
+    "sed -n '/x/R input' f",
+  ])("audits the reader verb refused by the guard: %s", (command) => {
+    expect(checkBashCommand(command).allowed).toBe(false);
+    expect(auditExecViolationDetails([bashLine(command)])[0]?.kind).toBe("reader_write_or_exec");
   });
 
   it("sees the attached spellings and the s/// flags the guard refuses, and a code-loading prefix on a reader", () => {

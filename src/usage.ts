@@ -821,7 +821,7 @@ const sedAddr = (group: number): string => {
     String.raw`[IM]*))*`
   );
 };
-/** A w/W/e command where a command starts: the script's start, after `;`,
+/** A w/W/r/R/e command where a command starts: the script's start, after `;`,
  * `{`, `}` or a newline, or after a branch or label and the whitespace that
  * ends it (`bx e cmd` is a branch, then `e`) — behind any address. A `w`
  * glued to its file (`wout`) is one too. */
@@ -830,13 +830,14 @@ const SED_VERB_RE = new RegExp(
     sedAddr(1) +
     String.raw`\s*[:btT][ \t]*[^\s;}]+[ \t]+)*` +
     sedAddr(2) +
-    String.raw`\s*[wWe]`,
+    String.raw`\s*[wWrRe]`,
 );
 /** An s command whose flags carry `e` (runs the pattern space) or `w` (writes),
  * with any delimiter and the flags in any order. */
-const SED_SFLAG_RE = /s([^\\\n])(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1[gpiImMnN0-9]*[ew]/;
+const SED_SFLAG_RE =
+  /s([^\\\n])(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1[gpiImMnN0-9 \t]*[ew]/;
 
-/** Whether this segment's sed writes a file or runs a command. */
+/** Whether this segment's sed accesses another file or runs a command. */
 function sedAuditHit(segment: string): boolean {
   const { writes, scripts } = sedScripts(segment);
   return writes || scripts.some((sc) => SED_VERB_RE.test(sc) || SED_SFLAG_RE.test(sc));

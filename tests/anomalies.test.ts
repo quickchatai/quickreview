@@ -334,6 +334,47 @@ describe("logAnomaly → wake funnel", () => {
     expect(calls).toBe(4);
   });
 
+  it("a newer failed signal owns the only retry chain, even at the same clock instant", async () => {
+    const timers: Array<() => void> = [];
+    const pending: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+    let calls = 0;
+    const policy = new AnomalyWakePolicy({
+      injectOverseer: () => {
+        calls++;
+        return new Promise<void>((resolve, reject) => pending.push({ resolve, reject }));
+      },
+      now: () => new Date(0),
+      retryBackoffMs: [60_000, 60_000],
+      setTimer: (cb) => {
+        timers.push(cb);
+        return cb;
+      },
+      clearTimer: () => {}, // also exercise an obsolete callback already queued
+    });
+    const signal = {
+      ts: new Date(0).toISOString(),
+      kind: "round_stranded",
+      pr: 7,
+      round_no: 2,
+      detail: "stranded",
+    };
+    policy.onAnomaly(signal);
+    pending.shift()!.reject(new Error("first unavailable"));
+    await new Promise((r) => setImmediate(r));
+    const obsolete = timers.shift()!;
+    policy.onAnomaly(signal);
+    pending.shift()!.reject(new Error("second unavailable"));
+    await new Promise((r) => setImmediate(r));
+    obsolete();
+    expect(calls).toBe(2);
+    timers.shift()!();
+    expect(calls).toBe(3);
+    pending.shift()!.resolve();
+    await new Promise((r) => setImmediate(r));
+    expect(timers).toHaveLength(0);
+    policy.stop();
+  });
+
   it("a hook that throws synchronously is contained: logAnomaly never throws, and it is retried", async () => {
     const timers: Array<() => void> = [];
     const store = new StateStore(":memory:");

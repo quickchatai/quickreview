@@ -136,7 +136,8 @@ const driver: import("./actions.js").TuiDriver = {
     memState.memFilter = tag;                      // see §4
     app.repaint();
   },
-  // Resolve on delivery, reject when undelivered — the result file says which.
+  // Resolve on delivered, queued or unconfirmed; reject definite non-delivery.
+  // The result trace preserves the label; queued/unconfirmed must not be re-sent.
   msgSession: (session, text) => deliverMessage(app, session, text),
   overseerInject: (text) => deliverMessage(app, "overseer", text),
   deployTab: (action) => {

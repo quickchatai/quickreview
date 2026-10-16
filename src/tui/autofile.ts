@@ -99,18 +99,17 @@ function ticketsRel(paths: TrackerPaths): string {
   return `efforts/${paths.effort}/tickets`;
 }
 
-/** The `Memory-key:` line of a ticket body, captured. */
-const MEMORY_KEY_RE = new RegExp(`^${MEMORY_KEY_LINE} (.+)$`, "gm");
-
 /** Keys already present in the effort's tickets — the dedup set. */
-export function filedKeys(paths: TrackerPaths): Set<string> {
+export function filedKeys(paths: TrackerPaths, marker = MEMORY_KEY_LINE): Set<string> {
+  const literal = marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const line = new RegExp(`^${literal} (.+)$`, "gm");
   const keys = new Set<string>();
   const dir = join(paths.root, ticketsRel(paths));
   if (!existsSync(dir)) return keys;
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".md")) continue;
     const body = readFileSync(join(dir, f), "utf8");
-    for (const m of body.matchAll(MEMORY_KEY_RE)) keys.add(m[1]!.trim());
+    for (const m of body.matchAll(line)) keys.add(m[1]!.trim());
   }
   return keys;
 }

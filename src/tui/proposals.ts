@@ -498,17 +498,6 @@ export function patchFenceViolation(
   return null;
 }
 
-/** Append the ratification + re-pin manifest hashes + refresh the seeds/
- * canonical copies for the seeded files the accepted patch touched. Pure file
- * transforms — caller does git.
- *
- * seeds/ carries the in-repo canonical copies the provenance suite
- * (tests/seed-integrity.test.ts) compares against, so an accepted reseed must
- * refresh the copy alongside the manifest sha — the canonical bytes track the
- * ratified content, while the divergence registry (not seeds/) records the
- * departure from the original seed lineage. The note is role-worded
- * ("owner": the accept click is the owner's ratification); older notes that
- * name a person stay valid — history is never rewritten. */
 /** The seed manifest and the ratified-divergence registry an accepted reseed
  * re-pins — written by `recordRatification`, guarded and committed by the
  * accept. */
@@ -524,6 +513,17 @@ function ratificationPaths(files: string[]): string[] {
   return [...files.map(seedCopy), SEED_MANIFEST, RATIFIED_DIVERGENCE];
 }
 
+/** Append the ratification + re-pin manifest hashes + refresh the seeds/
+ * canonical copies for the seeded files the accepted patch touched. Pure file
+ * transforms — caller does git.
+ *
+ * seeds/ carries the in-repo canonical copies the provenance suite
+ * (tests/seed-integrity.test.ts) compares against, so an accepted reseed must
+ * refresh the copy alongside the manifest sha — the canonical bytes track the
+ * ratified content, while the divergence registry (not seeds/) records the
+ * departure from the original seed lineage. The note is role-worded
+ * ("owner": the accept click is the owner's ratification); older notes that
+ * name a person stay valid — history is never rewritten. */
 export function recordRatification(
   repoRoot: string,
   files: string[],
