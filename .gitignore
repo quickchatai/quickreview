@@ -14,6 +14,7 @@ archive/*
 !archive/.gitkeep
 memory/*
 !memory/.gitkeep
+!memory/README.md
 wt/
 # The base clone (<sandbox root>/<[github] clone_dir>) is NOT listed here: its
 # name is per-install, so scripts/deploy.sh writes it into the LOCAL
@@ -57,3 +58,32 @@ node_modules
 .cache/
 *.tsbuildinfo
 .tsbuildinfo*
+
+# Contributor-local Claude Code state (the tracked .claude/ config stays tracked).
+.claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.*
+.claude/checkpoints/
+.claude/mailbox/
+.claude/agent-registry.json
+.claude/agent-memory-local
+
+# Editor and OS droppings.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Test coverage and Python byproducts.
+coverage/
+__pycache__/
+*.pyc
+.venv/
+
+# Secrets: per-environment env files and key material.
+.env.*
+!.env.example
+*.pem
+*.key
