@@ -2922,3 +2922,242 @@ describe("selfscan4: eviction spares entries a running round may still be readin
     }
   });
 });
+
+describe("project default registries", () => {
+  const pnpm = `lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      demo:
+        specifier: 1.2.3
+        version: 1.2.3
+packages:
+  demo@1.2.3:
+    resolution: {integrity: sha512-unused}
+snapshots:
+  demo@1.2.3: {}
+`;
+  const pylock = `[[package]]
+name = "httpx"
+version = "0.27.0"
+`;
+  const project = `[project]
+dependencies = ["httpx==0.27.0"]
+`;
+  const privateCases: [string, Record<string, string>, string, string][] = [
+    [
+      "pnpm .npmrc",
+      {
+        ".npmrc": "registry=https://packages.example.test/\n",
+        "package.json": JSON.stringify({ dependencies: { demo: "1.2.3" } }),
+        "pnpm-lock.yaml": pnpm,
+      },
+      "app.ts",
+      'import demo from "demo";',
+    ],
+    [
+      "Poetry primary",
+      {
+        "pyproject.toml": `[tool.poetry.dependencies]
+httpx = "0.27.0"
+[[tool.poetry.source]]
+name = "internal"
+url = "https://packages.example.test/simple/"
+priority = "primary"
+`,
+        "poetry.lock": pylock,
+      },
+      "app.py",
+      "import httpx",
+    ],
+    [
+      "uv project legacy index",
+      {
+        "pyproject.toml":
+          project +
+          `[tool.uv]
+index-url = "https://packages.example.test/simple/"
+`,
+        "uv.lock": pylock,
+      },
+      "app.py",
+      "import httpx",
+    ],
+    [
+      "uv standalone default index",
+      {
+        "pyproject.toml": project,
+        "uv.toml": `[[index]]
+name = "internal"
+url = "https://packages.example.test/simple/"
+default = true
+`,
+        "uv.lock": pylock,
+      },
+      "app.py",
+      "import httpx",
+    ],
+  ];
+  it.each(privateCases)(
+    "%s never fetches a same-named public artifact",
+    async (_label, files, filename, content) => {
+      const root = tree({ ...files, [filename]: content });
+      const { fetch, calls } = fakeFetch({});
+      const planned = planDependencyRequests(root, [{ filename }]);
+      expect(planned).toHaveLength(1);
+      expect(planned[0]?.version).toBeNull();
+      expect(planned[0]?.range).toMatch(/^@ /);
+      const manifest = await prepareDependencySources(root, [{ filename }], {
+        cacheDir: tmp(),
+        fetch,
+      });
+      expect(manifest.sources).toEqual([]);
+      expect(manifest.skipped).toHaveLength(1);
+      expect(calls).toEqual([]);
+    },
+  );
+  it("preserves explicit public pnpm tarballs despite a private default and snapshots", () => {
+    const root = tree({
+      ".npmrc": "registry=https://packages.example.test/",
+      "package.json": JSON.stringify({ dependencies: { demo: "1.2.3" } }),
+      "pnpm-lock.yaml": pnpm.replace(
+        "integrity: sha512-unused",
+        "tarball: https://registry.npmjs.org/demo/-/demo-1.2.3.tgz",
+      ),
+      "app.ts": 'import demo from "demo";',
+    });
+    expect(planDependencyRequests(root, [{ filename: "app.ts" }])[0]?.version).toBe("1.2.3");
+  });
+  it("preserves explicit public uv lock sources and public default indexes", () => {
+    for (const [config, source] of [
+      [
+        'index-url = "https://packages.example.test/simple/"',
+        'source = { registry = "https://pypi.org/simple" }',
+      ],
+      ['index-url = "https://pypi.org/simple/"', ""],
+    ]) {
+      const root = tree({
+        "pyproject.toml": project + `\n[tool.uv]\n${config}\n`,
+        "uv.lock": pylock + source,
+        "app.py": "import httpx",
+      });
+      expect(planDependencyRequests(root, [{ filename: "app.py" }])[0]?.version).toBe("0.27.0");
+    }
+  });
+  it("skips unlocked private defaults but preserves explicit PyPI and local declarations", () => {
+    const root = tree({
+      "pyproject.toml": `[tool.poetry.dependencies]
+httpx = {version = "0.27.0", source = "PyPI"}
+requests = "2.32.3"
+localpkg = {path = "../localpkg"}
+[[tool.poetry.source]]
+name = "private"
+url = "https://packages.example.test/simple/"
+`,
+      "app.py": "import httpx\nimport requests\nimport localpkg",
+    });
+    const requests = planDependencyRequests(root, [{ filename: "app.py" }]);
+    expect(requests.find((r) => r.name === "httpx")?.version).toBe("0.27.0");
+    expect(requests.find((r) => r.name === "requests")?.range).toBe("@ index source");
+    expect(requests.some((r) => r.name === "localpkg")).toBe(false);
+  });
+  it("does not fall back to npmjs for a declaration missing from a private pnpm lock", async () => {
+    const root = tree({
+      ".npmrc": "registry=https://packages.example.test/",
+      "package.json": JSON.stringify({ dependencies: { demo: "1.2.3" } }),
+      "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+      "app.ts": 'import demo from "demo";',
+    });
+    const { fetch, calls } = fakeFetch({});
+    const manifest = await prepareDependencySources(root, [{ filename: "app.ts" }], {
+      cacheDir: tmp(),
+      fetch,
+    });
+    expect(manifest.sources).toEqual([]);
+    expect(manifest.skipped).toHaveLength(1);
+    expect(calls).toEqual([]);
+  });
+  it("inherits pnpm defaults while a nested public override stays public", () => {
+    const root = tree({
+      ".npmrc": "registry=https://packages.example.test/",
+      "private/package.json": JSON.stringify({ dependencies: { demo: "1.2.3" } }),
+      "private/pnpm-lock.yaml": pnpm,
+      "private/app.ts": 'import demo from "demo";',
+      "public/.npmrc": "registry=https://registry.npmjs.org/",
+      "public/package.json": JSON.stringify({ dependencies: { demo: "1.2.3" } }),
+      "public/pnpm-lock.yaml": pnpm,
+      "public/app.ts": 'import demo from "demo";',
+    });
+    expect(planDependencyRequests(root, [{ filename: "private/app.ts" }])[0]?.version).toBeNull();
+    expect(planDependencyRequests(root, [{ filename: "public/app.ts" }])[0]?.version).toBe("1.2.3");
+  });
+  it("honors modern uv defaults and leaves supplemental Poetry indexes public", () => {
+    for (const config of [
+      `[tool.uv]\ndefault-index = "https://packages.example.test/simple/"`,
+      `[[tool.uv.index]]\nurl = "https://packages.example.test/simple/"\ndefault = true`,
+    ]) {
+      const root = tree({
+        "pyproject.toml": project + config,
+        "uv.lock": pylock,
+        "app.py": "import httpx",
+      });
+      expect(planDependencyRequests(root, [{ filename: "app.py" }])[0]?.version).toBeNull();
+    }
+    const root = tree({
+      "pyproject.toml": `[tool.poetry.dependencies]\nhttpx = "0.27.0"\n[[tool.poetry.source]]\nname = "optional"\nurl = "https://packages.example.test/simple/"\npriority = "supplemental"`,
+      "poetry.lock": pylock,
+      "app.py": "import httpx",
+    });
+    expect(planDependencyRequests(root, [{ filename: "app.py" }])[0]?.version).toBe("0.27.0");
+  });
+  it("preserves an explicit PyPI Poetry constraint even with an implicit lock source", () => {
+    const root = tree({
+      "pyproject.toml": `[tool.poetry.dependencies]\nhttpx = {version = "0.27.0", source = "PyPI"}\n[[tool.poetry.source]]\nname = "private"\nurl = "https://packages.example.test/simple/"`,
+      "poetry.lock": pylock,
+      "app.py": "import httpx",
+    });
+    expect(planDependencyRequests(root, [{ filename: "app.py" }])[0]?.version).toBe("0.27.0");
+  });
+  it.each([false, true])(
+    "keeps private peer-variant evidence regardless of package order (reverse=%s)",
+    async (reverse) => {
+      const variants = [
+        `  demo@1.2.3(peer@1):\n    resolution: {tarball: https://packages.example.test/demo.tgz}\n`,
+        `  demo@1.2.3(peer@2):\n    resolution: {tarball: https://registry.npmjs.org/demo/-/demo-1.2.3.tgz}\n`,
+      ];
+      if (reverse) variants.reverse();
+      const lock = `lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      demo:\n        specifier: 1.2.3\n        version: 1.2.3(peer@1)\npackages:\n${variants.join("")}`;
+      expect
+        .soft(
+          parsePnpmLock(lock)
+            .entries.get("demo")
+            ?.every((entry) => entry.foreign),
+        )
+        .toBe(true);
+      const root = tree({
+        "package.json": JSON.stringify({ dependencies: { demo: "1.2.3" } }),
+        "pnpm-lock.yaml": lock,
+        "app.ts": 'import demo from "demo";',
+      });
+      expect.soft(planDependencyRequests(root, [{ filename: "app.ts" }])[0]?.version).toBeNull();
+      const { fetch, calls } = fakeFetch({});
+      const manifest = await prepareDependencySources(root, [{ filename: "app.ts" }], {
+        cacheDir: tmp(),
+        fetch,
+      });
+      expect(manifest.sources).toEqual([]);
+      expect(calls).toEqual([]);
+    },
+  );
+  it.each(["dev-dependencies", "group.test.dependencies"])(
+    "keeps explicit PyPI constraints in Poetry %s",
+    (table) => {
+      const root = tree({
+        "pyproject.toml": `[tool.poetry.${table}]\nhttpx = {version = "0.27.0", source = "PyPI"}\n[[tool.poetry.source]]\nname = "private"\nurl = "https://packages.example.test/simple/"`,
+        "poetry.lock": pylock,
+        "app.py": "import httpx",
+      });
+      expect(planDependencyRequests(root, [{ filename: "app.py" }])[0]?.version).toBe("0.27.0");
+    },
+  );
+});

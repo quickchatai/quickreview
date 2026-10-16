@@ -1027,6 +1027,24 @@ export class App {
       }
       return;
     }
+    // The tab's input overlay owns its painted cells. Its renderer supplies
+    // the bounds, so resize/column layout cannot expose hidden tab actions.
+    if (this.view.inputBox) {
+      const meta = this.lastFrame?.meta;
+      const top = meta?.["inputBoxTop"];
+      const bottom = meta?.["inputBoxBottom"];
+      const width = meta?.["inputBoxCols"];
+      if (
+        top !== undefined &&
+        bottom !== undefined &&
+        width !== undefined &&
+        ev.x >= 1 &&
+        ev.x <= width &&
+        ev.y >= top + 1 &&
+        ev.y <= bottom + 1
+      )
+        return;
+    }
     const tab = this.tabHooks();
     if (this.tab !== "board") {
       // An installed surface: clicks hit its own zones (rows select, buttons
