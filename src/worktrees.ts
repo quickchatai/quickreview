@@ -80,6 +80,7 @@ export function prWorktreeRel(pr: number): string {
 }
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
+const MEMO_ENTRY_LIMIT = 5000;
 
 /** A file diff git renders without text hunks although the content changed:
  * a binary file, or a file deleted while empty. */
@@ -334,8 +335,6 @@ export function parsePatchSections(diff: string): PatchSection[] {
 export interface NameStatusEntry {
   /** The status letter (`A`, `M`, `D`, `R`, `C`, `T`, …). */
   status: string;
-  /** Similarity for a rename/copy (`R087` → 87). */
-  score?: number;
   path: string;
   old_path?: string;
 }
@@ -349,14 +348,14 @@ export function parseNameStatusZ(out: string): NameStatusEntry[] | null {
   let i = 0;
   while (i < tok.length) {
     const st = tok[i]!;
-    const m = /^([A-Z])(\d*)$/.exec(st);
+    const m = /^([A-Z])\d*$/.exec(st);
     if (!m) return null;
     const letter = m[1]!;
     if (letter === "R" || letter === "C") {
       const from = tok[i + 1];
       const to = tok[i + 2];
       if (from === undefined || to === undefined) return null;
-      entries.push({ status: letter, score: Number(m[2] || 0), path: to, old_path: from });
+      entries.push({ status: letter, path: to, old_path: from });
       i += 3;
     } else {
       const p = tok[i + 1];
@@ -1031,7 +1030,7 @@ export class WorktreeManager {
       } catch {
         return null;
       }
-      if (this.hunkMemo.size >= 5000) this.hunkMemo.clear();
+      if (this.hunkMemo.size >= MEMO_ENTRY_LIMIT) this.hunkMemo.clear();
       this.hunkMemo.set(key, hunks);
     }
     return hunks === "whole" || hunksTouchLine(hunks, line, window);
@@ -1069,7 +1068,7 @@ export class WorktreeManager {
         if (inFrom === null) return null;
         answer = !inFrom;
       }
-      if (this.betweenMemo.size >= 5000) this.betweenMemo.clear();
+      if (this.betweenMemo.size >= MEMO_ENTRY_LIMIT) this.betweenMemo.clear();
       this.betweenMemo.set(key, answer);
       return answer;
     } catch {
@@ -1264,7 +1263,7 @@ export class WorktreeManager {
   private async present(sha: string): Promise<boolean> {
     if (this.presentCommits.has(sha)) return true;
     if (!(await this.hasCommit(sha))) return false;
-    if (this.presentCommits.size >= 5000) this.presentCommits.clear();
+    if (this.presentCommits.size >= MEMO_ENTRY_LIMIT) this.presentCommits.clear();
     this.presentCommits.add(sha);
     return true;
   }
@@ -1278,7 +1277,7 @@ export class WorktreeManager {
       cwd: this.basePath,
     });
     const answer = res.code === 0;
-    if (this.pathMemo.size >= 5000) this.pathMemo.clear();
+    if (this.pathMemo.size >= MEMO_ENTRY_LIMIT) this.pathMemo.clear();
     this.pathMemo.set(key, answer);
     return answer;
   }
@@ -1385,7 +1384,10 @@ export class WorktreeManager {
           ["merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", q.from, q.mergeBase],
           { cwd: this.basePath },
         );
-        if (mt.code !== 0 && mt.code !== 1) return fail("merge-tree-failed", `exit ${mt.code}`);
+        if (mt.code !== 0 && mt.code !== 1) {
+          const cause = mt.stderr.trim().slice(0, 500);
+          return fail("merge-tree-failed", `exit ${mt.code}${cause ? `: ${cause}` : ""}`);
+        }
         const tok = mt.stdout.split("\0");
         tree = (tok[0] ?? "").trim();
         if (mt.code === 1)
@@ -1497,8 +1499,33 @@ export class WorktreeManager {
       .filter((l) => l.startsWith(prefix));
   }
 
-  /** Drop a worktree at PR close: remove --force, then prune. */
+  /** Owned refs, including PRs whose worktree directory is already gone. */
+  private async ownedPrRefs(): Promise<Map<number, string[]>> {
+    const refs = new Map<number, string[]>();
+    if (!existsSync(join(this.basePath, ".git"))) return refs;
+    const res = await this.git(["for-each-ref", "--format=%(refname)", "refs/qcr/"]);
+    for (const ref of res.stdout.split("\n")) {
+      const match =
+        /^refs\/qcr\/pr-(\d+)$/.exec(ref) ??
+        /^refs\/qcr\/reviewed\/pr-(\d+)-[0-9a-f]{7,12}$/.exec(ref);
+      if (!match) continue;
+      const pr = Number(match[1]);
+      if (!Number.isSafeInteger(pr) || pr <= 0) continue;
+      const list = refs.get(pr) ?? [];
+      list.push(ref);
+      refs.set(pr, list);
+    }
+    return refs;
+  }
+
+  /** Drop refs before the directory, retaining a discoverable retry on failure. */
   async remove(pr: number): Promise<void> {
+    const refs = (await this.ownedPrRefs()).get(pr) ?? [];
+    if (refs.length)
+      await runOrThrow(this.run, "git", ["update-ref", "--stdin"], {
+        cwd: this.basePath,
+        input: refs.map((ref) => `delete ${ref}\n`).join(""),
+      });
     const path = this.worktreePath(pr);
     if (existsSync(path)) {
       await this.run("git", ["worktree", "remove", "--force", path], { cwd: this.basePath });
@@ -1507,14 +1534,6 @@ export class WorktreeManager {
     }
     if (existsSync(join(this.basePath, ".git"))) {
       await this.run("git", ["worktree", "prune"], { cwd: this.basePath });
-      await this.run("git", ["update-ref", "-d", this.prRef(pr)], { cwd: this.basePath });
-      // The PR's pinned reviewed heads go with it.
-      const pinned = await this.reviewedHeadRefs(pr);
-      if (pinned.length)
-        await this.run("git", ["update-ref", "--stdin"], {
-          cwd: this.basePath,
-          input: pinned.map((r) => `delete ${r}\n`).join(""),
-        });
     }
   }
 
@@ -1530,13 +1549,14 @@ export class WorktreeManager {
   }
 
   /**
-   * Stale-worktree sweep at daemon start: every wt/pr-*
-   * whose PR is no longer open/known gets removed.
+   * Stale cleanup at daemon start: directories and owned refs whose PR is
+   * no longer open/known get removed, including interrupted prior cleanup.
    */
   async sweepStale(activePrs: Iterable<number>): Promise<number[]> {
     const active = new Set(activePrs);
     const removed: number[] = [];
-    for (const pr of this.listWorktreePrs()) {
+    const candidates = new Set([...this.listWorktreePrs(), ...(await this.ownedPrRefs()).keys()]);
+    for (const pr of [...candidates].sort((a, b) => a - b)) {
       if (active.has(pr)) continue;
       await this.remove(pr);
       removed.push(pr);
