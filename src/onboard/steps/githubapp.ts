@@ -551,6 +551,7 @@ export interface ApiResult {
   status: number;
   body: unknown;
   text: string;
+  link?: string | null;
 }
 
 /** One GitHub REST call with the wizard's headers, the body decoded
@@ -576,7 +577,7 @@ export async function api(
     } catch {
       body = null;
     }
-    return { status: res.status, body, text };
+    return { status: res.status, body, text, link: res.headers?.get?.("link") ?? null };
   } catch (err) {
     return { status: 0, body: null, text: `request failed: ${String(err)}` };
   }

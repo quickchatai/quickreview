@@ -46,16 +46,16 @@ import type { Schedule } from "./supervisor.js";
 import type { Embedder, ReembedJournalStatus, ReembedStatus } from "./types.js";
 
 /** One namespace's reindex outcome, as the script reports it. */
-export interface ReindexOutcome {
-  status: "completed" | "failed" | "busy" | "timeout";
-  uri: string;
-  detail?: string;
-  task_id?: string;
-  scanned_records?: number;
-  rebuilt_records?: number;
-  failed_records?: number;
-  unsupported_records?: number;
-}
+type ReindexCounts = {
+  scanned_records: number;
+  rebuilt_records: number;
+  failed_records: number;
+  unsupported_records: number;
+};
+export type ReindexOutcome = { uri: string; detail?: string; task_id?: string } & (
+  | ({ status: "completed" } & ReindexCounts)
+  | ({ status: "failed" | "busy" | "timeout" } & Partial<ReindexCounts>)
+);
 
 /** The HTTP seam the script takes — the minimum it reads. */
 export type ReembedFetch = (
@@ -72,6 +72,7 @@ export type ReembedFetch = (
 export interface ReembedModule {
   journalStatus(home: string): ReembedJournalStatus;
   configuredEmbedder(conf: unknown): Embedder;
+  sameEmbedder(a: Embedder, b: Embedder): boolean;
   resume(opts: {
     home: string;
     base: string;
@@ -130,12 +131,6 @@ const defaultSchedule: Schedule = (fn, ms) => {
  * boot, the tick and the retry all apply. */
 function outstanding(state: ReembedJournalStatus["state"] | undefined): boolean {
   return state === "pending" || state === "failed";
-}
-
-function sameEmbedder(a: Embedder, b: Embedder): boolean {
-  return (
-    a.provider === b.provider && a.model === b.model && Number(a.dimension) === Number(b.dimension)
-  );
 }
 
 /** An `api_base` for comparison: absent and empty are the same, and a trailing
@@ -233,7 +228,10 @@ export class ReembedDriver {
       return;
     }
     const declared = ovConfEmbedder(this.deps.cfg);
-    if (sameEmbedder(declared, ovConf) && baseOf(declared.api_base) === baseOf(ovConf.api_base))
+    if (
+      this.module.sameEmbedder(declared, ovConf) &&
+      baseOf(declared.api_base) === baseOf(ovConf.api_base)
+    )
       return;
     this.drift = { config_toml: declared, ov_conf: ovConf };
     this.deps.log(

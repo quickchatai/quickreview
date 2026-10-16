@@ -208,6 +208,22 @@ describe("parsing GitHub's delivery log", () => {
 });
 
 describe("all three layers green", () => {
+  it("refuses a successful old-endpoint ping when the named hostname changed", async () => {
+    seedChoices({ [INGRESS_CHOICE_KEY]: "named", webhook_url: "https://new.example.test/webhook" });
+    const h = harness({
+      services: [
+        { Service: "daemon", State: "running" },
+        { Service: "tunnel-named", State: "running" },
+      ],
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(result.checks.find((c) => c.name === "webhook-url")?.ok).toBe(false);
+    expect(result.checks.find((c) => c.name === "webhook-url")?.detail).toContain(
+      "new.example.test",
+    );
+  });
+
   it("containers, health, and a ping GitHub says it delivered", async () => {
     seedChoices({ [INGRESS_CHOICE_KEY]: "quick" });
     const h = harness({

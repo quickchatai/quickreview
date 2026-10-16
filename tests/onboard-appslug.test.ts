@@ -247,7 +247,7 @@ describe("the step", () => {
     const result = await blind.engine.runStep(APP_SLUG_STEP_ID);
     expect(result.ok).toBe(false);
     expect(blind.streamed).toEqual([]);
-    expect(result.failures.join(" ")).toMatch(/could not tell whether the daemon is running/);
+    expect(result.failures.join(" ")).toMatch(/delivery is unknown/);
     expect(readTomlKey(configText(), "github", "bot_login")).toBe("quick-review-9f2[bot]");
 
     // The file already agrees, yet the next run with a reachable host restarts.

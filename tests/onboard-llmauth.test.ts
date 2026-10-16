@@ -409,13 +409,30 @@ describe("API key validation", () => {
     // the two must AGREE on every value, not merely mention the same prefix.
     const fn = /^v_openai\(\).*$/m.exec(shell)?.[0];
     expect(fn).toBeDefined();
-    const shellAccepts = (value: string): boolean =>
+    const shellAccepts = (value: string, locale: string): boolean =>
       spawnSync("bash", ["-c", `${fn}\nprintf '%s' "$1" | v_openai`, "v", value], {
         encoding: "utf8",
+        env: { ...process.env, LC_ALL: locale },
       }).status === 0;
     // `read -r` hands the shell an already-trimmed value; the TS side trims.
-    for (const value of [KEY, "nope", "", "sk-", "sk- with space", "sk-a\tb", "sk-x", "SK-upper"]) {
-      expect(shellAccepts(value.trim()), JSON.stringify(value)).toBe(validateOpenAiKey(value));
+    for (const value of [
+      KEY,
+      "nope",
+      "",
+      "sk-",
+      "sk- with space",
+      "sk-a\tb",
+      "sk-a\u00a0b",
+      "sk-a\u2003b",
+      "sk-a\u2028b",
+      "sk-a\ufeffb",
+      "sk-x",
+      "SK-upper",
+    ]) {
+      for (const locale of ["C", "C.UTF-8"])
+        expect(shellAccepts(value.trim(), locale), `${locale}:${JSON.stringify(value)}`).toBe(
+          validateOpenAiKey(value),
+        );
     }
   });
 });

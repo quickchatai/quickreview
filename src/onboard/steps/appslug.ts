@@ -42,7 +42,7 @@ import {
   writeAtomic,
   type StreamRunner,
 } from "./compose.js";
-import { stackTransportFor } from "./transport.js";
+import { deliverConfigChange } from "./configdelivery.js";
 import {
   assertNoDryRunEdit,
   changedEdits,
@@ -208,28 +208,14 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
     // forgotten because the edits came back empty.
     let restartOwed = edits.length > 0 || ctx.data[RESTART_OWED_KEY] === true;
     if (write && restartOwed) {
-      // Whichever host the daemon lives on: `docker compose restart` here, the
-      // deploy that ships the corrected config on the server route.
-      // A probe that could not ask the host is not a daemon that is down: the
-      // restart stays owed rather than being discharged as "nothing to restart".
-      const transport = stackTransportFor(ctx, opts.stream ? { stream: opts.stream } : {});
-      const probe = await transport.daemonState();
-      if (probe.state === "unknown") {
-        checks.push({
-          name: "daemon-restart",
-          ok: false,
-          detail:
-            `could not tell whether the daemon is running ${transport.where} (${probe.detail}), so it was not restarted ` +
-            `onto the corrected bot_login — Fix: make the host reachable, then run the ${APP_SLUG_STEP_ID} step again`,
-        });
-      } else {
-        const restarted = await transport.restart(
-          (line) => ctx.adapters.log?.(`${APP_SLUG_STEP_ID}: ${line}`),
-          probe.state === "running",
-        );
-        checks.push(restarted);
-        restartOwed = !restarted.ok;
-      }
+      const delivery = await deliverConfigChange(
+        ctx,
+        opts.stream ? { stream: opts.stream } : {},
+        restartOwed,
+        APP_SLUG_STEP_ID,
+      );
+      checks.push(...delivery.checks);
+      restartOwed = delivery.restartOwed;
     } else if (restartOwed) {
       checks.push({
         name: "daemon-restart",

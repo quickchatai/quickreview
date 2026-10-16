@@ -158,8 +158,11 @@ export function parseInventoryHost(text: string): string {
  * the recorded alias over ssh, so an inventory still naming another host would
  * ship to a machine the wizard never looked at. `null` when it does.
  */
-export function inventoryTargetMismatch(root: string, alias: string): string | null {
-  const path = inventoryPath(root);
+export function inventoryTargetMismatch(
+  root: string,
+  alias: string,
+  path = inventoryPath(root),
+): string | null {
   const existing = readTextOrNull(path);
   if (existing === null) {
     return (

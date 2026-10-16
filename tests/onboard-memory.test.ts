@@ -50,6 +50,7 @@ import {
   ROOT_KEY_FILE,
   documentedKeysFile,
   filesContaining,
+  forwardFlags,
   isInside,
   memoryStep,
   normalizeMemoryChoice,
@@ -102,6 +103,7 @@ interface FakeServerOptions {
   /** Users that already exist, user → key. */
   users?: Record<string, string>;
   ready?: boolean;
+  unreachable?: boolean;
   /** Break one matrix cell: this (key-owner, namespace) pair answers 200 with
    * an unrecognised error envelope — i.e. INCONCLUSIVE. */
   murky?: { owner: string; ns: string };
@@ -128,6 +130,7 @@ function fakeServer(opts: FakeServerOptions = {}) {
     const method = (init?.method ?? "GET").toUpperCase();
     const headers = (init?.headers ?? {}) as Record<string, string>;
     calls.push(`${method} ${url.pathname}`);
+    if (url.pathname === "/ready" && opts.unreachable) throw new Error("connect ECONNREFUSED");
     if (url.pathname === "/ready") return json(opts.ready === false ? 503 : 200, { status: "ok" });
     if (url.pathname === "/api/v1/admin/accounts/default/users") {
       if (method === "GET") {
@@ -173,7 +176,7 @@ function adapters(
   return {
     fetch: fetchFn,
     runner: {
-      run: async () => ({ code: 127, stdout: "", stderr: "no subprocesses in this suite" }),
+      run: async () => ({ code: 0, stdout: "[]", stderr: "" }),
     },
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
@@ -639,6 +642,52 @@ describe("degraded modes stay legal and loud", () => {
   };
   const memoryEnabled = () => parseConfig(readFileSync(liveConfig(), "utf8")).openviking.enabled;
 
+  it("distinguishes an answering but unhealthy server from a broken forward", async () => {
+    const fetchFn = (async () => ({
+      status: 503,
+      json: async () => ({ detail: "embedder is not loaded" }),
+    })) as unknown as typeof fetch;
+    const result = await runStep(engineWith(fetchFn));
+    const detail = detailOf(result, "memory-server")?.detail;
+    expect(detail).toContain("embedder is not loaded");
+    expect(detail).toContain("answers");
+    expect(detail).not.toContain("start the forward");
+  });
+
+  it("keeps a failed switch restart owed across a new engine and retries it", async () => {
+    placeConfig();
+    let restarts = 0;
+    let fail = true;
+    const a = adapters(fakeServer().fetchFn);
+    a.runner = {
+      run: async () => ({
+        code: 0,
+        stdout: JSON.stringify([{ Service: "daemon", State: "running" }]),
+        stderr: "",
+      }),
+    };
+    const options = stepOptions({
+      transport: {
+        stream: {
+          run: async () => {
+            restarts++;
+            return { code: fail ? 1 : 0, stdout: "", stderr: fail ? "restart failed" : "" };
+          },
+        },
+      },
+    });
+    const first = new OnboardingEngine([memoryStep(options)], a);
+    expect((await first.runStep(MEMORY_STEP_ID, { choice: "declined" })).ok).toBe(false);
+    expect(memoryEnabled()).toBe(false);
+    expect(restarts).toBe(1);
+    const resumed = new OnboardingEngine([memoryStep(options)], a);
+    expect((await resumed.verifyAll()).ok).toBe(false);
+    fail = false;
+    expect((await resumed.runStep(MEMORY_STEP_ID, { choice: "declined" })).ok).toBe(true);
+    expect(restarts).toBe(2);
+    expect((await resumed.verifyAll()).ok).toBe(true);
+  });
+
   it("declining mints nothing, tells the DAEMON memory is off, stays green, and says what memory-less means", async () => {
     placeConfig();
     expect(memoryEnabled()).toBe(true);
@@ -815,7 +864,7 @@ describe("degraded modes stay legal and loud", () => {
   });
 
   it("lands the root key and waits when the server is not up yet (phase A before bring-up)", async () => {
-    const server = fakeServer({ ready: false });
+    const server = fakeServer({ unreachable: true });
     const result = await runStep(engineWith(server.fetchFn));
     expect(result.ok).toBe(false);
     expect(detailOf(result, "root-key")?.ok).toBe(true);
@@ -998,6 +1047,21 @@ describe("verify() checks what the consumers read now", () => {
     expect(report.checks.find((c) => c.name === "key-file")?.detail).toContain(moved);
   });
 
+  it.each(COMPANION_VARS)("repairs a lone companion alias when %s is missing", async (missing) => {
+    const engine = engineWith(fakeServer().fetchFn);
+    expect((await runStep(engine)).ok).toBe(true);
+    writeFileSync(
+      keysFile,
+      readFileSync(keysFile, "utf8")
+        .split("\n")
+        .filter((line) => !line.startsWith(`${missing}=`))
+        .join("\n"),
+    );
+    expect((await engine.verifyAll()).ok).toBe(false);
+    expect((await runStep(engine)).ok).toBe(true);
+    expect((await engine.verifyAll()).ok).toBe(true);
+  });
+
   it("the two companion spellings must agree — proving one while the other is stale is no proof", async () => {
     const server = fakeServer();
     const engine = engineWith(server.fetchFn);
@@ -1047,14 +1111,14 @@ describe("reaching the server", () => {
   });
 
   it("an unreachable server names the memory forward for this topology, not only the stack", async () => {
-    const result = await runStep(engineWith(fakeServer({ ready: false }).fetchFn));
+    const result = await runStep(engineWith(fakeServer({ unreachable: true }).fetchFn));
     const detail = detailOf(result, "memory-server")?.detail ?? "";
     expect(detail).toMatch(/memory forward/);
     expect(detail).toMatch(/from the repo root/);
     expect(detail).toContain(
       `cd ${dirname(stateDir)} && node scripts/companion-memory-forward.mjs run --local`,
     );
-    expect(detail).toContain(`--container "$(docker compose ps --format '{{.Name}}' daemon)"`);
+    expect(detail).toContain(`--container "$(sudo docker compose ps --format '{{.Name}}' daemon)"`);
   });
 
   it("on the server route the forward command carries THIS install's alias, container and sudo — never the script's defaults", async () => {
@@ -1064,7 +1128,7 @@ describe("reaching the server", () => {
     );
     const step = memoryStep(stepOptions());
     const report = await step.run({
-      adapters: adapters(fakeServer({ ready: false }).fetchFn),
+      adapters: adapters(fakeServer({ unreachable: true }).fetchFn),
       input: {},
       choices: { topology: "vm", vm_ssh_alias: "review-box" },
       data: {},
@@ -1161,5 +1225,20 @@ describe("the server route's daemon copy of the reviewer key", () => {
     const check = report.checks.find((c) => c.name === "reviewer-key-on-server");
     expect(check?.ok).toBe(false);
     expect(check?.detail).toMatch(/not proven either way/);
+  });
+});
+
+describe("forward command privilege parity", () => {
+  it.each([true, false])("uses sudo=%s for both compose lookup and relay Docker", (sudo) => {
+    writeFileSync(join(dirname(stateDir), "config.toml"), `[tui]\nsudo_docker = ${String(sudo)}\n`);
+    const flags = forwardFlags({
+      adapters: adapters(fakeServer().fetchFn),
+      input: {},
+      choices: {},
+      data: {},
+      recordChoice: () => {},
+    });
+    expect(flags).toContain(`$(${sudo ? "sudo " : ""}docker compose ps`);
+    expect(flags.includes("--no-sudo")).toBe(!sudo);
   });
 });

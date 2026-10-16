@@ -24,7 +24,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 import {
   OnboardingEngine,
@@ -96,7 +96,10 @@ beforeEach(() => {
   writeFileSync(join(secretsDir, SECRET_FILES.pem), PEM);
   writeFileSync(join(secretsDir, SECRET_FILES.webhookSecret), "s".repeat(40));
 });
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(root, { recursive: true, force: true });
+});
 
 const VM_CHOICES = { [TOPOLOGY_CHOICE_KEY]: "vm", [SSH_ALIAS_CHOICE_KEY]: ALIAS };
 
@@ -443,6 +446,23 @@ describe("the deploy composes the real script, at full strictness", () => {
     expect(deployCommandLine("sync")).toBe("scripts/deploy.sh sync");
   });
 
+  it.each(["QC_INVENTORY", "QC_ANSIBLE_DIR"] as const)(
+    "checks the effective inherited %s target before any deploy",
+    async (variable) => {
+      writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
+      const elsewhere = join(root, "external-ansible");
+      mkdirSync(elsewhere);
+      const alternate = join(elsewhere, "inventory.ini");
+      writeFileSync(alternate, "[quickreview]\nother-box\n");
+      vi.stubEnv(variable, variable === "QC_INVENTORY" ? alternate : elsewhere);
+      const h = deployHarness();
+      const result = await h.engine.runStep(VM_DEPLOY_STEP_ID);
+      expect(result.ok).toBe(false);
+      expect(result.failures.join(" ")).toContain("other-box");
+      expect(h.runs).toEqual([]);
+    },
+  );
+
   it("runs the plan first, then the deploy, and records what it did", async () => {
     const h = deployHarness();
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
@@ -510,6 +530,28 @@ describe("the deploy composes the real script, at full strictness", () => {
     });
     await same.engine.runStep(VM_DEPLOY_STEP_ID);
     expect(same.runs.map((r) => r.at(-1))).toEqual(["sync", "sync"]);
+  });
+
+  it("an explicit sync preserves the last provisioned host settings for the next default run", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS} cloudflared_enabled=true\n`);
+    const h = deployHarness({
+      choices: {
+        ...VM_CHOICES,
+        [VM_DEPLOY_CHOICE_KEY]: {
+          mode: "rebuild",
+          at: "2026-08-30T10:00:00Z",
+          host: ALIAS,
+          host_vars: { cloudflared_enabled: "false" },
+        },
+      },
+    });
+    expect((await h.engine.runStep(VM_DEPLOY_STEP_ID, { mode: "sync" })).ok).toBe(true);
+    expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({
+      host_vars: { cloudflared_enabled: "false" },
+    });
+    expect((await h.engine.verifyAll()).ok).toBe(false);
+    await h.engine.runStep(VM_DEPLOY_STEP_ID);
+    expect(h.runs.map((r) => r.at(-1))).toEqual(["sync", "sync", "rebuild", "rebuild"]);
   });
 
   it("a deploy recorded for another host does not make a fresh host's first deploy a sync", async () => {
@@ -795,7 +837,11 @@ describe("the layered verification runs over ssh, unchanged", () => {
       pingStatus?: number;
     } = {},
   ): Layered {
-    seedChoices({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: o.ingress ?? "named" });
+    seedChoices({
+      ...VM_CHOICES,
+      [INGRESS_CHOICE_KEY]: o.ingress ?? "named",
+      webhook_url: "https://review.example.com/webhook",
+    });
     const calls: string[][] = [];
     const runner = {
       run: async (cmd: string, args: string[]): Promise<ProcessResult> => {

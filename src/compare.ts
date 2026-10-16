@@ -120,26 +120,31 @@ export const NOT_ALLOWED_MUTATION_KINDS: readonly MutationKind[] = MUTATION_KIND
 
 // ---- dry-run collection ------------------------------------------------------
 
+/** Decode one recorded mutation, preserving the malformed-file sentinel. */
+export function decodeDryrunRecord(text: string | null, file: string): DryrunRecord {
+  try {
+    if (text === null) throw new Error("unreadable record");
+    return { ...(JSON.parse(text) as DryrunRecord), file };
+  } catch {
+    return { kind: "unparseable", method: "?", path: "?", note: `could not parse ${file}`, file };
+  }
+}
+
 /** Read state/dryrun/ into records (newest last). Tolerates junk files. */
 export function readDryrunDir(dir: string): DryrunRecord[] {
   if (!existsSync(dir)) return [];
-  const out: DryrunRecord[] = [];
-  for (const file of readdirSync(dir).sort()) {
-    if (!file.endsWith(".json")) continue;
-    try {
-      const rec = JSON.parse(readFileSync(join(dir, file), "utf8")) as DryrunRecord;
-      out.push({ ...rec, file });
-    } catch {
-      out.push({
-        kind: "unparseable",
-        method: "?",
-        path: "?",
-        note: `could not parse ${file}`,
-        file,
-      });
-    }
-  }
-  return out;
+  return readdirSync(dir)
+    .sort()
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => {
+      let text: string | null = null;
+      try {
+        text = readFileSync(join(dir, file), "utf8");
+      } catch {
+        /* Kept as an unparseable record. */
+      }
+      return decodeDryrunRecord(text, file);
+    });
 }
 
 /** The would-be review for a PR: the last substantive create_review record it

@@ -41,6 +41,7 @@
 //      lazily, and NEVER logged — `redact()` scrubs it out of every failure
 //      message at construction, before any caller can log or render one.
 import { readFileSync, statSync } from "node:fs";
+import { normalizeTag } from "../memory/store.js";
 import type { HealthRequest } from "../memory/health.js";
 
 /** The `fetch` slice this client uses — the whole network seam. */
@@ -203,8 +204,8 @@ export function isAuthFailure(status: number, code: string, message = ""): boole
  * known-empty" and ovsession's delete as the desired end state; the probe and
  * the request observer read it the same way through this one predicate.
  */
-export function isNotFound(status: number, code: string): boolean {
-  return status === 404 || code === "NOT_FOUND";
+export function isNotFound(_status: number, code: string): boolean {
+  return code === "NOT_FOUND";
 }
 
 /** One request, as the client's observer sees it: what was asked, how it
@@ -361,9 +362,7 @@ export function buildContextSearchBody(
     }
     if (Object.keys(quotas).length > 0) body["quotas"] = quotas;
   }
-  const tags = (opts.tags ?? [])
-    .map((t) => t.replace(/^#+/, "").trim().toLowerCase())
-    .filter((t) => t !== "");
+  const tags = (opts.tags ?? []).map((tag) => normalizeTag(tag).trim()).filter((t) => t !== "");
   if (tags.length > 0) body["tags"] = [...new Set(tags)];
   if (opts.since) body["since"] = opts.since;
   if (opts.until) body["until"] = opts.until;
