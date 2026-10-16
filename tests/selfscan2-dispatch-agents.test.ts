@@ -453,7 +453,7 @@ describe("migration collision renderers keep author-controlled filenames as data
         for (const f of fields) expect(line.trimStart().startsWith(f)).toBe(false);
   });
 
-  it("an ordinary name renders exactly as before", () => {
+  it("an ordinary name renders additive dependency advice", () => {
     const note = renderMigrationCollisionsNote(
       detectMigrationCollisions({
         files: [{ filename: "backend/chat/migrations/0042_x.py", status: "added" }],
@@ -461,7 +461,7 @@ describe("migration collision renderers keep author-controlled filenames as data
       }),
     );
     expect(note).toContain(
-      '- `backend/chat/migrations/0042_x.py` collides with `backend/chat/migrations/0042_existing.py` → rename to `backend/chat/migrations/0043_x.py`; in its dependencies point the `chat` entry at `("chat", "0042_existing")`, keeping every other entry',
+      '- `backend/chat/migrations/0042_x.py` collides with `backend/chat/migrations/0042_existing.py` → rename to `backend/chat/migrations/0043_x.py`; in its `dependencies`, also include `("chat", "0042_existing")` for the collision chain — keep every existing entry, applying the renamed-dependency replacements below where listed',
     );
   });
 });

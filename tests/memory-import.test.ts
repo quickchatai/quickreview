@@ -12,6 +12,7 @@ import {
   archiveReadOnly,
   classify,
   importKey,
+  keyOfDestEntry,
   importMemory,
   importedText,
   recordingMemoryStore,
@@ -558,5 +559,14 @@ describe("the seam", () => {
   it("takes any MemoryStore as its destination", () => {
     const dest: MemoryStore = recordingMemoryStore();
     expect(typeof dest.apply).toBe("function");
+  });
+});
+
+describe("destination provenance identity", () => {
+  it("quoted import-key text cannot claim an unrelated source identity", () => {
+    const of = (text: string): MemoryEntry => ({ ...sourceEntries()[0]!, text });
+    const text = "#feedback A quoted diagnostic\n```text\nimport-key:someone-elses-memory\n```";
+    expect(keyOfDestEntry(of(text))).toBe(importKey(text));
+    expect(keyOfDestEntry(of(importedText(of("#manual keep this"), "standing", "actual-key")))).toBe("actual-key");
   });
 });

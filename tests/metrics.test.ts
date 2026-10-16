@@ -309,7 +309,7 @@ describe("computeMetrics", () => {
     expect(m.windows.all.header).toMatchObject({ rounds: 4, approvals: 2, spend_usd: 4 });
   });
 
-  it("splits time-to-first-verdict into queue and review halves", () => {
+  it("reports queue and review medians over all measured live rounds", () => {
     const m = computeMetrics(store, { now });
     const ttfv = m.windows.d7.ttfv;
     // #100: 09:00 -> 09:20 = 1200s; #101: 10:50 -> 11:45 = 3300s
@@ -1095,5 +1095,24 @@ describe("ops", () => {
     expect(text).toContain("rounds 1/3");
     expect(text).toContain("build abc1234 (2026-08-13T12:00:00Z, sync)");
     expect(text).toContain("events (7d): pr_transition 7");
+  });
+});
+
+describe("measured zero spend", () => {
+  it("includes measured zeros and excludes absent measurements from the per-PR distribution", () => {
+    store.db.prepare("DELETE FROM rounds").run();
+    for (const [pr, spend] of [
+      [1, 0],
+      [2, 10],
+      [3, null],
+    ] as const)
+      insertRound(store, {
+        pr,
+        round_no: 1,
+        spend_usd: spend,
+        started_at: NOW.toISOString(),
+        finished_at: NOW.toISOString(),
+      });
+    expect(computeMetrics(store, { now }).windows.all.spend.per_pr_median).toBe(0);
   });
 });

@@ -1168,6 +1168,18 @@ describe("the round context block searches experiences/ only", () => {
 // ---- the relayout plan ------------------------------------------------------
 
 describe("the relayout plan over a fixture shaped like the live store", () => {
+  it("normalizes conflicting operations header values to match its planned classification", () => {
+    const entry = entryFrom(
+      "experiences/ops.md",
+      "#operations kind=note area=delivery A restart note",
+      "",
+    );
+    const action = planRelayout({ entries: [entry], retired: [] }).actions[0]!;
+    expect(action.kind).toBe("move");
+    if (action.kind !== "move") return;
+    expect(parseEventTags(action.text)).toMatchObject({ kind: "ops", area: "operations" });
+  });
+
   const plan = planRelayout(fixtureEntries());
   const action = (id: string) => plan.actions.find((a) => a.id === id)!;
 

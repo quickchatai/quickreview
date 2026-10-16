@@ -429,6 +429,18 @@ describe("keyChangeWatcher — a rotated daemon key reaches the sessions", () =>
     expect(fired).toBe(1);
   });
 
+  it("a throwing change callback leaves the rewrite owed for the next probe", () => {
+    let attempts = 0;
+    const watch = keyChangeWatcher(() => {
+      if (++attempts === 1) throw new Error("temporary write or log failure");
+    });
+    watch("key-A");
+    expect(() => watch("key-B")).toThrow("temporary");
+    expect(watch("key-B")).toBe(true);
+    expect(watch("key-B")).toBe(false);
+    expect(attempts).toBe(2);
+  });
+
   it("a change whose rewrite failed stays owed until one succeeds", () => {
     const answers = [false, true];
     let fired = 0;

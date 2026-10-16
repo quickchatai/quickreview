@@ -326,7 +326,7 @@ const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
 
 const CREDENTIALS: readonly CredentialName[] = ["daemon", "sessions"];
 
-function isAuthResult(c: CredentialStatus | null): boolean {
+export function isAuthResult(c: CredentialStatus | null): boolean {
   return c !== null && (c.result === "auth_failed" || c.result === "no_key");
 }
 

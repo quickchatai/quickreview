@@ -208,9 +208,11 @@ export interface LessonFilterContext {
   asOf?: string | null;
 }
 
-export type DropCounts = Partial<Record<string, number>>;
+export type RepoFactDropReason = "kind" | "no_paths";
+export type DropReason = LessonDropReason | CaseDropReason | RepoFactDropReason;
+export type DropCounts = Partial<Record<DropReason, number>>;
 
-function bump(d: DropCounts, reason: string, n = 1): void {
+function bump(d: DropCounts, reason: DropReason, n = 1): void {
   d[reason] = (d[reason] ?? 0) + n;
 }
 
@@ -368,14 +370,16 @@ export interface CaseHeader {
   fate: string | null;
   posted: string | null;
   replies: number;
-  kind: string | null;
-  severity: string | null;
 }
 
 /** A case header value, decoded (src/cases.ts `tagValue` encodes `%`, the
- * whitespace and the control bytes as `%XX`). */
+ * whitespace and control bytes as `%XX`, or wide code units as `%uXXXX`). */
 function decodeTagValue(v: string): string {
-  return v.replace(/%([0-9A-Fa-f]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
+  return v.replace(
+    /%u([0-9A-Fa-f]{4})|%([0-9A-Fa-f]{2})/g,
+    (_m, wide: string | undefined, byte: string | undefined) =>
+      String.fromCharCode(parseInt(wide ?? byte!, 16)),
+  );
 }
 
 /** A finding case's header, or null when the text is not a live case (no
@@ -395,8 +399,6 @@ export function parseCaseHeader(text: string): CaseHeader | null {
     fate: tags["fate"] ?? null,
     posted: tags["posted"] ?? null,
     replies,
-    kind: tags["finding_kind"] ?? null,
-    severity: tags["severity"] !== undefined ? decodeTagValue(tags["severity"]) : null,
   };
 }
 

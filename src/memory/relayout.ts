@@ -57,6 +57,7 @@ import {
   isMovedStub,
   nameOfId,
   withHeaderTags,
+  withoutHeaderTag,
 } from "./layout.js";
 import type { MemoryEntry } from "./store.js";
 
@@ -226,7 +227,7 @@ function decide(e: MemoryEntry, adjudicated: ReadonlySet<string>): Decision {
     const bodySaysBug =
       loose.hash.has("bug") || loose.kv["kind"] === "bug" || loose.kv["filed"] !== undefined;
     const kind = headerDefect ? "bug" : "ops";
-    const text = withHeaderTags(e.text, { kind, area: "operations" });
+    const text = withHeaderTags(withoutHeaderTag(withoutHeaderTag(e.text, "kind"), "area"), { kind, area: "operations" });
     return {
       dest: EVENTS_AREA,
       why: `ops note (kind=${kind})`,

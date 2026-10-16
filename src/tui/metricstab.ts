@@ -580,7 +580,7 @@ export function metricsCards(
     },
     {
       title: "TIME TO FIRST VERDICT",
-      subtitle: `queue ${fmtDur(win.ttfv.queue_median_s)} · review ${fmtDur(win.ttfv.review_median_s)} · ${distStats(win.ttfv, fmtDur)}`,
+      subtitle: `all live rounds: queue ${fmtDur(win.ttfv.queue_median_s)} · review ${fmtDur(win.ttfv.review_median_s)} · ${distStats(win.ttfv, fmtDur)}`,
       accent: ACCENTS.blue,
       body: (w) => histogramLines(win.ttfv, w, ACCENTS.blue),
     },

@@ -92,7 +92,8 @@ import { canonicalLensIds, storedLensIds } from "../lensids.js";
 import { cleanQuotedText } from "../memory/datafence.js";
 import { LESSON_CLASS_RE } from "../memory/lessons.js";
 import { carriedToRef } from "../outcomes.js";
-import type { StateStore } from "../state.js";
+import { tableExists, type StateStore } from "../state.js";
+export { tableExists } from "../state.js";
 import type { PostMergeScan } from "../worktrees.js";
 
 /** Where a candidate came from. `recheck` is the one source that is the
@@ -231,14 +232,6 @@ function oneLine(s: string, cap = 300): string {
     .replace(/\s+/g, " ")
     .trim();
   return t.length > cap ? `${t.slice(0, cap - 1)}…` : t;
-}
-
-/** Whether state.db holds table `name` (an optional source's tables may be absent). */
-export function tableExists(store: StateStore, name: string): boolean {
-  return (
-    store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !==
-    undefined
-  );
 }
 
 /** A finding's canonical lens ids: the outcome capture's `lens_ids` column, else parsed from

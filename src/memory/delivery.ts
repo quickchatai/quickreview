@@ -232,14 +232,12 @@ export function evidenceLine(refs: readonly string[], repo: string): string {
   return `Evidence: ${shown.join(", ")}${more}`;
 }
 
-/** The body a lesson's fence quotes: a typed lesson's header line is shown as
- * fields above the fence instead; a legacy entry is quoted whole. */
-function lessonBody(l: DeliveredLesson): string {
-  const text = cleanQuotedText(l.text);
-  const nl = text.indexOf("\n");
-  const first = nl < 0 ? text : text.slice(0, nl);
-  if (/^#lesson\s/.test(first)) return nl < 0 ? "" : text.slice(nl + 1);
-  return text;
+/** Quote a typed entry's body after its header; legacy text stays whole. */
+function typedEntryBody(text: string, marker: "lesson" | "case"): string {
+  const clean = cleanQuotedText(text);
+  const nl = clean.indexOf("\n");
+  const first = nl < 0 ? clean : clean.slice(0, nl);
+  return new RegExp(`^#${marker}\\s`).test(first) ? (nl < 0 ? "" : clean.slice(nl + 1)) : clean;
 }
 
 /** One lesson: a fields line, its evidence, its text fenced as data. */
@@ -251,7 +249,7 @@ export function renderDeliveredLesson(l: DeliveredLesson, n: number, repo: strin
     l.paths.length ? `paths ${l.paths.map((p) => codePath(p)).join(", ")}` : "any path",
     codePath(memoryLabel(l.uri)),
   ].join(" · ");
-  const body = lessonBody(l).trim();
+  const body = typedEntryBody(l.text, "lesson").trim();
   return [fields, evidenceLine(l.evidence, repo), ...(body ? [fenceAsData(body)] : [])].join("\n");
 }
 
@@ -432,9 +430,7 @@ export function addedLensLine(file: string): string {
 /** One past case: a fields line, then the case document (header dropped)
  * fenced as data. */
 function renderDeliveredCase(c: DeliveredCase, n: number): string {
-  const text = cleanQuotedText(c.text);
-  const nl = text.indexOf("\n");
-  const body = (/^#case\s/.test(nl < 0 ? text : text.slice(0, nl)) ? (nl < 0 ? "" : text.slice(nl + 1)) : text).trim();
+  const body = typedEntryBody(c.text, "case").trim();
   const fields = [
     `**Case ${n} — PR #${c.pr ?? "?"}**`,
     c.path ? codePath(c.path) : "no path",

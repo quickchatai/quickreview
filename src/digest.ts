@@ -6,6 +6,7 @@ import { sandboxRoot } from "./config.js";
 import { digestFiles, zoneDayBounds } from "./eod.js";
 import {
   cancelCauseLabel,
+  cancellationTotals,
   roundUsage,
   tallyCancellations,
   type CancellationTally,
@@ -129,8 +130,7 @@ export function dailyCancellations(
   const byCause = tallyCancellations(roundsOnDay(store, date, timeZone));
   return {
     date,
-    total: byCause.reduce((n, c) => n + c.count, 0),
-    loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
+    ...cancellationTotals(byCause),
     by_cause: byCause,
   };
 }

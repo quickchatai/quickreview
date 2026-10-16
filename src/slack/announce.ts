@@ -30,7 +30,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { Config } from "../config.js";
 import { opsDay } from "../eod.js";
-import type { SlackCooldownRow, SlackPostKind, StateStore } from "../state.js";
+import {
+  snapshotHeartbeat,
+  type SlackCooldownRow,
+  type SlackPostKind,
+  type StateStore,
+} from "../state.js";
 import type { RoundType } from "../types.js";
 import {
   causeMessage,
@@ -636,13 +641,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (raw === undefined) return undefined;
     try {
       const snap = JSON.parse(raw) as { heartbeat?: unknown; written_at?: unknown };
-      const value =
-        typeof snap.heartbeat === "string"
-          ? snap.heartbeat
-          : typeof snap.written_at === "string"
-            ? snap.written_at
-            : undefined;
-      return value !== undefined && Number.isFinite(Date.parse(value)) ? value : undefined;
+      const value = snapshotHeartbeat(snap);
+      return value !== null && Number.isFinite(Date.parse(value)) ? value : undefined;
     } catch (err) {
       this.log("slack: status.json unreadable for downtime measurement", err);
       return undefined;

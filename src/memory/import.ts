@@ -30,8 +30,8 @@
 //     prompt, the operator's own `add` by minting `#manual`, a machine `note`
 //     by refusing untagged text at all.
 //
-// Best effort, NO GATE: there is no probe-parity check, no pass/fail bar and
-// no abort path. Whatever imports, imports; gaps get fixed forward. That puts
+// Best effort, NO GATE: refused writes do not abort the pass. Incomplete
+// destination reads abort to preserve deduplication. That puts
 // the whole burden of visibility on the LOG — so the log names every skipped
 // entry with its reason and every failed write with the store's own refusal
 // message, and the report carries the same data structured for a caller that
@@ -72,23 +72,26 @@ export const DEFAULT_BATCH_SIZE = 256;
 // ---- classification --------------------------------------------------------
 
 /** Which category an entry lands in — its tags are preserved either way. */
-export type ImportCategory = "pinned" | "standing" | "learning" | "bug" | "feedback";
+export const IMPORT_CATEGORIES = ["pinned", "standing", "learning", "bug", "feedback"] as const;
+export type ImportCategory = (typeof IMPORT_CATEGORIES)[number];
 
 /** Why an entry stayed behind. Every skipped entry gets one, and the log
  * names the entry beside it — this is the only signal that anything missed. */
-export type SkipReason =
+export const SKIP_REASONS = [
   /** No curated tag: a session's day-to-day working note. */
-  | "raw-daily-note"
+  "raw-daily-note",
   /** A session compaction handoff block, not a lesson. */
-  | "session-handoff"
-  /** A `#bug`/`#feedback` thread already tagged closed. */
-  | "closed-thread"
+  "session-handoff",
+  /** A bug/feedback thread already tagged closed. */
+  "closed-thread",
   /** Another source entry with the same words was already imported. */
-  | "duplicate-in-source"
-  /** The destination already holds this entry (previous run, or another writer). */
-  | "already-imported"
+  "duplicate-in-source",
+  /** The destination already holds this entry. */
+  "already-imported",
   /** Nothing left after trimming. */
-  | "empty";
+  "empty",
+] as const;
+export type SkipReason = (typeof SKIP_REASONS)[number];
 
 export type Classification = { keep: true; category: ImportCategory } | { keep: false; reason: SkipReason };
 
@@ -179,7 +182,7 @@ function stripImportHeader(text: string): string {
  * an import, otherwise the key its own words would produce (so an entry that
  * reached the store by another route is still not duplicated). */
 export function keyOfDestEntry(e: MemoryEntry): string {
-  const stamped = new RegExp(`${IMPORT_KEY_PREFIX}(\\S+)`).exec(e.text);
+  const stamped = new RegExp(`${IMPORT_KEY_PREFIX}(\\S+)`).exec(HEADER_RE.exec(e.text)?.[0] ?? "");
   return stamped?.[1] ?? importKey(e.text);
 }
 
@@ -347,6 +350,10 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
   const plans: Plan[] = [];
   const seen = new Set<string>();
   const repins: Array<{ ref: EntryRef; entry: MemoryEntry }> = [];
+  const skipImported = (ref: EntryRef, category: ImportCategory, entry: MemoryEntry): void => {
+    report.skipped.push({ ...ref, reason: "already-imported" });
+    if (category === "pinned" && !entry.pinned) repins.push({ ref, entry });
+  };
 
   for (const e of srcEntries) {
     const verdict = classify(e);
@@ -363,10 +370,7 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
     seen.add(key);
     const already = existing.get(key);
     if (already) {
-      report.skipped.push({ ...ref, reason: "already-imported" });
-      // Repair a pin a previous run wrote but could not apply — the pinned
-      // area is the whole reason those entries survive truncation.
-      if (verdict.category === "pinned" && !already.pinned) repins.push({ ref, entry: already });
+      skipImported(ref, verdict.category, already);
       continue;
     }
     plans.push({ category: verdict.category, key, text: importedText(e, verdict.category, key), ref });
@@ -389,8 +393,7 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
     for (const plan of batch) {
       const already = existing.get(plan.key);
       if (already) {
-        report.skipped.push({ ...plan.ref, reason: "already-imported" });
-        if (plan.category === "pinned" && !already.pinned) repins.push({ ref: plan.ref, entry: already });
+        skipImported(plan.ref, plan.category, already);
         continue;
       }
       const area = IMPORT_AREAS[plan.category];
@@ -475,8 +478,7 @@ function indexByKey(entries: MemoryEntry[]): Map<string, MemoryEntry> {
 }
 
 function categoryCounts(plans: Plan[]): string {
-  const order: ImportCategory[] = ["pinned", "standing", "learning", "bug", "feedback"];
-  const counts = order.map((c) => `${c} ${plans.filter((p) => p.category === c).length}`);
+  const counts = IMPORT_CATEGORIES.map((c) => `${c} ${plans.filter((p) => p.category === c).length}`);
   return counts.join(", ");
 }
 
@@ -505,8 +507,7 @@ export function renderSummary(report: ImportReport): string[] {
   }
 
   lines.push(`skipped ${report.skipped.length}:`);
-  const reasons: SkipReason[] = ["raw-daily-note", "session-handoff", "closed-thread", "duplicate-in-source", "already-imported", "empty"];
-  for (const reason of reasons) {
+  for (const reason of SKIP_REASONS) {
     const group = report.skipped.filter((s) => s.reason === reason);
     if (group.length === 0) continue;
     lines.push(`  ${reason} (${group.length}):`);

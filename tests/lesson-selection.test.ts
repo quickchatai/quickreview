@@ -280,6 +280,11 @@ describe("cases", () => {
     `finding_kind=scope severity=P2 path=${(over.path ?? "backend/api/views.py").replace(/ /g, "%20")} lines=10 fate=refuted_conceded ` +
     `posted=${over.posted ?? "2026-09-01T10:00:00Z"} replies=${over.replies ?? 1}\nA finding the reviewer posted…`;
 
+  it("decodes an unambiguous Unicode whitespace escape without consuming adjacent hex filename characters", () => {
+    const text = caseText().replace("path=backend/api/views.py", "path=a%u2003b%20abc.ts");
+    expect(parseCaseHeader(text)?.path).toBe("a\u2003b abc.ts");
+  });
+
   it("parses the case header (path decoded) and refuses a withdrawn one", () => {
     expect(parseCaseHeader(caseText({ path: "a dir/x.py" }))).toMatchObject({
       pr: 9,

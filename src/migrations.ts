@@ -66,8 +66,8 @@ export interface MigrationCollision {
   /** Follow-ups only: false when the file keeps its number and only its
    * `dependencies` entry moves. */
   renumber?: boolean;
-  /** Follow-ups only, and only when the renamed dependency lives in another
-   * app: that app's label, which the stale tuple names. Absent ⇒ `app_label`. */
+  /** The dependency tuple's actual Django app label, which may differ from
+   * the directory-derived app_label. Absent ⇒ app_label. */
   dependency_app_label?: string;
 }
 
@@ -88,6 +88,14 @@ export function parseMigrationPath(path: string): MigrationRef | undefined {
     digits,
     name: m[3] as string,
   };
+}
+
+function migrationName(ref: MigrationRef): string {
+  return `${ref.digits}_${ref.name}`;
+}
+
+export function dependencyTuple(label: string, name: string): string {
+  return `(${label ? JSON.stringify(label) : "<existing app label>"}, ${JSON.stringify(name)})`;
 }
 
 /** Re-number a ref onto `n`, keeping the on-disk zero-padding width. */
@@ -147,14 +155,14 @@ function referencesAppMigration(
  * than a name-only match), except an occurrence that is the second
  * half of a tuple naming another app this PR or the base branch holds: that
  * one is that app's identically named migration. */
-function referencesOwnMigration(
+function ownDependencyLabel(
   patch: string | undefined,
   ownLabel: string,
   name: string,
   knownLabels: ReadonlySet<string>,
-): boolean {
-  if (!patch || !name) return false;
-  if (referencesAppMigration(patch, ownLabel, name)) return true;
+): string | null {
+  if (!patch || !name) return null;
+  if (referencesAppMigration(patch, ownLabel, name)) return ownLabel;
   const post = postChange(patch);
   const re = new RegExp(`["']${escapeRe(name)}["']`, "g");
   // The tuple's first half, which may sit on an earlier added line.
@@ -162,9 +170,9 @@ function referencesOwnMigration(
   for (let m = re.exec(post); m !== null; m = re.exec(post)) {
     const head = tupleHead.exec(post.slice(Math.max(0, m.index - 200), m.index));
     if (head && head[1] !== ownLabel && knownLabels.has(head[1] as string)) continue;
-    return true;
+    return head?.[1] ?? ownLabel;
   }
-  return false;
+  return null;
 }
 
 /**
@@ -248,62 +256,74 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     // The chain root is the base branch's leaf — the highest number the base
     // holds for this app, which is what the renumbered migration must depend on.
     const baseLeaf = [...base.values()].sort((a, b) => a.number - b.number).pop();
-    let dependencyName = baseLeaf ? `${baseLeaf.digits}_${baseLeaf.name}` : "";
-    // Old (pre-remedy) name → the new name the remedy assigns. Follow-up
-    // detection below reads this to find later migrations whose `dependencies`
-    // still point at a name the remedy retires.
+    let dependencyName = baseLeaf ? migrationName(baseLeaf) : "";
     const renamed = new Map<string, { name: string; number: number }>();
-    const collidingPaths = new Set(colliding.map(({ ref: r }) => r.path));
-    for (const { ref } of colliding) {
-      const targetNumber = next++;
-      const target = renamedTo(ref, targetNumber);
-      const occupant = base.get(ref.number) as MigrationRef;
-      out.push({
-        app,
-        app_label: ref.app_label,
-        pr_path: ref.path,
-        number: ref.number,
-        base_path: occupant.path,
-        target_number: targetNumber,
-        target_path: target.path,
-        dependency_name: dependencyName,
-        dependency: `("${ref.app_label}", "${dependencyName}")`,
-        kind: "base-collision",
-      });
-      renamed.set(`${ref.digits}_${ref.name}`, { name: target.name, number: targetNumber });
-      // Two colliding migrations in one app renumber into a chain: the second
-      // depends on the first's new name, not on the base leaf.
-      dependencyName = target.name;
+    const collidingPaths = new Set(colliding.map(({ ref }) => ref.path));
+    // Include every follow-up before allocating numbers, then process parents
+    // before dependants. Numbers usually follow dependency order, but Django
+    // permits a lower-numbered migration to depend on a later-numbered one.
+    const affected = new Set(colliding.map(({ ref }) => migrationName(ref)));
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const { ref, patch } of ordered) {
+        const name = migrationName(ref);
+        if (affected.has(name)) continue;
+        if (
+          [...affected].some(
+            (old) => ownDependencyLabel(patch, ref.app_label, old, knownLabels) !== null,
+          )
+        ) {
+          affected.add(name);
+          grew = true;
+        }
+      }
     }
-
-    // Follow-ups: a later PR migration in the same app whose
-    // `dependencies` reference a migration the remedy just renamed. Its
-    // dependency entry must move to the new name — and if its own number now
-    // sits at or below its renumbered dependency, it must renumber too (which
-    // may cascade onto migrations depending on it, hence the loop in number
-    // order and the `renamed` map growing as it goes).
-    for (const { ref, patch } of ordered) {
-      if (collidingPaths.has(ref.path)) continue;
-      // Same-app dependencies are `(app_label, name)` tuples too; a bare-name
-      // match must not take another app's identically named migration.
-      const stales = [...renamed.keys()].filter((old) =>
-        referencesOwnMigration(patch, ref.app_label, old, knownLabels),
+    const remaining = ordered.filter(({ ref }) => affected.has(migrationName(ref)));
+    const remedyOrder: typeof remaining = [];
+    while (remaining.length > 0) {
+      const index = remaining.findIndex(({ ref, patch }) =>
+        remaining.every(
+          ({ ref: other }) =>
+            other.path === ref.path ||
+            ownDependencyLabel(patch, ref.app_label, migrationName(other), knownLabels) === null,
+        ),
       );
-      if (stales.length === 0) continue;
-      const deps = stales.map((stale) => renamed.get(stale) as { name: string; number: number });
-      // With the free-number policy above (targets sit above every number
-      // either side uses) a follow-up is always at or below its renumbered
-      // dependency, so today this is always true; the conditional keeps the
-      // remedy correct if the target policy ever tightens.
-      const mustRenumber = deps.some((dep) => ref.number <= dep.number);
+      // An already-cyclic input has no dependency order; keep its stable path
+      // order rather than letting advice generation hang.
+      remedyOrder.push(remaining.splice(index < 0 ? 0 : index, 1)[0]!);
+    }
+    for (const { ref, patch } of remedyOrder) {
+      const stales = [...renamed.keys()].flatMap((old) => {
+        const label = ownDependencyLabel(patch, ref.app_label, old, knownLabels);
+        return label === null ? [] : [{ old, label, dep: renamed.get(old)! }];
+      });
+      const collides = collidingPaths.has(ref.path);
+      if (!collides && stales.length === 0) continue;
+      const mustRenumber = collides || stales.some(({ dep }) => ref.number <= dep.number);
       const targetNumber = mustRenumber ? next++ : ref.number;
       const target = mustRenumber
         ? renamedTo(ref, targetNumber)
-        : { name: `${ref.digits}_${ref.name}`, path: ref.path };
-      // One entry per stale dependency, so every stale tuple gets its own
-      // replacement; the rename rides the first entry only.
-      stales.forEach((stale, i) => {
-        const dep = deps[i] as { name: string; number: number };
+        : { name: migrationName(ref), path: ref.path };
+      if (collides) {
+        const label = stales[0]?.label ?? ref.app_label;
+        out.push({
+          app,
+          app_label: ref.app_label,
+          pr_path: ref.path,
+          number: ref.number,
+          base_path: base.get(ref.number)!.path,
+          target_number: targetNumber,
+          target_path: target.path,
+          dependency_name: dependencyName,
+          dependency: dependencyTuple(label, dependencyName),
+          ...(label !== ref.app_label ? { dependency_app_label: label } : {}),
+          kind: "base-collision",
+        });
+      }
+      // A colliding file still owns every original dependency edge. Adding
+      // the collision chain edge must not replace its branch dependencies.
+      stales.forEach(({ old, label, dep }, i) => {
         out.push({
           app,
           app_label: ref.app_label,
@@ -313,14 +333,16 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
           target_number: targetNumber,
           target_path: target.path,
           dependency_name: dep.name,
-          dependency: `("${ref.app_label}", "${dep.name}")`,
+          dependency: dependencyTuple(label, dep.name),
+          dependency_app_label: label,
           kind: "renamed-dependency",
-          stale_dependency: stale,
-          renumber: mustRenumber && i === 0,
+          stale_dependency: old,
+          renumber: !collides && mustRenumber && i === 0,
         });
       });
       if (mustRenumber)
-        renamed.set(`${ref.digits}_${ref.name}`, { name: target.name, number: targetNumber });
+        renamed.set(migrationName(ref), { name: target.name, number: targetNumber });
+      if (collides) dependencyName = target.name;
     }
     renamedByApp.set(app, { app_label: colliding[0]!.ref.app_label, renamed });
   }
@@ -347,7 +369,7 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
               target_number: ref.number,
               target_path: ref.path,
               dependency_name: dep.name,
-              dependency: `("${app_label}", "${dep.name}")`,
+              dependency: dependencyTuple(app_label, dep.name),
               kind: "renamed-dependency",
               stale_dependency: stale,
               renumber: false,
@@ -359,6 +381,16 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     }
   }
   return out;
+}
+
+/** A serialization edge is additive: a partial diff cannot enumerate all
+ * original parents, and no original edge may be discarded by the remedy. */
+export function collisionDependencyAdvice(c: MigrationCollision): string {
+  const unknown =
+    c.dependency_app_label || c.app_label
+      ? ""
+      : " (use its existing app label; the root path does not establish it)";
+  return `in its \`dependencies\`, also include ${codePath(c.dependency)} for the collision chain${unknown} — keep every existing entry, applying the renamed-dependency replacements below where listed`;
 }
 
 /** Stable identity of a detection result — used to post the comment once per
@@ -402,7 +434,7 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
       const stale = c.stale_dependency ?? "";
       lines.push(
         `- ${codePath(c.pr_path)} — its \`dependencies\` reference ${codePath(`"${stale}"`)}, which the renumber above moves to ${codePath(c.dependency_name)}.`,
-        `  - in its \`dependencies\`, replace ${codePath(`("${c.dependency_app_label ?? c.app_label}", "${stale}")`)} with ${codePath(c.dependency)} — keep every other entry`,
+        `  - in its \`dependencies\`, replace ${codePath(dependencyTuple(c.dependency_app_label ?? c.app_label, stale))} with ${codePath(c.dependency)} — keep every other entry`,
       );
       if (c.renumber)
         lines.push(
@@ -413,7 +445,7 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
     lines.push(
       `- ${codePath(c.pr_path)} collides with ${codePath(c.base_path)} on ${flatControls(branch)}.`,
       `  - rename it to ${codePath(c.target_path)} (number **${String(c.target_number).padStart(4, "0")}**)`,
-      `  - in its \`dependencies\`, point its ${codePath(c.app_label)} entry at ${codePath(c.dependency)} — keep every other entry`,
+      `  - ${collisionDependencyAdvice(c)}`,
     );
   }
   lines.push(

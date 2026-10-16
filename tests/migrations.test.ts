@@ -262,6 +262,125 @@ describe("detectMigrationCollisions", () => {
     expect(out.filter((c) => c.kind === "renamed-dependency")).toEqual([]);
   });
 
+  it("keeps an intervening follow-up ahead of the next colliding migration", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        added("chat/migrations/0042_a.py"),
+        { ...added("chat/migrations/0043_b.py"), patch: '+dependencies = [("chat", "0042_a")]' },
+        { ...added("chat/migrations/0044_c.py"), patch: '+dependencies = [("chat", "0043_b")]' },
+      ],
+      baseFiles: ["chat/migrations/0042_existing.py", "chat/migrations/0044_existing.py"],
+    });
+    expect(out.map((c) => [c.target_path, c.dependency])).toEqual([
+      ["chat/migrations/0045_a.py", '("chat", "0044_existing")'],
+      ["chat/migrations/0046_b.py", '("chat", "0045_a")'],
+      ["chat/migrations/0047_c.py", '("chat", "0045_a")'],
+      ["chat/migrations/0047_c.py", '("chat", "0046_b")'],
+    ]);
+  });
+
+  it("adds a serialization dependency without replacing an unchanged same-app parent", () => {
+    const collisions = detectMigrationCollisions({
+      files: [added("chat/migrations/0042_a.py"), added("chat/migrations/0043_b.py"),
+        { ...added("chat/migrations/0045_d.py"), patch: '+dependencies = [("chat", "0043_b")]' }],
+      baseFiles: ["chat/migrations/0042_existing.py", "chat/migrations/0045_existing.py"],
+    });
+    const body = renderMigrationCollisionComment({ collisions, base_ref: "main", base_sha: "" });
+    expect(body).toContain('also include `("chat", "0046_a")`');
+    expect(body).toContain("keep every existing entry");
+    expect(body).not.toContain("point its");
+  });
+
+  it.each([false, true])(
+    "keeps every original same-app edge on a colliding branch (multiple=%s)",
+    (multiple) => {
+      const out = detectMigrationCollisions({
+        files: [
+          added("chat/migrations/0042_a.py"),
+          {
+            ...added("chat/migrations/0043_b.py"),
+            patch: '+dependencies = [("qc_chat", "0042_a")]',
+          },
+          {
+            ...added("chat/migrations/0044_c.py"),
+            patch: '+dependencies = [("qc_chat", "0042_a")]',
+          },
+          {
+            ...added("chat/migrations/0045_d.py"),
+            patch: multiple
+              ? '+dependencies = [("qc_chat", "0043_b"), ("qc_chat", "0044_c")]'
+              : '+dependencies = [("qc_chat", "0043_b")]',
+          },
+        ],
+        baseFiles: ["chat/migrations/0042_existing.py", "chat/migrations/0045_existing.py"],
+      });
+      const repairs = out.filter(
+        (c) => c.pr_path.endsWith("0045_d.py") && c.kind === "renamed-dependency",
+      );
+      expect(repairs.map((c) => [c.stale_dependency, c.dependency])).toEqual([
+        ["0043_b", '("qc_chat", "0047_b")'],
+        ...(multiple ? [["0044_c", '("qc_chat", "0048_c")']] : []),
+      ]);
+      const body = renderMigrationCollisionComment({
+        collisions: out,
+        base_ref: "main",
+        base_sha: "",
+      });
+      expect(body).toContain('replace `("qc_chat", "0043_b")` with `("qc_chat", "0047_b")`');
+      expect(body).toContain("also include");
+      expect(body).not.toContain("point its `qc_chat` entry");
+    },
+  );
+
+  it("still repairs a lower-numbered follow-up that references a later collision", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        added("chat/migrations/0042_a.py"),
+        { ...added("chat/migrations/0043_b.py"), patch: '+dependencies = [("chat", "0044_c")]' },
+        added("chat/migrations/0044_c.py"),
+      ],
+      baseFiles: ["chat/migrations/0042_existing.py", "chat/migrations/0044_existing.py"],
+    });
+    expect(out.find((c) => c.pr_path.endsWith("0043_b.py"))).toMatchObject({
+      dependency: '("chat", "0046_c")',
+      target_number: 47,
+    });
+  });
+
+  it("preserves an explicit Django app label in follow-up advice", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        added("chat/migrations/0042_a.py"),
+        {
+          ...added("chat/migrations/0043_b.py"),
+          patch: '+dependencies = [("qc_chat", "0042_a")]',
+        },
+      ],
+      baseFiles: ["chat/migrations/0042_existing.py"],
+    });
+    expect(out[1]).toMatchObject({
+      dependency: '("qc_chat", "0044_a")',
+      dependency_app_label: "qc_chat",
+    });
+    const body = renderMigrationCollisionComment({
+      collisions: out,
+      base_ref: "main",
+      base_sha: "",
+    });
+    expect(body).toContain('("qc_chat", "0042_a")');
+  });
+
+  it("makes an unknown root app label explicit instead of prescribing an empty label", () => {
+    const collisions = detectMigrationCollisions({
+      files: [added("migrations/0042_a.py")],
+      baseFiles: ["migrations/0042_existing.py"],
+    });
+    const body = renderMigrationCollisionComment({ collisions, base_ref: "main", base_sha: "" });
+    expect(body).not.toContain('("",');
+    expect(body).toContain("existing app label");
+    expect(body).toContain("0042_existing");
+  });
+
   it("cascades: a follow-up depending on a renumbered follow-up renumbers too", () => {
     const out = detectMigrationCollisions({
       files: [
@@ -341,18 +460,17 @@ describe("renderMigrationCollisionComment", () => {
     expect(body).toContain("abcdef123456");
   });
 
-  // The remedy edits ONE entry: the detector never reads the migration's
-  // other dependencies (a cross-app edge, say), so it must never tell the
-  // author to replace the whole list with a singleton.
-  it("tells the author to change one dependencies entry and keep the others", () => {
+  // The remedy adds its serialization edge and preserves the original
+  // graph; it must never replace the whole list with a singleton.
+  it("tells the author to add the serialization edge and keep existing parents", () => {
     const body = renderMigrationCollisionComment({
       collisions,
       base_ref: "master",
       base_sha: "abc",
     });
     expect(body).not.toContain('`[("chat", "0042_add_widget_flag")]`');
-    expect(body).toContain("point its `chat` entry at");
-    expect(body).toContain("keep every other entry");
+    expect(body).toContain("also include");
+    expect(body).toContain("keep every existing entry");
   });
 
   it("says plainly that it is not a blocker and consumes no verdict", () => {

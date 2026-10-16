@@ -49,6 +49,8 @@ import type { CollisionCommentRecord } from "./state.js";
 import {
   collisionFingerprint,
   detectMigrationCollisions,
+  collisionDependencyAdvice,
+  dependencyTuple,
   renderMigrationCollisionComment,
   type MigrationCollision,
 } from "./migrations.js";
@@ -220,13 +222,13 @@ export function renderMigrationCollisionsNote(
     if (c.kind === "renamed-dependency") {
       const stale = c.stale_dependency ?? "";
       lines.push(
-        `- ${codePath(c.pr_path)} references renamed ${codePath(`"${stale}"`)} → in its dependencies replace ${codePath(`("${c.dependency_app_label ?? c.app_label}", "${stale}")`)} with ${codePath(c.dependency)}, keeping every other entry` +
+        `- ${codePath(c.pr_path)} references renamed ${codePath(`"${stale}"`)} → in its dependencies replace ${codePath(dependencyTuple(c.dependency_app_label ?? c.app_label, stale))} with ${codePath(c.dependency)}, keeping every other entry` +
           (c.renumber ? `; rename to ${codePath(c.target_path)}` : ""),
       );
       continue;
     }
     lines.push(
-      `- ${codePath(c.pr_path)} collides with ${codePath(c.base_path)} → rename to ${codePath(c.target_path)}; in its dependencies point the ${codePath(c.app_label)} entry at ${codePath(c.dependency)}, keeping every other entry`,
+      `- ${codePath(c.pr_path)} collides with ${codePath(c.base_path)} → rename to ${codePath(c.target_path)}; ${collisionDependencyAdvice(c)}`,
     );
   }
   if (undelivered) {

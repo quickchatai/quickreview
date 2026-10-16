@@ -181,7 +181,7 @@ describe("migration collision pre-check", () => {
       expect(review.event).toBe("COMMENT");
       expect(review.commit_id).toBe("headsha");
       expect(review.body).toContain("backend/chat/migrations/0043_add_rate_limit.py");
-      expect(review.body).toContain('point its `chat` entry at `("chat", "0042_add_widget_flag")`');
+      expect(review.body).toContain('also include `("chat", "0042_add_widget_flag")`');
       // Never a blocker: no REQUEST_CHANGES, and the round still dispatched
       // normally with the PR's verdict untouched.
       expect(adapter.reviews.some((r) => r.event === "REQUEST_CHANGES")).toBe(false);
