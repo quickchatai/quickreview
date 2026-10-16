@@ -50,6 +50,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import * as zlib from "node:zlib";
+import { parse as parseToml } from "smol-toml";
 import { flatControls } from "./codespan.js";
 
 // ---------------------------------------------------------------------------
@@ -874,7 +875,7 @@ function splitPnpmKey(key: string): { name: string; version: string } | null {
  * `resolution` names a tarball off the public registry is foreign, and so is
  * every importer pin at its name and version.
  */
-export function parsePnpmLock(text: string): NpmLock {
+export function parsePnpmLock(text: string, defaultForeign = false): NpmLock {
   const lock = emptyLock();
   let section: "packages" | "importers" | "root" | "other" = "other";
   let rootGroup: "deps" | "specs" = "deps";
@@ -908,12 +909,25 @@ export function parsePnpmLock(text: string): NpmLock {
   };
   /** The `packages:` block being read, and the name@version of every one whose
    * resolution is a tarball off the public registry. */
-  let pkg: { name: string; version: string; foreign: boolean } | null = null;
-  const foreignPkgs = new Set<string>();
+  let pkg: { name: string; version: string; foreign?: boolean } | null = null;
+  // Peer variants collapse to name@version below. Any explicit foreign variant
+  // makes that collapsed identity unsafe, regardless of package order.
+  const sourceByPackage = new Map<string, { foreign: boolean; public: boolean }>();
+  const packages: { name: string; version: string }[] = [];
+  const foreignSource = (name: string, version: string): boolean => {
+    const source = sourceByPackage.get(`${name}@${version}`);
+    return source?.foreign === true || (defaultForeign && source?.public !== true);
+  };
   const flushPkg = (): void => {
     if (!pkg) return;
-    addLock(lock, pkg.name, { version: pkg.version, ...(pkg.foreign ? { foreign: true } : {}) });
-    if (pkg.foreign) foreignPkgs.add(`${pkg.name}@${pkg.version}`);
+    packages.push({ name: pkg.name, version: pkg.version });
+    const key = `${pkg.name}@${pkg.version}`;
+    const source = sourceByPackage.get(key) ?? { foreign: false, public: false };
+    if (pkg.foreign !== undefined) {
+      source.foreign ||= pkg.foreign;
+      source.public ||= !pkg.foreign;
+    }
+    sourceByPackage.set(key, source);
     pkg = null;
   };
   const DEP_GROUP = /^(dependencies|devDependencies|optionalDependencies|specifiers):\s*$/;
@@ -938,8 +952,7 @@ export function parsePnpmLock(text: string): NpmLock {
       if (!m) {
         // `resolution: {…, tarball: <url>}`, inline or as its own line.
         const tarball = /\btarball:\s*['"]?([^,'"}\s]+)/.exec(raw);
-        if (pkg && tarball && /^ {4}/.test(raw) && isForeignResolved(tarball[1]))
-          pkg.foreign = true;
+        if (pkg && tarball && /^ {4}/.test(raw)) pkg.foreign = isForeignResolved(tarball[1]);
         continue;
       }
       flushPkg();
@@ -949,7 +962,10 @@ export function parsePnpmLock(text: string): NpmLock {
       if (paren > 0) key = key.slice(0, paren);
       const nv = splitPnpmKey(key);
       if (nv && nv.name && VERSION_LIKE.test(nv.version))
-        pkg = { name: nv.name, version: nv.version, foreign: false };
+        pkg = {
+          name: nv.name,
+          version: nv.version,
+        };
     } else if (section === "root") {
       // v5 single project: `  name: value` directly under the section;
       // v6 single project: `  name:` then `    specifier:` / `    version:`.
@@ -987,6 +1003,8 @@ export function parsePnpmLock(text: string): NpmLock {
     }
   }
   flushPkg();
+  for (const { name, version } of packages)
+    addLock(lock, name, { version, ...(foreignSource(name, version) ? { foreign: true } : {}) });
   for (const [imp, deps] of pins) {
     for (const [name, p] of deps) {
       // `1.2.0(react@18)` (v6+) / `1.2.0_react@18` (v5): the peer suffix is not the version.
@@ -1001,7 +1019,7 @@ export function parsePnpmLock(text: string): NpmLock {
       if (!VERSION_LIKE.test(version)) continue;
       const entry: LockEntry = { version };
       if (p.spec) entry.specs = [p.spec];
-      if (foreignPkgs.has(`${name}@${version}`)) entry.foreign = true;
+      if (foreignSource(name, version)) entry.foreign = true;
       if (scope && scope !== ".") entry.scope = scope;
       addLock(lock, name, entry);
     }
@@ -1024,16 +1042,32 @@ const PY_FOREIGN_PIN_PREFIX = "@ ";
  * never fetched from PyPI. A package from git, a URL or a non-PyPI index maps
  * to `@ <kind> source` (PY_FOREIGN_PIN_PREFIX), never to its bare version.
  */
-export function parsePythonLock(text: string, locals?: Set<string>): Map<string, string> {
+export function parsePythonLock(
+  text: string,
+  locals?: Set<string>,
+  defaultForeign = false,
+  publicDefaults?: ReadonlySet<string>,
+): Map<string, string> {
   const out = new Map<string, string>();
-  let cur: { name?: string; version?: string; local?: boolean; foreign?: string } | null = null;
+  let cur: {
+    name?: string;
+    version?: string;
+    local?: boolean;
+    foreign?: string;
+    publicSource?: boolean;
+  } | null = null;
   let where: "top" | "source" | "other" = "other";
   const flush = (): void => {
     if (cur?.name && cur.local) locals?.add(normPy(cur.name));
     if (cur?.name && cur.version && !cur.local) {
       const n = normPy(cur.name);
       if (!out.has(n))
-        out.set(n, cur.foreign ? `${PY_FOREIGN_PIN_PREFIX}${cur.foreign} source` : cur.version);
+        out.set(
+          n,
+          cur.foreign || (defaultForeign && !cur.publicSource && !publicDefaults?.has(n))
+            ? `${PY_FOREIGN_PIN_PREFIX}${cur.foreign ?? "index"} source`
+            : cur.version,
+        );
     }
   };
   for (const raw of text.split(/\r?\n/)) {
@@ -1063,8 +1097,10 @@ export function parsePythonLock(text: string, locals?: Set<string>): Map<string,
         // index; git / url / any other index is a different artifact under
         // the same name.
         const src = /^source\s*=\s*\{\s*(\w+)\s*=\s*"([^"]*)"/.exec(line);
-        if (src && !(src[1] === "registry" && isPublicPypiIndex(src[2] ?? "")))
-          cur.foreign = src[1] ?? "other";
+        if (src) {
+          cur.publicSource = src[1] === "registry" && isPublicPypiIndex(src[2] ?? "");
+          if (!cur.publicSource) cur.foreign = src[1] ?? "other";
+        }
       }
     } else if (where === "source") {
       // poetry: a `[package.source]` block at all means not-PyPI (PyPI
@@ -1209,7 +1245,7 @@ function tomlStrings(line: string): string[] {
  * `[tool.uv] dev-dependencies`, and Poetry's dependency tables. Poetry path
  * dependencies come back as range `file:<path>` (first-party).
  */
-export function parsePyprojectDeps(text: string): Map<string, PyReq> {
+export function parsePyprojectDeps(text: string, publicSources?: Set<string>): Map<string, PyReq> {
   const out = new Map<string, PyReq>();
   const add = (s: string): void => {
     const r = parsePep508(s);
@@ -1265,7 +1301,10 @@ export function parsePyprojectDeps(text: string): Map<string, PyReq> {
       else if (other) range = `@ ${other[2] ?? ""}`;
       else if (source && !/^pypi$/i.test(source[1] ?? ""))
         range = `${PY_FOREIGN_PIN_PREFIX}index source`;
-      else if (version) range = version[1] ?? "*";
+      else {
+        if (source) publicSources?.add(name);
+        if (version) range = version[1] ?? "*";
+      }
     }
     const pin = /^(?:==)?\s*(\d[0-9A-Za-z.+!_-]*)$/.exec(range);
     out.set(name, { pin: pin?.[1] ?? null, range });
@@ -1907,8 +1946,64 @@ function treeIo(root: string, readFile?: ReadFileFn): TreeIo {
   };
 }
 
+/** Project defaults identify an otherwise implicit lock source. Never substitute
+ * a public archive for a release whose configured index is private. */
+function tomlObject(text: string | null): Record<string, unknown> {
+  try {
+    const doc = text === null ? {} : parseToml(text);
+    return isObj(doc) ? doc : {};
+  } catch {
+    return {};
+  }
+}
+function childObject(obj: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = obj[key];
+  return isObj(value) ? value : {};
+}
+function pythonDefaults(
+  pyproject: string | null,
+  uvConfig: string | null,
+): {
+  poetry: boolean;
+  uv: boolean;
+  publicPoetry: Set<string>;
+} {
+  const doc = tomlObject(pyproject);
+  const tool = childObject(doc, "tool");
+  const poetry = childObject(tool, "poetry");
+  const sources = Array.isArray(poetry.source) ? poetry.source : [];
+  const privatePrimary = sources.some(
+    (source) =>
+      isObj(source) &&
+      (source.priority === "primary" ||
+        source.default === true ||
+        (source.priority === undefined && source.secondary !== true && source.default !== false)) &&
+      !(typeof source.url === "string"
+        ? isPublicPypiIndex(source.url)
+        : typeof source.name === "string" && source.name.toLowerCase() === "pypi"),
+  );
+  // An explicit PyPI constraint remains public even when an implicit primary
+  // source is private. Other explicit source constraints are already parsed.
+  const publicPoetry = new Set<string>();
+  if (pyproject !== null) parsePyprojectDeps(pyproject, publicPoetry);
+  const uv = uvConfig === null ? childObject(tool, "uv") : tomlObject(uvConfig);
+  const index = uv["default-index"] ?? uv["index-url"];
+  const defaults = Array.isArray(uv.index)
+    ? uv.index.filter((x) => isObj(x) && x.default === true)
+    : [];
+  return {
+    poetry: privatePrimary,
+    publicPoetry,
+    uv:
+      defaults.length > 0
+        ? defaults.some((x) => !isObj(x) || typeof x.url !== "string" || !isPublicPypiIndex(x.url))
+        : typeof index === "string" && !isPublicPypiIndex(index),
+  };
+}
+
 interface DirInfo {
   npmLocks: NpmLock[];
+  npmDefaultForeign: boolean;
   pkg: PackageJsonInfo | null;
   pyPins: Map<string, string>;
   /** Distributions a Python lockfile here records as local (first-party). */
@@ -1932,6 +2027,20 @@ class Resolver {
     if (hit) return hit;
     const read = (name: string): string | null =>
       this.io.read(posix.join(rel, name), MAX_MANIFEST_BYTES);
+    const npmrc = read(".npmrc");
+    const registry = npmrc
+      ?.split(/\r?\n/)
+      .map((line) => /^\s*registry\s*=\s*(.*?)\s*$/.exec(line))
+      .filter((match) => match !== null)
+      .at(-1)?.[1];
+    const npmDefaultForeign =
+      registry === undefined
+        ? rel
+          ? this.dir(posix.dirname(rel) === "." ? "" : posix.dirname(rel)).npmDefaultForeign
+          : false
+        : isForeignResolved(registry);
+    const pyproject = read("pyproject.toml");
+    const defaults = pythonDefaults(pyproject, read("uv.toml"));
     const npmLocks: NpmLock[] = [];
     for (const f of ["package-lock.json", "npm-shrinkwrap.json"]) {
       const t = read(f);
@@ -1941,7 +2050,7 @@ class Resolver {
     const yarn = read("yarn.lock");
     if (yarn !== null) npmLocks.push(parseYarnLock(yarn));
     const pnpm = read("pnpm-lock.yaml");
-    if (pnpm !== null) npmLocks.push(parsePnpmLock(pnpm));
+    if (pnpm !== null) npmLocks.push(parsePnpmLock(pnpm, npmDefaultForeign));
     const pkgText = read("package.json");
     const pkg = pkgText !== null ? parsePackageJson(pkgText) : null;
 
@@ -1953,7 +2062,15 @@ class Resolver {
     };
     for (const f of ["uv.lock", "poetry.lock"]) {
       const t = read(f);
-      if (t !== null) pins(parsePythonLock(t, pyLocal));
+      if (t !== null)
+        pins(
+          parsePythonLock(
+            t,
+            pyLocal,
+            f === "uv.lock" ? defaults.uv : defaults.poetry,
+            f === "poetry.lock" ? defaults.publicPoetry : undefined,
+          ),
+        );
     }
     const pipfile = read("Pipfile.lock");
     if (pipfile !== null) pins(parsePipfileLock(pipfile));
@@ -1971,11 +2088,17 @@ class Resolver {
         if (!pyDecl.has(k)) pyDecl.set(k, r);
       }
     }
-    const pyproject = read("pyproject.toml");
     if (pyproject !== null)
       for (const [k, r] of parsePyprojectDeps(pyproject)) if (!pyDecl.has(k)) pyDecl.set(k, r);
 
-    const info: DirInfo = { npmLocks, pkg, pyPins, pyLocal, pyDecl };
+    for (const [name, req] of pyDecl)
+      if (
+        !pyPins.has(name) &&
+        !isLocalRange(req.range) &&
+        (defaults.uv || (defaults.poetry && !defaults.publicPoetry.has(name)))
+      )
+        pyDecl.set(name, { range: "@ index source", pin: null });
+    const info: DirInfo = { npmLocks, npmDefaultForeign, pkg, pyPins, pyLocal, pyDecl };
     this.dirs.set(rel, info);
     return info;
   }
@@ -1991,6 +2114,7 @@ class Resolver {
    */
   npm(name: string, relFile: string): Resolved | null | "first-party" {
     let range: string | undefined;
+    let defaultForeign = false;
     let locked: { entries: LockEntry[]; dir: string } | undefined;
     let anyManifest = false;
     for (const d of ancestors(relDirOf(relFile))) {
@@ -1998,7 +2122,10 @@ class Resolver {
       if (info.pkg) {
         anyManifest = true;
         if (info.pkg.name === name) return "first-party";
-        if (range === undefined && info.pkg.deps.has(name)) range = info.pkg.deps.get(name);
+        if (range === undefined && info.pkg.deps.has(name)) {
+          range = info.pkg.deps.get(name);
+          defaultForeign = info.npmDefaultForeign;
+        }
       }
       for (const l of info.npmLocks) {
         anyManifest = true;
@@ -2018,7 +2145,8 @@ class Resolver {
       const version = picked?.version;
       if (version) return range !== undefined ? { name, version, range } : { name, version };
     }
-    if (range !== undefined) return { name, version: null, range };
+    if (range !== undefined)
+      return { name, version: null, range: defaultForeign ? NPM_FOREIGN_PIN : range };
     // No npm manifest anywhere on the path: nothing could alias the name, so
     // the bare import can only mean the registry package.
     return anyManifest ? null : { name, version: null, range: "*" };

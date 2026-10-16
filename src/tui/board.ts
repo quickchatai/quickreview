@@ -1162,6 +1162,9 @@ function inputBoxLines(box: NonNullable<BoardView["inputBox"]>, width: number): 
 export function overlayInputBox(frame: Frame, box: NonNullable<BoardView["inputBox"]>): void {
   const top = frame.rows - 5;
   if (top < 1) return;
+  frame.meta["inputBoxTop"] = top;
+  frame.meta["inputBoxBottom"] = top + 3;
+  frame.meta["inputBoxCols"] = frame.cols;
   frame.set(top, `├${"─".repeat(Math.max(0, frame.cols - 2))}┤`);
   inputBoxLines(box, frame.cols - 2).forEach((text, i) =>
     frame.boxRow(top + 1 + i, [{ text, width: frame.cols - 2 }]),

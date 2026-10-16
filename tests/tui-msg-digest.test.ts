@@ -678,3 +678,48 @@ describe("? help on a non-board tab", () => {
     await running;
   });
 });
+
+describe("input box mouse occlusion on a tab", () => {
+  it.each([18, 30])(
+    "does not dispatch clicks or wheels under the painted box at %s rows",
+    async (rows) => {
+      const rig = learningRig();
+      (rig.streams.out as unknown as { rows: number }).rows = rows;
+      const running = rig.app.run();
+      try {
+        rig.streams.type("3");
+        const tab = (
+          rig.app as unknown as {
+            hooks: { tabs: Record<string, { click?: () => boolean; key: () => boolean }> };
+          }
+        ).hooks.tabs["digest"]!;
+        let clicks = 0;
+        let wheels = 0;
+        tab.click = () => {
+          clicks++;
+          return true;
+        };
+        tab.key = () => {
+          wheels++;
+          return true;
+        };
+        rig.app.promptInput("edit visible draft", "preserve", () => {});
+        const frame = (rig.app as unknown as { lastFrame: { lines: string[] } }).lastFrame;
+        const target = frame.lines.findIndex((line) => stripAnsi(line).includes("MSG →"));
+        expect(target).toBeGreaterThan(0);
+        for (const y of [target, target + 1, target + 2, target + 3]) {
+          rig.streams.type(`\x1b[<0;10;${y}M`);
+          rig.streams.type(`\x1b[<65;10;${y}M`);
+        }
+        expect(clicks).toBe(0);
+        expect(wheels).toBe(0);
+        expect(rig.app.view.inputBox?.text).toBe("preserve");
+        rig.streams.type("\x1b[<0;10;6M");
+        expect(clicks).toBe(1); // visible tab content still answers
+      } finally {
+        rig.app.quit();
+        await running;
+      }
+    },
+  );
+});
