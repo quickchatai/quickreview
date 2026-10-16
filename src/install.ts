@@ -673,14 +673,17 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     }
     outcomes.push({ kind: "moved", name, from, to });
   }
-  // Links inside a moved profile keep their referents: one whose target moved
-  // with this run follows it, one whose target stayed points there absolutely.
+  // Links inside a moved profile follow moved or deduplicated referents into
+  // the home; a target left in the checkout stays there absolutely.
   const moved = new Set(outcomes.filter((o) => o.kind === "moved").map((o) => o.name));
+  const relocated = new Set(
+    outcomes.filter((o) => o.kind === "moved" || o.kind === "deduplicated").map((o) => o.name),
+  );
   const whereNow = (was: string): string => {
     for (const base of [fromBase, realBase]) {
       if (!within(base, was) || was === base) continue;
       const rel = relative(base, was);
-      if (moved.has(rel.split(sep)[0] ?? "")) return join(toBase, rel);
+      if (relocated.has(rel.split(sep)[0] ?? "")) return join(toBase, rel);
     }
     return was;
   };
