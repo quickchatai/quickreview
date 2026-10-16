@@ -759,6 +759,29 @@ describe("the fate table", () => {
     expect(await fate(h)).toEqual([["F1", "refuted_conceded", "resolved_no_change"]]);
   });
 
+  it("a changed head whose push was captured after the resolve never proves a refutation", async () => {
+    const h = threaded(fakeGit({ "workers/ingest.py@a1..b2": true }));
+    humanReply(h.store, { id: 845, root: 800, body: "Thanks", at: h.tick() });
+    h.tick();
+    resolvedThread(h.store, 800, 845);
+    h.store.db.prepare("UPDATE pr_state SET head_sha = ? WHERE number = ?").run(H2, PR);
+    expect(await fate(h)).toEqual([["F1", "unknown", "conflict:resolved_unobserved_head"]]);
+    h.tick();
+    h.push(H2);
+    expect(await fate(h)).toEqual([["F1", "unknown", "conflict:resolved_unobserved_head"]]);
+  });
+
+  it("an inferred refutation cites the latest accepting reply by written time, including backfills", async () => {
+    const h = threaded();
+    const older = h.tick();
+    humanReply(h.store, { id: 846, root: 800, body: "Good catch", at: h.tick() });
+    humanReply(h.store, { id: 847, root: 800, body: "Fair point", at: older });
+    h.tick();
+    resolvedThread(h.store, 800, 846);
+    expect(await fate(h)).toEqual([["F1", "unknown", "conflict:resolved_no_change"]]);
+    expect(h.capture.outcomesFor(PR)[0]!.evidence).toContain("reply 846 accepts the point");
+  });
+
   it("an inferred refutation the human reply contradicts is unknown, its basis naming the conflict", async () => {
     // Replies like "fair catch", "Updated: the description now says …", or a
     // fix made away from the anchor contradict an inferred refutation.

@@ -38,7 +38,7 @@ import {
   type WithholdWord,
 } from "../postingpolicy.js";
 import { markWithheld, postedClassOf, withheldReason } from "../reviewrender.js";
-import { SANCTIONED_TAGS } from "../severity.js";
+import { stripSanctionedTags } from "../severity.js";
 import {
   benchPath,
   CASE_FILES,
@@ -95,15 +95,9 @@ function classOf(tag: string): PolicyClass {
   return tag === "blocker" || tag === "question" || tag === "nit" ? tag : "check";
 }
 
-/** Every sanctioned tag (`severity.ts`), as a title strips it. */
-const ANY_TAG_RE = new RegExp(
-  SANCTIONED_TAGS.map((t) => t.replace(/[[\]]/g, "\\$&")).join("|"),
-  "gi",
-);
-
 function firstLineTitle(body: string): string {
   const first = (body.split("\n", 1)[0] ?? "").trim();
-  return first.replace(ANY_TAG_RE, "").trim();
+  return stripSanctionedTags(first).trim();
 }
 
 function str(v: unknown): string {

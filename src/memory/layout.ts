@@ -35,8 +35,18 @@ export const EVENTS_AREA = "events";
 /** Finding cases. */
 export const CASES_AREA = "finding-cases";
 
+/** An entry typed by the owner. */
+export const MANUAL_TAG = "manual";
+/** The header tag carried by a pinned instruction. */
+export const PINNED_TAG = "pinned";
+
 /** The header tag every reader hides an entry by. */
 export const RETIRED_TAG = "retired";
+/** Whether the header retires this entry from retrieval. */
+export function isRetired(text: string): boolean {
+  return parseHashTags(text).includes(RETIRED_TAG);
+}
+
 /** The tag a move's stub carries beside `#retired`. */
 export const MOVED_TAG = "moved";
 
@@ -134,8 +144,8 @@ export function unpinTargetArea(text: string): string {
  */
 export function areaForNewEntry(text: string, fallback: string): string {
   const tags = parseHashTags(text.trim());
-  if (tags.includes("pinned")) return PINNED_AREA;
-  if (tags.includes("manual")) return PREFERENCES_AREA;
+  if (tags.includes(PINNED_TAG)) return PINNED_AREA;
+  if (tags.includes(MANUAL_TAG)) return PREFERENCES_AREA;
   return fallback;
 }
 

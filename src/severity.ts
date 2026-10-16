@@ -377,6 +377,17 @@ export const SANCTIONED_TAGS: readonly string[] = [
   DEFERRED_TAG,
 ];
 
+/** Every sanctioned bracketed tag, regardless of case. */
+const SANCTIONED_TAG_RE = new RegExp(
+  SANCTIONED_TAGS.map((t) => t.replace(/[[\]]/g, "\\$&")).join("|"),
+  "gi",
+);
+
+/** Remove only sanctioned posting and marker tags from a title. */
+export function stripSanctionedTags(title: string): string {
+  return title.replace(SANCTIONED_TAG_RE, "");
+}
+
 const SEVERITY_WORDS: ReadonlySet<string> = new Set(SEVERITIES);
 
 /** The ordinary posting tag a findings-record tag word (bare, lower case) is

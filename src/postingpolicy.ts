@@ -30,7 +30,7 @@
 //      has it SELECT what posts by a senior reviewer's judgement and mark the
 //      rest `withheld`;
 //   3. mechanically after the session — `selectPosted`, applied by
-//      src/posting.ts `assembleReview` and by the benchmark export
+//      src/reviewrender.ts `applyPostingPolicyToRecord` and the benchmark export
 //      (src/bench/benchposting.ts), so a session that over-posts is still cut.
 //      What it cuts is recorded `withheld` with a word, never dropped silently.
 //
@@ -40,7 +40,7 @@
 // record.
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { severityRank } from "./severityrank.js";
-import { SANCTIONED_TAGS } from "./severity.js";
+import { stripSanctionedTags } from "./severity.js";
 
 export type NitsPolicy = "post" | "off";
 export type QuestionsPolicy = "post" | "blocking" | "off";
@@ -280,7 +280,7 @@ export function postingPolicyAddenda(p: PostingPolicy | undefined): PassAddendum
       : []),
     "",
   ].join("\n");
-  return [{ id: "posting-policy-validate", scope: [VALIDATE_PASS], text }];
+  return [{ id: POSTING_ADDENDUM_IDS[0], scope: [VALIDATE_PASS], text }];
 }
 
 // ---- mechanical enforcement ---------------------------------------------------
@@ -311,21 +311,10 @@ function sevRank(s: string | null): number {
   return severityRank(s) ?? 5;
 }
 
-/** Any sanctioned tag, posting or marker (`SANCTIONED_TAGS`), in any case. */
-const SANCTIONED_TAG_RE = new RegExp(
-  SANCTIONED_TAGS.map((t) => t.replace(/[[\]]/g, "\\$&")).join("|"),
-  "gi",
-);
-
 /** Normalise a finding title into a repeat-site key: no tags, no markers, no
  * code spans' backticks, lowercase, collapsed whitespace. */
 export function siteKey(title: string): string {
-  return title
-    .replace(SANCTIONED_TAG_RE, "")
-    .replace(/`/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+  return stripSanctionedTags(title).replace(/`/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 export interface Selection<T> {
