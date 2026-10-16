@@ -234,6 +234,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   private readonly claimedHere = new Set<string>();
   /** Tail of each posting lane (one per PR, else one per idem key). */
   private readonly lanes = new Map<string, Promise<unknown>>();
+  /** Corrections to one incident execute in order, including recovery edits. */
+  private readonly incidentEdits = new Map<string, Promise<unknown>>();
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
   private readonly clearTimeoutFn: (handle: unknown) => void;
   private readonly setIntervalFn: (fn: () => void, ms: number) => unknown;
@@ -497,7 +499,13 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     // recovery.
     const prior = a.incident_id ? this.deps.store.slackPost(a.incident_id) : undefined;
     if (a.incident_id && prior?.ok === 1 && prior.ts) {
-      await this.editIncident(a.incident_id, prior.ts, text, "reopening");
+      await this.editIncident(
+        a.incident_id,
+        prior.ts,
+        text,
+        "reopening",
+        () => this.deps.store.openReviewFailure(a.pr)?.incident_id === a.incident_id,
+      );
       return;
     }
     // An anomaly is a genuine escalation: it may spend the day's one bypass.
@@ -553,17 +561,30 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     ts: string,
     text: string,
     what: "recovery" | "reopening",
+    isCurrent: () => boolean,
   ): Promise<boolean> {
-    const { cfg, slack } = this.deps;
-    try {
-      const res = await slack.updateMessage({ channel: cfg.slack.channel, ts, text });
-      if (!res.ok)
-        this.log(`slack: failure ${what} update failed (${incidentId}, ts ${ts})`, res.error);
-      return res.ok;
-    } catch (err) {
-      this.log(`slack: failure ${what} update threw (${incidentId}, ts ${ts})`, err);
-      return false;
-    }
+    const prior = this.incidentEdits.get(incidentId) ?? Promise.resolve();
+    const run = prior.then(async () => {
+      // State can change while an earlier Slack request is in flight. An
+      // obsolete correction must not overwrite the current episode's message.
+      if (!this.enabled || !isCurrent()) return false;
+      const { cfg, slack } = this.deps;
+      try {
+        const res = await slack.updateMessage({ channel: cfg.slack.channel, ts, text });
+        if (!res.ok)
+          this.log(`slack: failure ${what} update failed (${incidentId}, ts ${ts})`, res.error);
+        return res.ok;
+      } catch (err) {
+        this.log(`slack: failure ${what} update threw (${incidentId}, ts ${ts})`, err);
+        return false;
+      }
+    });
+    const tail = run.catch(() => undefined);
+    this.incidentEdits.set(incidentId, tail);
+    void tail.then(() => {
+      if (this.incidentEdits.get(incidentId) === tail) this.incidentEdits.delete(incidentId);
+    });
+    return run;
   }
 
   /** A PR still waiting for a slot. This may be the FIRST event on the PR, in
@@ -729,6 +750,14 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
         incidentPost.ts,
         `✓ #${recovered.pr} review failure recovered via ${recovered.recovery ?? "operator action"} — ${recovered.incident_id}`,
         "recovery",
+        () =>
+          store
+            .recentReviewRecoveries(recovered.recovered_at!)
+            .some(
+              (current) =>
+                current.incident_id === recovered.incident_id &&
+                current.recovered_at === recovered.recovered_at,
+            ),
       );
       if (edited) this.correctedIncidents.add(recoveryKey(recovered));
     }
