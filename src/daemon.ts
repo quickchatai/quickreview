@@ -32,7 +32,7 @@ import {
 } from "./eventloop.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
-import { TokenMinter } from "./githubAuth.js";
+import { appActorAlias, TokenMinter } from "./githubAuth.js";
 import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { readLedgerCarry } from "./ledgercarry.js";
@@ -545,8 +545,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     log,
     isDraining: () => store.drainState().draining,
     botLogin: cfg.github.bot_login,
-    ownerActorAlias:
-      cfg.github.bot_login === `${cfg.github.app_slug}[bot]` ? cfg.github.app_slug : undefined,
+    ownerActorAlias: appActorAlias(cfg.github.bot_login, cfg.github.app_slug),
     // The author asked for a person on a review thread.
     //
     // There is no park to put them in: the state event is a deliberate no-op

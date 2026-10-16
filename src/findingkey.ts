@@ -21,7 +21,10 @@ export function recordString(val: unknown): string | null {
  * stores what the renderer posts, so a value both read must read alike. */
 export function recordNumber(val: unknown): number | null {
   if (typeof val === "number" && Number.isFinite(val)) return val;
-  if (typeof val === "string" && /^-?\d+(\.\d+)?$/.test(val.trim())) return Number(val.trim());
+  if (typeof val === "string" && /^-?\d+(\.\d+)?$/.test(val.trim())) {
+    const number = Number(val.trim());
+    return Number.isFinite(number) ? number : null;
+  }
   return null;
 }
 
@@ -59,18 +62,7 @@ export function recordSide(val: unknown): "LEFT" | "RIGHT" {
  *   beats never) from "resurrecting a settled one" (not legitimate). Nothing
  *   else in the system records it.
  */
-export type FindingDisposition =
-  | "posted"
-  | "killed"
-  | "doubted"
-  | "downgraded"
-  | "merged"
-  | "folded"
-  | "withheld"
-  | "conceded"
-  | "unknown";
-
-const DISPOSITIONS: ReadonlySet<string> = new Set([
+const DISPOSITION_VALUES = [
   "posted",
   "killed",
   "doubted",
@@ -79,7 +71,11 @@ const DISPOSITIONS: ReadonlySet<string> = new Set([
   "folded",
   "withheld",
   "conceded",
-]);
+] as const;
+
+export type FindingDisposition = (typeof DISPOSITION_VALUES)[number] | "unknown";
+
+const DISPOSITIONS: ReadonlySet<string> = new Set(DISPOSITION_VALUES);
 
 /** Spellings a session plausibly writes, folded onto the closed set. Tolerant
  * input, exactly like the verdict file's digit-string coercion — never a

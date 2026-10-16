@@ -34,6 +34,7 @@ import {
   normalizeDisposition,
   recordNumber,
   recordSide,
+  recordString,
 } from "./findingkey.js";
 import {
   firstSentence as policyFirstSentence,
@@ -106,9 +107,7 @@ interface Posted {
   inline: boolean;
 }
 
-function str(v: unknown): string | null {
-  return typeof v === "string" && v.trim() ? v.trim() : null;
-}
+const str = recordString;
 
 /** The parser's own coercion: a value the record stores is the value posted. */
 const num = recordNumber;

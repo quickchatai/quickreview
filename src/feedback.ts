@@ -39,11 +39,12 @@
 // from the LEDGER (`feedbackCommentsForDay`), never from memory — it therefore
 // survives a memory outage untouched.
 import { opsDay } from "./eod.js";
+import { withinBudget } from "./budget.js";
 import { FEEDBACK_DAY_ADDENDUM_ID, VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { FEEDBACK_FULL_TEXT_LABEL, cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags } from "./memory/eventtags.js";
 import { EVENTS_AREA } from "./memory/layout.js";
-import type { MemoryEntry, MemoryStore, MemoryWriteResult } from "./memory/store.js";
+import type { MemoryEntry, MemoryStore } from "./memory/store.js";
 import type { FeedbackSignalRow, StateStore } from "./state.js";
 
 /** A comment opts into the loop by STARTING with the tag (case-insensitive). */
@@ -591,7 +592,6 @@ export async function writeFeedbackMemory(
   };
   if (text === null) return fail(`unknown signal kind '${row.kind}' — no entry can be rendered`);
   const budget = deps.timeoutMs ?? FEEDBACK_MEMORY_TIMEOUT_MS;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     // `note`, not `add`: the entry carries its own tags and must be stored
     // verbatim — never dressed up as the operator's own words.
@@ -607,14 +607,9 @@ export async function writeFeedbackMemory(
     // deadline won is handled, never an unhandled rejection. The write may
     // still land after the deadline — the row stays `pending`, and the next
     // attempt addresses the same entry and finds it there.
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`memory write timed out after ${budget}ms`)),
-        budget,
-      );
-      timer.unref?.();
-    });
-    const res: MemoryWriteResult = await Promise.race([write, deadline]);
+    const bounded = await withinBudget(write, budget);
+    if (bounded.kind === "budget") return fail(`memory write timed out after ${budget}ms`);
+    const res = bounded.value;
     if (!res.ok) return fail(res.message);
     const uri =
       res.uri ??
@@ -627,8 +622,6 @@ export async function writeFeedbackMemory(
     return "written";
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -654,7 +647,7 @@ export const FEEDBACK_PUMP_DEFAULTS = Object.freeze({
   requeueFailedMs: 24 * 3_600_000,
 });
 
-export interface FeedbackMemoryPumpDeps extends FeedbackWriteDeps {
+export interface FeedbackMemoryPumpDeps extends Omit<FeedbackWriteDeps, "onGaveUp"> {
   /** Write only while this is true — `memory health == healthy`. A backfill
    * into a store that is down, or one whose key is refused, is just more
    * failures (and more load on a server that is already struggling). */

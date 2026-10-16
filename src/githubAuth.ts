@@ -12,6 +12,11 @@ import { join } from "node:path";
 
 export type FetchFn = typeof fetch;
 
+/** GraphQL's bare App actor, only for a matching configured bot login. */
+export function appActorAlias(botLogin: string, appSlug: string): string | undefined {
+  return botLogin === `${appSlug}[bot]` ? appSlug : undefined;
+}
+
 function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString("base64url");
 }
@@ -38,7 +43,7 @@ const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
 /** The deadline on each request — the same as the adapter's REST calls, so a
  * stalled mint cannot hold every caller waiting on its shared promise. */
-const REQUEST_TIMEOUT_MS = 60_000;
+export const GITHUB_REQUEST_TIMEOUT_MS = 60_000;
 
 export class TokenMinter {
   private cache = new Map<number, InstallationToken>();
@@ -68,7 +73,7 @@ export class TokenMinter {
   async resolveInstallationId(): Promise<number> {
     if (this.installationId !== null) return this.installationId;
     const res = await this.fetchFn(`${this.apiBase}/app/installations`, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
       headers: { authorization: `Bearer ${this.appJwt()}`, accept: "application/vnd.github+json" },
     });
     if (!res.ok) throw new Error(`GET /app/installations failed: ${res.status}`);
@@ -98,7 +103,7 @@ export class TokenMinter {
   private async mint(id: number): Promise<string> {
     const res = await this.fetchFn(`${this.apiBase}/app/installations/${id}/access_tokens`, {
       method: "POST",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
       headers: { authorization: `Bearer ${this.appJwt()}`, accept: "application/vnd.github+json" },
     });
     if (!res.ok) throw new Error(`token mint failed for installation ${id}: ${res.status}`);

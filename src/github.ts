@@ -12,7 +12,12 @@ import {
   type GateResult,
   type ReviewPurpose,
 } from "./gate.js";
-import { type TokenMinter, type FetchFn } from "./githubAuth.js";
+import {
+  appActorAlias,
+  GITHUB_REQUEST_TIMEOUT_MS,
+  type TokenMinter,
+  type FetchFn,
+} from "./githubAuth.js";
 import type { PrReviews } from "./reviewhistory.js";
 
 export interface PrConversation {
@@ -344,7 +349,7 @@ export class GitHubAdapter {
     const token = auth === "jwt" ? this.minter.appJwt() : await this.minter.installationToken();
     const res = await this.fetchFn(`${this.apiBase}${path}`, {
       method,
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
       headers: {
         authorization: `Bearer ${token}`,
         accept: "application/vnd.github+json",
@@ -388,7 +393,7 @@ export class GitHubAdapter {
     const token = await this.minter.installationToken();
     const res = await this.fetchFn(`${this.apiBase}/graphql`, {
       method: "POST",
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ query, variables }),
     });
@@ -864,13 +869,9 @@ export class GitHubAdapter {
     // thread reply is one, so on a long PR the human approval at the head is
     // exactly what a bounded read misses — and guard 1 would then not soften
     // over it. A short page ends the read, as for listReviewsFull.
-    const { rows } = await this.pagedArray<any>(
-      `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100`,
-      Number.POSITIVE_INFINITY,
-    );
-    return rows.map((r) => ({
+    return (await this.listReviewsFull(n)).map((r) => ({
       id: r.id,
-      user: r.user?.login ?? "",
+      user: r.user,
       state: r.state,
       commit_id: r.commit_id,
     }));
@@ -1249,10 +1250,7 @@ export class GitHubAdapter {
     // bare App slug. Both values are independently configured; recognize
     // exactly that pair here and nowhere else. Every unrelated identity stays
     // structurally refused.
-    const bareAppActor =
-      this.cfg.github.bot_login === `${this.cfg.github.app_slug}[bot]`
-        ? this.cfg.github.app_slug
-        : undefined;
+    const bareAppActor = appActorAlias(this.cfg.github.bot_login, this.cfg.github.app_slug);
     const ownActors = new Set(
       [this.cfg.github.bot_login, bareAppActor].filter((v): v is string => v !== undefined),
     );
