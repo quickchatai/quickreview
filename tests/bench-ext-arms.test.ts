@@ -254,31 +254,60 @@ describe("qodo_judge.py's judgement cache", () => {
     const runDir = join(t, "run");
     const out = join(t, "work");
     mkdirSync(join(runDir, "results", "all"), { recursive: true });
-    writeFileSync(join(t, "set.json"), JSON.stringify({ cases: [{ pr_url: URL_A, instance_id: "o__r-1@aaa" }] }));
+    writeFileSync(
+      join(t, "set.json"),
+      JSON.stringify({ cases: [{ pr_url: URL_A, instance_id: "o__r-1@aaa" }] }),
+    );
     writeFileSync(
       join(t, "gt.jsonl"),
       JSON.stringify({
         pr_url_to_review: URL_A,
-        issues: [{ title: "race", description: "d", file_path: "a.py", start_line: 5, end_line: 9 }],
+        issues: [
+          { title: "race", description: "d", file_path: "a.py", start_line: 5, end_line: 9 },
+        ],
       }) + "\n",
     );
     writeFileSync(join(t, "tools.json"), "[]");
     const judge = (ask: string) =>
       run(
         "python3",
-        ["-c", MAIN, "--set", join(t, "set.json"), "--gt", join(t, "gt.jsonl"), "--tools", join(t, "tools.json"),
-          "--run", runDir, "--only-tools", "quickreview", "--endpoint", "http://127.0.0.1:9", "--out", out],
+        [
+          "-c",
+          MAIN,
+          "--set",
+          join(t, "set.json"),
+          "--gt",
+          join(t, "gt.jsonl"),
+          "--tools",
+          join(t, "tools.json"),
+          "--run",
+          runDir,
+          "--only-tools",
+          "quickreview",
+          "--endpoint",
+          "http://127.0.0.1:9",
+          "--out",
+          out,
+        ],
         { env: { ...process.env, EXT, ASK: ask, OUT: out } },
       );
     const tp = () =>
-      (JSON.parse(readFileSync(join(out, "scores.json"), "utf8")) as {
-        scores: { quickreview: { "N=5": { tp: number } } };
-      }).scores.quickreview["N=5"].tp;
+      (
+        JSON.parse(readFileSync(join(out, "scores.json"), "utf8")) as {
+          scores: { quickreview: { "N=5": { tp: number } } };
+        }
+      ).scores.quickreview["N=5"].tp;
 
     await judge("fail"); // the case is unfinished: judged silent without asking
     expect(tp()).toBe(0);
 
-    writeArmCase(runDir, "o__r-1@aaa", "ok", [{ path: "a.py", start_line: 5, end_line: 9, content: "race" }], null);
+    writeArmCase(
+      runDir,
+      "o__r-1@aaa",
+      "ok",
+      [{ path: "a.py", start_line: 5, end_line: 9, content: "race" }],
+      null,
+    );
     await judge("match");
     expect(tp()).toBe(1);
     expect(readFileSync(join(out, "asked"), "utf8")).toBe("x");

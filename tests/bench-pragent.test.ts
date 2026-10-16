@@ -825,7 +825,11 @@ describe("the run", () => {
       mkdirSync(caseDir, { recursive: true });
       writeFileSync(
         join(caseDir, "case-summary.json"),
-        JSON.stringify({ arm: "pragent", status: "ok", fingerprint: { ...FP, model: "gpt-6-sol" } }),
+        JSON.stringify({
+          arm: "pragent",
+          status: "ok",
+          fingerprint: { ...FP, model: "gpt-6-sol" },
+        }),
       );
       // A body-only review: its saved judgement keys on the body alone.
       writeFileSync(join(caseDir, "review.md"), "the other model's body-only finding\n");

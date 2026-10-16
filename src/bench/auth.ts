@@ -187,7 +187,9 @@ export function apiKeyEnv(
   if (mode !== "api-key") return {};
   const out: Record<string, string> = {};
   const provider = benchProvider(env);
-  const keys = provider ? [BENCH_PROVIDERS[provider].keyVar] : ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
+  const keys = provider
+    ? [BENCH_PROVIDERS[provider].keyVar]
+    : ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
   for (const k of keys) {
     const v = env[k];
     if (v) out[k] = v;
@@ -230,7 +232,12 @@ export function benchAuthFrom(raw: string): { json: string; expiresAt: number | 
  * patience per request — so a PR is processed fully and fails only when the
  * provider is really unavailable. Provider-level retries stay off (pi's advice:
  * they would hide quota and usage-limit errors from pi). */
-export const BENCH_RETRY = { enabled: true, maxRetries: 10, baseDelayMs: 5_000, maxAgentDelayMs: 120_000 } as const;
+export const BENCH_RETRY = {
+  enabled: true,
+  maxRetries: 10,
+  baseDelayMs: 5_000,
+  maxAgentDelayMs: 120_000,
+} as const;
 
 /** pi's global settings for the sandbox — what the VM entrypoint provisions
  * (deploy/ansible/templates/entrypoint.sh.j2): bash-guard registered globally

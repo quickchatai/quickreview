@@ -45,16 +45,7 @@ import {
   type RoundProgressSnapshot,
 } from "../round-progress.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
-import {
-  FG,
-  RESET,
-  fmtAge,
-  legendLine,
-  osc8,
-  prUrl,
-  stateColor,
-  verdictChip,
-} from "./theme.js";
+import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
 /** Every clickable thing the board declares. */
 export type BoardAction =
@@ -369,14 +360,7 @@ export function memorySegment(
     case "auth_failed": {
       const d = isAuthResult(m.credentials.daemon);
       const sess = isAuthResult(m.credentials.sessions);
-      const which =
-        d && sess
-          ? "both keys"
-          : d
-            ? "daemon key"
-            : sess
-              ? "sessions' key"
-              : "a key";
+      const which = d && sess ? "both keys" : d ? "daemon key" : sess ? "sessions' key" : "a key";
       return {
         text: `${FG.anomaly}⛔ MEMORY AUTH FAILED${age} · ${which} refused${RESET}`,
         loud: true,

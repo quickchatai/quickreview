@@ -330,6 +330,8 @@ describe("renderSweepNote", () => {
     const note = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_task_files: files });
     expect(note).toContain("in `/s/p/tasks-sweep`");
     expect(note).toContain("`extra` keyed `sweep:*`");
-    expect(note).toContain('`launch_plan({ dirs: ["/s/p/tasks-sweep"], extra: { "sweep:*": … } })`');
+    expect(note).toContain(
+      '`launch_plan({ dirs: ["/s/p/tasks-sweep"], extra: { "sweep:*": … } })`',
+    );
   });
 });

@@ -78,12 +78,7 @@ import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "../contextpack.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
-import {
-  buildAgents,
-  configAddenda,
-  identityVars,
-  PASS_ADDENDA,
-} from "../include.js";
+import { buildAgents, configAddenda, identityVars, PASS_ADDENDA } from "../include.js";
 import { MEMORY_LESS } from "../memory/context.js";
 import {
   applyProfileTuning,
@@ -1593,8 +1588,8 @@ export async function reviewCase(
             broken.length
               ? `Your BENCHMARK MODE files in ${caseDir} cannot be read: ${broken.join("; ")}. Rewrite ${broken.length > 1 ? "them" : "it"} as valid JSON with the same content — plain double quotes, no escaped quotes around keys or values — and write ${CASE_FILES.outcome} last.`
               : ctx.cfg.review.render_outputs
-              ? `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.findings} (with the posting fields) and, last, ${CASE_FILES.outcome} in ${caseDir}.`
-              : `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.comments}, ${CASE_FILES.review}, ${CASE_FILES.findings} and, last, ${CASE_FILES.outcome} in ${caseDir}.`,
+                ? `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.findings} (with the posting fields) and, last, ${CASE_FILES.outcome} in ${caseDir}.`
+                : `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.comments}, ${CASE_FILES.review}, ${CASE_FILES.findings} and, last, ${CASE_FILES.outcome} in ${caseDir}.`,
           ],
           env,
           o.root,

@@ -162,7 +162,10 @@ describe("lens_yield: Martian case identity", () => {
     for (const id of ["acme__app-1@aaaaaaa", "acme__app-2@bbbbbbb"]) {
       const d = join(runs, run, "cases", id);
       mkdirSync(d, { recursive: true });
-      writeFileSync(join(d, "comments.json"), JSON.stringify([{ body: `finding in ${id} widget`, path: "a.py", line: 3 }]));
+      writeFileSync(
+        join(d, "comments.json"),
+        JSON.stringify([{ body: `finding in ${id} widget`, path: "a.py", line: 3 }]),
+      );
     }
     const res = join(runs, `${run}.martian`, "results", "gpt-6.1-sol");
     mkdirSync(res, { recursive: true });
@@ -205,7 +208,15 @@ print(json.dumps([p.name for p, _ in ly.martian_comments(Path(sys.argv[1]), sys.
       ].join("\n"),
     );
     const set = join(runs, "set.json");
-    writeFileSync(set, JSON.stringify({ cases: [{ pr_url: pr, instance_id: "c1" }, { pr_url: pr2, instance_id: "c2" }] }));
+    writeFileSync(
+      set,
+      JSON.stringify({
+        cases: [
+          { pr_url: pr, instance_id: "c1" },
+          { pr_url: pr2, instance_id: "c2" },
+        ],
+      }),
+    );
     const got = py(
       `from pathlib import Path
 print(json.dumps(sorted([p.name, [c[3] for c in cs]] for p, cs in ly.qodo_comments(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])))))`,

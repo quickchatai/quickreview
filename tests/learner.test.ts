@@ -296,7 +296,13 @@ describe("the miner — human fates", () => {
     h.pr(11);
     h.finding(11, { key: "F1" }, "refuted_conceded", { comment: 950, roundNo: 1 });
     h.addMinutes(30);
-    h.comment({ pr: 11, id: 9502, author: "alice", body: "newer: still unreachable", inReplyTo: 950 });
+    h.comment({
+      pr: 11,
+      id: 9502,
+      author: "alice",
+      body: "newer: still unreachable",
+      inReplyTo: 950,
+    });
     // an older reply the sweep backfills after the newer one was captured
     h.addMinutes(-20);
     h.comment({ pr: 11, id: 9501, author: "alice", body: "older: not reachable", inReplyTo: 950 });
@@ -634,9 +640,7 @@ describe("the miner — recall: what a human found on lines the bot approved", (
     scans.set(51, scan({ truncated: true, unread: true })); // recovers next read
     scans.set(52, scan({ truncated: true })); // a cap: final
     const rows = () =>
-      h.store.db
-        .prepare("SELECT pr, done, outcome FROM learner_recall_scans ORDER BY pr")
-        .all();
+      h.store.db.prepare("SELECT pr, done, outcome FROM learner_recall_scans ORDER BY pr").all();
     h.setNow("2026-10-22T10:00:00.000Z"); // the window closed 10-21
     await h.learner.mine();
     expect(rows()).toEqual([
@@ -1498,7 +1502,9 @@ describe("the curation receipt", () => {
     expect(
       h.learner.applyReceipt({
         day: "2026-10-07",
-        decisions: [{ candidates: [1], decision: "adopted", lesson: "late-lesson", reason: "late" }],
+        decisions: [
+          { candidates: [1], decision: "adopted", lesson: "late-lesson", reason: "late" },
+        ],
       }).ok,
     ).toBe(true);
     expect(h.learner.candidate(1)).toMatchObject({
@@ -1691,7 +1697,9 @@ describe("the miner — fates are re-read, never trusted as written", () => {
       polarity: "either",
       status: "open",
     });
-    expect(h.learner.candidate(1)!.summary).toContain("a human replied and the bot kept it standing");
+    expect(h.learner.candidate(1)!.summary).toContain(
+      "a human replied and the bot kept it standing",
+    );
     // Humans fixed it after all: no dont-raise candidate may stand over a fix.
     setFate(h, 11, "F", "fixed");
     r = await h.learner.mine();
@@ -1811,7 +1819,9 @@ describe("the miner — candidates say what the record shows (integration review
     await h.learner.mine();
     await h.learner.buildPacket("2026-10-07");
     const md = readFileSync(join(h.root, "state", "eod", "2026-10-07", "outcomes.md"), "utf8");
-    expect(md).toContain("The review system's OWN words (an overseer digest bullet — not a person's)");
+    expect(md).toContain(
+      "The review system's OWN words (an overseer digest bullet — not a person's)",
+    );
     expect(md).not.toContain("A person's words");
   });
 
@@ -1829,7 +1839,10 @@ describe("the miner — candidates say what the record shows (integration review
       day: "2026-10-07",
     });
     await h.learner.mine();
-    expect(h.learner.allCandidates()[0]).toMatchObject({ class: "feedback.general", lens_ids: "[]" });
+    expect(h.learner.allCandidates()[0]).toMatchObject({
+      class: "feedback.general",
+      lens_ids: "[]",
+    });
     // The reconcile sweep (or the case backfill) links bot comment 7200 later.
     h.finding(72, { key: "F" }, "fixed", { roundNo: 1, comment: 7200 });
     const r = await h.learner.mine();

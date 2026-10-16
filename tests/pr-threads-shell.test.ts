@@ -109,14 +109,10 @@ const exec = promisify(execFile);
 
 async function run(): Promise<{ ok: boolean; out: string }> {
   try {
-    const { stdout, stderr } = await exec(
-      "bash",
-      [join(dir, "scripts", "pr-threads.sh"), "5180"],
-      {
-        encoding: "utf8",
-        env: { ...process.env, GITHUB_API: apiBase, QCR_CONFIG: join(dir, "config.toml") },
-      },
-    );
+    const { stdout, stderr } = await exec("bash", [join(dir, "scripts", "pr-threads.sh"), "5180"], {
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_API: apiBase, QCR_CONFIG: join(dir, "config.toml") },
+    });
     return { ok: true, out: `${stdout}${stderr}` };
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string };

@@ -334,13 +334,13 @@ export function tagValue(v: string): string {
   return v
     .trim()
     .replace(/%/g, "%25")
-    .replace(
-      /[\s\u0000-\u001f\u007f-\u009f]/g,
-      (c) => {
-        const code = c.charCodeAt(0);
-        return `%${code > 0xff ? "u" : ""}${code.toString(16).padStart(code > 0xff ? 4 : 2, "0").toUpperCase()}`;
-      },
-    );
+    .replace(/[\s\u0000-\u001f\u007f-\u009f]/g, (c) => {
+      const code = c.charCodeAt(0);
+      return `%${code > 0xff ? "u" : ""}${code
+        .toString(16)
+        .padStart(code > 0xff ? 4 : 2, "0")
+        .toUpperCase()}`;
+    });
 }
 
 /** An enumerated word as a header value: `check this` → `check-this`. */
@@ -483,7 +483,8 @@ const fkey = (round: number, key: string): string => `${round}\u0000${key}`;
  * `pr_comments` and `feedback_signals` row ids. One spelling for the mark a
  * sync records and the late-activity check that compares against it. */
 const ACTIVITY_SQL = {
-  comments: (pr: string): string => `(SELECT COALESCE(MAX(id), 0) FROM pr_comments WHERE pr = ${pr})`,
+  comments: (pr: string): string =>
+    `(SELECT COALESCE(MAX(id), 0) FROM pr_comments WHERE pr = ${pr})`,
   signals: (pr: string): string =>
     `(SELECT COALESCE(MAX(id), 0) FROM feedback_signals WHERE pr = ${pr})`,
 };
@@ -1700,9 +1701,7 @@ export class CaseWriter {
   private hasOwed(): boolean {
     return (
       this.store.db
-        .prepare(
-          `SELECT 1 AS one FROM finding_cases WHERE ${WRITABLE_CASE} LIMIT 1`,
-        )
+        .prepare(`SELECT 1 AS one FROM finding_cases WHERE ${WRITABLE_CASE} LIMIT 1`)
         .get() !== undefined
     );
   }
@@ -1710,9 +1709,7 @@ export class CaseWriter {
   /** The next batch: the oldest owed cases. */
   private owedRows(): FindingCaseRow[] {
     return this.store.db
-      .prepare(
-        `SELECT * FROM finding_cases WHERE ${WRITABLE_CASE} ORDER BY ${OWED_ORDER} LIMIT ?`,
-      )
+      .prepare(`SELECT * FROM finding_cases WHERE ${WRITABLE_CASE} ORDER BY ${OWED_ORDER} LIMIT ?`)
       .all(this.cfg.batch) as FindingCaseRow[];
   }
 

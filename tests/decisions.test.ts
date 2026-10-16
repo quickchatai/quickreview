@@ -286,7 +286,7 @@ describe("the loosened-test hint", () => {
       detectLoosenedAssertions([
         t("tests/test_a.py", "@@ -1 +1 @@\n-    assert n == 1\n+    assert n == 1  # same\n"),
       ]),
-    ).toEqual([]);    // a tightened UPPER bound on a count is not a lowered count
+    ).toEqual([]); // a tightened UPPER bound on a count is not a lowered count
     expect(
       detectLoosenedAssertions([
         t(

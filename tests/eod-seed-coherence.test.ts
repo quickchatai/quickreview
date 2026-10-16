@@ -372,34 +372,37 @@ describe.each([
   ["packet", () => renderCurationSection(packet())],
   ["off", () => renderNoPacketSection(DAY, "off")],
   ["unavailable", () => renderNoPacketSection(DAY, "unavailable")],
-] as const)("the %s variant of the curation section says nothing against the seed", (_v, section) => {
-  const { seed, curation } = parts(rendered(section()));
+] as const)(
+  "the %s variant of the curation section says nothing against the seed",
+  (_v, section) => {
+    const { seed, curation } = parts(rendered(section()));
 
-  it("sends no repo fact to resources/ (the seed files them as experiences/ lessons)", () => {
-    expect(flat(seed)).not.toContain("viking://resources");
-    expect(curation).not.toContain("resources");
-  });
+    it("sends no repo fact to resources/ (the seed files them as experiences/ lessons)", () => {
+      expect(flat(seed)).not.toContain("viking://resources");
+      expect(curation).not.toContain("resources");
+    });
 
-  it("does not tell the curator #manual entries are not theirs (the seed's memory discipline rules on them)", () => {
-    expect(flat(seed)).toContain(
-      "consolidate or retire them only when one is superseded by a newer manual entry",
-    );
-    expect(curation).not.toMatch(/not yours/i);
-  });
+    it("does not tell the curator #manual entries are not theirs (the seed's memory discipline rules on them)", () => {
+      expect(flat(seed)).toContain(
+        "consolidate or retire them only when one is superseded by a newer manual entry",
+      );
+      expect(curation).not.toMatch(/not yours/i);
+    });
 
-  it("leaves a lesson's `content` to the seed (no 'the rule and its reason')", () => {
-    expect(flat(seed)).toContain(
-      "`content` is the one-sentence lesson and its evidence PR link(s), nothing more",
-    );
-    expect(curation).not.toContain("`content`");
-    expect(curation).not.toMatch(/and its reason/);
-  });
+    it("leaves a lesson's `content` to the seed (no 'the rule and its reason')", () => {
+      expect(flat(seed)).toContain(
+        "`content` is the one-sentence lesson and its evidence PR link(s), nothing more",
+      );
+      expect(curation).not.toContain("`content`");
+      expect(curation).not.toMatch(/and its reason/);
+    });
 
-  it("asks for no `source=manual` header (the seed's discipline names `#manual`)", () => {
-    expect(flat(seed)).not.toContain("source=manual");
-    expect(curation).not.toContain("source=manual");
-  });
-});
+    it("asks for no `source=manual` header (the seed's discipline names `#manual`)", () => {
+      expect(flat(seed)).not.toContain("source=manual");
+      expect(curation).not.toContain("source=manual");
+    });
+  },
+);
 
 /** The production receipt route — wire.ts's own `routeCurationReceipt` —
  * behind the command handler the watcher calls, on a daemon with or without

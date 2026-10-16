@@ -252,7 +252,8 @@ export interface FindingCommentRow {
 export function markerTwins(rows: readonly FindingCommentRow[]): Map<number, number[]> {
   const linked = new Map<string, FindingCommentRow>();
   for (const c of rows)
-    if (c.round_no !== null && c.finding_key !== null) linked.set(fkey(c.round_no, c.finding_key), c);
+    if (c.round_no !== null && c.finding_key !== null)
+      linked.set(fkey(c.round_no, c.finding_key), c);
   const out = new Map<number, number[]>();
   for (const c of [...rows].sort((a, b) => a.comment_id - b.comment_id)) {
     if (c.finding_key !== null || c.marker_round === null || c.marker_key === null) continue;
@@ -833,7 +834,8 @@ export class OutcomeCapture {
     const comments = this.commentsFor(pr);
     const links = new Map<string, FindingCommentRow>();
     for (const c of comments)
-      if (c.round_no !== null && c.finding_key !== null) links.set(fkey(c.round_no, c.finding_key), c);
+      if (c.round_no !== null && c.finding_key !== null)
+        links.set(fkey(c.round_no, c.finding_key), c);
     const twins = markerTwins(comments);
     const replies = new Map<number, PrCommentRow[]>();
     for (const c of this.store.prComments(pr)) {

@@ -3029,7 +3029,12 @@ export class StateStore {
             throw new Error(`operator recovery payload missing for ${row.id}`);
           const inserted = this.db
             .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
-            .run(pr, payload, `${OPERATOR_RECOVERED_WAKE_PREFIX}${row.kind}:${row.id}`, row.created_at);
+            .run(
+              pr,
+              payload,
+              `${OPERATOR_RECOVERED_WAKE_PREFIX}${row.kind}:${row.id}`,
+              row.created_at,
+            );
           wakeIds.push(Number(inserted.lastInsertRowid));
         }
         const changed = this.db
@@ -4077,7 +4082,9 @@ export class StateStore {
   recordReviewedVerdict(pr: number, headSha: string, verdict: string): boolean {
     return (
       this.db
-        .prepare("UPDATE reviewed_heads SET verdict = ? WHERE pr = ? AND lower(head_sha) = lower(?)")
+        .prepare(
+          "UPDATE reviewed_heads SET verdict = ? WHERE pr = ? AND lower(head_sha) = lower(?)",
+        )
         .run(verdict, pr, headSha).changes === 1
     );
   }
@@ -4215,8 +4222,9 @@ export class StateStore {
   }
 
   postingRetry(postingKey: string): PostingRetryRow | undefined {
-    return this.db.prepare("SELECT * FROM posting_retries WHERE posting_key = ?").get(postingKey) as
-      PostingRetryRow | undefined;
+    return this.db
+      .prepare("SELECT * FROM posting_retries WHERE posting_key = ?")
+      .get(postingKey) as PostingRetryRow | undefined;
   }
 
   /** Count an attempt BEFORE its first GitHub call: a crash inside it

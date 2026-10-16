@@ -196,7 +196,8 @@ describe("detectMigrationCollisions", () => {
         {
           filename: "backend/billing/migrations/0008_link.py",
           status: "added",
-          patch: '@@\n+    dependencies = [\n+        (\n+            "chat",\n+            "0042_a",\n+        ),\n+    ]',
+          patch:
+            '@@\n+    dependencies = [\n+        (\n+            "chat",\n+            "0042_a",\n+        ),\n+    ]',
         },
       ],
       baseFiles: BASE,
@@ -218,7 +219,8 @@ describe("detectMigrationCollisions", () => {
         {
           filename: "backend/billing/migrations/0008_link.py",
           status: "modified",
-          patch: '@@\n     dependencies = [\n-        ("chat",\n+        ("billing",\n         "0042_a"),\n     ]',
+          patch:
+            '@@\n     dependencies = [\n-        ("chat",\n+        ("billing",\n         "0042_a"),\n     ]',
         },
       ],
       baseFiles: BASE,
@@ -233,12 +235,14 @@ describe("detectMigrationCollisions", () => {
         {
           filename: "backend/billing/migrations/0008_link.py",
           status: "modified",
-          patch: '@@\n     dependencies = [\n-        ("chat", "0042_a"),\n+        ("chat", "0041_other"),\n     ]',
+          patch:
+            '@@\n     dependencies = [\n-        ("chat", "0042_a"),\n+        ("chat", "0041_other"),\n     ]',
         },
         {
           filename: "backend/chat/migrations/0043_b.py",
           status: "modified",
-          patch: '@@\n-    dependencies = [("chat", "0042_a")]\n+    dependencies = [("chat", "0042_add_widget_flag")]',
+          patch:
+            '@@\n-    dependencies = [("chat", "0042_a")]\n+    dependencies = [("chat", "0042_add_widget_flag")]',
         },
       ],
       baseFiles: BASE,
@@ -281,8 +285,11 @@ describe("detectMigrationCollisions", () => {
 
   it("adds a serialization dependency without replacing an unchanged same-app parent", () => {
     const collisions = detectMigrationCollisions({
-      files: [added("chat/migrations/0042_a.py"), added("chat/migrations/0043_b.py"),
-        { ...added("chat/migrations/0045_d.py"), patch: '+dependencies = [("chat", "0043_b")]' }],
+      files: [
+        added("chat/migrations/0042_a.py"),
+        added("chat/migrations/0043_b.py"),
+        { ...added("chat/migrations/0045_d.py"), patch: '+dependencies = [("chat", "0043_b")]' },
+      ],
       baseFiles: ["chat/migrations/0042_existing.py", "chat/migrations/0045_existing.py"],
     });
     const body = renderMigrationCollisionComment({ collisions, base_ref: "main", base_sha: "" });

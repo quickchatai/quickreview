@@ -55,7 +55,13 @@ import {
 } from "../src/bench/aacr.js";
 import { parseReferenceLabels, recallByQuality, renderReport } from "../src/bench/report.js";
 import { renderReviewFromRecord } from "../src/reviewrender.js";
-import { AuthExpiring, benchAuthFrom, DISABLED_REFRESH, syncBenchAuth, BENCH_RETRY } from "../src/bench/auth.js";
+import {
+  AuthExpiring,
+  benchAuthFrom,
+  DISABLED_REFRESH,
+  syncBenchAuth,
+  BENCH_RETRY,
+} from "../src/bench/auth.js";
 import {
   bridgeDelta,
   OCR_HARNESS_DEFAULTS,
@@ -1933,7 +1939,9 @@ describe("report and result bookkeeping", () => {
       // An earlier attempt's review, on a case whose store is now gone.
       writeFileSync(
         join(caseDir, "comments.json"),
-        JSON.stringify([{ path: "f.ts", line: 12, body: "[blocker] the earlier attempt's finding" }]),
+        JSON.stringify([
+          { path: "f.ts", line: 12, body: "[blocker] the earlier attempt's finding" },
+        ]),
       );
       writeFileSync(join(caseDir, "review.md"), "the earlier attempt's body\n");
       writeFileSync(join(caseDir, "findings-record.json"), JSON.stringify({ findings: [] }));

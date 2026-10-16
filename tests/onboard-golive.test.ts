@@ -95,7 +95,8 @@ function harness(
   const runner = {
     run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
       if (args.includes("ps")) {
-        if (o.psFails) return { code: 1, stdout: "", stderr: "Cannot connect to the Docker daemon" };
+        if (o.psFails)
+          return { code: 1, stdout: "", stderr: "Cannot connect to the Docker daemon" };
         const rows = (o.daemonRunning ?? true) ? [{ Service: "daemon", State: "running" }] : [];
         return { code: 0, stdout: JSON.stringify(rows), stderr: "" };
       }
@@ -362,7 +363,10 @@ describe("declining is a first-class outcome", () => {
   });
 
   it("a decline on a LIVE installation is refused, records nothing and never claims file-only reviews", async () => {
-    writeFileSync(join(root, "config.toml"), exampleConfig.replace(/^dry_run = true/m, "dry_run = false"));
+    writeFileSync(
+      join(root, "config.toml"),
+      exampleConfig.replace(/^dry_run = true/m, "dry_run = false"),
+    );
     seedChoices({ [PROOF_CHOICE_KEY]: PROOF, [GO_LIVE_CHOICE_KEY]: "live" });
     const h = harness();
     const before = configText();
@@ -377,7 +381,10 @@ describe("declining is a first-class outcome", () => {
   });
 
   it("a recorded decline later hand-flipped to live verifies as LIVE, not as dry-run", async () => {
-    writeFileSync(join(root, "config.toml"), exampleConfig.replace(/^dry_run = true/m, "dry_run = false"));
+    writeFileSync(
+      join(root, "config.toml"),
+      exampleConfig.replace(/^dry_run = true/m, "dry_run = false"),
+    );
     const report = await goLiveStep().verify({
       adapters: harness().adapters,
       input: {},
@@ -456,7 +463,9 @@ describe("the restart that makes the flip real is never forgotten", () => {
       confirm: GO_LIVE_CONFIRMATION,
     });
     expect(result.ok).toBe(false);
-    expect(result.failures.join(" ")).toMatch(/daemon-restart: config is on disk but its delivery is unknown/);
+    expect(result.failures.join(" ")).toMatch(
+      /daemon-restart: config is on disk but its delivery is unknown/,
+    );
     expect(h.restarts).toEqual([]);
   });
 
@@ -489,15 +498,24 @@ describe("the restart that makes the flip real is never forgotten", () => {
       decision: "go_live",
       confirm: GO_LIVE_CONFIRMATION,
     });
-    writeFileSync(join(root, "config.toml"), configText().replace(/^dry_run = false/m, "dry_run = true"));
+    writeFileSync(
+      join(root, "config.toml"),
+      configText().replace(/^dry_run = false/m, "dry_run = true"),
+    );
     const declined = await harness().engine.runStep(GO_LIVE_STEP_ID, { decision: "stay_dry_run" });
     expect(declined.ok).toBe(true);
-    writeFileSync(join(root, "config.toml"), configText().replace(/^dry_run = true/m, "dry_run = false"));
+    writeFileSync(
+      join(root, "config.toml"),
+      configText().replace(/^dry_run = true/m, "dry_run = false"),
+    );
     expect((await harness().engine.verifyAll()).ok).toBe(true);
   });
 
   it("re-offering on a LIVE installation says it is live, not that dry_run is true", async () => {
-    writeFileSync(join(root, "config.toml"), exampleConfig.replace(/^dry_run = true/m, "dry_run = false"));
+    writeFileSync(
+      join(root, "config.toml"),
+      exampleConfig.replace(/^dry_run = true/m, "dry_run = false"),
+    );
     seedChoices({ [PROOF_CHOICE_KEY]: PROOF });
     const result = await harness().engine.runStep(GO_LIVE_STEP_ID, {});
     const offer = result.checks.map((c) => c.detail).join(" ");

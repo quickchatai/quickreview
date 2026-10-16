@@ -107,7 +107,14 @@ describe("sweprbench_export.py — unfinished cases", () => {
     (status) => {
       const items = exportRun(
         [{ content: "[blocker] crash\n\n_P1 · confidence 1.00_", path: "a.py", start_line: 9 }],
-        [{ path: "a.py", line: 4, side: "LEFT", body: "[question] gone?\n\n_P2 · confidence 0.9_" }],
+        [
+          {
+            path: "a.py",
+            line: 4,
+            side: "LEFT",
+            body: "[question] gone?\n\n_P2 · confidence 0.9_",
+          },
+        ],
         status,
       );
       expect(items).toEqual([]);

@@ -495,7 +495,8 @@ describe("planFinds — TWO finds a round", () => {
     expect(lessonFindLimit(5000)).toBe(200);
     // Never less than either of the per-row plan's per-find limits, and always room for
     // the whole corpus and its non-file records while under the ceiling.
-    for (let n = 0; n <= 96; n++) expect(lessonFindLimit(n)).toBeGreaterThanOrEqual(Math.max(40, n * 2));
+    for (let n = 0; n <= 96; n++)
+      expect(lessonFindLimit(n)).toBeGreaterThanOrEqual(Math.max(40, n * 2));
     expect(planFinds({ title: "T", rows, prFiles: ["a"] }).finds[1]!.limit).toBe(200);
   });
 });
@@ -704,7 +705,13 @@ describe("selectRound", () => {
 
   it("each role gets ITS cap: the validator 20 of 25 eligible, the cases 8 of 12 — every cut listed", () => {
     // Five discovery rows, five dont-raise lessons each: 25 the validator may take.
-    const LENSES = ["pass-baseline", "pass-security", "pass-ui", "pass-contracts", "pass-data-safety"];
+    const LENSES = [
+      "pass-baseline",
+      "pass-security",
+      "pass-ui",
+      "pass-contracts",
+      "pass-data-safety",
+    ];
     const five: SelectionRow[] = [
       ...LENSES.map((lens, i) => ({ row: i, lens, agent: `${lens}--sol-med` })),
       { row: 5, lens: "pass-validate", agent: "pass-validate--sol-high" },
@@ -808,7 +815,10 @@ describe("selectRound", () => {
         0: {
           status: "ok",
           hits: [
-            hit("20261001T000000-docs.md", lesson("dont-raise", { lens: "pass-sweep", paths: "docs/**" })),
+            hit(
+              "20261001T000000-docs.md",
+              lesson("dont-raise", { lens: "pass-sweep", paths: "docs/**" }),
+            ),
           ],
         },
       }),
@@ -912,7 +922,11 @@ describe("selectRound", () => {
         plan,
         outcomes: outcomesFor(
           plan,
-          { 0: { status: "ok", hits: [] }, 1: { status: "ok", hits: [] }, 2: { status: "ok", hits: [] } },
+          {
+            0: { status: "ok", hits: [] },
+            1: { status: "ok", hits: [] },
+            2: { status: "ok", hits: [] },
+          },
           { status: "ok", hits: h },
         ),
         retired: new Set(),
@@ -961,7 +975,10 @@ describe("two-find equivalence — over an engine that returns the whole corpus,
 
   /** The fake engine's answer to every planned find: the WHOLE corpus of its
    * area, whatever the query or the limit. */
-  function wholeCorpus(plan: FindPlan, order: "as-is" | "reversed" = "as-is"): Map<string, FindOutcome> {
+  function wholeCorpus(
+    plan: FindPlan,
+    order: "as-is" | "reversed" = "as-is",
+  ): Map<string, FindOutcome> {
     const pick = (hits: FindHit[]) => (order === "reversed" ? [...hits].reverse() : hits);
     return new Map(
       plan.finds.map(
@@ -1047,14 +1064,25 @@ describe("two-find equivalence — over an engine that returns the whole corpus,
       expect(cuts).toContain("items");
       expect(cuts).toContain("tokens");
       const drops = new Set(old.flatMap((r) => Object.keys(r.dropped)));
-      for (const d of ["out_of_area", "duplicate", "moved", "retired", "not_lesson", "kind_unknown", "lens", "paths"])
+      for (const d of [
+        "out_of_area",
+        "duplicate",
+        "moved",
+        "retired",
+        "not_lesson",
+        "kind_unknown",
+        "lens",
+        "paths",
+      ])
         expect(drops, d).toContain(d);
       if (v.suppressed.length > 0) {
         expect(drops).toContain("suppressed");
         expect(drops).toContain("as_of");
       }
       const caseDrops = Object.keys(old.find((r) => r.role === "cases")!.dropped);
-      expect(caseDrops).toEqual(expect.arrayContaining(["same_pr", "paths", "retired", "not_case"]));
+      expect(caseDrops).toEqual(
+        expect.arrayContaining(["same_pr", "paths", "retired", "not_case"]),
+      );
     });
   }
 

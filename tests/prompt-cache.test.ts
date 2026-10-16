@@ -154,7 +154,9 @@ describe("the leaf spawn rewrite", () => {
       expect(w.spawn.args.at(-1)).toBe(WARMUP_TASK);
       expect(w.spawn.args.slice(0, 4)).toEqual(args.slice(0, 4));
       expect(w.spawn.args).toContain("key-1");
-      expect(w.spawn.args[w.spawn.args.indexOf("--model") + 1]).toBe("openai-codex/gpt-6.1-sol:high");
+      expect(w.spawn.args[w.spawn.args.indexOf("--model") + 1]).toBe(
+        "openai-codex/gpt-6.1-sol:high",
+      );
       expect(w.spawn.args[w.spawn.args.indexOf("--extension") + 1]).toBe(
         "/opt/quickreview/sandbox/extensions/leaf-cache.ts",
       );
@@ -174,13 +176,28 @@ describe("the leaf spawn rewrite", () => {
 
     it("the group's later children wait for the same warm-up and bring none", () => {
       const { task, d } = setup();
-      const first = rewriteLeafSpawn("/usr/bin/node", nativeArgs(taskPointer(task(1))), undefined, d)!;
-      const second = rewriteLeafSpawn("/usr/bin/node", nativeArgs(taskPointer(task(2))), undefined, d)!;
+      const first = rewriteLeafSpawn(
+        "/usr/bin/node",
+        nativeArgs(taskPointer(task(1))),
+        undefined,
+        d,
+      )!;
+      const second = rewriteLeafSpawn(
+        "/usr/bin/node",
+        nativeArgs(taskPointer(task(2))),
+        undefined,
+        d,
+      )!;
       expect(second.warmup).toBeUndefined();
       expect(second.child.args[2]).toBe(first.warmup!.readyFile);
       expect(second.child.args).toContain("key-1");
       // The third child is a new group (size 2): a new key and its own warm-up.
-      const third = rewriteLeafSpawn("/usr/bin/node", nativeArgs(taskPointer(task(3))), undefined, d)!;
+      const third = rewriteLeafSpawn(
+        "/usr/bin/node",
+        nativeArgs(taskPointer(task(3))),
+        undefined,
+        d,
+      )!;
       expect(third.warmup).toBeDefined();
       expect(third.child.args).toContain("key-2");
     });
@@ -248,13 +265,13 @@ describe("the pack-first payload (child side)", () => {
   });
 
   it("a body appended bare at the end is lifted out too", () => {
-    expect(packFirstPayload(payload(`${base}\n\n${lens}\n`), lens, "PACK")!.instructions).toBe(base);
+    expect(packFirstPayload(payload(`${base}\n\n${lens}\n`), lens, "PACK")!.instructions).toBe(
+      base,
+    );
   });
 
   it("fail-open: any unexpected shape sends the original", () => {
-    expect(
-      packFirstPayload(payload(`${base}\n${lens}\n${lens}`), lens, "PACK"),
-    ).toBeUndefined(); // ambiguous: twice
+    expect(packFirstPayload(payload(`${base}\n${lens}\n${lens}`), lens, "PACK")).toBeUndefined(); // ambiguous: twice
     expect(packFirstPayload(payload(`${base}\n\nsomething else`), lens, "PACK")).toBeUndefined();
     expect(packFirstPayload(payload(lens), lens, "PACK")).toBeUndefined(); // nothing left as base
     expect(packFirstPayload({ instructions: `${base}\n\n${lens}` }, lens, "PACK")).toBeUndefined();

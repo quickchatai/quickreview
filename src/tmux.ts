@@ -99,7 +99,6 @@ function sessionNames(stdout: string): string[] {
     .filter((l) => l.length > 0);
 }
 
-
 export interface TmuxOptions {
   exec?: ExecFn;
   /** Binary name — overridable for the container wrapper. */

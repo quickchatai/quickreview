@@ -122,8 +122,7 @@ export const BASH_RULES: BashRule[] = [
     // (`--w…` — the only restore long option starting with w), or `-W` alone
     // or anywhere in a combined short flag (`-SW`, `-WS`, `-WsHEAD` with an
     // attached source).
-    pattern:
-      /\bgit\s+restore\b(?:(?![^;&|\n]*--staged)|(?=[^;&|\n]*\s(?:--w[\w-]*|-[A-Za-z]*W)))/,
+    pattern: /\bgit\s+restore\b(?:(?![^;&|\n]*--staged)|(?=[^;&|\n]*\s(?:--w[\w-]*|-[A-Za-z]*W)))/,
     reason:
       "rule 11: git restore that touches the worktree (--worktree, -W, or no --staged) discards uncommitted changes. --staged alone is allowed — it touches the index, not the files.",
   },

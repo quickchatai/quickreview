@@ -333,7 +333,10 @@ describe("the boot build (executed)", () => {
     const bin = join(dir, "bin");
     const log = join(dir, "npm.log");
     const script = join(dir, "build.sh");
-    writeFileSync(script, `set -euo pipefail\nSANDBOX=${JSON.stringify(join(dir, "sandbox"))}\n${block}`);
+    writeFileSync(
+      script,
+      `set -euo pipefail\nSANDBOX=${JSON.stringify(join(dir, "sandbox"))}\n${block}`,
+    );
     const result = spawnSync("bash", [script], {
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, NPM_LOG: log },
       stdio: ["ignore", "pipe", "pipe"],
@@ -352,7 +355,9 @@ describe("the boot build (executed)", () => {
     mkdirSync(join(dir, "sandbox", "dist"), { recursive: true });
     mkdirSync(join(dir, "sandbox", "node_modules"));
     writeFileSync(join(dir, "sandbox", "package-lock.json"), '{"v":1}\n');
-    writeFileSync(join(dir, "bin", "npm"), '#!/usr/bin/env bash\necho "$*" >> "$NPM_LOG"\n', { mode: 0o755 });
+    writeFileSync(join(dir, "bin", "npm"), '#!/usr/bin/env bash\necho "$*" >> "$NPM_LOG"\n', {
+      mode: 0o755,
+    });
   }
 
   it("a restart with an unchanged lockfile still builds — never runs a stale dist/", () => {

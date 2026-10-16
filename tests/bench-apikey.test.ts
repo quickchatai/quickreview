@@ -94,13 +94,21 @@ describe("the switch", () => {
         const fp = authFingerprint("api-key");
         expect(fp.inference?.provider).toBe("google");
         expect(JSON.stringify(fp)).not.toContain("fake-secret");
-        syncBenchAuth({ srcDir: join(tmp, "absent"), dstDir: tmp, root: "/r", needMs: 0, mode: "api-key" });
+        syncBenchAuth({
+          srcDir: join(tmp, "absent"),
+          dstDir: tmp,
+          root: "/r",
+          needMs: 0,
+          mode: "api-key",
+        });
         const models = JSON.parse(readFileSync(join(tmp, "models.json"), "utf8"));
         expect(models).toEqual(googleModels());
         // Added to the BUILT-IN provider: no baseUrl or key of its own, the native Gemini API.
         expect(Object.keys(models.providers)).toEqual(["google"]);
         expect(models.providers.google.baseUrl).toBeUndefined();
-        const argon = models.providers.google.models.find((m: { id: string }) => m.id === "gemini-4-argon");
+        const argon = models.providers.google.models.find(
+          (m: { id: string }) => m.id === "gemini-4-argon",
+        );
         expect(argon.api).toBe("google-generative-ai");
       });
       withEnv({ QCR_BENCH_PROVIDER: "digitalocean", DIGITALOCEAN_API_KEY: "x" }, () => {
@@ -455,61 +463,77 @@ describe("the host side (bench.sh, ext.sh)", () => {
   const ext = readFileSync(join(ROOT, "bench", "aacr", "ext", "ext.sh"), "utf8");
 
   it.each([
-    { provider: "digitalocean", keyVar: "DIGITALOCEAN_API_KEY", envVar: "QCR_BENCH_DIGITALOCEAN_ENV", model: "digitalocean/glm-5.3-flash" },
-    { provider: "google", keyVar: "GEMINI_API_KEY", envVar: "QCR_BENCH_GOOGLE_ENV", model: "google/gemini-4-argon" },
-  ])("$provider passes the key file only to review case containers; bookkeeping has the same provider fingerprint", ({ provider, keyVar, envVar, model }) => {
-    const tmp = mkdtempSync(join(tmpdir(), "bench-gradient-shell-"));
-    try {
-      const bin = join(tmp, "bin");
-      mkdirSync(bin);
-      const log = join(tmp, "docker.log");
-      writeFileSync(join(bin, "docker"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${log}"\n`);
-      chmodSync(join(bin, "docker"), 0o755);
-      const keyFile = join(tmp, `${provider}.env`);
-      writeFileSync(keyFile, `${keyVar}=fake-gradient-secret\n`);
-      for (const phase of ["init", "case", "finish"]) {
-        const r = spawnSync(
-          "bash",
-          [
-            join(ROOT, "bench/aacr/bench.sh"),
-            "review",
-            "--phase",
-            phase,
-            "--run",
-            `gradient-${phase}`,
-            "--set",
-            "smoke10",
-            "--config",
-            `models.conversation=${model}`,
-          ],
-          {
-            env: {
-              PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-              HOME: tmp,
-              QCR_BENCH_RUNS_DIR: join(tmp, "runs"),
-              QCR_BENCH_PROVIDER: provider,
-              [envVar]: keyFile,
-            },
-            encoding: "utf8",
-          },
+    {
+      provider: "digitalocean",
+      keyVar: "DIGITALOCEAN_API_KEY",
+      envVar: "QCR_BENCH_DIGITALOCEAN_ENV",
+      model: "digitalocean/glm-5.3-flash",
+    },
+    {
+      provider: "google",
+      keyVar: "GEMINI_API_KEY",
+      envVar: "QCR_BENCH_GOOGLE_ENV",
+      model: "google/gemini-4-argon",
+    },
+  ])(
+    "$provider passes the key file only to review case containers; bookkeeping has the same provider fingerprint",
+    ({ provider, keyVar, envVar, model }) => {
+      const tmp = mkdtempSync(join(tmpdir(), "bench-gradient-shell-"));
+      try {
+        const bin = join(tmp, "bin");
+        mkdirSync(bin);
+        const log = join(tmp, "docker.log");
+        writeFileSync(
+          join(bin, "docker"),
+          `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${log}"\n`,
         );
-        expect(r.status, r.stderr).toBe(0);
-        const call = readFileSync(log, "utf8")
-          .trim()
-          .split("\n")
-          .filter((l) => l.startsWith("run "))
-          .at(-1)!;
-        expect(call).toContain(`QCR_BENCH_PROVIDER=${provider}`);
-        expect(call).toContain("QCR_BENCH_AUTH=api-key");
-        expect(call).not.toContain("fake-gradient-secret");
-        expect(call).not.toContain("pi-agent-src");
-        if (phase === "case") expect(call).toContain(`--env-file ${keyFile}`);
-        else expect(call).not.toContain("--env-file");
+        chmodSync(join(bin, "docker"), 0o755);
+        const keyFile = join(tmp, `${provider}.env`);
+        writeFileSync(keyFile, `${keyVar}=fake-gradient-secret\n`);
+        for (const phase of ["init", "case", "finish"]) {
+          const r = spawnSync(
+            "bash",
+            [
+              join(ROOT, "bench/aacr/bench.sh"),
+              "review",
+              "--phase",
+              phase,
+              "--run",
+              `gradient-${phase}`,
+              "--set",
+              "smoke10",
+              "--config",
+              `models.conversation=${model}`,
+            ],
+            {
+              env: {
+                PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+                HOME: tmp,
+                QCR_BENCH_RUNS_DIR: join(tmp, "runs"),
+                QCR_BENCH_PROVIDER: provider,
+                [envVar]: keyFile,
+              },
+              encoding: "utf8",
+            },
+          );
+          expect(r.status, r.stderr).toBe(0);
+          const call = readFileSync(log, "utf8")
+            .trim()
+            .split("\n")
+            .filter((l) => l.startsWith("run "))
+            .at(-1)!;
+          expect(call).toContain(`QCR_BENCH_PROVIDER=${provider}`);
+          expect(call).toContain("QCR_BENCH_AUTH=api-key");
+          expect(call).not.toContain("fake-gradient-secret");
+          expect(call).not.toContain("pi-agent-src");
+          if (phase === "case") expect(call).toContain(`--env-file ${keyFile}`);
+          else expect(call).not.toContain("--env-file");
+        }
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
       }
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("on the key route auth_mounts returns before any login volume is touched", () => {
     const fn = sh.slice(

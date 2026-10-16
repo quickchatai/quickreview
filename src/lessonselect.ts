@@ -257,7 +257,8 @@ export async function prefetchLessons(
             );
           },
           (err: unknown) => {
-            if (!expired) arrived.set(f.key, { status: "unreadable", reason: `error: ${String(err)}` });
+            if (!expired)
+              arrived.set(f.key, { status: "unreadable", reason: `error: ${String(err)}` });
           },
         );
       await Promise.race([call, ended]);
@@ -629,7 +630,10 @@ export class RoundLessonSelector implements RoundLessonHook {
           `lessons: round ${roundId} discarded before its handoff — its selection record dropped (${dropped.selections} role(s))`,
         );
     } catch (err) {
-      this.log(`lessons: round ${roundId} discarded, but its selection record could not be dropped (ignored)`, err);
+      this.log(
+        `lessons: round ${roundId} discarded, but its selection record could not be dropped (ignored)`,
+        err,
+      );
     }
   }
 
@@ -729,7 +733,12 @@ export class RoundLessonSelector implements RoundLessonHook {
     const corpus = engine ? this.corpusOf(engine) : null;
     const plan = planFinds({ title: order.title, rows, prFiles, addable, corpus });
     const lessonFind = plan.finds.find((f) => f.key === plan.lessonsKey) ?? null;
-    if (lessonFind && corpus !== null && corpus > lessonFind.limit && !this.corpusWarned.has(corpus)) {
+    if (
+      lessonFind &&
+      corpus !== null &&
+      corpus > lessonFind.limit &&
+      !this.corpusWarned.has(corpus)
+    ) {
       this.corpusWarned.add(corpus);
       this.log(
         `lessons: the lesson corpus (${corpus} files in experiences/) outgrows one find's limit (${lessonFind.limit}) — the round-level query's similarity now decides which ${lessonFind.limit} each round filters`,
@@ -859,8 +868,7 @@ export class RoundLessonSelector implements RoundLessonHook {
             ? ` — the round waited up to the budget (${budgetMs} ms, beside its memory seed) and got no lessons from those finds`
             : " — those deliver nothing; the round was not delayed"),
       );
-    }
-    else if (refused > 0)
+    } else if (refused > 0)
       this.log(
         `lessons: #${order.pr} round ${order.round_no} memory refused ${refused} of ${plan.finds.length} find(s)${note ? ` (${note})` : ""}`,
       );

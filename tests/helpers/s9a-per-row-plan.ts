@@ -25,13 +25,20 @@ export const S9A_MAX_FINDS_PER_ROUND = 24;
 const QUERY_MAX_CHARS = 600;
 
 /** The per-row query: the PR title, the shape of the row's files, the lens. */
-export function s9aRowQuery(input: { title: string; lens: string; files: readonly string[] }): string {
+export function s9aRowQuery(input: {
+  title: string;
+  lens: string;
+  files: readonly string[];
+}): string {
   const base = roundContextQuery({
     title: input.title,
     files: input.files.map((filename) => ({ filename })),
   });
   const lensWord = input.lens.replace(/^pass-/, "");
-  return [base, lensWord].filter((p) => p !== "").join(" — ").slice(0, QUERY_MAX_CHARS);
+  return [base, lensWord]
+    .filter((p) => p !== "")
+    .join(" — ")
+    .slice(0, QUERY_MAX_CHARS);
 }
 
 export function s9aPlanFinds(input: {

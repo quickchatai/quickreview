@@ -216,7 +216,8 @@ const TRIGGER_SEARCH_MAX_PAGES = 10;
 
 /** The trigger events the history importer reconstructs — one list for the
  * first query and every follow-up page. */
-const HISTORY_TIMELINE_TYPES = "[LABELED_EVENT, REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT]";
+const HISTORY_TIMELINE_TYPES =
+  "[LABELED_EVENT, REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT]";
 
 /** Hard stop for a connection walk — a server that keeps answering
  * hasNextPage with a cursor that never ends cannot loop forever. */

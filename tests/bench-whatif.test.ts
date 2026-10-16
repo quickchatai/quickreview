@@ -187,7 +187,10 @@ describe("raw lens candidates from pi's event stream", () => {
   });
 
   it("a range written into the path anchors at its END, as a `line:` range does", () => {
-    const embedded = parseFindingsBlock("- path: src/a.ts:10-30\n  claim: The cap is never read.", WHO);
+    const embedded = parseFindingsBlock(
+      "- path: src/a.ts:10-30\n  claim: The cap is never read.",
+      WHO,
+    );
     const field = parseFindingsBlock(
       "- path: src/a.ts\n  line: 10-30\n  claim: The cap is never read.",
       WHO,
@@ -774,7 +777,10 @@ describe("the report on control comments and missing inputs", () => {
     const out = mkdtempSync(join(tmpdir(), "whatif-evidence-"));
     cpSync(FIX, join(out, "source"), { recursive: true });
     const recPath = join(out, "source", "cases", COMFY, "findings-record.json");
-    const before = buildWhatifCase(join(out, "source"), CASES.find((c) => c.instance_id === COMFY)!);
+    const before = buildWhatifCase(
+      join(out, "source"),
+      CASES.find((c) => c.instance_id === COMFY)!,
+    );
     const rec = JSON.parse(readFileSync(recPath, "utf8")) as { findings: unknown[] };
     // A killed row no lens candidate fits, with evidence but no line: its
     // extra is excluded (no anchor), so it adds nothing.
@@ -785,7 +791,10 @@ describe("the report on control comments and missing inputs", () => {
       evidence: "an unanchored claim",
     });
     writeFileSync(recPath, JSON.stringify(rec));
-    const after = buildWhatifCase(join(out, "source"), CASES.find((c) => c.instance_id === COMFY)!);
+    const after = buildWhatifCase(
+      join(out, "source"),
+      CASES.find((c) => c.instance_id === COMFY)!,
+    );
     const k = (b: typeof before) => b.summary.variants["posted+killed"];
     expect(k(after).excluded.no_line).toBe(k(before).excluded.no_line + 1);
     expect(k(after).from_record_evidence).toBe(k(before).from_record_evidence);

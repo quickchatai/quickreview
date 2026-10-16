@@ -120,9 +120,13 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("git restore -SW src/tui/app.ts")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore --staged -WS src/tui/app.ts")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore --staged -WsHEAD~1 src/tui/app.ts")).toMatch(/rule 11/);
-    expect(bashBlockReason("git restore --staged -Wsorigin/main src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --staged -Wsorigin/main src/tui/app.ts")).toMatch(
+      /rule 11/,
+    );
     expect(bashBlockReason("git restore --staged --work src/tui/app.ts")).toMatch(/rule 11/);
-    expect(bashBlockReason("git restore --source=HEAD~1 --staged --worktree src/tui/app.ts")).toMatch(/rule 11/);
+    expect(
+      bashBlockReason("git restore --source=HEAD~1 --staged --worktree src/tui/app.ts"),
+    ).toMatch(/rule 11/);
     expect(bashBlockReason("git restore --source HEAD --worktree --staged .")).toMatch(/rule 11/);
     expect(bashBlockReason("git clean -fd")).toMatch(/rule 11/);
   });
@@ -136,7 +140,9 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("git restore --staged src/tui/app.ts")).toBeUndefined();
     expect(bashBlockReason("git restore --staged src/tui/app.ts && git status")).toBeUndefined();
     expect(bashBlockReason("git restore --source=HEAD~1 --staged src/tui/app.ts")).toBeUndefined();
-    expect(bashBlockReason("git restore --staged src/Widget.ts && git worktree list")).toBeUndefined();
+    expect(
+      bashBlockReason("git restore --staged src/Widget.ts && git worktree list"),
+    ).toBeUndefined();
     expect(bashBlockReason("git log --oneline -5")).toBeUndefined();
     // Words INSIDE other words or paths never trip the anchored patterns.
     expect(bashBlockReason("grep -rn 'git push' docs/")).toMatch(/rule 8/); // quoted text still matches — accepted: belt, not parser

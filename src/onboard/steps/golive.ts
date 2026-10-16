@@ -531,7 +531,8 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
             {
               name: "decision",
               ok: true,
-              detail: "dry-run, by the operator's own decision (config.toml has dry_run = true). A finished installation.",
+              detail:
+                "dry-run, by the operator's own decision (config.toml has dry_run = true). A finished installation.",
             },
           ],
         };

@@ -55,7 +55,10 @@ export const LEAF_CACHE_DEBUG_ENV = "QCR_LEAF_CACHE_DEBUG";
  * request order (never their content). */
 export function prefixDigest(payload: unknown): string {
   const h = (v: unknown) =>
-    createHash("sha256").update(JSON.stringify(v ?? null)).digest("hex").slice(0, 10);
+    createHash("sha256")
+      .update(JSON.stringify(v ?? null))
+      .digest("hex")
+      .slice(0, 10);
   if (typeof payload !== "object" || payload === null) return "no payload";
   const p = payload as Record<string, unknown>;
   const input = Array.isArray(p.input) ? p.input : [];

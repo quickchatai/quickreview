@@ -423,12 +423,7 @@ export async function probeContainerLogin(
   return { state, destination, mount };
 }
 
-function loginCheck(
-  name: string,
-  label: string,
-  attach: string,
-  probe: LoginProbe,
-): CheckResult {
+function loginCheck(name: string, label: string, attach: string, probe: LoginProbe): CheckResult {
   switch (probe.state) {
     case "ok":
       return {
@@ -515,7 +510,10 @@ async function localDaemonContainer(
     composeArgs(root, ["ps", "--all", "--format", "{{.Name}}", DAEMON_SERVICE]),
   );
   if (ps.code === 0) {
-    const name = ps.stdout.split("\n").map((l) => l.trim()).find((l) => l !== "");
+    const name = ps.stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l !== "");
     if (name) return name;
   }
   return daemonContainerName(configText);
@@ -577,9 +575,7 @@ export function parseRouteAnswer(answer: string): AuthRoute | null {
 /** The recorded route: the shared choice reader first, then this step's own
  * record (an older checklist), read through the same reader. */
 function recordedRoute(ctx: StepContext): AuthRoute | null {
-  return (
-    authRouteOf(ctx.choices) ?? authRouteOf({ [AUTH_ROUTE_CHOICE_KEY]: ctx.data.route })
-  );
+  return authRouteOf(ctx.choices) ?? authRouteOf({ [AUTH_ROUTE_CHOICE_KEY]: ctx.data.route });
 }
 
 interface RouteDecision {

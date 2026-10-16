@@ -84,9 +84,6 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
       (n, f) => n + (readFileSync(f, "utf8").match(/awaiting_human/g) ?? []).length,
       0,
     );
-    expect(
-      total,
-      "two mentions across two modules, both tombstones",
-    ).toBe(2);
+    expect(total, "two mentions across two modules, both tombstones").toBe(2);
   });
 });

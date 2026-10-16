@@ -2040,7 +2040,9 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
     expect(scopedFindTargets(areas)).toEqual(["viking://user/memories/experiences"]);
     expect(scopedFindTargets(areas, ROOT)).toEqual([`${ROOT}/experiences`]);
     expect(scopedFindTargets(areas, `${ROOT}/`)).toEqual([`${ROOT}/experiences`]);
-    expect(scopedFindTargets(areas, `${ROOT}/experiences/sub`)).toEqual([`${ROOT}/experiences/sub`]);
+    expect(scopedFindTargets(areas, `${ROOT}/experiences/sub`)).toEqual([
+      `${ROOT}/experiences/sub`,
+    ]);
     expect(scopedFindTargets(["experiences", "x"], ROOT)).toEqual([
       `${ROOT}/experiences`,
       `${ROOT}/x`,
@@ -2116,21 +2118,29 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
   });
 
   it("a review session writes no lesson, no pinned or owner entry, and no case", () => {
-    expect([...SCOPED_WRITE_REFUSED_AREAS]).toEqual(["experiences", "preferences", "finding-cases"]);
+    expect([...SCOPED_WRITE_REFUSED_AREAS]).toEqual([
+      "experiences",
+      "preferences",
+      "finding-cases",
+    ]);
     for (const uri of [
       `${ROOT}/experiences/x.md`,
       `${ROOT}/preferences/pinned/p.md`,
       `${ROOT}/preferences/m.md`,
       `${ROOT}/finding-cases/case-1.md`,
     ])
-      expect(scopedWriteRefusal([`${ROOT}/events/ok.md`, uri]), uri).toContain("Nothing was written");
+      expect(scopedWriteRefusal([`${ROOT}/events/ok.md`, uri]), uri).toContain(
+        "Nothing was written",
+      );
     expect(scopedWriteRefusal([`${ROOT}/events/ops.md`])).toBeNull();
     const tools = code("tools.ts");
     const write = tools.slice(tools.indexOf('name: "viking_write"'));
     expect(write).toContain(
       "const writeRefused = writeAreas ? scopedWriteRefusal(built.entries.map((e) => e.uri)) : null;",
     );
-    expect(write.indexOf("scopedWriteRefusal(")).toBeLessThan(write.indexOf("ns.client.batchWrite("));
+    expect(write.indexOf("scopedWriteRefusal(")).toBeLessThan(
+      write.indexOf("ns.client.batchWrite("),
+    );
   });
 
   it("a hand-typed #lesson header is refused — the header is the tool's to write", () => {

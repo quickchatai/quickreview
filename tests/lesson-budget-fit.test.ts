@@ -174,8 +174,12 @@ describe("[memory] shadow_budget_ms — the budget follows the mode", () => {
     expect(parseMemory({ shadow_budget_ms: 4500.7 }).shadow_budget_ms).toBe(4500);
     expect(parseMemory({ shadow_budget_ms: "soon" }).shadow_budget_ms).toBe(10_000);
     // The delivery budget's own ceiling is untouched by it.
-    expect(parseMemory({ shadow_budget_ms: 15_000, delivery_budget_ms: 9000 }).delivery_budget_ms).toBe(2000);
-    const example = parseConfig(readFileSync(resolve(process.cwd(), "config.example.toml"), "utf8"));
+    expect(
+      parseMemory({ shadow_budget_ms: 15_000, delivery_budget_ms: 9000 }).delivery_budget_ms,
+    ).toBe(2000);
+    const example = parseConfig(
+      readFileSync(resolve(process.cwd(), "config.example.toml"), "utf8"),
+    );
     expect(example.memory.shadow_budget_ms).toBe(10_000);
     const fixture = parseConfig(
       readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -207,7 +211,12 @@ describe("[memory] shadow_budget_ms — the budget follows the mode", () => {
       } else if (call === "select") {
         await s.select(order({ round_id: 12 }), FILES);
       } else {
-        await s.repoFacts({ pr: CORPUS_PR, title: "T", paths: ["docs/guide.md"], purpose: "recheck" });
+        await s.repoFacts({
+          pr: CORPUS_PR,
+          title: "T",
+          paths: ["docs/guide.md"],
+          purpose: "recheck",
+        });
       }
       expect(t.asked, `${mode}/${call}`).toEqual([expected]);
     }
@@ -576,7 +585,11 @@ describe("the daemon's shutdown cuts a shadow selection — never an awaited one
     );
     const t = manualTimers();
     const stop = new AbortController();
-    const p = prefetchLessons(engine, twoFinds, { budgetMs: 10_000, timer: t.timer, signal: stop.signal });
+    const p = prefetchLessons(engine, twoFinds, {
+      budgetMs: 10_000,
+      timer: t.timer,
+      signal: stop.signal,
+    });
     await flush();
     expect(engine.finds).toHaveLength(2);
     stop.abort();
@@ -607,11 +620,15 @@ describe("the daemon's shutdown cuts a shadow selection — never an awaited one
     // selection is whole (the entries' own headers still exclude), so it is
     // not a cut — it records, `retired_list: 0`.
     const listOut = new AbortController();
-    const pending = prefetchLessons(new FakeEngine(wholeCorpus, { retired: () => never() }), twoFinds, {
-      budgetMs: 10_000,
-      timer: manualTimers().timer,
-      signal: listOut.signal,
-    });
+    const pending = prefetchLessons(
+      new FakeEngine(wholeCorpus, { retired: () => never() }),
+      twoFinds,
+      {
+        budgetMs: 10_000,
+        timer: manualTimers().timer,
+        signal: listOut.signal,
+      },
+    );
     await flush();
     listOut.abort();
     expect(await pending).toMatchObject({ sent: 2, aborted: false, retired: null });
@@ -665,7 +682,11 @@ describe("the daemon's shutdown cuts a shadow selection — never an awaited one
     expect(ledger.roundRow(51)).toBeUndefined();
     expect(ledger.selections(51)).toEqual([]);
     expect(eventsOf(store, "lesson_selection")).toEqual([]);
-    expect(logs.filter((m) => /cut short by the daemon's shutdown \(1 of 2 find\(s\) answered\) — not recorded/.test(m))).toHaveLength(1);
+    expect(
+      logs.filter((m) =>
+        /cut short by the daemon's shutdown \(1 of 2 find\(s\) answered\) — not recorded/.test(m),
+      ),
+    ).toHaveLength(1);
     expect(activity.busy()).toBe(false);
 
     // After the stop: nothing starts, nothing is asked, nothing recorded.
@@ -673,7 +694,9 @@ describe("the daemon's shutdown cuts a shadow selection — never an awaited one
     await s.idle();
     expect(engine.finds).toHaveLength(2);
     expect(ledger.roundRow(52)).toBeUndefined();
-    expect(logs.filter((m) => /the daemon is stopping; no shadow selection/.test(m))).toHaveLength(1);
+    expect(logs.filter((m) => /the daemon is stopping; no shadow selection/.test(m))).toHaveLength(
+      1,
+    );
     expect(activity.busy()).toBe(false);
     store.close();
   });
@@ -725,7 +748,13 @@ describe("the daemon's shutdown cuts a shadow selection — never an awaited one
     expect(t.asked).toEqual([2000]);
     t.fireAll();
     expect(await p).not.toBeNull();
-    expect(ledger.roundRow(54)).toMatchObject({ mode: "on", state: "partial", finds: 2, answered: 1, timeouts: 1 });
+    expect(ledger.roundRow(54)).toMatchObject({
+      mode: "on",
+      state: "partial",
+      finds: 2,
+      answered: 1,
+      timeouts: 1,
+    });
     store.close();
   });
 });
@@ -819,7 +848,11 @@ describe("dispatch holds the round's window from the seed until the selection ta
       expect(r.seen["handoff"]).toEqual(["round #42"]);
       // The round is dispatched; its selection is still out — and holding.
       expect(r.activity.openLabels()).toEqual(["lessons #42"]);
-      expect(r.activity.trace.map((x) => x.ev)).toEqual(["+round #42", "+lessons #42", "-round #42"]);
+      expect(r.activity.trace.map((x) => x.ev)).toEqual([
+        "+round #42",
+        "+lessons #42",
+        "-round #42",
+      ]);
       t.fireAll();
       await r.selector!.idle();
       expect(r.activity.busy()).toBe(false);

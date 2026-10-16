@@ -1184,7 +1184,10 @@ describe("a round that finished during a hold is a backfill", () => {
       timeoutMs: 1000,
       now: clock.now,
     });
-    const at = (prs: Array<Partial<StatusSnapshot["prs"][number]>>, extra = {}): StatusSnapshot => ({
+    const at = (
+      prs: Array<Partial<StatusSnapshot["prs"][number]>>,
+      extra = {},
+    ): StatusSnapshot => ({
       ...snapshot(prs),
       heartbeat: clock.now().toISOString(),
       ...extra,
@@ -1229,9 +1232,9 @@ describe("a round that finished during a hold is a backfill", () => {
     const beat = "2026-08-25T10:00:00Z";
     await c.sweep({ ...snapshot([{ number: 9, rounds: 0 }]), heartbeat: beat }); // watching
     clock.advance(600); // 10:10 — the board's data is stale (the VM unreachable)
-    expect(
-      (await c.sweep({ ...snapshot([{ number: 9, rounds: 0 }]), heartbeat: beat })).held,
-    ).toBe("heartbeat-stale");
+    expect((await c.sweep({ ...snapshot([{ number: 9, rounds: 0 }]), heartbeat: beat })).held).toBe(
+      "heartbeat-stale",
+    );
     rounds.push(done(1, "2026-08-25T10:12:00Z"));
     clock.advance(600); // 10:20 — fresh data again
     await c.sweep({

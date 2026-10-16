@@ -559,9 +559,7 @@ describe("the tier line is honest-unknown", () => {
     as_of: "2026-10-07T10:00:00.000Z",
   };
   it("a daemon that predates lens-level matching reports no tiers: UNKNOWN, never an empty split", () => {
-    expect(lessonTierLine(S)).toBe(
-      "by tier: UNKNOWN (this daemon predates lens-level matching)",
-    );
+    expect(lessonTierLine(S)).toBe("by tier: UNKNOWN (this daemon predates lens-level matching)");
     expect(lessonDeliveryPhrase(S)).toContain(" — by tier: UNKNOWN");
     expect(lessonDeliveryPhrase(S)).not.toMatch(/class 0|lens 0/);
     // Its marks are all class-tier (the strict matcher): its total keeps

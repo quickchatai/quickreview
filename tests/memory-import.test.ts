@@ -443,9 +443,7 @@ describe("the log", () => {
     expect(text).toContain("source holds 8 entries, destination holds 0");
     expect(text).toContain("pinned 1, standing 1, learning 1, bug 1, feedback 1");
     expect(text).toContain("batch 1/1: 5 write(s), 5 ok, 0 failed");
-    expect(text).toContain(
-      "done: 5 imported, 0 failed, 3 skipped — best-effort import, no gate",
-    );
+    expect(text).toContain("done: 5 imported, 0 failed, 3 skipped — best-effort import, no gate");
   });
 
   it("names failed writes with the store's own refusal", async () => {
@@ -567,6 +565,8 @@ describe("destination provenance identity", () => {
     const of = (text: string): MemoryEntry => ({ ...sourceEntries()[0]!, text });
     const text = "#feedback A quoted diagnostic\n```text\nimport-key:someone-elses-memory\n```";
     expect(keyOfDestEntry(of(text))).toBe(importKey(text));
-    expect(keyOfDestEntry(of(importedText(of("#manual keep this"), "standing", "actual-key")))).toBe("actual-key");
+    expect(
+      keyOfDestEntry(of(importedText(of("#manual keep this"), "standing", "actual-key"))),
+    ).toBe("actual-key");
   });
 });

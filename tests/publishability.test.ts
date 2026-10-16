@@ -215,8 +215,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "src/commands.ts",
     tokens: ["owner_legacy"],
-    reason:
-      "LEGACY_COMMAND_NAMES maps the retired 'flag-owner-legacy' command to 'flag-owner'",
+    reason: "LEGACY_COMMAND_NAMES maps the retired 'flag-owner-legacy' command to 'flag-owner'",
   },
   {
     path: "src/wire.ts",
@@ -227,8 +226,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "config.example.toml",
     tokens: ["owner_legacy"],
-    reason:
-      "documents the legacy [slack] legacy_owner_slack_id alias an old config may still carry",
+    reason: "documents the legacy [slack] legacy_owner_slack_id alias an old config may still carry",
   },
   {
     path: "tests/prompt-provenance.test.ts",
@@ -438,8 +436,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "bench/aacr/hf/card.md",
     tokens: ["owner_legacy", "quickchat"],
-    reason:
-      "the dataset card's citations name the papers' author and affiliation",
+    reason: "the dataset card's citations name the papers' author and affiliation",
   },
   {
     path: "tests/hf-export.test.ts",
@@ -615,10 +612,7 @@ describe("publishability lint", () => {
       const offenders = tracked.filter((p) =>
         NAMED_TEAMMATE_CORPORA.some((d) => (d.endsWith("/") ? p.startsWith(d) : p === d)),
       );
-      expect(
-        offenders,
-        "per-teammate review corpora never travel — in ANY profile",
-      ).toEqual([]);
+      expect(offenders, "per-teammate review corpora never travel — in ANY profile").toEqual([]);
       // …and their absence is recorded as deliberate, not incidental.
       const dropped = (manifest.applied_exclusions ?? manifest.exclude).map((e) => e.path);
       for (const path of NAMED_TEAMMATE_CORPORA)

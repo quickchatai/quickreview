@@ -56,14 +56,27 @@ export function lessonCorpus(): FindHit[] {
     const month = i % 2 === 0 ? "09" : "10";
     const name = `2026${month}${day}T${String(i % 24).padStart(2, "0")}0000-l${i}.md`;
     const body = i % 6 === 0 ? `BIG ${"x".repeat(4400)}` : `Lesson ${i}.`;
-    hits.push({ uri: `${CORPUS_EXP}/${name}`, score: ((i * 37) % 100) / 100, text: typed(i, body) });
+    hits.push({
+      uri: `${CORPUS_EXP}/${name}`,
+      score: ((i * 37) % 100) / 100,
+      text: typed(i, body),
+    });
   }
   const special = (name: string, text: string, score = 0.5, area = CORPUS_EXP): void => {
     hits.push({ uri: `${area}/${name}`, score, text });
   };
-  special("20260901T000000-legacy-dr.md", "#lesson kind=dont-raise class=baseline.style evidence=pr:3\nNo style.");
-  special("20260902T000000-legacy-lf.md", "#lesson kind=look-for class=missed.y evidence=pr:4\nLook for y.");
-  special("20260903T000000-conv.md", "#convention #corpus topic=naming source=docs/x.md Use snake_case.");
+  special(
+    "20260901T000000-legacy-dr.md",
+    "#lesson kind=dont-raise class=baseline.style evidence=pr:3\nNo style.",
+  );
+  special(
+    "20260902T000000-legacy-lf.md",
+    "#lesson kind=look-for class=missed.y evidence=pr:4\nLook for y.",
+  );
+  special(
+    "20260903T000000-conv.md",
+    "#convention #corpus topic=naming source=docs/x.md Use snake_case.",
+  );
   special("20260904T000000-retired.md", `#retired ${typed(0, "Retired.")}`);
   special("20260905T000000-moved.md", "#retired #moved moved-to=events/x.md\nThis entry moved.");
   special("20260906T000000-unknown.md", "#eod-learning Something learned, polarity never said.");
@@ -89,7 +102,9 @@ export const CORPUS_SUPPRESSED = [`${CORPUS_EXP}/20261006T130000-suppressed.md`]
 function caseText(i: number): string {
   const pr = i % 9 === 0 ? CORPUS_PR : 200 + i;
   const path =
-    i % 5 === 4 ? "other/file.py" : CORPUS_PR_FILES[i % CORPUS_PR_FILES.length]!.replace(/ /g, "%20");
+    i % 5 === 4
+      ? "other/file.py"
+      : CORPUS_PR_FILES[i % CORPUS_PR_FILES.length]!.replace(/ /g, "%20");
   const lens = ["pass-baseline", "pass-ui", "pass-concurrency", "pass-security"][i % 4]!;
   const posted = `2026-${i % 2 === 0 ? "09" : "10"}-${String(1 + (i % 27)).padStart(2, "0")}T10:00:00Z`;
   return (

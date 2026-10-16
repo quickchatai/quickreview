@@ -208,9 +208,20 @@ describe("lens children's usage, from the parent's tool results", () => {
     JSON.stringify({
       type: "message",
       timestamp: ts,
-      message: { role: "toolResult", toolName, content: [], details: { mode: "parallel", results } },
+      message: {
+        role: "toolResult",
+        toolName,
+        content: [],
+        details: { mode: "parallel", results },
+      },
     });
-  const child = (model: string, input: number, output: number, cacheRead: number, cost: number) => ({
+  const child = (
+    model: string,
+    input: number,
+    output: number,
+    cacheRead: number,
+    cost: number,
+  ) => ({
     agent: "pass-x",
     model,
     usage: { input, output, cacheRead, cacheWrite: 0, cost, contextTokens: 0, turns: 3 },

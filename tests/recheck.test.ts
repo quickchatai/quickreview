@@ -122,12 +122,20 @@ describe("trivial-delta classifier", () => {
   });
 
   it("keeps a whitespace change inside a regex literal significant", () => {
-    expect(formattingOnly("@@\n-const pattern = /a b/;\n+const pattern = /ab/;", "src/x.ts")).toBe(false);
-    expect(formattingOnly("@@\n-if (/[ ]x/.test(s)) f();\n+if (/[]x/.test(s)) f();", "src/x.ts")).toBe(false);
+    expect(formattingOnly("@@\n-const pattern = /a b/;\n+const pattern = /ab/;", "src/x.ts")).toBe(
+      false,
+    );
+    expect(
+      formattingOnly("@@\n-if (/[ ]x/.test(s)) f();\n+if (/[]x/.test(s)) f();", "src/x.ts"),
+    ).toBe(false);
     expect(formattingOnly("@@\n-return /a  b/g;\n+return /a b/g;", "src/x.ts")).toBe(false);
-    expect(digitsOnly("@@\n-const p = /a b/;\n+const p = /ab/;", "app/migrations/0043_x.py")).toBe(false);
+    expect(digitsOnly("@@\n-const p = /a b/;\n+const p = /ab/;", "app/migrations/0043_x.py")).toBe(
+      false,
+    );
     // …while whitespace around it is still formatting.
-    expect(formattingOnly("@@\n-const pattern =   /a b/;\n+const pattern = /a b/;", "src/x.ts")).toBe(true);
+    expect(
+      formattingOnly("@@\n-const pattern =   /a b/;\n+const pattern = /a b/;", "src/x.ts"),
+    ).toBe(true);
     expect(formattingOnly("@@\n-    return /a b/;\n+  return /a b/;", "src/x.ts")).toBe(true);
     expect(formattingOnly("@@\n-x = a / b;\n+x = a/b;", "src/x.ts")).toBe(true);
   });
@@ -137,12 +145,20 @@ describe("trivial-delta classifier", () => {
     expect(formattingOnly("@@\n-x = a / b / c;\n+x = a/b/c;", "src/x.ts")).toBe(false);
     // A JSX closing tag followed by a string holding `/`.
     expect(formattingOnly('@@\n-<b>x</b>{" / q r"}\n+<b>x</b>{" / qr"}', "src/x.tsx")).toBe(false);
-    expect(formattingOnly('@@\n-<span>{a}</span>{" / "}{b}\n+<span>{a}</span>{" /"}{b}', "src/x.tsx")).toBe(false);
+    expect(
+      formattingOnly('@@\n-<span>{a}</span>{" / "}{b}\n+<span>{a}</span>{" /"}{b}', "src/x.tsx"),
+    ).toBe(false);
     // A `<` comparison followed by a string holding `/`.
-    expect(formattingOnly('@@\n-x = y</2; s = "a b / c d"\n+x = y</2; s = "a b / cd"', "src/x.ts")).toBe(false);
-    expect(formattingOnly('@@\n-if (a < b) s = "p / q r";\n+if (a < b) s = "p / qr";', "src/x.ts")).toBe(false);
+    expect(
+      formattingOnly('@@\n-x = y</2; s = "a b / c d"\n+x = y</2; s = "a b / cd"', "src/x.ts"),
+    ).toBe(false);
+    expect(
+      formattingOnly('@@\n-if (a < b) s = "p / q r";\n+if (a < b) s = "p / qr";', "src/x.ts"),
+    ).toBe(false);
     // Whitespace around those lines is still formatting.
-    expect(formattingOnly('@@\n-  <b>x</b>{" / q r"}\n+    <b>x</b>{" / q r"}', "src/x.tsx")).toBe(true);
+    expect(formattingOnly('@@\n-  <b>x</b>{" / q r"}\n+    <b>x</b>{" / q r"}', "src/x.tsx")).toBe(
+      true,
+    );
   });
 
   it("stays linear on a long unterminated slash run", () => {
@@ -165,14 +181,18 @@ describe("trivial-delta classifier", () => {
     ).toBe(false);
     // …while re-spacing that keeps every token is still formatting.
     expect(formattingOnly("@@\n-const n=a+b;\n+const  n = a + b;", "src/x.ts")).toBe(true);
-    expect(formattingOnly("@@\n-return f(a,b);\n+return f(\n+  a,\n+  b\n+);", "src/x.ts")).toBe(true);
+    expect(formattingOnly("@@\n-return f(a,b);\n+return f(\n+  a,\n+  b\n+);", "src/x.ts")).toBe(
+      true,
+    );
   });
 
   it("a statement-ending break never makes a renumber look trivial once digits are masked", () => {
     // A seam gap and a no-gap end both carry the break; only the seam keeps
     // its space, so masking a number-prefixed token cannot merge the two.
     expect(digitsOnly("@@\n-return\n-12_x\n+return\n+#_x", "app/migrations/0002_x.py")).toBe(false);
-    expect(digitsOnly("@@\n-x = a++\n-1_y\n+x = a++\n+#_y", "app/migrations/0002_x.py")).toBe(false);
+    expect(digitsOnly("@@\n-x = a++\n-1_y\n+x = a++\n+#_y", "app/migrations/0002_x.py")).toBe(
+      false,
+    );
   });
 
   it("keeps a line break that can end a statement significant", () => {
@@ -185,13 +205,18 @@ describe("trivial-delta classifier", () => {
     // Two shell commands against one, wherever the break falls.
     expect(formattingOnly("@@\n-run x -y\n+run x\n+-y", "scripts/x.sh")).toBe(false);
     expect(formattingOnly("@@\n-a b\n+a\n+b", "src/x.ts")).toBe(false);
-    const d = classifyDelta([file({ filename: "src/x.ts", patch: "@@\n-return value;\n+return\n+value;" })], {
-      prFiles: new Set(["src/x.ts"]),
-    });
+    const d = classifyDelta(
+      [file({ filename: "src/x.ts", patch: "@@\n-return value;\n+return\n+value;" })],
+      {
+        prFiles: new Set(["src/x.ts"]),
+      },
+    );
     expect(d.class).toBe("significant");
     // …while a re-flow that ends no statement, and a shell re-indent, are formatting.
     expect(formattingOnly("@@\n-const x = a && b;\n+const x = a &&\n+  b;", "src/x.ts")).toBe(true);
-    expect(formattingOnly("@@\n-return f(a, b);\n+return f(\n+  a,\n+  b\n+);", "src/x.ts")).toBe(true);
+    expect(formattingOnly("@@\n-return f(a, b);\n+return f(\n+  a,\n+  b\n+);", "src/x.ts")).toBe(
+      true,
+    );
     expect(formattingOnly("@@\n-  run x -y\n+    run  x -y", "scripts/x.sh")).toBe(true);
   });
 
@@ -215,9 +240,7 @@ describe("trivial-delta classifier", () => {
       ),
     ).toBe(false);
     // …while re-spacing on both sides of an unchanged line is still formatting.
-    expect(formattingOnly("@@\n-a(x,y)\n+a(x, y)\n \n-b(x,y)\n+b(x, y)", "src/x.ts")).toBe(
-      true,
-    );
+    expect(formattingOnly("@@\n-a(x,y)\n+a(x, y)\n \n-b(x,y)\n+b(x, y)", "src/x.ts")).toBe(true);
   });
 
   it("keeps a whitespace change in a style sheet selector significant", () => {
@@ -251,7 +274,9 @@ describe("trivial-delta classifier", () => {
         "src/q.ts",
       ),
     ).toBe(false);
-    expect(formattingOnly('@@\n q = """\n-  FROM t , u\n+  FROM t,u\n """', "app/q.py")).toBe(false);
+    expect(formattingOnly('@@\n q = """\n-  FROM t , u\n+  FROM t,u\n """', "app/q.py")).toBe(
+      false,
+    );
     expect(formattingOnly("@@\n cat <<EOF\n-a  b\n+a b\n EOF", "scripts/x.sh")).toBe(false);
     expect(formattingOnly("@@\n script: |\n-  echo a  b\n+  echo a b", "ci/x.yaml")).toBe(false);
     expect(
@@ -421,7 +446,10 @@ describe("trivial-delta classifier", () => {
 
   it("keeps a renamed migration significant when an underscored numeric literal changed", () => {
     expect(
-      digitsOnly("@@\n-    BATCH_SIZE = 1_000\n+    BATCH_SIZE = 2_000", "app/migrations/0043_x.py"),
+      digitsOnly(
+        "@@\n-    BATCH_SIZE = 1_000\n+    BATCH_SIZE = 2_000",
+        "app/migrations/0043_x.py",
+      ),
     ).toBe(false);
     const d = classifyDelta([
       file({

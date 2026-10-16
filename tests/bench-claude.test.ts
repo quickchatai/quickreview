@@ -30,7 +30,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DATASET_PINS, type BenchCase, type CaseSet, type PrefetchMeta } from "../src/bench/aacr.js";
+import {
+  DATASET_PINS,
+  type BenchCase,
+  type CaseSet,
+  type PrefetchMeta,
+} from "../src/bench/aacr.js";
 import {
   CLAUDE_HARNESS_DEFAULTS,
   CLAUDE_HARNESS_FLAGS,
@@ -178,9 +183,13 @@ describe("the credential is its own, and only it rides", () => {
       maxRetries: "10",
     });
     expect(
-      claudeEnv({ path: "/usr/bin", home: "/h", tmpDir: "/t", credential: {}, model: "claude-opus-5-5" })[
-        "ANTHROPIC_MODEL"
-      ],
+      claudeEnv({
+        path: "/usr/bin",
+        home: "/h",
+        tmpDir: "/t",
+        credential: {},
+        model: "claude-opus-5-5",
+      })["ANTHROPIC_MODEL"],
     ).toBe("claude-opus-5-5");
     expect(env["HOME"]).toBe("/tmp/claude-home/x");
     expect(env["CLAUDE_CONFIG_DIR"]).toBe("/tmp/claude-home/x/.claude");
@@ -600,11 +609,17 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     expect(readClaudeSummary(out, c)!.fingerprint).toMatchObject({ model: "claude-opus-5-5" });
     const run = JSON.parse(readFileSync(join(out, "run.json"), "utf8")) as Record<string, unknown>;
     expect(run["pinned_model"]).toBe("claude-opus-5-5");
-    expect(renderClaudeReport(set, out, [c])).toContain("pinned by ANTHROPIC_MODEL=`claude-opus-5-5`");
+    expect(renderClaudeReport(set, out, [c])).toContain(
+      "pinned by ANTHROPIC_MODEL=`claude-opus-5-5`",
+    );
     // A resume without the pin is a different configuration: the case re-runs.
     const lines: string[] = [];
-    expect(await claudeReviewRun({ ...opts, resume: true, env, log: (l) => lines.push(l) })).toBe(0);
-    expect(lines.some((l) => /different build\/version — its result is dropped/.test(l))).toBe(true);
+    expect(await claudeReviewRun({ ...opts, resume: true, env, log: (l) => lines.push(l) })).toBe(
+      0,
+    );
+    expect(lines.some((l) => /different build\/version — its result is dropped/.test(l))).toBe(
+      true,
+    );
     expect(readClaudeSummary(out, c)!.fingerprint.model).toBeUndefined();
   });
 
