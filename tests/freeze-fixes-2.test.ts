@@ -297,6 +297,13 @@ describe("pass-lint-conformance: planned only on linters a CI job runs", () => {
     "npm-run-all -p <glob>": viaCheck("npm-run-all --parallel lint:*"),
     "pnpm run /<regex>/": viaCheck("pnpm run /^lint:/"),
     "$npm_execpath run <name>": viaCheck("$npm_execpath run lint:es"),
+    "next lint": viaCheck("next lint"),
+    "ng lint": viaCheck("ng lint"),
+    "nuxt lint": viaCheck("nuxt lint"),
+    "vue-cli-service lint": viaCheck("vue-cli-service lint"),
+    "sh <local script>": viaCheck("sh scripts/lint.sh", { "lint:es": "true" }),
+    "./<local program>": viaCheck("./bin/check --all", { "lint:es": "true" }),
+    "node <local script>": viaCheck("node scripts/check.mjs", { "lint:es": "true" }),
     "pre<name> hook": viaCheck("tsc", { precheck: "npm run lint:es" }),
     "npm run --prefix <dir> (another package)": {
       ".github/workflows/ci.yml": "steps:\n  - run: npm run check\n",

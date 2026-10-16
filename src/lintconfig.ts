@@ -33,7 +33,8 @@ const JS_TS = /\.(c|m)?(j|t)sx?$/i;
 const TOOLS: readonly ToolSpec[] = [
   {
     tool: "eslint",
-    invoked: /\beslint\b/,
+    // Framework CLIs that run eslint without naming it.
+    invoked: /\beslint\b|\b(?:next|ng|nuxt|vue-cli-service)\s+lint\b/,
     configs: [
       "eslint.config.js",
       "eslint.config.mjs",
@@ -386,13 +387,18 @@ function expandName(name: string, scripts: Record<string, unknown>): string[] | 
   return Object.keys(scripts).filter((k) => glob.test(k));
 }
 
+/** A script body that runs a repo-local program, whose contents this reading never sees. */
+const LOCAL_PROGRAM =
+  /(?:^|[\s;&|(])(?:(?:(?:ba|z)?sh|node|tsx|ts-node|bun|zx|python3?)\s+(?:-\S+\s+)*[\w@.-]*\/?[\w@./-]*\.(?:sh|bash|[cm]?[jt]s|py)\b|\.{1,2}\/[\w@./-]+)/;
+
 /**
  * The bodies of the package scripts `callerText` calls, followed through the
  * scripts they call in turn (with their `pre`/`post` hooks), joined; "" when
  * none of them exists. FAILS OPEN — the whole `pkgText`, as if every script
  * ran — whenever the reading is not sure: the package.json does not parse or
  * has no `scripts` object, or the caller or a followed script calls a script
- * in a form `scriptCalls` cannot resolve.
+ * in a form `scriptCalls` cannot resolve, or a followed script runs a
+ * repo-local program (`sh scripts/lint.sh`, `./lint`).
  */
 function calledScripts(pkgText: string, callerText: string): string {
   let scripts: Record<string, unknown>;
@@ -417,7 +423,7 @@ function calledScripts(pkgText: string, callerText: string): string {
         const b = Object.hasOwn(scripts, name) ? scripts[name] : undefined;
         if (typeof b !== "string") continue;
         const more = scriptCalls(b);
-        if (more === null) return pkgText;
+        if (more === null || LOCAL_PROGRAM.test(b)) return pkgText;
         bodies.push(b);
         queue.push(...more);
       }
