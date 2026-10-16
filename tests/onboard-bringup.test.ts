@@ -324,6 +324,19 @@ describe("bring-up, happy path", () => {
     }
   });
 
+  it("refuses a mount path whose whitespace-hash suffix Compose would treat as a comment", async () => {
+    const chosen = join(root, "config #team");
+    mkdirSync(chosen);
+    const configPath = join(chosen, "config.toml");
+    writeFileSync(configPath, exampleConfig);
+    const h = harness({ configPath });
+    const result = await h.engine.runStep(BRINGUP_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(result.checks.find((c) => c.name === "mount-paths")?.detail).toMatch(/comment|#/);
+    expect(existsSync(join(root, ".env"))).toBe(false);
+    expect(h.streamed).toEqual([]);
+  });
+
   it("falls back to the live host uid when preflight recorded none", async () => {
     const h = harness({ uid: 501 });
     expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);

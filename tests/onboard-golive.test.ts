@@ -456,7 +456,7 @@ describe("the restart that makes the flip real is never forgotten", () => {
       confirm: GO_LIVE_CONFIRMATION,
     });
     expect(result.ok).toBe(false);
-    expect(result.failures.join(" ")).toMatch(/daemon-restart: could not tell whether the daemon is running/);
+    expect(result.failures.join(" ")).toMatch(/daemon-restart: config is on disk but its delivery is unknown/);
     expect(h.restarts).toEqual([]);
   });
 

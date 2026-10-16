@@ -983,3 +983,22 @@ describe("an explicit clone_dir is the operator's", () => {
     expect(failed(verified)).toBe("");
   });
 });
+
+describe("semantically kept TOML scalar spellings", () => {
+  it("keeps a multiline continued scalar whose semantic answer is unchanged", () => {
+    const text = '[owner]\nname = """Da\\\nna""" # keep this spelling\n';
+    expect(
+      changedEdits(text, [{ section: "owner", key: "name", value: tomlString("Dana") }]),
+    ).toEqual([]);
+  });
+  it.each(["'Dana'", '"D\\u0061na"'])(
+    "leaves an unchanged string spelling %s intact",
+    (spelling) => {
+      expect(
+        changedEdits(`[owner]\nname = ${spelling} # keep this\n`, [
+          { section: "owner", key: "name", value: tomlString("Dana") },
+        ]),
+      ).toEqual([]);
+    },
+  );
+});

@@ -105,14 +105,44 @@ export function declaredEmbedderOf(configText: string): DeclaredEmbedder {
   };
 }
 
+const EMBEDDER_FIELDS = [
+  {
+    key: "provider",
+    suffix: "EMBEDDING_PROVIDER",
+    fallback: OPENVIKING_DEFAULTS.embedding_provider,
+  },
+  { key: "model", suffix: "EMBEDDING_MODEL", fallback: OPENVIKING_DEFAULTS.embedding_model },
+  {
+    key: "dimension",
+    suffix: "EMBEDDING_DIMENSION",
+    fallback: OPENVIKING_DEFAULTS.embedding_dimension,
+  },
+  {
+    key: "keyFile",
+    suffix: "EMBEDDING_KEY_FILE",
+    fallback: OPENVIKING_DEFAULTS.embedding_key_file,
+  },
+] as const;
+const LOCAL_EMBEDDER_FIELDS = [
+  { key: "port", suffix: "LOCAL_EMBEDDER_PORT", fallback: OPENVIKING_DEFAULTS.local_embedder_port },
+  {
+    key: "threads",
+    suffix: "LOCAL_EMBEDDER_THREADS",
+    fallback: OPENVIKING_DEFAULTS.local_embedder_threads,
+  },
+] as const;
+
+/** Every embedder host field, with the deploy's tracked fallback value. */
+export const EMBEDDER_HOST_DEFAULTS: Readonly<Record<string, string>> = Object.fromEntries(
+  [...EMBEDDER_FIELDS, ...LOCAL_EMBEDDER_FIELDS].map((field) => [
+    `openviking_${field.suffix.toLowerCase()}`,
+    String(field.fallback),
+  ]),
+);
+
 /** The four `.env` keys docker-compose.yml passes into the daemon container. */
 export function embedderEnvEntries(e: DeclaredEmbedder): Array<[string, string]> {
-  return [
-    ["QCR_OPENVIKING_EMBEDDING_PROVIDER", e.provider],
-    ["QCR_OPENVIKING_EMBEDDING_MODEL", e.model],
-    ["QCR_OPENVIKING_EMBEDDING_DIMENSION", String(e.dimension)],
-    ["QCR_OPENVIKING_EMBEDDING_KEY_FILE", e.keyFile],
-  ];
+  return EMBEDDER_FIELDS.map((field) => [`QCR_OPENVIKING_${field.suffix}`, String(e[field.key])]);
 }
 
 /**
@@ -125,11 +155,11 @@ export function embedderEnvEntries(e: DeclaredEmbedder): Array<[string, string]>
  * shipped defaults, exactly as the daemon would refuse to start on it.
  */
 export function localEmbedderEnvEntries(configText: string): Array<[string, string]> {
-  const { port, threads } = localEmbedderRuntimeOf(configText);
-  return [
-    ["QCR_OPENVIKING_LOCAL_EMBEDDER_PORT", String(port)],
-    ["QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS", String(threads)],
-  ];
+  const runtime = localEmbedderRuntimeOf(configText);
+  return LOCAL_EMBEDDER_FIELDS.map((field) => [
+    `QCR_OPENVIKING_${field.suffix}`,
+    String(runtime[field.key]),
+  ]);
 }
 
 /** The local embedder's two runtime knobs. */
@@ -153,24 +183,18 @@ export function localEmbedderRuntimeOf(configText: string): LocalEmbedderRuntime
  * shipped defaults (which the tracked group_vars carry) — scripts/deploy.sh
  * refuses a config.toml whose port or threads the deploy would not render. */
 export function localEmbedderHostVars(rt: LocalEmbedderRuntime): Array<[string, string]> {
-  const out: Array<[string, string]> = [];
-  if (rt.port !== OPENVIKING_DEFAULTS.local_embedder_port)
-    out.push(["openviking_local_embedder_port", String(rt.port)]);
-  if (rt.threads !== OPENVIKING_DEFAULTS.local_embedder_threads)
-    out.push(["openviking_local_embedder_threads", String(rt.threads)]);
-  return out;
+  return LOCAL_EMBEDDER_FIELDS.filter((field) => rt[field.key] !== field.fallback).map((field) => [
+    `openviking_${field.suffix.toLowerCase()}`,
+    String(rt[field.key]),
+  ]);
 }
 
 /** The inventory HOST VARS for a hosted opt-in — nothing for the local
  * default, which the tracked group_vars already carry. */
 export function embedderHostVars(e: DeclaredEmbedder): Array<[string, string]> {
-  if (e.provider === "local") return [];
-  return [
-    ["openviking_embedding_provider", e.provider],
-    ["openviking_embedding_model", e.model],
-    ["openviking_embedding_dimension", String(e.dimension)],
-    ["openviking_embedding_key_file", e.keyFile],
-  ];
+  return EMBEDDER_FIELDS.filter(
+    (field) => e.provider !== "local" || String(e[field.key]) !== String(field.fallback),
+  ).map((field) => [`openviking_${field.suffix.toLowerCase()}`, String(e[field.key])]);
 }
 
 export function describeEmbedder(e: {
@@ -211,19 +235,21 @@ export function keyFileCheck(secretsDir: string, keyFile: string): CheckResult {
         : `${path} exists but does not look like an OpenAI key.`) +
       pi +
       ` Without it the memory engine refuses to start (memory degrades; the embedder is never switched silently). Fix: in another terminal, ` +
-      `\`bash deploy/collect-secrets.sh\` and paste the key at the ${keyFile} prompt (never through this session — it would land in a transcript), then run this step again`,
+      `\`bash deploy/collect-secrets.sh\` and paste the key at the ${OPENVIKING_DEFAULTS.embedding_key_file} prompt` +
+      (keyFile === OPENVIKING_DEFAULTS.embedding_key_file
+        ? ""
+        : `; then securely copy ${join(secretsDir, OPENVIKING_DEFAULTS.embedding_key_file)} to ${path}, keeping mode 0600`) +
+      " (never through this session — it would land in a transcript), then run this step again",
   };
 }
 
-function propagationNote(ctx: StepContext, e: DeclaredEmbedder): CheckResult {
+function propagationNote(ctx: StepContext): CheckResult {
   const vm = topologyOf(ctx.choices) === "vm";
   return {
     name: "propagation",
     ok: true,
     detail: vm
-      ? e.provider === "local"
-        ? "the deploy renders the tracked group_vars, which already say local — nothing else to write"
-        : "the inventory step (68) writes these as HOST VARS on your inventory line, which is what the deploy renders; scripts/deploy.sh refuses to deploy if config.toml and that value ever disagree"
+      ? "the inventory step (68) writes these as HOST VARS on your inventory line, which is what the deploy renders. Run it again, including when switching back to local; scripts/deploy.sh refuses to deploy if config.toml and those values disagree"
       : "the bring-up step (70) writes these into the project .env, which docker-compose.yml passes into the container",
   };
 }
@@ -262,13 +288,11 @@ export function embeddingsStep(): OnboardingStep {
         },
         model: {
           type: "string",
-          description:
-            "Hosted only: the embedding model (default text-embedding-3-small). Ignored for local, which has one model.",
+          description: `Hosted only: the embedding model (default ${HOSTED_EMBEDDING.model}). Ignored for local, which has one model.`,
         },
         dimension: {
           type: "string",
-          description:
-            "Hosted only: the vector dimension of that model (default 1536). Ignored for local.",
+          description: `Hosted only: the vector dimension of that model (default ${HOSTED_EMBEDDING.dimension}). Ignored for local.`,
         },
       },
     },
@@ -373,7 +397,7 @@ export function embeddingsStep(): OnboardingStep {
       ];
       if (provider !== "local")
         checks.push(keyFileCheck(secretsDirFor(ctx.adapters, ctx.choices), declared.keyFile));
-      checks.push(propagationNote(ctx, declared), MIGRATION_NOTE);
+      checks.push(propagationNote(ctx), MIGRATION_NOTE);
       return {
         ok: checks.every((c) => c.ok),
         checks,

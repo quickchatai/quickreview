@@ -8,7 +8,12 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import { OnboardingEngine, type OnboardAdapters } from "../src/onboard/engine.js";
-import { ESCALATION_STEP_ID, escalationStep } from "../src/onboard/steps/escalation.js";
+import {
+  ESCALATION_STEP_ID,
+  escalationStep,
+  patchEscalationSection,
+  foreignRuleBlocks,
+} from "../src/onboard/steps/escalation.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -284,5 +289,21 @@ describe("escalation step: the write is atomic", () => {
     const before = statSync(configPath).ino;
     await runStep({ enable: "no" });
     expect(statSync(configPath).ino).not.toBe(before);
+  });
+});
+
+describe("valid operator TOML rule spellings", () => {
+  it("replaces an empty escalation table at EOF without adding a second table", () => {
+    const out = patchEscalationSection("[escalation]", "[escalation]\nenabled = false\n");
+    expect(out.match(/\[escalation\]/g)).toHaveLength(1);
+  });
+  it("finds and preserves a rule whose header components are quoted", () => {
+    const block = '[["escalation".\'rules\']] # operator rule\nname = "mine"\nto = "bob"\n';
+    expect(foreignRuleBlocks(block)).toHaveLength(1);
+    expect(foreignRuleBlocks(block)[0]).toContain("# operator rule");
+  });
+  it("recognizes an owned rule after the loader trims its name", () => {
+    const block = '[[escalation.rules]]\nname = " onboarding:alice "\nto = "alice"\n';
+    expect(foreignRuleBlocks(block)).toEqual([]);
   });
 });

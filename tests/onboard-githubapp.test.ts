@@ -52,6 +52,7 @@ import {
   SECRET_FILES,
   appCreationUrl,
   convertManifestCode,
+  findInstallation,
   githubAppStep,
   loadManifest,
   manifestPageHtml,
@@ -691,6 +692,29 @@ describe("labels are idempotent", () => {
     expect(d).toMatch(/Validation Failed/);
   });
 
+  it("uses current config labels ahead of a stale recorded label snapshot", async () => {
+    const path = join(stateDir, "current-config.toml");
+    writeFileSync(path, '[github]\ntrigger_label = "current-trigger"\n');
+    const state = ghState();
+    const { report } = await runStep(
+      state,
+      fakeServer({ code: "c" }).factory,
+      { [LABELS_CHOICE_KEY]: { trigger: "stale-trigger" } },
+      {},
+      { paths: { stateDir, configPath: path } },
+    );
+    expect(report.ok).toBe(true);
+    expect(state.labels.has("current-trigger")).toBe(true);
+    expect(state.labels.has("stale-trigger")).toBe(false);
+  });
+
+  it("keeps an unrecorded existing App target unknown in approval guidance", async () => {
+    landCredentials();
+    const report = await verifyOnly(ghState({ labels: new Set(Object.values(DEFAULT_LABELS)) }));
+    expect(detail(report.checks, "org approval")).toMatch(/unknown|not recorded/);
+    expect(detail(report.checks, "org approval")).not.toContain("personal-account App");
+  });
+
   it("recorded non-default label names are used verbatim", async () => {
     const s = ghState();
     const server = fakeServer({ code: "c" });
@@ -955,5 +979,27 @@ describe("the loopback callback listener (real, on an ephemeral port)", () => {
     } finally {
       await listener.close();
     }
+  });
+});
+
+describe("installation pages", () => {
+  it("finds an existing App installation after the first full page", async () => {
+    const pages: number[] = [];
+    const fetchPage = (async (input: Parameters<typeof fetch>[0]) => {
+      const page = Number(new URL(String(input)).searchParams.get("page") ?? "1");
+      pages.push(page);
+      return new Response(
+        JSON.stringify(
+          page === 1
+            ? Array.from({ length: 100 }, (_, id) => ({ id, account: { login: `other-${id}` } }))
+            : [{ id: 4242, account: { login: "Acme" } }],
+        ),
+      );
+    }) as typeof fetch;
+    expect(await findInstallation(fetchPage, API, "app-jwt", "acme")).toEqual({
+      status: "found",
+      id: 4242,
+    });
+    expect(pages).toEqual([1, 2]);
   });
 });

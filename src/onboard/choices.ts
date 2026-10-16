@@ -28,7 +28,8 @@
 // type error rather than a conditional that never fires.
 
 /** Where the reviewer runs. Absent ⇒ "local" (see `topologyOf`). */
-export type Topology = "local" | "vm";
+export const TOPOLOGY_CHOICES = ["vm", "local"] as const;
+export type Topology = (typeof TOPOLOGY_CHOICES)[number];
 
 /** The webhook ingress shapes. These four ids are also the operator-facing
  * names in `INGRESS_OPTIONS` and in docs/onboarding.md. */
@@ -45,7 +46,8 @@ export type AuthRoute = (typeof AUTH_ROUTES)[number];
 export const REPO_SLUG_RE = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
 
 /** Whether the operator set memory up or declined it (a supported answer). */
-export type MemoryChoice = "configure" | "declined";
+export const MEMORY_CHOICE_IDS = ["configure", "declined"] as const;
+export type MemoryChoice = (typeof MEMORY_CHOICE_IDS)[number];
 
 // ---- the keys ----------------------------------------------------------------
 

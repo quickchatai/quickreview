@@ -47,6 +47,7 @@ import {
   parseWhy,
   type ProofRecord,
 } from "./proof.js";
+import { deliverConfigChange } from "./configdelivery.js";
 import { stackTransportFor, type StackTransport, type TransportOptions } from "./transport.js";
 
 export const GO_LIVE_STEP_ID = "go_live";
@@ -429,24 +430,8 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
             "From the daemon's next start, reviews are posted to GitHub for real. To go back, set it to true and restart.",
         },
       ];
-      // A probe that could not ask the host is not a daemon that is down: the
-      // restart stays owed rather than being discharged as "nothing to restart".
-      const state = await transport.daemonState();
-      const restarted: CheckResult =
-        state.state === "unknown"
-          ? {
-              name: "daemon-restart",
-              ok: false,
-              detail:
-                `could not tell whether the daemon is running ${transport.where} (${state.detail}), so it was not restarted ` +
-                "onto dry_run = false — a running daemon is still in dry-run. Fix: make the host reachable, then run this " +
-                `step again with decision: "go_live" and confirm: "${GO_LIVE_CONFIRMATION}"`,
-            }
-          : await transport.restart(
-              (line) => ctx.adapters.log?.(`${GO_LIVE_STEP_ID}: ${line}`),
-              state.state === "running",
-            );
-      checks.push(restarted);
+      const delivery = await deliverConfigChange(ctx, transportOpts, true, GO_LIVE_STEP_ID);
+      checks.push(...delivery.checks);
       const now = currentDryRun(ctx.adapters);
       checks.push(
         now === false
@@ -471,7 +456,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
         data: {
           decision: "live",
           flipped_at: ctx.adapters.clock().toISOString(),
-          [RESTART_OWED_KEY]: !restarted.ok,
+          [RESTART_OWED_KEY]: delivery.restartOwed,
         },
       };
     },
