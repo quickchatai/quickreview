@@ -602,6 +602,35 @@ describe("migrateProfiles", () => {
     );
   });
 
+  it.each(["relative", "absolute"] as const)(
+    "a %s descendant link follows a sibling deduplicated against its home copy",
+    (kind) => {
+      putProfile(root, "house", "own\n");
+      putProfile(root, "other", "shared\n");
+      putProfile(configHome(env), "other", "shared\n");
+      const from = join(root, "profiles");
+      const at = join(from, "house", "addenda", "linked.md");
+      symlinkSync(
+        kind === "relative"
+          ? "../../other/addenda/10-rule.md"
+          : join(from, "other", "addenda", "10-rule.md"),
+        at,
+      );
+
+      expect(migrateProfiles({ root, env }).map((o) => [o.kind, o.name])).toEqual([
+        ["moved", "house"],
+        ["deduplicated", "other"],
+      ]);
+      const home = join(configHome(env), "profiles");
+      const migrated = join(home, "house", "addenda", "linked.md");
+      expect(existsSync(join(from, "other"))).toBe(false);
+      expect(readFileSync(migrated, "utf8")).toBe("shared\n");
+      expect(realpathSync(migrated)).toBe(join(home, "other", "addenda", "10-rule.md"));
+      expect(migrateProfiles({ root, env })).toEqual([]);
+      expect(readFileSync(migrated, "utf8")).toBe("shared\n");
+    },
+  );
+
   it("moves nothing while QCR_CONFIG names the config — compose mounts THAT file's dir, not the home", () => {
     putProfile(root, "house");
     const [o] = migrateProfiles({ root, env: { ...env, QCR_CONFIG: join(dir, "x.toml") } });
