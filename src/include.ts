@@ -27,7 +27,13 @@ import { stripModelDocs } from "./promptdoc.js";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
-import { MODELS_TIER_DEFAULTS, splitModelSpec, type ScanDepth } from "./config.js";
+import {
+  MODELS_TIER_DEFAULTS,
+  splitModelSpec,
+  type ScanDepth,
+  type NitPolicy,
+  type MemoryDelivery,
+} from "./config.js";
 import { SCAN_DEEP_LENSES } from "./passes.js";
 import { higherTier, PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
@@ -607,7 +613,7 @@ const VALIDATE_COMPACT_OUTPUT_ADDENDUM =
 /** Addenda that exist only when the config asks for them — composed after the
  * registry by both agent builds (src/wire.ts, src/bench/runner.ts). */
 export function configAddenda(review: {
-  nits?: string;
+  nits?: NitPolicy;
   validate_demote?: boolean;
   validate_consequence_rule?: boolean;
   dedup_merge?: boolean;
@@ -694,7 +700,10 @@ export const LESSON_VALIDATE_ADDENDUM =
  * bench (which never calls this) — is no addendum at all, so the build is
  * byte-identical.
  */
-export function lessonAddenda(opts: { delivery: string; lessonsOff: boolean }): PassAddendum[] {
+export function lessonAddenda(opts: {
+  delivery: MemoryDelivery;
+  lessonsOff: boolean;
+}): PassAddendum[] {
   if (opts.delivery !== "on" || opts.lessonsOff) return [];
   return [
     {
@@ -716,7 +725,7 @@ export function lessonAddenda(opts: { delivery: string; lessonsOff: boolean }): 
  * cannot be read selects nothing for any round.
  */
 export function lessonAddendaFor(
-  delivery: string,
+  delivery: MemoryDelivery,
   killSwitch: { lessonsOff(): boolean } | null | undefined,
 ): PassAddendum[] {
   let lessonsOff = false;

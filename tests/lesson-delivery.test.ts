@@ -1545,7 +1545,7 @@ describe("lessonAddendaFor: the operator's kill switch, as the ledger holds it, 
     const store = new StateStore(":memory:");
     try {
       const ledger = new LessonLedger(store);
-      const ids = (d: string) => lessonAddendaFor(d, ledger).map((a) => a.id);
+      const ids = (d: MemoryDelivery) => lessonAddendaFor(d, ledger).map((a) => a.id);
       expect(ids("on")).toEqual([LESSON_VALIDATE_ADDENDUM_ID]);
       ledger.apply({ action: "off" }, "test");
       expect(ids("on")).toEqual([]);
