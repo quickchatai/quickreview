@@ -4,6 +4,7 @@
 // ordinary pump to decide what work is actually eligible.
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { ovSessionIdForPr } from "./memory/ovsession.js";
 import type { StateStore } from "./state.js";
 
 export type OperatorRecoveryMode = "rerun-round" | "restart-session";
@@ -96,8 +97,7 @@ export async function recoverPrForOperator(
   if (mode === "restart-session") {
     if (!deps.killSession) return { ok: false, reason: "restart-session kill hook unavailable" };
 
-    const payloads: Array<{ command: (typeof blockers)[number]; payload: Buffer; text: string }> =
-      [];
+    const payloads: Array<{ command: (typeof blockers)[number]; text: string }> = [];
     for (const command of blockers) {
       let payload: Buffer;
       try {
@@ -122,7 +122,7 @@ export async function recoverPrForOperator(
           reason: `session command ${command.id} payload is not UTF-8; refusing byte-changing recovery`,
         };
       }
-      payloads.push({ command, payload, text });
+      payloads.push({ command, text });
     }
 
     await deps.killSession(pr);
@@ -210,7 +210,7 @@ export async function recoverPrForOperator(
       : {}),
   };
   if (!redispatched) {
-    const blocker = deps.store.blockingSessionCommand(`pr-${pr}`);
+    const blocker = deps.store.blockingSessionCommand(ovSessionIdForPr(pr));
     const held = deps.store.heldWakes(pr).length;
     return {
       ok: false,

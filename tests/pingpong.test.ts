@@ -955,7 +955,7 @@ describe("human_requested wake response", () => {
     expect(path).not.toMatch(/round/);
   });
 
-  it("writes the payload the daemon reads", () => {
+  it("preserves the legacy payload format", () => {
     const path = writeWakeResponse(root, {
       pr: 77,
       human_requested: true,

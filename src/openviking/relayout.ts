@@ -29,7 +29,7 @@ export function relocateItemsOf(plan: RelayoutPlan): RelocateItem[] {
 
 /** Writes still owed by a plan (what a finished relayout reads as zero). */
 export function pendingWrites(plan: RelayoutPlan): number {
-  return plan.counts.move + plan.counts.retire + plan.counts.rewrite;
+  return relocateItemsOf(plan).length;
 }
 
 function actionLine(a: RelayoutAction): string {

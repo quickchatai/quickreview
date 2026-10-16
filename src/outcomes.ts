@@ -52,8 +52,8 @@
 //   refuted_conceded    — the session's decision said `refuted`; a later round
 //                         recorded it `conceded` with the code at its anchor
 //                         unchanged and no sha cited; or the session resolved
-//                         the thread with no push since the review. The last
-//                         two are INFERRED from the session's own act, so a
+//                         the thread with no push since the review and no
+//                         unobserved head. The last two are INFERRED from the session's own act, so a
 //                         human reply that accepts the point (`concedesPoint`:
 //                         "fair catch", "fixed", "updated the description")
 //                         turns them into `unknown`, basis `conflict:…`.
@@ -103,16 +103,14 @@ import { bareTag } from "./severity.js";
 import { yieldToLoop } from "./yieldloop.js";
 import type { PrCommentRow, PrStateRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
 
-export type FindingFate =
-  "fixed" | "refuted_conceded" | "upheld_after_reply" | "open_at_close" | "unknown";
-
-export const FINDING_FATES: readonly FindingFate[] = [
+export const FINDING_FATES = [
   "fixed",
   "refuted_conceded",
   "upheld_after_reply",
   "open_at_close",
   "unknown",
-];
+] as const;
+export type FindingFate = (typeof FINDING_FATES)[number];
 
 type DecisiveFate = "fixed" | "refuted_conceded" | "upheld_after_reply";
 /** What one piece of evidence can say: a decisive fate, or `unknown` — a
@@ -142,7 +140,7 @@ export interface AnchorGit {
 }
 
 /** Bump when a rule changes, so every PR is re-captured once. */
-export const OUTCOME_RULES_VERSION = 3;
+export const OUTCOME_RULES_VERSION = 4;
 /** PRs captured per reconcile pass. */
 export const OUTCOME_SWEEP_MAX_PRS = 25;
 /** How long after a close a PR is still captured — the close is evidence. */
@@ -472,7 +470,6 @@ export function decideFate<E extends { fate: EvidenceFate; at: number }>(
 // ---- the per-PR facts one capture reads -------------------------------------
 
 interface PrFacts {
-  pr: number;
   rows: RoundFindingRow[];
   posted: RoundFindingRow[];
   byRound: Map<number, RoundFindingRow[]>;
@@ -851,7 +848,6 @@ export class OutcomeCapture {
       "pr_closed",
     ]);
     const facts: PrFacts = {
-      pr,
       rows,
       posted,
       byRound,
@@ -1032,15 +1028,10 @@ export class OutcomeCapture {
     const threads = thread === null ? [] : [thread, ...(facts.twins.get(thread) ?? [])];
     const postedAt =
       ms(link?.created_at) ?? facts.recorded.get(f.round_no)?.at ?? ms(f.recorded_at) ?? 0;
-    // One thread keeps its capture order; twins' replies interleave by time.
-    const replies =
-      threads.length > 1
-        ? threads
-            .flatMap((t) => facts.replies.get(t) ?? [])
-            .sort((a, b) => replyMs(a) - replyMs(b) || a.comment_id - b.comment_id)
-        : thread !== null
-          ? (facts.replies.get(thread) ?? [])
-          : [];
+    // Backfilled replies and marker twins interleave by when they were written.
+    const replies = threads
+      .flatMap((t) => facts.replies.get(t) ?? [])
+      .sort((a, b) => replyMs(a) - replyMs(b) || a.comment_id - b.comment_id);
     /** A human reply in the thread, no later than `at`, that accepts the
      * point (`concedesPoint`) — the latest one, or null. */
     const humanConceded = (at: number): PrCommentRow | null =>
@@ -1132,6 +1123,23 @@ export class OutcomeCapture {
         const head = since[since.length - 1]?.head_sha ?? null;
         if (head === null) {
           if (cited.state === "unverified") continue;
+          // Push events carry observation times. A head that differs now may
+          // have landed before this resolve and only been captured afterwards.
+          const observedHead =
+            facts.pushes.filter((p) => p.at <= postedAt).at(-1)?.head_sha ?? f.head_sha;
+          if (
+            !facts.currentHead ||
+            !observedHead ||
+            facts.currentHead.toLowerCase() !== observedHead.toLowerCase()
+          ) {
+            evidence.push({
+              fate: "unknown",
+              basis: "conflict:resolved_unobserved_head",
+              at: r.at,
+              detail: `resolved without a push observed before it${who}, but the current head does not confirm the reviewed head`,
+            });
+            continue;
+          }
           const accepted = humanConceded(r.at);
           evidence.push(
             accepted

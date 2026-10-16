@@ -64,6 +64,9 @@ import { formatEventTags, parseEventTags, parseHashTags } from "../memory/eventt
 import {
   EXPERIENCES_AREA,
   FROM_TAG,
+  MANUAL_TAG,
+  PINNED_TAG,
+  isRetired,
   MOVED_TAG,
   PINNED_AREA,
   PREFERENCES_AREA,
@@ -100,10 +103,7 @@ import {
   type OpenVikingClient,
 } from "./client.js";
 
-/** Tag applied to `add` — an entry the owner typed himself. `note` (a machine
- * writer) is stored verbatim, so the two can never masquerade as each other. */
-export const MANUAL_TAG = "manual";
-export const PINNED_TAG = "pinned";
+export { MANUAL_TAG, PINNED_TAG } from "../memory/layout.js";
 
 /** Where a new entry lands. `experiences` is a real server quota bucket, which
  * is what lets a context search size it. */
@@ -704,7 +704,7 @@ export class OpenVikingStore implements MemoryStore {
       next.set(file.id, {
         sig,
         entry,
-        retired: parseHashTags(entry.text).includes(RETIRED_TAG),
+        retired: isRetired(entry.text),
       });
     });
     const entries: MemoryEntry[] = [];
@@ -918,7 +918,7 @@ export class OpenVikingStore implements MemoryStore {
           return;
         }
         const entry = entryFrom(id, res.result, file.modTime);
-        if (entry.text === "" || parseHashTags(entry.text).includes(RETIRED_TAG)) return;
+        if (entry.text === "" || isRetired(entry.text)) return;
         entries.push(entry);
       });
       // Every listed file gone: the listing and the content disagree, and an
@@ -1029,7 +1029,7 @@ export class OpenVikingStore implements MemoryStore {
       const res = await this.replace(op.id, next, op.expect);
       // A retire, or an edit whose new header says `#retired`: the content
       // decides, as it does for every other writer of retired bytes.
-      if (res.ok && parseHashTags(next).includes(RETIRED_TAG)) this.noteRetired(this.uriOf(op.id));
+      if (res.ok && isRetired(next)) this.noteRetired(this.uriOf(op.id));
       return res;
     } catch (err) {
       // The client is total, but a caller-supplied seam is not, and a write
@@ -1253,9 +1253,12 @@ export class OpenVikingStore implements MemoryStore {
       };
     }
     const undone = await this.unplaceCopy(toUri, content, from);
-    const left = undone
-      ? ""
-      : ` — and the new copy at ${to} could not be turned back into a pointer: retire it`;
+    const left =
+      undone === "landed"
+        ? ""
+        : undone === "absent"
+          ? ` — and the new copy at ${to} could not be turned back into a pointer: retire it`
+          : ` — the rollback outcome at ${to} is unknown; re-read it before deciding whether to retire a copy`;
     if (!res.ok && res.conflict)
       return {
         ok: false,
@@ -1341,8 +1344,13 @@ export class OpenVikingStore implements MemoryStore {
    * bytes) for an entry that provably still lives at `from`: the copy becomes
    * a `#moved` stub pointing back there — retired, so no reader shows it,
    * and a pointer, so a later move may write over it (a retired COPY would
-   * block every later move into that address for good). True when it landed. */
-  private async unplaceCopy(uri: string, content: string, from: string): Promise<boolean> {
+   * block every later move into that address for good). An uncertain answer
+   * is read back before its outcome is reported. */
+  private async unplaceCopy(
+    uri: string,
+    content: string,
+    from: string,
+  ): Promise<"landed" | "absent" | "unknown"> {
     const res = await this.client.batchWrite({
       root_uri: parentOf(uri),
       operations: [
@@ -1354,12 +1362,18 @@ export class OpenVikingStore implements MemoryStore {
       ],
       wait: false,
     });
-    if (res.ok && batchWriteLanded(res.result, uri)) {
+    const outcome =
+      res.ok && batchWriteLanded(res.result, uri)
+        ? "landed"
+        : !res.ok && provenUnwritten(res)
+          ? "absent"
+          : await this.writeOutcome(uri, movedStub(from), sha256Prefixed(content));
+    if (outcome === "landed") {
       this.noteRetired(uri);
-      return true;
+      return "landed";
     }
-    this.log(`openviking: a failed move left ${uri} live and could not undo it`);
-    return false;
+    this.log(`openviking: rollback at ${uri} is ${outcome}`);
+    return outcome;
   }
 
   /** A retirement this store wrote joins the published list at once. */
@@ -1526,14 +1540,24 @@ export class OpenVikingStore implements MemoryStore {
         );
         batches.push({ root, ops: chunk.length, ok: out.ok, message: `undo: ${out.message}` });
         for (const uri of out.landed) this.noteRetired(uri);
-        for (const it of chunk) {
-          if (out.landed.has(this.uriOf(it.to!))) continue;
+        await pool(chunk, this.concurrency, async (it) => {
+          if (out.landed.has(this.uriOf(it.to!))) return;
+          const uri = this.uriOf(it.to!);
+          const outcome = out.refused
+            ? "absent"
+            : await this.writeOutcome(uri, movedStub(it.id), sha256Prefixed(content(it)));
+          if (outcome === "landed") {
+            this.noteRetired(uri);
+            return;
+          }
           const prior = results.get(it.id);
           fail(
             it,
-            `${prior?.message ?? "refused"} — and the new copy at ${it.to} could not be turned back into a pointer: retire it`,
+            outcome === "absent"
+              ? `${prior?.message ?? "refused"} — and the new copy at ${it.to} could not be turned back into a pointer: retire it`
+              : `${prior?.message ?? "refused"} — the rollback outcome at ${it.to} is unknown; re-read it before deciding whether to retire a copy`,
           );
-        }
+        });
       }
     }
 
@@ -1550,7 +1574,7 @@ export class OpenVikingStore implements MemoryStore {
       if (it.to !== undefined) {
         this.noteRetired(this.uriOf(it.id));
         await this.mirrorTags(this.uriOf(it.to), content(it));
-      } else if (parseHashTags(content(it)).includes(RETIRED_TAG)) {
+      } else if (isRetired(content(it))) {
         this.noteRetired(this.uriOf(it.id));
       } else {
         await this.mirrorTags(this.uriOf(it.id), content(it));
@@ -1719,7 +1743,7 @@ export class OpenVikingStore implements MemoryStore {
       if (results.get(it.i)?.state !== "written") continue;
       if (!SWEEP_EXCLUDED_AREAS.includes(it.area)) {
         this.forget(it.id);
-        if (parseHashTags(it.content).includes(RETIRED_TAG)) this.noteRetired(it.uri);
+        if (isRetired(it.content)) this.noteRetired(it.uri);
       }
       await this.mirrorTags(it.uri, it.content);
     }

@@ -708,6 +708,54 @@ describe("pin and unpin MOVE an entry through the one seam", () => {
     ]);
   });
 
+  it.each([
+    { mode: "pin", unread: false },
+    { mode: "pin", unread: true },
+    { mode: "relayout", unread: false },
+    { mode: "relayout", unread: true },
+  ] as const)(
+    "$mode reads back a rollback whose acknowledgement was lost (unread=$unread)",
+    async ({ mode, unread }) => {
+      const server = new OvServer();
+      const id = "experiences/20260901T000000-l.md";
+      seed(server, [[id, "#operations #bug a defect"]]);
+      const destination = mode === "pin" ? `${ROOT}/preferences/pinned` : `${ROOT}/events`;
+      server.dirs.add(destination);
+      const losing = losingOneAnswer(
+        server,
+        (root, body) => root === destination && body.includes("replace_if_hash"),
+      );
+      const fetch: HttpFetch = (url, init) => {
+        if (batchRoot(url, init.body) === `${ROOT}/experiences`)
+          return err(409, "HASH_MISMATCH", "the source changed");
+        if (unread && losing.lost() > 0 && url.includes("/content/read"))
+          return err(500, "INTERNAL", "the read failed");
+        return losing.fetch(url, init);
+      };
+      const store = storeOver(fetch);
+      const [entry] = await store.read();
+      const message =
+        mode === "pin"
+          ? (await store.apply({ op: "pin", ...refOf(entry!) })).message
+          : (
+              await store.relocate([
+                {
+                  id,
+                  expect: refOf(entry!).expect,
+                  to: "events/20260901T000000-l.md",
+                  text: entry!.text,
+                },
+              ])
+            ).results[0]!.message;
+      expect(losing.lost()).toBe(1);
+      expect(isMovedStub(server.files.get(`${destination}/20260901T000000-l.md`)!)).toBe(true);
+      expect(server.files.get(`${ROOT}/${id}`)).toBe("#operations #bug a defect\n");
+      expect(message).not.toMatch(/could not be turned back|retire it/);
+      if (unread) expect(message).toContain("rollback outcome");
+      else expect(message).not.toContain("rollback outcome");
+    },
+  );
+
   it("a stub write that LANDED but lost its answer is a finished move — never a second retirement", async () => {
     const server = new OvServer();
     seed(server, [["experiences/20260901T000000-l.md", "#refuted lesson"]]);

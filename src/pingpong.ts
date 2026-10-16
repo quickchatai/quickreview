@@ -668,6 +668,23 @@ export class ThreadDecisionWatcher {
     this.failedDir = join(deps.verdictDir, "failed");
   }
 
+  private githubDelayMs(now: Date): number {
+    return this.lastGitHubStart > 0
+      ? Math.max(0, 5_000 - (now.getTime() - this.lastGitHubStart))
+      : 0;
+  }
+
+  private deadlinePending(deadline: string | undefined, now: Date): deadline is string {
+    return !!deadline && Date.parse(deadline) > now.getTime();
+  }
+
+  private breakerWaiting(breaker: ReturnType<PingPongLedger["breaker"]>, now: Date): boolean {
+    return (
+      breaker.state === "open" &&
+      (!breaker.open_until || this.deadlinePending(breaker.open_until, now))
+    );
+  }
+
   private recoverInterruptedReplays(): void {
     if (!existsSync(this.deps.verdictDir)) return;
     for (const name of readdirSync(this.deps.verdictDir).filter((entry) =>
@@ -870,13 +887,14 @@ export class ThreadDecisionWatcher {
       }
       this.pauseLogged = false;
       const now = (this.deps.now ?? (() => new Date()))();
-      if (this.lastGitHubStart > 0 && now.getTime() - this.lastGitHubStart < 5_000) {
-        this.requestSweep(5_000 - (now.getTime() - this.lastGitHubStart));
+      const githubDelay = this.githubDelayMs(now);
+      if (githubDelay > 0) {
+        this.requestSweep(githubDelay);
         return [];
       }
       const breaker = this.deps.ledger.breaker();
       if (breaker.state === "open") {
-        if (!breaker.open_until || Date.parse(breaker.open_until) > now.getTime()) {
+        if (this.breakerWaiting(breaker, now)) {
           if (breaker.open_until)
             this.requestSweep(Math.max(1, Date.parse(breaker.open_until) - now.getTime()));
           return [];
@@ -913,7 +931,7 @@ export class ThreadDecisionWatcher {
           );
           continue;
         }
-        if (retry.next_attempt_at && Date.parse(retry.next_attempt_at) > now.getTime()) {
+        if (this.deadlinePending(retry.next_attempt_at, now)) {
           earliestRetry = Math.min(earliestRetry, Date.parse(retry.next_attempt_at));
           continue;
         }
@@ -936,7 +954,7 @@ export class ThreadDecisionWatcher {
    * observation; only then is the file malformed and archived. */
   private malformedRead(name: string, pr: number, body: string, error: string, now: Date): boolean {
     const seen = this.invalidReads.get(name);
-    const settleMs = this.deps.malformedSettleMs ?? 250;
+    const settleMs = this.settleMs();
     if (seen?.body !== body || now.getTime() - seen.since < settleMs) {
       if (seen?.body !== body) this.invalidReads.set(name, { body, since: now.getTime() });
       this.retryAfterSettle(name);
@@ -947,12 +965,16 @@ export class ThreadDecisionWatcher {
     return true;
   }
 
+  private settleMs(): number {
+    return this.deps.malformedSettleMs ?? 250;
+  }
+
   private retryAfterSettle(name: string): void {
     if (this.retryTimers.has(name)) return;
     const timer = setTimeout(() => {
       this.retryTimers.delete(name);
       this.requestSweep();
-    }, this.deps.malformedSettleMs ?? 250);
+    }, this.settleMs());
     this.retryTimers.set(name, timer);
   }
 
@@ -979,23 +1001,15 @@ export class ThreadDecisionWatcher {
     if (!match || this.processing || this.inFlight.has(name) || this.deps.isDraining?.())
       return false;
     const now = (this.deps.now ?? (() => new Date()))();
-    if (this.lastGitHubStart > 0 && now.getTime() - this.lastGitHubStart < 5_000) return false;
+    if (this.githubDelayMs(now) > 0) return false;
     const breaker = this.deps.ledger.breaker();
-    if (
-      breaker.state === "open" &&
-      (!breaker.open_until || Date.parse(breaker.open_until) > now.getTime())
-    )
-      return false;
+    if (this.breakerWaiting(breaker, now)) return false;
     if (breaker.state === "open") {
       this.deps.ledger.halfOpen(now);
       this.deps.store.logEvent("pingpong_breaker_half_open", null, {});
     }
     const retry = this.deps.ledger.retry(Number(match[3]));
-    if (
-      retry.terminal ||
-      (retry.next_attempt_at && Date.parse(retry.next_attempt_at) > now.getTime())
-    )
-      return false;
+    if (retry.terminal || this.deadlinePending(retry.next_attempt_at, now)) return false;
     this.processing = true;
     this.inFlight.add(name);
     try {
@@ -1242,14 +1256,15 @@ export interface WakeResponse {
 }
 
 /**
- * Where the session drops a wake response for the daemon. It lives beside the
- * verdict files (the daemon already watches `verdict/`), named so it can never
- * be mistaken for a round verdict.
+ * Legacy wake-response filename, retained for input compatibility. No daemon
+ * watcher consumes it; human requests use thread decisions.
+ * @deprecated Use the thread-decision handoff.
  */
 export function wakeResponsePath(root: string, pr: number, ts = new Date().toISOString()): string {
   return join(root, "verdict", `pr-${pr}-wake-${ts.replace(/[:.]/g, "-")}.json`);
 }
 
+/** @deprecated Writes a legacy artifact that no daemon watcher consumes. */
 export function writeWakeResponse(
   root: string,
   response: Omit<WakeResponse, "written_at"> & { written_at?: string },

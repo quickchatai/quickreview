@@ -52,7 +52,7 @@ import { globMatcherOrNothing } from "../glob.js";
 import { canonicalLensIds } from "../lensids.js";
 import { roundContextQuery } from "./context.js";
 import { parseEventTags, parseHashTags } from "./eventtags.js";
-import { CASES_AREA, EXPERIENCES_AREA, PINNED_AREA } from "./layout.js";
+import { CASES_AREA, EXPERIENCES_AREA, PINNED_AREA, isRetired } from "./layout.js";
 import { parseLesson, type LessonKind, type ParsedLesson } from "./lessons.js";
 
 /** The validator's lens id — it has no task file and judges every finding. */
@@ -447,7 +447,7 @@ export function filterCaseHits(
       bump(dropped, "out_of_area");
       continue;
     }
-    if (ctx.retired.has(h.uri) || parseHashTags(text.trim()).includes("retired")) {
+    if (ctx.retired.has(h.uri) || isRetired(text.trim())) {
       bump(dropped, "retired");
       continue;
     }
