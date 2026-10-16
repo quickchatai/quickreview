@@ -40,6 +40,7 @@ import {
   renderCase,
   roleOf,
   withdrawalStub,
+  tagValue,
   withoutMentions,
 } from "../src/cases.js";
 import {
@@ -585,6 +586,10 @@ describe("the case document", () => {
     );
     expect(doc).toContain("fine ]0;pwned by me\nsecond 2J line");
     expect(doc).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+  });
+
+  it("encodes Unicode whitespace distinctly from byte escapes and adjacent hex characters", () => {
+    expect(tagValue("a\u2003b abc.ts")).toBe("a%u2003b%20abc.ts");
   });
 
   it("a PR-chosen file path cannot forge a section or carry a control byte (integration review)", async () => {

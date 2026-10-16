@@ -170,7 +170,7 @@ export const MEMORY_LAYOUT_NOTE = [
   "  at the PR's close), with the humans' replies quoted as data. Search them",
   "  (`viking_search`) for the evidence behind a learning;",
   "  never write, edit or retire one — the daemon rewrites each from its own",
-  "  records, and no review round reads them.",
+  "  records. The daemon may deliver matching cases as data in a review prompt.",
   "",
   "An entry's header is its first tokens — `#tags`, then `k=v` tags, then the",
   "prose (e.g. `#bug kind=bug area=operations day=YYYY-MM-DD What broke …`); a tag",

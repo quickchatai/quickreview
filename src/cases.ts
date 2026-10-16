@@ -336,7 +336,10 @@ export function tagValue(v: string): string {
     .replace(/%/g, "%25")
     .replace(
       /[\s\u0000-\u001f\u007f-\u009f]/g,
-      (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0").toUpperCase()}`,
+      (c) => {
+        const code = c.charCodeAt(0);
+        return `%${code > 0xff ? "u" : ""}${code.toString(16).padStart(code > 0xff ? 4 : 2, "0").toUpperCase()}`;
+      },
     );
 }
 

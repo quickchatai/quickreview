@@ -14,7 +14,16 @@
 // Ops-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
 // manual offsets).
 import { zoneDateString } from "./eod.js";
-import { cancelCauseLabel, tallyCancellations, type RoundRow, type StateStore } from "./state.js";
+import {
+  cancelCauseLabel,
+  tableExists,
+  snapshotHeartbeat,
+  roundUsage,
+  cancellationTotals,
+  tallyCancellations,
+  type RoundRow,
+  type StateStore,
+} from "./state.js";
 
 // ---- the payload contract (do not rename or reshape) ----------------------
 
@@ -35,7 +44,7 @@ export interface MetricsWindow {
     spend_usd: number;
     overruns: number; // finished_at > deadline_at
   };
-  // time-to-first-verdict: trigger_ts -> first round finished_at, seconds
+  // First verdict latency; queue/review medians separately cover all measured live rounds.
   ttfv: Dist & { queue_median_s: number | null; review_median_s: number | null };
   time_in_state: { state: string; median_s: number | null; total_s: number }[];
   verdict_mix: { verdict: string; count: number }[];
@@ -254,14 +263,6 @@ function readArchivedEventCounts(store: StateStore): Array<{ kind: string; n: nu
     .all() as Array<{ kind: string; n: number }>;
 }
 
-function tableExists(store: StateStore, name: string): boolean {
-  return (
-    store.db
-      .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?")
-      .get(name) !== undefined
-  );
-}
-
 interface ThreadRow {
   thread_id: number;
   pr: number;
@@ -303,6 +304,10 @@ function isBackfilled(r: RoundRow): boolean {
   return r.backfilled === 1;
 }
 
+function deliveredReview(r: RoundRow): boolean {
+  return !!r.finished_at && r.status === "done";
+}
+
 /** Time-to-first-verdict per PR: trigger (or, absent a recorded trigger, the
  * round start) -> the first finished round. An imported round with no
  * reconstructed trigger has no measured start (its start IS its verdict), so
@@ -315,7 +320,7 @@ function isBackfilled(r: RoundRow): boolean {
 function ttfvByPr(allRounds: RoundRow[], since: string | null): Map<number, number> {
   const first = new Map<number, RoundRow>();
   for (const r of allRounds) {
-    if (!r.finished_at || r.status !== "done") continue;
+    if (!deliveredReview(r)) continue;
     const seen = first.get(r.pr);
     if (!seen || r.round_no < seen.round_no) first.set(r.pr, r);
   }
@@ -422,7 +427,8 @@ export function computeWindow(input: WindowInput): MetricsWindow {
 
   // ---- ttfv (backfilled rounds included — they carry real timestamps) ----
   const ttfv = ttfvByPr(input.rounds, since);
-  // The queue and review legs are live only: a backfilled round's
+  // Queue and review medians cover every measured live round, not just the
+  // first verdict per PR. A backfilled round's
   // `started_at` is reconstructed, not when its review began.
   const queue: number[] = [];
   const review: number[] = [];
@@ -431,12 +437,10 @@ export function computeWindow(input: WindowInput): MetricsWindow {
       const q = seconds(r.trigger_ts, r.started_at);
       if (Number.isFinite(q) && q >= 0) queue.push(q);
     }
-    // An expired round's finished_at is the expiry sweep's clock, not a real
-    // end — the same reason `finishedLive` leaves it out of duration.
-    if (r.finished_at && r.status !== "expired") {
-      const v = seconds(r.started_at, r.finished_at);
-      if (Number.isFinite(v) && v >= 0) review.push(v);
-    }
+  }
+  for (const r of finishedLive) {
+    const v = seconds(r.started_at, r.finished_at!);
+    if (Number.isFinite(v) && v >= 0) review.push(v);
   }
 
   // ---- time in state ----
@@ -478,8 +482,8 @@ export function computeWindow(input: WindowInput): MetricsWindow {
   const byRoundType: Record<string, number> = {};
   const byLens: Record<string, number> = {};
   for (const r of live) {
-    const spend = r.est_usd ?? 0;
-    if (spend === 0) continue;
+    if (r.est_usd === null) continue;
+    const spend = r.est_usd;
     perPr.set(r.pr, (perPr.get(r.pr) ?? 0) + spend);
     // Accumulated at full precision and rounded once below, like `perPr` —
     // rounding every step drifts a bucket off the header's total.
@@ -496,7 +500,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
   for (const k of Object.keys(byRoundType)) byRoundType[k] = round2(byRoundType[k]!);
   for (const k of Object.keys(byLens)) byLens[k] = round2(byLens[k]!);
   const perPrValues = [...perPr.values()].map(round2);
-  const spendTotal = round2(live.reduce((n, r) => n + (r.est_usd ?? 0), 0));
+  const spendTotal = round2(roundUsage(live).spend_usd);
 
   // ---- rounds until resolution (PRs with activity in the window) ----
   const prsInWindow = new Set(rounds.map((r) => r.pr));
@@ -592,8 +596,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     loud: t.loud,
   }));
   const cancellations = {
-    total: byCause.reduce((n, c) => n + c.count, 0),
-    loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
+    ...cancellationTotals(byCause),
     by_cause: byCause,
   };
 
@@ -602,9 +605,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
       prs_triggered: triggeredPrs.size,
       // Only a `done` round delivered a review: cancelled, overdue and expired
       // rounds carry a `finished_at` too, but that is when they died.
-      prs_reviewed: new Set(
-        rounds.filter((r) => r.finished_at && r.status === "done").map((r) => r.pr),
-      ).size,
+      prs_reviewed: new Set(rounds.filter(deliveredReview).map((r) => r.pr)).size,
       approvals: rounds.filter((r) => r.verdict === "APPROVE").length,
       request_changes: rounds.filter((r) => r.verdict === "REQUEST_CHANGES").length,
       rounds: rounds.length,
@@ -829,12 +830,7 @@ export function readOps(
       running_rounds: number;
       max_concurrent_rounds: number;
     }>;
-    ops.heartbeat =
-      typeof snap.heartbeat === "string"
-        ? snap.heartbeat
-        : typeof snap.written_at === "string"
-          ? snap.written_at
-          : null;
+    ops.heartbeat = snapshotHeartbeat(snap);
     if (typeof snap.dry_run === "boolean") ops.dry_run = snap.dry_run;
     if (typeof snap.running_rounds === "number") ops.running_rounds = snap.running_rounds;
     if (typeof snap.max_concurrent_rounds === "number")
@@ -895,7 +891,7 @@ export function computeTimeline(store: StateStore, pr: number): TimelinePayload 
   }
 
   for (const r of rounds) {
-    if (r.backfilled === 1) {
+    if (isBackfilled(r)) {
       push(
         r.finished_at ?? r.started_at,
         "backfilled_round",
@@ -931,14 +927,12 @@ export function computeTimeline(store: StateStore, pr: number): TimelinePayload 
     pr,
     known: row !== undefined || rounds.length > 0 || meta !== undefined,
     items,
-    backfilled_rounds: rounds
-      .filter((r) => r.backfilled === 1)
-      .map((r) => ({
-        round_no: r.round_no,
-        submitted_at: r.finished_at ?? r.started_at,
-        verdict: r.verdict ?? null,
-        trigger_ts: r.trigger_ts ?? null,
-      })),
+    backfilled_rounds: rounds.filter(isBackfilled).map((r) => ({
+      round_no: r.round_no,
+      submitted_at: r.finished_at ?? r.started_at,
+      verdict: r.verdict ?? null,
+      trigger_ts: r.trigger_ts ?? null,
+    })),
   };
   const title = row?.title ?? meta?.title;
   const author = row?.author ?? meta?.author;
@@ -975,8 +969,7 @@ export function cancellationSummaryLine(
   tallies: ReadonlyArray<{ cause: string; count: number; loud: boolean; label?: string }>,
 ): string {
   if (tallies.length === 0) return `${label}: none`;
-  const total = tallies.reduce((n, t) => n + t.count, 0);
-  const loud = tallies.filter((t) => t.loud).reduce((n, t) => n + t.count, 0);
+  const { total, loud } = cancellationTotals(tallies);
   const parts = tallies.map(
     (t) => `${t.label ?? cancelCauseLabel(t.cause)} ${t.count}${t.loud ? " ⚑" : ""}`,
   );
@@ -1010,7 +1003,7 @@ export function renderMetrics(payload: MetricsPayload): string {
   lines.push("");
   lines.push(
     `ttfv (7d): median ${fmtSecs(w.ttfv.median)} p90 ${fmtSecs(w.ttfv.p90)} ` +
-      `(queue ${fmtSecs(w.ttfv.queue_median_s)}, review ${fmtSecs(w.ttfv.review_median_s)}) n=${w.ttfv.n}`,
+      `(all live rounds: queue ${fmtSecs(w.ttfv.queue_median_s)}, review ${fmtSecs(w.ttfv.review_median_s)}) n=${w.ttfv.n}`,
   );
   lines.push(
     `duration (7d): median ${fmtSecs(w.duration.median)} p90 ${fmtSecs(w.duration.p90)} ` +

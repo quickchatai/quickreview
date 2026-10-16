@@ -231,8 +231,7 @@ export interface ParsedLesson {
 }
 
 function splitList(v: string | undefined): string[] {
-  if (v === undefined) return [];
-  return [...new Set(v.split(",").map((s) => s.trim()).filter((s) => s !== ""))];
+  return stringList(v)!;
 }
 
 /** `cand:c42` / `cand:42` → 42; anything else null. */

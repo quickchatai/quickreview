@@ -30,6 +30,7 @@
 //   3. MEMORY NEVER BLOCKS A ROUND. Every call here is total: bounded by a
 //      deadline, swallowing every throw, returning a boolean. A session whose
 //      OpenViking session could not be created simply runs without a raw tier.
+import { withinBudget } from "../budget.js";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -101,18 +102,8 @@ const DEFAULT_LIFECYCLE_TIMEOUT_MS = 5_000;
 
 /** Resolve `fallback` if `p` has not settled within `ms`. Never rejects. */
 async function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      p.catch(() => fallback),
-      new Promise<T>((resolve) => {
-        timer = setTimeout(() => resolve(fallback), ms);
-        timer.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  const outcome = await withinBudget(p.catch(() => fallback), ms);
+  return outcome.kind === "done" ? outcome.value : fallback;
 }
 
 /**
@@ -522,7 +513,12 @@ export function keyChangeWatcher(
     const prev = last;
     last = key;
     if (prev === undefined || key === null || key === prev) return false;
-    if (onChange() === false) last = prev;
+    try {
+      if (onChange() === false) last = prev;
+    } catch (err) {
+      last = prev;
+      throw err;
+    }
     return true;
   };
 }

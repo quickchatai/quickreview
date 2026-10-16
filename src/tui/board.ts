@@ -6,7 +6,7 @@ import { archiveAttention, readArchiveStatus } from "../archive/status.js";
 import type { WhyPayload } from "../cli.js";
 import { readDaemonLoad, stallShortPhrase } from "../eventloop.js";
 import { curationNeedsAttention, earlierPhrase } from "../learner/status.js";
-import { fmtDuration } from "../memory/health.js";
+import { fmtDuration, isAuthResult } from "../memory/health.js";
 import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
@@ -367,15 +367,14 @@ export function memorySegment(
         loud: true,
       };
     case "auth_failed": {
-      const d = m.credentials.daemon?.result;
-      const sess = m.credentials.sessions?.result;
-      const bad = (r: string | undefined): boolean => r === "auth_failed" || r === "no_key";
+      const d = isAuthResult(m.credentials.daemon);
+      const sess = isAuthResult(m.credentials.sessions);
       const which =
-        bad(d) && bad(sess)
+        d && sess
           ? "both keys"
-          : bad(d)
+          : d
             ? "daemon key"
-            : bad(sess)
+            : sess
               ? "sessions' key"
               : "a key";
       return {

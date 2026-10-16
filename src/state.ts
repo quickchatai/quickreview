@@ -412,6 +412,17 @@ export function roundUsage(
   };
 }
 
+/** Total cancellations and the subset requiring operator attention. */
+export function cancellationTotals(tallies: ReadonlyArray<{ count: number; loud: boolean }>): {
+  total: number;
+  loud: number;
+} {
+  return {
+    total: tallies.reduce((n, t) => n + t.count, 0),
+    loud: tallies.filter((t) => t.loud).reduce((n, t) => n + t.count, 0),
+  };
+}
+
 /** The cancelled rounds among `rounds`, grouped by cause (an unclassified
  * one is `unknown`) and in `cancellationOrder`. */
 export function tallyCancellations(
@@ -430,6 +441,26 @@ export function tallyCancellations(
       loud: isLoudCancelCause(cause),
     }))
     .sort(cancellationOrder);
+}
+
+/** Whether an optional source's table exists in this state database. */
+export function tableExists(store: StateStore, name: string): boolean {
+  return (
+    store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !==
+    undefined
+  );
+}
+
+/** The snapshot's heartbeat, with its legacy written_at field as fallback. */
+export function snapshotHeartbeat(snapshot: {
+  heartbeat?: unknown;
+  written_at?: unknown;
+}): string | null {
+  return typeof snapshot.heartbeat === "string"
+    ? snapshot.heartbeat
+    : typeof snapshot.written_at === "string"
+      ? snapshot.written_at
+      : null;
 }
 
 /** One parsed row of the durable reasoning record. */
