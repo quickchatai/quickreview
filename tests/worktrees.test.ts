@@ -282,6 +282,58 @@ describe("WorktreeManager", () => {
     expect(await m.sweepStale([])).toEqual([]);
     expect(existsSync(join(root, "wt", "scratch"))).toBe(true);
   });
+
+  it("sweeps stale PR refs even after an interrupted cleanup removed the directory", async () => {
+    const sha = commit("a.txt", "x\n");
+    publishPullHead(7, sha);
+    publishPullHead(8, sha);
+    publishPullHead(9, sha);
+    const m = mgr();
+    await m.ensureWorktree(7);
+    await m.ensureWorktree(8);
+    await m.ensureWorktree(9);
+    await m.pinReviewedHead(7, sha);
+    await m.pinReviewedHead(8, sha);
+    rmSync(m.worktreePath(7), { recursive: true, force: true });
+    rmSync(m.worktreePath(8), { recursive: true, force: true });
+    rmSync(m.worktreePath(9), { recursive: true, force: true });
+    git(m.basePath, "update-ref", "-d", "refs/qcr/pr-7");
+    git(m.basePath, "update-ref", "refs/qcr/keep-me", sha);
+
+    expect(await m.sweepStale([8])).toEqual([7, 9]);
+    expect(
+      git(m.basePath, "for-each-ref", "--format=%(refname)", "refs/qcr").trim().split("\n"),
+    ).toEqual(["refs/qcr/keep-me", "refs/qcr/pr-8", reviewedHeadRef(8, sha)]);
+  });
+
+  it.each(["for-each-ref", "update-ref"])(
+    "retains the worktree when %s fails, and retries cleanup",
+    async (operation) => {
+      const sha = commit("a.txt", "x\n");
+      publishPullHead(7, sha);
+      const setup = mgr();
+      await setup.ensureWorktree(7);
+      await setup.pinReviewedHead(7, sha);
+      let refuse = true;
+      const run: ExecFn = async (cmd, args, opts) =>
+        refuse && args[0] === operation
+          ? { code: 128, stdout: "", stderr: "ref lock unavailable" }
+          : nodeExec(cmd, args, opts);
+      const m = new WorktreeManager({
+        root,
+        repo: "exampleorg/example-app",
+        cloneUrl: origin,
+        run,
+      });
+      await expect(m.remove(7)).rejects.toThrow("ref lock unavailable");
+      expect(existsSync(m.worktreePath(7))).toBe(true);
+      refuse = false;
+      expect(await m.reviewedHeadRefs(7)).toEqual([reviewedHeadRef(7, sha)]);
+      await m.remove(7);
+      expect(existsSync(m.worktreePath(7))).toBe(false);
+      expect(await m.reviewedHeadRefs(7)).toEqual([]);
+    },
+  );
 });
 
 // The migration-collision pre-check reads the BASE branch's migration
@@ -1429,7 +1481,11 @@ describe("prOwnedDelta", () => {
     });
   });
 
-  it("merge-tree failing is merge-tree-failed, never a partial delta", async () => {
+  it.each([
+    ["old git", "exit 128: old git"],
+    [" \n", "exit 128"],
+    ["x".repeat(600), `exit 128: ${"x".repeat(500)}`],
+  ])("merge-tree failing retains bounded diagnostics: %s", async (stderr, detail) => {
     git(origin, "checkout", "-q", "-b", "feature");
     write("a.txt", lines(20, { 1: "pr" }));
     const h0 = commitAll("pr");
@@ -1443,9 +1499,7 @@ describe("prOwnedDelta", () => {
     const head = git(origin, "rev-parse", "HEAD").trim();
     const facts = await round(m0, head);
     const run: ExecFn = async (cmd, args, opts) =>
-      args[0] === "merge-tree"
-        ? { code: 128, stdout: "", stderr: "old git" }
-        : nodeExec(cmd, args, opts);
+      args[0] === "merge-tree" ? { code: 128, stdout: "", stderr } : nodeExec(cmd, args, opts);
     const m = new WorktreeManager({ root, repo: "exampleorg/example-app", cloneUrl: origin, run });
     const d = await m.prOwnedDelta({
       pr: 7,
@@ -1454,7 +1508,7 @@ describe("prOwnedDelta", () => {
       mergeBase: facts.merge_base,
       baseSha: facts.base_sha,
     });
-    expect(d).toEqual({ ok: false, reason: "merge-tree-failed", detail: "exit 128" });
+    expect(d).toEqual({ ok: false, reason: "merge-tree-failed", detail });
   });
 });
 
