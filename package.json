@@ -21,7 +21,7 @@
     "onboard": "bash scripts/qcr onboard",
     "test": "vitest run",
     "//lint": "Deliberately NOT chained into `test` or `build`: scripts/dev-tui.sh blocks on the build before the TUI paints (ruling 5), and an ESLint pass there is seconds of blank terminal. CI runs it as its own step.",
-    "lint": "eslint .",
+    "lint": "node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,mjs,js,json,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,mjs,js,json,yml,yaml}\"",

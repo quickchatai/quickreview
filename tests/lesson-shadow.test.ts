@@ -380,7 +380,7 @@ describe("a shadow find aborted at the budget never reaches memory health", () =
    * deadline aborts it. */
   const slow: HttpFetch = (_url, init) =>
     new Promise((_resolve, reject) => {
-      init.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+      init.signal?.addEventListener("abort", () => reject(init.signal!.reason as Error));
     });
 
   async function healthyMonitor(): Promise<MemoryHealthMonitor> {

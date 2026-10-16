@@ -333,7 +333,7 @@ describe("wire.ts: the lesson shadow ledger is actually connected", () => {
   });
 
   it("shutdown CUTS the shadow selections and waits only for an awaited one's ≤ 2 s budget — never the shadow budget (docker's 10 s stop grace)", () => {
-    const stop = /async onStop\(reason = "shutdown"\) \{[\s\S]*?\n    \},\n/.exec(wire)?.[0] ?? "";
+    const stop = /async onStop\(reason = "shutdown"\) \{[\s\S]*?\n {4}\},\n/.exec(wire)?.[0] ?? "";
     expect(stop).not.toBe("");
     // stop() first, then the bounded wait — and both before the server goes.
     expect(stop).toMatch(
@@ -344,7 +344,7 @@ describe("wire.ts: the lesson shadow ledger is actually connected", () => {
   });
 
   it("shutdown stops the EOD pinned-area watchdog before the server goes", () => {
-    const stop = /async onStop\(reason = "shutdown"\) \{[\s\S]*?\n    \},\n/.exec(wire)?.[0] ?? "";
+    const stop = /async onStop\(reason = "shutdown"\) \{[\s\S]*?\n {4}\},\n/.exec(wire)?.[0] ?? "";
     expect(stop).toMatch(/pinWatch\?\.stop\(\);/);
     expect(stop.indexOf("pinWatch?.stop()")).toBeLessThan(stop.indexOf("openviking.stop()"));
   });

@@ -1258,7 +1258,7 @@ export function buildPassPlan(
       light !== undefined && PASS_TIER_ORDER.indexOf(light) < PASS_TIER_ORDER.indexOf(sweepTier);
     const rows = groups.map((focus): PassPlanEntry => {
       const isLight = lightApplies && focus.every(isLightSweepFile);
-      const tier = isLight ? light! : sweepTier;
+      const tier = isLight ? light : sweepTier;
       return {
         lens: SWEEP_PASS,
         agent: `${SWEEP_PASS}--${tier}`,
