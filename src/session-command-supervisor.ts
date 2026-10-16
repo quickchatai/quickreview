@@ -4,6 +4,7 @@
 // scheduler. Delivery remains inject-bridge-owned; round recovery remains the
 // VerdictWatcher's existing self-requeue path. The supervisor only classifies
 // finite start/finish obligations from durable command state + JSONL receipts.
+import { roundStageDeadlines } from "./round-stage-deadlines.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -23,6 +24,7 @@ import {
 import { sessionCommandMarker } from "./session-command.js";
 import {
   isTerminalAgentStatus,
+  executionsComplete,
   lensForAgent,
   plannedFanoutAgents,
   type RoundProgressSnapshot,
@@ -35,6 +37,16 @@ export const ROUND_STAGE_SUPERVISOR = "round-stage";
 /** How far a progress snapshot's run start may sit from the command's durable
  * start and still be the same run. */
 const RUN_START_TOLERANCE_MS = 5_000;
+
+function runStartsNear(commandStart: string, progressStart: string): boolean {
+  const started = Date.parse(commandStart);
+  const runStarted = Date.parse(progressStart);
+  return (
+    Number.isFinite(started) &&
+    Number.isFinite(runStarted) &&
+    Math.abs(runStarted - started) <= RUN_START_TOLERANCE_MS
+  );
+}
 
 export type RoundInfrastructureStage =
   | "command_start"
@@ -226,7 +238,8 @@ export class SessionCommandSupervisor {
         // receipt because no verdict came.
         if (
           command.status === "running" &&
-          round.status === "done" &&
+          (round.status === "done" ||
+            (round.status === "cancelled" && round.cancel_cause === "no_new_evidence")) &&
           !settled &&
           this.inVerdictTail(round)
         )
@@ -269,6 +282,9 @@ export class SessionCommandSupervisor {
     }
     if (this.verdictPending(command)) return; // the 10s verdict sweep owns it
     if (command.status === "running" && command.started_at !== null && runningRound) {
+      // Initial stage detection precedes the ordinary hard-cap check. Once
+      // recovery explicitly defers, its durable retry time owns the next probe.
+      if (!due && this.hasDeferredStageCheck(command)) return;
       if (await this.executionStageExpired(command, runningRound)) return;
     }
     if (!due) return;
@@ -618,6 +634,18 @@ export class SessionCommandSupervisor {
     }
   }
 
+  private hasDeferredStageCheck(command: SessionCommandRow): boolean {
+    return (
+      this.deps.store.db
+        .prepare(
+          `SELECT 1 FROM events WHERE pr = ? AND kind IN ('round_stage_recovery_deferred', 'round_stage_posted_tail_wait')
+       AND json_extract(payload, '$.command_id') = ?
+       AND json_extract(payload, '$.next_check_at') = ? LIMIT 1`,
+        )
+        .get(command.pr, command.id, command.next_check_at) !== undefined
+    );
+  }
+
   private matchingProgress(command: SessionCommandRow): RoundProgressSnapshot | undefined {
     if (!this.deps.progress) return undefined;
     const progress = this.deps.progress(command.pr);
@@ -641,14 +669,11 @@ export class SessionCommandSupervisor {
     if (command.started_at === null) return undefined;
     const progress = this.matchingProgress(command);
     if (!progress || progress.version !== 2) return undefined;
-    const started = Date.parse(command.started_at);
     const runStarted = Date.parse(progress.run_started_at);
     const accepted = Date.parse(progress.command_accepted_at ?? "");
     if (
-      !Number.isFinite(started) ||
-      !Number.isFinite(runStarted) ||
+      !runStartsNear(command.started_at, progress.run_started_at) ||
       !Number.isFinite(accepted) ||
-      Math.abs(runStarted - started) > RUN_START_TOLERANCE_MS ||
       accepted < runStarted
     )
       return undefined;
@@ -664,18 +689,26 @@ export class SessionCommandSupervisor {
     const started = Date.parse(command.started_at!);
     const now = this.now().getTime();
     const minute = 60_000;
-    const firstPassAt =
-      started +
-      (this.deps.cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN) * minute;
-    // A follow-up round whose pre-approval sweep is OWED may run a
-    // whole round-1 plan after its delta stage — its passes limit and its
-    // hard cap both get `[daemon] follow_up_sweep_extra_min` more.
     const sweepOwed = round.sweep_owed === 1;
-    const sweepExtraMin = sweepOwed ? this.sweepExtraMin() : 0;
     const passesMaxMin =
-      (this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN) + sweepExtraMin;
-    const passesAt = started + passesMaxMin * minute;
-    const hardAt = this.hardDeadlineMs(command.started_at!, command, round);
+      (this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN) +
+      (sweepOwed ? this.sweepExtraMin() : 0);
+    const deadlines = roundStageDeadlines(
+      started,
+      {
+        first_pass_max_min:
+          this.deps.cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
+        passes_max_min: this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN,
+        running_max_min:
+          this.deps.cfg.daemon.session_command_running_max_min ??
+          DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+        follow_up_sweep_extra_min: this.sweepExtraMin(),
+      },
+      sweepOwed,
+    );
+    const firstPassAt = deadlines.first_pass_start;
+    const passesAt = deadlines.passes_complete;
+    const hardAt = deadlines.running_hard_bound;
     const planned = round.lenses
       .split(",")
       .map((name) => name.trim())
@@ -712,7 +745,7 @@ export class SessionCommandSupervisor {
         return first === undefined || !terminal(first.status);
       }
       const executions = progress.agents.filter((agent) => lensForAgent(agent.agent) === name);
-      return executions.length === 0 || executions.some((agent) => !terminal(agent.status));
+      return !executionsComplete(executions);
     });
     const addedRunning = progress.agents
       .filter(
@@ -800,13 +833,10 @@ export class SessionCommandSupervisor {
     const progress = this.matchingProgress(command);
     if (!progress || progress.parent_status !== "settled") return false;
     const started = Date.parse(command.started_at);
-    const runStarted = Date.parse(progress.run_started_at);
     const updated = Date.parse(progress.updated_at);
     return (
-      Number.isFinite(started) &&
-      Number.isFinite(runStarted) &&
+      runStartsNear(command.started_at, progress.run_started_at) &&
       Number.isFinite(updated) &&
-      Math.abs(runStarted - started) <= RUN_START_TOLERANCE_MS &&
       updated >= started
     );
   }
@@ -978,34 +1008,38 @@ export class SessionCommandSupervisor {
       stage,
       `${detail}; command=${command.id}`,
     );
-    if (disposition === "retryable") {
-      const next = this.deadlineFromNowSeconds(
+    if (disposition === "retryable" || disposition === "posted_wait") {
+      let next = this.deadlineFromNowSeconds(
         this.deps.cfg.daemon.session_command_unknown_grace_s ??
           DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
       );
+      if (disposition === "posted_wait") {
+        // A posted tail's fixed end is an earlier obligation than the retry
+        // interval; preserve that boundary without probing every scan.
+        const tail = this.deps.store.db
+          .prepare(
+            `SELECT json_extract(payload, '$.wait_until') AS wait_until FROM events
+           WHERE pr = ? AND kind = 'round_stage_posted_wait'
+           AND json_extract(payload, '$.round_no') = ? ORDER BY id DESC LIMIT 1`,
+          )
+          .get(command.pr, command.round_no) as { wait_until: string } | undefined;
+        if (tail && Number.isFinite(Date.parse(tail.wait_until)) && tail.wait_until < next)
+          next = tail.wait_until;
+      }
       this.deps.store.scheduleSessionCommandCheck(command.id, next);
-      this.deps.store.logEvent("round_stage_recovery_deferred", command.pr, {
-        command_id: command.id,
-        round_no: command.round_no,
-        stage,
-        next_check_at: next,
-        detail,
-      });
-      return;
-    }
-    if (disposition === "posted_wait") {
-      // The round's review is already on GitHub (or was refused
-      // by guard 2), so this limit is not a failure. The session keeps its
-      // command and its life while it writes its ledger, findings record and
-      // verdict; the callback settles the round from the receipt once its
-      // bounded posted-tail grace runs out. Re-check after the ordinary
-      // finite interval — the callback logs the wait once, not every scan.
-      this.deps.store.scheduleSessionCommandCheck(
-        command.id,
-        this.deadlineFromNowSeconds(
-          this.deps.cfg.daemon.session_command_unknown_grace_s ??
-            DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
-        ),
+      this.deps.store.logEvent(
+        disposition === "posted_wait"
+          ? "round_stage_posted_tail_wait"
+          : "round_stage_recovery_deferred",
+        command.pr,
+        {
+          command_id: command.id,
+          round_no: command.round_no,
+          stage,
+          disposition,
+          next_check_at: next,
+          detail,
+        },
       );
       return;
     }

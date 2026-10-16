@@ -655,7 +655,7 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
       throw new Error(
         `profile heuristics ${file}: [${lens}] is not an extendable lens — allowed: ${PROFILE_EXTENDABLE_LENSES.join(", ")} ` +
           `(pass-intent is body-keyed, pass-placement/pass-simplicity are status/size-computed, ` +
-          `pass-concurrency/pass-ask-human are addable-only by ratified decision)`,
+          `pass-concurrency is content-triggered only; pass-ask-human is addable-only by ratified decision)`,
       );
     }
     if (typeof table !== "object" || table === null || Array.isArray(table)) {

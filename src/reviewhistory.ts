@@ -130,7 +130,12 @@ export interface CollectOptions {
 /** `months` calendar months before `now`, as an ISO instant. */
 export function windowStart(now: Date, months: number): string {
   const d = new Date(now.getTime());
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
   d.setUTCMonth(d.getUTCMonth() - months);
+  const last = new Date(d.getTime());
+  last.setUTCMonth(last.getUTCMonth() + 1, 0);
+  d.setUTCDate(Math.min(day, last.getUTCDate()));
   return d.toISOString();
 }
 

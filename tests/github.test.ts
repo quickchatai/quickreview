@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseConfig, type Config } from "../src/config.js";
 import { MutationGate } from "../src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
+import { ThreadResolutionRefusal } from "../src/thread-resolution-refusal.js";
 import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -449,6 +450,17 @@ describe("resolveOwnReviewThread ownership gate", () => {
     expect(dryrunRecords()).toHaveLength(0);
   });
 
+  it.each(["foreign-owner", "missing-root"] as const)(
+    "classifies a %s refusal for retry callers",
+    async (reason) => {
+      const { adapter } = build(() => threadPayload("alice"));
+      await expect(
+        adapter.resolveOwnReviewThread(3, reason === "missing-root" ? 999 : 555),
+      ).rejects.toBeInstanceOf(ThreadResolutionRefusal);
+      expect(dryrunRecords()).toHaveLength(0);
+    },
+  );
+
   it("refuses another identity's thread and skips an already-resolved own thread", async () => {
     const other = build(() => threadPayload("alice"));
     await expect(other.adapter.resolveOwnReviewThread(3, 555)).rejects.toThrow(
@@ -785,7 +797,9 @@ describe("list reads are paginated", () => {
   it("the triggered-set search fails rather than answer a partial set", async () => {
     const incomplete = build(() => ({ incomplete_results: true, items: [{ number: 1 }] })).adapter;
     await expect(incomplete.searchLabelTriggered()).rejects.toThrow(/incomplete/);
-    const capped = build((url) => ({ items: page(url, 5_000, (i) => ({ number: i + 1 })) })).adapter;
+    const capped = build((url) => ({
+      items: page(url, 5_000, (i) => ({ number: i + 1 })),
+    })).adapter;
     await expect(capped.searchTeamTriggered()).rejects.toThrow(/exceeded 10 pages/);
   });
 

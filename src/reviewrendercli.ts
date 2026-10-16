@@ -112,7 +112,7 @@ function main(argv: string[]): number {
   const config = renderConfig(root, botLogin);
   if (config.unread !== undefined)
     console.log(
-      `render-review: config or profile unreadable (${config.unread}) — rendered with the shipped defaults: no posting-policy cut, dedup_merge ${String(config.cfg.review.dedup_merge)}`,
+      `render-review: config or profile unreadable (${config.unread}) — rendered without a posting-policy cut; dedup_merge ${String(config.cfg.review.dedup_merge)}`,
     );
   const res = renderRound(root, Number(prRaw), Number(roundRaw), config.cfg);
   if ("error" in res) {

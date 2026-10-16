@@ -23,6 +23,7 @@
 // A record, not a gate. Nothing here holds a round, refuses an approval or
 // touches GitHub. The listing rows (`prior_finding_checks`) record exactly
 // what was handed out; the reports are the session's.
+import { findingRowFields } from "./finding-row.js";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -457,27 +458,9 @@ function entriesAsRows(
     round_id: null,
     round_no: roundNo,
     head_sha: headSha,
-    finding_key: f.key,
-    path: f.path,
-    line: f.line,
-    lens: f.lens,
-    tier: f.tier,
+    ...findingRowFields(f),
     unplanned: 0,
-    severity: f.severity,
-    confidence: f.confidence,
-    reachability: f.reachability,
-    kind: f.kind,
-    disposition: f.disposition,
-    axis: f.axis,
-    word: f.word,
-    reason: f.reason,
-    evidence: f.evidence,
-    posted_as: f.posted_as,
-    raised_in_round: f.raised_in_round,
-    thread_id: f.thread_id,
     recorded_at: "",
-    title: f.title,
-    lens_ids: JSON.stringify(canonicalLensIds(f.lens)),
   }));
 }
 

@@ -26,6 +26,7 @@ import {
   DEFERRED_TAG,
   ordinaryPostTag,
   SANCTIONED_TAGS,
+  type SanctionedTagWord,
 } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
 import {
@@ -79,7 +80,7 @@ export interface RenderedReview {
   problems: string[];
 }
 
-type Tag = "blocker" | "question" | "nit" | "check this" | "ask your human" | "deferred";
+type Tag = SanctionedTagWord;
 /** The closed tag grammar (`severity.ts` `SANCTIONED_TAGS`), bare. */
 const TAGS = SANCTIONED_TAGS.map(bareTag) as readonly Tag[];
 
@@ -108,6 +109,52 @@ interface Posted {
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+/** The supported record array spellings, in parser precedence order. */
+function entriesOf(rec: Record<string, unknown>): unknown[] | null {
+  return Array.isArray(rec.findings)
+    ? rec.findings
+    : Array.isArray(rec.candidates)
+      ? rec.candidates
+      : null;
+}
+
+function entriesById(entries: readonly unknown[]): Map<string, Record<string, unknown>> {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const record = entry as Record<string, unknown>;
+    const id = str(record.id);
+    if (id !== null) byId.set(id, record);
+  }
+  return byId;
+}
+
+/** Follow the complete identity chain, including withheld or missing leads.
+ * Cycles share their smallest member id so traversal order cannot split them. */
+function rootCauseId(
+  id: string,
+  sameAs: string | null,
+  byId: ReadonlyMap<string, Record<string, unknown>>,
+): string {
+  const path = [id];
+  let current = sameAs;
+  while (current !== null) {
+    const cycleAt = path.indexOf(current);
+    if (cycleAt !== -1) return path.slice(cycleAt).sort()[0]!;
+    path.push(current);
+    const entry = byId.get(current);
+    if (entry === undefined) return current;
+    const next = str(entry.same_as);
+    if (next === null) return current;
+    current = next;
+  }
+  return id;
+}
+
+function effectiveTitle(entry: Record<string, unknown>): string {
+  return str(entry.title) ?? policyFirstSentence(str(entry.reason) ?? "");
 }
 
 /** The parser's own coercion: a value the record stores is the value posted. */
@@ -164,7 +211,7 @@ function readPosted(
   const reachability = str(raw.reachability);
   const sevTag = severityTagOf(tag, severity, confidence, reachability);
   const reason = str(raw.reason) ?? "";
-  const title = str(raw.title) ?? (reason ? policyFirstSentence(reason) : "");
+  const title = effectiveTitle(raw);
   if (!str(raw.title)) problems.push(`${id}: no title — the reason's first sentence stands in`);
   const body = str(raw.body) ?? reason;
   if (!str(raw.body)) problems.push(`${id}: no body — the reason stands in`);
@@ -184,7 +231,7 @@ function readPosted(
     severity,
     confidence,
     reachability,
-    lens: str(raw.lens) ?? "unknown",
+    lens: str(raw.lens) ?? str(raw.name) ?? "unknown",
     same_as: str(raw.same_as),
     inline: raw.inline !== false,
   };
@@ -258,8 +305,8 @@ export function renderReviewFromRecord(
     summary: given.summary ?? opts.summary ?? null,
     lenses_applied: given.lenses_applied ?? opts.lensesApplied ?? null,
   };
-  const entries = Array.isArray(rec.findings) ? (rec.findings as unknown[]) : [];
-  if (!Array.isArray(rec.findings)) problems.push("the record has no findings array");
+  const entries = entriesOf(rec) ?? [];
+  if (entriesOf(rec) === null) problems.push("the record has no findings array");
   const posted = entries
     // The index in the WHOLE findings array is what the record parser keys a
     // key-less entry by, so it is taken before the filter.
@@ -295,18 +342,19 @@ export function renderReviewFromRecord(
     });
   }
 
-  // The verdict line and the sections count ROOT CAUSES: a follower row
-  // (same_as) is posted inline but neither counted nor bulleted. A follower
-  // whose lead is not posted (the posting cut kept the stronger site) stands
-  // for its root cause — the first such follower of that lead.
-  const postedIds = new Set(posted.map((p) => p.id));
-  const standIn = new Set<string>();
-  const leads = posted.filter((p) => {
-    if (p.same_as === null) return true;
-    if (postedIds.has(p.same_as) || standIn.has(p.same_as)) return false;
-    standIn.add(p.same_as);
-    return true;
-  });
+  // Count each root cause under its strongest surviving occurrence. Inline
+  // comments still include every posted site, including weaker leads.
+  const byId = entriesById(entries);
+  const representatives = new Map<string, Posted>();
+  const strength = (p: Posted) =>
+    ({ blocker: 3, question: 2, nit: 1 })[p.sevTag] * 2 +
+    (p.tag === "check this" || p.tag === "deferred" ? 0 : 1);
+  for (const p of posted) {
+    const key = rootCauseId(p.id, p.same_as, byId);
+    const prior = representatives.get(key);
+    if (!prior || strength(p) > strength(prior)) representatives.set(key, p);
+  }
+  const leads = [...representatives.values()];
   const of = (t: "blocker" | "nit" | "question") =>
     leads.filter((p) => p.tag !== "check this" && p.tag !== "deferred" && p.sevTag === t);
 
@@ -459,26 +507,27 @@ export function applyPostingPolicyToRecord(
   if (isDefaultPosting(policy) || typeof record !== "object" || record === null)
     return { record, withheld: [] };
   const rec = record as Record<string, unknown>;
-  if (!Array.isArray(rec.findings)) return { record, withheld: [] };
-  const entries = (rec.findings as unknown[]).map((e) =>
+  const rawEntries = entriesOf(rec);
+  if (rawEntries === null) return { record, withheld: [] };
+  const entries = rawEntries.map((e) =>
     typeof e === "object" && e !== null ? { ...(e as Record<string, unknown>) } : e,
   );
   const posted = entries.filter(isPostedEntry);
-  const byId = new Map(posted.map((e) => [String(e.id ?? ""), e]));
-  const titleOf = (e: Record<string, unknown>) =>
-    typeof e.title === "string" && e.title.trim()
-      ? e.title
-      : typeof e.reason === "string"
-        ? policyFirstSentence(e.reason)
-        : "";
+  // A withheld lead still owns the root-cause identity on later renders.
+  const byId = entriesById(entries);
   const sel = selectPosted(
     posted,
     (e) => {
-      const lead = typeof e.same_as === "string" ? byId.get(e.same_as) : undefined;
+      const sameAs = str(e.same_as);
+      const root = rootCauseId(str(e.id) ?? "", sameAs, byId);
+      const lead = byId.get(root);
       return {
         cls: postedClassOf(e),
         severity: typeof e.severity === "string" && e.severity.trim() ? e.severity.trim() : null,
-        key: siteKey(titleOf(lead ?? e)),
+        key:
+          sameAs !== null && lead === undefined
+            ? `same_as:${root}`
+            : siteKey(effectiveTitle(lead ?? e)),
       };
     },
     policy,
@@ -487,7 +536,7 @@ export function applyPostingPolicyToRecord(
   const withheld: PolicyWithheld[] = [];
   for (const { item, word } of sel.withheld) {
     markWithheld(item, word);
-    const line = typeof item.line === "number" ? item.line : null;
+    const line = recordNumber(item.line);
     const path = typeof item.path === "string" && item.path.trim() ? item.path : null;
     withheld.push({
       id: String(item.id ?? ""),
@@ -497,7 +546,7 @@ export function applyPostingPolicyToRecord(
       cls: postedClassOf(item, "withheld_as"),
       severity:
         typeof item.severity === "string" && item.severity.trim() ? item.severity.trim() : null,
-      title: titleOf(item),
+      title: effectiveTitle(item),
       inline: path !== null && line !== null && item.inline !== false,
     });
   }
@@ -521,7 +570,16 @@ export function renderPostedReview(
   withheld: PolicyWithheld[];
 } {
   const { dedupMerge, policy, ...renderOpts } = opts;
-  const checked = dedupMerge ? postCheckRecord(record) : { record, merges: [] as PostCheckMerge[] };
+  const normalized =
+    typeof record === "object" &&
+    record !== null &&
+    !Array.isArray((record as Record<string, unknown>).findings) &&
+    Array.isArray((record as Record<string, unknown>).candidates)
+      ? { ...record, findings: (record as Record<string, unknown>).candidates }
+      : record;
+  const checked = dedupMerge
+    ? postCheckRecord(normalized)
+    : { record: normalized, merges: [] as PostCheckMerge[] };
   const cut = applyPostingPolicyToRecord(checked.record, policy);
   const rendered = renderReviewFromRecord(cut.record, {
     ...renderOpts,

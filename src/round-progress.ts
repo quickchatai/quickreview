@@ -77,6 +77,11 @@ export function isTerminalAgentStatus(status: LiveAgentStatus): boolean {
   return status === "completed" || status === "failed";
 }
 
+/** A required lens is complete only when it ran and all its executions ended. */
+export function executionsComplete(executions: readonly LiveAgentProgress[]): boolean {
+  return executions.length > 0 && executions.every((agent) => isTerminalAgentStatus(agent.status));
+}
+
 /** The executions that open a round's fanout: a started run of one of the
  * plan's DISCOVERY lenses. Validator-first, an added lens or a foreign
  * subagent never counts. */
@@ -104,7 +109,7 @@ export function roundExecutionStage(
   const terminal = isTerminalAgentStatus;
   const plannedComplete = planned.every((name) => {
     const executions = progress.agents.filter((agent) => lensForAgent(agent.agent) === name);
-    return executions.length > 0 && executions.every((agent) => terminal(agent.status));
+    return executionsComplete(executions);
   });
   const addedComplete = progress.agents
     .filter((agent) => !planned.includes(lensForAgent(agent.agent)))

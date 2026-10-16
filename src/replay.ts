@@ -68,6 +68,11 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { githubCloneDir, type Config } from "./config.js";
 import { buildPassPlan } from "./dispatch.js";
+import { ecosystemFor, type Ecosystem } from "./ecosystem.js";
+import type { HeuristicsExtension } from "./heuristics.js";
+import { findCiLinters, type CiLinter } from "./lintconfig.js";
+import { loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
+import { findStyleGuide } from "./styleguide.js";
 // Type-only, erased at build: `buildPassPlan` takes the file list shape the
 // files API returns, and this module builds one out of a local `git diff`.
 import type { PrFileEntry } from "./github.js";
@@ -110,6 +115,13 @@ export interface ReplayIo {
   spawnSession(name: string, systemPrompt: string, model: string): Promise<void>;
   injectOrder(name: string, body: string): Promise<void>;
   killSession(name: string): Promise<void>;
+  exists(path: string): boolean;
+  planningInputs(tree: string): {
+    ecosystem: Ecosystem;
+    heuristics: HeuristicsExtension;
+    styleGuide: readonly string[];
+    ciLinters: readonly CiLinter[];
+  };
   readFile(path: string): string | null;
   writeFile(path: string, body: string): void;
   mkdirp(path: string): void;
@@ -394,7 +406,7 @@ export class ScratchReplay {
     checkoutFailed?: string;
   }> {
     const { io, baseClone, baseBranch } = this.o;
-    if (!existsSync(join(baseClone, ".git"))) {
+    if (!io.exists(join(baseClone, ".git"))) {
       throw new ReplayUnavailable(
         `regression replay: no base clone at ${baseClone}. Run this where the sandbox's clone lives (the VM container), or point --clone at one.`,
       );
@@ -501,7 +513,16 @@ export class ScratchReplay {
         );
         return [];
       }
-      const { pass_plan, sweep_unswept } = buildPassPlan(this.o.cfg, prepared.files);
+      const inputs = io.planningInputs(prepared.tree);
+      const { pass_plan, sweep_unswept } = buildPassPlan(
+        this.o.cfg,
+        prepared.files,
+        undefined,
+        inputs.ecosystem,
+        inputs.heuristics,
+        inputs.styleGuide,
+        inputs.ciLinters,
+      );
       const order = replayOrder({
         c,
         treePath: prepared.tree,
@@ -518,6 +539,7 @@ export class ScratchReplay {
       await io.spawnSession(name, replaySystemPrompt(), this.o.model);
       await io.injectOrder(name, order);
       const deadline = io.now() + this.o.timeoutMs;
+      let parseError: unknown;
       while (io.now() < deadline) {
         await io.sleep(this.o.pollMs);
         const raw = io.readFile(findingsPath);
@@ -532,9 +554,15 @@ export class ScratchReplay {
           );
           log(`replay: ${c.id} produced ${findings.length} finding(s)`);
           return findings;
-        } catch {
-          // Half-written file: the session is still flushing. Keep polling.
+        } catch (err) {
+          // Keep polling a file that may still be flushing, but preserve the
+          // diagnosis if it remains invalid until the deadline.
+          parseError = err;
         }
+      }
+      if (parseError !== undefined) {
+        const detail = parseError instanceof Error ? parseError.message : "unknown parsing error";
+        log(`replay: ${c.id} invalid findings at ${findingsPath}: ${detail}`);
       }
       log(
         `replay: ${c.id} produced nothing within ${Math.round(this.o.timeoutMs / 1000)}s — scored VACUOUS`,
@@ -571,6 +599,12 @@ export async function nodeReplayIo(opts: {
   // namespace live reviews read — and nothing else would stop a replay's
   // "lesson" persisting past teardown.
   class ReplaySessionManager extends PiSessionManager {
+    override provisionOvCredentials(): ReturnType<
+      InstanceType<typeof PiSessionManager>["provisionOvCredentials"]
+    > {
+      return { path: this.ovcliConfPath(), written: false, keyed: false, reason: "replay" };
+    }
+
     override extensionPaths(): string[] {
       return super.extensionPaths().filter((p) => !p.split(/[\\/]/).includes("openviking-pi"));
     }
@@ -591,6 +625,13 @@ export async function nodeReplayIo(opts: {
       mgr.injectFile(name, body);
     },
     killSession: (name) => mgr.tmux.killSession(name),
+    exists: existsSync,
+    planningInputs: (tree) => ({
+      ecosystem: ecosystemFor(loadProfileEcosystem(opts.sandboxRoot, opts.cfg.review.profile)),
+      heuristics: loadProfileHeuristics(opts.sandboxRoot, opts.cfg.review.profile),
+      styleGuide: findStyleGuide(tree),
+      ciLinters: findCiLinters(tree),
+    }),
     readFile: (p) => {
       try {
         return readFileSync(p, "utf8");
