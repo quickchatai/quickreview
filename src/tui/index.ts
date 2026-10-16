@@ -163,6 +163,10 @@ export function buildTuiDriver(
       throw new Error(
         `deploy_tab ${kind} refused — ${deployState.run.running ? "a run is in flight" : "the previous result is still on screen (x closes it)"}`,
       );
+    // Begin this action's own arm/confirm pair. An operator's earlier arm
+    // would make the first press confirm and the second reach the companion.
+    deployState.armedAt = undefined;
+    deployState.armedKind = undefined;
     app.pressKey(key);
     app.pressKey(key);
     const started = (): string | undefined => deployState.run?.kind; // read after the presses

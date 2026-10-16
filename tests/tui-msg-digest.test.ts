@@ -168,12 +168,12 @@ describe("InjectSender", () => {
 
 // The action channel's message verbs read the sender's LAST word: delivered,
 // queued and unconfirmed resolve with their label; only a definite
-// non-delivery (undelivered, a throwing sender, no sender) rejects — a failed
+// non-delivery (undelivered, no sender) rejects — a failed
 // result file asks the companion to re-send, and a queued message re-sent is
 // delivered twice.
 // MUTATION: reject on any state but delivered — the queued case goes red.
 describe("deliverMessage — the outcome the action result carries", () => {
-  it("resolves on delivered or queued, rejects on undelivered or a sender that throws", async () => {
+  it("resolves on delivered or queued, rejects on definite non-delivery", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let final: DeliveryState = "delivered";
@@ -201,11 +201,60 @@ describe("deliverMessage — the outcome the action result carries", () => {
       /overseer undelivered \(write failed/,
     );
     final = "pending";
-    await expect(deliverMessage(app, "pr-7", "hi")).rejects.toThrow(/undelivered \(ssh died\)/);
+    await expect(deliverMessage(app, "pr-7", "hi")).resolves.toMatch(/unconfirmed \(ssh died\)/);
     expect(app.view.noticeLine).toContain("ssh died");
     app.hooks.sendMessage = undefined;
     await expect(deliverMessage(app, "pr-7", "hi")).rejects.toThrow(/not wired/);
   });
+});
+
+describe("message delivery after a transport exception", () => {
+  it("a successful write followed by a throwing probe remains unconfirmed and is not offered for resend", async () => {
+    const streams = fakeStreams();
+    let writes = 0;
+    const ssh: SshRunner = async (_host, _args, opts) => {
+      if (opts?.stdin !== undefined) {
+        writes++;
+        return ok("");
+      }
+      throw new Error("probe connection lost");
+    };
+    const app = new App(TUI_DEFAULTS, ssh, streams.out, streams.input);
+    installMessageHooks(
+      app,
+      new InjectSender(
+        TUI_DEFAULTS,
+        ssh,
+        () => new Date(0),
+        async () => {},
+      ),
+    );
+    await expect(deliverMessage(app, "pr-7", "one author reply")).resolves.toMatch(
+      /unconfirmed.*probe connection lost/,
+    );
+    expect(writes).toBe(1);
+    expect(app.view.noticeLine).toContain("do not re-send");
+  });
+});
+
+describe("a receipt preceding a sender exception", () => {
+  it.each(["delivered", "queued", "undelivered"] as const)(
+    "preserves the known %s outcome",
+    async (state) => {
+      const streams = fakeStreams();
+      const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+      installMessageHooks(app, {
+        send: async (_session, _text, report) => {
+          report(state, `known ${state}`);
+          throw new Error("late transport exception");
+        },
+      });
+      expect(await app.hooks.sendMessage!("pr-7", "once", app)).toEqual({
+        state,
+        label: `known ${state}`,
+      });
+    },
+  );
 });
 
 describe("quick-message input box", () => {

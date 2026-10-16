@@ -5,7 +5,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StatusSnapshot } from "../src/state.js";
 import { processTuiActions } from "../src/tui/actions.js";
 import { renderBoard } from "../src/tui/board.js";
@@ -367,6 +367,29 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(r!.ok).toBe(false);
     expect(r!.message).toContain("deploy target is still loading");
     expect(deployState.run).toBeUndefined();
+  });
+
+  it("an already armed deploy action cannot send its confirmation's extra D to the companion", async () => {
+    const { app, deployState, driver } = makeRig();
+    vi.spyOn(app, "repaint").mockImplementation(() => {});
+    const stray: string[] = [];
+    app.sidebar = {
+      focused: false,
+      available: () => true,
+      blur: () => {},
+      focus: (seed?: string) => {
+        if (seed) stray.push(seed);
+      },
+    } as unknown as CompanionSidebar;
+    app.tab = "deploy";
+    deployState.loaded = true;
+    deployState.head = "abc123";
+    app.pressKey("D");
+    expect(deployState.armedKind).toBe("deploy");
+    driver.deployTab("deploy");
+    await settle();
+    expect(deployState.run?.kind).toBe("deploy");
+    expect(stray).toEqual([]);
   });
 
   it("deploy_tab abort with no run in flight is a FAILED result, not a stray x", async () => {

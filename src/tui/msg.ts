@@ -148,10 +148,14 @@ export function installMessageHooks(app: App, sender?: MessageSender): void {
         if (state !== "pending") last = { state, label };
       });
     } catch (err) {
-      last = {
-        state: "undelivered",
-        label: `✖ msg ${session} undelivered (${err instanceof Error ? err.message : String(err)})`,
-      };
+      // A transport can throw after the write, or even after its receipt.
+      // Keep a known terminal outcome; otherwise delivery is unknown and a
+      // failed action result must not invite a duplicate resend.
+      if (last.state === "unconfirmed")
+        last = {
+          state: "unconfirmed",
+          label: `? msg ${session} unconfirmed (${err instanceof Error ? err.message : String(err)}) — check the session; do not re-send`,
+        };
       theApp.notice(last.label);
     }
     return last;
@@ -161,8 +165,8 @@ export function installMessageHooks(app: App, sender?: MessageSender): void {
 /**
  * A quick-message sent on the companion's behalf (the action channel's
  * `msg_session` / `overseer_inject`): REJECTS only on a definite
- * non-delivery (a bad session name, a failed write, no sender wired, a
- * sender that threw) and otherwise resolves with the sender's label —
+ * non-delivery (a bad session name, a refused write, no sender wired)
+ * and otherwise resolves with the sender's label —
  * delivered, queued behind a busy session, or unconfirmed — so the action's
  * result file says what became of the message, and a message still queued
  * is never reported as a failure to be re-sent.
