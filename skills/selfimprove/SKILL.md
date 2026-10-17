@@ -1,0 +1,122 @@
+---
+name: selfimprove
+description: Scan the whole repo with the review tool, fix the findings, re-scan and repeat for a set number of fix rounds (default 2). Run as /selfimprove [rounds].
+license: MIT
+compatibility: Any coding CLI that reads SKILL.md (Claude Code, Codex, opencode, pi). Needs git, a shell, and the `qcr scan` command on PATH.
+disable-model-invocation: true
+metadata:
+  argument-hint: "[rounds=2]"
+  opencode/slash: selfimprove
+---
+
+# Self-improve
+
+This skill runs a loop. Scan the repo, sort the findings, fix them, then re-scan the files the fixes changed. Repeat for **N fix rounds**. N is the first argument (`$ARGUMENTS`). If it is missing or not a positive integer, N is `2`. The loop does: scan → fix → re-scan, until round N's fixes have been re-scanned.
+
+The scan tells you what is wrong, and the re-scan tells you whether a fix worked. Your own sense that something is fixed does not count.
+
+Two terms are used throughout:
+
+- **Settings**: `.selfimprove/settings.json` at the repo root, gitignored.
+- **Ledger**: the directory chosen at setup.
+
+## 1. Setup
+
+If the settings file exists, read it. Show the user a one-screen summary and go on. Don't ask the questions again. They can say "redo setup" to change anything.
+
+If there is no settings file, ask the questions in [references/setup.md](references/setup.md). Use the client's structured question tool when it has one, otherwise numbered options in chat. Ask every question even when one seems to have an obvious answer. Write the answers to the settings file, add `.selfimprove/` to `.gitignore`, and create the ledger from [references/ledger.md](references/ledger.md).
+
+Then check the environment:
+
+- `qcr scan status --json` answers.
+- The working tree is clean.
+- The baseline build and test commands pass. Record failures that already exist so they aren't blamed on fixes.
+
+**Done when:** the settings file exists and the user has seen it, the ledger directory exists, and the baseline is recorded in `LEDGER.md`.
+
+## 2. Price and approve
+
+Run `qcr scan preview --json`, with `--delta` on rounds after the first. On a repo that has never been priced, the preview offers a calibration run. That run is capped by the tool. Run it, then preview again.
+
+On the first round, show the user three things: the price of this scan, an estimate for all N rounds, and the budget set at setup. Get one explicit yes. That yes covers the later rounds as long as each one's preview costs less than the first round's and the running total stays inside the budget. If a later preview is more expensive, or would go over the budget, stop and ask again.
+
+**Done when:** you have a preview `key` that the user's approval covers. Record the price in the ledger.
+
+## 3. Scan
+
+Run `qcr scan start --key <key> --json` (add `--delta` after round 1), then `qcr scan status --wait --json`.
+
+If settings say `depth: deep` and this is round 1, run `qcr scan stage2 propose --deep --json` next. Approve its price the same way as step 2, then run `qcr scan stage2 start`. A delta re-scan never runs a deep pass.
+
+If the scan hits its hard stop before covering the plan, report how much coverage it got. Don't restart it at a higher price without asking.
+
+After a delta re-scan, answer any pending match question (`qcr scan matches`, then `qcr scan match`). Pair an old finding with a new one only when they describe the same defect at the same code.
+
+**Done when:** the run's status is finished or hard-stopped, there are no unanswered match questions, and the ledger has the run's cost, coverage, and counts of new, fixed and still-open findings.
+
+## 4. Triage
+
+Pull the open findings with `qcr scan findings --state new --json` and keep the ones inside the settings' `scope`. Give every finding exactly one verdict:
+
+- `real`
+- `not-real`
+- `by-design`
+- `duplicate`
+- `needs-owner`
+- `out-of-scope`
+
+Settings `no_touch` globs mark paths that are off limits. Any finding inside them gets `out-of-scope`. `needs-owner` means the right answer is a policy decision or a trade-off. Those findings are written to `NEEDS-OWNER.md` and never fixed.
+
+Write verdicts other than `real` back to the store with `qcr scan dismiss <fingerprint> --reason "<verdict>: <why>"`. That stops them coming back every round.
+
+Group the `real` findings into **packets**. A packet is the files one fixer can own without overlapping another packet. Put findings that touch the same helper in the same packet, because separate branches editing the same helper produce silent duplicates.
+
+**Done when:** every finding in scope has a verdict in `dispositions/r<round>.md`, and every `real` finding belongs to exactly one packet.
+
+## 5. Fix and review
+
+For each packet, follow [references/fix-loop.md](references/fix-loop.md). The short version:
+
+- Each packet gets its own branch, and its own worktree when parallel is on.
+- Write the test first, as the settings' `tdd` says.
+- The fix is done when the build and tests pass.
+- Then a reviewer who did not write the fix approves it, as the settings' `review` says.
+- The result lands as the settings' `land` says.
+
+When the client can delegate, hand each packet to a fixer subagent and each review to a separate reviewer subagent. Run up to `parallel` at once. When it cannot delegate, work through the packets one at a time and do the review as a separate pass: start from a fresh read of the diff, not from what you remember writing.
+
+After every packet lands, update `LEDGER.md` and `fixes-explained.md`.
+
+**Done when:** every packet is landed, or parked with a reason in the ledger, and no fixer or reviewer is still running.
+
+## 6. Next round or stop
+
+Stop the loop when any of these is true:
+
+- N fix rounds are done.
+- The delta re-scan finds no new finding in scope.
+- Everything that is left is `needs-owner`.
+- The next round's price would go over the budget.
+
+If none is true, go back to step 2 with `--delta`, round + 1. The re-scan covers only the files this round's fixes changed. Re-scan after the last fix round as well, so that round's fixes are checked.
+
+**Done when:** the ledger records why the loop stopped. Then give the user the final report:
+
+- rounds run
+- money spent
+- findings per round (new, fixed, still open)
+- what landed and where (branches, PRs or merges)
+- regressions the reviewers caught
+- the `NEEDS-OWNER.md` list
+
+## Guardrails
+
+- Stop and ask the user before anything outside this repo's working tree:
+  - pushing
+  - force-pushing
+  - opening PRs (unless `land` says PRs)
+  - deploying
+  - copying credentials
+- Commits carry plain messages and the user's git identity. Add co-author trailers only if settings say to.
+- Wait for the user's go before any scan they haven't approved, including after the loop has stopped.
+- If the user says pause, wrap up or stop, finish only the in-flight packets. Land them the normal way, which includes review unless the user waives it. Then stop every subagent and write the ledger's "Where it stopped" section.
