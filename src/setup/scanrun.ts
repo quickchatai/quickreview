@@ -588,7 +588,13 @@ export class ScanRunner {
    * the active run's, from a preview or proposal planned meanwhile. */
   private startingSha: string | null = null;
   private consuming = false;
+  /** Renews the driver lease from a start's claim to its run's end. */
   private renewTimer: ReturnType<typeof setInterval> | null = null;
+  /** The run the lease is renewed for (null while a start plans). */
+  private leaseRun: string | null = null;
+  /** Runs whose driver lease was lost: stopped, and never written again —
+   * the run record is the new holder's. */
+  private readonly fenced = new Set<string>();
   private readonly ledger: Ledger;
   private readonly findings: FindingsStore;
 
@@ -604,6 +610,8 @@ export class ScanRunner {
   }
 
   private store(file: RunFile): void {
+    // A run that lost the lease owns the record no more.
+    if (file.current !== null && this.fenced.has(file.current.id)) return;
     this.ports.state.write(RUN_FILE, `${JSON.stringify(file, null, 1)}\n`);
   }
 
@@ -893,9 +901,6 @@ export class ScanRunner {
    * concurrently) must not both pass the active check while the first is
    * still planning: that would run — and pay for — the same scan twice. */
   private refuseBusy(): Refusal | null {
-    const other = this.ports.lease?.other() ?? null;
-    if (!this.active && !this.starting && other !== null)
-      return { ok: false, errors: [heldElsewhere(other)] };
     if (this.active)
       return {
         ok: false,
@@ -924,6 +929,7 @@ export class ScanRunner {
       };
     }
     this.starting = true;
+    if (lease) this.renewLease(null);
     let started = false;
     try {
       const r = await body();
@@ -932,8 +938,59 @@ export class ScanRunner {
     } finally {
       this.starting = false;
       this.startingSha = null;
-      if (!started && !this.active) lease?.release();
+      if (!started && !this.active) {
+        this.stopRenewing();
+        lease?.release();
+      }
     }
+  }
+
+  /** Still holding the lease a start claimed, right before it launches? A
+   * planning that blocked past the lease's life may have lost it. */
+  private leaseLost(): Refusal | null {
+    const lease = this.ports.lease;
+    if (!lease || lease.renew(null)) return null;
+    const other = lease.other();
+    return {
+      ok: false,
+      errors: [
+        `the scan driver lease was lost while the start planned${other ? ` (${heldElsewhere(other)})` : ""} — preview again`,
+      ],
+    };
+  }
+
+  /** Renew the lease for `run` every LEASE_RENEW_MS until stopRenewing. */
+  private renewLease(run: string | null): void {
+    this.leaseRun = run;
+    if (this.renewTimer) return;
+    const timer = setInterval(() => this.renewTick(), LEASE_RENEW_MS);
+    timer.unref?.();
+    this.renewTimer = timer;
+  }
+
+  private stopRenewing(): void {
+    if (this.renewTimer) clearInterval(this.renewTimer);
+    this.renewTimer = null;
+    this.leaseRun = null;
+  }
+
+  /** One renewal. A lease found lost (this process was suspended past its
+   * life, and another took it over) stops the run it was held for: its
+   * in-flight cases are aborted and it writes the run record no more. */
+  private renewTick(): void {
+    const lease = this.ports.lease;
+    if (!lease || lease.renew(this.leaseRun)) return;
+    const other = lease.other();
+    const why = `the scan driver lease was lost${other ? ` — ${heldElsewhere(other)}` : ""}`;
+    const active = this.active;
+    this.stopRenewing();
+    if (active && !this.fenced.has(active.id)) {
+      this.ports.log?.(
+        `setup: ${why}; stopping scan ${active.id}, which no longer owns the run record`,
+      );
+      this.fenced.add(active.id);
+      active.abort.abort();
+    } else this.ports.log?.(`setup: ${why}`);
   }
 
   private async startPlanned(
@@ -974,6 +1031,8 @@ export class ScanRunner {
       unitOf: () => c.unit,
       suggestions: true,
     }));
+    const lost = this.leaseLost();
+    if (lost !== null) return lost;
     const run = this.launch(
       file,
       {
@@ -1071,22 +1130,17 @@ export class ScanRunner {
     return run;
   }
 
-  /** Hold the driver lease for `run` while it is driven: renewed on a timer,
-   * given up when it ends. */
+  /** Hold the driver lease for `run` while it is driven: renewed on the
+   * start's timer, given up when it ends. */
   private holdLease(run: string): void {
     const lease = this.ports.lease;
     if (!lease) return;
-    lease.claim(run);
-    if (this.renewTimer) clearInterval(this.renewTimer);
-    const timer = setInterval(() => {
-      if (this.active?.id === run) lease.claim(run);
-    }, LEASE_RENEW_MS);
-    timer.unref?.();
-    this.renewTimer = timer;
+    lease.renew(run);
+    this.renewLease(run);
     void this.active?.done.finally(() => {
-      clearInterval(timer);
-      if (this.renewTimer === timer) this.renewTimer = null;
-      if (!this.active && !this.starting) lease.release();
+      if (this.active || this.starting) return;
+      this.stopRenewing();
+      if (!this.fenced.has(run)) lease.release();
     });
   }
 
@@ -1427,6 +1481,8 @@ export class ScanRunner {
     );
     const cfg = p.settings.scan;
     const top = rows.reduce<PassTier>((t, r) => higherTier(t, r.tier), rows[0]!.tier);
+    const lost = this.leaseLost();
+    if (lost !== null) return lost;
     const run = this.launch(
       file,
       {
@@ -1660,8 +1716,12 @@ export class ScanRunner {
     // Never started: `skipped` when the cap kept it out, `stopped` when a stop did.
     for (const c of run.cases)
       if (c.status === "pending") c.status = capHit ? "skipped" : "stopped";
-    this.reconcile(run, tree);
-    await this.closeFixedTickets(run);
+    // A run that lost its lease settles nothing: the findings are the new
+    // holder's to reconcile.
+    if (!this.fenced.has(run.id)) {
+      this.reconcile(run, tree);
+      await this.closeFixedTickets(run);
+    }
     const allDone = run.cases.every((c) => c.status === "done");
     this.settle(
       file,

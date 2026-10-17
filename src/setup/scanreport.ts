@@ -223,8 +223,9 @@ export interface ScanStopRequest {
   /** The run the TUI showed running — only that run is stopped. */
   run: string;
   at: string;
-  /** Who asked: the TUI's stop, or `qcr scan stop`. */
-  by: "tui" | "cli";
+  /** Who asked: the TUI's stop, `qcr scan stop`, or the companion's
+   * scan_stop for a run another process drives. */
+  by: "tui" | "cli" | "companion";
 }
 
 export interface ScanStopResult {
@@ -257,7 +258,7 @@ export function parseStopRequest(text: string): ScanStopRequest | null {
       id: r.id,
       run: r.run,
       at: typeof r.at === "string" ? r.at : "",
-      by: r.by === "cli" ? "cli" : "tui",
+      by: r.by === "cli" || r.by === "companion" ? r.by : "tui",
     };
   } catch {
     return null;

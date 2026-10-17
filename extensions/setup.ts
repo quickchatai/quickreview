@@ -1350,7 +1350,7 @@ const activate = (pi: Pi): void => {
   }
   for (const def of toolDefinitions(engine)) pi.registerTool(def);
   // The scan tools, over the same engine's saved unit cut.
-  const { scan, findings, settingsOf, triage } = buildScan(
+  const { scan, findings, settingsOf, triage, home } = buildScan(
     engine,
     process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO,
     process.env,
@@ -1361,6 +1361,7 @@ const activate = (pi: Pi): void => {
     findings,
     settingsOf,
     triage ? () => triage.closeFixed() : null,
+    { home },
   ))
     pi.registerTool(def);
   // Triage — dismiss, promote, close fixed, scan memory.

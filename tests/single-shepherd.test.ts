@@ -189,7 +189,7 @@ describe("daemon topology", () => {
     // daemon's own loaders over a profile) — retunelog.js (the deploy tab
     // says which post-scan re-tune is not deployed) and scanreport.js (the [8]
     // scan tab reads the run record and the findings store, and asks for a
-    // stop). Each leaf may reach the rest of
+    // stop) and scanlease.js (the scan tab reads the driver lease). Each leaf may reach the rest of
     // src/setup/ by TYPE only (erased at build), so no exception can ever
     // carry the case runner along with it.
     const setupLeaves = [
@@ -200,6 +200,7 @@ describe("daemon topology", () => {
       "profile.js",
       "retunelog.js",
       "scanreport.js",
+      "scanlease.js",
     ];
     // One operator entry point reaches the whole of src/setup/: scancli.ts,
     // `qcr scan` — the companion's scan tools as a CLI verb, driving the

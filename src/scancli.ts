@@ -20,8 +20,16 @@
 //
 // Exit codes: 0 done; 1 refused (or a waited-for run that did not end
 // complete); 2 usage; 3 `status --wait` gave up at its `--timeout`.
-import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { spawn, type SpawnOptions } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import {
   CLI_VERBS,
@@ -38,12 +46,12 @@ import {
   renderSuggestions,
   stage2StartedLine,
   startedLine,
+  stopScan,
 } from "../extensions/setup-scan.js";
 import { loadConfig, sandboxRoot } from "./config.js";
 import { stateHome } from "./install.js";
 import type { FindingsStore, ScanFinding } from "./setup/findings.js";
 import { dismissedLookalike, validityOf } from "./setup/scanreport.js";
-import { clickStopScan, readStopResult, scanStopOutcome } from "./setup/scanreport.js";
 import type { ScanRunner, ScanRun, ScanSettings, ScanStatus } from "./setup/scanrun.js";
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "./setup/stage2.js";
 import type { StoredStage2Proposal } from "./setup/stage2request.js";
@@ -61,8 +69,6 @@ export const SCAN_USAGE =
 export const DRIVER_LOG = "scan/driver.log";
 /** How often `status --wait` and `stop` look again. */
 export const POLL_MS = 2000;
-/** How long `stop` waits for the driving process's answer. */
-export const STOP_WAIT_MS = 15_000;
 
 export interface FindingsQuery {
   state?: string;
@@ -514,8 +520,9 @@ export async function runScanCli(
         clearInterval(keep);
       }
       const s = scan.status();
-      return emit(s.run?.display === "complete" ? 0 : 1, renderStatus(s, CLI_VERBS), {
-        ok: true,
+      const complete = s.run?.display === "complete";
+      return emit(complete ? 0 : 1, renderStatus(s, CLI_VERBS), {
+        ok: complete,
         run: s.run ? runJson(s.run) : null,
       });
     }
@@ -678,43 +685,20 @@ function statusJson(s: ScanStatus): Record<string, unknown> {
   };
 }
 
-/** Stop the recorded run: in this process when it drives it, else through
- * the stop channel the driving process answers — the companion, or a
- * `qcr scan` driver. No answer within `STOP_WAIT_MS`: nothing drives it. */
+/** `qcr scan stop`: the shared stop (`stopScan`), rendered. */
 async function stop(
   deps: ScanCliDeps,
   emit: Emit,
   refusal: (what: string, errors: readonly string[]) => number,
 ): Promise<number> {
-  const s = deps.scan.status();
-  const run = s.run;
-  if (run === null || run.state !== "running")
-    return refusal("Scan stop", ["no scan is recorded as running"]);
-  if (s.active) {
-    const r = deps.scan.stop();
-    if (!r.ok) return refusal("Scan stop", r.errors);
-    const answer = `scan ${r.id} stopped — what finished is in the ledger`;
-    return emit(0, answer, { ok: true, run: r.id, answer });
-  }
-  const asked = clickStopScan(deps.home, run.id, new Date(deps.now()), "cli");
-  if (!asked.ok) return refusal("Scan stop", [asked.line]);
-  const t0 = deps.now();
-  for (;;) {
-    const answer = scanStopOutcome(deps.home, asked.request);
-    if (answer !== null) {
-      const read = readStopResult(deps.home);
-      const ok =
-        read.kind === "read" && read.result.request === asked.request && read.result.ok === true;
-      return emit(ok ? 0 : 1, answer, { ok, run: run.id, answer });
-    }
-    if (deps.now() - t0 >= STOP_WAIT_MS) {
-      const why =
-        `no process answered the stop of ${run.id} within ${STOP_WAIT_MS / 1000}s — nothing is driving it ` +
-        "(it reads as interrupted); preview and start again to resume";
-      return refusal("Scan stop", [why]);
-    }
-    await deps.sleep(POLL_MS);
-  }
+  const r = await stopScan(deps.scan, {
+    home: deps.home,
+    by: "cli",
+    sleep: deps.sleep,
+    now: deps.now,
+  });
+  if (!r.ok) return refusal("Scan stop", r.errors);
+  return emit(0, r.answer, { ok: true, run: r.run, answer: r.answer });
 }
 
 // ---- assembly ------------------------------------------------------------------
@@ -738,24 +722,94 @@ export function scanEnv(env: NodeJS.ProcessEnv, defaultRepo: string): NodeJS.Pro
   };
 }
 
-/** Launch the foreground driver detached, its output appended to the
- * driver log; resolve once it says it started (or refused), or exits first. */
-function detachDriver(env: NodeJS.ProcessEnv, home: string): ScanCliDeps["detach"] {
+/** How long a launch waits for the driver to say it started: planning
+ * reads the tree at the sha, so this is generous. */
+export const DETACH_TIMEOUT_MS = 120_000;
+/** The driver log is rotated (one generation kept) past this size. */
+export const DRIVER_LOG_MAX = 5 * 1024 * 1024;
+
+/** The child the launch needs — `child_process.spawn`'s, narrowed. */
+interface DriverChild {
+  on(event: "message", f: (m: unknown) => void): unknown;
+  on(event: "error", f: (err: Error) => void): unknown;
+  on(event: "exit", f: (code: number | null) => void): unknown;
+  disconnect(): void;
+  unref(): void;
+  kill(signal?: NodeJS.Signals): boolean;
+}
+
+/** Launch the foreground driver detached — this CLI again, under the same
+ * node flags, from the app root, its output appended to the driver log
+ * (rotated past `logMax`) — and resolve once it says it started (or
+ * refused). A driver that exits first, or stays silent past `timeoutMs` (it
+ * is then stopped), is a refusal. */
+export function detachDriver(
+  env: NodeJS.ProcessEnv,
+  home: string,
+  opts: {
+    spawn?: (command: string, args: string[], options: SpawnOptions) => DriverChild;
+    execPath?: string;
+    execArgv?: readonly string[];
+    script?: string;
+    timeoutMs?: number;
+    logMax?: number;
+  } = {},
+): ScanCliDeps["detach"] {
+  const spawnFn = opts.spawn ?? ((c, a, o) => spawn(c, a, o));
+  const timeoutMs = opts.timeoutMs ?? DETACH_TIMEOUT_MS;
+  const logMax = opts.logMax ?? DRIVER_LOG_MAX;
   return (argv) =>
     new Promise((resolve) => {
       const log = join(home, DRIVER_LOG);
-      mkdirSync(dirname(log), { recursive: true });
-      const fd = openSync(log, "a");
-      const child = spawn(
-        process.execPath,
-        [process.argv[1]!, "scan", ...argv, "--foreground", "--json"],
-        { detached: true, stdio: ["ignore", fd, fd, "ipc"], env },
-      );
+      let fd: number;
+      try {
+        mkdirSync(dirname(log), { recursive: true });
+        if (existsSync(log) && statSync(log).size > logMax) renameSync(log, `${log}.1`);
+        fd = openSync(log, "a");
+      } catch (err) {
+        resolve({
+          ok: false,
+          errors: [
+            `the driver log ${log} cannot be opened: ${err instanceof Error ? err.message : String(err)}`,
+          ],
+        });
+        return;
+      }
+      let child: DriverChild;
+      try {
+        child = spawnFn(
+          opts.execPath ?? process.execPath,
+          [
+            ...(opts.execArgv ?? process.execArgv),
+            opts.script ?? process.argv[1]!,
+            "scan",
+            ...argv,
+            "--foreground",
+            "--json",
+          ],
+          {
+            cwd: env.QCR_ROOT?.trim() || sandboxRoot(),
+            detached: true,
+            stdio: ["ignore", fd, fd, "ipc"],
+            env,
+          },
+        );
+      } catch (err) {
+        closeSync(fd);
+        resolve({
+          ok: false,
+          errors: [
+            `the scan driver could not start: ${err instanceof Error ? err.message : String(err)}`,
+          ],
+        });
+        return;
+      }
       closeSync(fd);
       let settled = false;
       const done = (o: DetachOutcome): void => {
         if (settled) return;
         settled = true;
+        clearTimeout(timer);
         try {
           child.disconnect();
         } catch {
@@ -764,20 +818,73 @@ function detachDriver(env: NodeJS.ProcessEnv, home: string): ScanCliDeps["detach
         child.unref();
         resolve(o);
       };
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        done({
+          ok: false,
+          errors: [
+            `the scan driver did not say it started within ${Math.round(timeoutMs / 1000)}s — it was stopped; see ${log}`,
+          ],
+        });
+      }, timeoutMs);
       child.on("message", (m: unknown) => {
         const msg = m as { kind?: string; outcome?: DetachOutcome };
         if (msg.kind === "started" && msg.outcome) done(msg.outcome);
       });
-      child.on("error", (err) =>
+      child.on("error", (err: Error) =>
         done({ ok: false, errors: [`the scan driver could not start: ${err.message}`] }),
       );
-      child.on("exit", (code) =>
+      child.on("exit", (code: number | null) =>
         done({
           ok: false,
           errors: [`the scan driver exited (code ${code ?? "?"}) before it started — see ${log}`],
         }),
       );
     });
+}
+
+/** Tell the launching process what the start did. Never throws, and never
+ * leaves an unhandled 'error' behind when that process is gone (a Ctrl-C
+ * during planning): the channel is checked, and a send that fails anyway
+ * reports to its callback. The run goes on regardless. */
+export function sendStarted(
+  proc: {
+    connected?: boolean;
+    send?: (msg: unknown, cb: (err: Error | null) => void) => boolean;
+  },
+  outcome: DetachOutcome,
+): void {
+  if (!proc.send || proc.connected === false) return;
+  try {
+    proc.send({ kind: "started", outcome }, () => {});
+  } catch {
+    // The channel closed between the check and the send.
+  }
+}
+
+/** A foreground driver's SIGINT/SIGTERM: the first stops the run (in-flight
+ * cases aborted, their pi children killed by the case runner); a second
+ * kills the driver's whole process group — the pi children with it — and
+ * exits. */
+export function foregroundSignals(
+  scan: Pick<ScanRunner, "stop">,
+  io: { killGroup: () => void; exit: (code: number) => void; log: (line: string) => void },
+): () => void {
+  let seen = 0;
+  return () => {
+    seen++;
+    if (seen === 1) {
+      io.log("scan: stopping — signal again to kill it outright");
+      scan.stop();
+      return;
+    }
+    io.log("scan: killed");
+    try {
+      io.killGroup();
+    } finally {
+      io.exit(130);
+    }
+  };
 }
 
 /** `qcr scan …`: assemble the companion's scan belt over this machine's
@@ -810,9 +917,20 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
     now: () => Date.now(),
     watchStops: (s) => {
       const unwatch = watchTuiRequests(s, STAGE2_POLL_MS, { stage2: false });
-      const onSignal = (): void => {
-        s.stop();
-      };
+      const onSignal = foregroundSignals(s, {
+        // A detached driver leads its own process group: the pi children
+        // are in it. In a terminal the group is the shell's job, which the
+        // terminal's Ctrl-C reaches whole already.
+        killGroup: () => {
+          try {
+            process.kill(-process.pid, "SIGKILL");
+          } catch {
+            // Not a group leader: exit alone.
+          }
+        },
+        exit: (code) => process.exit(code),
+        log: (line) => console.error(line),
+      });
       process.on("SIGINT", onSignal);
       process.on("SIGTERM", onSignal);
       return () => {
@@ -821,13 +939,6 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
         process.off("SIGTERM", onSignal);
       };
     },
-    onStart: (outcome) => {
-      if (!process.send) return;
-      try {
-        process.send({ kind: "started", outcome });
-      } catch {
-        // The launching process is gone: the run goes on regardless.
-      }
-    },
+    onStart: (outcome) => sendStarted(process, outcome),
   });
 }

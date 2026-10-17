@@ -14,6 +14,7 @@ import {
   type ScanFinding,
 } from "../src/setup/scanreport.js";
 import { STAGE2_FILE, STAGE2_RESULT_FILE, STAGE2_START_FILE } from "../src/setup/stage2request.js";
+import { DRIVER_DIR } from "../src/setup/scanlease.js";
 import { App } from "../src/tui/app.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import {
@@ -227,6 +228,45 @@ describe("honest unknown — never 'no scan' for a record that was not read", ()
     const { app, screen } = rig({ companionUp: false });
     expect(screen()).toContain("⏸ interrupted — the companion is down; the ledger resumes it");
     expect(barLabels(app)).not.toContain("x stop");
+  });
+
+  it("a run a live driver lease names reads running while the companion is down — a `qcr scan` driver drives it", async () => {
+    const { app, s, screen } = rig({ companionUp: false });
+    mkdirSync(join(s.home, DRIVER_DIR), { recursive: true });
+    writeFileSync(
+      join(s.home, DRIVER_DIR, "1.json"),
+      JSON.stringify({
+        holder: "h",
+        run: "scan-2",
+        pid: 4242,
+        host: "box",
+        at: "2026-09-29T11:59:50Z",
+      }),
+    );
+    await driving(app, () => {
+      app.hooks.onPoll?.(app);
+      expect(screen()).not.toContain("interrupted");
+      expect(barLabels(app)).toContain("x stop");
+    });
+  });
+
+  it("a lapsed driver lease does not: the run reads interrupted", async () => {
+    const { app, s, screen } = rig({ companionUp: false });
+    mkdirSync(join(s.home, DRIVER_DIR), { recursive: true });
+    writeFileSync(
+      join(s.home, DRIVER_DIR, "1.json"),
+      JSON.stringify({
+        holder: "h",
+        run: "scan-2",
+        pid: 1,
+        host: "box",
+        at: "2026-09-29T11:00:00Z",
+      }),
+    );
+    await driving(app, () => {
+      app.hooks.onPoll?.(app);
+      expect(screen()).toContain("interrupted");
+    });
   });
 
   it("a known-down companion's run paints its running unit interrupted too, never the green running mark", () => {

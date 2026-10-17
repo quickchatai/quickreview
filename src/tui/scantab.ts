@@ -85,6 +85,7 @@ import {
   VALIDITY_ORDER,
   validityOf,
 } from "../setup/scanreport.js";
+import { currentLease, leaseIsLive, type LeaseRecord } from "../setup/scanlease.js";
 import {
   clickStartStage2,
   keptRows,
@@ -442,6 +443,8 @@ export class ScanReportStore {
   /** The companion's latest answer to a stop click — null when there is none
    * or it cannot be read. */
   stopAnswer: ScanStopResult | null = null;
+  /** The scan driver lease as last read (live or not), or null. */
+  lease: LeaseRecord | null = null;
   constructor(readonly home: string) {}
 
   reload(): void {
@@ -450,6 +453,7 @@ export class ScanReportStore {
     // An unreadable answer is no answer here: it never infers an interruption.
     const stop = readStopResult(this.home);
     this.stopAnswer = stop.kind === "read" ? stop.result : null;
+    this.lease = currentLease(this.home);
     const p = readStage2Proposal(this.home);
     this.proposal = p.ok
       ? { kind: "read", proposal: p.proposal }
@@ -520,9 +524,14 @@ function view(deps: ScanTabDeps, st: ScanTabState) {
 /** Why a run the record calls running is not running, or null when nothing
  * says it is not: the companion is known down, or the companion answered a
  * stop for that run saying it drives no such run (a companion restart loses
- * the run in flight, and nothing else ever rewrites the record). */
+ * the run in flight, and nothing else ever rewrites the record). A live
+ * driver lease naming the run says it IS driven — by the companion or a
+ * `qcr scan` driver — whatever the companion's state. */
 function interruption(run: ScanRun, deps: ScanTabDeps): string | null {
   if (run.state !== "running") return null;
+  const lease = deps.store.lease;
+  if (lease !== null && lease.run === run.id && leaseIsLive(lease, deps.now?.() ?? new Date()))
+    return null;
   if (deps.companionUp?.() === false) return "the companion is down";
   const a = deps.store.stopAnswer;
   if (a !== null && a.run === run.id && a.in_flight !== undefined && a.in_flight !== run.id)

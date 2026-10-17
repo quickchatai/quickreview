@@ -46,7 +46,14 @@ import type {
   ScanFinding,
   ValidityView,
 } from "../src/setup/findings.js";
-import { VALIDITY_ORDER, validityOf } from "../src/setup/scanreport.js";
+import {
+  VALIDITY_ORDER,
+  clickStopScan,
+  readStopResult,
+  scanStopOutcome,
+  validityOf,
+  type ScanStopRequest,
+} from "../src/setup/scanreport.js";
 import { FindingsStore, dismissedLookalike, lookalikeRank } from "../src/setup/findings.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { SEVERITIES, type ScanSeverity } from "../src/setup/scan.js";
@@ -269,7 +276,7 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
     const again = r.mode === "stage2" ? "Propose stage 2 again" : "Preview";
     if (r.display === "interrupted")
       out.push(
-        `It was interrupted (the companion restarted). ${again} and start again — the ledger resumes it.`,
+        `It was interrupted (the process driving it went away — the companion restarted, or a \`qcr scan\` driver died). ${again} and start again — the ledger resumes it.`,
       );
     if (r.display === "capped")
       out.push(`It stopped at its hard cap. ${again} for the price of what is left.`);
@@ -692,6 +699,61 @@ export function startedLine(run: ScanRun, verbs: ScanVerbs = TOOL_VERBS): string
   );
 }
 
+/** How often a stop through the channel looks for its answer, and how long
+ * it waits for one. */
+export const STOP_POLL_MS = 2000;
+export const STOP_WAIT_MS = 15_000;
+
+/** Where a stop of a run another process drives goes: the stop channel
+ * under the state home, answered by whichever process holds the run. */
+export interface StopChannel {
+  home: string;
+  by?: ScanStopRequest["by"];
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+/** Stop the recorded run: here when this runner drives it, else through the
+ * stop channel the driving process answers — the companion, or a
+ * `qcr scan` driver. No answer within STOP_WAIT_MS: nothing drives it. */
+export async function stopScan(
+  scan: ScanRunner,
+  ch: StopChannel,
+): Promise<{ ok: true; run: string; answer: string } | { ok: false; errors: string[] }> {
+  const sleep = ch.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = ch.now ?? (() => Date.now());
+  const s = scan.status();
+  const run = s.run;
+  if (run === null || run.state !== "running")
+    return { ok: false, errors: ["no scan is recorded as running"] };
+  if (s.active) {
+    const r = scan.stop();
+    if (!r.ok) return r;
+    return { ok: true, run: r.id, answer: `scan ${r.id} stopped — what finished is in the ledger` };
+  }
+  const asked = clickStopScan(ch.home, run.id, new Date(now()), ch.by ?? "companion");
+  if (!asked.ok) return { ok: false, errors: [asked.line] };
+  const t0 = now();
+  for (;;) {
+    const answer = scanStopOutcome(ch.home, asked.request);
+    if (answer !== null) {
+      const read = readStopResult(ch.home);
+      const ok =
+        read.kind === "read" && read.result.request === asked.request && read.result.ok === true;
+      return ok ? { ok: true, run: run.id, answer } : { ok: false, errors: [answer] };
+    }
+    if (now() - t0 >= STOP_WAIT_MS)
+      return {
+        ok: false,
+        errors: [
+          `no process answered the stop of ${run.id} within ${STOP_WAIT_MS / 1000}s — nothing is driving it ` +
+            "(it reads as interrupted); preview and start again to resume",
+        ],
+      };
+    await sleep(STOP_POLL_MS);
+  }
+}
+
 // ---- tool belt ---------------------------------------------------------------
 
 const DELTA_PARAM = {
@@ -713,6 +775,9 @@ export function scanToolDefinitions(
   /** After a match answer: close the tickets of the promoted findings it
    * fixed (`ScanTriage.closeFixed`). */
   afterMatch: (() => Promise<CloseFixedResult>) | null = null,
+  /** Where a stop of a run another process drives goes; null: only a run
+   * this companion drives can be stopped. */
+  stopChannel: StopChannel | null = null,
 ): PiToolDefinition[] {
   const preview: PiToolDefinition = {
     name: "scan_preview",
@@ -779,6 +844,10 @@ export function scanToolDefinitions(
     promptSnippet: "Stop the running scan",
     parameters: NO_PARAMS,
     execute: async () => {
+      if (stopChannel !== null && !scan.status().active) {
+        const via = await stopScan(scan, stopChannel);
+        return via.ok ? text(via.answer) : refused("Scan stop", via);
+      }
       const r = scan.stop();
       if (!r.ok) return refused("Scan stop", r);
       return text(
@@ -1023,6 +1092,7 @@ export function buildScan(
   findings: FindingsStore;
   settingsOf: () => ScanSettings | null;
   triage: ScanTriage | null;
+  home: string;
 } {
   const root = env.QCR_ROOT?.trim() || sandboxRoot();
   const home = stateHome(env);
@@ -1070,7 +1140,7 @@ export function buildScan(
       }
     },
     closeFixedTickets: async () => (triage ? triage.closeFixed() : { closed: [], problems: [] }),
-    lease: lease ?? fileLease(state),
+    lease: lease ?? fileLease(home),
     log: (line) => console.error(line),
   });
   if (shared) {
@@ -1084,7 +1154,7 @@ export function buildScan(
       runs: () => scanRuns(scan),
     });
   }
-  return { scan, findings, settingsOf, triage };
+  return { scan, findings, settingsOf, triage, home };
 }
 
 /** The runner's runs, newest first, as the triage sees them: a run left

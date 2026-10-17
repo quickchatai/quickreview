@@ -26,6 +26,8 @@ export interface Rig {
   home: string;
   /** Move this rig's clock forward. */
   advance(ms: number): void;
+  /** What the runner logged. */
+  logs: string[];
 }
 
 export function scanRig(opts: {
@@ -38,6 +40,8 @@ export function scanRig(opts: {
   holder?: string;
   /** Shared across rigs over one state home, so two runners agree on time. */
   clock?: { t: number };
+  /** Called while a start plans (from the saved-cut port). */
+  duringPlan?: () => void;
 }): Rig {
   const trees = opts.trees ?? { [SHA]: FILES };
   const head = opts.head ?? SHA;
@@ -55,7 +59,13 @@ export function scanRig(opts: {
       blob: `b-${path}-${JSON.stringify(trees[sha]![path])}`,
     }));
   const lease =
-    opts.lease === undefined ? fileLease(state, () => new Date(time.t), opts.holder) : opts.lease;
+    opts.lease === undefined
+      ? fileLease(home, {
+          clock: () => new Date(time.t),
+          ...(opts.holder ? { holder: opts.holder } : {}),
+        })
+      : opts.lease;
+  const logs: string[] = [];
   const settings: ScanSettings = {
     scan: { ...SCAN_DEFAULTS, validator: false },
     riskPasses: ["pass-data-safety"],
@@ -94,22 +104,27 @@ export function scanRig(opts: {
       }),
       list: (sha) => (trees[sha] ? listOf(sha) : null),
     },
-    savedCut: () => ({
-      ok: true,
-      cut: {
-        units: ["app", "lib"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })),
-        ignored: [],
-      },
-    }),
+    savedCut: () => {
+      opts.duringPlan?.();
+      return {
+        ok: true,
+        cut: {
+          units: ["app", "lib"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })),
+          ignored: [],
+        },
+      };
+    },
     settings: () => ({ ok: true, settings }),
     buildAgents: () => ({ ok: true }),
     ...(lease ? { lease } : {}),
+    log: (line) => logs.push(line),
   });
   return {
     scan,
     findings: new FindingsStore(state),
     settingsOf: () => settings,
-    lease: lease ?? fileLease(state),
+    lease: lease ?? fileLease(home),
+    logs,
     home,
     advance: (ms) => {
       time.t += ms;

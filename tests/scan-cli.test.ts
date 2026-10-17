@@ -2,14 +2,24 @@
 // a temp state home (tests/helpers/scan-cli-rig.ts): what each subcommand
 // prints — human and `--json` — what it refuses, and its exit code. The
 // detached driver is a port here; the run itself is tests/scan-run.test.ts's.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScanTriage } from "../src/setup/triage.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { SCAN_STOP_FILE } from "../src/setup/scanreport.js";
-import { parseScanArgs, runScanCli, type ScanCliDeps } from "../src/scancli.js";
+import {
+  detachDriver,
+  foregroundSignals,
+  parseScanArgs,
+  runScanCli,
+  sendStarted,
+  type ScanCliDeps,
+} from "../src/scancli.js";
+import { scanToolDefinitions } from "../extensions/setup-scan.js";
+import type { ScanRunner } from "../src/setup/scanrun.js";
 import { SHA, SHA2, FILES, scanRig, type Rig } from "./helpers/scan-cli-rig.js";
 
 let dir: string;
@@ -484,5 +494,185 @@ describe("suggestions and stage 2", () => {
     const r = await h.run(["stage2", "propose"], true);
     expect(r.code).toBe(1);
     expect(r.json.ok).toBe(false);
+  });
+});
+
+describe("stopping a run another process drives", () => {
+  it("the scan_stop tool goes through the stop channel, as qcr scan stop does", async () => {
+    const clock = { t: Date.parse("2026-09-29T10:00:00Z") };
+    const driver = scanRig({ dir, hang: (s) => s.unit === "lib", holder: "driver", clock });
+    const rig = scanRig({ dir, holder: "companion", clock });
+    const p = await driver.scan.preview();
+    if (!p.ok) throw new Error("preview");
+    const started = await driver.scan.start({ key: p.preview.key });
+    if (!started.ok) throw new Error("start");
+    const defs = scanToolDefinitions(rig.scan, rig.findings, rig.settingsOf, null, {
+      home: rig.home,
+      sleep: async () => {
+        driver.scan.consumeStopRequest();
+        await driver.scan.idle();
+      },
+      now: () => 0,
+    });
+    const res = await defs.find((d) => d.name === "scan_stop")!.execute("id", {});
+    expect(res.content.map((c) => c.text).join("\n")).toBe(
+      `scan ${started.run.id} stopped — what finished is in the ledger`,
+    );
+    expect(driver.scan.status().run!.state).toBe("stopped");
+  });
+
+  it("an interrupted run's status names whichever driver went away", async () => {
+    const clock = { t: Date.parse("2026-09-29T10:00:00Z") };
+    const driver = scanRig({ dir, hang: () => true, holder: "driver", clock, lease: null });
+    const h = harness(scanRig({ dir, holder: "cli", clock }));
+    const p = await driver.scan.preview();
+    if (!p.ok) throw new Error("preview");
+    await driver.scan.start({ key: p.preview.key });
+    const s = await h.run(["status"]);
+    expect(s.text).toMatch(
+      /It was interrupted \(the process driving it went away — the companion restarted, or a `qcr scan` driver died\)/,
+    );
+    driver.scan.stop();
+    await driver.scan.idle();
+  });
+});
+
+describe("the foreground driver", () => {
+  it("--json says ok only when the run ended complete, matching the exit code", async () => {
+    const h = harness(scanRig({ dir, hang: () => true }));
+    h.deps.watchStops = (scan) => {
+      scan.stop();
+      return () => {};
+    };
+    const p = await h.run(["preview"], true);
+    const r = await h.run(["start", "--key", p.json.preview.key, "--foreground"], true);
+    expect(r.code).toBe(1);
+    expect(r.json).toMatchObject({ ok: false, run: { state: "stopped" } });
+  });
+
+  it("tells the launching process it started — and survives that process being gone", () => {
+    const outcome = { ok: false as const, errors: ["x"] };
+    const closed = { connected: false, send: vi.fn() };
+    sendStarted(closed, outcome);
+    expect(closed.send).not.toHaveBeenCalled();
+    // The channel closes between the check and the send: the error reaches
+    // the callback, never an unhandled 'error' event.
+    const racing = {
+      connected: true,
+      send: vi.fn((_m: unknown, cb?: (err: Error | null) => void) => {
+        cb?.(new Error("ERR_IPC_CHANNEL_CLOSED"));
+        return false;
+      }),
+    };
+    expect(() => sendStarted(racing, outcome)).not.toThrow();
+    expect(racing.send).toHaveBeenCalledWith({ kind: "started", outcome }, expect.any(Function));
+    const throwing = {
+      connected: true,
+      send: () => {
+        throw new Error("channel closed");
+      },
+    };
+    expect(() => sendStarted(throwing, outcome)).not.toThrow();
+    expect(() => sendStarted({}, outcome)).not.toThrow();
+  });
+
+  it("a first signal stops the run; a second kills the driver's process group and exits", () => {
+    const stop = vi.fn(() => ({ ok: true as const, id: "r" }));
+    const killGroup = vi.fn();
+    const exit = vi.fn();
+    const onSignal = foregroundSignals({ stop } as unknown as ScanRunner, {
+      killGroup,
+      exit,
+      log: () => {},
+    });
+    onSignal();
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(killGroup).not.toHaveBeenCalled();
+    onSignal();
+    expect(killGroup).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(130);
+  });
+});
+
+describe("the detached driver launch", () => {
+  class FakeChild extends EventEmitter {
+    disconnect = vi.fn();
+    unref = vi.fn();
+    kill = vi.fn(() => true);
+  }
+
+  function launch(opts: { timeoutMs?: number; logMax?: number } = {}) {
+    const home = join(dir, "state");
+    const child = new FakeChild();
+    const calls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = [];
+    const detach = detachDriver({ QCR_ROOT: "/app/root" }, home, {
+      spawn: (command, args, options) => {
+        calls.push({ command, args, options: options as Record<string, unknown> });
+        return child as never;
+      },
+      execPath: "/usr/bin/node",
+      execArgv: ["--enable-source-maps"],
+      script: "/app/root/dist/src/cli.js",
+      timeoutMs: opts.timeoutMs ?? 60_000,
+      ...(opts.logMax !== undefined ? { logMax: opts.logMax } : {}),
+    });
+    return { home, child, calls, detach };
+  }
+
+  it("runs this CLI again under the same node flags, from the app root, detached with IPC", async () => {
+    const { child, calls, detach } = launch();
+    const pending = detach(["start", "--key", "k"]);
+    const run = { id: "scan-1", mode: "stage1", sha: SHA, cases: [], cap_usd: 1 };
+    child.emit("message", { kind: "started", outcome: { ok: true, run, log: "L" } });
+    expect(await pending).toEqual({ ok: true, run, log: "L" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.command).toBe("/usr/bin/node");
+    expect(calls[0]!.args).toEqual([
+      "--enable-source-maps",
+      "/app/root/dist/src/cli.js",
+      "scan",
+      "start",
+      "--key",
+      "k",
+      "--foreground",
+      "--json",
+    ]);
+    expect(calls[0]!.options).toMatchObject({ cwd: "/app/root", detached: true });
+    expect((calls[0]!.options.stdio as unknown[])[3]).toBe("ipc");
+    expect(child.disconnect).toHaveBeenCalled();
+    expect(child.unref).toHaveBeenCalled();
+  });
+
+  it("a driver that exits before it started is a refusal naming its log", async () => {
+    const { home, child, detach } = launch();
+    const pending = detach(["start", "--key", "k"]);
+    child.emit("exit", 1);
+    expect(await pending).toEqual({
+      ok: false,
+      errors: [
+        `the scan driver exited (code 1) before it started — see ${join(home, "scan/driver.log")}`,
+      ],
+    });
+  });
+
+  it("a driver silent past the timeout is stopped and refused", async () => {
+    const { child, detach } = launch({ timeoutMs: 5 });
+    const r = await detach(["start", "--key", "k"]);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(r).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/did not say it started within/)],
+    });
+  });
+
+  it("a driver log past its bound is rotated before the next driver appends", async () => {
+    const { home, child, detach } = launch({ logMax: 10 });
+    mkdirSync(join(home, "scan"), { recursive: true });
+    writeFileSync(join(home, "scan/driver.log"), "x".repeat(20));
+    const pending = detach(["start", "--key", "k"]);
+    child.emit("exit", 1);
+    await pending;
+    expect(readFileSync(join(home, "scan/driver.log.1"), "utf8")).toBe("x".repeat(20));
+    expect(readFileSync(join(home, "scan/driver.log"), "utf8")).toBe("");
   });
 });
