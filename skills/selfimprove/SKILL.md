@@ -31,7 +31,7 @@ Then check the environment:
 
 - `qcr scan status --json` answers.
 - `pi` is on PATH and logged in (the scan's case runner uses it): a one-shot `pi -p "say ok"` answers.
-- The repo `qcr scan` reads (`[companion] reviewed_repo_dir` in the qcr config, or `QCR_REVIEWED_REPO`) is this repository, so commits made here are visible to the scan.
+- The repo `qcr scan` reads (`[companion] reviewed_repo_dir` in the qcr config, or `QCR_REVIEWED_REPO`) is this same checkout (a worktree of it counts), not a separate clone, so commits made here resolve for `--sha`.
 - The working tree is clean.
 - The baseline build and test commands pass. Record failures that already exist so they aren't blamed on fixes.
 
@@ -90,7 +90,7 @@ When the client can delegate, hand each packet to a fixer subagent and each revi
 
 After every packet lands, update `LEDGER.md` and `fixes-explained.md`.
 
-Then build the **round integration commit**: branch `selfimprove/r<round>` from the previous round's integration commit (round 1: the starting HEAD) and merge every approved packet into it, running `build` and `test` after each merge. With `land: merge` the target branch already is this commit. The re-scan reads that commit, and the next round's packets branch from it, so each round builds on the fixes before it even when nothing lands on the user's branch.
+Then build the **round integration commit**: branch `selfimprove/r<round>-integration` from the previous round's integration commit (round 1: the starting HEAD) and merge every approved packet into it, running `build` and `test` after each merge. With `land: merge` the target branch already is this commit. The re-scan reads that commit, and the next round's packets branch from it, so each round builds on the fixes before it even when nothing lands on the user's branch.
 
 **Done when:** every packet is landed, or parked with a reason in the ledger, and no fixer or reviewer is still running.
 

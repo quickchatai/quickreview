@@ -7,7 +7,7 @@ Give the fixer these four things:
 - the packet, meaning its findings with fingerprint, file, range and the scan's reasoning
 - the settings
 - this brief
-- a worktree, made by `git worktree add ../<repo>-si-r<round>-<packet> -b selfimprove/r<round>/<packet> <base>`. `<base>` is the previous round's integration commit, or the starting HEAD in round 1. Link or install dependencies in it.
+- a worktree, made by `git worktree add ../<repo>-si-r<round>-<packet> -b selfimprove/r<round>-<packet> <base>`. `<base>` is the previous round's integration commit, or the starting HEAD in round 1. Link or install dependencies in it.
 
 Line numbers in a finding can be stale, so locate the code by its content.
 
@@ -43,7 +43,7 @@ The fixer must stop committing once review has started. If it commits after that
 ## Landing
 
 - `branch`: leave the branch as it is and list it in the ledger.
-- `pr`: push the branch and open a PR. The setup answer authorised this.
+- `pr`: push the branch and open a PR. The setup answer authorised this. From round 2 on, packets are based on the previous round's integration commit, so their PRs also carry the earlier rounds' commits. Open them as stacked on that round's PRs, or say so in the description.
 - `merge`: merge into an integration worktree, run `build` and `test` there, and fast-forward the target branch only when everything is green. Land packets one at a time, and rerun the tests after each one, so a conflict between two packets shows up against the one that caused it.
 
 Afterwards, remove the packet worktree, from the main checkout rather than from inside the worktree.
