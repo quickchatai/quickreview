@@ -6,14 +6,15 @@ compatibility: Any coding CLI that reads SKILL.md (Claude Code, Codex, opencode,
 disable-model-invocation: true
 metadata:
   argument-hint: "[rounds=2]"
-  opencode/slash: selfimprove
 ---
 
 # Self-improve
 
-This skill runs a loop. Scan the repo, sort the findings, fix them, then re-scan the files the fixes changed. Repeat for **N fix rounds**. N is the first argument (`$ARGUMENTS`). If it is missing or not a positive integer, N is `2`. The loop does: scan → fix → re-scan, until round N's fixes have been re-scanned.
+This skill runs a loop. Scan the repo, sort the findings, fix them, then re-scan the files the fixes changed. Repeat for **N fix rounds**. N is the number the user gave with the command (Claude Code substitutes it here: `$ARGUMENTS`; elsewhere read it from the user's message). If it is missing or not a positive integer, N is `2`. The loop does: scan → fix → re-scan, until round N's fixes have been re-scanned.
 
 The scan tells you what is wrong, and the re-scan tells you whether a fix worked. Your own sense that something is fixed does not count.
+
+Run this skill only when the user invoked it by name. It spends money; never start it because a request merely sounds related.
 
 Two terms are used throughout:
 
@@ -28,7 +29,9 @@ If there is no settings file, ask the questions in [references/setup.md](referen
 
 Then check the environment:
 
-- `qcr scan status --json` answers, and `pi` is on PATH and logged in (the scan's case runner uses it).
+- `qcr scan status --json` answers.
+- `pi` is on PATH and logged in (the scan's case runner uses it): a one-shot `pi -p "say ok"` answers.
+- The repo `qcr scan` reads (`[companion] reviewed_repo_dir` in the qcr config, or `QCR_REVIEWED_REPO`) is this repository, so commits made here are visible to the scan.
 - The working tree is clean.
 - The baseline build and test commands pass. Record failures that already exist so they aren't blamed on fixes.
 
@@ -36,7 +39,7 @@ Then check the environment:
 
 ## 2. Price and approve
 
-Run `qcr scan preview --json`, with `--delta` on rounds after the first. On a repo that has never been priced, the preview offers a calibration run. That run is capped by the tool. Run it, then preview again.
+Run `qcr scan preview --json`. On rounds after the first, add `--delta --sha <round integration commit>` (see step 6). On a repo that has never been priced, the preview offers a calibration run instead, capped by the tool's `calibration_max_usd`. Show the user that cap and run it only after their yes, then preview again.
 
 On the first round, show the user three things: the price of this scan, an estimate for all N rounds, and the budget set at setup. Get one explicit yes. That yes covers the later rounds as long as each one's preview costs less than the first round's and the running total stays inside the budget. If a later preview is more expensive, or would go over the budget, stop and ask again.
 
@@ -46,7 +49,7 @@ On the first round, show the user three things: the price of this scan, an estim
 
 Run `qcr scan start <the preview's start arguments> --json`, then `qcr scan status --wait --json`. Exit 0 means the run completed, 1 means it ended incomplete or was refused, and 3 means the wait timed out (wait again).
 
-If settings say `depth: deep` and this is round 1, run `qcr scan stage2 propose --deep --json` next. Approve its price the same way as step 2, then run `qcr scan stage2 start`. A delta re-scan never runs a deep pass.
+If settings say `depth: deep` and this is round 1, run `qcr scan stage2 propose --deep --json` next. Approve its price the same way as step 2, then run `qcr scan stage2 start --key <the proposal's key> --json` and `qcr scan status --wait --json`. A delta re-scan never runs a deep pass.
 
 If the scan hits its hard stop before covering the plan, report how much coverage it got. Don't restart it at a higher price without asking.
 
@@ -67,7 +70,7 @@ Pull the open findings with `qcr scan findings --state new --json` and keep the 
 
 Settings `no_touch` globs mark paths that are off limits. Any finding inside them gets `out-of-scope`. `needs-owner` means the right answer is a policy decision or a trade-off. Those findings are written to `NEEDS-OWNER.md` and never fixed.
 
-Write verdicts other than `real` back to the store with `qcr scan dismiss <fingerprint> --reason "<verdict>: <why>"`. That stops them coming back every round.
+Write `not-real`, `by-design` and `duplicate` verdicts back to the store with `qcr scan dismiss <fingerprint> --reason "<verdict>: <why>"` (reason at most 500 characters). Dismissals are sticky, and they also teach PR reviews to stay quiet about the finding. So never dismiss `needs-owner` or `out-of-scope` findings, because they are real. Keep those in the ledger only.
 
 Group the `real` findings into **packets**. A packet is the files one fixer can own without overlapping another packet. Put findings that touch the same helper in the same packet, because separate branches editing the same helper produce silent duplicates.
 
@@ -87,6 +90,8 @@ When the client can delegate, hand each packet to a fixer subagent and each revi
 
 After every packet lands, update `LEDGER.md` and `fixes-explained.md`.
 
+Then build the **round integration commit**: branch `selfimprove/r<round>` from the previous round's integration commit (round 1: the starting HEAD) and merge every approved packet into it, running `build` and `test` after each merge. With `land: merge` the target branch already is this commit. The re-scan reads that commit, and the next round's packets branch from it, so each round builds on the fixes before it even when nothing lands on the user's branch.
+
 **Done when:** every packet is landed, or parked with a reason in the ledger, and no fixer or reviewer is still running.
 
 ## 6. Next round or stop
@@ -98,7 +103,7 @@ Stop the loop when any of these is true:
 - Everything that is left is `needs-owner`.
 - The next round's price would go over the budget.
 
-If none is true, go back to step 2 with `--delta`, round + 1. The re-scan covers only the files this round's fixes changed. Re-scan after the last fix round as well, so that round's fixes are checked.
+If none is true, go back to step 2 for round + 1. The re-scan is `--delta --sha <round integration commit>`, so it covers only the files this round's fixes changed, as they stand with the fixes in. Re-scan after the last fix round as well, so that round's fixes are checked.
 
 **Done when:** the ledger records why the loop stopped. Then give the user the final report:
 
@@ -111,7 +116,7 @@ If none is true, go back to step 2 with `--delta`, round + 1. The re-scan covers
 
 ## Guardrails
 
-- Stop and ask the user before anything outside this repo's working tree:
+- Worktrees and branches the loop creates for itself are fine. Stop and ask the user before anything that reaches outside the repo:
   - pushing
   - force-pushing
   - opening PRs (unless `land` says PRs)

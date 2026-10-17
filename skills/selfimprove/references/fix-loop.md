@@ -7,7 +7,7 @@ Give the fixer these four things:
 - the packet, meaning its findings with fingerprint, file, range and the scan's reasoning
 - the settings
 - this brief
-- a worktree, made by `git worktree add ../<repo>-si-r<round>-<packet> -b selfimprove/r<round>/<packet>`. Link or install dependencies in it.
+- a worktree, made by `git worktree add ../<repo>-si-r<round>-<packet> -b selfimprove/r<round>/<packet> <base>`. `<base>` is the previous round's integration commit, or the starting HEAD in round 1. Link or install dependencies in it.
 
 Line numbers in a finding can be stale, so locate the code by its content.
 
