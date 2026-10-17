@@ -28,7 +28,7 @@ If there is no settings file, ask the questions in [references/setup.md](referen
 
 Then check the environment:
 
-- `qcr scan status --json` answers.
+- `qcr scan status --json` answers, and `pi` is on PATH and logged in (the scan's case runner uses it).
 - The working tree is clean.
 - The baseline build and test commands pass. Record failures that already exist so they aren't blamed on fixes.
 
@@ -40,17 +40,17 @@ Run `qcr scan preview --json`, with `--delta` on rounds after the first. On a re
 
 On the first round, show the user three things: the price of this scan, an estimate for all N rounds, and the budget set at setup. Get one explicit yes. That yes covers the later rounds as long as each one's preview costs less than the first round's and the running total stays inside the budget. If a later preview is more expensive, or would go over the budget, stop and ask again.
 
-**Done when:** you have a preview `key` that the user's approval covers. Record the price in the ledger.
+**Done when:** you have the preview's `start` arguments (`null` means something blocks the start; report the errors), and the user's approval covers them. Record the price in the ledger.
 
 ## 3. Scan
 
-Run `qcr scan start --key <key> --json` (add `--delta` after round 1), then `qcr scan status --wait --json`.
+Run `qcr scan start <the preview's start arguments> --json`, then `qcr scan status --wait --json`. Exit 0 means the run completed, 1 means it ended incomplete or was refused, and 3 means the wait timed out (wait again).
 
 If settings say `depth: deep` and this is round 1, run `qcr scan stage2 propose --deep --json` next. Approve its price the same way as step 2, then run `qcr scan stage2 start`. A delta re-scan never runs a deep pass.
 
 If the scan hits its hard stop before covering the plan, report how much coverage it got. Don't restart it at a higher price without asking.
 
-After a delta re-scan, answer any pending match question (`qcr scan matches`, then `qcr scan match`). Pair an old finding with a new one only when they describe the same defect at the same code.
+After a delta re-scan, answer any pending match question (`qcr scan matches --json`, then `qcr scan match --key <K> OLD=NEW…`; passing no pairs means none of them match). Pair an old finding with a new one only when they describe the same defect at the same code.
 
 **Done when:** the run's status is finished or hard-stopped, there are no unanswered match questions, and the ledger has the run's cost, coverage, and counts of new, fixed and still-open findings.
 
