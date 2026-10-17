@@ -28,7 +28,7 @@
 //       private doc) or one that was never tracked (tests/helpers/
 //       published-links.ts), with its own negative control.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -589,6 +589,8 @@ describe("publishability lint", () => {
     const files: { path: string; text: string }[] = [];
     for (const path of tracked) {
       if (isExcluded(path) || isPendingReseed(path)) continue;
+      // A tracked symlink has no text of its own; its target is scanned at its real path.
+      if (lstatSync(join(repoRoot, path)).isSymbolicLink()) continue;
       const buf = readFileSync(join(repoRoot, path));
       if (isBinary(path, buf)) continue;
       files.push({ path, text: buf.toString("utf8") });
