@@ -925,7 +925,11 @@ export class ScanRunner {
       const other = lease.other();
       return {
         ok: false,
-        errors: [other ? heldElsewhere(other) : "the scan driver lease could not be claimed"],
+        errors: [
+          other
+            ? heldElsewhere(other)
+            : `the scan driver lease could not be claimed${lease.lastError ? `: ${lease.lastError}` : ""}`,
+        ],
       };
     }
     this.starting = true;

@@ -28,6 +28,8 @@ export interface Rig {
   advance(ms: number): void;
   /** What the runner logged. */
   logs: string[];
+  /** How often the run's end asked to close fixed tickets. */
+  closeFixedCalls(): number;
 }
 
 export function scanRig(opts: {
@@ -66,6 +68,7 @@ export function scanRig(opts: {
         })
       : opts.lease;
   const logs: string[] = [];
+  let closeFixed = 0;
   const settings: ScanSettings = {
     scan: { ...SCAN_DEFAULTS, validator: false },
     riskPasses: ["pass-data-safety"],
@@ -117,6 +120,10 @@ export function scanRig(opts: {
     settings: () => ({ ok: true, settings }),
     buildAgents: () => ({ ok: true }),
     ...(lease ? { lease } : {}),
+    closeFixedTickets: async () => {
+      closeFixed++;
+      return { closed: [], problems: [] };
+    },
     log: (line) => logs.push(line),
   });
   return {
@@ -125,6 +132,7 @@ export function scanRig(opts: {
     settingsOf: () => settings,
     lease: lease ?? fileLease(home),
     logs,
+    closeFixedCalls: () => closeFixed,
     home,
     advance: (ms) => {
       time.t += ms;

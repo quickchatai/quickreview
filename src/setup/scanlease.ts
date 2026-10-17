@@ -10,11 +10,16 @@
 // The lease is a sequence of GENERATIONS, `scan/driver/<n>.json`, the highest
 // one current. A claim creates the next generation with an exclusive create
 // (the record is written aside and hard-linked into place, which fails when
-// the name exists), so of any number of processes claiming at once exactly
-// one wins each generation — and a record is never seen half-written. A
-// holder renews only its own generation; once a newer one exists (its lease
-// lapsed and was taken over) it no longer holds the lease, and renewal says
-// so. An unreadable current generation is no lease.
+// the name exists — or, on a filesystem that refuses hard links, an O_EXCL
+// create), so of any number of processes claiming at once exactly one wins
+// each generation; the winner then checks no newer generation appeared before
+// it takes the lease. A holder renews only its own generation; once a newer
+// one exists (its lease lapsed and was taken over) it no longer holds the
+// lease, and renewal says so. An unreadable current generation (an O_EXCL
+// create not yet written, or a corrupt file) counts as live until its file is
+// as old as the lease's life, then as no lease. A claim prunes every
+// generation but the one before its own, and temp files older than the
+// lease's life.
 //
 // What the lease does NOT serialise: the records other processes may write
 // while a run is driven elsewhere. `qcr scan match` / `dismiss` and the
@@ -28,6 +33,7 @@
 import { randomUUID } from "node:crypto";
 import {
   linkSync,
+  statSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -64,6 +70,8 @@ export interface ScanLease {
   renew(run: string | null): boolean;
   /** Give the lease up — only when this runner still holds it. */
   release(): void;
+  /** Why the last claim failed, when it was not another holder's live lease. */
+  readonly lastError: string | null;
   /** The live lease of ANOTHER holder, or null. */
   other(): LeaseRecord | null;
 }
@@ -85,6 +93,24 @@ function parse(text: string): LeaseRecord | null {
 }
 
 const GEN = /^(\d+)\.json$/;
+
+/** Has the file at `path` been written within the lease's life? Files carry
+ * the real clock's mtime, so this reads the real clock. */
+function fresh(path: string): boolean {
+  try {
+    return Date.now() - statSync(path).mtimeMs < LEASE_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+const errText = (err: unknown): string =>
+  err instanceof Error
+    ? `${(err as NodeJS.ErrnoException).code ?? "error"}: ${err.message}`
+    : String(err);
+
+/** Where a hard link is refused rather than the name taken. */
+const NO_LINK = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV"]);
 
 /** The current generation and its record (null: unreadable), or null when
  * there is no lease at all. */
@@ -139,12 +165,19 @@ export function fileLease(
     holder?: string;
     /** Called between reading the lease and creating the next generation. */
     beforeCreate?: () => void;
+    /** Called right after generation `gen` was created, before the check
+     * that no newer one appeared. */
+    afterCreate?: (gen: number) => void;
+    /** The hard link (`fs.linkSync`). */
+    link?: (existing: string, path: string) => void;
   } = {},
 ): ScanLease {
   const dir = join(home, DRIVER_DIR);
   const clock = opts.clock ?? (() => new Date());
   const holder = opts.holder ?? `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
+  const link = opts.link ?? linkSync;
   let mine: number | null = null;
+  let lastError: string | null = null;
   const record = (run: string | null, at = clock()): string =>
     `${JSON.stringify({ holder, run, pid: process.pid, host: hostname(), at: at.toISOString() })}\n`;
   // Only its holder rewrites a generation: tmp + rename.
@@ -159,37 +192,76 @@ export function fileLease(
     }
   };
   const prune = (below: number): void => {
+    let names: string[];
     try {
-      for (const name of readdirSync(dir)) {
-        const m = GEN.exec(name);
-        if (m && Number(m[1]) < below) unlinkSync(join(dir, name));
-      }
+      names = readdirSync(dir);
     } catch {
-      // Another claimer pruned it first.
+      return;
+    }
+    for (const name of names) {
+      const m = GEN.exec(name);
+      const stale =
+        (m !== null && Number(m[1]) < below) ||
+        (name.startsWith(".") && name.endsWith(".tmp") && !fresh(join(dir, name)));
+      if (!stale) continue;
+      try {
+        unlinkSync(join(dir, name));
+      } catch {
+        // Another claimer pruned it first.
+      }
+    }
+  };
+  /** Create generation `gen` exclusively; null, or why not. */
+  const create = (gen: number, text: string): string | null => {
+    const path = join(dir, `${gen}.json`);
+    const tmp = join(dir, `.claim.${randomUUID()}.tmp`);
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(tmp, text);
+      try {
+        link(tmp, path);
+        return null;
+      } catch (err) {
+        if (!NO_LINK.has((err as NodeJS.ErrnoException).code ?? "")) throw err;
+      }
+      writeFileSync(path, text, { flag: "wx" });
+      return null;
+    } catch (err) {
+      return errText(err);
+    } finally {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        // Never written.
+      }
     }
   };
   const lease: ScanLease = {
     holder,
+    get lastError() {
+      return lastError;
+    },
     claim(run) {
+      lastError = null;
       const cur = current(dir);
       if (cur !== null && mine === cur.gen) return lease.renew(run);
+      if (cur !== null && cur.record === null && fresh(join(dir, `${cur.gen}.json`))) {
+        lastError = `generation ${cur.gen} is unreadable and was written within the lease's life — it may still be being written`;
+        return false;
+      }
       if (cur?.record && cur.record.holder !== holder && isLive(cur.record, clock())) return false;
       opts.beforeCreate?.();
       const gen = (cur?.gen ?? 0) + 1;
-      const tmp = join(dir, `.claim.${randomUUID()}.tmp`);
-      try {
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(tmp, record(run));
-        // The exclusive create: the link fails when generation `gen` exists.
-        linkSync(tmp, join(dir, `${gen}.json`));
-      } catch {
+      const failed = create(gen, record(run));
+      if (failed !== null) {
+        lastError = `generation ${gen} could not be created (${failed})`;
         return false;
-      } finally {
-        try {
-          unlinkSync(tmp);
-        } catch {
-          // Never written.
-        }
+      }
+      opts.afterCreate?.(gen);
+      // Won the create; still the newest?
+      if (current(dir)?.gen !== gen) {
+        lastError = `a newer generation than ${gen} appeared as it was created`;
+        return false;
       }
       mine = gen;
       prune(gen - 1);
