@@ -67,6 +67,7 @@ import {
   SCAN_TRANSCRIPTS_DIR,
   ScanRunner,
   type ScanPreview,
+  type ScanRun,
   type ScanSettings,
   type ScanStatus,
   type StoredSuggestion,
@@ -75,6 +76,8 @@ import { gitScanSource } from "../src/setup/scantree.js";
 import { ScanTriage, type CloseFixedResult } from "../src/setup/triage.js";
 import type { MemoryStore } from "../src/memory/store.js";
 import type { TrackerSink } from "../src/setup/engine.js";
+import type { MatchResult } from "../src/setup/findings.js";
+import { fileLease, type ScanLease } from "../src/setup/scanlease.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
@@ -92,6 +95,47 @@ const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixe
 
 // ---- rendering ---------------------------------------------------------------
 
+/** How a rendering names the next step: the companion's tools, or the
+ * `qcr scan` CLI's subcommands — the same words around either. */
+export interface ScanVerbs {
+  /** How to start the previewed run. */
+  start(p: Pick<ScanPreview, "key" | "sha" | "mode">): string;
+  /** Where the pending match question is shown. */
+  matches: string;
+  /** How to answer the match question `key`: what precedes "that are the
+   * SAME finding". */
+  match(key: string): string;
+  /** How to start the stored stage-2 proposal `key`, and only some of its rows. */
+  stage2Start(key: string): string;
+  /** The progress and stop verbs a start names. */
+  status: string;
+  stop: string;
+}
+
+export const TOOL_VERBS: ScanVerbs = {
+  start: (p) =>
+    `scan_start with key ${p.key} and sha ${p.sha}${p.mode === "delta" ? " and delta true" : ""}`,
+  matches: "scan_matches",
+  match: (key) => `scan_match: key ${key} and the pairs`,
+  stage2Start: (key) =>
+    `scan_stage2_start with key ${key} — only after the operator agreed to the cost ("do it"); the TUI's start click starts the same proposal. ` +
+    `To run only some rows: add rows (their ids, e.g. ["row-1"]) — only runnable rows, and the run stops hard at their total.`,
+  status: "scan_status",
+  stop: "scan_stop",
+};
+
+export const CLI_VERBS: ScanVerbs = {
+  start: (p) =>
+    `qcr scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}`,
+  matches: "qcr scan matches",
+  match: (key) => `qcr scan match --key ${key} OLD=NEW… — the pairs`,
+  stage2Start: (key) =>
+    `qcr scan stage2 start --key ${key} — only after the operator agreed to the cost; the TUI's start click starts the same proposal. ` +
+    "To run only some rows: add --rows with their ids (e.g. --rows row-1,row-3) — only runnable rows, and the run stops hard at their total.",
+  status: "qcr scan status",
+  stop: "qcr scan stop",
+};
+
 /** A delta's unchanged-but-owed files: those no reading covers, and — on a
  * deep delta — those a standard reading covers but no deep one does yet. */
 function owedClause(d: ScanPreview["delta"]): string {
@@ -108,7 +152,7 @@ function owedClause(d: ScanPreview["delta"]): string {
   return `; ${parts.join("; ")} — read first`;
 }
 
-export function renderPreview(p: ScanPreview): string {
+export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): string {
   const out: string[] = [];
   const deep = p.depth === "deep";
   const head = `${deep ? "(deep) " : ""}at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, skeptic ${p.settings.validator ? `on (at the lens's tier, ${p.settings.validate_tier}; its cost is in the price)` : "off (findings stay unjudged — validity unknown)"}`;
@@ -185,9 +229,7 @@ export function renderPreview(p: ScanPreview): string {
   }
   for (const b of p.blockers) out.push(`✗ ${b}`);
   if (p.blockers.length === 0) {
-    out.push(
-      `To run it: scan_start with key ${p.key} and sha ${p.sha}${p.mode === "delta" ? " and delta true" : ""} — only after the operator agreed to the cost.`,
-    );
+    out.push(`To run it: ${verbs.start(p)} — only after the operator agreed to the cost.`);
   }
   return out.join("\n\n");
 }
@@ -205,7 +247,7 @@ function tierCounts(r: NonNullable<ScanStatus["run"]>, findings: number, doubted
   return ` (${confirmed} confirmed, ${likely} likely, ${doubted} doubtful${unknown > 0 ? `, ${unknown} unknown` : ""})`;
 }
 
-export function renderStatus(s: ScanStatus): string {
+export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): string {
   const out: string[] = [];
   for (const p of s.problems) out.push(`✗ ${p}`);
   const r = s.run;
@@ -254,7 +296,7 @@ export function renderStatus(s: ScanStatus): string {
       out.push(
         `Findings no longer reported: ${r.matching.fixed} fixed` +
           (r.matching.pending > 0
-            ? `, ${r.matching.pending} waiting on your match (scan_matches)`
+            ? `, ${r.matching.pending} waiting on your match (${verbs.matches})`
             : ""),
       );
     }
@@ -337,7 +379,7 @@ export function renderFindings(fs: readonly ScanFinding[], total: number): strin
   return rows.join("\n");
 }
 
-export function renderQuestion(q: MatchQuestionView | null): string {
+export function renderQuestion(q: MatchQuestionView | null, verbs: ScanVerbs = TOOL_VERBS): string {
   if (q === null)
     return "No match question is pending: every finding a re-scan stopped reporting has been settled.";
   const row = (f: ScanFinding): string =>
@@ -349,7 +391,7 @@ export function renderQuestion(q: MatchQuestionView | null): string {
     ...q.unreported.map(row),
     `Fresh — first seen by the re-scan, possibly one of the above moved or reworded (${q.fresh.length}):`,
     ...q.fresh.map(row),
-    `Answer with scan_match: key ${q.key} and the pairs that are the SAME finding. Every unpaired old one becomes fixed; every unpaired fresh one stays new.`,
+    `Answer with ${verbs.match(q.key)} that are the SAME finding. Every unpaired old one becomes fixed; every unpaired fresh one stays new.`,
   ].join("\n");
 }
 
@@ -425,7 +467,7 @@ function renderFloor(p: StoredStage2Proposal): string[] {
   return out;
 }
 
-export function renderProposal(p: StoredStage2Proposal): string {
+export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_VERBS): string {
   const out: string[] = [];
   const run = p.rows.filter((r) => r.status === "run");
   const deep = p.depth === "deep";
@@ -478,12 +520,176 @@ export function renderProposal(p: StoredStage2Proposal): string {
   }
   if (p.over_budget_usd > 0) out.push(`Left out by the budget: ${usd(p.over_budget_usd)} of rows.`);
   if (p.runnable > 0) {
-    out.push(
-      `To run it: scan_stage2_start with key ${p.key} — only after the operator agreed to the cost ("do it"); the TUI's start click starts the same proposal. ` +
-        `To run only some rows: add rows (their ids, e.g. ["row-1"]) — only runnable rows, and the run stops hard at their total.`,
-    );
+    out.push(`To run it: ${verbs.stage2Start(p.key)}`);
   } else out.push("✗ nothing to run: every row is covered or over the budget.");
   return out.join("\n\n");
+}
+
+// ---- shared verbs ------------------------------------------------------------
+//
+// What a tool and its `qcr scan` subcommand (src/scancli.ts) both answer:
+// the checks, the orders and the structured results. Each surface renders
+// them its own way; neither carries a rule of its own.
+
+/** A preview's structured result: its cases summarised (counts, not files). */
+export function previewDetails(p: ScanPreview): Record<string, unknown> {
+  return {
+    ...p,
+    cases: p.cases.map((c) => ({
+      id: c.id,
+      files: c.files.length,
+      lines: c.lines,
+      estimate_usd: c.estimate_usd,
+    })),
+  };
+}
+
+/** A started run, as a start answers it. */
+export function startedDetails(run: ScanRun): {
+  id: string;
+  mode: ScanRun["mode"];
+  sha: string;
+  cases: number;
+  cap_usd: number;
+} {
+  return {
+    id: run.id,
+    mode: run.mode,
+    sha: run.sha,
+    cases: run.cases.length,
+    cap_usd: run.cap_usd,
+  };
+}
+
+export const FINDING_STATES: readonly FindingState[] = ["new", "promoted", "dismissed", "fixed"];
+/** How many findings a listing shows unless told otherwise, and at most. */
+export const FINDINGS_LIMIT = 50;
+export const FINDINGS_LIMIT_MAX = 200;
+
+/** A findings filter from loose parameters (a tool call's, the CLI's flags),
+ * or what is wrong with one. */
+export function findingsFilter(
+  p: Record<string, unknown>,
+): { ok: true; filter: FindingsFilter } | { ok: false; error: string } {
+  const filter: FindingsFilter = {};
+  if (typeof p.state === "string") {
+    if (!(FINDING_STATES as readonly string[]).includes(p.state))
+      return { ok: false, error: `Unknown state ${JSON.stringify(p.state)}.` };
+    filter.state = p.state as FindingState;
+  }
+  if (typeof p.severity === "string") {
+    if (!(SEVERITIES as readonly string[]).includes(p.severity))
+      return { ok: false, error: `Unknown severity ${JSON.stringify(p.severity)}.` };
+    filter.severity = p.severity as ScanSeverity;
+  }
+  if (typeof p.lens === "string") filter.lens = p.lens;
+  if (typeof p.unit === "string") filter.unit = p.unit;
+  if (typeof p.doubted === "boolean") filter.doubted = p.doubted;
+  if (typeof p.validity === "string") {
+    if (!(VALIDITY_ORDER as readonly string[]).includes(p.validity))
+      return {
+        ok: false,
+        error: `Unknown validity ${JSON.stringify(p.validity)} — confirmed, likely, doubtful or unknown.`,
+      };
+    filter.validity = p.validity as ValidityView;
+  }
+  return { ok: true, filter };
+}
+
+/** The stored findings a filter keeps, in validity order (`byValidity`),
+ * with the count in each tier — or why the store cannot be read. */
+export function listFindings(
+  findings: FindingsStore,
+  filter: FindingsFilter,
+):
+  | { ok: true; findings: ScanFinding[]; validity: Record<ValidityView, number> }
+  | { ok: false; error: string } {
+  const { findings: listed, error } = findings.list(filter);
+  if (error !== null) return { ok: false, error };
+  const fs = byValidity(listed);
+  const validity = Object.fromEntries(
+    VALIDITY_ORDER.map((v) => [v, fs.filter((f) => validityOf(f) === v).length]),
+  ) as Record<ValidityView, number>;
+  return { ok: true, findings: fs, validity };
+}
+
+/** Answer the match question whole, then close the tickets of the promoted
+ * findings it fixed — and the lines that say what was settled. */
+export async function answerMatch(
+  findings: FindingsStore,
+  args: { key?: unknown; pairs?: unknown },
+  afterMatch: (() => Promise<CloseFixedResult>) | null,
+): Promise<
+  | Extract<MatchResult, { ok: false }>
+  | (Extract<MatchResult, { ok: true }> & { tickets: CloseFixedResult | null; lines: string[] })
+> {
+  const r = findings.match({ key: args.key, pairs: args.pairs ?? [] });
+  if (!r.ok) return r;
+  const lines = [
+    `Settled: ${r.matched} matched (state kept), ${r.fixed} fixed, ${r.new} new` +
+      (r.dismissed_unreported > 0
+        ? `, ${r.dismissed_unreported} dismissed kept dismissed (stamped no longer reported)`
+        : "") +
+      ".",
+  ];
+  let tickets: CloseFixedResult | null = null;
+  if (afterMatch && r.fixed > 0) {
+    tickets = await afterMatch();
+    if (tickets.closed.length > 0)
+      lines.push(`Closed as fixed: ${tickets.closed.map((c) => c.ref).join(", ")}.`);
+    for (const p of tickets.problems) lines.push(`! ticket not closed: ${p}`);
+  }
+  return { ...r, tickets, lines };
+}
+
+/** A stored proposal's summary, as a propose answers it. */
+export function proposalDetails(p: StoredStage2Proposal): {
+  key: string;
+  sha: string;
+  cap_usd: number;
+  runnable: number;
+  rows: number;
+  depth: "standard" | "deep";
+  floor_rows: number;
+  floor_usd: number;
+} {
+  const floor = p.rows.filter((x) => x.floor);
+  return {
+    key: p.key,
+    sha: p.sha,
+    cap_usd: p.cap_usd,
+    runnable: p.runnable,
+    rows: p.rows.length,
+    depth: p.depth ?? "standard",
+    floor_rows: floor.length,
+    floor_usd: floor.filter((x) => x.status === "run").reduce((n, x) => n + x.estimate_usd, 0),
+  };
+}
+
+/** The line a stage-2 start answers: how many rows run (of how many, when
+ * narrowed), and the hard stop. */
+export function stage2StartedLine(
+  run: ScanRun,
+  runnable: number | null,
+  narrowed: boolean,
+  verbs: ScanVerbs = TOOL_VERBS,
+): string {
+  const count =
+    narrowed && runnable !== null
+      ? `${run.cases.length} row(s) of ${runnable} (${run.cases.map((c) => c.id).join(", ")})`
+      : `${run.cases.length} row(s)`;
+  return (
+    `Stage 2 ${run.id} started at ${run.sha.slice(0, 12)}: ${count}, hard stop ${usd(run.cap_usd)}. ` +
+    `It runs in the background — ${verbs.status} shows progress, ${verbs.stop} stops it.`
+  );
+}
+
+/** The line a stage-1 start answers. */
+export function startedLine(run: ScanRun, verbs: ScanVerbs = TOOL_VERBS): string {
+  return (
+    `Scan ${run.id} (${run.mode}) started at ${run.sha.slice(0, 12)}: ${run.cases.length} case(s), hard stop ${usd(run.cap_usd)}. ` +
+    `It runs in the background — ${verbs.status} shows progress, ${verbs.stop} stops it.`
+  );
 }
 
 // ---- tool belt ---------------------------------------------------------------
@@ -525,17 +731,7 @@ export function scanToolDefinitions(
         delta: params?.delta === true,
       });
       if (!r.ok) return refused("Scan preview", r);
-      return text(renderPreview(r.preview), {
-        preview: {
-          ...r.preview,
-          cases: r.preview.cases.map((c) => ({
-            id: c.id,
-            files: c.files.length,
-            lines: c.lines,
-            estimate_usd: c.estimate_usd,
-          })),
-        },
-      });
+      return text(renderPreview(r.preview), { preview: previewDetails(r.preview) });
     },
   };
   const start: PiToolDefinition = {
@@ -558,19 +754,7 @@ export function scanToolDefinitions(
         delta: params?.delta === true,
       });
       if (!r.ok) return refused("Scan start", r);
-      return text(
-        `Scan ${r.run.id} (${r.run.mode}) started at ${r.run.sha.slice(0, 12)}: ${r.run.cases.length} case(s), hard stop ${usd(r.run.cap_usd)}. ` +
-          "It runs in the background — scan_status shows progress, scan_stop stops it.",
-        {
-          run: {
-            id: r.run.id,
-            mode: r.run.mode,
-            sha: r.run.sha,
-            cases: r.run.cases.length,
-            cap_usd: r.run.cap_usd,
-          },
-        },
-      );
+      return text(startedLine(r.run), { run: startedDetails(r.run) });
     },
   };
   const status: PiToolDefinition = {
@@ -626,39 +810,18 @@ export function scanToolDefinitions(
     },
     execute: async (_id, params) => {
       const p = params ?? {};
-      const filter: FindingsFilter = {};
-      if (typeof p.state === "string") {
-        if (!["new", "promoted", "dismissed", "fixed"].includes(p.state))
-          return text(`Unknown state ${JSON.stringify(p.state)}.`);
-        filter.state = p.state as FindingState;
-      }
-      if (typeof p.severity === "string") {
-        if (!(SEVERITIES as readonly string[]).includes(p.severity))
-          return text(`Unknown severity ${JSON.stringify(p.severity)}.`);
-        filter.severity = p.severity as ScanSeverity;
-      }
-      if (typeof p.lens === "string") filter.lens = p.lens;
-      if (typeof p.unit === "string") filter.unit = p.unit;
-      if (typeof p.doubted === "boolean") filter.doubted = p.doubted;
-      if (typeof p.validity === "string") {
-        if (!(VALIDITY_ORDER as readonly string[]).includes(p.validity)) {
-          return text(
-            `Unknown validity ${JSON.stringify(p.validity)} — confirmed, likely, doubtful or unknown.`,
-          );
-        }
-        filter.validity = p.validity as ValidityView;
-      }
-      const { findings: listed, error } = findings.list(filter);
-      if (error !== null) return text(`✗ ${error}`);
-      const fs = byValidity(listed);
+      const f = findingsFilter(p);
+      if (!f.ok) return text(f.error);
+      const listed = listFindings(findings, f.filter);
+      if (!listed.ok) return text(`✗ ${listed.error}`);
+      const fs = listed.findings;
       const limit =
-        typeof p.limit === "number" && p.limit > 0 ? Math.min(200, Math.floor(p.limit)) : 50;
-      const tiers = Object.fromEntries(
-        VALIDITY_ORDER.map((v) => [v, fs.filter((f) => validityOf(f) === v).length]),
-      );
+        typeof p.limit === "number" && p.limit > 0
+          ? Math.min(FINDINGS_LIMIT_MAX, Math.floor(p.limit))
+          : FINDINGS_LIMIT;
       return text(renderFindings(fs.slice(0, limit), fs.length), {
         total: fs.length,
-        validity: tiers,
+        validity: listed.validity,
       });
     },
   };
@@ -701,23 +864,14 @@ export function scanToolDefinitions(
       required: ["key"],
     },
     execute: async (_id, params) => {
-      const r = findings.match({ key: params?.key, pairs: params?.pairs ?? [] });
+      const r = await answerMatch(
+        findings,
+        { key: params?.key, pairs: params?.pairs ?? [] },
+        afterMatch,
+      );
       if (!r.ok) return refused("Match", r);
-      const out = [
-        `Settled: ${r.matched} matched (state kept), ${r.fixed} fixed, ${r.new} new` +
-          (r.dismissed_unreported > 0
-            ? `, ${r.dismissed_unreported} dismissed kept dismissed (stamped no longer reported)`
-            : "") +
-          ".",
-      ];
-      let tickets: CloseFixedResult | null = null;
-      if (afterMatch && r.fixed > 0) {
-        tickets = await afterMatch();
-        if (tickets.closed.length > 0)
-          out.push(`Closed as fixed: ${tickets.closed.map((c) => c.ref).join(", ")}.`);
-        for (const p of tickets.problems) out.push(`! ticket not closed: ${p}`);
-      }
-      return text(out.join("\n"), { ...r, tickets_closed: tickets?.closed.length ?? 0 });
+      const { tickets, lines, ...result } = r;
+      return text(lines.join("\n"), { ...result, tickets_closed: tickets?.closed.length ?? 0 });
     },
   };
   const suggestions: PiToolDefinition = {
@@ -782,21 +936,7 @@ export function scanToolDefinitions(
         ...(params?.deep !== undefined ? { deep: params.deep } : {}),
       });
       if (!r.ok) return refused("Stage 2 proposal", r);
-      const floor = r.proposal.rows.filter((x) => x.floor);
-      return text(renderProposal(r.proposal), {
-        proposal: {
-          key: r.proposal.key,
-          sha: r.proposal.sha,
-          cap_usd: r.proposal.cap_usd,
-          runnable: r.proposal.runnable,
-          rows: r.proposal.rows.length,
-          depth: r.proposal.depth ?? "standard",
-          floor_rows: floor.length,
-          floor_usd: floor
-            .filter((x) => x.status === "run")
-            .reduce((n, x) => n + x.estimate_usd, 0),
-        },
-      });
+      return text(renderProposal(r.proposal), { proposal: proposalDetails(r.proposal) });
     },
   };
   const start2: PiToolDefinition = {
@@ -823,23 +963,9 @@ export function scanToolDefinitions(
       if (!r.ok) return refused("Stage 2 start", r);
       const runnable = scan.stage2Proposal().proposal?.runnable ?? null;
       const narrowed = params?.rows !== undefined && params?.rows !== null;
-      const count =
-        narrowed && runnable !== null
-          ? `${r.run.cases.length} row(s) of ${runnable} (${r.run.cases.map((c) => c.id).join(", ")})`
-          : `${r.run.cases.length} row(s)`;
-      return text(
-        `Stage 2 ${r.run.id} started at ${r.run.sha.slice(0, 12)}: ${count}, hard stop ${usd(r.run.cap_usd)}. ` +
-          "It runs in the background — scan_status shows progress, scan_stop stops it.",
-        {
-          run: {
-            id: r.run.id,
-            mode: r.run.mode,
-            sha: r.run.sha,
-            cases: r.run.cases.length,
-            cap_usd: r.run.cap_usd,
-          },
-        },
-      );
+      return text(stage2StartedLine(r.run, runnable, narrowed), {
+        run: startedDetails(r.run),
+      });
     },
   };
   return [preview, start, status, stop, list, matches, match, suggestions, propose, start2];
@@ -853,13 +979,20 @@ export const STAGE2_POLL_MS = 2000;
  * click starts the stored proposal it showed, exactly as the operator's word
  * would, and the `[8] scan` tab's stop stops the run it showed running,
  * exactly as scan_stop would. Returns the stop. */
-export function watchTuiRequests(scan: ScanRunner, everyMs = STAGE2_POLL_MS): () => void {
+export function watchTuiRequests(
+  scan: ScanRunner,
+  everyMs = STAGE2_POLL_MS,
+  /** false: answer only the stop — a `qcr scan` driver leaves the stage-2
+   * start click to the companion. */
+  opts: { stage2?: boolean } = {},
+): () => void {
   const timer = setInterval(() => {
     try {
       scan.consumeStopRequest();
     } catch (err) {
       console.error(`setup: scan stop request failed: ${String(err)}`);
     }
+    if (opts.stage2 === false) return;
     scan
       .consumeStage2Request()
       .catch((err: unknown) =>
@@ -882,6 +1015,9 @@ export function buildScan(
   reviewedRepo: string,
   env: NodeJS.ProcessEnv = process.env,
   shared: { memory: MemoryStore | null; tracker: TrackerSink } | null = null,
+  /** The driver lease; default the state home's file lease, shared with every
+   * other runner over it. */
+  lease: ScanLease | null = null,
 ): {
   scan: ScanRunner;
   findings: FindingsStore;
@@ -934,6 +1070,7 @@ export function buildScan(
       }
     },
     closeFixedTickets: async () => (triage ? triage.closeFixed() : { closed: [], problems: [] }),
+    lease: lease ?? fileLease(state),
     log: (line) => console.error(line),
   });
   if (shared) {

@@ -28,8 +28,11 @@
 //     tail run after run. Stage-2 rows keep the proposal's order.
 //   * STOP AND RESUME BY THE LEDGER. `stop` aborts in-flight cases and starts
 //     no more. A run the companion was not there to finish (a TUI quit, an
-//     expired login) reads as `interrupted`. Either way, only FINISHED cases
-//     wrote ledger rows, so starting again reads only what is left.
+//     expired login) reads as `interrupted` — unless another process sharing
+//     the state home holds the driver lease for it (scanlease.ts: the
+//     companion, or a `qcr scan` driver), when it reads as running and no
+//     second run starts beside it. Either way, only FINISHED cases wrote
+//     ledger rows, so starting again reads only what is left.
 //
 // A delta re-scan is the same run over the files whose content
 // changed since the last scan (scan.ts changedSince) AND every file no
@@ -155,6 +158,7 @@ import {
   type StoredStage2Proposal,
 } from "./stage2request.js";
 import type { UnitCut } from "./unitcut.js";
+import { LEASE_RENEW_MS, type LeaseRecord, type ScanLease } from "./scanlease.js";
 import {
   parseRunFile,
   parseStopRequest,
@@ -280,6 +284,10 @@ export interface ScanPorts {
   /** After the run's reconcile: close the tickets of promoted findings it
    * found fixed (triage.ts `closeFixed`). Absent: nothing closes. */
   closeFixedTickets?: () => Promise<{ closed: readonly unknown[]; problems: readonly string[] }>;
+  /** The driver lease shared with other processes over this state home
+   * (scanlease.ts). Absent: this runner knows only its own run, and any
+   * other run recorded as running reads as interrupted. */
+  lease?: ScanLease;
   log?: (line: string) => void;
 }
 
@@ -458,6 +466,12 @@ export type Stage2Proposal = StoredStage2Proposal;
 
 const EPS = 1e-9;
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** The refusal while another process holds the driver lease. */
+const heldElsewhere = (l: LeaseRecord): string =>
+  l.run === null
+    ? `a scan is starting in another process (pid ${l.pid} on ${l.host}) — wait for it, then check the status`
+    : `scan ${l.run} is running in another process (pid ${l.pid} on ${l.host}) — stop it there or wait for it`;
 /** The validator's variant at the tier of the lens it judges — never raised:
  * the scan validator is the skeptic, at the same tier. */
 const validatorAgent = (tier: PassTier): string => `${VALIDATE_PASS}--${tier}`;
@@ -574,6 +588,7 @@ export class ScanRunner {
    * the active run's, from a preview or proposal planned meanwhile. */
   private startingSha: string | null = null;
   private consuming = false;
+  private renewTimer: ReturnType<typeof setInterval> | null = null;
   private readonly ledger: Ledger;
   private readonly findings: FindingsStore;
 
@@ -878,6 +893,9 @@ export class ScanRunner {
    * concurrently) must not both pass the active check while the first is
    * still planning: that would run — and pay for — the same scan twice. */
   private refuseBusy(): Refusal | null {
+    const other = this.ports.lease?.other() ?? null;
+    if (!this.active && !this.starting && other !== null)
+      return { ok: false, errors: [heldElsewhere(other)] };
     if (this.active)
       return {
         ok: false,
@@ -892,13 +910,29 @@ export class ScanRunner {
   }
 
   /** Hold the starting slot across a start's planning and launch. */
-  private async holdingStart<T>(body: () => Promise<T>): Promise<T> {
+  private async holdingStart<T extends { ok: boolean }>(
+    body: () => Promise<T | Refusal>,
+  ): Promise<T | Refusal> {
+    // The lease is claimed before planning, so of two processes starting at
+    // once only one plans and runs.
+    const lease = this.ports.lease;
+    if (lease && !lease.claim(null)) {
+      const other = lease.other();
+      return {
+        ok: false,
+        errors: [other ? heldElsewhere(other) : "the scan driver lease could not be claimed"],
+      };
+    }
     this.starting = true;
+    let started = false;
     try {
-      return await body();
+      const r = await body();
+      started = r.ok;
+      return r;
     } finally {
       this.starting = false;
       this.startingSha = null;
+      if (!started && !this.active) lease?.release();
     }
   }
 
@@ -1033,7 +1067,27 @@ export class ScanRunner {
         if (this.active?.id === run.id) this.active = null;
       });
     this.active = { id: run.id, sha: run.sha, abort, done };
+    this.holdLease(run.id);
     return run;
+  }
+
+  /** Hold the driver lease for `run` while it is driven: renewed on a timer,
+   * given up when it ends. */
+  private holdLease(run: string): void {
+    const lease = this.ports.lease;
+    if (!lease) return;
+    lease.claim(run);
+    if (this.renewTimer) clearInterval(this.renewTimer);
+    const timer = setInterval(() => {
+      if (this.active?.id === run) lease.claim(run);
+    }, LEASE_RENEW_MS);
+    timer.unref?.();
+    this.renewTimer = timer;
+    void this.active?.done.finally(() => {
+      clearInterval(timer);
+      if (this.renewTimer === timer) this.renewTimer = null;
+      if (!this.active && !this.starting) lease.release();
+    });
   }
 
   /** The latest run, the history and the ledger's totals. */
@@ -1052,7 +1106,11 @@ export class ScanRunner {
           : {
               ...run,
               display:
-                run.state === "running" && this.active?.id !== run.id ? "interrupted" : run.state,
+                run.state === "running" &&
+                this.active?.id !== run.id &&
+                this.ports.lease?.other()?.run !== run.id
+                  ? "interrupted"
+                  : run.state,
             },
       active: this.active !== null,
       history: file.history,
@@ -1473,6 +1531,8 @@ export class ScanRunner {
       // Unreadable: answer again rather than never.
     }
     if (prev !== null && parseStopResult(prev)?.request === req.id) return null;
+    // Another process drives that run: the stop is its holder's to answer.
+    if (this.active?.id !== req.run && this.ports.lease?.other()?.run === req.run) return null;
     const inFlight = this.active?.id ?? null;
     const errors: string[] = [];
     if (!this.active)

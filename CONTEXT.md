@@ -136,6 +136,10 @@ _Avoid_: baseline (that is a PR lens), sweep
 The first stage-1 run at given settings: one case from each of a few units spread across the size range, under its own small hard cap, whose measured cost prices every later preview.
 _Avoid_: dry run, trial
 
+**Scan driver**:
+The process that drives a scan run's cases — the companion, or a `qcr scan` driver — holding the driver lease while it does; a run recorded as running that no live lease names was interrupted.
+_Avoid_: scan owner, scan host
+
 **Hard stop**:
 The cap a scan run never spends past — the estimate the operator approved (the calibration cap for a calibration run); reaching it aborts what is in flight, and the ledger holds only what finished.
 _Avoid_: budget (that is what the operator gives stage 2's proposal)

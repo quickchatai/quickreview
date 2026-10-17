@@ -223,7 +223,8 @@ export interface ScanStopRequest {
   /** The run the TUI showed running — only that run is stopped. */
   run: string;
   at: string;
-  by: "tui";
+  /** Who asked: the TUI's stop, or `qcr scan stop`. */
+  by: "tui" | "cli";
 }
 
 export interface ScanStopResult {
@@ -252,7 +253,12 @@ export function parseStopRequest(text: string): ScanStopRequest | null {
       r.run === ""
     )
       return null;
-    return { id: r.id, run: r.run, at: typeof r.at === "string" ? r.at : "", by: "tui" };
+    return {
+      id: r.id,
+      run: r.run,
+      at: typeof r.at === "string" ? r.at : "",
+      by: r.by === "cli" ? "cli" : "tui",
+    };
   } catch {
     return null;
   }
@@ -296,6 +302,7 @@ export function clickStopScan(
   home: string,
   run: string,
   now: Date = new Date(),
+  by: ScanStopRequest["by"] = "tui",
 ): { ok: true; request: string; line: string } | { ok: false; line: string } {
   const read = readScanRuns(home);
   if (read.kind === "unreadable") return { ok: false, line: `scan not stopped: ${read.why}` };
@@ -310,7 +317,7 @@ export function clickStopScan(
     id: `${now.toISOString()}-${Math.random().toString(36).slice(2, 8)}`,
     run,
     at: now.toISOString(),
-    by: "tui",
+    by,
   };
   try {
     writeAtomic(join(home, SCAN_STOP_FILE), `${JSON.stringify(request)}\n`);

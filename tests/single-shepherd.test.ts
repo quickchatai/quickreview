@@ -201,8 +201,19 @@ describe("daemon topology", () => {
       "retunelog.js",
       "scanreport.js",
     ];
+    // One operator entry point reaches the whole of src/setup/: scancli.ts,
+    // `qcr scan` — the companion's scan tools as a CLI verb, driving the
+    // case runner in the operator's own one-shot process (as the companion
+    // drives it in its container). It holds only while nothing but the CLI's
+    // dispatch reaches it, which the check after this one pins.
+    const operatorEntries = ["/src/scancli.ts"];
+    const reachesScanCli = srcFiles(src)
+      .filter((f) => !f.endsWith("/src/cli.ts"))
+      .filter((f) => /["'][^"']*\/scancli\.js["']/.test(readFileSync(f, "utf8")));
+    expect(reachesScanCli).toEqual([]);
     const reachesSetup = srcFiles(src)
       .filter((f) => !f.includes("/src/setup/"))
+      .filter((f) => !operatorEntries.some((p) => f.endsWith(p)))
       .filter((f) =>
         [...readFileSync(f, "utf8").matchAll(/from\s+["'][^"']*\/setup\/([^"']*)["']/g)].some(
           (m) => !setupLeaves.includes(m[1]!),
