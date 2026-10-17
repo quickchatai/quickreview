@@ -14,6 +14,7 @@ These questions run on the first run only, when there is no settings file yet. A
 | `ledger_dir` | Where does the ledger live? | `.selfimprove/ledger/` (gitignored) · a directory outside the repo · `docs/selfimprove/` (committed) |
 | `no_touch` | Paths fixers never edit? | Default: vendored code and dated records. Detect candidates first (`vendor/`, `third_party/`, `*VENDORED*`, dated `docs/` records) and let the user add globs. |
 | `git` | Commit identity and trailers? | `user-only` (no co-author trailers) · `with-trailer` |
+| `scan_cmd` | How is the scan invoked? | `qcr scan` · a wrapper path, for example one that runs `qcr scan` inside the container that holds the scan's model login |
 | `build` / `test` | Commands that make a fix green? | Detect them from the package manifest, Makefile or CI config, and confirm with the user. |
 
 Write the answers to `.selfimprove/settings.json`:
@@ -30,6 +31,7 @@ Write the answers to `.selfimprove/settings.json`:
   "ledger_dir": ".selfimprove/ledger",
   "no_touch": ["vendor/**"],
   "git": "user-only",
+  "scan_cmd": "qcr scan",
   "build": "npm run build",
   "test": "npm test"
 }

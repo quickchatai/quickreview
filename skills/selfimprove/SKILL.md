@@ -2,7 +2,7 @@
 name: selfimprove
 description: Scan the whole repo with the review tool, fix the findings, re-scan and repeat for a set number of fix rounds (default 2). Run as /selfimprove [rounds].
 license: MIT
-compatibility: Any coding CLI that reads SKILL.md (Claude Code, Codex, opencode, pi). Needs git, a shell, and the `qcr scan` command on PATH.
+compatibility: Any coding CLI that reads SKILL.md (Claude Code, Codex, opencode, pi). Needs git, a shell, and the `qcr scan` command (or a wrapper set as `scan_cmd`).
 disable-model-invocation: true
 metadata:
   argument-hint: "[rounds=2]"
@@ -20,6 +20,7 @@ Two terms are used throughout:
 
 - **Settings**: `.selfimprove/settings.json` at the repo root, gitignored.
 - **Ledger**: the directory chosen at setup.
+- **`<scan>`**: the settings' `scan_cmd`, by default `qcr scan`. Every `qcr scan …` below means `<scan> …`.
 
 ## 1. Setup
 
@@ -29,7 +30,7 @@ If there is no settings file, ask the questions in [references/setup.md](referen
 
 Then check the environment:
 
-- `qcr scan status --json` answers.
+- `<scan> status --json` answers, and `<scan> preview --json` does not refuse for a missing unit cut. If it does, the scan has never been set up for this repo: stop and tell the user to save a unit cut first (for qcr, the companion's setup flow).
 - `pi` is on PATH and logged in (the scan's case runner uses it): a one-shot `pi -p "say ok"` answers.
 - The repo `qcr scan` reads (`[companion] reviewed_repo_dir` in the qcr config, or `QCR_REVIEWED_REPO`) is this same checkout (a worktree of it counts), not a separate clone, so commits made here resolve for `--sha`.
 - The working tree is clean.
