@@ -1,3 +1,4 @@
+import { StateStore } from "../src/state.js";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { GitHubRequestError, type ReviewCommentFull } from "../src/github.js";
 import Database from "better-sqlite3";
@@ -169,6 +170,20 @@ describe("buildWakeMessage", () => {
 });
 
 describe("postReply", () => {
+  it("does not repeat a reply whose decision receipt is already committed", async () => {
+    const adapter = {
+      createReviewCommentReply: vi
+        .fn()
+        .mockResolvedValue({ executed: true, response: { id: 6001 } }),
+    };
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn() };
+    const input = { pr: 77, thread_id: 4000, body: "Thanks.", decision_comment_id: 5001 };
+    expect((await postReply({ adapter, store, ledger }, input)).posted).toBe(true);
+    expect((await postReply({ adapter, store, ledger }, input)).posted).toBe(true);
+    expect(adapter.createReviewCommentReply).toHaveBeenCalledTimes(1);
+    expect(ledger.exchanges(4000)).toBe(1);
+  });
+
   function deps(
     createReviewCommentReply: (n: number, commentId: number, body: string) => Promise<never>,
   ) {
@@ -435,6 +450,102 @@ describe("structured thread decision", () => {
     expect(await watcher.handleFile(name)).toBe(true);
     expect(createReviewCommentReply).toHaveBeenCalledTimes(2);
     expect(ledger.discipline(4000).exchanges).toBe(1);
+  });
+
+  it("accounts one reply when its local completion checkpoint fails after a successful POST", async () => {
+    ledger.claimAuthorMessage(event);
+    let now = new Date("2026-08-26T09:00:00Z");
+    const createReviewCommentReply = vi
+      .fn()
+      .mockResolvedValue({ executed: true, response: { id: 6001 } });
+    const mark = ledger.markDecisionStep.bind(ledger);
+    let failed = false;
+    vi.spyOn(ledger, "markDecisionStep").mockImplementation((id, step) => {
+      if (step === "reply_posted" && !failed) {
+        failed = true;
+        throw new Error("local checkpoint unavailable");
+      }
+      mark(id, step);
+    });
+    const watcher = new ThreadDecisionWatcher({
+      adapter: {
+        createReviewCommentReply,
+        resolveOwnReviewThread: vi.fn().mockResolvedValue({ skipped: null }),
+        listRecentReviewComments: vi.fn().mockResolvedValue([
+          {
+            id: 6001,
+            user: "qc-bot[bot]",
+            body: `That addresses it.\n\n${replyMarker(event.comment_id)}`,
+            in_reply_to_id: event.in_reply_to_id,
+          },
+        ]),
+      },
+      botLogin: "qc-bot[bot]",
+      store: { registerBotComment: vi.fn(), logEvent: vi.fn() },
+      ledger,
+      verdictDir: root,
+      now: () => now,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "keep_open",
+        reply: "That addresses it.",
+      }),
+    );
+    expect(await watcher.handleFile(name)).toBe(false);
+    now = new Date("2026-08-26T09:00:31Z");
+    expect(await watcher.handleFile(name)).toBe(true);
+    expect(createReviewCommentReply).toHaveBeenCalledTimes(1);
+    expect(ledger.exchanges(4000)).toBe(1);
+    expect(ledger.decisionProgress(5001).reply_posted).toBe(true);
+  });
+
+  it("rolls back local registry and exchange writes with a failed reply receipt", async () => {
+    const state = new StateStore(":memory:");
+    try {
+      const local = new PingPongLedger(state.db);
+      local.claimAuthorMessage(event);
+      const mark = local.markDecisionStep.bind(local);
+      vi.spyOn(local, "markDecisionStep").mockImplementation((id, step) => {
+        if (step === "reply_posted") throw new Error("receipt unavailable");
+        mark(id, step);
+      });
+      const watcher = new ThreadDecisionWatcher({
+        adapter: {
+          createReviewCommentReply: vi
+            .fn()
+            .mockResolvedValue({ executed: true, response: { id: 6001 } }),
+          resolveOwnReviewThread: vi.fn(),
+        },
+        store: state,
+        ledger: local,
+        verdictDir: root,
+      });
+      const name = "pr-77-thread-4000-comment-5001.json";
+      writeFileSync(
+        join(root, name),
+        JSON.stringify({
+          pr: 77,
+          thread_id: 4000,
+          comment_id: 5001,
+          resolution: "keep_open",
+          reply: "Thanks.",
+        }),
+      );
+      expect(await watcher.handleFile(name)).toBe(false);
+      expect(local.exchanges(4000)).toBe(0);
+      expect(state.botCommentPr(6001)).toBeUndefined();
+      expect(
+        state.recentEvents(100).filter((e) => e.kind === "pingpong_reply_posted"),
+      ).toHaveLength(0);
+    } finally {
+      state.close();
+    }
   });
 
   it("a retry after a lost reply response finds the landed reply and does not post it again", async () => {

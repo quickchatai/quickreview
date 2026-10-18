@@ -70,7 +70,12 @@ export type FeedbackEvent =
     }
   | { kind: "review_set_aside"; pr: number; review_id: number; by: string; stale: boolean }
   | { kind: "merged_over_block"; pr: number }
-  | { kind: "bot_comment_deleted"; pr: number; comment_id: number }
+  | {
+      kind: "bot_comment_deleted";
+      pr: number;
+      comment_id: number;
+      scope?: "review_comment" | "issue_comment";
+    }
   | { kind: "trigger_withdrawn"; pr: number; by: string };
 
 /** A review set aside within this window of a head push is GitHub's own
@@ -178,6 +183,8 @@ function whereLabel(scope: string | null, inReplyTo: number | null): string {
  *   signal — WHICH signal, i.e. the `FeedbackEvent` kind verbatim, so an
  *            explicit human comment can be told from a behavioral inference
  *            without parsing prose.
+ *   scope  — issue_comment for a deleted issue comment; absent means the
+ *            historical review_comment namespace.
  *
  * They are rendered into the entry text (the seam carries text, not a tag
  * map) as a single space-separated run right after the `#tags` — leading and
@@ -191,10 +198,20 @@ export type FeedbackEventTags = {
   pr: string;
   day: string;
   signal: FeedbackEvent["kind"];
+  /** An absent historical deletion namespace means review_comment. */
+  scope?: "issue_comment";
 };
 
 export function eventTagsFor(e: FeedbackEvent, day: string): FeedbackEventTags {
-  return { kind: FEEDBACK_EVENT_KIND, pr: String(e.pr), day, signal: e.kind };
+  return {
+    kind: FEEDBACK_EVENT_KIND,
+    pr: String(e.pr),
+    day,
+    signal: e.kind,
+    ...(e.kind === "bot_comment_deleted" && e.scope === "issue_comment"
+      ? { scope: "issue_comment" as const }
+      : {}),
+  };
 }
 
 // The tag vocabulary itself lives in `src/memory/eventtags.ts` — the store
@@ -406,7 +423,12 @@ export function feedbackEventFromRow(row: FeedbackSignalRow): FeedbackEvent | nu
     case "merged_over_block":
       return { kind: "merged_over_block", pr: row.pr };
     case "bot_comment_deleted":
-      return { kind: "bot_comment_deleted", pr: row.pr, comment_id: row.comment_id ?? 0 };
+      return {
+        kind: "bot_comment_deleted",
+        pr: row.pr,
+        comment_id: row.comment_id ?? 0,
+        scope: row.scope === "issue_comment" ? "issue_comment" : "review_comment",
+      };
     case "trigger_withdrawn":
       return { kind: "trigger_withdrawn", pr: row.pr, by: row.author ?? "" };
     default:
@@ -444,6 +466,26 @@ export function legacyFeedbackEntry(
     if (tags["signal"] !== row.kind || tags["pr"] !== String(row.pr) || tags["day"] !== row.day)
       continue;
     if (spelling !== null && !beforeQuote(e.text).includes(spelling)) continue;
+    if (row.kind === "feedback_comment") {
+      const ownScope =
+        /\((top-level|review body|inline thread|reply to bot comment \d+), comment \d+\): "/.exec(
+          beforeQuote(e.text),
+        )?.[1];
+      const scope =
+        ownScope === "top-level"
+          ? "issue_comment"
+          : ownScope === "review body"
+            ? "review"
+            : ownScope !== undefined
+              ? "review_comment"
+              : null;
+      const rowScope =
+        row.scope === "issue_comment" || row.scope === "review" ? row.scope : "review_comment";
+      if (scope !== rowScope) continue;
+    } else if (row.kind === "bot_comment_deleted") {
+      const scope = tags["scope"] === "issue_comment" ? "issue_comment" : "review_comment";
+      if (scope !== (row.scope === "issue_comment" ? "issue_comment" : "review_comment")) continue;
+    }
     return e;
   }
   return null;
@@ -504,6 +546,16 @@ export function ledgerFeedbackSignal(
     });
     return { result: "skipped_stale", row: null, day };
   }
+  // Unqualified historical deletion rows used the review-comment namespace.
+  // Preserve their deduplication when a new delivery supplies that scope.
+  if (
+    e.kind === "bot_comment_deleted" &&
+    e.scope !== "issue_comment" &&
+    store
+      .feedbackSignalsFor(e.pr)
+      .some((row) => row.kind === e.kind && row.comment_id === e.comment_id && !row.scope)
+  )
+    return { result: "duplicate", row: null, day };
   const memoryOff = opts.memoryEnabled === false;
   const row = store.recordFeedbackSignalRow({
     kind: e.kind,
@@ -512,7 +564,12 @@ export function ledgerFeedbackSignal(
       e.kind === "feedback_comment" || e.kind === "bot_comment_deleted" ? e.comment_id : null,
     review_id: e.kind === "review_set_aside" ? e.review_id : null,
     in_reply_to_id: e.kind === "feedback_comment" ? e.in_reply_to_id : null,
-    scope: e.kind === "feedback_comment" ? e.scope : null,
+    scope:
+      e.kind === "feedback_comment"
+        ? e.scope
+        : e.kind === "bot_comment_deleted"
+          ? (e.scope ?? "review_comment")
+          : null,
     author:
       e.kind === "feedback_comment"
         ? e.author
