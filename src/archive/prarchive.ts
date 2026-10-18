@@ -255,20 +255,23 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
 
   /** Append to the manifest: append-only, durable before the next step. */
   const commit = async (mutate: (m: Manifest) => void): Promise<void> => {
-    const next = cloneManifest(manifest);
-    if (!passRecorded)
-      next.passes.push({
-        id: passId,
-        kind: "archive",
-        started_at: startedAt,
-        closed_at: e.closed_at,
-      });
-    mutate(next);
+    const next = deps.meter.measure(() => {
+      const copy = cloneManifest(manifest);
+      if (!passRecorded)
+        copy.passes.push({
+          id: passId,
+          kind: "archive",
+          started_at: startedAt,
+          closed_at: e.closed_at,
+        });
+      mutate(copy);
+      return copy;
+    });
     await mkdir(dir, { recursive: true });
-    await writeManifest(dir, manifest, next);
+    await writeManifest(dir, manifest, next, deps.meter);
     manifest = next;
     passRecorded = true;
-    index = settledIndex(manifest);
+    index = deps.meter.measure(() => settledIndex(manifest));
   };
 
   // An orphan bundle (a crash between its rename and its entry): verified,
@@ -557,7 +560,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         unlinks.push({ path: f.path, rel, identity: identityFields(id) });
         continue;
       }
-      if (!f.snapshot && id.size > BUNDLE_RECORD_MAX_BYTES) {
+      if (id.size > BUNDLE_RECORD_MAX_BYTES) {
         // Too big for a record: its own gzip, the transcript protocol.
         stop = deps.stopReason() ?? (await deps.diskFor(id.size));
         if (stop) break;
@@ -569,6 +572,18 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
           ...p,
           verified_at: now(),
           class: cls,
+          ...(f.snapshot ? { snapshot: true as const } : {}),
+          ...("command" in f && f.command
+            ? {
+                session_command: {
+                  id: f.command.id,
+                  kind: f.command.kind,
+                  round_no: f.command.round_no,
+                  status: f.command.status,
+                  payload_sha256_ok: f.command.payload_sha256 === p.sha256,
+                },
+              }
+            : {}),
         });
         const out = await archiveOne(f.path, rel, id, `files/${rel}.gz`, undefined, entryOf);
         if (out === "verify_failed" || out === "changed") {
@@ -577,11 +592,11 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         }
         const r = out.ok;
         if ((await commitPacked(rel, out.dest, packedOf(r, id), entryOf)) === "new") {
-          res.stateFiles += 1;
+          if (!f.snapshot) res.stateFiles += 1;
           res.bytesIn += r.bytes;
           res.bytesOut += r.gzBytes;
         }
-        unlinks.push({ path: f.path, rel, identity: identityFields(id) });
+        if (!f.snapshot) unlinks.push({ path: f.path, rel, identity: identityFields(id) });
         await yieldToLoop();
         continue;
       }
@@ -850,7 +865,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
     for (const entry of manifest.entries) {
       const sources =
         entry.kind === "transcript" || entry.kind === "file" || entry.kind === "reused"
-          ? entry.source_removed_at === undefined
+          ? entry.source_removed_at === undefined && !("snapshot" in entry && entry.snapshot)
             ? [entry.source]
             : []
           : entry.kind === "bundle"

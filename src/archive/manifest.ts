@@ -60,6 +60,9 @@ export interface FileEntry extends Omit<IdentityFields, "dev" | "ino"> {
   verified_at: string;
   /** For `file`: the §7.2 class. */
   class?: string;
+  /** Snapshot only: its live source is kept, never restored or counted as removed. */
+  snapshot?: true;
+  session_command?: BundleCommand;
   /** A re-archive of bytes an earlier entry already holds (after a restore):
    * no recompress, the archive is that entry's. */
   reused?: true;
@@ -352,7 +355,7 @@ export function rowTallies(m: Manifest): RowTallies {
     if (!held) continue;
     out.bytesIn += held.bytes;
     out.bytesOut += held.gzBytes;
-    if (e.kind === "file") out.stateFiles += 1;
+    if (e.kind === "file" && !e.snapshot) out.stateFiles += 1;
     else if (e.kind === "transcript" && !e.legacy) out.transcriptFiles += 1;
     else if (e.kind === "bundle") out.stateFiles += e.files.filter((f) => !f.snapshot).length;
   }
@@ -390,9 +393,18 @@ export function assertAppendOnly(prev: Manifest, next: Manifest): void {
  * Write `next` over `prev` (the manifest as last read or written) after
  * checking it only appends; tmp + fsync + rename + dir fsync.
  */
-export async function writeManifest(dir: string, prev: Manifest, next: Manifest): Promise<void> {
-  assertAppendOnly(prev, next);
-  await writeTextAtomic(manifestPath(dir), manifestText(next));
+export async function writeManifest(
+  dir: string,
+  prev: Manifest,
+  next: Manifest,
+  meter?: { measure<T>(fn: () => T): T },
+): Promise<void> {
+  const serialize = (): string => {
+    assertAppendOnly(prev, next);
+    return manifestText(next);
+  };
+  const text = meter ? meter.measure(serialize) : serialize();
+  await writeTextAtomic(manifestPath(dir), text);
 }
 
 /** The latest archived copy of one live path, as the manifest records it. */

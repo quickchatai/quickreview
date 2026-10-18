@@ -1331,6 +1331,7 @@ export class Archiver {
         stopReason: () => this.fileStop(at),
         verifyFailed: (key, detail) => this.raiseQuiet(key, detail),
         log: this.log,
+        duplicateRemoved: () => bumpMark(this.deps.store, "duplicates.removed", 1),
         // Every synchronous span over the store's manifest (its shards'
         // parses, the index, each write's copy, check and stringify).
         meter,
@@ -1346,8 +1347,6 @@ export class Archiver {
         r = emptyStoreResult("failed", (err as Error).message);
       }
       if (r.outcome !== "held" && r.outcome !== "failed") this.storesSettled.add(p.key);
-      if (r.duplicatesRemoved > 0)
-        bumpMark(this.deps.store, "duplicates.removed", r.duplicatesRemoved);
       this.stores[p.key] = {
         last_run_at: startedAt,
         outcome: r.outcome,
@@ -1442,8 +1441,13 @@ export class Archiver {
       this.log(`archive: ${detail} (archive_verify_failed already raised for ${key})`);
       return;
     }
-    this.deps.store.logAnomaly("archive_verify_failed", null, null, detail);
-    this.dbCache = null;
+    try {
+      this.deps.store.logAnomaly("archive_verify_failed", null, null, detail);
+      this.dbCache = null;
+    } catch (err) {
+      this.raised.delete(key);
+      this.log("archive: could not raise archive_verify_failed", err);
+    }
   }
 
   /**
