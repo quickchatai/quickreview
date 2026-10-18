@@ -118,11 +118,13 @@ function harness(o: {
   repo: string;
   piBin: string;
   confirm?: ((q: string) => Promise<boolean>) | null;
+  route?: "laptop" | "action";
 }) {
   const lines: string[] = [];
   const asked: string[] = [];
   const deps = {
     cwd: o.repo,
+    ...(o.route !== undefined ? { route: o.route } : {}),
     out: (l: string) => lines.push(l),
     confirm:
       o.confirm === null
@@ -334,7 +336,7 @@ describe("qcr review: the hard stop", () => {
     const code = await runReviewCli([], false, h.deps);
     expect(Date.now() - t0).toBeLessThan(30_000);
     expect(code).toBe(1);
-    expect(h.text()).toMatch(/stopped at the price/i);
+    expect(h.text()).toMatch(/stopped at the cap/i);
     expect(h.text()).toMatch(/partial coverage/i);
     expect(readFileSync(pi.calls, "utf8").trim().split("\n")).toHaveLength(1);
   });
@@ -353,6 +355,87 @@ describe("qcr review: the hard stop", () => {
     expect(o.partial).toBe(true);
     expect(o.coverage.planned.length).toBeGreaterThan(0);
     expect(o.coverage.not_reached.length).toBeGreaterThan(0);
+  });
+});
+
+describe("qcr review: the estimate and the Action route", () => {
+  const spendPi = (name: string) =>
+    fakePi(name, [
+      `echo '{"type":"message_end","message":{"role":"assistant","usage":{"cost":{"total":9999}}}}'`,
+      `printf '%s' ${JSON.stringify(record)} > "$cd/findings-record.json"`,
+      `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
+    ]);
+
+  it("the laptop's estimate is a few dollars at most for a small branch, and its hard stop is twice that", async () => {
+    const h = harness({ repo: mkRepo("est-laptop"), piBin: "false" });
+    expect(await runReviewCli(["--preview"], true, h.deps)).toBe(0);
+    const p = JSON.parse(h.lines[0]!).preview;
+    expect(p.estimate_usd).toBeGreaterThan(0.1);
+    expect(p.estimate_usd).toBeLessThan(5);
+    expect(p.cap_usd).toBeCloseTo(p.estimate_usd * 2, 1);
+    expect(p.limit_usd).toBe(2);
+  });
+
+  it("the laptop still asks above its limit, quoting the refit estimate", async () => {
+    const repo = mkRepo("est-ask");
+    setLimit(repo, 0.01);
+    const h = harness({ repo, piBin: happyPi("est-ask").bin, confirm: async () => true });
+    expect(await runReviewCli([], true, h.deps)).toBe(0);
+    expect(h.asked).toHaveLength(1);
+    // a fresh copy of the branch: the run above left state, so a preview of it is no plan
+    const pre = harness({ repo: mkRepo("est-ask-fresh"), piBin: "false" });
+    await runReviewCli(["--preview"], true, pre.deps);
+    const est = (JSON.parse(pre.lines[0]!).preview.estimate_usd as number).toFixed(2);
+    expect(h.asked[0]).toContain(`$${est}`);
+  });
+
+  it("the Action sets no cap and asks nothing without --limit", async () => {
+    const repo = mkRepo("action-nocap");
+    setLimit(repo, 0.0001); // the repo's own limit is a laptop thing: ignored here
+    const pi = spendPi("action-nocap");
+    const h = harness({ repo, piBin: pi.bin, confirm: null, route: "action" });
+    expect(await runReviewCli([], true, h.deps)).toBe(0);
+    const o = JSON.parse(h.lines[0]!);
+    expect(o.ok).toBe(true);
+    expect(o.partial).toBe(false);
+    expect(o.cost_usd).toBe(9999);
+
+    const pre = harness({
+      repo: mkRepo("action-nocap-fresh"),
+      piBin: "false",
+      confirm: null,
+      route: "action",
+    });
+    await runReviewCli(["--preview"], true, pre.deps);
+    const p = JSON.parse(pre.lines[0]!).preview;
+    expect(p.cap_usd).toBeNull();
+    expect(p.limit_usd).toBeNull();
+    expect(p.auto).toBe(true);
+    expect(p.estimate_usd).toBeGreaterThan(0);
+  });
+
+  it("the Action stops hard at a --limit, and only there", async () => {
+    const repo = mkRepo("action-limit");
+    const pi = spendPi("action-limit");
+    const h = harness({ repo, piBin: pi.bin, confirm: null, route: "action" });
+    expect(await runReviewCli(["--limit", "3"], true, h.deps)).toBe(1);
+    const o = JSON.parse(h.lines[0]!);
+    expect(o.partial).toBe(true);
+    const pre = harness({ repo, piBin: "false", confirm: null, route: "action" });
+    await runReviewCli(["--preview", "--limit", "3"], true, pre.deps);
+    expect(JSON.parse(pre.lines[0]!).preview).toMatchObject({
+      cap_usd: 3,
+      limit_usd: 3,
+      auto: true,
+    });
+  });
+
+  it("the route comes from QCR_ROUTE or GITHUB_ACTIONS", async () => {
+    const { routeFromEnv } = await import("../src/reviewcli.js");
+    expect(routeFromEnv({})).toBe("laptop");
+    expect(routeFromEnv({ QCR_ROUTE: "action" })).toBe("action");
+    expect(routeFromEnv({ GITHUB_ACTIONS: "true" })).toBe("action");
+    expect(routeFromEnv({ GITHUB_ACTIONS: "false" })).toBe("laptop");
   });
 });
 
@@ -459,7 +542,7 @@ describe("qcr review --uncommitted", () => {
     ]);
     const c = harness({ repo: capRepo, piBin: pi.bin });
     expect(await runReviewCli(["--uncommitted"], false, c.deps)).toBe(1);
-    expect(c.text()).toMatch(/stopped at the price/i);
+    expect(c.text()).toMatch(/stopped at the cap/i);
   });
 
   it("refuses --uncommitted with --base or with branch, exit 2", async () => {

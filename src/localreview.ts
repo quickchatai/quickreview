@@ -255,20 +255,33 @@ export function removeReviewTree(cwd: string, dir: string): void {
 
 /** What a repo has decided about local reviews, kept in its git dir (never
  * tracked, never shared): the price under which a review starts without
- * asking, and the price model's two rates. */
+ * asking, and the price model's three rates. */
 export interface ReviewSettings {
   auto_limit_usd: number;
-  /** Dollars one lens costs before it reads anything. */
+  /** Dollars a review costs before any lens runs. */
+  usd_base: number;
+  /** Dollars one planned lens costs, whatever the diff. */
   usd_per_lens: number;
-  /** Dollars one lens adds per thousand changed lines. */
+  /** Dollars the diff adds per thousand changed lines, once, not per lens. */
   usd_per_kline: number;
 }
 
+/** The rates are a least-squares fit to what 295 recorded default-preset
+ * reviews cost (the final1 bench runs, gpt-6.1-sol list prices: $2 / M
+ * uncached input, $0.10 / M cached input, $10 / M output): the median PR is
+ * off by about a fifth, the sum by 1%, and no recorded review cost more than
+ * twice its estimate. The table is tests/fixtures/review-cost/recorded.json.
+ * A different model moves them; the repo's settings override them. */
 export const DEFAULT_REVIEW_SETTINGS: ReviewSettings = {
   auto_limit_usd: 2,
-  usd_per_lens: 0.1,
-  usd_per_kline: 0.5,
+  usd_base: 0.1,
+  usd_per_lens: 0.125,
+  usd_per_kline: 1.85,
 };
+
+/** A review stops hard at this many times its estimate. The estimate is the
+ * expected cost, so stopping at it would cut about half the reviews short. */
+export const HARD_STOP_FACTOR = 2;
 
 export const SETTINGS_GIT_PATH = "qcr-review.json";
 
@@ -295,11 +308,17 @@ export function loadReviewSettings(cwd: string): ReviewSettings {
   return out;
 }
 
-/** The price of reviewing `lines` changed lines with `lenses` lenses. The
- * review stops hard at it, so it is rounded UP to the cent shown. */
+/** The estimated cost of reviewing `lines` changed lines with `lenses` lenses:
+ * a base, a fixed cost per lens and one term for the diff. Rounded UP to the
+ * cent shown. */
 export function priceReview(lenses: number, lines: number, s: ReviewSettings): number {
-  const usd = lenses * (s.usd_per_lens + (s.usd_per_kline * lines) / 1000);
+  const usd = s.usd_base + s.usd_per_lens * lenses + (s.usd_per_kline * lines) / 1000;
   return Math.max(0.01, Math.ceil(usd * 100 - 1e-9) / 100);
+}
+
+/** The most a review may spend before it is stopped, from its estimate. */
+export function hardStopFor(estimateUsd: number): number {
+  return Math.ceil(estimateUsd * HARD_STOP_FACTOR * 100 - 1e-9) / 100;
 }
 
 /** What a start must quote: change the branch, the plan or the price and the
