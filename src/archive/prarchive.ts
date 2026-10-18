@@ -38,6 +38,11 @@
 // and the next pass resumes it — every step is idempotent. Disk is checked
 // before each file (§7.7). Nothing here spawns, injects, wakes or kills a
 // session (rule 9), and nothing reads or writes memory.
+import {
+  prepareDuplicateCount,
+  finishDuplicateCount,
+  recoverDuplicateCounts,
+} from "./duplicatecounts.js";
 import { mkdir, readdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import type { StateStore } from "../state.js";
@@ -61,6 +66,7 @@ import {
   legacyMatch,
   packedOf,
   placeArchive,
+  placementOutcome,
   readSessionMeta,
   sameRecorded,
   unlinkStopOf,
@@ -91,7 +97,7 @@ import {
   type SettledRecord,
 } from "./manifest.js";
 import { prInventory, type LiveListing, type SpanMeter } from "./prfiles.js";
-import { armArchiveRow, bumpMark, finishArchiveRow } from "./rows.js";
+import { armArchiveRow, finishArchiveRow } from "./rows.js";
 
 export interface PrPassDeps {
   store: StateStore;
@@ -218,6 +224,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
     );
     return held("manifest_unreadable");
   }
+  res.duplicatesRemoved += await recoverDuplicateCounts(store, pr, join(dir, "session.jsonl"));
   let index = settledIndex(manifest);
   const sessionDir = join(deps.sessionsRoot, subject);
 
@@ -384,13 +391,10 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
       keep: (dest, p) => commit((next) => next.entries.push(entryOf(dest, p))),
       log: (m) => deps.log(m),
     });
-    if (r.kind === "verify_failed") {
+    return placementOutcome(r, (detail) => {
       res.verifyFailures += 1;
-      deps.verifyFailed(`file:${pr}:${rel}`, `archive pr-${pr}: ${r.detail} — the source is kept`);
-      return "verify_failed";
-    }
-    if (r.kind === "changed") return "changed";
-    return { ok: r.ok, dest: r.dest };
+      deps.verifyFailed(`file:${pr}:${rel}`, `archive pr-${pr}: ${detail} — the source is kept`);
+    });
   };
 
   /**
@@ -832,11 +836,15 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         const now4 = unlinkYield ? null : eligibility(facts);
         if (now4 && !now4.eligible) unlinkStop = now4.reason ?? "ineligible";
         else if (now4) {
+          const countKey = prepareDuplicateCount(store, pr, {
+            path: inv.legacy.path,
+            identity: dup.id,
+          });
           const r = await unlinkIfIdentity(inv.legacy.path, identityFields(dup.id));
+          finishDuplicateCount(store, countKey, r === "removed" || r === "gone");
           // Counted with the removal itself, so a pass that unlinks an earlier
           // pass's record counts it once and a copy that moved counts nothing.
           if (r === "removed") {
-            bumpMark(store, "duplicates.removed", 1);
             res.duplicatesRemoved += 1;
             await deps.step?.("duplicate_unlinked", { pr });
           }

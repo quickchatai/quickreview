@@ -176,3 +176,12 @@ export function bumpMark(store: StateStore, name: string, n: number): void {
     )
     .run(name, n);
 }
+
+/** All archived events, from the same rollup used by daemon and CLI. */
+export function archivedEventTotal(store: StateStore): number {
+  return (
+    store.db.prepare("SELECT COALESCE(SUM(n), 0) AS n FROM archived_event_counts").get() as {
+      n: number;
+    }
+  ).n;
+}

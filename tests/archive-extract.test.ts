@@ -288,7 +288,7 @@ describe("below --to, no link is followed", () => {
     },
   );
 
-  it("a leftover link at a partial's name is removed, never written through", async () => {
+  it("an unrelated link at the old partial name is preserved and never written through", async () => {
     const f = await archivedFixture();
     const to = scratchDir();
     const victim = join(mkdtempSync(join(tmpdir(), "qcr-extract-victim-")), "keep.txt");
@@ -301,7 +301,7 @@ describe("below --to, no link is followed", () => {
     if (!r.ok) return;
     expect(readFileSync(victim, "utf8")).toBe("precious\n");
     expect(r.copied).toContain("manifest.json");
-    expect(existsSync(join(to, "manifest.json.extract-partial"))).toBe(false);
+    expect(existsSync(join(to, "manifest.json.extract-partial"))).toBe(true);
   });
 
   it(

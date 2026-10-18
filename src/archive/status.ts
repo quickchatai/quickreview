@@ -1,3 +1,4 @@
+import { isObj } from "./admission.js";
 // status.json `archive` (docs/archiving.md §11): the closed-PR
 // archiver as a person reads it — `qcr status`'s one line, `qcr archive
 // status`. The block is the WRITER's promise; `readArchiveStatus` is total
@@ -216,8 +217,6 @@ export function pendingArchiveStatus(mode: ArchiveMode): ArchiveStatus {
 export type ArchiveStatusRead =
   { kind: "absent" } | { kind: "unreadable"; why: string } | { kind: "read"; view: ArchiveStatus };
 
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const isStr = (v: unknown): v is string => typeof v === "string";
 
@@ -266,20 +265,28 @@ const DB_NUMBERS = [
   "months_sealed",
 ] as const;
 
+/** Common nullable phase admission, with caller-specific field diagnostics. */
+function phaseObject(value: unknown, label: string): Record<string, unknown> | null {
+  if (value === undefined || value === null) return null;
+  if (!isObj(value)) return bad(`${label} is ${shown(value)}, not an object or null`);
+  for (const key of ["last_run_at", "outcome"]) {
+    if (!isStr(value[key])) bad(`${label}.${key} is ${shown(value[key])}, not a string`);
+  }
+  return value;
+}
+
 /** The `db` sub-block: absent (an older daemon) and null read as null. */
 function readDb(v: unknown): ArchiveDbStatus | null {
-  if (v === undefined || v === null) return null;
-  if (!isObj(v)) return bad(`db is ${shown(v)}, not an object or null`);
-  if (!isStr(v.last_run_at)) bad(`db.last_run_at is ${shown(v.last_run_at)}, not a string`);
-  if (!isStr(v.outcome)) bad(`db.outcome is ${shown(v.outcome)}, not a string`);
+  const phase = phaseObject(v, `db`);
+  if (phase === null) return null;
   const out = {
-    last_run_at: v.last_run_at as string,
-    outcome: v.outcome as string,
-    skipped_reason: strOrNull(v, "skipped_reason"),
+    last_run_at: phase.last_run_at as string,
+    outcome: phase.outcome as string,
+    skipped_reason: strOrNull(phase, "skipped_reason"),
   } as ArchiveDbStatus;
   for (const k of DB_NUMBERS) {
-    if (!isNum(v[k])) bad(`db.${k} is ${shown(v[k])}, not a number`);
-    out[k] = v[k] as number;
+    if (!isNum(phase[k])) bad(`db.${k} is ${shown(phase[k])}, not a number`);
+    out[k] = phase[k] as number;
   }
   return out;
 }
@@ -300,18 +307,16 @@ const FILES_NUMBERS = [
 
 /** The `files` sub-block: absent (an older daemon) and null read as null. */
 function readFiles(v: unknown): ArchiveFilesStatus | null {
-  if (v === undefined || v === null) return null;
-  if (!isObj(v)) return bad(`files is ${shown(v)}, not an object or null`);
-  if (!isStr(v.last_run_at)) bad(`files.last_run_at is ${shown(v.last_run_at)}, not a string`);
-  if (!isStr(v.outcome)) bad(`files.outcome is ${shown(v.outcome)}, not a string`);
+  const phase = phaseObject(v, `files`);
+  if (phase === null) return null;
   const out = {
-    last_run_at: v.last_run_at as string,
-    outcome: v.outcome as string,
-    held_reason: strOrNull(v, "held_reason"),
+    last_run_at: phase.last_run_at as string,
+    outcome: phase.outcome as string,
+    held_reason: strOrNull(phase, "held_reason"),
   } as ArchiveFilesStatus;
   for (const k of FILES_NUMBERS) {
-    if (!isNum(v[k])) bad(`files.${k} is ${shown(v[k])}, not a number`);
-    out[k] = v[k] as number;
+    if (!isNum(phase[k])) bad(`files.${k} is ${shown(phase[k])}, not a number`);
+    out[k] = phase[k] as number;
   }
   return out;
 }
@@ -328,19 +333,16 @@ const STORE_NUMBERS = [
 
 /** One store's sub-block: absent and null read as null. */
 function readStore(name: string, v: unknown): ArchiveStoreStatus | null {
-  if (v === undefined || v === null) return null;
-  if (!isObj(v)) return bad(`stores.${name} is ${shown(v)}, not an object or null`);
-  if (!isStr(v.last_run_at))
-    bad(`stores.${name}.last_run_at is ${shown(v.last_run_at)}, not a string`);
-  if (!isStr(v.outcome)) bad(`stores.${name}.outcome is ${shown(v.outcome)}, not a string`);
+  const phase = phaseObject(v, `stores.${name}`);
+  if (phase === null) return null;
   const out = {
-    last_run_at: v.last_run_at as string,
-    outcome: v.outcome as string,
-    reason: strOrNull(v, "reason"),
+    last_run_at: phase.last_run_at as string,
+    outcome: phase.outcome as string,
+    reason: strOrNull(phase, "reason"),
   } as ArchiveStoreStatus;
   for (const k of STORE_NUMBERS) {
-    if (!isNum(v[k])) bad(`stores.${name}.${k} is ${shown(v[k])}, not a number`);
-    out[k] = v[k] as number;
+    if (!isNum(phase[k])) bad(`stores.${name}.${k} is ${shown(phase[k])}, not a number`);
+    out[k] = phase[k] as number;
   }
   return out;
 }
@@ -525,6 +527,8 @@ export function filesPhrase(s: ArchiveStatus): string {
 }
 
 /** One store's last pass in a few words. */
+export const STORE_LABELS = { overseer: "overseer store", pi_global: "pi-global store" } as const;
+
 export function storePhrase(label: string, st: ArchiveStoreStatus | null): string {
   if (!st) return "";
   if (st.outcome === "none") return `${label}: nothing to move (${st.kept_live} kept live)`;
@@ -543,8 +547,8 @@ export function storePhrase(label: string, st: ArchiveStoreStatus | null): strin
 export function storesAlertPhrase(s: ArchiveStatus): string {
   const parts: string[] = [];
   for (const [label, st] of [
-    ["overseer store", s.stores?.overseer ?? null],
-    ["pi-global store", s.stores?.pi_global ?? null],
+    [STORE_LABELS.overseer, s.stores?.overseer ?? null],
+    [STORE_LABELS.pi_global, s.stores?.pi_global ?? null],
   ] as const)
     if (st && (st.outcome === "failed" || st.outcome === "held" || st.verify_failures > 0))
       parts.push(storePhrase(label, st));

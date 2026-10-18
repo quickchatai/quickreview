@@ -1,3 +1,5 @@
+import { STORE_LABELS } from "./status.js";
+import { archivedEventTotal } from "./rows.js";
 // `qcr archive status [--plan]` (docs/archiving.md §11): the
 // archiver's block as the daemon published it, the archive ledger, the
 // policy every `[archive]` knob sets — and, with --plan, the plan detail:
@@ -32,9 +34,6 @@ export function archiveLedgerSummary(store: StateStore): ArchiveLedgerSummary {
     .prepare("SELECT state, COUNT(*) AS n FROM archive_prs GROUP BY state")
     .all() as Array<{ state: string; n: number }>)
     by_state[r.state] = r.n;
-  const events = store.db
-    .prepare("SELECT COALESCE(SUM(n), 0) AS n FROM archived_event_counts")
-    .get() as { n: number };
   const marks: Record<string, unknown> = {};
   for (const r of store.db
     .prepare("SELECT name, value FROM archive_marks ORDER BY name")
@@ -43,7 +42,7 @@ export function archiveLedgerSummary(store: StateStore): ArchiveLedgerSummary {
     value: unknown;
   }>)
     marks[r.name] = r.value;
-  return { by_state, archived_event_rows: events.n, marks };
+  return { by_state, archived_event_rows: archivedEventTotal(store), marks };
 }
 
 const pad = (s: string, n: number): string => (s.length >= n ? s : s + " ".repeat(n - s.length));
@@ -118,10 +117,10 @@ function planLines(plan: ArchivePlan): string[] {
   );
   if (plan.stores) {
     out.push(
-      `  overseer store: ${storeTallyPhrase(plan.stores.overseer, "the overseer's birth is not visible from a CLI process")}`,
+      `  ${STORE_LABELS.overseer}: ${storeTallyPhrase(plan.stores.overseer, "the overseer's birth is not visible from a CLI process")}`,
     );
     out.push(
-      `  pi-global store: ${plan.stores.pi_global ? storeTallyPhrase(plan.stores.pi_global, "unknown") : "not measured"}`,
+      `  ${STORE_LABELS.pi_global}: ${plan.stores.pi_global ? storeTallyPhrase(plan.stores.pi_global, "unknown") : "not measured"}`,
     );
   }
   return out;
@@ -171,8 +170,8 @@ export function renderArchiveReport(input: {
     // The stores that belong to no PR: each one's last pass, or that it
     // has not run (plan mode, not wired, or an older daemon).
     for (const [label, st] of [
-      ["overseer store", s.stores?.overseer ?? null],
-      ["pi-global store", s.stores?.pi_global ?? null],
+      [STORE_LABELS.overseer, s.stores?.overseer ?? null],
+      [STORE_LABELS.pi_global, s.stores?.pi_global ?? null],
     ] as const)
       lines.push(storePhrase(label, st) || `${label}: no pass yet`);
   }

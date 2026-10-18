@@ -264,3 +264,16 @@ export async function placeArchive(a: {
 export function unlinkStopOf(reason: string | null): string | null {
   return reason === "stopping" || reason === "restore_pending" ? reason : null;
 }
+
+/** Placement admission is shared; each writer owns its diagnostics and count. */
+export function placementOutcome(
+  result: PlaceResult,
+  verifyFailed: (detail: string) => void,
+): { ok: ArchiveFileOk; dest: string } | "verify_failed" | "changed" {
+  if (result.kind === "verify_failed") {
+    verifyFailed(result.detail);
+    return "verify_failed";
+  }
+  if (result.kind === "changed") return "changed";
+  return { ok: result.ok, dest: result.dest };
+}

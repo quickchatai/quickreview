@@ -25,20 +25,16 @@
 // No temporary name ends in `.jsonl`, so neither the receipt scan nor
 // authwatch ever reads a half-written file.
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
 import { lstat, mkdir, readdir, rename, unlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { pipeline } from "node:stream/promises";
-import { createGunzip } from "node:zlib";
 import {
-  CHUNK_BYTES,
-  HashTap,
   PARTIAL_SUFFIX,
-  RateLimit,
   fileDigestWithPrefix,
   fsyncDir,
   fsyncFile,
   gunzipDigest,
+  gunzipToFile,
+  verifyGzip,
   gzipFile,
   identityOf,
   isZlibError,
@@ -105,21 +101,19 @@ export async function archiveFile(
   // Step 3: the partial decompresses to exactly what was read. A gzip that
   // does not even decompress (a corrupt byte trips its CRC) is the same
   // verdict, never an I/O failure.
-  let back: { bytes: number; sha256: string } | Error;
-  try {
-    back = await gunzipDigest(partial, { bytesPerS: opts.bytesPerS, signal: opts.signal });
-  } catch (err) {
-    if (opts.signal?.aborted) throw err;
-    back = err as Error;
-  }
-  if (back instanceof Error || back.bytes !== bytes || back.sha256 !== sha256) {
+  const back = await verifyGzip(
+    partial,
+    { bytes, sha256 },
+    { bytesPerS: opts.bytesPerS, signal: opts.signal },
+  );
+  if (back.kind !== "verified") {
     await unlinkIfPresent(partial);
     return {
       kind: "verify_failed",
       detail:
-        back instanceof Error
-          ? `${partial} does not decompress (${back.message})`
-          : `${partial} decompressed to ${back.bytes} bytes / ${back.sha256.slice(0, 12)}…, the source read ${bytes} / ${sha256.slice(0, 12)}…`,
+        back.kind === "error"
+          ? `${partial} does not decompress (${back.error.message})`
+          : `${partial} decompressed to ${back.actual.bytes} bytes / ${back.actual.sha256.slice(0, 12)}…, the source read ${bytes} / ${sha256.slice(0, 12)}…`,
     };
   }
   // Step 4: the source is still the file that was hashed.
@@ -267,21 +261,14 @@ export async function restoreFromGzip(
 ): Promise<RestoreFileResult> {
   const partial = restorePartialOf(target);
   await mkdir(dirname(target), { recursive: true });
-  const tap = new HashTap();
-  await cleaningPartial(partial, () =>
-    pipeline(
-      createReadStream(gz, { highWaterMark: CHUNK_BYTES }),
-      new RateLimit(opts.bytesPerS, opts.signal),
-      createGunzip(),
-      tap,
-      createWriteStream(partial),
-      { signal: opts.signal },
-    ),
-  );
+  let got!: { bytes: number; sha256: string };
+  await cleaningPartial(partial, async () => {
+    got = await gunzipToFile(gz, partial, opts);
+  });
   // Outside the clean-up: a test's crash here leaves the partial, as a real
   // crash would.
   await opts.step?.("restore_partial_written", { target, partial });
-  return placeRestored(partial, target, { bytes: tap.bytes, sha256: tap.digest() }, expect);
+  return placeRestored(partial, target, got, expect);
 }
 
 /** The same, from bytes already read out of a bundle (and verified there). */

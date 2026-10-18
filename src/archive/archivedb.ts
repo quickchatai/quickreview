@@ -1,3 +1,4 @@
+import { isObj } from "./admission.js";
 // The archive DATABASES (docs/archiving.md §6, §9.3): one SQLite
 // file per UTC month under `<root>/archive/db/`, opened by the archiver's OWN
 // connections only — never `ATTACH`ed to the live one (cross-database commits
@@ -132,9 +133,6 @@ export class ArchiveFileMissing extends Error {}
 /** A SQLite identifier, double-quoted (an embedded `"` doubled). */
 export const quoteIdent = (name: string): string => `"${name.replace(/"/g, '""')}"`;
 
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
-
 /** Read `archive/db/manifest.json`: absent = empty; unreadable throws. */
 export async function readDbManifest(dir: string): Promise<DbManifest> {
   let text: string;
@@ -206,6 +204,7 @@ export class ArchiveConn {
   /** Whether the directory has been fsynced since this connection's WAL
    * first synced — a new `-wal` file's directory entry must be durable too. */
   private walDirSynced = false;
+  private checkpointSyncOwed = false;
 
   /**
    * Open `path`. Only `create: true` (ArchiveDb.target, for a name nothing on
@@ -311,6 +310,24 @@ export class ArchiveConn {
 
   syncDb(): Promise<void> {
     return fsyncFile(this.path);
+  }
+
+  /** A copied checkpoint cannot be followed by another writer until its
+   * database sync succeeds, even if a previous pass stopped on that sync. */
+  copyCheckpoint(measure: <T>(fn: () => T) => T): unknown {
+    this.checkpointSyncOwed = true;
+    return measure(() => this.db.pragma("wal_checkpoint(PASSIVE)"));
+  }
+
+  async checkpoint(measure: <T>(fn: () => T) => T): Promise<void> {
+    this.copyCheckpoint(measure);
+    await this.settleCheckpoint();
+  }
+
+  async settleCheckpoint(): Promise<void> {
+    if (!this.checkpointSyncOwed) return;
+    await this.syncDb();
+    this.checkpointSyncOwed = false;
   }
 
   /** The WAL's size on disk; 0 when there is none. */
@@ -464,7 +481,10 @@ export class ArchiveDb {
     const open = ofMonth.filter((f) => f.state === "open").sort((a, b) => a.seq - b.seq)[0];
     if (open) {
       const have = this.conns.get(open.file);
-      if (have && have.db.open) return have;
+      if (have && have.db.open) {
+        await have.settleCheckpoint();
+        return have;
+      }
       if (!(await existsOnDisk(join(this.dir, open.file))))
         throw new ArchiveFileMissing(
           `archive/db/${open.file} is listed open in ${DB_MANIFEST} but is not on disk — its month is held; it is never recreated`,

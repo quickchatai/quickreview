@@ -9,8 +9,8 @@
 // recovery can delete strays by suffix and neither the receipt scan nor
 // authwatch ever reads a half-written file.
 import { createHash, type Hash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { link, lstat, open, rename, unlink } from "node:fs/promises";
+import { constants, createReadStream, createWriteStream } from "node:fs";
+import { copyFile, link, lstat, open, rename, unlink, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { Transform, Writable, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -104,8 +104,8 @@ const NO_LINK = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
  * Move `from` to `to` WITHOUT replacing anything already at `to`: a hard link
  * (which fails on EEXIST), then the old name unlinked. Returns "exists" — with
  * `from` left in place — when `to` is taken. On a filesystem without hard
- * links it checks, then renames (the archiver is the only writer in its
- * directory, under its strict mutex). A crash between the link and the unlink
+ * links it exclusively copies the verified source, syncs it, then removes
+ * the old name; an existing destination is never replaced. A crash between the link and the unlink
  * leaves both names on one inode, which recovery's stray-partial sweep tidies.
  */
 export async function renameNoReplace(from: string, to: string): Promise<"placed" | "exists"> {
@@ -115,13 +115,16 @@ export async function renameNoReplace(from: string, to: string): Promise<"placed
     const code = (err as NodeJS.ErrnoException).code ?? "";
     if (code === "EEXIST") return "exists";
     if (!NO_LINK.has(code)) throw err;
+    const source = await lstat(from);
     try {
-      await lstat(to);
-      return "exists";
+      await copyFile(from, to, constants.COPYFILE_EXCL);
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") return "exists";
+      throw e;
     }
-    await rename(from, to);
+    await utimes(to, source.atime, source.mtime);
+    await fsyncFile(to);
+    await unlink(from);
     return "placed";
   }
   await unlink(from);
@@ -348,3 +351,44 @@ export function isZlibError(err: unknown): boolean {
 /** `<dir>/<name>` → `<dir>/<name>.partial`. */
 export const partialOf = (path: string): string =>
   join(dirname(path), `${basename(path)}${PARTIAL_SUFFIX}`);
+
+export type GzipVerification =
+  | { kind: "verified" }
+  | { kind: "error"; error: Error }
+  | { kind: "mismatch"; actual: { bytes: number; sha256: string } };
+
+/** One round-trip policy for ordinary files and sealed databases. */
+export async function verifyGzip(
+  path: string,
+  expected: { bytes: number; sha256: string },
+  opts: { bytesPerS: number; signal?: AbortSignal },
+): Promise<GzipVerification> {
+  let actual: { bytes: number; sha256: string };
+  try {
+    actual = await gunzipDigest(path, opts);
+  } catch (error) {
+    if (opts.signal?.aborted) throw error;
+    return { kind: "error", error: error instanceof Error ? error : new Error(String(error)) };
+  }
+  return actual.bytes === expected.bytes && actual.sha256 === expected.sha256
+    ? { kind: "verified" }
+    : { kind: "mismatch", actual };
+}
+
+/** Stream the same bounded, rate-limited decompression for restore/extract. */
+export async function gunzipToFile(
+  gz: string,
+  output: string,
+  opts: { bytesPerS: number; signal?: AbortSignal; exclusive?: boolean },
+): Promise<{ bytes: number; sha256: string }> {
+  const tap = new HashTap();
+  await pipeline(
+    createReadStream(gz, { highWaterMark: CHUNK_BYTES }),
+    new RateLimit(opts.bytesPerS, opts.signal),
+    createGunzip(),
+    tap,
+    createWriteStream(output, { flags: opts.exclusive ? "wx" : "w" }),
+    { signal: opts.signal },
+  );
+  return { bytes: tap.bytes, sha256: tap.digest() };
+}

@@ -302,22 +302,13 @@ export async function prInventory(
   // The flat per-PR state files (and the passes dirs, walked).
   for (const [cls, groups] of listing.flat) {
     for (const p of groups.get(pr) ?? []) {
-      const size = await fileSize(p);
-      if (size !== null) {
-        if (cls === "ledger") inv.ledger = { path: p, size };
-        else addSmall({ path: p, size, cls });
-        continue;
+      const expanded = await inventoryFiles(p, signal);
+      for (const f of expanded.files) {
+        if (cls === "ledger") {
+          if (f.path === p) inv.ledger = f;
+        } else addSmall({ ...f, cls });
       }
-      const files: string[] = [];
-      const dirs: string[] = [];
-      await walkFiles(p, files, signal, dirs);
-      for (const f of files) {
-        const s = await fileSize(f);
-        if (s === null) continue;
-        if (cls === "ledger") continue; // a ledger is a file, never a dir
-        addSmall({ path: f, size: s, cls });
-      }
-      inv.dirs.push(...dirs.reverse(), p);
+      inv.dirs.push(...expanded.dirs);
     }
   }
   // Session-command payloads: the PR's terminal command rows, under
@@ -372,4 +363,31 @@ export async function prInventory(
     if (s !== null) inv.legacy = { path: legacy, size: s };
   }
   return inv;
+}
+
+/** An unreadable inject listing is unknown, never an empty list. */
+export async function knownInjectFiles(dir: string | undefined): Promise<string[] | null> {
+  try {
+    return await topLevelInjectFiles(dir);
+  } catch {
+    return null;
+  }
+}
+
+/** Expand one inventory candidate with the same plain-file admission everywhere. */
+export async function inventoryFiles(
+  path: string,
+  signal?: AbortSignal,
+): Promise<{ files: Array<{ path: string; size: number }>; dirs: string[] }> {
+  const size = await fileSize(path);
+  if (size !== null) return { files: [{ path, size }], dirs: [] };
+  const paths: string[] = [],
+    dirs: string[] = [];
+  await walkFiles(path, paths, signal, dirs);
+  const files: Array<{ path: string; size: number }> = [];
+  for (const child of paths) {
+    const bytes = await fileSize(child);
+    if (bytes !== null) files.push({ path: child, size: bytes });
+  }
+  return { files, dirs: [...dirs.reverse(), path] };
 }

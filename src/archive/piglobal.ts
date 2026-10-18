@@ -115,6 +115,17 @@ export interface PiGlobalPassDeps extends Omit<StorePassDeps, "dir" | "subject" 
   storeDir: string;
 }
 
+/** Cleanup converges independently of whether this pass found old files. */
+async function removeEmptyDirs(dirs: string[]): Promise<void> {
+  for (const dir of [...dirs].reverse()) {
+    try {
+      await rmdir(dir);
+    } catch {
+      /* nonempty, changed or gone: keep it */
+    }
+  }
+}
+
 /** One pi-global pass. Never throws for a refusal; an unexpected I/O failure
  * throws, and the next pass resumes. */
 export async function archivePiGlobal(deps: PiGlobalPassDeps): Promise<StorePassResult> {
@@ -136,6 +147,7 @@ export async function archivePiGlobal(deps: PiGlobalPassDeps): Promise<StorePass
   if (old.length === 0) {
     const r = await settleStore(storeDeps);
     r.keptLive = young;
+    await removeEmptyDirs(dirs);
     return r;
   }
   const writer = await StoreWriter.open(storeDeps);
@@ -155,13 +167,7 @@ export async function archivePiGlobal(deps: PiGlobalPassDeps): Promise<StorePass
   );
   await writer.finish(removed, []);
   // Emptied directories, deepest first, never recursively, never the store.
-  if (removed.size > 0)
-    for (const d of [...dirs].reverse())
-      try {
-        await rmdir(d);
-      } catch {
-        /* not empty (or gone): it stays */
-      }
+  await removeEmptyDirs(dirs);
   const stop = pass.stop ?? unlinkStop;
   const incomplete = pass.incomplete || pass.unlinks.some((u) => !removed.has(u.source));
   return endStorePass(res, stop, incomplete);
