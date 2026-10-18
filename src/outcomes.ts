@@ -661,18 +661,19 @@ export class OutcomeCapture {
     );
     const seen = this.ts();
     const add = (commentId: number, path: string | null, line: number | null, source: string) => {
-      const postedAt = this.store.botCommentPostedAt(commentId);
+      const postedAt = this.store.botCommentPostedAt(commentId, "review_comment");
       insert.run(commentId, pr, path, line, postedAt, source, seen);
       if (postedAt !== null) backfill.run(postedAt, commentId);
     };
     this.store.db.transaction(() => {
       for (const c of this.store.prComments(pr)) {
         if (c.source !== "review_comment" || c.in_reply_to_id === null) continue;
-        if (!this.store.isBotComment(c.in_reply_to_id)) continue;
+        if (!this.store.isBotComment(c.in_reply_to_id, "review_comment")) continue;
         add(c.in_reply_to_id, c.path, c.line, "reply");
       }
       for (const f of posted) {
-        if (f.thread_id === null || !this.store.isBotComment(f.thread_id)) continue;
+        if (f.thread_id === null || !this.store.isBotComment(f.thread_id, "review_comment"))
+          continue;
         add(f.thread_id, f.path, f.line, "record");
       }
     })();
@@ -760,7 +761,8 @@ export class OutcomeCapture {
       const here = posted.filter((f) => f.path === c.path && f.line === c.line);
       if (here.length === 0) return null;
       const exactRound = c.review_id !== null ? reviewRound.get(c.review_id) : undefined;
-      const named = exactRound ?? this.store.botCommentRound(c.comment_id) ?? undefined;
+      const named =
+        exactRound ?? this.store.botCommentRound(c.comment_id, "review_comment") ?? undefined;
       let pool: RoundFindingRow[];
       if (named !== undefined) pool = here.filter((f) => f.round_no === named);
       else {

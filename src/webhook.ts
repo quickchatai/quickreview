@@ -87,7 +87,12 @@ export type Interpretation =
    * to remove (behavioral signal; interpreted in feedback.ts). */
   | { kind: "review_set_aside"; pr: number; review_id: number; by: string }
   /** A human deleted one of the bot's comments — the bluntest noise verdict. */
-  | { kind: "bot_comment_deleted"; pr: number; comment_id: number }
+  | {
+      kind: "bot_comment_deleted";
+      pr: number;
+      comment_id: number;
+      scope?: "review_comment" | "issue_comment";
+    }
   /** A human took the bot off the PR (trigger label removed / team review
    * request withdrawn) before the review completed. */
   | { kind: "trigger_withdrawn"; pr: number; by: string }
@@ -131,9 +136,15 @@ function isBotUser(user: any, botLogin: string): boolean {
 /** A deleted comment on either comment route: a human deleting one of the
  * bot's comments is the bluntest noise verdict (the bot never deletes its own —
  * it has no deletion path at all); another bot tidying up is mechanics. */
-function commentDeletion(comment: any, payload: any, pr: number, botLogin: string): Interpretation {
+function commentDeletion(
+  comment: any,
+  payload: any,
+  pr: number,
+  botLogin: string,
+  scope: "review_comment" | "issue_comment",
+): Interpretation {
   if (comment?.user?.login === botLogin && !isBotUser(payload?.sender, botLogin))
-    return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
+    return { kind: "bot_comment_deleted", pr, comment_id: comment.id, scope };
   return { kind: "ignored", reason: "non-signal comment deletion", pr };
 }
 
@@ -257,7 +268,8 @@ function interpretReviewComment(
 ): Interpretation {
   const comment = payload?.comment;
   const pr: number = payload?.pull_request?.number ?? 0;
-  if (action === "deleted") return commentDeletion(comment, payload, pr, deps.botLogin);
+  if (action === "deleted")
+    return commentDeletion(comment, payload, pr, deps.botLogin, "review_comment");
   if (action !== "created")
     return { kind: "ignored", reason: `unhandled review-comment action: ${action}` };
   if (!comment) return { kind: "ignored", reason: "review comment payload without comment" };
@@ -338,7 +350,8 @@ function interpretIssueComment(
   const comment = payload?.comment;
   const pr: number = issue.number ?? 0;
   if (!comment) return { kind: "ignored", reason: "issue comment payload without comment", pr };
-  if (action === "deleted") return commentDeletion(comment, payload, pr, deps.botLogin);
+  if (action === "deleted")
+    return commentDeletion(comment, payload, pr, deps.botLogin, "issue_comment");
   if (action !== "created")
     return { kind: "ignored", reason: `unhandled issue-comment action: ${action}`, pr };
 
@@ -400,6 +413,8 @@ export interface WebhookDeps {
   pipelineHealth?: () => StatusSnapshot["pipeline"];
   /** Clock for the rejection-row throttle; tests inject one. */
   now?: () => number;
+  /** PR-scoped readback for an inline reply whose root registration lagged. */
+  listReviewCommentsFull?: (pr: number) => Promise<ReadonlyArray<{ id: number; user: string }>>;
 }
 
 export interface WebhookHandleResult {
@@ -476,9 +491,8 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-/** Verify + dedupe + persist. Returns the HTTP status to answer with; the
- * interpretation (when any) is handed to `onInterpretation` by the caller so
- * the response can go out first. Exported for tests. */
+/** Verify and durably accept before answering. Preparation may be retried from
+ * the inbox; callbacks run through the recovery pump after the response. */
 export function handleDelivery(
   deps: WebhookDeps,
   headers: { signature?: string; guid?: string; event?: string },
@@ -517,59 +531,154 @@ export function handleDelivery(
   }
   const action: string | null = typeof payload?.action === "string" ? payload.action : null;
 
-  // Redelivery reuses the guid — dedupe on it.
-  if (!deps.store.recordDelivery(guid, event, action)) {
-    log("webhook: duplicate delivery", { guid, event, action });
-    return { status: 200, reason: "duplicate" };
-  }
-
-  // One App installation spans many repositories and every one of them
-  // delivers here. PR numbers are per-repo, so a foreign event interpreted as
-  // ours would close, trigger or capture on whichever tracked PR shares its
-  // number. A payload with no repository (ping, installation) is not
-  // repo-scoped and passes through.
-  const fullName: unknown = payload?.repository?.full_name;
-  if (
-    typeof fullName === "string" &&
-    fullName.toLowerCase() !== deps.cfg.github.repo.toLowerCase()
-  ) {
+  // Foreign repositories remain deduplicated, but never enter our work inbox.
+  if (foreignRepository(deps, payload)) {
+    if (!deps.store.recordDelivery(guid, event, action))
+      return { status: 200, reason: "duplicate" };
     deps.store.logEvent("webhook_event", null, {
       guid,
       event,
       action,
       interpretation: "ignored",
       reason: "foreign-repository",
-      repository: fullName,
+      repository: payload.repository.full_name,
     });
     return { status: 200, reason: "foreign-repository" };
   }
-
-  const interpretation = interpretEvent(event, action, payload, {
-    botLogin: deps.cfg.github.bot_login,
-    triggerLabel: deps.cfg.github.trigger_label,
-    reviewTeam: deps.cfg.github.review_team,
-    botCommentPr: (id) => deps.store.botCommentPr(id),
-    blockedPrAuthor: (pr) => blockedPrAuthor(deps.store, pr),
-  });
-  // The capture side record, taken beside the interpretation and
-  // never instead of it. `interpretation` above is already decided and is not
-  // read here — capture cannot divert a comment, cannot suppress one, and
-  // cannot classify one. It also must not be able to break the receiver: a
-  // capture failure is logged and the delivery proceeds exactly as before.
-  try {
-    captureComment(deps, event, action, payload);
-  } catch (err) {
-    log("webhook: comment capture failed", err);
-    deps.store.logEvent("comment_capture_failed", null, { guid, event, error: String(err) });
+  if (!deps.store.acceptWebhookDelivery(guid, event, action, JSON.stringify(payload))) {
+    log("webhook: duplicate delivery", { guid, event, action });
+    return { status: 200, reason: "duplicate" };
   }
-  deps.store.logEvent("webhook_event", interpretationPr(interpretation), {
-    guid,
-    event,
-    action,
-    interpretation: interpretation.kind,
-    ...(interpretation.kind === "ignored" ? { reason: interpretation.reason } : {}),
-  });
+  const interpretation = prepareAcceptedWebhook(deps, guid);
   return { status: 200, reason: interpretation.kind, interpretation, action };
+}
+
+function foreignRepository(deps: WebhookDeps, payload: any): boolean {
+  const repo: unknown = payload?.repository?.full_name;
+  return typeof repo === "string" && repo.toLowerCase() !== deps.cfg.github.repo.toLowerCase();
+}
+
+/** Preparation is replayable from the already-durable accepted payload. */
+function prepareAcceptedWebhook(deps: WebhookDeps, guid: string): Interpretation {
+  return deps.store.db.transaction(() => {
+    const row = deps.store.webhookInbox(guid);
+    if (!row) throw new Error("accepted webhook payload unavailable");
+    if (row.interpretation !== null) return JSON.parse(row.interpretation) as Interpretation;
+    const payload = JSON.parse(row.payload);
+    const interpretation: Interpretation = foreignRepository(deps, payload)
+      ? { kind: "ignored", reason: "foreign-repository" }
+      : interpretEvent(row.event, row.action, payload, {
+          botLogin: deps.cfg.github.bot_login,
+          triggerLabel: deps.cfg.github.trigger_label,
+          reviewTeam: deps.cfg.github.review_team,
+          botCommentPr: (id) => deps.store.botCommentPr(id, "review_comment"),
+          blockedPrAuthor: (pr) => blockedPrAuthor(deps.store, pr),
+        });
+    // Capture is a side copy: its persistence must never divert routing.
+    if (!foreignRepository(deps, payload)) {
+      try {
+        captureComment(deps, row.event, row.action, payload);
+      } catch (error) {
+        deps.log?.("webhook: comment capture failed", error);
+        deps.store.logEvent("comment_capture_failed", null, {
+          guid,
+          event: row.event,
+          error: String(error),
+        });
+      }
+    }
+    deps.store.logEvent("webhook_event", interpretationPr(interpretation), {
+      guid,
+      event: row.event,
+      action: row.action,
+      interpretation: interpretation.kind,
+      ...(interpretation.kind === "ignored" ? { reason: interpretation.reason } : {}),
+    });
+    deps.store.prepareWebhookInbox(guid, JSON.stringify(interpretation));
+    return interpretation;
+  })();
+}
+
+const webhookPumps = new WeakMap<StateStore, Promise<void>>();
+
+/** Fulfill accepted work independently of another delivery or process lifetime. */
+export function resumeWebhookDeliveries(
+  deps: WebhookDeps,
+  stopping: () => boolean = () => false,
+): Promise<void> {
+  const active = webhookPumps.get(deps.store);
+  if (active) return active;
+  // Register before the first synchronous read, including a callback that re-enters.
+  const work = Promise.resolve().then(async () => {
+    if (stopping() || deps.store.drainState().draining) return;
+    const clock = deps.now ?? Date.now;
+    for (const row of deps.store.readyWebhookInbox(new Date(clock()).toISOString())) {
+      if (stopping() || deps.store.drainState().draining) break;
+      try {
+        const payload = JSON.parse(row.payload);
+        if (foreignRepository(deps, payload)) {
+          deps.store.completeWebhookDelivery(row.guid);
+          continue;
+        }
+        let interpretation = prepareAcceptedWebhook(deps, row.guid);
+        if (
+          interpretation.kind === "ignored" &&
+          interpretation.reason === "not a reply in this PR's bot thread"
+        ) {
+          const root: unknown = payload?.comment?.in_reply_to_id;
+          const pr = interpretation.pr;
+          if (
+            pr !== undefined &&
+            typeof root === "number" &&
+            Number.isSafeInteger(root) &&
+            root > 0
+          ) {
+            const known = deps.store.botCommentPr(root, "review_comment");
+            if (known === undefined) {
+              if (!deps.listReviewCommentsFull) throw new Error("inline root read unavailable");
+              const comments = await deps.listReviewCommentsFull(pr);
+              if (stopping() || deps.store.drainState().draining) return;
+              const found = comments.find((comment) => comment.id === root);
+              if (!found) throw new Error("inline root evidence missing");
+              if (found.user.toLowerCase() !== deps.cfg.github.bot_login.toLowerCase()) {
+                deps.store.completeWebhookDelivery(row.guid);
+                continue;
+              }
+              deps.store.registerBotComment(root, pr, "review_comment");
+            }
+            interpretation = interpretEvent(row.event, row.action, payload, {
+              botLogin: deps.cfg.github.bot_login,
+              triggerLabel: deps.cfg.github.trigger_label,
+              reviewTeam: deps.cfg.github.review_team,
+              botCommentPr: (id) => deps.store.botCommentPr(id, "review_comment"),
+              blockedPrAuthor: (number) => blockedPrAuthor(deps.store, number),
+            });
+            deps.store.prepareWebhookInbox(row.guid, JSON.stringify(interpretation));
+          }
+        }
+        if (stopping() || deps.store.drainState().draining) break;
+        await deps.onInterpretation(interpretation, {
+          event: row.event,
+          action: row.action,
+          guid: row.guid,
+        });
+        if (stopping() || deps.store.drainState().draining) break;
+        deps.store.completeWebhookDelivery(row.guid);
+      } catch (error) {
+        deps.store.deferWebhookDelivery(row.guid, String(error), clock());
+        deps.log?.("webhook: accepted work remains pending", {
+          guid: row.guid,
+          error: String(error),
+        });
+      }
+    }
+  });
+  webhookPumps.set(deps.store, work);
+  const clear = (): void => {
+    if (webhookPumps.get(deps.store) === work) webhookPumps.delete(deps.store);
+  };
+  void work.then(clear, clear);
+  return work;
 }
 
 /** Capture every human comment on a tracked PR. Returns nothing —
@@ -599,7 +708,15 @@ function interpretationPr(i: Interpretation): number | null {
 export function createWebhookServer(deps: WebhookDeps): Server {
   const path = deps.path ?? "/webhook";
   const log = deps.log ?? (() => {});
-  return createServer((req: IncomingMessage, res: ServerResponse) => {
+  let stopped = false;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const kick = (): void => {
+    if (stopped) return;
+    void resumeWebhookDeliveries(deps, () => stopped).catch((error) =>
+      log("webhook: inbox unavailable", error),
+    );
+  };
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
       if (req.method === "GET" && req.url === "/health") {
         const pipeline = deps.pipelineHealth?.();
@@ -635,23 +752,19 @@ export function createWebhookServer(deps: WebhookDeps): Server {
       // 200 first, interpret after — GitHub fails the delivery past 10s.
       res.writeHead(result.status, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: result.status < 400, reason: result.reason }));
-      const interpretation = result.interpretation;
-      if (!interpretation) return;
-      setImmediate(() => {
-        void (async () => {
-          try {
-            await deps.onInterpretation(interpretation, {
-              event: headers.event ?? "",
-              action: result.action ?? null,
-              guid: headers.guid ?? "",
-            });
-          } catch (err) {
-            log("webhook: interpretation handler failed", err);
-          }
-        })();
-      });
+      setImmediate(kick);
     })();
   });
+  server.once("listening", () => {
+    kick();
+    timer = setInterval(kick, 5000);
+    timer.unref?.();
+  });
+  server.once("close", () => {
+    stopped = true;
+    if (timer !== undefined) clearInterval(timer);
+  });
+  return server;
 }
 
 /** Apply an interpretation to the store via the state machine. The daemon
@@ -660,6 +773,7 @@ export async function applyInterpretation(
   deps: {
     cfg: Config;
     store: StateStore;
+    deliveryGuid?: string;
     onPrTouched?: (pr: number) => void | Promise<void>;
     onAuthorReply?: (i: Extract<Interpretation, { kind: "author_reply" }>) => void | Promise<void>;
     onAuthorPrComment?: (
@@ -694,15 +808,18 @@ export async function applyInterpretation(
 ): Promise<void> {
   const { store, cfg } = deps;
   const opts = { botLogin: cfg.github.bot_login };
+  const local = <T>(run: () => T): T => store.webhookLocalOnce(deps.deliveryGuid, run);
   switch (i.kind) {
     case "trigger":
-      applyEventFor(
-        store,
-        i.pr,
-        { type: "trigger", source: i.source === "label" ? "label" : "team_request" },
-        i.meta,
-        opts,
-      );
+      local(() => {
+        applyEventFor(
+          store,
+          i.pr,
+          { type: "trigger", source: i.source === "label" ? "label" : "team_request" },
+          i.meta,
+          opts,
+        );
+      });
       await deps.onPrTouched?.(i.pr);
       return;
     case "synchronize":
@@ -710,12 +827,12 @@ export async function applyInterpretation(
       // (the reconcile poll's head refresh skips unknown PRs the same way).
       if (!store.getPr(i.pr)) return;
       // The refreshed head and its author-response fact commit together.
-      store.db.transaction(() => {
+      local(() => {
         const before = store.getPr(i.pr);
         const result = applyEventFor(store, i.pr, { type: "synchronize" }, i.meta, opts);
         if (!result.skipped && before && i.meta.head_sha && before.head_sha !== i.meta.head_sha)
           store.logEvent("head_push", i.pr, { head_sha: i.meta.head_sha, source: "webhook" });
-      })();
+      });
       // Still not a review trigger. It is the post-approval delta recheck's
       // core trigger, which the daemon decides on separately.
       await deps.onSynchronize?.(i);
@@ -724,7 +841,7 @@ export async function applyInterpretation(
       // A close already observed by reconcile still owes idempotent cleanup,
       // but cannot publish another lifecycle fact or erase its prior evidence.
       if (!store.getPr(i.pr)) return;
-      const overBlock = store.db.transaction(() => {
+      const overBlock = local(() => {
         const priorState = store.getPr(i.pr)?.state;
         if (priorState === "closed") {
           // Legacy interrupted closes can still owe local cleanup. Preserve
@@ -746,7 +863,7 @@ export async function applyInterpretation(
             },
           );
         return over;
-      })();
+      });
       if (overBlock) await deps.onFeedbackSignal?.({ kind: "merged_over_block", pr: i.pr });
       await deps.onClosed?.(i.pr);
       return;
@@ -755,20 +872,20 @@ export async function applyInterpretation(
       await deps.onAuthorPrComment?.(i);
       return;
     case "author_reply":
-      // A closed PR's session is archived and is never reborn for a wake: a
-      // reply there is recorded (capture) and owes nothing.
-      if (store.getPr(i.pr)?.state === "closed") {
-        store.logEvent("author_reply_ignored_closed", i.pr, { comment_id: i.comment_id });
-        return;
-      }
-      applyEventFor(store, i.pr, { type: "author_reply" }, {}, opts);
-      // New evidence at the current head (guard 2): a reply is the one
-      // thing other than a push that makes re-reviewing the same head useful.
-      store.noteAuthorReply(i.pr);
+      const replyOwed = local(() => {
+        if (store.getPr(i.pr)?.state === "closed") {
+          store.logEvent("author_reply_ignored_closed", i.pr, { comment_id: i.comment_id });
+          return false;
+        }
+        applyEventFor(store, i.pr, { type: "author_reply" }, {}, opts);
+        store.noteAuthorReply(i.pr);
+        return true;
+      });
+      if (!replyOwed) return;
       await deps.onAuthorReply?.(i);
       return;
     case "bot_comment":
-      store.registerBotComment(i.comment_id, i.pr, i.scope);
+      local(() => store.registerBotComment(i.comment_id, i.pr, i.scope));
       return;
     // Pure tuning-loop signals — no state-machine event, no session
     // wake, no reviewed_heads mark. The engine (wired by the daemon) owns
@@ -783,21 +900,33 @@ export async function applyInterpretation(
       // the bot off the PR" — a human tidying a stale label after the review
       // completed (e.g. a dry-run trigger the gate never really consumed) is
       // not a negative signal.
-      const state = store.getPr(i.pr)?.state;
-      if (state === "queued" || state === "reviewing") await deps.onFeedbackSignal?.(i);
-      else store.logEvent("trigger_withdrawn_ignored", i.pr, { state: state ?? null, by: i.by });
+      const withdrawn = local(() => {
+        const state = store.getPr(i.pr)?.state;
+        if (state === "queued" || state === "reviewing") return true;
+        store.logEvent("trigger_withdrawn_ignored", i.pr, { state: state ?? null, by: i.by });
+        return false;
+      });
+      if (withdrawn) await deps.onFeedbackSignal?.(i);
       return;
     }
     case "ci_completed":
       // Recorded, never a transition here. CI is evidence for the recheck,
       // and the withheld-approval retry behind `onCiCompleted` may re-queue a
       // PR whose approval red CI held back (`cigate.ts`).
-      for (const pr of i.prs)
-        store.logEvent("ci_completed", pr, { head_sha: i.head_sha, conclusion: i.conclusion });
+      local(() => {
+        for (const pr of i.prs)
+          store.logEvent("ci_completed", pr, { head_sha: i.head_sha, conclusion: i.conclusion });
+      });
       await deps.onCiCompleted?.(i);
       return;
     case "base_advanced":
-      store.logEvent("base_advanced", null, { branch: i.branch, before: i.before, after: i.after });
+      local(() =>
+        store.logEvent("base_advanced", null, {
+          branch: i.branch,
+          before: i.before,
+          after: i.after,
+        }),
+      );
       await deps.onBaseAdvanced?.(i);
       return;
     case "ignored":
