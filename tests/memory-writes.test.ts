@@ -52,6 +52,8 @@ import {
   type OvRequestRecord,
 } from "../src/openviking/client.js";
 import { OpenVikingStore, entryFrom, sha256Prefixed } from "../src/openviking/store.js";
+import { importMemory } from "../src/memory/import.js";
+import { refOf } from "../src/memory/store.js";
 import { StateStore } from "../src/state.js";
 import { listedFileStat } from "./helpers/ov-listing.js";
 
@@ -403,7 +405,171 @@ describe("a named note is created at exactly its address, or found there", () =>
     const again = await store.apply(op);
     expect(again.ok).toBe(true);
     expect(again.message).toContain("already present");
+    expect(again).toMatchObject({ unchanged: true });
     expect(server.files.size).toBe(1);
+  });
+
+  it("two independent importers create one entry and report the replay honestly", async () => {
+    const entry = entryFrom(
+      "experiences/legacy.md",
+      "#eod-learning keep this lesson",
+      "2026-10-06T00:00:00Z",
+    );
+    const source = { read: async () => [entry] };
+    const other = new OpenVikingStore({
+      client: client(server).client,
+      now: () => new Date("2026-10-06T10:00:00Z"),
+    });
+    const reports = await Promise.all([
+      importMemory({ source, dest: store }),
+      importMemory({ source, dest: other }),
+    ]);
+    expect([...server.files.keys()].filter((uri) => uri.endsWith(".md"))).toHaveLength(1);
+    expect(reports.reduce((n, r) => n + r.imported.length, 0)).toBe(1);
+    expect(
+      reports.reduce(
+        (n, r) => n + r.skipped.filter((s) => s.reason === "already-imported").length,
+        0,
+      ),
+    ).toBe(1);
+  });
+
+  it("concurrent imports share identity across pinned and ordinary placement", async () => {
+    const text = "#eod-learning keep this lesson";
+    const ordinary = entryFrom("experiences/legacy.md", text, "2026-10-06T00:00:00Z");
+    const pinned = entryFrom(
+      "preferences/pinned/legacy.md",
+      `#pinned ${text}`,
+      "2026-10-06T00:00:00Z",
+    );
+    const other = new OpenVikingStore({ client: client(server).client });
+    await Promise.all([
+      importMemory({ source: { read: async () => [ordinary] }, dest: store }),
+      importMemory({ source: { read: async () => [pinned] }, dest: other }),
+    ]);
+    const sweep = await new OpenVikingStore({ client: client(server).client }).sweep();
+    expect(sweep.unread).toEqual([]);
+    expect(sweep.entries).toHaveLength(1);
+    expect(sweep.entries[0]?.pinned).toBe(true);
+  });
+
+  it("finishes a durable import claim after its initial note write was refused", async () => {
+    const entry = entryFrom(
+      "preferences/pinned/legacy.md",
+      "#pinned #manual durable instruction",
+      "2026-10-06T00:00:00Z",
+    );
+    let refuse = true;
+    const failing = new OpenVikingStore({
+      client: client(server, {
+        fetchFn: async (url, init) => {
+          const request = init?.body ? (JSON.parse(String(init.body)) as BatchBody) : undefined;
+          if (
+            refuse &&
+            String(url).includes("/content/batch-write") &&
+            request?.operations.some((op) => op.uri.endsWith(".md"))
+          ) {
+            refuse = false;
+            return json(403, {
+              status: "error",
+              error: { code: "FORBIDDEN", message: "injected note refusal" },
+            });
+          }
+          return server.fetch(url, init);
+        },
+      }).client,
+    });
+    const first = await importMemory({ source: { read: async () => [entry] }, dest: failing });
+    expect(first.failed).toHaveLength(1);
+    expect([...server.files.keys()].filter((uri) => uri.endsWith(".md"))).toEqual([]);
+    expect(server.files.size).toBe(1); // durable identity, not a curated entry
+    expect((await store.sweep()).entries).toEqual([]);
+    const ordinary = entryFrom(
+      "preferences/legacy.md",
+      "#manual durable instruction",
+      "2026-10-07T00:00:00Z",
+    );
+    const next = await importMemory({ source: { read: async () => [ordinary] }, dest: store });
+    expect(next.failed).toEqual([]);
+    const entries = await store.read();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.pinned).toBe(true); // original placement survives interruption
+    expect(entries[0]?.text).toContain("#manual durable instruction");
+    const claim = [...server.files.entries()].find(([uri]) => uri.endsWith(".json"))![1];
+    expect(claim).not.toContain("durable instruction");
+  });
+
+  it.each([
+    "not-json",
+    JSON.stringify({ identity: "other", category: "events", name: "elsewhere" }),
+    JSON.stringify({ identity: "source-key", category: "../outside", name: "elsewhere" }),
+  ])("refuses an invalid persisted import identity claim (%s)", async (corrupt) => {
+    const op: MemoryOp = {
+      op: "note",
+      name: "one",
+      identity: "source-key",
+      text: "#learning original",
+      category: "experiences",
+    };
+    expect((await store.apply(op)).ok).toBe(true);
+    const claimUri = [...server.files.keys()].find((uri) => uri.endsWith(".json"))!;
+    server.files.set(claimUri, corrupt);
+    expect((await store.apply({ ...op, category: "events", text: "#learning replay" })).ok).toBe(
+      false,
+    );
+    expect([...server.files.keys()].filter((uri) => uri.endsWith(".md"))).toEqual([
+      `${ROOT}/experiences/one.md`,
+    ]);
+  });
+
+  it("a stale import cannot recreate or repin an entry retired after its initial destination read", async () => {
+    const entry = entryFrom(
+      "preferences/pinned/legacy.md",
+      "#pinned #manual keep this instruction",
+      "2026-10-06T00:00:00Z",
+    );
+    const source = { read: async () => [entry] };
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((r) => {
+      entered = r;
+    });
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let initial = true;
+    const staleDest = {
+      read: store.read.bind(store),
+      search: store.search.bind(store),
+      apply: store.apply.bind(store),
+      async sweep() {
+        if (initial) {
+          initial = false;
+          entered();
+          await gate;
+          return { entries: [], retired: [], unread: [] };
+        }
+        return store.sweep();
+      },
+    };
+    const pending = importMemory({ source, dest: staleDest });
+    await started;
+    let retired: MemoryWriteResult | undefined;
+    let replay: Awaited<ReturnType<typeof importMemory>> | undefined;
+    try {
+      await importMemory({ source, dest: store });
+      const live = (await store.read())[0]!;
+      retired = await store.apply({ op: "retire", ...refOf(live) });
+    } finally {
+      release();
+      replay = await pending;
+    }
+    expect(retired?.ok).toBe(true);
+    expect([...server.files.keys()].filter((uri) => uri.endsWith(".md"))).toHaveLength(1);
+    expect((await store.read()).length).toBe(0);
+    expect(replay?.imported).toHaveLength(0);
+    expect(replay?.skipped).toHaveLength(1);
+    expect(replay?.pins).toHaveLength(0);
   });
 
   it("an entry already there with OTHER bytes is kept, untouched, and reported existed", async () => {

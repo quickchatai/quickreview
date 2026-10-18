@@ -969,6 +969,7 @@ export class OpenVikingStore implements MemoryStore {
           body,
           op.category ?? areaForNewEntry(body, this.category),
           op.name,
+          op.identity,
         );
       }
       if (!validEntryId(op.id))
@@ -1077,6 +1078,7 @@ export class OpenVikingStore implements MemoryStore {
     body: string,
     category: string = this.category,
     name?: string,
+    identity?: string,
   ): Promise<MemoryWriteResult> {
     if (body.trim() === "") return { ok: false, message: "refused: an empty memory entry" };
     if (!validArea(category))
@@ -1086,6 +1088,7 @@ export class OpenVikingStore implements MemoryStore {
       };
     if (name !== undefined && !validEntryId(`${category}/${name}.md`))
       return { ok: false, message: `refused: '${name}' is not an entry name this store can spell` };
+    if (identity !== undefined) return this.createIdentified(body, category, name, identity);
     const dir = `${this.root}/${category}`;
     const ts = tsFromModTime(this.now().toISOString());
     const stamp = stampOf(ts);
@@ -1106,7 +1109,12 @@ export class OpenVikingStore implements MemoryStore {
         this.invalidate();
         await this.mirrorTags(uri, body);
         const same = res.result.unchanged.includes(uri);
-        return { ok: true, message: same ? `already present: ${id}` : `wrote ${id}`, uri };
+        return {
+          ok: true,
+          message: same ? `already present: ${id}` : `wrote ${id}`,
+          uri,
+          ...(same ? { unchanged: true } : {}),
+        };
       }
       if (res.ok)
         return {
@@ -1123,6 +1131,7 @@ export class OpenVikingStore implements MemoryStore {
       }
       if (!res.conflict) return { ok: false, message: `memory write failed: ${res.message}` };
       if (name !== undefined) {
+        this.invalidate(); // An external writer won; the cached destination may predate it.
         return {
           ok: true,
           existed: true,
@@ -1133,6 +1142,60 @@ export class OpenVikingStore implements MemoryStore {
       this.log(`openviking: memory name ${id} taken — retrying under a fresh name`);
     }
     return { ok: false, message: "refused: could not find a free name for this entry" };
+  }
+
+  /** The immutable claim is the global identity, independent of placement.
+   * Its target is durable before the note write. Any contender can
+   * finish an interrupted claim, always at the same address; moved/retired
+   * target bytes are protected by create_if_absent. A hidden bookkeeping area
+   * is omitted from curated-memory sweeps. No cross-area batch is required. */
+  private async createIdentified(
+    body: string,
+    category: string,
+    name: string | undefined,
+    identity: string,
+  ): Promise<MemoryWriteResult> {
+    if (!name || identity.length === 0 || identity.length > 256)
+      return {
+        ok: false,
+        message: "refused: identified notes require a bounded identity and name",
+      };
+    const dir = `${this.root}/${EXPERIENCES_AREA}/.import-identities`;
+    const uri = `${dir}/${createHash("sha256").update(identity).digest("hex")}.json`;
+    const content = JSON.stringify({ identity, category, name });
+    let result = await this.client.batchWrite({
+      root_uri: dir,
+      operations: [{ uri, content, precondition: { kind: "create_if_absent" } }],
+      wait: false,
+    });
+    if (!result.ok && result.code === "NOT_FOUND" && (await this.madeMissingArea(result.code, dir)))
+      result = await this.client.batchWrite({
+        root_uri: dir,
+        operations: [{ uri, content, precondition: { kind: "create_if_absent" } }],
+        wait: false,
+      });
+    if (result.ok && !batchWriteLanded(result.result, uri))
+      return { ok: false, message: "memory identity claim was not confirmed" };
+    if (!result.ok && !result.conflict)
+      return { ok: false, message: `memory identity claim failed: ${result.message}` };
+    if (!result.ok) {
+      const stored = await this.client.readContent(uri);
+      if (!stored.ok) return { ok: false, message: `memory identity unread: ${stored.message}` };
+      try {
+        const claim = JSON.parse(stored.result) as Record<string, unknown>;
+        if (
+          claim["identity"] !== identity ||
+          typeof claim["category"] !== "string" ||
+          typeof claim["name"] !== "string"
+        )
+          throw new Error("invalid claim");
+        // create validates the recovered area/name before any subsequent write.
+        return this.create(body, claim["category"], claim["name"]);
+      } catch {
+        return { ok: false, message: "memory identity claim is malformed — kept unchanged" };
+      }
+    }
+    return this.create(body, category, name);
   }
 
   private async replace(id: string, body: string, expect: string): Promise<MemoryWriteResult> {

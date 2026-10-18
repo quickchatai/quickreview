@@ -110,13 +110,15 @@ export function refOf(e: MemoryEntry): MemoryRef {
  * and `edit` rewrite it in place. `add` is the owner's own words and lands in
  * the preferences area.
  */
+/** note.identity globally deduplicates a named creation across placement changes;
+ * an interrupted creation resumes the first claimant's immutable target. */
 export type MemoryOp =
   | ({ op: "retire" } & MemoryRef)
   | ({ op: "pin" } & MemoryRef)
   | ({ op: "unpin" } & MemoryRef)
   | ({ op: "edit"; text: string } & MemoryRef)
   | { op: "add"; text: string }
-  | { op: "note"; text: string; name?: string; category?: string };
+  | { op: "note"; text: string; name?: string; category?: string; identity?: string };
 
 /** Applied, or refused with a reason fit to show an operator. */
 export interface MemoryWriteResult {
@@ -129,6 +131,8 @@ export interface MemoryWriteResult {
    * bytes, and kept it (`ok` is true: the address is taken by this writer's
    * entry, and nothing was overwritten). */
   existed?: boolean;
+  /** The exact named bytes were already present; no new entry was created. */
+  unchanged?: boolean;
 }
 
 /**
