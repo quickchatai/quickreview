@@ -469,7 +469,7 @@ describe("qcr review --uncommitted", () => {
     const h = harness({ repo, piBin: "false" });
     expect(await runReviewCli(["--uncommitted", "--preview"], true, h.deps)).toBe(0);
     const o = JSON.parse(h.lines[0]!);
-    expect(o.preview.target).toBe("uncommitted");
+    expect(o.preview.target).toEqual({ kind: "uncommitted" });
     expect(o.preview.base).toBe("HEAD");
     // a.ts (unstaged), b.ts (staged), new.ts (untracked); c.ts-style commits excluded
     expect(o.preview.files).toBe(3);
@@ -551,6 +551,231 @@ describe("qcr review --uncommitted", () => {
   it("refuses --uncommitted with --base or with branch, exit 2", async () => {
     expect(() => parseReviewArgs(["--uncommitted", "--base", "main"])).toThrow(/usage: qcr review/);
     expect(() => parseReviewArgs(["--uncommitted", "branch"])).toThrow(/usage: qcr review/);
+  });
+});
+
+describe("qcr review --diff", () => {
+  /** main's a.ts has one line; this diff adds two. */
+  const DIFF = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "index 1111111..2222222 100644",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,1 +1,3 @@",
+    " export const a = 1;",
+    "+export const d = 4;",
+    "+export const e = 5;",
+    "",
+  ].join("\n");
+
+  /** A repo on main with a.ts committed, no branch work. */
+  function mainRepo(name: string): string {
+    const repo = join(tmp, name);
+    mkdirSync(join(repo, "src"), { recursive: true });
+    git(repo, "init", "-q", "-b", "main");
+    writeFileSync(join(repo, "src", "a.ts"), "export const a = 1;\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "base");
+    return repo;
+  }
+
+  const bareDir = (name: string): string => {
+    const d = join(tmp, name);
+    mkdirSync(d, { recursive: true });
+    return d;
+  };
+
+  /** A harness whose stdin is `text`. */
+  function piped(o: Parameters<typeof harness>[0], text: string) {
+    const h = harness(o);
+    return { ...h, deps: { ...h.deps, readStdin: async () => text } };
+  }
+
+  /** A pi that records what the review tree held when the lenses ran. */
+  function treePi(name: string, seen: string) {
+    return fakePi(name, [
+      `ls -A "$QCR_WORKTREE" > ${JSON.stringify(seen)}`,
+      `cat "$QCR_WORKTREE/src/a.ts" >> ${JSON.stringify(seen)} 2>/dev/null`,
+      `printf '%s' ${JSON.stringify(record)} > "$cd/findings-record.json"`,
+      `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
+    ]);
+  }
+
+  it("parses --diff - and --diff FILE, and refuses what does not fit, with exit 2", () => {
+    expect(parseReviewArgs(["--diff", "-"])).toMatchObject({ diff: "-" });
+    expect(parseReviewArgs(["--diff", "p.patch", "--preview"])).toMatchObject({ diff: "p.patch" });
+    for (const rest of [
+      ["--diff"],
+      ["--diff", "--preview"],
+      ["--diff", "-", "--uncommitted"],
+      ["--diff", "-", "branch"],
+      ["--diff", "-", "12"],
+      ["--diff", "-", "--base", "main"],
+      ["--diff", "-", "--repo", "o/r"],
+    ])
+      expect(() => parseReviewArgs(rest), rest.join(" ")).toThrow(/usage: qcr review/);
+  });
+
+  it("is in the help", () => {
+    expect(reviewHelp()).toMatch(/--diff FILE/);
+    expect(REVIEW_USAGE).toMatch(/--diff FILE\|-/);
+  });
+
+  it("previews a piped diff as target.kind = diff: its files and lines, never postable", async () => {
+    const repo = mainRepo("diff-preview");
+    const h = piped({ repo, piBin: "false" }, DIFF);
+    expect(await runReviewCli(["--diff", "-", "--preview"], true, h.deps)).toBe(0);
+    const o = JSON.parse(h.lines[0]!);
+    expect(o.preview.target).toEqual({ kind: "diff" });
+    expect(o.preview.files).toBe(1);
+    expect(o.preview.lines).toBe(2);
+    expect(o.preview.postable).toBe(false);
+    expect(o.preview.branch).toBeUndefined();
+    expect(o.preview.repo).toBe("local/diff-preview");
+  });
+
+  it("works with no repository at all, and with a directory that is not one", async () => {
+    const dir = bareDir("diff-norepo");
+    const seen = join(tmp, "diff-norepo.seen");
+    const h = piped({ repo: dir, piBin: treePi("diff-norepo", seen).bin }, DIFF);
+    expect(await runReviewCli(["--diff", "-"], true, h.deps)).toBe(0);
+    const o = JSON.parse(h.lines[h.lines.length - 1]!);
+    expect(o.ok).toBe(true);
+    expect(o.preview.target).toEqual({ kind: "diff" });
+    expect(o.preview.repo).toBe("local/diff");
+    expect(Object.keys(o.findings)).toEqual(["P0", "P2"]);
+    // nothing to read as context: an empty review tree
+    expect(readFileSync(seen, "utf8")).toBe("");
+  });
+
+  it("reads a repository around it as context, the diff applied, and writes nothing to git", async () => {
+    const repo = mainRepo("diff-ctx");
+    setLimit(repo, 1000);
+    const seen = join(tmp, "diff-ctx.seen");
+    const before = git(repo, "status", "--porcelain");
+    const h = piped({ repo, piBin: treePi("diff-ctx", seen).bin }, DIFF);
+    expect(await runReviewCli(["--diff", "-"], false, h.deps)).toBe(0);
+    const tree = readFileSync(seen, "utf8");
+    expect(tree).toContain("export const d = 4;");
+    expect(tree).toContain("export const a = 1;");
+    expect(git(repo, "worktree", "list").split("\n")).toHaveLength(1);
+    expect(git(repo, "status", "--porcelain")).toBe(before);
+    expect(existsSync(join(repo, ".git", "worktrees"))).toBe(false);
+  });
+
+  it("runs against a read-only checkout", async () => {
+    const repo = mainRepo("diff-ro");
+    setLimit(repo, 1000);
+    const seen = join(tmp, "diff-ro.seen");
+    execFileSync("chmod", ["-R", "a-w", repo]);
+    try {
+      const h = piped({ repo, piBin: treePi("diff-ro", seen).bin }, DIFF);
+      expect(await runReviewCli(["--diff", "-"], false, h.deps)).toBe(0);
+      expect(readFileSync(seen, "utf8")).toContain("export const e = 5;");
+    } finally {
+      execFileSync("chmod", ["-R", "u+w", repo]);
+    }
+  });
+
+  it("a diff that does not apply to HEAD still runs: the repo is context only, and it says so", async () => {
+    const repo = mainRepo("diff-noapply");
+    setLimit(repo, 1000);
+    const seen = join(tmp, "diff-noapply.seen");
+    const other = DIFF.replace(" export const a = 1;", " export const z = 26;");
+    const h = piped({ repo, piBin: treePi("diff-noapply", seen).bin }, other);
+    const warned: string[] = [];
+    expect(
+      await runReviewCli(["--diff", "-"], true, { ...h.deps, warn: (l) => warned.push(l) }),
+    ).toBe(0);
+    const o = JSON.parse(h.lines[h.lines.length - 1]!);
+    expect(o.warnings.join("\n")).toMatch(/does not apply/);
+    expect(warned.join("\n")).toMatch(/does not apply/);
+    expect(readFileSync(seen, "utf8")).toContain("export const a = 1;");
+  });
+
+  it("reads --diff FILE relative to the working directory", async () => {
+    const repo = mainRepo("diff-file");
+    writeFileSync(join(tmp, "diff-file.patch"), DIFF);
+    const h = harness({ repo: tmp, piBin: "false" });
+    expect(await runReviewCli(["--diff", "diff-file.patch", "--preview"], true, h.deps)).toBe(0);
+    const o = JSON.parse(h.lines[0]!);
+    expect(o.preview.target.kind).toBe("diff");
+    expect(o.preview.files).toBe(1);
+    expect(repo).toBeTruthy();
+  });
+
+  it("refuses posting: --to pr and --post are exit 2, before anything runs or is paid", async () => {
+    const repo = mainRepo("diff-nopost");
+    const pi = happyPi("diff-nopost");
+    for (const rest of [
+      ["--diff", "-", "--to", "pr"],
+      ["--diff", "-", "--to", "terminal,pr"],
+      ["--diff", "-", "--post"],
+    ]) {
+      const h = piped({ repo, piBin: pi.bin }, DIFF);
+      expect(await runReviewCli(rest, true, h.deps), rest.join(" ")).toBe(2);
+      expect(JSON.parse(h.lines[0]!).ok).toBe(false);
+    }
+    expect(existsSync(pi.calls)).toBe(false);
+    const h = piped({ repo, piBin: pi.bin }, DIFF);
+    await runReviewCli(["--diff", "-", "--to", "pr"], false, h.deps);
+    expect(h.text()).toMatch(/a diff has no PR/);
+  });
+
+  it("a saved destination that posts does not apply to a diff", async () => {
+    const repo = mainRepo("diff-saved");
+    setLimit(repo, 1000);
+    const { saveDefaultDestinations } = await import("../src/reviewdest.js");
+    saveDefaultDestinations(repo, ["pr"]);
+    const h = piped({ repo, piBin: happyPi("diff-saved").bin }, DIFF);
+    expect(await runReviewCli(["--diff", "-"], false, h.deps)).toBe(0);
+    expect(h.text()).not.toMatch(/Posted|posts to/);
+  });
+
+  it("an empty or unreadable diff exits 1 with a clear message and spends nothing", async () => {
+    const repo = mainRepo("diff-bad");
+    const pi = happyPi("diff-bad");
+    for (const [text, why] of [
+      ["", /nothing to review.*no file changes/i],
+      ["just some words\n", /nothing to review.*no file changes/i],
+    ] as const) {
+      const h = piped({ repo, piBin: pi.bin }, text);
+      expect(await runReviewCli(["--diff", "-"], false, h.deps)).toBe(1);
+      expect(h.text()).toMatch(why);
+    }
+    const missing = harness({ repo, piBin: pi.bin });
+    expect(await runReviewCli(["--diff", "nope.patch"], false, missing.deps)).toBe(1);
+    expect(missing.text()).toMatch(/could not be read from nope\.patch/);
+    const nostdin = harness({ repo, piBin: pi.bin });
+    expect(await runReviewCli(["--diff", "-"], false, nostdin.deps)).toBe(1);
+    expect(nostdin.text()).toMatch(/standard input/);
+    expect(existsSync(pi.calls)).toBe(false);
+  });
+
+  it("keeps no state: the same diff reviewed twice is reviewed twice", async () => {
+    const repo = mainRepo("diff-nostate");
+    setLimit(repo, 1000);
+    const pi = happyPi("diff-nostate");
+    for (let n = 0; n < 2; n++) {
+      const h = piped({ repo, piBin: pi.bin }, DIFF);
+      expect(await runReviewCli(["--diff", "-"], true, h.deps)).toBe(0);
+      expect(JSON.parse(h.lines[h.lines.length - 1]!).unchanged).toBeUndefined();
+    }
+    expect(readFileSync(pi.calls, "utf8").trim().split("\n").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("the key moves with the diff and asks above the limit like any other review", async () => {
+    const repo = mainRepo("diff-key");
+    const a = piped({ repo, piBin: "false" }, DIFF);
+    await runReviewCli(["--diff", "-", "--preview"], true, a.deps);
+    const b = piped({ repo, piBin: "false" }, DIFF.replace("d = 4", "d = 44"));
+    await runReviewCli(["--diff", "-", "--preview"], true, b.deps);
+    expect(JSON.parse(b.lines[0]!).preview.key).not.toBe(JSON.parse(a.lines[0]!).preview.key);
+
+    setLimit(repo, 0.01);
+    const c = piped({ repo, piBin: happyPi("diff-key").bin, confirm: null }, DIFF);
+    expect(await runReviewCli(["--diff", "-"], false, c.deps)).toBe(1);
+    expect(c.text()).toMatch(/over the limit.*--key/);
   });
 });
 
@@ -676,7 +901,13 @@ describe("qcr review <PR>", () => {
       0,
     );
     const o = JSON.parse(h.lines[0]!);
-    expect(o.preview).toMatchObject({ pr: 7, head_sha: headSha, base: "main", credential: "gh" });
+    expect(o.preview).toMatchObject({
+      pr: 7,
+      target: { kind: "pr" },
+      head_sha: headSha,
+      base: "main",
+      credential: "gh",
+    });
     expect(existsSync(pi.calls)).toBe(false);
   });
 

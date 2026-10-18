@@ -312,6 +312,26 @@ describe("identifyTarget", () => {
   });
 });
 
+describe("identifyTarget for a diff", () => {
+  it("keys a diff file by its content, needs no repository, and refuses a piped one", () => {
+    const dir = join(tmp, "difftarget");
+    mkdirSync(dir);
+    writeFileSync(join(dir, "a.patch"), "one\n");
+    writeFileSync(join(dir, "b.patch"), "two\n");
+    const a = identifyTarget(["--diff", "a.patch"], dir);
+    const b = identifyTarget(["--diff", "b.patch"], dir);
+    expect(a.ok && b.ok).toBe(true);
+    if (a.ok && b.ok) {
+      expect(a.key).toMatch(/^diff:[0-9a-f]{40}$/);
+      expect(a.key).not.toBe(b.key);
+    }
+    const piped = identifyTarget(["--diff", "-"], dir);
+    expect(piped.ok).toBe(false);
+    expect(!piped.ok && piped.error).toMatch(/foreground/);
+    expect(identifyTarget(["--diff", "missing.patch"], dir).ok).toBe(false);
+  });
+});
+
 describe("runDetachedChild", () => {
   it("records exit code 1 and the error when the run throws", async () => {
     const dir = join(tmp, "child", "runs", "c1");

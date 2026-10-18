@@ -2,6 +2,6 @@
   "schema_version": 1,
   "ok": false,
   "errors": [
-    "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--json] | --help\n(unknown argument --bogus)"
+    "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--json] | --help\n(unknown argument --bogus)"
   ]
 }

@@ -10,6 +10,11 @@
 // over to verify and never repeated; a rewrite or a doubtful delta is a full
 // review.
 //
+// A unified diff is a target too (`--diff -` reads stdin, `--diff FILE` a
+// file): no repository is needed, one around the working directory is only
+// read for context, nothing is written to git, and with no PR behind it there
+// is nothing to post to.
+//
 // The seams the sibling tickets plug into: `ReviewTargetSource` (a PR, the
 // uncommitted tree), the destination and posting and the detached run all
 // hang off `runReviewCli`'s steps without changing its shape; a PR keys its
@@ -17,12 +22,14 @@
 //
 // Exit codes follow `qcr scan`: 0 done; 1 refused, declined, failed or
 // stopped short (partial); 2 usage.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
 import type { Ecosystem } from "./ecosystem.js";
 import {
+  addDiffTree,
   addReviewTree,
   addUncommittedTree,
   groupFindings,
@@ -33,6 +40,7 @@ import {
   renderGrouped,
   originRepo,
   resolveBranch,
+  resolveDiff,
   resolveUncommitted,
   reviewKey,
   type BranchTarget,
@@ -90,7 +98,7 @@ import {
 import { openReviewStore } from "./reviewstore.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--json] | --help";
+  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--json] | --help";
 
 export function reviewHelp(): string {
   return [
@@ -107,6 +115,7 @@ export function reviewHelp(): string {
     "  <PR number|URL>   a pull request, fetched into a scratch tree and reviewed read-only;",
     "                    a PR on another repo than this directory's needs --repo OWNER/NAME",
     "  --uncommitted     the uncommitted working tree (staged, unstaged and new files) against HEAD;\n                    never posted anywhere",
+    "  --diff FILE       a unified diff read from FILE, or from stdin with `--diff -`; the repository around\n                    the working directory is optional (read as context, never written to) and the\n                    diff has no PR, so it is never posted anywhere",
     "",
     "Options",
     "  --repo OWNER/NAME the repository of a PR number (default: this directory's origin)",
@@ -154,6 +163,8 @@ export type ReviewCommand =
   | {
       help: false;
       uncommitted: boolean;
+      /** `--diff`: a file to read the diff from, or "-" for stdin. */
+      diff?: string;
       pr?: string;
       repo?: string;
       base?: string;
@@ -172,6 +183,7 @@ const usage = (why?: string): Error => new Error(why ? `${REVIEW_USAGE}\n(${why}
 export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   let help = false;
   let uncommitted = false;
+  let diff: string | undefined;
   let preview = false;
   let full = false;
   let base: string | undefined;
@@ -192,7 +204,14 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     else if (a === "--preview") preview = true;
     else if (a === "--full") full = true;
     else if (a === "--base") base = value(i++, a);
-    else if (a === "--repo") repo = value(i++, a);
+    else if (a === "--diff") {
+      // "-" is stdin; a file whose name begins with "-" is written ./-name
+      const v = rest[i + 1];
+      if (v === undefined || (v !== "-" && v.startsWith("-")))
+        throw usage("--diff needs a file, or - for stdin");
+      diff = v;
+      i++;
+    } else if (a === "--repo") repo = value(i++, a);
     else if (a === "--key") key = value(i++, a);
     else if (a === "--to") {
       try {
@@ -219,11 +238,18 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   if (uncommitted && rest.includes("branch"))
     throw usage("choose one target: branch or --uncommitted");
   if (uncommitted && pr !== undefined) throw usage("choose one target: --uncommitted or a PR");
+  if (diff !== undefined) {
+    if (uncommitted || pr !== undefined || rest.includes("branch"))
+      throw usage("choose one target: branch, --uncommitted, --diff or a PR");
+    if (base !== undefined) throw usage("--diff carries its own changes; --base does not apply");
+    if (repo !== undefined) throw usage("--repo goes with a PR number or URL");
+  }
   if (pr !== undefined && base !== undefined) throw usage("--base applies to a branch, not a PR");
   if (pr === undefined && repo !== undefined) throw usage("--repo goes with a PR number or URL");
   return {
     help: false,
     uncommitted,
+    ...(diff !== undefined ? { diff } : {}),
     ...(pr !== undefined ? { pr } : {}),
     ...(repo !== undefined ? { repo } : {}),
     preview,
@@ -272,6 +298,8 @@ export interface ReviewCliDeps {
    * Absent or null: the review runs without memory and says so once. */
   memory?: ReviewMemorySource | null;
   log?: (line: string) => void;
+  /** The diff on standard input, for `--diff -`. Absent: stdin is not available. */
+  readStdin?: () => Promise<string>;
   /** Test seams for a PR target: the credential sources and where GitHub is. */
   pr?: PrCredentialDeps & Pick<PrFetchRequest, "fetchFn" | "gitBase" | "apiBase">;
   /** Where a warning is said before the run (stderr). */
@@ -353,6 +381,29 @@ function startedLenses(outDir: string): string[] {
   }
 }
 
+/** The text of a `--diff` argument: stdin for "-", else the file. */
+async function readDiffInput(
+  source: string,
+  deps: Pick<ReviewCliDeps, "cwd" | "readStdin">,
+): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  try {
+    if (source === "-") {
+      if (!deps.readStdin) return { ok: false, error: "--diff -: standard input is not available" };
+      return { ok: true, text: await deps.readStdin() };
+    }
+    return { ok: true, text: readFileSync(resolve(deps.cwd, source), "utf8") };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        `the diff could not be read from ${source === "-" ? "standard input" : source}: ${err instanceof Error ? err.message : String(err)}`.slice(
+          0,
+          300,
+        ),
+    };
+  }
+}
+
 /** Run one `qcr review`; resolves its exit code. */
 export async function runReviewCli(
   rest: readonly string[],
@@ -421,6 +472,10 @@ async function runReview(
   ].filter((d, i, a) => a.indexOf(d) === i);
   // Posting needs a PR: asked for on any other target, it is refused before
   // anything runs or is paid for.
+  if (explicit.includes("pr") && cmd.diff !== undefined)
+    return refuse(2, [
+      "--to pr posts to a pull request, and a diff has no PR: the findings go to the terminal, a file or json",
+    ]);
   if (explicit.includes("pr") && cmd.pr === undefined)
     return refuse(2, [
       "--to pr posts to a pull request, and this target has no PR: pass a PR number or URL",
@@ -481,9 +536,13 @@ async function runReview(
       token: cred.token,
     };
   } else {
-    const resolved = cmd.uncommitted
-      ? resolveUncommitted(deps.cwd)
-      : resolveBranch(deps.cwd, cmd.base);
+    let resolved: ReturnType<typeof resolveBranch>;
+    if (cmd.diff !== undefined) {
+      const read = await readDiffInput(cmd.diff, deps);
+      if (!read.ok) return refuse(1, [read.error]);
+      resolved = resolveDiff(deps.cwd, read.text);
+    } else
+      resolved = cmd.uncommitted ? resolveUncommitted(deps.cwd) : resolveBranch(deps.cwd, cmd.base);
     if (!resolved.ok) return refuse(1, [resolved.error]);
     t = resolved.target;
     runDir = join(deps.runsDir, `${stamp}-${t.headSha.slice(0, 7)}`);
@@ -504,9 +563,22 @@ async function runReview(
     reportPath = cmd.out !== undefined ? resolve(deps.cwd, cmd.out) : join(runDir, "report.md");
   const label = prInfo
     ? `PR #${prInfo.number} against ${t.base}`
-    : cmd.uncommitted
-      ? `uncommitted changes on ${t.branch}`
-      : `${t.branch} against ${t.base}`;
+    : cmd.diff !== undefined
+      ? cmd.diff === "-"
+        ? "the piped diff"
+        : `the diff ${cmd.diff}`
+      : cmd.uncommitted
+        ? `uncommitted changes on ${t.branch}`
+        : `${t.branch} against ${t.base}`;
+  const kind: "pr" | "branch" | "uncommitted" | "diff" = prInfo
+    ? "pr"
+    : cmd.diff !== undefined
+      ? "diff"
+      : cmd.uncommitted
+        ? "uncommitted"
+        : "branch";
+  // what the markdown report is titled
+  const subject = cmd.diff !== undefined ? label : `${t.branch} against ${t.base}`;
   const settings = loadReviewSettings(deps.cwd);
   const action = (deps.route ?? "laptop") === "action";
   // The laptop's confirm threshold is the person's limit; the Action has none,
@@ -518,16 +590,17 @@ async function runReview(
   // What an earlier review of this target left (none with --full, or when it
   // cannot be trusted).
   // A branch and a PR each keep state under their own key (the PR's delta is
-  // computed in its scratch repository); the uncommitted tree keeps none.
+  // computed in its scratch repository); the uncommitted tree and a diff keep none.
   // A run that posts to a PR reviews in full: the findings already on the PR
   // (the posted-findings skip) are its repeat protection, and an
   // unchanged-head shortcut would also skip the post.
   const targetKey = prInfo
     ? prTargetKey(prInfo.repo, prInfo.number)
     : branchTargetKey(t.repo, t.branch);
+  const keepsState = kind === "branch" || kind === "pr";
   const statePath = openReviewStore(deps.cwd)?.statePath(targetKey) ?? null;
   const postsToPr = prInfo !== null && dests.includes("pr");
-  const prev = cmd.full || cmd.uncommitted || postsToPr ? null : loadState(statePath, targetKey);
+  const prev = cmd.full || !keepsState || postsToPr ? null : loadState(statePath, targetKey);
   const short = (sha: string): string => sha.slice(0, 7);
   const stillOpen = (s: ReviewState | null, before?: number): StillOpen[] =>
     openFindings(s)
@@ -643,7 +716,15 @@ async function runReview(
   };
   let planned: ReturnType<typeof planRound>;
   try {
-    planned = planRound(gitDir);
+    // a diff has no checkout to plan over: an empty scratch directory stands
+    // in, and the plan is rendered again over the review tree below
+    let planTree = gitDir;
+    if (kind === "diff") {
+      planTree = mkdtempSync(join(tmpdir(), "qcr-plan-"));
+      const scratch = planTree;
+      cleanups.push(() => rmSync(scratch, { recursive: true, force: true }));
+    }
+    planned = planRound(planTree);
   } catch (err) {
     return refuse(1, [`the review plan could not be built: ${String(err).slice(0, 300)}`]);
   }
@@ -667,10 +748,10 @@ async function runReview(
   const priorCount = scope === "delta" ? openFindings(prev).findings.length : 0;
   const preview = {
     repo: t.repo,
-    target: cmd.uncommitted ? "uncommitted" : "branch",
+    target: { kind },
     // posting is offered only when a PR is behind the target
     postable: prInfo !== null,
-    branch: t.branch,
+    ...(kind === "diff" ? {} : { branch: t.branch }),
     base: t.base,
     head_sha: t.headSha,
     files: scope === "delta" && delta !== null ? delta.files.length : t.files.length,
@@ -777,7 +858,14 @@ async function runReview(
   const memoryReport = { used: seeded.used, notice: seeded.notice };
   let shot: OneShotResult;
   try {
-    if (cmd.uncommitted) addUncommittedTree(gitDir, treeDir, t);
+    if (kind === "diff") {
+      // a plain directory: no git write, so a read-only checkout is enough
+      const w = addDiffTree(deps.cwd, treeDir, t);
+      if (w !== null) {
+        runWarnings.push(w);
+        (deps.warn ?? ((l) => console.error(l)))(w);
+      }
+    } else if (cmd.uncommitted) addUncommittedTree(gitDir, treeDir, t);
     else addReviewTree(gitDir, treeDir, t.headSha);
     shot = await runOneShot({
       root: deps.root,
@@ -796,14 +884,15 @@ async function runReview(
       prompts: planRound(treeDir, seeded.memory).prompts,
       ...(cap !== null ? { capUsd: cap } : {}),
       memory: seeded.memory,
-      sessionName: `review-${(cmd.uncommitted ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`,
-      label: `${t.repo}@${cmd.uncommitted ? "uncommitted" : t.branch}`,
+      sessionName: `review-${(kind === "diff" ? "diff" : cmd.uncommitted ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`,
+      label: `${t.repo}@${kind === "diff" ? "diff" : cmd.uncommitted ? "uncommitted" : t.branch}`,
       ...(deps.log ? { log: deps.log } : {}),
     });
   } catch (err) {
     return refuse(1, [`the review could not run: ${String(err).slice(0, 300)}`]);
   } finally {
-    removeReviewTree(gitDir, treeDir);
+    if (kind === "diff") rmSync(treeDir, { recursive: true, force: true });
+    else removeReviewTree(gitDir, treeDir);
   }
 
   const spent = shot.costUsd ?? shot.piRun.spentUsd ?? null;
@@ -829,7 +918,7 @@ async function runReview(
     cost_usd: spent,
   };
   const recorded = recordRound(scope === "delta" ? prev : null, targetKey, round, shot.findings);
-  if (finished && !cmd.uncommitted) saveState(statePath, recorded.state);
+  if (finished && keepsState) saveState(statePath, recorded.state);
   const open = finished ? stillOpen(recorded.state, round.round_no) : [];
   const skipped = skipPosted(recorded.fresh, bot.findings);
   const groups = groupFindings({ findings: finished ? skipped.fresh : [] });
@@ -866,7 +955,7 @@ async function runReview(
       { ok: false, partial: true, coverage, ...data },
       renderMarkdown(
         {
-          title: `Partial review of ${t.branch} against ${t.base} (${t.repo})`,
+          title: `Partial review of ${subject} (${t.repo})`,
           verdict,
           notes: [
             `Stopped at the cap shown (${usd(cap!)}): ${started.length} of ${lenses.length} planned lenses had started.`,
@@ -888,7 +977,7 @@ async function runReview(
     return 1;
   }
   const mdMeta = {
-    title: `Review of ${t.branch} against ${t.base} (${t.repo})`,
+    title: `Review of ${subject} (${t.repo})`,
     verdict,
     notes: shot.warnings.slice(0, 5),
   };
@@ -1084,6 +1173,12 @@ export async function cmdReview(
   const cfg0 = loadConfig();
   const { cfg, ecosystem } = contextFor(root, cfg0.review.profile);
   const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY);
+  const readStdin = async (): Promise<string> => {
+    if (process.stdin.isTTY) throw new Error("standard input is a terminal: pipe a diff in");
+    const chunks: Buffer[] = [];
+    for await (const c of process.stdin) chunks.push(c as Buffer);
+    return Buffer.concat(chunks).toString("utf8");
+  };
   const agentDir =
     process.env["PI_CODING_AGENT_DIR"]?.trim() ||
     join(process.env["HOME"] || homedir(), ".pi", "agent");
@@ -1093,6 +1188,7 @@ export async function cmdReview(
     );
   return runReviewCli(rest, json, {
     cwd: process.cwd(),
+    readStdin,
     route: routeFromEnv(process.env),
     out: io.out ?? ((l) => console.log(l)),
     confirm: interactive

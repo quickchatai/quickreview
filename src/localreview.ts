@@ -5,13 +5,15 @@
 // (src/setup/scan.ts planKey) so a start must quote the price it was shown.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { PrFileEntry } from "./github.js";
 import { normalizeDisposition } from "./findingkey.js";
 import { severityRank } from "./severityrank.js";
 import { planKey } from "./plankey.js";
+import { parseUnifiedDiff } from "./diffinput.js";
 
 /** A git command's stdout, trimmed; throws with git's own words. */
 function git(
@@ -58,6 +60,9 @@ export interface BranchTarget {
    * scratch store that is gone once the target is resolved, so the patch is
    * what later builds the review tree. */
   uncommitted?: { treeSha: string; patch: string };
+  /** Set when the target is a unified diff handed in (`--diff`): there is no
+   * branch and no head, so `headSha` is a hash of the diff's text. */
+  diff?: { patch: string };
 }
 
 export type BranchResolution = { ok: true; target: BranchTarget } | { ok: false; error: string };
@@ -231,6 +236,65 @@ export function resolveUncommitted(cwd: string): BranchResolution {
       uncommitted: { treeSha, patch },
     },
   };
+}
+
+/** A unified diff handed in, as a target. The repository around `cwd` is not
+ * needed: when there is one it is only named (the repo, for the report), never
+ * written to. */
+export function resolveDiff(cwd: string, text: string): BranchResolution {
+  const { files, lines } = parseUnifiedDiff(text);
+  if (files.length === 0)
+    return { ok: false, error: "nothing to review: no file changes were found in the diff" };
+  const id = createHash("sha1").update(text).digest("hex");
+  const inRepo = tryGit(cwd, ["rev-parse", "--is-inside-work-tree"]) === "true";
+  return {
+    ok: true,
+    target: {
+      repo: inRepo ? repoName(cwd) : "local/diff",
+      branch: "diff",
+      base: "diff",
+      headSha: id,
+      baseSha: id,
+      mergeBase: id,
+      files,
+      lines,
+      diff: { patch: text },
+    },
+  };
+}
+
+/** The review's tree for a diff target: a plain directory, never a git
+ * worktree, so a read-only checkout is enough and nothing is written to its
+ * git dir. With a repository around `cwd` the tree starts as a copy of HEAD
+ * (`git archive`, a read) and the diff is applied on top when it applies;
+ * otherwise, or when it does not, the tree is the HEAD copy (or empty) and
+ * the review reads the changes from the diff itself. Returns a warning when
+ * the diff did not apply. */
+export function addDiffTree(cwd: string, dir: string, t: BranchTarget): string | null {
+  mkdirSync(dir, { recursive: true });
+  const top = tryGit(cwd, ["rev-parse", "--show-toplevel"]);
+  const head =
+    top === null ? null : tryGit(top, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+  if (top === null || head === null) return null;
+  const scratch = mkdtempSync(join(tmpdir(), "qcr-diff-"));
+  try {
+    const tarball = join(scratch, "head.tar");
+    git(top, ["archive", "--format=tar", "-o", tarball, head]);
+    execFileSync("tar", ["-xf", tarball, "-C", dir], { stdio: "ignore" });
+    if (!t.diff) return null;
+    try {
+      // the ceiling keeps git from finding a repository above the scratch tree
+      git(dir, ["apply", "--whitespace=nowarn"], {
+        input: t.diff.patch,
+        env: { GIT_CEILING_DIRECTORIES: dirname(resolve(dir)) },
+      });
+      return null;
+    } catch {
+      return "the diff does not apply to this repository's HEAD, so the repository is context only and the review reads the changes from the diff";
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /** The review's tree for an uncommitted target: HEAD, then the edits on top. */

@@ -96,6 +96,7 @@ function expectContract(schema: Json, name: string, version: number, live: Json)
 
 const REVIEW_GOLDENS = [
   "review-preview",
+  "review-diff-preview",
   "review-done",
   "review-partial",
   "review-refused",
@@ -256,10 +257,16 @@ beforeAll(() => {
   ctx = contextFor(root, "");
 });
 
-async function reviewJson(repo: string, piBin: string, args: string[]): Promise<[number, Json]> {
+async function reviewJson(
+  repo: string,
+  piBin: string,
+  args: string[],
+  stdin?: string,
+): Promise<[number, Json]> {
   const lines: string[] = [];
   const code = await runReviewCli(args, true, {
     cwd: repo,
+    ...(stdin !== undefined ? { readStdin: async () => stdin } : {}),
     out: (l: string) => lines.push(l),
     confirm: null,
     root,
@@ -301,6 +308,43 @@ describe("qcr review --json", () => {
     expect(c4).toBe(2);
     expectContract(review, "review-refused", REVIEW_SCHEMA_VERSION, refused);
   }, 120_000);
+
+  it("a piped diff is a diff target: target.kind = diff, with a repository around it and without", async () => {
+    const a = "export const a = 1;\n";
+    const diff = [
+      "diff --git a/src/a.ts b/src/a.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/a.ts",
+      "+++ b/src/a.ts",
+      "@@ -1,1 +1,2 @@",
+      ` ${a.trimEnd()}`,
+      "+export const b = 2;",
+      "",
+    ].join("\n");
+    const withRepo = join(tmp, "diff-repo");
+    mkdirSync(join(withRepo, "src"), { recursive: true });
+    git(withRepo, "init", "-q", "-b", "main");
+    writeFileSync(join(withRepo, "src", "a.ts"), a);
+    git(withRepo, "add", "-A");
+    git(withRepo, "commit", "-q", "-m", "base");
+    const bare = join(tmp, "diff-bare");
+    mkdirSync(bare);
+    for (const [name, cwd] of [
+      ["review-diff-preview", withRepo],
+      ["review-diff-preview-norepo", bare],
+    ] as const) {
+      const [code, o] = await reviewJson(cwd, "false", ["--diff", "-", "--preview"], diff);
+      expect(code).toBe(0);
+      expect(validate(review, o)).toEqual([]);
+      expect((o["preview"] as Json)["target"]).toEqual({ kind: "diff" });
+      expect((o["preview"] as Json)["postable"]).toBe(false);
+      if (cwd === withRepo) expectContract(review, name, REVIEW_SCHEMA_VERSION, o);
+    }
+    // a diff has no PR: posting is refused, and the refusal is a valid payload
+    const [code, refused] = await reviewJson(bare, "false", ["--diff", "-", "--to", "pr"], diff);
+    expect(code).toBe(2);
+    expect(validate(review, refused)).toEqual([]);
+  });
 
   it("--to json without --json is versioned too", async () => {
     const lines: string[] = [];
