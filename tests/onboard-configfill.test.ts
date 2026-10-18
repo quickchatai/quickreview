@@ -318,6 +318,21 @@ describe("the full interview", () => {
 // ---- derivables: computed, never asked --------------------------------------
 
 describe("derivables", () => {
+  it("points a local fill at the bundled Compose daemon instead of the VM container", async () => {
+    await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
+    const compose = readFileSync(join(REPO_ROOT, "docker-compose.yml"), "utf8");
+    const project = /^name:\s*(\S+)/m.exec(compose)?.[1];
+    expect(compose).toMatch(/^  daemon:/m);
+    expect(producedConfig().tui.container).toBe(`${project}-daemon-1`);
+    // A previously filled VM default must also recover when rerun locally.
+    const path = join(root, "config.toml");
+    writeFileSync(path, readFileSync(path, "utf8").replace(`${project}-daemon-1`, "quickreview-sandbox"));
+    await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
+    expect(producedConfig().tui.container).toBe(`${project}-daemon-1`);
+    writeFileSync(path, readFileSync(path, "utf8").replace(`${project}-daemon-1`, "operator-daemon"));
+    await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
+    expect(producedConfig().tui.container).toBe("operator-daemon");
+  });
   it("enumerates every value computed instead of asked — the list cannot silently shrink", () => {
     expect(DERIVABLES.map((d) => d.id)).toEqual([
       "bot_login",
@@ -329,6 +344,7 @@ describe("derivables", () => {
       "backfill_identity",
       "sink_kind",
       "tui_target",
+      "tui_container",
       "tui_ssh_host",
       "server_hostname",
       "companion_repo_dir",
