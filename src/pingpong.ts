@@ -354,6 +354,24 @@ export class PingPongLedger {
       .run(threadId, pr, this.ts());
     return this.exchanges(threadId);
   }
+
+  /** Count and receipt a decision's reply with its synchronous local writes.
+   * The daemon's registry and event log share this SQLite connection. */
+  recordReply(
+    threadId: number,
+    pr: number,
+    decisionCommentId: number | undefined,
+    localReceipt: (exchanges: number) => void,
+  ): number {
+    return this.db.transaction(() => {
+      if (decisionCommentId !== undefined && this.decisionProgress(decisionCommentId).reply_posted)
+        return this.exchanges(threadId);
+      const exchanges = this.recordExchange(threadId, pr);
+      localReceipt(exchanges);
+      if (decisionCommentId !== undefined) this.markDecisionStep(decisionCommentId, "reply_posted");
+      return exchanges;
+    })();
+  }
 }
 
 // ---- the wake message ----------------------------------------------------
@@ -472,8 +490,13 @@ export interface ReplyResult {
 /** Post one thread reply through the gate and register the posted comment id. */
 export async function postReply(
   deps: ReplyDeps,
-  input: { pr: number; thread_id: number; body: string },
+  input: { pr: number; thread_id: number; body: string; decision_comment_id?: number },
 ): Promise<ReplyResult> {
+  if (
+    input.decision_comment_id !== undefined &&
+    deps.ledger.decisionProgress(input.decision_comment_id).reply_posted
+  )
+    return { posted: true, exchanges: deps.ledger.exchanges(input.thread_id) };
   const discipline = deps.ledger.discipline(input.thread_id);
   if (!discipline.allowed) {
     const capHits = deps.ledger.recordCapHit(input.thread_id, input.pr);
@@ -498,25 +521,31 @@ export async function postReply(
     });
     return { posted: false, result, exchanges: discipline.exchanges, blocked: result.blocked };
   }
-  const exchanges = deps.ledger.recordExchange(input.thread_id, input.pr);
   let registered: number | undefined;
-  if (result.executed) {
-    const res = result.response as { id?: number } | undefined;
-    if (typeof res?.id === "number") {
-      deps.store.registerBotComment(res.id, input.pr, "review_comment");
-      registered = res.id;
-    }
-    deps.store.logEvent("pingpong_reply_posted", input.pr, {
-      thread_id: input.thread_id,
-      exchanges,
-    });
-  } else {
-    deps.store.logEvent("pingpong_reply_intent", input.pr, {
-      thread_id: input.thread_id,
-      exchanges,
-      dryrun_file: result.dryRunFile ?? null,
-    });
-  }
+  const exchanges = deps.ledger.recordReply(
+    input.thread_id,
+    input.pr,
+    input.decision_comment_id,
+    (exchanges) => {
+      if (result.executed) {
+        const res = result.response as { id?: number } | undefined;
+        if (typeof res?.id === "number") {
+          deps.store.registerBotComment(res.id, input.pr, "review_comment");
+          registered = res.id;
+        }
+        deps.store.logEvent("pingpong_reply_posted", input.pr, {
+          thread_id: input.thread_id,
+          exchanges,
+        });
+      } else {
+        deps.store.logEvent("pingpong_reply_intent", input.pr, {
+          thread_id: input.thread_id,
+          exchanges,
+          dryrun_file: result.dryRunFile ?? null,
+        });
+      }
+    },
+  );
   return { posted: true, result, exchanges, ...(registered !== undefined ? { registered } : {}) };
 }
 
@@ -1053,13 +1082,14 @@ export class ThreadDecisionWatcher {
           // came back. Account for it exactly as a posted reply, and do NOT
           // post it again: a second copy is a duplicate on the thread and one
           // reply past the exchange cap.
-          const exchanges = this.deps.ledger.recordExchange(d.thread_id, d.pr);
-          this.deps.store.registerBotComment(landed, d.pr, "review_comment");
-          this.deps.store.logEvent("pingpong_reply_recovered", d.pr, {
-            thread_id: d.thread_id,
-            comment_id: d.comment_id,
-            reply_id: landed,
-            exchanges,
+          this.deps.ledger.recordReply(d.thread_id, d.pr, d.comment_id, (exchanges) => {
+            this.deps.store.registerBotComment(landed, d.pr, "review_comment");
+            this.deps.store.logEvent("pingpong_reply_recovered", d.pr, {
+              thread_id: d.thread_id,
+              comment_id: d.comment_id,
+              reply_id: landed,
+              exchanges,
+            });
           });
         } else if (d.reply.trim()) {
           this.lastGitHubStart = now.getTime();
@@ -1068,6 +1098,7 @@ export class ThreadDecisionWatcher {
             pr: d.pr,
             thread_id: d.thread_id,
             body: `${d.reply.trim()}\n\n${replyMarker(d.comment_id)}`,
+            decision_comment_id: d.comment_id,
           });
           // An unverifiable PR state is transient: fail this attempt so the
           // bounded retry schedule below posts the reply later. A merged or
@@ -1076,7 +1107,8 @@ export class ThreadDecisionWatcher {
             throw new Error(`reply refused by posting guard: ${out.blocked}`);
           }
         }
-        this.deps.ledger.markDecisionStep(d.comment_id, "reply_posted");
+        if (!this.deps.ledger.decisionProgress(d.comment_id).reply_posted)
+          this.deps.ledger.markDecisionStep(d.comment_id, "reply_posted");
         this.deps.ledger.resetRetry(d.comment_id);
       }
       if (d.resolution === "resolve" && !progress.thread_resolved) {

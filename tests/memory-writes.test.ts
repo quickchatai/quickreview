@@ -1345,6 +1345,38 @@ describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () =>
     s.close();
   });
 
+  it("matches legacy feedback only within the source namespace named by its own prose", () => {
+    const state = new StateStore(":memory:");
+    try {
+      const labels = {
+        issue_comment: "top-level",
+        review_comment: "inline thread",
+        review: "review body",
+      };
+      const entries = Object.entries(labels).map(([scope, label]) =>
+        entryFrom(
+          `experiences/${scope}.md`,
+          `#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (${label}, comment 55): "too picky" — …`,
+          "",
+        ),
+      );
+      for (const scope of ["issue_comment", "review_comment", "review"] as const) {
+        const row = state.recordFeedbackSignalRow({
+          kind: "feedback_comment",
+          pr: 7,
+          comment_id: 55,
+          scope,
+          author: "x",
+          body: "[feedback] y",
+          day: "2026-09-02",
+        })!;
+        expect(legacyFeedbackEntry(row, entries)?.id).toBe(`experiences/${scope}.md`);
+      }
+    } finally {
+      state.close();
+    }
+  });
+
   it("matches a legacy entry by its header tags and id — quoted prose cannot fake one", () => {
     const s = new StateStore(":memory:");
     const row = s.recordFeedbackSignalRow({
@@ -1361,7 +1393,7 @@ describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () =>
       legacyFeedbackEntry(row, [
         mk(
           "experiences/a.md",
-          '#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (inline thread, comment 55): "too picky" — …',
+          '#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (top-level, comment 55): "too picky" — …',
         ),
       ])?.id,
     ).toBe("experiences/a.md");
@@ -1370,7 +1402,7 @@ describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () =>
       legacyFeedbackEntry(row, [
         mk(
           "experiences/b.md",
-          '#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (inline thread, comment 550): "too picky" — …',
+          '#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (top-level, comment 550): "too picky" — …',
         ),
       ]),
     ).toBeNull();
@@ -1379,7 +1411,7 @@ describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () =>
       legacyFeedbackEntry(row, [
         mk(
           "experiences/q.md",
-          '#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (inline thread, comment 56): "same as comment 55): " too" — …',
+          '#feedback kind=feedback pr=7 day=2026-09-02 signal=feedback_comment human [feedback] by bob on PR #7 (top-level, comment 56): "same as comment 55): " too" — …',
         ),
       ]),
     ).toBeNull();
