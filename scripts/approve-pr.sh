@@ -200,7 +200,11 @@ call() {
   echo "$1 $2 -> $status  ($4)"
   case "$status" in
     2*) CALL_RESPONSE="$(cat "$out")"; rm -f "$out" ;;
-    404) echo "  not present, treating as already cleared: $(head -c 200 "$out")"; rm -f "$out" ;;
+    404)
+      if [[ "$1" != "DELETE" ]]; then
+        echo "  $(head -c 300 "$out")" >&2; rm -f "$out"; die "$1 $2 failed with404"
+      fi
+      echo "  not present, treating as already cleared: $(head -c 200 "$out")"; rm -f "$out" ;;
     5*|000)
       echo "  $(head -c 300 "$out" 2>/dev/null)" >&2; rm -f "$out"
       [[ -n "$soft" ]] && return 75
@@ -311,7 +315,11 @@ if sys.argv[1]:
             raise SystemExit(f"approve-pr: comment {i}: need path(str), line(int>0), body(str)")
         if "side" in c and c["side"] not in ("RIGHT", "LEFT"):
             raise SystemExit(f"approve-pr: comment {i}: side must be RIGHT or LEFT")
-        out.append({k: c[k] for k in ("path", "line", "side", "body") if k in c})
+        if "start_line" in c and (type(c["start_line"]) is not int or not 1 <= c["start_line"] <= c["line"]):
+            raise SystemExit("invalid multiline anchor")
+        if "start_side" in c and ("start_line" not in c or c["start_side"] not in ("RIGHT", "LEFT")):
+            raise SystemExit("invalid multiline side")
+        out.append({k: c[k] for k in ("path", "line", "side", "start_line", "start_side", "body") if k in c})
     payload["comments"] = out
 json.dump(payload, sys.stdout)
 PY
@@ -362,7 +370,7 @@ if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
 fi
 # The reviewed-head mark, only for an approval that really reached GitHub (the
 # same rule the gate's after-step follows). The post-approval recheck reads it.
-if [[ "$LIVE" == "1" ]]; then guard_stamp_reviewed_head "$GUARD_HEAD_SHA" "APPROVE"; fi
+if [[ "$LIVE" == "1" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then guard_stamp_reviewed_head "$GUARD_HEAD_SHA" "APPROVE"; fi
 
 # ---- 2. clear the label trigger ---------------------------------------------
 

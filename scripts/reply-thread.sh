@@ -76,7 +76,7 @@ NOTE="reply to review comment $CID on #$PR"
 record() { # record <kind> <method> <path> <body-json> <note> — same shape as src/gate.ts
   mkdir -p "$DRYRUN_DIR"
   local file
-  file="$DRYRUN_DIR/$(date -u +%Y-%m-%dT%H-%M-%S-000Z)-0000-$1.json"
+  file="$DRYRUN_DIR/$(date -u +%Y-%m-%dT%H-%M-%S-000Z)-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')-$1.json"
   BODY_JSON="$4" python3 - "$file" "$1" "$2" "$3" "$5" "$PR" <<'PY'
 import json, os, sys, datetime
 path, kind, method, api_path, note, pr = sys.argv[1:7]

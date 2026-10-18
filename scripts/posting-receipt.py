@@ -37,10 +37,18 @@ def atomic(path: Path, value: dict) -> None:
 
 def base(path: Path) -> dict:
     try:
-        value = json.loads(path.read_text())
-        return value if isinstance(value, dict) else {}
-    except Exception:
+        text = path.read_text()
+    except FileNotFoundError:
         return {}
+    except OSError as exc:
+        raise SystemExit(f"posting-receipt: existing receipt unreadable: {exc}")
+    try:
+        value = json.loads(text)
+    except (ValueError, TypeError) as exc:
+        raise SystemExit(f"posting-receipt: existing receipt invalid: {exc}")
+    if not isinstance(value, dict) or not value:
+        raise SystemExit("posting-receipt: existing receipt must be a nonempty object")
+    return value
 
 
 def check(path: Path, key: str) -> None:
@@ -138,7 +146,11 @@ def enqueue(path: Path, key: str, raw_pr: str, raw_round: str, head: str, event:
         for c in comments:
             if not isinstance(c, dict) or not isinstance(c.get("path"), str) or type(c.get("line")) is not int or c["line"] < 1 or not isinstance(c.get("body"), str) or c.get("side", "RIGHT") not in ("RIGHT", "LEFT"):
                 raise SystemExit("posting-receipt: invalid inline comment")
-        payload["comments"] = [{k: c[k] for k in ("path", "line", "side", "body") if k in c} for c in comments]
+            if "start_line" in c and (type(c["start_line"]) is not int or not 1 <= c["start_line"] <= c["line"]):
+                raise SystemExit("posting-receipt: invalid multiline anchor")
+            if "start_side" in c and ("start_line" not in c or c["start_side"] not in ("RIGHT", "LEFT")):
+                raise SystemExit("posting-receipt: invalid multiline side")
+        payload["comments"] = [{k: c[k] for k in ("path", "line", "side", "start_line", "start_side", "body") if k in c} for c in comments]
     source_hash = hashlib.sha256(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     existing = base(path)
     if existing:

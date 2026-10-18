@@ -3,6 +3,7 @@
 // loopback GitHub stub, in dry-run. The rig (stub, temp home, state.db, the
 // run/record helpers) and why the suite is split are in
 // tests/helpers/guards-shell-rig.ts; this file owns its own stub instance.
+import { StateStore } from "../src/state.js";
 import { describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -309,5 +310,141 @@ describe("posting receipts", () => {
     expect(repeated.ok).toBe(true);
     expect(repeated.out).toContain("skipping duplicate approval");
     expect(dryrunRecords().filter((name) => name.includes("create_review"))).toHaveLength(1);
+  });
+});
+
+describe("posting regressions", () => {
+  it.each(["post-review.sh", "approve-pr.sh"])(
+    "%s preserves multiline anchors in the sent and queued payload",
+    async (script) => {
+      const comments = [
+        {
+          path: "src/example.ts",
+          line: 12,
+          side: "RIGHT",
+          start_line: 10,
+          start_side: "RIGHT",
+          body: "A range finding.",
+        },
+      ];
+      const path = join(s.dir, "range-comments.json");
+      writeFileSync(path, JSON.stringify(comments));
+      const args =
+        script === "post-review.sh"
+          ? ["5180", "COMMENT", bodyFile(), path]
+          : ["5180", bodyFile(), path];
+      const res = await run(script, args, {
+        QCR_EXPECTED_HEAD: HEAD,
+        QCR_ROUND_NO: "51",
+        QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
+      });
+      expect(res.ok).toBe(true);
+      const create = dryrunRecords().find((name) => name.includes("create_review"))!;
+      expect(JSON.parse(readFileSync(join(s.dir, "dryrun", create), "utf8")).body.comments).toEqual(
+        comments,
+      );
+      expect(
+        JSON.parse(readFileSync(join(s.dir, "receipts", "pr-5180-round-51.outbox.json"), "utf8"))
+          .payload.comments,
+      ).toEqual(comments);
+    },
+  );
+  it("post-review refuses boolean lines on the unkeyed route", async () => {
+    const path = join(s.dir, "boolean-comments.json");
+    writeFileSync(path, JSON.stringify([{ path: "x.ts", line: true, body: "invalid" }]));
+    expect((await run("post-review.sh", ["5180", "COMMENT", bodyFile(), path])).ok).toBe(false);
+    expect(dryrunRecords()).toEqual([]);
+  });
+  it("keeps receipt head identity when the PR-state guard is disabled", async () => {
+    const cfg = join(s.dir, "config.toml");
+    writeFileSync(
+      cfg,
+      readFileSync(cfg, "utf8") + "\n[guards]\nrecheck_pr_state_before_post = false\n",
+    );
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], {
+      QCR_EXPECTED_HEAD: HEAD,
+      QCR_ROUND_NO: "52",
+      QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
+    });
+    expect(res.ok).toBe(true);
+    expect(
+      JSON.parse(readFileSync(join(s.dir, "receipts", "pr-5180-round-52.json"), "utf8")),
+    ).toMatchObject({ head_sha: HEAD, status: "dryrun" });
+  });
+  it("a malformed existing receipt refuses a replay before preparing another post", async () => {
+    const dir = join(s.dir, "receipts");
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, "pr-5180-round-53.json");
+    writeFileSync(path, '{"status":"confirmed",');
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], {
+      QCR_EXPECTED_HEAD: HEAD,
+      QCR_ROUND_NO: "53",
+      QCR_POSTING_RECEIPT_DIR: dir,
+    });
+    expect(res.ok).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe('{"status":"confirmed",');
+    expect(dryrunRecords()).toEqual([]);
+  });
+  it("same-second dry-run replies retain both audit records", async () => {
+    const fixedDate = join(s.dir, "fixed-date");
+    mkdirSync(fixedDate);
+    writeFileSync(join(fixedDate, "date"), '#!/bin/sh\nprintf "2026-10-18T00-00-00-000Z\\n"\n', {
+      mode: 0o755,
+    });
+    for (const id of [11, 12])
+      expect(
+        (
+          await run("reply-thread.sh", ["5180", String(id), bodyFile()], {
+            PATH: fixedDate + ":" + process.env.PATH,
+          })
+        ).ok,
+      ).toBe(true);
+    expect(dryrunRecords()).toHaveLength(2);
+  });
+  function live(): Record<string, string> {
+    const cfg = join(s.dir, "config.toml");
+    writeFileSync(cfg, readFileSync(cfg, "utf8").replace("dry_run = true", "dry_run = false"));
+    writeFileSync(join(s.dir, "secrets", "app_id"), "4242\n");
+    writeFileSync(join(s.dir, "secrets", "app.pem"), "fixture");
+    const runtime = join(s.dir, "runtime");
+    mkdirSync(runtime, { recursive: true });
+    writeFileSync(
+      join(runtime, "quickreview-token-4242.json"),
+      JSON.stringify({ token: "fixture", expires_at: "2099-01-01T00:00:00Z" }),
+    );
+    return { XDG_RUNTIME_DIR: runtime, QCR_EXPECTED_HEAD: HEAD };
+  }
+  it("a404 approval POST fails rather than claiming the review was cleared", async () => {
+    s.mutationStatus = 404;
+    const res = await run("approve-pr.sh", ["5180", bodyFile()], live());
+    expect(res.ok).toBe(false);
+  });
+  it("confirmed approval cleanup leaves later author evidence and review time intact", async () => {
+    const key = `v1:5180:54:${HEAD}`,
+      path = join(s.dir, "receipts", "pr-5180-round-54.json");
+    const args = [path, key, "5180", "54", HEAD, "APPROVE", "APPROVE", '{"event":"APPROVE"}'];
+    await exec("python3", [join(root, "scripts", "posting-receipt.py"), "prepare", ...args]);
+    await exec("python3", [join(root, "scripts", "posting-receipt.py"), "confirm", ...args], {
+      env: {
+        ...process.env,
+        QCR_POST_RESPONSE: JSON.stringify({ id: 999, commit_id: HEAD, state: "APPROVED" }),
+      },
+    });
+    const store = new StateStore(s.dbPath);
+    store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 54 });
+    store.noteAuthorReply(5180, "2099-01-01T00:00:00Z");
+    const mark = store.reviewedHead(5180);
+    store.close();
+    await run("approve-pr.sh", ["5180", bodyFile()], {
+      ...live(),
+      QCR_ROUND_NO: "54",
+      QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
+    });
+    const after = new StateStore(s.dbPath);
+    try {
+      expect(after.reviewedHead(5180)).toEqual(mark);
+    } finally {
+      after.close();
+    }
   });
 });

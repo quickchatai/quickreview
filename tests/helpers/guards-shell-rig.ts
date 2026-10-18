@@ -55,6 +55,7 @@ export interface CheckRunStub {
 export const exec = promisify(execFile);
 
 export interface GuardsShellRig {
+  mutationStatus: number;
   /** What GET /pulls/5180 answers; null makes the stub 404. */
   pr: PrStub | null;
   reviews: ReviewStub[];
@@ -101,6 +102,7 @@ export function useGuardsShellRig(): GuardsShellRig {
   let server: Server;
 
   const s: GuardsShellRig = {
+    mutationStatus: 500,
     pr: null,
     reviews: [],
     checkRuns: [],
@@ -166,6 +168,7 @@ export function useGuardsShellRig(): GuardsShellRig {
     writeFileSync(join(s.dir, "config.toml"), CONFIG(join(s.dir, "secrets")));
     s.pr = { state: "open", merged: false, head: { sha: HEAD }, user: { login: "pr-author" } };
     s.reviews = [];
+    s.mutationStatus = 500;
     s.checkRuns = [{ name: "unit", status: "completed", conclusion: "success" }];
     s.statuses = [];
     s.dbPath = join(s.dir, "state.db");
@@ -198,7 +201,7 @@ export function useGuardsShellRig(): GuardsShellRig {
       }
       // Nothing else may be called: dry-run posts nothing, and a guard that
       // refuses must not have reached any other endpoint either.
-      res.writeHead(500, { "content-type": "application/json" });
+      res.writeHead(s.mutationStatus, { "content-type": "application/json" });
       res.end(JSON.stringify({ message: `unexpected ${req.method} ${req.url}` }));
     });
     await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
