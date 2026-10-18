@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
 import {
   applyEvent,
@@ -240,6 +240,32 @@ describe("applyEvent", () => {
     expect(row.stale_recheck).toBe(0);
     expect(row.trigger_ts).toBeNull();
     store.close();
+  });
+
+  it("rolls back a head advance when its successor checkpoint fails", () => {
+    const store = open();
+    try {
+      applyEvent(
+        store,
+        5409,
+        { type: "trigger", source: "label" },
+        { author: "alice", head_sha: "old" },
+      );
+      store.startRound(5409, "re-review", ["pass-baseline"], 75);
+      applyEvent(store, 5409, { type: "dispatched" });
+      const checkpoint = vi.spyOn(store, "recordSuccessor").mockImplementationOnce(() => {
+        throw new Error("successor disk failure");
+      });
+      expect(() => applyEvent(store, 5409, { type: "synchronize" }, { head_sha: "new" })).toThrow(
+        "successor disk failure",
+      );
+      checkpoint.mockRestore();
+      expect(store.getPr(5409)?.head_sha).toBe("old");
+      applyEvent(store, 5409, { type: "synchronize" }, { head_sha: "new" });
+      expect(store.successorFor(5409)?.head_sha).toBe("new");
+    } finally {
+      store.close();
+    }
   });
 
   it("records fresh-head work owed while preserving the reviewing lifecycle", () => {

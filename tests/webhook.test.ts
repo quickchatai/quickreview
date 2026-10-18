@@ -574,6 +574,115 @@ describe("interpretEvent — issue comments", () => {
 // ---- applyInterpretation → store ----------------------------------------
 
 describe("applyInterpretation", () => {
+  function tracked(store: StateStore): void {
+    store.upsertPr({
+      number: 4242,
+      state: "awaiting_author",
+      head_sha: "old",
+      title: "T",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+  }
+
+  it("records a head push only for the winning head refresh", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      tracked(store);
+      const interpretation = interpretEvent(
+        "pull_request",
+        "synchronize",
+        synchronizePayload(),
+        deps(),
+      );
+      await applyInterpretation({ cfg, store }, interpretation);
+      await applyInterpretation({ cfg, store }, interpretation);
+      expect(
+        store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='head_push'").get(),
+      ).toEqual({ n: 1 });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("records a close once while allowing idempotent cleanup to retry", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      tracked(store);
+      const cleanup = vi.fn();
+      const interpretation = interpretEvent("pull_request", "closed", closedPayload(false), deps());
+      await applyInterpretation({ cfg, store, onClosed: cleanup }, interpretation);
+      await applyInterpretation({ cfg, store, onClosed: cleanup }, interpretation);
+      expect(cleanup).toHaveBeenCalledTimes(2);
+      expect(
+        store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='pr_closed'").get(),
+      ).toEqual({ n: 1 });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("repairs interrupted closed cleanup without publishing another close fact", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      tracked(store);
+      const round = store.startRound(4242, "first", ["pass-baseline"], 75);
+      store.recordSuccessor({
+        pr: 4242,
+        predecessor_round_id: round,
+        head_sha: "new",
+        provenance: "human",
+        reason: "legacy close interrupted",
+      });
+      // The old daemon could stop after publishing closed but before cleanup.
+      store.upsertPr({
+        ...store.getPr(4242)!,
+        state: "closed",
+        head_sha: "authoritative-closed-head",
+      });
+      expect(store.successorFor(4242)).toBeDefined();
+      const cleanup = vi.fn();
+      await applyInterpretation(
+        { cfg, store, onClosed: cleanup },
+        interpretEvent("pull_request", "closed", closedPayload(true), deps()),
+      );
+      expect(store.successorFor(4242)).toBeUndefined();
+      expect(store.getPr(4242)?.head_sha).toBe("authoritative-closed-head");
+      expect(cleanup).toHaveBeenCalledTimes(1);
+      expect(store.feedbackSignalsFor(4242)).toHaveLength(0);
+      expect(
+        store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='pr_closed'").get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("keeps the standing block when durable merged feedback cannot be recorded", async () => {
+    const store = new StateStore(":memory:");
+    try {
+      tracked(store);
+      const checkpoint = vi.spyOn(store, "recordFeedbackSignalRow").mockImplementationOnce(() => {
+        throw new Error("feedback ledger unavailable");
+      });
+      const interpretation = interpretEvent("pull_request", "closed", closedPayload(true), deps());
+      await expect(applyInterpretation({ cfg, store }, interpretation)).rejects.toThrow(
+        "feedback ledger unavailable",
+      );
+      checkpoint.mockRestore();
+      expect(store.getPr(4242)?.state).toBe("awaiting_author");
+      expect(
+        store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='pr_closed'").get(),
+      ).toEqual({ n: 0 });
+      await applyInterpretation({ cfg, store }, interpretation);
+      expect(store.feedbackSignalsFor(4242)).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
   it("refreshes a pushed head without queuing or pumping a review", async () => {
     const store = new StateStore(":memory:");
     store.upsertPr({

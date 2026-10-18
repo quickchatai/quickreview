@@ -188,6 +188,16 @@ export function applyEvent(
   meta: PrMeta = {},
   opts: { botLogin?: string; now?: () => Date; reason?: string } = {},
 ): ApplyResult {
+  return store.db.transaction(() => applyEventTransaction(store, pr, event, meta, opts))();
+}
+
+function applyEventTransaction(
+  store: StateStore,
+  pr: number,
+  event: SmEvent,
+  meta: PrMeta = {},
+  opts: { botLogin?: string; now?: () => Date; reason?: string } = {},
+): ApplyResult {
   const now = opts.now ?? (() => new Date());
   const existing = store.getPr(pr);
   const author = meta.author ?? existing?.author ?? "";
@@ -285,9 +295,14 @@ export function applyEvent(
     }
   }
   if (event.type === "closed") {
+    store.acknowledgeTriggerEdges(pr);
     store.clearSuccessor(pr, "pr-closed");
     store.recoverReviewFailure(pr, "pr-closed");
   }
+
+  // Publication and observation acknowledgment share the lifecycle transaction.
+  if (event.type === "trigger" && (event.source === "label" || event.source === "team_request"))
+    store.acknowledgeTriggerEdges(pr);
 
   const changed = from !== to;
   const name: SmEventType = event.type;

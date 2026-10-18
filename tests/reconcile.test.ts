@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CheckSummary } from "../src/cigate.js";
 import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
@@ -296,6 +296,74 @@ describe("reconcileOnce", () => {
         )
         .get(),
     ).toEqual({ n: 1 });
+  });
+
+  it("rolls back a human edge when its level checkpoint fails", () => {
+    seed(45, "tracked");
+    store.observeTriggerLevel(45, "label", false);
+    store.db.exec(
+      "CREATE TRIGGER fail_trigger_level BEFORE UPDATE ON trigger_levels BEGIN SELECT RAISE(ABORT, 'level unavailable'); END",
+    );
+    expect(() => store.observeTriggerLevel(45, "label", true)).toThrow("level unavailable");
+    expect(store.triggerLevel(45, "label")).toBe(false);
+    expect(store.triggerEdgePending(45, "label")).toBe(false);
+    store.db.exec("DROP TRIGGER fail_trigger_level");
+    store.observeTriggerLevel(45, "label", true);
+    expect(store.triggerEdgePending(45, "label")).toBe(true);
+  });
+
+  it("retains a fresh human trigger after queue publication fails", async () => {
+    const { hooks } = recordingHooks();
+    seed(38, "tracked", { head: "layout-sha" });
+    store.recordReviewedHead(38, { head_sha: "approved-sha", verdict: "APPROVE", round_no: 1 });
+    store.claimRecheck(38, "push:layout-sha::", { head_sha: "layout-sha", trigger: "push" });
+    gh.open = [ref(38, { head_sha: "layout-sha" })];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    gh.teamTriggered = [item(38)];
+    const write = store.upsertPr.bind(store);
+    const checkpoint = vi.spyOn(store, "upsertPr").mockImplementation((row) => {
+      if (row.state === "queued") throw new Error("queue checkpoint unavailable");
+      write(row);
+    });
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    checkpoint.mockRestore();
+    expect(store.getPr(38)?.state).toBe("tracked");
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(store.getPr(38)).toMatchObject({ state: "queued", trigger_provenance: "human" });
+  });
+
+  it("rolls back a push fact when authoritative head publication fails", async () => {
+    const { hooks } = recordingHooks();
+    seed(44, "tracked", { head: "old" });
+    gh.open = [ref(44, { head_sha: "new" })];
+    const checkpoint = vi.spyOn(store, "upsertPr").mockImplementationOnce(() => {
+      throw new Error("head publication failed");
+    });
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    checkpoint.mockRestore();
+    expect(store.getPr(44)?.head_sha).toBe("old");
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE pr=44 AND kind='head_push'").get(),
+    ).toEqual({ n: 0 });
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE pr=44 AND kind='head_push'").get(),
+    ).toEqual({ n: 1 });
+  });
+
+  it("records merged-over-block feedback before a fallible close callback", async () => {
+    const { hooks } = recordingHooks();
+    seed(43, "awaiting_author");
+    gh.closedPrs.set(43, ref(43, { state: "closed", merged: true }));
+    const feedback = vi.fn(async () => {
+      throw new Error("feedback callback failed");
+    });
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, onMergedOverBlock: feedback });
+    expect(store.getPr(43)?.state).toBe("closed");
+    expect(store.feedbackSignalsFor(43)).toMatchObject([{ kind: "merged_over_block" }]);
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, onMergedOverBlock: feedback });
+    expect(store.feedbackSignalsFor(43)).toHaveLength(1);
+    expect(feedback).toHaveBeenCalledTimes(1);
   });
 
   it("still treats a newly appearing trigger as a human full-review request", async () => {
@@ -911,6 +979,25 @@ describe("reconcileOrphanedRounds", () => {
     expect(store.getPr(11)!.state).toBe("queued");
     expect(store.getPr(12)!.state).toBe("tracked"); // never disturbed
     store.close();
+  });
+
+  it("rolls back orphan cancellation when replacement publication fails", () => {
+    const store = new StateStore(":memory:");
+    try {
+      upsert(store, 14, "reviewing");
+      const id = store.startRound(14, "first", ["pass-baseline"], 75);
+      const checkpoint = vi.spyOn(store, "upsertPr").mockImplementationOnce(() => {
+        throw new Error("queue disk failure");
+      });
+      expect(() => reconcileOrphanedRounds(store, [], {})).toThrow("queue disk failure");
+      checkpoint.mockRestore();
+      expect(store.runningRounds().map((r) => r.id)).toContain(id);
+      expect(store.getPr(14)?.state).toBe("reviewing");
+      expect(reconcileOrphanedRounds(store, [], {}).requeued).toEqual([14]);
+      expect(store.getPr(14)?.state).toBe("queued");
+    } finally {
+      store.close();
+    }
   });
 
   it("promotes a durable fresh-head successor when the predecessor session is lost", () => {

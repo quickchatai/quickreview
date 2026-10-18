@@ -14,6 +14,7 @@ import {
 } from "./capture.js";
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
 import { auditUngatedReviews, hasUngatedApproval, ungatedReviewMessage } from "./execboundary.js";
+import { ledgerFeedbackSignal } from "./feedback.js";
 import { recheckFingerprint } from "./recheck.js";
 import { recheckPromptMarker } from "./types.js";
 import { standingVerdict } from "./standing-review.js";
@@ -212,18 +213,15 @@ export function reconcileOrphanedRounds(
     // `orphan_sweep` is the quiet cause: tmux lives in the container,
     // so a clean redeploy orphans every round in flight by construction. It is
     // counted and grouped like every other cause, and it raises nothing.
-    store.markRoundCancelled(
-      round.id,
-      "orphaned — tmux session lost across a restart",
-      "orphan_sweep",
-    );
-    store.logEvent("round_orphaned", round.pr, { round_id: round.id, round_no: round.round_no });
-    cancelled.push(round.pr);
-    log(`startup: #${round.pr} round ${round.round_no} cancelled (session lost)`);
-    const row = store.getPr(round.pr);
-    if (row?.state === "reviewing" && !store.hasLaterRound(round.pr, round.round_no)) {
-      // "reviewing" was true only while the session lived. A durable newer
-      // head wins; otherwise redo the lost head.
+    const replaced = store.db.transaction(() => {
+      store.markRoundCancelled(
+        round.id,
+        "orphaned — tmux session lost across a restart",
+        "orphan_sweep",
+      );
+      store.logEvent("round_orphaned", round.pr, { round_id: round.id, round_no: round.round_no });
+      const row = store.getPr(round.pr);
+      if (row?.state !== "reviewing" || store.hasLaterRound(round.pr, round.round_no)) return false;
       const successorPromoted = store.promoteSuccessor(round.pr);
       if (!successorPromoted)
         store.upsertPr({ ...row, state: "queued", trigger_ts: now().toISOString() });
@@ -232,6 +230,11 @@ export function reconcileOrphanedRounds(
         round_no: round.round_no,
         successor_promoted: successorPromoted,
       });
+      return true;
+    })();
+    cancelled.push(round.pr);
+    log(`startup: #${round.pr} round ${round.round_no} cancelled (session lost)`);
+    if (replaced) {
       requeued.push(round.pr);
       log(`startup: #${round.pr} requeued — its in-flight round was lost`);
     }
@@ -282,19 +285,21 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       const local = store.getPr(pr.number);
       if (!local) continue; // untriggered PRs are not tracked (no sweeps)
       if (local.head_sha !== pr.head_sha || local.title !== pr.title) {
-        const pushed = local.head_sha !== pr.head_sha;
-        if (pushed) {
-          // Push instant as GitHub-derived truth (webhooks may have been missed)
-          // — the author-response metric reads these.
-          store.logEvent("head_push", pr.number, { head_sha: pr.head_sha, source: "reconcile" });
-        }
-        applyEvent(
-          store,
-          pr.number,
-          { type: "track" },
-          { title: pr.title, head_sha: pr.head_sha, author: pr.author },
-          { botLogin, now },
-        );
+        const pushed = store.db.transaction(() => {
+          const before = store.getPr(pr.number);
+          const result = applyEvent(
+            store,
+            pr.number,
+            { type: "track" },
+            { title: pr.title, head_sha: pr.head_sha, author: pr.author },
+            { botLogin, now },
+          );
+          const changed =
+            !result.skipped && before !== undefined && before.head_sha !== pr.head_sha;
+          if (changed)
+            store.logEvent("head_push", pr.number, { head_sha: pr.head_sha, source: "reconcile" });
+          return changed;
+        })();
         if (pushed && deps.onHeadPush) {
           // After the track so the recheck reads the updated row. Errors are
           // contained: a failed recheck must not abort the reconcile pass.
@@ -439,7 +444,10 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       const freshKind =
         local === undefined
           ? group.kinds[0]
-          : group.kinds.find((kind) => previous.get(`${pr}:${kind}`) === false);
+          : group.kinds.find(
+              (kind) =>
+                store.triggerEdgePending(pr, kind) || previous.get(`${pr}:${kind}`) === false,
+            );
       if (local?.state === "reviewing") {
         // A fresh request can upgrade an already-recorded pushed-head
         // successor to human provenance. Same-head requests need no second
@@ -489,6 +497,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       // Dry-run never consumes triggers on GitHub, so an already-reviewed
       // head would re-queue forever; suppress until the head moves.
       if (cfg.dry_run && meta.head_sha && store.lastVerdictHead(pr) === meta.head_sha) {
+        if (freshKind) store.acknowledgeTriggerEdges(pr);
         deps.log?.(
           `dry-run: suppressing re-trigger of #${pr} at reviewed head ${meta.head_sha.slice(0, 10)}`,
         );
@@ -658,19 +667,33 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         { merged: ref.merged, local: local.state },
         report,
       );
-      // Same signal the webhook's closed case derives — a merge
-      // landing over a standing REQUEST_CHANGES. Read the state BEFORE
-      // applyEvent erases it; per-(pr, day) dedupe absorbs the overlap with
-      // a webhook delivery that already fired.
-      const overBlock = mergedOverBlock(ref.merged, local.state);
-      applyEvent(
-        store,
-        local.number,
-        { type: "closed" },
-        { title: ref.title, head_sha: ref.head_sha, author: ref.author },
-        { botLogin, now },
-      );
-      store.logEvent("pr_closed", local.number, { merged: ref.merged, source: "reconcile" });
+      // The existing feedback ledger is the durable owed-memory intent. Commit
+      // it with closure, before a callback can fail or the process can stop.
+      const overBlock = store.db.transaction(() => {
+        const priorState = store.getPr(local.number)?.state;
+        if (priorState === "closed") return false;
+        const result = applyEvent(
+          store,
+          local.number,
+          { type: "closed" },
+          { title: ref.title, head_sha: ref.head_sha, author: ref.author },
+          { botLogin, now },
+        );
+        if (result.skipped) return false;
+        store.logEvent("pr_closed", local.number, { merged: ref.merged, source: "reconcile" });
+        const over = mergedOverBlock(ref.merged, priorState);
+        if (over)
+          ledgerFeedbackSignal(
+            store,
+            { kind: "merged_over_block", pr: local.number },
+            {
+              timezone: cfg.ops.timezone,
+              now: now(),
+              memoryEnabled: cfg.openviking.enabled,
+            },
+          );
+        return over;
+      })();
       if (overBlock && deps.onMergedOverBlock) {
         try {
           await deps.onMergedOverBlock(local.number);
