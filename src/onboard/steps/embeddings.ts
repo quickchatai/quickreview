@@ -30,14 +30,25 @@ import {
   LOCAL_EMBEDDING,
   OPENVIKING_DEFAULTS,
   parseConfig,
+  ovConfEmbedder,
   parseOpenViking,
   type EmbeddingProvider,
   type OpenVikingConfig,
 } from "../../config.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { interviewConfigPath, readTextOrNull, secretsDirFor, writeAtomic } from "./compose.js";
+import {
+  interviewConfigPath,
+  readTextOrNull,
+  readEnvText,
+  rootOf,
+  secretsDirFor,
+  writeAtomic,
+} from "./compose.js";
 import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
-import { readTomlKey } from "./ingress.js";
+import { stackTransportFor } from "./transport.js";
+import { vmInventoryStep } from "./inventory.js";
+import { vmDeployStep } from "./vmdeploy.js";
+import { readTomlKey, readEnvKey } from "./ingress.js";
 import { topologyOf } from "./topology.js";
 
 export const EMBEDDINGS_STEP_ID = "embeddings";
@@ -263,6 +274,75 @@ const MIGRATION_NOTE: CheckResult = {
     "is yours to rebuild from this machine with `qcr memory reembed`. The memory TEXT is never touched. docs/memory-embeddings.md has the whole shape",
 };
 
+/** Compare the compose inputs to the config the daemon loads, including shipped defaults. */
+export function embedderInputsCheck(configText: string, envText: string): CheckResult {
+  const expected = [
+    ...embedderEnvEntries(declaredEmbedderOf(configText)),
+    ...localEmbedderEnvEntries(configText),
+  ];
+  const defaults = Object.fromEntries([
+    ...embedderEnvEntries(declaredEmbedderOf("")),
+    ...localEmbedderEnvEntries(""),
+  ]);
+  const changed = expected
+    .filter(([key, value]) => (readEnvKey(envText, key) ?? defaults[key]) !== value)
+    .map(([key]) => key);
+  return {
+    name: "embedder",
+    ok: changed.length === 0,
+    detail: changed.length
+      ? `.env no longer renders config.toml's embedder (${changed.join(", ")}) — run the bring-up step again`
+      : "the environment renders the embedder config.toml declares",
+  };
+}
+
+async function activeEmbedderCheck(
+  ctx: StepContext,
+  declared: OpenVikingConfig,
+): Promise<CheckResult> {
+  const expected = ovConfEmbedder(declared);
+  // Emit identity fields alone: ov.conf also contains credentials.
+  const script = `import {readFileSync} from "node:fs";
+import {loadConfig} from "./dist/src/config.js";
+const cfg=loadConfig();
+const dense=JSON.parse(readFileSync(cfg.openviking.config_file,"utf8")).embedding?.dense;
+console.log(JSON.stringify({provider:dense?.provider,model:dense?.model,dimension:dense?.dimension,api_base:dense?.api_base}));`;
+  const result = await stackTransportFor(ctx).exec(["node", "--input-type=module", "-e", script]);
+  let actual: Record<string, unknown> | undefined;
+  try {
+    const value: unknown = JSON.parse(result.stdout);
+    if (typeof value === "object" && value !== null && !Array.isArray(value))
+      actual = value as Record<string, unknown>;
+  } catch {
+    /* unreadable remains unknown */
+  }
+  if (
+    result.code !== 0 ||
+    !actual ||
+    typeof actual.provider !== "string" ||
+    typeof actual.model !== "string" ||
+    typeof actual.dimension !== "number"
+  )
+    return {
+      name: "embedder-runtime",
+      ok: false,
+      detail:
+        "the active embedder configuration is unreadable — its provider is unknown; restore daemon access before verifying delivery",
+    };
+  const matches =
+    actual.provider === expected.provider &&
+    actual.model === expected.model &&
+    actual.dimension === expected.dimension &&
+    actual.api_base === expected.api_base;
+  return {
+    name: "embedder-runtime",
+    ok: matches,
+    detail: matches
+      ? "the active embedder matches config.toml"
+      : "the active embedder differs from config.toml — run bring-up (or inventory and a rebuild on the server route) before claiming the change delivered",
+  };
+}
+
 export function embeddingsStep(): OnboardingStep {
   return {
     id: EMBEDDINGS_STEP_ID,
@@ -414,8 +494,10 @@ export function embeddingsStep(): OnboardingStep {
           checks: [{ name: "config.toml", ok: false, detail: `${path} does not exist` }],
         };
       let declared: DeclaredEmbedder;
+      let ov: OpenVikingConfig;
       try {
-        declared = embedderOf(parseConfig(text).openviking);
+        ov = parseConfig(text).openviking;
+        declared = embedderOf(ov);
       } catch (err) {
         return {
           ok: false,
@@ -433,6 +515,25 @@ export function embeddingsStep(): OnboardingStep {
       ];
       if (declared.provider !== "local")
         checks.push(keyFileCheck(secretsDirFor(ctx.adapters, ctx.choices), declared.keyFile));
+      const state = await stackTransportFor(ctx).daemonState();
+      if (state.state === "unknown")
+        checks.push({
+          name: "embedder-runtime",
+          ok: false,
+          detail: `running embedder is unknown (${state.detail}) — restore host access before verifying delivery`,
+        });
+      else if (state.state === "running") {
+        if (ov.enabled) checks.push(await activeEmbedderCheck(ctx, ov));
+        if (topologyOf(ctx.choices) === "vm") {
+          const inventory = await vmInventoryStep().verify(ctx);
+          const deployed = await vmDeployStep().verify(ctx);
+          checks.push(...inventory.checks, ...deployed.checks);
+        } else
+          checks.push({
+            ...embedderInputsCheck(text, readEnvText(rootOf(ctx.adapters))),
+            name: "embedder-inputs",
+          });
+      }
       return { ok: checks.every((c) => c.ok), checks };
     },
   };

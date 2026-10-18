@@ -107,6 +107,8 @@ function runner(): OnboardAdapters["runner"] {
         return { code: 0, stdout: "Docker version 27.0.0", stderr: "" };
       if (/docker compose version/.test(line))
         return { code: 0, stdout: "Docker Compose version v2.29.0", stderr: "" };
+      if (cmd === "docker" && args[0] === "inspect")
+        return { code: 1, stdout: "", stderr: "No such object" };
       if (/compose .*ps/.test(line)) return { code: 0, stdout: "", stderr: "" }; // nothing up yet
       return { code: 0, stdout: "", stderr: "" };
     },

@@ -418,6 +418,10 @@ export class OnboardingEngine {
         failures: [`step "${id}" is disabled by the recorded choices`],
       };
     }
+    const rec = this.record(id);
+    rec.status = "pending";
+    this.reopen();
+    this.save();
     let report: StepReport;
     try {
       report = await step.run(this.ctxFor(id, input));
@@ -427,7 +431,6 @@ export class OnboardingEngine {
         checks: [{ name: id, ok: false, detail: `step threw: ${String(err)}` }],
       };
     }
-    const rec = this.record(id);
     if (report.data) rec.data = { ...rec.data, ...report.data };
     if (report.ok) {
       rec.status = "done";

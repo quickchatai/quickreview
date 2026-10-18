@@ -94,6 +94,8 @@ export interface StackTransport {
 }
 
 export interface TransportOptions {
+  /** Newly collected secrets need the provisioning tasks that sync skips. */
+  deploymentMode?: "sync" | "rebuild";
   /** Long-running commands (the deploy that stands in for a restart). */
   stream?: StreamRunner;
   /** Health probe budget. */
@@ -462,7 +464,7 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
             ok: false,
             detail:
               `could not ask Docker on ${facts.alias} whether ${facts.container} exists (${(ps.stderr || ps.stdout).trim().slice(0, 200) || `exit ${ps.code}`}) — ` +
-              `the changed config is NOT known to be on the server. Fix: \`${deployCommandLine("sync")}\` ships it`,
+              `the changed config is NOT known to be on the server. Fix: \`${deployCommandLine(opts.deploymentMode ?? "sync")}\` ships it`,
           };
         }
         if (!psRows(ps.stdout).some((r) => r.name === facts.container)) return nothingDeployed;
@@ -471,7 +473,7 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
           ok: false,
           detail:
             `the ${facts.container} container on ${facts.alias} exists but is not running — it holds the config last shipped, ` +
-            `not this one, and starting it as it is would bring the old value back. Fix: \`${deployCommandLine("sync")}\` ` +
+            `not this one, and starting it as it is would bring the old value back. Fix: \`${deployCommandLine(opts.deploymentMode ?? "sync")}\` ` +
             "ships the change and recreates the container",
         };
       }
@@ -486,20 +488,22 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
         };
       }
       log(
-        `shipping the changed config to ${facts.alias} with \`${deployCommandLine("sync")}\` — on the server route the deploy IS the restart`,
+        `shipping the changed config to ${facts.alias} with \`${deployCommandLine(opts.deploymentMode ?? "sync")}\` — on the server route the deploy IS the restart`,
       );
-      const r = await stream.run("bash", deployArgv(root, "sync"), (line) => log(line));
+      const r = await stream.run("bash", deployArgv(root, opts.deploymentMode ?? "sync"), (line) =>
+        log(line),
+      );
       return r.code === 0
         ? {
             name: "daemon-restart",
             ok: true,
-            detail: `\`${deployCommandLine("sync")}\` shipped the config to ${facts.alias} and recreated the container — it is running with the value on disk`,
+            detail: `\`${deployCommandLine(opts.deploymentMode ?? "sync")}\` shipped the config to ${facts.alias} and recreated the container — it is running with the value on disk`,
           }
         : {
             name: "daemon-restart",
             ok: false,
             detail:
-              `\`${deployCommandLine("sync")}\` exited ${r.code}: ${(r.stderr || r.stdout).trim().split("\n").slice(-6).join(" ").slice(0, 400) || "no output"} — ` +
+              `\`${deployCommandLine(opts.deploymentMode ?? "sync")}\` exited ${r.code}: ${(r.stderr || r.stdout).trim().split("\n").slice(-6).join(" ").slice(0, 400) || "no output"} — ` +
               "the file on disk here is already correct; run that command yourself to ship it (it refuses on a dirty tree or a " +
               "pin mismatch, and those refusals are the point)",
           };

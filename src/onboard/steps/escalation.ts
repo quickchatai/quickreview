@@ -1,3 +1,5 @@
+import { deliverConfigChange, configDeliveryChecks } from "./configdelivery.js";
+import type { TransportOptions } from "./transport.js";
 // The escalation interview — the step that turns the optional,
 // off-by-default escalation feature on, and the only place a new operator is
 // asked about it.
@@ -367,7 +369,7 @@ function answersFrom(ctx: StepContext, enabled: boolean): EscalationAnswers {
   };
 }
 
-export function escalationStep(): OnboardingStep {
+export function escalationStep(opts: { transport?: TransportOptions } = {}): OnboardingStep {
   return {
     id: ESCALATION_STEP_ID,
     title: "Escalation: optional, off by default",
@@ -486,6 +488,12 @@ export function escalationStep(): OnboardingStep {
         };
       }
       writeAtomic(path, patched);
+      const delivery = await deliverConfigChange(
+        ctx,
+        opts.transport,
+        ctx.data.restart_owed === true || patched !== toml,
+        ESCALATION_STEP_ID,
+      );
 
       const checks: CheckResult[] = [
         {
@@ -529,10 +537,12 @@ export function escalationStep(): OnboardingStep {
           });
         }
       }
+      checks.push(...delivery.checks);
       return {
-        ok: true,
+        ok: checks.every((check) => check.ok),
         checks,
         data: {
+          restart_owed: delivery.restartOwed,
           enabled: enable,
           shape: answers.shape,
           targets: allTargets,
@@ -542,6 +552,8 @@ export function escalationStep(): OnboardingStep {
     },
 
     async verify(ctx): Promise<StepReport> {
+      const owed = configDeliveryChecks(ctx);
+      if (owed.length) return { ok: false, checks: owed };
       const path = interviewConfigPath(ctx);
       let cfg;
       try {

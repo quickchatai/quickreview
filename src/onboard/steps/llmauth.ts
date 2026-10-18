@@ -1,3 +1,5 @@
+import { deliverConfigChange, configDeliveryChecks } from "./configdelivery.js";
+import type { TransportOptions } from "./transport.js";
 // LLM auth — the wizard's credential choice.
 // Both routes are first-class and the trade is stated honestly:
 //
@@ -730,6 +732,20 @@ function companionModelNote(configText: string, route: AuthRoute): string {
         "its own login (/login in its pi)";
 }
 
+async function companionLoginChecks(ctx: StepContext, configText: string): Promise<CheckResult[]> {
+  const model = readTomlString(configText, "companion", "model") ?? COMPANION_DEFAULTS.model;
+  if (!model.startsWith(OAUTH_PREFIX)) return [];
+  const name = companionContainerName(configText);
+  return [
+    loginCheck(
+      "companion_login",
+      "companion container",
+      localAttach(name, companionSessionName(configText)),
+      await probeContainerLogin(ctx.adapters.runner, name),
+    ),
+  ];
+}
+
 async function oauthLoginChecks(
   ctx: StepContext,
   configText: string,
@@ -796,7 +812,7 @@ async function oauthLoginChecks(
 
 // ---- the step ---------------------------------------------------------------
 
-export function llmAuthStep(): OnboardingStep {
+export function llmAuthStep(opts: { transport?: TransportOptions } = {}): OnboardingStep {
   return {
     id: LLM_AUTH_STEP_ID,
     title: "LLM auth: ChatGPT OAuth or an API key",
@@ -835,6 +851,11 @@ export function llmAuthStep(): OnboardingStep {
       const route = decision.route;
       checks.push({ name: "route", ok: true, detail: `${route} route — ${decision.source}` });
 
+      let credentialChanged =
+        ctx.data.credentials_owed === true ||
+        (route === "api" &&
+          (recordedRoute(ctx) !== "api" ||
+            auditModelStrings(cfg.text).some((model) => model.kind === "oauth")));
       // --- the credential ------------------------------------------------
       if (route === "api") {
         if (!keyFile.valid) {
@@ -857,6 +878,7 @@ export function llmAuthStep(): OnboardingStep {
               });
             } else {
               writeKeyFile(secretsDir, pasted);
+              credentialChanged = true;
               keyFile = readKeyFileState(secretsDir);
               checks.push({
                 name: "credential",
@@ -913,7 +935,14 @@ export function llmAuthStep(): OnboardingStep {
 
       // --- the logins ------------------------------------------------------
       if (route === "oauth") checks.push(...(await oauthLoginChecks(ctx, configText, home)));
-
+      else checks.push(...(await companionLoginChecks(ctx, configText)));
+      const delivery = await deliverConfigChange(
+        ctx,
+        { ...opts.transport, ...(credentialChanged ? { deploymentMode: "rebuild" as const } : {}) },
+        ctx.data.restart_owed === true || credentialChanged || rewrite.text !== cfg.text,
+        LLM_AUTH_STEP_ID,
+      );
+      checks.push(...delivery.checks);
       checks.push(embeddingsCheck());
 
       const ok = checks.every((c) => c.ok);
@@ -923,13 +952,29 @@ export function llmAuthStep(): OnboardingStep {
         return {
           ok,
           checks,
-          data: { route, prefix: prefixFor(route), config_path: cfg.path, models: modelLabels() },
+          data: {
+            route,
+            prefix: prefixFor(route),
+            config_path: cfg.path,
+            models: modelLabels(),
+            restart_owed: delivery.restartOwed,
+            credentials_owed: credentialChanged && delivery.restartOwed,
+          },
         };
       }
-      return { ok, checks };
+      return {
+        ok,
+        checks,
+        data: {
+          restart_owed: delivery.restartOwed,
+          credentials_owed: credentialChanged && delivery.restartOwed,
+        },
+      };
     },
 
     async verify(ctx): Promise<StepReport> {
+      const owed = configDeliveryChecks(ctx);
+      if (owed.length) return { ok: false, checks: owed };
       // Never prompts, never writes, never touches a credential value.
       const home = hostHome();
       const route = recordedRoute(ctx);
@@ -983,6 +1028,7 @@ export function llmAuthStep(): OnboardingStep {
         modelsCheck(auditModelStrings(cfg.text), route, companionModelNote(cfg.text, route)),
       );
       if (route === "oauth") checks.push(...(await oauthLoginChecks(ctx, cfg.text, home)));
+      else checks.push(...(await companionLoginChecks(ctx, cfg.text)));
       checks.push(embeddingsCheck());
 
       return { ok: checks.every((c) => c.ok), checks };

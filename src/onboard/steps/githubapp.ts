@@ -562,25 +562,46 @@ export async function api(
   url: string,
   init?: RequestInit,
 ): Promise<ApiResult> {
-  try {
-    const res = await fetchFn(url, {
-      ...init,
-      headers: {
-        accept: "application/vnd.github+json",
-        "user-agent": "quickreview-onboarding",
-        ...(init?.headers ?? {}),
-      },
-    });
-    const text = await res.text();
-    let body: unknown = null;
+  const controller = new AbortController();
+  const signal = init?.signal
+    ? AbortSignal.any([init.signal, controller.signal])
+    : controller.signal;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("GitHub request deadline exceeded"));
+    }, 10_000);
+  });
+  const request = async (): Promise<ApiResult> => {
     try {
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      body = null;
+      const res = await fetchFn(url, {
+        ...init,
+        signal,
+        headers: {
+          accept: "application/vnd.github+json",
+          "user-agent": "quickreview-onboarding",
+          ...(init?.headers ?? {}),
+        },
+      });
+      const text = await res.text();
+      let body: unknown = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = null;
+      }
+      return { status: res.status, body, text, link: res.headers?.get?.("link") ?? null };
+    } catch (err) {
+      return { status: 0, body: null, text: `request failed: ${String(err)}` };
     }
-    return { status: res.status, body, text, link: res.headers?.get?.("link") ?? null };
+  };
+  try {
+    return await Promise.race([request(), deadline]);
   } catch (err) {
     return { status: 0, body: null, text: `request failed: ${String(err)}` };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
