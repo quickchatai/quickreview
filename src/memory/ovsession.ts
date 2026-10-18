@@ -124,8 +124,14 @@ export function openVikingSessionLifecycle(
     status: 0,
     conflict: false,
   };
+  // The caller deadline does not cancel a DELETE already sent to the server.
+  const deleting = new Map<string, Promise<{ ok: boolean; status: number }>>();
   return {
     async create(sessionId: string): Promise<boolean> {
+      if (deleting.has(sessionId)) {
+        log(`openviking: deletion of ${sessionId} is still pending — the PR runs without a raw tier`);
+        return false;
+      }
       let out: { ok: boolean; status: number; conflict?: boolean; busy?: boolean } = fail;
       try {
         out = await withDeadline(api.createSession(sessionId), timeoutMs, fail);
@@ -145,7 +151,14 @@ export function openVikingSessionLifecycle(
     async remove(sessionId: string): Promise<boolean> {
       let out: { ok: boolean; status: number } = fail;
       try {
-        out = await withDeadline(api.deleteSession(sessionId), timeoutMs, fail);
+        let pending = deleting.get(sessionId);
+        if (!pending) {
+          pending = Promise.resolve().then(() => api.deleteSession(sessionId)).catch(() => fail);
+          deleting.set(sessionId, pending);
+          const current = pending;
+          void pending.then(() => { if (deleting.get(sessionId) === current) deleting.delete(sessionId); });
+        }
+        out = await withDeadline(pending, timeoutMs, fail);
       } catch {
         out = fail;
       }

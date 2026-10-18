@@ -174,16 +174,18 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   // user key — never ADMIN/ROOT. Both directions are total, so a store that is
   // down or unkeyed costs the raw tier and never a session.
   const memoryRequests: NonNullable<ProductionParts["memoryRequests"]> = { sink: null };
-  const ovSessions = openVikingSessionLifecycle(
-    new OpenVikingClient({
-      ...ovConnection(cfg.openviking),
-      apiKey: keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET)),
-      // Counted with the daemon's other requests.
-      onRequest: (r) => memoryRequests.sink?.(r),
-    }),
-    // The lifecycle logs a failed delete.
-    { log: (msg) => console.log(`[quickreviewd] ${msg}`) },
-  );
+  const ovSessions = cfg.openviking.enabled
+    ? openVikingSessionLifecycle(
+        new OpenVikingClient({
+          ...ovConnection(cfg.openviking),
+          apiKey: keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET)),
+          // Counted with the daemon's other requests.
+          onRequest: (r) => memoryRequests.sink?.(r),
+        }),
+        // The lifecycle logs a failed delete.
+        { log: (msg) => console.log(`[quickreviewd] ${msg}`) },
+      )
+    : undefined;
   const sessions = new PiSessionManager({
     cfg,
     root,

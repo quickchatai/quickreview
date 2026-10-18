@@ -940,7 +940,7 @@ export class OpenVikingClient {
     tags: string[],
     mode: "append" | "replace" = "replace",
   ): Promise<boolean> {
-    if (tags.length === 0) return true;
+    if (tags.length === 0 && mode === "append") return true;
     const res = await this.request<unknown>("set_tags", "/api/v1/fs/attrs/set_tags", {
       method: "POST",
       body: { uri, tags, mode },

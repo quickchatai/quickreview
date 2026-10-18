@@ -247,6 +247,7 @@ export class OpenVikingSupervisor {
   private spawnChild(): void {
     if (this.stopping) return;
     this.cancelRestart = null;
+    this.notReadyPolls = 0;
     const args = [
       "--config",
       this.cfg.config_file,
@@ -310,6 +311,7 @@ export class OpenVikingSupervisor {
     this.sampler.reset();
     this.proc = undefined;
     this.health = null;
+    this.notReadyPolls = 0;
     this.lastExit = { code, signal, at: this.now().toISOString() };
     if (this.stopping) return;
     // A child that survived the reset window is not crash-looping: start the

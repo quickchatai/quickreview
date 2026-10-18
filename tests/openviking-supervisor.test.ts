@@ -469,6 +469,11 @@ describe("OpenVikingSupervisor", () => {
     expect(h.sup.status().not_ready_polls).toBe(1);
     await h.sup.poll();
     expect(h.sup.status().not_ready_polls).toBe(2);
+    h.children[0]!.exit(1, null);
+    expect(h.sup.status().not_ready_polls).toBe(0);
+    h.clock.fireLast();
+    await h.sup.poll();
+    expect(h.sup.status().not_ready_polls).toBe(1);
     ready = true;
     await h.sup.poll();
     expect(h.sup.status().not_ready_polls).toBe(0);

@@ -448,7 +448,7 @@ export class PiSessionManager implements SessionHooks {
   /** Create the PR's raw-notes session. Total: a memory engine that is down
    * costs the PR its raw tier and nothing else. */
   private async ensureOvSession(pr: number): Promise<boolean> {
-    if (!this.ovSessions) return false;
+    if (this.cfg.openviking?.enabled === false || !this.ovSessions) return false;
     try {
       return await this.ovSessions.create(ovSessionIdForPr(pr));
     } catch {
@@ -482,7 +482,7 @@ export class PiSessionManager implements SessionHooks {
   }
 
   private async removeOvSession(pr: number): Promise<boolean> {
-    if (!this.ovSessions) return false;
+    if (this.cfg.openviking?.enabled === false || !this.ovSessions) return false;
     const id = ovSessionIdForPr(pr);
     let ok = false;
     let error: string | undefined;
@@ -815,7 +815,7 @@ export class PiSessionManager implements SessionHooks {
     // The PR's raw-notes tier, created before pi starts so the extension has
     // something to attach to on the first turn. A store object, not a session
     // anyone schedules: the daemon still owns exactly two pi session kinds.
-    await this.ensureOvSession(pr);
+    const rawReady = await this.ensureOvSession(pr);
     if (this.prClosed(pr)) throw new Error(`PR #${pr} is closed — refusing session birth`);
     const template = readFileSync(join(this.root, "prompts", "conversation-system.md"), "utf8");
     const body = renderConversationSystemPrompt(
@@ -825,6 +825,7 @@ export class PiSessionManager implements SessionHooks {
     );
     try {
       await this.spawnSession(session, body, this.cfg.models.conversation, {
+        ...(rawReady ? {} : { QCR_OV_SESSION_ID: "", OPENVIKING_SESSION_ID: "" }),
         QCR_PR: String(pr),
         QCR_PR_META: `PR #${pr} — ${title} (worktree ${worktree})`,
         QCR_WORKTREE: worktree,

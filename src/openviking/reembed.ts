@@ -154,6 +154,7 @@ export class ReembedDriver {
   private attempts = 0;
   private lastRunAt: string | undefined;
   private lastError: string | undefined;
+  private migrationOwed = false;
   private inFlight = false;
   private cancel: (() => void) | null = null;
   private stopped = false;
@@ -248,6 +249,7 @@ export class ReembedDriver {
     if (!this.module) return false;
     try {
       this.journal = this.module.journalStatus(this.deps.cfg.home);
+      if (this.journal.state !== "unreadable") this.migrationOwed = outstanding(this.journal.state);
       this.unknownWhy = undefined;
       return true;
     } catch (err) {
@@ -270,15 +272,20 @@ export class ReembedDriver {
 
   private async tick(): Promise<void> {
     if (this.stopped || this.inFlight || !this.module) return;
-    if (!this.refresh()) return;
+    if (!this.refresh() || this.journal?.state === "unreadable") {
+      if (this.migrationOwed) this.arm(this.deps.pollMs ?? REEMBED_POLL_MS);
+      return;
+    }
     if (!outstanding(this.journal?.state)) return;
     if (!this.deps.ready()) {
       this.arm(this.deps.pollMs ?? REEMBED_POLL_MS);
       return;
     }
     this.inFlight = true;
+    let key = "";
+    const scrub = (text: string): string => (key ? text.split(key).join("<redacted>") : text);
     try {
-      const key = readKey(this.deps.keyPath);
+      key = readKey(this.deps.keyPath);
       this.attempts += 1;
       this.lastRunAt = this.now().toISOString();
       const run = await this.module.resume({
@@ -287,9 +294,9 @@ export class ReembedDriver {
         key,
         user: this.deps.cfg.user,
         ...(this.deps.fetchFn ? { fetchFn: this.deps.fetchFn } : {}),
-        log: (line) => this.deps.log(line),
+        log: (line) => this.deps.log(scrub(line)),
       });
-      const detail = run.detail ?? run.entry?.detail ?? "";
+      const detail = scrub(run.detail ?? run.entry?.detail ?? "");
       if (run.state === "completed") {
         this.lastError = undefined;
         this.deps.log(`openviking: reembed of ${this.deps.cfg.user} memory completed — ${detail}`);
@@ -301,13 +308,13 @@ export class ReembedDriver {
       }
     } catch (err) {
       // The script is total, but a caller-supplied fetch seam is not.
-      this.lastError = err instanceof Error ? err.message : String(err);
-      this.deps.log("openviking: reembed resume threw", err);
+      this.lastError = scrub(err instanceof Error ? err.message : String(err));
+      this.deps.log(`openviking: reembed resume threw: ${this.lastError}`);
     } finally {
       this.inFlight = false;
     }
     this.refresh();
-    if (outstanding(this.journal?.state)) this.arm(this.deps.retryMs ?? REEMBED_RETRY_MS);
+    if (this.migrationOwed) this.arm(this.deps.retryMs ?? REEMBED_RETRY_MS);
   }
 
   /** The `reembed` block of the heartbeat's `openviking` entry. Total.
