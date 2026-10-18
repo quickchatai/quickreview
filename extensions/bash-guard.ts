@@ -1724,7 +1724,126 @@ export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck 
   if (!root.allowed) return root;
   const c = ctx ?? processSecretContext();
   const p = path.startsWith("@") ? path.slice(1) : path;
-  return judgeSecretPath(expandShellWord(p, c.env), c);
+  const w = expandShellWord(p, c.env);
+  const proc = judgeProcPath(w, c.cwd);
+  if (!proc.allowed) return proc;
+  return judgeSecretPath(w, c);
+}
+
+/**
+ * A process's environment, memory and command line — `/proc/<pid>/environ`,
+ * `/mem` and `/cmdline`.
+ *
+ * Same family as the secret belt above, different payload: a review session's
+ * parent process holds credentials in memory and argv (the engine's env, the
+ * token handed over at spawn), and `cat` is a sanctioned reader, so
+ * `cat /proc/$PPID/environ` would hand them to the model. Yama's
+ * `ptrace_scope >= 1` blocks a sibling's `/proc/<pid>/mem` where the host sets
+ * it; this rule is the same refusal everywhere, in the policy itself, and it
+ * is not configurable.
+ *
+ * Judged on the SPELLING of every word, whatever program reads it (`cat`,
+ * `head`, `xxd`, `strings`, `tr … <`, a redirect, `dd if=`): the path is
+ * normalised against the cwd (a `cd /proc/self` earlier in the command moves
+ * it), `/proc/<pid>/root/…` hops are followed, `$PPID`/`$$`/`$(…)` in a
+ * component stand for any pid, and a glob is tried against concrete
+ * candidates (`/proc/[0-9]*` + `/e*`, `/proc/self/*`). A grep/rg PATTERN is
+ * exempt, as above: reviewing code that reads `/proc/self/environ` is
+ * ordinary. `/proc/cpuinfo`, `/proc/self/status` and `ls /proc` stay open.
+ *
+ * Same reach as the secret belt: variable indirection into the directory
+ * (`p=/proc/self; cat $p/environ`) is not followed.
+ */
+const PROC_PID = String.raw`(?:self|thread-self|\d+)`;
+const PROC_SECRET_RE = new RegExp(`^/proc/${PROC_PID}(?:/task/\\d+)?/(?:environ|mem|cmdline)$`);
+const PROC_ROOT_RE = new RegExp(`^/proc/${PROC_PID}(?:/task/\\d+)?/root(/.*)?$`);
+const PROC_GLOB_CANDIDATES: readonly string[] = (() => {
+  const out: string[] = [];
+  for (const pid of ["1", "4242", "self", "thread-self"]) {
+    for (const leaf of ["environ", "mem", "cmdline"]) {
+      out.push(`/proc/${pid}/${leaf}`, `/proc/${pid}/task/1/${leaf}`);
+    }
+  }
+  out.push("/proc/self/root/proc/self/environ", "/proc/1/root/proc/1/environ");
+  return out;
+})();
+
+/** A dynamic part of a word (`$VAR`, `${…}`, `$$`, `$(…)`, backticks) becomes
+ * a one-component wildcard, so `/proc/$PPID/environ` reads as a glob. */
+function procDynamicToGlob(text: string): string {
+  return text
+    .replace(/\$\((?:[^()]|\([^()]*\))*\)/g, "*")
+    .replace(/`[^`]*`/g, "*")
+    .replace(/\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[$!?#@*0-9-])/g, "*");
+}
+
+/** The command with substitutions opened up, so the words inside `$(…)` and
+ * backticks are judged as words of their own. */
+function procOpenSubstitutions(text: string): string {
+  return text.replace(/\$\(|[`()]/g, " ");
+}
+
+function procSecretBlock(word: string): BashCheck {
+  return block(
+    `exec policy: '${word}' reads a process's environment, memory or command line — never sanctioned; /proc/<pid>/environ, /mem and /cmdline hold credentials and argv that a review session has no business reading`,
+  );
+}
+
+/** One expanded word judged as a path. */
+export function judgeProcPath(w: string, cwd: string): BashCheck {
+  if (w === "") return { allowed: true };
+  let abs = posix.resolve(cwd, w);
+  for (let m = PROC_ROOT_RE.exec(abs); m !== null; m = PROC_ROOT_RE.exec(abs)) abs = m[1] || "/";
+  if (GLOB_CHARS.test(abs)) {
+    const re = globToRegex(abs);
+    if (PROC_GLOB_CANDIDATES.some((c) => re.test(c))) return procSecretBlock(w);
+    return { allowed: true };
+  }
+  return PROC_SECRET_RE.test(abs) ? procSecretBlock(w) : { allowed: true };
+}
+
+function judgeProcWord(raw: string, cwd: string): BashCheck {
+  const pieces = new Set<string>();
+  for (const piece of dequoteShellWord(raw).split(/[\s<>|;&()]+/)) {
+    if (piece === "") continue;
+    pieces.add(piece);
+    for (let eq = piece.indexOf("="); eq >= 0; eq = piece.indexOf("=", eq + 1))
+      pieces.add(piece.slice(eq + 1));
+    if (/^-[A-Za-z]./.test(piece)) pieces.add(piece.slice(2));
+    if (piece.startsWith("@")) pieces.add(piece.slice(1));
+  }
+  for (const piece of pieces) {
+    for (const w of braceExpand(piece)) {
+      const res = judgeProcPath(w, cwd);
+      if (!res.allowed) return res;
+    }
+  }
+  return { allowed: true };
+}
+
+/** Refuse a command that names `/proc/<pid>/{environ,mem,cmdline}`. */
+export function checkProcSecrets(cmd: string, cwd: string = process.cwd()): BashCheck {
+  for (const text of [procOpenSubstitutions(cmd), procDynamicToGlob(cmd)]) {
+    let at = cwd;
+    for (const segment of splitShellSegments(text)) {
+      const words = rawShellWords(segment);
+      const exempt = patternWordIndexes(words);
+      for (let i = 0; i < words.length; i++) {
+        if (exempt.has(i)) continue;
+        const res = judgeProcWord(words[i]!, at);
+        if (!res.allowed) return res;
+      }
+      const p = programIndex(words);
+      if (p >= 0 && basenameOf(dequoteShellWord(words[p]!)) === "cd") {
+        const target = words.slice(p + 1).find((w) => !w.startsWith("-"));
+        if (target !== undefined) {
+          const t = dequoteShellWord(target);
+          if (!/[*?[$]/.test(t)) at = posix.resolve(at, t);
+        }
+      }
+    }
+  }
+  return { allowed: true };
 }
 
 /**
@@ -2329,6 +2448,9 @@ export function checkBashCommand(
   // legitimately allowed, so the path is the only thing that distinguishes it.
   const secret = checkSecretPaths(normalized);
   if (!secret.allowed) return secret;
+  // Same reason again: `/proc/<pid>/environ` is read by `cat`.
+  const proc = checkProcSecrets(normalized, cwd ?? process.cwd());
+  if (!proc.allowed) return proc;
   // Same shape, same reason: a PROTECTED write surface
   // (`isProtectedWriteTarget`). A redirection target is not a program token,
   // so the per-segment walk below never sees it.
