@@ -1718,11 +1718,13 @@ export class PiSessionManager implements SessionHooks {
     return this.prSessionBirths.has(pr);
   }
 
-  /** SessionHooks: is the PR's tmux session alive? Read by the
-   * stuck-round detector (verdicts.ts checkDeadlines) — the same tmux
-   * has-session signal every other lifecycle decision here uses. */
+  /** SessionHooks: an affirmative tmux listing decides liveness. An
+   * unavailable listing rejects, so recovery callers preserve unknown
+   * rather than treating a failed probe as confirmed death. */
   async sessionAlive(pr: number): Promise<boolean> {
-    return this.tmux.hasSession(prSessionName(pr));
+    const names = await this.tmux.listSessionsKnown();
+    if (names === null) throw new Error("tmux liveness unknown: session listing unavailable");
+    return names.includes(prSessionName(pr));
   }
 
   /** SessionHooks: kill a wedged session so the requeued round's dispatch

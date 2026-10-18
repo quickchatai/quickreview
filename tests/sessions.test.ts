@@ -2057,53 +2057,65 @@ describe("durable command ownership", () => {
     }
   });
 
-  it("a payload that is not the dispatched bytes says so on the row and in the log — never a bare failure", async () => {
-    const store = new StateStore(
-      join(root, "state", "state.db"),
-      () => new Date("2026-08-13T10:00:00Z"),
-    );
-    try {
-      const m = manager(undefined, store);
-      m.setTitleResolver(() => order.title);
-      store.upsertPr({
-        number: 42,
-        state: "reviewing",
-        head_sha: "abc123",
-        title: order.title,
-        author: "alice",
-        trigger_ts: null,
-        stale_recheck: 0,
-        migration_gate: 0,
-      });
-      store.startRound(42, "first", ["pass-baseline"], 45);
-      await m.dispatchRound(order, "ROUND PROMPT BODY");
-      const command = store.activeSessionCommand("pr-42")!;
-      writeFileSync(command.payload_path, "NOT THE DISPATCHED BYTES");
+  it.each(["pending", "failed", "started wake"] as const)(
+    "an unusable %s payload preserves its diagnostic on the durable row",
+    async (state) => {
+      const store = new StateStore(
+        join(root, "state", "state.db"),
+        () => new Date("2026-08-13T10:00:00Z"),
+      );
+      try {
+        const m = manager(undefined, store);
+        m.setTitleResolver(() => order.title);
+        store.upsertPr({
+          number: 42,
+          state: "reviewing",
+          head_sha: "abc123",
+          title: order.title,
+          author: "alice",
+          trigger_ts: null,
+          stale_recheck: 0,
+          migration_gate: 0,
+        });
+        store.startRound(42, "first", ["pass-baseline"], 45);
+        await m.dispatchRound(order, "ROUND PROMPT BODY");
+        const command = store.activeSessionCommand("pr-42")!;
+        if (state === "failed") store.failActiveSessionCommand(command.id, "original failure");
+        if (state === "started wake") {
+          store.db
+            .prepare("UPDATE session_commands SET kind='wake', round_no=NULL WHERE id=?")
+            .run(command.id);
+          store.claimSessionCommand(command.id, "started-owner", command.next_check_at);
+          store.markSessionCommandStarted(command.id, "started-owner", command.next_check_at);
+        }
+        writeFileSync(command.payload_path, "NOT THE DISPATCHED BYTES");
 
-      expect(await m.retrySessionCommand(command.id, "expired")).toBe("retry_failed");
-      expect(store.getSessionCommand(command.id)!.failure).toMatch(/hash [0-9a-f]{64} != /);
-      rmSync(command.payload_path);
-      expect(
-        await m.redeliverSessionCommand(command.id, {
-          attempt: command.attempt,
-          redeliveries: command.redeliveries,
-          next_check_at: command.next_check_at,
-        }),
-      ).toBe("redelivery_failed");
-      expect(store.getSessionCommand(command.id)!.failure).toMatch(/unreadable/);
-      const rows = store.db
-        .prepare("SELECT payload FROM events WHERE kind = 'session_command_payload_unusable'")
-        .all() as Array<{ payload: string }>;
-      expect(rows.map((r) => (JSON.parse(r.payload) as { detail: string }).detail)).toEqual([
-        expect.stringMatching(/hash/),
-        expect.stringMatching(/unreadable/),
-      ]);
-      // Nothing was killed or replayed for a payload it could not trust.
-      expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(0);
-    } finally {
-      store.close();
-    }
-  });
+        expect(await m.retrySessionCommand(command.id, "expired")).toBe("retry_failed");
+        expect(store.getSessionCommand(command.id)!.failure).toMatch(/hash [0-9a-f]{64} != /);
+        if (state !== "pending") return;
+        rmSync(command.payload_path);
+        expect(
+          await m.redeliverSessionCommand(command.id, {
+            attempt: command.attempt,
+            redeliveries: command.redeliveries,
+            next_check_at: command.next_check_at,
+          }),
+        ).toBe("redelivery_failed");
+        expect(store.getSessionCommand(command.id)!.failure).toMatch(/unreadable/);
+        const rows = store.db
+          .prepare("SELECT payload FROM events WHERE kind = 'session_command_payload_unusable'")
+          .all() as Array<{ payload: string }>;
+        expect(rows.map((r) => (JSON.parse(r.payload) as { detail: string }).detail)).toEqual([
+          expect.stringMatching(/hash/),
+          expect.stringMatching(/unreadable/),
+        ]);
+        // Nothing was killed or replayed for a payload it could not trust.
+        expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(0);
+      } finally {
+        store.close();
+      }
+    },
+  );
 
   it("refuses replay when correlated acceptance wins during the kill", async () => {
     const store = new StateStore(
@@ -2862,4 +2874,15 @@ it("memory off sends no raw-tier birth or death request and attaches no raw id",
   mkdirSync(join(root, "example-app", ".git"), { recursive: true });
   await m.archiveAndClose(42);
   expect(ovCalls).toEqual([]);
+});
+
+it("public liveness requires an affirmative tmux listing; an unsuccessful probe is unknown", async () => {
+  const m = manager();
+  const listing = vi.spyOn(m.tmux, "listSessionsKnown").mockResolvedValue(null);
+  vi.spyOn(m.tmux, "hasSession").mockResolvedValue(false);
+  await expect(m.sessionAlive(42)).rejects.toThrow(/unknown|could not|unavailable/i);
+  listing.mockResolvedValue([]);
+  expect(await m.sessionAlive(42)).toBe(false);
+  listing.mockResolvedValue(["pr-42"]);
+  expect(await m.sessionAlive(42)).toBe(true);
 });

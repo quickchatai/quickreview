@@ -79,19 +79,15 @@ export async function wakeOrHold(
     // wakes still waiting for the stranded-wake sweep. The flush may carry
     // this wake out with the backlog (a coalesced author-reply burst), so what
     // is reported is whether it is still held.
-    if (store.hasHeldWakes(pr)) {
-      hold(deps, pr, message, reason);
-      await flushHeldWakes(deps, pr);
-      return stillHeld(store, pr, message) ? "held" : "injected";
-    }
-    // A claimed obligation is durable before the first await: held, then
-    // delivered through the same lease → inject → ack the flush paths use.
-    if (opts.holdOnFailure) {
-      hold(deps, pr, message, reason);
-      await flushHeldWakes(deps, pr);
-      if (!stillHeld(store, pr, message)) return "injected";
-      store.logEvent("wake_inject_failed_held", pr, { reason });
-      log(`wakes: #${pr} ${reason} wake not delivered — held for retry`);
+    if (store.hasHeldWakes(pr) || opts.holdOnFailure) {
+      const id = hold(deps, pr, message, reason);
+      const flushed = await flushHeldWakeBatches(deps, pr);
+      if (flushed.ids.includes(id)) return "injected";
+      if (!stillHeld(store, pr, id)) throw new Error(`wake ${id} was evicted before delivery`);
+      if (opts.holdOnFailure) {
+        store.logEvent("wake_inject_failed_held", pr, { reason });
+        log(`wakes: #${pr} ${reason} wake not delivered — held for retry`);
+      }
       return "held";
     }
     try {
@@ -117,15 +113,15 @@ export async function wakeOrHold(
   return "held";
 }
 
-/** Is a wake with this payload still among the PR's held wakes? */
-function stillHeld(store: StateStore, pr: number, message: string): boolean {
-  return store.heldWakes(pr).some((wake) => wake.payload === message);
+/** Is this exact wake still held? Absence alone never proves delivery. */
+function stillHeld(store: StateStore, pr: number, id: number): boolean {
+  return store.heldWakes(pr).some((wake) => wake.id === id);
 }
 
-function hold(deps: WakeDeps, pr: number, message: string, reason: string): void {
+function hold(deps: WakeDeps, pr: number, message: string, reason: string): number {
   const { store } = deps;
   const log = deps.log ?? ((): void => {});
-  const dropped = store.holdWakeEvicting(pr, message, reason);
+  const { id, dropped } = store.holdWakeWithIdentity(pr, message, reason);
   store.logEvent("wake_held", pr, {
     reason,
     dropped: dropped.length,
@@ -174,6 +170,9 @@ function hold(deps: WakeDeps, pr: number, message: string, reason: string): void
           .join(", ")}) — an author reply or recovered obligation was dropped unanswered`,
       );
   }
+  if (dropped.some((wake) => wake.id === id))
+    throw new Error(`wake ${id} was evicted before delivery`);
+  return id;
 }
 
 /** The anomaly a dropped author reply raises (WAKE grade). */
@@ -263,9 +262,17 @@ function deliveryPayload(pr: number, wakes: PendingWakeRow[]): string {
  * slot check alone cannot see such a round.
  */
 export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number> {
+  return (await flushHeldWakeBatches(deps, pr)).delivered;
+}
+
+async function flushHeldWakeBatches(
+  deps: WakeDeps,
+  pr: number,
+): Promise<{ delivered: number; ids: number[] }> {
   const { store } = deps;
   const log = deps.log ?? ((): void => {});
   let delivered = 0;
+  const deliveredIds: number[] = [];
   let attempted = 0;
   const leaseMs = 5 * 60_000;
   while (true) {
@@ -273,9 +280,7 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
     if (store.blockingSessionCommand(`pr-${pr}`)) break;
     // A paused PR's recheck nudges wait for the resume; the rest go now.
     const skip = store.getPr(pr)?.paused ? RECHECK_WAKE_PREFIX : undefined;
-    const queued = store
-      .heldWakes(pr)
-      .filter((wake) => skip === undefined || !wake.reason.startsWith(skip));
+    const queued = store.heldWakes(pr, skip);
     const batchSize = leadingDeliveryCount(queued);
     if (batchSize === 0) break;
     const token = randomUUID();
@@ -307,6 +312,7 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
         break;
       }
       delivered += wakes.length;
+      deliveredIds.push(...ids);
       if (wakes.length > 1) {
         store.logEvent("wakes_coalesced", pr, {
           ids,
@@ -341,5 +347,5 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
       attempted,
       remaining: store.heldWakes(pr).length,
     });
-  return delivered;
+  return { delivered, ids: deliveredIds };
 }
