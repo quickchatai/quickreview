@@ -27,25 +27,34 @@ def lens_for_agent(agent):
     return TIER_SUFFIX.sub("", agent)
 
 
-def load_plan(db, pr, round_no):
+def load_plans(db, pr, round_no):
     try:
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
         try:
-            row = con.execute(
-                "SELECT pass_plan FROM rounds WHERE pr = ? AND round_no = ? ORDER BY id DESC LIMIT 1",
-                (pr, round_no),
-            ).fetchone()
+            try:
+                row = con.execute(
+                    "SELECT pass_plan, sweep_plan FROM rounds WHERE pr = ? AND round_no = ? ORDER BY id DESC LIMIT 1",
+                    (pr, round_no),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                # Older databases predate the optional pre-approval sweep.
+                row = con.execute(
+                    "SELECT pass_plan, NULL FROM rounds WHERE pr = ? AND round_no = ? ORDER BY id DESC LIMIT 1",
+                    (pr, round_no),
+                ).fetchone()
         finally:
             con.close()
     except Exception:
-        return None
-    if not row or not row[0]:
-        return None
-    try:
-        plan = json.loads(row[0])
-    except Exception:
-        return None
-    return plan if isinstance(plan, list) else None
+        return (None, None)
+    if not row:
+        return (None, None)
+    def parse(raw):
+        try:
+            plan = json.loads(raw)
+            return plan if isinstance(plan, list) else None
+        except Exception:
+            return None
+    return (parse(row[0]), parse(row[1]))
 
 
 def load_progress(progress_dir, pr):
@@ -59,11 +68,13 @@ def load_progress(progress_dir, pr):
     return value
 
 
-def gap(plan, progress, round_no):
+def gap(plan, progress, round_no, sweep_plan=None):
     required = {}
-    for row in plan or []:
-        if isinstance(row, dict) and row.get("required") is True and isinstance(row.get("lens"), str):
-            required[row["lens"]] = required.get(row["lens"], 0) + 1
+    for phase, rows in (("plan", plan), ("sweep", sweep_plan)):
+        for row in rows or []:
+            if isinstance(row, dict) and row.get("required") is True and isinstance(row.get("lens"), str):
+                key = (phase, row["lens"])
+                required[key] = required.get(key, 0) + 1
     if not required:
         return ("complete", None)
     if progress is None:
@@ -71,16 +82,17 @@ def gap(plan, progress, round_no):
     if progress.get("round_no") != round_no:
         return ("unknown", f"round-progress snapshot is for round {progress.get('round_no', '?')}, not {round_no}")
     missing = []
-    for lens, rows in required.items():
+    for (phase, lens), rows in required.items():
         runs = [
             a for a in progress["agents"]
             if isinstance(a, dict) and isinstance(a.get("agent"), str) and lens_for_agent(a["agent"]) == lens
+            and (a.get("phase") == "sweep" if phase == "sweep" else a.get("phase") in (None, "plan"))
         ]
         completed = sum(1 for a in runs if a.get("status") == "completed")
         failed = [a for a in runs if a.get("status") == "failed"]
         if failed and completed < rows:
             errors = "; ".join(a.get("error") or "failed" for a in failed)
-            missing.append(f"{lens} ({completed}/{rows} completed, {len(failed)} failed: {errors})")
+            missing.append(f"{'sweep ' if phase == 'sweep' else ''}{lens} ({completed}/{rows} completed, {len(failed)} failed: {errors})")
     return ("missing", ", ".join(missing)) if missing else ("complete", None)
 
 
@@ -89,7 +101,8 @@ def main(argv):
         print("unknown: usage: required-passes.py <state.db> <round-progress-dir> <pr> <round_no>")
         return 0
     db, progress_dir, pr, round_no = argv[1], argv[2], int(argv[3]), int(argv[4])
-    state, detail = gap(load_plan(db, pr, round_no), load_progress(progress_dir, pr), round_no)
+    plan, sweep_plan = load_plans(db, pr, round_no)
+    state, detail = gap(plan, load_progress(progress_dir, pr), round_no, sweep_plan)
     print(state if detail is None else f"{state}: {detail}")
     return 3 if state == "missing" else 0
 

@@ -140,6 +140,7 @@ const CASES: Array<{
   name: string;
   plan: PassPlanEntry[] | null;
   progress: RoundProgressSnapshot | undefined;
+  sweepPlan?: PassPlanEntry[];
   expected: "complete" | "missing" | "unknown";
 }> = [
   {
@@ -216,9 +217,53 @@ const CASES: Array<{
   },
 ];
 
+// A full sweep is a separate obligation even when it repeats a delta lens.
+CASES.push(
+  {
+    name: "a completed delta cannot mask a failed required sweep",
+    plan: [row("pass-security", true)],
+    sweepPlan: [row("pass-security", true)],
+    progress: snapshot(3, [
+      Object.assign(agent("pass-security", "completed"), { phase: "plan" }),
+      Object.assign(agent("pass-security", "failed", TIMEOUT), { phase: "sweep" }),
+    ]),
+    expected: "missing",
+  },
+  {
+    name: "a completed sweep cannot mask a failed required delta",
+    plan: [row("pass-security", true)],
+    sweepPlan: [row("pass-security", true)],
+    progress: snapshot(3, [
+      Object.assign(agent("pass-security", "failed", TIMEOUT), { phase: "plan" }),
+      Object.assign(agent("pass-security", "completed"), { phase: "sweep" }),
+    ]),
+    expected: "missing",
+  },
+  {
+    name: "a sweep retry closes only its own required gap",
+    plan: [row("pass-security", true)],
+    sweepPlan: [row("pass-security", true)],
+    progress: snapshot(3, [
+      Object.assign(agent("pass-security", "completed"), { phase: "plan" }),
+      Object.assign(agent("pass-security", "failed", TIMEOUT), { phase: "sweep" }),
+      Object.assign(agent("pass-security", "completed"), { phase: "sweep" }),
+    ]),
+    expected: "complete",
+  },
+  {
+    name: "optional completions cannot repair failed required plan rows",
+    plan: [row("pass-security", true)],
+    progress: snapshot(3, [
+      Object.assign(agent("pass-security", "failed", TIMEOUT), { phase: "plan" }),
+      Object.assign(agent("pass-security", "completed"), { phase: "optional" }),
+    ]),
+    expected: "missing",
+  },
+);
+
 describe("requiredPassGap", () => {
-  it.each(CASES)("$name", ({ plan, progress, expected }) => {
-    const gap = requiredPassGap(plan, progress, 3);
+  it.each(CASES)("$name", ({ plan, progress, sweepPlan, expected }) => {
+    const gap = requiredPassGap(plan, progress, 3, sweepPlan);
     expect(gap.state).toBe(expected);
     if (gap.state === "missing" && plan === PLAN)
       expect(gap.missing[0]).toMatchObject({ lens: "pass-security", errors: [TIMEOUT] });
@@ -232,16 +277,20 @@ describe("scripts/required-passes.py answers as the TypeScript rule does", () =>
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it.each(CASES)("$name", ({ plan, progress, expected }) => {
+  it.each(CASES)("$name", ({ plan, progress, sweepPlan, expected }) => {
     const db = new Database(join(dir, "state.db"));
     db.exec(
-      "CREATE TABLE rounds (id INTEGER PRIMARY KEY, pr INTEGER, round_no INTEGER, pass_plan TEXT)",
+      "CREATE TABLE rounds (id INTEGER PRIMARY KEY, pr INTEGER, round_no INTEGER, pass_plan TEXT, sweep_plan TEXT)",
     );
     // An older attempt of the same round number is never the one read.
     db.prepare("INSERT INTO rounds (pr, round_no, pass_plan) VALUES (5180, 3, ?)").run("[]");
     db.prepare("INSERT INTO rounds (pr, round_no, pass_plan) VALUES (5180, 3, ?)").run(
       plan ? JSON.stringify(plan) : null,
     );
+    if (sweepPlan)
+      db.prepare("UPDATE rounds SET sweep_plan = ? WHERE id = (SELECT MAX(id) FROM rounds)").run(
+        JSON.stringify(sweepPlan),
+      );
     db.close();
     mkdirSync(join(dir, "rp"));
     if (progress) writeFileSync(join(dir, "rp", "pr-5180.json"), JSON.stringify(progress));
@@ -315,6 +364,24 @@ describe("the posting route refuses while a required pass is missing", () => {
     expect(res.ok).toBe(false);
     expect(res.out).toContain("required pass missing");
     expect(res.out).toContain(TIMEOUT);
+    expect(s.dryrunRecords()).toEqual([]);
+    expect(receipts()).toEqual([]);
+  });
+
+  it("refuses an approval after a failed required sweep despite a completed delta", async () => {
+    seed(
+      snapshot(1, [
+        Object.assign(agent("pass-baseline", "completed"), { phase: "plan" }),
+        Object.assign(agent("pass-security", "completed"), { phase: "plan" }),
+        Object.assign(agent("pass-security", "failed", TIMEOUT), { phase: "sweep" }),
+      ]),
+    );
+    const store = new StateStore(s.dbPath);
+    store.setRoundMeta(store.roundsFor(5180)[0]!.id, { sweep_plan: [row("pass-security", true)] });
+    store.close();
+    const res = await s.run("approve-pr.sh", ["5180", s.bodyFile()], env());
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("sweep pass-security");
     expect(s.dryrunRecords()).toEqual([]);
     expect(receipts()).toEqual([]);
   });
@@ -438,6 +505,29 @@ describe("the verdict path requeues instead of applying", () => {
     ]);
     expect(events("round_self_requeued")[0]).toMatchObject({ mode: "required_pass_missing" });
     expect(adapter.calls.some((c) => c.startsWith("addLabel:700"))).toBe(false);
+  });
+
+  it("requeues a failed required sweep independently of completed delta evidence", async () => {
+    const id = round(
+      705,
+      withPr(705, (n) =>
+        snapshot(
+          n,
+          [
+            Object.assign(agent("pass-baseline", "completed"), { phase: "plan" }),
+            Object.assign(agent("pass-security", "completed"), { phase: "plan" }),
+            Object.assign(agent("pass-security", "failed", TIMEOUT), { phase: "sweep" }),
+          ],
+          0,
+        ),
+      ),
+    );
+    store.setRoundMeta(id, { sweep_plan: [row("pass-security", true)] });
+    await watcher().sweep();
+    expect(status(id)).toBe("cancelled");
+    expect(store.getPr(705)!.state).toBe("queued");
+    expect(events("round_required_pass_missing")[0].missing).toContain("sweep pass-security");
+    expect(store.reviewedHead(705)).toBeUndefined();
   });
 
   it("every required pass completed: the verdict applies as usual", async () => {
