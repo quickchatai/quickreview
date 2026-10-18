@@ -234,7 +234,7 @@ describe("qcr review: under and over the limit", () => {
     expect(code).toBe(0);
     expect(h.asked).toHaveLength(0);
     expect(readFileSync(pi.calls, "utf8").trim().split("\n")).toHaveLength(1);
-    const t = h.text();
+    const t = h.lines.filter((l) => !l.startsWith("{")).join("\n");
     expect(t.indexOf("P0")).toBeGreaterThan(-1);
     expect(t.indexOf("P0")).toBeLessThan(t.indexOf("P2"));
     expect(t).toMatch(/c breaks the build/);

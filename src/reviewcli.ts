@@ -11,8 +11,8 @@
 //
 // Exit codes follow `qcr scan`: 0 done; 1 refused, declined, failed or
 // stopped short (partial); 2 usage.
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { Config } from "./config.js";
 import type { Ecosystem } from "./ecosystem.js";
 import {
@@ -37,11 +37,21 @@ import {
   type PrCredentialDeps,
   type PrFetchRequest,
 } from "./prtarget.js";
+import {
+  FALLBACK_DESTINATIONS,
+  destinationChoices,
+  loadDefaultDestinations,
+  parseDestinations,
+  renderMarkdown,
+  saveDefaultDestinations,
+  type Destination,
+  type DestinationChoice,
+} from "./reviewdest.js";
 import { renderOneShotPrompts, runOneShot, type OneShotResult } from "./oneshot.js";
 import type { ReviewRunner, ReviewSandboxChoice } from "./reviewbox.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json] | --help";
+  "usage: qcr review [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--to DEST] [--out FILE] [--json] | --help";
 
 export function reviewHelp(): string {
   return [
@@ -63,7 +73,13 @@ export function reviewHelp(): string {
     "  --preview         show the plan, the price and the key; start nothing",
     "  --key K           start over the limit without asking, quoting the key a preview showed",
     "  --limit USD       the limit for this run, over the repo's own",
-    "  --json            one JSON object instead of text",
+    "  --json            one JSON object instead of text (the agent destination)",
+    "  --to DEST         where the result goes, for this run: terminal, file, json (comma-separated)",
+    "  --out FILE        write the markdown report to FILE (implies file)",
+    "",
+    "Destinations: with none given, the repo's saved default is used; with none saved, an",
+    "interactive run asks and saves the answer for this repo (in its git dir), and a run",
+    "with no terminal prints the terminal text plus JSON and never waits.",
     "",
     "A PR is read with the first GitHub credential found: the App if configured, then",
     "GITHUB_TOKEN/GH_TOKEN, then `gh auth token` (run `gh auth login` to set that up).",
@@ -88,6 +104,8 @@ export type ReviewCommand =
       preview: boolean;
       key?: string;
       limit?: number;
+      to?: Destination[];
+      out?: string;
     };
 
 const usage = (why?: string): Error => new Error(why ? `${REVIEW_USAGE}\n(${why})` : REVIEW_USAGE);
@@ -103,6 +121,8 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   let repo: string | undefined;
   let key: string | undefined;
   let limit: number | undefined;
+  let to: Destination[] | undefined;
+  let out: string | undefined;
   const value = (i: number, flag: string): string => {
     const v = rest[i + 1];
     if (v === undefined || v.startsWith("--")) throw usage(`${flag} needs a value`);
@@ -115,6 +135,13 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     else if (a === "--base") base = value(i++, a);
     else if (a === "--repo") repo = value(i++, a);
     else if (a === "--key") key = value(i++, a);
+    else if (a === "--to") {
+      try {
+        to = parseDestinations(value(i++, a));
+      } catch (err) {
+        throw usage(err instanceof Error ? err.message : String(err));
+      }
+    } else if (a === "--out") out = value(i++, a);
     else if (a === "--limit") {
       const n = Number(value(i++, a));
       if (!Number.isFinite(n) || n <= 0)
@@ -145,6 +172,8 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     ...(base !== undefined ? { base } : {}),
     ...(key !== undefined ? { key } : {}),
     ...(limit !== undefined ? { limit } : {}),
+    ...(to !== undefined ? { to } : {}),
+    ...(out !== undefined ? { out } : {}),
   };
 }
 
@@ -154,6 +183,9 @@ export interface ReviewCliDeps {
   out: (line: string) => void;
   /** Ask a yes/no question of the person at the terminal. Null: nobody to ask. */
   confirm: ((question: string) => Promise<boolean>) | null;
+  /** Ask the person to pick one option. Absent: the session is not interactive,
+   * so the destination question is never asked. */
+  choose?: (question: string, options: DestinationChoice[]) => Promise<Destination>;
   /** The production tree (prompts/, extensions/, agents/). */
   root: string;
   /** pi's agent dir (its login). */
@@ -222,8 +254,27 @@ async function runReview(
   deps: ReviewCliDeps,
   cleanups: Array<() => void>,
 ): Promise<number> {
-  const say = (human: string, data: Record<string, unknown>): void =>
-    deps.out(json ? JSON.stringify(data) : human);
+  // Where results go. Before the destination is settled, messages use what is
+  // known: the flags, else the saved default, else the fallback.
+  let dests: readonly Destination[] = json ? ["json"] : FALLBACK_DESTINATIONS;
+  let reportPath: string | null = null;
+  const deliver = (human: string, data: Record<string, unknown>, markdown?: string): void => {
+    const to = new Set(dests);
+    if (markdown !== undefined && to.has("file") && reportPath !== null) {
+      try {
+        mkdirSync(dirname(reportPath), { recursive: true });
+        writeFileSync(reportPath, markdown);
+        human += `\nReport: ${reportPath}`;
+        data = { ...data, report: reportPath };
+      } catch (err) {
+        human += `\nThe report could not be written: ${String(err).slice(0, 200)}`;
+      }
+    }
+    // A file-only destination still tells the terminal what happened.
+    if (to.has("terminal") || !to.has("json")) deps.out(human);
+    if (to.has("json")) deps.out(JSON.stringify(data));
+  };
+  const say = (human: string, data: Record<string, unknown>): void => deliver(human, data);
   const refuse = (code: number, errors: string[]): number => {
     say(errors.map((e) => `✗ ${e}`).join("\n"), { ok: false, errors });
     return code;
@@ -238,6 +289,15 @@ async function runReview(
     deps.out(reviewHelp());
     return 0;
   }
+  const explicit: Destination[] = [
+    ...(json ? (["json"] as const) : []),
+    ...(cmd.to ?? []),
+    ...(cmd.out !== undefined ? (["file"] as const) : []),
+  ].filter((d, i, a) => a.indexOf(d) === i);
+  const saved = explicit.length > 0 ? null : loadDefaultDestinations(deps.cwd);
+  if (explicit.length > 0) dests = explicit;
+  else if (saved !== null) dests = saved;
+  else if (deps.choose) dests = ["terminal"];
   const stamp = new Date().toISOString().replace(/[^0-9]/g, "");
   // Where git commands run: the checkout the person stands in, or for a PR
   // the scratch repository its head and base were fetched into.
@@ -382,6 +442,21 @@ async function runReview(
     }
   }
 
+  // The first interactive run in a repo asks where results go and keeps the
+  // answer for it; a run with no terminal and no default never waits.
+  if (explicit.length === 0 && saved === null) {
+    if (deps.choose) {
+      const picked = await deps.choose(
+        "Where should review results go?",
+        destinationChoices({ pr: prInfo !== null }),
+      );
+      dests = [picked];
+      saveDefaultDestinations(deps.cwd, dests);
+    } else dests = FALLBACK_DESTINATIONS;
+  }
+  if (dests.includes("file"))
+    reportPath = cmd.out !== undefined ? resolve(deps.cwd, cmd.out) : join(runDir, "report.md");
+
   mkdirSync(runDir, { recursive: true });
   // A host run is said once, so a laptop without Docker is never silently
   // unsandboxed. A preview runs nothing, so it says nothing.
@@ -443,7 +518,20 @@ async function runReview(
       ...(count > 0 ? body : ["No findings were written before the stop."]),
       `Files: ${outDir}`,
     ].join("\n");
-    say(human, { ok: false, partial: true, coverage, ...data });
+    deliver(
+      human,
+      { ok: false, partial: true, coverage, ...data },
+      renderMarkdown(
+        {
+          title: `Partial review of ${t.branch} against ${t.base} (${t.repo})`,
+          verdict,
+          notes: [
+            `Stopped at the price shown (${usd(price)}): ${started.length} of ${lenses.length} planned lenses had started.`,
+          ],
+        },
+        groups,
+      ),
+    );
     return 1;
   }
   if (shot.error !== undefined || shot.findings === undefined) {
@@ -456,6 +544,11 @@ async function runReview(
     });
     return 1;
   }
+  const mdMeta = {
+    title: `Review of ${t.branch} against ${t.base} (${t.repo})`,
+    verdict,
+    notes: shot.warnings.slice(0, 5),
+  };
   const human = [
     "",
     `Review done${verdict ? `: ${verdict}` : ""}${spent === null ? "" : ` (${usd(spent)} of ${usd(price)})`}`,
@@ -463,7 +556,7 @@ async function runReview(
     ...shot.warnings.slice(0, 5).map((w) => `warning: ${w}`),
     `Files: ${outDir}`,
   ].join("\n");
-  say(human, { ok: true, partial: false, ...data });
+  deliver(human, { ok: true, partial: false, ...data }, renderMarkdown(mdMeta, groups));
   return 0;
 }
 
@@ -549,6 +642,27 @@ export async function cmdReview(rest: string[], json: boolean): Promise<number> 
           }
         }
       : null,
+    ...(interactive
+      ? {
+          choose: async (q: string, options: DestinationChoice[]): Promise<Destination> => {
+            const rl = createInterface({ input: process.stdin, output: process.stderr });
+            try {
+              const menu = options.map((o, i) => `  ${i + 1}) ${o.label}`).join("\n");
+              for (;;) {
+                const a = (
+                  await rl.question(
+                    `${q}\n${menu}\nThis is saved for this repo. [1-${options.length}] `,
+                  )
+                ).trim();
+                const o = options[Number(a) - 1] ?? options.find((x) => x.value === a);
+                if (o) return o.value;
+              }
+            } finally {
+              rl.close();
+            }
+          },
+        }
+      : {}),
     root,
     agentDir,
     cfg,
