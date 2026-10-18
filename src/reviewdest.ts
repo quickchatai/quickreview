@@ -1,13 +1,13 @@
 // Where a local review's result goes (`qcr review`): the terminal, a markdown
-// file, or JSON back to the agent. The repo's own default is kept in its git
-// dir (shared by its worktrees, never tracked, never global); a flag overrides
-// it for one run. Posting to a PR (src/reviewpost.ts) is offered, and
+// file, or JSON back to the agent. The repo's own default is kept in the state
+// home (src/reviewstore.ts: shared by its worktrees, never tracked, never
+// global); a flag overrides it for one run. Posting to a PR (src/reviewpost.ts) is offered, and
 // accepted, only for a target that has a PR.
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import type { TerminalFinding } from "./localreview.js";
+import { openReviewStore } from "./reviewstore.js";
 
 export type Destination = "terminal" | "file" | "json" | "pr";
 
@@ -18,8 +18,6 @@ export const FALLBACK_DESTINATIONS: readonly Destination[] = ["terminal", "json"
 
 /** The keys of one finding in the JSON (and the facts of one markdown bullet). */
 export const FINDINGS_JSON_KEYS = ["path", "line", "severity", "title", "lens"] as const;
-
-const DEST_FILE = "qcr-review-destination.json";
 
 export interface DestinationChoice {
   value: Destination;
@@ -50,22 +48,8 @@ export function parseDestinations(spec: string): Destination[] {
   return out;
 }
 
-/** The repo's own file: the common git dir, so every worktree of the repo shares it. */
-function defaultPath(cwd: string): string | null {
-  try {
-    const p = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return p ? resolve(cwd, p, DEST_FILE) : null;
-  } catch {
-    return null;
-  }
-}
-
 export function loadDefaultDestinations(cwd: string): Destination[] | null {
-  const path = defaultPath(cwd);
+  const path = openReviewStore(cwd)?.destinationPath() ?? null;
   if (path === null || !existsSync(path)) return null;
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as { destinations?: unknown };
@@ -81,7 +65,7 @@ export function loadDefaultDestinations(cwd: string): Destination[] | null {
 
 /** Keep the choice for this repo. False when `cwd` is not in a git repo. */
 export function saveDefaultDestinations(cwd: string, d: readonly Destination[]): boolean {
-  const path = defaultPath(cwd);
+  const path = openReviewStore(cwd)?.destinationPath() ?? null;
   if (path === null) return false;
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify({ destinations: d }, null, 2) + "\n");

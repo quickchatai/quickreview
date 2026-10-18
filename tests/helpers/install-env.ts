@@ -31,6 +31,8 @@ process.env.XDG_CONFIG_HOME = join(temp.root, "config");
 process.env.XDG_STATE_HOME = join(temp.root, "state");
 delete process.env.QCR_CONFIG;
 delete process.env.QCR_INSTALL;
+delete process.env.QCR_CONFIG_HOME;
+delete process.env.QCR_STATE_HOME;
 
 afterAll(() => {
   temp.close();

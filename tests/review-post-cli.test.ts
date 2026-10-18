@@ -3,6 +3,7 @@
 // (no network, no model, no docker, no GitHub).
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { freshStateHomePerTest } from "./helpers/fresh-state-home.js";
 import {
   chmodSync,
   existsSync,
@@ -27,6 +28,7 @@ vi.stubEnv(
 const { runReviewCli } = await import("../src/reviewcli.js");
 const { saveDefaultDestinations, destinationChoices } = await import("../src/reviewdest.js");
 const { contextFor } = await import("../src/bench/runner.js");
+const { openReviewStore } = await import("../src/reviewstore.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-cli-"));
@@ -34,6 +36,8 @@ afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
   vi.unstubAllEnvs();
 });
+
+freshStateHomePerTest();
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync(
@@ -344,7 +348,8 @@ describe("qcr review --to pr", () => {
     const pi = happyPi("pr-state");
     const h1 = prHarness(repo, pi.bin, api);
     expect(await runReviewCli(["7", "--to", "terminal"], false, h1.deps)).toBe(0);
-    expect(existsSync(join(repo, ".git", "qcr-review-state"))).toBe(true);
+    expect(existsSync(join(openReviewStore(repo)!.dir, "state"))).toBe(true);
+    expect(existsSync(join(repo, ".git", "qcr-review-state"))).toBe(false);
     const h2 = prHarness(repo, pi.bin, api);
     expect(await runReviewCli(["7", "--to", "terminal"], false, h2.deps)).toBe(0);
     expect(h2.text()).toMatch(/nothing new/i);

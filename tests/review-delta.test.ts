@@ -28,6 +28,7 @@ vi.stubEnv(
 const { runReviewCli } = await import("../src/reviewcli.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const state = await import("../src/reviewstate.js");
+const { openReviewStore } = await import("../src/reviewstore.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-delta-"));
@@ -367,7 +368,9 @@ describe("qcr review: a doubtful delta is a full review", () => {
     setLimit(repo);
     const pi = scriptedPi("gone", [{ findings: first }, { findings: [] }]);
     await runReviewCli([], false, harness(repo, pi.bin).deps);
-    const path = state.statePathFor(repo, state.branchTargetKey(resolveRepo(repo), "feature"));
+    const path = openReviewStore(repo)!.statePath(
+      state.branchTargetKey(resolveRepo(repo), "feature"),
+    );
     const s = JSON.parse(readFileSync(path!, "utf8"));
     s.rounds[s.rounds.length - 1].head_sha = "0123456789abcdef0123456789abcdef01234567";
     writeFileSync(path!, JSON.stringify(s));
@@ -383,7 +386,9 @@ describe("qcr review: a doubtful delta is a full review", () => {
     setLimit(repo);
     const pi = scriptedPi("corrupt", [{ findings: first }, { findings: first }]);
     await runReviewCli([], false, harness(repo, pi.bin).deps);
-    const path = state.statePathFor(repo, state.branchTargetKey(resolveRepo(repo), "feature"));
+    const path = openReviewStore(repo)!.statePath(
+      state.branchTargetKey(resolveRepo(repo), "feature"),
+    );
     writeFileSync(path!, "{ not json");
     smallPush(repo);
     expect(await runReviewCli([], false, harness(repo, pi.bin).deps)).toBe(0);

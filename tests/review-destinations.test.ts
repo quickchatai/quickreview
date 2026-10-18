@@ -28,6 +28,7 @@ vi.stubEnv(
 const { runReviewCli, parseReviewArgs } = await import("../src/reviewcli.js");
 const { loadDefaultDestinations, saveDefaultDestinations, destinationChoices, FINDINGS_JSON_KEYS } =
   await import("../src/reviewdest.js");
+const { openReviewStore } = await import("../src/reviewstore.js");
 const { contextFor } = await import("../src/bench/runner.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -192,8 +193,9 @@ describe("qcr review: destinations and the per-repo default", () => {
     saveDefaultDestinations(a, ["file"]);
     expect(loadDefaultDestinations(a)).toEqual(["file"]);
     expect(loadDefaultDestinations(b)).toBeNull();
-    // inside the repo's git dir, not tracked
-    expect(existsSync(join(a, ".git", "qcr-review-destination.json"))).toBe(true);
+    // in the state home, not in the repo or its git dir
+    expect(existsSync(openReviewStore(a)!.destinationPath())).toBe(true);
+    expect(existsSync(join(a, ".git", "qcr-review-destination.json"))).toBe(false);
     expect(git(a, "status", "--porcelain")).toBe("");
   });
 
