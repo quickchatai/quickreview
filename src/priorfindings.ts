@@ -38,7 +38,7 @@ import { canonicalLensIds, storedLensIds } from "./lensids.js";
 import { fenceAsData } from "./memory/datafence.js";
 import { predecessorOf } from "./outcomes.js";
 import { priorFindingFields } from "./priortasks.js";
-import { bareTag } from "./severity.js";
+import { bareTag, ordinaryPostTag } from "./severity.js";
 import type { PriorFindingCheckRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
 
 /** At most this many findings in the prompt; the sidecar holds them all. */
@@ -306,7 +306,10 @@ export function computePriorFindings(input: ComputePriorInput): PriorFindingsLis
           .map((m) => m.thread_id)
           .filter((t) => t !== null)
           .pop() ?? null,
-      blocking: bareTag(latest.posted_as) === "blocker",
+      blocking:
+        bareTag(latest.posted_as) !== "deferred" && ordinaryPostTag(
+          bareTag(latest.posted_as), latest.severity, latest.confidence, latest.reachability,
+        ) === "blocker",
       last_status: openReport?.status ?? null,
       last_status_round: openReport?.round ?? null,
       last_evidence: openReport?.evidence ?? null,

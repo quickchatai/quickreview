@@ -13,6 +13,7 @@ import {
   type PriorFindingsList,
 } from "../src/priorfindings.js";
 import { StateStore, type RoundFindingInput } from "../src/state.js";
+import { assignPriorFindings, renderPriorTaskSection } from "../src/priortasks.js";
 
 const HEAD = "abcdef1234567890abcdef1234567890abcdef12";
 
@@ -69,6 +70,35 @@ const blocker = (key: string, line: number, extra: Partial<RoundFindingInput> = 
   }) as RoundFindingInput;
 
 describe("collectPriorFindings — what is still open", () => {
+  it("keeps a real but deferred finding nonblocking regardless of its severity", () => {
+    const r1 = deliveredRound(7);
+    ingest(7, r1, [blocker("later", 10, { posted_as: "deferred", severity: "P1" })]);
+    const list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r1 + 1);
+    expect(list.findings[0]?.blocking).toBe(false);
+  });
+  it("keeps ask-your-human blockers blocking and carries their reasoning into the assigned leaf task", () => {
+    const r1 = deliveredRound(7);
+    ingest(7, r1, [blocker("human", 10, { posted_as: "ask your human", severity: "P1" })]);
+    const list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r1 + 1);
+    expect(list.findings[0]?.blocking).toBe(true);
+    const assigned = assignPriorFindings(list, [
+      { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+    ], new Set());
+    const task = renderPriorTaskSection(assigned[0]!.priors);
+    expect(task).toContain("why human");
+    expect(task).toContain("evidence human");
+  });
+  it("carries the original rationale and evidence into a blank-slate task", () => {
+    const r1 = deliveredRound(7);
+    ingest(7, r1, [blocker("context", 10)]);
+    const list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r1 + 1);
+    const assigned = assignPriorFindings(list, [
+      { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+    ], new Set());
+    const task = renderPriorTaskSection(assigned[0]!.priors);
+    expect(task).toContain("why context");
+    expect(task).toContain("evidence context");
+  });
   it("lists posted findings of earlier rounds, blockers first, and never the current round", () => {
     const r1 = deliveredRound(7);
     ingest(7, r1, [

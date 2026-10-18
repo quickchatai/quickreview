@@ -3,6 +3,7 @@
 // render-time post-check over the posted findings.
 import { describe, expect, it } from "vitest";
 import { clusterFindings, identifiersOf, postCheckRecord, renderGroups } from "../src/dedup.js";
+import { renderReviewFromRecord } from "../src/reviewrender.js";
 
 describe("identifiersOf", () => {
   it("takes named identifiers from code spans, not prose, paths or common words", () => {
@@ -130,6 +131,15 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     expect(f[3]!.disposition).toBe("killed");
     expect((record as { comments_posted: number }).comments_posted).toBe(2);
     expect(input.findings[0]!.disposition).toBe("posted"); // input not mutated
+  });
+  it("keeps existing repeat-site followers in the surviving post-check root cause", () => {
+    const input = rec();
+    const follower = { id: "repeat", disposition: "posted", posted_as: "nit", same_as: "F1",
+      path: "a.ts", line: 90, title: "A repeated site", body: "same cause" };
+    const { record } = postCheckRecord({ ...input, findings: [...input.findings.slice(0, 2), follower] });
+    const rendered = renderReviewFromRecord(record, { verdict: "REQUEST_CHANGES", bodyMode: "verdict" });
+    expect(rendered.body.split("\n")[0]).toContain("1 blocker");
+    expect(rendered.body.split("\n")[0]).not.toContain("nit");
   });
   it("a lead later merged into a stronger one hands on every site it absorbed", () => {
     const entry = (id: string, posted_as: string, severity: string, line: number) => ({
