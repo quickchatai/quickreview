@@ -957,3 +957,23 @@ describe("end to end: a re-scan fixes a promoted finding and its ticket closes w
     ).toMatchObject({ ok: true, sha: SHA_B });
   });
 });
+
+it("uses one durable note identity when a memory acknowledgement is lost", async () => {
+  const memory = new MemFake();
+  const landed = new Map<string, string>();
+  let attempts = 0;
+  memory.apply = async (op) => {
+    if (op.op !== "note") return { ok: false, message: "unsupported" };
+    attempts++;
+    landed.set(op.name ?? `unnamed-${attempts}`, op.text);
+    return attempts === 1
+      ? { ok: false, message: "transport timed out after server write" }
+      : { ok: true, message: "present" };
+  };
+  const { findings, triage } = setup({ memory });
+  findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t" });
+  await triage.dismiss({ fingerprint: FP("a"), reason: "by design" });
+  await triage.dismiss({ fingerprint: FP("a"), reason: "by design" });
+  expect(attempts).toBe(2);
+  expect(landed.size).toBe(1);
+});

@@ -1,3 +1,4 @@
+import { parsePrIdentity as parseOwnPr } from "../src/pr-identity.js";
 // ledger-pin — keeps the review ledger alive across pi's native compaction.
 //
 // The PR session maintains a fenced block that starts with "LEDGER PR #<n> @
@@ -33,8 +34,9 @@
 // The compaction contract was read out of pi 1.0.0's shipped dist (the
 // `qcr-bench:fast1` image, docker create + docker cp, no container run); each
 // tag below names the file and symbol it was checked against.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type {
   CompactHandlerResult,
   Pi,
@@ -52,11 +54,7 @@ const LEDGER_RE =
 
 /** The session's own PR number from QCR_PR — undefined for the overseer (no
  * QCR_PR) and for anything that is not a plain digit string (fail safe). */
-export function parseOwnPr(raw: string | undefined): number | undefined {
-  const trimmed = raw?.trim();
-  if (!trimmed || !/^\d+$/.test(trimmed)) return undefined;
-  return Number(trimmed);
-}
+export { parsePrIdentity as parseOwnPr } from "../src/pr-identity.js";
 
 /** Deep-walk an unknown payload collecting every string that could be message
  * text. // VERIFY-ON-PIN: the event payload shape is undocumented, so this is
@@ -113,7 +111,13 @@ function writeSnapshot(path: string, body: string): void {
     /* first snapshot */
   }
   if (previous.trim() === body.trim()) return;
-  writeFileSync(path, `${body}\n`);
+  const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    writeFileSync(tmp, `${body}\n`);
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 /** Sentinels around the pinned block, so the next compaction can strip the
@@ -286,6 +290,7 @@ export function activateWith(pi: Pi, deps: LedgerPinDeps = {}): void {
   const ownPr = parseOwnPr(env.QCR_PR);
   const snapshotPath = ledgerSnapshotPath(env, session);
   let lastLedger = "";
+  let persistedLedger = "";
 
   const capture = (source: unknown): string => {
     const onIgnore = (pr: number): void => {
@@ -293,10 +298,11 @@ export function activateWith(pi: Pi, deps: LedgerPinDeps = {}): void {
       console.error(`[ledger-pin] debug: ignoring LEDGER PR #${pr} (${who})`);
     };
     const ledger = extractLedger(collectText(source), ownPr, onIgnore) ?? lastLedger;
-    if (ledger && ledger !== lastLedger) {
-      lastLedger = ledger;
+    if (ledger) lastLedger = ledger;
+    if (ledger && ledger !== persistedLedger) {
       try {
         writeSnapshot(snapshotPath, ledger);
+        persistedLedger = ledger;
       } catch (err) {
         console.error(`[ledger-pin] snapshot write failed: ${String(err)}`);
       }

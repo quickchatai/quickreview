@@ -10,7 +10,7 @@
 // The bench sandbox's settings are pinned below and by tests/bench-aacr.test.ts.
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,10 +35,10 @@ afterEach(() => {
 /** Run one entrypoint's merge under a scratch HOME (already seeded); returns
  * the settings.json it leaves behind. The VM merge FATALs on a missing
  * bash-guard, so its path is pointed at a real scratch file. */
-function runMerge(file: string, home: string): Record<string, unknown> {
+function runMerge(file: string, home: string, bootstrap = ""): Record<string, unknown> {
   const guard = join(home, "bash-guard.ts");
   writeFileSync(guard, "// stub\n");
-  const script = heredoc(file).split(VM_GUARD).join(guard);
+  const script = bootstrap + "\n" + heredoc(file).split(VM_GUARD).join(guard);
   execFileSync(process.execPath, ["-"], {
     input: script,
     env: { PATH: process.env.PATH ?? "", HOME: home },
@@ -114,4 +114,27 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
       waited += Math.min(s.retry.baseDelayMs * 2 ** i, s.retry.maxAgentDelayMs);
     expect(waited).toBeGreaterThanOrEqual(10 * 60_000);
   });
+});
+
+it.each(
+  ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"].flatMap((file) =>
+    ["settings.json", "trust.json"].map((name) => [file, name] as const),
+  ),
+)("preserves %s / %s after a failed JSON replacement", (file, name) => {
+  const home = mkdtempSync(join(tmpdir(), "qcr-pi-write-failure-"));
+  tmps.push(home);
+  const agent = join(home, ".pi/agent");
+  mkdirSync(agent, { recursive: true });
+  const settings = { extensions: [], theme: "mine" };
+  const trust = { "/opt/quickreview": false };
+  writeFileSync(join(agent, "settings.json"), JSON.stringify(settings), { mode: 0o600 });
+  writeFileSync(join(agent, "trust.json"), JSON.stringify(trust), { mode: 0o600 });
+  const bootstrap = `const siFs = require("node:fs"); const siWrite = siFs.writeFileSync; siFs.writeFileSync = (file, data, ...args) => { if (require("node:path").basename(String(file)).startsWith(${JSON.stringify(name)})) { siWrite(file, "{"); throw new Error("disk full"); } return siWrite(file, data, ...args); };`;
+  expect(() => runMerge(file, home, bootstrap)).toThrow();
+  expect(JSON.parse(readFileSync(join(agent, name), "utf8"))).toEqual(
+    name === "settings.json" ? settings : trust,
+  );
+  expect(runMerge(file, home).theme).toBe("mine");
+  expect(statSync(join(agent, name)).mode & 0o777).toBe(0o600);
+  expect(JSON.parse(readFileSync(join(agent, "trust.json"), "utf8"))["/opt/quickreview"]).toBe(true);
 });

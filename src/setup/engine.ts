@@ -851,6 +851,10 @@ export class SetupEngine {
     if (error !== null) problems.push(error);
     const cut: UnitCut = file.saved ?? candidateCut(repo.unit_candidates, files);
     const view = this.view(cut, files, this.lineCounter());
+    problems.push(...view.errors, ...view.blocking_save);
+    const unassigned = view.unassigned?.length;
+    if (unassigned !== undefined && unassigned > 0)
+      problems.push(`${unassigned} file(s) are unassigned by the saved unit cut`);
     const themes = historyThemesState(this.ports.state);
     if (themes.state === "unreadable") problems.push(themes.error);
     const survey = this.surveyRun.status();

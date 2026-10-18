@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   renderComparison,
+  renderPlans,
   renderReplayPreview,
   renderReplayStatus,
   replayToolDefinitions,
@@ -259,7 +260,11 @@ function fakeRunner(calls: Call[], cost: (spec: CaseSpec) => number | null = () 
   });
 }
 
-function runner(calls: Call[], cost?: (spec: CaseSpec) => number | null): ReplayRunner {
+function runner(
+  calls: Call[],
+  cost?: (spec: CaseSpec) => number | null,
+  transform?: (spec: CaseSpec, outcome: CaseOutcome) => CaseOutcome,
+): ReplayRunner {
   const state = stateHomeFs(stateRoot());
   return new ReplayRunner({
     state,
@@ -271,7 +276,15 @@ function runner(calls: Call[], cost?: (spec: CaseSpec) => number | null): Replay
     },
     sides: (req) =>
       replaySides({ root: sandbox, env, stateRoot: stateRoot(), state, clock: () => now }, req),
-    cases: fakeRunner(calls, cost),
+    cases: (agentsDir) => {
+      const inner = fakeRunner(calls, cost)(agentsDir);
+      return {
+        run: async (spec, signal, onCost) => {
+          const result = await inner.run(spec, signal, onCost);
+          return transform ? transform(spec, result) : result;
+        },
+      };
+    },
     styleGuide: () => [],
     concurrency: 2,
   });
@@ -630,6 +643,22 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(shown).toContain("Only the NEW profile (1)");
   });
 
+  it("keeps candidates unvalidated when the replay validator opened no PR code", async () => {
+    const rr = runner([], undefined, (spec, outcome) =>
+      spec.agent.startsWith(`${VALIDATE_PASS}--`)
+        ? { ok: true, output: "FINDINGS pass-validate PR#7 @sha\nNONE", cost_usd: 0.001, reads: [] }
+        : outcome,
+    );
+    const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    const run = await ran(rr, p.key);
+    expect(run.cases.filter((c) => c.kind === "validate").every((c) => c.status === "failed")).toBe(
+      true,
+    );
+    const compared = compareRun(run)[0]!;
+    expect(compared.findings.new.length).toBeGreaterThan(0);
+    expect(compared.findings.new.every((f) => !f.validated)).toBe(true);
+  });
+
   it("a validator that judges nothing fails its case — the side keeps its lenses' candidates, never an empty review", async () => {
     const calls: Call[] = [];
     const inner = fakeRunner(calls);
@@ -955,6 +984,16 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(s.ok).toBe(true);
     expect(await rr.start({ key: p.key })).toMatchObject({ ok: false });
     expect(await rr.preview({ prs: [7], old: "none" })).toMatchObject({ ok: false });
+    await rr.idle();
+  });
+
+  it("refuses a preview while a start is planning shared trees and agents", async () => {
+    const rr = runner([]);
+    const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    const starting = rr.start({ key: p.key });
+    const competing = await rr.preview({ prs: [8], old: "none" });
+    expect(competing.ok).toBe(false);
+    expect((await starting).ok).toBe(true);
     await rr.idle();
   });
 
@@ -1363,5 +1402,21 @@ describe("gitReplaySource (a scratch git repo — git is the thing under test)",
     );
     expect(noMerge.ok).toBe(false);
     expect(!noMerge.ok && noMerge.reason).toContain("already contains the head");
+  });
+});
+
+describe("plan row prices", () => {
+  it("counts distinct cases even when their displayed prices are equal", async () => {
+    tune({ security: "critical" });
+    const pr = previewOf(await runner([]).preview({ prs: [7], old: "none" })).prs[0]!;
+    const row = pr.plans.old[0]!;
+    const distinct = {
+      ...pr,
+      plans: { old: [{ ...row, case: "old-case" }], new: [{ ...row, case: "new-case" }] },
+    };
+    expect(renderPlans(distinct, () => "$0.10")).toContain("$0.10 + $0.10");
+    expect(
+      renderPlans({ ...distinct, plans: { old: [row], new: [row] } }, () => "$0.10"),
+    ).not.toContain("$0.10 + $0.10");
   });
 });

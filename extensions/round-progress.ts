@@ -18,12 +18,15 @@ import { dirname, join } from "node:path";
 import type { Pi, PiEventPayload } from "@earendil-works/pi-coding-agent";
 import {
   appendProgressLog,
+  isLiveAgentStatus,
   progressLogPath,
   type LiveAgentProgress,
   type LiveAgentStatus,
+  type PassExecutionPhase,
   type ProgressTransition,
   type RoundProgressSnapshot,
 } from "../src/round-progress.js";
+import { parsePrIdentity } from "../src/pr-identity.js";
 import { parseSessionCommandMarker } from "../src/session-command.js";
 import { LAUNCH_PLAN_TOOL, planLaunch } from "./subagents.js";
 
@@ -68,7 +71,7 @@ function number(value: unknown): number {
 }
 
 function status(value: unknown, exitCode?: unknown): LiveAgentStatus {
-  if (value === "completed" || value === "failed" || value === "running") return value;
+  if (isLiveAgentStatus(value)) return value;
   return exitCode === 0 ? "completed" : exitCode === undefined ? "running" : "failed";
 }
 
@@ -87,24 +90,37 @@ function toolArgs(event: PiEventPayload): Record<string, unknown> {
 /** Native subagent supports one `{agent, task}` or parallel `{tasks:[...]}`.
  * Capture the latter at tool START — waiting for its first streaming update
  * would read as a false pre-fanout stall. */
-function subagentNames(args: Record<string, unknown>): string[] {
-  const single = text(args.agent);
-  if (single) return [single];
-  if (!Array.isArray(args.tasks)) return [];
-  return args.tasks
-    .map(record)
-    .map((task) => text(task?.agent))
-    .filter((name): name is string => name !== undefined);
+function subagentExecutions(
+  args: Record<string, unknown>,
+): Array<{ agent: string; phase?: PassExecutionPhase }> {
+  const tasks =
+    typeof args.agent === "string" ? [args] : Array.isArray(args.tasks) ? args.tasks : args.chain;
+  if (!Array.isArray(tasks)) return [];
+  return tasks.map(record).flatMap((task) => {
+    const agent = text(task?.agent);
+    if (!agent) return [];
+    // Native calls receive the same canonical task-file pointers as launch_plan.
+    // Free-form/legacy tasks stay unclassified rather than guessing a sweep.
+    const pointer = text(task?.task)?.match(
+      /^Task file: [^\n]*[\/]tasks(-sweep|-optional)?[\/][^\n]+\. Read it first;/,
+    );
+    const phase: PassExecutionPhase | undefined = pointer
+      ? pointer[1] === "-sweep"
+        ? "sweep"
+        : pointer[1] === "-optional"
+          ? "optional"
+          : "plan"
+      : undefined;
+    return [{ agent, ...(phase ? { phase } : {}) }];
+  });
 }
 
-/** The agents a `launch_plan` call launches, read at tool START
- * from the same plan the tool computes — its args name directories, not
- * agents, and the pre-fanout stall clock must see the fan-out begin exactly as
- * it sees a `subagent` call's. A plan the tool will refuse names no agent:
- * nothing launches, so nothing started. */
-function launchPlanNames(args: Record<string, unknown>): string[] {
+/** Read phase and agents from the same accepted launch plan as the tool. */
+function launchPlanExecutions(
+  args: Record<string, unknown>,
+): Array<{ agent: string; phase: PassExecutionPhase }> {
   const plan = planLaunch(args);
-  return plan.ok ? plan.units.map((u) => u.agent) : [];
+  return plan.ok ? plan.units.map(({ agent, phase }) => ({ agent, phase })) : [];
 }
 
 /** The round number rides the order's posting calls. The templates spell it
@@ -205,16 +221,13 @@ function asAgent(
     (typeof result.exitCode === "number" && result.exitCode > 0) ||
     result.stopReason === "error" ||
     result.stopReason === "aborted";
-  const st: LiveAgentStatus =
-    progress?.status === "completed" ||
-    progress?.status === "failed" ||
-    progress?.status === "running"
-      ? progress.status
-      : nativeFailed
-        ? "failed"
-        : live || result.exitCode === -1 || result.exitCode === undefined
-          ? "running"
-          : status(undefined, result.exitCode);
+  const st: LiveAgentStatus = isLiveAgentStatus(progress?.status)
+    ? progress.status
+    : nativeFailed
+      ? "failed"
+      : live || result.exitCode === -1 || result.exitCode === undefined
+        ? "running"
+        : status(undefined, result.exitCode);
   const tool = currentTool(progress) ?? (live ? native.lastTool : undefined);
   const last = text(progress?.lastMessage) ?? native.lastText;
   return {
@@ -228,15 +241,8 @@ function asAgent(
   };
 }
 
-function parsePr(env: NodeJS.ProcessEnv): number | undefined {
-  const raw = env.QCR_PR?.trim();
-  if (!raw || !/^\d+$/.test(raw)) return undefined;
-  const pr = Number(raw);
-  return Number.isSafeInteger(pr) && pr > 0 ? pr : undefined;
-}
-
 export default function activate(pi: Pi): void {
-  const pr = parsePr(process.env);
+  const pr = parsePrIdentity(process.env.QCR_PR);
   if (pr === undefined) return; // overseer and companion do not publish PR progress
   const session = process.env.QCR_SESSION_NAME?.trim() || `pr-${pr}`;
   const root = process.env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
@@ -387,7 +393,9 @@ export default function activate(pi: Pi): void {
     const name = toolName(event);
     const args = toolArgs(event);
     if (name === "subagent" || name === LAUNCH_PLAN_TOOL) {
-      const names = name === "subagent" ? subagentNames(args) : launchPlanNames(args);
+      const executions =
+        name === "subagent" ? subagentExecutions(args) : launchPlanExecutions(args);
+      const names = executions.map(({ agent }) => agent);
       if (names.length > 0) {
         const at = nowIso();
         const callId = toolId(event);
@@ -398,6 +406,7 @@ export default function activate(pi: Pi): void {
           agents.set(key, {
             execution_id: key,
             agent,
+            ...(executions[index]?.phase ? { phase: executions[index]!.phase } : {}),
             status: "running",
             duration_ms: 0,
             tool_count: 0,
@@ -497,6 +506,10 @@ export default function activate(pi: Pi): void {
       for (const [index, fallback] of fallbacks.entries()) {
         const key = fallbackKeys[index]!;
         const previous = agents.get(key);
+        if (previous && previous.status !== "running") {
+          finalAgents.push(previous);
+          continue;
+        }
         const finalAgent: LiveAgentProgress = {
           ...(previous ?? {
             execution_id: key,

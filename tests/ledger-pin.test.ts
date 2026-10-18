@@ -2,17 +2,35 @@
 // session that quotes a sibling review's header must not persist that ledger
 // over its own, and the overseer never carries a PR ledger. Filter is on
 // QCR_PR; missing or garbage QCR_PR fails safe (no mirror).
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Pi, PiEventHandler } from "@earendil-works/pi-coding-agent";
 import { activate, extractLedger, parseOwnPr } from "../extensions/ledger-pin.js";
 
+const snapshotFault = vi.hoisted(() => ({ active: false }));
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return {
+    ...fs,
+    writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+      if (snapshotFault.active && String(args[0]).includes("ledger.md")) {
+        fs.writeFileSync(args[0], "partial");
+        throw new Error("disk full during snapshot write");
+      }
+      return fs.writeFileSync(...args);
+    },
+  };
+});
+
 const OWN = "LEDGER PR #42 @ abc123def\n- fact: own session state\n- next: reply to author";
 const SIBLING = "LEDGER PR #5288 @ 8c2edc01\n- fact: sibling session state";
 
 describe("parseOwnPr", () => {
+  it.each(["0", "9007199254740992", "9".repeat(400)])("refuses invalid PR identity %s", (raw) => {
+    expect(parseOwnPr(raw)).toBeUndefined();
+  });
   it("parses a plain digit string (with surrounding whitespace)", () => {
     expect(parseOwnPr("42")).toBe(42);
     expect(parseOwnPr(" 5288 ")).toBe(5288);
@@ -101,7 +119,30 @@ describe("activate (mirror path)", () => {
     }
     if (dir) rmSync(dir, { recursive: true, force: true });
     dir = undefined;
+    snapshotFault.active = false;
     vi.restoreAllMocks();
+  });
+
+  it("retries the same ledger after a transient publication failure", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { fire, snapshot } = setup({ QCR_PR: "42", QCR_SESSION_NAME: "pr-42" });
+    mkdirSync(snapshot);
+    fire({ text: OWN });
+    rmSync(snapshot, { recursive: true });
+    fire({ text: OWN });
+    expect(readFileSync(snapshot, "utf8").trim()).toBe(OWN);
+  });
+
+  it("keeps the prior durable snapshot intact when a replacement write fails", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { fire, snapshot } = setup({ QCR_PR: "42", QCR_SESSION_NAME: "pr-42" });
+    fire({ text: OWN });
+    snapshotFault.active = true;
+    fire({ text: OWN + "\n- fact: new" });
+    snapshotFault.active = false;
+    expect(readFileSync(snapshot, "utf8").trim()).toBe(OWN);
+    fire({ text: OWN + "\n- fact: new" });
+    expect(readFileSync(snapshot, "utf8").trim()).toBe(OWN + "\n- fact: new");
   });
 
   it("mirrors the session's own PR block", () => {

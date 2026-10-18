@@ -570,6 +570,21 @@ export class ReplayRunner {
     old?: unknown;
     new_profile?: unknown;
   }): Promise<{ ok: true; preview: ReplayPreview } | Refusal> {
+    if (this.starting)
+      return { ok: false, errors: ["a replay is already planning — wait for it first"] };
+    this.starting = true;
+    try {
+      return await this.previewPlanned(raw);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async previewPlanned(raw: {
+    prs?: unknown;
+    old?: unknown;
+    new_profile?: unknown;
+  }): Promise<{ ok: true; preview: ReplayPreview } | Refusal> {
     if (this.active)
       return {
         ok: false,
@@ -908,9 +923,9 @@ export class ReplayRunner {
       }
       // A lens that opened nothing of the PR did not review it, whatever it
       // answered: never a finished review, never a price sample.
-      if (c.kind === "lens" && r.pr.length === 0) {
+      if (r.pr.length === 0) {
         c.status = "failed";
-        c.error = `the lens opened none of PR #${c.pr}'s files (${outcome.reads.length} file-read call${outcome.reads.length === 1 ? "" : "s"} in all)`;
+        c.error = `the ${c.kind === "lens" ? "lens" : "validator"} opened none of PR #${c.pr}'s files (${outcome.reads.length} file-read call${outcome.reads.length === 1 ? "" : "s"} in all)`;
         return spent;
       }
     }

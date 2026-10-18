@@ -3927,7 +3927,12 @@ export class VerdictWatcher {
         round_no: v.round_no,
         failed: failures,
       });
-    const gap = requiredPassGap(parsePlan(round.pass_plan), progress, v.round_no);
+    const gap = requiredPassGap(
+      parsePlan(round.pass_plan),
+      progress,
+      v.round_no,
+      parsePlan(round.sweep_plan),
+    );
     if (gap.state !== "missing") return false;
     const missing = describeGap(gap.missing);
     const posted = this.reviewWentOut(v.pr, v.round_no, proven);

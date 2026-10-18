@@ -23,7 +23,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PassThrough } from "node:stream";
 import { connect, type Socket } from "node:net";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, type CompanionConfig } from "../src/config.js";
 import {
   CompanionLifecycle,
@@ -932,4 +932,44 @@ describe.skipIf(!existsSync(opsDocPath))("provisioning is documented, not folklo
       expect(doc).toContain(forbidden);
     expect(doc).toMatch(/ADMIN|ROOT/); // the never-provision-an-admin-key rule
   });
+});
+
+it("retries a memory outage notification after its alerts mount recovers", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "qcr-health-retry-"));
+  const alerts = join(dir, "alerts");
+  writeFileSync(alerts, "mount unavailable");
+  let ticks = 0;
+  const stop = new Error("test complete");
+  const original = globalThis.setTimeout;
+  const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    callback: () => void,
+    ms?: number,
+  ) => {
+    if (ms !== 1) return original(callback, ms);
+    ticks++;
+    if (ticks === 3) {
+      rmSync(alerts);
+      mkdirSync(alerts);
+    }
+    if (ticks === 5) throw stop;
+    queueMicrotask(callback);
+    return {} as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout);
+  try {
+    await expect(
+      health.runWatcher(
+        { endpoint: "http://memory", alertsDir: alerts, timeoutMs: 1000, intervalMs: 1 },
+        {
+          fetchFn: async () => {
+            throw new Error("ECONNREFUSED");
+          },
+          log: () => {},
+        },
+      ),
+    ).rejects.toBe(stop);
+    expect(readdirSync(alerts).filter((name) => name.endsWith(".json"))).toHaveLength(1);
+  } finally {
+    timer.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

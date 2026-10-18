@@ -194,6 +194,8 @@ export interface ScanFinding {
    * merged sighting's) — so the aggregate is recomputed from the latest
    * reports whichever sighting reports last. */
   own_severity?: ScanSeverity;
+  /** Its own latest judgement, before aggregating merged sightings. */
+  own_judgement?: Judgement;
   /** Why the operator dismissed it; kept after a later promote. */
   dismissal?: Dismissal | null;
   /** Where it was filed when promoted. */
@@ -220,7 +222,9 @@ export interface NotReproduced extends Sighting {
   count: number;
 }
 
-export interface MergedSighting {
+type Judgement = Pick<ScanFinding, "validated" | "doubt" | "validity" | "scenario">;
+
+export interface MergedSighting extends Partial<Judgement> {
   fingerprint: string;
   lens: string;
   start: number;
@@ -261,6 +265,7 @@ export type ReportedFinding = Omit<
   | "lenses"
   | "merged"
   | "own_severity"
+  | "own_judgement"
   | "dismissal"
   | "ticket"
   | "resembles_dismissed"
@@ -343,7 +348,7 @@ function resemblingDismissal(
 }
 
 /** A validated survivor with no doubt, of the two, clears the flag. */
-function combinedDoubt(a: ReportedFinding | ScanFinding, b: ReportedFinding): ScanFinding["doubt"] {
+function combinedDoubt(a: Judgement, b: Judgement): ScanFinding["doubt"] {
   if ((a.validated && a.doubt === null) || (b.validated && b.doubt === null)) return null;
   return a.doubt ?? b.doubt;
 }
@@ -355,10 +360,7 @@ const validityRank = (v: ValidityView): number => VALIDITY_ORDER.length - VALIDI
 /** Two sightings of one defect: the best-supported tier wins (a confirmed
  * sighting outranks a doubt, as a clean survivor clears the doubt flag), and
  * its scenario with it. Unknown only when neither was judged. */
-function combinedValidity(
-  a: ReportedFinding | ScanFinding,
-  b: ReportedFinding,
-): Pick<ScanFinding, "validity" | "scenario"> {
+function combinedValidity(a: Judgement, b: Judgement): Pick<ScanFinding, "validity" | "scenario"> {
   const best = validityRank(validityOf(b)) > validityRank(validityOf(a)) ? b : a;
   const v = validityOf(best);
   return { validity: v === "unknown" ? null : v, scenario: best.scenario ?? null };
@@ -370,8 +372,8 @@ function combinedValidity(
  * doubtful with no reason, nor confirmed while flagged "may not be valid".
  * With no tier on either side, the pre-tier doubt rule stands. */
 function combinedJudgement(
-  a: ReportedFinding | ScanFinding,
-  b: ReportedFinding,
+  a: Judgement,
+  b: Judgement,
 ): Pick<ScanFinding, "doubt" | "validity" | "scenario"> {
   const tiered = combinedValidity(a, b);
   if (tiered.validity === null || tiered.validity === undefined)
@@ -386,10 +388,7 @@ function combinedJudgement(
  * the finding's validity: an exact re-sighting of the SAME code keeps the
  * judgement it already has rather than dropping a confirmed tier — or a
  * doubt — to unknown. Any judged sighting replaces it (the latest wins). */
-function judgementOf(
-  known: ScanFinding,
-  r: ReportedFinding,
-): Pick<ScanFinding, "validated" | "doubt" | "validity" | "scenario"> {
+function judgementOf(known: Judgement, r: Judgement): Judgement {
   if (r.validated || validityOf(r) !== "unknown") {
     return {
       validated: r.validated,
@@ -420,7 +419,7 @@ function collapsible(f: ScanFinding, run: string, held: ReadonlySet<string>): bo
  * which come along as their own merged entries, so a later re-sighting of
  * one of them can still lower the whole. */
 function absorbFinding(into: ScanFinding, f: ScanFinding): ScanFinding {
-  const once = absorb(into, { ...f, severity: f.own_severity ?? f.severity });
+  const once = absorb(into, { ...f, ...f.own_judgement, severity: f.own_severity ?? f.severity });
   const merged = [
     ...once.merged!,
     ...(f.merged ?? []).filter((m) => !once.merged!.some((x) => x.fingerprint === m.fingerprint)),
@@ -428,6 +427,7 @@ function absorbFinding(into: ScanFinding, f: ScanFinding): ScanFinding {
   return {
     ...once,
     severity: aggregateSeverity(once.own_severity!, merged),
+    ...aggregateJudgements(once.own_judgement ?? judgementOf(once, once), merged),
     lenses: [...new Set([...once.lenses!, ...(f.lenses ?? [])])],
     merged,
     aliases: [...new Set([...once.aliases!, ...(f.aliases ?? [])])],
@@ -476,7 +476,24 @@ function sightingOf(r: ReportedFinding): MergedSighting {
     end: r.end,
     severity: r.severity,
     claim: r.claim,
+    validated: r.validated,
+    doubt: r.doubt,
+    validity: r.validity ?? null,
+    scenario: r.scenario ?? null,
   };
+}
+
+function aggregateJudgements(own: Judgement, merged: readonly MergedSighting[]): Judgement {
+  return merged.reduce((current, sighting) => {
+    if (sighting.validated === undefined) return current;
+    const next: Judgement = {
+      validated: sighting.validated,
+      doubt: sighting.doubt ?? null,
+      validity: sighting.validity ?? null,
+      scenario: sighting.scenario ?? null,
+    };
+    return { validated: current.validated || next.validated, ...combinedJudgement(current, next) };
+  }, own);
 }
 
 /** The highest of a finding's own latest severity and each merged
@@ -491,8 +508,17 @@ function absorb(into: ScanFinding, r: ReportedFinding): ScanFinding {
   const lenses = [...new Set([...lensesOf(into), r.lens])];
   const merged = [
     ...(into.merged ?? []).filter((m) => m.fingerprint !== r.fingerprint),
-    sightingOf(r),
+    sightingOf({
+      ...r,
+      ...judgementOf(
+        ((into.merged ?? []).find(
+          (m) => m.fingerprint === r.fingerprint && m.validated !== undefined,
+        ) as Judgement | undefined) ?? { validated: false, doubt: null },
+        r,
+      ),
+    }),
   ];
+  const ownJudgement = into.own_judgement ?? judgementOf(into, into);
   // Before anything collapsed into it, its severity IS its own; a record
   // stored before `own_severity` existed falls back to its aggregate.
   const own = into.own_severity ?? into.severity;
@@ -501,8 +527,8 @@ function absorb(into: ScanFinding, r: ReportedFinding): ScanFinding {
     ...(r.blob !== undefined ? { blob: r.blob } : {}),
     own_severity: own,
     severity: aggregateSeverity(own, merged),
-    validated: into.validated || r.validated,
-    ...combinedJudgement(into, r),
+    own_judgement: ownJudgement,
+    ...aggregateJudgements(ownJudgement, merged),
     lenses,
     merged,
     aliases: [...new Set([...(into.aliases ?? []), r.fingerprint])],
@@ -819,13 +845,14 @@ export class FindingsStore {
           // give — its own latest and each absorbed one's latest, never a
           // stale maximum a re-scan has since lowered.
           const severity = aggregateSeverity(r.severity, known.merged ?? []);
+          const ownJudgement = judgementOf(known.own_judgement ?? known, r);
           byFp.set(ownFp, {
             ...known,
             ...r,
             fingerprint: ownFp,
-            ...judgementOf(known, r),
+            ...aggregateJudgements(ownJudgement, known.merged ?? []),
             severity,
-            ...(known.merged ? { own_severity: r.severity } : {}),
+            ...(known.merged ? { own_severity: r.severity, own_judgement: ownJudgement } : {}),
             ...history,
           });
         } else {
@@ -915,7 +942,13 @@ export class FindingsStore {
       args.run.run,
       new Set([...(prior?.unreported ?? []), ...(prior?.fresh ?? [])]),
     );
-    const pending = new Set(prior?.unreported ?? []);
+    const pending = new Set(
+      (prior?.unreported ?? []).filter((fp) => {
+        const finding = byFp.get(fp);
+        const current = finding ? args.blobs?.get(finding.path) : undefined;
+        return current === undefined || finding?.blob == null || current !== finding.blob;
+      }),
+    );
     const rereadBy = new Set<string>([args.run.run]);
     const unreported: string[] = [];
     let notReproduced = 0;

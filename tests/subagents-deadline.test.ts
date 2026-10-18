@@ -228,3 +228,26 @@ describe("config.toml [pi] subagent_pass_deadline_min", () => {
     expect(() => parseConfig(withKey('"8"'))).toThrow(/subagent_pass_deadline_min/);
   });
 });
+
+describe("per-pass deadline in native batch mode", () => {
+  it("times out and retries only the stuck child of a parallel call", async () => {
+    const native = nativeStub({ "pass-a": [0], "pass-b": ["hang", "hang"] });
+    const wrapped = wrapExecute(native.execute, new WeightedSemaphore(2), DEADLINE_ENV);
+    const out = (await wrapped("batch", { tasks: tasks("pass-a", "pass-b") })) as Combined;
+    expect(out.details.results[0]).toMatchObject({ agent: "pass-a", exitCode: 0 });
+    expect(out.details.results[1]).toMatchObject({ agent: "pass-b", exitCode: 1 });
+    expect(native.calls.filter((call) => call.agent === "pass-b")).toHaveLength(2);
+    expect(native.calls.filter((call) => call.agent === "pass-a")).toHaveLength(1);
+  });
+});
+
+it("keeps native batches at four concurrent children when adding individual deadlines", async () => {
+  const names = ["a", "b", "c", "d", "e", "f"];
+  const native = nativeStub(Object.fromEntries(names.map((name) => [name, [30]])));
+  const wrapped = wrapExecute(native.execute, new WeightedSemaphore(12), DEADLINE_ENV);
+  const pending = wrapped("batch", { tasks: tasks(...names) });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(native.calls).toHaveLength(4);
+  await pending;
+  expect(native.calls).toHaveLength(6);
+});

@@ -24,6 +24,7 @@
 // Every method resolves; a refusal is `{ok:false, reason}`, never a throw.
 import {
   closeSync,
+  linkSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -35,6 +36,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { claimTrackerId } from "../trackerid.js";
 import type { SinkResult, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
 
@@ -303,9 +305,19 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
         // An effort may have a map and no ticket yet: its tickets/ is made
         // here, or the claimed id would point at a file never written.
         mkdirSync(join(root, "efforts", t.effort, "tickets"), { recursive: true });
-        const fd = openSync(join(root, rel(n)), "wx");
-        writeFileSync(fd, content);
-        closeSync(fd);
+        const target = join(root, rel(n));
+        const tmp = `${target}.tmp-${randomUUID()}`;
+        let fd: number | undefined;
+        try {
+          fd = openSync(tmp, "wx");
+          writeFileSync(fd, content);
+          closeSync(fd);
+          fd = undefined;
+          linkSync(tmp, target); // complete bytes, exclusive destination
+        } finally {
+          if (fd !== undefined) closeSync(fd);
+          rmSync(tmp, { force: true });
+        }
         return { ok: true, ref: `FT-${n}` };
       } catch (err) {
         return { ok: false, reason: `the tracker refused the ticket: ${clean(err)}` };

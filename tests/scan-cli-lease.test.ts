@@ -54,10 +54,8 @@ describe("the scan driver lease", () => {
     expect(b.scan.status().run).toMatchObject({ id: run.id, display: "running" });
     expect(b.scan.status().active).toBe(false);
     const p = await b.scan.preview();
-    if (!p.ok) throw new Error("preview");
-    const refused = await b.scan.start({ key: p.preview.key });
-    expect(refused).toMatchObject({ ok: false });
-    expect(refused.ok ? "" : refused.errors.join(" ")).toMatch(
+    expect(p).toMatchObject({ ok: false });
+    expect(p.ok ? "" : p.errors.join(" ")).toMatch(
       new RegExp(`scan ${run.id} is running in another process`),
     );
     a.scan.stop();

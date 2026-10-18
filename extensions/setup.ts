@@ -325,7 +325,11 @@ export function renderSurveyStatus(s: SurveyStatus): string {
       : null;
     // A finished case the runner could not price makes the sum a floor, and
     // it says so rather than reading as the whole spend.
-    const unpriced = run.cases.some((c) => c.status === "done" && c.cost_usd === null);
+    const unpriced = run.cases.some(
+      (c) =>
+        c.cost_usd === null &&
+        (c.status === "done" || c.status === "failed" || c.started_at !== null),
+    );
     const state =
       run.display === "interrupted"
         ? "INTERRUPTED — the companion restarted mid-run; notes written so far are kept, start again (after a preview) to finish"
