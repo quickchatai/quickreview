@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import { daemonLoadLine } from "./eventloop.js";
 import {
@@ -1131,7 +1132,7 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
 function runDrainLocal(on: boolean): number {
   const dir = join(sandboxRoot(), "commands", "operator");
   mkdirSync(dir, { recursive: true });
-  const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-cli-drain.json`;
+  const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-cli-drain-${randomUUID()}.json`;
   writeFileSync(join(dir, `.${name}.tmp`), drainPayload(on));
   renameSync(join(dir, `.${name}.tmp`), join(dir, name));
   console.log(
@@ -1193,6 +1194,7 @@ export function cmdInstall(
     log?: (line: string) => void;
   } = {},
 ): number {
+  if (rest.length !== 1) throw new Error("usage: qcr install <where|migrate>");
   const root = deps.root ?? sandboxRoot();
   const env = deps.env ?? process.env;
   const log = deps.log ?? ((line: string) => console.log(line));
@@ -1886,6 +1888,7 @@ export async function main(argv: string[]): Promise<void> {
       return runTui(rest);
     }
     case "companion":
+      if (rest.length !== 1) throw new Error("usage: qcr companion <up|down|status|rebuild>");
       return cmdCompanion(rest[0]);
     case "memory": {
       process.exitCode = await cmdMemory(rest);
