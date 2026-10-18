@@ -947,15 +947,19 @@ export class VerdictWatcher {
       round_no: round.round_no,
       file: name,
     });
-    this.deps.store.logEvent("verdict_settled", round.pr, {
-      round_id: round.id,
-      round_no: round.round_no,
-      superseded: true,
-    });
+    const owed = this.deps.store.db.transaction(() => {
+      const measurement = this.oweMeasurement(round, round.finished_at);
+      this.deps.store.logEvent("verdict_settled", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        superseded: true,
+      });
+      return measurement;
+    })();
     this.log(
       `verdicts: #${round.pr} round ${round.round_no}'s interrupted apply is overtaken by a later round — ${name} lands nothing more`,
     );
-    return this.oweMeasurement(round, round.finished_at);
+    return owed;
   }
 
   /** A verdict file names a round this PR does not have: archived inert,
@@ -1537,6 +1541,8 @@ export class VerdictWatcher {
               detail: `GitHub review ${match.id} carries ${round.posting_key} in state ${match.state}, which does not say what was posted`,
               failure: "contradicted",
             };
+          const verifiedIntent =
+            receiptIdentityOk && receipt && receipt.status !== "skipped" ? receipt : undefined;
           const synthetic: PostingReceipt = {
             version: 1,
             posting_key: round.posting_key,
@@ -1544,8 +1550,11 @@ export class VerdictWatcher {
             pr: round.pr,
             round_no: round.round_no,
             head_sha: expectedHead,
-            intended_event: actualEvent,
+            intended_event: verifiedIntent?.intended_event ?? actualEvent,
             actual_event: actualEvent,
+            ...(verifiedIntent?.status === "deferred"
+              ? { delivered_by: "daemon_retry" as const }
+              : {}),
             status: "confirmed",
             payload_sha256: "0".repeat(64),
             prepared_at: match.submitted_at ?? this.now().toISOString(),
@@ -1553,7 +1562,7 @@ export class VerdictWatcher {
             gh_review_id: match.id,
             gh_commit_id: match.commit_id,
             gh_state: match.state,
-            reconciled: true,
+            ...(verifiedIntent ? {} : { reconciled: true }),
           };
           if (verdict && !receiptMatchesVerdict(synthetic, verdict)) {
             return {
@@ -2272,12 +2281,21 @@ export class VerdictWatcher {
     // The reviewed-head mark: this head has now been reviewed and decided.
     // Read by the no-new-evidence guard at dispatch and at posting time, and
     // by the post-approval delta recheck.
-    if (v.head_sha)
-      store.recordReviewedHead(v.pr, {
-        head_sha: v.head_sha,
-        verdict: v.verdict,
-        round_no: v.round_no,
-      });
+    if (v.head_sha) {
+      const posted = store.reviewedHead(v.pr);
+      if (
+        posted?.head_sha.toLowerCase() === v.head_sha.toLowerCase() &&
+        posted.round_no === v.round_no &&
+        posted.posted_event !== null
+      )
+        store.recordReviewedVerdict(v.pr, v.head_sha, v.verdict);
+      else
+        store.recordReviewedHead(v.pr, {
+          head_sha: v.head_sha,
+          verdict: v.verdict,
+          round_no: v.round_no,
+        });
+    }
     store.recoverReviewFailure(v.pr, "verdict-applied", {
       round_no: v.round_no,
       head_sha: v.head_sha,
@@ -2344,7 +2362,7 @@ export class VerdictWatcher {
     //
     // The round's usage window closed at its claim (`finished_at`), and its
     // measurement is owed from here — in the same synchronous turn as
-    // `verdict_settled`, so no restart can land between the two. Its reads (async — seconds, at most the usage
+    // `verdict_settled`. Both writes share one SQLite transaction. Its reads (async — seconds, at most the usage
     // budget) run at the very end of the apply, after the compaction request
     // and the held-wake flush: a round dispatched while they run must never
     // receive this round's held wakes (rule 9), and nothing in between reads
@@ -2352,11 +2370,13 @@ export class VerdictWatcher {
     // start measures it.
     let owed: OwedMeasurement | undefined;
     if (round) {
-      store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
-      // The window ends where the round did — its claim — not here: the
-      // awaits since (CI read, Slack) can outlast a successor's dispatch, and
-      // its transcript must not count twice.
-      owed = this.oweMeasurement(round, finished?.finished_at);
+      // Debt and replay suppression share a commit. A persistence failure
+      // leaves the done apply eligible for replay, never silently unmeasured.
+      owed = store.db.transaction(() => {
+        const measurement = this.oweMeasurement(round, finished?.finished_at);
+        store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
+        return measurement;
+      })();
     }
     // Escalation — off unless the operator switched it on, and it runs here,
     // after the verdict has been applied, the label moved and the
@@ -2974,8 +2994,9 @@ export class VerdictWatcher {
     startedAt: string,
     finishedAt: string,
     integrity: "check" | "interrupted" = "check",
-  ): Promise<void> {
+  ): Promise<boolean> {
     const { cfg, store } = this.deps;
+    let persisted = false;
     try {
       const bounded = await withinBudget(
         this.transcripts.measure({
@@ -3029,6 +3050,7 @@ export class VerdictWatcher {
         );
       }
 
+      persisted = true;
       // Classified, so the durable event says which policy was crossed.
       if (integrity === "check") await this.checkRoundIntegrity(pr, roundId);
       else this.integrityInterrupted(pr, roundId);
@@ -3046,6 +3068,7 @@ export class VerdictWatcher {
     } catch (err) {
       this.log(`verdicts: usage measurement failed for #${pr}`, err);
     }
+    return persisted;
   }
 
   /**
@@ -3057,8 +3080,8 @@ export class VerdictWatcher {
    * `rounds.usage_owed_to` carries the window's end from the same synchronous
    * turn as the round end's terminal write until the measurement has
    * finished, whatever it found, and the next start resumes what is still owed
-   * (`resumeOwedMeasurements`). Best-effort on the durable half: a write that
-   * fails is logged, and the measurement still runs in this process.
+   * (`resumeOwedMeasurements`). The durable write must succeed before a
+   * terminal replay marker is published; a failure leaves apply replayable.
    */
   private oweMeasurement(
     round: Pick<RoundRow, "id" | "pr" | "round_no" | "started_at">,
@@ -3068,15 +3091,8 @@ export class VerdictWatcher {
     endedAt?: string | null,
   ): OwedMeasurement {
     const measuredTo = endedAt ?? this.now().toISOString();
+    this.deps.store.oweRoundMeasurement(round.id, measuredTo);
     this.measuring.add(round.id);
-    try {
-      this.deps.store.oweRoundMeasurement(round.id, measuredTo);
-    } catch (err) {
-      this.log(
-        `verdicts: #${round.pr} round ${round.round_no} — could not record its owed measurement`,
-        err,
-      );
-    }
     return {
       pr: round.pr,
       roundId: round.id,
@@ -3099,23 +3115,27 @@ export class VerdictWatcher {
   }
 
   /** The measurement, then the obligation cleared — whatever it found
-   * (`measureUsage` records usage, or records it unknown, and never throws). */
+   * (`measureUsage` explicitly reports that usage or unknown was persisted). */
   private async runMeasurement(
     owed: OwedMeasurement,
     integrity: "check" | "interrupted",
   ): Promise<void> {
     try {
-      await this.measureUsage(owed.pr, owed.roundId, owed.startedAt, owed.measuredTo, integrity);
+      const persisted = await this.measureUsage(
+        owed.pr,
+        owed.roundId,
+        owed.startedAt,
+        owed.measuredTo,
+        integrity,
+      );
+      if (persisted) this.deps.store.settleRoundMeasurement(owed.roundId);
+    } catch (err) {
+      this.log(
+        `verdicts: #${owed.pr} round ${owed.roundNo} — could not settle its owed measurement`,
+        err,
+      );
     } finally {
       this.measuring.delete(owed.roundId);
-      try {
-        this.deps.store.settleRoundMeasurement(owed.roundId);
-      } catch (err) {
-        this.log(
-          `verdicts: #${owed.pr} round ${owed.roundNo} — could not clear its owed measurement`,
-          err,
-        );
-      }
     }
   }
 
@@ -3450,6 +3470,7 @@ export class VerdictWatcher {
       }
       // Owed FAILED_LOUD review work keeps its wakes behind it.
       if (store.openReviewFailure(pr)) continue;
+      if (store.blockingSessionCommand(`pr-${pr}`)) continue;
       // A paused PR holding only deferred rechecks waits for the resume,
       // quietly: the next tick after the pause lifts delivers them.
       if (pauseDefersAllHeldWakes(store, pr)) continue;
