@@ -896,8 +896,7 @@ export class DbMover {
     meter: { measure: <T>(fn: () => T) => T },
   ): Promise<void> {
     if ((await conn.walBytes()) < (this.deps.checkpointWalBytes ?? CHECKPOINT_WAL_BYTES)) return;
-    meter.measure(() => conn.db.pragma("wal_checkpoint(PASSIVE)"));
-    await conn.syncDb();
+    await conn.checkpoint((fn) => meter.measure(fn));
   }
 
   /** Halve past the target; grow by half when well under it. */

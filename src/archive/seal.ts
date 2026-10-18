@@ -58,6 +58,7 @@ import {
   fileDigest,
   fsyncDir,
   gunzipDigest,
+  verifyGzip,
   gzipFile,
   identityOf,
   isZlibError,
@@ -317,7 +318,11 @@ export async function sealFile(deps: SealDeps, entry: DbFileEntry): Promise<Seal
   type Ck = Array<{ busy: number; log: number; checkpointed: number }>;
   const checkpoint = (mode: "PASSIVE" | "TRUNCATE"): Ck | null => {
     try {
-      return measure(() => conn.db.pragma(`wal_checkpoint(${mode})`)) as Ck;
+      return (
+        mode === "PASSIVE"
+          ? conn.copyCheckpoint(measure)
+          : measure(() => conn.db.pragma("wal_checkpoint(TRUNCATE)"))
+      ) as Ck;
     } catch (err) {
       if (isBusy(err)) return null;
       throw err;
@@ -326,7 +331,7 @@ export async function sealFile(deps: SealDeps, entry: DbFileEntry): Promise<Seal
   const passive = checkpoint("PASSIVE");
   if (!passive || passive[0]?.busy || (passive[0] && passive[0].checkpointed < passive[0].log))
     return { file: entry.file, outcome: "busy", detail: "the WAL could not be checkpointed whole" };
-  await conn.syncDb();
+  await conn.settleCheckpoint();
   const ck = checkpoint("TRUNCATE");
   if (!ck || ck[0]?.busy)
     return { file: entry.file, outcome: "busy", detail: "TRUNCATE checkpoint busy" };
@@ -354,19 +359,16 @@ export async function sealFile(deps: SealDeps, entry: DbFileEntry): Promise<Seal
   }
   await deps.beforeVerify?.(partial);
   // Any failure to decompress is a failed round trip, never a pass.
-  const back = await gunzipDigest(partial, rate).catch((err: unknown) => {
-    if (deps.signal?.aborted) throw err;
-    return err instanceof Error ? err : new Error(String(err));
-  });
-  if (back instanceof Error || back.bytes !== gz.bytes || back.sha256 !== gz.sha256) {
+  const back = await verifyGzip(partial, gz, rate);
+  if (back.kind !== "verified") {
     await unlinkIfPresent(partial);
     return {
       file: entry.file,
       outcome: "verify_failed",
       detail:
-        back instanceof Error
-          ? `the gzip did not decompress: ${back.message}`
-          : `the gzip decompressed to ${back.bytes} byte(s) / ${back.sha256.slice(0, 12)}, the file is ${gz.bytes} / ${gz.sha256.slice(0, 12)}`,
+        back.kind === "error"
+          ? `the gzip did not decompress: ${back.error.message}`
+          : `the gzip decompressed to ${back.actual.bytes} byte(s) / ${back.actual.sha256.slice(0, 12)}, the file is ${gz.bytes} / ${gz.sha256.slice(0, 12)}`,
     };
   }
   const after = await identityOf(path);

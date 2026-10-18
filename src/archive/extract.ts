@@ -18,28 +18,28 @@
 // code), inside any of those trees wherever a symlink puts them, or one that
 // would CONTAIN any of them (`/`, the root's parent). Symlinks are resolved
 // first. Below `--to`, no symlink is ever followed: every directory an
-// extraction writes in is a plain directory under it, and a leftover at a
-// partial's name is removed, never written through. Nothing is ever
+// extraction writes in is a plain directory under it, and temporary files are created in a
+// fresh private directory beside the target, never at another output name. Nothing is ever
 // overwritten: a file already there with the same bytes is left (a re-run is
 // idempotent); one with other bytes is reported, never replaced.
 //
 // This runs in the CLI process, never in the daemon; it takes no lock (the
 // archiver only appends to a manifest and never rewrites a placed gzip).
-import { constants, createReadStream, createWriteStream } from "node:fs";
-import { copyFile, lstat, mkdir, readdir, realpath, utimes, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { createHash } from "node:crypto";
-import { pipeline } from "node:stream/promises";
-import { createGunzip } from "node:zlib";
-import { readBundleRecords } from "./bundle.js";
+import { constants } from "node:fs";
 import {
-  CHUNK_BYTES,
-  HashTap,
-  RateLimit,
-  fileDigest,
-  renameNoReplace,
-  unlinkIfPresent,
-} from "./fsutil.js";
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rmdir,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readBundleRecords } from "./bundle.js";
+import { fileDigest, gunzipToFile, renameNoReplace, unlinkIfPresent } from "./fsutil.js";
 import { ManifestUnreadable, readManifestIfPresent, type Manifest } from "./manifest.js";
 import { injectDirOf } from "./prfiles.js";
 
@@ -143,8 +143,7 @@ function safeUnder(to: string, rel: string): string | null {
 /**
  * The partial `target` is written through, made safe to create: every
  * directory from `to` down to the target's is created or found as a PLAIN
- * directory (a symlink there is refused, so a write never leaves `--to`), and
- * a leftover at the partial's name is removed rather than written through.
+ * directory (a symlink there is refused, so a write never leaves `--to`).
  */
 async function preparePartial(to: string, target: string): Promise<void> {
   const rel = relative(to, dirname(target));
@@ -159,7 +158,6 @@ async function preparePartial(to: string, target: string): Promise<void> {
     if (!(await lstat(cur)).isDirectory())
       throw new Error(`${cur} is not a plain directory — an extraction never follows a link`);
   }
-  await unlinkIfPresent(`${target}${EXTRACT_PARTIAL_SUFFIX}`);
 }
 
 /**
@@ -174,17 +172,20 @@ async function throughPartial(
   signal: AbortSignal | undefined,
   write: (partial: string) => Promise<void>,
 ): Promise<string | null> {
-  const partial = `${target}${EXTRACT_PARTIAL_SUFFIX}`;
-  let prepared = false;
+  let staging: string | undefined;
+  let partial: string | undefined;
   try {
     await preparePartial(to, target);
-    prepared = true;
+    staging = await mkdtemp(join(dirname(target), ".qcr-extract-"));
+    partial = join(staging, `payload${EXTRACT_PARTIAL_SUFFIX}`);
     await write(partial);
     return null;
   } catch (err) {
-    if (prepared) await unlinkIfPresent(partial).catch(() => false);
     if (signal?.aborted) throw err;
     return (err as Error).message;
+  } finally {
+    if (partial) await unlinkIfPresent(partial).catch(() => false);
+    if (staging) await rmdir(staging).catch(() => {});
   }
 }
 
@@ -256,16 +257,11 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
       continue;
     }
     const error = await throughPartial(to, target, signal, async (partial) => {
-      const tap = new HashTap();
-      await pipeline(
-        createReadStream(join(dir, archive), { highWaterMark: CHUNK_BYTES }),
-        new RateLimit(bytesPerS, signal),
-        createGunzip(),
-        tap,
-        createWriteStream(partial, { flags: "wx" }),
-        { signal },
-      );
-      const got = { bytes: tap.bytes, sha256: tap.digest() };
+      const got = await gunzipToFile(join(dir, archive), partial, {
+        bytesPerS,
+        signal,
+        exclusive: true,
+      });
       if (got.bytes !== expect.bytes || got.sha256 !== expect.sha256)
         throw new Error(
           `${archive} decompressed to ${got.bytes} bytes / ${got.sha256.slice(0, 12)}…, the manifest records ${expect.bytes} / ${expect.sha256.slice(0, 12)}…`,
@@ -303,7 +299,7 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
         continue;
       }
       const rec = records.get(f.path);
-      const sha = rec ? createHash("sha256").update(rec.data).digest("hex") : null;
+      const sha = rec?.record.sha256 ?? null;
       if (!rec || rec.data.length !== f.bytes || sha !== f.sha256) {
         errors.push({
           path: relative(to, target),

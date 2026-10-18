@@ -32,6 +32,7 @@ import {
   identityFields,
   packedOf,
   placeArchive,
+  placementOutcome,
   bytesHeld,
   type Packed,
 } from "./archivewrite.js";
@@ -413,16 +414,13 @@ export class StoreWriter {
       keep: (dest, p) => this.append(entryOf(dest, p)),
       log: (m) => deps.log(m),
     });
-    if (r.kind === "verify_failed") {
+    return placementOutcome(r, (detail) => {
       this.result.verifyFailures += 1;
       deps.verifyFailed(
         `file:${deps.subject}:${f.source}`,
-        `archive ${deps.subject}: ${r.detail} — the source is kept`,
+        `archive ${deps.subject}: ${detail} — the source is kept`,
       );
-      return "verify_failed";
-    }
-    if (r.kind === "changed") return "changed";
-    return { ok: r.ok, dest: r.dest };
+    });
   }
 
   /** A transcript entry of this pass for `f`. */

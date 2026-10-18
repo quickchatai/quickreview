@@ -1,3 +1,6 @@
+import { recoverAllDuplicateCounts } from "./duplicatecounts.js";
+import { STORE_LABELS } from "./status.js";
+import { archivedEventTotal } from "./rows.js";
 // The closed-PR archiver (docs/archiving.md §10) — daemon
 // bookkeeping on its own timer. It never spawns pi, injects, wakes or kills a
 // session, and makes no GitHub call (root rule 9; it is not a session kind).
@@ -73,7 +76,7 @@ import type { StateStore } from "../state.js";
 import { withinBudget } from "../budget.js";
 import { yieldToLoop } from "../yieldloop.js";
 import { ArchiveDb, ManifestUnreadable, archiveDbDir } from "./archivedb.js";
-import { DbMover, type DbMoveResult } from "./dbmove.js";
+import { DELIVERIES_TABLE, DbMover, type DbMoveResult } from "./dbmove.js";
 import { atNearestExisting } from "./fsutil.js";
 import type { OutsideFacts } from "./eligibility.js";
 import { removeRestorePartial, sweepPartials, type StepFn } from "./gzfile.js";
@@ -87,7 +90,7 @@ import {
 import { OVERSEER_STORE, archiveOverseer } from "./overseer.js";
 import { archivePiGlobal } from "./piglobal.js";
 import { archivePr, type PrPassResult } from "./prarchive.js";
-import { SpanMeter, injectDirOf, listLiveTree, topLevelInjectFiles } from "./prfiles.js";
+import { SpanMeter, injectDirOf, listLiveTree, knownInjectFiles } from "./prfiles.js";
 import {
   RESTORE_RETRY_MS,
   RESTORE_WAIT_MS,
@@ -968,6 +971,10 @@ export class Archiver {
    * and its recovery retried every tick — the restores, the other PRs and
    * every later phase go on. */
   private async recoverFiles(): Promise<void> {
+    const counted = await recoverAllDuplicateCounts(this.deps.store, this.deps.root, (pr, error) =>
+      this.log(`archive: pr-${pr} duplicate accounting recovery deferred`, error),
+    );
+    if (counted > 0) this.dbCache = null;
     if (this.filesRecovered && this.recoveryOwed.size === 0) return;
     let rows: ReturnType<typeof inFlightRows>;
     try {
@@ -1031,12 +1038,7 @@ export class Archiver {
       LIVE_SESSIONS_DEADLINE_MS,
       this.abort.signal,
     );
-    let injectFiles: string[] | null;
-    try {
-      injectFiles = await topLevelInjectFiles(injectDirOf(this.deps.root, pr));
-    } catch {
-      injectFiles = null;
-    }
+    const injectFiles = await knownInjectFiles(injectDirOf(this.deps.root, pr));
     return {
       tmuxAlive: names === null ? null : names.includes(`pr-${pr}`),
       birthInFlight: false,
@@ -1738,13 +1740,10 @@ export class Archiver {
              FROM archive_prs WHERE archived_at IS NOT NULL`,
         )
         .get() as { prs: number; files: number; bytes_in: number; bytes_out: number };
-      const events = db
-        .prepare("SELECT COALESCE(SUM(n), 0) AS n FROM archived_event_counts")
-        .get() as { n: number };
       totals = {
         ...prs,
-        event_rows: events.n,
-        delivery_rows: markNumber(this.deps.store, "deliveries.archived_rows"),
+        event_rows: archivedEventTotal(this.deps.store),
+        delivery_rows: markNumber(this.deps.store, DELIVERIES_TABLE.countMark!),
         duplicates_removed: markNumber(this.deps.store, "duplicates.removed"),
       };
       restores = db
@@ -1850,7 +1849,7 @@ type StoreCommon = Omit<import("./storepass.js").StorePassDeps, "dir" | "subject
 function storePhraseOf(key: "overseer" | "pi_global", st: ArchiveStoreStatus | null): string {
   if (!st) return `${key}: not run`;
   return (
-    `${key === "overseer" ? "overseer store" : "pi-global store"} — ${st.archived} archived, ${st.removed} removed` +
+    `${STORE_LABELS[key]} — ${st.archived} archived, ${st.removed} removed` +
     (st.duplicates_removed ? `, ${st.duplicates_removed} legacy duplicate(s) removed` : "") +
     (st.verify_failures ? `, ${st.verify_failures} VERIFY FAILURE(S)` : "") +
     `, ${st.kept_live} kept live (${st.outcome}${st.reason ? `: ${st.reason}` : ""})`
@@ -1869,16 +1868,11 @@ const isHoldReason = (r: string): r is ArchiveHoldReason => HOLD_REASONS.has(r);
 /** Wait for `p`, but never longer than `ms` (a real, unref'd timer). */
 async function waitAtMost(p: Promise<unknown>, ms: number): Promise<void> {
   if (!(ms > 0)) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
+  await withinBudget(
     p.then(
       () => undefined,
       () => undefined,
     ),
-    new Promise<void>((resolveWait) => {
-      timer = setTimeout(resolveWait, ms);
-      timer.unref?.();
-    }),
-  ]);
-  if (timer) clearTimeout(timer);
+    ms,
+  );
 }

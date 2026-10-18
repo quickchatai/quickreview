@@ -23,6 +23,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Archiver } from "../src/archive/archiver.js";
 import {
   ArchiveDb,
+  ArchiveConn,
   ArchiveFileMissing,
   ManifestUnreadable,
   monthFile,
@@ -996,3 +997,16 @@ function fakePlan(): ArchivePlan {
     max_sync_span_ms: 1,
   };
 }
+
+it("blocks a later writer after a sealing checkpoint database sync fails", async () => {
+  const r = await moved();
+  const sync = vi
+    .spyOn(ArchiveConn.prototype, "syncDb")
+    .mockRejectedValue(new Error("seal sync failed"));
+  try {
+    await expect(sealFile(deps(r), r.adb.entry(AUG)!)).rejects.toThrow("seal sync failed");
+    await expect(r.adb.target("2026-08")).rejects.toThrow("seal sync failed");
+  } finally {
+    sync.mockRestore();
+  }
+});

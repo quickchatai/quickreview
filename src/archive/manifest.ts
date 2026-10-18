@@ -1,3 +1,4 @@
+import { isObj } from "./admission.js";
 // The per-PR archive MANIFEST (docs/archiving.md §6): plain JSON at
 // `archive/pr-<n>/manifest.json`, readable with `jq`, and APPEND-ONLY.
 //
@@ -199,9 +200,6 @@ export function emptyManifest(subject: string): Manifest {
 }
 
 export const manifestPath = (dir: string): string => join(dir, MANIFEST_FILE);
-
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
  * The manifest in `dir`: an empty one when there is none; ManifestUnreadable

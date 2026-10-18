@@ -42,11 +42,10 @@ import {
   ARTIFACT_CLASSES,
   PR_DIR,
   SpanMeter,
-  fileSize,
   listLiveTree,
+  knownInjectFiles,
+  inventoryFiles,
   prInventory,
-  topLevelInjectFiles,
-  walkFiles,
   type ArtifactClass,
 } from "./prfiles.js";
 
@@ -431,12 +430,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
     signal?.throwIfAborted();
     await yieldToLoop();
     // The PR's inject dir: its top-level wakes are an eligibility input.
-    let injectFiles: string[] | null;
-    try {
-      injectFiles = await topLevelInjectFiles(listing.injectDirs.get(pr)?.[0]);
-    } catch {
-      injectFiles = null;
-    }
+    const injectFiles = await knownInjectFiles(listing.injectDirs.get(pr)?.[0]);
     const e = meter.measure(() =>
       prEligibility(store, pr, {
         now,
@@ -499,17 +493,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
       if (inv.legacy) add(legacy, inv.legacy.size);
       // What no class claims: counted (a directory by the files under it).
       for (const p of listing.unclassified.get(c.pr) ?? []) {
-        const size = await fileSize(p);
-        if (size !== null) {
-          other.push({ path: p, size });
-          continue;
-        }
-        const files: string[] = [];
-        await walkFiles(p, files, signal);
-        for (const f of files) {
-          const s = await fileSize(f);
-          if (s !== null) other.push({ path: f, size: s });
-        }
+        other.push(...(await inventoryFiles(p, signal)).files);
       }
     } catch (err) {
       if (signal?.aborted) throw err;
