@@ -13,6 +13,7 @@ const exec = promisify(execFile);
 let dir: string, api: string, server: Server;
 let badCursor: boolean;
 let incompleteChecks: boolean;
+let redirectChecks: string | null;
 const head = "a".repeat(40);
 
 beforeEach(async () => {
@@ -24,6 +25,7 @@ beforeEach(async () => {
   writeFileSync(join(dir, "config.toml"), `[github]\nrepo = "exampleorg/example-app"\nsecrets_dir = "${dir}/secrets"\n`);
   badCursor = false;
   incompleteChecks = false;
+  redirectChecks = null;
   server = createServer(async (req, res) => {
     res.setHeader("content-type", "application/json");
     if (req.url === "/graphql" && req.method === "POST") {
@@ -39,6 +41,9 @@ beforeEach(async () => {
         reviewThreads: { nodes: [{ id: `thread-${page}`, isResolved: false, isOutdated: false, path: nodes[0]!.path, line: 1, comments: { nodes: [{ author: { login: "reader" }, body: page === 2 ? "late unresolved concern" : "first concern" }] } }], pageInfo: { hasNextPage: page === 1, endCursor: badCursor ? null : "page-two" } },
       } } } }));
     } else if (req.method === "GET" && req.url?.includes("/check-runs")) {
+      if (redirectChecks !== null) {
+        res.statusCode = 302; res.setHeader("location", redirectChecks); res.end(); return;
+      }
       res.end(JSON.stringify({ total_count: incompleteChecks ? 101 : 0, check_runs: [] }));
     } else if (req.method === "GET" && req.url?.includes("/status")) {
       res.end(JSON.stringify({ statuses: [{ context: "legacy-ci", state: "failure", description: "required status failed" }] }));
@@ -136,5 +141,25 @@ it("stops the actual compiler watcher after the development TUI exits", async ()
     expect(alive).toBe(false);
   } finally {
     if (watcher !== undefined) { try { process.kill(watcher, "SIGKILL"); } catch {} }
+  }
+});
+
+it("refuses cross-origin redirects before forwarding the App credential", async () => {
+  let requests = 0;
+  const other = createServer((_request, response) => {
+    requests++;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ total_count: 0, check_runs: [] }));
+  });
+  await new Promise<void>((ok) => other.listen(0, "127.0.0.1", ok));
+  const address = other.address();
+  redirectChecks = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}/checks`;
+  try {
+    const result = await run();
+    expect(result.ok).toBe(false);
+    expect(requests).toBe(0);
+    expect(result.out).not.toContain("fixture-token");
+  } finally {
+    await new Promise<void>((ok) => other.close(() => ok()));
   }
 });

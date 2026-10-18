@@ -5,6 +5,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+import urllib.parse
 
 MAX_PAGES = 100
 
@@ -14,6 +15,17 @@ def main():
     owner, name = repo.split("/", 1)
     token = os.environ["QCR_CONTEXT_TOKEN"]
 
+    origin = urllib.parse.urlsplit(api)
+
+    class ApiRedirects(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            target = urllib.parse.urlsplit(newurl)
+            if (target.scheme, target.netloc) != (origin.scheme, origin.netloc):
+                raise ValueError("refused cross-origin GitHub redirect")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    opener = urllib.request.build_opener(ApiRedirects())
+
     def request(path, payload=None):
         data = None if payload is None else json.dumps(payload).encode()
         req = urllib.request.Request(api + path, data=data, headers={
@@ -22,7 +34,7 @@ def main():
             "Content-Type": "application/json",
             "X-GitHub-Api-Version": "2022-11-28",
         })
-        with urllib.request.urlopen(req, timeout=60) as response:
+        with opener.open(req, timeout=60) as response:
             return json.load(response)
 
     query = '''query($owner:String!,$name:String!,$number:Int!,$filesCursor:String,$threadsCursor:String){
