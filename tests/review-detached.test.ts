@@ -2,13 +2,14 @@
 // plugins. Time, pids, the launcher and the review itself are injected; one
 // test really spawns a detached node stub to show the run outlives its starter.
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   identifyTarget,
   launchDetached,
+  driverSignals,
   runDetachedChild,
   runDetachedVerb,
   type DetachDeps,
@@ -325,4 +326,104 @@ describe("runDetachedChild", () => {
     expect(JSON.parse(readFileSync(join(dir, "exit.json"), "utf8")).code).toBe(1);
     expect(readFileSync(join(dir, "output.jsonl"), "utf8")).toContain("boom");
   });
+});
+
+describe("driverSignals", () => {
+  it("the first signal halts and SIGTERMs pi, the second SIGKILLs it and exits 130", () => {
+    const calls: string[] = [];
+    const onSignal = driverSignals({
+      killPi: (sig) => calls.push(`kill ${sig}`),
+      halt: () => calls.push("halt"),
+      exit: (code) => calls.push(`exit ${code}`),
+    });
+    onSignal();
+    expect(calls).toEqual(["halt", "kill SIGTERM"]);
+    onSignal();
+    expect(calls).toEqual(["halt", "kill SIGTERM", "kill SIGKILL", "exit 130"]);
+  });
+
+  it("runDetachedChild listens for SIGINT and SIGTERM while the run lasts, then lets go", async () => {
+    const dir = join(tmp, "sig", "runs", "s1");
+    mkdirSync(dir, { recursive: true });
+    const on: string[] = [];
+    const off: string[] = [];
+    await runDetachedChild({
+      dir,
+      key: "k",
+      run: async () => {
+        expect(on).toEqual(["SIGINT", "SIGTERM"]);
+        return 0;
+      },
+      proc: {
+        on: ((sig: string) => on.push(sig)) as never,
+        off: ((sig: string) => off.push(sig)) as never,
+        exit: (() => undefined) as never,
+      },
+    });
+    expect(off).toEqual(["SIGINT", "SIGTERM"]);
+  });
+});
+
+describe("stop leaves no orphan", () => {
+  it("a fake pi in its own process group, and its child, are gone after `review stop`", async () => {
+    const home = join(tmp, "orphan");
+    const pidFile = join(tmp, "orphan-pids");
+    const pi = join(tmp, "fake-pi.sh");
+    // Like the real pi: a lens child it would otherwise leave behind.
+    writeFileSync(pi, `#!/bin/sh\nsleep 300 &\necho "$$ $!" > ${pidFile}\nwait\n`);
+    chmodSync(pi, 0o755);
+    const stub = join(tmp, "orphan-stub.mjs");
+    const dist = join(process.cwd(), "dist", "src");
+    writeFileSync(
+      stub,
+      `import { runDetachedChild } from ${JSON.stringify(join(dist, "reviewdetach.js"))};
+import { runPi } from ${JSON.stringify(join(dist, "oneshot.js"))};
+const [dir, key] = process.argv.slice(2);
+await runDetachedChild({ dir, key, run: async () => {
+  const r = await runPi([], process.env, dir, dir + "/events.jsonl", dir + "/stderr.log", 600000, ${JSON.stringify(pi)});
+  return r.code === null ? 1 : r.code;
+} });
+`,
+    );
+    const alive = (p: number): boolean => {
+      try {
+        process.kill(p, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const deps: DetachDeps = {
+      home,
+      out: () => {},
+      now: Date.now,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      newId: () => "orph1",
+      alive,
+      kill: (p, s) => process.kill(-p, s),
+      identify: () => ({ ok: true, key: "branch:o/r@y", label: "y" }),
+      launch: (l) =>
+        launchDetached({
+          command: process.execPath,
+          args: [stub, l.dir, l.key],
+          dir: l.dir,
+          env: process.env,
+        }),
+    };
+    expect(await runDetachedVerb("start", [], true, deps)).toBe(0);
+    let pids: number[] = [];
+    for (let i = 0; i < 100 && pids.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      try {
+        pids = readFileSync(pidFile, "utf8").trim().split(" ").map(Number);
+      } catch {
+        // pi not started yet
+      }
+    }
+    expect(pids).toHaveLength(2);
+    expect(pids.every(alive)).toBe(true);
+    expect(await runDetachedVerb("stop", [], true, deps)).toBe(0);
+    for (let i = 0; i < 100 && pids.some(alive); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(pids.filter(alive)).toEqual([]);
+  }, 20_000);
 });
