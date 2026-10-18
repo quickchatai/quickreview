@@ -6751,6 +6751,13 @@ export class StateStore {
       .run(result.ts ?? null, result.ok ? 1 : 0, result.error ?? null, idemKey);
   }
 
+  /** A definitive missing-message response can release only that exact old receipt. */
+  forgetMissingSlackMessage(idemKey: string, ts: string): boolean {
+    return this.db.prepare(
+      "UPDATE slack_posts SET ts = NULL, ok = 0, error = 'message_not_found' WHERE idem_key = ? AND ts = ? AND ok = 1",
+    ).run(idemKey, ts).changes === 1;
+  }
+
   slackPost(idemKey: string): SlackPostRow | undefined {
     return this.db.prepare("SELECT * FROM slack_posts WHERE idem_key = ?").get(idemKey) as
       SlackPostRow | undefined;

@@ -17,7 +17,8 @@
 // to the inject they sit beside, read back by `onDisk()` — and grant nothing.
 // Across a restart the memory is empty: the Slack dir fails closed (no live
 // origin), and disk seeds only what can RESTRICT. Two kinds of record are read
-// back: the newest one (`bootCause`, the turn that ran at shutdown) and every
+// back: the last accepted wake (or newest record when none is proven accepted)
+// as `bootCause`, and every
 // one bound to a wake still pending in the inject dir (`bootQueued`) — pending
 // wakes survive a restart and the bridge serves them first, so a guest's
 // queued message is a guest's turn after the restart too. Either is kept only
@@ -245,13 +246,23 @@ export class OriginStore {
     this.deliveredDir = opts.deliveredDir ?? null;
     this.pendingDir = this.deliveredDir === null ? null : dirname(this.deliveredDir);
     const onDisk = this.scan();
-    const newest = onDisk[0]?.rec ?? null;
+    const accepted = this.acceptedDiskName(onDisk.map((entry) => entry.name));
+    const newest = (onDisk.find((entry) => entry.name === accepted) ?? onDisk[0])?.rec ?? null;
     this.bootCause = newest && beltRestricts(newest) ? newest : null;
     this.bootQueued = [];
     for (const { rec, name } of onDisk) {
       const stem = name.replace(/\.json$/, "");
       if (beltRestricts(rec) && this.isPending(stem)) this.bootQueued.push({ rec, stem });
     }
+  }
+
+  /** The bridge's last accepted wake, independent of later queued writes. */
+  private acceptedDiskName(names: readonly string[]): string | undefined {
+    if (this.deliveredDir === null) return undefined;
+    return names.filter((name) => {
+      const stem = name.replace(/\.json$/, "");
+      return !this.isPending(stem) && existsSync(join(this.deliveredDir!, `${stem}.md`));
+    }).sort().at(-1);
   }
 
   /** A wake named `<stem>.md` is still in the bridge's pending queue. */
@@ -538,7 +549,8 @@ export class OriginStore {
       if (!keepHeld.has(h) && Date.parse(h.rec.expires_at) <= now) this.authority.delete(path);
     }
     if (!existsSync(this.dir)) return;
-    const keep = this.scan()[0]?.name;
+    const disk = this.scan();
+    const keep = new Set([disk[0]?.name, this.acceptedDiskName(disk.map((entry) => entry.name))]);
     for (const entry of readdirSync(this.dir, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
       const path = join(this.dir, entry.name);
@@ -548,7 +560,7 @@ export class OriginStore {
           continue;
         }
         if (!entry.name.endsWith(".json")) continue;
-        if (entry.name === keep) continue;
+        if (keep.has(entry.name)) continue;
         // A record bound to a wake still pending describes a turn to come,
         // which a restart before it is served must still find.
         if (this.isPending(entry.name.replace(/\.json$/, ""))) continue;

@@ -153,6 +153,13 @@ describe("disabled Slack", () => {
 });
 
 describe("root-on-first-event (DP-2a)", () => {
+  it("starts a new root when the recorded PR thread belongs to another channel", async () => {
+    store.upsertSlackThread({ pr: 5263, channel: "C_OLD", root_ts: "old-root" });
+    await announcer().roundStarted(round);
+    expect(slack.posts[0]?.thread_ts).toBeUndefined();
+    expect(store.slackThreadForPr(5263)).toMatchObject({ channel: "C_REVIEW", root_ts: slack.posts[0] ? "1700000001.0001" : "missing" });
+  });
+
   it("retains an unknown delivery reservation across repeated calls and restart", async () => {
     const post = vi.spyOn(slack, "postMessage").mockResolvedValue({ ok: false, error: "response lost", ambiguous: true } as SlackPostResult);
     const args = { pr: 5263, round_no: 1, verdict: "APPROVE" as const, summary: "s", duration_s: 60 };
@@ -944,4 +951,20 @@ describe("concurrent posts", () => {
     await a.roundStarted(round);
     expect(slack.posts).toHaveLength(2);
   });
+});
+
+it("replaces a definitively missing heartbeat and ignores stale missing-message replies", async () => {
+  const a = announcer();
+  const old = await a.heartbeat();
+  const releases: Array<(result: SlackPostResult) => void> = [];
+  vi.spyOn(slack, "updateMessage").mockImplementation(async () => new Promise((resolve) => releases.push(resolve)));
+  const first = a.heartbeat(); const second = a.heartbeat();
+  await vi.waitFor(() => expect(releases).toHaveLength(2));
+  releases[0]!({ ok: false, error: "message_not_found" });
+  const replacement = await first;
+  expect(replacement).not.toBe(old);
+  releases[1]!({ ok: false, error: "message_not_found" });
+  expect(await second).toBe(replacement);
+  expect(slack.posts).toHaveLength(2);
+  expect(store.slackPost(HEARTBEAT_IDEM_KEY)?.ts).toBe(replacement);
 });
