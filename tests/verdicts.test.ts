@@ -4756,3 +4756,141 @@ describe("grouped plan telemetry retains every row policy", () => {
     expect(mismatch()).toBeUndefined();
   });
 });
+
+describe("settlement preserves earlier durable facts", () => {
+  it("publishes measurement debt before settlement makes verdict replay inert", async () => {
+    const id = reviewingRound(734);
+    const original = store.logEvent.bind(store);
+    let owedAtSettlement: string | null | undefined;
+    store.logEvent = (kind, pr, payload) => {
+      if (kind === "verdict_settled")
+        owedAtSettlement = store.roundsFor(734).find((r) => r.id === id)?.usage_owed_to;
+      return original(kind, pr, payload);
+    };
+    await watcher().handleFile(write(734, 1, verdictFile({ pr: 734 })));
+    expect(owedAtSettlement).toEqual(expect.any(String));
+  });
+
+  it("retains measurement debt when neither usage nor an unknown result can be persisted", async () => {
+    const id = reviewingRound(735);
+    const recordUsage = store.recordRoundUsage.bind(store);
+    const logEvent = store.logEvent.bind(store);
+    store.recordRoundUsage = () => {
+      throw new Error("database full during usage write");
+    };
+    store.logEvent = (kind, pr, payload) => {
+      if (kind === "round_usage_unknown") throw new Error("database full during unknown write");
+      return logEvent(kind, pr, payload);
+    };
+    await watcher().handleFile(write(735, 1, verdictFile({ pr: 735 })));
+    expect(store.roundsFor(735).find((r) => r.id === id)?.usage_owed_to).toEqual(
+      expect.any(String),
+    );
+    store.recordRoundUsage = recordUsage;
+    store.logEvent = logEvent;
+    const restarted = watcher();
+    await restarted.sweep();
+    await restarted.idle();
+    expect(store.roundsFor(735).find((r) => r.id === id)?.usage_owed_to).toBeNull();
+  });
+
+  it("resuming a done apply preserves its first completion and usage window", async () => {
+    store.close();
+    let clock = new Date("2026-08-13T12:00:00.000Z");
+    store = new StateStore(":memory:", () => clock);
+    const id = reviewingRound(730);
+    const { key } = stampPosting(730, 1);
+    writePostingReceipt(730, 1, key, "REQUEST_CHANGES");
+    clock = new Date(clock.getTime() + 10_000);
+    store.finishRound(id, "REQUEST_CHANGES", null);
+    const first = store.roundsFor(730)[0]!;
+    clock = new Date(clock.getTime() + 120_000);
+    await watcher({ now: () => clock }).handleFile(write(730, 1, verdictFile({ pr: 730 })));
+    expect(store.roundsFor(730)[0]).toMatchObject({
+      finished_at: first.finished_at,
+      duration_s: first.duration_s,
+    });
+  });
+
+  it("enriching a posted round keeps an author reply that arrived after posting", async () => {
+    reviewingRound(731);
+    store.recordReviewedHead(731, {
+      head_sha: "abc123",
+      posted_event: "REQUEST_CHANGES",
+      round_no: 1,
+    });
+    const stamped = store.reviewedHead(731)!;
+    const replyAt = new Date(Date.parse(stamped.reviewed_at) + 1000).toISOString();
+    adapter.removeLabel = async () => {
+      store.noteAuthorReply(731, replyAt);
+      return { executed: false, dryRunFile: "d" };
+    };
+    await watcher().handleFile(write(731, 1, verdictFile({ pr: 731 })));
+    expect(store.reviewedHead(731)).toMatchObject({
+      reviewed_at: stamped.reviewed_at,
+      last_author_reply_at: replyAt,
+      verdict: "REQUEST_CHANGES",
+    });
+  });
+
+  it("does not report ordinary queued wakes as stranded behind a non-round owner", async () => {
+    reviewingRound(732);
+    store.finishRound(store.roundsFor(732)[0]!.id, "APPROVE", null);
+    store.setPrState(732, "tracked");
+    store.createSessionCommand({
+      id: "owning-wake",
+      pr: 732,
+      session: "pr-732",
+      kind: "wake",
+      round_no: null,
+      payload_path: join(dir, "owner.md"),
+      payload_sha256: "a".repeat(64),
+      inject_path: join(dir, "inject.md"),
+      next_check_at: "2099-01-01T00:00:00.000Z",
+    });
+    store.holdWake(732, "later FIFO wake", "ordinary");
+    const h = recordingHooks();
+    await watcher({}, h.hooks).checkDeadlines();
+    expect(
+      store.db.prepare("SELECT * FROM events WHERE pr=732 AND kind='wakes_stranded'").all(),
+    ).toEqual([]);
+    expect(store.heldWakes(732)).toHaveLength(1);
+    expect(h.injects).toEqual([]);
+  });
+
+  it("reconciles a marker-confirmed COMMENT using the surviving withheld approval intent", async () => {
+    const id = reviewingRound(733);
+    const { key } = stampPosting(733, 1);
+    writePostingReceipt(733, 1, key, "APPROVE", {
+      status: "deferred",
+      deferred_at: "2026-08-13T12:00:00.000Z",
+      gh_review_id: undefined,
+      gh_commit_id: undefined,
+      gh_state: undefined,
+    });
+    adapter.listReviewsFull = async () => [
+      {
+        id: 7331,
+        user: cfg.github.bot_login,
+        user_type: "Bot",
+        state: "COMMENTED",
+        body: `review\n\n${postingMarker(key)}`,
+        commit_id: "abc123",
+        submitted_at: "2026-08-13T12:00:00.000Z",
+      },
+    ];
+    await watcher({ cfg: { ...cfg, dry_run: false } }).handleFile(
+      write(
+        733,
+        1,
+        verdictFile({
+          pr: 733,
+          verdict: "APPROVE",
+        }),
+      ),
+    );
+    expect(store.roundsFor(733)[0]).toMatchObject({ id, status: "done", verdict: "APPROVE" });
+    expect(store.openReviewFailure(733)).toBeUndefined();
+    expect(store.approvalWithheld(733)?.head_sha).toBe("abc123");
+  });
+});

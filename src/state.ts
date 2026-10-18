@@ -2445,17 +2445,26 @@ export class StateStore {
     summary: string | null = null,
     expectedStatus?: string,
   ): boolean {
-    const row = this.db.prepare("SELECT started_at FROM rounds WHERE id = ?").get(id) as
-      { started_at: string } | undefined;
-    const duration = row ? (this.now().getTime() - Date.parse(row.started_at)) / 1000 : null;
+    const row = this.db
+      .prepare("SELECT started_at, finished_at, duration_s, status FROM rounds WHERE id = ?")
+      .get(id) as
+      Pick<RoundRow, "started_at" | "finished_at" | "duration_s" | "status"> | undefined;
+    const finishedAt =
+      row?.status === "done" && row.finished_at !== null ? row.finished_at : this.ts();
+    const duration =
+      row?.status === "done" && row.duration_s !== null
+        ? row.duration_s
+        : row
+          ? (Date.parse(finishedAt) - Date.parse(row.started_at)) / 1000
+          : null;
     const set =
       "UPDATE rounds SET verdict = ?, est_usd = COALESCE(est_usd, ?), duration_s = ?, finished_at = ?, summary = ?, status = 'done' WHERE id = ?";
     const result =
       expectedStatus === undefined
-        ? this.db.prepare(set).run(verdict, estUsd, duration, this.ts(), summary, id)
+        ? this.db.prepare(set).run(verdict, estUsd, duration, finishedAt, summary, id)
         : this.db
             .prepare(`${set} AND status = ?`)
-            .run(verdict, estUsd, duration, this.ts(), summary, id, expectedStatus);
+            .run(verdict, estUsd, duration, finishedAt, summary, id, expectedStatus);
     return result.changes > 0;
   }
 
