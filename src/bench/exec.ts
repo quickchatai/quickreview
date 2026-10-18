@@ -36,10 +36,12 @@ export interface ExecOptions {
 /** Run a command to completion with argv (never a shell), capture its output. */
 export function run(bin: string, args: string[], o: ExecOptions = {}): Promise<ExecResult> {
   return new Promise((resolve) => {
+    const processGroup = process.platform !== "win32" && Boolean(o.timeoutMs);
     const child = spawn(bin, args, {
       cwd: o.cwd,
       env: o.env ?? process.env,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: processGroup,
     });
     const max = o.maxBytes ?? 64 * 1024 * 1024;
     const out: Buffer[] = [];
@@ -56,7 +58,13 @@ export function run(bin: string, args: string[], o: ExecOptions = {}): Promise<E
     const timer = o.timeoutMs
       ? setTimeout(() => {
           timedOut = true;
-          child.kill("SIGKILL");
+          if (processGroup && child.pid !== undefined) {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+            } catch {
+              child.kill("SIGKILL");
+            }
+          } else child.kill("SIGKILL");
         }, o.timeoutMs)
       : null;
     child.on("error", (e) => {

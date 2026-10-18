@@ -49,6 +49,37 @@ const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => 
   evidence: "a.py:10",
 });
 
+it("judges a reanchored deleted-line comment once and reads its ordinary tag after markers", () => {
+  const run = mkdtempSync(join(tmpdir(), "bench-deleted-judge-"));
+  const id = "o__r@1234567";
+  mkdirSync(join(run, "results/all"), { recursive: true });
+  mkdirSync(join(run, "cases", id), { recursive: true });
+  const body = "[ask your human] [blocker] Guard removed";
+  writeFileSync(
+    join(run, "results/all", `${id}.json`),
+    JSON.stringify({
+      review: { comments: [{ path: "a.py", start_line: 12, end_line: 12, content: body }] },
+    }),
+  );
+  writeFileSync(
+    join(run, "cases", id, "head-patches.json"),
+    JSON.stringify({
+      "a.py": "@@ -11,3 +11,2 @@\n context\n-guard\n context",
+    }),
+  );
+  writeFileSync(
+    join(run, "cases", id, "comments.json"),
+    JSON.stringify([
+      { path: "a.py", line: 12, side: "LEFT", body },
+      { path: "other.py", line: 3, side: "LEFT", body: "[check this] [question] Other guard" },
+    ]),
+  );
+  const review = reviewForJudge(run, id);
+  expect(review.comments).toHaveLength(2);
+  expect(review.comments[0]).toMatchObject({ tag: "blocker", text: "Guard removed" });
+  expect(review.comments[1]).toMatchObject({ tag: "question", text: "Other guard" });
+});
+
 const SET = {
   set: "t",
   version: "1",

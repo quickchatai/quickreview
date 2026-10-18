@@ -377,6 +377,7 @@ export interface LeftSideComment {
 export function normalizeFindingPath(
   raw: string | undefined,
   tree: string,
+  basePaths?: ReadonlySet<string>,
 ): { path: string; lines: { start: number; end: number } | null } {
   let p = (raw ?? "").trim().replace(/^`|`$/g, "");
   let lines: { start: number; end: number } | null = null;
@@ -393,7 +394,7 @@ export function normalizeFindingPath(
   if (p.startsWith(t)) return { path: p.slice(t.length), lines };
   p = p.replace(/^\.\//, "");
   // A leading `a/` or `b/` is a diff prefix unless the tree has that path.
-  if (/^[ab]\//.test(p) && !existsSync(join(t, p))) p = p.slice(2);
+  if (/^[ab]\//.test(p) && !existsSync(join(t, p)) && !basePaths?.has(p)) p = p.slice(2);
   return { path: p, lines };
 }
 
@@ -421,13 +422,14 @@ export function findingNote(f: PireviewFinding): string {
 export function toComments(
   findings: PireviewFinding[],
   tree: string,
+  basePaths?: ReadonlySet<string>,
 ): { comments: OcrShapedComment[]; left: LeftSideComment[] } {
   const comments: OcrShapedComment[] = [];
   const left: LeftSideComment[] = [];
   for (const f of findings) {
     const note = findingNote(f);
     if (!note) continue;
-    const { path, lines } = normalizeFindingPath(f.path, tree);
+    const { path, lines } = normalizeFindingPath(f.path, tree, basePaths);
     const start = f.location?.startLine ?? lines?.start ?? null;
     const end = f.location ? (f.location.endLine ?? f.location.startLine) : (lines?.end ?? null);
     if (f.location?.side === "base") {
@@ -721,7 +723,18 @@ export async function reviewCasePireview(
         summary.usage = { input: u.input ?? 0, output: u.output ?? 0, cacheRead: u.cacheRead ?? 0 };
         summary.cost_usd = typeof u.costTotal === "number" ? u.costTotal : null;
       }
-      ({ comments, left } = toComments(scored, tree));
+      let basePaths: Set<string> | undefined;
+      if (scored.length > 0) {
+        const baseTree = await exec(
+          "git",
+          ["-C", tree, "ls-tree", "-r", "--name-only", "-z", meta.merge_base],
+          { env },
+        );
+        if (baseTree.code !== 0)
+          throw new Error(`base tree paths unavailable: ${baseTree.stderr.trim().slice(0, 400)}`);
+        basePaths = new Set(baseTree.stdout.split("\0").filter(Boolean));
+      }
+      ({ comments, left } = toComments(scored, tree, basePaths));
       if (pmeta.parseError) summary.warnings.push(`pi-review: ${pmeta.parseError.slice(0, 600)}`);
     }
     if (summary.status !== "ok")
@@ -754,7 +767,6 @@ export async function reviewCasePireview(
     writeFileSync(join(caseDir, "pireview-meta.json"), JSON.stringify(pmeta, null, 2) + "\n");
   // Base-side findings: the defect judge reads LEFT rows from comments.json.
   writeFileSync(join(caseDir, "comments.json"), JSON.stringify(left, null, 2) + "\n");
-  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writePireviewResult(
     o.outDir,
     c,
@@ -770,6 +782,7 @@ export async function reviewCasePireview(
       bench: { status: summary.status, fingerprint: o.fingerprint },
     }),
   );
+  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   log(
     `pireview: ${c.instance_id} ${summary.status} — ${summary.comments} comment(s)` +
       (summary.left_side ? ` + ${summary.left_side} base-side` : "") +

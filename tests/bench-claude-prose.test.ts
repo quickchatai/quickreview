@@ -18,6 +18,18 @@ import {
 } from "../src/bench/claudeprose.js";
 
 const FX = join(resolve(dirname(fileURLToPath(import.meta.url))), "fixtures", "claude-prose");
+it("does not score located paragraphs introduced as unreported findings", () => {
+  const parsed = parseClaudeProse(
+    "I chose not to report:\n\nsrc/a.ts:12 — Missing guard.\n\nFindings:\n\nsrc/b.ts:14 — Null dereference.",
+  );
+  expect(parsed.findings.map((f) => f.path)).toEqual(["src/b.ts"]);
+});
+it("keeps a rejected located paragraph's explicit negative introduction for its following list", () => {
+  const parsed = parseClaudeProse(
+    "Findings:\n\nsrc/a.ts:12 — I chose not to report:\n\n- src/b.ts:14 — An observation.",
+  );
+  expect(parsed.findings).toEqual([]);
+});
 
 function fixture(id: string): { text: string; files: string[] | null } {
   const f = join(FX, `${id}.files.txt`);

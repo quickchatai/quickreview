@@ -27,6 +27,25 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const captureFault = vi.hoisted(() => ({ enabled: false }));
+vi.mock("node:fs", async (original) => {
+  const real = await original<typeof import("node:fs")>();
+  const { Writable } = await import("node:stream");
+  return {
+    ...real,
+    createWriteStream: (...args: Parameters<typeof real.createWriteStream>) => {
+      if (!captureFault.enabled || !String(args[0]).endsWith("pi-events.jsonl"))
+        return real.createWriteStream(...args);
+      real.appendFileSync(args[0], "");
+      return new Writable({
+        write(_chunk, _encoding, done) {
+          done(new Error("capture quota exhausted"));
+        },
+      });
+    },
+  };
+});
+
 vi.stubEnv("GIT_ALLOW_PROTOCOL", "file");
 // The bench reads the install locator's config; name a production-shaped one.
 vi.stubEnv(
@@ -199,6 +218,64 @@ describe("a retried case's continuation", () => {
     expect(invocations[0]).not.toMatch(/--continue/);
     expect(s.continued).toBe(false);
     expect(s.error).toMatch(/nothing to continue/);
+  });
+});
+
+describe("a completed benchmark process with invalid output guarantees", () => {
+  const finished = async (record: boolean, fault = false) => {
+    const dir = mkdtempSync(join(tmp, "finished-"));
+    const c = mkCase(B1);
+    const cstore = join(dir, "store");
+    execFileSync("git", ["clone", "--quiet", "--bare", join(tmp, "work"), storeDir(cstore, c)]);
+    const root = join(dir, "root");
+    mkdirSync(root);
+    for (const entry of readdirSync(ROOT))
+      if (!["wt", ".git", "state"].includes(entry))
+        symlinkSync(join(ROOT, entry), join(root, entry));
+    const outDir = join(dir, "out");
+    const caseDir = join(outDir, "cases", safeId(c.instance_id));
+    const files: Record<string, string> = {
+      "outcome.json": JSON.stringify({ verdict: "APPROVE", passes: [] }),
+      "comments.json": "[]",
+      "review.md": "Approved",
+      ...(record ? { "findings-record.json": JSON.stringify({ findings: [] }) } : {}),
+    };
+    const piBin = join(dir, "fake-pi");
+    writeFileSync(
+      piBin,
+      `#!${process.execPath}\nprocess.stdin.resume(); process.stdin.on('end', () => { const fs = require('node:fs'); for (const [name, text] of Object.entries(${JSON.stringify(files)})) fs.writeFileSync(require('node:path').join(${JSON.stringify(caseDir)}, name), text); console.log('{}'); });\n`,
+    );
+    chmodSync(piBin, 0o755);
+    const cfg = benchConfig("");
+    cfg.review.render_outputs = true;
+    captureFault.enabled = fault;
+    try {
+      return await reviewCase(
+        c,
+        metaFor(c),
+        {
+          root,
+          store: cstore,
+          outDir,
+          agentDir: join(dir, "agent"),
+          timeoutMs: 10 * 60_000,
+          piBin,
+        },
+        { cfg, ecosystem: ecosystemFor("none"), fingerprint: {} as never },
+      );
+    } finally {
+      captureFault.enabled = false;
+    }
+  };
+  it("requires the record even when handwritten output and a valid verdict exist", async () => {
+    const summary = await finished(false);
+    expect(summary.status).toBe("no-output");
+    expect(summary.error).toContain("findings-record.json");
+  });
+  it("reports capture failure even after usable output files have been written", async () => {
+    const summary = await finished(true, true);
+    expect(summary.status).toBe("failed");
+    expect(summary.error).toContain("capture quota exhausted");
   });
 });
 

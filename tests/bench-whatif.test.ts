@@ -207,6 +207,26 @@ describe("raw lens candidates from pi's event stream", () => {
 });
 
 describe("the findings record, linked back onto the lens candidates", () => {
+  it("preserves LEFT for unlinked record evidence and excludes it from head-side what-if scoring", () => {
+    const records = parseFindingsRecord({
+      findings: [
+        {
+          id: "f",
+          path: "a.ts",
+          line: 12,
+          side: "LEFT",
+          lens: "pass-baseline",
+          disposition: "killed",
+          severity: "P1",
+          evidence: "Guard removed",
+        },
+      ],
+    });
+    const extras = recordExtras(linkRecord(records, []), [], ["killed"]);
+    expect(extras[0]?.side).toBe("LEFT");
+    expect(toOcrComments(extras).comments).toEqual([]);
+    expect(toOcrComments(extras).excluded.left_side).toBe(1);
+  });
   it("links every row it can by lens + file + nearest line, one-to-one", () => {
     const raw = rawCandidatesFromEvents(events(RAGFLOW)).candidates;
     const links = linkRecord(parseFindingsRecord(record(RAGFLOW)), raw);
@@ -576,6 +596,16 @@ describe("reading the scored metrics back", () => {
     // every posted+killed round, and never in the control.
     const ruff =
       "The configuration still ignores every Ruff rule, so selecting `F` does not enforce any Pyflakes checks.";
+    const resultPath = join(out, "results", "posted+killed", `${COMFY}.json`);
+    const result = JSON.parse(readFileSync(resultPath, "utf8"));
+    const correct = result.review.comments.find((c: { content: string }) => c.content === ruff);
+    Object.assign(correct, { path: "p.py", start_line: 1, end_line: 2 });
+    result.review.comments.unshift({
+      ...correct,
+      path: "other.py",
+      qcr_whatif: { origin: "wrong source" },
+    });
+    writeFileSync(resultPath, JSON.stringify(result));
     const refs = (m: boolean): Array<[boolean, string]> => [[m, m ? ruff : ""]];
     for (const [v, m] of [
       ["posted", false],

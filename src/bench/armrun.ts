@@ -5,6 +5,7 @@
 
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { readJsonObject } from "./publication.js";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
 import type { ExecOptions, ExecResult } from "./exec.js";
 import { caseWarningLines, dropMetricsFiles, type CaseDiagnostics } from "./report.js";
@@ -102,8 +103,14 @@ export function prepareArmCases(o: {
         prior = { fingerprint: undefined };
       }
       if (prior) {
-        if (JSON.stringify(prior.fingerprint) === want) continue;
-        o.log(`${o.arm}: ${c.instance_id} was reviewed by ${o.differs} — its result is dropped`);
+        if (JSON.stringify(prior.fingerprint) === want) {
+          if (readJsonObject(join(resultsDir, `${safeId(c.instance_id)}.json`)) !== undefined)
+            continue;
+          o.log(
+            `${o.arm}: ${c.instance_id} has no readable result despite its summary — reviewed again`,
+          );
+        } else
+          o.log(`${o.arm}: ${c.instance_id} was reviewed by ${o.differs} — its result is dropped`);
         dropped.push(c.instance_id);
       } else {
         const left = files.slice(1).filter((f) => existsSync(f));

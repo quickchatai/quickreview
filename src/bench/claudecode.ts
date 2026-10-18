@@ -53,6 +53,7 @@
 // without re-reviewing anything.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { publishText } from "./publication.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
@@ -847,7 +848,7 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
           "the rebuilt view",
         );
       changed++;
-      writeFileSync(resultFile, text);
+      publishText(resultFile, text);
     }
     const view = claudeViewOf(next)!;
     const bench = next["bench"] as Obj;

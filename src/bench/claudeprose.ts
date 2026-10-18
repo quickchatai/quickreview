@@ -296,7 +296,7 @@ export function parseClaudeProse(
       const t = text(b);
       const loc = paragraphLocation(b.lines[0]!);
       i++;
-      if (loc && !STRONG_NEG.test(t)) {
+      if (loc && !STRONG_NEG.test(t) && leadInSaysFindings(leadIn, opening)) {
         const cand: Candidate = {
           written: loc.written,
           start: loc.start,
@@ -322,7 +322,10 @@ export function parseClaudeProse(
           }
         }
       }
-      leadIn = t;
+      if (loc) {
+        if (STRONG_NEG.test(t) || !leadInSaysFindings(leadIn, opening)) skipped.non_finding++;
+      }
+      if (!loc || STRONG_NEG.test(t)) leadIn = t;
       continue;
     }
     // one list group

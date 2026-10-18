@@ -30,6 +30,7 @@ import {
   type SweepStatus,
 } from "../sweepstatus.js";
 import { renderPassTasks } from "../passtasks.js";
+import { publishText } from "./publication.js";
 import {
   postedRenderOptions,
   renderPostedReview,
@@ -1637,8 +1638,10 @@ export async function reviewCase(
     // session that wrote its own files anyway is overruled: the record is the
     // source.
     let renderedPosting: BenchPostingReport | undefined;
+    const record = ctx.cfg.review.render_outputs
+      ? readJson(join(caseDir, CASE_FILES.findings))
+      : undefined;
     if (ctx.cfg.review.render_outputs) {
-      const record = readJson(join(caseDir, CASE_FILES.findings));
       if (record !== undefined) {
         const out = renderBenchOutputs(record, outcome, ctx.cfg);
         writeFileSync(
@@ -1720,14 +1723,23 @@ export async function reviewCase(
       summary.follow_up = followUpOutcomeOf(summary.follow_up, outcome, summary.verdict);
     summary.status = r.timedOut
       ? "timeout"
-      : outcome === undefined || rawComments === undefined
-        ? "no-output"
-        : summary.verdict === "APPROVE" || summary.verdict === "REQUEST_CHANGES"
-          ? "ok"
-          : "no-verdict";
+      : r.streamError
+        ? "failed"
+        : outcome === undefined ||
+            rawComments === undefined ||
+            (ctx.cfg.review.render_outputs && record === undefined)
+          ? "no-output"
+          : summary.verdict === "APPROVE" || summary.verdict === "REQUEST_CHANGES"
+            ? "ok"
+            : "no-verdict";
     // A no-output round says why when the files are there but unreadable.
     if (summary.status === "no-output" && summary.error === undefined) {
-      const still = unparseableOutputs(caseDir, ctx.cfg.review.render_outputs);
+      const still = [
+        ...unparseableOutputs(caseDir, ctx.cfg.review.render_outputs),
+        ...missingOutputs(caseDir, ctx.cfg.review.render_outputs).map(
+          (name) => `${name} not written`,
+        ),
+      ];
       if (still.length) summary.error = still.join("; ").slice(0, 2000);
     }
   } catch (err) {
@@ -1985,8 +1997,9 @@ export function writeResults(
     } catch {
       // no earlier result for this case
     }
-    if (before !== text) changed.push({ variant, metrics: dropMetricsFiles(dir).length });
-    writeFileSync(file, text);
+    if (before === text) continue;
+    changed.push({ variant, metrics: dropMetricsFiles(dir).length });
+    publishText(file, text);
   }
   return changed;
 }

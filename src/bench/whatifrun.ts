@@ -266,11 +266,31 @@ function clip(s: string, n: number): string {
 }
 
 /** Which comment of a variant's result file produced a matched note. */
-function originOf(outDir: string, variant: WhatifVariant, instance: string, note: string): string {
+function originOf(outDir: string, variant: WhatifVariant, ref: RefOutcome, note: string): string {
+  const instance = ref.instance_id;
   const file = readJson(join(outDir, "results", variant, `${safeId(instance)}.json`)) as
-    | { review?: { comments?: Array<{ content?: string; qcr_whatif?: Record<string, unknown> }> } }
+    | {
+        review?: {
+          comments?: Array<{
+            path?: string;
+            start_line?: number;
+            end_line?: number;
+            content?: string;
+            qcr_whatif?: Record<string, unknown>;
+          }>;
+        };
+      }
     | undefined;
-  const hit = file?.review?.comments?.find((c) => (c.content ?? "").trim() === note.trim());
+  const hit = file?.review?.comments?.find(
+    (c) =>
+      (c.content ?? "").trim() === note.trim() &&
+      c.path === ref.path &&
+      ref.from_line !== null &&
+      ref.to_line !== null &&
+      typeof c.start_line === "number" &&
+      typeof c.end_line === "number" &&
+      lineGate(ref.from_line, ref.to_line, c.start_line, c.end_line),
+  );
   const p = hit?.qcr_whatif;
   if (!p) return "?";
   if (p["origin"] === "posted") return "posted comment";
@@ -465,7 +485,7 @@ export function renderWhatifReport(
         source_own_rounds: ownOf(r)?.matched.posted?.rounds ?? null,
         matched_notes: (r.matched[v]?.notes ?? []).map((n) => ({
           text: n,
-          origin: originOf(outDir, v, r.instance_id, n),
+          origin: originOf(outDir, v, r, n),
         })),
         posted_in_gate: postedInGate(outDir, r),
       })),
@@ -486,7 +506,7 @@ export function renderWhatifReport(
       L.push(`- ${refLine(r, v, ownOf(r))}`);
       L.push(`  - **Reference:** ${clip(r.note, 600)}`);
       for (const n of r.matched[v]?.notes ?? [])
-        L.push(`  - **Ours** (${originOf(outDir, v, r.instance_id, n)}): ${clip(n, 600)}`);
+        L.push(`  - **Ours** (${originOf(outDir, v, r, n)}): ${clip(n, 600)}`);
       const there = postedInGate(outDir, r);
       if (!there.length)
         L.push("  - The control posted NOTHING within this reference's line gate.");
