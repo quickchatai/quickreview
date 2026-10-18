@@ -14,15 +14,19 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:fs", async (orig) => {
   const real = await orig<typeof import("node:fs")>();
   return {
     ...real,
-    renameSync: () => {
-      throw Object.assign(new Error("EXDEV: cross-device link not permitted"), { code: "EXDEV" });
+    renameSync: (from: string, to: string) => {
+      // Only the profile move crosses mounts. Atomic journal/symlink
+      // publication renames within the same directory cannot be EXDEV.
+      if (dirname(from) !== dirname(to))
+        throw Object.assign(new Error("EXDEV: cross-device link not permitted"), { code: "EXDEV" });
+      return real.renameSync(from, to);
     },
   };
 });

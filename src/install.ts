@@ -35,8 +35,12 @@
 // Pure where it can be: every locator takes the env as a parameter (and
 // `strandedCheckoutConfig` / `locateProfile` an `exists` / `isDir` probe), so
 // the tests drive it with temp XDG homes and never touch the operator's own.
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
+  fsyncSync,
+  openSync,
   copyFileSync,
   cpSync,
   existsSync,
@@ -543,9 +547,130 @@ function sameTree(a: string, b: string): boolean {
   return true;
 }
 
+interface ProfileLinkRepair {
+  profile: string;
+  path: string;
+  target: string;
+}
+interface ProfileRepairPlan {
+  version: 1;
+  from: string;
+  to: string;
+  links: ProfileLinkRepair[];
+}
+
+function profileRepairPlan(path: string, from: string, to: string): ProfileRepairPlan {
+  if (!existsSync(path)) return { version: 1, from, to, links: [] };
+  if (!lstatSync(path).isFile() || statSync(path).size > 1_000_000)
+    throw new Error("invalid profile repair journal");
+  const plan = JSON.parse(readFileSync(path, "utf8")) as ProfileRepairPlan;
+  if (
+    plan.version !== 1 ||
+    plan.from !== from ||
+    plan.to !== to ||
+    !Array.isArray(plan.links) ||
+    plan.links.some(
+      (link) =>
+        !link ||
+        !isPathSegment(link.profile) ||
+        EXAMPLE_PROFILES.includes(link.profile) ||
+        typeof link.target !== "string" ||
+        typeof link.path !== "string" ||
+        isAbsolute(link.path) ||
+        link.path.split(/[\\/]/).some((part) => part === "" || part === "." || part === ".."),
+    )
+  )
+    throw new Error("invalid profile repair journal");
+  return plan;
+}
+
+function saveProfileRepairPlan(path: string, plan: ProfileRepairPlan): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.${randomUUID()}.tmp`;
+  try {
+    const fd = openSync(tmp, "wx", 0o600);
+    try {
+      writeFileSync(fd, JSON.stringify(plan));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, path);
+    const dir = openSync(dirname(path), "r");
+    try {
+      fsyncSync(dir);
+    } finally {
+      closeSync(dir);
+    }
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+function profileLinks(root: string, profile: string): ProfileLinkRepair[] {
+  if (lstatSync(root).isSymbolicLink()) return [];
+  const links: ProfileLinkRepair[] = [];
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
+      const path = rel === "" ? entry.name : join(rel, entry.name);
+      if (entry.isSymbolicLink())
+        links.push({ profile, path, target: readlinkSync(join(root, path)) });
+      else if (entry.isDirectory()) walk(path);
+    }
+  };
+  walk("");
+  return links;
+}
+
+/** Recover link publication even when rename succeeded before interruption. */
+function repairProfileLinks(plan: ProfileRepairPlan): void {
+  const relocated = (profile: string): boolean =>
+    !existsSync(join(plan.from, profile)) && isDirectory(join(plan.to, profile));
+  for (const link of plan.links) {
+    const oldAt = join(plan.from, link.profile, link.path);
+    const at = join(relocated(link.profile) ? plan.to : plan.from, link.profile, link.path);
+    // The snapshot walker never traversed symlinked directories. A changed
+    // parent must not redirect journal replay outside the captured profile.
+    let parent = join(relocated(link.profile) ? plan.to : plan.from, link.profile);
+    for (const part of ["", ...link.path.split(sep).slice(0, -1)]) {
+      parent = part === "" ? parent : join(parent, part);
+      const st = lstatSync(parent);
+      if (!st.isDirectory() || st.isSymbolicLink())
+        throw new Error(`profile directory changed during migration: ${link.profile}/${link.path}`);
+    }
+    const was = resolve(dirname(oldAt), link.target);
+    let target = was;
+    for (const base of [plan.from, realpathSync(plan.from)]) {
+      if (!within(base, was) || was === base) continue;
+      const rel = relative(base, was);
+      if (relocated(rel.split(sep)[0]!)) target = join(plan.to, rel);
+    }
+    // Relative links that already name the correct place retain their spelling.
+    if (resolve(dirname(at), link.target) === target) continue;
+    try {
+      const st = lstatSync(at);
+      if (!st.isSymbolicLink())
+        throw new Error(`profile link changed during migration: ${link.profile}/${link.path}`);
+      const current = readlinkSync(at);
+      if (resolve(dirname(at), current) === target) continue;
+      if (current !== link.target)
+        throw new Error(`profile link changed during migration: ${link.profile}/${link.path}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    const tmp = `${at}.${randomUUID()}.tmp`;
+    try {
+      symlinkSync(target, tmp);
+      renameSync(tmp, at);
+    } finally {
+      rmSync(tmp, { force: true });
+    }
+  }
+}
+
 /**
  * Move every install profile out of the checkout's `profiles/` into the
- * config home's — every directory there except the generic `EXAMPLE_PROFILES`.
+ * config home's — every admissible profile directory except `EXAMPLE_PROFILES`.
  * Same discipline as the config move: idempotent (a second run finds nothing
  * left to move), an identical copy already in the home just drops the
  * checkout's, and a differing one is a conflict that touches nothing.
@@ -593,6 +718,7 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
           (e.isSymbolicLink() &&
             (isDirectory(join(fromBase, e.name)) ||
               movedSibling(join(fromBase, e.name)) !== null))) &&
+        isPathSegment(e.name) &&
         !EXAMPLE_PROFILES.includes(e.name),
     )
     .map((e) => e.name)
@@ -601,6 +727,39 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
   if (override !== "") {
     return names.map((name) => ({ kind: "override", name, path: resolve(override) }));
   }
+  const repairPath = join(toBase, ".qcr-profile-repair.json");
+  const previousPlan = profileRepairPlan(repairPath, fromBase, toBase);
+  repairProfileLinks(previousPlan);
+  // Resolve all duplicate comparisons before sibling moves can dangle links.
+  const equalTrees = new Map<string, boolean>();
+  const conflicts = new Set<string>();
+  for (const name of names) {
+    const from = join(fromBase, name),
+      to = join(toBase, name);
+    if (
+      !isDirectory(from) ||
+      !existsSync(to) ||
+      samePath(from, to) ||
+      (isDirectory(to) && linksInto(to, from))
+    )
+      continue;
+    const equal = isDirectory(to) && sameTree(from, to);
+    equalTrees.set(name, equal);
+    if (!equal) conflicts.add(name);
+  }
+  const linkMap = new Map(previousPlan.links.map((link) => [`${link.profile}/${link.path}`, link]));
+  for (const name of names) {
+    if (conflicts.has(name) || !isDirectory(join(fromBase, name))) continue;
+    for (const link of profileLinks(join(fromBase, name), name))
+      linkMap.set(`${name}/${link.path}`, link);
+  }
+  const repairPlan: ProfileRepairPlan = {
+    version: 1,
+    from: fromBase,
+    to: toBase,
+    links: [...linkMap.values()],
+  };
+  if (repairPlan.links.length > 0) saveProfileRepairPlan(repairPath, repairPlan);
   // Linked profiles resolve before anything moves, and move last: a link to a
   // sibling in the checkout (`house -> house-real`) must follow that sibling
   // into the home, not point at the spot it was just moved out of.
@@ -645,7 +804,7 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
         outcomes.push({ kind: "aliased", name, from, to });
         continue;
       }
-      if (!isDirectory(to) || !sameTree(from, to)) {
+      if (!isDirectory(to) || equalTrees.get(name) !== true) {
         outcomes.push({ kind: "conflict", name, from, to });
         continue;
       }
@@ -673,46 +832,9 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     }
     outcomes.push({ kind: "moved", name, from, to });
   }
-  // Links inside a moved profile follow moved or deduplicated referents into
-  // the home; a target left in the checkout stays there absolutely.
-  const moved = new Set(outcomes.filter((o) => o.kind === "moved").map((o) => o.name));
-  const relocated = new Set(
-    outcomes.filter((o) => o.kind === "moved" || o.kind === "deduplicated").map((o) => o.name),
-  );
-  const whereNow = (was: string): string => {
-    for (const base of [fromBase, realBase]) {
-      if (!within(base, was) || was === base) continue;
-      const rel = relative(base, was);
-      if (relocated.has(rel.split(sep)[0] ?? "")) return join(toBase, rel);
-    }
-    return was;
-  };
-  for (const name of moved)
-    if (!linkTargets.has(name)) rebaseLinks(join(fromBase, name), join(toBase, name), whereNow);
+  repairProfileLinks(repairPlan);
+  rmSync(repairPath, { force: true });
   return outcomes.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-}
-
-/** Re-point every link under `newRoot` (the tree that was `oldRoot`) whose
- * target no longer resolves to where it did: `whereNow` maps the referent's
- * old path to its current one. A linked directory is re-pointed, not walked. */
-function rebaseLinks(oldRoot: string, newRoot: string, whereNow: (was: string) => string): void {
-  const walk = (rel: string): void => {
-    for (const entry of readdirSync(join(newRoot, rel), { withFileTypes: true })) {
-      const path = rel === "" ? entry.name : join(rel, entry.name);
-      if (entry.isDirectory()) {
-        walk(path);
-        continue;
-      }
-      if (!entry.isSymbolicLink()) continue;
-      const at = join(newRoot, path);
-      const target = readlinkSync(at);
-      const now = whereNow(resolve(dirname(join(oldRoot, path)), target));
-      if (resolve(dirname(at), target) === now) continue;
-      unlinkSync(at);
-      symlinkSync(now, at);
-    }
-  };
-  walk("");
 }
 
 /** What the profile half of `qcr install migrate` prints; a conflict fails. */

@@ -234,6 +234,23 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     for (const { ref } of entries) knownLabels.add(ref.app_label);
   knownLabels.delete("");
 
+  // Infer custom labels only from tuples naming migrations this app owns.
+  // Multiple incompatible labels remain unresolved rather than choosing one.
+  const labelsByApp = new Map<string, string>();
+  for (const [app, ordered] of orderedByApp) {
+    const ownNames = new Set([
+      ...[...(baseByApp.get(app)?.values() ?? [])].map(migrationName),
+      ...ordered.map(({ ref }) => migrationName(ref)),
+    ]);
+    const labels = new Set<string>();
+    for (const { ref, patch } of ordered)
+      for (const name of ownNames) {
+        const label = ownDependencyLabel(patch, ref.app_label, name, knownLabels);
+        if (label !== null && label !== ref.app_label) labels.add(label);
+      }
+    labelsByApp.set(app, labels.size === 1 ? [...labels][0]! : ordered[0]!.ref.app_label);
+  }
+
   const out: MigrationCollision[] = [];
   // Every rename the remedy prescribes, per app, for the cross-app follow-up
   // pass below.
@@ -306,7 +323,7 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
         ? renamedTo(ref, targetNumber)
         : { name: migrationName(ref), path: ref.path };
       if (collides) {
-        const label = stales[0]?.label ?? ref.app_label;
+        const label = stales[0]?.label ?? labelsByApp.get(app) ?? ref.app_label;
         out.push({
           app,
           app_label: ref.app_label,
@@ -344,7 +361,10 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
         renamed.set(migrationName(ref), { name: target.name, number: targetNumber });
       if (collides) dependencyName = target.name;
     }
-    renamedByApp.set(app, { app_label: colliding[0]!.ref.app_label, renamed });
+    renamedByApp.set(app, {
+      app_label: labelsByApp.get(app) ?? colliding[0]!.ref.app_label,
+      renamed,
+    });
   }
 
   // Cross-app follow-ups: a PR migration in another app whose `dependencies`

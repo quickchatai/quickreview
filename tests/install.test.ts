@@ -1,7 +1,7 @@
 // The install locator: temp XDG homes and QCR_CONFIG
 // in, every config path out. Never the operator's own homes: every case hands
 // the locator an explicit env.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
   existsSync,
@@ -50,6 +50,24 @@ import {
 } from "../src/install.js";
 import { loadConfig, parseConfig } from "../src/config.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+
+const linkFault = vi.hoisted(() => ({ path: "" }));
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return {
+    ...fs,
+    symlinkSync: (...args: Parameters<typeof fs.symlinkSync>) => {
+      if (
+        linkFault.path &&
+        (String(args[1]) === linkFault.path || String(args[1]).startsWith(`${linkFault.path}.`))
+      ) {
+        linkFault.path = "";
+        throw new Error("link repair unavailable");
+      }
+      return fs.symlinkSync(...args);
+    },
+  };
+});
 
 let dir: string;
 let root: string;
@@ -630,6 +648,99 @@ describe("migrateProfiles", () => {
       expect(readFileSync(migrated, "utf8")).toBe("shared\n");
     },
   );
+
+  it("recovers unfinished descendant link repairs after the profile already moved", () => {
+    putProfile(root, "house", "own\n");
+    putProfile(root, "other", "shared\n");
+    symlinkSync(
+      join(root, "profiles", "other", "addenda", "10-rule.md"),
+      join(root, "profiles", "house", "addenda", "linked.md"),
+    );
+    const at = join(configHome(env), "profiles", "house", "addenda", "linked.md");
+    linkFault.path = at;
+    expect(() => migrateProfiles({ root, env })).toThrow("link repair unavailable");
+    expect(existsSync(join(root, "profiles", "house"))).toBe(false);
+    migrateProfiles({ root, env });
+    expect(readFileSync(at, "utf8")).toBe("shared\n");
+  });
+
+  it("refuses a changed descendant directory during journal replay without writing through it", () => {
+    putProfile(root, "house", "own\n");
+    putProfile(root, "other", "shared\n");
+    symlinkSync(
+      join(root, "profiles", "other", "addenda", "10-rule.md"),
+      join(root, "profiles", "house", "addenda", "linked.md"),
+    );
+    const migrated = join(configHome(env), "profiles", "house", "addenda");
+    linkFault.path = join(migrated, "linked.md");
+    expect(() => migrateProfiles({ root, env })).toThrow("link repair unavailable");
+    const outside = join(dir, "outside");
+    mkdirSync(outside);
+    rmSync(migrated, { recursive: true });
+    symlinkSync(outside, migrated);
+    expect(() => migrateProfiles({ root, env })).toThrow(/changed.*migration|migration.*changed/);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("refuses an invalid repair plan before moving profiles or touching outside paths", () => {
+    putProfile(root, "house");
+    const home = join(configHome(env), "profiles");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      join(home, ".qcr-profile-repair.json"),
+      JSON.stringify({
+        version: 1,
+        from: join(root, "profiles"),
+        to: home,
+        links: [{ profile: "house", path: "../../outside", target: "/unrelated" }],
+      }),
+    );
+    expect(() => migrateProfiles({ root, env })).toThrow("invalid profile repair journal");
+    expect(existsSync(join(root, "profiles", "house"))).toBe(true);
+    expect(existsSync(join(home, "house"))).toBe(false);
+  });
+
+  it("leaves directories that are not admissible profile names in the checkout", () => {
+    putProfile(root, ".scratch");
+    putProfile(root, "house");
+    expect(migrateProfiles({ root, env }).map((row) => row.name)).toEqual(["house"]);
+    expect(existsSync(join(root, "profiles", ".scratch"))).toBe(true);
+    expect(existsSync(join(configHome(env), "profiles", ".scratch"))).toBe(false);
+  });
+
+  it("compares nested links before moving an earlier sibling referent", () => {
+    putProfile(root, "a-shared", "shared\n");
+    putProfile(root, "z-house", "own\n");
+    putProfile(configHome(env), "a-shared", "shared\n");
+    putProfile(configHome(env), "z-house", "own\n");
+    symlinkSync(
+      "../../a-shared/addenda/10-rule.md",
+      join(root, "profiles", "z-house", "addenda", "linked.md"),
+    );
+    symlinkSync(
+      "../../a-shared/addenda/10-rule.md",
+      join(configHome(env), "profiles", "z-house", "addenda", "linked.md"),
+    );
+    expect(migrateProfiles({ root, env }).map((row) => row.kind)).toEqual([
+      "deduplicated",
+      "deduplicated",
+    ]);
+  });
+
+  it("repairs an aliased profile's links when its sibling moves", () => {
+    putProfile(root, "house", "own\n");
+    putProfile(root, "other", "shared\n");
+    mkdirSync(join(configHome(env), "profiles"), { recursive: true });
+    symlinkSync(join(root, "profiles", "house"), join(configHome(env), "profiles", "house"));
+    symlinkSync(
+      "../../other/addenda/10-rule.md",
+      join(root, "profiles", "house", "addenda", "linked.md"),
+    );
+    expect(migrateProfiles({ root, env }).map((row) => row.kind)).toEqual(["aliased", "moved"]);
+    expect(readFileSync(join(root, "profiles", "house", "addenda", "linked.md"), "utf8")).toBe(
+      "shared\n",
+    );
+  });
 
   it("moves nothing while QCR_CONFIG names the config — compose mounts THAT file's dir, not the home", () => {
     putProfile(root, "house");
