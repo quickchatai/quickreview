@@ -1692,3 +1692,55 @@ describe("deploy — the operator channel's seal survives the sandbox chown", ()
     );
   });
 });
+
+describe("deployment identity and Slack token configuration", () => {
+  it("passes configured Slack token filenames to provisioning", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const path = join(env.home, "config.toml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8") +
+        '\n[slack]\nbot_token_file = "concierge_bot"\napp_token_file = "concierge_app"\n',
+    );
+    const res = run(env, ["--dry-run", "rebuild"]);
+    expect(res.code).toBe(0);
+    expect(planVars(res.stdout).slack_bot_token_file).toBe("concierge_bot");
+    expect(planVars(res.stdout).slack_app_token_file).toBe("concierge_app");
+    const playbook = readFileSync(join(root, "deploy/ansible/playbook.yml"), "utf8");
+    expect(playbook).toContain(
+      'loop: ["{{ slack_bot_token_file }}", "{{ slack_app_token_file }}"]',
+    );
+  });
+
+  it("refuses token paths the VM secrets mount cannot supply", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const path = join(env.home, "config.toml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8") + '\n[slack]\nenabled = true\nbot_token_file = "/private/token"\n',
+    );
+    const res = run(env, ["--dry-run", "rebuild"]);
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("bot_token_file");
+    expect(res.stderr).toContain("flat filename");
+  });
+
+  it("keeps disabled Slack from blocking an unrelated deployment", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const path = join(env.home, "config.toml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8") +
+        '\n[slack]\nenabled = false\nbot_token_file = "/private/token"\n',
+    );
+    const res = run(env, ["--dry-run", "rebuild"]);
+    expect(res.code).toBe(0);
+    expect(planVars(res.stdout).slack_bot_token_file).toBe("slack_bot_token");
+  });
+
+  it("builds the image user with the UID used for provisioned ownership", () => {
+    // MUTATION: replace {{ container_uid }} with 1001 in useradd; this fails.
+    const dockerfile = readFileSync(join(root, "deploy/ansible/templates/Dockerfile.j2"), "utf8");
+    expect(dockerfile).toContain("useradd --create-home --uid {{ container_uid }} review");
+  });
+});

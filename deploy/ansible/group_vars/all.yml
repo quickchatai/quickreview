@@ -156,3 +156,7 @@ secrets_src: "{{ lookup('env', 'HOME') }}/.config/qcr/default/secrets"
 # source). Defaults to the repo this playbook lives in;
 # override with -e for a different checkout.
 sandbox_src: "{{ playbook_dir | dirname | dirname }}"
+
+# Flat Slack token names copied from the controller secrets directory.
+slack_bot_token_file: slack_bot_token
+slack_app_token_file: slack_app_token

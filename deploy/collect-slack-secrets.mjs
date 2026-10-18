@@ -231,9 +231,13 @@ export function readSlackValues(text) {
 }
 
 /** Locate a TOML table: everything between its header line and the next `[`. */
+function sectionHeaderMatches(line, header) {
+  return line.replace(/#.*$/, "").trim() === header;
+}
+
 function sliceSection(text, header) {
   const lines = text.split("\n");
-  const start = lines.findIndex((l) => l.trim() === header);
+  const start = lines.findIndex((l) => sectionHeaderMatches(l, header));
   if (start === -1) return { start: -1, end: -1, body: "" };
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
@@ -286,9 +290,20 @@ export function patchConfigToml(text, values) {
     }
   }
 
+  const missing = ["channel", "channel_kind", "legacy_owner_slack_id"]
+    .filter(
+      (key) =>
+        values[key] !== undefined &&
+        !lines
+          .slice(slack.start + 1, slack.end)
+          .some((line) => new RegExp(`^\\s*${key}\\s*=`).test(line)),
+    )
+    .map((key) => `${key} = ${JSON.stringify(String(values[key]))}`);
+  out.splice(slack.end, 0, ...missing);
+
   // A set `[owner] slack_id` wins over the legacy key at load, and the two
   // differing is a load error — so a set canonical id follows the same value.
-  const owner = sliceSection(src, "[owner]");
+  const owner = sliceSection(out.join("\n"), "[owner]");
   if (String(values.legacy_owner_slack_id ?? "").trim() !== "" && owner.start !== -1) {
     for (let i = owner.start + 1; i < owner.end; i++) {
       const m = out[i].match(/^\s*slack_id\s*=\s*(?:"([^"]*)"|'([^']*)')/);
@@ -302,9 +317,9 @@ export function patchConfigToml(text, values) {
     const entries = renderUsersTable(values.users)
       .split("\n")
       .filter((l) => l !== "");
-    const uStart = out.findIndex((l) => l.trim() === "[slack.users]");
+    const uStart = out.findIndex((l) => sectionHeaderMatches(l, "[slack.users]"));
     if (uStart === -1) {
-      out.splice(slack.end, 0, "[slack.users]", ...entries, "");
+      out.splice(sliceSection(out.join("\n"), "[slack]").end, 0, "[slack.users]", ...entries, "");
     } else {
       let uEnd = out.length;
       for (let i = uStart + 1; i < out.length; i++) {
@@ -389,8 +404,10 @@ oauth_config:
     bot:
       - chat:write
       - channels:history
+      - channels:read
       - users:read
       ${priv ? "- groups:history" : "# - groups:history    # only if the channel is private"}
+      ${priv ? "- groups:read" : "# - groups:read       # only if the channel is private"}
 settings:
   socket_mode_enabled: true
   event_subscriptions:
@@ -460,8 +477,8 @@ export function expandHome(p, home = homedir()) {
  * written — "" when unset, which leaves the choice to the install locator. */
 export function readSecretsDir(text) {
   const gh = sliceSection(String(text ?? ""), "[github]");
-  const m = gh.body.match(/^\s*secrets_dir\s*=\s*"([^"]*)"/m);
-  return m ? m[1] : "";
+  const m = gh.body.match(/^\s*secrets_dir\s*=\s*(?:"([^"]*)"|'([^']*)')/m);
+  return m ? (m[1] ?? m[2]) : "";
 }
 
 /**
@@ -935,7 +952,9 @@ async function main() {
   if (channelKind === "private") {
     out();
     bad("PRIVATE channel — three consequences:");
-    para("1. the manifest needs `groups:history` (bot scope) and `message.groups` (bot event);");
+    para(
+      "1. the manifest needs `groups:history` and `groups:read` (bot scope) and `message.groups` (bot event);",
+    );
     para("2. applying that manifest means re-installing, which mints a NEW bot token and");
     para("   revokes the current one;");
     para("3. after re-installing, re-run this wizard with --force and redo step 2.");
@@ -1139,7 +1158,7 @@ async function main() {
   para("This wizard does NOT deploy and does NOT start anything. The VM daemon is");
   para("intentionally stopped. When you are ready, the command is:");
   out();
-  out(`    ${bold("./scripts/deploy.sh")}`);
+  out(`    ${bold("./scripts/deploy.sh rebuild")}`);
   out();
 
   rl.close();
