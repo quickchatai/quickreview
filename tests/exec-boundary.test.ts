@@ -633,6 +633,55 @@ const CORPUS = [
     outcome: null,
     note: "a label ends at whitespace, so the e after it is the next command",
   },
+  {
+    round: 14,
+    via: "bash",
+    chain: "xargs sort",
+    outcome: null,
+    note: "stdin can supply sort output options",
+  },
+  {
+    round: 14,
+    via: "bash",
+    chain: "xargs find .",
+    outcome: null,
+    note: "stdin can supply executable find primaries",
+  },
+  {
+    round: 14,
+    via: "bash",
+    chain: "xargs uniq --",
+    outcome: null,
+    note: "stdin can supply positional output",
+  },
+  {
+    round: 14,
+    via: "bash",
+    chain: 'find . -ex"ec" sh {} +',
+    outcome: null,
+    note: "shell dequotes executable primary",
+  },
+  {
+    round: 14,
+    via: "bash",
+    chain: 'sort --out"put"=config.toml input',
+    outcome: null,
+    note: "shell dequotes output option",
+  },
+  {
+    round: 14,
+    via: "bash",
+    chain: "sh -n +n input.sh",
+    outcome: null,
+    note: "later shell option cancels syntax-only mode",
+  },
+  {
+    round: 14,
+    via: "bash",
+    chain: "uniq input config.toml",
+    outcome: null,
+    note: "second positional operand overwrites policy",
+  },
 ] as const;
 
 /**
@@ -1774,6 +1823,23 @@ describe("the audit does not fire on the reads that ARE the job", () => {
       ])[0]?.kind,
     ).toBe("github_write");
   });
+
+  it.each([
+    'find . -ex"ec" sh {} +',
+    'sort --out"put"=/tmp/out input',
+    "uniq input /tmp/out",
+    "uniq -f 1 input /tmp/out",
+    "uniq -- input /tmp/out",
+  ])("audits a reader's actual argv: %s", (command) => {
+    expect(auditExecViolationDetails([bashLine(command)])[0]?.kind).toBe("reader_write_or_exec");
+  });
+
+  it.each(["uniq input", "uniq -f 1 input", "uniq --skip-fields=1 input"])(
+    "keeps an input-only uniq silent: %s",
+    (command) => {
+      expect(auditExecViolationDetails([bashLine(command)])).toEqual([]);
+    },
+  );
 
   it("sees the reader WRITE/EXEC modes it was blind to — layers 2 and 3 no longer fail identically", () => {
     const kindOf = (c: string): string | undefined =>

@@ -402,3 +402,47 @@ describe("activate — a degraded manifest read is never cached", () => {
     }
   });
 });
+
+describe("git argument boundaries in the shared checkout", () => {
+  it.each([
+    "git -C . reset --hard",
+    "git --attr-source HEAD reset --hard",
+    "git --no-pager -C /workspace stash pop",
+    "git -c color.ui=never clean -fd",
+    "git --git-dir=.git --work-tree=. push",
+    "git checkout HEAD -- src/a.ts",
+    "git -C . checkout HEAD -- src/a.ts",
+    "git restore -- file--staged",
+    "git restore --source=branch--staged file",
+    "git restore --pathspec-from-file --staged",
+    "git restore --pathspec-from-fil --staged",
+    "git restore -S -W file",
+    "git restore -SW file",
+    "git restore -WsHEAD file",
+    'git restore "$FILE"',
+    "bash -c 'git restore file && git diff --staged'",
+  ])("vetoes %s", (cmd) => expect(bashBlockReason(cmd), cmd).toMatch(/rule (8|11)/));
+  it.each([
+    "git restore -S file",
+    "git -C . restore -S file",
+    "git restore -s HEAD -S file",
+    "git restore --staged -- file--worktree",
+    "git restore -S -- --worktree",
+    "git -C . status",
+    "git -c color.ui=never checkout -b topic",
+    "git --no-pager stash list",
+    'git restore -S "$FILE"',
+    "bash -c 'git restore -S file'",
+    "cat scripts/deploy.sh",
+    "git add scripts/deploy.sh",
+    "git diff -- scripts/deploy.sh",
+  ])("allows %s", (cmd) => expect(bashBlockReason(cmd), cmd).toBeUndefined());
+  it.each([
+    "scripts/deploy.sh sync",
+    "env A=1 bash scripts/deploy.sh sync",
+    "timeout 30 ./scripts/deploy.sh sync",
+    "cat scripts/deploy.sh; scripts/deploy.sh sync",
+  ])("still refuses deploy execution: %s", (cmd) =>
+    expect(bashBlockReason(cmd), cmd).toMatch(/rule 8/),
+  );
+});

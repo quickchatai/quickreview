@@ -873,11 +873,37 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
     // rule reads the DEQUOTED segment, as git receives its options
     // (`--out"put"=…` is `--output=…`); sed's reads it with a quote nested in
     // the other kind masked (`maskNestedQuotes`).
-    const hit =
-      prog === "sed"
-        ? sedAuditHit(segment)
-        : READER_MODE_AUDIT[prog]?.test(prog === "git" ? bare : segment);
+    const hit = prog === "sed" ? sedAuditHit(segment) : READER_MODE_AUDIT[prog]?.test(bare);
     if (hit === true) return "reader_write_or_exec";
+    if (/(?:^|\s)(?:\S*\/)?xargs(?:\s|$)/.test(bare)) {
+      if (["find", "uniq", "sh", "xargs"].includes(prog)) return "reader_write_or_exec";
+      if (
+        ["sort", "sed", "git", "gh"].includes(prog) &&
+        (!/\s--\s*$/.test(bare) || /(?:^|\s)(?:-[a-zA-Z]*[Ii]|--replace)/.test(bare))
+      )
+        return "reader_write_or_exec";
+    }
+    if (prog === "sh" && /\bsh\s+-n\s+(?:\+|-(?!--(?:\s|$)|(?:\s|$)))/.test(bare))
+      return "interpreter";
+    if (prog === "uniq") {
+      const words = sedWords(segment);
+      if (words !== null) {
+        const at = words.findIndex((w) => /(?:^|\/)uniq$/.test(w));
+        let operands = 0;
+        let options = true;
+        for (let i = at + 1; i < words.length; i++) {
+          const word = words[i]!;
+          if (options && word === "--") {
+            options = false;
+            continue;
+          }
+          if (options && word.startsWith("-") && word !== "-") {
+            if (/^-[fsw]$|^--(?:skip-fields|skip-chars|check-chars)$/.test(word)) i++;
+          } else operands++;
+        }
+        if (operands > 1) return "reader_write_or_exec";
+      }
+    }
     // A reader's ARGUMENTS are patterns, but an assignment PREFIX in front
     // of it is the environment it runs in — `LD_PRELOAD=… cat f` loads code
     // whatever cat then reads.

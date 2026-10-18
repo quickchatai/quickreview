@@ -1614,3 +1614,63 @@ describe("checkReadPath and the file-tool veto", () => {
     expect(veto("grep", { pattern: "openai_api_key", path: "wt/pr-5" })).toBeUndefined();
   });
 });
+
+describe("reader arguments received by the program", () => {
+  it.each([
+    "xargs sort",
+    "xargs find .",
+    "xargs uniq --",
+    "xargs git diff",
+    "xargs gh api repos/o/r",
+    "xargs -I{} sort -- {}",
+    "xargs --replace={} sort --",
+    "xargs sh -n",
+    'find . -ex"ec" sh {} +',
+    'sort --out"put"=config.toml input',
+    "sort -\\o config.toml input",
+    "find . -$'exec' sh {} +",
+    "sort --out$'put'=config.toml input",
+    "sh -n +n input.sh",
+    "sh -n -c 'touch /tmp/probe'",
+    "sh -n -o noexec +o noexec input.sh",
+    "uniq input config.toml",
+    "uniq -- input .git/config",
+    "uniq -f 1 input config.toml",
+    "uniq --skip-fields=1 input config.toml",
+    "uniq -w2 input config.toml",
+    "uniq - input",
+  ])("refuses %s", (cmd) => block(cmd));
+
+  it.each([
+    "xargs sort --",
+    "xargs -r sort -u --",
+    "uniq input",
+    "uniq -f 1 input",
+    "uniq --skip-fields=1 input",
+    "uniq -w2 input",
+    "sh -n -- input.sh",
+    "sort -- input",
+    "find . -name '*.ts'",
+  ])("preserves a safe reader: %s", (cmd) => {
+    allow(cmd);
+  });
+});
+
+describe("literal patterns and pattern-file operands", () => {
+  it.each([
+    'rg "secret app.pem" src',
+    "grep -e 'webhook_secret tunnel_token' src/a.ts",
+    'rg -n "read app.pem" src',
+    "rg --regexp='read app.pem' src",
+    "rg -e 'read app.pem' src",
+  ])("allows a complete literal pattern: %s", (cmd) => allow(cmd));
+  it.each([
+    "rg -f app.pem src",
+    "grep --file app.pem src",
+    "rg --file=app.pem src",
+    "grep -fapp.pem src",
+    "rg -f patterns app.pem",
+    "rg -e safe -f app.pem src",
+    "rg 'read app.pem' app.pem",
+  ])("checks pattern files and searched files: %s", (cmd) => block(cmd));
+});
