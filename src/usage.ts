@@ -765,6 +765,36 @@ function assignmentPrefix(segment: string): string {
   return out.join(" ");
 }
 
+/** Git search text is data. Parse only the invocation shape here; the
+ * independent reader-mode and protected-target checks still run first. */
+function gitSearchReader(segment: string): boolean {
+  const words = sedWords(segment);
+  if (words === null) return false;
+  let i = 0;
+  while (words[i] === "env" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i] ?? "")) i++;
+  if (!/(?:^|\/)git$/.test(words[i++] ?? "")) return false;
+  while (words[i]?.startsWith("-")) {
+    const option = words[i++]!;
+    if (option === "-C") {
+      if (words[i++] === undefined) return false;
+    } else if (
+      !["--no-pager", "--paginate", "--literal-pathspecs", "--no-optional-locks"].includes(option)
+    )
+      return false;
+  }
+  if (!["grep", "log"].includes(words[i++] ?? "")) return false;
+  // Program/config selectors are options wherever they occur, independently
+  // of the guard's parser. A pattern containing these whole option words
+  // stays conservatively visible, matching the existing reader-mode policy.
+  return !words
+    .slice(i)
+    .some((word) =>
+      /^--(?:config-env|git-dir|work-tree|exec-path|exec|upload-pack|receive-pack)(?:=|$)/.test(
+        word,
+      ),
+    );
+}
+
 /** Whether `segment` opens ANSI-C (`$'…'`) or locale (`$"…"`) quoting
  * outside quotes — where it can spell any option; inside quotes `$'`/`$"` is
  * literal. */
@@ -930,10 +960,11 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
     // A reader's ARGUMENTS are patterns, but an assignment PREFIX in front
     // of it is the environment it runs in — `LD_PRELOAD=… cat f` loads code
     // whatever cat then reads.
-    if (AUDIT_READERS.has(prog))
-      return GIT_CONFIG_INJECTION_RE.test(assignmentPrefix(segment))
-        ? "git_config_injection"
-        : null;
+    if (AUDIT_READERS.has(prog) || (prog === "git" && gitSearchReader(segment))) {
+      const prefix = assignmentPrefix(segment);
+      if (prog === "git" && POLICY_RELOCATION_RE.test(prefix)) return "policy_relocation";
+      return GIT_CONFIG_INJECTION_RE.test(prefix) ? "git_config_injection" : null;
+    }
   }
   // A policy-relocation env prefix (`QCR_CONFIG=` and kin) — checked AFTER the
   // reader skip so `grep QCR_CONFIG=x file` (a read of a config) does not trip

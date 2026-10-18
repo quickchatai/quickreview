@@ -12,6 +12,7 @@
 //     shown the outcome each chain was reaching for and asked whether the
 //     daemon has a record of it.
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -61,6 +62,13 @@ import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
  * single-boundary defence is inadequate.
  */
 const CORPUS = [
+  {
+    round: 14,
+    via: "bash",
+    chain: "git diff --no-index --output=/tmp/qcr-audit-diff-output before.txt after.txt",
+    outcome: null,
+    note: "real scratch git diff writes the named file; reader exemption must preserve output-mode auditing",
+  },
   {
     round: 1,
     via: "bash",
@@ -1852,6 +1860,92 @@ describe("the audit does not fire on the reads that ARE the job", () => {
       "cat scripts/deploy.sh | head -40",
     ]) {
       expect(auditExecViolationDetails([bashLine(cmd)]), `false line on: ${cmd}`).toEqual([]);
+    }
+  });
+
+  it("proves the Git output-mode corpus control writes a scratch file", () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-git-output-probe-"));
+    try {
+      writeFileSync(join(root, "before.txt"), "before\n");
+      writeFileSync(join(root, "after.txt"), "after\n");
+      // git diff exits 1 for a difference, after writing the output.
+      try {
+        execFileSync(
+          "git",
+          ["diff", "--no-index", `--output=${join(root, "output")}`, "before.txt", "after.txt"],
+          { cwd: root },
+        );
+      } catch (error) {
+        expect((error as { status?: number }).status).toBe(1);
+      }
+      expect(readFileSync(join(root, "output"), "utf8")).toContain("+after");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("audits Git search options while treating literal search text as data in source and build", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-git-search-audit-"));
+    const compiled = (await import(
+      resolve(process.cwd(), "dist/src/usage.js")
+    )) as typeof import("../src/usage.js");
+    try {
+      execFileSync("git", ["init", "--quiet", root]);
+      writeFileSync(join(root, "sample.txt"), "git push\nnpm run build\ngh pr create\nHOME=\n");
+      execFileSync("git", ["-C", root, "add", "sample.txt"]);
+      execFileSync("git", [
+        "-C",
+        root,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "--quiet",
+        "-m",
+        "search fixture",
+      ]);
+      for (const text of ["git push", "npm run build", "gh pr create", "HOME="]) {
+        // Execution proves this exact quoted argument is search data, not code.
+        const command = `git -C '${root}' grep -n -F -e '${text}' -- sample.txt`;
+        expect(execFileSync("bash", ["-c", command], { encoding: "utf8" })).toContain(text);
+        expect(checkBashCommand(command).allowed).toBe(true);
+        expect(auditExecViolationDetails([bashLine(command)]), command).toEqual([]);
+        expect(compiled.auditExecViolationDetails([bashLine(command)]), command).toEqual([]);
+        const logCommand = `git -C '${root}' log --oneline -S '${text}' -- sample.txt`;
+        expect(execFileSync("bash", ["-c", logCommand], { encoding: "utf8" })).toContain(
+          "search fixture",
+        );
+        expect(checkBashCommand(logCommand).allowed).toBe(true);
+        expect(auditExecViolationDetails([bashLine(logCommand)]), logCommand).toEqual([]);
+        expect(compiled.auditExecViolationDetails([bashLine(logCommand)]), logCommand).toEqual([]);
+      }
+      // MUTATION: remove the Git search reader exemption in usage.ts — red above.
+      for (const command of [
+        "git -c core.pager=evil grep x",
+        "GIT_PAGER=evil git grep x",
+        "QCR_CONFIG=/tmp/other git grep x",
+        "QCR_INSTALL=other git log -S x",
+        "QCR_STATE_DB=/tmp/other git grep x",
+        "git grep --open-files-in-pager=evil x",
+        "git grep -nOevil x",
+        "git log --output=/tmp/out -S x",
+        "git --exec-path=/tmp/evil grep x",
+        "git grep x | python3 evil.py",
+        "git grep 'x > config.toml'",
+      ]) {
+        expect(auditExecViolationDetails([bashLine(command)]).length, command).toBeGreaterThan(0);
+        expect(
+          compiled.auditExecViolationDetails([bashLine(command)]).length,
+          command,
+        ).toBeGreaterThan(0);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

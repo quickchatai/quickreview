@@ -71,6 +71,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/companion-memory.test.ts",
   "tests/deploy.test.ts",
   "tests/docker-daemon.test.ts",
+  "tests/exec-boundary.test.ts",
   "tests/fences-cigate.test.ts",
   "tests/fences-gate.test.ts",
   "tests/fences-provenance.test.ts",
