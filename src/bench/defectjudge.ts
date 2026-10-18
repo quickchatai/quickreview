@@ -8,6 +8,7 @@
 // (`defect-report`) with no model call at all.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import type { Runtime } from "../engine/port.js";
 import { publishText, readJsonObject } from "./publication.js";
 import { usageFromEvents } from "./aacr.js";
 import { runJudgeSession } from "./runner.js";
@@ -30,6 +31,8 @@ export interface JudgePiOptions {
   env: NodeJS.ProcessEnv;
   eventsPath: string;
   timeoutMs: number;
+  /** Hosts the judge session. Omitted: a process runtime. */
+  runtime?: Runtime;
 }
 
 export interface JudgePiResult {
