@@ -246,10 +246,21 @@ function permanentRejection(e: HttpError): boolean {
   return !!e.status && e.status >= 400 && e.status < 500 && e.status !== 408 && !rateLimited(e);
 }
 
+/** The exact published snapshot, allowing only confirmed approval softening. */
+function receiptMatchesJob(receipt: ReturnType<typeof readPostingReceipt>, job: PostingJob): boolean {
+  if (!receipt || receipt.posting_key !== job.posting_key ||
+    receipt.head_sha.toLowerCase() !== job.head_sha.toLowerCase()) return false;
+  if (receipt.status === "skipped") return true; // terminal refusal, never a replay
+  return receipt.payload_sha256.toLowerCase() === job.payload_sha256 &&
+    receipt.intended_event === job.intended_event &&
+    (receipt.actual_event === job.payload.event ||
+      (receipt.status === "confirmed" && receipt.actual_event === "COMMENT"));
+}
+
 /** The deferred receipt of this job, when its receipt says `deferred`. */
 function deferredReceipt(dir: string, j: PostingJob): PostingReceipt | undefined {
   const r = readPostingReceipt(dir, j.pr, j.round_no);
-  return r && r.status === "deferred" && r.posting_key === j.posting_key ? r : undefined;
+  return r && r.status === "deferred" && receiptMatchesJob(r, j) ? r : undefined;
 }
 
 const QUIET_WINDOW_MS = 120_000;
@@ -286,6 +297,11 @@ export class PostingOutbox {
         if (!/^pr-\d+-round-\d+\.outbox\.json$/.test(name)) continue;
         const path = join(this.deps.dir, name),
           job = readPostingJob(path);
+        if (job && outboxProcesses(job, this.deps.repo) && job.deferred_at &&
+          !this.recoverDeferredHandoff(path, job)) {
+          this.deps.log("posting deferred handoff unconfirmed — ordinary replay withheld", job);
+          continue;
+        }
         if (job && outboxProcesses(job, this.deps.repo) && deferredReceipt(this.deps.dir, job)) {
           // A deferred job runs on its own bounded schedule and is
           // never touched by the open-ended path below.
@@ -304,6 +320,32 @@ export class PostingOutbox {
       }
     } finally {
       this.busy = false;
+    }
+  }
+  /** Finish the shell's job-first handoff under the existing posting lock. */
+  private recoverDeferredHandoff(path: string, job: PostingJob): boolean {
+    const receiptPath = postingReceiptPath(this.deps.dir, job.pr, job.round_no);
+    const current = readPostingReceipt(this.deps.dir, job.pr, job.round_no);
+    if (receiptMatchesJob(current, job) && current?.status !== "prepared") return true;
+    const lock = `${receiptPath}.lock`;
+    if (!this.acquire(lock)) return false;
+    try {
+      const fresh = readPostingJob(path);
+      const receipt = readPostingReceipt(this.deps.dir, job.pr, job.round_no);
+      if (!fresh || !outboxProcesses(fresh, this.deps.repo) || !fresh.deferred_at ||
+        fresh.posting_key !== job.posting_key || !receiptMatchesJob(receipt, fresh) || !receipt) return false;
+      if (receipt.status !== "prepared") return true;
+      if (receipt.payload_sha256 !== fresh.payload_sha256 || receipt.head_sha !== fresh.head_sha ||
+        receipt.intended_event !== fresh.intended_event || receipt.actual_event !== fresh.payload.event) return false;
+      writePostingFile(receiptPath, {
+        ...receipt,
+        status: "deferred",
+        deferred_at: fresh.deferred_at,
+        defer_reason: fresh.last_error ?? "recovered interrupted deferred handoff",
+      });
+      return true;
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
     }
   }
   private schedule(path: string, j: PostingJob, error: string, minimumMs = 0): void {
