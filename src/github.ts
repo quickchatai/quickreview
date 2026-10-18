@@ -489,10 +489,11 @@ export class GitHubAdapter {
   async searchIssuesPaged(q: string, maxPages = 10): Promise<SearchIssueItem[]> {
     const out: SearchIssueItem[] = [];
     for (let page = 1; page <= maxPages; page++) {
-      const res = await this.request<{ items: SearchIssueItem[] }>(
+      const res = await this.request<{ items: SearchIssueItem[]; incomplete_results?: boolean }>(
         "GET",
         `/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=${page}`,
       );
+      if (res.incomplete_results === true) throw new Error("incomplete history search results");
       const items = res.items ?? [];
       out.push(...items);
       if (items.length < 100) break;
@@ -806,15 +807,17 @@ export class GitHubAdapter {
    * the files on the FIRST page only (later pages page the commits) and caps
    * them at COMPARE_FILES_CAP, so a list that long is flagged `truncated`: the
    * classifier must not read an unseen remainder as "nothing PR-owned".
+   * A behind/diverged comparison is merge-base-relative rather than the two
+   * reviewed trees; it also cannot prove an empty post-approval delta.
    */
   async compareFiles(base: string, head: string): Promise<FileList> {
-    const res = await this.request<{ files?: any[] }>(
+    const res = await this.request<{ files?: any[]; status?: string }>(
       "GET",
       `/repos/${this.owner}/${this.repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}?per_page=100&page=1`,
     );
     const files = res.files ?? [];
     const out: FileList = files.map(fileEntry);
-    if (files.length >= COMPARE_FILES_CAP) out.truncated = true;
+    if (files.length >= COMPARE_FILES_CAP || res.status === "behind" || res.status === "diverged") out.truncated = true;
     return out;
   }
 
@@ -828,40 +831,52 @@ export class GitHubAdapter {
   async listChecks(ref: string): Promise<CheckSummary[]> {
     const out: CheckSummary[] = [];
     const enc = encodeURIComponent(ref);
-    for (let page = 1; page <= 10; page++) {
-      const runs = await this.request<{ check_runs?: any[] }>(
-        "GET",
-        `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs?per_page=100&page=${page}`,
-      );
-      const batch = runs.check_runs ?? [];
-      for (const r of batch)
-        out.push({
-          name: r.name ?? "check",
-          source: "check_run",
-          status: r.status ?? "",
-          conclusion: r.conclusion ?? null,
-          started_at: r.started_at ?? null,
-        });
-      if (batch.length < 100) break;
-    }
-    for (let page = 1; page <= 10; page++) {
-      const status = await this.request<{ statuses?: any[] }>(
-        "GET",
-        `/repos/${this.owner}/${this.repo}/commits/${enc}/status?per_page=100&page=${page}`,
-      );
-      const batch = status.statuses ?? [];
-      for (const s of batch)
-        // A commit status has no status/conclusion split: `pending` is unfinished,
-        // `success`/`failure`/`error` are its conclusions.
-        out.push({
-          name: s.context ?? "status",
-          source: "status",
-          status: s.state === "pending" ? "pending" : "completed",
-          conclusion: s.state === "pending" ? null : s.state === "success" ? "success" : "failure",
-        });
-      if (batch.length < 100) break;
-    }
+    const runs = await this.completeCheckPages<any>(
+      `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs`, "check_runs",
+    );
+    for (const r of runs)
+      out.push({
+        name: r.name ?? "check", source: "check_run", status: r.status ?? "",
+        conclusion: r.conclusion ?? null, started_at: r.started_at ?? null,
+      });
+    const statuses = await this.completeCheckPages<any>(
+      `/repos/${this.owner}/${this.repo}/commits/${enc}/status`, "statuses",
+    );
+    for (const s of statuses)
+      out.push({
+        name: s.context ?? "status", source: "status",
+        status: s.state === "pending" ? "pending" : "completed",
+        conclusion: s.state === "pending" ? null : s.state === "success" ? "success" : "failure",
+      });
     return out;
+  }
+
+  /** Complete CI evidence, or an unreadable result that callers classify unknown. */
+  private async completeCheckPages<T>(path: string, field: string): Promise<T[]> {
+    const rows: T[] = [];
+    let expected: number | undefined;
+    for (let page = 1; page <= 10; page++) {
+      const result = await this.request<Record<string, unknown>>("GET", `${path}?per_page=100&page=${page}`);
+      const count = result.total_count;
+      if (count !== undefined) {
+        if (typeof count !== "number" || !Number.isInteger(count) || count < 0)
+          throw new Error(`unreadable ${field} total_count`);
+        if (expected !== undefined && expected !== count)
+          throw new Error(`incomplete ${field}: count changed while reading`);
+        expected = count;
+      }
+      const batch = result[field];
+      if (!Array.isArray(batch)) throw new Error(`unreadable ${field} page`);
+      rows.push(...batch as T[]);
+      if (expected !== undefined && rows.length > expected)
+        throw new Error(`incomplete ${field}: rows exceed advertised count`);
+      if (batch.length < 100 || (expected !== undefined && rows.length === expected)) {
+        if (expected !== undefined && rows.length !== expected)
+          throw new Error(`incomplete ${field}: advertised count not reached`);
+        return rows;
+      }
+    }
+    throw new Error(`incomplete ${field}: page limit reached`);
   }
 
   async listReviews(
