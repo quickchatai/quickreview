@@ -1164,3 +1164,38 @@ describe("GraphQL rides REST's transport rules", () => {
     expect(twice.invalidated()).toBe(1);
   });
 });
+
+describe("filing command reconciliation", () => {
+  const marker = "<!-- qcr-filing:abc -->";
+  const own = {
+    number: 55,
+    user: { login: cfg.github.bot_login },
+    body: `text\n${marker}`,
+    head: { ref: "bot/improve-docs" },
+    base: { ref: "main" },
+  };
+  it("requires our actor, a complete standalone marker, and the exact improvement branch", async () => {
+    const { adapter, calls } = build(() => [
+      { ...own, number: 1, user: { login: "someone-else" } },
+      { ...own, number: 2, body: `quoted ${marker}` },
+      { ...own, number: 3, head: { ref: "other" } },
+      own,
+    ]);
+    expect(
+      await adapter.findFiledItem("improvement_pr", marker, {
+        head: "bot/improve-docs",
+        base: "main",
+      }),
+    ).toBe(55);
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+    expect(calls[0]?.url).toContain("state=all");
+  });
+  it("refuses multiple matching bot receipts and excludes pull requests from issue recovery", async () => {
+    const ambiguous = build(() => [own, { ...own, number: 56 }]);
+    await expect(ambiguous.adapter.findFiledItem("issue", marker)).rejects.toThrow(
+      "ambiguous filing markers",
+    );
+    const pr = build(() => [{ ...own, pull_request: {} }]);
+    expect(await pr.adapter.findFiledItem("issue", marker)).toBeNull();
+  });
+});

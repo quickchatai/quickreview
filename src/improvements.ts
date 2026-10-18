@@ -20,6 +20,7 @@
 // wedge every later filing). The clone's own working tree is never touched
 // either — the base fetch lands in `refs/remotes/`, and the branch is
 // addressed by ref, never checked out.
+import { createHash } from "node:crypto";
 import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
 import { localWallClockToInstant, zonedParts } from "./eod.js";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
@@ -66,6 +67,8 @@ export interface FileOutcome {
 }
 
 export interface ImprovementContext {
+  /** Trusted command watcher delivery identity, stable across retries. */
+  deliveryKey?: string;
   cfg: Config;
   adapter: GitHubAdapter;
   gate: MutationGate;
@@ -443,6 +446,44 @@ async function fileImprovementPrNow(
   if (!isBranchName(payload.branch))
     return reject(`bad branch name '${payload.branch}' (a plain local branch name is required)`);
 
+  const deliveryKey = ctx.deliveryKey
+    ? createHash("sha256")
+        .update(
+          JSON.stringify(["improvement_pr", ctx.deliveryKey, ctx.gate.isDryRun, payload, base]),
+        )
+        .digest("hex")
+    : undefined;
+  const marker = deliveryKey ? `<!-- qcr-filing:${deliveryKey} -->` : undefined;
+  if (deliveryKey) {
+    const receipt = ctx.store.filingReceipt(deliveryKey);
+    if (receipt?.result !== undefined && receipt.result !== null)
+      return JSON.parse(receipt.result) as FileOutcome;
+    if (receipt) {
+      try {
+        const number = await ctx.adapter.findFiledItem("improvement_pr", marker!, {
+          head: botBranch,
+          base,
+        });
+        if (number !== null) {
+          const outcome = {
+            ok: true,
+            pr: number,
+            branch: botBranch,
+            dry_run: false,
+            recovered: true,
+          };
+          ctx.store.settleFiling(deliveryKey, receipt.slot, `#${number}`, outcome);
+          return outcome;
+        }
+      } catch (err) {
+        return reject(
+          `create_pull reconciliation unknown — the existing cap reservation stays charged: ${String(err)}`,
+        );
+      }
+      return reject("create_pull outcome unknown — the existing cap reservation stays charged");
+    }
+  }
+
   const rate = improvementRateReason(ctx.store, ctx.cfg.caps, now, ctx.cfg.ops.timezone);
   if (rate) return reject(rate);
 
@@ -515,13 +556,21 @@ async function fileImprovementPrNow(
     // daemon that dies while GitHub creates the PR still has it spent; only a
     // definite refusal frees it. A label failure after the creation is a
     // warning on a real filing, never a rejection that frees the slot.
-    const slot = ctx.store.recordFiledItem("improvement_pr", payload.title, botBranch);
+    const slot = deliveryKey
+      ? ctx.store.reserveFiling(deliveryKey, "improvement_pr", payload.title, botBranch)
+      : ctx.store.recordFiledItem("improvement_pr", payload.title, botBranch);
     let pull: Awaited<ReturnType<GitHubAdapter["createPull"]>>;
     try {
-      pull = await ctx.adapter.createPull(botBranch, base, payload.title, payload.body);
+      pull = await ctx.adapter.createPull(
+        botBranch,
+        base,
+        payload.title,
+        marker ? `${payload.body}\n\n${marker}` : payload.body,
+      );
     } catch (err) {
       if (!creationMayHaveHappened(err)) {
-        ctx.store.releaseFiledItem(slot);
+        if (deliveryKey) ctx.store.releaseFiling(deliveryKey, slot);
+        else ctx.store.releaseFiledItem(slot);
         throw err;
       }
       return reject(
@@ -529,9 +578,29 @@ async function fileImprovementPrNow(
         { branch: botBranch },
       );
     }
+    if (pull.blocked) {
+      if (deliveryKey) ctx.store.releaseFiling(deliveryKey, slot);
+      else ctx.store.releaseFiledItem(slot);
+      return reject(`gate refused create_pull: ${pull.blocked}`, { branch: botBranch });
+    }
     const prNumber = (pull.response as { number?: number } | undefined)?.number ?? 0;
+    if (pull.executed && (!Number.isSafeInteger(prNumber) || prNumber <= 0))
+      return reject(
+        "create_pull outcome unknown — no valid creation receipt, cap slot stays charged",
+        { branch: botBranch },
+      );
     const ref = prNumber > 0 ? `#${prNumber}` : botBranch;
-    ctx.store.settleFiledItem(slot, ref);
+    const creationOutcome: FileOutcome = {
+      ok: true,
+      branch: botBranch,
+      files: verdict.files,
+      lines: verdict.lines,
+      pushed,
+      pr: prNumber > 0 ? prNumber : null,
+      dry_run: ctx.gate.isDryRun,
+    };
+    if (deliveryKey) ctx.store.settleFiling(deliveryKey, slot, ref, creationOutcome);
+    else ctx.store.settleFiledItem(slot, ref);
     let labelWarning: string | undefined;
     try {
       await ctx.adapter.addLabel(prNumber, ctx.cfg.github.improvement_label);
@@ -579,6 +648,8 @@ export function creationMayHaveHappened(err: unknown): boolean {
 }
 
 export interface IssueContext {
+  /** Trusted command watcher delivery identity, stable across retries. */
+  deliveryKey?: string;
   cfg: Config;
   adapter: GitHubAdapter;
   gate: MutationGate;
@@ -612,6 +683,37 @@ async function fileIssueNow(payload: IssuePayload, ctx: IssueContext): Promise<F
     return { ok: false, reason, pr, ...extra };
   };
 
+  const deliveryKey = ctx.deliveryKey
+    ? createHash("sha256")
+        .update(JSON.stringify(["issue", ctx.deliveryKey, ctx.gate.isDryRun, payload]))
+        .digest("hex")
+    : undefined;
+  if (deliveryKey) {
+    const receipt = ctx.store.filingReceipt(deliveryKey);
+    if (receipt?.result !== undefined && receipt.result !== null)
+      return JSON.parse(receipt.result) as FileOutcome;
+    if (receipt) {
+      try {
+        const number = await ctx.adapter.findFiledItem(
+          "issue",
+          `<!-- qcr-filing:${deliveryKey} -->`,
+        );
+        if (number !== null) {
+          const outcome = { ok: true, issue: number, pr, dry_run: false, recovered: true };
+          ctx.store.settleFiling(deliveryKey, receipt.slot, `#${number}`, outcome);
+          return outcome;
+        }
+      } catch (err) {
+        return reject(
+          `create_issue reconciliation unknown — the existing command reservation stays charged: ${String(err)}`,
+        );
+      }
+      return reject(
+        "create_issue outcome unknown — the existing command reservation stays charged",
+      );
+    }
+  }
+
   const rate = issueRateReason(ctx.store, ctx.cfg.caps, now, ctx.cfg.ops.timezone);
   if (rate) return reject(rate);
 
@@ -633,28 +735,49 @@ async function fileIssueNow(payload: IssuePayload, ctx: IssueContext): Promise<F
 
   // Charged before the request, as for an improvement PR: a daemon that dies
   // while GitHub creates the issue still has the slot spent.
-  const slot = ctx.store.recordFiledItem("issue", payload.title, null);
+  const slot = deliveryKey
+    ? ctx.store.reserveFiling(deliveryKey, "issue", payload.title, null)
+    : ctx.store.recordFiledItem("issue", payload.title, null);
   let result: Awaited<ReturnType<GitHubAdapter["createIssue"]>>;
   try {
-    result = await ctx.adapter.createIssue(payload.title, payload.body, [
-      ctx.cfg.github.issue_label,
-    ]);
+    result = await ctx.adapter.createIssue(
+      payload.title,
+      deliveryKey ? `${payload.body}\n\n<!-- qcr-filing:${deliveryKey} -->` : payload.body,
+      [ctx.cfg.github.issue_label],
+    );
   } catch (err) {
     const message = (err as Error).message;
     if (!creationMayHaveHappened(err)) {
-      ctx.store.releaseFiledItem(slot);
+      if (deliveryKey) ctx.store.releaseFiling(deliveryKey, slot);
+      else ctx.store.releaseFiledItem(slot);
       return reject(`create_issue refused: ${message}`);
     }
     return reject(`create_issue outcome unknown — the cap slot stays charged: ${message}`);
   }
+  if (result.blocked) {
+    if (deliveryKey) ctx.store.releaseFiling(deliveryKey, slot);
+    else ctx.store.releaseFiledItem(slot);
+    return reject(`gate refused create_issue: ${result.blocked}`);
+  }
   const issueNumber = (result.response as { number?: number } | undefined)?.number ?? 0;
+  if (result.executed && (!Number.isSafeInteger(issueNumber) || issueNumber <= 0))
+    return reject(
+      "create_issue outcome unknown — no valid creation receipt, cap slot stays charged",
+    );
   const ref = issueNumber > 0 ? `#${issueNumber}` : null;
-  ctx.store.settleFiledItem(slot, ref);
+  const outcome: FileOutcome = {
+    ok: true,
+    issue: issueNumber > 0 ? issueNumber : null,
+    pr,
+    dry_run: ctx.gate.isDryRun,
+  };
+  if (deliveryKey) ctx.store.settleFiling(deliveryKey, slot, ref, outcome);
+  else ctx.store.settleFiledItem(slot, ref);
   ctx.store.logEvent("issue_filed", pr, {
     title: payload.title,
     issue: issueNumber || null,
     pr,
     dry_run: ctx.gate.isDryRun,
   });
-  return { ok: true, issue: issueNumber > 0 ? issueNumber : null, pr, dry_run: ctx.gate.isDryRun };
+  return outcome;
 }

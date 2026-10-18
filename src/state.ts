@@ -1139,6 +1139,13 @@ CREATE TABLE IF NOT EXISTS filed_items (
   ref TEXT,
   filed_at TEXT NOT NULL
 );
+-- Stable command delivery receipts for issue filing; the cap reservation and
+-- pending receipt are committed together before the gated creation request.
+CREATE TABLE IF NOT EXISTS filing_receipts (
+  delivery_key TEXT PRIMARY KEY,
+  slot INTEGER NOT NULL REFERENCES filed_items(id),
+  result TEXT
+);
 -- Escalation deliveries (the optional off-by-default feature).
 --
 -- One row per escalation that ACTUALLY REACHED GITHUB. A suppressed one --
@@ -6502,6 +6509,45 @@ export class StateStore {
   /** Free a reserved slot whose creation GitHub definitely refused. */
   releaseFiledItem(id: number): void {
     this.db.prepare("DELETE FROM filed_items WHERE id = ?").run(id);
+  }
+
+  filingReceipt(key: string): { slot: number; result: string | null } | undefined {
+    return this.db
+      .prepare("SELECT slot, result FROM filing_receipts WHERE delivery_key = ?")
+      .get(key) as { slot: number; result: string | null } | undefined;
+  }
+
+  reserveFiling(
+    key: string,
+    kind: "issue" | "improvement_pr",
+    title: string,
+    ref: string | null,
+  ): number {
+    return this.db.transaction(() => {
+      const slot = this.recordFiledItem(kind, title, ref);
+      this.db
+        .prepare("INSERT INTO filing_receipts (delivery_key, slot) VALUES (?, ?)")
+        .run(key, slot);
+      return slot;
+    })();
+  }
+
+  settleFiling(key: string, slot: number, ref: string | null, result: unknown): void {
+    this.db.transaction(() => {
+      this.settleFiledItem(slot, ref);
+      this.db
+        .prepare("UPDATE filing_receipts SET result = ? WHERE delivery_key = ? AND slot = ?")
+        .run(JSON.stringify(result), key, slot);
+    })();
+  }
+
+  releaseFiling(key: string, slot: number): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare("DELETE FROM filing_receipts WHERE delivery_key = ? AND slot = ?")
+        .run(key, slot);
+      this.releaseFiledItem(slot);
+    })();
   }
 
   filedSince(kind: "improvement_pr" | "issue", sinceIso: string): number {

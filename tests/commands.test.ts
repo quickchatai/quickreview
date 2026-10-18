@@ -40,6 +40,26 @@ async function drained(w: CommandWatcher): Promise<void> {
 }
 
 describe("validateCommand — whitelist", () => {
+  it("passes the watcher delivery identity to both filing handlers", async () => {
+    const deps = makeDeps();
+    const context = {
+      file: "owner/fix",
+      delivery_key: "exact-file-version",
+      issuer: "operator" as const,
+    };
+    await executeCommand({ command: "file-issue", title: "t", body: "b" }, deps, context);
+    expect(deps.fileIssue).toHaveBeenCalledWith({ title: "t", body: "b" }, "exact-file-version");
+    await executeCommand(
+      { command: "file-improvement-pr", title: "t", body: "b", branch: "wip/fix", slug: "fix" },
+      deps,
+      context,
+    );
+    expect(deps.fileImprovementPr).toHaveBeenCalledWith(
+      { title: "t", body: "b", branch: "wip/fix", slug: "fix" },
+      "exact-file-version",
+    );
+  });
+
   it("accepts every whitelisted command with a valid payload", () => {
     const valid: unknown[] = [
       { command: "rerun-round", pr: 12 },
@@ -701,7 +721,10 @@ describe("CommandWatcher", () => {
     const deps = makeDeps();
     const r = await runSlack(deps, { command: "file-issue", pr: 1234, title: "t", body: "b" }, m);
     expect(r.ok).toBe(true);
-    expect(deps.fileIssue).toHaveBeenCalledWith({ title: "t", body: "b", pr: 1234 });
+    expect(deps.fileIssue).toHaveBeenCalledWith(
+      { title: "t", body: "b", pr: 1234 },
+      expect.any(String),
+    );
   });
 
   it("tier owner runs every command on any PR", async () => {
@@ -757,7 +780,10 @@ describe("CommandWatcher", () => {
     );
     await tierWatcher(deps, "local", () => null).sweep();
     expect(result("deferral-pr-5314-retry-jitter")).toMatchObject({ ok: true });
-    expect(deps.fileIssue).toHaveBeenCalledWith({ title: "t", body: "b", pr: 5314 });
+    expect(deps.fileIssue).toHaveBeenCalledWith(
+      { title: "t", body: "b", pr: 5314 },
+      expect.any(String),
+    );
   });
 
   it("legacy commands/ refuses mid-turn for a non-owner Slack origin (the belt)", async () => {
