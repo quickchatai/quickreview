@@ -780,6 +780,93 @@ describe("resume — journal in, journal out", () => {
       },
     ]);
 
+  it("polls its saved running task instead of starting a replacement rebuild", async () => {
+    const saved = journal("pending");
+    reembed.writeJournal(home, {
+      ...saved,
+      namespaces: { ...saved.namespaces, reviewer: { state: "pending", task_id: "saved-task" } },
+    });
+    const calls: string[] = [];
+    const result = await reembed.resume({
+      home,
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      sleep: noSleep,
+      fetchFn: async (url, init) => {
+        calls.push(`${init?.method ?? "GET"} ${url}`);
+        return {
+          status: 200,
+          json: async () => ({ status: "ok", result: { status: "completed", result: done } }),
+        };
+      },
+    });
+    expect(result.state).toBe("completed");
+    expect(calls).toEqual([`GET ${BASE}/api/v1/tasks/saved-task`]);
+  });
+
+  it("restarts only when the server authoritatively forgot its saved task", async () => {
+    const saved = journal("pending");
+    reembed.writeJournal(home, {
+      ...saved,
+      namespaces: { ...saved.namespaces, reviewer: { state: "pending", task_id: "forgotten" } },
+    });
+    const calls: string[] = [];
+    let tick = 0;
+    const result = await reembed.resume({
+      home,
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      sleep: noSleep,
+      deadlineMs: 3,
+      now: () => new Date(tick++),
+      fetchFn: async (url, init) => {
+        calls.push(`${init?.method ?? "GET"} ${url}`);
+        if (init?.method !== "POST")
+          return { status: 404, json: async () => ({ status: "error" }) };
+        return {
+          status: 200,
+          json: async () => ({ status: "ok", result: done }),
+        };
+      },
+    });
+    expect(result.state).toBe("completed");
+    expect(calls).toEqual([
+      `GET ${BASE}/api/v1/tasks/forgotten`,
+      `POST ${BASE}/api/v1/content/reindex`,
+    ]);
+  });
+
+  it("persists the accepted task identity before the first potentially interrupted poll", async () => {
+    reembed.writeJournal(home, journal("pending"));
+    let savedTask: unknown;
+    const result = await reembed.resume({
+      home,
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      sleep: noSleep,
+      fetchFn: async (_url, init) => {
+        if (init?.method === "POST")
+          return {
+            status: 200,
+            json: async () => ({
+              status: "ok",
+              result: { status: "accepted", task_id: "new-task" },
+            }),
+          };
+        savedTask = reembed.readJournal(home).journal.namespaces.reviewer.task_id;
+        return {
+          status: 200,
+          json: async () => ({ status: "ok", result: { status: "completed", result: done } }),
+        };
+      },
+    });
+    expect(result.state).toBe("completed");
+    expect(savedTask).toBe("new-task");
+  });
+
   it("a pending namespace is re-embedded and journalled COMPLETED with its counts", async () => {
     reembed.writeJournal(home, journal("pending"));
     const { fetchFn } = completedServer();
