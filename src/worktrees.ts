@@ -231,6 +231,8 @@ export interface PatchSection {
   binary: boolean;
   /** A submodule pointer (mode 160000): no lines to scope. */
   gitlink: boolean;
+  /** Executable/type mode metadata changed, independent of any line hunks. */
+  mode_changed?: true;
   /** The hunk text from the first `@@` on — GitHub's `patch` shape. */
   hunks: string;
 }
@@ -266,6 +268,7 @@ export function parsePatchSections(diff: string): PatchSection[] {
     let added = false;
     let binary = false;
     let gitlink = false;
+    let modeChanged = false;
     i += 1;
     while (
       i < lines.length &&
@@ -283,6 +286,7 @@ export function parsePatchSections(diff: string): PatchSection[] {
         renameTo = sectionPath(l.slice(l.indexOf(" to ") + 4), "");
       else if (l.startsWith("deleted file mode")) deleted = true;
       else if (l.startsWith("new file mode")) added = true;
+      else if (l.startsWith("old mode ") || l.startsWith("new mode ")) modeChanged = true;
       else if (l.startsWith("Binary files ") || l === "GIT binary patch") binary = true;
       if (/ 160000$|^index [0-9a-f]+\.\.[0-9a-f]+ 160000$/.test(l)) gitlink = true;
       i += 1;
@@ -304,6 +308,7 @@ export function parsePatchSections(diff: string): PatchSection[] {
       added: added || minus === null,
       binary,
       gitlink,
+      ...(modeChanged ? { mode_changed: true as const } : {}),
       hunks,
     });
   }
@@ -448,6 +453,7 @@ export function joinDeltaFiles(
     const parse = parseNewSideRanges(hunks);
     const binary = secs.some((s) => s.binary);
     const gitlink = secs.some((s) => s.gitlink);
+    const modeChanged = secs.some((s) => s.mode_changed);
     const deleted = e.status === "D";
     // A rename/copy with no content change has a section and no hunks: no
     // lines, but the section is what proves it was read.
@@ -459,7 +465,7 @@ export function joinDeltaFiles(
       additions: parse.additions,
       deletions: parse.deletions,
       ranges: parse.ranges,
-      whole_file: deleted || binary || gitlink || unread || typeChange,
+      whole_file: deleted || binary || gitlink || modeChanged || unread || typeChange,
       patch: binary ? "" : hunks,
     };
     if (e.old_path !== undefined) file.old_path = e.old_path;
@@ -754,7 +760,7 @@ export class WorktreeManager {
       rmSync(path, { recursive: true, force: true });
       await this.git(["worktree", "add", "--force", "--force", "--detach", path, sha]);
     } else {
-      await this.git(["worktree", "add", "--detach", path, sha]);
+      await this.git(["worktree", "add", "--force", "--force", "--detach", path, sha]);
     }
     return path;
   }
