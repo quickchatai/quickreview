@@ -16,9 +16,13 @@
 // session dir removed when they exit), so they leave no transcript anywhere
 // the walk reads; counting the main session alone undercounts a round many
 // times over. Their usage IS in the parent's transcript: the `subagent` / `launch_plan`
-// tool result carries `details.results[]`, each child's model and its summed
-// `usage` (input, output, cacheRead, cost — native runSingleAgent). Each child
-// counts there, once (`childUsage`), surfaced via `children_included`.
+// (or `lens` / `lens_wave`, src/lensresult.ts) tool result carries
+// `details.results[]`, each child's model and its summed `usage` (input,
+// output, cacheRead, cost — native runSingleAgent). Each child counts there,
+// once (`childUsage`), surfaced via `children_included`. A lens-ledger line
+// (`lens-ledger.jsonl` in the session dir) is read the same way, and a lens
+// run that carries an `id` counts once however many results and ledger lines
+// repeat it; a warm-up session, which only the ledger records, counts too.
 //
 // This file owns WHAT a transcript line contributes — its usage and its
 // exec-policy audit items (`parseTranscriptLine`) — and how contributions add
@@ -28,6 +32,7 @@
 // skipped, never thrown.
 // The guard's TOKENISER — not its policy. The rules below stay an
 // independent implementation on purpose (see execViolationKind).
+import { isLensTool, ledgerLineFrom, lensIdOf, type LensLedgerLine } from "./lensresult.js";
 import {
   normalizeRedirections,
   opensUnmodelledQuoting,
@@ -117,6 +122,9 @@ export interface LineUsage {
   cache: number;
   /** pi's own `usage.cost.total`, when the record carries a finite one. */
   cost: number | null;
+  /** A lens child's run id (LensResult v1), when it carries one: the key the
+   * round counts it once by. */
+  lensId?: string;
 }
 
 /** What one transcript line contributes to the round's two measures. A line
@@ -172,7 +180,8 @@ export function parseTranscriptLine(
           : rec.modelId;
     }
     usage = assistantUsage(rec, model);
-    childUsage = childUsageOf(rec);
+    const ledger = ledgerLineFrom(rec);
+    childUsage = ledger !== null ? [ledgerUsageOf(ledger)] : childUsageOf(rec);
   }
   const audit = auditItemsOf(value);
   if (usage === undefined && audit.length === 0 && childUsage.length === 0)
@@ -188,11 +197,25 @@ export function parseTranscriptLine(
   };
 }
 
-/** The tools whose result carries the lens children's usage (native pi's
- * subagent tool and the glue's launch_plan, which returns the same result). */
-const CHILD_RESULT_TOOLS = new Set(["subagent", "launch_plan"]);
+/** A child's model without its `:<thinking>` suffix (the pricing table's key). */
+function childModel(model: unknown): string {
+  return typeof model === "string" && model ? model.replace(/:[a-z]+$/, "") : UNKNOWN_MODEL;
+}
 
-/** Each child's usage in a subagent / launch_plan tool result, attributed to
+/** What one lens-ledger line contributes: its run's usage, keyed by its id. */
+function ledgerUsageOf(line: LensLedgerLine): LineUsage {
+  return {
+    model: childModel(line.model),
+    tin: line.usage.input,
+    tout: line.usage.output,
+    cache: line.usage.cacheRead,
+    cost: line.usage.cost,
+    lensId: line.id,
+  };
+}
+
+/** Each child's usage in a lens tool result (`subagent`, `launch_plan`, `lens`,
+ * `lens_wave` — the tmux bot's spellings and the engine's), attributed to
  * the child's model without its `:<thinking>` suffix (the pricing table's
  * key). VERIFY-ON-PIN (pi 1.0.0, examples/extensions/subagent): a result's
  * `usage` is the child's sum over its turns — input, output, cacheRead, and
@@ -201,7 +224,7 @@ function childUsageOf(rec: JsonlRecord): LineUsage[] {
   if (rec.type !== "message") return [];
   const msg = rec.message;
   if (typeof msg !== "object" || msg === null || msg.role !== "toolResult") return [];
-  if (typeof msg.toolName !== "string" || !CHILD_RESULT_TOOLS.has(msg.toolName)) return [];
+  if (!isLensTool(msg.toolName)) return [];
   const results = msg.details?.results;
   if (!Array.isArray(results)) return [];
   const out: LineUsage[] = [];
@@ -210,12 +233,14 @@ function childUsageOf(rec: JsonlRecord): LineUsage[] {
     const { usage, model } = r as { usage?: Record<string, unknown>; model?: unknown };
     if (typeof usage !== "object" || usage === null) continue;
     const cost = usage.cost;
+    const lensId = lensIdOf(r);
     out.push({
-      model: typeof model === "string" && model ? model.replace(/:[a-z]+$/, "") : UNKNOWN_MODEL,
+      model: childModel(model),
       tin: num(usage.input),
       tout: num(usage.output),
       cache: num(usage.cacheRead),
       cost: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
+      ...(lensId !== null ? { lensId } : {}),
     });
   }
   return out;
