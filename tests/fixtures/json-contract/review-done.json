@@ -4,7 +4,9 @@
   "partial": false,
   "preview": {
     "repo": "local/done",
-    "target": "branch",
+    "target": {
+      "kind": "branch"
+    },
     "postable": false,
     "branch": "feature",
     "base": "main",

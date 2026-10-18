@@ -3,7 +3,9 @@
   "ok": true,
   "preview": {
     "repo": "local/pv",
-    "target": "branch",
+    "target": {
+      "kind": "branch"
+    },
     "postable": false,
     "branch": "feature",
     "base": "main",

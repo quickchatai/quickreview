@@ -186,20 +186,29 @@
           "type": "string"
         },
         "target": {
-          "enum": ["branch", "uncommitted"]
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "enum": ["pr", "branch", "uncommitted", "diff"],
+              "description": "What is reviewed: a pull request, the current branch against its base, the uncommitted working tree, or a unified diff handed in (`--diff`). Only a pr target can be posted."
+            }
+          }
         },
         "postable": {
           "type": "boolean",
           "description": "True when a PR is behind the target, so --to pr applies."
         },
         "branch": {
-          "type": "string"
+          "type": "string",
+          "description": "Absent for a diff target."
         },
         "base": {
           "type": "string"
         },
         "head_sha": {
-          "type": "string"
+          "type": "string",
+          "description": "The reviewed head; for a diff target a hash of the diff's text."
         },
         "files": {
           "type": "integer",

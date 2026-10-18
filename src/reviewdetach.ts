@@ -26,7 +26,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { haltPi, killPiGroups } from "./oneshot.js";
 import { originRepo, resolveBranch, resolveUncommitted } from "./localreview.js";
 import { parsePrTarget } from "./prtarget.js";
@@ -34,7 +34,7 @@ import { parseReviewArgs } from "./reviewcli.js";
 import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
 
 export const DETACHED_USAGE =
-  "usage: qcr review start [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] --json\n" +
+  "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] --json\n" +
   "       qcr review status [RUN_ID] [--wait [--timeout SECONDS]] --json\n" +
   "       qcr review stop [RUN_ID]";
 
@@ -93,14 +93,42 @@ export function identifyTarget(rest: readonly string[], cwd: string): Identified
   let pr: string | undefined;
   let repo: string | undefined;
   let uncommitted = false;
+  let diff: string | undefined;
   let base: string | undefined;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (a === "--repo") repo = rest[++i];
     else if (a === "--base") base = rest[++i];
     else if (a === "--uncommitted") uncommitted = true;
+    else if (a === "--diff") diff = rest[++i];
     else if (a === "--key" || a === "--limit" || a === "--to" || a === "--out") i++;
     else if (/^#?\d+$/.test(a) || /^https?:\/\//.test(a)) pr = a;
+  }
+  if (diff !== undefined) {
+    // a detached child has no stdin to read the diff from
+    if (diff === "-")
+      return {
+        ok: false,
+        error:
+          "a piped diff cannot run detached: run `qcr review --diff -` in the foreground, or `qcr review start --diff FILE`",
+      };
+    try {
+      const text = readFileSync(resolve(cwd, diff));
+      return {
+        ok: true,
+        key: `diff:${createHash("sha1").update(text).digest("hex")}`,
+        label: `the diff ${diff}`,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error:
+          `the diff could not be read from ${diff}: ${err instanceof Error ? err.message : String(err)}`.slice(
+            0,
+            300,
+          ),
+      };
+    }
   }
   if (pr !== undefined) {
     const p = parsePrTarget(pr, {
