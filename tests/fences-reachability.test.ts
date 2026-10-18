@@ -66,6 +66,13 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "does, this entry is the debt being VISIBLE rather than silent, which is the whole point of [T8].",
     },
     {
+      file: "src/engine/envmap.ts",
+      why:
+        "the table classifying every QCR_* and OPENVIKING_* name the extensions carry (P1.2). It is read " +
+        "only by tests/extension-envmap.test.ts until the SDK session builder (P2) and the extension " +
+        "factories (P3) take it. Delete this entry with the first import.",
+    },
+    {
       file: "src/reviewrendercli.ts",
       why:
         "the `[review] render_outputs` renderer's command line. Driven by scripts/render-review.sh, which a " +
