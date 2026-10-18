@@ -3,7 +3,7 @@
 // stands in for GitHub: PR heads are published as refs/pull/<n>/head, exactly
 // the ref the manager fetches.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +16,8 @@ import {
   localExcludePath,
   parseBlameShas,
   parseDiffHunks,
+  joinDeltaFiles,
+  parsePatchSections,
   parseDiffHunksByFile,
   POST_MERGE_LIMITS,
   parseNewSideRanges,
@@ -226,6 +228,27 @@ describe("WorktreeManager", () => {
     await m.checkoutAt(7, sha);
     expect(await m.headSha(7)).toBe(sha);
     expect(git(root, "rev-parse", "HEAD").trim()).toBe(sandboxHead);
+  });
+
+  it("rebuilds a missing checkout even when its registration is still locked", async () => {
+    const sha = commit("feature.txt", "v1\n");
+    publishPullHead(7, sha);
+    const m = mgr();
+    const facts = await m.ensureWorktree(7);
+    git(m.basePath, "worktree", "lock", facts.path);
+    rmSync(facts.path, { recursive: true, force: true });
+    await m.checkoutAt(7, sha);
+    expect(readFileSync(join(facts.path, "feature.txt"), "utf8")).toBe("v1\n");
+    expect(await m.headSha(7)).toBe(sha);
+  });
+
+  it("scopes executable-mode changes beyond an empty line range", () => {
+    commit("mode.sh", "echo fixture\n");
+    chmodSync(join(origin, "mode.sh"), 0o755);
+    const patch = git(origin, "diff", "--no-ext-diff");
+    expect(patch).toContain("old mode 100644");
+    const files = joinDeltaFiles([{ path: "mode.sh", status: "M" }], parsePatchSections(patch));
+    expect(files[0]?.whole_file).toBe(true);
   });
 
   it("hasCommit distinguishes a fetched sha from an unknown one", async () => {
