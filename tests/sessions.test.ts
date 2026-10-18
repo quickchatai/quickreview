@@ -48,6 +48,7 @@ let root: string;
 let secrets: string;
 let calls: { cmd: string; args: string[]; env?: NodeJS.ProcessEnv }[];
 let liveSessions: Set<string>;
+let onListSessions: (() => void) | undefined;
 let onKillSession: ((name: string) => void) | undefined;
 let onNewSession: ((name: string, args: string[]) => void) | undefined;
 let autoBridgeReady = true;
@@ -105,8 +106,10 @@ const cfg = (): Config =>
 const fakeExec: ExecFn = async (cmd, args, opts) => {
   calls.push({ cmd, args, env: opts?.env });
   if (cmd === "tmux") {
-    if (args[0] === "list-sessions")
+    if (args[0] === "list-sessions") {
+      onListSessions?.();
       return { code: 0, stdout: [...liveSessions].join("\n"), stderr: "" };
+    }
     if (args[0] === "has-session") {
       const name = String(args[2]).replace(/^=/, "");
       return { code: liveSessions.has(name) ? 0 : 1, stdout: "", stderr: "" };
@@ -115,7 +118,7 @@ const fakeExec: ExecFn = async (cmd, args, opts) => {
       const session = String(args[3]);
       liveSessions.add(session);
       onNewSession?.(session, args);
-      if (autoBridgeReady && session.startsWith("pr-")) {
+      if (autoBridgeReady) {
         const generation = args
           .find((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))
           ?.split("=", 2)[1];
@@ -128,6 +131,8 @@ const fakeExec: ExecFn = async (cmd, args, opts) => {
             session,
             generation,
             stage: "ready",
+            run_status: "idle",
+            compaction: { state: "idle", seq: 0 },
             updated_at: "2026-08-13T10:00:00.000Z",
           });
         }
@@ -227,6 +232,7 @@ beforeEach(() => {
   calls = [];
   ovCalls = [];
   liveSessions = new Set();
+  onListSessions = undefined;
   onKillSession = undefined;
   onNewSession = undefined;
   autoBridgeReady = true;
@@ -248,8 +254,17 @@ afterEach(() => {
 it("removes only the confirmed-gone session birth and bridge metadata", () => {
   const directory = join(root, "state", "sessions");
   mkdirSync(directory, { recursive: true });
-  const removed = ["smoke-fixture.json", "smoke-fixture.bridge-old.json", "smoke-fixture.bridge-new.json"];
-  const retained = ["pr-7.json", "pr-7.bridge-old.json", "smoke-fixture-other.bridge-old.json", "smoke-fixture.bridge-not-json"];
+  const removed = [
+    "smoke-fixture.json",
+    "smoke-fixture.bridge-old.json",
+    "smoke-fixture.bridge-new.json",
+  ];
+  const retained = [
+    "pr-7.json",
+    "pr-7.bridge-old.json",
+    "smoke-fixture-other.bridge-old.json",
+    "smoke-fixture.bridge-not-json",
+  ];
   for (const name of [...removed, ...retained]) writeFileSync(join(directory, name), "fixture");
   manager().removeSessionBirthMetadata("smoke-fixture");
   for (const name of removed) expect(existsSync(join(directory, name))).toBe(false);
@@ -2054,7 +2069,7 @@ describe("durable command ownership", () => {
       keepKilledSession = true;
 
       await expect(m.retrySessionCommand(command.id, "expired")).rejects.toThrow(
-        /survived command-recovery kill/,
+        /not proven gone after kill/,
       );
       expect(store.getSessionCommand(command.id)).toMatchObject({
         status: "running",
@@ -2398,6 +2413,236 @@ describe("archive and close", () => {
   });
 });
 
+it("refuses the round mailbox write when pause lands during session birth", async () => {
+  const store = new StateStore(":memory:");
+  try {
+    store.upsertPr({
+      number: 42,
+      state: "queued",
+      head_sha: "abc",
+      title: "paused owner",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const m = manager(undefined, store);
+    onNewSession = (session) => {
+      if (session === "pr-42")
+        store.db.prepare("UPDATE pr_state SET paused=1 WHERE number=42").run();
+    };
+    await expect(m.dispatchRound(order, "round prompt")).rejects.toThrow(/paused/);
+    expect(store.activeSessionCommand("pr-42")).toBeUndefined();
+  } finally {
+    store.close();
+  }
+});
+
+it("retry recovery preserves a replacement command across its async liveness probe", async () => {
+  const store = new StateStore(":memory:");
+  try {
+    store.upsertPr({
+      number: 42,
+      state: "queued",
+      head_sha: "abc",
+      title: "owner",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const m = manager(undefined, store);
+    m.setTitleResolver(() => "owner");
+    await m.inject(42, "old command");
+    const old = store.activeSessionCommand("pr-42")!;
+    store.claimSessionCommand(old.id, "old-bridge", new Date().toISOString());
+    store.markSessionCommandStarted(old.id, "old-bridge", new Date().toISOString());
+    vi.spyOn(m.tmux, "listSessionsKnown").mockImplementationOnce(async () => {
+      store.finishSessionCommand(old.id, "old-bridge", "acked");
+      store.createSessionCommand({
+        ...old,
+        id: "successor",
+        payload_path: "successor.md",
+        inject_path: "successor.md",
+        next_check_at: new Date().toISOString(),
+      });
+      expect(store.claimSessionCommand("successor", "new-bridge", new Date().toISOString())).toBe(
+        true,
+      );
+      expect(
+        store.markSessionCommandStarted("successor", "new-bridge", new Date().toISOString()),
+      ).toBe(true);
+      return ["pr-42"];
+    });
+    expect(await m.retrySessionCommand(old.id, "expired start")).toBe("settled");
+    expect(store.activeSessionCommand("pr-42")?.id).toBe("successor");
+    expect(liveSessions.has("pr-42")).toBe(true);
+    expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(0);
+  } finally {
+    store.close();
+  }
+});
+
+it("production forwarding preserves a command ownership fence across an async kill probe", async () => {
+  const store = new StateStore(":memory:");
+  try {
+    store.upsertPr({
+      number: 42,
+      state: "queued",
+      head_sha: "abc",
+      title: "owner",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const m = manager(undefined, store);
+    m.setTitleResolver(() => "owner");
+    await m.inject(42, "old command");
+    const old = store.activeSessionCommand("pr-42")!;
+    store.claimSessionCommand(old.id, "old-bridge", new Date().toISOString());
+    store.markSessionCommandStarted(old.id, "old-bridge", new Date().toISOString());
+    const expected = store.getSessionCommand(old.id)!;
+    vi.spyOn(m.tmux, "listSessionsKnown").mockImplementationOnce(async () => {
+      store.finishSessionCommand(old.id, "old-bridge", "acked");
+      store.createSessionCommand({
+        ...old,
+        id: "successor",
+        payload_path: "successor.md",
+        inject_path: "successor.md",
+        next_check_at: new Date().toISOString(),
+      });
+      expect(store.claimSessionCommand("successor", "new-bridge", new Date().toISOString())).toBe(
+        true,
+      );
+      expect(
+        store.markSessionCommandStarted("successor", "new-bridge", new Date().toISOString()),
+      ).toBe(true);
+      return ["pr-42"];
+    });
+    const { hooks } = daemonOriginWakes({
+      hooks: m,
+      origins: new OriginStore(join(root, "state", "origin")),
+      enabled: false,
+    });
+    expect(await hooks.killSession!(42, expected)).toBe(false);
+    expect(store.activeSessionCommand("pr-42")?.id).toBe("successor");
+    expect(liveSessions.has("pr-42")).toBe(true);
+    expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(0);
+  } finally {
+    store.close();
+  }
+});
+
+it("refuses an overseer birth without its matching bridge-ready receipt", async () => {
+  autoBridgeReady = false;
+  const config = cfg();
+  config.daemon.session_bridge_ready_timeout_s = 0.005;
+  const m = manager(undefined, undefined, config);
+  await expect(m.ensureOverseerSession()).rejects.toThrow(/timed out/);
+  expect(liveSessions.has("overseer")).toBe(false);
+});
+
+it("replaces a live overseer whose bridge failed before accepting another wake", async () => {
+  const m = manager();
+  await m.ensureOverseerSession();
+  const birth = JSON.parse(
+    readFileSync(join(root, "state", "sessions", "overseer.json"), "utf8"),
+  ) as { bridge_generation: string };
+  writeSessionBridgeState(m.bridgeStatePath("overseer", birth.bridge_generation), {
+    version: 1,
+    session: "overseer",
+    generation: birth.bridge_generation,
+    stage: "failed",
+    updated_at: "2026-08-13T10:00:00Z",
+    detail: "watcher failed",
+  });
+  await m.injectOverseer("fresh wake");
+  expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(1);
+  expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(2);
+});
+
+it("defers automatic overseer rotation while an accepted wake remains unfinished", async () => {
+  let now = new Date("2026-08-13T10:00:00Z");
+  const m = manager(() => now);
+  await m.injectOverseer("accepted but still running");
+  now = new Date("2026-08-21T10:00:00Z");
+  expect(await m.rotateOverseerIfDue()).toBe(false);
+  expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(0);
+});
+
+it("holds automatic rotation for an accepted run even with an empty mailbox", async () => {
+  let now = new Date("2026-08-13T10:00:00Z");
+  const m = manager(() => now);
+  await m.ensureOverseerSession();
+  const birth = JSON.parse(
+    readFileSync(join(root, "state", "sessions", "overseer.json"), "utf8"),
+  ) as { bridge_generation: string };
+  const state = {
+    version: 1 as const,
+    session: "overseer",
+    generation: birth.bridge_generation,
+    stage: "ready" as const,
+    updated_at: now.toISOString(),
+    compaction: { state: "idle" as const, seq: 0 },
+  };
+  writeSessionBridgeState(m.bridgeStatePath("overseer", birth.bridge_generation), {
+    ...state,
+    run_status: "active",
+  });
+  now = new Date("2026-08-21T10:00:00Z");
+  expect(readdirSync(m.injectDir("overseer")).filter((file) => file.endsWith(".md"))).toEqual([]);
+  expect(await m.rotateOverseerIfDue()).toBe(false);
+  expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toEqual([]);
+  writeSessionBridgeState(m.bridgeStatePath("overseer", birth.bridge_generation), {
+    ...state,
+    run_status: "idle",
+  });
+  onListSessions = () => {
+    if (existsSync(join(m.injectDir(OVERSEER_SESSION), ".overseer-retire-request.json")))
+      liveSessions.delete(OVERSEER_SESSION);
+  };
+  expect(await m.rotateOverseerIfDue()).toBe(true);
+});
+
+it("accepts a legacy bridge receipt while holding automatic rotation as unknown", async () => {
+  let now = new Date("2026-08-13T10:00:00Z");
+  const m = manager(() => now);
+  await m.ensureOverseerSession();
+  const birth = JSON.parse(
+    readFileSync(join(root, "state", "sessions", "overseer.json"), "utf8"),
+  ) as { bridge_generation: string };
+  writeSessionBridgeState(m.bridgeStatePath("overseer", birth.bridge_generation), {
+    version: 1,
+    session: "overseer",
+    generation: birth.bridge_generation,
+    stage: "ready",
+    updated_at: now.toISOString(),
+    compaction: { state: "idle", seq: 0 },
+  });
+  expect(await m.ensureOverseerSession()).toBe("overseer");
+  now = new Date("2026-08-21T10:00:00Z");
+  expect(await m.rotateOverseerIfDue()).toBe(false);
+  expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toEqual([]);
+});
+
+it.each(["alive", "unknown"] as const)(
+  "never rotates stale idle telemetry when self-retirement is %s",
+  async (probe) => {
+    let now = new Date("2026-08-13T10:00:00Z");
+    const config = cfg();
+    config.daemon.session_bridge_ready_timeout_s = 0.005;
+    const m = manager(() => now, undefined, config);
+    await m.ensureOverseerSession();
+    now = new Date("2026-08-21T10:00:00Z");
+    if (probe === "unknown") vi.spyOn(m.tmux, "listSessionsKnown").mockResolvedValue(null);
+    expect(await m.rotateOverseerIfDue()).toBe(false);
+    expect(tmuxArgs().filter((args) => args[0] === "kill-session")).toEqual([]);
+    expect(tmuxArgs().filter((args) => args[0] === "new-session")).toHaveLength(1);
+    expect(existsSync(m.archiveDir("overseer"))).toBe(false);
+  },
+);
+
 describe("overseer rotation", () => {
   it("is not due before the configured age", async () => {
     let now = new Date("2026-08-13T10:00:00Z");
@@ -2420,6 +2665,10 @@ describe("overseer rotation", () => {
 
     now = new Date("2026-08-20T10:00:00Z"); // 7 days
     expect(m.overseerRotationDue()).toBe(true);
+    onListSessions = () => {
+      if (existsSync(join(m.injectDir(OVERSEER_SESSION), ".overseer-retire-request.json")))
+        liveSessions.delete(OVERSEER_SESSION);
+    };
     expect(await m.rotateOverseerIfDue()).toBe(true);
 
     const rec = join(m.archiveDir(OVERSEER_SESSION), "2026-08-20");
@@ -2430,7 +2679,7 @@ describe("overseer rotation", () => {
     );
     // The transcript stays live until the archiver moves it.
     expect(existsSync(join(sdir, "run.jsonl"))).toBe(true);
-    expect(tmuxArgs()).toContainEqual(["kill-session", "-t", "=overseer"]);
+    expect(tmuxArgs().filter((args) => args[0] === "kill-session")).toEqual([]);
     expect(tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === "overseer")).toHaveLength(2);
     expect(liveSessions.has(OVERSEER_SESSION)).toBe(true);
   });

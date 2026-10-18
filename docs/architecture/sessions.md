@@ -63,7 +63,7 @@ in order:
    session.
 6. Records the birth in `state/sessions/<session>.json` (session name, birth
    timestamp, bridge generation).
-7. For a PR session only: waits for the bridge to publish `ready` for that
+7. Waits for either session kind's bridge to publish `ready` for that
    exact generation, and kills the session if it does not.
 
 ### The pi argv
@@ -140,7 +140,7 @@ leaving a half-born one.
 
 `currentBridgeReady(session)` re-reads the pair (birth file → generation →
 bridge state) whenever the daemon needs to know whether a *pre-existing*
-session is usable. `birthPrSession` uses it as a fence: a tmux session that is
+session is usable. Both PR and overseer births use it as a fence: a tmux session that is
 alive but has no matching `ready` generation is killed and reborn, and the kill
 is verified.
 
@@ -598,10 +598,26 @@ API.
   so nothing is still writing into it.
 - **Killing.** `killSession(pr)` kills and **verifies the session is gone**,
   throwing otherwise; recovery must never dispatch beside a survivor. The ledger
-  on disk is the continuity that survives a kill by design.
+  on disk is the continuity that survives a kill by design. Supervisor callers
+  pass the exact command reservation; a changed owner returns false without a
+  kill. The kill is serialized with session births so it cannot kill a successor.
 - **Rotation.** `rotateOverseerIfDue()` archives the overseer run under a dated
   directory and respawns it once it is older than `[daemon]
   overseer_rotation_days`.
+
+Automatic overseer rotation requires the current bridge generation to report
+`run_status: idle` and idle compaction, with no pending wake files. Acceptance
+moves a wake into `.done/` before the agent finishes, so an empty mailbox alone
+is not proof of idle work. The bridge reports active at run start and returns
+to idle only after `agent_settled` drains its acknowledgement. Older bridge
+receipts without `run_status` remain accepted as input but hold automatic
+rotation as unknown; an explicit operator restart remains available. Idle
+telemetry only admits a generation-bound retirement request: it never authorizes
+a kill. The owning bridge rechecks its generation, active work, compaction,
+pending mailbox and Pi's own idle/queued-message state in one synchronous
+callback before exiting itself. The manager archives and rebirths only after
+tmux positively confirms disappearance. A timeout or unknown liveness does
+neither, so a failed active-state receipt write cannot terminate active work.
 
 ## Invariants to preserve
 

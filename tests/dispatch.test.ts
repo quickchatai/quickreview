@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, sandboxRoot, type Config } from "../src/config.js";
 import {
   ALL_PASSES,
@@ -332,6 +332,50 @@ describe("the context pack reads the worktree the round reviews", () => {
     },
   );
 });
+
+it("honors an operator pause applied during its final preparation", async () => {
+  queue(211, "2026-08-13T09:00:00Z");
+  const { hooks, orders } = recordingHooks();
+  await dispatchOnce({
+    cfg: baseCfg,
+    store,
+    adapter: new FakeAdapter(),
+    hooks,
+    renderPrompt: (order) => {
+      store.db.prepare("UPDATE pr_state SET paused=1 WHERE number=?").run(order.pr);
+      return "prepared prompt";
+    },
+  });
+  expect(orders).toEqual([]);
+  expect(store.runningRounds()).toEqual([]);
+  expect(store.getPr(211)?.paused).toBe(1);
+});
+
+it(
+  "retains a withheld approval if its durable retry receipt cannot be recorded",
+  { timeout: HEAVY_TIMEOUT_MS },
+  async () => {
+    queue(212, "2026-08-13T09:00:00Z");
+    const head = store.getPr(212)!.head_sha;
+    store.recordApprovalWithheld(212, { head_sha: head });
+    const original = store.logEvent.bind(store);
+    const spy = vi.spyOn(store, "logEvent").mockImplementation((kind, pr, payload) => {
+      if (kind === "approval_retry_dispatched") throw new Error("retry receipt disk failure");
+      return original(kind, pr, payload);
+    });
+    try {
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter: new FakeAdapter(),
+        hooks: recordingHooks().hooks,
+      });
+      expect(store.approvalWithheld(212)?.head_sha).toBe(head);
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);
 
 describe("a PR closed while its own round is prepared", () => {
   // MUTATION: drop the closed check before the handoff — the closed PR gets a

@@ -9,6 +9,29 @@ export function sessionCommandMarker(id: string, payloadSha256: string): string 
 export function parseSessionCommandMarker(
   text: string,
 ): { id: string; payloadSha256: string } | undefined {
-  const match = /<!-- qcr-command:([^:\s>]+):([a-f0-9]{64}) -->/.exec(text);
+  const match = [...text.matchAll(/<!-- qcr-command:([^:\s>]+):([a-f0-9]{64}) -->/g)].at(-1);
   return match ? { id: match[1]!, payloadSha256: match[2]! } : undefined;
+}
+
+/** The exact reservation whose consumer recovery is allowed to fence. */
+export interface SessionCommandOwnership {
+  id: string;
+  status: string;
+  owner_token: string | null;
+  attempt: number;
+  started_at: string | null;
+}
+
+export function sameSessionCommandOwner(
+  current: SessionCommandOwnership | undefined,
+  expected: SessionCommandOwnership,
+): boolean {
+  return (
+    current !== undefined &&
+    current.id === expected.id &&
+    current.status === expected.status &&
+    current.owner_token === expected.owner_token &&
+    current.attempt === expected.attempt &&
+    current.started_at === expected.started_at
+  );
 }

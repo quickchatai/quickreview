@@ -650,7 +650,12 @@ export function daemonOriginWakes(opts: {
       // Liveness + kill feed the stuck-round detector; without sessionAlive
       // liveness is always unknown and every stuck round parks.
       ...(hooks.sessionAlive ? { sessionAlive: (pr: number) => hooks.sessionAlive!(pr) } : {}),
-      ...(hooks.killSession ? { killSession: (pr: number) => hooks.killSession!(pr) } : {}),
+      ...(hooks.killSession
+        ? {
+            killSession: (...args: Parameters<NonNullable<SessionHooks["killSession"]>>) =>
+              hooks.killSession!(...args),
+          }
+        : {}),
       ...(hooks.sessionActivityAt
         ? { sessionActivityAt: (pr: number) => hooks.sessionActivityAt!(pr) }
         : {}),

@@ -54,12 +54,14 @@ import {
 import {
   bridgeCompaction,
   COMPACTION_REQUEST_FILE,
+  OVERSEER_RETIRE_REQUEST_FILE,
   readSessionBridgeState,
   waitForSessionBridgeReady,
   writeSessionBridgeState,
   type CompactionRequest,
   type SessionBridgeState,
 } from "./session-bridge.js";
+import { sameSessionCommandOwner, type SessionCommandOwnership } from "./session-command.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
@@ -677,7 +679,9 @@ export class PiSessionManager implements SessionHooks {
       env: this.buildEnv(session, spawnEnv),
     });
     this.recordBirth(session, generation);
-    if (prOfSession(session) === undefined) return;
+    // Readiness admission belongs to the two daemon-owned session kinds.
+    // Isolated replay/smoke callers retain their own lifecycle protocol.
+    if (!isSandboxSession(session)) return;
     try {
       await waitForSessionBridgeReady(
         bridgeStateFile,
@@ -687,7 +691,7 @@ export class PiSessionManager implements SessionHooks {
       );
     } catch (error) {
       const detail = String(error);
-      this.commandStore?.logEvent("session_bridge_readiness_failed", prOfSession(session)!, {
+      this.commandStore?.logEvent("session_bridge_readiness_failed", prOfSession(session) ?? null, {
         session,
         generation,
         detail,
@@ -874,6 +878,10 @@ export class PiSessionManager implements SessionHooks {
    * share one has→spawn flight, as PR births do: a second spawn would fail
    * on tmux's duplicate name before its caller wrote its wake. */
   async ensureOverseerSession(): Promise<string> {
+    if (this.overseerRotation) {
+      await this.overseerRotation;
+      return OVERSEER_SESSION;
+    }
     const existing = this.overseerBirth;
     if (existing) return existing;
     const birth = this.birthOverseer();
@@ -886,9 +894,21 @@ export class PiSessionManager implements SessionHooks {
   }
 
   private overseerBirth?: Promise<string>;
+  private overseerRotation?: Promise<string | false>;
 
-  private async birthOverseer(): Promise<string> {
-    if (await this.tmux.hasSession(OVERSEER_SESSION)) return OVERSEER_SESSION;
+  private async birthOverseer(rotating = false): Promise<string> {
+    const alive = await this.tmux.hasSession(OVERSEER_SESSION);
+    // A probe begun before rotation may describe its old incarnation. Join
+    // the rotation's fresh birth instead of fencing a newly starting bridge.
+    if (!rotating && this.overseerRotation) {
+      await this.overseerRotation;
+      return OVERSEER_SESSION;
+    }
+    if (alive) {
+      if (this.currentBridgeReady(OVERSEER_SESSION)) return OVERSEER_SESSION;
+      if (!(await this.killConfirmed(OVERSEER_SESSION)))
+        throw new Error("the overseer survived its stale-bridge fence");
+    }
     const template = readFileSync(join(this.root, "prompts", "overseer-system.md"), "utf8");
     // The seeded overseer prompt is canonical and unmodifiable (CLAUDE.md rule
     // 6), so the Slack contract rides as a spawn-time appendix — same shape as
@@ -899,7 +919,11 @@ export class PiSessionManager implements SessionHooks {
       await this.spawnSession(OVERSEER_SESSION, body, this.cfg.models.overseer);
     } catch (err) {
       // A creator outside this manager instance may have won after our check.
-      if (await this.tmux.hasSession(OVERSEER_SESSION)) return OVERSEER_SESSION;
+      if (
+        (await this.tmux.hasSession(OVERSEER_SESSION)) &&
+        this.currentBridgeReady(OVERSEER_SESSION)
+      )
+        return OVERSEER_SESSION;
       throw err;
     }
     return OVERSEER_SESSION;
@@ -1136,6 +1160,8 @@ export class PiSessionManager implements SessionHooks {
       await this.worktrees.ensureWorktree(order.pr, { baseRef: order.base_ref });
     }
     await this.ensurePrSession(order.pr, order.title, order.worktree);
+    if (this.commandStore?.getPr(order.pr)?.paused)
+      throw new Error(`PR #${order.pr} paused during session preparation — round not handed off`);
     const stamped = stampRoundPrompt(renderedPrompt, order.pr, order.round_no);
     // Keep the exact bytes that were dispatched. Redelivery must send the same
     // prompt — re-rendering later would quietly change the order (a different
@@ -1449,44 +1475,66 @@ export class PiSessionManager implements SessionHooks {
     }
     const payload = read.payload;
 
-    const session = prSessionName(command.pr);
-    if (!(await this.sessionProvenGone(session)) && !(await this.killConfirmed(session))) {
-      throw new Error(`session ${session} survived command-recovery kill; refusing replay`);
-    }
-
-    // Nothing can consume or settle the old command after the tmux session is
-    // proven absent. Check the merits lifecycle, then atomically return the
-    // same ownership row to pending. A settlement that won during the kill is
-    // success, never grounds for duplicate replay.
-    if (command.kind === "round" && command.round_no !== null) {
-      if (existsSync(join(this.root, "verdict", `pr-${command.pr}-round-${command.round_no}.json`)))
-        return "round_finished";
-      const round = store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
-      if (!round || round.status !== "running") return "round_finished";
-    }
-    if (
-      !store.retrySessionCommandAfterFence(
-        command.id,
-        command.attempt,
-        this.commandDeadline(this.sessionCommandStartLeaseMs()),
-      )
-    ) {
-      const current = store.getSessionCommand(command.id);
-      if (current?.status === "acked") return "settled";
-      if (
-        command.kind === "round" &&
-        current?.started_at !== null &&
-        current?.started_at !== undefined
-      )
-        return "accepted_race";
+    const prepareReplay = (): SessionCommandRetryResult | undefined => {
+      // Nothing can consume or settle the old command after the tmux session is
+      // proven absent. Check the merits lifecycle, then atomically return the
+      // same ownership row to pending. A settlement that won during the kill is
+      // success, never grounds for duplicate replay.
       if (command.kind === "round" && command.round_no !== null) {
+        if (
+          existsSync(join(this.root, "verdict", `pr-${command.pr}-round-${command.round_no}.json`))
+        )
+          return "round_finished";
         const round = store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
         if (!round || round.status !== "running") return "round_finished";
       }
-      return "retry_failed";
+      if (
+        !store.retrySessionCommandAfterFence(
+          command.id,
+          command.attempt,
+          this.commandDeadline(this.sessionCommandStartLeaseMs()),
+        )
+      ) {
+        const current = store.getSessionCommand(command.id);
+        if (current?.status === "acked") return "settled";
+        if (
+          command.kind === "round" &&
+          current?.started_at !== null &&
+          current?.started_at !== undefined
+        )
+          return "accepted_race";
+        if (command.kind === "round" && command.round_no !== null) {
+          const round = store
+            .roundsFor(command.pr)
+            .find((row) => row.round_no === command.round_no);
+          if (!round || round.status !== "running") return "round_finished";
+        }
+        return "retry_failed";
+      }
+    };
+    let preparation: SessionCommandRetryResult | undefined;
+    let publicationError: { error: unknown } | undefined;
+    const fenced = await this.fenceSession(command.pr, command, () => {
+      preparation = prepareReplay();
+      // Publish replay transport before releasing the close flight: a birth
+      // already waiting on this fence must find its immutable command file.
+      if (!preparation) {
+        try {
+          this.writeAtomic(command.inject_path, payload);
+        } catch (error) {
+          publicationError = { error };
+        }
+      }
+    });
+    if (!fenced) {
+      const current = store.getSessionCommand(command.id);
+      return !current || current.status === "acked" || current.status === "cancelled"
+        ? "settled"
+        : "raced";
     }
+    if (preparation) return preparation;
     try {
-      this.writeAtomic(command.inject_path, payload);
+      if (publicationError) throw publicationError.error;
       await this.ensureSessionForWake(command.pr);
       const replayed = store.getSessionCommand(command.id);
       if (replayed?.status === "acked" || replayed?.status === "cancelled") return "settled";
@@ -1751,14 +1799,45 @@ export class PiSessionManager implements SessionHooks {
    * session as gone; a tmux that could not be asked throws, so no caller
    * releases ownership beside a pi that may still run. The ledger on disk is
    * the continuity that matters and survives the kill by design. */
-  async killSession(pr: number): Promise<void> {
+  async killSession(pr: number): Promise<void>;
+  async killSession(pr: number, expected: SessionCommandOwnership): Promise<boolean>;
+  async killSession(pr: number, expected?: SessionCommandOwnership): Promise<void | boolean>;
+  async killSession(pr: number, expected?: SessionCommandOwnership): Promise<void | boolean> {
+    const fenced = await this.fenceSession(pr, expected);
+    return expected ? fenced : undefined;
+  }
+
+  private async fenceSession(
+    pr: number,
+    expected?: SessionCommandOwnership,
+    afterFence?: () => void,
+  ): Promise<boolean> {
     const session = prSessionName(pr);
-    if (await this.sessionProvenGone(session)) return;
-    if (!(await this.killConfirmed(session))) {
-      throw new Error(
-        `session ${session} not proven gone after kill; recovery must not dispatch beside it`,
-      );
-    }
+    let fenced = false;
+    const owns = () => {
+      if (!expected) return true;
+      if (
+        !this.commandStore ||
+        !sameSessionCommandOwner(this.commandStore.getSessionCommand(expected.id), expected)
+      )
+        return false;
+      const active = this.commandStore.activeSessionCommand(session);
+      return !active || active.id === expected.id;
+    };
+    // Birth and delivery wait this existing close flight. Thus a successor
+    // cannot be born between the last ownership check and the async tmux kill.
+    await this.withPrClose(pr, async () => {
+      if (!owns()) return;
+      const gone = await this.sessionProvenGone(session);
+      if (!owns()) return;
+      if (!gone && !(await this.killConfirmed(session)))
+        throw new Error(
+          `session ${session} not proven gone after kill; recovery must not dispatch beside it`,
+        );
+      afterFence?.(); // Keep retry's CAS inside the same birth/close serialization.
+      fenced = true;
+    });
+    return fenced;
   }
 
   /** Kill `session` and confirm it gone: `Tmux.killSession` ignores its exit
@@ -1829,7 +1908,9 @@ export class PiSessionManager implements SessionHooks {
         if (attempted++ >= Math.max(0, Math.floor(max))) break;
         try {
           await this.withPrClose(pr, async () => {
-            if (this.prClosed(pr)) await this.killSession(pr);
+            // Already inside the birth/close fence; do not recursively join it.
+            if (this.prClosed(pr) && !(await this.killConfirmed(prSessionName(pr))))
+              throw new Error(`closed session pr-${pr} survived its cleanup kill`);
           });
         } catch (error) {
           this.recordEvent("closed_session_kill_failed", pr, { error: String(error) });
@@ -2097,6 +2178,50 @@ export class PiSessionManager implements SessionHooks {
    * file name, into `archive/overseer/transcripts/`. Returns the dir's name.
    */
   async rotateOverseer(): Promise<string> {
+    const rotated = await this.runOverseerRotation(false);
+    return rotated === false ? this.rotateOverseer() : rotated;
+  }
+
+  private async runOverseerRotation(automatic: boolean): Promise<string | false> {
+    if (this.overseerRotation) return this.overseerRotation;
+    const rotation = this.rotateOverseerNow(automatic);
+    this.overseerRotation = rotation;
+    try {
+      return await rotation;
+    } finally {
+      if (this.overseerRotation === rotation) this.overseerRotation = undefined;
+    }
+  }
+
+  private async retireOverseerWhenIdle(): Promise<boolean> {
+    const bridge = this.currentBridgeState(OVERSEER_SESSION);
+    if (bridge?.stage !== "ready") return false;
+    const nonce = randomUUID();
+    const path = join(this.injectDir(OVERSEER_SESSION), OVERSEER_RETIRE_REQUEST_FILE);
+    try {
+      this.writeAtomic(path, JSON.stringify({ version: 1, generation: bridge.generation, nonce }));
+      const deadline = performance.now() + this.sessionBridgeReadyTimeoutMs();
+      while (true) {
+        if (await this.sessionProvenGone(OVERSEER_SESSION)) return true;
+        if (performance.now() >= deadline) return false;
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(25, Math.max(1, deadline - performance.now()))),
+        );
+      }
+    } finally {
+      try {
+        const current = JSON.parse(readFileSync(path, "utf8")) as { nonce?: string };
+        if (current.nonce === nonce) rmSync(path);
+      } catch {
+        /* Do not remove a replacement or unreadable request. */
+      }
+    }
+  }
+
+  private async rotateOverseerNow(automatic: boolean): Promise<string | false> {
+    // Stale idle telemetry is never authority to kill. The bridge proves idle
+    // in its own event loop and retires itself; unknown/timeout keeps it intact.
+    if (automatic && !(await this.retireOverseerWhenIdle())) return false;
     const day = this.now().toISOString().slice(0, 10);
     const base = this.archiveDir(OVERSEER_SESSION);
     let stamp = day;
@@ -2104,12 +2229,12 @@ export class PiSessionManager implements SessionHooks {
     this.archiveSession(OVERSEER_SESSION, join(base, stamp));
     // A kill that did not take would let the respawn below adopt the old
     // overseer and report a rotation that never happened.
-    if (!(await this.killConfirmed(OVERSEER_SESSION))) {
+    if (!automatic && !(await this.killConfirmed(OVERSEER_SESSION))) {
       throw new Error(`the overseer survived the rotation kill — not rotated (record ${stamp})`);
     }
     // An older single-flight probe may still describe the overseer killed
     // above. Rotation needs its own fresh liveness decision.
-    await this.birthOverseer();
+    await this.birthOverseer(true);
     return stamp;
   }
 
@@ -2123,8 +2248,24 @@ export class PiSessionManager implements SessionHooks {
 
   async rotateOverseerIfDue(): Promise<boolean> {
     if (!this.overseerRotationDue()) return false;
-    await this.rotateOverseer();
-    return true;
+    // Acceptance archives transport before the run settles. Idle telemetry
+    // only admits the retirement request; the process itself proves idle.
+    // A legacy receipt without run_status is unknown and safely holds automatic
+    // rotation; the operator can still request an explicit restart.
+    const bridge = this.currentBridgeState(OVERSEER_SESSION);
+    if (
+      bridge?.stage !== "ready" ||
+      bridge.run_status !== "idle" ||
+      bridge.compaction?.state !== "idle"
+    )
+      return false;
+    try {
+      if (readdirSync(this.injectDir(OVERSEER_SESSION)).some((file) => file.endsWith(".md")))
+        return false;
+    } catch {
+      return false;
+    }
+    return (await this.runOverseerRotation(true)) !== false;
   }
 
   // ---- daemon start ------------------------------------------------------

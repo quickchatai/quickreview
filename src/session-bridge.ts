@@ -42,6 +42,9 @@ export interface SessionBridgeState {
   updated_at: string;
   failed_stage?: string;
   detail?: string;
+  /** Accepted agent work, independent of the transport mailbox. Older
+   * receipts omit this: unknown, so automatic rotation must hold. */
+  run_status?: "active" | "idle";
   /** Absent on an older bridge that does not report compaction: unknown. */
   compaction?: SessionBridgeCompaction;
 }
@@ -151,3 +154,6 @@ export async function waitForSessionBridgeReady(
     await sleep(Math.min(pollMs, Math.max(1, deadline - Date.now())));
   }
 }
+
+/** Automatic overseer retirement asks the owning process to exit only when idle. */
+export const OVERSEER_RETIRE_REQUEST_FILE = ".overseer-retire-request.json";
