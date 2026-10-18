@@ -6,7 +6,16 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { PrFileEntry } from "./github.js";
@@ -206,6 +215,12 @@ export function resolveUncommitted(cwd: string): BranchResolution {
     const index = resolve(cwd, git(cwd, ["rev-parse", "--git-path", "index"]));
     try {
       copyFileSync(index, env.GIT_INDEX_FILE);
+      // git re-hashes a file whose stat matches its entry only while the index
+      // file is no newer than that entry (the racy check): the copy keeps the
+      // original's mtime, a microsecond earlier, or a same-size edit made in
+      // the tick of the last index write would be read as unchanged
+      const t = (Math.floor(statSync(index).mtimeMs * 1000) - 1) / 1e6;
+      utimesSync(env.GIT_INDEX_FILE, t, t);
     } catch {
       git(top, ["read-tree", headSha], { env });
     }
