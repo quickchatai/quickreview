@@ -500,6 +500,10 @@ export class LessonLedger {
     const at = this.ts();
     const tx = this.store.db.transaction(() => {
       this.store.db.prepare("DELETE FROM lesson_selections WHERE round_id = ?").run(round.round_id);
+      // Marks are derived from the newest selection for this PR/round.
+      this.store.db
+        .prepare("DELETE FROM lesson_shadow_marks WHERE round_id = ? OR (pr = ? AND round_no = ?)")
+        .run(round.round_id, round.pr, round.round_no);
       this.store.db
         .prepare(
           `INSERT OR REPLACE INTO lesson_rounds
