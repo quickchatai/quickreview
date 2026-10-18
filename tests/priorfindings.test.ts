@@ -70,6 +70,12 @@ const blocker = (key: string, line: number, extra: Partial<RoundFindingInput> = 
   }) as RoundFindingInput;
 
 describe("collectPriorFindings — what is still open", () => {
+  it("keeps a real but deferred finding nonblocking regardless of its severity", () => {
+    const r1 = deliveredRound(7);
+    ingest(7, r1, [blocker("later", 10, { posted_as: "deferred", severity: "P1" })]);
+    const list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r1 + 1);
+    expect(list.findings[0]?.blocking).toBe(false);
+  });
   it("keeps ask-your-human blockers blocking and carries their reasoning into the assigned leaf task", () => {
     const r1 = deliveredRound(7);
     ingest(7, r1, [blocker("human", 10, { posted_as: "ask your human", severity: "P1" })]);
