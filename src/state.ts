@@ -1051,6 +1051,13 @@ CREATE TABLE IF NOT EXISTS trigger_levels (
   observed_at TEXT NOT NULL,
   PRIMARY KEY (pr, kind)
 );
+-- An observed absent-to-present human request is owed until lifecycle publication.
+CREATE TABLE IF NOT EXISTS trigger_edges (
+  pr INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  requested_at TEXT NOT NULL,
+  PRIMARY KEY (pr, kind)
+);
 -- A newer head observed while an older round owns the PR is durable
 -- work owed. It survives the predecessor's every terminal path and is retained
 -- after queue promotion until a verdict actually covers the target head.
@@ -5577,12 +5584,29 @@ export class StateStore {
   }
 
   observeTriggerLevel(pr: number, kind: "label" | "team_request", present: boolean): void {
-    this.db
-      .prepare(
-        `INSERT INTO trigger_levels (pr, kind, present, observed_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(pr, kind) DO UPDATE SET present=excluded.present, observed_at=excluded.observed_at`,
-      )
-      .run(pr, kind, present ? 1 : 0, this.ts());
+    this.db.transaction(() => {
+      if (present && this.triggerLevel(pr, kind) === false && this.getPr(pr)?.state !== "closed")
+        this.db
+          .prepare("INSERT OR IGNORE INTO trigger_edges (pr,kind,requested_at) VALUES (?,?,?)")
+          .run(pr, kind, this.ts());
+      this.db
+        .prepare(
+          `INSERT INTO trigger_levels (pr, kind, present, observed_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(pr, kind) DO UPDATE SET present=excluded.present, observed_at=excluded.observed_at`,
+        )
+        .run(pr, kind, present ? 1 : 0, this.ts());
+    })();
+  }
+
+  triggerEdgePending(pr: number, kind: "label" | "team_request"): boolean {
+    return (
+      this.db.prepare("SELECT 1 FROM trigger_edges WHERE pr=? AND kind=?").get(pr, kind) !==
+      undefined
+    );
+  }
+
+  acknowledgeTriggerEdges(pr: number): void {
+    this.db.prepare("DELETE FROM trigger_edges WHERE pr=?").run(pr);
   }
 
   // ---- post-approval delta rechecks -------------------------------------
