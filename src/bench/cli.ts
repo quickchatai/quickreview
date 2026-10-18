@@ -5,6 +5,8 @@
 //   prefetch  --set <file> [--only id,id] [--store DIR] [--wait-rate-limit]
 //   review    --set <file> --out DIR [--only id,id] [--store DIR] [--profile NAME]
 //             [--timeout-min N] [--concurrency N] [--resume] [--keep-tree]
+//             [--allow-customised]   run although the profile replaces shipped
+//                                    agents or prompts (refused otherwise)
 //             [--config a.b=v,c.d=w]   config levers for this run (runner.ts)
 //             [--phase all|init|case|finish]   arm.sh's one-container-per-case split;
 //             every case ends with a `result: <id> <status> retry= limited=` line
@@ -104,6 +106,7 @@ import { PRAGENT_DEFAULTS, renderPragentReport, runPragentReview } from "./prage
 import { GIT_ISOLATION_ENV, run as runCmd } from "./exec.js";
 import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
+  benchCustomisation,
   buildBenchAgents,
   contextFor,
   prepareReviewCases,
@@ -272,7 +275,10 @@ async function main(): Promise<number> {
 
   if (f.cmd === "agents") {
     const { cfg } = contextFor(root, f.get("--profile") ?? "");
-    log(`built ${buildBenchAgents(root, cfg)} agents into ${join(root, ".pi", "agents")}`);
+    const custom = benchCustomisation(root, cfg.review.profile, f.has("--allow-customised"));
+    log(
+      `built ${buildBenchAgents(root, cfg, join(root, ".pi", "agents"), custom)} agents into ${join(root, ".pi", "agents")}`,
+    );
     return 0;
   }
 
@@ -325,7 +331,12 @@ async function main(): Promise<number> {
     const base = contextFor(root, profileFlag, overrides);
     // `--config review.profile=<name>` chooses the profile as `--profile` does.
     const profile = base.cfg.review.profile;
-    const ctx = { ...base, fingerprint: runFingerprint(base.cfg, profile, overrides) };
+    const bench = benchCustomisation(root, profile, f.has("--allow-customised"));
+    const ctx = {
+      ...base,
+      fingerprint: runFingerprint(base.cfg, profile, overrides, bench.custom),
+      ...(bench.readFile ? { readFile: bench.readFile } : {}),
+    };
     const authSrc = f.get("--auth-src") ?? DEFAULTS.authSrc;
     const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
     // A case container always resumes: its run was set up (and, if fresh,
@@ -344,6 +355,9 @@ async function main(): Promise<number> {
         tiers: ctx.cfg.models.tiers,
         validate_tier: ctx.cfg.models.validate_tier,
       },
+      ...(bench.custom.customised
+        ? { customised: true, profile_overrides: ctx.fingerprint.profile_overrides }
+        : {}),
       pi: ctx.cfg.pi.version,
       qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
       cases: cases.map((c) => c.instance_id),
@@ -367,7 +381,12 @@ async function main(): Promise<number> {
         return 0;
       }
     }
-    const agents = buildBenchAgents(root, ctx.cfg);
+    const agents = buildBenchAgents(
+      root,
+      ctx.cfg,
+      join(root, ".pi", "agents"),
+      bench.readFile ? { readFile: bench.readFile } : {},
+    );
     log(
       `review: ${agents} lens agents built (profile ${profile || "(generic)"}), ${cases.length} case(s)`,
     );

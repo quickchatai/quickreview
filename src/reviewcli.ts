@@ -76,6 +76,16 @@ import { AuthExpiring } from "./piauthcopy.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
+import { ecosystemFor } from "./ecosystem.js";
+import { applyProfileOverlays, loadProfileEcosystem } from "./profiles.js";
+import {
+  assessOverrides,
+  customisedNote,
+  overrideReader,
+  resolveOverrides,
+  type Customisation,
+  type OverrideSet,
+} from "./profileoverrides.js";
 import {
   branchTargetKey,
   prTargetKey,
@@ -602,6 +612,35 @@ async function runReview(
 
   const outDir = join(runDir, "out");
   const treeDir = join(runDir, "tree");
+  // The profiles' replacements of shipped agents and prompts
+  // (src/profileoverrides.ts): the repo's `.qcr/` as the BASE commit has it,
+  // under the user's named profile. The gate (`dry_run`), the credentials and
+  // the bash guard stay `deps`' own; only lens tuning, the ecosystem, agents
+  // and prompts move.
+  let overrides: OverrideSet;
+  let custom: Customisation;
+  try {
+    overrides = resolveOverrides({
+      root: deps.root,
+      profile: deps.cfg.review.profile,
+      repo: { gitDir, baseRef: t.baseSha, destDir: join(runDir, "profile") },
+    });
+    custom = assessOverrides(deps.root, overrides);
+  } catch (err) {
+    return refuse(1, [`the profile could not be loaded: ${String(err).slice(0, 300)}`]);
+  }
+  cleanups.push(() => rmSync(join(runDir, "profile"), { recursive: true, force: true }));
+  const readFile = overrideReader(deps.root, overrides);
+  const profileLookup = overrides.lookup;
+  const repoProfile = profileLookup.repoProfile !== undefined;
+  const cfg = repoProfile ? applyProfileOverlays(deps.root, deps.cfg, profileLookup) : deps.cfg;
+  const ecosystem = repoProfile
+    ? ecosystemFor(loadProfileEcosystem(deps.root, deps.cfg.review.profile, profileLookup))
+    : deps.ecosystem;
+  const profileArgs = {
+    ...(readFile ? { readFile } : {}),
+    ...(repoProfile ? { profileLookup } : {}),
+  };
   const target = {
     repo: t.repo,
     number: prInfo?.number ?? 0,
@@ -621,13 +660,14 @@ async function runReview(
   ): { prompts: OneShotPrompts; scope: "delta" | "full"; fallback: typeof fallback } => {
     const common = {
       root: deps.root,
-      cfg: deps.cfg,
-      ecosystem: deps.ecosystem,
+      cfg,
+      ecosystem,
       target,
       tree,
       caseDir: outDir,
       files: t.files,
       issuedAt: new Date().toISOString(),
+      ...profileArgs,
     };
     let why = fallback;
     if (prev !== null && delta !== null) {
@@ -698,6 +738,7 @@ async function runReview(
       : `  price: ${usd(price)} (estimate) — the run stops hard at ${usd(cap!)} (limit without asking: ${usd(limit!)})`,
     `  key: ${key}`,
     ...(prInfo ? [`  GitHub credential: ${credentialLabel(prInfo.source)}`] : []),
+    ...(custom.customised ? [`  ${customisedNote(custom)}`] : []),
   ];
   if (cmd.preview) {
     say(previewText.join("\n"), { ok: true, preview });
@@ -723,7 +764,7 @@ async function runReview(
   }
 
   mkdirSync(runDir, { recursive: true });
-  const runWarnings: string[] = [];
+  const runWarnings: string[] = overrides.ignored.map((l) => `profile: ${l}`);
   // pi runs isolated from the operator's pi home, the qcr checkout and the
   // reviewed repo: a private agent dir and, as its cwd, the run's out dir
   // holding the reviewer stub (src/hostroute.ts).
@@ -734,9 +775,13 @@ async function runReview(
       srcAgentDir: deps.agentDir,
       agentDir: join(runDir, "agent"),
       cwd: outDir,
-      cfg: deps.cfg,
+      cfg,
       needMs: deps.timeoutMs,
       checkouts: [deps.cwd, gitDir],
+      profile: {
+        ...(readFile ? { readFile } : {}),
+        ...(repoProfile ? { lookup: profileLookup } : {}),
+      },
     });
   } catch (err) {
     return refuse(1, [
@@ -788,8 +833,8 @@ async function runReview(
       files: t.files,
       target,
       outDir,
-      cfg: deps.cfg,
-      ecosystem: deps.ecosystem,
+      cfg,
+      ecosystem,
       timeoutMs: deps.timeoutMs,
       ...(deps.piBin !== undefined ? { piBin: deps.piBin } : {}),
       // Rendered over the review tree, as production renders over its worktree.
@@ -848,7 +893,10 @@ async function runReview(
     out_dir: outDir,
     warnings: [...runWarnings, ...shot.warnings],
     memory: memoryReport,
+    customised: custom.customised,
+    overrides: custom.overrides,
   };
+  const customNotes = custom.customised ? [customisedNote(custom)] : [];
   const heading = scope === "delta" ? "New findings" : "Findings";
   const body = count > 0 ? ["", `${heading} (${count})`, ...renderGrouped(unfinishedGroups)] : [];
   if (shot.capped) {
@@ -859,6 +907,7 @@ async function runReview(
         (coverage.not_reached.length ? `; not reached: ${coverage.not_reached.join(", ")}` : "") +
         ".",
       ...(count > 0 ? body : ["No findings were written before the stop."]),
+      ...customNotes,
       `Files: ${outDir}`,
     ].join("\n");
     deliver(
@@ -870,6 +919,7 @@ async function runReview(
           verdict,
           notes: [
             `Stopped at the cap shown (${usd(cap!)}): ${started.length} of ${lenses.length} planned lenses had started.`,
+            ...customNotes,
           ],
         },
         groups,
@@ -890,7 +940,8 @@ async function runReview(
   const mdMeta = {
     title: `Review of ${t.branch} against ${t.base} (${t.repo})`,
     verdict,
-    notes: shot.warnings.slice(0, 5),
+    // the customised line closes the report: it is its footer
+    notes: [...shot.warnings.slice(0, 5), ...customNotes],
   };
   const human = [
     "",
@@ -910,6 +961,7 @@ async function runReview(
     ...[...(bot.warning !== undefined ? [bot.warning] : []), ...shot.warnings]
       .slice(0, 5)
       .map((w) => `warning: ${w}`),
+    ...customNotes,
     `Files: ${outDir}`,
   ].join("\n");
   // Posting to the PR: one comment-only review, marked, deduplicated.
@@ -925,8 +977,9 @@ async function runReview(
     );
     // what the bot has not already posted, as the terminal shows it
     const review = assemblePostReview(rawWithout(shot.findings, bot.findings), {
-      cfg: deps.cfg,
+      cfg,
       roundNo: round.round_no,
+      customised: custom.customised,
       lenses,
       verdict,
       summary: typeof shot.outcome?.["summary"] === "string" ? shot.outcome["summary"] : null,

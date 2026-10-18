@@ -73,6 +73,12 @@ import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import {} from "../contextpack.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
+import {
+  assessOverrides,
+  overrideReader,
+  resolveOverrides,
+  type Customisation,
+} from "../profileoverrides.js";
 import { buildAgents, configAddenda, identityVars, PASS_ADDENDA } from "../include.js";
 import {
   applyProfileTuning,
@@ -85,6 +91,7 @@ import {
   loadProfileEcosystem,
   loadProfileLensTuning,
   loadProfilePosting,
+  type ProfileLookup,
 } from "../profiles.js";
 import {
   applyProfilePosting,
@@ -264,6 +271,11 @@ export interface RunFingerprint {
   /** The profile's `[posting]` policy. Absent at the default posting, so a run
    * without one keeps its fingerprint. */
   posting?: PostingPolicy;
+  /** Set only on a run whose profile replaced shipped agents or prompts and
+   * was allowed to (`--allow-customised`); an uncustomised run keeps its
+   * fingerprint. */
+  customised?: true;
+  profile_overrides?: Array<{ path: string; origin: string; sha256: string }>;
   /** sha256 of the whole effective `[review]` table and the subagent
    * settings the case's pi runs under: a setting none of the named fields
    * above records (task files, rendered outputs, the context pack, a lever
@@ -308,7 +320,12 @@ function fingerprintLenses(
   return out;
 }
 
-export function runFingerprint(cfg: Config, profile: string, overrides = ""): RunFingerprint {
+export function runFingerprint(
+  cfg: Config,
+  profile: string,
+  overrides = "",
+  custom?: Customisation,
+): RunFingerprint {
   // A lever at its shipped default is left out, so a run fingerprints the
   // same as one from before the lever existed.
   const D = REVIEW_DEFAULTS;
@@ -365,8 +382,42 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
     ...(isDefaultPosting(cfg.posting) ? {} : { posting: { ...cfg.posting! } }),
+    ...(custom?.customised
+      ? {
+          customised: true as const,
+          profile_overrides: custom.overrides.map((o) => ({
+            path: o.path,
+            origin: o.origin,
+            sha256: o.sha256,
+          })),
+        }
+      : {}),
     settings_sha256: reviewSettingsDigest(cfg),
   };
+}
+
+/**
+ * The profile's replacements of shipped agents and prompts for a bench run.
+ * A bench run measures the shipped files, so a profile that replaces any is
+ * refused unless `allow` (`--allow-customised`); an allowed run is served the
+ * replacements and records them in its fingerprint. With none, `readFile` is
+ * absent and the run is exactly what it always was.
+ */
+export function benchCustomisation(
+  root: string,
+  profile: string,
+  allow: boolean,
+): { readFile?: (path: string) => string; custom: Customisation } {
+  const set = resolveOverrides({ root, profile });
+  const custom = assessOverrides(root, set);
+  if (custom.customised && !allow)
+    throw new Error(
+      `bench: profile "${profile}" replaces shipped files, so this run would not measure them: ` +
+        `${custom.overrides.map((o) => o.path).join(", ")}. Pass --allow-customised to run it anyway ` +
+        "(the run is recorded as customised).",
+    );
+  const readFile = overrideReader(root, set);
+  return { ...(readFile ? { readFile } : {}), custom };
 }
 
 /** Git reads no system or global configuration and never prompts — for the
@@ -525,6 +576,10 @@ export function buildBenchAgents(
   root: string,
   cfg: Config,
   out: string = join(root, ".pi", "agents"),
+  /** A profile's replacements (src/profileoverrides.ts): `readFile` serves a
+   * replaced agent or prompt, `lookup` adds the repo profile's layer. Absent:
+   * the shipped files and the named profile alone, as always. */
+  profile: { readFile?: (path: string) => string; lookup?: ProfileLookup } = {},
 ): number {
   // Empty it rather than remove it: in the sandbox it is a tmpfs MOUNTPOINT
   // (the root filesystem is read-only), and a mountpoint cannot be rmdir'd.
@@ -534,16 +589,17 @@ export function buildBenchAgents(
     // The bench round runs without the memory extension (header: memory off).
     memory: false,
     root,
+    ...(profile.readFile ? { readFile: profile.readFile } : {}),
     tiers: cfg.models.tiers,
     riskPasses: cfg.models.risk_passes,
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
-    ecosystem: loadProfileEcosystem(root, cfg.review.profile),
+    ecosystem: loadProfileEcosystem(root, cfg.review.profile, profile.lookup),
     models: roundAgentModels(cfg),
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),
-      ...loadProfileAddenda(root, cfg.review.profile),
+      ...loadProfileAddenda(root, cfg.review.profile, profile.lookup),
       ...lensTuningAddenda(cfg.lenses),
       // The profile's `[posting]` policy, compiled for the validator.
       ...postingPolicyAddenda(cfg.posting),
@@ -620,6 +676,8 @@ export function renderCasePrompts(args: {
   /** A follow-up case: the PR-owned delta `benchDelta` computed over
    * the tree (undefined = none could be — the round runs in full). */
   followUpDelta?: PrOwnedDelta;
+  /** A customised run's replacements (`benchCustomisation`). */
+  readFile?: (path: string) => string;
 }): CasePrompts {
   if (args.c.followup) return renderFollowUpPrompts(args);
   const { c, meta } = args;
@@ -643,6 +701,7 @@ export function renderCasePrompts(args: {
     files: args.files,
     issuedAt: args.issuedAt,
     ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
+    ...(args.readFile ? { readFile: args.readFile } : {}),
   });
 }
 
@@ -740,6 +799,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
   const fu = c.followup!;
   return renderFollowUpOneShotPrompts({
     root: args.root,
+    ...(args.readFile ? { readFile: args.readFile } : {}),
     cfg: args.cfg,
     ecosystem: args.ecosystem,
     target: {
@@ -849,7 +909,12 @@ export async function reviewCase(
   c: BenchCase,
   meta: PrefetchMeta,
   o: RunnerOptions,
-  ctx: { cfg: Config; ecosystem: Ecosystem; fingerprint: RunFingerprint },
+  ctx: {
+    cfg: Config;
+    ecosystem: Ecosystem;
+    fingerprint: RunFingerprint;
+    readFile?: (path: string) => string;
+  },
 ): Promise<CaseSummary> {
   const log = o.log ?? (() => {});
   const safe = safeId(c.instance_id);
@@ -922,6 +987,7 @@ export async function reviewCase(
       issuedAt: new Date().toISOString(),
       dependencyNote,
       ...(followUpDelta ? { followUpDelta } : {}),
+      ...(ctx.readFile ? { readFile: ctx.readFile } : {}),
     });
     summary.planned_lenses = prompts.plannedLenses;
     writeFileSync(join(caseDir, "pass-plan.json"), JSON.stringify(prompts.passPlan, null, 2));

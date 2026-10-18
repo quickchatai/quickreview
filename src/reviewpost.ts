@@ -26,6 +26,10 @@ import {
 /** The line every posted comment (and the review body) shows to a reader. */
 export const QCR_VISIBLE_MARKER = "_Posted by qcr (local review)._";
 
+/** The same line when a profile replaced a shipped agent or prompt for the
+ * run (src/profileoverrides.ts): the reader sees the review is not stock. */
+export const QCR_CUSTOMISED_MARKER = "_Posted by qcr (local review, customised profile)._";
+
 /** The only review event this route ever sends. */
 export const POST_EVENT = "COMMENT" as const;
 
@@ -36,10 +40,10 @@ export interface PostReview {
 }
 
 /** Add the visible marker above the hidden finding marker (or at the end). */
-function mark(body: string): string {
+function mark(body: string, visible: string): string {
   const hidden = body.match(new RegExp(`\\n*(${FINDING_MARKER_RE.source})\\s*$`));
-  if (!hidden) return `${body.trimEnd()}\n\n${QCR_VISIBLE_MARKER}`;
-  return `${body.slice(0, hidden.index).trimEnd()}\n\n${QCR_VISIBLE_MARKER}\n\n${hidden[1]}`;
+  if (!hidden) return `${body.trimEnd()}\n\n${visible}`;
+  return `${body.slice(0, hidden.index).trimEnd()}\n\n${visible}\n\n${hidden[1]}`;
 }
 
 /** The review to post from a findings record: rendered by the production
@@ -53,6 +57,8 @@ export function assemblePostReview(
     lenses: readonly string[];
     verdict?: string | null;
     summary?: string | null;
+    /** A profile replaced a shipped file for this run: say so in the marker. */
+    customised?: boolean;
   },
 ): PostReview {
   const { rendered } = renderPostedReview(record, {
@@ -63,10 +69,11 @@ export function assemblePostReview(
     }),
     findingMarkers: { roundNo: o.roundNo },
   });
+  const visible = o.customised ? QCR_CUSTOMISED_MARKER : QCR_VISIBLE_MARKER;
   return {
     event: POST_EVENT,
-    body: mark(rendered.body),
-    comments: rendered.comments.map((c) => ({ ...c, body: mark(c.body) })),
+    body: mark(rendered.body, visible),
+    comments: rendered.comments.map((c) => ({ ...c, body: mark(c.body, visible) })),
   };
 }
 
@@ -146,7 +153,11 @@ interface ExistingComment {
 /** What identifies a comment's finding for a re-post: the text without our
  * markers, whitespace collapsed. */
 const textOf = (body: string): string =>
-  stripFindingMarkers(body).replace(QCR_VISIBLE_MARKER, "").replace(/\s+/g, " ").trim();
+  stripFindingMarkers(body)
+    .replace(QCR_VISIBLE_MARKER, "")
+    .replace(QCR_CUSTOMISED_MARKER, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
 const sameFinding = (c: RenderedComment, e: ExistingComment): boolean => {
   if (e.path !== c.path || typeof e.body !== "string") return false;
