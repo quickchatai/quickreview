@@ -14,6 +14,7 @@ import {
   decideFollowUp,
   followUpSweepOwed,
   leanFollowUpPlan,
+  sweepOrderOf,
   LEAN_ADDABLE_PASSES,
   dispatchOnce,
   renderDeltaPatch,
@@ -278,18 +279,45 @@ describe("follow-up rounds: the delta scope", () => {
     async () => {
       queue(13);
       reviewed(13);
-      adapter.files.set(13, PR_FILES);
-      const { d, orders } = deps({ delta: okDelta([deltaFile("app/api/views.py")]) });
+      adapter.files.set(
+        13,
+        [...PR_FILES, file("tests/api.test.py", 10)].map((f) => ({
+          ...f,
+          patch: "@@ -1 +1 @@\n-return old\n+return new",
+        })),
+      );
+      const config = structuredClone(baseCfg);
+      config.review.sweep_group_files = 1;
+      config.review.behaviour_delta = true;
+      config.review.behaviour_delta_max_groups = 1;
+      config.review.sweep_group_lines = 1;
+      config.review.sweep_light_tier = "terra-med";
+      config.models.pass_tiers["pass-sweep"] = "sol-high";
+      const { d, orders } = deps({
+        cfg: config,
+        delta: okDelta([deltaFile("app/api/views.py"), deltaFile("tests/api.test.py")]),
+      });
       await dispatchOnce(d);
       const o = orders[0]!;
+      expect(
+        new Set(o.optional_plan?.filter((p) => p.lens === "pass-sweep").map((p) => p.tier)).size,
+      ).toBe(2);
       expect(o.optional_plan?.length ?? 0).toBeGreaterThan(0);
+      expect(o.sweep_plan_behaviour_unread?.length).toBeGreaterThan(0);
+      const sweep = sweepOrderOf(o, o.sweep_plan!);
+      expect(sweep.behaviour_unread).toEqual(o.sweep_plan_behaviour_unread);
+      expect(
+        renderPassPlan(sweep.pass_plan, sweep.sweep_unswept, {
+          behaviourUnread: sweep.behaviour_unread,
+        }),
+      ).toContain("Base behaviour not compared");
       const recorded = JSON.parse(lastRound(13).addable_passes!) as Array<{
         lens: string;
         tier: string;
         optional?: boolean;
       }>;
-      for (const lens of new Set(o.optional_plan!.map((p) => p.lens))) {
-        const row = o.optional_plan!.find((p) => p.lens === lens)!;
+      for (const row of o.optional_plan!) {
+        const lens = row.lens;
         expect(recorded).toContainEqual(
           expect.objectContaining({ lens, tier: row.tier, optional: true }),
         );
@@ -889,12 +917,17 @@ describe("follow-up rounds: review fixes", () => {
       const full = buildPassPlan(baseCfg, PR_FILES);
       const carried = await decideFollowUp(seam, {
         ...args,
-        fullPlan: { ...full, sweep_unswept: ["app/far/away.py"] },
+        fullPlan: {
+          ...full,
+          sweep_unswept: ["app/far/away.py"],
+          behaviour_unread: ["app/not-compared.py"],
+        },
       });
       expect(carried.kind).toBe("delta");
       if (carried.kind === "delta") {
         expect(carried.decision.sweepPlan).toEqual(full.pass_plan);
         expect(carried.decision.sweepUnswept).toEqual(["app/far/away.py"]);
+        expect(carried.decision).toMatchObject({ sweepBehaviourUnread: ["app/not-compared.py"] });
       }
     },
   );

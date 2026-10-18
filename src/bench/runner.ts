@@ -957,6 +957,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
       ...(d.optionalPlan ? { optionalPlan: d.optionalPlan } : {}),
       ...(d.sweepPlan ? { sweepPlan: d.sweepPlan } : {}),
       ...(d.sweepUnswept ? { sweepUnswept: d.sweepUnswept } : {}),
+      ...(d.sweepBehaviourUnread ? { sweepBehaviourUnread: d.sweepBehaviourUnread } : {}),
     };
     report = {
       round_no: fu.round_no,

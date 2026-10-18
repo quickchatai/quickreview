@@ -1391,6 +1391,7 @@ export interface FollowUpDecision {
   /** The full plan's files left over the per-round sweep cap — carried with
    * `sweepPlan`, so the sweep is told what it does not cover, as round 1 is. */
   sweepUnswept?: string[];
+  sweepBehaviourUnread?: string[];
   /** `follow_up_extent = "session"`: the full delta plan's rows the
    * lean core left out — per-file sweep rows, quality and style lenses —
    * offered to the session as optional rows. */
@@ -1595,6 +1596,7 @@ export function planFollowUp(
     const optionalLenses = new Set(optionalPlan.map((p) => p.lens));
     plan = {
       ...lean,
+      sweep_unswept: plan.sweep_unswept,
       addable_lenses: lean.addable_lenses.filter((l) => !optionalLenses.has(l)),
     };
   } else {
@@ -1625,6 +1627,9 @@ export function planFollowUp(
             sweepPlan: args.fullPlan.pass_plan,
             ...(args.fullPlan.sweep_unswept.length > 0
               ? { sweepUnswept: args.fullPlan.sweep_unswept }
+              : {}),
+            ...(args.fullPlan.behaviour_unread?.length
+              ? { sweepBehaviourUnread: args.fullPlan.behaviour_unread }
               : {}),
           }
         : {}),
@@ -1731,9 +1736,11 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
     prior_findings_note: _p,
     sweep_plan: _sp,
     sweep_plan_unswept: _su,
+    sweep_plan_behaviour_unread: _bu,
     sweep_task_files: _st,
     // The delta plan's facts, not the whole PR's: the sweep carries its own.
     sweep_unswept: _du,
+    behaviour_unread: _db,
     coverage_files: _cf,
     ...whole
   } = order;
@@ -1743,6 +1750,9 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
     lenses: lensesOf(sweepPlan),
     ...(order.sweep_plan_unswept && order.sweep_plan_unswept.length > 0
       ? { sweep_unswept: order.sweep_plan_unswept }
+      : {}),
+    ...(order.sweep_plan_behaviour_unread?.length
+      ? { behaviour_unread: order.sweep_plan_behaviour_unread }
       : {}),
   };
 }
@@ -1813,6 +1823,7 @@ export function buildRoundOrder(args: {
     optionalPlan?: PassPlanEntry[];
     sweepPlan?: PassPlanEntry[];
     sweepUnswept?: string[];
+    sweepBehaviourUnread?: string[];
   };
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
@@ -1937,6 +1948,9 @@ export function buildRoundOrder(args: {
                 ...(args.followUp.sweepUnswept && args.followUp.sweepUnswept.length > 0
                   ? { sweep_plan_unswept: args.followUp.sweepUnswept }
                   : {}),
+                ...(args.followUp.sweepBehaviourUnread?.length
+                  ? { sweep_plan_behaviour_unread: args.followUp.sweepBehaviourUnread }
+                  : {}),
               }
             : {}),
         }
@@ -1960,21 +1974,18 @@ function recordedPlan(
   validateTier: PassTier | null;
 } {
   const plannedPasses = plan.pass_plan;
-  const optional = new Map<string, RecordedAddablePass>();
-  for (const p of optionalPlan)
-    if (!optional.has(p.lens))
-      optional.set(p.lens, {
-        lens: p.lens,
-        tier: p.tier,
-        optional: true,
-        raisable_to: p.raisable_to,
-      });
+  const optional: RecordedAddablePass[] = optionalPlan.map((p) => ({
+    lens: p.lens,
+    tier: p.tier,
+    optional: true,
+    raisable_to: p.raisable_to,
+  }));
   return {
     plannedPasses,
     lenses: lensesOf(plannedPasses),
     addablePasses: [
       ...plan.addable_lenses.map((lens) => ({ lens, tier: addTierOf(cfg, lens) })),
-      ...optional.values(),
+      ...optional,
     ],
     // Null when the profile switched the validator off: the round had no
     // validator, and recording the configured tier would say it did.
@@ -2694,6 +2705,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
                 ...(followUp.optionalPlan ? { optionalPlan: followUp.optionalPlan } : {}),
                 ...(followUp.sweepPlan ? { sweepPlan: followUp.sweepPlan } : {}),
                 ...(followUp.sweepUnswept ? { sweepUnswept: followUp.sweepUnswept } : {}),
+                ...(followUp.sweepBehaviourUnread
+                  ? { sweepBehaviourUnread: followUp.sweepBehaviourUnread }
+                  : {}),
               },
             }
           : {}),

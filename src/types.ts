@@ -334,6 +334,8 @@ export interface RoundOrder {
    * `sweep_unswept`) — present only beside `sweep_plan`, and rendered in
    * `{{sweep_note}}` as round 1 renders its own. */
   sweep_plan_unswept?: string[];
+  /** Whole-PR behaviour-delta gaps, distinct from the change review's own. */
+  sweep_plan_behaviour_unread?: string[];
   /** `[review] context_pack = "pack-first"`: the round's context pack,
    * written beside its task files (src/contextpack.ts). The task files then
    * point at it; absent ⇒ no task file mentions a pack. */
