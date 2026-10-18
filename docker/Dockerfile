@@ -37,6 +37,10 @@
 # tests/release-image.test.ts fails the moment either default drifts. Bump
 # them together, never one alone.
 ARG NODE_MAJOR=22
+# The Debian release under node. bookworm is the image; bench/aacr/Dockerfile's
+# ocr, claude and pragent arms need git >= 2.41 and python >= 3.12, so bench.sh
+# builds this same file with NODE_DISTRO=trixie for those three.
+ARG NODE_DISTRO=bookworm
 ARG TMUX_VERSION=3.5a
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.3.0
@@ -45,7 +49,7 @@ ARG PI_VERSION=1.3.0
 # bookworm ships 3.3a, below the >=3.5 that `extended-keys-format csi-u` needs
 # (modified keys actually reaching pi). Built once here so the release stage
 # carries the binary and its two runtime libraries, not a compiler.
-FROM node:${NODE_MAJOR}-bookworm AS tmux-build
+FROM node:${NODE_MAJOR}-${NODE_DISTRO} AS tmux-build
 ARG TMUX_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libevent-dev libncurses-dev bison pkg-config \
@@ -58,7 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---- build -------------------------------------------------------------------
 # Compiles the TypeScript and leaves production-only node_modules (native
 # addons - better-sqlite3, node-pty - are built here for the target arch).
-FROM node:${NODE_MAJOR}-bookworm AS build
+FROM node:${NODE_MAJOR}-${NODE_DISTRO} AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -70,7 +74,7 @@ RUN npx tsc -p tsconfig.json && node scripts/verify-dist.mjs
 RUN npm prune --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # ---- release -----------------------------------------------------------------
-FROM node:${NODE_MAJOR}-bookworm-slim AS release
+FROM node:${NODE_MAJOR}-${NODE_DISTRO}-slim AS release
 ARG PI_PACKAGE
 ARG PI_VERSION
 
@@ -78,14 +82,14 @@ ENV DEBIAN_FRONTEND=noninteractive TZ=UTC LANG=C.UTF-8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq ripgrep openssh-client python3 tzdata \
-      libevent-core-2.1-7 libncurses6 \
+      'libevent-core-2.1-7*' libncurses6 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=tmux-build /out/usr/local/bin/tmux /usr/local/bin/tmux
 RUN tmux -V
 
 # GitHub CLI. The scripts the daemon mode runs (scripts/post-review.sh and
-# friends) call it; bench, which posts nothing, drops it again.
+# friends) call it; bench, which posts nothing, purges it (bench/aacr/Dockerfile).
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
