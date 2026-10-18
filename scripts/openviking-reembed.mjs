@@ -68,9 +68,13 @@
 // exit. Zero dependencies and plain JS on purpose: the entrypoint runs it
 // before the TypeScript build, on a container that may have no `dist/` yet.
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -253,9 +257,29 @@ export function readJournal(home) {
 export function writeJournal(home, journal) {
   const path = journalPath(home);
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tmp, path);
+  const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  let fd;
+  try {
+    fd = openSync(tmp, "wx", 0o600);
+    writeFileSync(fd, `${JSON.stringify(journal, null, 2)}\n`);
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = undefined;
+    renameSync(tmp, path);
+    const directory = openSync(dirname(path), "r");
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
+    }
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* The renamed temp no longer exists. */
+    }
+  }
 }
 
 /**
@@ -594,7 +618,7 @@ function errorMessage(body, fallback) {
  *   busy       another reindex of this namespace is already running
  *              (409) — try again later; the server allows one at a time
  *   timeout    the task did not settle within `deadlineMs` — it may still be
- *              running server-side; the next run polls it again via 409
+ *              running server-side; the next run polls its saved task id
  */
 /** @returns {Promise<ReindexResult>} */
 export async function reindexNamespace({
@@ -608,49 +632,64 @@ export async function reindexNamespace({
   pollMs = DEFAULTS.pollMs,
   deadlineMs = DEFAULTS.deadlineMs,
   log = /** @type {Log} */ (() => {}),
+  taskId: savedTaskId = "",
+  onTask = /** @type {(taskId: string) => void} */ (() => {}),
 }) {
   const uri = `viking://user/${user}`;
   const headers = reindexHeaders(key, user);
-  const started = await call(
-    fetchFn,
-    `${base}/api/v1/content/reindex`,
-    { method: "POST", headers, body: JSON.stringify({ uri, mode: "vectors_only", wait: false }) },
-    requestTimeoutMs,
-  );
-  if (started.status === 401 || started.status === 403) {
-    return {
-      status: "failed",
-      uri,
-      detail: `refused (HTTP ${started.status}): ${errorMessage(started.body, "this key does not own the namespace")}`,
-    };
-  }
-  if (started.status === 409)
-    return {
-      status: "busy",
-      uri,
-      detail: "a reindex of this namespace is already running — retry later",
-    };
-  if (started.status < 200 || started.status >= 300 || envelopeError(started.body)) {
-    return {
-      status: "failed",
-      uri,
-      detail:
-        started.error ??
-        `HTTP ${started.status}: ${errorMessage(started.body, "reindex request refused")}`,
-    };
-  }
-  const result =
-    started.body?.result && typeof started.body.result === "object" ? started.body.result : {};
-  if (result.status === "completed") return { status: "completed", uri, ...countsOf(result) };
-  const taskId = typeof result.task_id === "string" ? result.task_id : "";
-  if (!taskId)
-    return {
-      status: "failed",
-      uri,
-      detail: "the server accepted the reindex but named no task to follow",
-    };
-  log(`openviking: reembed ${uri} — task ${taskId} accepted`);
+  let taskId = savedTaskId;
+  if (!taskId) {
+    const started = await call(
+      fetchFn,
+      `${base}/api/v1/content/reindex`,
+      { method: "POST", headers, body: JSON.stringify({ uri, mode: "vectors_only", wait: false }) },
+      requestTimeoutMs,
+    );
+    if (started.status === 401 || started.status === 403) {
+      return {
+        status: "failed",
+        uri,
+        detail: `refused (HTTP ${started.status}): ${errorMessage(started.body, "this key does not own the namespace")}`,
+      };
+    }
+    if (started.status === 409)
+      return {
+        status: "busy",
+        uri,
+        detail: "a reindex of this namespace is already running — retry later",
+      };
+    if (started.status < 200 || started.status >= 300 || envelopeError(started.body)) {
+      return {
+        status: "failed",
+        uri,
+        detail:
+          started.error ??
+          `HTTP ${started.status}: ${errorMessage(started.body, "reindex request refused")}`,
+      };
+    }
+    const result =
+      started.body?.result && typeof started.body.result === "object" ? started.body.result : {};
+    if (result.status === "completed") return { status: "completed", uri, ...countsOf(result) };
+    taskId = typeof result.task_id === "string" ? result.task_id : "";
+    if (!taskId)
+      return {
+        status: "failed",
+        uri,
+        detail: "the server accepted the reindex but named no task to follow",
+      };
+    log(`openviking: reembed ${uri} — task ${taskId} accepted`);
 
+    try {
+      onTask(taskId);
+    } catch (err) {
+      return {
+        status: "timeout",
+        uri,
+        task_id: taskId,
+        detail: `task accepted but its durable identity could not be saved: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
   const deadline = now() + deadlineMs;
   for (;;) {
     await sleep(pollMs);
@@ -660,6 +699,23 @@ export async function reindexNamespace({
       { method: "GET", headers },
       requestTimeoutMs,
     );
+    // A restarted server may have lost its volatile task registry. Only an
+    // authoritative missing saved task permits starting a replacement.
+    if (savedTaskId && task.status === 404) {
+      return reindexNamespace({
+        base,
+        key,
+        user,
+        fetchFn,
+        now,
+        sleep,
+        requestTimeoutMs,
+        pollMs,
+        deadlineMs,
+        log,
+        onTask,
+      });
+    }
     if (task.status >= 200 && task.status < 300 && !envelopeError(task.body)) {
       const t = task.body?.result && typeof task.body.result === "object" ? task.body.result : {};
       if (t.status === "completed")
@@ -734,6 +790,21 @@ export async function resume({
     base,
     key,
     user,
+    taskId: ns.state === "pending" && typeof ns.task_id === "string" ? ns.task_id : "",
+    onTask: (taskId) => {
+      const fresh = readJournal(home).journal;
+      const freshNs = fresh?.namespaces?.[user];
+      if (!fresh || !freshNs || fresh.reset_at !== journal.reset_at)
+        throw new Error("migration changed before task identity could be saved");
+      if (freshNs.state === "completed" && freshNs.settled_by === "operator") return;
+      writeJournal(home, {
+        ...fresh,
+        namespaces: {
+          ...fresh.namespaces,
+          [user]: { ...freshNs, state: "pending", task_id: taskId },
+        },
+      });
+    },
     fetchFn,
     now: () => now().getTime(),
     sleep,
