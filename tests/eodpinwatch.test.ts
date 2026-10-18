@@ -274,6 +274,35 @@ describe("window close and verdict", () => {
     expect(h.anomalies[0]!.detail).toContain("removed 1");
   });
 
+  it("keeps the sweep in flight until its closing snapshot finishes", async () => {
+    let release!: (entries: readonly PinnedEntryView[]) => void;
+    let reached!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const h = harness(
+      [
+        [entry("b1", 0, "h1")],
+        () => {
+          reached();
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+        },
+      ],
+      { windowMin: 1 },
+    );
+    await h.watch.wrapInject(async () => {})("x");
+    h.advance(60_000);
+    h.tick();
+    await started;
+    const premature = h.watch.isOpen();
+    release([entry("b1", 0, "h1")]);
+    await h.watch.settled();
+    expect(premature).toBe(true);
+    expect(h.watch.isOpen()).toBe(false);
+  });
+
   it("closes early when the day's digest appears", async () => {
     let digest = false;
     const h = harness([[entry("b1", 0, "h1")], [entry("b1", 0, "EDITED")]], {

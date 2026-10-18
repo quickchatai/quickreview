@@ -327,7 +327,7 @@ export interface EodPinWatch {
   wrapInject(
     inner: (message: string, date?: string) => Promise<void>,
   ): (message: string, date?: string) => Promise<void>;
-  /** True while a sweep window is open. */
+  /** True until the open sweep window and its closing snapshot are finished. */
   isOpen(): boolean;
   /** Resolves when the most recent window CLOSE has been judged; resolves
    * immediately when no judgement is in flight. Tests await this; production
@@ -366,6 +366,7 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
   const readTimeoutMs = Math.max(1, deps.readTimeoutMs ?? EOD_PIN_WATCH_DEFAULTS.readTimeoutMs);
 
   let win: OpenWindow | null = null;
+  const closing = new Set<OpenWindow>();
   let stopped = false;
   /** The most recent close's judgement — awaited only by tests. */
   let lastJudgement: Promise<void> = Promise.resolve();
@@ -452,9 +453,12 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
     win = null;
     if (w.timer !== null) clearT(w.timer);
     w.timer = null;
-    lastJudgement = judge(w, closedBy).catch((err) =>
-      log("eod pin watch: judgement failed — pinned area unverified today", err),
-    );
+    closing.add(w);
+    lastJudgement = judge(w, closedBy)
+      .catch((err) => log("eod pin watch: judgement failed — pinned area unverified today", err))
+      .finally(() => {
+        closing.delete(w);
+      });
   };
 
   const poll = (w: OpenWindow): void => {
@@ -533,10 +537,11 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
         return inner(message, date);
       };
     },
-    isOpen: () => win !== null,
+    isOpen: () => win !== null || closing.size > 0,
     settled: () => lastJudgement,
     stop() {
       stopped = true;
+      closing.clear();
       const w = win;
       win = null;
       // A restart mid-sweep is not evidence of anything: the window is dropped

@@ -440,6 +440,8 @@ export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
   let stopped = false;
   let handle: unknown = null;
   let target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
+  // Retain the next scheduled day independently of a prior day's retries.
+  let dailyTarget = target;
   /** The day a failed inject is being retried for, and the retries spent. */
   let retry: { date: string; attempt: number } | null = null;
 
@@ -483,7 +485,7 @@ export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
     } else {
       if (!delivered) log(`heartbeat for ${date} not delivered after ${attempt} retries`);
       retry = null;
-      target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
+      target = dailyTarget;
     }
     arm();
   };
@@ -496,6 +498,7 @@ export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
       return;
     }
     const date = retry?.date ?? zoneDateString(target, deps.timeZone);
+    if (retry === null) dailyTarget = nextEodFire(target, deps.timeHHMM, deps.timeZone);
     void fire(date).then(
       (delivered) => settle(date, delivered),
       (err: unknown) => {
