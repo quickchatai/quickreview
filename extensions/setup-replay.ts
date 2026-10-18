@@ -86,13 +86,10 @@ export function renderPlans(
       : SIDES.filter((s) => row[s])
           .map((s) => `${s}: ${row[s]!.case}`)
           .join(", ");
-    const price = [
-      ...new Set(
-        SIDES.filter((s) => row[s])
-          .map((s) => priceOf(row[s]!.case))
-          .filter(Boolean),
-      ),
-    ].join(" + ");
+    const price = [...new Set(SIDES.flatMap((side) => (row[side] ? [row[side]!.case] : [])))]
+      .map(priceOf)
+      .filter(Boolean)
+      .join(" + ");
     lines.push(
       `  ${pad(label(any), 30)} ${pad(row.old?.tier ?? "—", 11)} ${pad(row.new?.tier ?? "—", 11)} ${cases}${price ? `, ${price}` : ""}`,
     );

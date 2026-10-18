@@ -238,3 +238,18 @@ describe("styleGuideRefsIn — the listing twin of findStyleGuide", () => {
     }
   });
 });
+
+describe("source-file variants", () => {
+  it.each([
+    ["pyi", "Python"],
+    ["cts", "TypeScript"],
+    ["cxx", "C++"],
+    ["hh", "C++"],
+    ["hxx", "C++"],
+    ["mm", "Objective-C"],
+  ])("discovers %s code", (extension, language) => {
+    const files = [`component/main.${extension}`];
+    expect(repoFacts(files, () => "").languages).toContainEqual({ language, files: 1 });
+    expect(unitCandidates(files).some((unit) => unit.roots.includes("component"))).toBe(true);
+  });
+});

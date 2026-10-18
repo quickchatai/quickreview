@@ -184,7 +184,9 @@ const clean = (err: unknown): string => (err instanceof Error ? err.message : St
 /** A case that finished, opened every file and kept every note: what lets a
  * unit's earlier notes go, and what a complete run is made of. */
 function caseComplete(c: SurveyCaseState): boolean {
-  return c.status === "done" && c.notes_failed === 0 && !c.unopened?.length;
+  return (
+    c.status === "done" && c.notes_failed === 0 && c.notes_dropped === 0 && !c.unopened?.length
+  );
 }
 
 /** An earlier entry a survey may retire: one a survey RUN wrote (an

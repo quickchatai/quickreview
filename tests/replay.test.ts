@@ -671,3 +671,23 @@ describe("qcr regression", () => {
     expect(handed).toBe(DRY);
   });
 });
+
+it("carries behaviour-delta omissions from the replay planner to the injected order", async () => {
+  const diff = ["a.py", "b.py"]
+    .map(
+      (path) =>
+        `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-return old\n+return changed\n`,
+    )
+    .join("");
+  const io = fakeIo({ answer: { findings: [] }, diff });
+  const config = structuredClone(cfg);
+  config.review.behaviour_delta = true;
+  config.review.behaviour_delta_max_groups = 1;
+  config.review.sweep_group_lines = 1;
+  const planned = buildPassPlan(config, parseUnifiedDiff(diff));
+  expect(planned.behaviour_unread).toHaveLength(1);
+  await replayer(io, { cfg: config, baseClone: REPO }).replay(set.cases[0]!);
+  const order = io.files.get(join(SCRATCH, "run-t1", `pr-${set.cases[0]!.pr}`, "order.md"))!;
+  expect(order).toContain("Base behaviour not compared");
+  expect(order).toContain(planned.behaviour_unread![0]!);
+});

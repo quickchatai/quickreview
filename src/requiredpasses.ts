@@ -17,7 +17,10 @@
  *    `max_self_requeues` instead of applying its verdict.
  * `tests/required-passes.test.ts` runs the Python copy against this one.
  *
- * The rule per required lens: it is MISSING when at least one of its
+ * Each task-directory phase owns its required rows independently. A sweep
+ * completion cannot repair a plan failure, or vice versa; unclassified legacy
+ * executions keep their original plan interpretation.
+ * The rule per required lens in one phase: it is MISSING when at least one of its
  * executions failed and fewer executions completed than the plan has rows
  * for it. A session that relaunched the failed pass and got a return is
  * whole again; a still-running pass is not a gap (nothing has failed yet).
@@ -29,6 +32,7 @@ import type { PassPlanEntry } from "./types.js";
 
 export interface MissingPass {
   lens: string;
+  phase?: "sweep";
   /** Plan rows for this lens. */
   rows: number;
   completed: number;
@@ -55,9 +59,11 @@ export function requiredPassGap(
   plan: readonly PassPlanEntry[] | null,
   progress: RoundProgressSnapshot | undefined,
   roundNo: number,
+  sweepPlan?: readonly PassPlanEntry[] | null,
 ): RequiredPassGap {
   const required = requiredRows(plan ?? []);
-  if (required.size === 0) return { state: "complete" };
+  const sweepRequired = requiredRows(sweepPlan ?? []);
+  if (required.size === 0 && sweepRequired.size === 0) return { state: "complete" };
   if (!progress) return { state: "unknown", reason: "no readable round-progress snapshot" };
   if (progress.round_no !== roundNo)
     return {
@@ -65,18 +71,28 @@ export function requiredPassGap(
       reason: `round-progress snapshot is for round ${progress.round_no ?? "?"}, not ${roundNo}`,
     };
   const missing: MissingPass[] = [];
-  for (const [lens, rows] of required) {
-    const runs = progress.agents.filter((a) => lensForAgent(a.agent) === lens);
-    const completed = runs.filter((a) => a.status === "completed").length;
-    const failedRuns = runs.filter((a) => a.status === "failed");
-    if (failedRuns.length > 0 && completed < rows)
-      missing.push({
-        lens,
-        rows,
-        completed,
-        failed: failedRuns.length,
-        errors: failedRuns.map((a) => a.error ?? "failed"),
-      });
+  for (const [phase, obligations] of [
+    ["plan", required],
+    ["sweep", sweepRequired],
+  ] as const) {
+    for (const [lens, rows] of obligations) {
+      const runs = progress.agents.filter(
+        (a) =>
+          lensForAgent(a.agent) === lens &&
+          (phase === "sweep" ? a.phase === "sweep" : a.phase === undefined || a.phase === "plan"),
+      );
+      const completed = runs.filter((a) => a.status === "completed").length;
+      const failedRuns = runs.filter((a) => a.status === "failed");
+      if (failedRuns.length > 0 && completed < rows)
+        missing.push({
+          lens,
+          ...(phase === "sweep" ? { phase } : {}),
+          rows,
+          completed,
+          failed: failedRuns.length,
+          errors: failedRuns.map((a) => a.error ?? "failed"),
+        });
+    }
   }
   return missing.length > 0 ? { state: "missing", missing } : { state: "complete" };
 }
@@ -120,7 +136,7 @@ export function describeGap(missing: readonly MissingPass[]): string {
   return missing
     .map(
       (m) =>
-        `${m.lens} (${m.completed}/${m.rows} completed, ${m.failed} failed: ${m.errors.join("; ")})`,
+        `${m.phase === "sweep" ? "sweep " : ""}${m.lens} (${m.completed}/${m.rows} completed, ${m.failed} failed: ${m.errors.join("; ")})`,
     )
     .join(", ");
 }

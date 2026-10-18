@@ -104,6 +104,10 @@ describe("near-duplicate findings collapse into one", () => {
         end: 987,
         severity: "P1",
         claim: A986.claim,
+        validated: true,
+        doubt: null,
+        validity: null,
+        scenario: null,
       },
     ]);
     const b = all.find((f) => f.fingerprint === B966.fingerprint)!;

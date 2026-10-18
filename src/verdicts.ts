@@ -1,3 +1,9 @@
+import {
+  enqueueRoundWork,
+  pendingRoundWork,
+  finishRoundWork,
+  type RoundWork,
+} from "./round-work.js";
 // Verdict watcher. The PR session writes
 // verdict/pr-<n>-round-<k>.json at round end; the daemon owns everything that
 // touches GitHub from there: labels off/on, the escalation review request
@@ -71,6 +77,7 @@ import {
   enforceFindingsRecord,
   findingsRecordPath,
   ingestRepairedFindingsRecords,
+  resumeFindingsRecordedHooks,
   readFindingsRecord,
 } from "./findingsrecord.js";
 import {
@@ -433,6 +440,46 @@ interface PlanComparison {
 
 type PlanRow = { lens: string; tier: string; raisable_to?: string[] };
 
+function allowsTier(policy: PlanRow, tier: string | null | undefined): boolean {
+  return (
+    !!tier &&
+    [policy.tier, ...(policy.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!)].includes(
+      tier,
+    )
+  );
+}
+
+/** Match executions to distinct rows before judging any excess retries. */
+function plannedTierMismatches(passes: VerdictPassEntry[], rows: PlanRow[]): string[] {
+  const byLens = new Map<string, PlanRow[]>();
+  for (const row of rows) byLens.set(row.lens, [...(byLens.get(row.lens) ?? []), row]);
+  const wrong: string[] = [];
+  for (const [lens, policies] of byLens) {
+    const runs = passes.filter((pass) => pass.name === lens);
+    const assigned = new Map<number, number>();
+    const place = (run: number, seen: Set<number>): boolean => {
+      for (let row = 0; row < policies.length; row++) {
+        if (seen.has(row) || !allowsTier(policies[row]!, runs[run]!.tier)) continue;
+        seen.add(row);
+        const previous = assigned.get(row);
+        if (previous === undefined || place(previous, seen)) {
+          assigned.set(row, run);
+          return true;
+        }
+      }
+      return false;
+    };
+    const excess = runs.filter((_pass, run) => !place(run, new Set()));
+    for (const pass of excess)
+      if (
+        assigned.size < policies.length ||
+        !policies.some((policy) => allowsTier(policy, pass.tier))
+      )
+        wrong.push(lens);
+  }
+  return wrong;
+}
+
 function comparePlan(
   passes: VerdictPassEntry[],
   plan: PlanRow[] | null,
@@ -451,39 +498,30 @@ function comparePlan(
   };
   if (plan && addable) {
     out.planned = plan.map((p) => p.lens);
-    const byAddable = new Map(addable.map((p) => [p.lens, p]));
-    const byPlan = new Map(plan.map((p) => [p.lens, p]));
+    const byAddable = new Map<string, RecordedAddablePass[]>();
+    for (const policy of addable)
+      byAddable.set(policy.lens, [...(byAddable.get(policy.lens) ?? []), policy]);
+    out.wrongTier = plannedTierMismatches(passes, plan);
+    const plannedNames = new Set(plan.map((p) => p.lens));
     for (const pass of passes) {
-      const plannedPass = byPlan.get(pass.name);
-      if (plannedPass) {
-        const tiers = [
-          plannedPass.tier,
-          ...(plannedPass.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!),
-        ];
-        if (!pass.tier || !tiers.includes(pass.tier)) out.wrongTier.push(pass.name);
-        continue;
-      }
-      const policy = byAddable.get(pass.name);
-      if (!policy) {
+      if (plannedNames.has(pass.name)) continue;
+      const policies = byAddable.get(pass.name);
+      if (!policies) {
         out.unknownAdditions.push(pass.name);
         continue;
       }
-      if (policy.optional) {
-        // An optional row the order offered: its tier or a rung it may raise
-        // to, and no reason owed.
-        const tiers = [
-          policy.tier,
-          ...(policy.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!),
-        ];
-        if (pass.tier && tiers.includes(pass.tier))
+      const optional = policies.filter((policy) => policy.optional);
+      if (optional.length > 0) {
+        if (optional.some((policy) => allowsTier(policy, pass.tier)))
           out.allowedAdditions.push({
             name: pass.name,
-            tier: pass.tier,
+            tier: pass.tier!,
             reason: pass.reason ?? "optional row",
           });
         else out.wrongTier.push(pass.name);
         continue;
       }
+      const policy = policies[0]!;
       if (!pass.tier || pass.tier !== policy.tier) out.wrongTier.push(pass.name);
       if (!pass.reason) out.missingReason.push(pass.name);
       if (pass.tier === policy.tier && pass.reason) {
@@ -495,7 +533,16 @@ function comparePlan(
     // by lens name only.
     out.unknownAdditions = [...new Set(executed.filter((lens) => !out.planned.includes(lens)))];
   }
-  if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
+  if (checkMissing) {
+    const remaining = new Map<string, number>();
+    for (const lens of executed) remaining.set(lens, (remaining.get(lens) ?? 0) + 1);
+    out.missing = out.planned.filter((lens) => {
+      const count = remaining.get(lens) ?? 0;
+      if (count === 0) return true;
+      remaining.set(lens, count - 1);
+      return false;
+    });
+  }
   return out;
 }
 
@@ -707,6 +754,7 @@ export class VerdictWatcher {
   /** Rounds whose owed measurement this process is running or about to run —
    * the boot resume never measures one of them a second time. */
   private readonly measuring = new Set<number>();
+  private readonly working = new Set<string>();
   /** Measurements handed to the background (`MeasureMode`), until they end. */
   private readonly background = new Set<Promise<void>>();
   /** The once-per-watcher resume of measurements an earlier process owed. */
@@ -762,6 +810,16 @@ export class VerdictWatcher {
    * in one line would hold every other PR's verdict behind it — the fs.watch
    * path handles PRs concurrently too. */
   async sweep(): Promise<string[]> {
+    this.resumeRoundWork();
+    this.detach(
+      () =>
+        resumeFindingsRecordedHooks({
+          store: this.deps.store,
+          ...(this.deps.onFindingsRecorded ? { onRecorded: this.deps.onFindingsRecorded } : {}),
+          log: this.log.bind(this),
+        }),
+      "recorded findings hooks",
+    );
     if (!existsSync(this.deps.verdictDir)) return [];
     const byPr = new Map<string, string[]>();
     const listed = readdirSync(this.deps.verdictDir).sort();
@@ -907,15 +965,19 @@ export class VerdictWatcher {
       round_no: round.round_no,
       file: name,
     });
-    this.deps.store.logEvent("verdict_settled", round.pr, {
-      round_id: round.id,
-      round_no: round.round_no,
-      superseded: true,
-    });
+    const owed = this.deps.store.db.transaction(() => {
+      const measurement = this.oweMeasurement(round, round.finished_at);
+      this.deps.store.logEvent("verdict_settled", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        superseded: true,
+      });
+      return measurement;
+    })();
     this.log(
       `verdicts: #${round.pr} round ${round.round_no}'s interrupted apply is overtaken by a later round — ${name} lands nothing more`,
     );
-    return this.oweMeasurement(round, round.finished_at);
+    return owed;
   }
 
   /** A verdict file names a round this PR does not have: archived inert,
@@ -1497,6 +1559,8 @@ export class VerdictWatcher {
               detail: `GitHub review ${match.id} carries ${round.posting_key} in state ${match.state}, which does not say what was posted`,
               failure: "contradicted",
             };
+          const verifiedIntent =
+            receiptIdentityOk && receipt && receipt.status !== "skipped" ? receipt : undefined;
           const synthetic: PostingReceipt = {
             version: 1,
             posting_key: round.posting_key,
@@ -1504,8 +1568,11 @@ export class VerdictWatcher {
             pr: round.pr,
             round_no: round.round_no,
             head_sha: expectedHead,
-            intended_event: actualEvent,
+            intended_event: verifiedIntent?.intended_event ?? actualEvent,
             actual_event: actualEvent,
+            ...(verifiedIntent?.status === "deferred"
+              ? { delivered_by: "daemon_retry" as const }
+              : {}),
             status: "confirmed",
             payload_sha256: "0".repeat(64),
             prepared_at: match.submitted_at ?? this.now().toISOString(),
@@ -1513,7 +1580,7 @@ export class VerdictWatcher {
             gh_review_id: match.id,
             gh_commit_id: match.commit_id,
             gh_state: match.state,
-            reconciled: true,
+            ...(verifiedIntent ? {} : { reconciled: true }),
           };
           if (verdict && !receiptMatchesVerdict(synthetic, verdict)) {
             return {
@@ -2232,12 +2299,21 @@ export class VerdictWatcher {
     // The reviewed-head mark: this head has now been reviewed and decided.
     // Read by the no-new-evidence guard at dispatch and at posting time, and
     // by the post-approval delta recheck.
-    if (v.head_sha)
-      store.recordReviewedHead(v.pr, {
-        head_sha: v.head_sha,
-        verdict: v.verdict,
-        round_no: v.round_no,
-      });
+    if (v.head_sha) {
+      const posted = store.reviewedHead(v.pr);
+      if (
+        posted?.head_sha.toLowerCase() === v.head_sha.toLowerCase() &&
+        posted.round_no === v.round_no &&
+        posted.posted_event !== null
+      )
+        store.recordReviewedVerdict(v.pr, v.head_sha, v.verdict);
+      else
+        store.recordReviewedHead(v.pr, {
+          head_sha: v.head_sha,
+          verdict: v.verdict,
+          round_no: v.round_no,
+        });
+    }
     store.recoverReviewFailure(v.pr, "verdict-applied", {
       round_no: v.round_no,
       head_sha: v.head_sha,
@@ -2304,7 +2380,7 @@ export class VerdictWatcher {
     //
     // The round's usage window closed at its claim (`finished_at`), and its
     // measurement is owed from here — in the same synchronous turn as
-    // `verdict_settled`, so no restart can land between the two. Its reads (async — seconds, at most the usage
+    // `verdict_settled`. Both writes share one SQLite transaction. Its reads (async — seconds, at most the usage
     // budget) run at the very end of the apply, after the compaction request
     // and the held-wake flush: a round dispatched while they run must never
     // receive this round's held wakes (rule 9), and nothing in between reads
@@ -2312,11 +2388,29 @@ export class VerdictWatcher {
     // start measures it.
     let owed: OwedMeasurement | undefined;
     if (round) {
-      store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
-      // The window ends where the round did — its claim — not here: the
-      // awaits since (CI read, Slack) can outlast a successor's dispatch, and
-      // its transcript must not count twice.
-      owed = this.oweMeasurement(round, finished?.finished_at);
+      // Debt and replay suppression share a commit. A persistence failure
+      // leaves the done apply eligible for replay, never silently unmeasured.
+      owed = store.db.transaction(() => {
+        const measurement = this.oweMeasurement(round, finished?.finished_at);
+        this.enqueueTail(
+          v.pr,
+          v.round_no,
+          round.id,
+          v.head_sha,
+          tailPlannedLenses(round, sweepStatus),
+        );
+        if (cfg.escalation.enabled)
+          enqueueRoundWork(store, {
+            key: `escalations:${round.id}`,
+            kind: "escalations",
+            pr: v.pr,
+            round_no: v.round_no,
+            payload: v,
+            due_at: this.now().toISOString(),
+          });
+        store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
+        return measurement;
+      })();
     }
     // Escalation — off unless the operator switched it on, and it runs here,
     // after the verdict has been applied, the label moved and the
@@ -2326,7 +2420,8 @@ export class VerdictWatcher {
     // delivery record and nothing else — there is no channel back into the
     // verdict — and the whole call is wrapped, so even a throw lands as a log
     // line on an already-applied verdict.
-    await this.safe(() => this.deliverEscalations(v), `escalations pr-${v.pr}`);
+    if (round && cfg.escalation.enabled) await this.runRoundWorkKey(`escalations:${round.id}`);
+    else await this.safe(() => this.deliverEscalations(v), `escalations pr-${v.pr}`);
     // Round is over: compact the sticky conversation. Cache re-reads of the
     // ever-growing prefix are a large share of measured cost; the continuity
     // that matters (SETTLED digest, ledger) survives compaction by design:
@@ -2368,6 +2463,27 @@ export class VerdictWatcher {
 
   /** The round-end ledger and findings-record checks, after the settle
    * delay — shared by a verdict and a receipt settlement. */
+  private enqueueTail(
+    pr: number,
+    roundNo: number,
+    roundId: number | null,
+    headSha: string,
+    lenses: string,
+  ): string {
+    const key = `tail:${roundId ?? `${pr}:${roundNo}`}`;
+    enqueueRoundWork(this.deps.store, {
+      key,
+      kind: "tail",
+      pr,
+      round_no: roundNo,
+      payload: { roundId, headSha, lenses },
+      due_at: new Date(
+        this.now().getTime() + Math.max(0, this.deps.ledgerCheckDelayMs ?? 90_000),
+      ).toISOString(),
+    });
+    return key;
+  }
+
   private async scheduleRoundTail(
     pr: number,
     roundNo: number,
@@ -2375,23 +2491,62 @@ export class VerdictWatcher {
     headSha: string,
     lenses: string,
   ): Promise<void> {
-    const planned = lenses ? lenses.split(",").filter(Boolean) : [];
-    const tail = async (): Promise<void> => {
-      await this.safe(() => this.checkLedger(pr, roundNo, headSha), `ledger check pr-${pr}`);
-      await this.safe(
-        () => this.checkFindingsRecord(pr, roundNo, roundId, headSha, planned),
-        `findings record check pr-${pr}`,
-      );
-    };
-    const settleMs = this.deps.ledgerCheckDelayMs ?? 90_000;
-    if (settleMs <= 0) {
-      await tail();
-    } else {
+    const key = this.enqueueTail(pr, roundNo, roundId, headSha, lenses);
+    const delay = this.deps.ledgerCheckDelayMs ?? 90_000;
+    if (delay <= 0) await this.runRoundWorkKey(key);
+    else {
       const timer = setTimeout(() => {
-        void tail();
-      }, settleMs);
+        this.detach(() => this.runRoundWorkKey(key), `round tail ${key}`);
+      }, delay);
       timer.unref?.();
     }
+  }
+
+  private async runRoundWorkKey(key: string): Promise<void> {
+    for (const kind of ["tail", "escalations"] as const) {
+      const work = pendingRoundWork(this.deps.store, kind, this.now().toISOString()).find(
+        (row) => row.key === key,
+      );
+      if (work) await this.runRoundWork(work);
+    }
+  }
+
+  private async runRoundWork(work: RoundWork): Promise<void> {
+    if (this.working.has(work.key)) return;
+    this.working.add(work.key);
+    try {
+      if (work.kind === "tail") {
+        const payload = JSON.parse(work.payload) as {
+          roundId: number | null;
+          headSha: string;
+          lenses: string;
+        };
+        await this.checkLedger(work.pr, work.round_no, payload.headSha);
+        await this.checkFindingsRecord(
+          work.pr,
+          work.round_no,
+          payload.roundId,
+          payload.headSha,
+          payload.lenses.split(",").filter(Boolean),
+        );
+      } else {
+        const parsed = validateVerdict(JSON.parse(work.payload));
+        if (!parsed.ok || !parsed.verdict || parsed.verdict.outcome === "head_moved")
+          throw new Error(`unreadable escalation intent ${work.key}`);
+        await this.deliverEscalations(parsed.verdict);
+      }
+      finishRoundWork(this.deps.store, work.key, this.now().toISOString());
+    } catch (err) {
+      this.log(`verdicts: owed ${work.kind} for #${work.pr} round ${work.round_no} failed`, err);
+    } finally {
+      this.working.delete(work.key);
+    }
+  }
+
+  private resumeRoundWork(): void {
+    for (const kind of ["tail", "escalations"] as const)
+      for (const work of pendingRoundWork(this.deps.store, kind, this.now().toISOString()))
+        this.detach(() => this.runRoundWork(work), `owed ${kind} ${work.key}`);
   }
 
   // ---- escalation (off by default) ---------------------------------------
@@ -2934,8 +3089,9 @@ export class VerdictWatcher {
     startedAt: string,
     finishedAt: string,
     integrity: "check" | "interrupted" = "check",
-  ): Promise<void> {
+  ): Promise<boolean> {
     const { cfg, store } = this.deps;
+    let persisted = false;
     try {
       const bounded = await withinBudget(
         this.transcripts.measure({
@@ -2989,6 +3145,7 @@ export class VerdictWatcher {
         );
       }
 
+      persisted = true;
       // Classified, so the durable event says which policy was crossed.
       if (integrity === "check") await this.checkRoundIntegrity(pr, roundId);
       else this.integrityInterrupted(pr, roundId);
@@ -3006,6 +3163,7 @@ export class VerdictWatcher {
     } catch (err) {
       this.log(`verdicts: usage measurement failed for #${pr}`, err);
     }
+    return persisted;
   }
 
   /**
@@ -3017,8 +3175,8 @@ export class VerdictWatcher {
    * `rounds.usage_owed_to` carries the window's end from the same synchronous
    * turn as the round end's terminal write until the measurement has
    * finished, whatever it found, and the next start resumes what is still owed
-   * (`resumeOwedMeasurements`). Best-effort on the durable half: a write that
-   * fails is logged, and the measurement still runs in this process.
+   * (`resumeOwedMeasurements`). The durable write must succeed before a
+   * terminal replay marker is published; a failure leaves apply replayable.
    */
   private oweMeasurement(
     round: Pick<RoundRow, "id" | "pr" | "round_no" | "started_at">,
@@ -3028,15 +3186,8 @@ export class VerdictWatcher {
     endedAt?: string | null,
   ): OwedMeasurement {
     const measuredTo = endedAt ?? this.now().toISOString();
+    this.deps.store.oweRoundMeasurement(round.id, measuredTo);
     this.measuring.add(round.id);
-    try {
-      this.deps.store.oweRoundMeasurement(round.id, measuredTo);
-    } catch (err) {
-      this.log(
-        `verdicts: #${round.pr} round ${round.round_no} — could not record its owed measurement`,
-        err,
-      );
-    }
     return {
       pr: round.pr,
       roundId: round.id,
@@ -3059,23 +3210,27 @@ export class VerdictWatcher {
   }
 
   /** The measurement, then the obligation cleared — whatever it found
-   * (`measureUsage` records usage, or records it unknown, and never throws). */
+   * (`measureUsage` explicitly reports that usage or unknown was persisted). */
   private async runMeasurement(
     owed: OwedMeasurement,
     integrity: "check" | "interrupted",
   ): Promise<void> {
     try {
-      await this.measureUsage(owed.pr, owed.roundId, owed.startedAt, owed.measuredTo, integrity);
+      const persisted = await this.measureUsage(
+        owed.pr,
+        owed.roundId,
+        owed.startedAt,
+        owed.measuredTo,
+        integrity,
+      );
+      if (persisted) this.deps.store.settleRoundMeasurement(owed.roundId);
+    } catch (err) {
+      this.log(
+        `verdicts: #${owed.pr} round ${owed.roundNo} — could not settle its owed measurement`,
+        err,
+      );
     } finally {
       this.measuring.delete(owed.roundId);
-      try {
-        this.deps.store.settleRoundMeasurement(owed.roundId);
-      } catch (err) {
-        this.log(
-          `verdicts: #${owed.pr} round ${owed.roundNo} — could not clear its owed measurement`,
-          err,
-        );
-      }
     }
   }
 
@@ -3410,6 +3565,7 @@ export class VerdictWatcher {
       }
       // Owed FAILED_LOUD review work keeps its wakes behind it.
       if (store.openReviewFailure(pr)) continue;
+      if (store.blockingSessionCommand(`pr-${pr}`)) continue;
       // A paused PR holding only deferred rechecks waits for the resume,
       // quietly: the next tick after the pause lifts delivers them.
       if (pauseDefersAllHeldWakes(store, pr)) continue;
@@ -3887,7 +4043,12 @@ export class VerdictWatcher {
         round_no: v.round_no,
         failed: failures,
       });
-    const gap = requiredPassGap(parsePlan(round.pass_plan), progress, v.round_no);
+    const gap = requiredPassGap(
+      parsePlan(round.pass_plan),
+      progress,
+      v.round_no,
+      parsePlan(round.sweep_plan),
+    );
     if (gap.state !== "missing") return false;
     const missing = describeGap(gap.missing);
     const posted = this.reviewWentOut(v.pr, v.round_no, proven);

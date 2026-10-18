@@ -387,7 +387,11 @@ export function wrapExecute(
 ): ToolExecute {
   return async function wrapped(this: unknown, id, params, signal, onUpdate, ctx) {
     const safe = sanitizeParams(params ?? {}, env);
-    if (resolveWideFanout(env) && Array.isArray(safe.tasks) && safe.tasks.length > 1) {
+    if (
+      (resolveWideFanout(env) || resolvePassDeadlineMs(env) !== undefined) &&
+      Array.isArray(safe.tasks) &&
+      safe.tasks.length > 1
+    ) {
       return await runWide.call(this, execute, semaphore, id, safe, signal, onUpdate, ctx, env);
     }
     const weight = callWeight(safe, semaphore.permits);
@@ -531,30 +535,38 @@ async function runWide(
     typeof onUpdate === "function"
       ? (onUpdate as unknown as (update: ParallelNativeResult) => void)
       : undefined;
+  const nativeSlots = resolveWideFanout(env)
+    ? undefined
+    : new WeightedSemaphore(NATIVE_IN_CALL_CONCURRENCY);
   const values = await Promise.all(
     tasks.map(async (task, index) => {
-      const passUpdate = notify
-        ? (value: ParallelNativeResult) => {
-            partial[index] = value.details.results;
-            notify({
-              ...value,
-              details: { ...value.details, mode: "parallel", results: partial.flat() },
-            });
-          }
-        : undefined;
-      const value = await runPass.call(
-        this,
-        execute,
-        semaphore,
-        id,
-        { ...safe, tasks: [task] },
-        signal,
-        passUpdate,
-        ctx,
-        deadlineMs,
-      );
-      partial[index] = value.details.results;
-      return value;
+      await nativeSlots?.acquire(1);
+      try {
+        const passUpdate = notify
+          ? (value: ParallelNativeResult) => {
+              partial[index] = value.details.results;
+              notify({
+                ...value,
+                details: { ...value.details, mode: "parallel", results: partial.flat() },
+              });
+            }
+          : undefined;
+        const value = await runPass.call(
+          this,
+          execute,
+          semaphore,
+          id,
+          { ...safe, tasks: [task] },
+          signal,
+          passUpdate,
+          ctx,
+          deadlineMs,
+        );
+        partial[index] = value.details.results;
+        return value;
+      } finally {
+        nativeSlots?.release(1);
+      }
     }),
   );
   const allResults = values.flatMap((v) => v.details.results);

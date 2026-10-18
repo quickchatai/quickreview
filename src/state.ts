@@ -1132,6 +1132,18 @@ CREATE TABLE IF NOT EXISTS operator_commands (
   file       TEXT NOT NULL,
   handled_at TEXT NOT NULL
 );
+-- Owed post-settlement work. A terminal replay marker and its obligations
+-- share a transaction; completion receipts prevent later duplicate effects.
+CREATE TABLE IF NOT EXISTS round_work (
+  key TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  pr INTEGER NOT NULL,
+  round_no INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS round_work_pending ON round_work (kind, due_at) WHERE completed_at IS NULL;
 CREATE TABLE IF NOT EXISTS filed_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,           -- 'improvement_pr' | 'issue'
@@ -2445,17 +2457,26 @@ export class StateStore {
     summary: string | null = null,
     expectedStatus?: string,
   ): boolean {
-    const row = this.db.prepare("SELECT started_at FROM rounds WHERE id = ?").get(id) as
-      { started_at: string } | undefined;
-    const duration = row ? (this.now().getTime() - Date.parse(row.started_at)) / 1000 : null;
+    const row = this.db
+      .prepare("SELECT started_at, finished_at, duration_s, status FROM rounds WHERE id = ?")
+      .get(id) as
+      Pick<RoundRow, "started_at" | "finished_at" | "duration_s" | "status"> | undefined;
+    const finishedAt =
+      row?.status === "done" && row.finished_at !== null ? row.finished_at : this.ts();
+    const duration =
+      row?.status === "done" && row.duration_s !== null
+        ? row.duration_s
+        : row
+          ? (Date.parse(finishedAt) - Date.parse(row.started_at)) / 1000
+          : null;
     const set =
       "UPDATE rounds SET verdict = ?, est_usd = COALESCE(est_usd, ?), duration_s = ?, finished_at = ?, summary = ?, status = 'done' WHERE id = ?";
     const result =
       expectedStatus === undefined
-        ? this.db.prepare(set).run(verdict, estUsd, duration, this.ts(), summary, id)
+        ? this.db.prepare(set).run(verdict, estUsd, duration, finishedAt, summary, id)
         : this.db
             .prepare(`${set} AND status = ?`)
-            .run(verdict, estUsd, duration, this.ts(), summary, id, expectedStatus);
+            .run(verdict, estUsd, duration, finishedAt, summary, id, expectedStatus);
     return result.changes > 0;
   }
 
@@ -3197,17 +3218,16 @@ export class StateStore {
     );
   }
 
-  /** Preserve a failed rebirth's pre-reserve cause on the one command row.
-   * The command remains pending and retryable; this is diagnosis, not a
-   * terminal transition. The next recovery and final FAILED_LOUD incident use
-   * this cause instead of collapsing it back to generic UNKNOWN evidence. */
+  /** Preserve an unusable payload's diagnosis without changing command
+   * status or ownership. Only commands eligible for replay accept it. */
   noteSessionCommandRecoveryFailure(id: string, failure: string): boolean {
     const ts = this.ts();
     return (
       this.db
         .prepare(
           `UPDATE session_commands SET failure=@failure, updated_at=@ts
-        WHERE id=@id AND status IN ('pending', 'running') AND started_at IS NULL`,
+        WHERE id=@id AND status IN ('pending', 'running', 'failed')
+          AND (kind != 'round' OR started_at IS NULL)`,
         )
         .run({ id, failure, ts }).changes === 1
     );
@@ -3594,22 +3614,38 @@ export class StateStore {
     reason: string,
     cap = MAX_HELD_WAKES,
   ): EvictedWake[] {
-    const hold = this.db.transaction((): EvictedWake[] => {
-      this.db
-        .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
-        .run(pr, payload, reason, this.now().toISOString());
-      return this.trimHeldWakes(pr, cap);
-    });
-    return hold();
+    return this.holdWakeWithIdentity(pr, payload, reason, cap).dropped;
   }
 
-  heldWakes(pr: number): PendingWakeRow[] {
+  /** The inserted identity remains observable even when the cap evicts it. */
+  holdWakeWithIdentity(
+    pr: number,
+    payload: string,
+    reason: string,
+    cap = MAX_HELD_WAKES,
+  ): { id: number; dropped: EvictedWake[] } {
+    return this.db.transaction(() => {
+      const inserted = this.db
+        .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
+        .run(pr, payload, reason, this.now().toISOString());
+      return { id: Number(inserted.lastInsertRowid), dropped: this.trimHeldWakes(pr, cap) };
+    })();
+  }
+
+  heldWakes(pr: number, skipReasonPrefix?: string): PendingWakeRow[] {
     return this.db
       .prepare(
-        `SELECT * FROM pending_wakes WHERE pr = ?
+        `SELECT * FROM pending_wakes WHERE pr=@pr
+      AND (@skip IS NULL OR substr(CASE WHEN substr(reason,1,@recoveredLength)=@recovered
+        THEN substr(reason,@recoveredLength+1) ELSE reason END,1,length(@skip)) != @skip)
       ORDER BY ${PENDING_WAKE_ORDER_SQL}`,
       )
-      .all(pr) as PendingWakeRow[];
+      .all({
+        pr,
+        skip: skipReasonPrefix ?? null,
+        recovered: OPERATOR_RECOVERED_WAKE_PREFIX,
+        recoveredLength: OPERATOR_RECOVERED_WAKE_PREFIX.length,
+      }) as PendingWakeRow[];
   }
 
   hasHeldWakes(pr: number): boolean {
@@ -3638,21 +3674,7 @@ export class StateStore {
     if (!Number.isSafeInteger(count) || count < 1)
       throw new Error(`invalid held-wake batch size ${count}`);
     const claim = this.db.transaction((n: number): PendingWakeRow[] | null => {
-      const rows = (
-        skipReasonPrefix === undefined
-          ? this.db
-              .prepare(
-                `SELECT * FROM pending_wakes WHERE pr = ?
-        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`,
-              )
-              .all(n, count)
-          : this.db
-              .prepare(
-                `SELECT * FROM pending_wakes WHERE pr = ? AND substr(reason, 1, ?) != ?
-        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`,
-              )
-              .all(n, skipReasonPrefix.length, skipReasonPrefix, count)
-      ) as PendingWakeRow[];
+      const rows = this.heldWakes(n, skipReasonPrefix).slice(0, count);
       if (rows.length !== count) return null;
       if (rows.some((row) => row.claim_token && row.claimed_at && row.claimed_at > leaseBefore))
         return null;

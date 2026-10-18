@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { claimTrackerId } from "../src/trackerid.js";
 import { claimNextId } from "../src/tui/autofile.js";
@@ -31,6 +31,21 @@ import {
   scanTrackerSink,
   stampedFingerprints,
 } from "../src/setup/trackersink.js";
+
+const ticketFault = vi.hoisted(() => ({ active: false }));
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return {
+    ...fs,
+    writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+      if (ticketFault.active && String(args[1]).includes("Scan-fingerprint:")) {
+        fs.writeFileSync(args[0], "# Partial ticket\n");
+        throw new Error("disk full");
+      }
+      return fs.writeFileSync(...args);
+    },
+  };
+});
 
 let root: string;
 beforeEach(() => {
@@ -295,4 +310,24 @@ describe("the markdown fallback", () => {
     );
     expect(scanTrackerSink({ trackerDir: undefined, state, clock }).kind).toBe("markdown");
   });
+});
+
+it("publishes a complete fingerprint stamp or no ticket after an interrupted write", async () => {
+  try {
+    ticketFault.active = true;
+    expect((await sink().file(ticket())).ok).toBe(false);
+    expect(
+      readdirSync(join(root, "efforts/billing/tickets")).filter((name) => name.endsWith(".md")),
+    ).toEqual([]);
+  } finally {
+    ticketFault.active = false;
+  }
+  expect((await sink().file(ticket())).ok).toBe(true);
+  const files = readdirSync(join(root, "efforts/billing/tickets")).filter((name) =>
+    name.endsWith(".md"),
+  );
+  expect(files).toHaveLength(1);
+  expect(
+    stampedFingerprints(readFileSync(join(root, "efforts/billing/tickets", files[0]!), "utf8")),
+  ).toContain(FP("a"));
 });

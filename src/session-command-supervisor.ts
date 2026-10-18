@@ -277,6 +277,7 @@ export class SessionCommandSupervisor {
       return;
     }
     if (command.status === "running" && settled) {
+      if (!due && this.hasDeferredStageCheck(command)) return;
       await this.settledWithoutVerdict(command);
       return;
     }

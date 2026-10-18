@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseConfig, type Config } from "../src/config.js";
+import { parseConfig, parseEscalation, type Config } from "../src/config.js";
 import type { GateResult } from "../src/gate.js";
 import { StateStore, type ReviewedHeadRow } from "../src/state.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
@@ -4681,4 +4681,343 @@ describe("review rework: loud where nothing repairs, measured where the window i
     expect(store.getPr(722)?.state).toBe("queued");
     expect(countOf("anomaly_round_ended", 722)).toBe(1);
   });
+});
+
+describe("grouped plan telemetry retains every row policy", () => {
+  const row = (tier: string, raises: string[] = []) => ({
+    lens: "pass-sweep",
+    agent: `pass-sweep--${tier}`,
+    tier,
+    raisable_to: raises,
+  });
+  const mismatch = () => {
+    const event = store.db
+      .prepare(
+        "SELECT payload FROM events WHERE kind = 'pass_plan_mismatch' ORDER BY id DESC LIMIT 1",
+      )
+      .get() as { payload: string } | undefined;
+    return event ? JSON.parse(event.payload) : undefined;
+  };
+  async function run(rows: ReturnType<typeof row>[], tiers: string[], optional = false) {
+    const id = policyRound(820);
+    store.db.prepare("UPDATE rounds SET pass_plan=?,addable_passes=? WHERE id=?").run(
+      JSON.stringify(optional ? [] : rows),
+      JSON.stringify(
+        optional
+          ? rows.map((r) => ({
+              lens: r.lens,
+              tier: r.tier,
+              raisable_to: r.raisable_to,
+              optional: true,
+            }))
+          : [],
+      ),
+      id,
+    );
+    const { hooks } = recordingHooks();
+    await watcher({}, hooks).handleFile(
+      write(
+        820,
+        1,
+        verdictFile({
+          pr: 820,
+          passes: tiers.map((tier) => ({ name: "pass-sweep", tier, findings: 0 })),
+        }),
+      ),
+    );
+  }
+  it("does not let the final low-tier row license every production sweep", async () => {
+    await run(
+      [row("sol-high"), row("sol-high"), row("terra-med")],
+      ["terra-med", "terra-med", "terra-med"],
+    );
+    expect(mismatch()?.wrong_tier).toHaveLength(2);
+  });
+  it("accepts each row's actual tier regardless of row or execution order", async () => {
+    await run(
+      [row("sol-high"), row("sol-high"), row("terra-med")],
+      ["terra-med", "sol-high", "sol-high"],
+    );
+    expect(mismatch()).toBeUndefined();
+  });
+  it("assigns a raise without consuming the only row a lower tier can satisfy", async () => {
+    await run(
+      [row("terra-med", ["pass-sweep--sol-high"]), row("sol-high")],
+      ["sol-high", "terra-med"],
+    );
+    expect(mismatch()).toBeUndefined();
+  });
+  it("counts missing executions for repeated rows of the same lens", async () => {
+    await run([row("terra-med"), row("terra-med")], ["terra-med"]);
+    expect(mismatch()?.missing).toEqual(["pass-sweep"]);
+  });
+  it("retains all offered optional tiers", async () => {
+    await run([row("sol-high"), row("terra-med")], ["sol-high"], true);
+    expect(mismatch()).toBeUndefined();
+  });
+});
+
+describe("settlement preserves earlier durable facts", () => {
+  it("publishes measurement debt before settlement makes verdict replay inert", async () => {
+    const id = reviewingRound(734);
+    const original = store.logEvent.bind(store);
+    let owedAtSettlement: string | null | undefined;
+    store.logEvent = (kind, pr, payload) => {
+      if (kind === "verdict_settled")
+        owedAtSettlement = store.roundsFor(734).find((r) => r.id === id)?.usage_owed_to;
+      return original(kind, pr, payload);
+    };
+    await watcher().handleFile(write(734, 1, verdictFile({ pr: 734 })));
+    expect(owedAtSettlement).toEqual(expect.any(String));
+  });
+
+  it("retains measurement debt when neither usage nor an unknown result can be persisted", async () => {
+    const id = reviewingRound(735);
+    const recordUsage = store.recordRoundUsage.bind(store);
+    const logEvent = store.logEvent.bind(store);
+    store.recordRoundUsage = () => {
+      throw new Error("database full during usage write");
+    };
+    store.logEvent = (kind, pr, payload) => {
+      if (kind === "round_usage_unknown") throw new Error("database full during unknown write");
+      return logEvent(kind, pr, payload);
+    };
+    await watcher().handleFile(write(735, 1, verdictFile({ pr: 735 })));
+    expect(store.roundsFor(735).find((r) => r.id === id)?.usage_owed_to).toEqual(
+      expect.any(String),
+    );
+    store.recordRoundUsage = recordUsage;
+    store.logEvent = logEvent;
+    const restarted = watcher();
+    await restarted.sweep();
+    await restarted.idle();
+    expect(store.roundsFor(735).find((r) => r.id === id)?.usage_owed_to).toBeNull();
+  });
+
+  it("resuming a done apply preserves its first completion and usage window", async () => {
+    store.close();
+    let clock = new Date("2026-08-13T12:00:00.000Z");
+    store = new StateStore(":memory:", () => clock);
+    const id = reviewingRound(730);
+    const { key } = stampPosting(730, 1);
+    writePostingReceipt(730, 1, key, "REQUEST_CHANGES");
+    clock = new Date(clock.getTime() + 10_000);
+    store.finishRound(id, "REQUEST_CHANGES", null);
+    const first = store.roundsFor(730)[0]!;
+    clock = new Date(clock.getTime() + 120_000);
+    await watcher({ now: () => clock }).handleFile(write(730, 1, verdictFile({ pr: 730 })));
+    expect(store.roundsFor(730)[0]).toMatchObject({
+      finished_at: first.finished_at,
+      duration_s: first.duration_s,
+    });
+  });
+
+  it("enriching a posted round keeps an author reply that arrived after posting", async () => {
+    reviewingRound(731);
+    store.recordReviewedHead(731, {
+      head_sha: "abc123",
+      posted_event: "REQUEST_CHANGES",
+      round_no: 1,
+    });
+    const stamped = store.reviewedHead(731)!;
+    const replyAt = new Date(Date.parse(stamped.reviewed_at) + 1000).toISOString();
+    adapter.removeLabel = async () => {
+      store.noteAuthorReply(731, replyAt);
+      return { executed: false, dryRunFile: "d" };
+    };
+    await watcher().handleFile(write(731, 1, verdictFile({ pr: 731 })));
+    expect(store.reviewedHead(731)).toMatchObject({
+      reviewed_at: stamped.reviewed_at,
+      last_author_reply_at: replyAt,
+      verdict: "REQUEST_CHANGES",
+    });
+  });
+
+  it("does not report ordinary queued wakes as stranded behind a non-round owner", async () => {
+    reviewingRound(732);
+    store.finishRound(store.roundsFor(732)[0]!.id, "APPROVE", null);
+    store.setPrState(732, "tracked");
+    store.createSessionCommand({
+      id: "owning-wake",
+      pr: 732,
+      session: "pr-732",
+      kind: "wake",
+      round_no: null,
+      payload_path: join(dir, "owner.md"),
+      payload_sha256: "a".repeat(64),
+      inject_path: join(dir, "inject.md"),
+      next_check_at: "2099-01-01T00:00:00.000Z",
+    });
+    store.holdWake(732, "later FIFO wake", "ordinary");
+    const h = recordingHooks();
+    await watcher({}, h.hooks).checkDeadlines();
+    expect(
+      store.db.prepare("SELECT * FROM events WHERE pr=732 AND kind='wakes_stranded'").all(),
+    ).toEqual([]);
+    expect(store.heldWakes(732)).toHaveLength(1);
+    expect(h.injects).toEqual([]);
+  });
+
+  it("reconciles a marker-confirmed COMMENT using the surviving withheld approval intent", async () => {
+    const id = reviewingRound(733);
+    const { key } = stampPosting(733, 1);
+    writePostingReceipt(733, 1, key, "APPROVE", {
+      status: "deferred",
+      deferred_at: "2026-08-13T12:00:00.000Z",
+      gh_review_id: undefined,
+      gh_commit_id: undefined,
+      gh_state: undefined,
+    });
+    adapter.listReviewsFull = async () => [
+      {
+        id: 7331,
+        user: cfg.github.bot_login,
+        user_type: "Bot",
+        state: "COMMENTED",
+        body: `review\n\n${postingMarker(key)}`,
+        commit_id: "abc123",
+        submitted_at: "2026-08-13T12:00:00.000Z",
+      },
+    ];
+    await watcher({ cfg: { ...cfg, dry_run: false } }).handleFile(
+      write(
+        733,
+        1,
+        verdictFile({
+          pr: 733,
+          verdict: "APPROVE",
+        }),
+      ),
+    );
+    expect(store.roundsFor(733)[0]).toMatchObject({ id, status: "done", verdict: "APPROVE" });
+    expect(store.openReviewFailure(733)).toBeUndefined();
+    expect(store.approvalWithheld(733)?.head_sha).toBe("abc123");
+  });
+});
+
+describe("round tail survives process restart", () => {
+  it("resumes an enabled escalation interrupted after the settled marker", async () => {
+    reviewingRound(742);
+    const escalation = parseEscalation({
+      enabled: true,
+      targets: ["teammate-one"],
+      rules: [{ name: "all", to: "teammate-one", why: "you own this code", paths: ["**"] }],
+    });
+    let release!: () => void;
+    let reached!: () => void;
+    const entered = new Promise<void>((r) => {
+      reached = r;
+    });
+    const blocked = new Promise<void>((r) => {
+      release = r;
+    });
+    let comments = 0;
+    let firstRead = true;
+    const escAdapter: VerdictAdapter = {
+      addLabel: adapter.addLabel.bind(adapter),
+      removeLabel: adapter.removeLabel.bind(adapter),
+      async listPrFiles() {
+        if (firstRead) {
+          firstRead = false;
+          reached();
+          await blocked;
+        }
+        return [{ filename: "a.py" }];
+      },
+      async getPr() {
+        return { labels: [] };
+      },
+      async createReview() {
+        comments++;
+        return { executed: true };
+      },
+    };
+    const deps = { cfg: { ...cfg, escalation }, adapter: escAdapter };
+    const interrupted = watcher(deps).handleFile(write(742, 1, verdictFile({ pr: 742 })));
+    await entered;
+    const restarted = watcher(deps);
+    let deliveredAfterRestart: number;
+    try {
+      await restarted.sweep();
+      await restarted.idle();
+      deliveredAfterRestart = comments;
+    } finally {
+      release();
+      await interrupted;
+    }
+    expect(deliveredAfterRestart).toBe(1);
+    expect(comments).toBe(1);
+    await restarted.sweep();
+    await restarted.idle();
+    expect(comments).toBe(1);
+  });
+
+  it("resumes the delayed findings and ledger checks exactly once", async () => {
+    let clock = new Date();
+    const id = reviewingRound(740);
+    const findingsDir = join(dir, "state", "findings");
+    mkdirSync(findingsDir, { recursive: true });
+    writeFileSync(
+      join(findingsDir, "pr-740-round-1.json"),
+      JSON.stringify({
+        pr: 740,
+        round_no: 1,
+        findings: [{ id: "a", lens: "pass-baseline", disposition: "posted" }],
+      }),
+    );
+    const first = watcher({ findingsDir, ledgerCheckDelayMs: 90_000, now: () => clock });
+    await first.handleFile(write(740, 1, verdictFile({ pr: 740 })));
+    expect(store.findingsForRound(740, 1)).toEqual([]);
+    clock = new Date(clock.getTime() + 91_000);
+    const restarted = watcher({ findingsDir, now: () => clock });
+    await restarted.sweep();
+    await restarted.idle();
+    expect(store.findingsForRound(740, 1)).toHaveLength(1);
+    const recorded = () =>
+      store.db.prepare("SELECT * FROM events WHERE pr=740 AND kind='findings_recorded'").all();
+    expect(recorded()).toHaveLength(1);
+    expect(store.roundsFor(740)[0]).toMatchObject({ id, status: "done" });
+    await restarted.sweep();
+    await restarted.idle();
+    expect(recorded()).toHaveLength(1);
+  });
+
+  it.each([false, true])(
+    "resumes a consumed findings hook after its dependency becomes ready (missing verdict directory: %s)",
+    async (missingVerdictDir) => {
+      reviewingRound(741);
+      const findingsDir = join(dir, "state", "findings");
+      mkdirSync(findingsDir, { recursive: true });
+      writeFileSync(
+        join(findingsDir, "pr-741-round-1.json"),
+        JSON.stringify({
+          pr: 741,
+          round_no: 1,
+          findings: [{ id: "a", lens: "pass-baseline", disposition: "posted" }],
+        }),
+      );
+      await watcher({
+        findingsDir,
+        ledgerCheckDelayMs: 0,
+        onFindingsRecorded: () => {
+          throw new Error("lesson ledger is not ready during boot");
+        },
+      }).handleFile(write(741, 1, verdictFile({ pr: 741 })));
+      expect(store.findingsForRound(741, 1)).toHaveLength(1);
+      let completed = 0;
+      const restarted = watcher({
+        findingsDir,
+        ...(missingVerdictDir ? { verdictDir: join(dir, "absent-verdict-directory") } : {}),
+        onFindingsRecorded: () => {
+          completed++;
+        },
+      });
+      await restarted.sweep();
+      await restarted.idle();
+      expect(completed).toBe(1);
+      await restarted.sweep();
+      await restarted.idle();
+      expect(completed).toBe(1);
+    },
+  );
 });

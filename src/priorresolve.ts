@@ -1,3 +1,5 @@
+import { postedFindingChains } from "./priorfindings.js";
+import { markerTwins, type FindingCommentRow } from "./outcomes.js";
 // Resolving the bot's own threads for findings a follow-up round verified
 // FIXED.
 //
@@ -32,8 +34,8 @@
 // `prior_thread_resolve_failed`), and nothing here wakes anyone or holds a
 // round. A resolve that fails for a reason other than the adapter's own
 // refusal (a GitHub 5xx, a dropped connection) is tried again twice, a few
-// seconds apart, before it is recorded failed: this runs once per round, and
-// nothing later re-raises a fixed finding's thread. It never unresolves anything and never touches another identity's
+// seconds apart, before it is recorded failed. Durable per-thread outcomes
+// let a restart resume only unfinished work; an exhausted failure is terminal. It never unresolves anything and never touches another identity's
 // thread.
 
 import { ThreadResolutionRefusal } from "./thread-resolution-refusal.js";
@@ -81,6 +83,25 @@ function commentIdsOf(
       .all(pr, roundNo, findingKey) as Array<{ thread_id: number }>)
       ids.add(r.thread_id);
   }
+  if (hasLinks) {
+    const comments = store.db
+      .prepare("SELECT * FROM finding_comments WHERE pr=? ORDER BY comment_id")
+      .all(pr) as FindingCommentRow[];
+    // A captured root may not have been linked yet. Its round's durable
+    // thread id still establishes that root, but only its exact marker may
+    // establish twins (a positional link does not confer marker identity).
+    const rooted = comments.map((comment) =>
+      ids.has(comment.comment_id) &&
+      comment.round_no === null &&
+      comment.finding_key === null &&
+      comment.marker_round === roundNo &&
+      comment.marker_key === findingKey
+        ? { ...comment, round_no: roundNo, finding_key: findingKey, via: "marker" as const }
+        : comment,
+    );
+    const twins = markerTwins(rooted);
+    for (const id of [...ids]) for (const twin of twins.get(id) ?? []) ids.add(twin);
+  }
   return [...ids];
 }
 
@@ -126,11 +147,11 @@ export function priorThreadsToResolve(
   const unlinked: string[] = [];
   const seen = new Set<number>();
   const checks = store.priorFindingChecks(pr);
+  const families = postedFindingChains(store.roundFindings(pr));
   const newer = (round: number, key: string) =>
     checks.some(
       (c) =>
-        c.round_no === round &&
-        c.finding_key === key &&
+        families.find(`${c.round_no}:${c.finding_key}`) === families.find(`${round}:${key}`) &&
         c.checked_round > checkedRound &&
         c.status !== null,
     );
@@ -210,8 +231,14 @@ export async function resolveVerifiedPriorThreads(
   deps: PriorResolveDeps,
   pr: number,
   roundNo: number,
-): Promise<{ resolved: number; skipped: number; failed: number; unlinked: number }> {
-  const tally = { resolved: 0, skipped: 0, failed: 0, unlinked: 0 };
+): Promise<{
+  resolved: number;
+  skipped: number;
+  failed: number;
+  unlinked: number;
+  readable: boolean;
+}> {
+  const tally = { resolved: 0, skipped: 0, failed: 0, unlinked: 0, readable: false };
   let earlier = new Map<string, string[]>();
   if (deps.sidecarPath) {
     const path = deps.sidecarPath(pr, roundNo);
@@ -242,6 +269,7 @@ export async function resolveVerifiedPriorThreads(
     deps.log?.(`priorresolve: #${pr} round ${roundNo} threads not listed`, err);
     return tally;
   }
+  tally.readable = true;
   tally.unlinked = plan.unlinked.length;
   if (plan.unlinked.length > 0)
     deps.store.logEvent("prior_thread_resolve_skipped", pr, {
@@ -249,7 +277,16 @@ export async function resolveVerifiedPriorThreads(
       reason: "no-known-comment",
       refs: plan.unlinked,
     });
+  const completed = deps.store.db.prepare(`SELECT 1 FROM events WHERE pr=?
+    AND kind IN ('prior_thread_resolved','prior_thread_resolve_skipped','prior_thread_resolve_failed')
+    AND json_extract(payload, '$.round_no')=? AND json_extract(payload, '$.comment_id')=? LIMIT 1`);
   for (const t of plan.threads) {
+    // A resumed invocation skips completed and exhausted outcomes. Retrying
+    // interrupted work must never turn the finite retry policy into a loop.
+    if (completed.get(pr, roundNo, t.comment_id)) {
+      tally.skipped++;
+      continue;
+    }
     const base = {
       round_no: roundNo,
       ref: `${t.round_no}:${t.finding_key}`,

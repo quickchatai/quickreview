@@ -132,25 +132,9 @@ export interface ComputePriorInput {
   incomplete?: readonly IncompleteRound[];
 }
 
-/**
- * The pure core. Collapse the earlier rounds' rows into the open prior
- * findings:
- *
- * - A re-posting (a later posted row whose `raised_in_round` names an earlier
- *   round and which `predecessorOf` maps onto one of that round's postings, or
- *   which shares its thread) SUPERSEDES the earlier one: one entry per chain,
- *   on its latest posting.
- * - A chain is RESOLVED by a later `conceded` row naming it (thread, or
- *   raised_in_round + predecessorOf), a later `settled:<thread>` kill on its
- *   thread, or a later round's report of fixed/conceded/settled/obsolete —
- *   the LATEST report on the chain wins, and a resolution counts only when it
- *   comes from a round after the chain's latest posting (a finding re-posted
- *   after it was "resolved" is open again; never quieter).
- * - Sorted blockers first, then by round, path and line.
- */
-export function computePriorFindings(input: ComputePriorInput): PriorFindingsList {
-  const { pr, roundNo } = input;
-  const rows = input.rows.filter((r) => r.round_no < roundNo);
+/** The shared posted-finding identity policy: thread ownership first, then
+ * explicit raised-in-round continuation. Killed candidates never own a chain. */
+export function postedFindingChains(rows: readonly RoundFindingRow[]) {
   const posted = rows.filter(isPostedRow).sort((a, b) => a.round_no - b.round_no || a.id - b.id);
   const postedKeys = new Set(posted.map((p) => rkey(p.round_no, p.finding_key)));
   const byRound = new Map<number, RoundFindingRow[]>();
@@ -195,6 +179,30 @@ export function computePriorFindings(input: ComputePriorInput): PriorFindingsLis
     list.push(r);
     members.set(root, list);
   }
+
+  return { posted, postedKeys, namedPosting, find, members };
+}
+
+/**
+ * The pure core. Collapse the earlier rounds' rows into the open prior
+ * findings:
+ *
+ * - A re-posting (a later posted row whose `raised_in_round` names an earlier
+ *   round and which `predecessorOf` maps onto one of that round's postings, or
+ *   which shares its thread) SUPERSEDES the earlier one: one entry per chain,
+ *   on its latest posting.
+ * - A chain is RESOLVED by a later `conceded` row naming it (thread, or
+ *   raised_in_round + predecessorOf), a later `settled:<thread>` kill on its
+ *   thread, or a later round's report of fixed/conceded/settled/obsolete —
+ *   the LATEST report on the chain wins, and a resolution counts only when it
+ *   comes from a round after the chain's latest posting (a finding re-posted
+ *   after it was "resolved" is open again; never quieter).
+ * - Sorted blockers first, then by round, path and line.
+ */
+export function computePriorFindings(input: ComputePriorInput): PriorFindingsList {
+  const { pr, roundNo } = input;
+  const rows = input.rows.filter((r) => r.round_no < roundNo);
+  const { posted, postedKeys, namedPosting, find, members } = postedFindingChains(rows);
 
   // ---- resolutions per chain ------------------------------------------------
   interface Resolution {

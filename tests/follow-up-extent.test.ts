@@ -84,6 +84,14 @@ function plan(cfg: Config, linesPerFile: number) {
 }
 
 describe("the plan: a lean core and optional rows", () => {
+  it("keeps the cap warning beside the offered optional sweep rows", () => {
+    const cfg = withExtent("session");
+    cfg.review = { ...cfg.review, sweep_group_files: 1, sweep_max_groups: 1, sweep_wide_files: 0 };
+    const d = plan(cfg, 3);
+    expect(d.optionalPlan?.some((p) => p.lens === SWEEP_PASS)).toBe(true);
+    expect(d.plan.sweep_unswept.length).toBeGreaterThan(0);
+  });
+
   it('"session" (the default): the core always, the rest optional — whatever the delta size', () => {
     expect(baseCfg.review.follow_up_extent).toBe("session");
     for (const lines of [3, 60]) {

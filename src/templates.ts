@@ -688,17 +688,26 @@ export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): s
  * the follow-up template says when to run it; this block is what to run.
  */
 export function renderSweepNote(
-  order: Pick<RoundOrder, "sweep_plan" | "sweep_task_files" | "sweep_plan_unswept">,
+  order: Pick<
+    RoundOrder,
+    "sweep_plan" | "sweep_task_files" | "sweep_plan_unswept" | "sweep_plan_behaviour_unread"
+  >,
 ): string {
   const plan = order.sweep_plan;
   if (!plan || plan.length === 0) return "";
   const head = [
-    "**PRE-APPROVAL SWEEP — owed this round.** No whole-PR review has run since the",
-    "first round and the PR is not approved, so before this round approves, the",
+    "**PRE-APPROVAL SWEEP — owed this round.** Before this round approves, the",
     "whole PR gets one blank-slate look with the full plan below (step 4b says",
     "when to launch it and when it is not reached):",
   ];
-  const out = [...head, "", renderPassPlan(plan, order.sweep_plan_unswept ?? [], { sweep: true })];
+  const out = [
+    ...head,
+    "",
+    renderPassPlan(plan, order.sweep_plan_unswept ?? [], {
+      sweep: true,
+      behaviourUnread: order.sweep_plan_behaviour_unread,
+    }),
+  ];
   const files = order.sweep_task_files;
   if (files && files.length > 0) {
     // The sweep launches through `launch_plan` too, as its own call.

@@ -62,7 +62,10 @@ describe("round progress extension", () => {
       await emit("tool_execution_start", {
         toolName: "subagent",
         toolCallId: "lens-1",
-        args: { agent: "pass-security", task: "check auth" },
+        args: {
+          agent: "pass-security",
+          task: `Task file: ${root}/state/pr-5408-round-1-passes/tasks-sweep/01-pass-security.md. Read it first; it is your complete task.`,
+        },
       });
       await emit("tool_execution_update", {
         toolName: "subagent",
@@ -100,6 +103,7 @@ describe("round progress extension", () => {
         fanout_started_at: expect.any(String),
         active_tool: "subagent: pass-security",
       });
+      expect(running.agents[0].phase).toBe("sweep");
       expect(running.preparing_at).toBe(running.command_accepted_at);
       expect(running.fanout_started_at).toBe(running.first_lens_started_at);
       expect(
@@ -705,72 +709,84 @@ describe("round progress — wide fan-out, one permit per pass", () => {
 // pre-fanout stall clock must still see the fan-out begin at tool START, from
 // the same plan the tool computes; a refused plan starts nothing.
 describe("round progress — launch_plan", () => {
-  it("records the planned agents and the fan-out start at tool start", async () => {
-    const root = mkdtempSync(join(tmpdir(), "qcr-progress-lp-"));
-    dirs.push(root);
-    const tasks = join(root, "state", "pr-5409-round-1-passes", "tasks");
-    mkdirSync(tasks, { recursive: true });
-    writeFileSync(join(tasks, "01-pass-baseline--sol-high.md"), "t");
-    writeFileSync(join(tasks, "02-pass-security--sol-high.md"), "t");
-    const previous = { ...process.env };
-    process.env.QCR_SANDBOX_ROOT = root;
-    process.env.QCR_SESSION_NAME = "pr-5409";
-    process.env.QCR_PR = "5409";
-    const handlers = new Map<string, PiEventHandler[]>();
-    const pi = {
-      on(name: string, handler: PiEventHandler) {
-        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
-      },
-    };
-    const emit = async (name: string, event: Record<string, unknown> = {}) => {
-      for (const handler of handlers.get(name) ?? []) await handler(event);
-    };
-    try {
-      activate(pi as never);
-      await emit("agent_start");
-      await emit("message_start", {
-        message: {
-          role: "user",
-          content: [
-            { type: "text", text: `round order\n<!-- qcr-command:cmd-5409:${"b".repeat(64)} -->` },
-          ],
+  it.each(["plan", "sweep", "optional"] as const)(
+    "records %s phase with the agents at tool start",
+    async (phase) => {
+      const root = mkdtempSync(join(tmpdir(), "qcr-progress-lp-"));
+      dirs.push(root);
+      const tasks = join(
+        root,
+        "state",
+        "pr-5409-round-1-passes",
+        phase === "plan" ? "tasks" : `tasks-${phase}`,
+      );
+      mkdirSync(tasks, { recursive: true });
+      writeFileSync(join(tasks, "01-pass-baseline--sol-high.md"), "t");
+      writeFileSync(join(tasks, "02-pass-security--sol-high.md"), "t");
+      const previous = { ...process.env };
+      process.env.QCR_SANDBOX_ROOT = root;
+      process.env.QCR_SESSION_NAME = "pr-5409";
+      process.env.QCR_PR = "5409";
+      const handlers = new Map<string, PiEventHandler[]>();
+      const pi = {
+        on(name: string, handler: PiEventHandler) {
+          handlers.set(name, [...(handlers.get(name) ?? []), handler]);
         },
-      });
-      const path = join(root, "state", "round-progress", "pr-5409.json");
-      await emit("tool_execution_start", {
-        toolName: "launch_plan",
-        toolCallId: "refused",
-        args: { dirs: [join(root, "elsewhere")] },
-      });
-      await emit("tool_execution_end", {
-        toolName: "launch_plan",
-        toolCallId: "refused",
-        isError: true,
-      });
-      expect(JSON.parse(readFileSync(path, "utf8")).fanout_started_at).toBeUndefined();
+      };
+      const emit = async (name: string, event: Record<string, unknown> = {}) => {
+        for (const handler of handlers.get(name) ?? []) await handler(event);
+      };
+      try {
+        activate(pi as never);
+        await emit("agent_start");
+        await emit("message_start", {
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `round order\n<!-- qcr-command:cmd-5409:${"b".repeat(64)} -->`,
+              },
+            ],
+          },
+        });
+        const path = join(root, "state", "round-progress", "pr-5409.json");
+        await emit("tool_execution_start", {
+          toolName: "launch_plan",
+          toolCallId: "refused",
+          args: { dirs: [join(root, "elsewhere")] },
+        });
+        await emit("tool_execution_end", {
+          toolName: "launch_plan",
+          toolCallId: "refused",
+          isError: true,
+        });
+        expect(JSON.parse(readFileSync(path, "utf8")).fanout_started_at).toBeUndefined();
 
-      await emit("tool_execution_start", {
-        toolName: "launch_plan",
-        toolCallId: "plan-1",
-        args: { dirs: [tasks] },
-      });
-      const running = JSON.parse(readFileSync(path, "utf8"));
-      expect(running.fanout_started_at).toEqual(expect.any(String));
-      expect(running.agents.map((a: { agent: string }) => a.agent)).toEqual([
-        "pass-baseline--sol-high",
-        "pass-security--sol-high",
-      ]);
-      expect(
-        roundExecutionStage(parseRoundProgress(JSON.stringify(running))!, [
-          "pass-baseline",
-          "pass-security",
-          "pass-validate",
-        ]),
-      ).toBe("fanout-started");
-    } finally {
-      process.env = previous;
-    }
-  });
+        await emit("tool_execution_start", {
+          toolName: "launch_plan",
+          toolCallId: "plan-1",
+          args: { dirs: [tasks] },
+        });
+        const running = JSON.parse(readFileSync(path, "utf8"));
+        expect(running.fanout_started_at).toEqual(expect.any(String));
+        expect(running.agents.map((a: { phase?: string }) => a.phase)).toEqual([phase, phase]);
+        expect(running.agents.map((a: { agent: string }) => a.agent)).toEqual([
+          "pass-baseline--sol-high",
+          "pass-security--sol-high",
+        ]);
+        expect(
+          roundExecutionStage(parseRoundProgress(JSON.stringify(running))!, [
+            "pass-baseline",
+            "pass-security",
+            "pass-validate",
+          ]),
+        ).toBe("fanout-started");
+      } finally {
+        process.env = previous;
+      }
+    },
+  );
 });
 
 // The snapshot is rewritten on every event; the transition log
@@ -918,5 +934,86 @@ describe("round progress — append-only transition log", () => {
     expect(read(`${path}.1`)).toEqual([4, 5, 6]);
     expect(read(path)).toEqual([7]);
     expect(existsSync(`${path}.2`)).toBe(false);
+  });
+});
+
+describe("subagent event ordering", () => {
+  async function harness(
+    run: (
+      emit: (name: string, event?: Record<string, unknown>) => Promise<void>,
+      read: () => ReturnType<typeof parseRoundProgress>,
+    ) => Promise<void>,
+  ) {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-order-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    Object.assign(process.env, { QCR_SANDBOX_ROOT: root, QCR_SESSION_NAME: "pr-42", QCR_PR: "42" });
+    const handlers = new Map<string, PiEventHandler[]>();
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    try {
+      activate({
+        on(name: string, handler: PiEventHandler) {
+          handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+        },
+      } as never);
+      await emit("agent_start");
+      await run(emit, () =>
+        parseRoundProgress(readFileSync(join(root, "state/round-progress/pr-42.json"), "utf8")),
+      );
+    } finally {
+      process.env = previous;
+    }
+  }
+  it("publishes a readable snapshot when a chain is the first fanout", async () => {
+    await harness(async (emit, read) => {
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "c",
+        args: {
+          chain: [
+            { agent: "pass-a", task: "a" },
+            { agent: "pass-b", task: "b" },
+          ],
+        },
+      });
+      await emit("tool_execution_update", {
+        toolName: "subagent",
+        toolCallId: "c",
+        partialResult: { details: { mode: "chain", results: [{ agent: "pass-a", exitCode: 0 }] } },
+      });
+      expect(read()).toBeDefined();
+      expect(read()?.fanout_started_at).toBeDefined();
+    });
+  });
+  it("preserves completed siblings when a parallel call ends with no results", async () => {
+    await harness(async (emit, read) => {
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "c",
+        args: {
+          tasks: [
+            { agent: "pass-a", task: "a" },
+            { agent: "pass-b", task: "b" },
+          ],
+        },
+      });
+      await emit("tool_execution_update", {
+        toolName: "subagent",
+        toolCallId: "c",
+        partialResult: {
+          details: {
+            mode: "parallel",
+            results: [
+              { agent: "pass-a", exitCode: 0 },
+              { agent: "pass-b", exitCode: -1 },
+            ],
+          },
+        },
+      });
+      await emit("tool_execution_end", { toolName: "subagent", toolCallId: "c", isError: true });
+      expect(read()?.agents.map((a) => a.status)).toEqual(["completed", "failed"]);
+    });
   });
 });

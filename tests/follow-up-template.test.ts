@@ -335,3 +335,18 @@ describe("renderSweepNote", () => {
     );
   });
 });
+
+it("describes owed sweeps without asserting an obsolete standing-approval history", () => {
+  const note = renderSweepNote({ sweep_plan: SWEEP_PLAN });
+  expect(note).not.toContain("the PR is not approved");
+  expect(note).not.toContain("No whole-PR review has run since");
+});
+
+it("renders the sweep's own behaviour-delta coverage gaps", () => {
+  const note = renderSweepNote({
+    ...{ sweep_plan_behaviour_unread: ["src/not-compared.py"] },
+    sweep_plan: SWEEP_PLAN,
+  });
+  expect(note).toContain("Base behaviour not compared");
+  expect(note).toContain("src/not-compared.py");
+});

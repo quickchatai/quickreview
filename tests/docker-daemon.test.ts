@@ -768,3 +768,39 @@ describe("entrypoint secrets link", () => {
     });
   }
 });
+
+it.each(
+  ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"].flatMap((file) =>
+    ["state", "memory"].map((migration) => [file, migration] as const),
+  ),
+)("preserves migrated %s / %s after a failed copy", (file, migration) => {
+  const dir = mkdtempSync(join(tmpdir(), "qcr-migration-failure-"));
+  try {
+    const source = join(dir, "source");
+    const destination = join(dir, "destination");
+    mkdirSync(source);
+    mkdirSync(destination);
+    writeFileSync(join(source, "memory.json"), "valuable state");
+    const text = readFileSync(join(root, file), "utf8");
+    const start = text.indexOf(
+      migration === "state" ? 'if [[ -d "$SANDBOX/state"' : 'if [[ -e "$HOME/.openviking"',
+    );
+    expect(start).toBeGreaterThan(0);
+    const block = text.slice(start);
+    const end = /\n\s*fi/.exec(block)!;
+    const fragment = block
+      .slice(0, end.index + end[0].length)
+      .replaceAll("$HOME/.openviking", "${SI_SOURCE}")
+      .replaceAll("$SANDBOX/state", "${SI_SOURCE}")
+      .replaceAll("$OV_HOME", "${SI_DEST}");
+    const result = spawnSync("bash", ["-c", "set -euo pipefail\ncp() { return 1; }\n" + fragment], {
+      env: { ...process.env, SI_SOURCE: source, SI_DEST: destination },
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(1);
+    expect(readFileSync(join(source, "memory.json"), "utf8")).toBe("valuable state");
+    expect(existsSync(source)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
