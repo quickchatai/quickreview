@@ -104,12 +104,17 @@ function diffFiles(cwd: string, from: string, to: string): { files: PrFileEntry[
   return { files, lines };
 }
 
+/** `owner/name` from the origin remote, or null when there is none. */
+export function originRepo(cwd: string): string | null {
+  const origin = tryGit(cwd, ["remote", "get-url", "origin"]);
+  const m = origin?.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?\/?$/);
+  return m ? m[1]! : null;
+}
+
 /** `owner/name` from the origin remote, else `local/<directory>`. */
 function repoName(cwd: string): string {
   const top = tryGit(cwd, ["rev-parse", "--show-toplevel"]) ?? cwd;
-  const origin = tryGit(cwd, ["remote", "get-url", "origin"]);
-  const m = origin?.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?\/?$/);
-  return m ? m[1]! : `local/${basename(resolve(top))}`;
+  return originRepo(cwd) ?? `local/${basename(resolve(top))}`;
 }
 
 export function resolveBranch(cwd: string, asked?: string): BranchResolution {
