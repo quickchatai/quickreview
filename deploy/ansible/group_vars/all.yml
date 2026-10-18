@@ -14,7 +14,7 @@ node_major: "22"
 # pi CLI npm package + exact version pin (registry-verified). The image never
 # floats — bumping is a deliberate edit + `-e rebuild_image=true`.
 pi_npm_package: "@earendil-works/pi-coding-agent"
-pi_version: "1.0.0"
+pi_version: "1.3.0"
 
 # No subagent-extension pin: subagents are pi's own first-party extension,
 # shipped INSIDE the pinned pi package (examples/extensions/subagent) and

@@ -82,6 +82,10 @@ describe("parsing the new verbs", () => {
     });
     expect(parseScanArgs(["units", "save"])).toEqual({ verb: "units-save" });
     expect(parseScanArgs(["login"])).toEqual({ verb: "login" });
+    expect(parseScanArgs(["login", "--provider", "anthropic"])).toEqual({
+      verb: "login",
+      provider: "anthropic",
+    });
     expect(parseScanArgs(["doctor"])).toEqual({ verb: "doctor" });
     expect(parseScanArgs(["rebuild"])).toEqual({ verb: "rebuild" });
   });
@@ -232,6 +236,19 @@ describe("qcr scan doctor and login", () => {
     });
     expect((await h.run(["login"])).code).toBe(0);
     expect(called).toBe(1);
+  });
+
+  it("login passes on the provider asked for", async () => {
+    const asked: Array<string | undefined> = [];
+    const h = harness({
+      login: async (provider) => {
+        asked.push(provider);
+        return 0;
+      },
+    });
+    await h.run(["login"]);
+    await h.run(["login", "--provider", "anthropic"]);
+    expect(asked).toEqual([undefined, "anthropic"]);
   });
 
   it("a sandboxed start names its container beside the driver log", async () => {

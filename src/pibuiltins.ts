@@ -25,7 +25,7 @@
 //    server (127.0.0.1:8080 by default). Starts nothing, but it is a model
 //    route nobody configured; off so the provider set stays the one we pin.
 //
-// VERIFY-ON-PIN (0.99.1, re-read at 1.0.0 — dist/extensions/index.js unchanged): the four names and
+// VERIFY-ON-PIN (0.99.1, re-read at 1.0.0 and 1.3.0 — dist/extensions/index.js unchanged): the four names and
 // the `-builtin:<name>` spelling. A later pi that adds a built-in is NOT
 // covered by this list — re-read dist/extensions/index.js on every bump.
 //

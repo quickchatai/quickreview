@@ -109,6 +109,8 @@ export const SCANBOX = {
   authSrc: "/pi-agent-src",
   /** The scan's own pi agent dir, on the tmpfs pi home. */
   agentDir: `${CONTAINER.piHome}/agent`,
+  /** `qcr scan login`'s login (src/scanlogin.ts). */
+  loginScript: "/opt/qcr/dist/src/scanlogin.js",
 } as const;
 
 /** The companion's pi home is its login: only its `agent/` dir is mounted. */
@@ -271,37 +273,45 @@ export function scanRunArgv(p: ScanBoxPlan, argv: readonly string[]): string[] {
 }
 
 /** How `qcr scan login` reaches the companion's pi: the argv after
- * `docker`, which route, and the line saying so. */
+ * `docker`, which route, the line saying so — or why it cannot. */
 export interface ScanLoginRoute {
   route: "exec" | "run";
   argv: string[];
   say: string;
+  problem?: string;
 }
 
-/** `qcr scan login` logs the companion's pi in — the login every scan reads.
- * With the companion container running, pi inside it (`docker exec`), so the
- * companion stays the one process that writes its login; otherwise a
- * throwaway pi over its pi home volume, read-write. A `[scan] pihome_volume`
- * that is not the companion's is logged in the throwaway way. */
+/** `qcr scan login` logs the companion's pi in to `provider` — the login
+ * every scan reads — straight through pi's own OAuth flow
+ * (`SCANBOX.loginScript`). With the companion container running, inside it
+ * (`docker exec`), so the companion stays the one process that writes its
+ * login; otherwise in a throwaway container over its pi home volume,
+ * read-write. A `[scan] pihome_volume` that is not the companion's is logged
+ * in the throwaway way. */
 export async function scanLoginRoute(
   docker: DockerRunner,
   s: ScanSandboxConfig,
   companion: { container_name: string; pihome_volume: string },
+  provider: string,
 ): Promise<ScanLoginRoute> {
   const vol = s.pihome_volume;
+  const script = ["node", SCANBOX.loginScript, "--provider", provider];
   if (vol === companion.pihome_volume) {
-    const st = await docker([
-      "inspect",
-      "--format",
-      "{{.State.Running}}",
-      companion.container_name,
-    ]);
-    if (st.ok && st.stdout.trim() === "true")
+    const name = companion.container_name;
+    const st = await docker(["inspect", "--format", "{{.State.Running}}", name]);
+    if (st.ok && st.stdout.trim() === "true") {
+      const has = await docker(["exec", name, "test", "-f", SCANBOX.loginScript]);
       return {
         route: "exec",
-        argv: ["exec", "-it", companion.container_name, "pi"],
-        say: `scan login: the companion container ${companion.container_name} is running — opening pi inside it; /login there logs in its pi home ${vol}, the login every scan reads.`,
+        argv: ["exec", "-it", name, ...script],
+        say: `scan login: the companion container ${name} is running — logging its pi in to ${provider} inside it (pi home ${vol}, the login every scan reads).`,
+        ...(has.ok
+          ? {}
+          : {
+              problem: `the running companion ${name} runs an image without the login script — \`qcr companion rebuild\`, then \`qcr scan login\` again`,
+            }),
       };
+    }
   }
   return {
     route: "run",
@@ -313,12 +323,12 @@ export async function scanLoginRoute(
       "--mount",
       mountSpec({ dest: SCANBOX.piHome, source: vol }),
       s.image,
-      "pi",
+      ...script,
     ],
     say:
       vol === companion.pihome_volume
-        ? `scan login: the companion container ${companion.container_name} is not running — opening pi in a throwaway container over its pi home ${vol}; /login there is the login every scan reads.`
-        : `scan login: [scan] pihome_volume ${vol} is not the companion's — opening pi in a throwaway container over it; /login there is the login every scan reads.`,
+        ? `scan login: the companion container ${companion.container_name} is not running — logging pi in to ${provider} in a throwaway container over its pi home ${vol} (the login every scan reads).`
+        : `scan login: [scan] pihome_volume ${vol} is not the companion's — logging pi in to ${provider} in a throwaway container over it (the login every scan reads).`,
   };
 }
 

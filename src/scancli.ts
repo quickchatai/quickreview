@@ -55,6 +55,7 @@ import {
 } from "../extensions/setup.js";
 import { loadConfig, sandboxRoot, type CompanionConfig } from "./config.js";
 import { stateHome } from "./install.js";
+import { loginProvider } from "./scanlogin.js";
 import {
   IN_SANDBOX_ENV,
   STARTED_FILE_ENV,
@@ -83,7 +84,7 @@ export const SCAN_USAGE =
   "matches | match --key K [OLD=NEW…] | suggestions | " +
   "stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] | " +
   "stage2 start --key K [--rows ID,ID…] [--foreground] | dismiss FP… --reason TEXT | " +
-  "units show | units propose [--file F|-] | units adjust --file F|- | units save | login | doctor | rebuild   (every subcommand takes --json)";
+  "units show | units propose [--file F|-] | units adjust --file F|- | units save | login [--provider P] | doctor | rebuild   (every subcommand takes --json)";
 
 export { DETACH_TIMEOUT_MS, DRIVER_LOG, DRIVER_LOG_MAX };
 /** How often `status --wait` and `stop` look again. */
@@ -115,7 +116,7 @@ export type ScanCommand =
   | { verb: "units-propose"; file?: string }
   | { verb: "units-adjust"; file: string }
   | { verb: "units-save" }
-  | { verb: "login" }
+  | { verb: "login"; provider?: string }
   | { verb: "doctor" }
   | { verb: "rebuild" };
 
@@ -147,6 +148,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
     "--budget",
     "--reason",
     "--file",
+    "--provider",
   ]);
   const BARE = new Set([
     "--delta",
@@ -295,9 +297,14 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
       if (positional.length === 0) throw usage("dismiss needs at least one fingerprint");
       return { verb: "dismiss", fingerprints: positional, reason };
     }
+    case "login": {
+      allowed("--provider");
+      noPositional();
+      const provider = str("--provider");
+      return { verb: "login", ...(provider !== undefined ? { provider } : {}) };
+    }
     case "units-show":
     case "units-save":
-    case "login":
     case "doctor":
     case "rebuild":
       allowed();
@@ -467,7 +474,7 @@ export interface ScanCliDeps {
   /** `doctor`: the sandbox's readiness report. */
   doctor?: () => Promise<DoctorReport>;
   /** `login`: pi, interactive, over the companion's pi home (in the running companion, or a throwaway container); its exit code. */
-  login?: () => Promise<number>;
+  login?: (provider?: string) => Promise<number>;
   /** `rebuild`: build `[scan] image` alone, stamped; no container touched. */
   rebuild?: () => Promise<
     { ok: true; image: string; stamp: string } | { ok: false; errors: string[] }
@@ -751,7 +758,7 @@ export async function runScanCli(
     }
     case "login":
       if (!deps.login) return refusal("Login", ["no login in this assembly"]);
-      return deps.login();
+      return deps.login(cmd.provider);
     case "rebuild": {
       if (!deps.rebuild) return refusal("Scan image rebuild", ["no rebuild in this assembly"]);
       const r = await deps.rebuild();
@@ -1212,19 +1219,22 @@ async function sandboxPorts(
         stamp: appStamp,
         onProgress: (line) => console.error(line),
       }),
-    login: async () => {
+    login: async (asked?: string) => {
       if (sandbox.sandbox === "host") {
         console.log(
           'scan login: [scan] sandbox = "host" — the scan runs this machine\'s `pi`; run `pi` and /login there.',
         );
         return 1;
       }
-      const route = await scanLoginRoute(
-        docker,
-        sandbox,
-        cfg?.companion ?? cfgMod.COMPANION_DEFAULTS,
-      );
+      const companionCfg = cfg?.companion ?? cfgMod.COMPANION_DEFAULTS;
+      // The login the scan's stage 1 needs; the companion's model's when unset.
+      const provider = asked?.trim() || loginProvider(model() || companionCfg.model);
+      const route = await scanLoginRoute(docker, sandbox, companionCfg, provider);
       console.log(route.say);
+      if (route.problem) {
+        console.log(`scan login: ${route.problem}`);
+        return 1;
+      }
       const r = spawnSync("docker", route.argv, { stdio: "inherit" });
       if (r.error) {
         console.log(`scan login: docker could not start: ${r.error.message}`);

@@ -443,26 +443,42 @@ describe("the scan container's argv", () => {
   });
 
   const companionOf = { container_name: "qcr-companion", pihome_volume: "companion-pihome" };
-  const running =
-    (state: string | null): DockerRunner =>
+  const LOGIN = ["node", "/opt/qcr/dist/src/scanlogin.js", "--provider", "openai-codex"];
+  const companionDocker =
+    (state: string | null, hasScript = true): DockerRunner =>
     async (a) =>
       a[0] === "inspect"
         ? state === null
           ? fail("Error: No such object: qcr-companion")
           : { ...OK, stdout: `${state}\n` }
-        : fail("unscripted");
+        : a[0] === "exec" && a.includes("test")
+          ? hasScript
+            ? OK
+            : fail("")
+          : fail("unscripted");
 
-  it("`qcr scan login` with the companion running: pi inside the companion, which owns the login", async () => {
-    const r = await scanLoginRoute(running("true"), SANDBOX, companionOf);
+  it("`qcr scan login` with the companion running: straight into the login, inside the companion", async () => {
+    const r = await scanLoginRoute(companionDocker("true"), SANDBOX, companionOf, "openai-codex");
     expect(r.route).toBe("exec");
-    expect(r.argv).toEqual(["exec", "-it", "qcr-companion", "pi"]);
+    expect(r.argv).toEqual(["exec", "-it", "qcr-companion", ...LOGIN]);
+    expect(r.problem).toBeUndefined();
     expect(r.say).toMatch(/running/);
     expect(r.say).toMatch(/qcr-companion/);
   });
 
-  it("`qcr scan login` with the companion stopped or absent: a throwaway pi over its pi home, read-write", async () => {
+  it("`qcr scan login` into a running companion whose image lacks the login script says to rebuild it", async () => {
+    const r = await scanLoginRoute(
+      companionDocker("true", false),
+      SANDBOX,
+      companionOf,
+      "openai-codex",
+    );
+    expect(r.problem).toMatch(/qcr companion rebuild/);
+  });
+
+  it("`qcr scan login` with the companion stopped or absent: the login in a throwaway container over its pi home, read-write", async () => {
     for (const state of ["false", null]) {
-      const r = await scanLoginRoute(running(state), SANDBOX, companionOf);
+      const r = await scanLoginRoute(companionDocker(state), SANDBOX, companionOf, "openai-codex");
       expect(r.route).toBe("run");
       expect(r.argv).toEqual([
         "run",
@@ -472,7 +488,7 @@ describe("the scan container's argv", () => {
         "--mount",
         "type=volume,src=companion-pihome,dst=/home/companion/.pi",
         "qcr-companion",
-        "pi",
+        ...LOGIN,
       ]);
       expect(r.say).toMatch(/not running/);
       expect(r.say).toMatch(/companion-pihome/);
@@ -481,12 +497,19 @@ describe("the scan container's argv", () => {
 
   it("`qcr scan login` over an overridden [scan] pihome_volume never execs into the companion", async () => {
     const r = await scanLoginRoute(
-      running("true"),
+      companionDocker("true"),
       { ...SANDBOX, pihome_volume: "other-pihome" },
       companionOf,
+      "anthropic",
     );
     expect(r.route).toBe("run");
     expect(r.argv).toContain("type=volume,src=other-pihome,dst=/home/companion/.pi");
+    expect(r.argv.slice(-2)).toEqual(["--provider", "anthropic"]);
+  });
+
+  it("the login script is the built app's", () => {
+    expect(SCANBOX.loginScript).toBe(`${SCANBOX.app}/dist/src/scanlogin.js`);
+    expect(existsSync(resolve(root, "src/scanlogin.ts"))).toBe(true);
   });
 });
 

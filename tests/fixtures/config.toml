@@ -160,7 +160,7 @@ evidence_why_interval_s = 10      # L1 evidence sweep pace: at most one
 # VERIFY-ON-PIN: package + version mirrored in package.json "pi" block and the
 # ansible group_vars; the image never floats.
 package = "@earendil-works/pi-coding-agent"
-version = "1.0.0"
+version = "1.3.0"
 session_dir = "state/pi-sessions"
 subagent_max_concurrency = 6
 
