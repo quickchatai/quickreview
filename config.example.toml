@@ -927,13 +927,20 @@ deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-ma
                                # the order is the priority: under a budget the first lens covers the whole tree before the next starts
 # Where `qcr scan start` drives a run (not a profile key). "docker": in a throwaway
 # container from the companion image, mounting only the reviewed repo (read-only),
-# the state home, the scan's own pi home volume and this config (read-only) —
-# `qcr scan login` logs that volume in, `qcr scan doctor` checks it all, and an
-# image older than the checkout is refused until `qcr scan rebuild` (which builds
-# it and touches no container). Unset, it is "host" inside the companion container.
-# "host": a detached process on this machine, running the `pi` on the PATH.
+# the state home, the companion's pi login (read-only) and this config (read-only)
+# — `qcr scan doctor` checks it all, and an image older than the checkout is
+# refused until `qcr scan rebuild` (which builds it and touches no container).
+# Unset, it is "host" inside the companion container.
+# "host": a detached process on this machine, running the `pi` on the PATH (its own login).
+#
+# One login: the companion's. Log its pi in once (`qcr scan login` does it, in the
+# running companion or over its pi home volume); the companion alone refreshes it.
+# A scan reads that login read-only and runs every case on a fresh private copy with
+# the refresh token neutralised, so it never refreshes and never writes anything the
+# companion reads. The price: a scan case cannot outlive the access token — a start
+# or a case it would not outlive is refused; open the companion so it refreshes.
 sandbox = "docker"
-pihome_volume = "scan-pihome"  # the sandbox's pi home (its own login, apart from the companion's)
+# pihome_volume = "companion-pihome"  # whose login the scan reads; default [companion] pihome_volume
 # image = "qcr-companion"      # the sandbox's image; default [companion] image
 
 [slack]

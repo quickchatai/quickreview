@@ -39,12 +39,14 @@ import {
   effectiveSandbox,
   renderDoctor,
   scanDoctor,
-  scanLoginArgv,
+  SCAN_AUTH_COPY_SCRIPT,
+  scanLoginRoute,
   scanMounts,
   scanRunArgv,
   writeStartedFile,
   type ScanBoxPlan,
 } from "../src/scanbox.js";
+import { SCAN_AUTH_SRC_ENV, SCAN_CASE_AUTH_BUDGET_MS } from "../src/scanauth.js";
 import { scanEnv } from "../src/scancli.js";
 import {
   CompanionLifecycle,
@@ -90,19 +92,28 @@ function fakeDocker(rules: Array<(argv: string[]) => DockerResult | undefined>):
 const SANDBOX: ScanSandboxConfig = {
   sandbox: "docker",
   sandbox_set: false,
-  pihome_volume: "scan-pihome",
+  pihome_volume: "companion-pihome",
   image: "qcr-companion",
 };
 
 describe("[scan] sandbox, pihome_volume and image", () => {
-  it("default to the docker sandbox, the scan-pihome volume and the companion image", () => {
+  it("default to the docker sandbox, the companion's pi home volume and the companion image", () => {
     const cfg = parseConfig(fixtureToml);
     expect(cfg.scan_sandbox).toEqual({
       sandbox: "docker",
       sandbox_set: false,
-      pihome_volume: "scan-pihome",
+      pihome_volume: cfg.companion.pihome_volume,
       image: cfg.companion.image,
     });
+    expect(cfg.scan_sandbox.pihome_volume).toBe("companion-pihome");
+  });
+
+  it("follow the install's companion pi home when [companion] pihome_volume is renamed and [scan]'s is not", () => {
+    const toml = fixtureToml.replace(
+      "[companion]",
+      '[companion]\npihome_volume = "companion-pihome-selfscan"',
+    );
+    expect(parseConfig(toml).scan_sandbox.pihome_volume).toBe("companion-pihome-selfscan");
   });
 
   it("follow the companion image when [companion] image is renamed and [scan] image is not", () => {
@@ -143,7 +154,8 @@ describe("[scan] sandbox, pihome_volume and image", () => {
     const scan = example.slice(example.indexOf("\n[scan]\n"));
     const table = scan.slice(0, scan.indexOf("\n[", 2));
     expect(table).toMatch(/^sandbox = "docker"/m);
-    expect(table).toMatch(/^pihome_volume = "scan-pihome"/m);
+    expect(table).toMatch(/^#\s*pihome_volume = /m);
+    expect(table).not.toContain("scan-pihome");
     expect(table).toMatch(/^#\s*image = /m);
     // And the example still parses with them.
     expect(parseConfig(example).scan_sandbox.sandbox).toBe("docker");
@@ -262,6 +274,13 @@ describe("the one-shot entrypoint mode", () => {
     expect(entrypoint).toContain(`"\${${DRIVER_LOG_ENV}:-}"`);
   });
 
+  it("the pi-home durability guard is the companion's: a scan's tmpfs pi home is meant to vanish", () => {
+    const guard = entrypoint.indexOf("if ! awk");
+    const opener = entrypoint.lastIndexOf('if [ "$ENTRY_MODE" = companion ]; then', guard);
+    expect(opener).toBeGreaterThan(-1);
+    expect(entrypoint.slice(opener, guard)).not.toMatch(/\nfi\n/);
+  });
+
   it("the one-shot merge skips the /workspace skills, agents and trust", () => {
     const m = /node <<'PI_EXT_MERGE'\n([\s\S]*?)\nPI_EXT_MERGE\n/.exec(entrypoint)!;
     const home = join(dir, "home");
@@ -287,7 +306,7 @@ describe("the one-shot entrypoint mode", () => {
 const PLAN: ScanBoxPlan = {
   name: "qcr-scan-default-tok1",
   image: "qcr-companion",
-  pihomeVolume: "scan-pihome",
+  pihomeVolume: "companion-pihome",
   reviewedRepo: "/host/app",
   gitDirs: [],
   stateHome: "/host/state",
@@ -305,14 +324,20 @@ const PLAN: ScanBoxPlan = {
 };
 
 describe("the scan container's argv", () => {
-  it("mounts the reviewed repo read-only, the state home, the scan pi home and the config — nothing else", () => {
+  it("mounts the reviewed repo read-only, the state home, the companion's login read-only and the config — nothing else", () => {
     expect(scanMounts(PLAN)).toEqual([
       { dest: "/reviewed-repo", source: "/host/app", mode: "ro" },
       { dest: "/qcr-state", source: "/host/state", mode: "rw" },
-      { dest: "/home/companion/.pi", source: "scan-pihome" },
+      { dest: "/pi-agent-src", source: "companion-pihome", subpath: "agent", mode: "ro" },
+      { dest: "/pi-agent-src/sessions", source: "", tmpfs: true },
+      { dest: "/home/companion/.pi", source: "", tmpfs: true, tmpfsMode: "1777" },
       { dest: "/qcr-config/live", source: "/host/opstate/scan-config", mode: "ro" },
       { dest: "/qcr-config/profiles", source: "/host/config/profiles", mode: "ro" },
     ]);
+    // The companion's pi home is mounted read-only at the source path, and
+    // never at the pi home: no mount of it can be written.
+    const vols = scanMounts(PLAN).filter((m) => m.source === "companion-pihome");
+    expect(vols).toEqual([expect.objectContaining({ dest: "/pi-agent-src", mode: "ro" })]);
     const dests = scanMounts(PLAN).map((m) => m.dest);
     for (const never of ["/workspace", "/tracker", "/github-read", "/evidence", "/feed", "/alerts"])
       expect(dests).not.toContain(never);
@@ -321,7 +346,7 @@ describe("the scan container's argv", () => {
   it("a worktree's git dir is mounted read-only where it sits, so git resolves it", () => {
     const m = scanMounts({ ...PLAN, gitDirs: ["/host/main/.git"] });
     expect(m[1]).toEqual({ dest: "/host/main/.git", source: "/host/main/.git", mode: "ro" });
-    expect(m).toHaveLength(6);
+    expect(m).toHaveLength(8);
   });
 
   it("runs the foreground driver in a removed-at-exit container, on the memory network", () => {
@@ -343,7 +368,11 @@ describe("the scan container's argv", () => {
       "--mount",
       "type=bind,src=/host/state,dst=/qcr-state",
       "--mount",
-      "type=volume,src=scan-pihome,dst=/home/companion/.pi",
+      "type=volume,src=companion-pihome,dst=/pi-agent-src,volume-subpath=agent,readonly",
+      "--mount",
+      "type=tmpfs,dst=/pi-agent-src/sessions",
+      "--mount",
+      "type=tmpfs,dst=/home/companion/.pi,tmpfs-mode=1777",
       "--mount",
       "type=bind,src=/host/opstate/scan-config,dst=/qcr-config/live,readonly",
       "--mount",
@@ -366,6 +395,10 @@ describe("the scan container's argv", () => {
       `${STARTED_FILE_ENV}=/qcr-state/scan/started/tok1.json`,
       "--env",
       `${DRIVER_LOG_ENV}=/qcr-state/scan/driver.log`,
+      "--env",
+      `${SCAN_AUTH_SRC_ENV}=/pi-agent-src`,
+      "--env",
+      "PI_CODING_AGENT_DIR=/home/companion/.pi/agent",
       "--env",
       "OPENVIKING_URL=http://198.51.100.1:1933",
       "--env",
@@ -409,17 +442,51 @@ describe("the scan container's argv", () => {
     expect(argv.join(" ")).not.toMatch(/OPENVIKING|--env-file/);
   });
 
-  it("`qcr scan login` opens pi interactively over the scan pi home, in a throwaway container", () => {
-    expect(scanLoginArgv(SANDBOX)).toEqual([
-      "run",
-      "--rm",
-      "-it",
-      ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
-      "--mount",
-      "type=volume,src=scan-pihome,dst=/home/companion/.pi",
-      "qcr-companion",
-      "pi",
-    ]);
+  const companionOf = { container_name: "qcr-companion", pihome_volume: "companion-pihome" };
+  const running =
+    (state: string | null): DockerRunner =>
+    async (a) =>
+      a[0] === "inspect"
+        ? state === null
+          ? fail("Error: No such object: qcr-companion")
+          : { ...OK, stdout: `${state}\n` }
+        : fail("unscripted");
+
+  it("`qcr scan login` with the companion running: pi inside the companion, which owns the login", async () => {
+    const r = await scanLoginRoute(running("true"), SANDBOX, companionOf);
+    expect(r.route).toBe("exec");
+    expect(r.argv).toEqual(["exec", "-it", "qcr-companion", "pi"]);
+    expect(r.say).toMatch(/running/);
+    expect(r.say).toMatch(/qcr-companion/);
+  });
+
+  it("`qcr scan login` with the companion stopped or absent: a throwaway pi over its pi home, read-write", async () => {
+    for (const state of ["false", null]) {
+      const r = await scanLoginRoute(running(state), SANDBOX, companionOf);
+      expect(r.route).toBe("run");
+      expect(r.argv).toEqual([
+        "run",
+        "--rm",
+        "-it",
+        ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
+        "--mount",
+        "type=volume,src=companion-pihome,dst=/home/companion/.pi",
+        "qcr-companion",
+        "pi",
+      ]);
+      expect(r.say).toMatch(/not running/);
+      expect(r.say).toMatch(/companion-pihome/);
+    }
+  });
+
+  it("`qcr scan login` over an overridden [scan] pihome_volume never execs into the companion", async () => {
+    const r = await scanLoginRoute(
+      running("true"),
+      { ...SANDBOX, pihome_volume: "other-pihome" },
+      companionOf,
+    );
+    expect(r.route).toBe("run");
+    expect(r.argv).toContain("type=volume,src=other-pihome,dst=/home/companion/.pi");
   });
 });
 
@@ -428,12 +495,23 @@ describe("the scan container's argv", () => {
 /** The launch tests' clock: their sleep advances it, a rule may too. */
 const clock = { t: 0 };
 
+/** The driver's `docker run`, not the read of the companion's login. */
+const isDriverRun = (c: string[]): boolean => c[0] === "run" && c.includes("--detach");
+/** The read of the companion's login: a one-shot over its pi home, read-only. */
+const isLoginRead = (c: string[]): boolean => c[0] === "run" && c.includes("--input-type=module");
+const loginAnswer =
+  (summary: unknown) =>
+  (a: string[]): DockerResult | undefined =>
+    isLoginRead(a) ? { ...OK, stdout: `${JSON.stringify(summary)}\n` } : undefined;
+const GOOD_LOGIN = { "openai-codex": { type: "oauth", expires: 1e15 } };
+
 describe("the sandboxed launch", () => {
   const RUN = { id: "scan-1", mode: "stage1", sha: "a".repeat(40), cases: [], cap_usd: 1 };
 
   function setup(
     rules: Array<(argv: string[]) => DockerResult | undefined>,
     over: Partial<Parameters<typeof dockerDetach>[0]> = {},
+    login: unknown = GOOD_LOGIN,
   ) {
     const env = { HOME: dir } as NodeJS.ProcessEnv;
     const home = join(dir, ".local/state/qcr/default");
@@ -443,6 +521,7 @@ describe("the sandboxed launch", () => {
     writeFileSync(config, "# the live config\n");
     // The pi home volume exists unless a test's own rule says otherwise.
     const { docker, calls } = fakeDocker([
+      loginAnswer(login),
       ...rules,
       (a) => (a[0] === "volume" && a[1] === "inspect" ? OK : undefined),
     ]);
@@ -504,7 +583,7 @@ describe("the sandboxed launch", () => {
       `{{index .Config.Labels "${STAMP_LABEL}"}}`,
       "qcr-companion",
     ]);
-    const run = calls.find((c) => c[0] === "run")!;
+    const run = calls.find(isDriverRun)!;
     expect(run.slice(-6)).toEqual(["scan", "start", "--key", "K", "--foreground", "--json"]);
     // The config the container reads is a copy of the live one.
     expect(
@@ -649,25 +728,70 @@ describe("the sandboxed launch", () => {
       { env: { HOME: dir, QCR_INSTALL: "work" } as NodeJS.ProcessEnv },
     );
     await detach(["start", "--key", "K"]);
-    const run = calls.find((c) => c[0] === "run")!;
+    const run = calls.find(isDriverRun)!;
     expect(run[run.indexOf("--name") + 1]).toBe("qcr-scan-work-tok1");
   });
 
-  it("refuses while the scan pi home volume does not exist — never lets docker make it empty", async () => {
+  it("refuses while the companion's pi home volume does not exist — never lets docker make it empty", async () => {
     const { calls, detach } = setup([
       stamped("s1"),
       (a) =>
         a[0] === "volume"
-          ? fail("Error response from daemon: get scan-pihome: no such volume")
+          ? fail("Error response from daemon: get companion-pihome: no such volume")
           : undefined,
     ]);
     expect(await detach(["start", "--key", "K"])).toEqual({
       ok: false,
       errors: [
-        "the scan pi home volume scan-pihome does not exist — run `qcr scan login` to make it and log pi in",
+        "the companion's pi home volume companion-pihome does not exist — run `qcr scan login` to log the companion's pi in",
       ],
     });
     expect(calls.some((c) => c[0] === "run")).toBe(false);
+  });
+
+  it("reads the companion's login read-only at the source path, never mounting it writable", async () => {
+    const { calls, detach } = setup([
+      stamped("s1"),
+      (a) => (isDriverRun(a) ? OK : undefined),
+      (a) => (a[0] === "inspect" ? fail("No such object") : undefined),
+    ]);
+    await detach(["start", "--key", "K"]);
+    const read = calls.find(isLoginRead)!;
+    expect(read).toBeDefined();
+    const mounts = calls
+      .filter((c) => c[0] === "run")
+      .flatMap((c) => c.filter((_, i) => c[i - 1] === "--mount"))
+      .filter((m) => m.includes("src=companion-pihome"));
+    expect(mounts.length).toBeGreaterThanOrEqual(2);
+    for (const m of mounts) {
+      expect(m).toContain("dst=/pi-agent-src");
+      expect(m.split(",")).toContain("readonly");
+    }
+    // The login read comes before the driver's run.
+    expect(calls.findIndex(isLoginRead)).toBeLessThan(calls.findIndex(isDriverRun));
+  });
+
+  it("refuses when the companion's pi home holds no login, naming the fix", async () => {
+    const { calls, detach } = setup([stamped("s1")], {}, {});
+    const r = await detach(["start", "--key", "K"]);
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { errors: string[] }).errors[0]).toMatch(/no pi login.*qcr scan login/);
+    expect(calls.some(isDriverRun)).toBe(false);
+  });
+
+  it("refuses when the access token would not outlive a case, telling the operator to let the companion refresh", async () => {
+    const { calls, detach } = setup(
+      [stamped("s1")],
+      {},
+      { "openai-codex": { type: "oauth", expires: SCAN_CASE_AUTH_BUDGET_MS - 1 } },
+    );
+    const r = await detach(["start", "--key", "K"]);
+    expect(r).toMatchObject({ ok: false });
+    const why = (r as { errors: string[] }).errors[0]!;
+    expect(why).toMatch(/never refreshes/);
+    expect(why).toMatch(/open the companion/i);
+    expect(why).toMatch(/qcr scan login/);
+    expect(calls.some(isDriverRun)).toBe(false);
   });
 
   it("hands the container the reviewer key alone, in a 0600 file of its own", async () => {
@@ -692,7 +816,7 @@ describe("the sandboxed launch", () => {
       },
     );
     await detach(["start", "--key", "K"]);
-    const run = calls.find((c) => c[0] === "run")!;
+    const run = calls.find(isDriverRun)!;
     expect(run).not.toContain(keys);
     const file = run[run.indexOf("--env-file") + 1]!;
     expect(file).toBe(join(dir, ".local/state/qcr-operator/default/scan-memory-keys.env"));
@@ -716,7 +840,7 @@ describe("the sandboxed launch", () => {
       },
     );
     await detach(["start", "--key", "K"]);
-    expect(calls.find((c) => c[0] === "run")).not.toContain("--env-file");
+    expect(calls.find(isDriverRun)).not.toContain("--env-file");
   });
 
   it("an outcome written as the timeout struck is still the answer", async () => {
@@ -774,6 +898,7 @@ describe("the sandboxed launch", () => {
       docker: async (argv, o) => {
         calls.push(argv);
         if (argv[0] === "image") return { ...OK, stdout: "s1\n" };
+        if (isLoginRead(argv)) return { ...OK, stdout: JSON.stringify(GOOD_LOGIN) };
         if (argv[0] === "run") {
           seen.push(o?.timeoutMs);
           return fail("docker timed out after 10000 ms");
@@ -851,17 +976,21 @@ describe("qcr scan doctor", () => {
         gitDirs: () => ({ ok: true, mounts: [] }),
         cut: () => ({ saved: true, problems: [] }),
         model: "openai-codex/gpt-6.1-sol:medium",
+        now: () => 0,
         ...over,
       }),
       repo,
     };
   }
+  const HOUR = 3_600_000;
   const all = [
     (a: string[]) => (a[0] === "version" ? { ...OK, stdout: "27.1.0\n" } : undefined),
     (a: string[]) => (a[0] === "image" ? { ...OK, stdout: "s1\n" } : undefined),
     (a: string[]) => (a[0] === "volume" ? { ...OK, stdout: "[]" } : undefined),
+    loginAnswer({ "openai-codex": { type: "oauth", expires: 3 * HOUR + 12 * 60_000 } }),
     (a: string[]) => (a[0] === "run" ? { ...OK, stdout: "OK\n" } : undefined),
   ];
+  const probeOf = (calls: string[][]) => calls.find((c) => c[0] === "run" && !isLoginRead(c));
 
   it("passes every check on a ready machine, and says what it probed", async () => {
     const { report, calls, repo } = doctor(all);
@@ -876,14 +1005,36 @@ describe("qcr scan doctor", () => {
       ["reviewed_repo", true],
       ["unit_cut", true],
     ]);
-    expect(calls.find((c) => c[0] === "run")).toEqual([
+    // The pi home check reports the login and its remaining life.
+    const pihome = r.checks.find((c) => c.check === "pihome")!;
+    expect(pihome.detail).toMatch(/companion-pihome/);
+    expect(pihome.detail).toMatch(/openai-codex/);
+    expect(pihome.detail).toMatch(/3h 12m/);
+    // The login is read over a read-only mount at the source path.
+    const read = calls.find(isLoginRead)!;
+    expect(read).toContain(
+      "type=volume,src=companion-pihome,dst=/pi-agent-src,volume-subpath=agent,readonly",
+    );
+    // The probe runs on a private, refresh-disabled copy — the scan's own route.
+    expect(probeOf(calls)).toEqual([
       "run",
       "--rm",
       ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
       "--mount",
-      "type=volume,src=scan-pihome,dst=/home/companion/.pi",
+      "type=volume,src=companion-pihome,dst=/pi-agent-src,volume-subpath=agent,readonly",
+      "--mount",
+      "type=tmpfs,dst=/pi-agent-src/sessions",
+      "--mount",
+      "type=tmpfs,dst=/home/companion/.pi,tmpfs-mode=1777",
+      "--env",
+      `${SCAN_AUTH_SRC_ENV}=/pi-agent-src`,
+      "--env",
+      "PI_CODING_AGENT_DIR=/home/companion/.pi/agent",
       "qcr-companion",
-      "pi",
+      "sh",
+      "-c",
+      'node --input-type=module -e "$0" && exec pi "$@"',
+      SCAN_AUTH_COPY_SCRIPT,
       "-p",
       "--no-session",
       "--no-extensions",
@@ -891,6 +1042,10 @@ describe("qcr scan doctor", () => {
       "openai-codex/gpt-6.1-sol:medium",
       "Reply with the single word OK.",
     ]);
+    // No probe ever mounts the companion's pi home writable.
+    for (const c of calls.filter((x) => x[0] === "run"))
+      for (const m of c.filter((_, i) => c[i - 1] === "--mount"))
+        if (m.includes("src=companion-pihome")) expect(m.split(",")).toContain("readonly");
     expect(renderDoctor(r)).toMatch(/^✓ docker/m);
     expect(renderDoctor(r)).toMatch(/all checks pass/i);
   });
@@ -910,7 +1065,7 @@ describe("qcr scan doctor", () => {
     const { report, calls } = doctor([
       all[0]!,
       all[1]!,
-      (a) => (a[0] === "volume" ? fail("Error: no such volume: scan-pihome") : undefined),
+      (a) => (a[0] === "volume" ? fail("Error: no such volume: companion-pihome") : undefined),
     ]);
     const r = await report;
     expect(r.checks.find((c) => c.check === "pihome")).toMatchObject({
@@ -920,9 +1075,36 @@ describe("qcr scan doctor", () => {
     expect(calls.some((c) => c[0] === "run")).toBe(false);
   });
 
-  it("a pi that does not answer is not logged in", async () => {
+  it("no login for the stage-1 model's provider fails, and no probe is run", async () => {
+    const { report, calls } = doctor([
+      ...all.slice(0, 3),
+      loginAnswer({ anthropic: { type: "oauth", expires: 1e15 } }),
+      ...all.slice(4),
+    ]);
+    const r = await report;
+    expect(r.checks.find((c) => c.check === "pihome")).toMatchObject({
+      ok: false,
+      detail: expect.stringMatching(/no openai-codex login/),
+      fix: "qcr scan login",
+    });
+    expect(probeOf(calls)).toBeUndefined();
+  });
+
+  it("an access token that would not outlive a case fails, saying to let the companion refresh", async () => {
     const r = await doctor([
       ...all.slice(0, 3),
+      loginAnswer({ "openai-codex": { type: "oauth", expires: SCAN_CASE_AUTH_BUDGET_MS - 1 } }),
+      ...all.slice(4),
+    ]).report;
+    const pihome = r.checks.find((c) => c.check === "pihome")!;
+    expect(pihome.ok).toBe(false);
+    expect(pihome.fix).toMatch(/open the companion/i);
+    expect(pihome.fix).toMatch(/qcr scan login/);
+  });
+
+  it("a pi that does not answer is not logged in", async () => {
+    const r = await doctor([
+      ...all.slice(0, 4),
       (a) => (a[0] === "run" ? fail("No API key found for openai-codex") : undefined),
     ]).report;
     expect(r.checks.find((c) => c.check === "pihome")).toMatchObject({

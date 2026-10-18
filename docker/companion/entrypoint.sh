@@ -38,10 +38,12 @@ fi
 # with the next recreate — the login silently stops persisting, and nobody
 # finds out until they are asked to log in again. Loud, never fatal: a
 # companion that starts is worth more than one that is right, and the operator
-# can see this line.
+# can see this line. The companion's alone: a one-shot container's pi home is
+# what it mounts — the scan sandbox's is a private tmpfs, meant to vanish.
 # /proc/mounts, not `mountpoint`: util-linux is not guaranteed in the base
 # image, and a guard that reports a false alarm when its own tool is missing
 # teaches you to ignore it.
+if [ "$ENTRY_MODE" = companion ]; then
 if ! awk -v d="$PI_HOME_DIR" '$2 == d { found = 1 } END { exit !found }' /proc/mounts; then
   echo "!! $PI_HOME_DIR is NOT a mount point — pi's OAuth token and settings will"
   echo "!! NOT survive a container recreate. Expected the companion-pihome volume"
@@ -49,6 +51,7 @@ if ! awk -v d="$PI_HOME_DIR" '$2 == d { found = 1 } END { exit !found }' /proc/m
   echo "!! CONTAINER.piHome in src/tui/companion.ts."
 else
   echo "pi home on the volume: $PI_HOME_DIR (OAuth + conversation are durable)"
+fi
 fi
 
 # Everything from here to the pi settings is the companion's: its mounts,

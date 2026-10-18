@@ -6,7 +6,8 @@
 // which the companion loads with its much wider authority. So the companion's
 // dir is mounted read-only at `/pi-agent-src`, and every case gets a private
 // copy of the access token in a tmpfs agent dir, with the refresh token
-// replaced by a value no OAuth server accepts. The sandbox therefore:
+// replaced by a value no OAuth server accepts (src/piauthcopy.ts, the copy the
+// scan sandbox takes too). The sandbox therefore:
 //   - never writes anything the companion reads;
 //   - never refreshes, so it can never rotate (and invalidate) the companion's
 //     grant — which a second refresher would do;
@@ -16,18 +17,17 @@
 // remaining life against the case budget BEFORE the case starts and stops the
 // run with a clear instruction, instead of failing case after case.
 
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
+import {
+  AuthExpiring,
+  authCopyFrom,
+  copyPiAuth,
+  DISABLED_REFRESH,
+  type AuthCopyWords,
+} from "../piauthcopy.js";
 
 // The API-key route: the published runs used the login above; an outsider
 // re-running the benchmark brings their own API key instead.
@@ -197,31 +197,26 @@ export function apiKeyEnv(
   return out;
 }
 
-/** What a copied OAuth credential carries instead of the real refresh token. */
-export const DISABLED_REFRESH = "bench-refresh-disabled";
-
-export class AuthExpiring extends Error {}
+export { AuthExpiring, DISABLED_REFRESH };
 
 /**
- * The sandbox copy of a pi `auth.json`: every OAuth entry's refresh token
- * replaced (not deleted — pi's credential guard expects the field to be a
- * string), everything else kept. Returns the earliest OAuth expiry so the
- * caller can refuse a case that would outlive it.
+ * The sandbox copy of a pi `auth.json` (src/piauthcopy.ts `authCopyFrom`):
+ * every OAuth entry's refresh token replaced, everything else kept, and the
+ * earliest OAuth expiry so the caller can refuse a case that would outlive it.
  */
 export function benchAuthFrom(raw: string): { json: string; expiresAt: number | null } {
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
-  let expiresAt: number | null = null;
-  for (const v of Object.values(parsed)) {
-    if (typeof v !== "object" || v === null) continue;
-    const cred = v as Record<string, unknown>;
-    if (cred["type"] !== "oauth") continue;
-    cred["refresh"] = DISABLED_REFRESH;
-    if (typeof cred["expires"] === "number") {
-      expiresAt = expiresAt === null ? cred["expires"] : Math.min(expiresAt, cred["expires"]);
-    }
-  }
-  return { json: JSON.stringify(parsed, null, 2) + "\n", expiresAt };
+  const { json, expiresAt } = authCopyFrom(raw);
+  return { json, expiresAt };
 }
+
+/** The benchmark's refusals: its fixes are the login volume and the key route. */
+const BENCH_AUTH_WORDS: AuthCopyWords = {
+  missing: (src) =>
+    `no pi login at ${src} — log pi in on the auth volume first (/login), or use your own API key: QCR_BENCH_AUTH=api-key (bench/aacr/README.md "Reproduce")`,
+  expiring: ({ expiresAt, needMs }) =>
+    `the shared Codex access token expires at ${new Date(expiresAt).toISOString()}, inside this case's ${Math.round(needMs / 60_000)}-minute budget. ` +
+    "The benchmark never refreshes it (that would invalidate the login's own grant). Use pi on that login volume once so it refreshes its own login, then re-run with --resume — or run on your own API key (QCR_BENCH_AUTH=api-key).",
+};
 
 /** pi's agent-level retry for a benchmark sandbox — every session and every
  * lens child reads it (one agent dir). pi's own default (3 attempts, ≤ 60 s
@@ -296,25 +291,13 @@ export function syncBenchAuth(o: {
     }
     return { expiresAt: null };
   }
-  const src = join(o.srcDir, "auth.json");
-  if (!existsSync(src)) {
-    throw new AuthExpiring(
-      `no pi login at ${src} — log pi in on the auth volume first (/login), or use your own API key: QCR_BENCH_AUTH=api-key (bench/aacr/README.md "Reproduce")`,
-    );
-  }
-  const { json, expiresAt } = benchAuthFrom(readFileSync(src, "utf8"));
-  const now = (o.now ?? Date.now)();
-  if (expiresAt !== null && expiresAt < now + o.needMs) {
-    throw new AuthExpiring(
-      `the shared Codex access token expires at ${new Date(expiresAt).toISOString()}, inside this case's ${Math.round(o.needMs / 60_000)}-minute budget. ` +
-        "The benchmark never refreshes it (that would invalidate the login's own grant). Use pi on that login volume once so it refreshes its own login, then re-run with --resume — or run on your own API key (QCR_BENCH_AUTH=api-key).",
-    );
-  }
-  mkdirSync(o.dstDir, { recursive: true, mode: 0o700 });
-  const tmp = join(o.dstDir, "auth.json.tmp");
-  writeFileSync(tmp, json, { mode: 0o600 });
-  renameSync(tmp, join(o.dstDir, "auth.json"));
-  chmodSync(join(o.dstDir, "auth.json"), 0o600);
+  const { expiresAt } = copyPiAuth({
+    srcDir: o.srcDir,
+    dstDir: o.dstDir,
+    needMs: o.needMs,
+    ...(o.now ? { now: o.now } : {}),
+    words: BENCH_AUTH_WORDS,
+  });
   writeBenchSettings(o.dstDir, o.root);
   return { expiresAt };
 }

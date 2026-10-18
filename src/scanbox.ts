@@ -11,9 +11,17 @@
 //                             record, findings, ledger, transcripts, lease,
 //                             stop channel and driver log stay on the host,
 //                             so every other `qcr scan` verb reads them there
-//   the scan's pi home        /home/companion/.pi    a named volume of its own
+//   the companion's pi agent  /pi-agent-src          read-only (its sessions
+//   dir (its login)                                  hidden under a tmpfs)
+//   the scan's pi home        /home/companion/.pi    a tmpfs, private to the run
 //   a copy of the live config /qcr-config/live       read-only
 //   the repo profiles         /qcr-config/profiles   read-only
+//
+// The login is the companion's: one login, refreshed by the companion alone.
+// Before every case the driver copies its auth.json into the tmpfs pi home
+// with the refresh token neutralised (src/scanauth.ts), so the scan never
+// refreshes and never writes anything the companion reads; a case the access
+// token would not outlive is refused.
 //
 // No /workspace, no ssh, no tracker, no GitHub token, no evidence. The network
 // is unrestricted (the model provider), and the memory wiring is the
@@ -44,6 +52,14 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { appStamp } from "./appstamp.js";
 import type { ScanSandboxConfig } from "./config.js";
+import type { LoginSummary } from "./piauthcopy.js";
+import {
+  SCAN_AUTH_FIX,
+  SCAN_AUTH_SRC_ENV,
+  SCAN_CASE_AUTH_BUDGET_MS,
+  scanAuthExpiring,
+  scanAuthMissing,
+} from "./scanauth.js";
 import {
   configHome,
   installName,
@@ -89,7 +105,14 @@ export const SCANBOX = {
   configFile: CONTAINER.configFile,
   profiles: CONTAINER.profiles,
   piHome: CONTAINER.piHome,
+  /** The companion's agent dir, read-only: the login the scan copies. */
+  authSrc: "/pi-agent-src",
+  /** The scan's own pi agent dir, on the tmpfs pi home. */
+  agentDir: `${CONTAINER.piHome}/agent`,
 } as const;
+
+/** The companion's pi home is its login: only its `agent/` dir is mounted. */
+const AGENT_SUBPATH = "agent";
 
 /** The image label carrying the build stamp. */
 export const STAMP_LABEL = "qcr.build-sha";
@@ -111,8 +134,14 @@ export const PI_PROBE_PROMPT = "Reply with the single word OK.";
 
 export interface ScanMount {
   dest: string;
+  /** A host path (bind), a volume name, or "" for a tmpfs. */
   source: string;
   mode?: "ro" | "rw";
+  /** The volume's sub-directory mounted, not the whole volume. */
+  subpath?: string;
+  tmpfs?: true;
+  /** A tmpfs's permission bits, octal. */
+  tmpfsMode?: string;
 }
 
 /** One container's worth of resolved inputs. */
@@ -135,13 +164,36 @@ export interface ScanBoxPlan {
   memory: MemoryWiring;
 }
 
+/** The login mounts: the companion's agent dir read-only at the source path
+ * (its sessions hidden under an empty tmpfs) and a private tmpfs pi home the
+ * copy is made in — never the companion's pi home at the pi home. */
+export function loginMounts(pihomeVolume: string): ScanMount[] {
+  return [
+    { dest: SCANBOX.authSrc, source: pihomeVolume, subpath: AGENT_SUBPATH, mode: "ro" },
+    { dest: `${SCANBOX.authSrc}/sessions`, source: "", tmpfs: true },
+    // World-writable: docker makes a tmpfs root's, and the image's user
+    // makes the agent dir in it.
+    { dest: SCANBOX.piHome, source: "", tmpfs: true, tmpfsMode: "1777" },
+  ];
+}
+
+/** The env that points the container's pi and driver at the copy. */
+function loginEnvArgv(): string[] {
+  return [
+    "--env",
+    `${SCAN_AUTH_SRC_ENV}=${SCANBOX.authSrc}`,
+    "--env",
+    `PI_CODING_AGENT_DIR=${SCANBOX.agentDir}`,
+  ];
+}
+
 /** Every mount a scan container gets, in `docker run` order. */
 export function scanMounts(p: ScanBoxPlan): ScanMount[] {
   return [
     { dest: SCANBOX.reviewedRepo, source: p.reviewedRepo, mode: "ro" },
     ...p.gitDirs.map((d) => ({ dest: d, source: d, mode: "ro" as const })),
     { dest: SCANBOX.stateHome, source: p.stateHome, mode: "rw" },
-    { dest: SCANBOX.piHome, source: p.pihomeVolume },
+    ...loginMounts(p.pihomeVolume),
     { dest: SCANBOX.configLive, source: p.configMirror, mode: "ro" },
     { dest: SCANBOX.profiles, source: p.profiles, mode: "ro" },
   ];
@@ -152,11 +204,18 @@ export function scanMounts(p: ScanBoxPlan): ScanMount[] {
  * path can be read as a mode. A path holding a comma cannot be spelled
  * (`commaProblem` refuses it first). */
 export function mountSpec(m: ScanMount): string {
+  if (m.tmpfs)
+    return [
+      `type=tmpfs`,
+      `dst=${m.dest}`,
+      ...(m.tmpfsMode ? [`tmpfs-mode=${m.tmpfsMode}`] : []),
+    ].join(",");
   const bind = m.source.startsWith("/");
   return [
     `type=${bind ? "bind" : "volume"}`,
     `src=${m.source}`,
     `dst=${m.dest}`,
+    ...(m.subpath ? [`volume-subpath=${m.subpath}`] : []),
     ...(m.mode === "ro" ? ["readonly"] : []),
   ].join(",");
 }
@@ -204,25 +263,143 @@ export function scanRunArgv(p: ScanBoxPlan, argv: readonly string[]): string[] {
     [DRIVER_LOG_ENV, inState(DRIVER_LOG)],
   ];
   for (const [k, v] of env) out.push("--env", `${k}=${v}`);
+  out.push(...loginEnvArgv());
   out.push(...memoryEnvArgv({ ...p.memory, keysFile: undefined }));
   if (p.keysFile) out.push("--env-file", p.keysFile);
   out.push(p.image, "node", SCANBOX.cli, "scan", ...argv, "--foreground", "--json");
   return out;
 }
 
-/** `qcr scan login`: pi, interactive, over the scan's pi home — `/login`
- * there is what every scan container's pi then uses. */
-export function scanLoginArgv(s: ScanSandboxConfig): string[] {
+/** How `qcr scan login` reaches the companion's pi: the argv after
+ * `docker`, which route, and the line saying so. */
+export interface ScanLoginRoute {
+  route: "exec" | "run";
+  argv: string[];
+  say: string;
+}
+
+/** `qcr scan login` logs the companion's pi in — the login every scan reads.
+ * With the companion container running, pi inside it (`docker exec`), so the
+ * companion stays the one process that writes its login; otherwise a
+ * throwaway pi over its pi home volume, read-write. A `[scan] pihome_volume`
+ * that is not the companion's is logged in the throwaway way. */
+export async function scanLoginRoute(
+  docker: DockerRunner,
+  s: ScanSandboxConfig,
+  companion: { container_name: string; pihome_volume: string },
+): Promise<ScanLoginRoute> {
+  const vol = s.pihome_volume;
+  if (vol === companion.pihome_volume) {
+    const st = await docker([
+      "inspect",
+      "--format",
+      "{{.State.Running}}",
+      companion.container_name,
+    ]);
+    if (st.ok && st.stdout.trim() === "true")
+      return {
+        route: "exec",
+        argv: ["exec", "-it", companion.container_name, "pi"],
+        say: `scan login: the companion container ${companion.container_name} is running — opening pi inside it; /login there logs in its pi home ${vol}, the login every scan reads.`,
+      };
+  }
+  return {
+    route: "run",
+    argv: [
+      "run",
+      "--rm",
+      "-it",
+      ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
+      "--mount",
+      mountSpec({ dest: SCANBOX.piHome, source: vol }),
+      s.image,
+      "pi",
+    ],
+    say:
+      vol === companion.pihome_volume
+        ? `scan login: the companion container ${companion.container_name} is not running — opening pi in a throwaway container over its pi home ${vol}; /login there is the login every scan reads.`
+        : `scan login: [scan] pihome_volume ${vol} is not the companion's — opening pi in a throwaway container over it; /login there is the login every scan reads.`,
+  };
+}
+
+// ---- the companion's login, read-only --------------------------------------------
+
+/** Prints the login summary of the agent dir named by its argument
+ * (`loginSummary`: providers and expiries, never a token). */
+export const LOGIN_SUMMARY_SCRIPT =
+  `const { readFileSync } = await import("node:fs");` +
+  `const { loginSummary } = await import("${SCANBOX.app}/dist/src/piauthcopy.js");` +
+  `let raw = "{}";` +
+  `try { raw = readFileSync(process.argv[1] + "/auth.json", "utf8"); } catch {}` +
+  `console.log(JSON.stringify(loginSummary(raw)));`;
+
+/** Makes the refresh-disabled copy where the env says (`syncScanAuthFromEnv`),
+ * for a token that outlives the doctor's probe. */
+export const SCAN_AUTH_COPY_SCRIPT =
+  `const { syncScanAuthFromEnv } = await import("${SCANBOX.app}/dist/src/scanauth.js");` +
+  `syncScanAuthFromEnv(process.env, ${PI_PROBE_TIMEOUT_MS});`;
+
+/** `docker run` reading the companion's login summary over a read-only mount. */
+export function loginSummaryArgv(image: string, pihomeVolume: string): string[] {
   return [
     "run",
     "--rm",
-    "-it",
-    ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
     "--mount",
-    mountSpec({ dest: SCANBOX.piHome, source: s.pihome_volume }),
-    s.image,
-    "pi",
+    mountSpec(loginMounts(pihomeVolume)[0]!),
+    image,
+    "node",
+    "--input-type=module",
+    "-e",
+    LOGIN_SUMMARY_SCRIPT,
+    SCANBOX.authSrc,
   ];
+}
+
+/** The companion's login, as the image reads it, or why it cannot be read. */
+export async function readLoginSummary(
+  docker: DockerRunner,
+  image: string,
+  pihomeVolume: string,
+): Promise<{ ok: true; summary: LoginSummary } | { ok: false; error: string }> {
+  const r = await docker(loginSummaryArgv(image, pihomeVolume), { timeoutMs: 60_000 });
+  if (!r.ok) return { ok: false, error: dockerFailureLine(r) };
+  const last = r.stdout.trim().split("\n").pop() ?? "";
+  try {
+    const parsed = JSON.parse(last) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      throw new Error("not an object");
+    return { ok: true, summary: parsed as LoginSummary };
+  } catch {
+    return { ok: false, error: `the login summary could not be read: ${last.slice(0, 200)}` };
+  }
+}
+
+/** The earliest OAuth expiry in a login — the token a copy must outlive. */
+function earliestExpiry(s: LoginSummary): { provider: string; expiresAt: number } | null {
+  let out: { provider: string; expiresAt: number } | null = null;
+  for (const [provider, c] of Object.entries(s))
+    if (c.type === "oauth" && c.expires !== null && (out === null || c.expires < out.expiresAt))
+      out = { provider, expiresAt: c.expires };
+  return out;
+}
+
+/** "3h 12m" — a token's remaining life. */
+export function lifeWords(ms: number): string {
+  if (ms <= 0) return "expired";
+  const m = Math.floor(ms / 60_000);
+  const d = Math.floor(m / 1440);
+  const h = Math.floor((m % 1440) / 60);
+  return d > 0 ? `${d}d ${h}h` : `${h}h ${m % 60}m`;
+}
+
+/** Why a scan cannot run on this login now, or null: no login at all, or
+ * a token that would expire inside a case's budget. */
+export function loginProblem(s: LoginSummary, now: number): string | null {
+  if (Object.keys(s).length === 0) return scanAuthMissing(`${SCANBOX.authSrc}/auth.json`);
+  const e = earliestExpiry(s);
+  if (e !== null && e.expiresAt < now + SCAN_CASE_AUTH_BUDGET_MS)
+    return scanAuthExpiring({ ...e, needMs: SCAN_CASE_AUTH_BUDGET_MS });
+  return null;
 }
 
 /** The driver's side of the handshake: its start outcome, written whole
@@ -443,9 +620,16 @@ export function dockerDetach<R = unknown>(
     if (!volume.ok)
       return refuse(
         /no such volume/i.test(dockerFailureLine(volume))
-          ? `the scan pi home volume ${vol} does not exist — run \`qcr scan login\` to make it and log pi in`
-          : `the scan pi home volume ${vol} cannot be inspected: ${dockerFailureLine(volume)}`,
+          ? `the companion's pi home volume ${vol} does not exist — run \`qcr scan login\` to log the companion's pi in`
+          : `the companion's pi home volume ${vol} cannot be inspected: ${dockerFailureLine(volume)}`,
       );
+    // The login is read before anything starts: a token the first case
+    // would not outlive is refused here, not case by case.
+    const login = await readLoginSummary(deps.docker, deps.sandbox.image, vol);
+    if (!login.ok)
+      return refuse(`the companion's pi login in ${vol} cannot be read: ${login.error}`);
+    const loginWhy = loginProblem(login.summary, now());
+    if (loginWhy !== null) return refuse(loginWhy);
     const git = (deps.gitDirs ?? hostGitDirs)(repo);
     if (!git.ok) return refuse(`git cannot read the reviewed repo at ${repo}: ${git.error}`);
     const home = stateHome(deps.env);
@@ -621,6 +805,7 @@ export interface DoctorDeps {
   /** `pi …` on this machine (sandbox = "host"); default the PATH's. */
   hostPi?: (argv: string[], opts: { timeoutMs: number }) => Promise<DockerResult>;
   piTimeoutMs?: number;
+  now?: () => number;
 }
 
 /** pi's one-shot probe arguments. */
@@ -707,36 +892,75 @@ async function pihomeCheck(
   login: string,
 ): Promise<DoctorCheck> {
   const vol = d.sandbox.pihome_volume;
-  // Asked first: `docker run -v` would create an empty volume.
+  // Asked first: `docker run` would create an empty volume.
   const exists = await d.docker(["volume", "inspect", vol]);
   if (!exists.ok)
     return {
       check: "pihome",
       ok: false,
-      detail: `the scan pi home volume ${vol} does not exist — never logged in`,
+      detail: `the companion's pi home volume ${vol} does not exist — never logged in`,
       fix: login,
     };
   if (!imageOk)
     return { check: "pihome", ok: false, detail: "not checked — the image must match first" };
+  const read = await readLoginSummary(d.docker, d.sandbox.image, vol);
+  if (!read.ok)
+    return {
+      check: "pihome",
+      ok: false,
+      detail: `the login in ${vol} cannot be read: ${read.error}`,
+      fix: login,
+    };
+  const provider = d.model.split("/")[0] ?? "";
+  const cred = read.summary[provider];
+  if (cred === undefined)
+    return {
+      check: "pihome",
+      ok: false,
+      detail: `no ${provider} login in ${vol} — the stage-1 model ${d.model} needs one`,
+      fix: login,
+    };
+  const now = (d.now ?? Date.now)();
+  const life =
+    cred.expires === null
+      ? `a ${cred.type} login (no expiry)`
+      : `access token good for ${lifeWords(cred.expires - now)} (until ${new Date(cred.expires).toISOString()})`;
+  const why = loginProblem(read.summary, now);
+  if (why !== null)
+    return {
+      check: "pihome",
+      ok: false,
+      detail: `${vol}: ${provider} ${life} — ${why}`,
+      fix: SCAN_AUTH_FIX,
+    };
+  // The probe runs the scan's own route: a refresh-disabled copy of the
+  // read-only login in a private pi home, never the volume itself.
   const r = await d.docker(
     [
       "run",
       "--rm",
       ...PUBLIC_DNS.flatMap((x) => ["--dns", x]),
-      "--mount",
-      mountSpec({ dest: SCANBOX.piHome, source: vol }),
+      ...loginMounts(vol).flatMap((m) => ["--mount", mountSpec(m)]),
+      ...loginEnvArgv(),
       d.sandbox.image,
-      "pi",
+      "sh",
+      "-c",
+      'node --input-type=module -e "$0" && exec pi "$@"',
+      SCAN_AUTH_COPY_SCRIPT,
       ...probeArgv(d.model),
     ],
     { timeoutMs },
   );
   return r.ok
-    ? { check: "pihome", ok: true, detail: `pi in ${vol} answers on ${d.model}` }
+    ? {
+        check: "pihome",
+        ok: true,
+        detail: `${vol}: ${provider} ${life}; pi on a read-only copy answers on ${d.model}`,
+      }
     : {
         check: "pihome",
         ok: false,
-        detail: `pi in ${vol} did not answer on ${d.model}: ${dockerFailureLine(r)}`,
+        detail: `${vol}: ${provider} ${life}; pi on a read-only copy did not answer on ${d.model}: ${dockerFailureLine(r)}`,
         fix: login,
       };
 }

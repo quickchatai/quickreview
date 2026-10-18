@@ -466,7 +466,7 @@ export interface ScanCliDeps {
   units?: UnitCutPort | null;
   /** `doctor`: the sandbox's readiness report. */
   doctor?: () => Promise<DoctorReport>;
-  /** `login`: pi, interactive, over the scan's pi home; its exit code. */
+  /** `login`: pi, interactive, over the companion's pi home (in the running companion, or a throwaway container); its exit code. */
   login?: () => Promise<number>;
   /** `rebuild`: build `[scan] image` alone, stamped; no container touched. */
   rebuild?: () => Promise<
@@ -1123,7 +1123,7 @@ async function sandboxPorts(
   settingsOf: () => { scan: { tier: string } } | null,
 ): Promise<Pick<ScanCliDeps, "detach" | "units" | "doctor" | "login" | "rebuild">> {
   const [
-    { buildScanImage, dockerDetach, effectiveSandbox, scanDoctor, scanLoginArgv },
+    { buildScanImage, dockerDetach, effectiveSandbox, scanDoctor, scanLoginRoute },
     companion,
     { appStamp },
     install,
@@ -1143,6 +1143,7 @@ async function sandboxPorts(
   }
   const configured = cfg?.scan_sandbox ?? {
     ...cfgMod.SCAN_SANDBOX_DEFAULTS,
+    pihome_volume: cfgMod.COMPANION_DEFAULTS.pihome_volume,
     image: cfgMod.COMPANION_DEFAULTS.image,
   };
   const docker = companion.realDockerRunner;
@@ -1218,7 +1219,13 @@ async function sandboxPorts(
         );
         return 1;
       }
-      const r = spawnSync("docker", scanLoginArgv(sandbox), { stdio: "inherit" });
+      const route = await scanLoginRoute(
+        docker,
+        sandbox,
+        cfg?.companion ?? cfgMod.COMPANION_DEFAULTS,
+      );
+      console.log(route.say);
+      const r = spawnSync("docker", route.argv, { stdio: "inherit" });
       if (r.error) {
         console.log(`scan login: docker could not start: ${r.error.message}`);
         return 1;

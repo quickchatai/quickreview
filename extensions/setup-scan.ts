@@ -37,6 +37,7 @@ import { join } from "node:path";
 import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
+import { scanCasesForEnv } from "../src/scanauth.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { Refusal, SetupEngine } from "../src/setup/engine.js";
 import type {
@@ -1109,7 +1110,16 @@ export function buildScan(
   const scan = new ScanRunner({
     state,
     clock: () => new Date(),
-    cases: piCaseRunner({ agentsDir, cwd: root, transcriptDir: join(home, SCAN_TRANSCRIPTS_DIR) }),
+    // In the scan container: each case on a fresh refresh-disabled copy of
+    // the companion's login; a token a case would not outlive stops the run.
+    cases: scanCasesForEnv(
+      piCaseRunner({ agentsDir, cwd: root, transcriptDir: join(home, SCAN_TRANSCRIPTS_DIR) }),
+      env,
+      (reason) => {
+        console.error(`scan: stopping — ${reason}`);
+        scan.stop();
+      },
+    ),
     source: gitScanSource(reviewedRepo, home),
     savedCut: () => {
       const cut = engine.savedCut();

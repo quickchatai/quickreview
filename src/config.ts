@@ -2182,8 +2182,9 @@ export interface ScanSandboxConfig {
   /** Whether config.toml names `sandbox`: only the default gives way to
    * where the CLI runs (inside the companion container it is `host`). */
   sandbox_set: boolean;
-  /** The named volume the sandbox mounts as pi's home — its own login,
-   * apart from the companion's (`qcr scan login`). */
+  /** The pi home volume whose login the sandbox reads — read-only, a
+   * refresh-disabled copy per case; by default the companion's own
+   * (`[companion] pihome_volume`), which alone refreshes it. */
   pihome_volume: string;
   /** The image the sandbox runs; empty in the file means the companion's. */
   image: string;
@@ -2192,15 +2193,17 @@ export interface ScanSandboxConfig {
 /** The `[scan]` keys that say where a run is driven, not how it scans. */
 export const SCAN_SANDBOX_KEYS = ["sandbox", "pihome_volume", "image"] as const;
 
-export const SCAN_SANDBOX_DEFAULTS: Omit<ScanSandboxConfig, "image"> = {
+export const SCAN_SANDBOX_DEFAULTS: Omit<ScanSandboxConfig, "image" | "pihome_volume"> = {
   sandbox: "docker",
   sandbox_set: false,
-  pihome_volume: "scan-pihome",
 };
 
-/** `[scan] sandbox / pihome_volume / image`; the image defaults to
- * `companionImage`. */
-export function parseScanSandbox(raw: unknown, companionImage: string): ScanSandboxConfig {
+/** `[scan] sandbox / pihome_volume / image`; the image and the pi home
+ * volume default to the companion's. */
+export function parseScanSandbox(
+  raw: unknown,
+  companion: { image: string; pihome_volume: string },
+): ScanSandboxConfig {
   const t = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   const name = (key: string, fallback: string): string => {
     const v = t[key];
@@ -2219,8 +2222,8 @@ export function parseScanSandbox(raw: unknown, companionImage: string): ScanSand
   return {
     sandbox: sandbox as ScanSandbox,
     sandbox_set: t["sandbox"] !== undefined,
-    pihome_volume: name("pihome_volume", SCAN_SANDBOX_DEFAULTS.pihome_volume),
-    image: name("image", companionImage),
+    pihome_volume: name("pihome_volume", companion.pihome_volume),
+    image: name("image", companion.image),
   };
 }
 
@@ -2783,7 +2786,7 @@ export function parseConfig(toml: string): Config {
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
     scan: parseScan(raw.scan),
-    scan_sandbox: parseScanSandbox(raw.scan, companion.image),
+    scan_sandbox: parseScanSandbox(raw.scan, companion),
     archive: parseArchive((raw.archive ?? {}) as Record<string, unknown>),
   };
   validateLensKnobs(cfg);
