@@ -27,6 +27,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { haltPi, killPiGroups } from "./oneshot.js";
 import { originRepo, resolveBranch, resolveUncommitted } from "./localreview.js";
 import { parsePrTarget } from "./prtarget.js";
 import { parseReviewArgs } from "./reviewcli.js";
@@ -385,15 +386,50 @@ export function launchDetached(o: {
   }
 }
 
+/** The driver's SIGINT/SIGTERM (what `qcr review stop` sends): the first halts
+ * the run and kills every pi's process group, which the kill aimed at the
+ * driver's own group never reaches; a second kills them outright and exits. */
+export function driverSignals(io: {
+  killPi: (sig: NodeJS.Signals) => void;
+  halt: () => void;
+  exit: (code: number) => void;
+}): () => void {
+  let seen = 0;
+  return () => {
+    seen++;
+    if (seen === 1) {
+      io.halt();
+      io.killPi("SIGTERM");
+      setTimeout(() => io.killPi("SIGKILL"), 5_000).unref();
+      return;
+    }
+    try {
+      io.killPi("SIGKILL");
+    } finally {
+      io.exit(130);
+    }
+  };
+}
+
 /** The detached child's body: run the review, keep what it prints, record how it
  * ended and free the target. A throw is an exit code 1 with the error as output. */
 export async function runDetachedChild(o: {
   dir: string;
   key: string;
   run: (out: (line: string) => void) => Promise<number>;
+  /** The process whose signals stop the run (tests inject one). */
+  proc?: Pick<NodeJS.Process, "on" | "off" | "exit">;
 }): Promise<void> {
+  const proc = o.proc ?? process;
   const outFile = join(o.dir, "output.jsonl");
   const out = (line: string): void => appendFileSync(outFile, `${line}\n`);
+  const onSignal = driverSignals({
+    killPi: killPiGroups,
+    halt: haltPi,
+    exit: (code) => proc.exit(code),
+  });
+  proc.on("SIGINT", onSignal);
+  proc.on("SIGTERM", onSignal);
   let code: number;
   try {
     code = await o.run(out);
@@ -402,6 +438,9 @@ export async function runDetachedChild(o: {
       JSON.stringify({ ok: false, errors: [`the review crashed: ${String(err).slice(0, 300)}`] }),
     );
     code = 1;
+  } finally {
+    proc.off("SIGINT", onSignal);
+    proc.off("SIGTERM", onSignal);
   }
   writeFileSync(join(o.dir, "exit.json"), JSON.stringify({ code }));
   rmSync(lockPath(dirname(dirname(o.dir)), o.key), { force: true });

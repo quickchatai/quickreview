@@ -136,6 +136,28 @@ export interface PiRun {
   capped?: boolean;
 }
 
+/** Process groups of the pi children runPi has running right now, so a signal
+ * handler elsewhere (reviewdetach.ts runDetachedChild) can reach them: each pi
+ * leads its own group, which a kill aimed at the driver's group never touches. */
+const livePiGroups = new Set<number>();
+let piHalted = false;
+
+/** Signal every running pi's process group (its lens children with it). */
+export function killPiGroups(sig: NodeJS.Signals): void {
+  for (const pgid of livePiGroups) {
+    try {
+      process.kill(-pgid, sig);
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/** The run is being stopped: no further pi is spawned by this process. */
+export function haltPi(): void {
+  piHalted = true;
+}
+
 /** The bench's ONE pi spawn (tests/single-shepherd.test.ts S2): the review
  * round and the defect judge (defectjudge.ts) both go through it. */
 export function runPi(
@@ -152,6 +174,10 @@ export function runPi(
   capUsd?: number,
 ): Promise<PiRun> {
   return new Promise((resolve) => {
+    if (piHalted) {
+      resolve({ code: null, timedOut: false, streamError: "stopped" });
+      return;
+    }
     const events = createWriteStream(eventsPath, { flags: "a" });
     const errs = createWriteStream(stderrPath, { flags: "a" });
     // detached: its own process group, so a timeout kills the lens children
@@ -162,6 +188,7 @@ export function runPi(
       stdio: [stdinText === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       detached: true,
     });
+    if (child.pid) livePiGroups.add(child.pid);
     let timedOut = false;
     let capped = false;
     let spent = 0;
@@ -223,6 +250,7 @@ export function runPi(
     // events file's LAST message_end).
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (child.pid) livePiGroups.delete(child.pid);
       let open = 2;
       const settled = (): void => {
         if (--open === 0) resolve({ code, timedOut, streamError, spentUsd: spent, capped });
