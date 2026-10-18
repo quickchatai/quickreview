@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -500,9 +500,7 @@ describe("quoted patterns and substitutions", () => {
   it("allows the sanctioned mint-token read pattern and plain scripts", () => {
     allow(`GH_TOKEN="$(scripts/mint-token.sh)" gh api repos/x/pulls/5/files`);
     allow("scripts/pr-checks.sh 4656");
-    allow(
-      'cd /opt/quickreview/sandbox && GH_TOKEN="$(scripts/mint-token.sh)" scripts/pr-context.sh 5197',
-    );
+    allow(`cd ${process.cwd()} && GH_TOKEN="$(scripts/mint-token.sh)" scripts/pr-context.sh 5197`);
     allow("date -u +%Y-%m-%dT%H:%M:%SZ && git -C wt/pr-4656 status --short");
     allow("nl -ba file.py | head");
   });
@@ -1400,7 +1398,7 @@ describe("checkBashCommand — a regression replay session runs no sandbox scrip
   };
 
   it("blocks cd-then-post and every other sanctioned script", () => {
-    allow("cd /opt/quickreview && bash scripts/post-review.sh 5 COMMENT /tmp/b.md");
+    allow(`cd ${process.cwd()} && bash scripts/post-review.sh 5 COMMENT /tmp/b.md`);
     withReplay(() => {
       block("cd /opt/quickreview && bash scripts/post-review.sh 5 COMMENT /tmp/b.md", "replay");
       block("cd /opt/quickreview && scripts/approve-pr.sh 5 body.md", "replay");
@@ -1673,4 +1671,82 @@ describe("literal patterns and pattern-file operands", () => {
     "rg -e safe -f app.pem src",
     "rg 'read app.pem' app.pem",
   ])("checks pattern files and searched files: %s", (cmd) => block(cmd));
+});
+
+describe("sanctioned scripts require the trusted working directory", () => {
+  it.each([
+    "cd wt/pr-1 && scripts/pr-context.sh 1",
+    "cd wt/pr-1 && bash scripts/pr-context.sh 1",
+    "cd wt/pr-1 && bash -c 'scripts/pr-context.sh 1'",
+    "bash -c 'cd wt/pr-1 && scripts/pr-context.sh 1'",
+    "cd wt/pr-1 && xargs scripts/pr-context.sh",
+    "cd wt/pr-1 && xargs bash scripts/pr-context.sh",
+    'cd wt/pr-1 && GH_TOKEN="$(scripts/mint-token.sh)" gh api repos/o/r',
+    "cd wt/pr-1 || scripts/pr-context.sh 1",
+    "QCR_SANDBOX_ROOT=wt/pr-1 scripts/pr-context.sh 1",
+  ])("refuses a script after an untrusted cd: %s", (cmd) => block(cmd));
+
+  it("refuses a root-relative script from an untrusted tool cwd", () => {
+    expect(checkBashCommand("scripts/pr-context.sh 1", 0, `${process.cwd()}/wt/pr-1`).allowed).toBe(
+      false,
+    );
+    expect(
+      checkBashCommand("bash -c 'scripts/pr-context.sh 1'", 0, `${process.cwd()}/wt/pr-1`).allowed,
+    ).toBe(false);
+    expect(checkBashCommand("git status", 0, `${process.cwd()}/wt/pr-1`).allowed).toBe(true);
+  });
+
+  it("keeps canonical root calls and directory changes for reading", () => {
+    allow("scripts/pr-context.sh 1");
+    allow("bash -c 'scripts/pr-context.sh 1'");
+    allow(`cd ${process.cwd()} && scripts/pr-context.sh 1`);
+    allow("cd wt/pr-1 && git status");
+  });
+
+  it("uses the daemon root and resolves directory symlinks before trusting them", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-script-cwd-"));
+    const root = join(dir, "trusted");
+    const other = join(dir, "reviewed");
+    mkdirSync(root);
+    mkdirSync(join(other, "sub"), { recursive: true });
+    symlinkSync(join(other, "sub"), join(root, "link"));
+    const before = process.env.QCR_SANDBOX_ROOT;
+    process.env.QCR_SANDBOX_ROOT = root;
+    try {
+      expect(checkBashCommand("scripts/pr-context.sh 1", 0, root).allowed).toBe(true);
+      expect(checkBashCommand("scripts/pr-context.sh 1", 0, other).allowed).toBe(false);
+      expect(checkBashCommand("scripts/pr-context.sh 1", 0, `${root}/link/..`).allowed).toBe(false);
+      expect(
+        checkBashCommand(`cd ${root}/link/.. && scripts/pr-context.sh 1`, 0, root).allowed,
+      ).toBe(false);
+    } finally {
+      if (before === undefined) delete process.env.QCR_SANDBOX_ROOT;
+      else process.env.QCR_SANDBOX_ROOT = before;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the pi tool context cwd for authorization", () => {
+    let handler: ((e: unknown, ctx: { cwd: string }) => unknown) | undefined;
+    activate({
+      on: (name: string, h: typeof handler) => {
+        if (name === "tool_call") handler = h;
+      },
+    } as never);
+    const event = { toolName: "bash", input: { command: "scripts/pr-context.sh 1" } };
+    expect(handler!(event, { cwd: `${process.cwd()}/wt/pr-1` })).toMatchObject({ block: true });
+    expect(handler!(event, { cwd: process.cwd() })).toBeUndefined();
+  });
+});
+
+describe("wake patterns cover the delivery filename language", () => {
+  it.each(Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0")))(
+    "protects month %s rather than one representative date",
+    (month) => {
+      block(`printf forged > 2027-${month}-18T16-32-41-123Z-10421.m?`);
+      block(`printf forged > 2027-${month}-18T16-32-41-123Z-10421--cmd-review-8.m[d]`);
+      block(`printf forged > 2027-${month}-18T16-32-41-123Z-10421.md.tmp-[2-9]`);
+    },
+  );
+  it("keeps unrelated filename patterns available", () => allow("printf text > /tmp/out-*.txt"));
 });
