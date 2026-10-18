@@ -205,6 +205,13 @@ export async function resolvePostCredential(
   o: PrCredentialDeps = {},
 ): Promise<CredentialResolution> {
   if (postAs === null) return { ok: true, ...resolved };
+  const known = ["app", "gh", "env:GITHUB_TOKEN", "env:GH_TOKEN"];
+  if (!known.includes(postAs)) {
+    return {
+      ok: false,
+      error: `post_as is ${postAs} but that credential is not available (expected one of ${known.join(", ")})`,
+    };
+  }
   const env = o.env ?? process.env;
   const r = await resolveGithubCredential({
     secretsDir: postAs === "app" ? secretsDir : "",

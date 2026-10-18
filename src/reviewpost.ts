@@ -169,17 +169,16 @@ export async function postReviewToPr(req: PostRequest): Promise<PostResult> {
   }
 }
 
-const POST_AS = ["app", "gh", "env:GITHUB_TOKEN", "env:GH_TOKEN"] as const;
-
 /** The repo's configured posting identity (`post_as` in `.git/qcr-review.json`):
  * which credential source to post as. Null: the credential the PR was read
- * with. An unrecognised value is ignored, so a typo never changes who posts. */
+ * with. Any other value is returned as written; an unrecognised one is
+ * rejected at posting time, so a typo never changes who posts. */
 export function loadPostIdentity(cwd: string): string | null {
   const path = settingsPath(cwd);
   if (path === null || !existsSync(path)) return null;
   try {
     const v = (JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>)["post_as"];
-    return typeof v === "string" && (POST_AS as readonly string[]).includes(v) ? v : null;
+    return typeof v === "string" && v !== "" ? v : null;
   } catch {
     return null;
   }

@@ -331,6 +331,32 @@ describe("qcr review --to pr", () => {
     expect(api.posts[0]!.auth).toBe("Bearer other");
   });
 
+  it.each([
+    ["gh", {}],
+    ["app", {}],
+    ["env:GH_TOKEN", {}],
+    ["env:GITHUB_TOKN", { GITHUB_TOKN: "x" }],
+    ["App", {}],
+  ])(
+    "post_as %s that is not available is an error: exit 1, nothing posted",
+    async (postAs, env) => {
+      const repo = cwdRepo(`post-as-bad-${postAs.replace(/\W/g, "")}`);
+      writeFileSync(
+        join(repo, ".git", "qcr-review.json"),
+        JSON.stringify({ auto_limit_usd: 1000, post_as: postAs }),
+      );
+      const api = stubApi();
+      const h = prHarness(repo, happyPi(`post-as-bad-${postAs.replace(/\W/g, "")}`).bin, api, {
+        env: { GITHUB_TOKEN: "tok", ...env },
+      });
+      expect(await runReviewCli(["7", "--to", "pr"], false, h.deps)).toBe(1);
+      expect(h.text()).toMatch(
+        new RegExp(`post_as is ${postAs} but that credential is not available`),
+      );
+      expect(api.posts).toHaveLength(0);
+    },
+  );
+
   it("a failed post is reported and the run exits 1, the findings still shown", async () => {
     const repo = cwdRepo("post-fail");
     const api = stubApi();
