@@ -89,7 +89,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 // The pure parts live in src/engine/lens/ (shared with the engine routes);
-// every name stays importable from here.
+// every name stays importable from here. The env names they read still reach
+// this extension: QCR_SUBAGENT_PASS_DEADLINE_MIN (deadline.ts), QCR_PR and
+// QCR_SANDBOX_ROOT (launch-plan.ts). They are named here so the env inventory
+// keeps them listed.
 export {
   CACHE_GROUP_MAX_AGE_MS,
   CacheGrouper,
