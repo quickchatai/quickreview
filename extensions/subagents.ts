@@ -71,11 +71,54 @@
 //    rule holds — logged FATAL below, never a crashed pi.
 import { CONTEXT_PACK_FILE, LEAF_PACK_ENV } from "../src/contextpack.js";
 import type { Pi, PiToolDefinition } from "@earendil-works/pi-coding-agent";
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { CACHE_GROUP_MAX_AGE_MS, CacheGrouper } from "../src/engine/lens/cache-group.js";
+import {
+  type ParallelNativeResult,
+  minutesText,
+  passTimeoutMessage,
+  resolvePassDeadlineMs,
+  runUnderDeadline,
+  soleTask,
+  timedOutResult,
+} from "../src/engine/lens/deadline.js";
+import { planLaunch } from "../src/engine/lens/launch-plan.js";
+import { WeightedSemaphore } from "../src/engine/lens/semaphore.js";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+
+// The pure parts live in src/engine/lens/ (shared with the engine routes);
+// every name stays importable from here.
+export {
+  CACHE_GROUP_MAX_AGE_MS,
+  CacheGrouper,
+  type CacheSlot,
+} from "../src/engine/lens/cache-group.js";
+export {
+  PASS_DEADLINE_ENV,
+  minutesText,
+  passTimeoutMessage,
+  resolvePassDeadlineMs,
+  runUnderDeadline,
+  soleTask,
+  timedOutResult,
+  type ParallelNativeResult,
+} from "../src/engine/lens/deadline.js";
+export {
+  LAUNCH_PLAN_DIRS_ENV,
+  type LaunchPlan,
+  type LaunchUnit,
+  listTaskFiles,
+  planLaunch,
+  realDir,
+  resolveTaskDir,
+  sanctionedExtras,
+  stringList,
+  taskPointer,
+  unitKeys,
+} from "../src/engine/lens/launch-plan.js";
+export { WeightedSemaphore } from "../src/engine/lens/semaphore.js";
 
 /** Env var pinning the discovery scope. "user" (default) reads ONLY
  * ~/.pi/agent/agents — repo-controlled `.pi/agents` dirs are unreachable no
@@ -136,130 +179,6 @@ export function resolveMaxConcurrency(
   return n >= 1 && n <= 64 ? n : DEFAULT_MAX_CONCURRENCY;
 }
 
-/** Env var carrying the per-pass deadline in minutes (on the VM, config.toml
- * [pi] subagent_pass_deadline_min riding the session command line). Absent,
- * "0" or malformed ⇒ no deadline: the companion and the bench run unchanged
- * unless they set it. */
-export const PASS_DEADLINE_ENV = "QCR_SUBAGENT_PASS_DEADLINE_MIN";
-
-/** The per-pass deadline in ms, or undefined for none. Minutes may be
- * fractional; anything but a plain non-negative number up to 240 is a
- * misconfiguration and means no deadline (never a surprise kill). */
-export function resolvePassDeadlineMs(
-  env: Record<string, string | undefined> = process.env,
-): number | undefined {
-  const raw = (env[PASS_DEADLINE_ENV] ?? "").trim();
-  if (!/^\d{1,3}(?:\.\d{1,6})?$/.test(raw)) return undefined;
-  const minutes = Number(raw);
-  if (!(minutes > 0) || minutes > 240) return undefined;
-  return Math.max(1, Math.round(minutes * 60_000));
-}
-
-/** "8", "0.5" — the deadline as the operator wrote it, for the failure text. */
-function minutesText(ms: number): string {
-  const min = ms / 60_000;
-  return Number.isInteger(min) ? String(min) : String(Number(min.toFixed(3)));
-}
-
-/** The failure text a pass that timed out twice returns in its slot. */
-export function passTimeoutMessage(agent: string, deadlineMs: number): string {
-  return `pass ${agent} timed out after ${minutesText(deadlineMs)} min (retried once)`;
-}
-
-/**
- * Run one pass under the per-pass deadline: each attempt gets its own
- * AbortSignal composed of the caller's signal OR a fresh timer, which native
- * honours by killing its child (SIGTERM, then SIGKILL). An attempt the TIMER
- * ended is retried once with a fresh deadline; a second timeout answers
- * "timed_out". The caller's abort always wins and is never retried: it
- * rethrows exactly as before. A result native returns after the timer fired
- * (the child finished as it was being killed) is a result, not a timeout.
- */
-export async function runUnderDeadline<T>(
-  attempt: (signal: AbortSignal) => Promise<T>,
-  callerSignal: AbortSignal | undefined,
-  deadlineMs: number,
-  onTimeout?: (attemptNo: number) => void,
-): Promise<T | "timed_out"> {
-  for (let attemptNo = 1; attemptNo <= 2; attemptNo++) {
-    callerSignal?.throwIfAborted();
-    const timer = new AbortController();
-    const handle = setTimeout(
-      () => timer.abort(new Error(`per-pass deadline of ${minutesText(deadlineMs)} min reached`)),
-      deadlineMs,
-    );
-    const signal = callerSignal ? AbortSignal.any([callerSignal, timer.signal]) : timer.signal;
-    try {
-      return await attempt(signal);
-    } catch (err) {
-      if (callerSignal?.aborted || !timer.signal.aborted) throw err;
-      onTimeout?.(attemptNo);
-    } finally {
-      clearTimeout(handle);
-    }
-  }
-  return "timed_out";
-}
-
-/** The one task a call runs, when it runs exactly one: a single-mode
- * `{agent, task}` call or a one-element `tasks` array. */
-function soleTask(
-  params: Record<string, unknown>,
-): { agent: string; task: unknown; mode: "single" | "parallel" } | undefined {
-  if (Array.isArray(params.tasks)) {
-    if (params.tasks.length !== 1) return undefined;
-    const t = params.tasks[0];
-    const agent =
-      typeof t === "object" && t !== null ? (t as Record<string, unknown>).agent : undefined;
-    return typeof agent === "string"
-      ? { agent, task: (t as Record<string, unknown>).task, mode: "parallel" }
-      : undefined;
-  }
-  if (params.chain !== undefined) return undefined;
-  return typeof params.agent === "string"
-    ? { agent: params.agent, task: params.task, mode: "single" }
-    : undefined;
-}
-
-/** A pass that timed out twice, in native's own result shape for its mode,
- * so the combined result, round-progress and the session read it as one
- * failed pass with the timeout named. */
-export function timedOutResult(
-  sole: { agent: string; task: unknown; mode: "single" | "parallel" },
-  deadlineMs: number,
-): ParallelNativeResult {
-  const message = passTimeoutMessage(sole.agent, deadlineMs);
-  const result = {
-    agent: sole.agent,
-    agentSource: "unknown",
-    task: sole.task,
-    exitCode: 1,
-    messages: [],
-    stderr: "",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      cost: 0,
-      contextTokens: 0,
-      turns: 0,
-    },
-    stopReason: "error",
-    errorMessage: message,
-    timedOut: true,
-  };
-  const text =
-    sole.mode === "parallel"
-      ? `Parallel: 0/1 succeeded\n\n### [${sole.agent}] failed (timeout)\n\n${message}`
-      : `Agent timeout: ${message}`;
-  return {
-    content: [{ type: "text", text }],
-    details: { mode: sole.mode, agentScope: undefined, projectAgentsDir: null, results: [result] },
-    isError: true,
-  };
-}
-
 /** Drop `cwd` from a task/chain item, leaving the rest untouched. */
 function stripCwd(item: unknown): unknown {
   if (typeof item !== "object" || item === null || Array.isArray(item)) return item;
@@ -300,59 +219,7 @@ export function callWeight(params: Record<string, unknown>, permits: number): nu
   return 1;
 }
 
-/** A weighted counting semaphore (FIFO). */
-export class WeightedSemaphore {
-  private available: number;
-  private readonly waiters: Array<{ weight: number; resolve: () => void }> = [];
-
-  constructor(readonly permits: number) {
-    this.available = permits;
-  }
-
-  /** Number of permits currently held (for tests/diagnostics). */
-  get held(): number {
-    return this.permits - this.available;
-  }
-
-  private normalizeWeight(weight: number): number {
-    return Math.max(1, Math.min(weight, this.permits));
-  }
-
-  async acquire(weight: number): Promise<void> {
-    const w = this.normalizeWeight(weight);
-    if (this.available >= w && this.waiters.length === 0) {
-      this.available -= w;
-      return;
-    }
-    await new Promise<void>((resolve) => {
-      this.waiters.push({ weight: w, resolve });
-    });
-  }
-
-  release(weight: number): void {
-    this.available += this.normalizeWeight(weight);
-    if (this.available > this.permits) this.available = this.permits;
-    while (
-      this.waiters.length > 0 &&
-      this.waiters[0] !== undefined &&
-      this.available >= this.waiters[0].weight
-    ) {
-      const next = this.waiters.shift();
-      if (!next) break;
-      this.available -= next.weight;
-      next.resolve();
-    }
-  }
-}
-
 type ToolExecute = PiToolDefinition["execute"];
-
-interface ParallelNativeResult {
-  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
-  details: { mode?: string; results: unknown[]; [key: string]: unknown };
-  isError?: boolean;
-  [key: string]: unknown;
-}
 
 function parallelResult(value: unknown): ParallelNativeResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -702,225 +569,6 @@ async function runPass(
 /** The tool's name, as the round templates spell it. */
 export const LAUNCH_PLAN_TOOL = "launch_plan";
 
-/** Env var naming EXTRA sanctioned task dirs, exactly, separated by the
- * platform path delimiter — the bench's `<case>/tasks` and `<case>/tasks-sweep`
- * (src/bench/runner.ts). Production never sets it. */
-export const LAUNCH_PLAN_DIRS_ENV = "QCR_LAUNCH_PLAN_DIRS";
-
-/** A round's pass directory, as dispatch.ts names it. */
-const PASSES_DIR_RE = /^pr-\d+-round-\d+-passes$/;
-/** A task file, as passtasks.ts names it: the 1-based row, then the agent. */
-const TASK_FILE_RE = /^(\d{2,})-([a-z0-9][a-z0-9-]*)\.md$/;
-/** The validator's agent ids — `pass-validate` and its tier variants. */
-const VALIDATOR_AGENT_RE = /^pass-validate(--|$)/;
-
-/** The pointer a task-file launch carries — the exact words the round
- * templates prescribe (src/passtasks.ts renderPassTaskNote). */
-export function taskPointer(path: string): string {
-  return `Task file: ${path}. Read it first; it is your complete task.`;
-}
-
-/** One unit of a planned launch. */
-export interface LaunchUnit {
-  /** "plan" for the round's tasks dir, "optional" for a follow-up round's
-   * optional rows, "sweep" for the sweep's. */
-  phase: "plan" | "sweep" | "optional";
-  /** 1-based row, as the plan tables print it. */
-  row: number;
-  agent: string;
-  file: string;
-  path: string;
-  task: string;
-}
-
-export type LaunchPlan =
-  { ok: true; units: LaunchUnit[]; skipped: LaunchUnit[] } | { ok: false; error: string };
-
-function realDir(path: string): string | undefined {
-  try {
-    return realpathSync(path);
-  } catch {
-    return undefined;
-  }
-}
-
-/** The extra sanctioned dirs from the environment, each resolved; one that
- * does not exist sanctions nothing. */
-function sanctionedExtras(env: Record<string, string | undefined>): Set<string> {
-  const out = new Set<string>();
-  for (const raw of (env[LAUNCH_PLAN_DIRS_ENV] ?? "").split(delimiter)) {
-    const p = raw.trim();
-    if (!p || !isAbsolute(p)) continue;
-    const real = realDir(p);
-    if (real) out.add(real);
-  }
-  return out;
-}
-
-/** Resolve one `dirs` entry to a sanctioned task dir, or say why not. */
-function resolveTaskDir(
-  input: string,
-  realRoot: string,
-  extras: ReadonlySet<string>,
-  pr: string | undefined,
-):
-  | { dir: string; phase: "plan" | "sweep" | "optional"; passes: string | undefined }
-  | { error: string } {
-  const real = realDir(resolve(realRoot, input));
-  if (!real) return { error: `${input}: no such directory` };
-  // Resolved too: on the VM `<sandbox>/state` is a SYMLINK to the state volume
-  // (entrypoint.sh.j2), so a resolved task dir lives under its target.
-  const state = realDir(join(realRoot, "state")) ?? join(realRoot, "state");
-  // A PR session (QCR_PR, set by the daemon — the session cannot set its own
-  // environment) launches only its own PR's rounds.
-  const ownPasses = (name: string) =>
-    PASSES_DIR_RE.test(name) && (pr === undefined || name.startsWith(`pr-${pr}-round-`));
-  if (dirname(real) === state && ownPasses(basename(real))) {
-    // The round's pass dir: its plan tasks. The sweep's dir is named itself.
-    const tasks = realDir(join(real, "tasks"));
-    if (!tasks || tasks !== join(real, "tasks"))
-      return { error: `${input}: the round has no task files (no tasks/ directory)` };
-    return { dir: tasks, phase: "plan", passes: real };
-  }
-  const name = basename(real);
-  // `tasks-optional` — a follow-up round's optional rows.
-  const phaseOf = (n: string): "plan" | "sweep" | "optional" =>
-    n === "tasks-sweep" ? "sweep" : n === "tasks-optional" ? "optional" : "plan";
-  if (
-    (name === "tasks" || name === "tasks-sweep" || name === "tasks-optional") &&
-    dirname(dirname(real)) === state &&
-    ownPasses(basename(dirname(real)))
-  )
-    return { dir: real, phase: phaseOf(name), passes: dirname(real) };
-  if (extras.has(real)) return { dir: real, phase: phaseOf(name), passes: undefined };
-  return {
-    error: `${input}: not a round's task directory (only state/pr-<n>-round-<k>-passes/tasks, …/tasks-sweep or …/tasks-optional)`,
-  };
-}
-
-/** The discovery task files of one dir, in row order (= the daemon's launch
- * order). Regular files only: a symlink is never followed. */
-function listTaskFiles(dir: string): Array<{ row: number; agent: string; file: string }> {
-  const out: Array<{ row: number; agent: string; file: string }> = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    const m = TASK_FILE_RE.exec(entry.name);
-    if (!m || m[1] === undefined || m[2] === undefined) continue;
-    if (VALIDATOR_AGENT_RE.test(m[2])) continue;
-    out.push({ row: Number.parseInt(m[1], 10), agent: m[2], file: entry.name });
-  }
-  return out.sort((a, b) => a.row - b.row || a.file.localeCompare(b.file));
-}
-
-/** The keys a unit answers to in `extra` and `skip`: its file name (with or
- * without `.md`), its row (`3`, or `sweep:3` / `optional:3` outside the
- * plan), its agent, its phase's wildcard (`plan:*` / `optional:*` /
- * `sweep:*`) and `*`. */
-export function unitKeys(u: Pick<LaunchUnit, "phase" | "row" | "file" | "agent">): string[] {
-  const row = u.phase === "plan" ? String(u.row) : `${u.phase}:${u.row}`;
-  return [u.file, u.file.replace(/\.md$/, ""), row, u.agent, `${u.phase}:*`, "*"];
-}
-
-function stringList(value: unknown): string[] | undefined {
-  if (value === undefined) return [];
-  if (typeof value === "string") return [value];
-  if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) return undefined;
-  return value as string[];
-}
-
-/**
- * Plan a launch: resolve and confine the dirs, list their discovery task
- * files, apply `skip` and `extra`. Pure over the filesystem it reads; never
- * throws — every refusal is an `{ ok: false }` with the reason.
- */
-export function planLaunch(
-  params: Record<string, unknown>,
-  env: Record<string, string | undefined> = process.env,
-): LaunchPlan {
-  try {
-    const dirs = stringList(params.dirs ?? params.dir);
-    if (!dirs || dirs.length === 0)
-      return {
-        ok: false,
-        error: "`dirs` must name the round's task directory (one to three paths)",
-      };
-    if (dirs.length > 3)
-      return {
-        ok: false,
-        error: "at most three dirs: the round's tasks, its tasks-optional and its tasks-sweep",
-      };
-    const skip = stringList(params.skip);
-    if (!skip) return { ok: false, error: "`skip` must be a list of row keys" };
-    const extraRaw = params.extra ?? {};
-    if (typeof extraRaw !== "object" || extraRaw === null || Array.isArray(extraRaw))
-      return { ok: false, error: "`extra` must map a row key to text" };
-    const extra = Object.entries(extraRaw as Record<string, unknown>);
-    if (extra.some(([, v]) => typeof v !== "string"))
-      return { ok: false, error: "`extra` values must be text" };
-
-    const root = env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
-    const realRoot = realDir(root);
-    if (!realRoot) return { ok: false, error: `sandbox root ${root} is not readable` };
-    const extras = sanctionedExtras(env);
-
-    const resolved: Array<{
-      dir: string;
-      phase: "plan" | "sweep" | "optional";
-      passes: string | undefined;
-    }> = [];
-    for (const d of dirs) {
-      const r = resolveTaskDir(d, realRoot, extras, env.QCR_PR?.trim() || undefined);
-      if ("error" in r) return { ok: false, error: r.error };
-      if (resolved.some((x) => x.dir === r.dir)) continue;
-      if (resolved.some((x) => x.phase === r.phase))
-        return { ok: false, error: `two ${r.phase} task directories in one launch` };
-      if (resolved.some((x) => x.passes !== r.passes))
-        return { ok: false, error: "the task directories belong to different rounds" };
-      resolved.push(r);
-    }
-    // Plan rows first, then the optional rows, then the sweep's — the daemon's
-    // launch order within each.
-    const rank = { plan: 0, optional: 1, sweep: 2 } as const;
-    resolved.sort((a, b) => rank[a.phase] - rank[b.phase]);
-
-    const all: LaunchUnit[] = [];
-    for (const r of resolved) {
-      for (const f of listTaskFiles(r.dir)) {
-        const path = join(r.dir, f.file);
-        all.push({ phase: r.phase, ...f, path, task: taskPointer(path) });
-      }
-    }
-    if (all.length === 0)
-      return {
-        ok: false,
-        error: `no discovery task files in ${resolved.map((r) => r.dir).join(", ")}`,
-      };
-
-    // Every key must hit a row: a typo must never silently drop the prior
-    // findings the session meant to assign, nor launch a row it meant to raise.
-    const hits = (key: string) => all.filter((u) => unitKeys(u).includes(key));
-    for (const key of skip)
-      if (hits(key).length === 0) return { ok: false, error: `skip: no row answers to "${key}"` };
-    for (const [key] of extra)
-      if (hits(key).length === 0) return { ok: false, error: `extra: no row answers to "${key}"` };
-
-    const skipped = all.filter((u) => skip.some((k) => unitKeys(u).includes(k)));
-    const units = all
-      .filter((u) => !skipped.includes(u))
-      .map((u) => {
-        const added = extra
-          .filter(([k]) => unitKeys(u).includes(k))
-          .map(([, v]) => (v as string).trim())
-          .filter((v) => v);
-        return added.length ? { ...u, task: [u.task, ...added].join("\n\n") } : u;
-      });
-    if (units.length === 0) return { ok: false, error: "every row was skipped: nothing to launch" };
-    return { ok: true, units, skipped };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 /** An error result, never a throw (VERIFY-ON-PIN: pi renders a returned
  * `isError` result to the model as a failed tool call — the native subagent
  * tool returns its own failures the same way). */
@@ -1069,8 +717,6 @@ export const LEAF_CACHE_EXT_ENV = "QCR_LEAF_CACHE_EXT";
 export { LEAF_PACK_ENV };
 /** The pack's file name beside a round's task dirs (src/contextpack.ts). */
 export const LEAF_PACK_FILE = CONTEXT_PACK_FILE;
-/** A group older than this starts afresh: the provider's cache is short-lived. */
-export const CACHE_GROUP_MAX_AGE_MS = 4 * 60_000;
 export const DEFAULT_CACHE_STAGGER_MS = 2500;
 /** The longest a packed group's child waits for its warm-up. */
 export const CACHE_WARMUP_WAIT_S = 30;
@@ -1088,37 +734,6 @@ export function resolveCacheGroup(env: Record<string, string | undefined> = proc
 
 export function resolveCacheStagger(env: Record<string, string | undefined> = process.env): number {
   return nonNegativeInt(env[CACHE_STAGGER_ENV], DEFAULT_CACHE_STAGGER_MS);
-}
-
-/** One cache group's place: its key, whether the caller is its first child,
- * and how long a pack-less child should wait. */
-export interface CacheSlot {
-  key: string;
-  first: boolean;
-  delayMs: number;
-}
-
-/** Hands out cache keys: per model, one per group of `size` children, a fresh
- * group when the last is full or stale. */
-export class CacheGrouper {
-  private readonly groups = new Map<string, { key: string; leaderAt: number; members: number }>();
-
-  constructor(
-    readonly size: number,
-    readonly staggerMs: number,
-    private readonly newKey: () => string = randomUUID,
-  ) {}
-
-  next(now: number, model = ""): CacheSlot {
-    const g = this.groups.get(model);
-    if (g === undefined || g.members >= this.size || now - g.leaderAt > CACHE_GROUP_MAX_AGE_MS) {
-      const key = this.newKey();
-      this.groups.set(model, { key, leaderAt: now, members: 1 });
-      return { key, first: true, delayMs: 0 };
-    }
-    g.members += 1;
-    return { key: g.key, first: false, delayMs: Math.max(0, g.leaderAt + this.staggerMs - now) };
-  }
 }
 
 /** The index of `--no-session` when `args` carries native's exact leaf flag
