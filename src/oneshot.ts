@@ -28,7 +28,7 @@ import type { PrFileEntry } from "./github.js";
 import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "./contextpack.js";
 import { identityVars } from "./include.js";
 import { lensEnabled } from "./lenstuning.js";
-import { MEMORY_LESS } from "./memory/context.js";
+import { MEMORY_LESS, type RoundMemory } from "./memory/context.js";
 import { renderPassTasks } from "./passtasks.js";
 import { loadProfileHeuristics } from "./profiles.js";
 import { isDefaultPosting } from "./postingpolicy.js";
@@ -343,6 +343,8 @@ export function renderOneShotPrompts(args: {
   issuedAt: string;
   /** The rendered third-party-sources block, "" when none (depsources.ts). */
   dependencyNote?: string;
+  /** The round's memory seed (src/reviewmemory.ts); absent => memory-less. */
+  memory?: RoundMemory;
 }): OneShotPrompts {
   const { root, cfg, target, tree } = args;
   const identity = { ...identityVars(cfg), repo: target.repo };
@@ -413,7 +415,7 @@ export function renderOneShotPrompts(args: {
   const rendered = renderRoundPrompt(
     template,
     order,
-    MEMORY_LESS,
+    args.memory ?? MEMORY_LESS,
     cfg.owner.name,
     args.ecosystem,
     identity,
@@ -471,6 +473,8 @@ export interface OneShotInput {
    * round's, rendered here. */
   prompts?: OneShotPrompts;
   dependencyNote?: string;
+  /** The memory seed for the first round's prompt (ignored with `prompts`). */
+  memory?: RoundMemory;
   /** Names the run in log lines (default `repo#number`). */
   label?: string;
   /** The session name pi is given (default `oneshot-<number>`). */
@@ -543,6 +547,7 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
         files: i.files,
         issuedAt: new Date().toISOString(),
         ...(i.dependencyNote ? { dependencyNote: i.dependencyNote } : {}),
+        ...(i.memory ? { memory: i.memory } : {}),
       });
     // An earlier attempt's task files never leak into this one: launch_plan
     // launches every task file the dir holds.

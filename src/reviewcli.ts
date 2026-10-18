@@ -26,6 +26,7 @@ import {
   reviewKey,
   type BranchTarget,
 } from "./localreview.js";
+import { seedReviewMemory, type ReviewMemorySource } from "./reviewmemory.js";
 import { renderOneShotPrompts, runOneShot, type OneShotResult } from "./oneshot.js";
 
 export const REVIEW_USAGE =
@@ -117,6 +118,9 @@ export interface ReviewCliDeps {
   /** Where each run keeps its throwaway tree and its files. */
   runsDir: string;
   timeoutMs: number;
+  /** The install's OpenViking memory, when set up (src/reviewmemory.ts).
+   * Absent or null: the review runs without memory and says so once. */
+  memory?: ReviewMemorySource | null;
   log?: (line: string) => void;
 }
 
@@ -250,6 +254,14 @@ export async function runReviewCli(
   }
 
   mkdirSync(runDir, { recursive: true });
+  // Memory seasons the prompt; it never fails or holds up the review.
+  const seeded = await seedReviewMemory(
+    deps.memory,
+    { title: target.title, files: t.files },
+    deps.log,
+  );
+  if (seeded.notice !== null && !json) deps.out(seeded.notice);
+  const memoryReport = { used: seeded.used, notice: seeded.notice };
   let shot: OneShotResult;
   try {
     addReviewTree(deps.cwd, treeDir, t.headSha);
@@ -265,6 +277,7 @@ export async function runReviewCli(
       timeoutMs: deps.timeoutMs,
       ...(deps.piBin !== undefined ? { piBin: deps.piBin } : {}),
       capUsd: price,
+      memory: seeded.memory,
       sessionName: `review-${t.branch.replace(/[^A-Za-z0-9._-]/g, "-")}`,
       label: `${t.repo}@${t.branch}`,
       ...(deps.log ? { log: deps.log } : {}),
@@ -292,6 +305,7 @@ export async function runReviewCli(
     cost_usd: spent,
     out_dir: outDir,
     warnings: shot.warnings,
+    memory: memoryReport,
   };
   const body = count > 0 ? ["", `Findings (${count})`, ...renderGrouped(groups)] : [];
   if (shot.capped) {
@@ -335,6 +349,7 @@ export async function cmdReview(rest: string[], json: boolean): Promise<number> 
   const { contextFor } = await import("./bench/runner.js");
   const { createInterface } = await import("node:readline/promises");
   const { homedir } = await import("node:os");
+  const { openReviewMemory } = await import("./reviewmemory.js");
   const root = sandboxRoot();
   const cfg0 = loadConfig();
   const { cfg, ecosystem } = contextFor(root, cfg0.review.profile);
@@ -364,6 +379,7 @@ export async function cmdReview(rest: string[], json: boolean): Promise<number> 
     cfg,
     ecosystem,
     runsDir: join(stateHome(), "review", "runs"),
+    memory: openReviewMemory(cfg0),
     timeoutMs: 60 * 60_000,
     log: (l) => console.error(l),
   });

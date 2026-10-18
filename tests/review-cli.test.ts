@@ -365,3 +365,51 @@ describe("qcr review: the throwaway tree", () => {
     expect(git(repo, "status", "--porcelain")).toBe("");
   });
 });
+
+describe("qcr review: memory when set up", () => {
+  const memStub = (text: string) => ({
+    assembler: {
+      pinnedHead: async () => ({ status: "read" as const, text: "PINNED-HEAD-MARK" }),
+      contextBlock: async () => ({ status: "read" as const, text }),
+    },
+  });
+
+  it("seeds the review prompt from a configured memory, with no notice", async () => {
+    const repo = mkRepo("memseed");
+    setLimit(repo, 1000);
+    const h = harness({ repo, piBin: happyPi("memseed").bin });
+    expect(await runReviewCli([], true, { ...h.deps, memory: memStub("CONTEXT-BLOCK-MARK") })).toBe(
+      0,
+    );
+    const o = JSON.parse(h.lines[0]!);
+    const order = readFileSync(join(o.out_dir, "round-order.md"), "utf8");
+    expect(order).toContain("PINNED-HEAD-MARK");
+    expect(order).toContain("CONTEXT-BLOCK-MARK");
+    expect(o.memory).toEqual({ used: true, notice: null });
+  });
+
+  it("without memory the review runs clean and says so once", async () => {
+    const repo = mkRepo("memnone");
+    setLimit(repo, 1000);
+    const h = harness({ repo, piBin: happyPi("memnone").bin });
+    expect(await runReviewCli([], false, h.deps)).toBe(0);
+    expect(h.lines.filter((l) => /^memory:/.test(l))).toHaveLength(1);
+    expect(h.text()).not.toMatch(/✗|error/i);
+  });
+
+  it("an unreachable memory never fails the review and is told once", async () => {
+    const repo = mkRepo("memdown");
+    setLimit(repo, 1000);
+    const hang = new Promise<never>(() => {});
+    const h = harness({ repo, piBin: happyPi("memdown").bin });
+    const t0 = Date.now();
+    const code = await runReviewCli([], false, {
+      ...h.deps,
+      memory: { assembler: { pinnedHead: () => hang, contextBlock: () => hang }, timeoutMs: 100 },
+    });
+    expect(code).toBe(0);
+    expect(Date.now() - t0).toBeLessThan(20_000);
+    expect(h.lines.filter((l) => /^memory:/.test(l))).toHaveLength(1);
+    expect(h.text()).toMatch(/c breaks the build/);
+  });
+});
