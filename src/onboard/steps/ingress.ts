@@ -351,7 +351,11 @@ export function normalizeHostname(raw: unknown): string | null {
     .replace(/^https?:\/\//, "")
     .replace(/\/.*$/, "")
     .replace(/:\d+$/, "");
-  return /^[a-z0-9]([a-z0-9-]{0,62})?(\.[a-z0-9]([a-z0-9-]{0,62})?)+$/.test(text) ? text : null;
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
+    text,
+  )
+    ? text
+    : null;
 }
 
 // ---- the running shape ------------------------------------------------------
@@ -765,7 +769,7 @@ export function ingressStep(opts: { stream?: StreamRunner } = {}): OnboardingSte
                 },
           );
         }
-        checks.push(...(await runningShapeChecks(ctx, root, option)));
+        checks.push(...(await runningShapeChecks(ctx, root, option, hostname)));
       }
 
       if (ctx.data.restart_owed === true)
@@ -790,6 +794,7 @@ async function runningShapeChecks(
   ctx: StepContext,
   root: string,
   option: IngressOption,
+  selectedHostname: string | null,
 ): Promise<CheckResult[]> {
   const ps = await ctx.adapters.runner.run("docker", [
     "compose",
@@ -865,6 +870,19 @@ async function runningShapeChecks(
     "/opt/quickreview/state/ingress/hostname",
   ]);
   const published = cat.code === 0 ? normalizeHostname(cat.stdout) : null;
+  const reserved =
+    option.id === "ngrok"
+      ? (selectedHostname ??
+        normalizeHostname(readEnvKey(readTextOrNull(join(root, ".env")) ?? "", NGROK_DOMAIN_ENV)))
+      : null;
+  if (published !== null && reserved !== null && published !== reserved) {
+    checks.push({
+      name: "hostname-file",
+      ok: false,
+      detail: `the running ngrok tunnel publishes ${published}, but ${reserved} is selected — recreate the tunnel with the selected reserved hostname`,
+    });
+    return checks;
+  }
   checks.push(
     published !== null
       ? {

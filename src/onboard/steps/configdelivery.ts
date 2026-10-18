@@ -43,3 +43,16 @@ export async function deliverConfigChange(
     };
   }
 }
+
+/** A failed delivery stays visible during read-only verification. */
+export function configDeliveryChecks(ctx: StepContext): CheckResult[] {
+  return ctx.data.restart_owed === true
+    ? [
+        {
+          name: "daemon-restart",
+          ok: false,
+          detail: "config is on disk but its delivery is still owed — run this step again",
+        },
+      ]
+    : [];
+}

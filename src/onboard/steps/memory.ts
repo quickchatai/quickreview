@@ -98,6 +98,7 @@ import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../en
 export const MEMORY_STEP_ID = "memory";
 /** Recorded choice: "configure" (default) | "declined". */
 export const MEMORY_CHOICE_KEY = CHOICE_KEYS.memory;
+export const MEMORY_RESTART_CHOICE_KEY = CHOICE_KEYS.memoryRestartOwed;
 /** Private placement bookkeeping; verification follows the current locator. */
 export const KEYS_FILE_CHOICE_KEY = "openviking_keys_file";
 
@@ -125,6 +126,7 @@ export const CONTAINER_SECRETS_DIR = "/opt/quickreview/secrets";
  * so this interface IS the contract — `tests/onboard-memory.test.ts` checks the
  * real module still satisfies it. */
 export interface ProvisionModule {
+  readyButEmbedding?(body: unknown): string | null;
   mintRootKey(): string;
   mintUserKeys(opts: {
     base: string;
@@ -594,16 +596,22 @@ function defaultLoaders(root: string): {
 async function serverReady(
   fetchFn: typeof fetch,
   base: string,
+  provision: ProvisionModule,
 ): Promise<{ ok: boolean; detail: string; answering: boolean }> {
   try {
     const res = await fetchFn(`${base}/ready`, { signal: AbortSignal.timeout(10_000) });
-    const ok = res.status >= 200 && res.status < 300;
+    let ok = res.status >= 200 && res.status < 300;
     let detail = `HTTP ${res.status}`;
     if (!ok) {
       try {
         const text =
           typeof res.text === "function" ? await res.text() : JSON.stringify(await res.json());
         if (text.trim()) detail += `: ${text.trim().slice(0, 500)}`;
+        const embedding = provision.readyButEmbedding?.(JSON.parse(text));
+        if (embedding != null) {
+          ok = true;
+          detail += "; user provisioning can use the admin API despite the embedder failure";
+        }
       } catch {
         /* The HTTP answer still establishes reachability. */
       }
@@ -914,7 +922,10 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
     },
 
     async run(ctx): Promise<StepReport> {
-      let restartOwed = ctx.data.restart_owed === true;
+      let restartOwed =
+        typeof ctx.choices[MEMORY_RESTART_CHOICE_KEY] === "boolean"
+          ? ctx.choices[MEMORY_RESTART_CHOICE_KEY] === true
+          : ctx.data.restart_owed === true;
       const perform = async (): Promise<StepReport> => {
         const choice = await askChoice(ctx);
         if (typeof choice !== "string")
@@ -985,7 +996,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
         }
 
         // --- phase B: the two USER keys (the server mints them) ---
-        const ready = await serverReady(ctx.adapters.fetch, base);
+        const ready = await serverReady(ctx.adapters.fetch, base, prov);
         if (!ready.ok) {
           checks.push({
             name: "memory-server",
@@ -1051,6 +1062,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
         };
       };
       const report = await perform();
+      ctx.recordChoice(CHOICE_KEYS.memoryRestartOwed, restartOwed);
       return { ...report, data: { ...report.data, restart_owed: restartOwed } };
     },
 
@@ -1058,17 +1070,20 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       // The recorded choice is authoritative: a run's data is merged into the
       // step record, so an earlier decline's `declined` flag outlives a later
       // configure. The flag counts only when no choice is recorded.
-      const delivery: CheckResult[] =
-        ctx.data.restart_owed === true
-          ? [
-              {
-                name: "daemon-restart",
-                ok: false,
-                detail:
-                  "memory config is on disk but its daemon restart is still owed; run this step again",
-              },
-            ]
-          : [];
+      const delivery: CheckResult[] = (
+        typeof ctx.choices[MEMORY_RESTART_CHOICE_KEY] === "boolean"
+          ? ctx.choices[MEMORY_RESTART_CHOICE_KEY] === true
+          : ctx.data.restart_owed === true
+      )
+        ? [
+            {
+              name: "daemon-restart",
+              ok: false,
+              detail:
+                "memory config is on disk but its daemon restart is still owed; run this step again",
+            },
+          ]
+        : [];
       const recorded = ctx.choices[MEMORY_CHOICE_KEY];
       if (recorded === "declined" || (recorded === undefined && ctx.data.declined === true)) {
         const declined = [...DECLINED_CHECKS, switchStillOff(ctx), ...delivery];

@@ -42,6 +42,7 @@ import {
   ingressOptionOf,
   nodeStreamRunner,
   readEnvText,
+  readTextOrNull,
   rootOf,
   secretsDirFor,
   writeAtomic,
@@ -51,6 +52,7 @@ import {
   declaredEmbedderOf,
   describeEmbedder,
   embedderEnvEntries,
+  embedderInputsCheck,
   localEmbedderEnvEntries,
 } from "./embeddings.js";
 import { readEnvKey, setEnvKey } from "./ingress.js";
@@ -266,6 +268,21 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
         await composePs(ctx.adapters.runner, root),
         ingressOptionOf(ctx.choices),
       );
+      const text = readTextOrNull(ctx.adapters.paths.configPath);
+      if (text === null)
+        return {
+          ok: false,
+          checks: [
+            ...checks,
+            {
+              name: "embedder",
+              ok: false,
+              detail:
+                "config.toml is unreadable — embedder inputs are unknown; restore it before verifying bring-up",
+            },
+          ],
+        };
+      checks.push(embedderInputsCheck(text, readEnvText(root)));
       return { ok: checks.every((c) => c.ok), checks };
     },
   };

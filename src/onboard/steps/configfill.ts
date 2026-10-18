@@ -71,6 +71,8 @@ import {
   type StepContext,
   type StepReport,
 } from "../engine.js";
+import { deliverConfigChange, configDeliveryChecks } from "./configdelivery.js";
+import type { TransportOptions } from "./transport.js";
 import { readTomlKey, secretsDirFor } from "./ingress.js";
 
 export const CONFIG_FILL_STEP_ID = "config_fill";
@@ -120,10 +122,19 @@ export function rewriteFillMarker(comment: string): string {
 function sectionAt(lines: string[]): string[] {
   const out: string[] = [];
   let cur = "";
+  let continuation: string | null = null;
   for (const line of lines) {
+    if (continuation !== null) {
+      continuation += "\n" + line;
+      out.push("\0");
+      if (splitTail(continuation) !== null) continuation = null;
+      continue;
+    }
     const m = HEADER_RE.exec(line);
     if (m) cur = m[1]!.trim();
     out.push(cur);
+    const assignment = /^\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*(.*)$/.exec(line);
+    if (assignment && splitTail(assignment[1]!) === null) continuation = assignment[1]!;
   }
   return out;
 }
@@ -139,18 +150,27 @@ export function patchToml(text: string, edits: readonly TomlEdit[]): string {
   const lines = text.split("\n");
   for (const edit of edits) {
     const sections = sectionAt(lines);
-    const live = new RegExp(`^(\\s*)(${escapeRe(edit.key)})(\\s*=\\s*)(.*)$`);
-    const commented = new RegExp(`^(\\s*)#\\s*(${escapeRe(edit.key)})(\\s*=\\s*)(.*)$`);
+    const spelling = `(?:${escapeRe(edit.key)}|"(?:[^"\\\\]|\\\\.)*"|'[^']*')`;
+    const live = new RegExp(`^(\\s*)(${spelling})(\\s*=\\s*)(.*)$`);
+    const commented = new RegExp(`^(\\s*)#\\s*(${spelling})(\\s*=\\s*)(.*)$`);
     let applied = false;
     for (const re of [live, commented]) {
       for (let i = 0; i < lines.length && !applied; i++) {
         if (sections[i] !== edit.section) continue;
         const m = re.exec(lines[i]!);
         if (!m) continue;
-        const parts = splitTail(m[4]!);
-        if (!parts) continue;
+        try {
+          if (!Object.hasOwn(parseToml(`${m[2]} = 0`), edit.key)) continue;
+        } catch {
+          continue;
+        }
+        let end = i;
+        let tail = m[4]!;
+        while (splitTail(tail) === null && end + 1 < lines.length) tail += "\n" + lines[++end]!;
+        const parts = splitTail(tail);
+        if (!parts) throw new Error(`cannot patch unterminated TOML assignment ${edit.key}`);
         const comment = parts.comment ? `${parts.gap}${rewriteFillMarker(parts.comment)}` : "";
-        lines[i] = `${m[1]}${m[2]}${m[3]}${edit.value}${comment}`;
+        lines.splice(i, end - i + 1, `${m[1]}${m[2]}${m[3]}${edit.value}${comment}`);
         applied = true;
       }
       if (applied) break;
@@ -1008,7 +1028,7 @@ function configFillParameters(): unknown {
   return { type: "object", properties };
 }
 
-export function configFillStep(): OnboardingStep {
+export function configFillStep(opts: { transport?: TransportOptions } = {}): OnboardingStep {
   return {
     id: CONFIG_FILL_STEP_ID,
     title: "Interview and fill config.toml",
@@ -1123,6 +1143,13 @@ export function configFillStep(): OnboardingStep {
       }
 
       if (rendered !== source) writeAtomic(configPath, rendered);
+      const delivery = await deliverConfigChange(
+        ctx,
+        opts.transport,
+        ctx.data.restart_owed === true || (existing !== null && rendered !== source),
+        CONFIG_FILL_STEP_ID,
+      );
+      checks.push(...delivery.checks);
 
       checks.push({
         name: "config",
@@ -1177,6 +1204,7 @@ export function configFillStep(): OnboardingStep {
             QUESTIONS.filter((q) => questionAsked(q, ctx.choices)).map((q) => [q.id, facts[q.id]]),
           ),
           config_path: configPath,
+          restart_owed: delivery.restartOwed,
           filled_from: existing === null ? "config.example.toml" : "config.toml",
         },
       };
@@ -1211,6 +1239,7 @@ export function configFillStep(): OnboardingStep {
         };
       }
       const checks: CheckResult[] = [
+        ...configDeliveryChecks(ctx),
         { name: "loader", ok: true, detail: `${configPath} parses under the strict loader` },
       ];
       const previous = previousAnswers(ctx);

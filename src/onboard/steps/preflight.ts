@@ -114,7 +114,13 @@ export function preflightStep(): OnboardingStep {
       const current = ctx.adapters.host.uid;
       if (typeof recorded !== "number") {
         checks.push({ name: "uid", ok: false, detail: "no uid recorded — run the preflight step" });
-      } else if (current !== null && current !== recorded) {
+      } else if (current === null) {
+        checks.push({
+          name: "uid",
+          ok: false,
+          detail: "could not determine the current user id — re-run preflight on a supported host",
+        });
+      } else if (current !== recorded) {
         checks.push({
           name: "uid",
           ok: false,

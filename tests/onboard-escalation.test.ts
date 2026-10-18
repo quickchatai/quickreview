@@ -36,7 +36,12 @@ function adapters(): OnboardAdapters {
     fetch: (async () => {
       throw new Error("no network in this suite");
     }) as unknown as typeof fetch,
-    runner: { run: async () => ({ code: 127, stdout: "", stderr: "" }) },
+    runner: {
+      run: async (cmd, args) =>
+        cmd === "docker" && args.includes("ps")
+          ? { code: 0, stdout: "[]", stderr: "" }
+          : { code: 127, stdout: "", stderr: "" },
+    },
     clock: () => new Date("2026-09-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
     paths: { stateDir: join(root, "state"), configPath },

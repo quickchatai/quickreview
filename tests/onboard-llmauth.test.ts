@@ -202,8 +202,20 @@ function fakeAdapters(
         if (world.noDocker) return { code: 127, stdout: "", stderr: "docker: command not found" };
         if (cmd !== "docker") return { code: 127, stdout: "", stderr: `${cmd}: not found` };
         const name = args[args.length - 1] ?? "";
-        if (args[0] === "compose" && args.includes("ps") && world.composeDaemon !== undefined)
-          return { code: 0, stdout: `${world.composeDaemon}\n`, stderr: "" };
+        if (args[0] === "compose" && args.includes("ps")) {
+          if (args.at(-1) !== "json" && world.composeDaemon === undefined)
+            return { code: 1, stdout: "", stderr: "no name listing available" };
+          return {
+            code: 0,
+            stdout:
+              args.at(-1) === "json"
+                ? JSON.stringify(
+                    world.composeDaemon ? [{ Service: "daemon", State: "running" }] : [],
+                  )
+                : `${world.composeDaemon ?? ""}\n`,
+            stderr: "",
+          };
+        }
         if (args[0] === "inspect" && args[1] === "--format" && args[2] === "{{json .Mounts}}") {
           const c = containers[name];
           if (!c) return { code: 1, stdout: "", stderr: `Error: No such object: ${name}` };
@@ -891,5 +903,19 @@ describe("no credential ever reaches an argv (or any other record)", () => {
     expect(verified.ok).toBe(true);
     for (const call of calls) for (const arg of call) expect(arg).not.toContain(KEY);
     expect(JSON.stringify(verified.results)).not.toContain(KEY);
+  });
+});
+
+describe("API route companion credentials", () => {
+  it("requires the default companion's independent OAuth login", async () => {
+    writeExample();
+    keyFileOnDisk();
+    const result = await engine(
+      { containers: { "qcr-companion": { piHome: "/home/companion/.pi", auth: false } } },
+      [],
+      ["api"],
+    ).runStep(LLM_AUTH_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(" ")).toContain("companion_login");
   });
 });

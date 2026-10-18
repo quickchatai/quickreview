@@ -686,3 +686,22 @@ describe("a hostname belongs to the shape it was given for", () => {
     expect(report.demoted.map((d) => d.failures.join(" ")).join(" ")).not.toMatch(/ngrok-domain/);
   });
 });
+
+describe("reserved ngrok publication", () => {
+  it("refuses a running tunnel publishing a different domain than selected", async () => {
+    writeFileSync(join(secretsDir, "ngrok_authtoken"), "stub-token");
+    const f = fake(
+      fakeDocker(
+        [
+          ["daemon", "running"],
+          ["tunnel-ngrok", "running"],
+        ],
+        "different.ngrok.app",
+      ),
+    );
+    await f.engine.runStep(INGRESS_STEP_ID, { choice: "ngrok", hostname: "selected.ngrok.app" });
+    const result = await f.engine.verifyAll();
+    expect(result.ok).toBe(false);
+    expect(result.results[0]?.failures.join(" ")).toContain("selected.ngrok.app");
+  });
+});

@@ -122,6 +122,9 @@ export const CHOICE_KEYS = {
   /** `MemoryChoice`. Written by the memory step; read by its phase-B peer. */
   memory: "memory_setup",
 
+  /** Shared by the two memory phases through their common implementation. */
+  memoryRestartOwed: "memory_restart_owed",
+
   /** The proof round record. Written by the proof step; read by go-live. */
   proof: "proof_round_completed",
 } as const;
@@ -161,6 +164,7 @@ export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
   webhookUrl: ["ingress"],
   memory: ["memory"],
   proof: ["proof_round"],
+  memoryRestartOwed: ["memory"],
 };
 
 /**
