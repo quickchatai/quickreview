@@ -273,10 +273,11 @@ export async function archiveOverseer(deps: OverseerPassDeps): Promise<StorePass
     for (const d of duplicates) {
       duplicateStop = allowed();
       if (duplicateStop) break;
-      if (await writer.removeDuplicate(d.path, d.id)) removedDuplicates.push(d.entry);
+      if (await writer.removeDuplicate(d.path, d.id, d.entry, () => (duplicateStop = allowed())))
+        removedDuplicates.push(d.entry);
       else incomplete = true;
     }
-  await writer.finish(removed, removedDuplicates);
+  await writer.finish(removed, []);
 
   stop = stop ?? unlinkStop ?? duplicateStop;
   if (unlinks.some((u) => !removed.has(u.source))) incomplete = true;

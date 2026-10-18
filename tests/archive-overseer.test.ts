@@ -236,6 +236,47 @@ describe("the overseer store (acceptance 4)", () => {
 });
 
 describe("the overseer's legacy rotation copies (§7.5)", () => {
+  it.each(["duplicate_recorded", "duplicate_unlinked"])(
+    "a crash at %s preserves one duplicate receipt and counts only the unlink",
+    async (cut) => {
+      const f = root();
+      const original = put(f.root, `${OV}/old.jsonl`, line("old").repeat(10), BORN - DAY);
+      put(f.root, `${OV}/current.jsonl`, line("current"), BORN + 60_000);
+      const copy = put(f.root, "archive/overseer/2026-10-01/session.jsonl", readFileSync(original));
+      put(
+        f.root,
+        "archive/overseer/2026-10-01/meta.json",
+        JSON.stringify({ session_file: original }),
+      );
+      let crash = true;
+      const a = archiver(
+        f,
+        {},
+        {
+          step: (name) => {
+            if (crash && name === cut) throw new Error("crash at duplicate boundary");
+          },
+        },
+      );
+      expect(a.status().totals?.duplicates_removed).toBe(0);
+      await a.tick();
+      expect(a.status().stores?.overseer?.outcome).toBe("failed");
+      expect(
+        manifest(f, "overseer").entries.filter((e) => e.kind === "duplicate_removed"),
+      ).toHaveLength(1);
+      expect(existsSync(copy)).toBe(cut === "duplicate_recorded");
+      expect(Number(mark(f, "duplicates.removed") ?? 0)).toBe(cut === "duplicate_recorded" ? 0 : 1);
+      expect(a.status().totals?.duplicates_removed).toBe(cut === "duplicate_recorded" ? 0 : 1);
+      crash = false;
+      await a.tick();
+      expect(existsSync(copy)).toBe(false);
+      expect(
+        manifest(f, "overseer").entries.filter((e) => e.kind === "duplicate_removed"),
+      ).toHaveLength(1);
+      expect(Number(mark(f, "duplicates.removed"))).toBe(1);
+    },
+  );
+
   it(
     "exact and prefix duplicates are removed, a live one waits, an unmatched one is kept as a gzip",
     { timeout: HEAVY_TIMEOUT_MS },

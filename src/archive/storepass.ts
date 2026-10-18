@@ -84,6 +84,8 @@ export interface StorePassDeps {
    * archiver folds it into `max_sync_span_ms`). */
   meter?: SpanMeter;
   step?: StepFn;
+  /** Persist the cumulative count at the successful unlink, before later steps can fail. */
+  duplicateRemoved?: () => void;
   /** With nothing to move, still open the manifest and stamp the removals a
    * crash left unstamped (`settleStore`) — the archiver asks once per start. */
   settle?: boolean;
@@ -266,6 +268,7 @@ export class StoreWriter {
   private readonly index = new Map<string, SettledRecord>();
   /** Every archive name an entry references, across every shard. */
   private readonly refs = new Set<string>();
+  private readonly duplicates = new Set<string>();
   /** The shards this pass wrote to. */
   private readonly touched = new Set<number>();
   private readonly meter: SpanMeter;
@@ -315,6 +318,8 @@ export class StoreWriter {
   private absorb(entries: readonly ManifestEntry[]): void {
     indexEntries(this.index, entries);
     for (const e of entries) {
+      if (e.kind === "duplicate_removed")
+        this.duplicates.add(JSON.stringify([e.path, e.bytes, e.sha256]));
       const a = placedArchive(e);
       if (a !== null) this.refs.add(a);
     }
@@ -517,9 +522,24 @@ export class StoreWriter {
 
   /** Remove one proven duplicate (the legacy copy), only while its identity
    * is the one compared. */
-  async removeDuplicate(path: string, id: FileIdentity): Promise<boolean> {
+  async removeDuplicate(
+    path: string,
+    id: FileIdentity,
+    entry: Omit<DuplicateEntry, "pass" | "removed_at">,
+    allowed: () => string | null,
+  ): Promise<boolean> {
+    if (!sameIdentity(id, await identityOrNull(path))) return false;
+    if (!this.duplicates.has(JSON.stringify([entry.path, entry.bytes, entry.sha256]))) {
+      await this.append({ ...entry, pass: this.passId, removed_at: this.deps.now().toISOString() });
+      await this.deps.step?.("duplicate_recorded", { store: this.deps.subject, path });
+    }
+    if (allowed()) return false;
     const r = await unlinkIfIdentity(path, identityFields(id));
-    if (r === "removed") this.result.duplicatesRemoved += 1;
+    if (r === "removed") {
+      this.result.duplicatesRemoved += 1;
+      this.deps.duplicateRemoved?.();
+      await this.deps.step?.("duplicate_unlinked", { store: this.deps.subject, path });
+    }
     return r === "removed";
   }
 

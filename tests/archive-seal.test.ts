@@ -768,6 +768,28 @@ describe("sealing through the archiver (mode on)", () => {
     }
   });
 
+  it("retries a quiet anomaly whose first persistence failed without waiting six hours", async () => {
+    const r = await moved();
+    r.adb.close();
+    r.store.db
+      .prepare("UPDATE archive_marks SET value = value + 1 WHERE name = ?")
+      .run(fileRowsMark(AUG, "events"));
+    const log = vi.spyOn(r.store, "logAnomaly").mockImplementationOnce(() => {
+      throw new Error("temporary anomaly write failure");
+    });
+    const a = archiver(r);
+    try {
+      await a.tick();
+      expect(r.store.anomalies()).toEqual([]);
+      await a.tick();
+      expect(r.store.anomalies().map((x) => x.kind)).toEqual(["archive_verify_failed"]);
+      expect(log).toHaveBeenCalledTimes(2);
+    } finally {
+      log.mockRestore();
+      a.stop();
+    }
+  });
+
   it("seal recovery runs on the first tick only — and again after a seal that failed partway", async () => {
     const r = await moved();
     r.adb.close();
