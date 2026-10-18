@@ -87,3 +87,6 @@ __pycache__/
 !.env.example
 *.pem
 *.key
+
+# selfimprove skill settings and ledger
+.selfimprove/
