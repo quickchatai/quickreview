@@ -562,3 +562,113 @@ describe("loadProfileEcosystem", () => {
     ).toThrow(/not valid TOML/);
   });
 });
+
+describe("migration comment delivery recovery", () => {
+  const round = {
+    pr: 7,
+    head_sha: "head",
+    base_ref: "main",
+    base_sha: "base",
+    files: [{ filename: "app/migrations/0042_new.py", status: "added" }],
+  };
+  it("reports dry-run collision comments as undelivered", async () => {
+    const outcome = await DJANGO_ECOSYSTEM.preCheck(
+      {
+        logEvent() {},
+        migrationCollisionCommented: () => "not_commented",
+        listBaseMigrations: async () => ["app/migrations/0042_existing.py"],
+        createReview: async () => ({ executed: false, dryRunFile: "intent.json" }),
+      },
+      round,
+    );
+    expect(outcome).toMatchObject({ status: "checked", comment_undelivered: true });
+  });
+  it("reconciles a response-lost collision comment without posting it a second time", async () => {
+    const store = new StateStore(":memory:");
+    let writes = 0;
+    let body = "";
+    const io = {
+      logEvent: store.logEvent.bind(store),
+      migrationCollisionCommented: (pr: number, fp: string) =>
+        store.migrationCollisionCommented(pr, fp, { live: true }),
+      listBaseMigrations: async () => ["app/migrations/0042_existing.py"],
+      createReview: async (_pr: number, payload: { body: string }) => {
+        writes++;
+        body = payload.body;
+        throw new TypeError("accepted then connection lost");
+      },
+      findCollisionComment: async (pr: number, marker: string, head: string) =>
+        pr === round.pr && head === round.head_sha && body.split("\n").includes(marker),
+    };
+    try {
+      await DJANGO_ECOSYSTEM.preCheck(io, round);
+      expect(await DJANGO_ECOSYSTEM.preCheck(io, round)).not.toHaveProperty("comment_undelivered");
+      expect(writes).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+  it.each(["missing", "unreadable"])(
+    "never resends an uncertain migration comment when marker evidence is %s",
+    async (kind) => {
+      const store = new StateStore(":memory:");
+      let writes = 0;
+      const io = {
+        logEvent: store.logEvent.bind(store),
+        migrationCollisionCommented: (pr: number, fp: string) =>
+          store.migrationCollisionCommented(pr, fp, { live: true }),
+        listBaseMigrations: async () => ["app/migrations/0042_existing.py"],
+        createReview: async () => {
+          writes++;
+          throw new TypeError("lost response");
+        },
+        findCollisionComment: async () => {
+          if (kind === "unreadable") throw new Error("read unavailable");
+          return false;
+        },
+      };
+      try {
+        await DJANGO_ECOSYSTEM.preCheck(io, round);
+        expect(await DJANGO_ECOSYSTEM.preCheck(io, round)).toMatchObject({
+          comment_undelivered: true,
+        });
+        expect(writes).toBe(1);
+      } finally {
+        store.close();
+      }
+    },
+  );
+
+  it("keeps a deduped dry-run remedy undelivered, then permits the live comment", async () => {
+    const store = new StateStore(":memory:");
+    let dryRun = true,
+      writes = 0;
+    const io = {
+      get isDryRun() {
+        return dryRun;
+      },
+      logEvent: store.logEvent.bind(store),
+      migrationCollisionCommented: (pr: number, fp: string) =>
+        store.migrationCollisionCommented(pr, fp, { live: !dryRun }),
+      listBaseMigrations: async () => ["app/migrations/0042_existing.py"],
+      createReview: async () => {
+        writes++;
+        return dryRun ? { executed: false, dryRunFile: "intent.json" } : { executed: true };
+      },
+    };
+    try {
+      expect(await DJANGO_ECOSYSTEM.preCheck(io, round)).toMatchObject({
+        comment_undelivered: true,
+      });
+      expect(await DJANGO_ECOSYSTEM.preCheck(io, round)).toMatchObject({
+        comment_undelivered: true,
+      });
+      expect(writes).toBe(1);
+      dryRun = false;
+      expect(await DJANGO_ECOSYSTEM.preCheck(io, round)).not.toHaveProperty("comment_undelivered");
+      expect(writes).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+});

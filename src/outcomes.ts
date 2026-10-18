@@ -1,3 +1,4 @@
+import { prActivity, type PrActivity } from "./pr-activity.js";
 // Outcome capture: what became of every finding the reviewer posted.
 //
 // Why. `round_findings` records why each candidate was raised or killed; this
@@ -215,6 +216,12 @@ CREATE TABLE IF NOT EXISTS review_outcomes (
   gh_review_id INTEGER,
   at TEXT NOT NULL,
   recorded_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS outcome_capture_activity (
+  pr INTEGER PRIMARY KEY,
+  captured_at TEXT NOT NULL,
+  comments_max INTEGER NOT NULL,
+  signals_max INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS outcome_capture_marks (
   pr INTEGER PRIMARY KEY,
@@ -1306,6 +1313,7 @@ export class OutcomeCapture {
     // below are in flight was not read, so it must move the fingerprint away
     // from this mark and bring the PR back next pass.
     const signature = this.signature(pr);
+    const activity = prActivity(this.store, pr);
     const memo = new Map<string, Promise<ChainEvidence>>();
     const decided: Array<{ f: RoundFindingRow; chain: ChainEvidence }> = [];
     for (const f of facts.posted)
@@ -1381,7 +1389,7 @@ export class OutcomeCapture {
           drop.run(pr, Number(round), key);
         }
     })();
-    this.markCaptured(pr, signature);
+    this.markCaptured(pr, signature, activity);
     return {
       posted: facts.posted.length,
       linked: link.linked,
@@ -1422,13 +1430,22 @@ export class OutcomeCapture {
     ]);
   }
 
-  private markCaptured(pr: number, signature: string): void {
-    this.store.db
-      .prepare(
-        `INSERT INTO outcome_capture_marks (pr, signature, captured_at) VALUES (?, ?, ?)
-         ON CONFLICT(pr) DO UPDATE SET signature = excluded.signature, captured_at = excluded.captured_at`,
-      )
-      .run(pr, signature, this.ts());
+  private markCaptured(pr: number, signature: string, activity: PrActivity): void {
+    const at = this.ts();
+    this.store.db.transaction(() => {
+      this.store.db
+        .prepare(
+          `INSERT INTO outcome_capture_marks (pr, signature, captured_at) VALUES (?, ?, ?)
+        ON CONFLICT(pr) DO UPDATE SET signature=excluded.signature, captured_at=excluded.captured_at`,
+        )
+        .run(pr, signature, at);
+      this.store.db
+        .prepare(
+          `INSERT INTO outcome_capture_activity (pr, captured_at, comments_max, signals_max) VALUES (?, ?, ?, ?)
+        ON CONFLICT(pr) DO UPDATE SET captured_at=excluded.captured_at, comments_max=excluded.comments_max, signals_max=excluded.signals_max`,
+        )
+        .run(pr, at, activity.comments, activity.signals);
+    })();
   }
 
   /**

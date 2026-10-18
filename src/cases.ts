@@ -1,3 +1,4 @@
+import { ACTIVITY_SQL, prActivity } from "./pr-activity.js";
 // Finding cases: the knowledge outside the code, into the memory engine.
 //
 // WHAT. For every finding the reviewer POSTED that drew a human response or
@@ -479,16 +480,6 @@ export type CaseOutcomeReads = Pick<
 
 const fkey = (round: number, key: string): string => `${round}\u0000${key}`;
 
-/** A PR's activity watermark, as SQL over the PR expression `pr`: the newest
- * `pr_comments` and `feedback_signals` row ids. One spelling for the mark a
- * sync records and the late-activity check that compares against it. */
-const ACTIVITY_SQL = {
-  comments: (pr: string): string =>
-    `(SELECT COALESCE(MAX(id), 0) FROM pr_comments WHERE pr = ${pr})`,
-  signals: (pr: string): string =>
-    `(SELECT COALESCE(MAX(id), 0) FROM feedback_signals WHERE pr = ${pr})`,
-};
-
 /** A `finding_cases` row the writer may send: owed, with its bytes rendered.
  * Every batch takes the oldest first. */
 const WRITABLE_CASE = "state = 'pending' AND content IS NOT NULL";
@@ -586,8 +577,12 @@ export function prCases(
         });
       }
       for (const s of signals)
-        if (s.kind === "bot_comment_deleted" && s.comment_id === thread)
-          deleted.push({ round_no: m.row.round_no, comment_id: thread, at: s.created_at });
+        if (
+          s.kind === "bot_comment_deleted" &&
+          s.scope !== "issue_comment" &&
+          inThread(s.comment_id)
+        )
+          deleted.push({ round_no: m.row.round_no, comment_id: s.comment_id!, at: s.created_at });
     }
     const uniqueReplies = [...new Map(replies.map((r) => [r.comment_id, r])).values()].sort(
       (a, b) => (a.at ?? "").localeCompare(b.at ?? "") || a.comment_id - b.comment_id,
@@ -1128,7 +1123,13 @@ export class CaseWriter {
 
   private syncOne(r: { pr: number; captured_at: string }): boolean {
     try {
-      this.syncPr(r.pr, r.captured_at);
+      const captured = this.store.db
+        .prepare(
+          "SELECT comments_max AS comments, signals_max AS signals FROM outcome_capture_activity WHERE pr=? AND captured_at=?",
+        )
+        .get(r.pr, r.captured_at) as { comments: number; signals: number } | undefined;
+      // Legacy captures have no activity receipt: acknowledge no newer rows.
+      this.syncPr(r.pr, r.captured_at, "sync", captured ?? { comments: 0, signals: 0 });
       return true;
     } catch (err) {
       this.log(`cases: sync of #${r.pr} failed`, err);
@@ -1269,12 +1270,7 @@ export class CaseWriter {
 
   /** The newest `pr_comments` and `feedback_signals` row ids of a PR. */
   private activityOf(pr: number): { comments: number; signals: number } {
-    const row = this.store.db
-      .prepare(
-        `SELECT ${ACTIVITY_SQL.comments("@pr")} AS comments, ${ACTIVITY_SQL.signals("@pr")} AS signals`,
-      )
-      .get({ pr }) as { comments: number; signals: number };
-    return row;
+    return prActivity(this.store, pr);
   }
 
   // ---- late activity -------------------------------------------------------------------

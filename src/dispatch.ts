@@ -125,6 +125,7 @@ import {
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
 export interface DispatchAdapter {
+  listReviewsFull?(pr: number): Promise<Array<{ user: string; body: string; commit_id: string }>>;
   listPrFiles(n: number): Promise<PrFileEntry[] & { truncated?: boolean }>;
   /** Read-only; dispatch needs `base_ref` to keep the base branch fresh, and
    * `body` as pass-intent's artifact + substance-bar input. Absent body ⇒ the
@@ -438,6 +439,18 @@ async function ecosystemPreCheck(
   const outcome = await eco.preCheck(
     {
       logEvent: (kind, pr, payload) => deps.store.logEvent(kind, pr, payload),
+      isDryRun: deps.cfg.dry_run,
+      ...(deps.adapter.listReviewsFull
+        ? {
+            findCollisionComment: async (pr: number, marker: string, head: string) =>
+              (await deps.adapter.listReviewsFull!(pr)).some(
+                (review) =>
+                  review.user === deps.cfg.github.bot_login &&
+                  review.commit_id === head &&
+                  review.body.split(/\r?\n/).includes(marker),
+              ),
+          }
+        : {}),
       migrationCollisionCommented: (pr, fingerprint) =>
         deps.store.migrationCollisionCommented(pr, fingerprint, { live: !deps.cfg.dry_run }),
       createReview: async (pr, payload, options) => {
