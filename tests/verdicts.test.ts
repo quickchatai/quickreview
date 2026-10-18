@@ -2364,6 +2364,52 @@ describe("approval withheld for red CI, session route", () => {
     });
   });
 
+  it("a delayed CI read cannot replace the successor verdict's withheld mark", async () => {
+    reviewingRound(750);
+    let release!: () => void;
+    let reached!: () => void;
+    const entered = new Promise<void>((r) => {
+      reached = r;
+    });
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    adapter.listChecks = async () => {
+      reached();
+      await held;
+      return [{ name: "old-ci", source: "check_run", status: "completed", conclusion: "failure" }];
+    };
+    const oldApply = watcher().handleFile(
+      write(750, 1, verdictFile({ pr: 750, verdict: "APPROVE", approval_withheld: true })),
+    );
+    await entered;
+    let newer: ReturnType<StateStore["approvalWithheld"]>;
+    try {
+      store.cancelRunningRounds(750, "rerun-round");
+      reviewingRound(750);
+      store.upsertPr({ ...store.getPr(750)!, head_sha: "new222" });
+      await watcher({ adapter: new FakeAdapter() }).handleFile(
+        write(
+          750,
+          2,
+          verdictFile({
+            pr: 750,
+            round_no: 2,
+            head_sha: "new222",
+            verdict: "APPROVE",
+            approval_withheld: true,
+          }),
+        ),
+      );
+      newer = store.approvalWithheld(750);
+      expect(newer?.head_sha).toBe("new222");
+    } finally {
+      release();
+      await oldApply;
+    }
+    expect(store.approvalWithheld(750)).toEqual(newer);
+  });
+
   it("a failed checks read stores a null ci_state, exactly as before", async () => {
     reviewingRound(100);
     adapter.listChecks = async () => {
@@ -2974,6 +3020,23 @@ describe("guarded no-op settlement", () => {
         mark: expect.objectContaining({ posted_event: "REQUEST_CHANGES", verdict: null }),
       }),
     ]);
+  });
+
+  it("rolls back guarded-noop cancellation when its restoration receipt cannot commit", async () => {
+    const { roundId } = skippedRound(519);
+    store.db.exec(`CREATE TRIGGER reject_noop_receipt BEFORE INSERT ON events
+      WHEN NEW.kind='posting_guarded_noop' BEGIN SELECT RAISE(ABORT,'receipt disk full'); END`);
+    const name = write(519, 1, verdictFile({ pr: 519 }));
+    await expect(watcher().handleFile(name)).rejects.toThrow("receipt disk full");
+    expect(store.roundsFor(519)[0]).toMatchObject({ id: roundId, status: "running" });
+    expect(store.getPr(519)?.state).toBe("reviewing");
+    expect(store.db.prepare("SELECT usage_owed_to FROM rounds WHERE id=?").get(roundId)).toEqual({
+      usage_owed_to: null,
+    });
+    store.db.exec("DROP TRIGGER reject_noop_receipt");
+    await watcher().handleFile(name);
+    expect(store.getPr(519)?.state).toBe("awaiting_author");
+    expect(events("posting_guarded_noop", 519)).toHaveLength(1);
   });
 
   it("a skipped round's unposted APPROVE can never approve: the standing REQUEST_CHANGES still wins", async () => {
@@ -3705,6 +3768,32 @@ describe("integration review", () => {
       expect(killed).toEqual([]);
     });
 
+    it("rechecks a posting receipt committed while the old session is being fenced", async () => {
+      reviewingRound(614);
+      const { key } = stampPosting(614, 1);
+      prepared(614, key);
+      adapter.listReviewsFull = async () => [];
+      const killed: number[] = [];
+      const hooks = killingHooks(killed);
+      hooks.killSession = async () => {
+        killed.push(614);
+        writePostingReceipt(614, 1, key, "APPROVE");
+      };
+      const w = watcher({ cfg: live, now: at }, hooks);
+      expect(await w.recoverInfrastructureFailure(614, 1, "parent_finalize", "limit")).toBe(
+        "retryable",
+      );
+      expect(killed).toEqual([614]);
+      expect(store.roundsFor(614)[0]?.status).toBe("running");
+      expect(count("round_self_requeued", 614)).toBe(0);
+      expect(
+        await w.recoverInfrastructureFailure(614, 1, "settled_without_verdict", "parent stopped"),
+      ).toBe("settled");
+      await w.idle();
+      expect(store.roundsFor(614)[0]?.status).toBe("done");
+      expect(count("round_self_requeued", 614)).toBe(0);
+    });
+
     it("once GitHub is read and holds no marker, the old path requeues", async () => {
       reviewingRound(612);
       const { key } = stampPosting(612, 1);
@@ -3784,6 +3873,7 @@ describe("integration review", () => {
           verdict: "APPROVE",
         }),
       ]);
+      expect(adapter.calls).not.toContain(`addLabel:621:${cfg.github.reviewed_label}`);
       expect(count("verdict_applied", 621)).toBe(0);
       expect(count("verdict_settled", 621)).toBe(0);
       expect(store.reviewedHead(621)).toBeUndefined();

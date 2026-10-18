@@ -70,7 +70,7 @@ export type TerminalReviewFailureResolution =
       disposition: TerminalReviewFailureDisposition;
       incident_id: string;
       command_id: string;
-      command_status: "cancelled";
+      command_status: "cancelled" | "acked";
       already_resolved: boolean;
     }
   | { ok: false; reason: string };
@@ -5158,7 +5158,8 @@ export class StateStore {
           prior.recovery === recovery &&
           command?.pr === input.pr &&
           command.session === `pr-${input.pr}` &&
-          command.status === "cancelled"
+          (command.status === "cancelled" ||
+            (command.status === "acked" && command.kind === "round"))
         ) {
           return {
             ok: true,
@@ -5211,7 +5212,12 @@ export class StateStore {
         !command ||
         command.pr !== input.pr ||
         command.session !== `pr-${input.pr}` ||
-        command.status !== "failed" ||
+        (command.status !== "failed" &&
+          !(
+            command.status === "acked" &&
+            command.kind === "round" &&
+            current.stage === "posting_receipt"
+          )) ||
         command.round_no !== current.round_no
       ) {
         return { ok: false, reason: `failed command identity changed for ${input.command_id}` };
@@ -5250,21 +5256,36 @@ export class StateStore {
         };
 
       const ts = this.ts();
-      const commandChanged = this.db
-        .prepare(
-          `UPDATE session_commands
+      const commandChanged =
+        command.status === "failed"
+          ? this.db
+              .prepare(
+                `UPDATE session_commands
             SET status='cancelled', owner_token=NULL, settled_at=COALESCE(settled_at, @ts),
                 updated_at=@ts, next_check_at=@ts,
                 failure=CASE WHEN failure IS NULL OR failure='' THEN @reason ELSE failure || '; ' || @reason END
           WHERE id=@command_id AND pr=@pr AND session=@session AND status='failed'`,
-        )
-        .run({
-          command_id: input.command_id,
-          pr: input.pr,
-          session: `pr-${input.pr}`,
-          ts,
-          reason: `operator resolved ${recovery} review debt`,
-        }).changes;
+              )
+              .run({
+                command_id: input.command_id,
+                pr: input.pr,
+                session: `pr-${input.pr}`,
+                ts,
+                reason: `operator resolved ${recovery} review debt`,
+              }).changes
+          : this.db
+              .prepare(
+                `UPDATE session_commands SET status='acked'
+         WHERE id=@command_id AND pr=@pr AND session=@session AND kind='round'
+           AND round_no=@round_no AND status='acked'`,
+              )
+              .run({
+                command_id: input.command_id,
+                pr: input.pr,
+                session: `pr-${input.pr}`,
+                round_no: current.round_no,
+              }).changes;
+      const commandStatus = command.status === "acked" ? "acked" : "cancelled";
       if (commandChanged !== 1)
         throw new Error(`terminal debt command CAS lost for ${input.command_id}`);
 
@@ -5290,14 +5311,14 @@ export class StateStore {
         command_id: input.command_id,
         head_sha: input.head_sha,
         disposition: input.disposition,
-        command_status: "cancelled",
+        command_status: commandStatus,
       });
       return {
         ok: true,
         disposition: input.disposition,
         incident_id: input.incident_id,
         command_id: input.command_id,
-        command_status: "cancelled",
+        command_status: commandStatus,
         already_resolved: false,
       };
     })();
