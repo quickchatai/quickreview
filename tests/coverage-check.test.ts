@@ -174,7 +174,7 @@ describe("the knob and the note", () => {
 describe("coverage_gaps on both routes", () => {
   it("rides the finding-clusters extension both routes load", () => {
     const ext = readFileSync(join(root, "extensions/finding-clusters.ts"), "utf8");
-    expect(ext).toContain("registerQcrTool(pi, COVERAGE_TOOL)");
+    expect(ext).toContain("FINDING_CLUSTERS_TOOLS");
     expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
     expect(readFileSync(join(root, "src/oneshot.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
   });

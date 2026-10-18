@@ -14,10 +14,17 @@
 // lenses return, the eligible changed files nothing addressed or swept,
 // packed into pass-sweep rows.
 //
-// VERIFY-ON-PIN: registerTool's definition shape and execute's positional
-// signature, as pi's ToolDefinition declares them.
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerQcrTool, textResult as text, type QcrTool } from "./pi-tool.js";
+// `CLUSTER_TOOL` / `COVERAGE_TOOL` are the QcrTool literals; the two tools pi
+// sees are their `defineTool` ToolDefinitions (FINDING_CLUSTERS_TOOLS), so a
+// tmux pi (the default export, which registers them) and an SDK session
+// (`createFindingClusters()` as an extension factory, or the same list as
+// customTools) carry identical objects. The extension reads no config and no env.
+//
+// VERIFY-ON-PIN: defineTool's and registerTool's definition shape and execute's
+// positional signature, as pi's ToolDefinition declares them.
+import { defineTool } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { textResult as text, toPiTool, type QcrTool } from "./pi-tool.js";
 import { CLOSE_LINES, clusterFindings, renderGroups, type ClusterCandidate } from "../src/dedup.js";
 import { coverageGaps, coverageReason, type CoverageFile } from "../src/coverage.js";
 
@@ -203,6 +210,24 @@ export const COVERAGE_TOOL: QcrTool = {
   },
 };
 
+/** The two tools as pi ToolDefinitions: registered by the extension, or handed
+ * to an SDK session as `customTools`. */
+export const FINDING_CLUSTERS_TOOLS: ToolDefinition[] = [CLUSTER_TOOL, COVERAGE_TOOL].map((t) =>
+  defineTool(toPiTool(t)),
+);
+
+/** The extension has nothing to configure: both tools are pure. */
+export type FindingClustersConfig = Record<string, never>;
+
+/** The factory an SDK session loads. The default export below is its env shim. */
+export function createFindingClusters(
+  _config: FindingClustersConfig = {},
+): (pi: ExtensionAPI) => void {
+  return (pi: ExtensionAPI): void => {
+    for (const tool of FINDING_CLUSTERS_TOOLS) pi.registerTool(tool);
+  };
+}
+
 const activate = (pi: ExtensionAPI): void => {
   if (typeof pi.registerTool !== "function") {
     console.error(
@@ -210,8 +235,7 @@ const activate = (pi: ExtensionAPI): void => {
     );
     return;
   }
-  registerQcrTool(pi, CLUSTER_TOOL);
-  registerQcrTool(pi, COVERAGE_TOOL);
+  createFindingClusters()(pi);
 };
 
 export default activate;
