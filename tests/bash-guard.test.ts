@@ -6,6 +6,7 @@ import activate, {
   APP_SECRET_FILES,
   checkBashCommand,
   checkReadPath,
+  checkProcSecrets,
   checkReaderModes,
   checkSecretPaths,
   checkWritePath,
@@ -1777,4 +1778,113 @@ describe("the dynamic profile recovery journal is protected policy", () => {
   );
   it("protects expansion onto the journal", () =>
     block("printf forged > state/setup/qcr-profile-write.js?n"));
+});
+
+// A review session's parent holds credentials in memory and argv, and `cat` is
+// a sanctioned reader: /proc/<pid>/{environ,mem,cmdline} must be refused by
+// spelling, whatever reads it.
+describe("checkBashCommand — /proc/<pid>/environ, mem and cmdline", () => {
+  it("refuses the plain spellings", () => {
+    block("cat /proc/1/environ", "/proc/1/environ");
+    block("cat /proc/$PPID/environ");
+    block("cat /proc/${PPID}/environ");
+    block("cat /proc/$$/cmdline");
+    block("tr '\\0' '\\n' < /proc/self/environ");
+    block("head -c 64 /proc/1/mem");
+    block("cat /proc/thread-self/environ");
+    block("cat /proc/self/task/12/environ");
+    block("cat /proc/4242/cmdline");
+  });
+
+  it("refuses by any reader, redirect or option form", () => {
+    block("xxd /proc/1/environ");
+    block("strings /proc/1/cmdline");
+    block("head -c 10 /proc/1/environ | tr '\\0' ' '");
+    block("sort </proc/1/environ");
+    block("cat</proc/1/environ");
+    block("dd if=/proc/self/mem bs=1 count=4");
+    block("cat --files=/proc/1/environ");
+    block("bash -c 'cat /proc/self/environ'");
+    block("echo ok && cat /proc/1/environ");
+    block("cat $(echo /proc/1/environ)");
+  });
+
+  it("refuses globs that can expand to one", () => {
+    block("cat /proc/*/environ");
+    block("cat /proc/[0-9]*/cmdline");
+    block("cat /proc/self/e*");
+    block("cat /proc/s?lf/environ");
+    block("cat /pro?/1/mem");
+    block("cat /proc/self/*");
+    block("cat /proc/$(echo self)/environ");
+    block("cat /proc/`echo 1`/environ");
+  });
+
+  it("refuses respellings of the same path", () => {
+    block("cat /proc//1/environ");
+    block("cat /proc/./self/environ");
+    block("cat /proc/self/../self/environ");
+    block("cat /proc/s'e'lf/environ");
+    block('cat "/proc/1/envi"ron');
+    block("cat /proc/{1,2}/environ");
+    block("cat /proc/self/root/proc/1/environ");
+    block("cat /proc/1/root/proc/self/mem");
+  });
+
+  it("follows a cd into /proc", () => {
+    block("cd /proc/self && cat environ");
+    block("cd /proc/1; head -c 4 mem");
+    block("cd /proc && cat 1/cmdline");
+    block("cd /proc/self/task/1 && cat environ");
+  });
+
+  it("allows the rest of /proc and ordinary reads", () => {
+    allow("ls /proc");
+    allow("cat /proc/cpuinfo");
+    allow("cat /proc/meminfo");
+    allow("cat /proc/self/status");
+    allow("cat /proc/1/status");
+    allow("cat /proc/self/limits");
+    allow("cat /proc/*/status");
+    allow("cd /proc && cat cpuinfo");
+    allow("cat src/environ.ts");
+    allow("cat mem");
+    allow("cat docs/cmdline");
+    allow("cd src && cat environ.ts");
+  });
+
+  it("lets a grep pattern name the path", () => {
+    allow("grep -n /proc/self/environ src/a.ts");
+    allow("rg -e '/proc/1/mem' src");
+    block("grep -n foo /proc/self/environ");
+    block("rg foo /proc/*/cmdline");
+  });
+
+  it("applies to the file tools too", () => {
+    expect(checkReadPath("/proc/self/environ").allowed).toBe(false);
+    expect(checkReadPath("@/proc/1/mem").allowed).toBe(false);
+    expect(checkReadPath("/proc/cpuinfo").allowed).toBe(true);
+    expect(checkReadPath("src/app.ts").allowed).toBe(true);
+  });
+
+  it("checkProcSecrets resolves against the given cwd", () => {
+    expect(checkProcSecrets("cat environ", "/proc/self").allowed).toBe(false);
+    expect(checkProcSecrets("cat environ", "/work").allowed).toBe(true);
+  });
+
+  it("is applied before the program allowlist, in the pi hookup", () => {
+    const handlers: Array<(e: unknown, c: unknown) => unknown> = [];
+    activate({
+      on: (_n: string, h: (e: unknown, c: unknown) => unknown) => handlers.push(h),
+    } as never);
+    const r = handlers[0]!(
+      { toolName: "bash", input: { command: "cat /proc/1/environ" } },
+      { cwd: "/work" },
+    ) as { block?: boolean };
+    expect(r.block).toBe(true);
+    const k = handlers[0]!({ toolName: "read", input: { path: "/proc/self/environ" } }, {}) as {
+      block?: boolean;
+    };
+    expect(k.block).toBe(true);
+  });
 });
