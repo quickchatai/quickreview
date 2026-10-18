@@ -472,6 +472,8 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       fol.disposition = "merged";
       fol.word = "post-check";
       fol.merged_into = leadId;
+      for (const entry of byKey.values())
+        if (s(entry.same_as) === folId) entry.same_as = leadId;
       fol.reason =
         `Merged by the post-check into ${leadId}: same file, anchors within ${POST_CHECK_LINES} lines, a shared identifier. ${s(fol.reason)}`.trim();
       const folLine = recordNumber(fol.line)!;

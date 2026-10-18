@@ -87,6 +87,8 @@ export function assignPriorFindings(
       {
         ref: f.ref,
         ...priorFindingFields(f),
+        reason: f.reason,
+        evidence: f.evidence,
         unchanged: f.path !== null && !deltaPaths.has(f.path),
         held_last_round:
           f.round_no === prev || (f.last_status === "open" && f.last_status_round === prev),
@@ -103,6 +105,8 @@ export function renderPriorTaskSection(priors: readonly PriorTaskEntry[]): strin
   if (priors.length === 0) return "";
   const lines = priors.map((p) => {
     const parts = [`ref ${p.ref}`, p.where, p.tag, p.lens, `title: ${p.title}`];
+    if (p.reason) parts.push(`reason: ${p.reason}`);
+    if (p.evidence) parts.push(`evidence: ${p.evidence}`);
     if (p.unchanged)
       parts.push(
         p.held_last_round

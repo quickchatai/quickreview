@@ -139,6 +139,9 @@ export interface PriorTaskEntry {
   /** The lens(es) that raised it. */
   lens: string;
   title: string;
+  /** The original finding's rationale and code evidence, when recorded. */
+  reason?: string | null;
+  evidence?: string | null;
   /** Its file has no change since the last review (not in the delta). */
   unchanged: boolean;
   /** The last round's report left it open (or it was posted then). */
