@@ -69,6 +69,7 @@
 //    file inside the installed package. If either import fails the tool is
 //    simply never registered and the round templates' "Unknown agent = STOP"
 //    rule holds — logged FATAL below, never a crashed pi.
+import { CONTEXT_PACK_FILE, LEAF_PACK_ENV } from "../src/contextpack.js";
 import type { Pi, PiToolDefinition } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -313,8 +314,12 @@ export class WeightedSemaphore {
     return this.permits - this.available;
   }
 
+  private normalizeWeight(weight: number): number {
+    return Math.max(1, Math.min(weight, this.permits));
+  }
+
   async acquire(weight: number): Promise<void> {
-    const w = Math.max(1, Math.min(weight, this.permits));
+    const w = this.normalizeWeight(weight);
     if (this.available >= w && this.waiters.length === 0) {
       this.available -= w;
       return;
@@ -325,7 +330,7 @@ export class WeightedSemaphore {
   }
 
   release(weight: number): void {
-    this.available += Math.max(1, Math.min(weight, this.permits));
+    this.available += this.normalizeWeight(weight);
     if (this.available > this.permits) this.available = this.permits;
     while (
       this.waiters.length > 0 &&
@@ -379,6 +384,46 @@ function renderedParallelContent(results: unknown[], chunks: string[]): string {
   return `Parallel: ${successCount}/${results.length} succeeded\n\n${bodies.join("\n\n---\n\n")}`;
 }
 
+/** Advisory progress may be malformed; only the final result is authoritative. */
+function nativeProgress(
+  notify: ((value: ParallelNativeResult) => void) | undefined,
+): ((update: unknown) => void) | undefined {
+  return notify
+    ? (update: unknown) => {
+        let value: ParallelNativeResult;
+        try {
+          value = parallelResult(update);
+        } catch {
+          return;
+        }
+        notify(value);
+      }
+    : undefined;
+}
+
+function combinedParallel(
+  last: ParallelNativeResult | undefined,
+  results: unknown[],
+  rendered: string[],
+  anyError: boolean,
+) {
+  return {
+    ...last,
+    content: [{ type: "text" as const, text: renderedParallelContent(results, rendered) }],
+    details: { ...last?.details, mode: "parallel", results },
+    ...(anyError ? { isError: true } : {}),
+  };
+}
+
+function configuredDeadline<T>(
+  attempt: (signal: AbortSignal) => Promise<T>,
+  agent: string,
+  signal: AbortSignal | undefined,
+  deadlineMs: number,
+): Promise<T | "timed_out"> {
+  return runUnderDeadline(attempt, signal, deadlineMs, (n) => logPassTimeout(agent, deadlineMs, n));
+}
+
 /** Wrap the native tool's execute with the sanitizer + the semaphore. */
 export function wrapExecute(
   execute: ToolExecute,
@@ -411,11 +456,11 @@ export function wrapExecute(
       const deadlineMs = resolvePassDeadlineMs(env);
       const sole = soleTask(safe);
       if (deadlineMs !== undefined && sole) {
-        const value = await runUnderDeadline(
+        const value = await configuredDeadline(
           async (attemptSignal) => await execute.call(this, id, safe, attemptSignal, onUpdate, ctx),
+          sole.agent,
           signal,
           deadlineMs,
-          (n) => logPassTimeout(sole.agent, deadlineMs, n),
         );
         return value === "timed_out"
           ? (timedOutResult(sole, deadlineMs) as unknown as Awaited<ReturnType<ToolExecute>>)
@@ -441,26 +486,20 @@ export function wrapExecute(
           typeof onUpdate === "function"
             ? (onUpdate as unknown as (update: ParallelNativeResult) => void)
             : undefined;
-        const chunkUpdate = notify
-          ? (update: unknown) => {
-              // Progress is advisory. Drop a malformed native update and let
-              // the final result produce the explicit pin-compatibility error.
-              let value: ParallelNativeResult;
-              try {
-                value = parallelResult(update);
-              } catch {
-                return;
+        const chunkUpdate = nativeProgress(
+          notify
+            ? (value) => {
+                notify({
+                  ...value,
+                  details: {
+                    ...value.details,
+                    mode: "parallel",
+                    results: [...allResults, ...value.details.results],
+                  },
+                });
               }
-              notify({
-                ...value,
-                details: {
-                  ...value.details,
-                  mode: "parallel",
-                  results: [...allResults, ...value.details.results],
-                },
-              });
-            }
-          : undefined;
+            : undefined,
+        );
         const value = parallelResult(
           await execute.call(this, id, { ...safe, tasks: chunk }, signal, chunkUpdate, ctx),
         );
@@ -474,12 +513,7 @@ export function wrapExecute(
         if (text) rendered.push(text);
       }
 
-      return {
-        ...last,
-        content: [{ type: "text" as const, text: renderedParallelContent(allResults, rendered) }],
-        details: { ...last?.details, mode: "parallel", results: allResults },
-        ...(anyError ? { isError: true } : {}),
-      };
+      return combinedParallel(last, allResults, rendered, anyError);
     } finally {
       semaphore.release(weight);
     }
@@ -580,12 +614,7 @@ async function runWide(
     .filter((text) => text);
   const last = values[values.length - 1];
   const anyError = values.some((v) => v.isError === true);
-  return {
-    ...last,
-    content: [{ type: "text" as const, text: renderedParallelContent(allResults, rendered) }],
-    details: { ...last?.details, mode: "parallel", results: allResults },
-    ...(anyError ? { isError: true } : {}),
-  };
+  return combinedParallel(last, allResults, rendered, anyError);
 }
 
 /**
@@ -617,29 +646,17 @@ async function runPass(
   try {
     // Aborted while parked: never spend the newly-acquired permit on a child.
     signal?.throwIfAborted();
-    const passUpdate = onUpdate
-      ? (update: unknown) => {
-          // Progress is advisory. Drop a malformed native update and let the
-          // final result produce the explicit pin-compatibility error.
-          let value: ParallelNativeResult;
-          try {
-            value = parallelResult(update);
-          } catch {
-            return;
-          }
-          onUpdate(value);
-        }
-      : undefined;
+    const passUpdate = nativeProgress(onUpdate);
     const sole = deadlineMs === undefined ? undefined : soleTask(params);
     if (deadlineMs === undefined || !sole) {
       return parallelResult(await execute.call(this, id, params, signal, passUpdate, ctx));
     }
-    const value = await runUnderDeadline(
+    const value = await configuredDeadline(
       async (attemptSignal) =>
         parallelResult(await execute.call(this, id, params, attemptSignal, passUpdate, ctx)),
+      sole.agent,
       signal,
       deadlineMs,
-      (n) => logPassTimeout(sole.agent, deadlineMs, n),
     );
     if (value !== "timed_out") return value;
     const failed = timedOutResult(sole, deadlineMs);
@@ -1049,9 +1066,9 @@ export const CACHE_STAGGER_ENV = "QCR_SUBAGENT_CACHE_STAGGER_MS";
 /** Env var: the leaf-cache extension's absolute path (set by the daemon). */
 export const LEAF_CACHE_EXT_ENV = "QCR_LEAF_CACHE_EXT";
 /** Env var the leaf-cache extension reads in the child: the pack's path. */
-export const LEAF_PACK_ENV = "QCR_LEAF_PACK";
+export { LEAF_PACK_ENV };
 /** The pack's file name beside a round's task dirs (src/contextpack.ts). */
-export const LEAF_PACK_FILE = "context-pack.md";
+export const LEAF_PACK_FILE = CONTEXT_PACK_FILE;
 /** A group older than this starts afresh: the provider's cache is short-lived. */
 export const CACHE_GROUP_MAX_AGE_MS = 4 * 60_000;
 export const DEFAULT_CACHE_STAGGER_MS = 2500;

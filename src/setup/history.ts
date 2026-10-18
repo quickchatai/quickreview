@@ -86,7 +86,8 @@ export function readDigest(fs: StateFs): DigestRead {
 
 // ---- the companion's view ----
 
-export type HistorySection = "human" | "rounds" | "feedback";
+export const HISTORY_SECTIONS = ["human", "rounds", "feedback"] as const;
+export type HistorySection = (typeof HISTORY_SECTIONS)[number];
 
 export interface HistorySummary {
   repo: string;

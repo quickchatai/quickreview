@@ -18,6 +18,7 @@
 //
 // Convention (setup.ts): every tool answers a refusal as its result, never a
 // throw.
+import { dismissedLine } from "../src/setup/presentation.js";
 import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 import type { Refusal } from "../src/setup/engine.js";
 import {
@@ -63,12 +64,7 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
     execute: async (_id, params) => {
       const r = await triage.dismiss({ fingerprint: params?.fingerprint, reason: params?.reason });
       if (!r.ok) return refused("Dismiss", r);
-      const fp = r.finding.fingerprint.slice(0, 12);
-      const mem =
-        r.memory === "written"
-          ? "the memory note is written"
-          : `the memory note was NOT written (${r.memory.problem}) — dismiss it again later to retry`;
-      return text(`${fp} ${r.again ? "re-dismissed" : "dismissed"}: ${mem}.`, {
+      return text(dismissedLine(r), {
         fingerprint: r.finding.fingerprint,
         memory: r.memory === "written",
       });

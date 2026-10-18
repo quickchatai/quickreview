@@ -1,3 +1,4 @@
+import { usd, findingLocation } from "../src/setup/presentation.js";
 // setup-scan — the scan half of the companion's setup tool belt. Not an
 // extension of its own: extensions/setup.ts (the one setup & scan extension)
 // registers these beside the setup_* tools. The companion judges
@@ -33,6 +34,7 @@
 //
 // Convention (setup.ts, onboarding.ts): every tool answers a refusal as its
 // result, never a throw.
+import { FINDING_STATES } from "../src/setup/findings.js";
 import { join } from "node:path";
 import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 import { sandboxRoot } from "../src/config.js";
@@ -98,8 +100,6 @@ function text(t: string, details?: Record<string, unknown>): PiToolResult {
 function refused(what: string, r: Refusal): PiToolResult {
   return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
 }
-
-const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixed(2)}`);
 
 // ---- rendering ---------------------------------------------------------------
 
@@ -373,7 +373,7 @@ export function renderFindings(fs: readonly ScanFinding[], total: number): strin
   if (fs.length === 0) return "No stored scan findings match.";
   const rows = fs.map(
     (f) =>
-      `- [${f.severity}] ${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`} (${f.unit}, ${f.kind}, ${f.state}` +
+      `- [${f.severity}] ${findingLocation(f)} (${f.unit}, ${f.kind}, ${f.state}` +
       validityNote(f) +
       `${f.capped_from ? `, ${f.capped_from}→${f.severity}: ${f.reachability}` : ""}` +
       `${f.anchor_quoted === false ? ", ANCHOR NOT QUOTED — the lines may not be the defect's" : ""}` +
@@ -391,7 +391,7 @@ export function renderQuestion(q: MatchQuestionView | null, verbs: ScanVerbs = T
   if (q === null)
     return "No match question is pending: every finding a re-scan stopped reporting has been settled.";
   const row = (f: ScanFinding): string =>
-    `  - ${f.fingerprint} [${f.severity}] ${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`} (${f.unit}, ${f.lens}, ${f.kind}` +
+    `  - ${f.fingerprint} [${f.severity}] ${findingLocation(f)} (${f.unit}, ${f.lens}, ${f.kind}` +
     `${f.state === "new" ? "" : `, ${f.state}`}${lookalikeNote(f)}) ${f.claim}`;
   return [
     `MATCH QUESTION ${q.key} (re-scan ${q.run} at ${q.sha.slice(0, 12)}).`,
@@ -569,7 +569,7 @@ export function startedDetails(run: ScanRun): {
   };
 }
 
-export const FINDING_STATES: readonly FindingState[] = ["new", "promoted", "dismissed", "fixed"];
+export { FINDING_STATES } from "../src/setup/findings.js";
 /** How many findings a listing shows unless told otherwise, and at most. */
 export const FINDINGS_LIMIT = 50;
 export const FINDINGS_LIMIT_MAX = 200;

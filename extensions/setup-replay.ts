@@ -15,6 +15,7 @@
 //
 // Convention (setup.ts, setup-scan.ts): every tool answers a refusal as its
 // result, never a throw.
+import { usd, findingLocation } from "../src/setup/presentation.js";
 import { readFileSync } from "node:fs";
 import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 import { parseConfig, sandboxRoot } from "../src/config.js";
@@ -54,7 +55,6 @@ function refused(what: string, r: Refusal): PiToolResult {
   return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
 }
 
-const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixed(2)}`);
 const pad = (s: string, n: number): string =>
   s.length >= n ? `${s.slice(0, n - 1)}…` : s.padEnd(n);
 
@@ -117,7 +117,7 @@ export function renderReplayPreview(p: ReplayPreview): string {
 }
 
 function finding(f: ReplayFinding): string {
-  const at = `${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`}`;
+  const at = `${findingLocation(f)}`;
   const doubt = f.doubt
     ? ` — MAY NOT BE VALID (${f.doubt.word})`
     : f.validated

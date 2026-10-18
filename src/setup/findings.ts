@@ -96,6 +96,7 @@ import { readings, type LedgerEntry, type Reading } from "./ledger.js";
 import { SEVERITIES, type ScanSeverity } from "./scan.js";
 import type { Reachability } from "../severity.js";
 import {
+  FINDING_STATES,
   FINDINGS_FILE,
   FINDINGS_VERSION,
   VALIDITY_ORDER,
@@ -111,7 +112,8 @@ import {
 export { FINDINGS_FILE, FINDINGS_VERSION, dismissedLookalike, lookalikeRank };
 export type { Validity, ValidityView };
 
-export type FindingState = "new" | "promoted" | "dismissed" | "fixed";
+export { FINDING_STATES };
+export type FindingState = (typeof FINDING_STATES)[number];
 
 export interface Sighting {
   run: string;

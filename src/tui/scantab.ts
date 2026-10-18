@@ -36,6 +36,7 @@
 // companion is down — or that the companion answered it is not driving — is
 // shown as interrupted, never as "no scan"; no action is offered from a value
 // that was not read.
+import { FINDING_STATES } from "../setup/scanreport.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import {
@@ -99,7 +100,7 @@ import {
 // ---- the model -----------------------------------------------------------------
 
 const SEVERITY_ORDER: readonly ScanSeverity[] = ["P0", "P1", "P2", "P3", "nit"];
-const STATES: readonly FindingState[] = ["new", "promoted", "dismissed", "fixed"];
+const STATES = FINDING_STATES;
 
 export interface ScanFilter {
   state?: FindingState;

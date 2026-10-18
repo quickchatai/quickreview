@@ -33,6 +33,7 @@
 // The compaction contract was read out of pi 1.0.0's shipped dist (the
 // `qcr-bench:fast1` image, docker create + docker cp, no container run); each
 // tag below names the file and symbol it was checked against.
+import { backtickFence } from "../src/codespan.js";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -40,7 +41,6 @@ import type {
   CompactHandlerResult,
   Pi,
   PiCompactionPreparation,
-  PiCompactionResult,
   PiEventContext,
   PiEventPayload,
 } from "@earendil-works/pi-coding-agent";
@@ -131,11 +131,7 @@ export const PIN_CLOSE = "<!-- /qcr:ledger-pin -->";
 
 /** A fence longer than any backtick run in `body`, so a ledger that quotes
  * code can never close its own fence early. */
-export function fenceFor(body: string): string {
-  let longest = 0;
-  for (const run of body.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
-  return "`".repeat(Math.max(3, longest + 1));
-}
+export const fenceFor = backtickFence;
 
 /** The block appended to the compaction summary: PR meta + the ledger,
  * verbatim, between the sentinels. */
@@ -168,17 +164,7 @@ export function stripPinned(summary: string): string {
 }
 
 /** pi's exported default summariser, as ledger-pin calls it. */
-export type CompactFn = (
-  preparation: PiCompactionPreparation,
-  model: unknown,
-  apiKey: string | undefined,
-  headers?: Record<string, string>,
-  customInstructions?: string,
-  signal?: AbortSignal,
-  thinkingLevel?: string,
-  streamFn?: (model: unknown, context: unknown, options: unknown) => unknown,
-  env?: Record<string, string>,
-) => Promise<PiCompactionResult>;
+export type CompactFn = typeof import("@earendil-works/pi-coding-agent").compact;
 
 /** Load `compact` from the installed (= pinned) pi package, resolved inside
  * the pi process exactly like extensions/subagents.ts's import of the same
