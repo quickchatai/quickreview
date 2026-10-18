@@ -1480,10 +1480,12 @@ export interface AnomalyRecord {
 
 /**
  * What the event log says about one migration-collision COMMENT (the dedupe's
- * three-state read). `unknown` is not "no": it is a log with a comment row
- * this code cannot read, and the caller treats it as "do not post".
+ * delivery read). `unknown` is an unreadable ledger row; `pending` is a
+ * readable intent with unconfirmed delivery. Neither permits another POST.
+ * A dry-run receipt is recorded intent, never a delivered remedy.
  */
-export type CollisionCommentRecord = "commented" | "not_commented" | "unknown";
+export type CollisionCommentRecord =
+  "commented" | "dryrun" | "pending" | "not_commented" | "unknown";
 
 /** Self-requeues a PR has spent, split by whether the row could be
  * attributed to the head asked about. `unattributed` rows are requeues that
@@ -6437,22 +6439,27 @@ export class StateStore {
     opts: { live?: boolean } = {},
   ): CollisionCommentRecord {
     const rows = this.db
-      .prepare("SELECT payload FROM events WHERE kind = 'migration_collision_comment' AND pr = ?")
-      .all(pr) as Array<{ payload: string | null }>;
+      .prepare(
+        `SELECT kind,payload FROM events
+      WHERE kind IN ('migration_collision_comment','migration_collision_comment_pending','migration_collision_comment_refused') AND pr=? ORDER BY id DESC`,
+      )
+      .all(pr) as Array<{ kind: string; payload: string | null }>;
     let unreadable = false;
-    for (const r of rows) {
-      const stamped = readStringField(r.payload, "fingerprint");
-      if (stamped === undefined) unreadable = true;
-      else if (stamped === fingerprint) {
-        // Live, a row stamped `executed: false` is a dry-run record of the
-        // would-be comment (or a guard refusal): nothing reached
-        // GitHub, so it cannot suppress the real post. A row with no
-        // `executed` field predates the stamp and still counts.
-        if (opts.live && readBooleanField(r.payload, "executed") === false) continue;
-        return "commented";
+    let latest: CollisionCommentRecord | undefined;
+    for (const row of rows) {
+      const stamped = readStringField(row.payload, "fingerprint");
+      if (stamped === undefined) {
+        unreadable = true;
+        continue;
       }
+      if (stamped !== fingerprint) continue;
+      if (row.kind === "migration_collision_comment") {
+        if (readBooleanField(row.payload, "executed") !== false) return "commented";
+        latest ??= opts.live ? "not_commented" : "dryrun";
+      } else
+        latest ??= row.kind === "migration_collision_comment_pending" ? "pending" : "not_commented";
     }
-    return unreadable ? "unknown" : "not_commented";
+    return unreadable ? "unknown" : (latest ?? "not_commented");
   }
 
   /**

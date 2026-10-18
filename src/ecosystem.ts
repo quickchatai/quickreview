@@ -38,6 +38,7 @@
 //     implementations hold no state and dispatch keeps owning the store, the
 //     gate-backed adapter and the git seam — nothing here can grow a second
 //     mutation path.
+import { GitHubRequestError } from "./github.js";
 import { codePath } from "./codespan.js";
 import type { GateResult } from "./gate.js";
 import {
@@ -79,6 +80,9 @@ export interface EcosystemPreCheckIo {
    * duplicate on the reviewed repo is the mutation this read exists to
    * prevent, and an unreadable row cannot rule it out. */
   migrationCollisionCommented(pr: number, fingerprint: string): CollisionCommentRecord;
+  /** Read-only marker reconciliation; absent adapters retain unknown delivery. */
+  findCollisionComment?(pr: number, marker: string, head: string): Promise<boolean>;
+  isDryRun?: boolean;
   /** The gated COMMENT delivery — dispatch's `adapter.createReview`. */
   createReview(
     pr: number,
@@ -351,22 +355,40 @@ async function djangoPreCheck(
   // comment. Detection still runs and is still logged; only the duplicate
   // COMMENT is suppressed.
   const commented = io.migrationCollisionCommented(round.pr, fingerprint);
-  if (commented === "commented") {
+  if (commented === "commented" || commented === "dryrun") {
     log(`dispatch: #${round.pr} migration collision already commented at ${round.head_sha}`);
-    return { status: "checked", collisions };
+    return {
+      status: "checked",
+      collisions,
+      ...(commented === "dryrun" ? { comment_undelivered: true as const } : {}),
+    };
   }
-  if (commented === "unknown") {
+  const marker = `<!-- qcr-migration:${fingerprint} -->`;
+  if (commented === "unknown" || commented === "pending") {
+    try {
+      if (await io.findCollisionComment?.(round.pr, marker, round.head_sha)) {
+        io.logEvent("migration_collision_comment", round.pr, {
+          head_sha: round.head_sha,
+          fingerprint,
+          executed: true,
+          recovered: true,
+        });
+        return { status: "checked", collisions };
+      }
+    } catch (err) {
+      log(`dispatch: #${round.pr} migration marker read unavailable`, err);
+    }
     // The ledger holds a comment row it cannot read. Posting would risk the
     // exact duplicate the dedupe exists to prevent, so the COMMENT is withheld
     // — loudly, and with the check still counted as RUN: the collisions ride
     // the round order into the gate note, so the session still hears them.
     log(
-      `dispatch: #${round.pr} migration collision comment withheld — an earlier comment row is unreadable`,
+      `dispatch: #${round.pr} migration collision comment withheld — ${commented === "pending" ? "an earlier delivery is unconfirmed" : "an earlier comment row is unreadable"}`,
     );
     io.logEvent("migration_collision_comment_withheld", round.pr, {
       head_sha: round.head_sha,
       fingerprint,
-      reason: "unreadable_comment_row",
+      reason: commented === "pending" ? "unconfirmed_delivery" : "unreadable_comment_row",
     });
     return { status: "checked", collisions, comment_withheld: true, comment_undelivered: true };
   }
@@ -377,12 +399,17 @@ async function djangoPreCheck(
       base_ref: round.base_ref,
       base_sha: round.base_sha,
     });
+    if (!io.isDryRun)
+      io.logEvent("migration_collision_comment_pending", round.pr, {
+        head_sha: round.head_sha,
+        fingerprint,
+      });
     const result = await io.createReview(
       round.pr,
       {
         commit_id: round.head_sha,
         event: "COMMENT",
-        body,
+        body: `${body}\n\n${marker}`,
       },
       { purpose: "migration_precheck" },
     );
@@ -399,7 +426,7 @@ async function djangoPreCheck(
         reason: result.blocked ?? "not_executed",
       });
     } else {
-      delivered = true;
+      delivered = result.executed;
       io.logEvent("migration_collision_comment", round.pr, {
         head_sha: round.head_sha,
         fingerprint,
@@ -408,6 +435,12 @@ async function djangoPreCheck(
       });
     }
   } catch (err) {
+    if (err instanceof GitHubRequestError && err.status >= 400 && err.status < 500)
+      io.logEvent("migration_collision_comment_refused", round.pr, {
+        head_sha: round.head_sha,
+        fingerprint,
+        reason: String(err),
+      });
     // The COMMENT failed, but the collisions are real, already detected and
     // already logged — throwing them away here would leave the round's gate
     // note empty while the addendum still muzzles the lens, i.e. NOBODY

@@ -2418,3 +2418,37 @@ describe("what a case says and what the writer records around a send", () => {
     expect(await w.tick()).toMatchObject({ late: [] });
   });
 });
+
+describe("case capture activity ownership", () => {
+  it("keeps a reply arriving after ordinary capture owed beyond the capture window", async () => {
+    const h = harness({ state: "closed" });
+    const r = h.round(H1, [posted({ key: "F1" })]);
+    h.capture.observeBotComments(PR, [h.botComment({ id: 900, round: r, key: "F1" })]);
+    await h.capture.capturePr(PR);
+    h.reply({ id: 9001, root: 900, author: "bob", body: "Arrived after capture.", at: h.at() });
+    const { w } = writer(h);
+    expect(w.syncCaptured()).toBe(1);
+    h.tick(3 * 24 * 60);
+    const capture = vi.spyOn(h.capture, "capturePr");
+    expect((await w.tick()).late).toEqual([PR]);
+    expect(capture).toHaveBeenCalledWith(PR);
+  });
+
+  it("counts deletion of a known duplicate-marker root in the same finding case", async () => {
+    const h = harness({ state: "closed" });
+    const r = h.round(H1, [posted({ key: "F1" })]);
+    h.capture.observeBotComments(
+      PR,
+      [900, 901].map((id) => h.botComment({ id, round: r, key: "F1" })),
+    );
+    await h.capture.capturePr(PR);
+    h.store.recordFeedbackSignalRow({
+      kind: "bot_comment_deleted",
+      pr: PR,
+      comment_id: 901,
+      day: "2026-10-01",
+    });
+    const facts = prCases(h.store, h.capture, { pr: PR, repo: REPO, botLogin: BOT });
+    expect(facts.cases[0]?.deleted.map((row) => row.comment_id)).toContain(901);
+  });
+});

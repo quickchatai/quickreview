@@ -98,6 +98,47 @@ describe("detectMigrationCollisions", () => {
     ).toEqual([]);
   });
 
+  it("uses an inferred custom Django label for collision-chain advice", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        {
+          filename: "backend/chat/migrations/0042_new.py",
+          status: "added",
+          patch: '@@\n+dependencies = [("custom_chat", "0041_previous")]',
+        },
+      ],
+      baseFiles: [
+        "backend/chat/migrations/0041_previous.py",
+        "backend/chat/migrations/0042_existing.py",
+      ],
+    });
+    expect(out[0]?.dependency).toBe('("custom_chat", "0042_existing")');
+  });
+
+  it("updates cross-app references to a colliding migration's inferred custom label", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        {
+          filename: "backend/chat/migrations/0042_new.py",
+          status: "added",
+          patch: '@@\n+dependencies = [("custom_chat", "0041_previous")]',
+        },
+        {
+          filename: "backend/billing/migrations/0001_link.py",
+          status: "added",
+          patch: '@@\n+dependencies = [("custom_chat", "0042_new")]',
+        },
+      ],
+      baseFiles: [
+        "backend/chat/migrations/0041_previous.py",
+        "backend/chat/migrations/0042_existing.py",
+      ],
+    });
+    expect(out.find((row) => row.pr_path.includes("billing"))?.dependency).toBe(
+      '("custom_chat", "0043_new")',
+    );
+  });
+
   it("only collides within the same app", () => {
     // 0007 is taken in billing, free in chat.
     expect(
