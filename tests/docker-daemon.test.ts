@@ -323,11 +323,11 @@ describe("the boot build (executed)", () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  function boot(): string[] {
-    const start = entrypoint.indexOf('cd "$SANDBOX"\nmarker=');
-    const end = entrypoint.indexOf("\nfi\n", start) + 4;
+  function boot(source = entrypoint): string[] {
+    const start = source.indexOf('cd "$SANDBOX"\nmarker=');
+    const end = source.indexOf("\nfi\n", start) + 4;
     expect(start).toBeGreaterThan(0);
-    const block = entrypoint
+    const block = source
       .slice(start, end)
       .replace("/opt/quickreview/state/.build-lock-hash", join(dir, "state", ".build-lock-hash"));
     const bin = join(dir, "bin");
@@ -338,7 +338,12 @@ describe("the boot build (executed)", () => {
       `set -euo pipefail\nSANDBOX=${JSON.stringify(join(dir, "sandbox"))}\n${block}`,
     );
     const result = spawnSync("bash", [script], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, NPM_LOG: log },
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        NPM_LOG: log,
+        NODE_ABI_FILE: join(dir, "node-abi"),
+      },
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
     });
@@ -351,6 +356,8 @@ describe("the boot build (executed)", () => {
   function setup(): void {
     dir = mkdtempSync(join(tmpdir(), "qcr-bootbuild-"));
     mkdirSync(join(dir, "bin"));
+    writeFileSync(join(dir, "node-abi"), "127");
+    writeFileSync(join(dir, "bin", "node"), '#!/bin/bash\ncat "$NODE_ABI_FILE"\n', { mode: 0o755 });
     mkdirSync(join(dir, "state"));
     mkdirSync(join(dir, "sandbox", "dist"), { recursive: true });
     mkdirSync(join(dir, "sandbox", "node_modules"));
@@ -359,6 +366,17 @@ describe("the boot build (executed)", () => {
       mode: 0o755,
     });
   }
+
+  it.each(["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"])(
+    "reinstalls native dependencies when Node ABI changes in %s",
+    (path) => {
+      setup();
+      const source = readFileSync(join(root, path), "utf8");
+      expect(boot(source)).toContain("ci");
+      writeFileSync(join(dir, "node-abi"), "137");
+      expect(boot(source)).toContain("ci");
+    },
+  );
 
   it("a restart with an unchanged lockfile still builds — never runs a stale dist/", () => {
     setup();
