@@ -30,7 +30,7 @@
 //     `sessionGitConfigPins` in src/sessions.ts, which pins where git looks for
 //     configuration at spawn. The guard's job there is only to stop a caller
 //     RE-POINTING the pin (COMMAND_INJECTING_ENV).
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
 import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 
@@ -193,10 +193,43 @@ function inReplaySession(): boolean {
   return process.env.QCR_REPLAY === "1";
 }
 
-function sanctionedScript(token: string): { sanctioned: boolean; name?: string } {
+function sanctionedScript(
+  token: string,
+  cwd: string | null,
+): { sanctioned: boolean; name?: string } {
   const m = SCRIPT_PATH_RE.exec(token);
   if (!m) return { sanctioned: false };
-  return { sanctioned: !inReplaySession() && SANCTIONED_SCRIPTS.has(m[1]!), name: m[1]! };
+  return {
+    sanctioned: !inReplaySession() && trustedScriptCwd(cwd) && SANCTIONED_SCRIPTS.has(m[1]!),
+    name: m[1]!,
+  };
+}
+
+/** Only the daemon-selected checkout owns the sanctioned script bytes. */
+function trustedScriptCwd(cwd: string | null): boolean {
+  const root = process.env.QCR_SANDBOX_ROOT ?? process.cwd();
+  if (cwd === null) return false;
+  try {
+    return realpathSync.native(cwd) === realpathSync.native(root);
+  } catch {
+    return false;
+  }
+}
+
+/** A changed shell directory is not inferred from a reviewed path. Only an
+ * explicit cd to the daemon's absolute root preserves script authorization;
+ * every other cd conservatively invalidates it for this whole command. */
+function scriptCwdForCommand(cmd: string, cwd: string | null): string | null {
+  for (const segment of splitShellSegments(cmd)) {
+    const words = shellWords(segment).words;
+    let at = 0;
+    while (words[at] === "env" || /^\w+=/.test(words[at] ?? "")) at++;
+    const program = (words[at] ?? "").replace(/^\(+/, "");
+    if (program.slice(program.lastIndexOf("/") + 1) !== "cd") continue;
+    const args = words.slice(at + 1).filter((word) => word !== "--");
+    if (args.length !== 1 || !args[0]!.startsWith("/") || !trustedScriptCwd(args[0]!)) return null;
+  }
+  return cwd;
 }
 
 const REPLAY_NO_SCRIPTS =
@@ -710,6 +743,7 @@ const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
  */
 const POLICY_RELOCATING_ENV = new Set([
   "QCR_CONFIG",
+  "QCR_SANDBOX_ROOT",
   "QCR_INSTALL",
   "QCR_STATE_DB",
   "QCR_DRYRUN_DIR",
@@ -750,7 +784,12 @@ function envInjectionBlock(name: string): BashCheck | null {
 /** One segment's program + args, env prefixes and subshell parens skipped.
  * `segment` is the RAW text the tokens came from — needed for `bash -c`, whose
  * payload the whitespace split has already shredded (see `bashCPayload`). */
-function checkSegment(segment: string, tokens: string[], depth: number): BashCheck {
+function checkSegment(
+  segment: string,
+  tokens: string[],
+  depth: number,
+  cwd: string | null,
+): BashCheck {
   let i = 0;
   let afterEnv = false;
   for (; i < tokens.length; i++) {
@@ -788,11 +827,11 @@ function checkSegment(segment: string, tokens: string[], depth: number): BashChe
       if (lifted.kind === "payload") {
         if (depth >= MAX_NESTED_COMMAND_DEPTH)
           return block("exec policy: 'bash -c' nested too deep to analyse — refused");
-        return checkBashCommand(lifted.payload, depth + 1);
+        return checkBashCommand(lifted.payload, depth + 1, cwd);
       }
       if (lifted.kind === "unliftable") return block(lifted.reason);
     }
-    return checkProgram(raw, args, rawArgs, depth, textAfterWords(segment, i + 1));
+    return checkProgram(raw, args, rawArgs, depth, textAfterWords(segment, i + 1), cwd);
   }
   return { allowed: true }; // empty segment
 }
@@ -817,7 +856,7 @@ interface ShellWords {
  * in `checkBashCommand`, this preserves separators (`;`, newline, `&&`) that
  * live INSIDE a quoted word — which is exactly what a `bash -c` payload is.
  */
-function shellWords(s: string): ShellWords {
+export function shellWords(s: string): ShellWords {
   const ANSI_C: Readonly<Record<string, string>> = {
     n: "\n",
     t: "\t",
@@ -959,9 +998,10 @@ function checkProgram(
   /** The segment's text after `prog`, verbatim — quotes, and the newlines a
    * whitespace split loses, intact. */
   rawText?: string,
+  cwd: string | null = process.cwd(),
 ): BashCheck {
   // Sanctioned scripts, invoked directly.
-  const direct = sanctionedScript(prog);
+  const direct = sanctionedScript(prog, cwd);
   if (direct.name !== undefined || /(^|\/)scripts\//.test(prog)) {
     return direct.sanctioned
       ? { allowed: true }
@@ -977,10 +1017,13 @@ function checkProgram(
   // before `sh`/`bash`, which have their own narrower rules below.
   if (AGENT_SPAWNERS.has(base)) return block(`${AGENT_SPAWN_REASON} — '${base}' is blocked`);
   if (base === "sh") {
-    // Only the `sh -n <file>` syntax check is sanctioned.
-    return args[0] === "-n"
+    // No option after -n may switch execution back on or introduce a command.
+    const words = rawText === undefined ? args.map(dequote) : shellWords(rawText).words;
+    const next = words[1];
+    return words[0] === "-n" &&
+      (next === undefined || next === "--" || next === "-" || !/^[-+]/.test(next))
       ? { allowed: true }
-      : block("exec policy: 'sh' is only allowed as 'sh -n' (syntax check)");
+      : block("exec policy: 'sh' is only allowed as 'sh -n [--] <file>' (syntax check)");
   }
   if (base === "bash") {
     // A `bash -c` with a readable payload never reaches here: `checkSegment`
@@ -992,7 +1035,7 @@ function checkProgram(
     // after the script is the script's own argument).
     for (const a of args) {
       if (!a.startsWith("-")) {
-        return sanctionedScript(a).sanctioned
+        return sanctionedScript(a, cwd).sanctioned
           ? { allowed: true }
           : block(
               inReplaySession()
@@ -1023,30 +1066,48 @@ function checkProgram(
     return checkGit(args.filter((a) => a.length > 0));
   }
   if (base === "xargs") {
-    // xargs runs another program — vet the target too.
-    const target = args.find((a) => !a.startsWith("-") && a !== "{}");
-    if (target === undefined) return { allowed: true };
-    const from = args.indexOf(target) + 1;
-    // xargs appends what it reads from stdin to sed's words, and GNU sed reads
-    // an option anywhere: a file NAMED "-es/.*/cmd/e" in a PR's tree, piped in
-    // from `git diff --name-only`, would be a script. So sed through xargs is
-    // allowed only when its own words end with `--` (everything appended is
-    // a file) and xargs substitutes nothing into them (-I/-i/--replace).
-    if (/(?:^|\/)sed$/.test(target)) {
-      const replaces = args.slice(0, from - 1).some((a) => /^(?:-[a-zA-Z]*[Ii]|--replace)/.test(a));
-      if (replaces || args[args.length - 1] !== "--") {
-        return block(
-          "exec policy: 'xargs sed' without a closing '--' — xargs appends stdin to sed's words, where a name like '-es/x/y/e' is a script; end sed's arguments with '--' (`xargs sed -n 1p --`)",
-        );
+    // xargs contributes arguments the guard cannot inspect. Classify its own
+    // options before locating the program, including detached option values.
+    let at = 0;
+    for (; at < args.length; at++) {
+      const option = dequote(args[at]!);
+      if (option === "--") {
+        at++;
+        break;
       }
+      if (!option.startsWith("-")) break;
+      if (/^(?:-[nLPsEId]|--(?:max-args|max-lines|max-procs|max-chars|delimiter))$/.test(option))
+        at++;
     }
-    return checkProgram(
-      target,
+    const target = args[at];
+    if (target === undefined) return { allowed: true };
+    const from = at + 1;
+    const checked = checkProgram(
+      dequote(target),
       args.slice(from),
       rawArgs?.slice(from),
       depth,
       rawText === undefined ? undefined : textAfterWords(rawText, from),
+      cwd,
     );
+    if (!checked.allowed) return checked;
+    const reader = basenameOf(dequote(target));
+    if (["find", "uniq", "sh", "xargs"].includes(reader)) {
+      return block(
+        `exec policy: 'xargs ${reader}' can receive executable or output operands from stdin — use a direct, fully specified reader invocation`,
+      );
+    }
+    if (["sed", "sort", "git", "gh"].includes(reader)) {
+      const replaces = args
+        .slice(0, at)
+        .some((a) => /^(?:-[a-zA-Z]*[Ii]|--replace)/.test(dequote(a)));
+      if (replaces || dequote(args[args.length - 1] ?? "") !== "--") {
+        return block(
+          `exec policy: 'xargs ${reader}' without a closing '--' or with replacement — stdin must only supply file operands after all checked options`,
+        );
+      }
+    }
+    return checked;
   }
   if (ALLOWED.has(base)) {
     // Allowlisted for READING is not allowlisted outright: sed/sort/find each
@@ -1385,10 +1446,35 @@ function secretBlock(word: string, why: string): BashCheck {
 
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
+/** Preserve each shell word's original spelling so secret-path expansion can
+ * still inspect quotes and escapes, while a multiword pattern stays one word. */
+function rawShellWords(text: string): string[] {
+  const words: string[] = [];
+  let start = -1;
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (start < 0 && !/\s/.test(c)) start = i;
+    if (c === "\\" && quote !== "'") {
+      i++;
+      continue;
+    }
+    if (quote !== null) {
+      if (c === quote) quote = null;
+    } else if (c === "'" || c === '"') quote = c;
+    else if (/\s/.test(c) && start >= 0) {
+      words.push(text.slice(start, i));
+      start = -1;
+    }
+  }
+  if (start >= 0) words.push(text.slice(start));
+  return words;
+}
+
 function checkAppSecretWords(cmd: string, ctx: SecretPathContext): BashCheck {
   let cwd = ctx.cwd;
   for (const segment of splitShellSegments(cmd)) {
-    const words = segment.split(/\s+/).filter((w) => w.length > 0);
+    const words = rawShellWords(segment);
     const exempt = patternWordIndexes(words);
     for (let i = 0; i < words.length; i++) {
       if (exempt.has(i)) continue;
@@ -1439,6 +1525,15 @@ function patternWordIndexes(words: readonly string[]): Set<number> {
     if (w === "--") {
       if (firstPositional < 0 && i + 1 < words.length) firstPositional = i + 1;
       break;
+    }
+    if (w === "-f" || w === "--file") {
+      explicit = true; // the next word names a file, never a literal pattern
+      i++;
+      continue;
+    }
+    if (/^(?:-f.|--file=)/.test(w)) {
+      explicit = true;
+      continue;
     }
     if (w === "-e" || w === "--regexp" || w === "--expression") {
       explicit = true;
@@ -1922,7 +2017,8 @@ function gitConfigWriteBlock(path: string): BashCheck {
 const BRACE_GROUP_RE = /\{[^{}]*(?:,|\.\.)[^{}]*\}/g;
 /** The component names the protected sets are spelled with: what a pattern
  * component is tried against. One representative temp name stands for the
- * retired list's `.tmp-<pid>`, and one wake file name for every wake. */
+ * retired list's `.tmp-<pid>`; wake patterns are judged as a filename
+ * family by possibleWakePattern below. */
 const PROTECTED_COMPONENT_NAMES: readonly string[] = [
   ".git",
   ".gitconfig",
@@ -1936,11 +2032,30 @@ const PROTECTED_COMPONENT_NAMES: readonly string[] = [
   "retired-uris.json.tmp-1",
   "inject",
   ".done",
-  "2026-01-01T00-00-00-000Z-0000.md",
 ];
 /** Past this many candidate paths a pattern is refused without enumerating
  * the rest — a target that broad is no reviewer's write. */
 const PATTERN_CANDIDATE_CAP = 512;
+
+/** A conservative intersection with wake filenames. Before the first glob
+ * metacharacter the literal prefix must fit a timestamp/sequence; after an
+ * optional command marker any suffix may be part of its id. The remaining
+ * pattern is deliberately unconstrained, so uncertainty refuses a write. */
+function possibleWakePattern(part: string): boolean {
+  if (!GLOB_CHARS.test(part)) return false;
+  const prefix = part.split(/[*?[]/, 1)[0]!;
+  const stem = "0000-00-00T00-00-00-000Z-0000";
+  for (let i = 0; i < Math.min(prefix.length, stem.length); i++) {
+    if (stem[i] === "0" ? !/[0-9]/.test(prefix[i]!) : prefix[i] !== stem[i]) return false;
+  }
+  if (prefix.length <= stem.length) return true;
+  const rest = prefix.slice(stem.length).replace(/^\d*/, "");
+  if ("--cmd-".startsWith(rest) || rest.startsWith("--cmd-")) return true;
+  if (".md".startsWith(rest)) return true;
+  if (!rest.startsWith(".md")) return false;
+  const tail = rest.slice(3);
+  return ".tmp-".startsWith(tail) || tail.startsWith(".tmp-");
+}
 
 /** The protected path a redirection-target PATTERN can expand onto, or null
  * (also null for a target with no pattern syntax at all). */
@@ -1949,6 +2064,7 @@ export function protectedPatternHit(target: string): string | null {
   if (!GLOB_CHARS.test(widened)) return null;
   let paths = [""];
   const parts = widened.split("/");
+  if (possibleWakePattern(parts[parts.length - 1]!)) return target;
   for (const [k, part] of parts.entries()) {
     const options = [part];
     if (GLOB_CHARS.test(part)) {
@@ -1965,6 +2081,8 @@ export function protectedPatternHit(target: string): string | null {
 
 /** One redirection target (dequoted), judged literally and as a pattern. */
 function judgeRedirectTarget(target: string): BashCheck {
+  const pattern = target.replace(BRACE_GROUP_RE, "*").split("/").at(-1)!;
+  if (possibleWakePattern(pattern)) return deliverySurfaceWriteBlock(target);
   if (isProtectedWriteTarget(target)) return protectedWriteBlock(target);
   const hit = protectedPatternHit(target);
   if (hit === null) return { allowed: true };
@@ -2184,8 +2302,13 @@ export function redirectTargets(cmd: string): string[] {
 
 /** Pure policy check over a full bash command string: split into segments
  * (quote-aware) and vet each segment's first program token. */
-export function checkBashCommand(cmd: string, depth = 0): BashCheck {
+export function checkBashCommand(
+  cmd: string,
+  depth = 0,
+  cwd: string | null = process.cwd(),
+): BashCheck {
   const normalized = normalizeRedirections(cmd);
+  const scriptCwd = scriptCwdForCommand(normalized, cwd);
   // Checked over the WHOLE command, before the per-segment program check: the
   // programs that would read a root credential (cat, grep, jq…) are all
   // legitimately allowed, so the path is the only thing that distinguishes it.
@@ -2202,7 +2325,7 @@ export function checkBashCommand(cmd: string, depth = 0): BashCheck {
       .split(/\s+/)
       .filter((t) => t.length > 0);
     if (tokens.length === 0) continue;
-    const res = checkSegment(segment, tokens, depth);
+    const res = checkSegment(segment, tokens, depth, scriptCwd);
     if (!res.allowed) return res;
   }
   return { allowed: true };
@@ -2602,10 +2725,38 @@ export function checkReaderModes(
     }
     return { allowed: true };
   }
+  const words = rawText === undefined ? args.map(dequote) : shellWords(rawText).words;
+  if (
+    ["find", "sort", "uniq"].includes(prog) &&
+    (args.some(opensUnmodelledQuoting) ||
+      (rawText !== undefined && opensUnmodelledQuoting(rawText)))
+  ) {
+    return block(`exec policy: '${prog}' has quoting the guard cannot decode`);
+  }
+  if (prog === "uniq") {
+    let operands = 0;
+    let options = true;
+    for (let i = 0; i < words.length; i++) {
+      const a = words[i]!;
+      if (options && a === "--") {
+        options = false;
+        continue;
+      }
+      if (options && a.startsWith("-") && a !== "-") {
+        if (/^-(?:f|s|w)$/.test(a) || /^--(?:skip-fields|skip-chars|check-chars)$/.test(a)) i++;
+        continue;
+      }
+      operands++;
+    }
+    return operands > 1
+      ? block(
+          "exec policy: 'uniq' with an output operand writes a file — use only an input operand",
+        )
+      : { allowed: true };
+  }
   const rule = READER_MODE_RULES[prog];
   if (rule === undefined) return { allowed: true };
-  for (const raw of args) {
-    const a = raw.replace(/^['"]+|['"]+$/g, "");
+  for (const a of words) {
     if (a.length > 0 && a.startsWith("-") && rule.flags.test(a)) {
       return block(
         `exec policy: '${prog} ${a}' ${rule.what} — the reviewer reads code and never writes or runs anything. Use the read-only form.`,
@@ -2662,7 +2813,7 @@ const READ_TOOLS = new Set(["read", "grep", "find", "ls", "read_file", "view", "
  * writes this way) `path`/`file_path` on a file tool's input.
  */
 export default function activate(pi: Pi): void {
-  pi.on("tool_call", (event) => {
+  pi.on("tool_call", (event, ctx) => {
     const ev = event as ToolCallEvent;
     const input = (ev.input ?? ev.arguments) as
       | {
@@ -2691,7 +2842,7 @@ export default function activate(pi: Pi): void {
     if (ev.toolName === "bash") {
       const cmd = input?.command;
       if (typeof cmd !== "string") return;
-      const res = checkBashCommand(cmd);
+      const res = checkBashCommand(cmd, 0, typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd());
       if (!res.allowed)
         return { block: true, reason: res.reason ?? "exec policy: command blocked" };
       return;

@@ -539,7 +539,6 @@ const SURFACE_COMPONENT_NAMES: readonly string[] = [
   "retired-uris.json.tmp-1",
   "inject",
   ".done",
-  "2026-01-01T00-00-00-000Z-0000.md",
 ];
 
 /** A shell pattern component as an anchored regex: `*`, `?`, `[…]`/`[!…]`. */
@@ -572,10 +571,32 @@ function surfacePathKind(path: string): ExecViolationKind | null {
   return null;
 }
 
+/** Conservatively recognize every wake-like literal prefix before a glob,
+ * independently of the guard's implementation. No single date represents
+ * the timestamp, sequence and command-id families. */
+function wakePatternPrefix(component: string): boolean {
+  const at = component.search(/[*?[]/);
+  if (at < 0) return false;
+  const literal = component.slice(0, at);
+  const shape = "dddd-dd-ddTdd-dd-dd-dddZ-dddd";
+  for (let i = 0; i < Math.min(shape.length, literal.length); i++) {
+    if (shape[i] === "d" ? !/^[0-9]$/.test(literal[i]!) : shape[i] !== literal[i]) return false;
+  }
+  if (literal.length <= shape.length) return true;
+  const suffix = literal.slice(shape.length).replace(/^[0-9]+/, "");
+  if ("--cmd-".startsWith(suffix) || suffix.startsWith("--cmd-")) return true;
+  if (".md".startsWith(suffix)) return true;
+  return (
+    suffix.startsWith(".md") &&
+    (".tmp-".startsWith(suffix.slice(3)) || suffix.slice(3).startsWith(".tmp-"))
+  );
+}
+
 /** The surface a PATTERN write target can expand onto, if any. */
 function patternTargetKind(target: string): ExecViolationKind | null {
   if (!PATTERN_SYNTAX_RE.test(target)) return null;
   const parts = target.replace(/\{[^{}]*(?:,|\.\.)[^{}]*\}/g, "*").split("/");
+  if (wakePatternPrefix(parts[parts.length - 1]!)) return "delivery_surface_write";
   let paths = [""];
   for (const [k, part] of parts.entries()) {
     const options = [part];
@@ -609,7 +630,7 @@ const OUTPUT_TARGET_RE = /--output[=\s]\s*([^\s;&|()<>]+)/g;
  * right there in the segment whether it is quoted or not. Independent of the
  * guard's own list by design. */
 const POLICY_RELOCATION_RE =
-  /(?:^|[\s;&|(])QCR_(?:CONFIG|INSTALL|STATE_DB|DRYRUN_DIR|POSTING_RECEIPT_DIR)=/;
+  /(?:^|[\s;&|(])QCR_(?:CONFIG|SANDBOX_ROOT|INSTALL|STATE_DB|DRYRUN_DIR|POSTING_RECEIPT_DIR)=/;
 
 /**
  * Programs whose ARGUMENTS are search patterns and paths, never commands.
@@ -873,11 +894,37 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
     // rule reads the DEQUOTED segment, as git receives its options
     // (`--out"put"=…` is `--output=…`); sed's reads it with a quote nested in
     // the other kind masked (`maskNestedQuotes`).
-    const hit =
-      prog === "sed"
-        ? sedAuditHit(segment)
-        : READER_MODE_AUDIT[prog]?.test(prog === "git" ? bare : segment);
+    const hit = prog === "sed" ? sedAuditHit(segment) : READER_MODE_AUDIT[prog]?.test(bare);
     if (hit === true) return "reader_write_or_exec";
+    if (/(?:^|\s)(?:\S*\/)?xargs(?:\s|$)/.test(bare)) {
+      if (["find", "uniq", "sh", "xargs"].includes(prog)) return "reader_write_or_exec";
+      if (
+        ["sort", "sed", "git", "gh"].includes(prog) &&
+        (!/\s--\s*$/.test(bare) || /(?:^|\s)(?:-[a-zA-Z]*[Ii]|--replace)/.test(bare))
+      )
+        return "reader_write_or_exec";
+    }
+    if (prog === "sh" && /\bsh\s+-n\s+(?:\+|-(?!--(?:\s|$)|(?:\s|$)))/.test(bare))
+      return "interpreter";
+    if (prog === "uniq") {
+      const words = sedWords(segment);
+      if (words !== null) {
+        const at = words.findIndex((w) => /(?:^|\/)uniq$/.test(w));
+        let operands = 0;
+        let options = true;
+        for (let i = at + 1; i < words.length; i++) {
+          const word = words[i]!;
+          if (options && word === "--") {
+            options = false;
+            continue;
+          }
+          if (options && word.startsWith("-") && word !== "-") {
+            if (/^-[fsw]$|^--(?:skip-fields|skip-chars|check-chars)$/.test(word)) i++;
+          } else operands++;
+        }
+        if (operands > 1) return "reader_write_or_exec";
+      }
+    }
     // A reader's ARGUMENTS are patterns, but an assignment PREFIX in front
     // of it is the environment it runs in — `LD_PRELOAD=… cat f` loads code
     // whatever cat then reads.
@@ -925,7 +972,26 @@ export function execViolationKind(cmd: string): ExecViolationKind | null {
   // `>&f`, `{v}>f`, `1<>f` and `>|f` all become `>f`, so a write the guard
   // refuses is spelled the same way when this audit reads it back.
   const normalized = normalizeRedirections(cmd);
-  for (const segment of splitShellSegments(normalized)) {
+  const segments = splitShellSegments(normalized);
+  const root = process.env.QCR_SANDBOX_ROOT ?? process.cwd();
+  const changedDirectory = segments.some((segment) => {
+    if (segmentProgram(segment) !== "cd") return false;
+    const words = sedWords(segment);
+    return words === null || words.length !== 2 || words[1] !== root;
+  });
+  if (
+    changedDirectory &&
+    segments.some((segment) => {
+      const prog = segmentProgram(segment);
+      return (
+        prog !== null &&
+        !AUDIT_READERS.has(prog) &&
+        /(?:^|[\s'"(])(?:\.\/)?scripts\/[a-z-]+\.sh(?:[\s'";)]|$)/.test(segment)
+      );
+    })
+  )
+    return "interpreter";
+  for (const segment of segments) {
     if (segment.trim().length === 0) continue;
     const kind = segmentViolationKind(segment);
     if (kind !== null) return kind;
