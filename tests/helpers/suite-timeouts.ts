@@ -74,6 +74,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/context-files.test.ts",
   "tests/deploy.test.ts",
   "tests/docker-daemon.test.ts",
+  "tests/engine-port-contract.test.ts",
   "tests/exec-boundary.test.ts",
   "tests/fences-cigate.test.ts",
   "tests/fences-gate.test.ts",
