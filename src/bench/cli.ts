@@ -111,6 +111,7 @@ import {
   rebuildResults,
   recordUnprefetched,
   resultLine,
+  limitedModelErrors,
   reviewCase,
   runFingerprint,
   type CaseSummary,
@@ -308,9 +309,7 @@ async function main(): Promise<number> {
         const s = existsSync(p) ? (JSON.parse(readFileSync(p, "utf8")) as CaseSummary) : null;
         const st = s?.status ?? "missing";
         tally[st] = (tally[st] ?? 0) + 1;
-        const e = s?.model_errors;
-        if (s && s.status !== "ok" && e && e.rate_limited + e.overloaded + (e.usage_limit ?? 0) > 0)
-          limited++;
+        if (s && s.status !== "ok" && limitedModelErrors(s) > 0) limited++;
       }
       const ok = tally["ok"] ?? 0;
       const kinds = Object.entries(tally)

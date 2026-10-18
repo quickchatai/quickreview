@@ -28,6 +28,7 @@
 // (`codex_arm.py --check-result`): Codex reader on `review_output` and OCR
 // reader on `review` must produce the SAME comments, or the case fails.
 
+import { finiteNumber as num } from "./values.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
@@ -251,10 +252,6 @@ export interface CodexTokens {
   cached_input_tokens: number;
   output_tokens: number;
   reasoning_output_tokens: number;
-}
-
-function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
 export function codexTokens(result: Record<string, unknown>): CodexTokens {

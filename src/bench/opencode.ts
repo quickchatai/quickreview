@@ -71,6 +71,9 @@
 // included — the event stream carries the parent's only), read with
 // `opencode db` before the data dir is removed.
 
+import { bridgeApiBase } from "./values.js";
+import { integerOrNull as intOrNull } from "./values.js";
+import { finiteNumber as num } from "./values.js";
 import {
   copyFileSync,
   existsSync,
@@ -315,7 +318,7 @@ export function opencodeConfig(o: {
         npm: "@ai-sdk/openai-compatible",
         name: "ChatGPT Codex backend via the loopback bridge",
         options: {
-          baseURL: `${o.bridgeUrl.replace(/\/+$/, "")}/v1`,
+          baseURL: bridgeApiBase(o.bridgeUrl),
           apiKey: "loopback-bridge",
           headerTimeout: 900_000,
           chunkTimeout: 900_000,
@@ -496,10 +499,6 @@ export interface OpencodeEvents {
   sessionId: string | null;
 }
 
-function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
-}
-
 const TASK_RESULT_RE = /<task_result>\s*([\s\S]*?)\s*<\/task_result>/;
 
 export function parseOpencodeEvents(stdout: string): OpencodeEvents {
@@ -633,12 +632,6 @@ export interface OcrShapedComment {
   end_line: number | null;
   content: string;
   severity?: string;
-}
-
-function intOrNull(v: unknown): number | null {
-  if (typeof v === "number" && Number.isInteger(v)) return v;
-  if (typeof v === "string" && /^\d+$/.test(v.trim())) return Number(v.trim());
-  return null;
 }
 
 /** evaluate.py `build_target_comments_from_codex`, emitted in the shape its

@@ -119,7 +119,7 @@ function entriesOf(rec: Record<string, unknown>): unknown[] | null {
       : null;
 }
 
-function entriesById(entries: readonly unknown[]): Map<string, Record<string, unknown>> {
+export function entriesById(entries: readonly unknown[]): Map<string, Record<string, unknown>> {
   const byId = new Map<string, Record<string, unknown>>();
   for (const entry of entries) {
     if (typeof entry !== "object" || entry === null) continue;
@@ -132,7 +132,7 @@ function entriesById(entries: readonly unknown[]): Map<string, Record<string, un
 
 /** Follow the complete identity chain, including withheld or missing leads.
  * Cycles share their smallest member id so traversal order cannot split them. */
-function rootCauseId(
+export function rootCauseId(
   id: string,
   sameAs: string | null,
   byId: ReadonlyMap<string, Record<string, unknown>>,

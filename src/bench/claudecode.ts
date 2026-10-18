@@ -52,6 +52,8 @@
 // is built at review time, and `claude-rebuild` rebuilds it for a finished run
 // without re-reviewing anything.
 
+import { assertArm } from "./ocr.js";
+import { finiteNumber as num } from "./values.js";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { publishText } from "./publication.js";
 import { tmpdir } from "node:os";
@@ -205,7 +207,18 @@ export function claudeRepoPath(workRoot: string, repo: string): string {
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
-const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+function claudeFindingProjection(
+  result: unknown,
+): Pick<ClaudeCaseSummary, "comments" | "harness_comments" | "view_source"> {
+  const harness = claudeScoredFindings(result).length;
+  const view = claudeViewOf(result);
+  return {
+    comments: view ? view.comments : harness,
+    harness_comments: harness,
+    view_source: view ? view.source : null,
+  };
+}
 
 // ---- the OCR-shaped view ----------------------------------------------------------
 
@@ -487,15 +500,10 @@ export function summarizeClaudeResult(a: {
           ? "auth-failed"
           : "no-model-call"
         : "ok";
-  const harness = claudeScoredFindings(r).length;
-  const view = claudeViewOf(r);
   return {
     status: finalStatus,
     exit_code: exit,
-    // what the eval scores: the view when the file has one
-    comments: view ? view.comments : harness,
-    harness_comments: harness,
-    view_source: view ? view.source : null,
+    ...claudeFindingProjection(r),
     review_output_source:
       r && typeof r["review_output_source"] === "string" ? r["review_output_source"] : null,
     raw_text_fallback: !!r && typeof r["review_output"] === "string",
@@ -855,9 +863,7 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
     const prose = bench["claude_prose_parsed"] as ClaudeProseMarker | undefined;
     const summary = readClaudeSummary(o.outDir, c);
     if (summary) {
-      summary.comments = view.comments;
-      summary.harness_comments = claudeScoredFindings(next).length;
-      summary.view_source = view.source;
+      Object.assign(summary, claudeFindingProjection(next));
       writeClaudeSummary(o.outDir, summary);
     }
     out.push({ instance_id: c.instance_id, source: view.source, comments: view.comments, prose });
@@ -915,11 +921,8 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
   };
   mkdirSync(o.outDir, { recursive: true });
   const runFile = join(o.outDir, "run.json");
+  assertArm(o.outDir, "claude");
   const previous = readJson(runFile) as Obj | undefined;
-  if (previous && previous["reviewer"] !== "claude")
-    throw new Error(
-      `${o.outDir} holds another arm's run (reviewer ${JSON.stringify(previous["reviewer"] ?? "QuickReview")}) — pick a new --run`,
-    );
   // run.json is about to carry THIS configuration, so no case reviewed under
   // another may stay a result of the run: without --resume every case goes;
   // with it, every case whose fingerprint differs goes now (its judge inputs

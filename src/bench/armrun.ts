@@ -3,6 +3,7 @@
 // configuration, the run record's lifecycle fields, the harness's time
 // budget, the prepared tree's merge-base check and the AACR score table.
 
+import { CASE_FILES } from "./artifacts.js";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { readJsonObject } from "./publication.js";
@@ -40,7 +41,7 @@ export function dropStaleMetrics(
 
 /** The case-dir files the defect judge reads beside a case's result
  * (defects.ts `reviewForJudge`): a case no longer in the run takes them too. */
-export const JUDGE_INPUT_FILES = ["review.md", "comments.json"] as const;
+export const JUDGE_INPUT_FILES = [CASE_FILES.review, CASE_FILES.comments] as const;
 
 export interface ArmCasePrep {
   /** Call before a case is reviewed (again): its result file is about to be

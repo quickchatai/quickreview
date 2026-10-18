@@ -35,6 +35,8 @@
 // body through `--background`; the report says which. (The QuickReview arm
 // gets both, as production does.)
 
+import { bridgeApiBase } from "./values.js";
+import { finiteNumber as num } from "./values.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
@@ -107,7 +109,7 @@ export function ocrEnv(o: {
     HOME: o.home,
     TMPDIR: o.tmpDir,
     LANG: "C.UTF-8",
-    OCR_LLM_URL: `${o.bridgeUrl.replace(/\/+$/, "")}/v1`,
+    OCR_LLM_URL: bridgeApiBase(o.bridgeUrl),
     OCR_LLM_TOKEN: "loopback-bridge",
     OCR_LLM_MODEL: o.model,
     OCR_USE_ANTHROPIC: "false",
@@ -133,6 +135,11 @@ export function scoredOcrComments(result: Record<string, unknown>): number {
   ).length;
 }
 
+/** OCR stdout is JSON when parseable, otherwise retained verbatim for diagnosis. */
+function parseOcrStdout(stdout: string): unknown {
+  try { return JSON.parse(stdout) as unknown; } catch { return stdout; }
+}
+
 /** reviewers/ocr.py `save_result`: the parsed JSON when stdout is JSON, else
  * the raw text (the scorer then reads zero comments — a failure costs the
  * case's references, as it does in the harness). `bench` is ours. */
@@ -145,14 +152,7 @@ export function ocrResultPayload(a: {
   stderr: string;
   bench: Record<string, unknown>;
 }): Record<string, unknown> {
-  let review: unknown = a.stdout;
-  if (a.stdout) {
-    try {
-      review = JSON.parse(a.stdout);
-    } catch {
-      // ocr may print non-JSON before its JSON stage — kept as text
-    }
-  }
+  const review = parseOcrStdout(a.stdout);
   return {
     instance_id: a.c.instance_id,
     repo: a.c.repo,
@@ -272,10 +272,6 @@ export interface OcrCaseSummary {
 
 function str(v: unknown, fallback = ""): string {
   return typeof v === "string" ? v : typeof v === "number" ? String(v) : fallback;
-}
-
-function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
 /** Status + OCR's own numbers from one finished process. The case's warnings
@@ -458,12 +454,7 @@ export async function reviewCaseOcr(
     stderr = r.stderr;
     summary.exit_code = r.code;
     summary.bridge = bridgeDelta(before, after);
-    let review: unknown = null;
-    try {
-      review = JSON.parse(stdout);
-    } catch {
-      review = null;
-    }
+    const review = parseOcrStdout(stdout);
     Object.assign(
       summary,
       summarizeOcrRun({

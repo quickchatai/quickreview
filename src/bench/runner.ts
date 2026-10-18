@@ -30,7 +30,7 @@ import {
   type SweepStatus,
 } from "../sweepstatus.js";
 import { renderPassTasks } from "../passtasks.js";
-import { publishText } from "./publication.js";
+import { publishChangedResult } from "./publication.js";
 import {
   postedRenderOptions,
   renderPostedReview,
@@ -218,10 +218,15 @@ export function retryable(s: Pick<CaseSummary, "status" | "error">): boolean {
  * and its adaptive concurrency. `limited` counts rate-limit, overload and
  * usage-limit errors; `quota=N` (only when N > 0) says N of them were the
  * plan's usage window running out, which stops new launches outright. */
+export function limitedModelErrors(s: Pick<CaseSummary, "model_errors">): number {
+  const e = s.model_errors;
+  return e ? e.rate_limited + e.overloaded + (e.usage_limit ?? 0) : 0;
+}
+
 export function resultLine(s: CaseSummary, skipped = false): string {
   const e = s.model_errors;
   const quota = e?.usage_limit ?? 0;
-  const limited = e ? e.rate_limited + e.overloaded + quota : 0;
+  const limited = limitedModelErrors(s);
   return `result: ${s.instance_id} ${s.status} retry=${retryable(s) ? 1 : 0} limited=${limited}${quota ? ` quota=${quota}` : ""}${skipped ? " skipped" : ""}`;
 }
 
@@ -689,7 +694,6 @@ export function renderCasePrompts(args: {
 }): CasePrompts {
   if (args.c.followup) return renderFollowUpPrompts(args);
   const { root, cfg, c, meta, tree } = args;
-  const identity = { ...identityVars(cfg), repo: c.repo };
   const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
   const body = boundBody(meta.body);
   const directiveFiles = directiveFilesOf(cfg, args.files);
@@ -753,33 +757,7 @@ export function renderCasePrompts(args: {
         pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
       }
     : unrendered;
-  const template = readFileSync(join(root, "prompts", roundTemplateFile("first")), "utf8");
-  const rendered = renderRoundPrompt(
-    template,
-    order,
-    MEMORY_LESS,
-    cfg.owner.name,
-    args.ecosystem,
-    identity,
-  );
-  const orderText =
-    rendered +
-    "\n\n" +
-    benchAppendix({
-      repo: c.repo,
-      pr: c.pr,
-      headSha: c.head_commit,
-      mergeBase: meta.merge_base,
-      caseDir: args.caseDir,
-      title: meta.title,
-      body,
-      ...(cfg.review.render_outputs ? { renderOutputs: true } : {}),
-    });
-  const system = renderConversationSystemPrompt(
-    readFileSync(join(root, "prompts", "conversation-system.md"), "utf8"),
-    { pr: c.pr, title, worktree: tree },
-    identity,
-  );
+  const { system, order: orderText } = renderBenchPrompts(args, order, roundTemplateFile("first"));
   return {
     system,
     order: orderText,
@@ -787,6 +765,31 @@ export function renderCasePrompts(args: {
     passPlan: order.pass_plan,
     taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
     ...(packed.file ? { contextPack: packed.file } : {}),
+  };
+}
+
+/** Both round routes apply the same memory-free rendering and benchmark override. */
+function renderBenchPrompts(
+  args: Parameters<typeof renderCasePrompts>[0],
+  order: Parameters<typeof renderRoundPrompt>[1],
+  templateFile: string,
+): { system: string; order: string } {
+  const { root, cfg, c, meta, tree } = args;
+  const identity = { ...identityVars(cfg), repo: c.repo };
+  const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
+  const template = readFileSync(join(root, "prompts", templateFile), "utf8");
+  const rendered = renderRoundPrompt(template, order, MEMORY_LESS, cfg.owner.name, args.ecosystem, identity);
+  return {
+    system: renderConversationSystemPrompt(
+      readFileSync(join(root, "prompts", "conversation-system.md"), "utf8"),
+      { pr: c.pr, title, worktree: tree }, identity,
+    ),
+    order: rendered + "\n\n" + benchAppendix({
+      repo: c.repo, pr: c.pr, headSha: c.head_commit, mergeBase: meta.merge_base,
+      caseDir: args.caseDir, title: meta.title, body: boundBody(meta.body),
+      ...(cfg.review.render_outputs ? { renderOutputs: true } : {}),
+      ...(c.followup ? { roundNo: c.followup.round_no, privateReplay: true, prevHead: c.followup.prev_head } : {}),
+    }),
   };
 }
 
@@ -871,7 +874,7 @@ export function followUpOutcomeOf(
     ...(passes
       ? {
           executed_phases: passes.map((p) => ({
-            agent: `${String(p["name"])}--${String(p["tier"])}`,
+            agent: executedAgent(p),
             phase: phaseOf(p),
           })),
         }
@@ -896,7 +899,6 @@ export function followUpOutcomeOf(
 function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): CasePrompts {
   const { root, cfg, c, meta, tree } = args;
   const fu = c.followup!;
-  const identity = { ...identityVars(cfg), repo: c.repo };
   const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
   const body = boundBody(meta.body);
   const directiveFiles = directiveFilesOf(cfg, args.files);
@@ -1065,36 +1067,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
         }
       : {}),
   };
-  const template = readFileSync(join(root, "prompts", templateFileForOrder(order)), "utf8");
-  const rendered = renderRoundPrompt(
-    template,
-    order,
-    MEMORY_LESS,
-    cfg.owner.name,
-    args.ecosystem,
-    identity,
-  );
-  const orderText =
-    rendered +
-    "\n\n" +
-    benchAppendix({
-      repo: c.repo,
-      pr: c.pr,
-      headSha: c.head_commit,
-      mergeBase: meta.merge_base,
-      caseDir: args.caseDir,
-      title: meta.title,
-      body,
-      ...(cfg.review.render_outputs ? { renderOutputs: true } : {}),
-      roundNo: fu.round_no,
-      privateReplay: true,
-      prevHead: fu.prev_head,
-    });
-  const system = renderConversationSystemPrompt(
-    readFileSync(join(root, "prompts", "conversation-system.md"), "utf8"),
-    { pr: c.pr, title, worktree: tree },
-    identity,
-  );
+  const { system, order: orderText } = renderBenchPrompts(args, order, templateFileForOrder(order));
   for (const t of sweepTasks) extraFiles.push({ path: t.path, text: t.text });
   for (const t of optionalTasks) extraFiles.push({ path: t.path, text: t.text });
   return {
@@ -1715,7 +1688,7 @@ export async function reviewCase(
     summary.verdict = typeof outcome?.["verdict"] === "string" ? outcome["verdict"] : null;
     summary.executed_passes = Array.isArray(outcome?.["passes"])
       ? (outcome["passes"] as Array<Record<string, unknown>>).map(
-          (p) => `${String(p["name"])}--${String(p["tier"])}`,
+          (p) => executedAgent(p),
         )
       : [];
     // A follow-up case keeps the session's own phase and sweep
@@ -1815,12 +1788,20 @@ export function collectComments(caseDir: string): {
   };
 }
 
+function caseResultFile(outDir: string, c: BenchCase, variant: string): string {
+  return join(outDir, "results", variant, `${safeId(c.instance_id)}.json`);
+}
+
+function executedAgent(p: Record<string, unknown>): string {
+  return `${String(p["name"])}--${String(p["tier"])}`;
+}
+
 /** The case summary and every variant's result file of one case. */
 function caseFiles(outDir: string, c: BenchCase): [string, ...string[]] {
   return [
     join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
     ...Object.keys(VARIANTS).map((v) =>
-      join(outDir, "results", v, `${safeId(c.instance_id)}.json`),
+      caseResultFile(outDir, c, v),
     ),
   ];
 }
@@ -1832,7 +1813,7 @@ function removeCaseFiles(outDir: string, c: BenchCase): MetricsDropped {
   const dropped: MetricsDropped = [];
   rmSync(caseFiles(outDir, c)[0], { force: true });
   for (const v of Object.keys(VARIANTS) as Variant[]) {
-    const file = join(outDir, "results", v, `${safeId(c.instance_id)}.json`);
+    const file = caseResultFile(outDir, c, v);
     if (!existsSync(file)) continue;
     dropped.push({ variant: v, metrics: dropMetricsFiles(join(outDir, "results", v)).length });
     rmSync(file, { force: true });
@@ -1992,15 +1973,9 @@ export function writeResults(
     });
     const file = join(dir, `${safeId(c.instance_id)}.json`);
     const text = JSON.stringify(result, null, 2) + "\n";
-    let before: string | null = null;
-    try {
-      before = readFileSync(file, "utf8");
-    } catch {
-      // no earlier result for this case
-    }
-    if (before === text) continue;
-    changed.push({ variant, metrics: dropMetricsFiles(dir).length });
-    publishText(file, text);
+    publishChangedResult(file, text, () => {
+      changed.push({ variant, metrics: dropMetricsFiles(dir).length });
+    });
   }
   return changed;
 }
