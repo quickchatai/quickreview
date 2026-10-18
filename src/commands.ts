@@ -16,6 +16,7 @@
 // (`src/levers.ts`) bound a session's `drain`/`pause-pr` and never an
 // operator's. A file in the operator directory without the seal is served as
 // a session's, loudly.
+import { createHash } from "node:crypto";
 import {
   closeSync,
   constants as fsConstants,
@@ -734,7 +735,13 @@ export async function executeCommand(
       if (!deps.slackReply)
         return { ok: false, reason: "slack_reply is not wired (Slack is disabled)" };
       return normalize(
-        await deps.slackReply({ thread: command.thread, text: command.text, file: ctx.file }),
+        await deps.slackReply({
+          thread: command.thread,
+          text: command.text,
+          // Session filenames are stable replay keys, even after archival.
+          // Sealed operator rewrites are separate, versioned deliveries.
+          file: ctx.issuer === "operator" ? (ctx.delivery_key ?? ctx.file) : ctx.file,
+        }),
       );
     }
     case "drain": {
@@ -777,7 +784,7 @@ export async function executeCommand(
             : command.command === "suppress-lesson"
               ? { action: "suppress", uri: command.uri }
               : { action: "unsuppress", uri: command.uri };
-      return normalize(await deps.lessonSwitch(change, ctx.file));
+      return normalize(await deps.lessonSwitch(change, ctx.delivery_key ?? ctx.file));
     }
     case "archive-run":
     case "archive-restore": {
@@ -790,11 +797,11 @@ export async function executeCommand(
       if (command.command === "archive-run") {
         if (!deps.archiveRun)
           return { ok: false, reason: "archive-run is not wired on this daemon" };
-        return normalize(await deps.archiveRun(ctx.file));
+        return normalize(await deps.archiveRun(ctx.delivery_key ?? ctx.file));
       }
       if (!deps.archiveRestore)
         return { ok: false, reason: "archive-restore is not wired on this daemon" };
-      return normalize(await deps.archiveRestore(command.pr, ctx.file));
+      return normalize(await deps.archiveRestore(command.pr, ctx.delivery_key ?? ctx.file));
     }
   }
 }
@@ -1002,6 +1009,22 @@ export interface CommandResultFile extends FileOutcome {
   issuer: CommandIssuer;
 }
 
+// These handlers own richer durable recovery (filing reconciles exact GitHub
+// markers; lever/process handlers journal their effects; the remaining handlers
+// use their own delivery key). Pending recovery must reach those handlers.
+const HANDLER_RECOVERY_COMMANDS = new Set<Command["command"]>([
+  "file-improvement-pr",
+  "file-issue",
+  "pause-pr",
+  "drain",
+  "restart-session",
+  "slack_reply",
+  "lessons-off",
+  "lessons-on",
+  "suppress-lesson",
+  "unsuppress-lesson",
+]);
+
 export class CommandWatcher {
   private readonly dir: string;
   private readonly resultsDir: string;
@@ -1014,6 +1037,8 @@ export class CommandWatcher {
   private parentWatcher: FSWatcher | null = null;
   private sweepTimer: NodeJS.Timeout | null = null;
   private readonly inFlight = new Set<string>();
+  /** Diagnostics only: every sweep still reads/parses the source anew. */
+  private readonly parseFailures = new Map<string, string>();
   /** Serialises handling so two file events can't race the same caps. */
   private queue: Promise<void> = Promise.resolve();
 
@@ -1258,19 +1283,31 @@ export class CommandWatcher {
       const version = this.opts.operator ? (read.version ?? seen) : null;
       if (version !== null && version !== seen && this.opts.store.operatorCommandHandled(version))
         return null;
-      const issuer = this.issuerFor(path, read.ok ? read.identity : null);
       if (!read.ok) {
-        return this.finish(
+        const fingerprint = createHash("sha256")
+          .update(JSON.stringify([read.version, read.text, read.reason]))
+          .digest("hex");
+        if (this.parseFailures.get(path) === fingerprint) return null;
+        const result = this.finish(
           path,
           name,
           version,
           read.text,
           null,
-          issuer,
-          { ok: false, reason: read.reason },
+          this.issuerFor(path, null),
+          { ok: false, reason: `${read.reason}; file retained for a later completed write` },
+          true,
           true,
         );
+        this.parseFailures.set(path, fingerprint);
+        if (this.parseFailures.size > 256) {
+          const oldest = this.parseFailures.keys().next().value;
+          if (oldest !== undefined) this.parseFailures.delete(oldest);
+        }
+        return result;
       }
+      this.parseFailures.delete(path);
+      const issuer = this.issuerFor(path, read.identity);
       const validation = validateCommand(read.value, { issuer });
       if (!validation.ok) {
         const attempted = (read.value as { command?: unknown } | null)?.command;
@@ -1300,15 +1337,36 @@ export class CommandWatcher {
           { ok: false, reason: denial },
           true,
         );
+      const deliveryKey = `${this.opts.scope ?? "local"}/${read.identity}/${read.version}`;
+      const receiptKey = createHash("sha256")
+        .update(JSON.stringify([deliveryKey, validation.command]))
+        .digest("hex");
+      const journal = !HANDLER_RECOVERY_COMMANDS.has(validation.command.command);
+      const reserved = !journal || this.opts.store.reserveCommandDelivery(receiptKey);
       let outcome: FileOutcome;
-      try {
-        outcome = await executeCommand(validation.command, this.opts.deps, {
-          file: this.opts.scope ? `${this.opts.scope}/${name}` : name,
-          delivery_key: `${this.opts.scope ?? "local"}/${read.identity}/${read.version}`,
-          issuer,
-        });
-      } catch (err) {
-        outcome = { ok: false, reason: `handler threw: ${(err as Error).message}` };
+      if (!reserved) {
+        const receipt = this.opts.store.commandDeliveryReceipt(receiptKey)!;
+        outcome =
+          receipt.result === null
+            ? {
+                ok: false,
+                reason:
+                  "command outcome unknown after interrupted delivery; submit a fresh command to retry",
+              }
+            : (JSON.parse(receipt.result) as FileOutcome);
+      } else {
+        try {
+          outcome = await executeCommand(validation.command, this.opts.deps, {
+            file: this.opts.scope ? `${this.opts.scope}/${name}` : name,
+            delivery_key: deliveryKey,
+            issuer,
+          });
+          if (journal) this.opts.store.settleCommandDelivery(receiptKey, JSON.stringify(outcome));
+        } catch (err) {
+          // The effect may already have happened. Leave its pending receipt
+          // unknown rather than allowing a restart to repeat it.
+          outcome = { ok: false, reason: `handler threw: ${(err as Error).message}` };
+        }
       }
       return this.finish(
         path,
@@ -1369,6 +1427,7 @@ export class CommandWatcher {
     issuer: CommandIssuer,
     outcome: FileOutcome,
     loud: boolean,
+    unsettled = false,
   ): CommandResultFile {
     const result: CommandResultFile = {
       ...outcome,
@@ -1392,6 +1451,10 @@ export class CommandWatcher {
       this.log(
         `[commands] REJECTED ${result.file} (${command ?? "?"}): ${outcome.reason ?? "unknown reason"}`,
       );
+    // A parse failure is an observation, not a settled delivery: a slow
+    // writer may complete after eager retries. Keep both session and operator
+    // files eligible, even when metadata did not advance between observations.
+    if (unsettled) return result;
     // Make sure a daemon restart cannot re-execute the file: session dirs
     // archive it into processed/; the operator dir is not writable by the
     // daemon, so the store keeps the ledger instead, keyed by this version.
