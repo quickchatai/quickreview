@@ -69,6 +69,7 @@
 // before the TypeScript build, on a container that may have no `dist/` yet.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { tryDirectoryLock } from "./directory-lock.mjs";
 import {
   closeSync,
   existsSync,
@@ -254,7 +255,7 @@ export function readJournal(home) {
   }
 }
 
-export function writeJournal(home, journal) {
+function writeJournalUnlocked(home, journal) {
   const path = journalPath(home);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
@@ -280,6 +281,22 @@ export function writeJournal(home, journal) {
       /* The renamed temp no longer exists. */
     }
   }
+}
+
+/** @template T @param {string} home @param {() => T} run @returns {T} */
+function withJournalLock(home, run) {
+  const lease = tryDirectoryLock(home);
+  if (!lease.ok) throw new Error(lease.detail);
+  try {
+    return run();
+  } finally {
+    lease.release();
+  }
+}
+
+/** Explicit journal replacement participates in the same writer protocol. */
+export function writeJournal(home, journal) {
+  withJournalLock(home, () => writeJournalUnlocked(home, journal));
 }
 
 /**
@@ -334,7 +351,7 @@ export function journalStatus(home) {
  * throw — when there is no journal, no such row, or the row is already
  * completed, so a typo cannot mint a receipt for nothing.
  */
-export function settle({ home, user, detail = "", now = () => new Date() }) {
+function settleUnlocked({ home, user, detail = "", now = () => new Date() }) {
   const { journal, unreadable } = readJournal(home);
   if (unreadable) return { ok: false, detail: `${journalPath(home)} cannot be parsed` };
   const ns = journal?.namespaces?.[user];
@@ -348,8 +365,17 @@ export function settle({ home, user, detail = "", now = () => new Date() }) {
     settled_by: "operator",
     detail: detail || `settled by the operator (was ${ns.state})`,
   };
-  writeJournal(home, { ...journal, namespaces: { ...journal.namespaces, [user]: entry } });
+  writeJournalUnlocked(home, { ...journal, namespaces: { ...journal.namespaces, [user]: entry } });
   return { ok: true, detail: entry.detail, entry };
+}
+
+/** @param {{home: string, user: string, detail?: string, now?: () => Date}} opts */
+export function settle(opts) {
+  try {
+    return withJournalLock(opts.home, () => settleUnlocked(opts));
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 // ---- prepare (disk half) -----------------------------------------------------------
@@ -444,7 +470,7 @@ export async function serverIsUp({
  * before the collection leaves, and a failed move puts the journal back as it
  * was.
  */
-export async function prepare({
+async function prepareUnlocked({
   home,
   conf,
   users,
@@ -502,7 +528,7 @@ export async function prepare({
     namespaces,
   };
   try {
-    writeJournal(home, next);
+    writeJournalUnlocked(home, next);
   } catch (err) {
     const reason = `could not write ${journalPath(home)}: ${err instanceof Error ? err.message : String(err)} — the collection stays where it is`;
     log(`openviking: reembed prepare FAILED — ${reason}`);
@@ -535,13 +561,33 @@ export async function prepare({
   };
 }
 
+/** @param {{home: string, conf: Record<string, any>, users: string[], own?: string, base: string, fetchFn?: OvFetch, now?: () => Date, log?: Log}} opts */
+export async function prepare(opts) {
+  const lease = tryDirectoryLock(opts.home);
+  if (!lease.ok)
+    return {
+      action: "refuse",
+      reason: lease.detail,
+      expected: configuredEmbedder(opts.conf),
+      collectionDir: collectionDirOf(workspaceOf(opts.home, opts.conf), opts.conf),
+      movedTo: undefined,
+      journal: undefined,
+      stored: undefined,
+    };
+  try {
+    return await prepareUnlocked(opts);
+  } finally {
+    lease.release();
+  }
+}
+
 /** Put the journal back as it was before a reset whose move failed: the
  * previous journal, or none. A restore that fails is logged; the journal it
  * leaves names a `moved_to` that does not exist, which the next `prepare`
  * reads as an interrupted reset and finishes. */
 function restoreJournal(home, previous, log) {
   try {
-    if (previous) writeJournal(home, previous);
+    if (previous) writeJournalUnlocked(home, previous);
     else unlinkSync(journalPath(home));
   } catch (err) {
     log(
@@ -791,20 +837,21 @@ export async function resume({
     key,
     user,
     taskId: ns.state === "pending" && typeof ns.task_id === "string" ? ns.task_id : "",
-    onTask: (taskId) => {
-      const fresh = readJournal(home).journal;
-      const freshNs = fresh?.namespaces?.[user];
-      if (!fresh || !freshNs || fresh.reset_at !== journal.reset_at)
-        throw new Error("migration changed before task identity could be saved");
-      if (freshNs.state === "completed" && freshNs.settled_by === "operator") return;
-      writeJournal(home, {
-        ...fresh,
-        namespaces: {
-          ...fresh.namespaces,
-          [user]: { ...freshNs, state: "pending", task_id: taskId },
-        },
-      });
-    },
+    onTask: (taskId) =>
+      withJournalLock(home, () => {
+        const fresh = readJournal(home).journal;
+        const freshNs = fresh?.namespaces?.[user];
+        if (!fresh || !freshNs || fresh.reset_at !== journal.reset_at)
+          throw new Error("migration changed before task identity could be saved");
+        if (freshNs.state === "completed" && freshNs.settled_by === "operator") return;
+        writeJournalUnlocked(home, {
+          ...fresh,
+          namespaces: {
+            ...fresh.namespaces,
+            [user]: { ...freshNs, state: "pending", task_id: taskId },
+          },
+        });
+      }),
     fetchFn,
     now: () => now().getTime(),
     sleep,
@@ -842,27 +889,36 @@ export async function resume({
   // same file from another process meanwhile. So the outcome is merged into
   // the journal as it stands NOW, touching only this host's own row — never
   // written back over the snapshot read before the rebuild, which would
-  // silently undo an operator's receipt. (Read and write are synchronous: no
-  // turn of this process can interleave between them.)
-  const fresh = readJournal(home).journal;
-  const freshNs = fresh?.namespaces?.[user];
-  if (!fresh || !freshNs || fresh.reset_at !== journal.reset_at) {
-    // The migration this rebuild belonged to is gone or was re-armed: its
-    // outcome says nothing about the journal on disk now.
-    const detail = `${state}, not journalled: the migration changed underneath`;
+  // silently undo an operator's receipt. The short process lease covers the
+  // fresh read and write together; synchronous turns alone do not exclude
+  // another process. No lease spans the rebuild's HTTP polling.
+  try {
+    return withJournalLock(home, () => {
+      const fresh = readJournal(home).journal;
+      const freshNs = fresh?.namespaces?.[user];
+      if (!fresh || !freshNs || fresh.reset_at !== journal.reset_at) {
+        // The migration this rebuild belonged to is gone or was re-armed: its
+        // outcome says nothing about the journal on disk now.
+        const detail = `${state}, not journalled: the migration changed underneath`;
+        log(`openviking: reembed ${run.uri} — ${detail}`);
+        return { action: "reindex", state, run, entry, detail };
+      }
+      if (freshNs.state === "completed" && freshNs.settled_by === "operator") {
+        // The operator settled this row by their explicit word mid-rebuild; that
+        // receipt stands.
+        const detail = `${state}, not journalled: settled by the operator meanwhile`;
+        log(`openviking: reembed ${run.uri} — ${detail}`);
+        return { action: "reindex", state, run, entry, detail };
+      }
+      writeJournalUnlocked(home, { ...fresh, namespaces: { ...fresh.namespaces, [user]: entry } });
+      log(`openviking: reembed ${run.uri} — ${state}: ${entry.detail}`);
+      return { action: "reindex", state, run, entry };
+    });
+  } catch (err) {
+    const detail = `${state}, not journalled: ${err instanceof Error ? err.message : String(err)}`;
     log(`openviking: reembed ${run.uri} — ${detail}`);
     return { action: "reindex", state, run, entry, detail };
   }
-  if (freshNs.state === "completed" && freshNs.settled_by === "operator") {
-    // The operator settled this row by their explicit word mid-rebuild; that
-    // receipt stands.
-    const detail = `${state}, not journalled: settled by the operator meanwhile`;
-    log(`openviking: reembed ${run.uri} — ${detail}`);
-    return { action: "reindex", state, run, entry, detail };
-  }
-  writeJournal(home, { ...fresh, namespaces: { ...fresh.namespaces, [user]: entry } });
-  log(`openviking: reembed ${run.uri} — ${state}: ${entry.detail}`);
-  return { action: "reindex", state, run, entry };
 }
 
 // ---- cli ----------------------------------------------------------------------------

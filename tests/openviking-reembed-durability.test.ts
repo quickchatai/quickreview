@@ -16,7 +16,9 @@ vi.mock("node:fs", async (importOriginal) => {
       fs.fsyncSync(fd);
     },
     renameSync(from: string, to: string) {
-      syncProbe.events.push("rename");
+      // Lease publication is coordination, separate from the journal/vector
+      // durability sequence this probe measures.
+      if (!String(to).endsWith(".qcr-reembed.lock")) syncProbe.events.push("rename");
       fs.renameSync(from, to);
     },
   };

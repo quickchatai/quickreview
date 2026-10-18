@@ -13,7 +13,6 @@
 // and a refused stamp must not produce a duplicate ticket on the next tick.
 // Both keys are stable across pin and across the stamp itself — `memoryKey`
 // normalizes exactly those two mutations away.
-import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -24,6 +23,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { parseEventTags } from "../memory/eventtags.js";
+import { memoryTextKey } from "../memory/textidentity.js";
 import { withHeaderTags, withoutHeaderTag } from "../memory/layout.js";
 import { claimTrackerId } from "../trackerid.js";
 import { refOf, type MemoryEntry, type MemoryStore } from "./memory.js";
@@ -41,11 +41,7 @@ export const FILED_TAG = "filed";
  * those would make an already-filed defect look new and file a duplicate
  * ticket. Same words = same defect. */
 export function memoryKey(e: MemoryEntry): string {
-  const normalized = withoutHeaderTag(e.text, FILED_TAG)
-    .replace(/(^|\s)#pinned(?=\s|$)/g, "$1")
-    .replace(/\s+/g, " ")
-    .trim();
-  return `sha1:${createHash("sha1").update(normalized, "utf8").digest("hex").slice(0, 16)}`;
+  return memoryTextKey(withoutHeaderTag(e.text, FILED_TAG));
 }
 
 /** The ticket a previous run filed this entry as, read off its own tag. */

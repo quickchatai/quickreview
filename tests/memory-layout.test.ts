@@ -1126,6 +1126,22 @@ describe("the round context block searches experiences/ only", () => {
     expect(inRoundSearchScope(`${ROOT}/experiences/`)).toBe(false);
   });
 
+  it("never recalls import identity records or their engine summaries", async () => {
+    const server = new OvServer();
+    server.searchEntries = [
+      { uri: `${ROOT}/experiences/live.md`, text: "current lesson" },
+      { uri: `${ROOT}/experiences/.import-identities/claim.json`, text: "forbidden claim body" },
+      { uri: `${ROOT}/experiences/.import-identities/.abstract.md`, text: "forbidden claim body" },
+      { uri: `${ROOT}/experiences/.overview.md`, text: "forbidden claim body" },
+    ];
+    const { client, store } = wire(server);
+    const assembler = new OpenVikingContextAssembler({ client, store });
+    expect(await assembler.contextBlock("q", { maxTokens: 2000 })).toEqual({
+      status: "read",
+      text: "current lesson",
+    });
+  });
+
   it("keeps the retired list fresh on its own — the head no longer sweeps the store", async () => {
     // The head reads one directory and never sweeps the store, so the context
     // search refreshes the retired list (and with it the file the sessions'

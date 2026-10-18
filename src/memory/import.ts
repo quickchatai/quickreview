@@ -59,6 +59,7 @@ import {
 } from "./store.js";
 import { IMPORT_TAG } from "./eventtags.js";
 import { EVENTS_AREA, EXPERIENCES_AREA, PREFERENCES_AREA } from "./layout.js";
+import { memoryTextKey } from "./textidentity.js";
 
 export { IMPORT_TAG };
 
@@ -163,11 +164,7 @@ export function classify(e: MemoryEntry): Classification {
  * dedup the same way).
  */
 export function importKey(text: string): string {
-  const normalized = stripImportHeader(text)
-    .replace(/(^|\s)#pinned(?=\s|$)/g, "$1")
-    .replace(/\s+/g, " ")
-    .trim();
-  return `sha1:${createHash("sha1").update(normalized, "utf8").digest("hex").slice(0, 16)}`;
+  return memoryTextKey(stripImportHeader(text));
 }
 
 const HEADER_RE = new RegExp(`^(?:#[\\w-]+[ \t]+)*#${IMPORT_TAG}\\b[^\\r\\n]*${IMPORT_KEY_PREFIX}\\S+[^\\r\\n]*(?:\\r?\\n|$)`);
@@ -407,10 +404,25 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
       const area = IMPORT_AREAS[plan.category];
       const res = await applyQuietly(opts.dest, {
         op: "note",
+        name: `import-${plan.key.replace(":", "-")}`,
+        identity: plan.key,
         text: plan.text,
         ...(area !== undefined ? { category: area } : {}),
       });
       const record: ImportedRecord = { ...plan.ref, category: plan.category, message: res.message };
+      if (res.ok && (res.existed || res.unchanged)) {
+        // The server's immutable address, rather than a stale listing, decides
+        // whether this process created anything. Read its current identity
+        // before carrying out pin repairs; a retired copy stays retired.
+        existing = indexByKey(await readDestFully(opts.dest, report.imported.length));
+        const kept = existing.get(plan.key);
+        if (kept) skipImported(plan.ref, plan.category, kept);
+        else {
+          report.failed.push({...record,message:"kept the occupied import address, but could not verify its source identity — nothing imported"});
+          bad++;
+        }
+        continue;
+      }
       if (res.ok) {
         report.imported.push(record);
         ok += 1;

@@ -90,6 +90,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/onboard-llmauth.test.ts",
   "tests/onboard-streamrunner.test.ts",
   "tests/openviking-embedder.test.ts",
+  "tests/openviking-reembed-lock.test.ts",
   "tests/openviking.test.ts",
   "tests/pibuiltins.test.ts",
   "tests/pr-checks-why.test.ts",
