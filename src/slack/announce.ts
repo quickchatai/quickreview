@@ -299,7 +299,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
     const thread = req.pr === undefined ? undefined : store.slackThreadForPr(req.pr);
     // Root-on-first-event: with no recorded root, this post BECOMES the root.
-    const threadTs = thread?.root_ts;
+    const threadTs = thread?.channel === cfg.slack.channel ? thread.root_ts : undefined;
 
     if (req.hourCapped && store.slackPost(req.idemKey)?.ok !== 1) {
       const ceiling = hourlyCeiling(store, cfg, this.now());
@@ -797,17 +797,23 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       existing = store.slackPost(HEARTBEAT_IDEM_KEY);
     }
     if (existing?.ts) {
+      let missing = false;
       try {
         const res = await slack.updateMessage({
           channel: cfg.slack.channel,
           ts: existing.ts,
           text,
         });
-        if (!res.ok) this.log("slack: heartbeat update failed", res.error);
+        if (!res.ok) {
+          this.log("slack: heartbeat update failed", res.error);
+          missing = res.error === "message_not_found" && !res.ambiguous;
+        }
       } catch (err) {
         this.log("slack: heartbeat update threw", err);
       }
-      return existing.ts;
+      if (!missing) return existing.ts;
+      if (!store.forgetMissingSlackMessage(HEARTBEAT_IDEM_KEY, existing.ts))
+        return store.slackPost(HEARTBEAT_IDEM_KEY)?.ts ?? undefined;
     }
     const ts = await this.post({ idemKey: HEARTBEAT_IDEM_KEY, kind: "announce", text });
     if (ts) {

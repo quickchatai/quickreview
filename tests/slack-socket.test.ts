@@ -94,6 +94,18 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("Socket Mode envelopes", () => {
+  it("ignores a JSON null frame and still processes the next envelope", async () => {
+    const h = harness();
+    const events: SlackInboundEvent[] = [];
+    await h.client.startSocket((event) => { events.push(event); });
+    const ws = h.sockets[0]!;
+    expect(() => ws.push(null)).not.toThrow();
+    ws.push(messageEnvelope("after-null"));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events).toHaveLength(1);
+    await h.client.stopSocket();
+  });
+
   it("acks an envelope with its envelope_id, before processing it", async () => {
     const h = harness();
     const order: string[] = [];
