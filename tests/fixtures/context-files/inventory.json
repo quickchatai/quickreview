@@ -87,25 +87,25 @@
       "effective": []
     },
     "clone-review": {
-      "cwd": "/qcr-checkout",
-      "agentDir": "/operator-pi-agent",
+      "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",
+      "agentDir": "/home/op/.local/state/qcr/default/review/runs/RUN/agent",
       "contextFiles": "default",
       "effective": [
         {
-          "path": "/qcr-checkout/AGENTS.md",
-          "source": "AGENTS.md"
+          "path": "/home/op/.local/state/qcr/default/review/runs/RUN/out/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
         }
       ],
-      "note": "cwd is the qcr checkout itself (root = sandboxRoot()); its ancestors are the developer's own disk, outside our control."
+      "note": "cwd is the run's own out dir under the state home, outside every checkout, holding a copy of the reviewer stub (src/hostroute.ts); the agentDir is a private one with no context file."
     },
     "clone-review-lens": {
-      "cwd": "/qcr-checkout",
-      "agentDir": "/operator-pi-agent",
+      "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",
+      "agentDir": "/home/op/.local/state/qcr/default/review/runs/RUN/agent",
       "contextFiles": "default",
       "effective": [
         {
-          "path": "/qcr-checkout/AGENTS.md",
-          "source": "AGENTS.md"
+          "path": "/home/op/.local/state/qcr/default/review/runs/RUN/out/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
         }
       ],
       "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."

@@ -66,14 +66,6 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "does, this entry is the debt being VISIBLE rather than silent, which is the whole point of [T8].",
     },
     {
-      file: "src/envstrip.ts",
-      why:
-        "the GitHub token env names a child that runs a model's tools must drop. It left the removed " +
-        "review sandbox for a neutral module so the engine one-shot env (P0.4), scan's case runner (P1.1) " +
-        "and the worker supervisor (P8.5) can take it; none of them imports it yet. Delete this entry " +
-        "with the first import.",
-    },
-    {
       file: "src/reviewrendercli.ts",
       why:
         "the `[review] render_outputs` renderer's command line. Driven by scripts/render-review.sh, which a " +

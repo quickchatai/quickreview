@@ -77,6 +77,7 @@ import { caseCostUsd, eventLineCostUsd } from "./bench/cost.js";
 import { GIT_ISOLATION_ENV } from "./bench/exec.js";
 import { POLICED_ORIGINALS, type BenchPostingReport } from "./bench/benchposting.js";
 import { apiKeyEnv } from "./bench/auth.js";
+import { GITHUB_TOKEN_ENVS } from "./envstrip.js";
 
 /** Cut a PR body to a UTF-8 byte budget. The body is the one unbounded input
  * in the order, and it appears twice (the intent note and the override). */
@@ -793,8 +794,19 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
 // ---- the run ----------------------------------------------------------------
 
 export interface OneShotInput {
-  /** The production tree (prompts/, extensions/, agents/) — the session's cwd. */
+  /** The production tree (prompts/, extensions/, agents/). Where the session
+   * runs unless `cwd` says otherwise (the bench: its project-scope lens
+   * agents live under it). */
   root: string;
+  /** Where pi runs, and so which context file, project settings and project
+   * agents it discovers. Omitted: `root`. The host route (`qcr review`) passes
+   * the run's own dir outside every checkout, holding the reviewer stub, so a
+   * checkout never carries a context file of ours (src/hostroute.ts). */
+  cwd?: string;
+  /** Which lens agents the session resolves: "project" (the nearest
+   * `.pi/agents` above the cwd, the bench's) or "user" (`<agentDir>/agents`,
+   * the host route's). Omitted: "project". */
+  agentScope?: "project" | "user";
   /** pi's agent dir for this run (its login). */
   agentDir: string;
   /** The prepared checkout of the target, at its head. */
@@ -922,7 +934,7 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
       TMPDIR: tmpDir,
       LANG: "C.UTF-8",
       PI_CODING_AGENT_DIR: i.agentDir,
-      QCR_SUBAGENT_SCOPE: "project",
+      QCR_SUBAGENT_SCOPE: i.agentScope ?? "project",
       QCR_SUBAGENT_MAX_CONCURRENCY: String(cfg.pi.subagent_max_concurrency),
       QCR_SUBAGENT_WIDE_FANOUT: cfg.review?.wide_lens_fanout === false ? "0" : "1",
       QCR_SUBAGENT_CACHE_GROUP: String(cfg.pi.subagent_cache_group ?? 0),
@@ -952,18 +964,30 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
       // The API-key route (src/bench/auth.ts); nothing on the login route.
       ...apiKeyEnv(),
     };
+    // No GitHub credential reaches a process whose model runs bash.
+    for (const k of GITHUB_TOKEN_ENVS) delete env[k];
     const sessionDir = join(outDir, "session");
     // This attempt's session only: an earlier attempt's JSONL left here would
     // make `resumable` true and `--continue` would resume THAT conversation.
     rmSync(sessionDir, { recursive: true, force: true });
+    // Host isolation: pi discovers nothing of its own. `-ne` leaves only the
+    // extensions named below (so neither ~/.pi/agent, nor a project's `.pi/`,
+    // nor a package can add one to the session) and `-ns` no skill; lens
+    // children, which load only the agent dir's GLOBAL settings, get bash-guard
+    // from there (the bench's and the host route's settings both register it).
+    // `-nc` is deliberately absent: the cwd's context file is the reviewer stub.
     const base = [
       "--approve",
+      "-ne",
+      "-ns",
       "--model",
       cfg.models.conversation,
       "--session-dir",
       sessionDir,
       "--system-prompt",
       sysPath,
+      "--extension",
+      join(root, "extensions", "bash-guard.ts"),
       "--extension",
       join(root, "extensions", "ledger-pin.ts"),
       "--extension",
@@ -981,10 +1005,11 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
     const events = join(outDir, PI_RUN_FILES[0]);
     const stderr = join(outDir, PI_RUN_FILES[1]);
     log(`review: ${label} — ${i.files.length} files, lenses ${prompts.plannedLenses.join(" ")}`);
+    const cwd = i.cwd ?? root;
     let r = await runPi(
       [...base, "-p"],
       env,
-      root,
+      cwd,
       events,
       stderr,
       i.timeoutMs,
@@ -1047,7 +1072,7 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
                 : `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.comments}, ${CASE_FILES.review}, ${CASE_FILES.findings} and, last, ${CASE_FILES.outcome} in ${outDir}.`,
           ],
           env,
-          root,
+          cwd,
           events,
           stderr,
           left,
