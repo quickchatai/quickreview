@@ -35,6 +35,7 @@ import {
   reviewKey,
   type BranchTarget,
 } from "./localreview.js";
+import type { RoundMemory } from "./memory/context.js";
 import { seedReviewMemory, type ReviewMemorySource } from "./reviewmemory.js";
 import type { CredentialSource } from "./ghcred.js";
 import {
@@ -523,6 +524,7 @@ async function runReview(
   // the checkout the person is standing in is only read.
   const planRound = (
     tree: string,
+    memory?: RoundMemory,
   ): { prompts: OneShotPrompts; scope: "delta" | "full"; fallback: typeof fallback } => {
     const common = {
       root: deps.root,
@@ -540,7 +542,7 @@ async function runReview(
       if (fu.followUp.scope === "delta") return { prompts: fu, scope: "delta", fallback: null };
       why = { reason: fu.followUp.reason ?? "follow-up-full" };
     }
-    return { prompts: renderOneShotPrompts(common), scope: "full", fallback: why };
+    return { prompts: renderOneShotPrompts(memory ? { ...common, memory } : common), scope: "full", fallback: why };
   };
   let planned: ReturnType<typeof planRound>;
   try {
@@ -665,7 +667,7 @@ async function runReview(
       timeoutMs: deps.timeoutMs,
       ...(deps.piBin !== undefined ? { piBin: deps.piBin } : {}),
       // Rendered over the review tree, as production renders over its worktree.
-      prompts: planRound(treeDir).prompts,
+      prompts: planRound(treeDir, seeded.memory).prompts,
       capUsd: price,
       memory: seeded.memory,
       sessionName: `review-${(cmd.uncommitted ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`,
