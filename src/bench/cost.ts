@@ -69,35 +69,41 @@ function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
+/** What one pi `--mode json` event line costs: an assistant `message_end`'s
+ * own price, or the children a `subagent`/`launch_plan` result reports. Zero
+ * for any other line, or one that is not JSON. */
+export function eventLineCostUsd(line: string): number {
+  if (!line.startsWith("{")) return 0;
+  let e: {
+    type?: string;
+    toolName?: string;
+    message?: { role?: string; usage?: { cost?: { total?: unknown } } };
+    result?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
+  };
+  try {
+    e = JSON.parse(line) as typeof e;
+  } catch {
+    return 0;
+  }
+  if (e.type === "message_end" && e.message?.role === "assistant")
+    return num(e.message.usage?.cost?.total);
+  let usd = 0;
+  if (
+    e.type === "tool_execution_end" &&
+    (e.toolName === "subagent" || e.toolName === "launch_plan")
+  )
+    for (const r of e.result?.details?.results ?? []) {
+      const c = r.usage?.cost;
+      usd += typeof c === "object" && c !== null ? num((c as { total?: unknown }).total) : num(c);
+    }
+  return usd;
+}
+
 export function caseCostUsd(caseDir: string): CaseCost | null {
   const events = join(caseDir, "pi-events.jsonl");
   if (existsSync(events)) {
     let usd = 0;
-    for (const line of readFileSync(events, "utf8").split("\n")) {
-      if (!line.startsWith("{")) continue;
-      let e: {
-        type?: string;
-        toolName?: string;
-        message?: { role?: string; usage?: { cost?: { total?: unknown } } };
-        result?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
-      };
-      try {
-        e = JSON.parse(line) as typeof e;
-      } catch {
-        continue;
-      }
-      if (e.type === "message_end" && e.message?.role === "assistant")
-        usd += num(e.message.usage?.cost?.total);
-      else if (
-        e.type === "tool_execution_end" &&
-        (e.toolName === "subagent" || e.toolName === "launch_plan")
-      )
-        for (const r of e.result?.details?.results ?? []) {
-          const c = r.usage?.cost;
-          usd +=
-            typeof c === "object" && c !== null ? num((c as { total?: unknown }).total) : num(c);
-        }
-    }
+    for (const line of readFileSync(events, "utf8").split("\n")) usd += eventLineCostUsd(line);
     return { usd, source: "pi" };
   }
   const summary = join(caseDir, "case-summary.json");

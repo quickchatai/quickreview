@@ -184,4 +184,51 @@ describe("runOneShot", () => {
     expect(r.findings).toBeUndefined();
     expect(r.review).toBeNull();
   });
+
+  it("stops hard once pi's own spend reaches capUsd, with no continuation", async () => {
+    const pi = fakePi("capped", [
+      `echo '{"type":"message_end","message":{"role":"assistant","usage":{"cost":{"total":5}}}}'`,
+      "sleep 60",
+    ]);
+    const t0 = Date.now();
+    const r = await runOneShot({
+      root: mkRoot("root-capped"),
+      agentDir: join(tmp, "agent"),
+      tree: mkTree("tree-capped"),
+      files,
+      target,
+      outDir: join(tmp, "out-capped"),
+      cfg: benchConfig(""),
+      ecosystem: ecosystemFor("none"),
+      timeoutMs: 10 * 60_000,
+      piBin: pi.bin,
+      capUsd: 1,
+    });
+    expect(Date.now() - t0).toBeLessThan(30_000);
+    expect(r.capped).toBe(true);
+    expect(r.continued).toBe(false);
+    expect(readFileSync(pi.calls, "utf8").trim().split("\n")).toHaveLength(1);
+    expect(r.costUsd).toBeGreaterThanOrEqual(5);
+  });
+
+  it("a run under capUsd is not capped", async () => {
+    const pi = fakePi("uncapped", [
+      `printf '%s' ${JSON.stringify(record)} > "$cd/findings-record.json"`,
+      `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
+    ]);
+    const r = await runOneShot({
+      root: mkRoot("root-uncapped"),
+      agentDir: join(tmp, "agent"),
+      tree: mkTree("tree-uncapped"),
+      files,
+      target,
+      outDir: join(tmp, "out-uncapped"),
+      cfg: benchConfig(""),
+      ecosystem: ecosystemFor("none"),
+      timeoutMs: 10 * 60_000,
+      piBin: pi.bin,
+      capUsd: 1,
+    });
+    expect(r.capped).toBe(false);
+  });
 });
