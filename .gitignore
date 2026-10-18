@@ -90,3 +90,7 @@ __pycache__/
 
 # selfimprove skill settings and ledger
 .selfimprove/
+
+# Agents a clone-route bench builds into the checkout it runs from
+# (buildBenchAgents → .pi/agents); .pi/settings.json stays tracked.
+.pi/agents/
