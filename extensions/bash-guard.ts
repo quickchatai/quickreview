@@ -817,7 +817,7 @@ interface ShellWords {
  * in `checkBashCommand`, this preserves separators (`;`, newline, `&&`) that
  * live INSIDE a quoted word — which is exactly what a `bash -c` payload is.
  */
-function shellWords(s: string): ShellWords {
+export function shellWords(s: string): ShellWords {
   const ANSI_C: Readonly<Record<string, string>> = {
     n: "\n",
     t: "\t",
@@ -977,10 +977,13 @@ function checkProgram(
   // before `sh`/`bash`, which have their own narrower rules below.
   if (AGENT_SPAWNERS.has(base)) return block(`${AGENT_SPAWN_REASON} — '${base}' is blocked`);
   if (base === "sh") {
-    // Only the `sh -n <file>` syntax check is sanctioned.
-    return args[0] === "-n"
+    // No option after -n may switch execution back on or introduce a command.
+    const words = rawText === undefined ? args.map(dequote) : shellWords(rawText).words;
+    const next = words[1];
+    return words[0] === "-n" &&
+      (next === undefined || next === "--" || next === "-" || !/^[-+]/.test(next))
       ? { allowed: true }
-      : block("exec policy: 'sh' is only allowed as 'sh -n' (syntax check)");
+      : block("exec policy: 'sh' is only allowed as 'sh -n [--] <file>' (syntax check)");
   }
   if (base === "bash") {
     // A `bash -c` with a readable payload never reaches here: `checkSegment`
@@ -1023,30 +1026,47 @@ function checkProgram(
     return checkGit(args.filter((a) => a.length > 0));
   }
   if (base === "xargs") {
-    // xargs runs another program — vet the target too.
-    const target = args.find((a) => !a.startsWith("-") && a !== "{}");
-    if (target === undefined) return { allowed: true };
-    const from = args.indexOf(target) + 1;
-    // xargs appends what it reads from stdin to sed's words, and GNU sed reads
-    // an option anywhere: a file NAMED "-es/.*/cmd/e" in a PR's tree, piped in
-    // from `git diff --name-only`, would be a script. So sed through xargs is
-    // allowed only when its own words end with `--` (everything appended is
-    // a file) and xargs substitutes nothing into them (-I/-i/--replace).
-    if (/(?:^|\/)sed$/.test(target)) {
-      const replaces = args.slice(0, from - 1).some((a) => /^(?:-[a-zA-Z]*[Ii]|--replace)/.test(a));
-      if (replaces || args[args.length - 1] !== "--") {
-        return block(
-          "exec policy: 'xargs sed' without a closing '--' — xargs appends stdin to sed's words, where a name like '-es/x/y/e' is a script; end sed's arguments with '--' (`xargs sed -n 1p --`)",
-        );
+    // xargs contributes arguments the guard cannot inspect. Classify its own
+    // options before locating the program, including detached option values.
+    let at = 0;
+    for (; at < args.length; at++) {
+      const option = dequote(args[at]!);
+      if (option === "--") {
+        at++;
+        break;
       }
+      if (!option.startsWith("-")) break;
+      if (/^(?:-[nLPsEId]|--(?:max-args|max-lines|max-procs|max-chars|delimiter))$/.test(option))
+        at++;
     }
-    return checkProgram(
-      target,
+    const target = args[at];
+    if (target === undefined) return { allowed: true };
+    const from = at + 1;
+    const checked = checkProgram(
+      dequote(target),
       args.slice(from),
       rawArgs?.slice(from),
       depth,
       rawText === undefined ? undefined : textAfterWords(rawText, from),
     );
+    if (!checked.allowed) return checked;
+    const reader = basenameOf(dequote(target));
+    if (["find", "uniq", "sh", "xargs"].includes(reader)) {
+      return block(
+        `exec policy: 'xargs ${reader}' can receive executable or output operands from stdin — use a direct, fully specified reader invocation`,
+      );
+    }
+    if (["sed", "sort", "git", "gh"].includes(reader)) {
+      const replaces = args
+        .slice(0, at)
+        .some((a) => /^(?:-[a-zA-Z]*[Ii]|--replace)/.test(dequote(a)));
+      if (replaces || dequote(args[args.length - 1] ?? "") !== "--") {
+        return block(
+          `exec policy: 'xargs ${reader}' without a closing '--' or with replacement — stdin must only supply file operands after all checked options`,
+        );
+      }
+    }
+    return checked;
   }
   if (ALLOWED.has(base)) {
     // Allowlisted for READING is not allowlisted outright: sed/sort/find each
@@ -1385,10 +1405,35 @@ function secretBlock(word: string, why: string): BashCheck {
 
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
+/** Preserve each shell word's original spelling so secret-path expansion can
+ * still inspect quotes and escapes, while a multiword pattern stays one word. */
+function rawShellWords(text: string): string[] {
+  const words: string[] = [];
+  let start = -1;
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (start < 0 && !/\s/.test(c)) start = i;
+    if (c === "\\" && quote !== "'") {
+      i++;
+      continue;
+    }
+    if (quote !== null) {
+      if (c === quote) quote = null;
+    } else if (c === "'" || c === '"') quote = c;
+    else if (/\s/.test(c) && start >= 0) {
+      words.push(text.slice(start, i));
+      start = -1;
+    }
+  }
+  if (start >= 0) words.push(text.slice(start));
+  return words;
+}
+
 function checkAppSecretWords(cmd: string, ctx: SecretPathContext): BashCheck {
   let cwd = ctx.cwd;
   for (const segment of splitShellSegments(cmd)) {
-    const words = segment.split(/\s+/).filter((w) => w.length > 0);
+    const words = rawShellWords(segment);
     const exempt = patternWordIndexes(words);
     for (let i = 0; i < words.length; i++) {
       if (exempt.has(i)) continue;
@@ -1439,6 +1484,15 @@ function patternWordIndexes(words: readonly string[]): Set<number> {
     if (w === "--") {
       if (firstPositional < 0 && i + 1 < words.length) firstPositional = i + 1;
       break;
+    }
+    if (w === "-f" || w === "--file") {
+      explicit = true; // the next word names a file, never a literal pattern
+      i++;
+      continue;
+    }
+    if (/^(?:-f.|--file=)/.test(w)) {
+      explicit = true;
+      continue;
     }
     if (w === "-e" || w === "--regexp" || w === "--expression") {
       explicit = true;
@@ -2602,10 +2656,38 @@ export function checkReaderModes(
     }
     return { allowed: true };
   }
+  const words = rawText === undefined ? args.map(dequote) : shellWords(rawText).words;
+  if (
+    ["find", "sort", "uniq"].includes(prog) &&
+    (args.some(opensUnmodelledQuoting) ||
+      (rawText !== undefined && opensUnmodelledQuoting(rawText)))
+  ) {
+    return block(`exec policy: '${prog}' has quoting the guard cannot decode`);
+  }
+  if (prog === "uniq") {
+    let operands = 0;
+    let options = true;
+    for (let i = 0; i < words.length; i++) {
+      const a = words[i]!;
+      if (options && a === "--") {
+        options = false;
+        continue;
+      }
+      if (options && a.startsWith("-") && a !== "-") {
+        if (/^-(?:f|s|w)$/.test(a) || /^--(?:skip-fields|skip-chars|check-chars)$/.test(a)) i++;
+        continue;
+      }
+      operands++;
+    }
+    return operands > 1
+      ? block(
+          "exec policy: 'uniq' with an output operand writes a file — use only an input operand",
+        )
+      : { allowed: true };
+  }
   const rule = READER_MODE_RULES[prog];
   if (rule === undefined) return { allowed: true };
-  for (const raw of args) {
-    const a = raw.replace(/^['"]+|['"]+$/g, "");
+  for (const a of words) {
     if (a.length > 0 && a.startsWith("-") && rule.flags.test(a)) {
       return block(
         `exec policy: '${prog} ${a}' ${rule.what} — the reviewer reads code and never writes or runs anything. Use the read-only form.`,

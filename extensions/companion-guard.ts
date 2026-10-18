@@ -40,6 +40,7 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import { shellWords, splitShellSegments } from "./bash-guard.js";
 
 export interface BashRule {
   pattern: RegExp;
@@ -62,7 +63,8 @@ export const BASH_RULES: BashRule[] = [
       "rule 8: no gh here — it is not installed, and this guard keeps it a boundary rather than an accident of the image. GitHub reads go through the read-only token in $QCR_GITHUB_READ_ENV.",
   },
   {
-    pattern: /(^|[\s/;&|])deploy\.sh\b/,
+    pattern:
+      /(^|[;&|\n(`{]|\$\(|-exec(dir)?\s)\s*(([A-Za-z_]\w*=\S*|sudo|env|exec|nohup|command|time|eval|xargs|bash|sh|zsh|dash|source|\.|timeout(\s+-\S+)*\s+\S+)(\s+-\S+)*\s+)*['"]?(\S*\/)?deploy\.sh\b/,
     reason:
       "rule 8: the companion never runs scripts/deploy.sh. Deploys are the owner's, via the deploying skill.",
   },
@@ -114,19 +116,6 @@ export const BASH_RULES: BashRule[] = [
       "rule 11: git checkout -- <path> / git checkout . discards uncommitted changes. Branch switches and -b are fine; discarding is not.",
   },
   {
-    // A restore is allowed only when it is staged-only: `--staged` in the
-    // restore's own command segment and no worktree flag beside it. Both are
-    // read inside that segment only: a `--staged` in a later command (`git
-    // restore f && git diff --staged`) does not exempt the discard before it.
-    // The worktree flag is `--worktree` or any abbreviation git accepts for it
-    // (`--w…` — the only restore long option starting with w), or `-W` alone
-    // or anywhere in a combined short flag (`-SW`, `-WS`, `-WsHEAD` with an
-    // attached source).
-    pattern: /\bgit\s+restore\b(?:(?![^;&|\n]*--staged)|(?=[^;&|\n]*\s(?:--w[\w-]*|-[A-Za-z]*W)))/,
-    reason:
-      "rule 11: git restore that touches the worktree (--worktree, -W, or no --staged) discards uncommitted changes. --staged alone is allowed — it touches the index, not the files.",
-  },
-  {
     pattern: /\bgit\s+clean\b/,
     reason:
       "rule 11: git clean deletes untracked files in the shared checkout — someone else's scratch work included.",
@@ -138,6 +127,78 @@ export function bashBlockReason(
   command: string,
   rules: BashRule[] = BASH_RULES,
 ): string | undefined {
+  if (rules === BASH_RULES) {
+    for (const segment of splitShellSegments(command)) {
+      const { words } = shellWords(segment);
+      // Quoted command strings (bash -c, eval) keep their separators inside
+      // a word. Apply the same segment-aware checks to that literal payload.
+      for (const word of words) {
+        if (/\bgit\s/.test(word) && word.length < segment.length) {
+          const reason = bashBlockReason(word, rules);
+          if (reason) return reason;
+        }
+      }
+      for (let i = 0; i < words.length; i++) {
+        if (!/(?:^|\/)git$/.test(words[i]!)) continue;
+        let at = i + 1;
+        while (at < words.length && words[at]!.startsWith("-")) {
+          const option = words[at++]!;
+          if (
+            [
+              "-C",
+              "-c",
+              "--git-dir",
+              "--work-tree",
+              "--namespace",
+              "--config-env",
+              "--attr-source",
+              "--super-prefix",
+            ].includes(option)
+          )
+            at++;
+          if (option === "--") break;
+        }
+        const verb = words[at];
+        const args = words.slice(at + 1);
+        if (verb === "restore") {
+          let staged = false;
+          let worktree = false;
+          for (let j = 0; j < args.length; j++) {
+            const arg = args[j]!;
+            if (arg === "--") break;
+            if (
+              arg.startsWith("--") &&
+              ["--source", "--pathspec-from-file", "--conflict"].some((option) =>
+                option.startsWith(arg),
+              )
+            ) {
+              j++;
+              continue;
+            }
+            if (arg === "--staged") staged = true;
+            else if (/^--w[\w-]*$/.test(arg)) worktree = true;
+            else if (/^-[^-]/.test(arg)) {
+              for (const flag of arg.slice(1)) {
+                if (flag === "s") {
+                  if (arg.endsWith("s")) j++; // detached source value
+                  break;
+                }
+                if (flag === "S") staged = true;
+                if (flag === "W") worktree = true;
+              }
+            }
+          }
+          if (!staged || worktree)
+            return "rule 11: git restore that touches the worktree discards uncommitted changes. Use --staged or -S alone to change only the index.";
+        }
+        if (verb === "checkout" && args.includes("--"))
+          return "rule 11: git checkout with path operands discards uncommitted changes in the shared checkout.";
+        // Apply the existing bright lines after consuming git's global options.
+        const normalized = `git ${words.slice(at).join(" ")}`;
+        for (const rule of rules) if (rule.pattern.test(normalized)) return rule.reason;
+      }
+    }
+  }
   for (const rule of rules) if (rule.pattern.test(command)) return rule.reason;
   return undefined;
 }
