@@ -326,6 +326,7 @@ describe("qcr companion rebuild", () => {
     const lines: string[] = [];
     await rebuildCompanion(
       {
+        checkBuildable: () => void order.push("check"),
         removeContainer: async () => void order.push("remove"),
         buildImage: async () => void order.push("build"),
         ensureUp: async () => {
@@ -341,10 +342,31 @@ describe("qcr companion rebuild", () => {
       async () => void order.push("refresh"),
       (l) => lines.push(l),
     );
-    expect(order).toEqual(["remove", "build", "refresh", "ensureUp", "spawnPi"]);
+    expect(order).toEqual(["check", "remove", "build", "refresh", "ensureUp", "spawnPi"]);
     expect(lines.at(-1)).toBe(
       "companion qcr-companion: image rebuilt, created; pi session spawned",
     );
+  });
+
+  it("an app with nothing built is refused before the running container is removed", async () => {
+    const order: string[] = [];
+    await expect(
+      rebuildCompanion(
+        {
+          checkBuildable: () => {
+            throw new Error("run `npm run build` first");
+          },
+          removeContainer: async () => void order.push("remove"),
+          buildImage: async () => void order.push("build"),
+          ensureUp: async () => "created",
+          spawnPi: async () => true,
+        },
+        "qcr-companion",
+        async () => {},
+        () => {},
+      ),
+    ).rejects.toThrow(/npm run build/);
+    expect(order).toEqual([]);
   });
 });
 

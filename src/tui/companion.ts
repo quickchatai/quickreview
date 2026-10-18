@@ -382,6 +382,37 @@ export function companionInjectDir(cfg: Pick<CompanionConfig, "repo_dir" | "sess
   return `${cfg.repo_dir}/inject/${cfg.session}`;
 }
 
+/** Set on the companion's pi: code that runs there (the setup belt, a
+ * `qcr scan` the companion runs) knows it is inside the companion container. */
+export const IN_COMPANION_ENV = "QCR_IN_COMPANION";
+
+/** Why the app image cannot be built from `ctx`, or null: it copies the
+ * built app, so `dist/` must be there. */
+export function appBuildProblem(ctx: string, exists: (p: string) => boolean): string | null {
+  return exists(join(ctx, "dist", "src", "cli.js"))
+    ? null
+    : `the image copies the built app, and ${join(ctx, "dist")} has none — run \`npm run build\` in ${ctx} first`;
+}
+
+/** `docker build` of the app image (docker/companion/Dockerfile) from the
+ * app root `ctx`, as `image`, stamped. Builds an image and nothing else:
+ * no container is touched. */
+export function appImageBuildArgv(image: string, ctx: string, stamp: string): string[] {
+  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+  return [
+    "build",
+    "-t",
+    image,
+    "-f",
+    join(ctx, "docker", "companion", "Dockerfile"),
+    "--build-arg",
+    `COMPANION_UID=${uid}`,
+    "--build-arg",
+    `BUILD_SHA=${stamp}`,
+    ctx,
+  ];
+}
+
 export class CompanionLifecycle {
   /** Resolved by ensureUp() before any `docker run`; the constants are the
    * safe standing answer so runArgv() stays pure and callable in tests. */
@@ -569,6 +600,8 @@ export class CompanionLifecycle {
       `QCR_SUBAGENT_MAX_CONCURRENCY=${SUBAGENTS.maxConcurrency}`,
       // The retired URIs the recall excludes — see MEMORY.retiredFile.
       `QCR_OV_RETIRED_FILE=${CONTAINER.stateHome}/${MEMORY.retiredFile}`,
+      // What a `qcr scan` run here reads to default its sandbox to the host.
+      `${IN_COMPANION_ENV}=1`,
     ];
   }
 
@@ -751,34 +784,25 @@ export class CompanionLifecycle {
     if (!res.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(res)}`);
   }
 
+  /** Throws when the image cannot be built (`appBuildProblem`) — asked
+   * before anything is removed for a rebuild. */
+  checkBuildable(): void {
+    const problem = appBuildProblem(this.cfg.build_context, (p) => this.fs.exists(p));
+    if (problem !== null) throw new Error(problem);
+  }
+
   /** Build the companion image (idempotent, cached) from the app root,
    * with docker/companion/Dockerfile: the image copies the built app for the
    * scan sandbox, so the app must be built first, and the image is stamped
    * with the app's build stamp. Runs with the caller's uid so the host bind
    * mounts stay writable. */
   async buildImage(onProgress?: (line: string) => void): Promise<void> {
+    this.checkBuildable();
     const ctx = this.cfg.build_context;
-    if (!this.fs.exists(join(ctx, "dist", "src", "cli.js")))
-      throw new Error(
-        `the image copies the built app, and ${join(ctx, "dist")} has none — run \`npm run build\` in ${ctx} first`,
-      );
     onProgress?.(`building ${this.cfg.image} image (first run — takes a few minutes)…`);
-    const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
-    const res = await this.docker(
-      [
-        "build",
-        "-t",
-        this.cfg.image,
-        "-f",
-        join(ctx, "docker", "companion", "Dockerfile"),
-        "--build-arg",
-        `COMPANION_UID=${uid}`,
-        "--build-arg",
-        `BUILD_SHA=${this.stampOf(ctx)}`,
-        ctx,
-      ],
-      { timeoutMs: 1_800_000 },
-    );
+    const res = await this.docker(appImageBuildArgv(this.cfg.image, ctx, this.stampOf(ctx)), {
+      timeoutMs: 1_800_000,
+    });
     if (!res.ok) throw new Error(`docker build ${this.cfg.image} failed: ${errText(res)}`);
     onProgress?.(`${this.cfg.image} image built`);
   }

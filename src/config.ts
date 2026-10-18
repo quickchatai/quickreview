@@ -2179,6 +2179,9 @@ export type ScanSandbox = (typeof SCAN_SANDBOXES)[number];
 
 export interface ScanSandboxConfig {
   sandbox: ScanSandbox;
+  /** Whether config.toml names `sandbox`: only the default gives way to
+   * where the CLI runs (inside the companion container it is `host`). */
+  sandbox_set: boolean;
   /** The named volume the sandbox mounts as pi's home — its own login,
    * apart from the companion's (`qcr scan login`). */
   pihome_volume: string;
@@ -2191,6 +2194,7 @@ export const SCAN_SANDBOX_KEYS = ["sandbox", "pihome_volume", "image"] as const;
 
 export const SCAN_SANDBOX_DEFAULTS: Omit<ScanSandboxConfig, "image"> = {
   sandbox: "docker",
+  sandbox_set: false,
   pihome_volume: "scan-pihome",
 };
 
@@ -2214,6 +2218,7 @@ export function parseScanSandbox(raw: unknown, companionImage: string): ScanSand
     );
   return {
     sandbox: sandbox as ScanSandbox,
+    sandbox_set: t["sandbox"] !== undefined,
     pihome_volume: name("pihome_volume", SCAN_SANDBOX_DEFAULTS.pihome_volume),
     image: name("image", companionImage),
   };

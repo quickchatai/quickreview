@@ -31,13 +31,23 @@
 // (src/appstamp.ts): a container never drives a scan with other code.
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { appStamp } from "./appstamp.js";
 import type { ScanSandboxConfig } from "./config.js";
 import {
   configHome,
   installName,
+  operatorStateHome,
   PROFILES_DIR,
   scanConfigMirrorDir,
   stateHome,
@@ -45,8 +55,11 @@ import {
 } from "./install.js";
 import { DETACH_TIMEOUT_MS, DRIVER_LOG, prepareDriverLog } from "./scandriverlog.js";
 import {
+  appBuildProblem,
+  appImageBuildArgv,
   CONTAINER,
   dockerFailureLine,
+  IN_COMPANION_ENV,
   memoryEnvArgv,
   mirrorConfigFile,
   PUBLIC_DNS,
@@ -116,6 +129,9 @@ export interface ScanBoxPlan {
   profiles: string;
   install: string;
   token: string;
+  /** The memory env's non-secret half comes from `memory`; its key is this
+   * file's alone — the reviewer key, never the companion's whole key file. */
+  keysFile?: string;
   memory: MemoryWiring;
 }
 
@@ -129,6 +145,28 @@ export function scanMounts(p: ScanBoxPlan): ScanMount[] {
     { dest: SCANBOX.configLive, source: p.configMirror, mode: "ro" },
     { dest: SCANBOX.profiles, source: p.profiles, mode: "ro" },
   ];
+}
+
+/** One mount as docker's `--mount` spells it. Unlike `--volume`, a bind
+ * whose source is missing fails rather than being created, and nothing in a
+ * path can be read as a mode. A path holding a comma cannot be spelled
+ * (`commaProblem` refuses it first). */
+export function mountSpec(m: ScanMount): string {
+  const bind = m.source.startsWith("/");
+  return [
+    `type=${bind ? "bind" : "volume"}`,
+    `src=${m.source}`,
+    `dst=${m.dest}`,
+    ...(m.mode === "ro" ? ["readonly"] : []),
+  ].join(",");
+}
+
+/** A path `--mount` cannot take, or null. */
+function commaProblem(paths: readonly string[]): string | null {
+  const bad = paths.find((p) => p.includes(","));
+  return bad === undefined
+    ? null
+    : `the path ${bad} holds a comma, which docker's --mount cannot take — move or link it`;
 }
 
 /** The container's path of a state-home file. */
@@ -153,8 +191,7 @@ export function scanRunArgv(p: ScanBoxPlan, argv: readonly string[]): string[] {
   ];
   if (p.memory.network !== "") out.push("--network", p.memory.network);
   for (const ip of PUBLIC_DNS) out.push("--dns", ip);
-  for (const m of scanMounts(p))
-    out.push("--volume", `${m.source}:${m.dest}${m.mode ? `:${m.mode}` : ""}`);
+  for (const m of scanMounts(p)) out.push("--mount", mountSpec(m));
   const env: Array<[string, string]> = [
     ["QCR_ROOT", SCANBOX.app],
     ["QCR_CONFIG", SCANBOX.configFile],
@@ -167,7 +204,8 @@ export function scanRunArgv(p: ScanBoxPlan, argv: readonly string[]): string[] {
     [DRIVER_LOG_ENV, inState(DRIVER_LOG)],
   ];
   for (const [k, v] of env) out.push("--env", `${k}=${v}`);
-  out.push(...memoryEnvArgv(p.memory));
+  out.push(...memoryEnvArgv({ ...p.memory, keysFile: undefined }));
+  if (p.keysFile) out.push("--env-file", p.keysFile);
   out.push(p.image, "node", SCANBOX.cli, "scan", ...argv, "--foreground", "--json");
   return out;
 }
@@ -180,8 +218,8 @@ export function scanLoginArgv(s: ScanSandboxConfig): string[] {
     "--rm",
     "-it",
     ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
-    "--volume",
-    `${s.pihome_volume}:${SCANBOX.piHome}`,
+    "--mount",
+    mountSpec({ dest: SCANBOX.piHome, source: s.pihome_volume }),
     s.image,
     "pi",
   ];
@@ -229,12 +267,12 @@ export async function imageProblem(
   const s = await imageStamp(docker, image);
   if (!s.ok)
     return s.missing
-      ? `${s.error} — run \`qcr companion rebuild\``
+      ? `${s.error} — run \`qcr scan rebuild\``
       : `docker is not reachable (${s.error}) — the scan sandbox needs it; or set [scan] sandbox = "host"`;
   if (s.stamp === null)
-    return `the image ${image} carries no build stamp — run \`qcr companion rebuild\``;
+    return `the image ${image} carries no build stamp — run \`qcr scan rebuild\``;
   if (s.stamp !== stamp)
-    return `the image ${image} was built from other code (stamp ${s.stamp}; this checkout is ${stamp}) — run \`qcr companion rebuild\``;
+    return `the image ${image} was built from other code (stamp ${s.stamp}; this checkout is ${stamp}) — run \`qcr scan rebuild\``;
   return null;
 }
 
@@ -309,6 +347,54 @@ export interface ScanBoxDeps {
   logMax?: number;
 }
 
+/** Under the operator state home: the scan container's key file — the
+ * reviewer key alone (`reviewerKeyFile`). */
+export const SCAN_KEYS_FILE = "scan-memory-keys.env";
+/** The one key a scan writes memory with (src/setup/adapters.ts
+ * `reviewerMemoryFromEnv`). */
+const REVIEWER_KEY = "OPENVIKING_REVIEWER_KEY";
+
+/** Write the reviewer key line of the wiring's key file, alone, to `dest`
+ * (0600, written aside and renamed into place); "" when there is none to
+ * pass — no key file, or no reviewer key in it (a stale `dest` is removed). */
+export function reviewerKeyFile(memory: MemoryWiring, dest: string): string | { failed: string } {
+  try {
+    const text = memory.keysFile ? readFileSync(memory.keysFile, "utf8") : "";
+    const line = text.split("\n").find((l) => l.startsWith(`${REVIEWER_KEY}=`));
+    if (line === undefined) {
+      rmSync(dest, { force: true });
+      return "";
+    }
+    mkdirSync(dirname(dest), { recursive: true });
+    const tmp = `${dest}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${line}\n`, { mode: 0o600 });
+    renameSync(tmp, dest);
+    return dest;
+  } catch (err) {
+    return { failed: `the scan container's memory key could not be prepared: ${String(err)}` };
+  }
+}
+
+/** Remove the handshake files no launch can still be waiting for: older
+ * than the launch bound. Best effort. */
+function sweepStarted(dir: string, olderThanMs: number): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - olderThanMs;
+  for (const n of names) {
+    const p = join(dir, n);
+    try {
+      if (statSync(p).mtimeMs < cutoff) rmSync(p, { force: true });
+    } catch {
+      // Gone already.
+    }
+  }
+}
+
 /** A container name docker accepts, unique per launch. */
 export function scanContainerName(install: string, token: string): string {
   return `qcr-scan-${install}-${token}`;
@@ -337,6 +423,8 @@ export function dockerDetach<R = unknown>(
       return refuse(
         `no reviewed repo at ${repo} — set [companion] reviewed_repo_dir (or QCR_REVIEWED_REPO)`,
       );
+    const repoComma = commaProblem([repo]);
+    if (repoComma !== null) return refuse(repoComma);
     const source = deps.configSource();
     if (source === undefined)
       return refuse(
@@ -348,6 +436,16 @@ export function dockerDetach<R = unknown>(
       (deps.stamp ?? (() => appStamp(deps.appRoot)))(),
     );
     if (problem !== null) return refuse(problem);
+    // Asked, never assumed: `docker run` would create the volume empty, and
+    // every case would then fail on a pi that is not logged in.
+    const vol = deps.sandbox.pihome_volume;
+    const volume = await deps.docker(["volume", "inspect", vol]);
+    if (!volume.ok)
+      return refuse(
+        /no such volume/i.test(dockerFailureLine(volume))
+          ? `the scan pi home volume ${vol} does not exist — run \`qcr scan login\` to make it and log pi in`
+          : `the scan pi home volume ${vol} cannot be inspected: ${dockerFailureLine(volume)}`,
+      );
     const git = (deps.gitDirs ?? hostGitDirs)(repo);
     if (!git.ok) return refuse(`git cannot read the reviewed repo at ${repo}: ${git.error}`);
     const home = stateHome(deps.env);
@@ -358,6 +456,9 @@ export function dockerDetach<R = unknown>(
     const log = prepareDriverLog(home, deps.logMax);
     if (!log.ok) return refuse(log.error);
     const profiles = join(configHome(deps.env), PROFILES_DIR);
+    const comma = commaProblem([...git.mounts, home, mirrorDir, profiles]);
+    if (comma !== null) return refuse(comma);
+    sweepStarted(join(home, STARTED_DIR), timeoutMs);
     try {
       // Created here, never by docker: a source docker invents is root-owned.
       for (const d of [join(home, STARTED_DIR), profiles]) mkdirSync(d, { recursive: true });
@@ -369,6 +470,8 @@ export function dockerDetach<R = unknown>(
     const memory = deps.memory
       ? await deps.memory()
       : { network: "", endpoint: "", notes: ["memory wiring not resolved"] };
+    const keys = reviewerKeyFile(memory, join(operatorStateHome(deps.env), SCAN_KEYS_FILE));
+    if (typeof keys === "object") return refuse(keys.failed);
     const plan: ScanBoxPlan = {
       name: scanContainerName(install, token),
       image: deps.sandbox.image,
@@ -380,11 +483,20 @@ export function dockerDetach<R = unknown>(
       profiles,
       install,
       token,
+      ...(keys !== "" ? { keysFile: keys } : {}),
       memory,
     };
     const started = join(home, STARTED_DIR, `${token}.json`);
-    const run = await deps.docker(scanRunArgv(plan, argv), { timeoutMs: 120_000 });
-    if (!run.ok) return refuse(`the scan container could not start: ${dockerFailureLine(run)}`);
+    // One bound over the whole launch: what `docker run` takes is gone from
+    // the wait for the driver.
+    const t0 = now();
+    const left = (): number => Math.max(0, timeoutMs - (now() - t0));
+    const run = await deps.docker(scanRunArgv(plan, argv), { timeoutMs: Math.max(1, left()) });
+    if (!run.ok) {
+      // A run that timed out may still have made its container.
+      await deps.docker(["rm", "-f", plan.name]);
+      return refuse(`the scan container could not start: ${dockerFailureLine(run)}`);
+    }
     const read = (): StartOutcome<R> | null => {
       let text: string;
       try {
@@ -400,7 +512,6 @@ export function dockerDetach<R = unknown>(
         return refuse(`the scan driver's start outcome could not be read: ${started}`);
       }
     };
-    const t0 = now();
     for (;;) {
       const o = read();
       if (o) return o;
@@ -413,15 +524,68 @@ export function dockerDetach<R = unknown>(
           `the scan container ${plan.name} exited before the driver started — see ${log.path}`,
         );
       }
-      if (now() - t0 >= timeoutMs) {
+      if (left() <= 0) {
         await deps.docker(["rm", "-f", plan.name]);
+        // It may have answered while it was being removed.
+        const late = read();
+        if (late) return late;
         return refuse(
           `the scan driver did not say it started within ${Math.round(timeoutMs / 1000)}s — its container was removed; see ${log.path}`,
         );
       }
-      await sleep(pollMs);
+      await sleep(Math.min(pollMs, Math.max(1, left())));
     }
   };
+}
+
+// ---- where, and with what image ----------------------------------------------------
+
+/** What the companion container's CLI is told about its sandbox. */
+export const IN_COMPANION_NOTE =
+  "inside the companion container — [scan] sandbox defaults to host there";
+
+/** The sandbox a run here uses: the configured one, except that an unset
+ * `[scan] sandbox` is `host` inside the companion container — which its env
+ * says (`IN_COMPANION_ENV`), or which a `/workspace` mount with no docker
+ * reachable gives away. There, `host` is the container itself. */
+export async function effectiveSandbox(
+  s: ScanSandboxConfig,
+  o: {
+    env: NodeJS.ProcessEnv;
+    exists: (path: string) => boolean;
+    docker: DockerRunner;
+  },
+): Promise<{ sandbox: ScanSandboxConfig; note?: string }> {
+  if (s.sandbox_set || s.sandbox === "host") return { sandbox: s };
+  const host = { sandbox: { ...s, sandbox: "host" as const }, note: IN_COMPANION_NOTE };
+  if (o.env[IN_COMPANION_ENV]?.trim()) return host;
+  if (!o.exists(CONTAINER.workspace)) return { sandbox: s };
+  const v = await o.docker(["version", "--format", "{{.Server.Version}}"], { timeoutMs: 10_000 });
+  return v.ok ? { sandbox: s } : host;
+}
+
+/** `qcr scan rebuild`: build `[scan] image` from the app root, stamped, and
+ * nothing else — no container is removed, stopped or started, so a running
+ * companion on the same image keeps running (it moves to the new image at
+ * its own next recreate, `qcr companion rebuild`). */
+export async function buildScanImage(o: {
+  docker: DockerRunner;
+  image: string;
+  buildContext: string;
+  exists: (path: string) => boolean;
+  stamp: (root: string) => string;
+  onProgress?: (line: string) => void;
+}): Promise<{ ok: true; image: string; stamp: string } | { ok: false; errors: string[] }> {
+  const problem = appBuildProblem(o.buildContext, o.exists);
+  if (problem !== null) return { ok: false, errors: [problem] };
+  const stamp = o.stamp(o.buildContext);
+  o.onProgress?.(`building ${o.image} (stamp ${stamp}) — takes a few minutes…`);
+  const r = await o.docker(appImageBuildArgv(o.image, o.buildContext, stamp), {
+    timeoutMs: 1_800_000,
+  });
+  if (!r.ok)
+    return { ok: false, errors: [`docker build ${o.image} failed: ${dockerFailureLine(r)}`] };
+  return { ok: true, image: o.image, stamp };
 }
 
 // ---- doctor -----------------------------------------------------------------------
@@ -436,12 +600,16 @@ export interface DoctorCheck {
 export interface DoctorReport {
   ok: boolean;
   sandbox: string;
+  /** Why the sandbox is not the configured one, when it is not. */
+  note?: string;
   reviewed_repo: string;
   checks: DoctorCheck[];
 }
 
 export interface DoctorDeps {
   sandbox: ScanSandboxConfig;
+  /** Why `sandbox` is not the configured one (`effectiveSandbox`). */
+  note?: string;
   docker: DockerRunner;
   stamp: () => string;
   reviewedRepo: string;
@@ -490,7 +658,7 @@ export async function scanDoctor(d: DoctorDeps): Promise<DoctorReport> {
       checks.push(
         problem === null
           ? { check: "image", ok: true, detail: `${d.sandbox.image} matches this checkout` }
-          : { check: "image", ok: false, detail: problem, fix: "qcr companion rebuild" },
+          : { check: "image", ok: false, detail: problem, fix: "qcr scan rebuild" },
       );
       checks.push(await pihomeCheck(d, problem === null, timeoutMs, LOGIN));
     }
@@ -526,6 +694,7 @@ export async function scanDoctor(d: DoctorDeps): Promise<DoctorReport> {
   return {
     ok: checks.every((c) => c.ok),
     sandbox: d.sandbox.sandbox,
+    ...(d.note ? { note: d.note } : {}),
     reviewed_repo: d.reviewedRepo,
     checks,
   };
@@ -554,8 +723,8 @@ async function pihomeCheck(
       "run",
       "--rm",
       ...PUBLIC_DNS.flatMap((x) => ["--dns", x]),
-      "--volume",
-      `${vol}:${SCANBOX.piHome}`,
+      "--mount",
+      mountSpec({ dest: SCANBOX.piHome, source: vol }),
       d.sandbox.image,
       "pi",
       ...probeArgv(d.model),
@@ -599,7 +768,7 @@ function repoCheck(d: DoctorDeps): DoctorCheck {
 
 /** The doctor's report in words: one line per check, its fix under it. */
 export function renderDoctor(r: DoctorReport): string {
-  const lines = [`Scan sandbox: ${r.sandbox}`];
+  const lines = [`Scan sandbox: ${r.sandbox}${r.note ? ` (${r.note})` : ""}`];
   for (const c of r.checks) {
     lines.push(`${c.ok ? "✓" : "✗"} ${c.check} — ${c.detail}`);
     if (!c.ok && c.fix) lines.push(`  fix: ${c.fix}`);

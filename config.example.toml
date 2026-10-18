@@ -929,7 +929,8 @@ deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-ma
 # container from the companion image, mounting only the reviewed repo (read-only),
 # the state home, the scan's own pi home volume and this config (read-only) —
 # `qcr scan login` logs that volume in, `qcr scan doctor` checks it all, and an
-# image older than the checkout is refused until `qcr companion rebuild`.
+# image older than the checkout is refused until `qcr scan rebuild` (which builds
+# it and touches no container). Unset, it is "host" inside the companion container.
 # "host": a detached process on this machine, running the `pi` on the PATH.
 sandbox = "docker"
 pihome_volume = "scan-pihome"  # the sandbox's pi home (its own login, apart from the companion's)

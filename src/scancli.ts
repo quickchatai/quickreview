@@ -83,7 +83,7 @@ export const SCAN_USAGE =
   "matches | match --key K [OLD=NEW…] | suggestions | " +
   "stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] | " +
   "stage2 start --key K [--rows ID,ID…] [--foreground] | dismiss FP… --reason TEXT | " +
-  "units show | units propose [--file F|-] | units adjust --file F|- | units save | login | doctor   (every subcommand takes --json)";
+  "units show | units propose [--file F|-] | units adjust --file F|- | units save | login | doctor | rebuild   (every subcommand takes --json)";
 
 export { DETACH_TIMEOUT_MS, DRIVER_LOG, DRIVER_LOG_MAX };
 /** How often `status --wait` and `stop` look again. */
@@ -116,7 +116,8 @@ export type ScanCommand =
   | { verb: "units-adjust"; file: string }
   | { verb: "units-save" }
   | { verb: "login" }
-  | { verb: "doctor" };
+  | { verb: "doctor" }
+  | { verb: "rebuild" };
 
 const usage = (why?: string): Error => new Error(why ? `${SCAN_USAGE}\n(${why})` : SCAN_USAGE);
 
@@ -298,6 +299,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
     case "units-save":
     case "login":
     case "doctor":
+    case "rebuild":
       allowed();
       noPositional();
       return { verb: sub };
@@ -466,6 +468,10 @@ export interface ScanCliDeps {
   doctor?: () => Promise<DoctorReport>;
   /** `login`: pi, interactive, over the scan's pi home; its exit code. */
   login?: () => Promise<number>;
+  /** `rebuild`: build `[scan] image` alone, stamped; no container touched. */
+  rebuild?: () => Promise<
+    { ok: true; image: string; stamp: string } | { ok: false; errors: string[] }
+  >;
 }
 
 type Emit = (code: number, human: string, data: Record<string, unknown>) => number;
@@ -746,6 +752,17 @@ export async function runScanCli(
     case "login":
       if (!deps.login) return refusal("Login", ["no login in this assembly"]);
       return deps.login();
+    case "rebuild": {
+      if (!deps.rebuild) return refusal("Scan image rebuild", ["no rebuild in this assembly"]);
+      const r = await deps.rebuild();
+      if (!r.ok) return refusal("Scan image rebuild", r.errors);
+      return emit(
+        0,
+        `Scan image ${r.image} built (stamp ${r.stamp}); no container was stopped or replaced. ` +
+          "A companion on the same image keeps its container until `qcr companion rebuild`.",
+        { ok: true, image: r.image, stamp: r.stamp },
+      );
+    }
   }
 }
 
@@ -1104,31 +1121,43 @@ async function sandboxPorts(
   home: string,
   engine: UnitCutPort,
   settingsOf: () => { scan: { tier: string } } | null,
-): Promise<Pick<ScanCliDeps, "detach" | "units" | "doctor" | "login">> {
-  const [{ dockerDetach, scanDoctor, scanLoginArgv }, companion, { appStamp }, install, cfgMod] =
-    await Promise.all([
-      import("./scanbox.js"),
-      import("./tui/companion.js"),
-      import("./appstamp.js"),
-      import("./install.js"),
-      import("./config.js"),
-    ]);
+): Promise<Pick<ScanCliDeps, "detach" | "units" | "doctor" | "login" | "rebuild">> {
+  const [
+    { buildScanImage, dockerDetach, effectiveSandbox, scanDoctor, scanLoginArgv },
+    companion,
+    { appStamp },
+    install,
+    cfgMod,
+  ] = await Promise.all([
+    import("./scanbox.js"),
+    import("./tui/companion.js"),
+    import("./appstamp.js"),
+    import("./install.js"),
+    import("./config.js"),
+  ]);
   let cfg: ReturnType<typeof loadConfig> | null = null;
   try {
     cfg = loadConfig();
   } catch {
     // No readable config: the sandbox defaults; a start then refuses for it.
   }
-  const sandbox = cfg?.scan_sandbox ?? {
+  const configured = cfg?.scan_sandbox ?? {
     ...cfgMod.SCAN_SANDBOX_DEFAULTS,
     image: cfgMod.COMPANION_DEFAULTS.image,
   };
+  const docker = companion.realDockerRunner;
+  // Inside the companion container an unset sandbox is the host: there is
+  // no docker there, and the container is the sandbox already.
+  const { sandbox, note } = await effectiveSandbox(configured, {
+    env,
+    exists: (p) => existsSync(p),
+    docker,
+  });
   const appRoot = env.QCR_ROOT?.trim() || sandboxRoot();
   // The checkout to mount: named by the env or `[companion]`, never the
   // in-container default (a host path is what docker mounts).
   const reviewedRepo =
     process.env.QCR_REVIEWED_REPO?.trim() || cfg?.companion.reviewed_repo_dir || "";
-  const docker = companion.realDockerRunner;
   // The model stage 1 runs on (the profile may move its tier): the login
   // the doctor's probe needs.
   const model = (): string => {
@@ -1163,6 +1192,7 @@ async function sandboxPorts(
     doctor: () =>
       scanDoctor({
         sandbox,
+        ...(note ? { note } : {}),
         docker,
         stamp: () => appStamp(appRoot),
         reviewedRepo,
@@ -1171,6 +1201,15 @@ async function sandboxPorts(
           return { saved: st.saved !== null, problems: st.cut_file_unreadable ? st.problems : [] };
         },
         model: model(),
+      }),
+    rebuild: () =>
+      buildScanImage({
+        docker,
+        image: sandbox.image,
+        buildContext: cfg?.companion.build_context ?? appRoot,
+        exists: (p) => existsSync(p),
+        stamp: appStamp,
+        onProgress: (line) => console.error(line),
       }),
     login: async () => {
       if (sandbox.sandbox === "host") {

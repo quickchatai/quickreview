@@ -1285,9 +1285,12 @@ async function startCompanion(
 }
 
 /** `qcr companion rebuild`: replace the container and image, then start the
- * new one exactly as `up` does. The pihome volume is untouched. */
+ * new one exactly as `up` does. The pihome volume is untouched. To rebuild
+ * the scan sandbox's image without touching the companion: `qcr scan
+ * rebuild`. */
 export async function rebuildCompanion(
   lc: CompanionStarter & {
+    checkBuildable(): void;
     removeContainer(): Promise<unknown>;
     buildImage(log: (line: string) => void): Promise<unknown>;
   },
@@ -1295,6 +1298,9 @@ export async function rebuildCompanion(
   refreshInputs: () => Promise<void>,
   log: (line: string) => void,
 ): Promise<void> {
+  // Refused before the running container goes: a rebuild that cannot build
+  // must leave the companion as it was.
+  lc.checkBuildable();
   await lc.removeContainer();
   await lc.buildImage(log);
   const { outcome, born } = await startCompanion(lc, refreshInputs, log);
@@ -1919,7 +1925,7 @@ export async function main(argv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
-          "companion <up|down|status|rebuild>|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
+          "companion <up|down|status|rebuild>|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       // A bare `qcr` (or an explicit help) is a usage request; anything else

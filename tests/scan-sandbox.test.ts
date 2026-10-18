@@ -6,7 +6,17 @@
 // `qcr scan login` / `doctor`, the image's build, its ignore list and its
 // one-shot entrypoint mode are pinned beside them.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +35,8 @@ import {
   STAMP_LABEL,
   STARTED_FILE_ENV,
   dockerDetach,
+  buildScanImage,
+  effectiveSandbox,
   renderDoctor,
   scanDoctor,
   scanLoginArgv,
@@ -36,6 +48,7 @@ import {
 import { scanEnv } from "../src/scancli.js";
 import {
   CompanionLifecycle,
+  IN_COMPANION_ENV,
   MEMORY,
   PUBLIC_DNS,
   type DockerResult,
@@ -76,6 +89,7 @@ function fakeDocker(rules: Array<(argv: string[]) => DockerResult | undefined>):
 
 const SANDBOX: ScanSandboxConfig = {
   sandbox: "docker",
+  sandbox_set: false,
   pihome_volume: "scan-pihome",
   image: "qcr-companion",
 };
@@ -85,6 +99,7 @@ describe("[scan] sandbox, pihome_volume and image", () => {
     const cfg = parseConfig(fixtureToml);
     expect(cfg.scan_sandbox).toEqual({
       sandbox: "docker",
+      sandbox_set: false,
       pihome_volume: "scan-pihome",
       image: cfg.companion.image,
     });
@@ -99,7 +114,12 @@ describe("[scan] sandbox, pihome_volume and image", () => {
     const cfg = parseConfig(
       `${fixtureToml}\n[scan]\nsandbox = "host"\npihome_volume = "v2"\nimage = "img:1"\ndepth = "deep"\n`,
     );
-    expect(cfg.scan_sandbox).toEqual({ sandbox: "host", pihome_volume: "v2", image: "img:1" });
+    expect(cfg.scan_sandbox).toEqual({
+      sandbox: "host",
+      sandbox_set: true,
+      pihome_volume: "v2",
+      image: "img:1",
+    });
     expect(cfg.scan.depth).toBe("deep");
     expect(cfg.scan).not.toHaveProperty("sandbox");
     expect(cfg.scan).not.toHaveProperty("pihome_volume");
@@ -275,6 +295,7 @@ const PLAN: ScanBoxPlan = {
   profiles: "/host/config/profiles",
   install: "default",
   token: "tok1",
+  keysFile: "/host/opstate/scan-memory-keys.env",
   memory: {
     network: MEMORY.network,
     endpoint: "http://198.51.100.1:1933",
@@ -317,16 +338,16 @@ describe("the scan container's argv", () => {
       "--network",
       MEMORY.network,
       ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
-      "--volume",
-      "/host/app:/reviewed-repo:ro",
-      "--volume",
-      "/host/state:/qcr-state:rw",
-      "--volume",
-      "scan-pihome:/home/companion/.pi",
-      "--volume",
-      "/host/opstate/scan-config:/qcr-config/live:ro",
-      "--volume",
-      "/host/config/profiles:/qcr-config/profiles:ro",
+      "--mount",
+      "type=bind,src=/host/app,dst=/reviewed-repo,readonly",
+      "--mount",
+      "type=bind,src=/host/state,dst=/qcr-state",
+      "--mount",
+      "type=volume,src=scan-pihome,dst=/home/companion/.pi",
+      "--mount",
+      "type=bind,src=/host/opstate/scan-config,dst=/qcr-config/live,readonly",
+      "--mount",
+      "type=bind,src=/host/config/profiles,dst=/qcr-config/profiles,readonly",
       "--env",
       "QCR_ROOT=/opt/qcr",
       "--env",
@@ -357,8 +378,9 @@ describe("the scan container's argv", () => {
       "QCR_MEMORY_ENDPOINT=http://198.51.100.1:1933",
       "--env",
       "QCR_MEMORY_ALERTS_DIR=/alerts",
+      // The reviewer key alone, never the companion's whole key file.
       "--env-file",
-      "/host/keys.env",
+      "/host/opstate/scan-memory-keys.env",
       "qcr-companion",
       "node",
       SCANBOX.cli,
@@ -374,14 +396,15 @@ describe("the scan container's argv", () => {
     // No GitHub token, no ssh, no tracker reach the container.
     const flat = argv.join(" ");
     expect(flat).not.toMatch(/GITHUB|\.ssh|SSH_AUTH_SOCK|QCR_TRACKER_DIR|\/workspace/);
+    expect(argv).not.toContain("/host/keys.env");
+    expect(argv).not.toContain("--volume");
   });
 
   it("memory-less wiring: no network, no memory env — the scan still runs", () => {
-    const argv = scanRunArgv({ ...PLAN, memory: { network: "", endpoint: "", notes: [] } }, [
-      "start",
-      "--key",
-      "K",
-    ]);
+    const argv = scanRunArgv(
+      { ...PLAN, keysFile: undefined, memory: { network: "", endpoint: "", notes: [] } },
+      ["start", "--key", "K"],
+    );
     expect(argv).not.toContain("--network");
     expect(argv.join(" ")).not.toMatch(/OPENVIKING|--env-file/);
   });
@@ -392,8 +415,8 @@ describe("the scan container's argv", () => {
       "--rm",
       "-it",
       ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
-      "--volume",
-      "scan-pihome:/home/companion/.pi",
+      "--mount",
+      "type=volume,src=scan-pihome,dst=/home/companion/.pi",
       "qcr-companion",
       "pi",
     ]);
@@ -401,6 +424,9 @@ describe("the scan container's argv", () => {
 });
 
 // ---- the launch -----------------------------------------------------------------
+
+/** The launch tests' clock: their sleep advances it, a rule may too. */
+const clock = { t: 0 };
 
 describe("the sandboxed launch", () => {
   const RUN = { id: "scan-1", mode: "stage1", sha: "a".repeat(40), cases: [], cap_usd: 1 };
@@ -415,8 +441,12 @@ describe("the sandboxed launch", () => {
     mkdirSync(repo, { recursive: true });
     const config = join(dir, "config.toml");
     writeFileSync(config, "# the live config\n");
-    const { docker, calls } = fakeDocker(rules);
-    let t = 0;
+    // The pi home volume exists unless a test's own rule says otherwise.
+    const { docker, calls } = fakeDocker([
+      ...rules,
+      (a) => (a[0] === "volume" && a[1] === "inspect" ? OK : undefined),
+    ]);
+    clock.t = 0;
     const detach = dockerDetach({
       docker,
       env,
@@ -429,9 +459,9 @@ describe("the sandboxed launch", () => {
       memory: async () => ({ network: "", endpoint: "", notes: [] }),
       token: () => "tok1",
       sleep: async (ms) => {
-        t += ms;
+        clock.t += ms;
       },
-      now: () => t,
+      now: () => clock.t,
       timeoutMs: 10_000,
       pollMs: 500,
       ...over,
@@ -542,7 +572,7 @@ describe("the sandboxed launch", () => {
     expect(r).toEqual({
       ok: false,
       errors: [
-        "the image qcr-companion was built from other code (stamp old0; this checkout is s1) — run `qcr companion rebuild`",
+        "the image qcr-companion was built from other code (stamp old0; this checkout is s1) — run `qcr scan rebuild`",
       ],
     });
     expect(calls.some((c) => c[0] === "run")).toBe(false);
@@ -551,14 +581,14 @@ describe("the sandboxed launch", () => {
   it("refuses an image with no stamp, a missing image and an unreachable docker", async () => {
     expect(await setup([stamped("<no value>")]).detach(["start", "--key", "K"])).toEqual({
       ok: false,
-      errors: ["the image qcr-companion carries no build stamp — run `qcr companion rebuild`"],
+      errors: ["the image qcr-companion carries no build stamp — run `qcr scan rebuild`"],
     });
     const missing = setup([
       (a) => (a[0] === "image" ? fail("Error: No such image: qcr-companion") : undefined),
     ]);
     expect(await missing.detach(["start", "--key", "K"])).toEqual({
       ok: false,
-      errors: ["the image qcr-companion is not built — run `qcr companion rebuild`"],
+      errors: ["the image qcr-companion is not built — run `qcr scan rebuild`"],
     });
     const down = setup([
       (a) =>
@@ -621,6 +651,152 @@ describe("the sandboxed launch", () => {
     await detach(["start", "--key", "K"]);
     const run = calls.find((c) => c[0] === "run")!;
     expect(run[run.indexOf("--name") + 1]).toBe("qcr-scan-work-tok1");
+  });
+
+  it("refuses while the scan pi home volume does not exist — never lets docker make it empty", async () => {
+    const { calls, detach } = setup([
+      stamped("s1"),
+      (a) =>
+        a[0] === "volume"
+          ? fail("Error response from daemon: get scan-pihome: no such volume")
+          : undefined,
+    ]);
+    expect(await detach(["start", "--key", "K"])).toEqual({
+      ok: false,
+      errors: [
+        "the scan pi home volume scan-pihome does not exist — run `qcr scan login` to make it and log pi in",
+      ],
+    });
+    expect(calls.some((c) => c[0] === "run")).toBe(false);
+  });
+
+  it("hands the container the reviewer key alone, in a 0600 file of its own", async () => {
+    const keys = join(dir, "keys.env");
+    writeFileSync(
+      keys,
+      "OPENVIKING_API_KEY=root\nOPENVIKING_COMPANION_KEY=comp\nOPENVIKING_REVIEWER_KEY=rev\n",
+    );
+    const { calls, detach } = setup(
+      [
+        stamped("s1"),
+        (a) => (a[0] === "run" ? OK : undefined),
+        (a) => (a[0] === "inspect" ? fail("No such object") : undefined),
+      ],
+      {
+        memory: async () => ({
+          network: MEMORY.network,
+          endpoint: "http://198.51.100.1:1933",
+          keysFile: keys,
+          notes: [],
+        }),
+      },
+    );
+    await detach(["start", "--key", "K"]);
+    const run = calls.find((c) => c[0] === "run")!;
+    expect(run).not.toContain(keys);
+    const file = run[run.indexOf("--env-file") + 1]!;
+    expect(file).toBe(join(dir, ".local/state/qcr-operator/default/scan-memory-keys.env"));
+    expect(readFileSync(file, "utf8")).toBe("OPENVIKING_REVIEWER_KEY=rev\n");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(run.join(" ")).toContain(`OPENVIKING_URL=http://198.51.100.1:1933`);
+    expect(run.join(" ")).not.toMatch(/root|comp\b/);
+  });
+
+  it("no reviewer key: no env file at all", async () => {
+    const keys = join(dir, "keys.env");
+    writeFileSync(keys, "OPENVIKING_API_KEY=root\n");
+    const { calls, detach } = setup(
+      [
+        stamped("s1"),
+        (a) => (a[0] === "run" ? OK : undefined),
+        (a) => (a[0] === "inspect" ? fail("No such object") : undefined),
+      ],
+      {
+        memory: async () => ({ network: "", endpoint: "http://x:1", keysFile: keys, notes: [] }),
+      },
+    );
+    await detach(["start", "--key", "K"]);
+    expect(calls.find((c) => c[0] === "run")).not.toContain("--env-file");
+  });
+
+  it("an outcome written as the timeout struck is still the answer", async () => {
+    const { home, detach } = setup([
+      stamped("s1"),
+      (a) => (a[0] === "run" ? OK : undefined),
+      (a) => (a[0] === "inspect" ? { ...OK, stdout: "true\n" } : undefined),
+      (a) => {
+        if (a[0] !== "rm") return undefined;
+        writeStartedFile(join(home, "scan/started/tok1.json"), { ok: false, errors: ["late"] });
+        return OK;
+      },
+    ]);
+    expect(await detach(["start", "--key", "K"])).toEqual({ ok: false, errors: ["late"] });
+  });
+
+  it("sweeps started files no launch can still be waiting for", async () => {
+    const { home, detach } = setup([
+      stamped("s1"),
+      (a) => (a[0] === "run" ? fail("nope") : undefined),
+    ]);
+    const dirOf = join(home, "scan/started");
+    mkdirSync(dirOf, { recursive: true });
+    writeFileSync(join(dirOf, "old.json"), "{}");
+    writeFileSync(join(dirOf, "old.json.7.tmp"), "{");
+    writeFileSync(join(dirOf, "fresh.json"), "{}");
+    const old = new Date(Date.now() - 3_600_000);
+    utimesSync(join(dirOf, "old.json"), old, old);
+    utimesSync(join(dirOf, "old.json.7.tmp"), old, old);
+    await detach(["start", "--key", "K"]);
+    expect(readdirSync(dirOf)).toEqual(["fresh.json"]);
+  });
+
+  it("bounds the whole launch — docker run and the wait — to the timeout", async () => {
+    const { calls, detach } = setup([
+      stamped("s1"),
+      (a) => {
+        if (a[0] !== "run") return undefined;
+        clock.t += 8_000; // a slow docker run
+        return OK;
+      },
+      (a) => (a[0] === "inspect" ? { ...OK, stdout: "true\n" } : undefined),
+      (a) => (a[0] === "rm" ? OK : undefined),
+    ]);
+    const r = await detach(["start", "--key", "K"]);
+    expect(r).toMatchObject({ ok: false, errors: [expect.stringMatching(/within 10s/)] });
+    expect(clock.t).toBeLessThanOrEqual(10_500);
+    expect(calls.at(-1)).toEqual(["rm", "-f", "qcr-scan-default-tok1"]);
+  });
+
+  it("gives docker run only what is left of the bound, and removes a run that failed", async () => {
+    const seen: Array<number | undefined> = [];
+    const calls: string[][] = [];
+    const { detach } = setup([], {
+      docker: async (argv, o) => {
+        calls.push(argv);
+        if (argv[0] === "image") return { ...OK, stdout: "s1\n" };
+        if (argv[0] === "run") {
+          seen.push(o?.timeoutMs);
+          return fail("docker timed out after 10000 ms");
+        }
+        return OK;
+      },
+    });
+    expect(await detach(["start", "--key", "K"])).toMatchObject({ ok: false });
+    expect(seen).toEqual([10_000]);
+    expect(calls.at(-1)).toEqual(["rm", "-f", "qcr-scan-default-tok1"]);
+  });
+
+  it("refuses a host path docker's --mount cannot spell", async () => {
+    const repo = join(dir, "a,b");
+    mkdirSync(repo, { recursive: true });
+    const { calls, detach } = setup([stamped("s1")], { reviewedRepo: repo });
+    expect(await detach(["start", "--key", "K"])).toEqual({
+      ok: false,
+      errors: [
+        `the path ${repo} holds a comma, which docker's --mount cannot take — move or link it`,
+      ],
+    });
+    expect(calls.some((c) => c[0] === "run")).toBe(false);
   });
 });
 
@@ -704,8 +880,8 @@ describe("qcr scan doctor", () => {
       "run",
       "--rm",
       ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
-      "--volume",
-      "scan-pihome:/home/companion/.pi",
+      "--mount",
+      "type=volume,src=scan-pihome,dst=/home/companion/.pi",
       "qcr-companion",
       "pi",
       "-p",
@@ -727,7 +903,7 @@ describe("qcr scan doctor", () => {
     ]).report;
     const image = r.checks.find((c) => c.check === "image")!;
     expect(r.ok).toBe(false);
-    expect(image).toMatchObject({ ok: false, fix: "qcr companion rebuild" });
+    expect(image).toMatchObject({ ok: false, fix: "qcr scan rebuild" });
   });
 
   it("no volume yet is not logged in — and no container is run to find out", async () => {
@@ -804,5 +980,137 @@ describe("qcr scan doctor", () => {
       "openai-codex/gpt-6.1-sol:medium",
       "Reply with the single word OK.",
     ]);
+  });
+});
+
+describe("where the sandbox defaults to the host", () => {
+  const docker =
+    (up: boolean): DockerRunner =>
+    async (a) =>
+      a[0] === "version" ? (up ? { ...OK, stdout: "27\n" } : fail("Cannot connect")) : fail("x");
+
+  it("inside the companion container (its env says so): host, with the reason", async () => {
+    expect(
+      await effectiveSandbox(SANDBOX, {
+        env: { [IN_COMPANION_ENV]: "1" },
+        exists: () => false,
+        docker: docker(true),
+      }),
+    ).toEqual({
+      sandbox: { ...SANDBOX, sandbox: "host" },
+      note: "inside the companion container — [scan] sandbox defaults to host there",
+    });
+  });
+
+  it("no docker and a /workspace mount: the companion container too", async () => {
+    const r = await effectiveSandbox(SANDBOX, {
+      env: {},
+      exists: (p) => p === "/workspace",
+      docker: docker(false),
+    });
+    expect(r.sandbox.sandbox).toBe("host");
+    expect(r.note).toMatch(/companion container/);
+  });
+
+  it("docker reachable, or no /workspace: the configured default stands", async () => {
+    expect(
+      (await effectiveSandbox(SANDBOX, { env: {}, exists: () => true, docker: docker(true) }))
+        .sandbox.sandbox,
+    ).toBe("docker");
+    expect(
+      (await effectiveSandbox(SANDBOX, { env: {}, exists: () => false, docker: docker(false) }))
+        .sandbox.sandbox,
+    ).toBe("docker");
+  });
+
+  it("an explicit [scan] sandbox is never overridden", async () => {
+    const set = { ...SANDBOX, sandbox_set: true };
+    expect(
+      await effectiveSandbox(set, {
+        env: { [IN_COMPANION_ENV]: "1" },
+        exists: () => true,
+        docker: docker(false),
+      }),
+    ).toEqual({ sandbox: set });
+  });
+
+  it("the doctor says why", () => {
+    const text = renderDoctor({
+      ok: true,
+      sandbox: "host",
+      note: "inside the companion container — [scan] sandbox defaults to host there",
+      reviewed_repo: "/r",
+      checks: [],
+    });
+    expect(text.split("\n")[0]).toBe(
+      "Scan sandbox: host (inside the companion container — [scan] sandbox defaults to host there)",
+    );
+  });
+
+  it("the companion's pi carries the env that says so", () => {
+    const cfg = resolveCompanionPaths({ ...COMPANION_DEFAULTS, repo_dir: "/host/rs" }, "/host/rs");
+    const lc = new CompanionLifecycle(
+      cfg,
+      async () => OK,
+      { HOME: "/host/home" },
+      () => {},
+    );
+    expect(lc.piEnvPrefix()).toContain(`${IN_COMPANION_ENV}=1`);
+  });
+});
+
+describe("qcr scan rebuild", () => {
+  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+
+  it("builds [scan] image alone, stamped — no container is removed, stopped or started", async () => {
+    const { docker, calls } = fakeDocker([(a) => (a[0] === "build" ? OK : undefined)]);
+    const r = await buildScanImage({
+      docker,
+      image: "qcr-companion",
+      buildContext: "/host/rs",
+      exists: () => true,
+      stamp: () => "abcd",
+    });
+    expect(r).toEqual({ ok: true, image: "qcr-companion", stamp: "abcd" });
+    expect(calls).toEqual([
+      [
+        "build",
+        "-t",
+        "qcr-companion",
+        "-f",
+        "/host/rs/docker/companion/Dockerfile",
+        "--build-arg",
+        `COMPANION_UID=${uid}`,
+        "--build-arg",
+        "BUILD_SHA=abcd",
+        "/host/rs",
+      ],
+    ]);
+  });
+
+  it("refuses before docker when the app is not built", async () => {
+    const { docker, calls } = fakeDocker([]);
+    const r = await buildScanImage({
+      docker,
+      image: "img",
+      buildContext: "/host/rs",
+      exists: () => false,
+      stamp: () => "abcd",
+    });
+    expect(r).toMatchObject({ ok: false, errors: [expect.stringMatching(/npm run build/)] });
+    expect(calls).toEqual([]);
+  });
+
+  it("a failed build is a refusal with docker's reason", async () => {
+    const { docker } = fakeDocker([(a) => (a[0] === "build" ? fail("no space left") : undefined)]);
+    expect(
+      await buildScanImage({
+        docker,
+        image: "img",
+        buildContext: "/c",
+        exists: () => true,
+        stamp: () => "s",
+      }),
+    ).toEqual({ ok: false, errors: ["docker build img failed: no space left"] });
   });
 });

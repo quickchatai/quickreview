@@ -83,6 +83,7 @@ describe("parsing the new verbs", () => {
     expect(parseScanArgs(["units", "save"])).toEqual({ verb: "units-save" });
     expect(parseScanArgs(["login"])).toEqual({ verb: "login" });
     expect(parseScanArgs(["doctor"])).toEqual({ verb: "doctor" });
+    expect(parseScanArgs(["rebuild"])).toEqual({ verb: "rebuild" });
   });
 
   it("refuses adjust without a file, a bare `units`, and stray flags", () => {
@@ -182,7 +183,7 @@ describe("qcr scan doctor and login", () => {
     reviewed_repo: "/host/app",
     checks: [
       { check: "docker", ok: true, detail: "docker 27.1.0" },
-      { check: "image", ok: false, detail: "stamp differs", fix: "qcr companion rebuild" },
+      { check: "image", ok: false, detail: "stamp differs", fix: "qcr scan rebuild" },
     ],
   };
 
@@ -192,11 +193,33 @@ describe("qcr scan doctor and login", () => {
     expect(j.code).toBe(1);
     expect(j.json).toEqual(report);
     const t = await h.run(["doctor"]);
-    expect(t.text).toMatch(/✗ image — stamp differs\n {2}fix: qcr companion rebuild/);
+    expect(t.text).toMatch(/✗ image — stamp differs\n {2}fix: qcr scan rebuild/);
     const ok = harness({
       doctor: async () => ({ ...report, ok: true, checks: [report.checks[0]!] }),
     });
     expect((await ok.run(["doctor"])).code).toBe(0);
+  });
+
+  it("rebuild builds the scan image and says no container was touched", async () => {
+    const h = harness({
+      rebuild: async () => ({ ok: true, image: "qcr-companion", stamp: "abcd" }),
+    });
+    const t = await h.run(["rebuild"]);
+    expect(t.code).toBe(0);
+    expect(t.text).toMatch(/^Scan image qcr-companion built \(stamp abcd\)/);
+    expect(t.text).toMatch(/no container was stopped or replaced/);
+    expect((await h.run(["rebuild"], true)).json).toEqual({
+      ok: true,
+      image: "qcr-companion",
+      stamp: "abcd",
+    });
+    const no = harness({
+      rebuild: async () => ({ ok: false, errors: ["docker build x failed: y"] }),
+    });
+    expect(await no.run(["rebuild"], true)).toMatchObject({
+      code: 1,
+      json: { ok: false, errors: ["docker build x failed: y"] },
+    });
   });
 
   it("login hands the terminal over and returns its exit code", async () => {
