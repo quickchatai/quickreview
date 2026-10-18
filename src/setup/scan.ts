@@ -23,6 +23,7 @@
 // unreadable then, readable now) or cut short between ranges. Those are
 // owed, not skipped: a delta that left them out would leave a file no
 // lens ever read out of every delta for as long as it stays unchanged.
+import { planKey } from "../plankey.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { globMatcher } from "../glob.js";
@@ -441,11 +442,8 @@ export async function drainLanes(
   if (failed !== null) throw (failed as { err: unknown }).err;
 }
 
-/** What a preview's key covers: change any of it and a start quoting the old
- * key is refused — the operator always saw the price of what runs. */
-export function planKey(parts: unknown): string {
-  return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
-}
+/** What a preview's key covers (src/plankey.ts, shared with `qcr review`). */
+export { planKey };
 
 // ---- the prompts -----------------------------------------------------------------
 

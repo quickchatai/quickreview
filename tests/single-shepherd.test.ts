@@ -176,8 +176,12 @@ describe("daemon topology", () => {
     // one-shot `-p --no-session --no-extensions` probe), or — the doctor's
     // probe with `[scan] sandbox = "host"` — the same one-shot leaf on the
     // operator's machine. No daemon module imports it (pinned below).
+    // reviewcli.ts is `qcr review`: the operator's own terminal, the shared
+    // one-shot runner (oneshot.ts) with a pi binary override. Only cli.ts
+    // imports it (dynamically); no daemon module does.
     const allowedPaths = [
       "/src/oneshot.ts",
+      "/src/reviewcli.ts",
       "/src/bench/runner.ts",
       "/src/setup/caserunner.ts",
       "/src/scanbox.ts",

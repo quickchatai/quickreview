@@ -58,7 +58,7 @@ import {
   type ModelErrors,
   type Stages,
 } from "./bench/aacr.js";
-import { caseCostUsd } from "./bench/cost.js";
+import { caseCostUsd, eventLineCostUsd } from "./bench/cost.js";
 import { GIT_ISOLATION_ENV } from "./bench/exec.js";
 import { POLICED_ORIGINALS, type BenchPostingReport } from "./bench/benchposting.js";
 import { apiKeyEnv } from "./bench/auth.js";
@@ -116,6 +116,10 @@ export interface PiRun {
   code: number | null;
   timedOut: boolean;
   streamError: string | null;
+  /** pi's own price for what this process spent (every lens child included). */
+  spentUsd?: number;
+  /** The process was killed because its spend reached `capUsd`. */
+  capped?: boolean;
 }
 
 /** The bench's ONE pi spawn (tests/single-shepherd.test.ts S2): the review
@@ -129,6 +133,9 @@ export function runPi(
   timeoutMs: number,
   piBin: string,
   stdinText?: string,
+  /** Hard stop: kill the process group once pi's own price for the run reaches
+   * this many dollars. Omitted: no cap. */
+  capUsd?: number,
 ): Promise<PiRun> {
   return new Promise((resolve) => {
     const events = createWriteStream(eventsPath, { flags: "a" });
@@ -142,6 +149,8 @@ export function runPi(
       detached: true,
     });
     let timedOut = false;
+    let capped = false;
+    let spent = 0;
     let streamError: string | null = null;
     const kill = (sig: NodeJS.Signals): void => {
       try {
@@ -171,6 +180,14 @@ export function runPi(
     // from `message_end` and `tool_execution_end`.
     const lines = createInterface({ input: child.stdout! });
     lines.on("line", (line) => {
+      if (capUsd !== undefined && !capped) {
+        spent += eventLineCostUsd(line);
+        if (spent >= capUsd) {
+          capped = true;
+          kill("SIGTERM");
+          setTimeout(() => kill("SIGKILL"), 5_000).unref();
+        }
+      }
       if (
         line.startsWith('{"type":"tool_execution_update"') ||
         line.startsWith('{"type":"message_update"')
@@ -194,7 +211,7 @@ export function runPi(
       clearTimeout(timer);
       let open = 2;
       const settled = (): void => {
-        if (--open === 0) resolve({ code, timedOut, streamError });
+        if (--open === 0) resolve({ code, timedOut, streamError, spentUsd: spent, capped });
       };
       for (const s of [events, errs]) {
         if (s.closed) settled();
@@ -461,6 +478,9 @@ export interface OneShotInput {
   /** When the caller's clock started, so the continuation's budget counts
    * work done before the runner (default: now). */
   startedAt?: number;
+  /** Hard stop in dollars: the session (lens children with it) is killed once
+   * pi's own price for the round reaches this. The result says `capped`. */
+  capUsd?: number;
   log?: (line: string) => void;
 }
 
@@ -470,6 +490,8 @@ export interface OneShotResult {
   piRun: PiRun;
   /** The one `--continue` ran. */
   continued: boolean;
+  /** The round was stopped at `capUsd` before it finished. */
+  capped: boolean;
   /** Why the round could not be read: no session to continue, or the output
    * stream failed. */
   error?: string;
@@ -621,12 +643,14 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
       i.timeoutMs,
       piBin,
       prompts.order,
+      i.capUsd,
     );
     const result: OneShotResult = {
       prompts,
       plannedLenses: prompts.plannedLenses,
       piRun: r,
       continued: false,
+      capped: r.capped === true,
       warnings: [],
       costUsd: null,
       review: null,
@@ -653,7 +677,7 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
       result.error = `pi exited ${String(r.code)} before any assistant message — nothing to continue`;
     }
     const stoppedShort = !existsSync(outcomePath) || broken.length > 0 || missing.length > 0;
-    if (!r.timedOut && !r.streamError && stoppedShort && resumable) {
+    if (!r.timedOut && !r.streamError && !result.capped && stoppedShort && resumable) {
       const left = i.timeoutMs - (Date.now() - started);
       if (left > 120_000) {
         result.continued = true;
@@ -681,8 +705,11 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
           stderr,
           left,
           piBin,
+          undefined,
+          i.capUsd === undefined ? undefined : Math.max(0, i.capUsd - (r.spentUsd ?? 0)),
         );
         result.piRun = r;
+        result.capped = r.capped === true;
       }
     }
     result.warnings = [
