@@ -4016,6 +4016,37 @@ export class StateStore {
     ).m;
   }
 
+  /** Keep imported history chronological across incremental snapshots. Native
+   * rounds retain their numbers; historical comment attribution follows its round. */
+  resequenceBackfilledRounds(pr: number): void {
+    this.db.transaction(() => {
+      const rows = this.db
+        .prepare(
+          "SELECT id, round_no FROM rounds WHERE pr=? AND backfilled=1 ORDER BY finished_at, gh_review_id, id",
+        )
+        .all(pr) as Array<{ id: number; round_no: number }>;
+      const native = this.db
+        .prepare("SELECT MIN(round_no) AS n FROM rounds WHERE pr=? AND backfilled=0")
+        .get(pr) as { n: number | null };
+      const base = native.n === null ? 1 : native.n - rows.length;
+      // Snapshot attribution first so overlapping number ranges cannot remap
+      // a comment twice. Imports produce no findings/session rows.
+      const numbers = new Map(rows.map((row, i) => [row.round_no, base + i]));
+      const comments = this.db
+        .prepare("SELECT comment_id, kind, round_no FROM bot_comments WHERE pr=?")
+        .all(pr) as Array<{ comment_id: number; kind: string; round_no: number | null }>;
+      const commentUpdate = this.db.prepare(
+        "UPDATE bot_comments SET round_no=? WHERE comment_id=? AND kind=?",
+      );
+      for (const comment of comments) {
+        const number = comment.round_no === null ? undefined : numbers.get(comment.round_no);
+        if (number !== undefined) commentUpdate.run(number, comment.comment_id, comment.kind);
+      }
+      const update = this.db.prepare("UPDATE rounds SET round_no=? WHERE id=? AND backfilled=1");
+      rows.forEach((row, i) => update.run(base + i, row.id));
+    })();
+  }
+
   /** Insert one imported historical round. Returns false when the review was
    * already imported (INSERT ... WHERE NOT EXISTS on gh_review_id). */
   insertBackfilledRound(row: {

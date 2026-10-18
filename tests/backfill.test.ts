@@ -388,6 +388,68 @@ describe("runBackfill", () => {
     s.close();
   });
 
+  it("keeps incremental historical imports chronological without moving native rounds", async () => {
+    for (const native of [false, true]) {
+      const s = store();
+      if (native)
+        s.db
+          .prepare(
+            "INSERT INTO rounds (pr,round_no,round_type,lenses,started_at,deadline_at,status) VALUES (5000,7,'first','x','2026-08-13T20:45:29Z','2026-08-13T22:00:00Z','running')",
+          )
+          .run();
+      const reviews = PR_5000.reviews!;
+      await runBackfill(s, harness([{ ...PR_5000, reviews: [reviews[0]!] }]).adapter, cfg, {});
+      const oldRound = backfilledRows(s)[0]!;
+      s.registerBotComment(987, 5000, "review_comment", oldRound.round_no);
+      const stats = await runBackfill(s, harness([PR_5000]).adapter, cfg, {});
+      expect(stats.reviews_imported).toBe(1);
+      const rows = backfilledRows(s);
+      expect(rows.map((r) => r.gh_review_id)).toEqual([111, 222]);
+      expect(rows.map((r) => r.round_no)).toEqual(native ? [5, 6] : [1, 2]);
+      expect(
+        (
+          s.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id=987").get() as {
+            round_no: number;
+          }
+        ).round_no,
+      ).toBe(rows[0]!.round_no);
+      const snapshot = backfilledRows(s);
+      const earlier = { databaseId: 99, state: "COMMENTED", submittedAt: "2026-01-01T00:00:00Z" };
+      const expanded = harness([{ ...PR_5000, reviews: [earlier, ...reviews] }]).adapter;
+      const preview: string[] = [];
+      await runBackfill(s, expanded, cfg, { dryRun: true, log: (line) => preview.push(line) });
+      expect(preview.join("\n")).toContain("chronological round number assigned on import");
+      expect(backfilledRows(s)).toEqual(snapshot);
+      await runBackfill(s, expanded, cfg, {});
+      const reordered = backfilledRows(s);
+      expect(reordered.map((r) => [r.round_no, r.gh_review_id])).toEqual(
+        native
+          ? [
+              [4, 99],
+              [5, 111],
+              [6, 222],
+            ]
+          : [
+              [1, 99],
+              [2, 111],
+              [3, 222],
+            ],
+      );
+      expect(
+        (
+          s.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id=987").get() as {
+            round_no: number;
+          }
+        ).round_no,
+      ).toBe(reordered[1]!.round_no);
+      if (native)
+        expect(s.db.prepare("SELECT round_no FROM rounds WHERE backfilled=0").get()).toEqual({
+          round_no: 7,
+        });
+      s.close();
+    }
+  });
+
   it("an import cut short inside a PR writes none of its rounds — the retry numbers them oldest first", async () => {
     const { adapter } = harness([PR_5000]);
     const s = store();
@@ -437,7 +499,7 @@ describe("runBackfill", () => {
     expect(backfilledRows(s)).toEqual([]);
     expect(s.allBackfillPrMeta()).toEqual([]);
     expect(readdirSync(dryrunDir)).toEqual([]); // no gate traffic either
-    expect(lines.join("\n")).toContain("would import #5000 round 1 REQUEST_CHANGES");
+    expect(lines.join("\n")).toContain("would import #5000 historical REQUEST_CHANGES");
     s.close();
   });
 
