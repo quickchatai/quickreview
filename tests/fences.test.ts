@@ -368,7 +368,7 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    *
    * MUTATION: change `ARG PI_VERSION` in docker/companion/Dockerfile — this fails.
    */
-  it.each(["docker/companion/Dockerfile", "bench/aacr/Dockerfile"])(
+  it.each(["docker/Dockerfile", "docker/companion/Dockerfile", "bench/aacr/Dockerfile"])(
     "%s installs the same pi version (where the file exists)",
     (rel) => {
       if (!has(rel)) return;

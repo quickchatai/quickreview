@@ -73,6 +73,30 @@
       ],
       "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
     },
+    "release-image": {
+      "cwd": "/opt/qcr",
+      "agentDir": "/home/qcr/.pi/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/qcr/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "The reviewer stub baked at the image's app dir (docker/Dockerfile), root-owned and read-only; the agentDir sits under the fixed HOME and holds no context file. A route that gives pi its own cwd (the clone route's out dir) gets its own copy of the stub."
+    },
+    "release-image-lens": {
+      "cwd": "/opt/qcr",
+      "agentDir": "/home/qcr/.pi/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/qcr/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+    },
     "bench-judge": {
       "cwd": "/case-tree",
       "agentDir": "/tmp/pi-agent",
