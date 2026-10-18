@@ -701,13 +701,7 @@ export class EvidenceCopier {
       this.watchResumedMs = nowMs;
     }
     const byNumber = [...snapshot.prs].sort((a, b) => a.number - b.number);
-    // A PR with no rounds costs nothing: retired without a `why`, whatever
-    // the pace says. The snapshot's count leaves `expired` rounds out, so a
-    // PR last reconciled WITH rounds that now counts none had them expire —
-    // finished rounds `why` still lists, and copies — and is asked once.
-    for (const pr of byNumber)
-      if ((pr.rounds ?? 0) === 0 && !this.hadRounds(pr.number))
-        this.retire(pr.number, prSignature(pr));
+    // Zero excludes expired rounds, so every new signature needs one why read.
     const pending = byNumber.filter(
       (pr) => this.reconciled.get(pr.number)?.sig !== prSignature(pr),
     );
@@ -757,11 +751,6 @@ export class EvidenceCopier {
   }
 
   /** Was this PR last reconciled at a signature that counted rounds? */
-  private hadRounds(pr: number): boolean {
-    const sig = this.reconciled.get(pr)?.sig;
-    return sig !== undefined && Number.parseInt(sig, 10) > 0;
-  }
-
   /** Record a clean reconcile, with whether the store now holds anything
    * for the PR (one stat, only when the signature moved). */
   private retire(pr: number, sig: string): void {

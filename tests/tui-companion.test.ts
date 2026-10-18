@@ -1477,3 +1477,29 @@ describe("the config mirror", () => {
     expect(typeof out === "object" && "failed" in out).toBe(true);
   });
 });
+
+it("refuses removal when inspect cannot establish container absence", async () => {
+  const { lc, calls } = lifecycle([
+    (argv) => (argv[0] === "inspect" ? { ...FAIL, stderr: "cannot connect to Docker" } : undefined),
+  ]);
+  await expect(lc.removeContainer()).rejects.toThrow(/unknown|inspect|connect/i);
+  expect(calls.some((argv) => argv[0] === "rm")).toBe(false);
+});
+
+it("mounts supported profiles beside an explicit config override", () => {
+  const config = "/custom/config.toml";
+  const fs: CompanionFs = {
+    exists: (p) => [config, "/custom/profiles"].includes(p),
+    read: () => undefined,
+    mode: () => undefined,
+  };
+  const lc = new CompanionLifecycle(
+    CFG,
+    async () => OK,
+    { ...HOST_ENV, QCR_CONFIG: config },
+    noDirs,
+    fs,
+  );
+  expect(lc.expectedMounts().get(`${CONTAINER.configLive}/profiles`)).toBe("/custom/profiles");
+  expect(lc.expectedMounts().get(CONTAINER.profiles)).toBe(HOMES.profiles);
+});

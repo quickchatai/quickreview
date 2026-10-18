@@ -98,8 +98,12 @@ export class Poller {
     );
   }
 
+  private generation = 0;
+
   async tick(): Promise<void> {
+    const generation = ++this.generation;
     const res = await this.ssh(this.cfg.ssh_host, statusArgv(this.cfg));
+    if (generation !== this.generation) return;
     const snapshot = res.ok ? parseSnapshot(res.stdout) : undefined;
     if (snapshot) {
       this.state.snapshot = snapshot;

@@ -1086,3 +1086,10 @@ describe("metrics tab wiring", () => {
     await run;
   });
 });
+
+it("clamps persisted metrics scroll to the last visible page", () => {
+  const st = mkView({ scroll: 100000 });
+  const frame = renderMetrics(st, 160, 30);
+  expect(st.scroll).toBeLessThan(100000);
+  expect(frame.lines.slice(3, 15).map(stripAnsi).join("\n")).toMatch(/[a-z]/i);
+});

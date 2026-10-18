@@ -162,8 +162,9 @@ export function renderDigestTab(
   else if (st.content === undefined) body.push(`${MUTED}loading ${file}…${RESET}`);
   else for (const line of st.content.split("\n")) body.push(styleDigestLine(line));
 
+  const from = Math.max(0, Math.min(st.scroll, body.length - bodyRows));
   for (let r = 0; r < bodyRows; r++) {
-    frame.boxRow(1 + r, [{ text: ` ${body[st.scroll + r] ?? ""}`, width: cols - 2 }]);
+    frame.boxRow(1 + r, [{ text: ` ${body[from + r] ?? ""}`, width: cols - 2 }]);
   }
   paintCmdBar(frame, "digest", cols, rows, live.bar);
   frame.set(rows - 1, rule(cols, "└", "┘", []));

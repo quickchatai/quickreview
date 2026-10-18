@@ -183,12 +183,20 @@ export class GithubIssueSink implements IssueSink {
       if (!probe.ok) continue;
       const body = probe.stdout.trim();
       if (body === "pending" || body === "") continue;
-      let result: { ok?: unknown; reason?: unknown; issue?: unknown };
+      let result: { ok?: unknown; reason?: unknown; issue?: unknown; duplicate_of?: unknown };
       try {
         result = JSON.parse(body) as typeof result;
       } catch {
-        return { ok: false, reason: "unreadable daemon result" };
+        // A concurrent reader can see the daemon still writing its receipt.
+        continue;
       }
+      if (
+        result.ok !== true &&
+        typeof result.duplicate_of === "number" &&
+        Number.isInteger(result.duplicate_of) &&
+        result.duplicate_of > 0
+      )
+        return { ok: true, id: `#${result.duplicate_of}`, stamp: `#${result.duplicate_of}` };
       if (result.ok !== true)
         return { ok: false, reason: resultReason(result.reason, "refused, no reason given") };
       const issue = typeof result.issue === "number" && result.issue > 0 ? result.issue : null;

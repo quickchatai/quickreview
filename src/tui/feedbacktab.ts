@@ -345,6 +345,7 @@ export interface FeedbackTabState {
   sel: number;
   selKey?: string;
   propSel: number;
+  propSlug?: string;
   changeSel: number;
   showArchived: boolean;
   /** The sha `R` armed; `y` runs it, anything else cancels. */
@@ -843,14 +844,20 @@ export function installFeedbackTab(
     st.sel = moveSelection(i, 0, list.length);
     st.selKey = list[st.sel] ? entryKey(list[st.sel]!) : undefined;
   };
+  const selectProposal = (i: number): void => {
+    st.propSel = moveSelection(i, 0, store.proposals.length);
+    st.propSlug = store.proposals[st.propSel]?.slug;
+  };
   store.onLoaded((part) => {
     if (part === "memory") {
       const list = inbox();
       const rebound = st.selKey ? list.findIndex((e) => entryKey(e) === st.selKey) : -1;
       selectSignal(rebound >= 0 ? rebound : st.sel);
     }
-    if (part === "proposals")
-      st.propSel = Math.min(st.propSel, Math.max(0, store.proposals.length - 1));
+    if (part === "proposals") {
+      const rebound = st.propSlug ? store.proposals.findIndex((p) => p.slug === st.propSlug) : -1;
+      selectProposal(rebound >= 0 ? rebound : st.propSel);
+    }
   });
 
   const reloadChanges = (): void => {
@@ -911,7 +918,7 @@ export function installFeedbackTab(
       // session behind it, and again on `r`.
       if (!scannedOnce) {
         scannedOnce = true;
-        reloadChanges();
+        setImmediate(reloadChanges);
       }
       const frame = renderFeedbackTab(
         store,
@@ -950,12 +957,12 @@ export function installFeedbackTab(
           break;
         case "prop":
           st.focus = "proposed";
-          st.propSel = action.i;
+          selectProposal(action.i);
           break;
         case "prop-accept":
         case "prop-reject":
           st.focus = "proposed";
-          st.propSel = action.i;
+          selectProposal(action.i);
           theApp.pressKey(action.t === "prop-accept" ? "A" : "x");
           return true;
         case "change":
@@ -992,8 +999,7 @@ export function installFeedbackTab(
         case "up": {
           const delta = key.kind === "down" ? 1 : -1;
           if (st.focus === "inbox") selectSignal(st.sel + delta);
-          else if (st.focus === "proposed")
-            st.propSel = moveSelection(st.propSel, delta, store.proposals.length);
+          else if (st.focus === "proposed") selectProposal(st.propSel + delta);
           else st.changeSel = moveSelection(st.changeSel, delta, entries.length);
           theApp.repaint();
           return true;
@@ -1027,7 +1033,12 @@ export function installFeedbackTab(
               if (st.focus !== "proposed" || !proposal) return false;
               store.status = `accepting '${proposal.slug}'…`;
               theApp.repaint();
-              store.verb(store.accept(proposal.slug));
+              store.verb(
+                store.accept(proposal.slug).then((result) => {
+                  if (result.ok) reloadChanges();
+                  return result;
+                }),
+              );
               return true;
             case "x":
               if (st.focus !== "proposed" || !proposal) return false;

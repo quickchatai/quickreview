@@ -272,6 +272,29 @@ describe("ONE issue-tracker ticket per incident older than 2 h", () => {
     memo,
   });
 
+  it("describes sessions-only failure without claiming daemon learning is down", () => {
+    const paths = tracker();
+    const m = block();
+    m.credentials.sessions = m.credentials.daemon;
+    m.credentials.daemon = {
+      result: "ok",
+      status: 200,
+      code: "",
+      ms: 3,
+      at: SINCE,
+      source: "probe",
+    };
+    const out = maybeFileMemoryIncident(paths, m, opts());
+    if (out.kind !== "filed") throw new Error("not filed");
+    const body = readFileSync(
+      join(paths.root, "efforts", paths.effort, "tickets", out.file),
+      "utf8",
+    );
+    expect(body).not.toContain("Every round runs memory-less");
+    expect(body).toContain("daemon");
+    expect(body).toContain("sessions");
+  });
+
   it("files nothing before the incident is 2 h old", () => {
     const paths = tracker();
     const early = new Date(Date.parse(SINCE) + 2 * HOURS - 1);

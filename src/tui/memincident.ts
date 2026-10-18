@@ -146,8 +146,13 @@ Closed: —
 ## Question
 
 Reviewer memory (OpenViking) has been unusable since ${since} — ${age} when
-this was filed. Every round runs memory-less and nothing the
-reviewer learns is written until it is fixed. Auto-filed by the TUI from the
+this was filed. ${
+    m.credentials.daemon?.result === "ok"
+      ? "The daemon key works: daemon memory reads and learning writes remain available. Review sessions cannot use memory until their credentials recover."
+      : m.credentials.sessions?.result === "ok"
+        ? "The daemon cannot use memory for its reads and learning writes. Review sessions still have a working memory credential."
+        : "Every round runs memory-less and nothing the reviewer learns is written until it is fixed."
+  } Auto-filed by the TUI from the
 daemon's status.json \`memory\` block — not from memory, which is the thing
 that is down. Diagnose and fix the cause, then resolve with a note; the
 board banner clears on its own once memory answers again.

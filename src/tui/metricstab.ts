@@ -906,6 +906,7 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
             ? `${FG.dim}metrics unavailable: ${drill.error}${RESET}`
             : `${FG.dim}loading timeline for #${drill.pr}…${RESET}`,
         ];
+    view.scroll = Math.max(0, Math.min(view.scroll, lines.length - (rows - 2 - barRows)));
     for (let r = 0; r < rows - 2 - barRows; r++)
       frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
     paintCmdBar(frame, "metrics", cols, rows, live.bar);
@@ -960,6 +961,10 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
     now,
   });
   const columns = packColumns(cards, widths);
+  view.scroll = Math.max(
+    0,
+    Math.min(view.scroll, Math.max(0, ...columns.map((c) => c.length)) - bodyRows),
+  );
   for (let r = 0; r < bodyRows; r++) {
     frame.boxRow(
       3 + r,

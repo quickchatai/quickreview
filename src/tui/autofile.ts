@@ -12,7 +12,7 @@
 // tag write is a store mutation and can be refused (stale hash, store down),
 // and a refused stamp must not produce a duplicate ticket on the next tick.
 // Both keys are stable across pin and across the stamp itself — `memoryKey`
-// normalizes exactly those two mutations away.
+// normalizes those mutations and the pin provenance header away.
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -33,15 +33,15 @@ export const MEMORY_KEY_LINE = "Memory-key:";
 /** The event tag that records where a defect entry was filed. */
 export const FILED_TAG = "filed";
 
-/** Dedup key = hash of the entry's TEXT with the two tokens the system itself
- * writes removed (`#pinned`, and the header's `filed=…` — only the header's:
+/** Dedup key = hash of the entry's TEXT with the tokens the system itself
+ * writes removed (`#pinned`, and the header's `from=…` and `filed=…` — only the header's:
  * a `filed=` word in the prose is the reporter's, and part of the defect),
  * not its (ts,id,block) address: retiring an entry shifts indices, pinning
  * rewrites the text, and the filer's own stamp rewrites it again — any of
  * those would make an already-filed defect look new and file a duplicate
  * ticket. Same words = same defect. */
 export function memoryKey(e: MemoryEntry): string {
-  const normalized = withoutHeaderTag(e.text, FILED_TAG)
+  const normalized = withoutHeaderTag(withoutHeaderTag(e.text, FILED_TAG), "from")
     .replace(/(^|\s)#pinned(?=\s|$)/g, "$1")
     .replace(/\s+/g, " ")
     .trim();

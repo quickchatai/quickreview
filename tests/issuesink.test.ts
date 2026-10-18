@@ -306,3 +306,12 @@ describe("buildIssueSink / ticketProjection", () => {
     expect(buildIssueSink(cfg, ssh).kind).toBe("github");
   });
 });
+
+it("recovers a refused filing stamp from the daemon's duplicate issue receipt", async () => {
+  const { ssh } = runner([JSON.stringify({ ok: false, reason: "duplicate", duplicate_of: 42 })]);
+  const store = recordingStore();
+  const report = await githubSink(ssh, store).file([entry()], NOW.toISOString());
+  expect(report.filed).toHaveLength(1);
+  expect(store.ops).toHaveLength(1);
+  expect(store.ops[0]).toMatchObject({ op: "edit", text: expect.stringContaining("filed=#42") });
+});

@@ -9,7 +9,7 @@
 // session is idle), never read as lost.
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
-import type { SshRunner } from "./remote.js";
+import { shellQuote, type SshRunner } from "./remote.js";
 import { resultReason } from "./unwedge.js";
 
 /** The only session names the TUI will ever build a remote path from. */
@@ -38,7 +38,7 @@ export function injectWriteArgv(cfg: TuiConfig, session: string, name: string): 
     cfg.container,
     "sh",
     "-c",
-    `mkdir -p '${dir}' && cat > '${dir}/.${name}.tmp' && mv '${dir}/.${name}.tmp' '${dir}/${name}'`,
+    `mkdir -p ${shellQuote(dir)} && cat > ${shellQuote(`${dir}/.${name}.tmp`)} && mv ${shellQuote(`${dir}/.${name}.tmp`)} ${shellQuote(`${dir}/${name}`)}`,
   ];
 }
 
@@ -52,13 +52,14 @@ export function injectProbeArgv(cfg: TuiConfig, session: string, name: string): 
     cfg.container,
     "sh",
     "-c",
-    `if [ -f '${dir}/.done/${name}' ]; then echo consumed; elif [ -f '${dir}/${name}' ]; then echo pending; else echo missing; fi`,
+    `if [ -f ${shellQuote(`${dir}/.done/${name}`)} ]; then echo consumed; elif [ -f ${shellQuote(`${dir}/${name}`)} ]; then echo pending; else echo missing; fi`,
   ];
 }
 
 /**
  * `undelivered` is a definite non-delivery (bad session name, the write
- * failed). `queued`: the file was still pending at the timeout. `unconfirmed`:
+ * failed before publication). A lost transport acknowledgement is probed,
+ * never taken as proof of non-delivery. `queued`: the file was still pending at the timeout. `unconfirmed`:
  * at the timeout no probe saw the file pending or consumed.
  */
 export type DeliveryState = "pending" | "delivered" | "queued" | "unconfirmed" | "undelivered";
@@ -96,7 +97,7 @@ export class InjectSender implements MessageSender {
     const write = await this.ssh(this.cfg.ssh_host, injectWriteArgv(this.cfg, session, name), {
       stdin: text,
     });
-    if (!write.ok) {
+    if (!write.ok && write.code !== null && write.code !== 255) {
       const why = resultReason(write.stderr, `exit ${write.code}`).slice(0, 160);
       onState("undelivered", `✖ msg ${session} undelivered (write failed: ${why})`);
       return;

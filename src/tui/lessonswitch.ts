@@ -91,7 +91,8 @@ export class LessonSwitchSender {
       try {
         v = JSON.parse(body) as Record<string, unknown>;
       } catch {
-        return { ok: false, reason: "unreadable daemon result" };
+        // A concurrent reader can see the daemon still writing its receipt.
+        continue;
       }
       const issuer =
         v["issuer"] === "operator" || v["issuer"] === "session" ? v["issuer"] : undefined;

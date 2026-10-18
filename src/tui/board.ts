@@ -670,11 +670,11 @@ function currentProgressLines(
     if (!agent) return `  ${FG.dim}○ ${name} · pending${tier}${RESET}`;
     if (agent.status === "running") {
       const tool = agent.current_tool ? ` · ${oneLine(agent.current_tool)}` : "";
-      return `  ${FG.accent}⟳ ${name} · running ${durationLabel(agent.duration_ms)}${tool}${RESET}`;
+      return `  ${FG.accent}⟳ ${name} · running ${durationLabel(agent.duration_ms)}${tool}${tier}${RESET}`;
     }
     if (agent.status === "failed") {
       const error = agent.error ? ` · ${oneLine(agent.error)}` : "";
-      return `  ${FG.anomaly}✗ ${name} · failed after ${durationLabel(agent.duration_ms)}${error}${RESET}`;
+      return `  ${FG.anomaly}✗ ${name} · failed after ${durationLabel(agent.duration_ms)}${error}${tier}${RESET}`;
     }
     return `  ${FG.approve}✓ ${name} · done in ${durationLabel(agent.duration_ms)} · ${agent.tool_count} tools${tier}${RESET}`;
   };
@@ -1268,7 +1268,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     inputBoxLines(view.inputBox, cols - 2).forEach((text, i) =>
       frame.boxRow(piTop + 1 + i, [{ text, width: cols - 2 }]),
     );
-    for (let i = 4; i <= piLines; i++) frame.boxRow(piTop + i, [{ text: "", width: cols - 2 }]);
+    for (let i = 4; i < pRows; i++) frame.boxRow(piTop + i, [{ text: "", width: cols - 2 }]);
   } else if (pRows > 0) {
     frame.boxRow(piTop + 1, [
       {

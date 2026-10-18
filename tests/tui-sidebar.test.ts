@@ -501,3 +501,30 @@ describe("CompanionSidebar", () => {
     sb.stop();
   });
 });
+
+it("cancels already queued Enter after a failed character, then admits fresh input", async () => {
+  let release!: () => void;
+  const sent: string[][] = [];
+  let first = true;
+  const runner: DockerRunner = async (argv) => {
+    if (argv[3] !== "send-keys") return OK;
+    sent.push(argv.slice(6));
+    if (first) {
+      first = false;
+      await new Promise<void>((r) => (release = r));
+      return FAIL;
+    }
+    return OK;
+  };
+  const sb = new CompanionSidebar(CFG, runner);
+  const a = sb.sendKeys(Buffer.from("a"));
+  const enter = sb.sendKeys(Buffer.from("\r"));
+  await Promise.resolve();
+  release();
+  await expect(a).rejects.toThrow();
+  await expect(enter).rejects.toThrow();
+  expect(sent).toEqual([["-l", "--", "a"]]);
+  await sb.sendKeys(Buffer.from("b"));
+  expect(sent.at(-1)).toEqual(["-l", "--", "b"]);
+  sb.stop();
+});

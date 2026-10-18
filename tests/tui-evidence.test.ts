@@ -454,10 +454,20 @@ describe("EvidenceCopier", () => {
     expect(store.has(5306, 1)).toBe(true);
   });
 
-  it("a PR with no rounds costs nothing at all", async () => {
+  it("copies expired-only history on the first sweep of a fresh copier", async () => {
+    const { ssh } = fakeVm([round(1, "expired")]);
+    await copier(ssh).sweep(snapshot([{ number: 5306, rounds: 0 }]));
+    expect(store.has(5306, 1)).toBe(true);
+  });
+
+  it("confirms a zero-count PR once and caches the empty history", async () => {
     const { ssh, scripts } = fakeVm([]);
-    await copier(ssh).sweep(snapshot([{ number: 1, rounds: 0 }]));
-    expect(scripts).toEqual([]);
+    const c = copier(ssh);
+    const snap = snapshot([{ number: 1, rounds: 0 }]);
+    await c.sweep(snap);
+    expect(scripts).toHaveLength(1);
+    await c.sweep(snap);
+    expect(scripts).toHaveLength(1);
   });
 
   it("re-reads a PR only when its snapshot signature moves", () => {
@@ -599,7 +609,7 @@ describe("the sweep's progress survives a re-exec", () => {
     // Each entry says whether the store held the PR's evidence once it was
     // reconciled — the zero-round PR never had any.
     expect(record.reconciled["1"]).toEqual({ sig: prSignature(THREE.prs[0]!), stored: true });
-    expect(record.reconciled["4"]).toEqual({ sig: prSignature(THREE.prs[3]!), stored: false });
+    expect(record.reconciled["4"]).toEqual({ sig: prSignature(THREE.prs[3]!), stored: true });
     expect(readdirSync(join(dir, "state")).filter((f) => f.includes(".tmp"))).toEqual([]);
 
     // The re-exec: a NEW copier over the same record re-polls nothing at all.
@@ -638,7 +648,7 @@ describe("the sweep's progress survives a re-exec", () => {
         .filter(isWhy)
         .map(whyPr)
         .sort((a, b) => a - b),
-    ).toEqual([1, 2, 3]);
+    ).toEqual([1, 2, 3, 4]);
     expect(scripts.slice(before).some((s) => s.includes("head -c"))).toBe(false);
     // …the operator is told once, and the record is replaced by a readable one.
     expect(notices.filter((n) => n.includes("unreadable"))).toEqual([

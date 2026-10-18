@@ -512,14 +512,15 @@ export class LearningStore {
    * one shared checkout, and two interleaved would commit each other's
    * staged files. A second request while one runs is refused, not queued —
    * the operator presses A again once the first has answered. Holds the
-   * slug being accepted, so a rejection of that same proposal waits too. */
+   * slug being accepted; opposite actions on that slug are refused until it answers. */
   private accepting: string | undefined;
+  private readonly rejecting = new Set<string>();
 
   accept(slug: string): Promise<{ ok: boolean; message: string }> {
-    if (this.accepting !== undefined)
+    if (this.accepting !== undefined || this.rejecting.has(slug))
       return Promise.resolve({
         ok: false,
-        message: `an accept is already running — '${slug}' not started; press A again once it answers`,
+        message: `a proposal action is already running — '${slug}' not started; press A again once it answers`,
       });
     this.accepting = slug;
     // Async so a synchronous throw still reaches `.finally` — a latch that
@@ -547,14 +548,21 @@ export class LearningStore {
   }
 
   async reject(slug: string, reason: string): Promise<{ ok: boolean; message: string }> {
-    if (this.deps.reject) return this.deps.reject(this.app, slug, reason);
-    // An accept of this proposal already holds its patch and is committing
-    // it: a rejection now would record a verdict the commit contradicts.
-    if (this.accepting === slug)
+    if (this.accepting === slug || this.rejecting.has(slug))
       return {
         ok: false,
-        message: `'${slug}' is being accepted — not rejected; press x again once the accept answers`,
+        message: `'${slug}' is being accepted or rejected — try again once it answers`,
       };
+    this.rejecting.add(slug);
+    try {
+      return await this.rejectOne(slug, reason);
+    } finally {
+      this.rejecting.delete(slug);
+    }
+  }
+
+  private async rejectOne(slug: string, reason: string): Promise<{ ok: boolean; message: string }> {
+    if (this.deps.reject) return this.deps.reject(this.app, slug, reason);
     // The sweep's never-re-propose contract rides this memory entry, so it
     // is written first: the proposal is removed only once the rejection is
     // on record, and a refused record leaves it in place to reject again.

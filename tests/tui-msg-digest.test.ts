@@ -65,9 +65,9 @@ describe("quick-message inject writes", () => {
     const argv = injectWriteArgv(TUI_DEFAULTS, "pr-5012", "f.md");
     expect(argv.slice(0, 5)).toEqual(["sudo", "docker", "exec", "-i", "quickreview-sandbox"]);
     const script = argv[argv.length - 1]!;
-    expect(script).toContain("cat > '/opt/quickreview/sandbox/inject/pr-5012/.f.md.tmp'");
+    expect(script).toContain("cat > /opt/quickreview/sandbox/inject/pr-5012/.f.md.tmp");
     expect(script).toContain(
-      "mv '/opt/quickreview/sandbox/inject/pr-5012/.f.md.tmp' '/opt/quickreview/sandbox/inject/pr-5012/f.md'",
+      "mv /opt/quickreview/sandbox/inject/pr-5012/.f.md.tmp /opt/quickreview/sandbox/inject/pr-5012/f.md",
     );
   });
 
@@ -722,4 +722,39 @@ describe("input box mouse occlusion on a tab", () => {
       }
     },
   );
+});
+
+it("keeps digest failures visible after scrolling a long document", () => {
+  const st: DigestState = {
+    files: ["2026-08-13.md"],
+    back: 0,
+    scroll: 900,
+    contentError: "read failed",
+  };
+  expect(
+    renderDigestTab(st, true, "2026-08-13", 100, 24).lines.map(stripAnsi).join("\n"),
+  ).toContain("read failed");
+  expect(st.scroll).toBe(900); // preserve document position through failed refreshes
+});
+
+it("quotes apostrophes in configured inject paths", () => {
+  const cfg = { ...TUI_DEFAULTS, remote_sandbox_root: "/opt/operator's sandbox" };
+  for (const argv of [injectWriteArgv(cfg, "main", "f.md"), injectProbeArgv(cfg, "main", "f.md")])
+    expect(argv.at(-1)).toContain("operator'\\''s sandbox");
+});
+
+it("probes consumption after a lost write acknowledgement", async () => {
+  let calls = 0;
+  const sender = new InjectSender(
+    { ...TUI_DEFAULTS, msg_timeout_s: 3 },
+    async () =>
+      ++calls === 1
+        ? { ok: false, stdout: "", stderr: "connection lost", code: 255 }
+        : ok("consumed"),
+    () => new Date(0),
+    async () => {},
+  );
+  const states: DeliveryState[] = [];
+  await sender.send("main", "hello", (state) => states.push(state));
+  expect(states.at(-1)).toBe("delivered");
 });

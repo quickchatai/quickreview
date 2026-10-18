@@ -35,12 +35,12 @@ function fakeChild(): EventEmitter & {
   kill: ReturnType<typeof vi.fn>;
   stdout: EventEmitter;
   stderr: EventEmitter;
-  stdin: { end: ReturnType<typeof vi.fn> };
+  stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
 } {
   const child = new EventEmitter() as ReturnType<typeof fakeChild>;
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  child.stdin = { end: vi.fn() };
+  child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
   child.kill = vi.fn();
   return child;
 }

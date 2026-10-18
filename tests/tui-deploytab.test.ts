@@ -1274,3 +1274,13 @@ describe("power button (stop/start the VM app)", () => {
     await run;
   });
 });
+
+it("sanitizes a live partial deployment progress line", async () => {
+  const { renderDeployTab } = await import("../src/tui/deploytab.js");
+  const st = emptyState({
+    run: { kind: "deploy", lines: [], partial: "old\rnew\x1b[2J", running: true },
+  });
+  const text = renderDeployTab(st, true, 100, 24).lines.join("\n");
+  expect(text).not.toContain("\r");
+  expect(text).not.toContain("\x1b[2J");
+});

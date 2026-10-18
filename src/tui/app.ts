@@ -577,7 +577,7 @@ export class App {
 
   private async refreshEvents(): Promise<void> {
     const res = await this.ssh(this.cfg.ssh_host, eventsArgv(this.cfg, 50));
-    if (!res.ok) return;
+    if (this.stopped || !res.ok) return;
     try {
       const parsed = JSON.parse(res.stdout) as {
         events: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }>;
@@ -1406,6 +1406,10 @@ export class App {
    * handleInput); a folded repeat of it does not. */
   setAlertBadge(badge: AlertBadge): void {
     this.view.alerts = badge;
+    if (badge.latest?.tier !== "alert") {
+      this.view.alertFocus = false;
+      this.armedAlert = undefined;
+    }
     if (badge.latest?.tier === "alert" && badge.latest !== this.armedAlert) {
       this.armedAlert = badge.latest;
       this.view.alertFocus = true;
@@ -1630,20 +1634,22 @@ export class App {
    * column hands over because nothing else could deliver it (sidebar.ts
    * `onCopy`).
    */
-  copyText(text: string, from?: string): void {
-    if (text.length === 0) return;
+  async copyText(text: string, from?: string): Promise<boolean> {
+    if (text.length === 0) return true;
     const lines = text.split("\n").length;
     const what = `${text.length} chars${lines > 1 ? ` · ${lines} lines` : ""}`;
-    void this.clipboard
-      .write(text)
-      .then((ok) =>
-        this.notice(
-          ok
-            ? `✓ copied ${what}${from ? ` from ${from}` : ""}`
-            : "✖ no clipboard tool (wl-copy / xclip / klipper)",
-        ),
-      )
-      .catch(() => this.notice("✖ clipboard write failed"));
+    try {
+      const ok = await this.clipboard.write(text);
+      this.notice(
+        ok
+          ? `✓ copied ${what}${from ? ` from ${from}` : ""}`
+          : "✖ no clipboard tool (wl-copy / xclip / klipper)",
+      );
+      return ok;
+    } catch {
+      this.notice("✖ clipboard write failed");
+      return false;
+    }
   }
 
   /** Paint the selection highlight over the finished frame. */

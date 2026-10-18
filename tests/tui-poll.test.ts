@@ -145,3 +145,29 @@ describe("Poller", () => {
     expect(updates).toBe(2);
   });
 });
+
+it("keeps the newer manual refresh when an older poll answers last", async () => {
+  const replies: Array<(r: RemoteResult) => void> = [];
+  const p = new Poller(
+    TUI_DEFAULTS,
+    () => new Promise((r) => replies.push(r)),
+    () => {},
+  );
+  const older = p.tick();
+  const newer = p.tick();
+  replies[1]!({
+    ok: true,
+    stdout: JSON.stringify(snap("2026-08-13T12:01:00Z")),
+    stderr: "",
+    code: 0,
+  });
+  await newer;
+  replies[0]!({
+    ok: true,
+    stdout: JSON.stringify(snap("2026-08-13T12:00:00Z")),
+    stderr: "",
+    code: 0,
+  });
+  await older;
+  expect(p.state.snapshot?.written_at).toBe("2026-08-13T12:01:00Z");
+});

@@ -420,14 +420,17 @@ export class CompanionSidebar {
        * round trip as the capture; a buffer newer than the last one seen is
        * read and handed here. The first listing is only a baseline, so a TUI
        * start never re-copies a stale buffer over the operator's clipboard.
+       * Return false (or reject) to retain the buffer for a bounded retry;
+       * an acknowledged callback may be asynchronous.
        */
-      onCopy?: (text: string) => void;
+      onCopy?: (text: string) => unknown;
     } = {},
   ) {}
 
   /** The newest paste buffer handled (`name created size`) — delivered, or
    * the baseline; "" when there was none; undefined until the first listing. */
   private lastBuffer: string | undefined;
+  private copyTail: Promise<void> = Promise.resolve();
   /** The buffer whose read is in flight, so a poll does not start a second. */
   private bufferReading: string | undefined;
   /** Failed reads of the newest buffer, by its listing line. */
@@ -563,18 +566,36 @@ export class CompanionSidebar {
     const seq = ++this.bufferReadStarted;
     this.bufferReading = newest;
     const settle = (ok: boolean, text: string): void => {
-      if (this.bufferReading === newest) this.bufferReading = undefined;
       if (!ok) {
+        if (this.bufferReading === newest) this.bufferReading = undefined;
         this.bufferFailures =
           this.bufferFailures.buffer === newest
             ? { buffer: newest, count: this.bufferFailures.count + 1 }
             : { buffer: newest, count: 1 };
         return;
       }
-      if (seq < this.bufferReadDelivered) return; // a newer copy already landed
+      if (seq < this.bufferReadDelivered) {
+        if (this.bufferReading === newest) this.bufferReading = undefined;
+        return;
+      }
       this.bufferReadDelivered = seq;
-      this.lastBuffer = newest;
-      if (text.length > 0) onCopy?.(text);
+      // Serialize host writes as well as reads: a slower old clipboard tool
+      // must finish before the newer selection is published.
+      this.copyTail = this.copyTail.then(async () => {
+        let copied = true;
+        try {
+          if (text.length > 0) copied = (await onCopy?.(text)) !== false;
+        } catch {
+          copied = false;
+        }
+        if (copied) this.lastBuffer = newest;
+        else
+          this.bufferFailures =
+            this.bufferFailures.buffer === newest
+              ? { buffer: newest, count: this.bufferFailures.count + 1 }
+              : { buffer: newest, count: 1 };
+        if (this.bufferReading === newest) this.bufferReading = undefined;
+      });
     };
     void this.docker(["exec", this.cfg.container_name, "tmux", "show-buffer", "-b", name], {
       timeoutMs: 5_000,
@@ -609,8 +630,20 @@ export class CompanionSidebar {
    * landed. Callers fire one send per stdin event without awaiting, and each
    * is its own `docker exec` — unqueued, a slow "a" lets the Enter typed
    * after it reach tmux first. A failed send rejects its own caller only. */
+  private sendGeneration = 0;
+
   private inOrder(job: () => Promise<void>): Promise<void> {
-    const run = this.sendTail.then(job, job);
+    const generation = this.sendGeneration;
+    const run = this.sendTail.then(async () => {
+      if (generation !== this.sendGeneration)
+        throw new Error("input cancelled after an earlier send failed — type again");
+      try {
+        await job();
+      } catch (err) {
+        this.sendGeneration += 1;
+        throw err;
+      }
+    });
     this.sendTail = run.catch(() => undefined);
     return run;
   }

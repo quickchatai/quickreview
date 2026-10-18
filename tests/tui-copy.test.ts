@@ -299,6 +299,56 @@ describe("the companion's paste buffers reach the host clipboard (pi /copy)", ()
     sb.stop();
   });
 
+  it("retries a buffer whose host clipboard write failed", async () => {
+    const same = listing("buffer0 100 9");
+    const listings = [listing(), same, same, same];
+    let attempts = 0;
+    const sb = new CompanionSidebar(
+      CFG,
+      async (argv) => ({
+        ...OK,
+        stdout: argv.includes("show-buffer") ? "copy text" : (listings.shift() ?? same),
+      }),
+      { onCopy: async () => ++attempts > 1 },
+    );
+    for (let i = 0; i < 4; i++) {
+      await sb.refresh();
+      await settle();
+    }
+    expect(attempts).toBe(2);
+    sb.stop();
+  });
+
+  it("finishes an older host clipboard write before publishing the newer copy", async () => {
+    const listings = [listing(), listing("buffer0 100 3"), listing("buffer1 200 3")];
+    const writes: string[] = [];
+    let finish!: () => void;
+    const sb = new CompanionSidebar(
+      CFG,
+      async (argv) => ({
+        ...OK,
+        stdout: argv.includes("show-buffer") ? argv.at(-1)! : (listings.shift() ?? ""),
+      }),
+      {
+        onCopy: async (text) => {
+          writes.push(text);
+          if (text === "buffer0") await new Promise<void>((r) => (finish = r));
+        },
+      },
+    );
+    await sb.refresh();
+    await settle();
+    await sb.refresh();
+    await settle();
+    await sb.refresh();
+    await settle();
+    expect(writes).toEqual(["buffer0"]);
+    finish();
+    await settle();
+    expect(writes).toEqual(["buffer0", "buffer1"]);
+    sb.stop();
+  });
+
   it("asks for no buffers at all when nobody listens", async () => {
     const calls: string[][] = [];
     const sb = new CompanionSidebar(CFG, async (argv) => (calls.push(argv), OK));
