@@ -1611,6 +1611,16 @@ describe("serveAuthorReply: the ping-pong wake carries the replied file's repo f
     };
   }
 
+  it("does not consume an author-message claim when persisting its wake fails", async () => {
+    const w = world();
+    try {
+      vi.spyOn(w.store, "holdWakeEvicting").mockImplementation(() => { throw new Error("wake persistence unavailable"); });
+      await expect(serveAuthorReply(w.deps, reply)).rejects.toThrow("wake persistence unavailable");
+      expect(w.deps.pingpong.hasClaim(reply.pr, reply.in_reply_to_id, reply.comment_id)).toBe(false);
+      expect(w.injected).toEqual([]);
+    } finally { w.store.close(); }
+  });
+
   it("asks for the thread's file, appends the facts — and is the plain wake, byte for byte, without them", async () => {
     const withFacts = world();
     const empty = world();
