@@ -5,7 +5,7 @@
 // (src/setup/scan.ts planKey) so a start must quote the price it was shown.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { PrFileEntry } from "./github.js";
@@ -53,8 +53,11 @@ export interface BranchTarget {
   /** Added plus deleted lines over the diff. */
   lines: number;
   /** Set when the target is the uncommitted working tree: the tree object of
-   * HEAD plus every uncommitted edit (the person's index is never touched). */
-  uncommitted?: { treeSha: string };
+   * HEAD plus every uncommitted edit (the person's index is never touched),
+   * and the binary patch from HEAD to it. The tree's objects live only in a
+   * scratch store that is gone once the target is resolved, so the patch is
+   * what later builds the review tree. */
+  uncommitted?: { treeSha: string; patch: string };
 }
 
 export type BranchResolution = { ok: true; target: BranchTarget } | { ok: false; error: string };
@@ -74,10 +77,15 @@ function baseOf(cwd: string, asked: string | undefined): string | null {
 }
 
 /** The files and changed-line count between two trees (or commits). */
-function diffFiles(cwd: string, from: string, to: string): { files: PrFileEntry[]; lines: number } {
-  const numstat = git(cwd, ["diff", "--no-renames", "--numstat", from, to]);
+function diffFiles(
+  cwd: string,
+  from: string,
+  to: string,
+  env?: Record<string, string>,
+): { files: PrFileEntry[]; lines: number } {
+  const numstat = git(cwd, ["diff", "--no-renames", "--numstat", from, to], { env });
   const names = new Map<string, string>();
-  for (const l of git(cwd, ["diff", "--no-renames", "--name-status", from, to])
+  for (const l of git(cwd, ["diff", "--no-renames", "--name-status", from, to], { env })
     .split("\n")
     .filter(Boolean)) {
     const [s, ...p] = l.split("\t");
@@ -92,7 +100,9 @@ function diffFiles(cwd: string, from: string, to: string): { files: PrFileEntry[
     const additions = binary ? 0 : Number(a);
     const deletions = binary ? 0 : Number(d);
     lines += additions + deletions;
-    const patch = binary ? undefined : git(cwd, ["diff", "--no-renames", from, to, "--", path]);
+    const patch = binary
+      ? undefined
+      : git(cwd, ["diff", "--no-renames", from, to, "--", path], { env });
     files.push({
       filename: path,
       additions,
@@ -159,7 +169,10 @@ export function resolveBranch(cwd: string, asked?: string): BranchResolution {
 
 /** The uncommitted working tree against HEAD: staged, unstaged and new
  * (untracked, not ignored) files, read without touching the person's index or
- * files. The snapshot is a tree built in a throwaway index. */
+ * files. The snapshot is a tree built in a throwaway index, and its objects
+ * are written to a throwaway object store that borrows the repo's as an
+ * alternate, so nothing is written into the reviewed repository and a
+ * read-only checkout works. */
 export function resolveUncommitted(cwd: string): BranchResolution {
   if (tryGit(cwd, ["rev-parse", "--is-inside-work-tree"]) !== "true")
     return { ok: false, error: `${cwd} is not a git repository` };
@@ -167,16 +180,40 @@ export function resolveUncommitted(cwd: string): BranchResolution {
   if (headSha === null) return { ok: false, error: "the repository has no commits yet" };
   const scratch = mkdtempSync(join(tmpdir(), "qcr-snap-"));
   let treeSha: string;
+  let files: PrFileEntry[];
+  let lines: number;
+  let patch: string;
   try {
-    const env = { GIT_INDEX_FILE: join(scratch, "index") };
+    const objects = join(scratch, "objects");
+    mkdirSync(objects);
+    const commonDir = resolve(cwd, git(cwd, ["rev-parse", "--git-common-dir"]));
+    const env = {
+      GIT_INDEX_FILE: join(scratch, "index"),
+      GIT_OBJECT_DIRECTORY: objects,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: join(commonDir, "objects"),
+    };
     const top = git(cwd, ["rev-parse", "--show-toplevel"]);
-    git(top, ["read-tree", headSha], { env });
+    // Start from the person's own index (copied, never touched): its cached
+    // stat data keeps `add -A` from re-hashing every unchanged file, and git
+    // refreshes the mtime of each object it writes again, even one that sits
+    // in the alternate store. An index that is absent or unreadable falls back
+    // to HEAD's tree.
+    const index = resolve(cwd, git(cwd, ["rev-parse", "--git-path", "index"]));
+    try {
+      copyFileSync(index, env.GIT_INDEX_FILE);
+    } catch {
+      git(top, ["read-tree", headSha], { env });
+    }
     git(top, ["add", "-A"], { env });
     treeSha = git(top, ["write-tree"], { env });
+    ({ files, lines } = diffFiles(cwd, headSha, treeSha, env));
+    patch =
+      files.length === 0
+        ? ""
+        : git(cwd, ["diff", "--binary", "--no-renames", headSha, treeSha], { env, raw: true });
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-  const { files, lines } = diffFiles(cwd, headSha, treeSha);
   if (files.length === 0)
     return { ok: false, error: "nothing to review: the working tree has no uncommitted changes" };
   const branch = tryGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? "HEAD";
@@ -191,7 +228,7 @@ export function resolveUncommitted(cwd: string): BranchResolution {
       mergeBase: headSha,
       files,
       lines,
-      uncommitted: { treeSha },
+      uncommitted: { treeSha, patch },
     },
   };
 }
@@ -200,9 +237,7 @@ export function resolveUncommitted(cwd: string): BranchResolution {
 export function addUncommittedTree(cwd: string, dir: string, t: BranchTarget): void {
   addReviewTree(cwd, dir, t.headSha);
   if (!t.uncommitted) return;
-  const patch = git(cwd, ["diff", "--binary", "--no-renames", t.headSha, t.uncommitted.treeSha], {
-    raw: true,
-  });
+  const { patch } = t.uncommitted;
   if (patch) git(dir, ["apply", "--whitespace=nowarn"], { input: patch });
 }
 
