@@ -2,6 +2,7 @@
 // making progress. This is deliberately outside dispatch: it fences
 // the one sticky Pi first, repairs only that PR's command slot, then asks the
 // ordinary pump to decide what work is actually eligible.
+import { asyncCommandEffect, commandEffectKey } from "./commandeffects.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, renameSync, rmSync } from "node:fs";
 import { ovSessionIdForPr } from "./memory/ovsession.js";
@@ -11,6 +12,8 @@ import type { StateStore } from "./state.js";
 export type OperatorRecoveryMode = "rerun-round" | "restart-session";
 
 export interface OperatorRecoveryDeps {
+  /** Trusted watcher delivery identity, stable across retries. */
+  deliveryKey?: string;
   store: StateStore;
   pump: () => Promise<void>;
   /** Required for restart-session. It must return only after the old Pi can no
@@ -45,6 +48,15 @@ export interface OperatorRecoveryResult {
  * transactionally preserves non-round work before releasing ownership.
  */
 export async function recoverPrForOperator(
+  deps: OperatorRecoveryDeps,
+  pr: number,
+  mode: OperatorRecoveryMode,
+): Promise<OperatorRecoveryResult> {
+  return asyncCommandEffect(deps.store, commandEffectKey(mode, deps.deliveryKey, pr), () =>
+    recoverPrForOperatorNow(deps, pr, mode));
+}
+
+async function recoverPrForOperatorNow(
   deps: OperatorRecoveryDeps,
   pr: number,
   mode: OperatorRecoveryMode,

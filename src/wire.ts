@@ -1,3 +1,4 @@
+import { asyncCommandEffect, commandEffectKey } from "./commandeffects.js";
 // Production assembly of quickreviewd: createDaemon() with the real pi session
 // manager, the round-template renderer, the agents build step, the EOD timer,
 // the overseer command executor, and the weekly overseer rotation. `npm run
@@ -1713,14 +1714,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         async rerunRound(pr) {
           return recoverPrForOperator({ store: d.store, pump: () => d.pump() }, pr, "rerun-round");
         },
-        async restartSession(target) {
+        async restartSession(target, deliveryKey) {
           if (target === "overseer") {
-            const name = await sessions.rotateOverseer();
-            return { ok: true, respawned: name };
+            return asyncCommandEffect(d.store, commandEffectKey("restart-overseer", deliveryKey, target), async () => {
+              const name = await sessions.rotateOverseer();
+              return { ok: true, respawned: name };
+            });
           }
           return recoverPrForOperator(
             {
               store: d.store,
+              deliveryKey,
               pump: () => d.pump(),
               // Returns only once tmux lists the session as gone; a tmux it
               // could not ask throws, which leaves ownership unchanged.
@@ -1742,8 +1746,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // The two bounded levers: who is asking comes from the
         // watcher's channel, and a session's hold is capped, budgeted and
         // expiring in src/levers.ts — an operator's is not.
-        pausePr(pr, reason, issuer, forMin) {
-          return pauseLever(leverDeps, pr, reason, issuer, forMin);
+        pausePr(pr, reason, issuer, forMin, deliveryKey) {
+          return pauseLever({ ...leverDeps, deliveryKey }, pr, reason, issuer, forMin);
         },
         resumePr(pr, issuer) {
           return resumeLever(leverDeps, pr, issuer, () => d.pump());
@@ -1839,8 +1843,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // finish naturally. Off is the manual lift; the automatic one is the
         // next boot's first healthy reconcile pass (daemon.ts). Never touches
         // GitHub, never goes near the gate.
-        drain(on, issuer, forMin) {
-          return drainLever(leverDeps, on, issuer, forMin, async () => {
+        drain(on, issuer, forMin, deliveryKey) {
+          return drainLever({ ...leverDeps, deliveryKey }, on, issuer, forMin, async () => {
             d.wakeThreadDecisions();
             await d.pump();
           });
