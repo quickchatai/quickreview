@@ -9,7 +9,7 @@
 // code nor the goldens can drift from the schema alone.
 //
 // Regenerate the goldens ONLY for a deliberate change to a payload:
-// `UPDATE_GOLDEN=1 npx vitest run tests/json-contract.test.ts`.
+// `UPDATE_GOLDEN=1 npx vitest run tests/json-contract.test.ts` (then `npx prettier --write tests/fixtures/json-contract`).
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,

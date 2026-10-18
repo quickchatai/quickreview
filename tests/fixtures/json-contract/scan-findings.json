@@ -17,9 +17,7 @@
         "end": 2
       },
       "lens": "pass-scan",
-      "lenses": [
-        "pass-scan"
-      ],
+      "lenses": ["pass-scan"],
       "unit": "app",
       "kind": "bug",
       "severity": "P2",
@@ -48,9 +46,7 @@
         "end": 2
       },
       "lens": "pass-scan",
-      "lenses": [
-        "pass-scan"
-      ],
+      "lenses": ["pass-scan"],
       "unit": "lib",
       "kind": "bug",
       "severity": "P2",
