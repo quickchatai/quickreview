@@ -8,6 +8,7 @@ import {
   resolveGithubCredential,
   ghAuthTokenFromCli,
   type CredentialResolution,
+  type CredentialSource,
 } from "./ghcred.js";
 import { TokenMinter } from "./githubAuth.js";
 import { originRepo, resolveBranch, type BranchTarget } from "./localreview.js";
@@ -191,4 +192,34 @@ export function resolvePrCredential(
     mintApp: o.mintApp ?? ((dir) => new TokenMinter(dir).installationToken()),
     ghAuthToken: o.ghAuthToken ?? ghAuthTokenFromCli,
   });
+}
+
+/** The identity a review is posted as: the credential source the repo names
+ * (`post_as` in its review settings), else the one already resolved for
+ * reading the PR. A named source that is not available is an error, never a
+ * silent switch to another identity. */
+export async function resolvePostCredential(
+  secretsDir: string,
+  postAs: string | null,
+  resolved: { source: CredentialSource; token: string },
+  o: PrCredentialDeps = {},
+): Promise<CredentialResolution> {
+  if (postAs === null) return { ok: true, ...resolved };
+  const known = ["app", "gh", "env:GITHUB_TOKEN", "env:GH_TOKEN"];
+  if (!known.includes(postAs)) {
+    return {
+      ok: false,
+      error: `post_as is ${postAs} but that credential is not available (expected one of ${known.join(", ")})`,
+    };
+  }
+  const env = o.env ?? process.env;
+  const r = await resolveGithubCredential({
+    secretsDir: postAs === "app" ? secretsDir : "",
+    env: postAs.startsWith("env:") ? { [postAs.slice(4)]: env[postAs.slice(4)] } : {},
+    mintApp: o.mintApp ?? ((dir) => new TokenMinter(dir).installationToken()),
+    ghAuthToken: postAs === "gh" ? (o.ghAuthToken ?? ghAuthTokenFromCli) : () => null,
+  });
+  return r.ok
+    ? r
+    : { ok: false, error: `post_as is ${postAs} but that credential is not available` };
 }

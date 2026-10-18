@@ -38,9 +38,11 @@ import {
 import type { RoundMemory } from "./memory/context.js";
 import { seedReviewMemory, type ReviewMemorySource } from "./reviewmemory.js";
 import type { CredentialSource } from "./ghcred.js";
+import { assemblePostReview, loadPostIdentity, postReviewToPr } from "./reviewpost.js";
 import {
   fetchPrTarget,
   parsePrTarget,
+  resolvePostCredential,
   resolvePrCredential,
   type PrCredentialDeps,
   type PrFetchRequest,
@@ -101,12 +103,18 @@ export function reviewHelp(): string {
     "  --limit USD       the limit for this run, over the repo's own",
     "  --full            review the whole branch again, ignoring what an earlier review left",
     "  --json            one JSON object instead of text (the agent destination)",
-    "  --to DEST         where the result goes, for this run: terminal, file, json (comma-separated)",
+    "  --to DEST         where the result goes, for this run: terminal, file, json, pr (comma-separated;\n                    pr posts a comment-only review to the PR and needs a PR target)",
     "  --out FILE        write the markdown report to FILE (implies file)",
     "",
     "Destinations: with none given, the repo's saved default is used; with none saved, an",
     "interactive run asks and saves the answer for this repo (in its git dir), and a run",
     "with no terminal prints the terminal text plus JSON and never waits.",
+    "",
+    "Posting (--to pr, or saved as the default) sends one review whose event is always",
+    "COMMENT, never an approval or a change request. Every comment says it came from qcr",
+    "and carries the hidden finding markers, and findings already on the PR are skipped.",
+    "It posts as the credential the PR was read with, or the source named by `post_as`",
+    "(app, gh, env:GITHUB_TOKEN, env:GH_TOKEN) in `.git/qcr-review.json`.",
     "",
     "A PR is read with the first GitHub credential found: the App if configured, then",
     "GITHUB_TOKEN/GH_TOKEN, then `gh auth token` (run `gh auth login` to set that up).",
@@ -368,7 +376,17 @@ async function runReview(
     ...(cmd.to ?? []),
     ...(cmd.out !== undefined ? (["file"] as const) : []),
   ].filter((d, i, a) => a.indexOf(d) === i);
-  const saved = explicit.length > 0 ? null : loadDefaultDestinations(deps.cwd);
+  // Posting needs a PR: asked for on any other target, it is refused before
+  // anything runs or is paid for.
+  if (explicit.includes("pr") && cmd.pr === undefined)
+    return refuse(2, [
+      "--to pr posts to a pull request, and this target has no PR: pass a PR number or URL",
+    ]);
+  // A saved default that posts does not apply to a target with no PR.
+  const savedAll = explicit.length > 0 ? null : loadDefaultDestinations(deps.cwd);
+  const savedUse =
+    savedAll === null || cmd.pr !== undefined ? savedAll : savedAll.filter((d) => d !== "pr");
+  const saved = savedUse !== null && savedUse.length > 0 ? savedUse : null;
   if (explicit.length > 0) dests = explicit;
   else if (saved !== null) dests = saved;
   else if (deps.choose) dests = ["terminal"];
@@ -384,6 +402,7 @@ async function runReview(
     source: CredentialSource;
   } | null = null;
   let runDir: string;
+  let prToken = "";
   if (cmd.pr !== undefined) {
     const parsed = parsePrTarget(cmd.pr, {
       cwdRepo: originRepo(deps.cwd),
@@ -406,6 +425,7 @@ async function runReview(
     });
     if (!fetched.ok) return refuse(1, [fetched.error]);
     gitDir = fetched.gitDir;
+    prToken = cred.token;
     t = fetched.target;
     prInfo = {
       number: fetched.number,
@@ -542,7 +562,11 @@ async function runReview(
       if (fu.followUp.scope === "delta") return { prompts: fu, scope: "delta", fallback: null };
       why = { reason: fu.followUp.reason ?? "follow-up-full" };
     }
-    return { prompts: renderOneShotPrompts(memory ? { ...common, memory } : common), scope: "full", fallback: why };
+    return {
+      prompts: renderOneShotPrompts(memory ? { ...common, memory } : common),
+      scope: "full",
+      fallback: why,
+    };
   };
   let planned: ReturnType<typeof planRound>;
   try {
@@ -570,8 +594,8 @@ async function runReview(
   const preview = {
     repo: t.repo,
     target: cmd.uncommitted ? "uncommitted" : "branch",
-    // no PR behind this target: posting is never offered
-    postable: false,
+    // posting is offered only when a PR is behind the target
+    postable: prInfo !== null,
     branch: t.branch,
     base: t.base,
     head_sha: t.headSha,
@@ -775,8 +799,53 @@ async function runReview(
     ...shot.warnings.slice(0, 5).map((w) => `warning: ${w}`),
     `Files: ${outDir}`,
   ].join("\n");
-  deliver(human, { ok: true, partial: false, ...data }, renderMarkdown(mdMeta, groups));
-  return 0;
+  // Posting to the PR: one comment-only review, marked, deduplicated.
+  let posted: Record<string, unknown> | null = null;
+  let postFailed = false;
+  let postLine = "";
+  if (dests.includes("pr") && prInfo !== null) {
+    const id = await resolvePostCredential(
+      deps.cfg.github.secrets_dir,
+      loadPostIdentity(deps.cwd),
+      { source: prInfo.source, token: prToken },
+      deps.pr,
+    );
+    const res = id.ok
+      ? await postReviewToPr({
+          repo: t.repo,
+          number: prInfo.number,
+          headSha: t.headSha,
+          token: id.token,
+          review: assemblePostReview(shot.findings, {
+            cfg: deps.cfg,
+            roundNo: round.round_no,
+            lenses,
+            verdict,
+            summary: typeof shot.outcome?.["summary"] === "string" ? shot.outcome["summary"] : null,
+          }),
+          ...(deps.pr?.fetchFn ? { fetchFn: deps.pr.fetchFn } : {}),
+          ...(deps.pr?.apiBase ? { apiBase: deps.pr.apiBase } : {}),
+        })
+      : id;
+    if (res.ok) {
+      posted = { ok: true, posted: res.posted, skipped: res.skipped, url: res.url };
+      postLine =
+        res.posted === 0
+          ? `Nothing posted: ${res.skipped} comment${res.skipped === 1 ? " is" : "s are"} already on the PR.`
+          : `Posted ${res.posted} comment${res.posted === 1 ? "" : "s"} to PR #${prInfo.number} (comment-only review)` +
+            `${res.skipped ? `, ${res.skipped} already there` : ""}${res.url ? `: ${res.url}` : ""}`;
+    } else {
+      postFailed = true;
+      posted = { ok: false, error: res.error };
+      postLine = `Review not posted: ${res.error}`;
+    }
+  }
+  deliver(
+    postLine ? `${human}\n${postLine}` : human,
+    { ok: !postFailed, partial: false, ...data, ...(posted ? { post: posted } : {}) },
+    renderMarkdown(mdMeta, groups),
+  );
+  return postFailed ? 1 : 0;
 }
 
 /** Docker when present and usable, else the host (with its warning). Only

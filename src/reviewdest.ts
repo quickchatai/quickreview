@@ -1,17 +1,17 @@
 // Where a local review's result goes (`qcr review`): the terminal, a markdown
 // file, or JSON back to the agent. The repo's own default is kept in its git
 // dir (shared by its worktrees, never tracked, never global); a flag overrides
-// it for one run. Posting to a PR is a further destination that the posting
-// ticket adds to `destinationChoices` for targets that have a PR.
+// it for one run. Posting to a PR (src/reviewpost.ts) is offered, and
+// accepted, only for a target that has a PR.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { TerminalFinding } from "./localreview.js";
 
-export type Destination = "terminal" | "file" | "json";
+export type Destination = "terminal" | "file" | "json" | "pr";
 
-export const DESTINATIONS: readonly Destination[] = ["terminal", "file", "json"];
+export const DESTINATIONS: readonly Destination[] = ["terminal", "file", "json", "pr"];
 
 /** What a non-interactive run with no default does: print, and hand the agent JSON. */
 export const FALLBACK_DESTINATIONS: readonly Destination[] = ["terminal", "json"];
@@ -27,12 +27,15 @@ export interface DestinationChoice {
 }
 
 /** The destinations a person can be asked to pick. `pr`: the target is a PR,
- * the only target that can be posted to (the posting ticket adds it here). */
-export function destinationChoices(_target: { pr: boolean }): DestinationChoice[] {
+ * the only target that can be posted to. */
+export function destinationChoices(target: { pr: boolean }): DestinationChoice[] {
   return [
     { value: "terminal", label: "print in the terminal" },
     { value: "file", label: "write a markdown report" },
     { value: "json", label: "JSON for a coding agent" },
+    ...(target.pr
+      ? [{ value: "pr" as const, label: "post to the PR as a comment-only review" }]
+      : []),
   ];
 }
 
