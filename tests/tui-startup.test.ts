@@ -477,6 +477,11 @@ describe("connection triage", () => {
     identity: "/home/x/.ssh/google_compute_engine",
     agent: { reachable: true, identities: ["256 SHA256:abc /home/x/.ssh/other (ED25519)"] },
   };
+  it("recognizes the probe's own timeout text instead of recommending a key", async () => {
+    const { classifyConnection } = await import("../src/tui/sshtriage.js");
+    const diagnosis = classifyConnection({ ...base, connect: { ok: false, stderr: "timed out after 5000ms", timedOut: false } });
+    expect(diagnosis.kind).toBe("host-unreachable");
+  });
 
   it("names the KEY and prints the ssh-add line when the agent cannot offer it", async () => {
     const { classifyConnection } = await import("../src/tui/sshtriage.js");

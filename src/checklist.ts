@@ -430,13 +430,17 @@ export function renderTable(results: ProbeResult[]): string {
       `${r.item}    ${r.name.padEnd(nameWidth)}  ${(r.pass ? "PASS" : "FAIL").padEnd(6)}  ${r.detail}`,
     );
   }
-  const failed = results.filter((r) => !r.pass);
+  const automated = results.filter((r) => !r.manual);
+  const failed = automated.filter((r) => !r.pass);
   lines.push("");
   lines.push(
     failed.length === 0
-      ? `all ${results.length} automated items PASS`
-      : `${failed.length}/${results.length} automated items FAILED: ${failed.map((r) => r.item).join(" ")}`,
+      ? `all ${automated.length} automated items PASS`
+      : `${failed.length}/${automated.length} automated items FAILED: ${failed.map((r) => r.item).join(" ")}`,
   );
+  const pending = results.filter((r) => r.manual && !r.pass);
+  if (pending.length > 0)
+    lines.push(`guided-manual items pending: ${pending.map((r) => r.item).join(" ")}`);
   return lines.join("\n");
 }
 

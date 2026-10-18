@@ -23,5 +23,5 @@ export function sshConfigRows(text: string): Array<readonly [string, string]> {
 export const SSH_HOST_KEY_FAILURE =
   /host key verification failed|remote host identification has changed/i;
 export const SSH_DNS_FAILURE = /could not resolve hostname|name or service not known/i;
-export const SSH_TIMEOUT_FAILURE = /connection timed out|operation timed out/i;
+export const SSH_TIMEOUT_FAILURE = /connection timed out|operation timed out|timed out after/i;
 export const SSH_ROUTE_FAILURE = /connection refused|no route to host|network is unreachable/i;

@@ -704,6 +704,7 @@ export function resolutionByPr(
   for (const p of store.allPrs()) {
     tracked.add(p.number);
     if (p.state === "closed") closed.add(p.number);
+    else closed.delete(p.number);
   }
   for (const m of store.allBackfillPrMeta())
     if (!tracked.has(m.pr) && (m.closed_at !== null || m.merged_at !== null)) closed.add(m.pr);
