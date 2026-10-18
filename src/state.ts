@@ -3197,17 +3197,16 @@ export class StateStore {
     );
   }
 
-  /** Preserve a failed rebirth's pre-reserve cause on the one command row.
-   * The command remains pending and retryable; this is diagnosis, not a
-   * terminal transition. The next recovery and final FAILED_LOUD incident use
-   * this cause instead of collapsing it back to generic UNKNOWN evidence. */
+  /** Preserve an unusable payload's diagnosis without changing command
+   * status or ownership. Only commands eligible for replay accept it. */
   noteSessionCommandRecoveryFailure(id: string, failure: string): boolean {
     const ts = this.ts();
     return (
       this.db
         .prepare(
           `UPDATE session_commands SET failure=@failure, updated_at=@ts
-        WHERE id=@id AND status IN ('pending', 'running') AND started_at IS NULL`,
+        WHERE id=@id AND status IN ('pending', 'running', 'failed')
+          AND (kind != 'round' OR started_at IS NULL)`,
         )
         .run({ id, failure, ts }).changes === 1
     );
@@ -3594,22 +3593,38 @@ export class StateStore {
     reason: string,
     cap = MAX_HELD_WAKES,
   ): EvictedWake[] {
-    const hold = this.db.transaction((): EvictedWake[] => {
-      this.db
-        .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
-        .run(pr, payload, reason, this.now().toISOString());
-      return this.trimHeldWakes(pr, cap);
-    });
-    return hold();
+    return this.holdWakeWithIdentity(pr, payload, reason, cap).dropped;
   }
 
-  heldWakes(pr: number): PendingWakeRow[] {
+  /** The inserted identity remains observable even when the cap evicts it. */
+  holdWakeWithIdentity(
+    pr: number,
+    payload: string,
+    reason: string,
+    cap = MAX_HELD_WAKES,
+  ): { id: number; dropped: EvictedWake[] } {
+    return this.db.transaction(() => {
+      const inserted = this.db
+        .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
+        .run(pr, payload, reason, this.now().toISOString());
+      return { id: Number(inserted.lastInsertRowid), dropped: this.trimHeldWakes(pr, cap) };
+    })();
+  }
+
+  heldWakes(pr: number, skipReasonPrefix?: string): PendingWakeRow[] {
     return this.db
       .prepare(
-        `SELECT * FROM pending_wakes WHERE pr = ?
+        `SELECT * FROM pending_wakes WHERE pr=@pr
+      AND (@skip IS NULL OR substr(CASE WHEN substr(reason,1,@recoveredLength)=@recovered
+        THEN substr(reason,@recoveredLength+1) ELSE reason END,1,length(@skip)) != @skip)
       ORDER BY ${PENDING_WAKE_ORDER_SQL}`,
       )
-      .all(pr) as PendingWakeRow[];
+      .all({
+        pr,
+        skip: skipReasonPrefix ?? null,
+        recovered: OPERATOR_RECOVERED_WAKE_PREFIX,
+        recoveredLength: OPERATOR_RECOVERED_WAKE_PREFIX.length,
+      }) as PendingWakeRow[];
   }
 
   hasHeldWakes(pr: number): boolean {
@@ -3638,21 +3653,7 @@ export class StateStore {
     if (!Number.isSafeInteger(count) || count < 1)
       throw new Error(`invalid held-wake batch size ${count}`);
     const claim = this.db.transaction((n: number): PendingWakeRow[] | null => {
-      const rows = (
-        skipReasonPrefix === undefined
-          ? this.db
-              .prepare(
-                `SELECT * FROM pending_wakes WHERE pr = ?
-        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`,
-              )
-              .all(n, count)
-          : this.db
-              .prepare(
-                `SELECT * FROM pending_wakes WHERE pr = ? AND substr(reason, 1, ?) != ?
-        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`,
-              )
-              .all(n, skipReasonPrefix.length, skipReasonPrefix, count)
-      ) as PendingWakeRow[];
+      const rows = this.heldWakes(n, skipReasonPrefix).slice(0, count);
       if (rows.length !== count) return null;
       if (rows.some((row) => row.claim_token && row.claimed_at && row.claimed_at > leaseBefore))
         return null;

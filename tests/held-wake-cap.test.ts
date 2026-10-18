@@ -200,9 +200,13 @@ describe("the held-wake cap", () => {
 
   it("an author reply dropped by the store would be loud — a WAKE anomaly, never a silent row", async () => {
     // The store never selects one; this is the belt over that guarantee.
-    vi.spyOn(store, "holdWakeEvicting").mockReturnValue([
-      { id: 2472, reason: "author_reply", released_recheck: null, re_raised_by_reconcile: false },
-    ]);
+    const hold = store.holdWakeWithIdentity.bind(store);
+    vi.spyOn(store, "holdWakeWithIdentity").mockImplementation((...args) => ({
+      ...hold(...args),
+      dropped: [
+        { id: 2472, reason: "author_reply", released_recheck: null, re_raised_by_reconcile: false },
+      ],
+    }));
     await wakeOrHold(deps(), PR, "recheck", "recheck:push");
     const anomaly = store
       .recentEvents(50)
@@ -279,4 +283,27 @@ describe("an evicted recheck is asked again by the reconcile backstop (#5362 ④
     await pass();
     expect(pushes).toEqual([PR]); // asked again — never silently dropped
   });
+});
+
+it("operator recovery keeps a recheck deferred while its PR is paused", async () => {
+  store.finishRound(store.roundsFor(PR)[0]!.id, "APPROVE", null);
+  store.db.prepare("UPDATE pr_state SET paused=1 WHERE number=?").run(PR);
+  store.holdWake(PR, "recovered recheck", "operator_recovered:recheck:cmd-recheck");
+  store.holdWake(PR, "ordinary wake", "ledger_stale");
+  expect(await flushHeldWakes(deps(), PR)).toBe(1);
+  expect(injected).toEqual(["ordinary wake"]);
+  expect(store.heldWakes(PR)).toHaveLength(1);
+  store.db.prepare("UPDATE pr_state SET paused=0 WHERE number=?").run(PR);
+  expect(await flushHeldWakes(deps(), PR)).toBe(1);
+  expect(injected).toEqual(["ordinary wake", "recovered recheck"]);
+});
+
+it("does not report an evicted wake as injected when protected backlog fills the cap", async () => {
+  store.finishRound(store.roundsFor(PR)[0]!.id, "APPROVE", null);
+  for (let i = 0; i < MAX_HELD_WAKES; i++)
+    store.holdWake(PR, `protected ${i}`, `operator_recovered:wake:${i}`);
+  await expect(wakeOrHold(deps(), PR, "evicted incoming question", "recheck:ci")).rejects.toThrow(
+    /evicted|dropped/i,
+  );
+  expect(injected).not.toContain("evicted incoming question");
 });

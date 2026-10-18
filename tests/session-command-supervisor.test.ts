@@ -1828,3 +1828,34 @@ describe("parent finalize waits for an active parent run", () => {
     expect(events("round_finalize_held_parent_active")).toHaveLength(0);
   });
 });
+
+it("honors a deferred settled-running recovery check across supervisor restarts", async () => {
+  const { id, pr } = seedRoundCommand({ status: "running", started: true });
+  const failed = vi.fn(async () => "retryable" as const);
+  const kill = vi.fn(async () => {});
+  const startedAt = store.getSessionCommand(id)!.started_at!;
+  const progress = () => ({
+    version: 1 as const,
+    pr,
+    session: `pr-${pr}`,
+    run_started_at: startedAt,
+    updated_at: clock.toISOString(),
+    parent_status: "settled" as const,
+    command_id: id,
+    command_sha256: "a".repeat(64),
+    last_activity_at: clock.toISOString(),
+    last_activity: "settled",
+    agents: [],
+  });
+  const fresh = () =>
+    supervisor(hooks({ killSession: kill }), failed, baseCfg, progress).supervisor;
+  await fresh().scan();
+  const next = store.getSessionCommand(id)!.next_check_at;
+  expect(next > clock.toISOString()).toBe(true);
+  await fresh().scan();
+  expect(failed).toHaveBeenCalledTimes(1);
+  expect(kill).toHaveBeenCalledTimes(1);
+  clock = new Date(next);
+  await fresh().scan();
+  expect(failed).toHaveBeenCalledTimes(2);
+});
