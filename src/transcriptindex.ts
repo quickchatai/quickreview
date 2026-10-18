@@ -224,6 +224,13 @@ interface FileView {
   pending: LineContribution[];
 }
 
+/** Preserve confirmed line contributions while refusing a partial usage total. */
+class PartialTranscriptRead extends Error {
+  constructor(readonly view: FileView, cause: unknown) {
+    super(reasonOf(cause), { cause });
+  }
+}
+
 interface Part {
   view: FileView;
   /** Global-store file: every line counts. Otherwise the line window. */
@@ -446,6 +453,10 @@ export class TranscriptIndex {
     try {
       return await this.viewOf(path, st);
     } catch (err) {
+      if (err instanceof PartialTranscriptRead) {
+        unreadable.push({ path, reason: reasonOf(err) });
+        return err.view;
+      }
       if (!isMissing(err)) unreadable.push({ path, reason: reasonOf(err) });
       return undefined;
     }
@@ -544,7 +555,7 @@ export class TranscriptIndex {
     // mtime clear of the racy window: no byte read. (A scan this query waited
     // on may have seen MORE than `st` — lines appended since, which a later
     // read would also have seen.) A racily clean one is probed by `scan`.
-    if (cached && sameInode(cached, st) && unmoved(cached, st) && !this.racy(cached)) {
+    if (cached && cached.committed === cached.scanned && sameInode(cached, st) && unmoved(cached, st) && !this.racy(cached)) {
       this.counters.hits++;
       this.touch(path, cached);
       return { records: cached.records, n: cached.records.length, pending: cached.pending };
@@ -620,6 +631,7 @@ export class TranscriptIndex {
   ): Promise<FileEntry> {
     const readAt = this.now();
     const fh = await this.fs.open(path);
+    let records: LineContribution[] = [];
     try {
       // The same file as the one kept: the bytes at its start and just before
       // the old offset are still the ones the last scan saw. Bytes between
@@ -629,13 +641,12 @@ export class TranscriptIndex {
         sameInode(cached, st) &&
         cached.tail.length > 0 &&
         (await this.probe(fh, cached));
-      if (intact && unmoved(cached, st)) {
+      if (intact && cached.committed === cached.scanned && unmoved(cached, st)) {
         // Racily clean, and confirmed: nothing to read.
         cached.verifiedAtMs = readAt;
         this.counters.hits++;
         return cached;
       }
-      let records: LineContribution[] = [];
       let model = UNKNOWN_MODEL;
       let pos = 0;
       let head: Buffer = EMPTY;
@@ -661,7 +672,7 @@ export class TranscriptIndex {
       while (pos < st.size) {
         const want = Math.min(this.chunkBytes, st.size - pos);
         const { bytesRead } = await fh.read(buf, 0, want, pos);
-        if (bytesRead === 0) break; // truncated under us — what was read stands
+        if (bytesRead === 0) throw new Error("transcript reached EOF before the stated size");
         pos += bytesRead;
         this.counters.bytes_read += bytesRead;
         const chunk = buf.subarray(0, bytesRead);
@@ -703,6 +714,8 @@ export class TranscriptIndex {
         pending,
         count: records.length + pending.length,
       };
+    } catch (error) {
+      throw new PartialTranscriptRead({ records, n: records.length, pending: [] }, error);
     } finally {
       await fh.close();
     }
