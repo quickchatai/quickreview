@@ -682,6 +682,27 @@ const CORPUS = [
     outcome: null,
     note: "second positional operand overwrites policy",
   },
+  {
+    round: 15,
+    via: "bash",
+    chain: "cd wt/pr-1 && scripts/pr-context.sh 1",
+    outcome: null,
+    note: "a reviewed script basename is not the trusted sanctioned script",
+  },
+  {
+    round: 15,
+    via: "bash",
+    chain: "cd wt/pr-1 && bash -c 'scripts/pr-context.sh 1'",
+    outcome: null,
+    note: "nested shell inherits the untrusted directory",
+  },
+  {
+    round: 15,
+    via: "bash",
+    chain: "printf forged > 2026-10-18T00-00-00-000Z-0000.m?",
+    outcome: null,
+    note: "a wake glob intersects the filename language beyond the old January sample",
+  },
 ] as const;
 
 /**
