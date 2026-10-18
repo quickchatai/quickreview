@@ -46,6 +46,8 @@ const instructions = (text: string): string[] =>
     .map((l) => l.trim())
     .filter((l) => l !== "" && !l.startsWith("#"));
 const lines = instructions(dockerfile);
+/** The Dockerfile with its comments gone: what the checks below are about. */
+const code = lines.join("\n");
 /** The body of the one RUN line containing `needle`. */
 const runWith = (needle: string): string => {
   const hits = lines.filter((l) => l.startsWith("RUN ") && l.includes(needle));
@@ -62,10 +64,10 @@ describe("release image — stages and pins", () => {
   });
 
   it("is multi-arch by construction: no pinned platform, no arch literal", () => {
-    expect(dockerfile).not.toMatch(/--platform/);
-    expect(dockerfile).not.toMatch(/\b(amd64|arm64|aarch64|x86_64)\b/);
+    expect(code).not.toMatch(/--platform/);
+    expect(code).not.toMatch(/\b(amd64|arm64|aarch64|x86_64)\b/);
     // the one arch-dependent line asks dpkg
-    expect(dockerfile).toContain("dpkg --print-architecture");
+    expect(code).toContain("dpkg --print-architecture");
   });
 
   it("pi: ARG defaults == config.toml [pi] == group_vars == package.json", () => {
@@ -86,7 +88,7 @@ describe("release image — stages and pins", () => {
 
   it("install lines reference the ARGs, never a literal version", () => {
     expect(dockerfile).toContain('"${PI_PACKAGE}@${PI_VERSION}"');
-    expect(dockerfile).not.toMatch(/pi-coding-agent@\d/);
+    expect(code).not.toMatch(/pi-coding-agent@\d/);
     expect(dockerfile).toContain("tmux-${TMUX_VERSION}");
   });
 
@@ -98,7 +100,7 @@ describe("release image — stages and pins", () => {
   it("builds tmux from source; there are no OpenViking layers", () => {
     expect(lines.some((l) => /^RUN .*\.\/configure && make/.test(l))).toBe(true);
     expect(runWith("tmux -V")).toBe("tmux -V");
-    expect(dockerfile).not.toMatch(/openviking|llama|\.gguf/i);
+    expect(code).not.toMatch(/openviking|llama|\.gguf/i);
   });
 
   it("the build stage compiles with tsc and verifies dist", () => {
@@ -116,9 +118,9 @@ describe("release image — any uid, a root-owned tree", () => {
   });
 
   it("creates no user and chowns nothing: the caller picks the uid", () => {
-    expect(dockerfile).not.toMatch(/useradd|adduser|chown|--chown/);
+    expect(code).not.toMatch(/useradd|adduser|chown|--chown/);
     // the companion's and the VM's per-uid build args are gone
-    expect(dockerfile).not.toMatch(/COMPANION_UID|REVIEW_UID/);
+    expect(code).not.toMatch(/COMPANION_UID|REVIEW_UID/);
     // a default for a bare `docker run` is numeric: it needs no passwd entry
     expect(lines.filter((l) => l.startsWith("USER "))).toEqual(["USER 1000:1000"]);
   });
@@ -161,9 +163,18 @@ describe("release image — any uid, a root-owned tree", () => {
       .filter((l) => l.startsWith("COPY ") && !l.includes("--from"))
       .flatMap((l) => l.split(/\s+/).slice(1, -1))
       .map((p) => p.replace(/\/$/, ""));
-    for (const s of new Set(sources)) expect(admitted, s).toContain(s);
+    const covers = (a: string, s: string): boolean => s === a || s.startsWith(`${a}/`);
+    for (const s of new Set(sources))
+      expect(
+        [...admitted].some((a) => covers(a, s)),
+        s,
+      ).toBe(true);
     // nothing else rides: every admitted path is copied
-    for (const a of admitted) expect(sources, a).toContain(a);
+    for (const a of admitted)
+      expect(
+        sources.some((s) => covers(a, s)),
+        a,
+      ).toBe(true);
   });
 
   it("the secrets and state of a checkout are never admitted", () => {
@@ -193,7 +204,7 @@ describe("release image — the reviewer stub (D34)", () => {
 describe("release image — rule 5: no claude", () => {
   it("asserts its absence and installs nothing of Anthropic's", () => {
     expect(lines).toContain("RUN ! command -v claude");
-    expect(dockerfile).not.toMatch(/@anthropic-ai|claude-code|claude_driver/);
+    expect(code).not.toMatch(/@anthropic-ai|claude-code|claude_driver/);
   });
 
   it("the claude arm lives only in bench/aacr/Dockerfile", () => {
@@ -256,7 +267,7 @@ function sandbox(): Sandbox {
 
 function sh(s: Sandbox, script: string): { status: number | null; stderr: string } {
   // the Dockerfile's RUN steps `cd /opt/qcr`; point that at the scratch copy
-  const r = spawnSync("sh", ["-c", script.replaceAll("/opt/qcr", join(s.dir, "opt-qcr"))], {
+  const r = spawnSync("/bin/sh", ["-c", script.replaceAll("/opt/qcr", join(s.dir, "opt-qcr"))], {
     env: s.env,
     encoding: "utf8",
   });
@@ -309,6 +320,8 @@ describe("release image — the build-time checks fail when they should", () => 
     const s = sandbox();
     try {
       const step = runWith("command -v claude");
+      // a PATH the host's own claude is not on
+      s.env.PATH = s.bin;
       expect(sh(s, step).status).toBe(0);
       const claude = join(s.bin, "claude");
       writeFileSync(claude, "#!/bin/sh\n");
