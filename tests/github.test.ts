@@ -1199,3 +1199,60 @@ describe("filing command reconciliation", () => {
     expect(await pr.adapter.findFiledItem("issue", marker)).toBeNull();
   });
 });
+
+describe("complete GitHub evidence", () => {
+  it.each(["check-runs", "status"])(
+    "refuses a missing %s array instead of proving empty CI",
+    async (endpoint) => {
+      const { adapter } = build((url) =>
+        url.includes(`/${endpoint}?`) ? {} : { check_runs: [], statuses: [] },
+      );
+      await expect(adapter.listChecks("a")).rejects.toThrow(/unreadable|incomplete/i);
+    },
+  );
+  it("refuses check rows beyond the declared total count", async () => {
+    const { adapter } = build(() => ({
+      total_count: 0,
+      check_runs: [{ name: "ci", status: "completed", conclusion: "success" }],
+      statuses: [],
+    }));
+    await expect(adapter.listChecks("a")).rejects.toThrow(/count/i);
+  });
+  it("refuses history search explicitly marked incomplete even on a short page", async () => {
+    const { adapter } = build(() => ({ incomplete_results: true, items: [] }));
+    await expect(adapter.searchIssuesPaged("repo:o/r")).rejects.toThrow(/incomplete/i);
+  });
+  it.each(["check-runs", "status"])("refuses a saturated %s pagination bound", async (endpoint) => {
+    const { adapter } = build((url) =>
+      url.includes(`/${endpoint}?`)
+        ? endpoint === "check-runs"
+          ? {
+              check_runs: Array.from({ length: 100 }, () => ({
+                name: "ci",
+                status: "completed",
+                conclusion: "success",
+              })),
+            }
+          : {
+              statuses: Array.from({ length: 100 }, () => ({
+                context: "legacy-ci",
+                state: "success",
+              })),
+            }
+        : { check_runs: [], statuses: [] },
+    );
+    await expect(adapter.listChecks("a")).rejects.toThrow(/incomplete|page limit/i);
+  });
+  it("refuses a short checks page that contradicts the advertised count", async () => {
+    const { adapter } = build(() => ({ total_count: 101, check_runs: [], statuses: [] }));
+    await expect(adapter.listChecks("a")).rejects.toThrow(/incomplete|count/i);
+  });
+  it.each(["behind", "diverged"])(
+    "does not treat %s compare output as a complete two-head delta",
+    async (status) => {
+      const { adapter } = build(() => ({ status, files: [] }));
+      const files = await adapter.compareFiles("approved-head", "rewritten-head");
+      expect(files.truncated).toBe(true);
+    },
+  );
+});
