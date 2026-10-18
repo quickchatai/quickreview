@@ -9,6 +9,7 @@
 // whose budget the token would not cover is refused before it starts, and the
 // run is stopped with the fix.
 
+import { CASE_STOP_GRACE_MS } from "./casebudget.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AuthExpiring, copyPiAuth, type AuthCopyWords } from "./piauthcopy.js";
@@ -103,7 +104,20 @@ export function scanAuthCases<S, O>(
         o.onExpired(reason);
         return { ok: false, reason, cost_usd: 0 };
       }
-      return inner.run(spec, signal, onCost);
+      const bounded = new AbortController();
+      const stop = (): void => bounded.abort();
+      signal.addEventListener("abort", stop, { once: true });
+      if (signal.aborted) stop();
+      // Reserve the runner's forced-stop grace inside the login admission budget.
+      const timer = setTimeout(stop, Math.max(0, o.needMs - CASE_STOP_GRACE_MS));
+      timer.unref();
+      try {
+        // Wait for process cleanup and its final cost rather than racing a refusal.
+        return await inner.run(spec, bounded.signal, onCost);
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", stop);
+      }
     },
   };
 }

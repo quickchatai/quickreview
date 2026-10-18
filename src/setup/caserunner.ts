@@ -8,6 +8,7 @@
 // fence checks it too) — and what it spawns is a leaf: `-p --no-session
 // --no-extensions`, read-only tools, no memory, no fan-out (root rule 9: no
 // new session kind, nothing on the VM).
+import { CASE_STOP_GRACE_MS } from "../casebudget.js";
 import { spawn as nodeSpawn } from "node:child_process";
 import {
   appendFileSync,
@@ -433,7 +434,7 @@ export function piCaseRunner(opts: {
           }
           const kill = (): void => {
             child.kill("SIGTERM");
-            setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+            setTimeout(() => child.kill("SIGKILL"), CASE_STOP_GRACE_MS).unref();
           };
           signal.addEventListener("abort", kill, { once: true });
           child.stdout.on("data", (d: Buffer | string) => {

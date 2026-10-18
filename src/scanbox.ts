@@ -741,7 +741,7 @@ export function dockerDetach<R = unknown>(
         await deps.docker(["rm", "-f", plan.name]);
         // It may have answered while it was being removed.
         const late = read();
-        if (late) return late;
+        if (late && !late.ok) return late;
         return refuse(
           `the scan driver did not say it started within ${Math.round(timeoutMs / 1000)}s — its container was removed; see ${log.path}`,
         );
