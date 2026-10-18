@@ -1,4 +1,4 @@
-// The scans behind the engine fences (P2.1, ruling R22). Pure functions over a
+// The scans behind the engine fences (P2.1). Pure functions over a
 // repo root, so tests/fences-engine.test.ts can run them on the real tree AND
 // on a planted copy: a fence that cannot be made to fail is not a fence.
 import { readFileSync, readdirSync, existsSync } from "node:fs";
@@ -123,8 +123,8 @@ export function daemonReachesEngine(root: string): string[] {
 }
 
 /**
- * Image-only paths and state-home reads, which src/engine/** must not carry
- * (ruling R22): the engine is what a post-v1 pi package would ship, so every
+ * Image-only paths and state-home reads, which src/engine/** must not carry:
+ * the engine is what a post-v1 pi package would ship, so every
  * path reaches it through SessionSpec or config. Matched on code with
  * comments removed.
  */

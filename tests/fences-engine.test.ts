@@ -1,4 +1,4 @@
-// [P2.1] The engine fences, laid before the engine grows (ruling R22).
+// [P2.1] The engine fences, laid before the engine grows.
 //
 //   S2 SDK allowlist  only src/engine/pisdk.ts and the extension factory
 //                     modules import @earendil-works/pi-coding-agent at runtime
