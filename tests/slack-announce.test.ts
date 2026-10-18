@@ -1,8 +1,9 @@
 // The announcer: threading, idempotence, caps, failure
 // containment, the daemon lifecycle and the pinned heartbeat. All I/O is faked
 // — the Slack seam is a recording object and the store is in-memory.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import {
@@ -154,8 +155,16 @@ describe("disabled Slack", () => {
 
 describe("root-on-first-event (DP-2a)", () => {
   it("retains an unknown delivery reservation across repeated calls and restart", async () => {
-    const post = vi.spyOn(slack, "postMessage").mockResolvedValue({ ok: false, error: "response lost", ambiguous: true } as SlackPostResult);
-    const args = { pr: 5263, round_no: 1, verdict: "APPROVE" as const, summary: "s", duration_s: 60 };
+    const post = vi
+      .spyOn(slack, "postMessage")
+      .mockResolvedValue({ ok: false, error: "response lost", ambiguous: true } as SlackPostResult);
+    const args = {
+      pr: 5263,
+      round_no: 1,
+      verdict: "APPROVE" as const,
+      summary: "s",
+      duration_s: 60,
+    };
     const a = announcer();
     await a.verdict(args);
     await a.verdict(args);
@@ -164,7 +173,9 @@ describe("root-on-first-event (DP-2a)", () => {
     expect(store.slackPost("verdict:5263:1")?.ts).toBeNull();
   });
   it("never persists successful post settlement without its first thread root", async () => {
-    const bind = vi.spyOn(store, "upsertSlackThread").mockImplementation(() => { throw new Error("interrupted root binding"); });
+    const bind = vi.spyOn(store, "upsertSlackThread").mockImplementation(() => {
+      throw new Error("interrupted root binding");
+    });
     await expect(announcer().roundStarted(round)).rejects.toThrow("interrupted root binding");
     bind.mockRestore();
     expect(store.slackPost("pickup:5263")?.ts).toBeNull();
@@ -620,6 +631,129 @@ describe("pinned heartbeat", () => {
       store.recoverReviewFailure(5410, "operator-rerun");
       return store.slackPost("review-failure:cmd-5410")!.ts!;
     }
+    function reopenFailure(): void {
+      store.openReviewFailure({
+        pr: 5410,
+        command_id: "cmd-5410",
+        round_id: null,
+        round_no: 1,
+        head_sha: "abc",
+        stage: "command_start",
+        detail: "again",
+        attempts: 2,
+        retry_cap: 2,
+      });
+    }
+    const reopened = {
+      pr: 5410,
+      round_no: 1,
+      kind: "failed_loud" as const,
+      deadline_min: 75,
+      incident_id: "review-failure:cmd-5410",
+    };
+
+    it("honours the cause switch before editing a reopened incident", async () => {
+      const a = announcer();
+      const ts = await recoveredIncident(a);
+      await a.heartbeat();
+      reopenFailure();
+      cfg.slack.policy.causes["review.failed_loud"] = { enabled: false, cooldown_min: 0 };
+      slack.updates.length = 0;
+      await a.anomaly(reopened);
+      expect(slack.updates.filter((update) => update.ts === ts)).toEqual([]);
+    });
+
+    it("retries an owed reopening correction across announcer restart", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "slack-reopening-"));
+      store.close();
+      const dbPath = join(dir, "state.db");
+      store = new StateStore(dbPath, now);
+      try {
+        const a = announcer();
+        const ts = await recoveredIncident(a);
+        await a.heartbeat();
+        at("2026-08-17T09:02:00.000Z");
+        reopenFailure();
+        slack.refuseUpdates = 1;
+        await a.anomaly(reopened);
+        expect(slack.updates.filter((update) => update.ts === ts).at(-1)?.text).toContain(
+          "recovered via",
+        );
+        cfg.slack.policy.causes["review.failed_loud"] = { enabled: false, cooldown_min: 0 };
+        await announcer().heartbeat();
+        expect(slack.updates.filter((update) => update.ts === ts).at(-1)?.text).toContain(
+          "recovered via",
+        );
+        cfg.slack.policy.causes["review.failed_loud"] = { enabled: true, cooldown_min: 0 };
+        store.close();
+        store = new StateStore(dbPath, now);
+        await announcer().heartbeat();
+        expect(slack.updates.filter((update) => update.ts === ts).at(-1)?.text).toContain(
+          "work is still owed",
+        );
+      } finally {
+        store.close();
+        store = new StateStore(":memory:", now);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("retains a refused reopening when automatic retry is merely deferred", async () => {
+      const a = announcer();
+      const ts = await recoveredIncident(a);
+      await a.heartbeat();
+      at("2026-08-17T09:02:00.000Z");
+      reopenFailure();
+      slack.refuseUpdates = 1;
+      await a.anomaly(reopened);
+      // Scheduling facts select the ordinary paused-PR deferral path.
+      store.db
+        .prepare(
+          "UPDATE review_failures SET stage='first_pass_start', next_action='retry_wait', next_retry_at=? WHERE pr=5410",
+        )
+        .run(clock.toISOString());
+      store.db.prepare("UPDATE pr_state SET paused=1 WHERE number=5410").run();
+      at("2026-08-17T09:03:00.000Z");
+      expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([]);
+      expect(store.openReviewFailure(5410)?.updated_at).toBe(clock.toISOString());
+      await announcer().heartbeat();
+      expect(slack.updates.filter((update) => update.ts === ts).at(-1)?.text).toContain(
+        "work is still owed",
+      );
+    });
+
+    it("does not let an older successful edit forget a newer refused reopening", async () => {
+      const a = announcer();
+      const ts = await recoveredIncident(a);
+      await a.heartbeat();
+      const original = slack.updateMessage.bind(slack);
+      let release!: (result: SlackPostResult) => void;
+      const update = vi
+        .spyOn(slack, "updateMessage")
+        .mockImplementationOnce(
+          async () =>
+            new Promise((resolve) => {
+              release = resolve;
+            }),
+        )
+        .mockResolvedValueOnce({ ok: false, error: "rate_limited" })
+        .mockImplementation(original);
+      at("2026-08-17T09:02:00.000Z");
+      reopenFailure();
+      const first = a.anomaly({ ...reopened, kind: "overdue" });
+      await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+      at("2026-08-17T09:03:00.000Z");
+      reopenFailure();
+      const second = a.anomaly(reopened);
+      release({ ok: true });
+      await first;
+      await second;
+      await a.heartbeat();
+      expect(slack.updates.filter((entry) => entry.ts === ts).at(-1)?.text).toContain(
+        "work is still owed",
+      );
+    });
+
     const corrections = (ts: string) =>
       slack.updates.filter((u) => u.ts === ts && u.text.includes("recovered via"));
 
