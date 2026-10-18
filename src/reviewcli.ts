@@ -38,7 +38,12 @@ import {
 import type { RoundMemory } from "./memory/context.js";
 import { seedReviewMemory, type ReviewMemorySource } from "./reviewmemory.js";
 import type { CredentialSource } from "./ghcred.js";
-import { assemblePostReview, loadPostIdentity, postReviewToPr } from "./reviewpost.js";
+import {
+  assemblePostReview,
+  loadPostIdentity,
+  localPostGate,
+  postReviewToPr,
+} from "./reviewpost.js";
 import {
   fetchPrTarget,
   parsePrTarget,
@@ -114,7 +119,9 @@ export function reviewHelp(): string {
     "COMMENT, never an approval or a change request. Every comment says it came from qcr",
     "and carries the hidden finding markers, and findings already on the PR are skipped.",
     "It posts as the credential the PR was read with, or the source named by `post_as`",
-    "(app, gh, env:GITHUB_TOKEN, env:GH_TOKEN) in `.git/qcr-review.json`.",
+    "(app, gh, env:GITHUB_TOKEN, env:GH_TOKEN) in `.git/qcr-review.json`. The post goes",
+    "through the mutation gate: with `dry_run = true` in the install's config the review is",
+    "recorded under state/dryrun/ and nothing is sent.",
     "",
     "A PR is read with the first GitHub credential found: the App if configured, then",
     "GITHUB_TOKEN/GH_TOKEN, then `gh auth token` (run `gh auth login` to set that up).",
@@ -863,6 +870,15 @@ async function runReview(
           number: prInfo.number,
           headSha: t.headSha,
           token: id.token,
+          // The one gate, with the install's dry_run: a dry-run install records
+          // the review under state/dryrun/ and sends nothing (CLAUDE.md rule 1).
+          gate: localPostGate({
+            dryRun: deps.cfg.dry_run,
+            dryrunDir: join(deps.root, "state", "dryrun"),
+            token: id.token,
+            ...(deps.pr?.fetchFn ? { fetchFn: deps.pr.fetchFn } : {}),
+            ...(deps.pr?.apiBase ? { apiBase: deps.pr.apiBase } : {}),
+          }),
           review: assemblePostReview(shot.findings, {
             cfg: deps.cfg,
             roundNo: round.round_no,
@@ -874,7 +890,20 @@ async function runReview(
           ...(deps.pr?.apiBase ? { apiBase: deps.pr.apiBase } : {}),
         })
       : id;
-    if (res.ok) {
+    if (res.ok && res.recorded !== undefined) {
+      posted = {
+        ok: true,
+        posted: 0,
+        skipped: res.skipped,
+        url: null,
+        dry_run: true,
+        would_post: res.wouldPost,
+        recorded: res.recorded,
+      };
+      postLine =
+        `Dry run (dry_run = true in this install's config): the review of ${res.wouldPost} ` +
+        `comment${res.wouldPost === 1 ? "" : "s"} on PR #${prInfo.number} was recorded, not posted: ${res.recorded}`;
+    } else if (res.ok) {
       posted = { ok: true, posted: res.posted, skipped: res.skipped, url: res.url };
       postLine =
         res.posted === 0

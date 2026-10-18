@@ -203,6 +203,12 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     expect(rule3).toMatch(/2026-10-18/);
     expect(rule3).toMatch(/GITHUB_TOKEN/);
     expect(rule3).toMatch(/gh auth/);
+    // The carve-out is the credential only: the post still goes through the gate.
+    expect(rule3).toMatch(/MutationGate/);
+    expect(rule3).toMatch(/dry_run/);
+    // The token handoff is a read-and-unlinked file, never env.
+    expect(rule3).toMatch(/read\s+once and unlinked/);
+    expect(rule3).toMatch(/never as env/);
   });
 });
 
