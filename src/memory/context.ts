@@ -36,6 +36,8 @@
 // Nothing here knows about HTTP or OpenViking: an implementation
 // of `ContextAssembler` is injected (see src/dispatch.ts `DispatchDeps.memory`).
 
+import { withinBudget } from "../budget.js";
+import { MEMORY_DEFAULTS } from "../config.js";
 import { promptQuoted } from "../codespan.js";
 import type { RoundLessonDelivery } from "./delivery.js";
 import type { RoundActivityWindow } from "./roundactivity.js";
@@ -147,13 +149,13 @@ export const MEMORY_LESS: RoundMemory = Object.freeze({
 
 export const ROUND_CONTEXT_DEFAULTS = {
   /** Token budget for the ONE context block. */
-  maxTokens: 2000,
+  maxTokens: MEMORY_DEFAULTS.context_tokens,
   /** Deadline for the whole seed (head + block run concurrently). The round
    * proceeds memory-less the instant it expires — this is the ceiling on how
    * long memory may ever delay a review. Sized so a seed's query queued
    * behind one document embedding (3 s or more on the VM) still finishes.
-   * Mirrors `MEMORY_DEFAULTS.context_timeout_ms`. */
-  timeoutMs: 9000,
+   * Uses the same default as the parsed memory configuration. */
+  timeoutMs: MEMORY_DEFAULTS.context_timeout_ms,
   /** The part of the budget a seed keeps for its SEARCH when it waits for the
    * case writer's embedding tail: the wait is at most
    * `timeoutMs - searchReserveMs`. An uncontested context search takes
@@ -277,8 +279,6 @@ export function roundContextQuery(input: { title: string; files: readonly Contex
   return clamp([title, shape].filter((p) => p !== "").join(" — "), ROUND_CONTEXT_DEFAULTS.queryMaxChars);
 }
 
-const TIMED_OUT = Symbol("memory-timeout");
-
 /** A short, log-safe spelling of a value that broke the contract. */
 function describeValue(value: unknown): string {
   if (value === null) return "null";
@@ -301,22 +301,15 @@ async function guarded(
   gaps: MemoryGap[],
   log: (msg: string, extra?: unknown) => void,
 ): Promise<string> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const value = await Promise.race([
-      // The call itself is inside the try so a SYNCHRONOUS throw from a broken
-      // implementation degrades exactly like a rejection.
-      Promise.resolve().then(fn),
-      new Promise<typeof TIMED_OUT>((resolve) => {
-        timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
-      }),
-    ]);
-    if (value === TIMED_OUT) {
+    // Defer the call so a synchronous throw remains inside this refusal path.
+    const result = await withinBudget(Promise.resolve().then(fn), timeoutMs);
+    if (result.kind === "budget") {
       gaps.push({ part, reason: "timeout" });
       log(`memory: ${part} timed out after ${timeoutMs}ms — round proceeds memory-less`);
       return "";
     }
+    const value = result.value;
     if (value.status === "unreadable") {
       gaps.push({ part, reason: `unreadable: ${clamp(collapse(value.reason), 200)}` });
       log(`memory: ${part} unreadable (${value.reason}) — round proceeds memory-less`);
@@ -336,8 +329,6 @@ async function guarded(
     gaps.push({ part, reason: `error: ${String(err)}` });
     log(`memory: ${part} failed — round proceeds memory-less`, err);
     return "";
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

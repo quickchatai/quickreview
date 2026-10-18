@@ -37,6 +37,7 @@
 // Memory still never blocks or delays a round: nothing here sits on the round
 // path. `recordRoundSeed` is told about a seed after the round was built.
 
+import { MEMORY_DEFAULTS } from "../config.js";
 import { curationPhrase, type CurationStatus } from "../learner/status.js";
 import { lessonDeliveryPhrase, type LessonDeliveryStatus } from "./shadowstatus.js";
 
@@ -273,10 +274,10 @@ export const MEMORY_WAKE = Object.freeze({
 } as const);
 
 export const MEMORY_HEALTH_DEFAULTS = Object.freeze({
-  intervalMs: 120_000,
-  downAfterMs: 600_000,
-  bootGraceMs: 300_000,
-  rewakeMs: 6 * 3_600_000,
+  intervalMs: MEMORY_DEFAULTS.probe_interval_s * 1000,
+  downAfterMs: MEMORY_DEFAULTS.down_after_min * 60_000,
+  bootGraceMs: MEMORY_DEFAULTS.boot_grace_min * 60_000,
+  rewakeMs: MEMORY_DEFAULTS.rewake_h * 3_600_000,
   /** The sliding window the "too many recent request failures" rule reads. */
   degradedWindowMs: 600_000,
   /** …and how many failures (at least half the window) it takes. */
@@ -688,10 +689,7 @@ export class MemoryHealthMonitor {
     }
     // Either credential's latest failure degrades: the sessions' probe is
     // judged as the daemon's is.
-    for (const n of CREDENTIALS) {
-      const c = this.creds[n];
-      if (c && c.result !== "ok" && c.result !== "absent") return "degraded";
-    }
+    if (this.credentialFailing()) return "degraded";
     if (this.windowDegraded(t)) return "degraded";
     return "healthy";
   }
