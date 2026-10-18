@@ -176,9 +176,7 @@ describe("coverage_gaps on both routes", () => {
     const ext = readFileSync(join(root, "extensions/finding-clusters.ts"), "utf8");
     expect(ext).toContain("pi.registerTool(COVERAGE_TOOL)");
     expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
-    expect(readFileSync(join(root, "src/bench/runner.ts"), "utf8")).toMatch(
-      /"finding-clusters\.ts"/,
-    );
+    expect(readFileSync(join(root, "src/oneshot.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
   });
   it("answers rows with reasons, and reports malformed input instead of throwing", async () => {
     const res = await COVERAGE_TOOL.execute("t1", {

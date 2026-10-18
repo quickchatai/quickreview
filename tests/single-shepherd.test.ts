@@ -176,7 +176,16 @@ describe("daemon topology", () => {
     // one-shot `-p --no-session --no-extensions` probe), or — the doctor's
     // probe with `[scan] sandbox = "host"` — the same one-shot leaf on the
     // operator's machine. No daemon module imports it (pinned below).
-    const allowedPaths = ["/src/bench/runner.ts", "/src/setup/caserunner.ts", "/src/scanbox.ts"];
+    // reviewcli.ts is `qcr review`: the operator's own terminal, the shared
+    // one-shot runner (oneshot.ts) with a pi binary override. Only cli.ts
+    // imports it (dynamically); no daemon module does.
+    const allowedPaths = [
+      "/src/oneshot.ts",
+      "/src/reviewcli.ts",
+      "/src/bench/runner.ts",
+      "/src/setup/caserunner.ts",
+      "/src/scanbox.ts",
+    ];
     const offenders = srcFiles(src)
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))
@@ -218,9 +227,11 @@ describe("daemon topology", () => {
       .filter((f) => /["'][^"']*\/scancli\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanCli).toEqual([]);
     // The scan sandbox's pi allowance above holds only while `qcr scan` is
-    // the one module that reaches it.
+    // the one module that reaches it — and `qcr review`'s sandbox
+    // (src/reviewbox.ts), the same operator CLI's container launcher, which
+    // takes only scanbox's docker mounts and login checks, never its pi probe.
     const reachesScanBox = srcFiles(src)
-      .filter((f) => !f.endsWith("/src/scancli.ts"))
+      .filter((f) => !f.endsWith("/src/scancli.ts") && !f.endsWith("/src/reviewbox.ts"))
       .filter((f) => /["'][^"']*\/scanbox\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanBox).toEqual([]);
     const reachesSetup = srcFiles(src)
