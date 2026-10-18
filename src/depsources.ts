@@ -90,6 +90,8 @@ export interface DepSource {
 export interface DepSkip {
   ecosystem: DepEcosystem;
   name: string;
+  version?: string;
+  range?: string;
   reason: string;
 }
 
@@ -732,7 +734,14 @@ function isForeignResolved(resolved: unknown): boolean {
 }
 
 /** package-lock.json / npm-shrinkwrap.json, lockfileVersion 1, 2 and 3. */
-export function parsePackageLock(text: string): NpmLock | null {
+export function parsePackageLock(
+  text: string,
+  implicitForeign: (name: string) => boolean = () => false,
+): NpmLock | null {
+  const foreignSource = (name: string, resolved: unknown): boolean =>
+    typeof resolved === "string" && resolved !== ""
+      ? isForeignResolved(resolved)
+      : implicitForeign(name);
   let doc: unknown;
   try {
     doc = JSON.parse(text);
@@ -760,7 +769,7 @@ export function parsePackageLock(text: string): NpmLock | null {
       }
       const version = str(val.version);
       if (!version || !VERSION_LIKE.test(version)) continue;
-      const foreign = isForeignResolved(val.resolved) ? { foreign: true as const } : {};
+      const foreign = foreignSource(name, val.resolved) ? { foreign: true as const } : {};
       if (prefix === "") addLock(lock, name, { version, ...foreign });
       // Nested under a WORKSPACE (not under another package): that
       // workspace's own copy, which beats the hoisted one for its files.
@@ -777,7 +786,7 @@ export function parsePackageLock(text: string): NpmLock | null {
         addLock(
           lock,
           name,
-          isForeignResolved(val.resolved) ? { version, foreign: true } : { version },
+          foreignSource(name, val.resolved) ? { version, foreign: true } : { version },
         );
     }
   }
@@ -875,7 +884,10 @@ function splitPnpmKey(key: string): { name: string; version: string } | null {
  * `resolution` names a tarball off the public registry is foreign, and so is
  * every importer pin at its name and version.
  */
-export function parsePnpmLock(text: string, defaultForeign = false): NpmLock {
+export function parsePnpmLock(
+  text: string,
+  defaultForeign: boolean | ((name: string) => boolean) = false,
+): NpmLock {
   const lock = emptyLock();
   let section: "packages" | "importers" | "root" | "other" = "other";
   let rootGroup: "deps" | "specs" = "deps";
@@ -916,7 +928,11 @@ export function parsePnpmLock(text: string, defaultForeign = false): NpmLock {
   const packages: { name: string; version: string }[] = [];
   const foreignSource = (name: string, version: string): boolean => {
     const source = sourceByPackage.get(`${name}@${version}`);
-    return source?.foreign === true || (defaultForeign && source?.public !== true);
+    return (
+      source?.foreign === true ||
+      ((typeof defaultForeign === "function" ? defaultForeign(name) : defaultForeign) &&
+        source?.public !== true)
+    );
   };
   const flushPkg = (): void => {
     if (!pkg) return;
@@ -1779,6 +1795,7 @@ function pickFromPool(pool: LockEntry[], range: string | undefined): string | nu
 // ---------------------------------------------------------------------------
 
 interface PyVersion {
+  epoch: number;
   release: number[];
   final: boolean;
 }
@@ -1789,7 +1806,11 @@ const PY_VERSION_RE =
 function parsePyVersion(v: string): PyVersion | null {
   const m = PY_VERSION_RE.exec(v);
   if (!m) return null;
-  return { release: (m[1] ?? "0").split(".").map(Number), final: !m[2] && !m[3] && !m[4] };
+  return {
+    epoch: Number(/^\s*v?(\d+)!/i.exec(v)?.[1] ?? 0),
+    release: (m[1] ?? "0").split(".").map(Number),
+    final: !m[2] && !m[3] && !m[4],
+  };
 }
 
 function cmpRelease(a: readonly number[], b: readonly number[]): number {
@@ -1800,7 +1821,7 @@ function cmpRelease(a: readonly number[], b: readonly number[]): number {
   return 0;
 }
 
-function pyClause(v: readonly number[], clause: string): boolean | null {
+function pyClause(version: PyVersion, clause: string): boolean | null {
   const m = /^(===|==|!=|~=|>=|<=|>|<|\^|~|=)?\s*(.*)$/.exec(clause.trim());
   const op = m?.[1] ?? "";
   const target = (m?.[2] ?? "").trim();
@@ -1809,8 +1830,10 @@ function pyClause(v: readonly number[], clause: string): boolean | null {
   const tv = parsePyVersion(wildcard ? target.slice(0, -2) : target);
   if (!tv) return null;
   const t = tv.release;
-  const prefix = (): boolean => t.every((n, i) => (v[i] ?? 0) === n);
-  const c = cmpRelease(v, t);
+  const v = version.release;
+  const epoch = version.epoch - tv.epoch;
+  const prefix = (): boolean => epoch === 0 && t.every((n, i) => (v[i] ?? 0) === n);
+  const c = epoch || cmpRelease(v, t);
   switch (op) {
     case "":
     case "=":
@@ -1831,7 +1854,7 @@ function pyClause(v: readonly number[], clause: string): boolean | null {
       if (t.length < 2) return null;
       const upper = t.slice(0, -1);
       upper[upper.length - 1] = (upper[upper.length - 1] ?? 0) + 1;
-      return c >= 0 && cmpRelease(v, upper) < 0;
+      return epoch === 0 && c >= 0 && cmpRelease(v, upper) < 0;
     }
     case "^": {
       // Poetry caret: bump the first non-zero component.
@@ -1839,11 +1862,11 @@ function pyClause(v: readonly number[], clause: string): boolean | null {
       if (i < 0) i = t.length - 1;
       const upper = t.slice(0, i + 1);
       upper[i] = (upper[i] ?? 0) + 1;
-      return c >= 0 && cmpRelease(v, upper) < 0;
+      return epoch === 0 && c >= 0 && cmpRelease(v, upper) < 0;
     }
     case "~": {
       const upper = t.length >= 2 ? [t[0] ?? 0, (t[1] ?? 0) + 1] : [(t[0] ?? 0) + 1];
-      return c >= 0 && cmpRelease(v, upper) < 0;
+      return epoch === 0 && c >= 0 && cmpRelease(v, upper) < 0;
     }
     default:
       return null;
@@ -1858,17 +1881,19 @@ function pyClause(v: readonly number[], clause: string): boolean | null {
 export function pyVersionMatches(version: string, spec: string): boolean {
   const v = parsePyVersion(version);
   if (!v || !v.final) return false;
-  return spec
-    .split("||")
-    .some((alt) => alt.split(",").every((cl) => pyClause(v.release, cl) === true));
+  return spec.split("||").some((alt) => alt.split(",").every((cl) => pyClause(v, cl) === true));
 }
 
 function maxPyVersion(versions: readonly string[], spec: string): string | null {
-  let best: { raw: string; r: number[] } | null = null;
+  let best: { raw: string; parsed: PyVersion } | null = null;
   for (const raw of versions) {
     if (!pyVersionMatches(raw, spec)) continue;
-    const r = parsePyVersion(raw)?.release ?? [];
-    if (!best || cmpRelease(r, best.r) > 0) best = { raw, r };
+    const parsed = parsePyVersion(raw)!;
+    if (
+      !best ||
+      (parsed.epoch - best.parsed.epoch || cmpRelease(parsed.release, best.parsed.release)) > 0
+    )
+      best = { raw, parsed };
   }
   return best?.raw ?? null;
 }
@@ -2004,6 +2029,7 @@ function pythonDefaults(
 interface DirInfo {
   npmLocks: NpmLock[];
   npmDefaultForeign: boolean;
+  npmScopeForeign: Map<string, boolean>;
   pkg: PackageJsonInfo | null;
   pyPins: Map<string, string>;
   /** Distributions a Python lockfile here records as local (first-party). */
@@ -2039,18 +2065,26 @@ class Resolver {
           ? this.dir(posix.dirname(rel) === "." ? "" : posix.dirname(rel)).npmDefaultForeign
           : false
         : isForeignResolved(registry);
+    const parent = rel ? this.dir(posix.dirname(rel) === "." ? "" : posix.dirname(rel)) : null;
+    const npmScopeForeign = new Map(parent?.npmScopeForeign);
+    for (const line of npmrc?.split(/\r?\n/) ?? []) {
+      const match = /^\s*(@[^:\s]+):registry\s*=\s*(.*?)\s*$/.exec(line);
+      if (match) npmScopeForeign.set(match[1]!, isForeignResolved(match[2]));
+    }
+    const registryForeign = (name: string): boolean =>
+      npmScopeForeign.get(name.split("/")[0]!) ?? npmDefaultForeign;
     const pyproject = read("pyproject.toml");
     const defaults = pythonDefaults(pyproject, read("uv.toml"));
     const npmLocks: NpmLock[] = [];
-    for (const f of ["package-lock.json", "npm-shrinkwrap.json"]) {
+    for (const f of ["npm-shrinkwrap.json", "package-lock.json"]) {
       const t = read(f);
-      const l = t !== null ? parsePackageLock(t) : null;
+      const l = t !== null ? parsePackageLock(t, registryForeign) : null;
       if (l) npmLocks.push(l);
     }
     const yarn = read("yarn.lock");
     if (yarn !== null) npmLocks.push(parseYarnLock(yarn));
     const pnpm = read("pnpm-lock.yaml");
-    if (pnpm !== null) npmLocks.push(parsePnpmLock(pnpm, npmDefaultForeign));
+    if (pnpm !== null) npmLocks.push(parsePnpmLock(pnpm, registryForeign));
     const pkgText = read("package.json");
     const pkg = pkgText !== null ? parsePackageJson(pkgText) : null;
 
@@ -2091,6 +2125,27 @@ class Resolver {
     if (pyproject !== null)
       for (const [k, r] of parsePyprojectDeps(pyproject)) if (!pyDecl.has(k)) pyDecl.set(k, r);
 
+    const uv = childObject(childObject(tomlObject(pyproject), "tool"), "uv");
+    for (const [name, source] of Object.entries(childObject(uv, "sources"))) {
+      const key = normPy(name);
+      if (!pyDecl.has(key) || pyPins.has(key)) continue;
+      const entries = Array.isArray(source) ? source : [source];
+      if (
+        entries.some(
+          (entry) => isObj(entry) && (entry.workspace === true || typeof entry.path === "string"),
+        )
+      ) {
+        pyDecl.set(key, { range: "file:uv-source", pin: null });
+      } else if (
+        entries.some(
+          (entry) =>
+            isObj(entry) &&
+            ["git", "url", "index"].some((field) => typeof entry[field] === "string"),
+        )
+      ) {
+        pyDecl.set(key, { range: "@ uv source", pin: null });
+      }
+    }
     for (const [name, req] of pyDecl)
       if (
         !pyPins.has(name) &&
@@ -2098,7 +2153,15 @@ class Resolver {
         (defaults.uv || (defaults.poetry && !defaults.publicPoetry.has(name)))
       )
         pyDecl.set(name, { range: "@ index source", pin: null });
-    const info: DirInfo = { npmLocks, npmDefaultForeign, pkg, pyPins, pyLocal, pyDecl };
+    const info: DirInfo = {
+      npmLocks,
+      npmDefaultForeign,
+      npmScopeForeign,
+      pkg,
+      pyPins,
+      pyLocal,
+      pyDecl,
+    };
     this.dirs.set(rel, info);
     return info;
   }
@@ -2124,12 +2187,13 @@ class Resolver {
         if (info.pkg.name === name) return "first-party";
         if (range === undefined && info.pkg.deps.has(name)) {
           range = info.pkg.deps.get(name);
-          defaultForeign = info.npmDefaultForeign;
+          defaultForeign = info.npmScopeForeign.get(name.split("/")[0]!) ?? info.npmDefaultForeign;
         }
       }
       for (const l of info.npmLocks) {
         anyManifest = true;
-        if (isLinked(l, name, d ? posix.relative(d, relFile) : relFile)) return "first-party";
+        if (!locked && isLinked(l, name, d ? posix.relative(d, relFile) : relFile))
+          return "first-party";
         const e = l.entries.get(name);
         if (!locked && e?.length) locked = { entries: e, dir: d };
       }
@@ -2187,7 +2251,9 @@ class Resolver {
 
   /** Is `top` a module of the repo itself, as seen from this file? */
   pyFirstParty(top: string, relFile: string): boolean {
-    const dirs = new Set([...ancestors(relDirOf(relFile)), "src"]);
+    const dirs = new Set(
+      ancestors(relDirOf(relFile)).flatMap((dir) => [dir, posix.join(dir, "src")]),
+    );
     for (const d of dirs) {
       const base = posix.join(d, top);
       if (this.io.exists(`${base}.py`) || this.io.exists(`${base}/__init__.py`)) return true;
@@ -2203,7 +2269,7 @@ class Resolver {
     const top = parts[0] ?? "";
     if (!top || PY_STDLIB.has(top) || this.pyFirstParty(top, relFile)) return [];
     const lookup = (candidate: string): Resolved | null | "first-party" => {
-      const alias = PY_ALIASES[candidate];
+      const alias = Object.hasOwn(PY_ALIASES, candidate) ? PY_ALIASES[candidate] : undefined;
       const r = this.pyDist(normPy(alias ?? candidate), relFile);
       if (r === null && alias) return { name: normPy(alias), version: null, range: "*" };
       return r;
@@ -2995,6 +3061,12 @@ async function httpGet(
     const headers: Record<string, string> = { "user-agent": USER_AGENT };
     if (accept) headers.accept = accept;
     const res = await ctx.fetch(url, { signal: ac.signal, headers, redirect: "follow" });
+    if ((res.url && !res.url.startsWith(allowedPrefix)) || !res.ok) {
+      // A rejected response is never consumed. Release its transfer before
+      // clearing the request deadline; cleanup cannot delay preparation.
+      void res.body?.cancel().catch(() => undefined);
+      ac.abort();
+    }
     if (res.url && !res.url.startsWith(allowedPrefix))
       throw new SkipError(`redirected off ${hostOf(allowedPrefix)}`);
     if (res.status === 404) throw new SkipError(`not found (404 from ${hostOf(url)})`);
@@ -3330,6 +3402,10 @@ async function prepareOne(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
     const reason = e instanceof SkipError ? e.message : `unpack failed: ${short(e)}`;
     out = { ok: false, skip: { ecosystem: req.ecosystem, name: req.name, reason } };
   }
+  if (!out.ok) {
+    if (req.version !== null) out.skip.version = req.version;
+    else if (req.range !== undefined) out.skip.range = req.range;
+  }
   if (out.ok)
     ctx.log(
       `depsources: ${req.ecosystem} ${out.source.name}@${out.source.version} ready (${out.source.files} files)`,
@@ -3398,7 +3474,16 @@ export async function prepareDependencySources(
       take.forEach((r, i) => {
         results[i] = {
           ok: false,
-          skip: { ecosystem: r.ecosystem, name: r.name, reason: "no fetch implementation" },
+          skip: {
+            ecosystem: r.ecosystem,
+            name: r.name,
+            ...(r.version !== null
+              ? { version: r.version }
+              : r.range !== undefined
+                ? { range: r.range }
+                : {}),
+            reason: "no fetch implementation",
+          },
         };
       });
     } else {
@@ -3430,6 +3515,11 @@ export async function prepareDependencySources(
       manifest.skipped.push({
         ecosystem: r.ecosystem,
         name: r.name,
+        ...(r.version !== null
+          ? { version: r.version }
+          : r.range !== undefined
+            ? { range: r.range }
+            : {}),
         reason: "over the per-PR package cap",
       });
     log(`depsources: ${manifest.sources.length} source(s), ${manifest.skipped.length} skipped`);
@@ -3544,7 +3634,10 @@ export function renderDependencyNote(m: DepManifest): string {
   if (m.skipped.length) {
     const shown = m.skipped
       .slice(0, MAX_RENDERED_SKIPS)
-      .map((s) => `\`${f(s.name)}\` (${f(s.reason)})`);
+      .map(
+        (s) =>
+          `\`${f(s.name)}${s.version ? `@${f(s.version)}` : s.range ? ` ${f(s.range)}` : ""}\` (${f(s.reason)})`,
+      );
     const more = m.skipped.length - shown.length;
     lines.push(`Not available: ${shown.join("; ")}${more > 0 ? `; +${more} more` : ""}.`);
   }
