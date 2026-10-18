@@ -18,7 +18,8 @@
 // Exit codes follow `qcr scan`: 0 done; 1 refused, declined, failed or
 // stopped short (partial); 2 usage.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
 import type { Ecosystem } from "./ecosystem.js";
 import {
@@ -38,7 +39,12 @@ import {
 import type { RoundMemory } from "./memory/context.js";
 import { seedReviewMemory, type ReviewMemorySource } from "./reviewmemory.js";
 import type { CredentialSource } from "./ghcred.js";
-import { assemblePostReview, loadPostIdentity, postReviewToPr } from "./reviewpost.js";
+import {
+  assemblePostReview,
+  loadPostIdentity,
+  postReviewToPr,
+  type PostResult,
+} from "./reviewpost.js";
 import {
   fetchPrTarget,
   parsePrTarget,
@@ -460,6 +466,20 @@ async function runReview(
     t = resolved.target;
     runDir = join(deps.runsDir, `${stamp}-${t.headSha.slice(0, 7)}`);
   }
+  // The first interactive run in a repo asks where results go and keeps the
+  // answer for it; a run with no terminal and no default never waits. The
+  // answer comes before anything reads `dests` (posting to a PR changes what
+  // is reviewed), and a preview, which starts nothing, never asks.
+  if (explicit.length === 0 && saved === null && deps.choose && !cmd.preview) {
+    const picked = await deps.choose(
+      "Where should review results go?",
+      destinationChoices({ pr: prInfo !== null }),
+    );
+    dests = [picked];
+    saveDefaultDestinations(deps.cwd, dests);
+  }
+  if (dests.includes("file"))
+    reportPath = cmd.out !== undefined ? resolve(deps.cwd, cmd.out) : join(runDir, "report.md");
   const label = prInfo
     ? `PR #${prInfo.number} against ${t.base}`
     : cmd.uncommitted
@@ -524,7 +544,8 @@ async function runReview(
   if (prev !== null) {
     if (!deltaEnabled(deps.cfg)) fallback = { reason: "follow_up_full" };
     else {
-      const d = await computeDelta(deps.cwd, prev, t);
+      // a PR's commits live in its scratch repository, not in the person's checkout
+      const d = await computeDelta(gitDir, prev, t);
       if (d.ok) delta = d.delta;
       else fallback = { reason: d.reason, ...(d.detail ? { detail: d.detail } : {}) };
     }
@@ -670,21 +691,6 @@ async function runReview(
       return refuse(1, [`declined: ${usd(price)} is over the ${usd(limit)} limit`]);
     }
   }
-
-  // The first interactive run in a repo asks where results go and keeps the
-  // answer for it; a run with no terminal and no default never waits.
-  if (explicit.length === 0 && saved === null) {
-    if (deps.choose) {
-      const picked = await deps.choose(
-        "Where should review results go?",
-        destinationChoices({ pr: prInfo !== null }),
-      );
-      dests = [picked];
-      saveDefaultDestinations(deps.cwd, dests);
-    } else dests = FALLBACK_DESTINATIONS;
-  }
-  if (dests.includes("file"))
-    reportPath = cmd.out !== undefined ? resolve(deps.cwd, cmd.out) : join(runDir, "report.md");
 
   mkdirSync(runDir, { recursive: true });
   const runWarnings: string[] = [];
@@ -857,23 +863,29 @@ async function runReview(
       { source: prInfo.source, token: prToken },
       deps.pr,
     );
-    const res = id.ok
-      ? await postReviewToPr({
-          repo: t.repo,
-          number: prInfo.number,
-          headSha: t.headSha,
-          token: id.token,
-          review: assemblePostReview(shot.findings, {
-            cfg: deps.cfg,
-            roundNo: round.round_no,
-            lenses,
-            verdict,
-            summary: typeof shot.outcome?.["summary"] === "string" ? shot.outcome["summary"] : null,
-          }),
-          ...(deps.pr?.fetchFn ? { fetchFn: deps.pr.fetchFn } : {}),
-          ...(deps.pr?.apiBase ? { apiBase: deps.pr.apiBase } : {}),
-        })
-      : id;
+    // what the bot has not already posted, as the terminal shows it
+    const review = assemblePostReview(rawWithout(shot.findings, bot.findings), {
+      cfg: deps.cfg,
+      roundNo: round.round_no,
+      lenses,
+      verdict,
+      summary: typeof shot.outcome?.["summary"] === "string" ? shot.outcome["summary"] : null,
+    });
+    // Every finding was the bot's already: there is nothing to post, not even
+    // a review body to repeat.
+    const res: PostResult = !id.ok
+      ? id
+      : skipped.skipped > 0 && review.comments.length === 0
+        ? { ok: true, posted: 0, skipped: skipped.skipped, url: null }
+        : await postReviewToPr({
+            repo: t.repo,
+            number: prInfo.number,
+            headSha: t.headSha,
+            token: id.token,
+            review,
+            ...(deps.pr?.fetchFn ? { fetchFn: deps.pr.fetchFn } : {}),
+            ...(deps.pr?.apiBase ? { apiBase: deps.pr.apiBase } : {}),
+          });
     if (res.ok) {
       posted = { ok: true, posted: res.posted, skipped: res.skipped, url: res.url };
       postLine =
@@ -893,6 +905,34 @@ async function runReview(
     renderMarkdown(mdMeta, groups),
   );
   return postFailed ? 1 : 0;
+}
+
+/** The CLI entry the detached driver re-runs: `cli` beside this module. Read
+ * from where this module is, not from `process.argv[1]`, which is whatever the
+ * person launched (a bin symlink, a wrapper, a test runner). */
+export function detachedEntry(metaUrl: string = import.meta.url): string {
+  return fileURLToPath(new URL(`./cli${extname(fileURLToPath(metaUrl))}`, metaUrl));
+}
+
+/** The process `qcr review start` detaches: this node, this entry, the run's
+ * directory and key, the review's own arguments. */
+export function detachedCommand(
+  l: { dir: string; key: string; argv: readonly string[] },
+  o: { entry?: string; execPath?: string; execArgv?: readonly string[] } = {},
+): { command: string; args: string[] } {
+  return {
+    command: o.execPath ?? process.execPath,
+    args: [
+      ...(o.execArgv ?? process.execArgv),
+      o.entry ?? detachedEntry(),
+      "review",
+      "--detached-run",
+      l.dir,
+      l.key,
+      ...l.argv,
+      "--json",
+    ],
+  };
 }
 
 /** The terminal side: the real repo, root, login and a prompt on stdin. */
@@ -930,17 +970,7 @@ export async function cmdReview(
       identify: (args) => det.identifyTarget(args, process.cwd()),
       launch: (l) =>
         det.launchDetached({
-          command: process.execPath,
-          args: [
-            ...process.execArgv,
-            process.argv[1]!,
-            "review",
-            "--detached-run",
-            l.dir,
-            l.key,
-            ...l.argv,
-            "--json",
-          ],
+          ...detachedCommand(l),
           dir: l.dir,
           env: process.env,
         }),
