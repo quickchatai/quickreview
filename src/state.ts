@@ -89,6 +89,8 @@ export interface ReviewFailureRow {
   /** Circuit-breaker generation. Zero is the first delayed retry
    * after the ordinary per-head fast retries are spent. */
   retry_epoch: number;
+  /** Advances only when a settled incident reopens, never on retry scheduling. */
+  reopen_epoch?: number;
   next_retry_at: string | null;
   failed_at: string;
   updated_at: string;
@@ -630,6 +632,17 @@ export interface SlackEventRow {
   injected_at: string | null;
 }
 
+export interface SlackReopeningRow {
+  incident_id: string;
+  generation: string;
+  pr: number;
+  episode: string;
+  cause: string;
+  text: string;
+  channel: string;
+  ts: string;
+}
+
 export interface SlackPostRow {
   id: number;
   idem_key: string;
@@ -1086,6 +1099,7 @@ CREATE TABLE IF NOT EXISTS review_failures (
   attempts     INTEGER NOT NULL,
   retry_cap    INTEGER NOT NULL,
   retry_epoch  INTEGER NOT NULL DEFAULT 0,
+  reopen_epoch INTEGER NOT NULL DEFAULT 0,
   next_retry_at TEXT,
   failed_at    TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
@@ -1268,6 +1282,17 @@ CREATE TABLE IF NOT EXISTS slack_posts (
   error      TEXT
 );
 CREATE INDEX IF NOT EXISTS slack_posts_day ON slack_posts(posted_at);
+CREATE TABLE IF NOT EXISTS slack_reopenings (
+  incident_id TEXT PRIMARY KEY,
+  generation TEXT NOT NULL,
+  pr INTEGER NOT NULL,
+  episode TEXT NOT NULL,
+  cause TEXT NOT NULL,
+  text TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  ts TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS slack_cooldowns (
   key           TEXT PRIMARY KEY,
   last_fired_at TEXT NOT NULL,
@@ -1824,6 +1849,7 @@ export class StateStore {
       // means this failure remains in the operator-owned classes.
       "ALTER TABLE review_failures ADD COLUMN retry_epoch INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE review_failures ADD COLUMN next_retry_at TEXT",
+      "ALTER TABLE review_failures ADD COLUMN reopen_epoch INTEGER NOT NULL DEFAULT 0",
       // The feedback ledger tracks its own memory write, so a
       // signal memory did not take is owed, not lost. `memory_state` is
       // nullable on purpose: NULL means "a row from before this column", and
@@ -4465,6 +4491,7 @@ export class StateStore {
            head_sha=excluded.head_sha, stage=excluded.stage, detail=excluded.detail,
            attempts=excluded.attempts, retry_cap=excluded.retry_cap,
            retry_epoch=excluded.retry_epoch, next_retry_at=excluded.next_retry_at,
+           reopen_epoch=review_failures.reopen_epoch + CASE WHEN review_failures.work_owed=0 THEN 1 ELSE 0 END,
            updated_at=excluded.updated_at, recovered_at=NULL, recovery=NULL,
            next_action=excluded.next_action, work_owed=1`,
         )
@@ -7009,7 +7036,8 @@ export class StateStore {
 
   /** Preserve an unknown create reservation and its diagnostic without admitting a retry. */
   noteSlackPostUnknown(idemKey: string, error: string): void {
-    this.db.prepare("UPDATE slack_posts SET error = ? WHERE idem_key = ? AND ok = 1 AND ts IS NULL")
+    this.db
+      .prepare("UPDATE slack_posts SET error = ? WHERE idem_key = ? AND ok = 1 AND ts IS NULL")
       .run(error, idemKey);
   }
 
@@ -7028,6 +7056,31 @@ export class StateStore {
     return this.db.prepare(
       "UPDATE slack_posts SET ts = NULL, ok = 0, error = 'message_not_found' WHERE idem_key = ? AND ts = ? AND ok = 1",
     ).run(idemKey, ts).changes === 1;
+  }
+
+  queueSlackReopening(row: SlackReopeningRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO slack_reopenings
+      (incident_id,generation,pr,episode,cause,text,channel,ts)
+      VALUES (@incident_id,@generation,@pr,@episode,@cause,@text,@channel,@ts)
+      ON CONFLICT(incident_id) DO UPDATE SET generation=excluded.generation,
+        pr=excluded.pr,episode=excluded.episode,cause=excluded.cause,
+        text=excluded.text,channel=excluded.channel,ts=excluded.ts`,
+      )
+      .run(row);
+  }
+
+  owedSlackReopenings(): SlackReopeningRow[] {
+    return this.db
+      .prepare("SELECT * FROM slack_reopenings ORDER BY incident_id")
+      .all() as SlackReopeningRow[];
+  }
+
+  clearSlackReopening(incidentId: string, generation: string): void {
+    this.db
+      .prepare("DELETE FROM slack_reopenings WHERE incident_id = ? AND generation = ?")
+      .run(incidentId, generation);
   }
 
   slackPost(idemKey: string): SlackPostRow | undefined {

@@ -27,12 +27,14 @@
 // superseded) are deliberately NOT cooldown-gated: they answer a real event on
 // one PR and folding them would silently drop a verdict. They honour their
 // cause's `enabled` switch (never hardcoded) and the idem ledger, nothing else.
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import type { Config } from "../config.js";
 import { opsDay } from "../eod.js";
 import {
   snapshotHeartbeat,
   type SlackCooldownRow,
+  type SlackReopeningRow,
   type SlackPostKind,
   type StateStore,
 } from "../state.js";
@@ -506,6 +508,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   async anomaly(a: AnomalyAnnouncement): Promise<void> {
     if (a.round_no === null || !this.enabled) return;
     const { cause, text } = this.anomalyMessage({ ...a, round_no: a.round_no });
+    if (!causePolicy(this.deps.cfg, cause).enabled) return;
     // An incident already announced is announced again when it reopens (or
     // fails again before it recovered): its one message — which a recovery
     // corrected to "recovered" — is edited to say work is owed again, where a
@@ -513,13 +516,20 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     // recovery.
     const prior = a.incident_id ? this.deps.store.slackPost(a.incident_id) : undefined;
     if (a.incident_id && prior?.ok === 1 && prior.ts) {
-      await this.editIncident(
-        a.incident_id,
-        prior.ts,
+      const failure = this.deps.store.openReviewFailure(a.pr);
+      if (failure?.incident_id !== a.incident_id) return;
+      const owed: SlackReopeningRow = {
+        incident_id: a.incident_id,
+        generation: randomUUID(),
+        pr: a.pr,
+        episode: String(failure.reopen_epoch ?? 0),
+        cause,
         text,
-        "reopening",
-        () => this.deps.store.openReviewFailure(a.pr)?.incident_id === a.incident_id,
-      );
+        ts: prior.ts,
+        channel: this.deps.cfg.slack.channel,
+      };
+      this.deps.store.queueSlackReopening(owed);
+      await this.retryReopening(owed);
       return;
     }
     // An anomaly is a genuine escalation: it may spend the day's one bypass.
@@ -532,6 +542,31 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       pr: a.pr,
       text,
     });
+  }
+
+  private async retryReopening(owed: SlackReopeningRow): Promise<void> {
+    const { store, cfg } = this.deps;
+    const current = (): boolean => {
+      const failure = store.openReviewFailure(owed.pr);
+      return (
+        failure?.incident_id === owed.incident_id &&
+        String(failure.reopen_epoch ?? 0) === owed.episode
+      );
+    };
+    if (!current()) {
+      store.clearSlackReopening(owed.incident_id, owed.generation);
+      return;
+    }
+    if (!this.enabled || !causePolicy(cfg, owed.cause).enabled) return;
+    const edited = await this.editIncident(
+      owed.incident_id,
+      owed.ts,
+      owed.text,
+      "reopening",
+      () => current() && causePolicy(cfg, owed.cause).enabled,
+      owed.channel,
+    );
+    if (edited) store.clearSlackReopening(owed.incident_id, owed.generation);
   }
 
   /** An anomaly's policy cause and its message, chosen once by its kind. */
@@ -576,6 +611,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     text: string,
     what: "recovery" | "reopening",
     isCurrent: () => boolean,
+    channel?: string,
   ): Promise<boolean> {
     const prior = this.incidentEdits.get(incidentId) ?? Promise.resolve();
     const run = prior.then(async () => {
@@ -584,7 +620,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       if (!this.enabled || !isCurrent()) return false;
       const { cfg, slack } = this.deps;
       try {
-        const res = await slack.updateMessage({ channel: cfg.slack.channel, ts, text });
+        const res = await slack.updateMessage({ channel: channel ?? cfg.slack.channel, ts, text });
         if (!res.ok)
           this.log(`slack: failure ${what} update failed (${incidentId}, ts ${ts})`, res.error);
         return res.ok;
@@ -735,6 +771,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   async heartbeat(): Promise<string | undefined> {
     if (!this.enabled) return undefined;
     const { store, cfg, slack } = this.deps;
+    for (const owed of store.owedSlackReopenings()) await this.retryReopening(owed);
     const refreshedAt = this.now();
     // The banner names only a JUST-recovered incident; the incident message's
     // correction is owed until Slack accepts it, whatever the tick cadence —
