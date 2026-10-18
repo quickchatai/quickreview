@@ -756,6 +756,7 @@ export async function runScanCli(
       return emit(r.ok ? 0 : 1, renderDoctor(r), r as unknown as Record<string, unknown>);
     }
     case "login":
+      if (json) return refusal("Login", ["login is interactive; run qcr scan login without --json"]);
       if (!deps.login) return refusal("Login", ["no login in this assembly"]);
       return deps.login(cmd.provider);
     case "rebuild": {

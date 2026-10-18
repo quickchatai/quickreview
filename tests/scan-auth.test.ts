@@ -18,7 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { benchAuthFrom, DISABLED_REFRESH as BENCH_DISABLED } from "../src/bench/auth.js";
 import { AuthExpiring, DISABLED_REFRESH, loginSummary } from "../src/piauthcopy.js";
 import {
@@ -227,4 +227,21 @@ describe("which case runner the driver uses", () => {
       DISABLED_REFRESH,
     );
   });
+});
+
+it("stops a borrowed-login case before its admission budget ends and retains spent cost", async () => {
+  vi.useFakeTimers();
+  try {
+    writeFileSync(join(src, "auth.json"), login("tok-A", 10 * HOUR));
+    let observed: AbortSignal | undefined;
+    const cases = scanAuthCases({ run: async (_spec: string, signal: AbortSignal) => {
+      observed = signal;
+      return new Promise<CaseOutcome>((resolve) => signal.addEventListener("abort", () =>
+        resolve({ ok: false, reason: "stopped", cost_usd: 0.25 }), { once: true }));
+    } }, { srcDir: src, dstDir: dst, needMs: 60_000, now: () => 0, onExpired: () => {} });
+    const result = cases.run("fixture", new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(55_000);
+    expect(observed?.aborted).toBe(true);
+    expect(await result).toMatchObject({ ok: false, cost_usd: 0.25 });
+  } finally { vi.useRealTimers(); }
 });

@@ -885,6 +885,22 @@ describe("the sandboxed launch", () => {
     expect(await detach(["start", "--key", "K"])).toEqual({ ok: false, errors: ["late"] });
   });
 
+  it("refuses a late successful receipt after forcibly removing its driver", async () => {
+    const { home, detach } = setup([
+      stamped("s1"),
+      (a) => (a[0] === "run" ? OK : undefined),
+      (a) => (a[0] === "inspect" ? { ...OK, stdout: "true\n" } : undefined),
+      (a) => {
+        if (a[0] !== "rm") return undefined;
+        writeStartedFile(join(home, "scan/started/tok1.json"), { ok: true, run: { id: "late" } } as never);
+        return OK;
+      },
+    ]);
+    const outcome = await detach(["start", "--key", "K"]);
+    expect(outcome.ok).toBe(false);
+    expect(JSON.stringify(outcome)).toMatch(/removed/);
+  });
+
   it("sweeps started files no launch can still be waiting for", async () => {
     const { home, detach } = setup([
       stamped("s1"),

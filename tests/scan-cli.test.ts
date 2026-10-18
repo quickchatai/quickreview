@@ -676,3 +676,12 @@ describe("the detached driver launch", () => {
     expect(readFileSync(join(home, "scan/driver.log"), "utf8")).toBe("");
   });
 });
+
+it("refuses interactive login as structured JSON without invoking the adapter", async () => {
+  const h = harness();
+  h.deps.login = vi.fn(async () => 0);
+  const code = await runScanCli(["login"], true, h.deps);
+  expect(code).toBe(1);
+  expect(JSON.parse(h.lines.join("\n"))).toMatchObject({ ok: false, errors: [expect.stringMatching(/interactive|json/i)] });
+  expect(h.deps.login).not.toHaveBeenCalled();
+});

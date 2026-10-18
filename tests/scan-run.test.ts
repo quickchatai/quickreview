@@ -1234,3 +1234,18 @@ it.each(["read", "write"])(
     expect(state.read(LEDGER_FILE)).toBeNull();
   },
 );
+
+it("publishes the active handle before an initial synchronous auth refusal stops it", async () => {
+  let scan: ScanRunner;
+  let stopped: unknown;
+  const cases: FakeRunner = { specs: [], run: async () => {
+    stopped = scan.stop();
+    return { ok: false, reason: "auth expired", cost_usd: 0 };
+  } };
+  scan = new ScanRunner(ports(cases));
+  const preview = await previewOf(scan);
+  expect((await scan.start({ key: preview.key })).ok).toBe(true);
+  await scan.idle();
+  expect(stopped).toMatchObject({ ok: true });
+  expect(scan.status().run?.state).toBe("stopped");
+});
