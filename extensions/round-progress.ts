@@ -90,8 +90,9 @@ function toolArgs(event: PiEventPayload): Record<string, unknown> {
 function subagentNames(args: Record<string, unknown>): string[] {
   const single = text(args.agent);
   if (single) return [single];
-  if (!Array.isArray(args.tasks)) return [];
-  return args.tasks
+  const tasks = Array.isArray(args.tasks) ? args.tasks : args.chain;
+  if (!Array.isArray(tasks)) return [];
+  return tasks
     .map(record)
     .map((task) => text(task?.agent))
     .filter((name): name is string => name !== undefined);
@@ -497,6 +498,10 @@ export default function activate(pi: Pi): void {
       for (const [index, fallback] of fallbacks.entries()) {
         const key = fallbackKeys[index]!;
         const previous = agents.get(key);
+        if (previous && previous.status !== "running") {
+          finalAgents.push(previous);
+          continue;
+        }
         const finalAgent: LiveAgentProgress = {
           ...(previous ?? {
             execution_id: key,

@@ -638,6 +638,8 @@ export class ScanRunner {
         entries: LedgerEntry[];
       }
     | Refusal {
+    const other = this.ports.lease?.other();
+    if (other) return { ok: false, errors: [heldElsewhere(other)] };
     const s = this.ports.settings();
     if (!s.ok) return s;
     const cut = this.ports.savedCut();
@@ -1696,6 +1698,7 @@ export class ScanRunner {
         ) {
           unknownSpend = true;
           capHit = true;
+          abort.abort();
           run.problems.push(
             `case ${plan.id} ended and nothing priced it — what it spent is unknown, so no further case starts (the cap cannot be held without prices)`,
           );
@@ -1873,6 +1876,7 @@ export class ScanRunner {
     // validator that failed judges nothing: its findings are kept with no
     // tier (unknown), never a guessed one.
     let validated = false;
+    let validatorOpened: Set<string> | null = null;
     let kept: KeptFinding[] = anchored.map((a) => ({
       ...a,
       validity: null,
@@ -1904,6 +1908,7 @@ export class ScanRunner {
       // nothing from the code: its tiers are not taken — unknown, not guessed.
       const candPaths = [...new Set(anchored.map((a) => a.cand.path))];
       const skepticOpened = v.ok ? openedFocus(v.reads, candPaths, tree.root) : null;
+      validatorOpened = skepticOpened;
       const skepticUnread = skepticOpened !== null && skepticOpened.size === 0;
       const read = v.ok && !skepticUnread ? parseValidatorAnswer(v.output, tree.root) : null;
       if (read === null || !read.answered) {
@@ -1973,7 +1978,19 @@ export class ScanRunner {
             doubt: { word: "not-upheld", reason: UNMENTIONED_REASON, class: null },
           });
         }
-        kept = judged;
+        kept =
+          skepticOpened === null
+            ? judged
+            : [
+                ...judged.filter((a) => skepticOpened.has(a.cand.path)),
+                ...anchored
+                  .filter((a) => !skepticOpened.has(a.cand.path))
+                  .map((a) => ({ ...a, validity: null, scenario: null, doubt: null })),
+              ];
+        if (skepticOpened !== null && skepticOpened.size < candPaths.length)
+          run.problems.push(
+            `case ${plan.id}: the validator did not open every candidate file — unread findings are kept unvalidated`,
+          );
       }
     }
 
@@ -1997,7 +2014,7 @@ export class ScanRunner {
         evidence: cand.evidence,
         fix: cand.fix,
         detail: cand.detail,
-        validated,
+        validated: validated && (validatorOpened === null || validatorOpened.has(cand.path)),
         doubt,
         validity,
         scenario,

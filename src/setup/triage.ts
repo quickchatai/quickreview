@@ -32,6 +32,7 @@
 // (eventtags.ts), and its own `#word`s are de-hashed — so nothing it writes
 // can pin itself or forge a tag. Never `#pinned`: the scan writes no pinned
 // memory (spec, out of scope).
+import { createHash } from "node:crypto";
 import { dehash, formatEventTags } from "../memory/eventtags.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { Refusal, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
@@ -254,7 +255,8 @@ export class ScanTriage {
         const ready = await memory.ensureWritable();
         if (!ready.ok) return { problem: `reviewer memory is not writable: ${ready.message}` };
       }
-      const r = await memory.apply({ op: "note", text });
+      const name = `scan-${createHash("sha256").update(text).digest("hex").slice(0, 32)}`;
+      const r = await memory.apply({ op: "note", text, name });
       return r.ok ? "written" : { problem: r.message };
     } catch (err) {
       return { problem: `memory unreachable: ${clean(err)}` };

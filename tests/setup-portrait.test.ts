@@ -606,3 +606,12 @@ describe("lineDiff", () => {
     expect(lineDiff("a\nb", "a\nc", 1)).toEqual(["- a", "- b", "+ a", "+ c"]);
   });
 });
+
+it("keeps saved-cut diagnostics in portrait facts after repo evolution", () => {
+  const { e, repo } = engine();
+  expect(e.propose().ok).toBe(true);
+  expect(e.save().ok).toBe(true);
+  repo.files = { "brand-new/file.py": "code\n" };
+  assembled(e);
+  expect(factsOnDisk().current.facts.problems.join("\n")).toMatch(/matches no file|unassigned/);
+});

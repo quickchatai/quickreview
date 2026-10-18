@@ -281,9 +281,12 @@ export function runClientOnce(cfg, spec, opts = {}) {
     });
   return new Promise((resolve) => {
     let settled = false;
+    let publishTimer;
+    let pendingHostname = null;
     const finish = (how) => {
       if (settled) return;
       settled = true;
+      clearTimeout(publishTimer);
       resolve(how);
     };
     let child;
@@ -296,18 +299,24 @@ export function runClientOnce(cfg, spec, opts = {}) {
       log(`could not start ${spec.cmd}: ${errText(err)}`);
       return finish({ ok: false, reason: errText(err) });
     }
+    const publish = () => {
+      if (settled || pendingHostname === null) return;
+      clearTimeout(publishTimer);
+      try {
+        onHostname(pendingHostname);
+        pendingHostname = null;
+      } catch (err) {
+        log(`could not publish hostname ${pendingHostname}: ${errText(err)}`);
+        publishTimer = setTimeout(publish, 1000);
+      }
+    };
     const handleLine = (line) => {
       if (opts.echo !== false && line.trim() !== "") log(line.trim());
       if (!spec.captures) return;
       const host = extractHostname(cfg.kind, line);
       if (host === null) return;
-      try {
-        onHostname(host);
-      } catch (err) {
-        // An unwritable shared volume is loud and retried on the next
-        // announcement; it never kills the tunnel that is otherwise working.
-        log(`could not publish hostname ${host}: ${errText(err)}`);
-      }
+      pendingHostname = host;
+      publish();
     };
     const stdout = lineSplitter(handleLine);
     const stderr = lineSplitter(handleLine);
@@ -334,6 +343,10 @@ export async function runSidecar(cfg, opts = {}) {
   const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const maxRuns = opts.maxRuns ?? Infinity;
   const outcomes = [];
+  // Infinite supervision has no caller to receive retry history.
+  const record = (outcome) => {
+    if (Number.isFinite(maxRuns)) outcomes.push(outcome);
+  };
   let attempt = 0;
   for (let run = 0; run < maxRuns; run++) {
     const spec = tunnelSpec(cfg); // re-read secrets every attempt
@@ -344,7 +357,7 @@ export async function runSidecar(cfg, opts = {}) {
       log(
         `FATAL: unknown QCR_TUNNEL_KIND ${JSON.stringify(spec.unknownKind)} — expected one of ${KINDS.join(", ")}; idling`,
       );
-      outcomes.push({ ok: false, reason: "unknown-kind" });
+      record({ ok: false, reason: "unknown-kind" });
       await sleep(cfg.backoffMaxMs);
       continue;
     }
@@ -353,13 +366,13 @@ export async function runSidecar(cfg, opts = {}) {
         `${cfg.kind}: credential file ${spec.missing} is missing or empty — the tunnel cannot start. ` +
           "Create it (the sidecar re-reads it on every attempt; no restart needed).",
       );
-      outcomes.push({ ok: false, reason: "missing-secret" });
+      record({ ok: false, reason: "missing-secret" });
       await sleep(backoffMs(attempt++, cfg.backoffMinMs, cfg.backoffMaxMs));
       continue;
     }
     log(`starting ${spec.cmd} ${spec.args.join(" ")} (kind=${cfg.kind}, upstream=${cfg.upstream})`);
     const outcome = await runClientOnce(cfg, spec, opts);
-    outcomes.push(outcome);
+    record(outcome);
     const wait = backoffMs(attempt++, cfg.backoffMinMs, cfg.backoffMaxMs);
     log(`restarting in ${Math.round(wait / 1000)}s`);
     await sleep(wait);

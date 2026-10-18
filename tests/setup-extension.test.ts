@@ -506,6 +506,17 @@ describe("the survey tools", () => {
       active: false,
     });
     expect(all).toMatch(/spent \$0\.25 of/);
+    for (const status of ["failed", "stopped"] as const) {
+      const partial = renderSurveyStatus({
+        ok: true,
+        problems: [],
+        run: { ...run, cases: [c("a", 0.25), { ...c("b", null), status, started_at: "t" }] },
+        last_complete: null,
+        active: false,
+      });
+      expect(partial).toContain("spent at least $0.25");
+    }
+
     // A note cut at the length cap is counted where the operator reads it.
     const cut = renderSurveyStatus({
       ok: true,

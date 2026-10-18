@@ -7,7 +7,7 @@
 // self-heal's watcher reads — proven twice over, by holding the two hostname
 // regexes to the same characters and by driving a real WebhookHealer over a
 // file this wrapper wrote.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import {
   existsSync,
@@ -518,4 +518,38 @@ describe("compose topology — a sidecar only when the operator chose one", () =
     expect(daemonReadme).toContain("1933");
     expect(daemonReadme).toMatch(/never published|deliberately never published/);
   });
+});
+
+it("retries a failed hostname publication without another client announcement", async () => {
+  vi.useFakeTimers();
+  const child = fakeChild();
+  let attempts = 0;
+  const conf = cfg();
+  const run = sidecar.runClientOnce(conf, sidecar.tunnelSpec(conf), {
+    spawn: () => child,
+    log: () => {},
+    echo: false,
+    onHostname: (host: string) => {
+      attempts++;
+      if (attempts === 1) throw new Error("volume full");
+      sidecar.writeHostname(conf.hostnameFile as string, host);
+    },
+  });
+  try {
+    child.stderr.emit("data", "https://retry-once.trycloudflare.com\\n".replace("\\n", "\n"));
+    expect(attempts).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(attempts).toBe(2);
+    expect(readFileSync(conf.hostnameFile as string, "utf8")).toBe(
+      "retry-once.trycloudflare.com\n",
+    );
+    child.emit("close", 0, null);
+    await run;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(attempts).toBe(2);
+  } finally {
+    child.emit("close", 0, null);
+    await run;
+    vi.useRealTimers();
+  }
 });

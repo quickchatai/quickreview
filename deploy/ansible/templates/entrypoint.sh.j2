@@ -9,7 +9,7 @@ SECRETS=/opt/quickreview/secrets
 # state volume (the status collector's host-side pickup surface). One-time
 # migration if a real dir already accumulated content.
 if [[ -d "$SANDBOX/state" && ! -L "$SANDBOX/state" ]]; then
-  cp -a "$SANDBOX/state/." /opt/quickreview/state/ 2>/dev/null || true
+  cp -a "$SANDBOX/state/." /opt/quickreview/state/
   rm -rf "$SANDBOX/state"
 fi
 [[ -L "$SANDBOX/state" ]] || ln -sfn /opt/quickreview/state "$SANDBOX/state"
@@ -56,7 +56,7 @@ mkdir -p "$OV_HOME/workspace" || echo "openviking: could not create $OV_HOME/wor
 # Same migration idiom as the state symlink above: a real directory that
 # accumulated content is folded onto the volume once, then replaced by the link.
 if [[ -e "$HOME/.openviking" && ! -L "$HOME/.openviking" ]]; then
-  cp -a "$HOME/.openviking/." "$OV_HOME/" 2>/dev/null || true
+  cp -a "$HOME/.openviking/." "$OV_HOME/"
   rm -rf "$HOME/.openviking"
 fi
 [[ -L "$HOME/.openviking" ]] || ln -sfn "$OV_HOME" "$HOME/.openviking"
@@ -357,7 +357,15 @@ settings.tuiMode = "regular";
 const DISABLED_BUILTINS = ["-builtin:mcp", "-builtin:codemode", "-builtin:tool-search", "-builtin:llama.cpp"];
 settings.extensions = settings.extensions.filter((p) => !isBuiltinEntry(p)).concat(DISABLED_BUILTINS);
 
-fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+function atomicJsonWrite(target, value) {
+  const tmp = `${target}.tmp-${process.pid}-${require("node:crypto").randomUUID()}`;
+  try {
+    const mode = fs.existsSync(target) ? fs.statSync(target).mode & 0o777 : 0o600;
+    fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", { mode });
+    fs.renameSync(tmp, target);
+  } finally { fs.rmSync(tmp, { force: true }); }
+}
+atomicJsonWrite(file, settings);
 console.log("pi extensions registered: " + settings.extensions.join(", "));
 
 const trustFile = path.join(process.env.HOME, ".pi", "agent", "trust.json");
@@ -365,7 +373,7 @@ let trust = {};
 if (fs.existsSync(trustFile)) trust = JSON.parse(fs.readFileSync(trustFile, "utf8"));
 if (trust["/opt/quickreview"] !== true) {
   trust["/opt/quickreview"] = true;
-  fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
+  atomicJsonWrite(trustFile, trust);
 }
 console.log("pi project trust: defaultProjectTrust=always, /opt/quickreview pre-trusted");
 

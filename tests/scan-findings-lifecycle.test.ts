@@ -184,3 +184,80 @@ describe("reconcile settles only against the content the run's tree holds", () =
     expect(st.question().question!.fresh.map((f) => f.fingerprint)).toEqual([moved.fingerprint]);
   });
 });
+
+it("replaces an absorbed fingerprint's obsolete judgement while preserving independent support", () => {
+  const st = store();
+  const unknown = { ...CANON, validated: false, validity: null };
+  const confirmed = { ...ALIAS, validity: "confirmed" as const, scenario: "traced" };
+  st.report([unknown, confirmed], S("r1", "2026-09-30T10:00:00Z"));
+  expect(st.load().findings[0]?.validity).toBe("confirmed");
+  const doubted = {
+    ...confirmed,
+    validity: "doubtful" as const,
+    scenario: null,
+    doubt: { word: "refuted", reason: "caller guards it" },
+  };
+  st.report([doubted], S("r2", "2026-09-30T11:00:00Z"));
+  expect(st.load().findings[0]?.validity).toBe("doubtful");
+  st.report(
+    [{ ...CANON, validity: "confirmed", scenario: "independent caller" }],
+    S("r3", "2026-09-30T12:00:00Z"),
+  );
+  st.report([doubted], S("r4", "2026-09-30T13:00:00Z"));
+  expect(st.load().findings[0]?.validity).toBe("confirmed");
+});
+
+it("removes reverted unchanged findings from an obsolete pending match question", () => {
+  const st = store();
+  st.report([CANON], S("r1", "2026-09-30T10:00:00Z"));
+  const moved = { ...CANON, fingerprint: "cc".repeat(32), blob: "b2", start: 40, end: 41 };
+  st.report([moved], S("r2", "2026-09-30T11:00:00Z"));
+  const rows = [row({ lens: CANON.lens, run: "r2", at: "2026-09-30T11:00:01Z" })];
+  st.reconcile({
+    rows,
+    tree: new Set([CANON.path]),
+    blobs: new Map([[CANON.path, "b2"]]),
+    run: S("r2", "2026-09-30T11:00:02Z"),
+  });
+  expect(st.question().question?.unreported.map((f) => f.fingerprint)).toContain(CANON.fingerprint);
+  rows.push(row({ lens: CANON.lens, run: "r3", blob: "b1", at: "2026-09-30T12:00:01Z" }));
+  st.reconcile({
+    rows,
+    tree: new Set([CANON.path]),
+    blobs: new Map([[CANON.path, "b1"]]),
+    run: S("r3", "2026-09-30T12:00:02Z"),
+  });
+  expect(st.load().findings.find((f) => f.fingerprint === CANON.fingerprint)?.state).toBe("new");
+});
+
+it("keeps each latest judgement when two collapsed groups fold together", () => {
+  const st = store();
+  const a = { ...CANON, validated: false, validity: null };
+  const b = { ...ALIAS, validated: false, validity: null };
+  const c = {
+    ...ALIAS,
+    fingerprint: "cc".repeat(32),
+    start: ALIAS.start + 1,
+    end: ALIAS.end + 1,
+    validity: "confirmed" as const,
+    scenario: "traced",
+  };
+  st.report([a], S("r0", "2026-09-30T09:00:00Z"));
+  st.report([b, c], S("r1", "2026-09-30T10:00:00Z"));
+  st.report([a], S("r1", "2026-09-30T10:00:01Z"));
+  st.reconcile({ rows: [], tree: new Set([CANON.path]), run: S("r1", "2026-09-30T10:00:02Z") });
+  expect(st.load().findings).toHaveLength(1);
+  expect(st.load().findings[0]?.validity).toBe("confirmed");
+  st.report(
+    [
+      {
+        ...c,
+        validity: "doubtful",
+        scenario: null,
+        doubt: { word: "refuted", reason: "caller guards it" },
+      },
+    ],
+    S("r2", "2026-09-30T11:00:00Z"),
+  );
+  expect(st.load().findings[0]?.validity).toBe("doubtful");
+});

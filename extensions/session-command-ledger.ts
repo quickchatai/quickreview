@@ -316,10 +316,12 @@ export class SessionCommandLedger {
   }
 
   private active(): CommandRow | undefined {
-    return this.db
-      .prepare(
-        "SELECT * FROM session_commands WHERE session = ? AND status IN ('pending', 'running', 'failed') ORDER BY created_at DESC LIMIT 1",
-      )
-      .get(this.session) as CommandRow | undefined;
+    return (
+      (this.db
+        .prepare(
+          "SELECT * FROM session_commands WHERE session = ? AND status IN ('pending', 'running') ORDER BY created_at DESC LIMIT 1",
+        )
+        .get(this.session) as CommandRow | undefined) ?? this.blockingFailedCommand()
+    );
   }
 }

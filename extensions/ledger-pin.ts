@@ -33,8 +33,9 @@
 // The compaction contract was read out of pi 1.0.0's shipped dist (the
 // `qcr-bench:fast1` image, docker create + docker cp, no container run); each
 // tag below names the file and symbol it was checked against.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type {
   CompactHandlerResult,
   Pi,
@@ -113,7 +114,13 @@ function writeSnapshot(path: string, body: string): void {
     /* first snapshot */
   }
   if (previous.trim() === body.trim()) return;
-  writeFileSync(path, `${body}\n`);
+  const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    writeFileSync(tmp, `${body}\n`);
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 /** Sentinels around the pinned block, so the next compaction can strip the
@@ -286,6 +293,7 @@ export function activateWith(pi: Pi, deps: LedgerPinDeps = {}): void {
   const ownPr = parseOwnPr(env.QCR_PR);
   const snapshotPath = ledgerSnapshotPath(env, session);
   let lastLedger = "";
+  let persistedLedger = "";
 
   const capture = (source: unknown): string => {
     const onIgnore = (pr: number): void => {
@@ -293,10 +301,11 @@ export function activateWith(pi: Pi, deps: LedgerPinDeps = {}): void {
       console.error(`[ledger-pin] debug: ignoring LEDGER PR #${pr} (${who})`);
     };
     const ledger = extractLedger(collectText(source), ownPr, onIgnore) ?? lastLedger;
-    if (ledger && ledger !== lastLedger) {
-      lastLedger = ledger;
+    if (ledger) lastLedger = ledger;
+    if (ledger && ledger !== persistedLedger) {
       try {
         writeSnapshot(snapshotPath, ledger);
+        persistedLedger = ledger;
       } catch (err) {
         console.error(`[ledger-pin] snapshot write failed: ${String(err)}`);
       }

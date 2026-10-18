@@ -209,6 +209,7 @@ export async function runWatcher(cfg, opts = {}) {
   const tick = async () => {
     const sample = await probe(cfg.endpoint, cfg.timeoutMs, fetchFn);
     const inGrace = !sample.ok && deployGraceActive(cfg.alertsDir, now().getTime());
+    const announced = state.announced;
     const next = decide(state, sample, inGrace);
     state = next.state;
     if (inGrace && state.fails >= FAIL_THRESHOLD && state.announced !== "down") {
@@ -229,6 +230,7 @@ export async function runWatcher(cfg, opts = {}) {
       } catch (err) {
         // An unwritable alerts dir is not worth dying over; the log line is
         // still in `docker logs`.
+        state = { ...state, announced };
         log(`could not write alert file: ${errText(err)}`);
       }
     }
