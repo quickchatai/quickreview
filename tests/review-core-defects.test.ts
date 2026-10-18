@@ -7,6 +7,7 @@
 // script and GitHub's API a fake fetch. No network, no model, no docker.
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { freshStateHomePerTest } from "./helpers/fresh-state-home.js";
 import {
   chmodSync,
   existsSync,
@@ -39,6 +40,8 @@ afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
   vi.unstubAllEnvs();
 });
+
+freshStateHomePerTest();
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync(

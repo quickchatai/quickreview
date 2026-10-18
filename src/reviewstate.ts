@@ -8,12 +8,10 @@
 // is production's `computePriorFindings` over them, so the chain, supersede
 // and resolution rules are the daemon's, not a copy.
 //
-// Kept in the repo's git dir, never tracked, never shared. Unreadable state is
-// no state: the next review is a full one.
-import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+// Kept in the install's state home (src/reviewstore.ts), never tracked, never
+// shared. Unreadable state is no state: the next review is a full one.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { normalizeDisposition, recordString, type FindingDisposition } from "./findingkey.js";
 import { parseFindingsRecord, type FindingsRecordEntry } from "./findingsrecord.js";
 import { computePriorFindings, type PriorFindingsList } from "./priorfindings.js";
@@ -29,22 +27,6 @@ export function branchTargetKey(repo: string, branch: string): string {
 /** A PR's key: the repo and the PR number, apart from any branch of the repo. */
 export function prTargetKey(repo: string, number: number): string {
   return `pr:${repo}#${number}`;
-}
-
-/** The state file for a target: in the repo's common git dir, so every
- * worktree of the repo shares it. Null outside a git repository. */
-export function statePathFor(cwd: string, key: string): string | null {
-  try {
-    const common = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    const hash = createHash("sha256").update(key).digest("hex").slice(0, 20);
-    return resolve(cwd, common, "qcr-review-state", `${hash}.json`);
-  } catch {
-    return null;
-  }
 }
 
 /** One review of the target. */

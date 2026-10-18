@@ -83,10 +83,10 @@ import {
   openFindings,
   recordRound,
   saveState,
-  statePathFor,
   type ReviewRound,
   type ReviewState,
 } from "./reviewstate.js";
+import { openReviewStore } from "./reviewstore.js";
 
 export const REVIEW_USAGE =
   "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--json] | --help";
@@ -119,7 +119,7 @@ export function reviewHelp(): string {
     "  --out FILE        write the markdown report to FILE (implies file)",
     "",
     "Destinations: with none given, the repo's saved default is used; with none saved, an",
-    "interactive run asks and saves the answer for this repo (in its git dir), and a run",
+    "interactive run asks and saves the answer for this repo (in the install's state home), and a run",
     "with no terminal prints the terminal text plus JSON and never waits.",
     "",
     "Posting (--to pr, or saved as the default) sends one review whose event is always",
@@ -524,7 +524,7 @@ async function runReview(
   const targetKey = prInfo
     ? prTargetKey(prInfo.repo, prInfo.number)
     : branchTargetKey(t.repo, t.branch);
-  const statePath = statePathFor(deps.cwd, targetKey);
+  const statePath = openReviewStore(deps.cwd)?.statePath(targetKey) ?? null;
   const postsToPr = prInfo !== null && dests.includes("pr");
   const prev = cmd.full || cmd.uncommitted || postsToPr ? null : loadState(statePath, targetKey);
   const short = (sha: string): string => sha.slice(0, 7);
