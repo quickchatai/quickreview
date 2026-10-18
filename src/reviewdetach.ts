@@ -13,6 +13,13 @@
 // child when it ends) and stopped.json (written by `stop`); `locks/<hash>.json`
 // names the run that holds a target. A lock whose run is over or dead is
 // stale and is replaced, so a crash never wedges a target.
+//
+// A frozen driver (a synchronous loop stops every timer and signal handler in
+// it) is beyond its own deadline's reach. `start` therefore also launches a
+// watchdog, a second small process of its own group: it reads the driver's
+// heartbeat (src/heartbeat.ts) and kills the driver's group, and the pi groups
+// the beat names, once the deadline plus a grace has passed and the beat has
+// stopped advancing.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -28,6 +35,8 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { haltPi, killPiGroups } from "./oneshot.js";
+import { livePiGroupIds } from "./engine/procruntime.js";
+import { HEARTBEAT_FILE, readBeat, startHeartbeat } from "./heartbeat.js";
 import { originRepo, resolveBranch, resolveUncommitted } from "./localreview.js";
 import { parsePrTarget } from "./prtarget.js";
 import { parseReviewArgs } from "./reviewcli.js";
@@ -59,6 +68,9 @@ export interface DetachDeps {
     key: string;
     argv: string[];
   }) => { ok: true; pid: number } | { ok: false; error: string };
+  /** Start the run's watchdog once the child has a pid. A failure to start it
+   * leaves the run without that backstop, which is no reason to refuse it. */
+  watch?: (w: { dir: string; key: string; pid: number }) => void;
 }
 
 export type RunState = "running" | "done" | "failed" | "stopped";
@@ -378,6 +390,11 @@ function start(
     return refuse([`the review could not be started: ${l.error}`]);
   }
   writeFileSync(join(dir, "run.json"), JSON.stringify({ ...run, pid: l.pid }));
+  try {
+    deps.watch?.({ dir, key: id.key, pid: l.pid });
+  } catch {
+    // see DetachDeps.watch
+  }
   return emit(0, `Review ${runId} started on ${id.label}. \`qcr review status --wait ${runId}\``, {
     ok: true,
     run_id: runId,
@@ -396,9 +413,11 @@ export function launchDetached(o: {
   dir: string;
   env: NodeJS.ProcessEnv;
   cwd?: string;
+  /** The log file in `dir`; default driver.log. */
+  log?: string;
 }): { ok: true; pid: number } | { ok: false; error: string } {
   try {
-    const fd = openSync(join(o.dir, "driver.log"), "a");
+    const fd = openSync(join(o.dir, o.log ?? "driver.log"), "a");
     const child = spawn(o.command, o.args, {
       detached: true,
       stdio: ["ignore", fd, fd],
@@ -459,6 +478,7 @@ export async function runDetachedChild(o: {
   });
   proc.on("SIGINT", onSignal);
   proc.on("SIGTERM", onSignal);
+  const stopBeat = startHeartbeat(join(o.dir, HEARTBEAT_FILE), { pgids: livePiGroupIds });
   let code: number;
   try {
     code = await o.run(out);
@@ -473,9 +493,84 @@ export async function runDetachedChild(o: {
     );
     code = 1;
   } finally {
+    stopBeat();
     proc.off("SIGINT", onSignal);
     proc.off("SIGTERM", onSignal);
   }
   writeFileSync(join(o.dir, "exit.json"), JSON.stringify({ code }));
   rmSync(lockPath(dirname(dirname(o.dir)), o.key), { force: true });
+}
+
+// ---- the watchdog ----------------------------------------------------------------
+
+/** How long past a turn's deadline the driver may still be running before the
+ * watchdog steps in: the in-process budget gets its own graces first. */
+export const WATCHDOG_GRACE_MS = 30_000;
+/** A beat older than this has stopped advancing (the driver writes every 2 s). */
+export const WATCHDOG_STALE_MS = 15_000;
+/** Exit code the watchdog records for a run it killed: `timeout(1)`'s. */
+export const WATCHDOG_EXIT_CODE = 124;
+
+export interface WatchdogDeps {
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  alive: (pid: number) => boolean;
+  /** Signal a whole process group. */
+  kill: (pgid: number, signal: NodeJS.Signals) => void;
+  pollMs?: number;
+  graceMs?: number;
+  staleMs?: number;
+}
+
+/** Watch one detached run until it ends. Resolves "killed" after it SIGKILLs a
+ * driver that is past its deadline plus the grace with a heartbeat that has
+ * stopped advancing, and records that as the run's end (exit.json, an output
+ * line, the target freed). Resolves "ended" when the run ends on its own. A
+ * driver that is past its deadline but still beating is the in-process
+ * budget's to stop, not this one's. */
+export async function runWatchdog(
+  w: { dir: string; key: string; pid: number },
+  deps: WatchdogDeps,
+): Promise<"ended" | "killed"> {
+  const graceMs = deps.graceMs ?? WATCHDOG_GRACE_MS;
+  const staleMs = deps.staleMs ?? WATCHDOG_STALE_MS;
+  for (;;) {
+    if (
+      existsSync(join(w.dir, "exit.json")) ||
+      existsSync(join(w.dir, "stopped.json")) ||
+      !deps.alive(w.pid)
+    )
+      return "ended";
+    const beat = readBeat(join(w.dir, HEARTBEAT_FILE));
+    const now = deps.now();
+    if (
+      beat !== null &&
+      beat.deadline_at !== null &&
+      now > beat.deadline_at + graceMs &&
+      now - beat.at > staleMs
+    ) {
+      for (const pgid of [...beat.pgids, w.pid]) {
+        try {
+          deps.kill(pgid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+      appendFileSync(
+        join(w.dir, "output.jsonl"),
+        `${JSON.stringify(
+          withSchemaVersion(REVIEW_SCHEMA_VERSION, {
+            ok: false,
+            errors: [
+              `the review stopped responding past its deadline and was killed by its watchdog`,
+            ],
+          }),
+        )}\n`,
+      );
+      writeFileSync(join(w.dir, "exit.json"), JSON.stringify({ code: WATCHDOG_EXIT_CODE }));
+      rmSync(lockPath(dirname(dirname(w.dir)), w.key), { force: true });
+      return "killed";
+    }
+    await deps.sleep(deps.pollMs ?? 2_000);
+  }
 }

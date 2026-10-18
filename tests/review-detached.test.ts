@@ -126,6 +126,18 @@ describe("start", () => {
     expect(h.launched).toHaveLength(0);
   });
 
+  it("starts the watchdog with the child's pid, and a watchdog that throws does not refuse the run", async () => {
+    const watched: Array<{ key: string; pid: number }> = [];
+    const h = harness({
+      watch: (w) => {
+        watched.push({ key: w.key, pid: w.pid });
+        throw new Error("no watchdog");
+      },
+    });
+    expect(await runDetachedVerb("start", [], true, h.deps)).toBe(0);
+    expect(watched).toEqual([{ key: "branch:o/r@feature", pid: 4001 }]);
+  });
+
   it("is refused (1) when the launch fails, and leaves no lock", async () => {
     const h = harness({ launch: () => ({ ok: false, error: "spawn ENOENT" }) });
     expect(await runDetachedVerb("start", [], true, h.deps)).toBe(1);
@@ -345,6 +357,21 @@ describe("runDetachedChild", () => {
     });
     expect(JSON.parse(readFileSync(join(dir, "exit.json"), "utf8")).code).toBe(1);
     expect(readFileSync(join(dir, "output.jsonl"), "utf8")).toContain("boom");
+  });
+
+  it("keeps a heartbeat file while the run lasts, for the watchdog to read", async () => {
+    const dir = join(tmp, "child", "runs", "c2");
+    mkdirSync(dir, { recursive: true });
+    let during: unknown = null;
+    await runDetachedChild({
+      dir,
+      key: "k",
+      run: async () => {
+        during = JSON.parse(readFileSync(join(dir, "heartbeat.json"), "utf8"));
+        return 0;
+      },
+    });
+    expect(during).toMatchObject({ seq: 1, pid: process.pid, deadline_at: null, pgids: [] });
   });
 });
 

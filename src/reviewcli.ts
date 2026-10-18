@@ -1168,6 +1168,26 @@ export function detachedCommand(
   };
 }
 
+/** The watchdog `qcr review start` detaches beside the run: this node, this
+ * entry, the run's directory, key and driver pid. */
+export function watchdogCommand(
+  w: { dir: string; key: string; pid: number },
+  o: { entry?: string; execPath?: string; execArgv?: readonly string[] } = {},
+): { command: string; args: string[] } {
+  return {
+    command: o.execPath ?? process.execPath,
+    args: [
+      ...(o.execArgv ?? process.execArgv),
+      o.entry ?? detachedEntry(),
+      "review",
+      "--watchdog",
+      w.dir,
+      w.key,
+      String(w.pid),
+    ],
+  };
+}
+
 /** The terminal side: the real repo, root, login and a prompt on stdin. */
 export async function cmdReview(
   rest: string[],
@@ -1207,7 +1227,37 @@ export async function cmdReview(
           dir: l.dir,
           env: process.env,
         }),
+      watch: (w) => {
+        det.launchDetached({
+          ...watchdogCommand(w),
+          dir: w.dir,
+          env: process.env,
+          log: "watchdog.log",
+        });
+      },
     });
+  }
+  if (rest[0] === "--watchdog") {
+    const [, dir, key, pid] = rest;
+    if (!dir || !key || !/^\d+$/.test(pid ?? "")) return 2;
+    const det = await import("./reviewdetach.js");
+    await det.runWatchdog(
+      { dir, key, pid: Number(pid) },
+      {
+        now: Date.now,
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        alive: (p) => {
+          try {
+            process.kill(p, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        kill: (pgid, sig) => process.kill(-pgid, sig),
+      },
+    );
+    return 0;
   }
   if (rest[0] === "--detached-run") {
     const dir = rest[1];

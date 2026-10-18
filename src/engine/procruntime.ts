@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
-import { EventCostMeter } from "../bench/cost.js";
+import { TurnBudget, termThenKill } from "./budget.js";
 import {
   RuntimeUnsupportedError,
   type Delivery,
@@ -62,6 +62,12 @@ export type PiRun = TurnResult;
  * leads its own group, which a kill aimed at the driver's group never touches. */
 const livePiGroups = new Set<number>();
 let piHalted = false;
+
+/** The process groups of the pi children running now: the heartbeat names them
+ * so an outside watchdog can reach what the driver's own group does not hold. */
+export function livePiGroupIds(): number[] {
+  return [...livePiGroups];
+}
 
 /** Signal every running pi's process group (its lens children with it). */
 export function killPiGroups(sig: NodeJS.Signals): void {
@@ -116,9 +122,6 @@ export function runPi(
       detached: true,
     });
     if (child.pid) livePiGroups.add(child.pid);
-    let timedOut = false;
-    let capped = false;
-    const meter = new EventCostMeter();
     let streamError: string | null = null;
     const kill = (sig: NodeJS.Signals): void => {
       try {
@@ -133,6 +136,12 @@ export function runPi(
       streamError = String(e);
       kill("SIGKILL");
     };
+    // The deadline and the $ cap: abort is SIGTERM to the group, dispose is
+    // SIGKILL, which cannot be ignored, so there is no backstop beyond it.
+    const budget = new TurnBudget(
+      { abort: async () => kill("SIGTERM"), dispose: async () => kill("SIGKILL") },
+      { timeoutMs, capUsd, graceMs: { cap: 5_000, timeout: 15_000 }, backstop: () => {} },
+    );
     hooks?.onSpawn?.(kill);
     events.on("error", onStreamError);
     errs.on("error", onStreamError);
@@ -150,14 +159,7 @@ export function runPi(
     // spend so far, so the cap bites before the call ends); the cost in the
     // file comes from `message_end` and `tool_execution_end`.
     onLfLines(child.stdout!, (line) => {
-      if (capUsd !== undefined && !capped) {
-        meter.add(line);
-        if (meter.totalUsd >= capUsd) {
-          capped = true;
-          kill("SIGTERM");
-          setTimeout(() => kill("SIGKILL"), 5_000).unref();
-        }
-      }
+      budget.observe(line);
       if (
         line.startsWith('{"type":"tool_execution_update"') ||
         line.startsWith('{"type":"message_update"')
@@ -167,11 +169,6 @@ export function runPi(
       hooks?.onEvent?.(line);
     });
     child.stderr!.pipe(errs);
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill("SIGTERM");
-      setTimeout(() => kill("SIGKILL"), 15_000).unref();
-    }, timeoutMs);
     child.on("error", (e) => {
       errs.write(`spawn error: ${String(e)}\n`);
     });
@@ -179,12 +176,18 @@ export function runPi(
     // them synchronously the moment this resolves (the judge's answer is the
     // events file's LAST message_end).
     child.on("close", (code) => {
-      clearTimeout(timer);
+      budget.end();
       if (child.pid) livePiGroups.delete(child.pid);
       let open = 2;
       const settled = (): void => {
         if (--open === 0)
-          resolve({ code, timedOut, streamError, spentUsd: meter.totalUsd, capped });
+          resolve({
+            code,
+            timedOut: budget.tripped === "timeout",
+            streamError,
+            spentUsd: budget.spentUsd,
+            capped: budget.tripped === "cap",
+          });
       };
       for (const s of [events, errs]) {
         if (s.closed) settled();
@@ -297,9 +300,7 @@ class ProcSession implements RuntimeSession {
   }
 
   async abort(): Promise<void> {
-    this.killRunning?.("SIGTERM");
-    const kill = this.killRunning;
-    if (kill) setTimeout(() => kill("SIGKILL"), ABORT_GRACE_MS).unref();
+    if (this.killRunning) termThenKill(this.killRunning, ABORT_GRACE_MS);
   }
 
   subscribe(listener: (event: SessionEvent) => void): () => void {
