@@ -299,9 +299,18 @@ describe("wire.ts: the lesson shadow ledger is actually connected", () => {
   it("the daemon is handed the late-bound selection hook and the findings matcher", () => {
     expect(wire).toMatch(/lessons: lateLessons,/);
     expect(wire).toMatch(/start: \(order, files\) => lessonSelector\?\.start\(order, files\)/);
+    // MUTATION: replace wire's completeRecordedFindings(...) reader with
+    // Promise.resolve(...), or remove the helper's markRound(...) reader.
+    // Either disconnect must fail despite both imports/declarations remaining.
     expect(wire).toMatch(
-      /onFindingsRecorded: \(\{ pr, roundNo \}\) => \{[\s\S]*?markRound\(lessonLedger, daemon\.store, pr, roundNo\)/,
+      /onFindingsRecorded: \(target\) =>\s*completeRecordedFindings\(\s*\{\s*store: daemon\.store,\s*ledger: lessonLedger,[\s\S]*?\},\s*target,/,
     );
+    const findingsConsumer = readFileSync(
+      join(process.cwd(), "src", "recordedfindings.ts"),
+      "utf8",
+    );
+    expect(findingsConsumer).toMatch(/const \{ pr, roundNo \} = target;/);
+    expect(findingsConsumer).toMatch(/markRound\(deps\.ledger, deps\.store, pr, roundNo\)/);
     // …and the daemon passes both on: the hook to every dispatch pump, the
     // matcher to the verdict watcher's findings check.
     expect(daemon).toMatch(/\.\.\.\(deps\.lessons \? \{ lessons: deps\.lessons \} : \{\}\)/);

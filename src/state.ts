@@ -1132,6 +1132,18 @@ CREATE TABLE IF NOT EXISTS operator_commands (
   file       TEXT NOT NULL,
   handled_at TEXT NOT NULL
 );
+-- Owed post-settlement work. A terminal replay marker and its obligations
+-- share a transaction; completion receipts prevent later duplicate effects.
+CREATE TABLE IF NOT EXISTS round_work (
+  key TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  pr INTEGER NOT NULL,
+  round_no INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS round_work_pending ON round_work (kind, due_at) WHERE completed_at IS NULL;
 CREATE TABLE IF NOT EXISTS filed_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,           -- 'improvement_pr' | 'issue'

@@ -1,3 +1,4 @@
+import { enqueueRoundWork, pendingRoundWork, finishRoundWork } from "./round-work.js";
 // The durable reasoning record.
 //
 // WHAT THIS IS. `rounds.lenses` records the PLAN and `rounds.executed_passes`
@@ -567,8 +568,9 @@ export interface FindingsCheckDeps {
    * Told every time a round's findings record LANDS in `round_findings`: the
    * lesson shadow ledger marks the round's posted
    * findings a selected dont-raise lesson would have touched
-   * (src/lessonshadow.ts). Runs after `findings_recorded`; must not throw —
-   * a throw is logged and swallowed, the record stands either way.
+   * (src/lessonshadow.ts). Runs asynchronously after `findings_recorded`;
+   * its durable obligation is retried until the callback returns successfully.
+   * A returned promise is awaited; synchronous callbacks stay accepted.
    */
   onRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => void;
 }
@@ -727,33 +729,41 @@ function ingestFindingsRecord(
 ): void {
   const { store, log } = deps;
   const { pr, roundNo, roundId, headSha, planned } = target;
-  const stored = store.recordRoundFindings(
-    { pr, round_id: roundId, round_no: roundNo, head_sha: record.head_sha ?? headSha },
-    record.findings,
-    planned,
-  );
-  if (record.comments_posted !== null && roundId !== null)
-    store.recordRoundComments(roundId, record.comments_posted);
-  // The statuses this round reported for prior findings. Stored
-  // beside the listing the daemon made at order build; the next round's
-  // list drops what a later report resolved.
-  const priorReported =
-    record.prior.length > 0
-      ? store.recordPriorReports(pr, roundNo, record.head_sha ?? headSha, record.prior)
-      : 0;
-  store.logEvent("findings_recorded", pr, {
-    round_id: roundId,
-    round_no: roundNo,
-    entries: stored,
-    comments_posted: record.comments_posted,
-    ...(priorReported > 0 ? { prior_reported: priorReported } : {}),
-    ...(parsed.note ? { note: parsed.note } : {}),
-  });
-  try {
-    deps.onRecorded?.({ pr, roundNo, roundId });
-  } catch (err) {
-    log?.(`findings: #${pr} round ${roundNo} onRecorded hook threw (ignored)`, err);
-  }
+  const stored = store.db.transaction(() => {
+    const stored = store.recordRoundFindings(
+      { pr, round_id: roundId, round_no: roundNo, head_sha: record.head_sha ?? headSha },
+      record.findings,
+      planned,
+    );
+    if (record.comments_posted !== null && roundId !== null)
+      store.recordRoundComments(roundId, record.comments_posted);
+    // The statuses this round reported for prior findings. Stored
+    // beside the listing the daemon made at order build; the next round's
+    // list drops what a later report resolved.
+    const priorReported =
+      record.prior.length > 0
+        ? store.recordPriorReports(pr, roundNo, record.head_sha ?? headSha, record.prior)
+        : 0;
+    if (deps.onRecorded)
+      enqueueRoundWork(store, {
+        key: `findings_hook:${roundId ?? `${pr}:${roundNo}`}`,
+        kind: "findings_hook",
+        pr,
+        round_no: roundNo,
+        due_at: "",
+        payload: { pr, roundNo, roundId },
+      });
+    store.logEvent("findings_recorded", pr, {
+      round_id: roundId,
+      round_no: roundNo,
+      entries: stored,
+      comments_posted: record.comments_posted,
+      ...(priorReported > 0 ? { prior_reported: priorReported } : {}),
+      ...(parsed.note ? { note: parsed.note } : {}),
+    });
+    return stored;
+  })();
+  void resumeFindingsRecordedHooks(deps);
   // The round's posted output against the three output rules. A quiet
   // anomaly (anomalies.ts wakes nobody for this kind) — a durable, queryable
   // row is the point, and no round is ever held open for it.
@@ -784,4 +794,44 @@ function ingestFindingsRecord(
     `findings: #${pr} round ${roundNo} recorded ${stored} entr${stored === 1 ? "y" : "ies"}` +
       (parsed.note ? ` (${parsed.note})` : ""),
   );
+}
+
+const recordedHookFlights = new WeakMap<StateStore, Promise<void>>();
+
+/** Resume unfinished callback delivery. The callback may return an async
+ * completion; legacy synchronous callbacks remain accepted. No round waits
+ * for this worker, and an exhausted per-thread failure remains terminal. */
+export function resumeFindingsRecordedHooks(
+  deps: Pick<FindingsCheckDeps, "store" | "log" | "onRecorded">,
+): Promise<void> {
+  if (!deps.onRecorded) return Promise.resolve();
+  const existing = recordedHookFlights.get(deps.store);
+  if (existing) return existing;
+  const work = Promise.resolve()
+    .then(async () => {
+      for (const row of pendingRoundWork(deps.store, "findings_hook", new Date().toISOString())) {
+        try {
+          const target = JSON.parse(row.payload) as {
+            pr: number;
+            roundNo: number;
+            roundId: number | null;
+          };
+          await deps.onRecorded!(target);
+          finishRoundWork(deps.store, row.key, new Date().toISOString());
+        } catch (err) {
+          deps.log?.(
+            `findings: #${row.pr} round ${row.round_no} recorded hook incomplete — retained for retry`,
+            err,
+          );
+        }
+      }
+    })
+    .catch((err: unknown) => {
+      deps.log?.("findings: recorded hook worker unavailable — obligations retained", err);
+    })
+    .finally(() => {
+      recordedHookFlights.delete(deps.store);
+    });
+  recordedHookFlights.set(deps.store, work);
+  return work;
 }

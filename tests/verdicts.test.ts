@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseConfig, type Config } from "../src/config.js";
+import { parseConfig, parseEscalation, type Config } from "../src/config.js";
 import type { GateResult } from "../src/gate.js";
 import { StateStore, type ReviewedHeadRow } from "../src/state.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
@@ -4893,4 +4893,131 @@ describe("settlement preserves earlier durable facts", () => {
     expect(store.openReviewFailure(733)).toBeUndefined();
     expect(store.approvalWithheld(733)?.head_sha).toBe("abc123");
   });
+});
+
+describe("round tail survives process restart", () => {
+  it("resumes an enabled escalation interrupted after the settled marker", async () => {
+    reviewingRound(742);
+    const escalation = parseEscalation({
+      enabled: true,
+      targets: ["teammate-one"],
+      rules: [{ name: "all", to: "teammate-one", why: "you own this code", paths: ["**"] }],
+    });
+    let release!: () => void;
+    let reached!: () => void;
+    const entered = new Promise<void>((r) => {
+      reached = r;
+    });
+    const blocked = new Promise<void>((r) => {
+      release = r;
+    });
+    let comments = 0;
+    let firstRead = true;
+    const escAdapter: VerdictAdapter = {
+      addLabel: adapter.addLabel.bind(adapter),
+      removeLabel: adapter.removeLabel.bind(adapter),
+      async listPrFiles() {
+        if (firstRead) {
+          firstRead = false;
+          reached();
+          await blocked;
+        }
+        return [{ filename: "a.py" }];
+      },
+      async getPr() {
+        return { labels: [] };
+      },
+      async createReview() {
+        comments++;
+        return { executed: true };
+      },
+    };
+    const deps = { cfg: { ...cfg, escalation }, adapter: escAdapter };
+    const interrupted = watcher(deps).handleFile(write(742, 1, verdictFile({ pr: 742 })));
+    await entered;
+    const restarted = watcher(deps);
+    let deliveredAfterRestart: number;
+    try {
+      await restarted.sweep();
+      await restarted.idle();
+      deliveredAfterRestart = comments;
+    } finally {
+      release();
+      await interrupted;
+    }
+    expect(deliveredAfterRestart).toBe(1);
+    expect(comments).toBe(1);
+    await restarted.sweep();
+    await restarted.idle();
+    expect(comments).toBe(1);
+  });
+
+  it("resumes the delayed findings and ledger checks exactly once", async () => {
+    let clock = new Date();
+    const id = reviewingRound(740);
+    const findingsDir = join(dir, "state", "findings");
+    mkdirSync(findingsDir, { recursive: true });
+    writeFileSync(
+      join(findingsDir, "pr-740-round-1.json"),
+      JSON.stringify({
+        pr: 740,
+        round_no: 1,
+        findings: [{ id: "a", lens: "pass-baseline", disposition: "posted" }],
+      }),
+    );
+    const first = watcher({ findingsDir, ledgerCheckDelayMs: 90_000, now: () => clock });
+    await first.handleFile(write(740, 1, verdictFile({ pr: 740 })));
+    expect(store.findingsForRound(740, 1)).toEqual([]);
+    clock = new Date(clock.getTime() + 91_000);
+    const restarted = watcher({ findingsDir, now: () => clock });
+    await restarted.sweep();
+    await restarted.idle();
+    expect(store.findingsForRound(740, 1)).toHaveLength(1);
+    const recorded = () =>
+      store.db.prepare("SELECT * FROM events WHERE pr=740 AND kind='findings_recorded'").all();
+    expect(recorded()).toHaveLength(1);
+    expect(store.roundsFor(740)[0]).toMatchObject({ id, status: "done" });
+    await restarted.sweep();
+    await restarted.idle();
+    expect(recorded()).toHaveLength(1);
+  });
+
+  it.each([false, true])(
+    "resumes a consumed findings hook after its dependency becomes ready (missing verdict directory: %s)",
+    async (missingVerdictDir) => {
+      reviewingRound(741);
+      const findingsDir = join(dir, "state", "findings");
+      mkdirSync(findingsDir, { recursive: true });
+      writeFileSync(
+        join(findingsDir, "pr-741-round-1.json"),
+        JSON.stringify({
+          pr: 741,
+          round_no: 1,
+          findings: [{ id: "a", lens: "pass-baseline", disposition: "posted" }],
+        }),
+      );
+      await watcher({
+        findingsDir,
+        ledgerCheckDelayMs: 0,
+        onFindingsRecorded: () => {
+          throw new Error("lesson ledger is not ready during boot");
+        },
+      }).handleFile(write(741, 1, verdictFile({ pr: 741 })));
+      expect(store.findingsForRound(741, 1)).toHaveLength(1);
+      let completed = 0;
+      const restarted = watcher({
+        findingsDir,
+        ...(missingVerdictDir ? { verdictDir: join(dir, "absent-verdict-directory") } : {}),
+        onFindingsRecorded: () => {
+          completed++;
+        },
+      });
+      await restarted.sweep();
+      await restarted.idle();
+      expect(completed).toBe(1);
+      await restarted.sweep();
+      await restarted.idle();
+      expect(completed).toBe(1);
+    },
+  );
 });
