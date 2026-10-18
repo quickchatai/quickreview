@@ -16,20 +16,21 @@ import { join } from "node:path";
 import type { Config } from "./config.js";
 import type { Ecosystem } from "./ecosystem.js";
 import {
-  addReviewTree,
+  addUncommittedTree,
   groupFindings,
   loadReviewSettings,
   priceReview,
   removeReviewTree,
   renderGrouped,
   resolveBranch,
+  resolveUncommitted,
   reviewKey,
   type BranchTarget,
 } from "./localreview.js";
 import { renderOneShotPrompts, runOneShot, type OneShotResult } from "./oneshot.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review [branch] [--base REF] [--preview] [--key K] [--limit USD] [--json] | --help";
+  "usage: qcr review [branch | --uncommitted] [--base REF] [--preview] [--key K] [--limit USD] [--json] | --help";
 
 export function reviewHelp(): string {
   return [
@@ -42,7 +43,7 @@ export function reviewHelp(): string {
     "Targets",
     "  (none), branch    the current branch against its base (default)",
     "  <PR number|URL>   a pull request — not available in this build yet",
-    "  --uncommitted     the uncommitted working tree — not available in this build yet",
+    "  --uncommitted     the uncommitted working tree (staged, unstaged and new files) against HEAD;\n                    never posted anywhere",
     "",
     "Options",
     "  --base REF        the base to review against (default: origin's default branch, main, master)",
@@ -58,7 +59,15 @@ export function reviewHelp(): string {
 }
 
 export type ReviewCommand =
-  { help: true } | { help: false; base?: string; preview: boolean; key?: string; limit?: number };
+  | { help: true }
+  | {
+      help: false;
+      uncommitted: boolean;
+      base?: string;
+      preview: boolean;
+      key?: string;
+      limit?: number;
+    };
 
 const usage = (why?: string): Error => new Error(why ? `${REVIEW_USAGE}\n(${why})` : REVIEW_USAGE);
 
@@ -66,6 +75,7 @@ const usage = (why?: string): Error => new Error(why ? `${REVIEW_USAGE}\n(${why}
  * refused, so a mistyped flag never runs something else. */
 export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   let help = false;
+  let uncommitted = false;
   let preview = false;
   let base: string | undefined;
   let key: string | undefined;
@@ -87,13 +97,19 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
         throw usage("--limit must be a positive number of dollars");
       limit = n;
     } else if (a === "branch") continue;
-    else if (a === "--uncommitted" || /^#?\d+$/.test(a) || /^https?:\/\//.test(a))
+    else if (a === "--uncommitted") uncommitted = true;
+    else if (/^#?\d+$/.test(a) || /^https?:\/\//.test(a))
       throw usage(`${a}: only the current branch can be reviewed in this build`);
     else throw usage(`unknown argument ${a}`);
   }
   if (help) return { help: true };
+  if (uncommitted && base !== undefined)
+    throw usage("--uncommitted reviews against HEAD; --base does not apply");
+  if (uncommitted && rest.includes("branch"))
+    throw usage("choose one target: branch or --uncommitted");
   return {
     help: false,
+    uncommitted,
     preview,
     ...(base !== undefined ? { base } : {}),
     ...(key !== undefined ? { key } : {}),
@@ -160,11 +176,16 @@ export async function runReviewCli(
     deps.out(reviewHelp());
     return 0;
   }
-  const resolved = resolveBranch(deps.cwd, cmd.base);
+  const resolved = cmd.uncommitted
+    ? resolveUncommitted(deps.cwd)
+    : resolveBranch(deps.cwd, cmd.base);
   if (!resolved.ok) return refuse(1, [resolved.error]);
   const t: BranchTarget = resolved.target;
   const settings = loadReviewSettings(deps.cwd);
   const limit = cmd.limit ?? settings.auto_limit_usd;
+  const label = cmd.uncommitted
+    ? `uncommitted changes on ${t.branch}`
+    : `${t.branch} against ${t.base}`;
   const runId = `${new Date().toISOString().replace(/[^0-9]/g, "")}-${t.headSha.slice(0, 7)}`;
   const runDir = join(deps.runsDir, runId);
   const outDir = join(runDir, "out");
@@ -172,7 +193,7 @@ export async function runReviewCli(
   const target = {
     repo: t.repo,
     number: 0,
-    title: `${t.branch} against ${t.base}`,
+    title: label,
     body: null,
     headSha: t.headSha,
     baseRef: t.base,
@@ -198,7 +219,8 @@ export async function runReviewCli(
   }
   const price = priceReview(lenses.length, t.lines, settings);
   const key = reviewKey({
-    headSha: t.headSha,
+    // an uncommitted review is keyed on the edits, so the key moves with them
+    headSha: t.uncommitted?.treeSha ?? t.headSha,
     baseSha: t.baseSha,
     lenses,
     lines: t.lines,
@@ -207,6 +229,9 @@ export async function runReviewCli(
   const auto = price <= limit;
   const preview = {
     repo: t.repo,
+    target: cmd.uncommitted ? "uncommitted" : "branch",
+    // no PR behind this target: posting is never offered
+    postable: false,
     branch: t.branch,
     base: t.base,
     head_sha: t.headSha,
@@ -220,7 +245,7 @@ export async function runReviewCli(
     key,
   };
   const previewText = [
-    `Review ${t.branch} against ${t.base} (${t.repo})`,
+    `Review ${label} (${t.repo})`,
     `  ${t.files.length} file${t.files.length === 1 ? "" : "s"}, ${t.lines} changed line${t.lines === 1 ? "" : "s"}`,
     `  lenses: ${lenses.join(", ")}`,
     `  price: ${usd(price)} — the run stops hard there (limit without asking: ${usd(limit)})`,
@@ -252,7 +277,7 @@ export async function runReviewCli(
   mkdirSync(runDir, { recursive: true });
   let shot: OneShotResult;
   try {
-    addReviewTree(deps.cwd, treeDir, t.headSha);
+    addUncommittedTree(deps.cwd, treeDir, t);
     shot = await runOneShot({
       root: deps.root,
       agentDir: deps.agentDir,
@@ -265,8 +290,8 @@ export async function runReviewCli(
       timeoutMs: deps.timeoutMs,
       ...(deps.piBin !== undefined ? { piBin: deps.piBin } : {}),
       capUsd: price,
-      sessionName: `review-${t.branch.replace(/[^A-Za-z0-9._-]/g, "-")}`,
-      label: `${t.repo}@${t.branch}`,
+      sessionName: `review-${(cmd.uncommitted ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`,
+      label: `${t.repo}@${cmd.uncommitted ? "uncommitted" : t.branch}`,
       ...(deps.log ? { log: deps.log } : {}),
     });
   } catch (err) {

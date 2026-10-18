@@ -165,12 +165,7 @@ describe("qcr review: usage", () => {
   });
 
   it("refuses an unknown flag and targets this build cannot review, with exit 2", async () => {
-    for (const rest of [
-      ["--bogus"],
-      ["123"],
-      ["https://github.com/o/r/pull/3"],
-      ["--uncommitted"],
-    ]) {
+    for (const rest of [["--bogus"], ["123"], ["https://github.com/o/r/pull/3"]]) {
       expect(() => parseReviewArgs(rest), rest.join(" ")).toThrow(/usage: qcr review/);
     }
     const h = harness({ repo: mkRepo("badarg"), piBin: "false" });
@@ -363,5 +358,106 @@ describe("qcr review: the throwaway tree", () => {
     await runReviewCli([], false, h.deps);
     expect(git(repo, "worktree", "list").split("\n")).toHaveLength(1);
     expect(git(repo, "status", "--porcelain")).toBe("");
+  });
+});
+
+describe("qcr review --uncommitted", () => {
+  /** feature branch, then: a staged edit, an unstaged edit, a new file. */
+  function dirtyRepo(name: string): string {
+    const repo = mkRepo(name);
+    writeFileSync(join(repo, "src", "b.ts"), "export const s = 1;\n");
+    git(repo, "add", "src/b.ts");
+    writeFileSync(join(repo, "src", "a.ts"), "export const a = 1;\nexport const u = 9;\n");
+    writeFileSync(join(repo, "src", "new.ts"), "export const n = 0;\n");
+    return repo;
+  }
+
+  it("reviews only the uncommitted edits: staged, unstaged and new, not the branch's commits", async () => {
+    const repo = dirtyRepo("unc-set");
+    const h = harness({ repo, piBin: "false" });
+    expect(await runReviewCli(["--uncommitted", "--preview"], true, h.deps)).toBe(0);
+    const o = JSON.parse(h.lines[0]!);
+    expect(o.preview.target).toBe("uncommitted");
+    expect(o.preview.base).toBe("HEAD");
+    // a.ts (unstaged), b.ts (staged), new.ts (untracked); c.ts-style commits excluded
+    expect(o.preview.files).toBe(3);
+    // a.ts: -2 lines +1 vs HEAD's three-line file, b.ts +1, new.ts +1
+    expect(o.preview.lines).toBe(2 + 1 + 1 + 1);
+  });
+
+  it("leaves the person's index and files exactly as they were", async () => {
+    const repo = dirtyRepo("unc-untouched");
+    const before = git(repo, "status", "--porcelain");
+    const h = harness({ repo, piBin: "false" });
+    await runReviewCli(["--uncommitted", "--preview"], false, h.deps);
+    expect(git(repo, "status", "--porcelain")).toBe(before);
+    expect(before).toMatch(/A {2}src\/b\.ts/);
+    expect(before).toMatch(/\?\? src\/new\.ts/);
+  });
+
+  it("the review tree holds HEAD plus the edits, and is cleaned up", async () => {
+    const repo = dirtyRepo("unc-tree");
+    setLimit(repo, 1000);
+    const seen = join(tmp, "unc-tree.seen");
+    const pi = fakePi("unc-tree", [
+      `cat "$QCR_WORKTREE/src/a.ts" "$QCR_WORKTREE/src/b.ts" "$QCR_WORKTREE/src/new.ts" > ${JSON.stringify(seen)}`,
+      `printf '%s' ${JSON.stringify(record)} > "$cd/findings-record.json"`,
+      `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
+    ]);
+    const h = harness({ repo, piBin: pi.bin });
+    expect(await runReviewCli(["--uncommitted"], false, h.deps)).toBe(0);
+    const text = readFileSync(seen, "utf8");
+    expect(text).toContain("export const u = 9;");
+    expect(text).toContain("export const s = 1;");
+    expect(text).toContain("export const n = 0;");
+    expect(text).not.toContain("export const b = 2;");
+    expect(git(repo, "worktree", "list").split("\n")).toHaveLength(1);
+  });
+
+  it("a clean tree exits with a clear message and spends nothing", async () => {
+    const repo = mkRepo("unc-clean");
+    const pi = happyPi("unc-clean");
+    const h = harness({ repo, piBin: pi.bin });
+    expect(await runReviewCli(["--uncommitted"], false, h.deps)).toBe(1);
+    expect(h.text()).toMatch(/nothing to review.*no uncommitted changes/i);
+    expect(existsSync(pi.calls)).toBe(false);
+    expect(h.asked).toHaveLength(0);
+  });
+
+  it("posting is never offered: not postable, nothing asked about posting", async () => {
+    const repo = dirtyRepo("unc-nopost");
+    setLimit(repo, 1000);
+    const h = harness({ repo, piBin: happyPi("unc-nopost").bin });
+    expect(await runReviewCli(["--uncommitted"], true, h.deps)).toBe(0);
+    const o = JSON.parse(h.lines[0]!);
+    expect(o.preview.postable).toBe(false);
+    expect(h.asked).toHaveLength(0);
+    expect(h.lines.join("\n")).not.toMatch(/post (to|it)|--post/i);
+    expect(reviewHelp()).not.toMatch(/--post\b/);
+  });
+
+  it("runs under the same price, key and hard stop; the key moves with the edits", async () => {
+    const repo = dirtyRepo("unc-key");
+    const a = harness({ repo, piBin: "false" });
+    await runReviewCli(["--uncommitted", "--preview"], true, a.deps);
+    writeFileSync(join(repo, "src", "new.ts"), "export const n = 1;\n");
+    const b = harness({ repo, piBin: "false" });
+    await runReviewCli(["--uncommitted", "--preview"], true, b.deps);
+    expect(JSON.parse(b.lines[0]!).preview.key).not.toBe(JSON.parse(a.lines[0]!).preview.key);
+
+    const capRepo = dirtyRepo("unc-cap");
+    setLimit(capRepo, 1000);
+    const pi = fakePi("unc-cap", [
+      `echo '{"type":"message_end","message":{"role":"assistant","usage":{"cost":{"total":9999}}}}'`,
+      "sleep 60",
+    ]);
+    const c = harness({ repo: capRepo, piBin: pi.bin });
+    expect(await runReviewCli(["--uncommitted"], false, c.deps)).toBe(1);
+    expect(c.text()).toMatch(/stopped at the price/i);
+  });
+
+  it("refuses --uncommitted with --base or with branch, exit 2", async () => {
+    expect(() => parseReviewArgs(["--uncommitted", "--base", "main"])).toThrow(/usage: qcr review/);
+    expect(() => parseReviewArgs(["--uncommitted", "branch"])).toThrow(/usage: qcr review/);
   });
 });
