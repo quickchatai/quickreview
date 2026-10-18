@@ -58,9 +58,16 @@ export function dockerShArgv(cfg: TuiConfig, script: string): string[] {
   return [...dockerPrefix(cfg), cfg.container, "sh", "-c", script];
 }
 
-/** `cat status.json` on the host — the state volume is host-mounted, no docker. */
+/** VM state is host-mounted; local Compose state lives in a named Docker volume. */
 export function statusArgv(cfg: TuiConfig): string[] {
-  return ["cat", `${cfg.remote_state_dir}/status.json`];
+  return stateReadArgv(cfg, "status.json");
+}
+
+function stateReadArgv(cfg: TuiConfig, path: string): string[] {
+  return [
+    ...(transportOf(cfg) === "local" ? [...dockerPrefix(cfg), cfg.container] : []),
+    "cat", `${cfg.remote_state_dir}/${path}`,
+  ];
 }
 
 /** In-container `qcr why <n> --json`. */
@@ -70,11 +77,10 @@ export function whyArgv(cfg: TuiConfig, pr: number): string[] {
 
 /**
  * The selected PR's ephemeral parent/lens activity. Like status.json this is
- * on the host-mounted state volume, so the hot path is one read-only cat — no
- * container exec and, importantly, no repeated GitHub enrichment fetch.
+ * read with one cat from the topology's state volume, without GitHub enrichment.
  */
 export function progressArgv(cfg: TuiConfig, pr: number): string[] {
-  return ["cat", `${cfg.remote_state_dir}/round-progress/pr-${pr}.json`];
+  return stateReadArgv(cfg, `round-progress/pr-${pr}.json`);
 }
 
 /** In-container `qcr events --tail <k> --json`. */

@@ -51,6 +51,7 @@ import {
   expandHome,
   githubCloneDir,
   loadConfig,
+  TUI_DEFAULTS,
   type Config,
 } from "../../config.js";
 import {
@@ -477,7 +478,7 @@ export interface Derivable {
    * loader-side cascade / code default that this step must simply LEAVE ALONE.
    * `fresh` is false when the source document is the operator's OWN config: a
    * fill-time default returns null there rather than overwriting their choice. */
-  write(facts: FillFacts, fresh: boolean): { section: string; key: string; value: string } | null;
+  write(facts: FillFacts, fresh: boolean, existing?: Config): { section: string; key: string; value: string } | null;
   /** True ⇒ the derivation is an invariant re-checked at verify time. False ⇒
    * it is only a fill-time default the operator is free to change afterwards. */
   stable: boolean;
@@ -620,6 +621,17 @@ export const DERIVABLES: readonly Derivable[] = [
             `Fix: run this step again (it writes target = "${want}")`
         : null;
     },
+  },
+  {
+    id: "tui_container",
+    path: "[tui] container",
+    explain: "the bundled local Compose project runs service daemon as quickreview-daemon-1; preserve an operator's custom container",
+    write: (f, fresh, existing) =>
+      f.topology === "local" && (fresh || existing?.tui.container === TUI_DEFAULTS.container)
+        ? { section: "tui", key: "container", value: tomlString("quickreview-daemon-1") }
+        : null,
+    stable: false,
+    holds: () => null,
   },
   {
     id: "tui_ssh_host",
@@ -896,6 +908,7 @@ export function buildEdits(
   facts: FillFacts,
   choices: Readonly<Record<string, unknown>>,
   fresh: boolean,
+  existing?: Config,
 ): TomlEdit[] {
   const edits: TomlEdit[] = [];
   for (const q of QUESTIONS) {
@@ -903,7 +916,7 @@ export function buildEdits(
     edits.push({ section: q.section, key: q.key, value: tomlString(facts[q.id]) });
   }
   for (const d of DERIVABLES) {
-    const w = d.write(facts, fresh);
+    const w = d.write(facts, fresh, existing);
     if (w) edits.push(w);
   }
   // Later wins: a derivation over the same key (the escalation-mention
@@ -1103,7 +1116,7 @@ export function configFillStep(opts: { transport?: TransportOptions } = {}): Onb
       }
 
       const facts = collected.facts;
-      const wanted = buildEdits(facts, ctx.choices, existing === null);
+      const wanted = buildEdits(facts, ctx.choices, existing === null, cfg ?? undefined);
       const edits = changedEdits(source, wanted);
       const rendered = edits.length ? patchToml(source, edits) : source;
 

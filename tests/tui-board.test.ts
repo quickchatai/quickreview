@@ -1065,8 +1065,12 @@ describe("key decoding", () => {
 });
 
 describe("remote argv builders", () => {
-  it("reads status.json from the host state volume without docker", () => {
+  it("reads status.json from the topology's state volume", () => {
     expect(statusArgv(TUI_DEFAULTS)).toEqual(["cat", "/opt/quickreview/state/status.json"]);
+    const local = { ...TUI_DEFAULTS, target: "local" as const, container: "compose-daemon", sudo_docker: false };
+    expect(statusArgv(local)).toEqual(["docker", "exec", "compose-daemon", "cat", "/opt/quickreview/state/status.json"]);
+    expect(progressArgv(local, 5012)).toEqual(["docker", "exec", "compose-daemon", "cat", "/opt/quickreview/state/round-progress/pr-5012.json"]);
+    expect(statusArgv({ ...local, sudo_docker: true })).toEqual(["sudo", "docker", "exec", "compose-daemon", "cat", "/opt/quickreview/state/status.json"]);
   });
 
   it("runs read-only CLI calls inside the container with sudo docker", () => {
