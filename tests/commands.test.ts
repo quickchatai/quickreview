@@ -60,6 +60,28 @@ describe("validateCommand — whitelist", () => {
     );
   });
 
+  it("uses trusted delivery identity for Slack reply and operator lesson keys", async () => {
+    const deps = {
+      ...makeDeps(),
+      lessonSwitch: vi.fn(async () => ({ ok: true })),
+      archiveRun: vi.fn(async () => ({ ok: true })),
+      archiveRestore: vi.fn(async () => ({ ok: true })),
+    };
+    const ctx = { file: "same-name", delivery_key: "fresh-version", issuer: "operator" as const };
+    await executeCommand({ command: "slack_reply", thread: "C:1", text: "hi" }, deps, ctx);
+    expect(deps.slackReply).toHaveBeenCalledWith({
+      thread: "C:1",
+      text: "hi",
+      file: "fresh-version",
+    });
+    await executeCommand({ command: "lessons-off" }, deps, ctx);
+    expect(deps.lessonSwitch).toHaveBeenCalledWith({ action: "off" }, "fresh-version");
+    await executeCommand({ command: "archive-run" }, deps, ctx);
+    expect(deps.archiveRun).toHaveBeenCalledWith("fresh-version");
+    await executeCommand({ command: "archive-restore", pr: 5 }, deps, ctx);
+    expect(deps.archiveRestore).toHaveBeenCalledWith(5, "fresh-version");
+  });
+
   it("accepts every whitelisted command with a valid payload", () => {
     const valid: unknown[] = [
       { command: "rerun-round", pr: 12 },
@@ -367,7 +389,7 @@ describe("CommandWatcher", () => {
     });
   }
 
-  it("a scoped watcher names its directory in the context file; an unscoped one passes the bare name", async () => {
+  it("a scoped session watcher names its directory while an unscoped one passes the bare name", async () => {
     const thread = "1712345678.123456";
     mkdirSync(slackDir(), { recursive: true });
     writeFileSync(
@@ -425,6 +447,133 @@ describe("CommandWatcher", () => {
       pr: 6,
     });
     w.stop();
+  });
+
+  it("retains unfinished JSON for a later write after eager retries expire", async () => {
+    const path = join(cmdDir(), "unfinished.json");
+    writeFileSync(path, '{"command":"rerun-rou');
+    const deps = makeDeps();
+    const w = new CommandWatcher({ dir: cmdDir(), deps, store, parseAttempts: 1 });
+    await w.handleFile(path);
+    expect(existsSync(path)).toBe(true);
+    expect(result("unfinished")).toMatchObject({ ok: false });
+    writeFileSync(path, JSON.stringify({ command: "rerun-round", pr: 12 }));
+    await w.sweep();
+    await drained(w);
+    expect(deps.rerunRound).toHaveBeenCalledWith(12);
+    expect(result("unfinished")).toMatchObject({ ok: true });
+    w.stop();
+  });
+
+  it("reports an unchanged unfinished write once while still noticing its completed bytes", async () => {
+    const path = join(cmdDir(), "slow.json");
+    writeFileSync(path, '{"command":"rerun-rou');
+    const deps = makeDeps();
+    const w = new CommandWatcher({ dir: cmdDir(), deps, store, parseAttempts: 1 });
+    await w.sweep();
+    await w.sweep();
+    await w.sweep();
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='command_rejected'").get(),
+    ).toEqual({ n: 1 });
+    expect(existsSync(path)).toBe(true);
+    writeFileSync(path, JSON.stringify({ command: "rerun-round", pr: 12 }));
+    await w.sweep();
+    await w.sweep();
+    expect(deps.rerunRound).toHaveBeenCalledTimes(1);
+    expect(result("slow")).toMatchObject({ ok: true });
+    w.stop();
+  });
+
+  it("does not repeat a completed destructive command if result publication fails before archival", async () => {
+    const path = join(cmdDir(), "crash.json");
+    writeFileSync(path, JSON.stringify({ command: "rerun-round", pr: 12 }));
+    const deps = makeDeps();
+    const blocked = join(cmdDir(), "results", "crash.result.json");
+    deps.rerunRound.mockImplementationOnce(async () => {
+      mkdirSync(blocked);
+      return { ok: true, redispatched: true };
+    });
+    await expect(watcher(deps).handleFile(path)).rejects.toThrow();
+    rmSync(blocked, { recursive: true });
+    await watcher(deps).handleFile(path);
+    expect(deps.rerunRound).toHaveBeenCalledTimes(1);
+    expect(result("crash")).toMatchObject({ ok: true });
+  });
+
+  it.each(["archive-run", "archive-restore"] as const)(
+    "does not repeat %s after result publication fails",
+    async (kind) => {
+      const dir = join(cmdDir(), "operator");
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, "archive.json");
+      writeFileSync(
+        path,
+        JSON.stringify(kind === "archive-run" ? { command: kind } : { command: kind, pr: 12 }),
+      );
+      const blocked = join(cmdDir(), "results", "archive.result.json");
+      const run = vi.fn(async () => ({ ok: true }));
+      run.mockImplementationOnce(async () => {
+        mkdirSync(blocked);
+        return { ok: true };
+      });
+      const deps = { ...makeDeps(), archiveRun: run, archiveRestore: run };
+      const create = () =>
+        new CommandWatcher({
+          dir,
+          deps,
+          store,
+          operator: {
+            euid: 1001,
+            gids: [1001],
+            stat: (p) =>
+              p.endsWith(".json")
+                ? { uid: 0, gid: 0, mode: 0o644, kind: "file" }
+                : { uid: 0, gid: 0, mode: 0o755, kind: "dir" },
+          },
+        });
+      await expect(create().handleFile(path)).rejects.toThrow();
+      rmSync(blocked, { recursive: true });
+      await create().handleFile(path);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(result("archive")).toMatchObject({ ok: true });
+    },
+  );
+
+  it("withholds an interrupted effect rather than repeating it on replay", async () => {
+    const path = join(cmdDir(), "uncertain.json");
+    writeFileSync(path, JSON.stringify({ command: "rerun-round", pr: 12 }));
+    const deps = makeDeps();
+    const blocked = join(cmdDir(), "results", "uncertain.result.json");
+    deps.rerunRound.mockImplementationOnce(async () => {
+      mkdirSync(blocked);
+      throw new Error("reset response lost");
+    });
+    await expect(watcher(deps).handleFile(path)).rejects.toThrow();
+    rmSync(blocked, { recursive: true });
+    await watcher(deps).handleFile(path);
+    expect(deps.rerunRound).toHaveBeenCalledTimes(1);
+    expect(result("uncertain")).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("outcome unknown"),
+    });
+  });
+
+  it("lets a filing handler reconcile its own pending receipt on replay", async () => {
+    const path = join(cmdDir(), "filing.json");
+    writeFileSync(path, JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    const deps = makeDeps();
+    const blocked = join(cmdDir(), "results", "filing.result.json");
+    deps.fileIssue.mockImplementationOnce(async () => {
+      mkdirSync(blocked);
+      return { ok: true, issue: 7 };
+    });
+    await expect(watcher(deps).handleFile(path)).rejects.toThrow();
+    rmSync(blocked, { recursive: true });
+    await watcher(deps).handleFile(path);
+    expect(deps.fileIssue).toHaveBeenCalledTimes(2);
+    expect(deps.fileIssue.mock.calls[0]).toEqual(deps.fileIssue.mock.calls[1]);
+    expect(result("filing")).toMatchObject({ ok: true, issue: 7 });
   });
 
   it("the same command written again while it ran is the same command — run once, archived", async () => {
@@ -845,7 +994,7 @@ describe("CommandWatcher", () => {
     expect(deps.rerunRound).toHaveBeenCalledWith(7);
   });
 
-  it("slack_reply gets the command file basename as its idempotence scope", async () => {
+  it("session slack_reply retains its scoped filename as its idempotence scope", async () => {
     const deps = makeDeps();
     mkdirSync(slackDir(), { recursive: true });
     writeFileSync(

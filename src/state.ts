@@ -1206,6 +1206,12 @@ CREATE TABLE IF NOT EXISTS command_effect_receipts (
   delivery_key TEXT PRIMARY KEY,
   result TEXT
 );
+-- Commands without a richer handler-owned recovery journal reserve before
+-- effects; a pending row means interrupted/unknown, never permission to repeat.
+CREATE TABLE IF NOT EXISTS command_delivery_receipts (
+  delivery_key TEXT PRIMARY KEY,
+  result TEXT
+);
 -- Stable command delivery receipts for issue filing; the cap reservation and
 -- pending receipt are committed together before the gated creation request.
 CREATE TABLE IF NOT EXISTS filing_receipts (
@@ -6746,6 +6752,26 @@ export class StateStore {
   settleCommandEffect(key: string, result: unknown): void {
     this.db.prepare("UPDATE command_effect_receipts SET result = ? WHERE delivery_key = ? AND result IS NULL")
       .run(JSON.stringify(result), key);
+  }
+
+  commandDeliveryReceipt(key: string): { result: string | null } | undefined {
+    return this.db
+      .prepare("SELECT result FROM command_delivery_receipts WHERE delivery_key=?")
+      .get(key) as { result: string | null } | undefined;
+  }
+
+  reserveCommandDelivery(key: string): boolean {
+    return (
+      this.db
+        .prepare("INSERT OR IGNORE INTO command_delivery_receipts (delivery_key) VALUES (?)")
+        .run(key).changes === 1
+    );
+  }
+
+  settleCommandDelivery(key: string, result: string): void {
+    this.db
+      .prepare("UPDATE command_delivery_receipts SET result=? WHERE delivery_key=?")
+      .run(result, key);
   }
 
   filingReceipt(key: string): { slot: number; result: string | null } | undefined {

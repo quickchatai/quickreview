@@ -22,6 +22,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -30,7 +31,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import type { CommandDeps } from "../src/commands.js";
+import { CommandWatcher, type CommandDeps } from "../src/commands.js";
 import { StateStore } from "../src/state.js";
 import { SLACK_INJECT_MARKER } from "../src/slack/router.js";
 import type { SlackInboundEvent, SlackInboundHandler, SlackTransport } from "../src/slack/types.js";
@@ -310,6 +311,47 @@ describe("the full concierge loop", () => {
       "already posted (idem_key reply:slack/reply-2)",
     );
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("treats a new sealed operator file version as fresh while repeated sweeps stay deduplicated", async () => {
+    const ev = event();
+    await deliver(ev);
+    const operator = join(dir, "commands", "operator");
+    mkdirSync(operator, { recursive: true });
+    const path = join(operator, "reply.json");
+    const body = JSON.stringify({ command: "slack_reply", thread: ev.ts, text: "operator reply" });
+    const watcher = new CommandWatcher({
+      dir: operator,
+      scope: "operator",
+      deps: { ...commandDeps(), slackReply: runtime.slackReply },
+      store,
+      operator: {
+        euid: 1001,
+        gids: [1001],
+        stat: (p) =>
+          p.endsWith(".json")
+            ? { uid: 0, gid: 0, mode: 0o644, kind: "file" }
+            : { uid: 0, gid: 0, mode: 0o755, kind: "dir" },
+      },
+    });
+    try {
+      writeFileSync(path, body);
+      await watcher.sweep();
+      await watcher.sweep();
+      expect(transport.posts.filter((p) => p.thread_ts === ev.ts)).toHaveLength(1);
+      const replacement = join(operator, "replacement.tmp");
+      writeFileSync(replacement, body);
+      renameSync(replacement, path);
+      await watcher.sweep();
+      await watcher.sweep();
+      expect(transport.posts.filter((p) => p.thread_ts === ev.ts)).toHaveLength(2);
+      const replies = ledger().filter((row) => row.kind === "reply");
+      expect(replies).toHaveLength(2);
+      expect(new Set(replies.map((row) => row.idem_key)).size).toBe(2);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      watcher.stop();
+    }
   });
 
   it("a same-named reply served from commands/ is a different delivery, not a replay", async () => {
