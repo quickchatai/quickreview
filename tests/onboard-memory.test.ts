@@ -1,3 +1,4 @@
+import { memoryUserKeysStep, MEMORY_KEYS_STEP_ID } from "../src/onboard/steps/memorykeys.js";
 // The onboarding memory step — mint, place, prove.
 //
 // Everything is faked: a fake OpenViking (admin user routes + the confined
@@ -1240,5 +1241,48 @@ describe("forward command privilege parity", () => {
     });
     expect(flags).toContain(`$(${sudo ? "sudo " : ""}docker compose ps`);
     expect(flags.includes("--no-sudo")).toBe(!sudo);
+  });
+});
+
+describe("memory phase delivery and provisioning readiness", () => {
+  it("provisions users when only the embedder readiness check fails", async () => {
+    const server = fakeServer();
+    const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (new URL(String(input)).pathname === "/ready")
+        return {
+          status: 503,
+          json: async () => ({
+            status: "not_ready",
+            checks: { storage: "ok", embedding: "embedder unavailable" },
+          }),
+        } as Response;
+      return server.fetchFn(input, init);
+    }) as typeof fetch;
+    const result = await runStep(engineWith(fetcher));
+    expect(result.ok, result.failures.join(" ")).toBe(true);
+    expect(server.users.has("reviewer")).toBe(true);
+  });
+  it("phase B retries phase A's persisted restart obligation", async () => {
+    const path = join(dirname(stateDir), "config.toml");
+    writeFileSync(path, readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+    const a = adapters(fakeServer().fetchFn);
+    let restarts = 0;
+    a.runner = {
+      run: async () => ({
+        code: 0,
+        stdout: JSON.stringify([{ Service: "daemon", State: "running" }]),
+        stderr: "",
+      }),
+    };
+    const options = stepOptions({
+      transport: {
+        stream: { run: async () => ({ code: ++restarts === 1 ? 1 : 0, stdout: "", stderr: "" }) },
+      },
+    });
+    const engine = new OnboardingEngine([memoryStep(options), memoryUserKeysStep(options)], a);
+    expect((await engine.runStep(MEMORY_STEP_ID, { choice: "declined" })).ok).toBe(false);
+    expect((await engine.runStep(MEMORY_KEYS_STEP_ID, { choice: "declined" })).ok).toBe(true);
+    expect(restarts).toBe(2);
+    expect((await engine.verifyAll()).ok).toBe(true);
   });
 });

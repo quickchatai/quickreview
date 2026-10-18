@@ -21,6 +21,7 @@
 // the recorded alias. The TUI's native ssh mode is what this topology uses;
 // its local mode (`target = "local"`) belongs to the this-computer route.
 import { existsSync } from "node:fs";
+import { effectiveInventoryPath } from "./deploysh.js";
 import { join } from "node:path";
 import type {
   CheckResult,
@@ -57,11 +58,14 @@ export const VM_INVENTORY_STEP_ID = "vm_inventory";
 export const INVENTORY_GROUP = "quickreview";
 
 export function inventoryPath(root: string): string {
-  return join(root, "deploy", "ansible", "inventory.ini");
+  return effectiveInventoryPath(root);
 }
 
 export function inventoryExamplePath(root: string): string {
-  return join(root, "deploy", "ansible", "inventory.example.ini");
+  return join(
+    process.env.QC_ANSIBLE_DIR || join(root, "deploy", "ansible"),
+    "inventory.example.ini",
+  );
 }
 
 export interface InventoryFacts {

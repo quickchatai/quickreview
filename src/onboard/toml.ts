@@ -2,16 +2,20 @@
  * ignoring `#` inside quotes. Returns null when the tail cannot be split
  * confidently (an unterminated quote), so the caller leaves the line alone. */
 export function splitTail(tail: string): { value: string; gap: string; comment: string } | null {
-  let quote: '"' | "'" | null = null;
+  let quote: string | null = null;
   for (let i = 0; i < tail.length; i++) {
     const ch = tail[i]!;
     if (quote) {
-      if (ch === "\\" && quote === '"') i++;
-      else if (ch === quote) quote = null;
+      if (ch === "\\" && quote.startsWith('"')) i++;
+      else if (tail.startsWith(quote, i)) {
+        i += quote.length - 1;
+        quote = null;
+      }
       continue;
     }
     if (ch === '"' || ch === "'") {
-      quote = ch;
+      quote = tail.startsWith(ch.repeat(3), i) ? ch.repeat(3) : ch;
+      i += quote.length - 1;
       continue;
     }
     if (ch === "#") {
