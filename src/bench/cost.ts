@@ -66,33 +66,40 @@ export interface CaseCost {
  * `SLIM_COST_KEY`). */
 export const SLIM_COST_KEY = "bench_cost_usd";
 
+/** What one pi `--mode json` event line costs: an assistant `message_end`'s
+ * own price, or the children a `subagent`/`launch_plan` result reports. Zero
+ * for any other line, or one that is not JSON. */
+export function eventLineCostUsd(line: string): number {
+  if (!line.startsWith("{")) return 0;
+  let e: {
+    type?: string;
+    toolName?: string;
+    message?: { role?: string; usage?: { cost?: { total?: unknown } } };
+    result?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
+  };
+  try {
+    e = JSON.parse(line) as typeof e;
+  } catch {
+    return 0;
+  }
+  if (e.type === "message_end" && e.message?.role === "assistant")
+    return num(e.message.usage?.cost?.total);
+  let usd = 0;
+  if (
+    e.type === "tool_execution_end" &&
+    (e.toolName === "subagent" || e.toolName === "launch_plan")
+  )
+    for (const r of e.result?.details?.results ?? []) {
+      usd += usageCost(r.usage?.cost);
+    }
+  return usd;
+}
+
 export function caseCostUsd(caseDir: string): CaseCost | null {
   const events = join(caseDir, "pi-events.jsonl");
   if (existsSync(events)) {
     let usd = 0;
-    for (const line of readFileSync(events, "utf8").split("\n")) {
-      if (!line.startsWith("{")) continue;
-      let e: {
-        type?: string;
-        toolName?: string;
-        message?: { role?: string; usage?: { cost?: { total?: unknown } } };
-        result?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
-      };
-      try {
-        e = JSON.parse(line) as typeof e;
-      } catch {
-        continue;
-      }
-      if (e.type === "message_end" && e.message?.role === "assistant")
-        usd += num(e.message.usage?.cost?.total);
-      else if (
-        e.type === "tool_execution_end" &&
-        (e.toolName === "subagent" || e.toolName === "launch_plan")
-      )
-        for (const r of e.result?.details?.results ?? []) {
-          usd += usageCost(r.usage?.cost);
-        }
-    }
+    for (const line of readFileSync(events, "utf8").split("\n")) usd += eventLineCostUsd(line);
     return { usd, source: "pi" };
   }
   const summary = join(caseDir, "case-summary.json");
