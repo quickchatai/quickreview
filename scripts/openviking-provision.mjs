@@ -161,19 +161,15 @@ export function usersFromListing(body) {
  * key are simply absent from the map (never guessed, never rotated).
  */
 export function userKeysFromListing(body) {
-  const list = Array.isArray(body)
-    ? body
-    : Array.isArray(body?.result)
-      ? body.result
-      : Array.isArray(body?.data)
-        ? body.data
-        : Array.isArray(body?.users)
-          ? body.users
-          : Array.isArray(body?.data?.users)
-            ? body.data.users
-            : Array.isArray(body?.result?.users)
-              ? body.result.users
-              : null;
+  const candidates = [body, body?.data, body?.result];
+  let list = candidates.find((value) => Array.isArray(value));
+  if (!list) {
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== "object") continue;
+      list = ["users", "items", "accounts"].map((key) => candidate[key]).find(Array.isArray);
+      if (list) break;
+    }
+  }
   const out = {};
   if (!Array.isArray(list)) return out;
   for (const item of list) {
@@ -636,7 +632,7 @@ export function embedderSpecFromFlags(flags) {
   const threads = Number(flags.get("embedder-threads"));
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     return `--embedder-port ${flags.get("embedder-port")} is not a port`;
-  if (!Number.isInteger(threads) || threads < 1)
+  if (!Number.isInteger(threads) || threads < 1 || threads > 16)
     return `--embedder-threads ${flags.get("embedder-threads")} is not a thread count`;
   return {
     python: String(flags.get("embedder-python")),

@@ -114,6 +114,7 @@ json.dump(acc, open(sys.argv[1], "w"))
 print(len(rows))' "$ALL" "$OUT")" || die "reviews page $page unreadable"
       if ((n < 100)); then break; fi
     done
+    ((n < 100)) || die "incomplete review history: page limit reached"
     python3 - "$ALL" "$BOT" "$PR" <<'PY'
 import json, sys
 reviews = json.load(open(sys.argv[1]))

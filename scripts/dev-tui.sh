@@ -47,7 +47,7 @@ fi
 # --preserveWatchOutput: without it tsc clears the screen on every rebuild,
 # and that clear lands on the TUI even with stdout redirected (it is an escape
 # sequence written to the tty tsc inherited, not to the log).
-(cd "$ROOT" && exec npx tsc -p tsconfig.json --watch --preserveWatchOutput) >"$LOG" 2>&1 &
+(cd "$ROOT" && exec node "$ROOT/node_modules/typescript/bin/tsc" -p tsconfig.json --watch --preserveWatchOutput) >"$LOG" 2>&1 &
 WATCH_PID=$!
 
 # The compiler must not outlive the TUI — an orphaned watcher keeps rebuilding
