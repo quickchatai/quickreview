@@ -10,7 +10,13 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COMPANION_AGENTS_DIR } from "../extensions/setup.js";
-import { isPiCliEntry, piCaseRunner, piInvocation, type SpawnFn } from "../src/setup/caserunner.js";
+import {
+  isPiCliEntry,
+  leafEnv,
+  piCaseRunner,
+  piInvocation,
+  type SpawnFn,
+} from "../src/setup/caserunner.js";
 
 let dir: string;
 beforeEach(() => {
@@ -100,5 +106,106 @@ describe("piInvocation — resolves pi, never the host script", () => {
       new AbortController().signal,
     );
     expect(calls).toEqual(["pi"]);
+  });
+});
+
+describe("the scan leaf's isolation — argv and env", () => {
+  /** What one case spawned: the fake child closes at once, failed. */
+  async function spawned(
+    opts: { root?: string; env?: NodeJS.ProcessEnv } = {},
+  ): Promise<{ args: string[]; cwd: string; env: NodeJS.ProcessEnv | undefined }> {
+    let seen: { args: string[]; cwd: string; env: NodeJS.ProcessEnv | undefined } | undefined;
+    const spawn: SpawnFn = (_command, args, o) => {
+      seen = { args, cwd: o.cwd, env: o.env };
+      const child = new EventEmitter() as EventEmitter & ReturnType<SpawnFn>;
+      Object.assign(child, {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: () => true,
+      });
+      setTimeout(() => child.emit("close", 1), 0);
+      return child;
+    };
+    await piCaseRunner({
+      agentsDir: COMPANION_AGENTS_DIR,
+      cwd: "/opt/qcr",
+      ...opts,
+      spawn,
+      invocation: { command: "pi", prefix: [] },
+    }).run(
+      { id: "c", unit: "u", agent: "pass-survey", files: [], prompt: "p" },
+      new AbortController().signal,
+    );
+    if (!seen) throw new Error("the case runner never spawned pi");
+    return seen;
+  }
+
+  it("loads no extension but bash-guard, no skill and no context file", async () => {
+    const { args } = await spawned();
+    for (const flag of ["-ne", "-ns", "-nc"]) expect(args).toContain(flag);
+    expect(args).not.toContain("--no-extensions");
+    const ext = args.flatMap((a, i) => (a === "--extension" || a === "-e" ? [args[i + 1]] : []));
+    expect(ext).toEqual(["/opt/qcr/extensions/bash-guard.ts"]);
+    // the flags come before the prompt operand, which stays last
+    expect(args.at(-1)).toBe("Task: p");
+  });
+
+  it("finds bash-guard under `root` when it is not the cwd", async () => {
+    const { args } = await spawned({ root: "/srv/qcr" });
+    expect(args[args.indexOf("--extension") + 1]).toBe("/srv/qcr/extensions/bash-guard.ts");
+  });
+
+  it("starts pi with an allowlisted env, never the driver's, and no GitHub credential", async () => {
+    const { env } = await spawned({
+      env: {
+        PATH: "/usr/bin",
+        HOME: "/home/companion",
+        LANG: "C.UTF-8",
+        LC_ALL: "C",
+        PI_CODING_AGENT_DIR: "/home/companion/.pi/agent",
+        QCR_SANDBOX_ROOT: "/opt/qcr",
+        OPENAI_API_KEY: "sk-model",
+        GITHUB_TOKEN: "ghp_a",
+        GH_TOKEN: "ghp_b",
+        GH_ENTERPRISE_TOKEN: "ghp_c",
+        QCR_GITHUB_READ_ENV: "/run/secrets/gh.env",
+        DATABASE_URL: "postgres://x",
+        AWS_SECRET_ACCESS_KEY: "nope",
+        SSH_AUTH_SOCK: "/tmp/agent.sock",
+      },
+    });
+    expect(env).toEqual({
+      PATH: "/usr/bin",
+      HOME: "/home/companion",
+      LANG: "C.UTF-8",
+      LC_ALL: "C",
+      PI_CODING_AGENT_DIR: "/home/companion/.pi/agent",
+      QCR_SANDBOX_ROOT: "/opt/qcr",
+      OPENAI_API_KEY: "sk-model",
+    });
+  });
+
+  it("with no env given it filters process.env", async () => {
+    const was = { t: process.env.GITHUB_TOKEN, g: process.env.GH_TOKEN };
+    process.env.GITHUB_TOKEN = "ghp_live";
+    process.env.GH_TOKEN = "ghp_live2";
+    try {
+      const { env } = await spawned();
+      expect(env).toBeDefined();
+      expect(Object.keys(env!)).not.toContain("GITHUB_TOKEN");
+      expect(Object.keys(env!)).not.toContain("GH_TOKEN");
+      expect(env).toEqual(leafEnv(process.env));
+    } finally {
+      if (was.t === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = was.t;
+      if (was.g === undefined) delete process.env.GH_TOKEN;
+      else process.env.GH_TOKEN = was.g;
+    }
+  });
+
+  it("leafEnv drops a token env even when its name would otherwise match", () => {
+    expect(leafEnv({ PATH: "/bin", GITHUB_TOKEN: "x", GH_ENTERPRISE_TOKEN: "y" })).toEqual({
+      PATH: "/bin",
+    });
   });
 });

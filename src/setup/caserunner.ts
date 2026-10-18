@@ -5,9 +5,9 @@
 // on purpose: the single-shepherd fence (tests/single-shepherd.test.ts)
 // allows it by path, like the companion's own argv and the bench runner. It
 // is not a daemon module — nothing the daemon loads imports src/setup/ (that
-// fence checks it too) — and what it spawns is a leaf: `-p --no-session
-// --no-extensions`, read-only tools, no memory, no fan-out (root rule 9: no
-// new session kind, nothing on the VM).
+// fence checks it too) — and what it spawns is a leaf: `-p --no-session -ne`
+// with bash-guard the one extension, read-only tools, no memory, no fan-out
+// (root rule 9: no new session kind, nothing on the VM).
 import { CASE_STOP_GRACE_MS } from "../casebudget.js";
 import { spawn as nodeSpawn } from "node:child_process";
 import {
@@ -25,6 +25,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
 /** An agent file of the companion set: `name`/`tools`/`model` frontmatter
@@ -62,7 +63,7 @@ export function parseAgentFile(text: string): AgentFile | null {
 export type SpawnFn = (
   command: string,
   args: string[],
-  opts: { cwd: string; stdio: ["ignore", "pipe", "pipe"] },
+  opts: { cwd: string; env?: NodeJS.ProcessEnv; stdio: ["ignore", "pipe", "pipe"] },
 ) => {
   stdout: NodeJS.ReadableStream;
   stderr: NodeJS.ReadableStream;
@@ -202,6 +203,61 @@ export function resolvedReadPath(raw: string, cwd: string, home: string = homedi
   return posix.resolve(cwd, p);
 }
 
+/** What a leaf's pi process may inherit, by exact name. The leaf's model runs
+ * bash, so the process env is allowlisted rather than copied: no GitHub
+ * credential (src/envstrip.ts) and nothing else of the driver's reaches it. */
+const LEAF_ENV_NAMES: ReadonlySet<string> = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TERM",
+  "TZ",
+  "LANG",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "all_proxy",
+]);
+
+/** …and by prefix or shape: locale (`LC_*`), XDG dirs, pi's own settings
+ * (`PI_*`, among them `PI_CODING_AGENT_DIR`), bash-guard's locators
+ * (`QCR_*`: install, config home, sandbox root, replay flag) and the model
+ * providers' key variables. */
+const LEAF_ENV_PATTERNS: readonly RegExp[] = [
+  /^LC_[A-Z_]+$/,
+  /^XDG_[A-Z_]+$/,
+  /^PI_[A-Z0-9_]+$/,
+  /^QCR_[A-Z0-9_]+$/,
+  /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_API_KEY$/,
+];
+
+/** The env one leaf's pi starts with: `source` (the driver's) filtered to the
+ * allowlist, the GitHub token envs always dropped, and `QCR_GITHUB_READ_ENV`
+ * (the path of the file holding the read token) with them. */
+export function leafEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    if (LEAF_ENV_NAMES.has(name) || LEAF_ENV_PATTERNS.some((re) => re.test(name)))
+      env[name] = value;
+  }
+  for (const k of GITHUB_TOKEN_ENVS) delete env[k];
+  delete env["QCR_GITHUB_READ_ENV"];
+  return env;
+}
+
 /** The stderr a failed case's reason is taken from: its last characters. */
 const STDERR_TAIL_CHARS = 4000;
 
@@ -243,11 +299,15 @@ export function pruneTranscripts(dir: string, keep: number, except: string): voi
  * Runs a case as one background pi subagent, the way pi's own subagent
  * extension runs a child: `pi --mode json -p --no-session` with the agent's
  * model, its tools and its body as the appended system prompt, the task as
- * the message — plus `--no-extensions` (a leaf loads nothing, so it can
- * neither fan out nor reach memory) and `--approve` (the no-stall rule: a
- * child never waits on a trust modal). The child runs in `cwd`, first-party
- * ground, never in the reviewed checkout, whose `.pi/` config must not load
- * (extensions/subagents.ts reason 3); it reads the checkout by absolute path.
+ * the message — plus `-ne` with bash-guard as the one `-e` extension (a leaf
+ * can neither fan out nor reach memory, and its bash is vetted like every
+ * review session's), `-ns` and `-nc` (no skill, no context file: nothing of
+ * the install's or a checkout's own reaches it) and `--approve` (the
+ * no-stall rule: a child never waits on a trust modal). The child runs in
+ * `cwd`, first-party ground, never in the reviewed checkout, whose `.pi/`
+ * config must not load (extensions/subagents.ts reason 3); it reads the
+ * checkout by absolute path, and no context file is ever written there. Its
+ * env is `leafEnv`: an allowlist, never the driver's whole environment.
  *
  * The answer is the last assistant message's text; the cost is pi's own
  * per-message accounting summed (null when it reported none); `reads` is
@@ -273,6 +333,11 @@ export function piCaseRunner(opts: {
   cwd: string;
   /** Where each case's event stream is kept; absent, none is. */
   transcriptDir?: string;
+  /** The production tree holding extensions/bash-guard.ts. Omitted: `cwd`
+   * (the app root in every production caller). */
+  root?: string;
+  /** The env the leaf's env is filtered from. Omitted: process.env. */
+  env?: NodeJS.ProcessEnv;
   spawn?: SpawnFn;
   invocation?: { command: string; prefix: string[] };
 }): CaseRunner {
@@ -323,7 +388,11 @@ export function piCaseRunner(opts: {
           "json",
           "-p",
           "--no-session",
-          "--no-extensions",
+          "-ne",
+          "-ns",
+          "-nc",
+          "--extension",
+          join(opts.root ?? opts.cwd, "extensions", "bash-guard.ts"),
           "--approve",
         ];
         if (agent.model) args.push("--model", agent.model);
@@ -423,7 +492,11 @@ export function piCaseRunner(opts: {
           };
           let child: ReturnType<SpawnFn>;
           try {
-            child = spawn(inv.command, args, { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"] });
+            child = spawn(inv.command, args, {
+              cwd: opts.cwd,
+              env: leafEnv(opts.env),
+              stdio: ["ignore", "pipe", "pipe"],
+            });
           } catch (err) {
             resolve({
               ok: false,

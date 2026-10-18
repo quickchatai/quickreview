@@ -113,21 +113,16 @@
     "scan-leaf-container": {
       "cwd": "/opt/qcr",
       "agentDir": "/home/companion/.pi/agent",
-      "contextFiles": "default",
+      "contextFiles": "disabled",
       "effective": [],
-      "note": "cwd is the app root in the scan container (QCR_ROOT=/opt/qcr), which the companion image fills with an explicit COPY list that has no context file."
+      "note": "cwd is the app root in the scan container (QCR_ROOT=/opt/qcr), which the companion image fills with an explicit COPY list that has no context file. The leaf passes -nc besides: it loads none whatever the root holds."
     },
     "scan-leaf-host": {
       "cwd": "/qcr-checkout",
       "agentDir": "/operator-pi-agent",
-      "contextFiles": "default",
-      "effective": [
-        {
-          "path": "/qcr-checkout/AGENTS.md",
-          "source": "AGENTS.md"
-        }
-      ],
-      "note": "[scan] sandbox = \"host\": cwd is sandboxRoot(), the qcr checkout."
+      "contextFiles": "disabled",
+      "effective": [],
+      "note": "[scan] sandbox = \"host\": cwd is sandboxRoot(), the qcr checkout, whose AGENTS.md the leaf does not load (-nc, P1.1); nothing is written there or into the scanned tree."
     },
     "companion": {
       "cwd": "/workspace",
