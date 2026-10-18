@@ -228,7 +228,9 @@ function harness(o: {
       : {}),
     root,
     agentDir: join(tmp, "agent"),
-    cfg: ctx.cfg,
+    // The posting gate takes the install's dry_run; these runs are live ones
+    // (dry-run posting is covered in review-post-cli.test.ts).
+    cfg: { ...ctx.cfg, dry_run: false },
     ecosystem: ctx.ecosystem,
     piBin: o.piBin,
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
