@@ -66,41 +66,97 @@ export interface CaseCost {
  * `SLIM_COST_KEY`). */
 export const SLIM_COST_KEY = "bench_cost_usd";
 
-/** What one pi `--mode json` event line costs: an assistant `message_end`'s
- * own price, or the children a `subagent`/`launch_plan` result reports. Zero
- * for any other line, or one that is not JSON. */
-export function eventLineCostUsd(line: string): number {
-  if (!line.startsWith("{")) return 0;
-  let e: {
-    type?: string;
-    toolName?: string;
-    message?: { role?: string; usage?: { cost?: { total?: unknown } } };
-    result?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
-  };
-  try {
-    e = JSON.parse(line) as typeof e;
-  } catch {
-    return 0;
-  }
-  if (e.type === "message_end" && e.message?.role === "assistant")
-    return num(e.message.usage?.cost?.total);
+/** What the lens children of one `subagent`/`launch_plan` tool event report so
+ * far: the sum of their per-child prices. */
+function toolEventCostUsd(e: {
+  partialResult?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
+  result?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
+}): number {
   let usd = 0;
-  if (
-    e.type === "tool_execution_end" &&
-    (e.toolName === "subagent" || e.toolName === "launch_plan")
-  )
-    for (const r of e.result?.details?.results ?? []) {
-      usd += usageCost(r.usage?.cost);
-    }
+  for (const r of (e.partialResult ?? e.result)?.details?.results ?? [])
+    usd += usageCost(r.usage?.cost);
   return usd;
+}
+
+/** A pi `--mode json` stream's running price. An assistant `message_end` adds
+ * its own price. A `subagent`/`launch_plan` call prices its lens children
+ * twice over its life: each `tool_execution_update` carries what they have
+ * spent so far (counted as the largest value seen for that toolCallId — the
+ * figure only grows, and a repeated or reordered update adds nothing), and the
+ * `tool_execution_end` carries the final figure, which REPLACES that value
+ * rather than adding to it. A stream with no updates (every pi-events.jsonl
+ * runPi writes) prices as it always did: the ends alone. */
+export class EventCostMeter {
+  private readonly perCall = new Map<string, number>();
+  private total = 0;
+  private settled = 0;
+
+  /** Feed one event line; returns the change in the running price (negative
+   * only when a call's final figure comes in under its largest live one). */
+  add(line: string): number {
+    if (!line.startsWith("{")) return 0;
+    let e: {
+      type?: string;
+      toolName?: string;
+      toolCallId?: unknown;
+      message?: { role?: string; usage?: { cost?: { total?: unknown } } };
+      partialResult?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
+      result?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
+    };
+    try {
+      e = JSON.parse(line) as typeof e;
+    } catch {
+      return 0;
+    }
+    if (e.type === "message_end" && e.message?.role === "assistant") {
+      const usd = num(e.message.usage?.cost?.total);
+      this.total += usd;
+      return usd;
+    }
+    if (
+      (e.type !== "tool_execution_update" && e.type !== "tool_execution_end") ||
+      (e.toolName !== "subagent" && e.toolName !== "launch_plan")
+    )
+      return 0;
+    // A call with no id cannot be matched to its end: it is its own entry.
+    const id = typeof e.toolCallId === "string" ? e.toolCallId : `\0anon${this.settled++}`;
+    const prev = this.perCall.get(id) ?? 0;
+    const usd = toolEventCostUsd(e);
+    const next = e.type === "tool_execution_end" ? usd : Math.max(prev, usd);
+    // A finished call is closed under a fresh key: the same id turning up
+    // again (pi-events.jsonl appends across a continuation's processes) is a
+    // new call, priced on its own, as a line-by-line sum always did.
+    if (e.type === "tool_execution_end") {
+      this.perCall.delete(id);
+      this.perCall.set(`\0end${this.settled++}`, next);
+    } else this.perCall.set(id, next);
+    // Added in stream order, so a stream with no updates sums exactly as a
+    // line-by-line sum of the prices would (float addition is not associative).
+    this.total += next - prev;
+    return next - prev;
+  }
+
+  /** The running price over everything fed so far. */
+  get totalUsd(): number {
+    return this.total;
+  }
+}
+
+/** What one pi `--mode json` event line costs on its own: an assistant
+ * `message_end`'s price, or the children a `subagent`/`launch_plan` update or
+ * end reports. Zero for any other line, or one that is not JSON. Summing it
+ * over a stream that carries updates counts a call once per update — price a
+ * stream with an EventCostMeter. */
+export function eventLineCostUsd(line: string): number {
+  return new EventCostMeter().add(line);
 }
 
 export function caseCostUsd(caseDir: string): CaseCost | null {
   const events = join(caseDir, "pi-events.jsonl");
   if (existsSync(events)) {
-    let usd = 0;
-    for (const line of readFileSync(events, "utf8").split("\n")) usd += eventLineCostUsd(line);
-    return { usd, source: "pi" };
+    const meter = new EventCostMeter();
+    for (const line of readFileSync(events, "utf8").split("\n")) meter.add(line);
+    return { usd: meter.totalUsd, source: "pi" };
   }
   const summary = join(caseDir, "case-summary.json");
   if (!existsSync(summary)) return null;

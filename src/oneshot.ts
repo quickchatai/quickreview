@@ -73,7 +73,7 @@ import {
   type ModelErrors,
   type Stages,
 } from "./bench/aacr.js";
-import { caseCostUsd, eventLineCostUsd } from "./bench/cost.js";
+import { caseCostUsd, EventCostMeter } from "./bench/cost.js";
 import { GIT_ISOLATION_ENV } from "./bench/exec.js";
 import { POLICED_ORIGINALS, type BenchPostingReport } from "./bench/benchposting.js";
 import { apiKeyEnv } from "./bench/auth.js";
@@ -217,7 +217,7 @@ export function runPi(
     if (child.pid) livePiGroups.add(child.pid);
     let timedOut = false;
     let capped = false;
-    let spent = 0;
+    const meter = new EventCostMeter();
     let streamError: string | null = null;
     const kill = (sig: NodeJS.Signals): void => {
       try {
@@ -243,12 +243,14 @@ export function runPi(
       child.stdin.end(stdinText);
     }
     // `*_update` events re-emit a lens child's whole transcript on every
-    // update — the file grows quadratically. Nothing reads them: usage comes
-    // from `message_end` and `tool_execution_end`.
+    // update — the file grows quadratically, so they are not written. The $ cap
+    // does read them (a `subagent`/`launch_plan` update carries its children's
+    // spend so far, so the cap bites before the call ends); the cost in the
+    // file comes from `message_end` and `tool_execution_end`.
     onLfLines(child.stdout!, (line) => {
       if (capUsd !== undefined && !capped) {
-        spent += eventLineCostUsd(line);
-        if (spent >= capUsd) {
+        meter.add(line);
+        if (meter.totalUsd >= capUsd) {
           capped = true;
           kill("SIGTERM");
           setTimeout(() => kill("SIGKILL"), 5_000).unref();
@@ -278,7 +280,8 @@ export function runPi(
       if (child.pid) livePiGroups.delete(child.pid);
       let open = 2;
       const settled = (): void => {
-        if (--open === 0) resolve({ code, timedOut, streamError, spentUsd: spent, capped });
+        if (--open === 0)
+          resolve({ code, timedOut, streamError, spentUsd: meter.totalUsd, capped });
       };
       for (const s of [events, errs]) {
         if (s.closed) settled();
