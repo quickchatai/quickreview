@@ -1,8 +1,9 @@
 // The single-shepherd invariant (docs/single-shepherd-invariant.md): one main
-// pi per PR owns the review, the daemon only nudges, every agent runs through
-// the `subagent` tool (pi's native subagent extension, loaded per spawn by the
-// first-party glue) launched by that one pi, and it is never given
-// two instructions at once.
+// pi per PR owns the review, the daemon only nudges, agents are launched only
+// by the round's engine (the planned discovery wave) and by that one pi (the
+// `subagent` / `launch_plan` tools on the tmux bot, the `lens` / `lens_wave`
+// tools on engine routes), lenses are leaves, and the main pi is never given
+// two instructions at once, bar an operator's steer.
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import {
   existsSync,
@@ -25,6 +26,7 @@ import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
 import { flushHeldWakes, pauseDefersAllHeldWakes, wakeOrHold } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
+import { runtimeSdkImporters } from "./helpers/engine-fences.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 // ---- S1/S2: the daemon spawns two session kinds and launches no agent ------
@@ -154,6 +156,41 @@ describe("daemon topology", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("S2: only pisdk.ts and the extension factories import the pi SDK at runtime", () => {
+    // The SDK is the engine's session host, not a daemon facility: the daemon
+    // never reaches it, and runLens gets its sessions from PiHost.makeSession
+    // rather than importing the SDK itself. Type-only imports (erased at
+    // build) are free; extensions/ are the factory modules pi loads. The scan
+    // and its planted cases are in tests/fences-engine.test.ts.
+    const offenders = runtimeSdkImporters(join(import.meta.dirname, "..")).filter(
+      (f) => f !== "src/engine/pisdk.ts" && !f.startsWith("extensions/"),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("CLAUDE.md rule 9 is the ratified text (D9)", () => {
+    // Rule text changes only by the owner's ratification, so the test pins it
+    // verbatim (whitespace folded: CLAUDE.md wraps it). The same words open
+    // docs/single-shepherd-invariant.md's amendment.
+    const RATIFIED =
+      "[private rule text removed]";
+    const text = readFileSync(join(import.meta.dirname, "..", "CLAUDE.md"), "utf8");
+    const start = text.indexOf("\n9. ");
+    const end = text.indexOf("\n10. ", start);
+    expect(start).toBeGreaterThan(-1);
+    const rule = text
+      .slice(start + 4, end)
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(rule).toBe(RATIFIED);
+    const doc = readFileSync(
+      join(import.meta.dirname, "..", "docs", "single-shepherd-invariant.md"),
+      "utf8",
+    );
+    expect(doc).toContain("Exactly two launchers");
+    expect(doc).toContain("`lens` / `lens_wave`");
   });
 
   it("S2: no daemon module invokes pi outside the session manager", () => {
