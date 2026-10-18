@@ -6791,6 +6791,12 @@ export class StateStore {
     return info.changes === 1;
   }
 
+  /** Preserve an unknown create reservation and its diagnostic without admitting a retry. */
+  noteSlackPostUnknown(idemKey: string, error: string): void {
+    this.db.prepare("UPDATE slack_posts SET error = ? WHERE idem_key = ? AND ok = 1 AND ts IS NULL")
+      .run(error, idemKey);
+  }
+
   /** Fill in the Slack-assigned message ts (and outcome) after the API call. */
   settleSlackPost(
     idemKey: string,

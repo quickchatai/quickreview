@@ -3,7 +3,7 @@
 // — the Slack seam is a recording object and the store is in-memory.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import {
   HEARTBEAT_IDEM_KEY,
@@ -153,6 +153,23 @@ describe("disabled Slack", () => {
 });
 
 describe("root-on-first-event (DP-2a)", () => {
+  it("retains an unknown delivery reservation across repeated calls and restart", async () => {
+    const post = vi.spyOn(slack, "postMessage").mockResolvedValue({ ok: false, error: "response lost", ambiguous: true } as SlackPostResult);
+    const args = { pr: 5263, round_no: 1, verdict: "APPROVE" as const, summary: "s", duration_s: 60 };
+    const a = announcer();
+    await a.verdict(args);
+    await a.verdict(args);
+    await announcer().verdict(args);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(store.slackPost("verdict:5263:1")?.ts).toBeNull();
+  });
+  it("never persists successful post settlement without its first thread root", async () => {
+    const bind = vi.spyOn(store, "upsertSlackThread").mockImplementation(() => { throw new Error("interrupted root binding"); });
+    await expect(announcer().roundStarted(round)).rejects.toThrow("interrupted root binding");
+    bind.mockRestore();
+    expect(store.slackPost("pickup:5263")?.ts).toBeNull();
+    expect(store.slackThreadForPr(5263)).toBeUndefined();
+  });
   it("pickup opens the thread and every later post replies to the recorded root", async () => {
     const a = announcer();
     await a.roundStarted(round);
@@ -292,11 +309,11 @@ describe("failure containment", () => {
     expect(store.slackThreadForPr(5263)).toBeUndefined();
   });
 
-  it("swallows a thrown transport error and still records the failure", async () => {
+  it("swallows a thrown transport error and retains the unknown reservation with its cause", async () => {
     slack.throwNext = true;
     const a = announcer();
     await a.verdict({ pr: 5263, round_no: 1, verdict: "APPROVE", summary: "s", duration_s: 60 });
-    expect(store.slackPost("verdict:5263:1")).toMatchObject({ ok: 0 });
+    expect(store.slackPost("verdict:5263:1")).toMatchObject({ ok: 1, ts: null });
     expect(String(store.slackPost("verdict:5263:1")!.error)).toContain("socket hang up");
   });
 

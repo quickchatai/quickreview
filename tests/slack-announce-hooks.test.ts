@@ -190,7 +190,7 @@ describe("dispatch hook", () => {
       });
       expect(orders).toHaveLength(1);
       expect(store.runningRounds()).toHaveLength(1);
-      await vi.waitFor(() => expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 0 }));
+      await vi.waitFor(() => expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 1, ts: null, error: expect.stringContaining("slack is down") }));
     },
   );
 
@@ -374,6 +374,6 @@ describe("verdict hooks", () => {
     });
     await watcher(announcer()).sweep();
     expect(store.roundsFor(6000)[0]!.verdict).toBe("APPROVE");
-    expect(store.slackPost("verdict:6000:1")).toMatchObject({ ok: 0 });
+    expect(store.slackPost("verdict:6000:1")).toMatchObject({ ok: 1, ts: null, error: expect.stringContaining("slack is down") });
   });
 });
