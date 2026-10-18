@@ -277,6 +277,7 @@ export interface ReplayOrderArgs {
   plan: PassPlanEntry[];
   /** Files the sweep cap left out of the plan. */
   unswept?: string[];
+  behaviourUnread?: string[];
   baseSha: string;
   changedFiles: number;
   /** True when the diff base could not be resolved — the session is told so
@@ -304,7 +305,9 @@ export function replayOrder(a: ReplayOrderArgs): string {
   L.push("");
   // `sweep`: a replay carries no prior findings, so the split note says
   // nothing about where one goes.
-  L.push(renderPassPlan(a.plan, a.unswept ?? [], { sweep: true }));
+  L.push(
+    renderPassPlan(a.plan, a.unswept ?? [], { sweep: true, behaviourUnread: a.behaviourUnread }),
+  );
   L.push("");
   L.push("Then write the surviving findings — the ones that would actually have been posted — to:");
   L.push("");
@@ -514,7 +517,7 @@ export class ScratchReplay {
         return [];
       }
       const inputs = io.planningInputs(prepared.tree);
-      const { pass_plan, sweep_unswept } = buildPassPlan(
+      const { pass_plan, sweep_unswept, behaviour_unread } = buildPassPlan(
         this.o.cfg,
         prepared.files,
         undefined,
@@ -529,6 +532,7 @@ export class ScratchReplay {
         findingsPath,
         plan: pass_plan,
         unswept: sweep_unswept,
+        behaviourUnread: behaviour_unread,
         baseSha: prepared.baseSha,
         changedFiles: prepared.files.length,
         degradedDiff: prepared.degraded,
