@@ -132,6 +132,43 @@ describe("ambiguous / nonexistent wall clocks", () => {
 });
 
 describe("startEodTimer", () => {
+  it("keeps the next daily hour armed while the previous injection is unresolved", async () => {
+    let clock = new Date("2026-08-13T15:59:00Z");
+    const timers: Array<() => void> = [];
+    let owed: string[] = [];
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const timer = startEodTimer({
+      timeHHMM: "18:00",
+      timeZone: TZ,
+      now: () => clock,
+      readPrompt: () => "sweep",
+      injectOverseer: async () => pending,
+      setTimer: (cb) => {
+        timers.push(cb);
+        return timers.length;
+      },
+      clearTimer: () => {},
+      deferred: {
+        load: () => [],
+        save: (dates) => {
+          owed = dates;
+        },
+      },
+    });
+    clock = new Date("2026-08-13T16:00:00Z");
+    timers[0]!();
+    await Promise.resolve();
+    expect(timers).toHaveLength(2);
+    clock = new Date("2026-08-14T16:00:00Z");
+    timers[1]!();
+    expect(owed).toContain("2026-08-14");
+    timer.stop();
+    finish();
+  });
+
   it("renders the prompt with the local date and reschedules", async () => {
     let clock = new Date("2026-03-29T10:00:00Z"); // 12:00 Warsaw, transition day
     const timers: Array<{ cb: () => void; ms: number }> = [];

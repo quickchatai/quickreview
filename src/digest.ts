@@ -56,10 +56,13 @@ export function digestHeadline(content: string): string | undefined {
 
 /** Newest digest/<date>.md file name (lexicographic == chronological). */
 export function latestDigestFile(digestDir: string = defaultDigestDir()): string | undefined {
-  if (!existsSync(digestDir)) return undefined;
-  const files = digestFiles(readdirSync(digestDir));
-  const last = files[files.length - 1];
-  return last === undefined ? undefined : join(digestDir, last);
+  try {
+    const files = digestFiles(readdirSync(digestDir));
+    const last = files[files.length - 1];
+    return last === undefined ? undefined : join(digestDir, last);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Headline of the most recent digest — what the daemon copies into status.json. */
@@ -155,9 +158,13 @@ export function cancellationSummaryLine(c: DailyCancellations): string {
   const parts = c.by_cause.map(
     (b) => `${cancelCauseLabel(b.cause)} ${b.count}${b.loud ? " ⚑" : ""}`,
   );
+  const stoppedDead = c.by_cause
+    .filter((item) => item.cause === "deadline_overrun")
+    .reduce((total, item) => total + item.count, 0);
+  const attention = stoppedDead === c.loud ? "stopped dead" : "need attention";
   return `cancelled: ${c.total} round${c.total === 1 ? "" : "s"} — ${parts.join(", ")}${
     c.loud > 0
-      ? ` (${c.loud} stopped dead — worth a look; the orphan sweep is a redeploy artefact and is not)`
+      ? ` (${c.loud} ${attention} — worth a look; the orphan sweep is a redeploy artefact and is not)`
       : ""
   }`;
 }

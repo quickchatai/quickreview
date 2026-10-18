@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   digestHeadline,
+  cancellationSummaryLine,
   digestWritten,
   latestDigestFile,
   latestDigestHeadline,
@@ -51,6 +52,12 @@ describe("writeDigest / latestDigestHeadline", () => {
     writeDigest("2026-08-12", "# d\n\nheadline", dir);
     expect(digestWritten("2026-08-12", dir)).toBe(true);
     expect(digestWritten("2026-08-13", dir)).toBe(false);
+  });
+
+  it("renders a directory read failure as unavailable", () => {
+    const path = join(dir, "not-a-directory");
+    writeFileSync(path, "fixture");
+    expect(latestDigestHeadline(path)).toBeUndefined();
   });
 
   it("ignores non-digest files and an empty/missing dir", () => {
@@ -208,4 +215,14 @@ describe("dailyCancellations / cancellationSummaryLine", () => {
     expect(withContext).toContain("cancelled: none");
     expect(withContext.startsWith("sweep 2026-08-21\n")).toBe(true);
   });
+});
+
+it("does not relabel a lost-prompt cancellation as a stopped-dead round", () => {
+  const line = cancellationSummaryLine({
+    date: "2026-10-07",
+    total: 1,
+    loud: 1,
+    by_cause: [{ cause: "lost_prompt", count: 1, loud: true }],
+  });
+  expect(line).not.toContain("1 stopped dead");
 });

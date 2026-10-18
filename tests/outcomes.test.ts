@@ -1039,6 +1039,33 @@ describe("the fate table", () => {
     expect(await fate(k)).toEqual([["F1", "unknown", null]]);
   });
 
+  it.each(["open", "unverifiable"])(
+    "explicit %s prior report prevents changed-anchor disappearance from becoming a fix",
+    async (status) => {
+      const h = threaded(fakeGit({ "workers/ingest.py@a1..b2": true }));
+      h.tick();
+      h.round(H2, []);
+      h.store.recordPriorReports(PR, 2, H2, [
+        { round_no: 1, finding_key: "F1", status, evidence: "checked explicitly" },
+      ]);
+      const result = await fate(h);
+      expect(result[0]?.[1]).toBe("unknown");
+    },
+  );
+
+  it("a killed nearby candidate cannot steal a posted finding's continuation", async () => {
+    const h = threaded();
+    h.store.recordRoundFindings({ pr: PR, round_id: null, round_no: 1, head_sha: H1 }, [
+      posted({ key: "killed", line: 44, disposition: "killed", posted_as: null }),
+    ]);
+    h.tick();
+    h.round(H2, [posted({ key: "later", line: 44, raised_in_round: 1 })]);
+    await fate(h);
+    expect(h.capture.outcomesFor(PR).find((row) => row.finding_key === "F1")?.carried_to).toBe(
+      "2:later",
+    );
+  });
+
   it("a nearby same-lens finding at the next round keeps it from reading 'gone' — and is not carried", async () => {
     const git = fakeGit({ "workers/ingest.py@a1..b2": true });
     const h = threaded(git);

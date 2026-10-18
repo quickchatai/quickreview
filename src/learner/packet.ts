@@ -22,6 +22,7 @@
 //
 // Pure: no clock, no I/O — the learner (src/learner/learner.ts) assembles the
 // data and writes the files.
+import type { ReceiptDecision } from "./receipt.js";
 import { fenceAsData } from "../memory/datafence.js";
 import { EXPERIENCES_AREA } from "../memory/layout.js";
 import { balancePhrase, type LessonBalance } from "../memory/lessons.js";
@@ -139,7 +140,7 @@ export function majorityPolarity(cands: readonly { polarity: Polarity }[]): Pola
 const POLARITY_LABEL: Readonly<Record<Polarity, string>> = {
   "look-for": "look-for (a miss: something the bot did not raise)",
   "dont-raise": "dont-raise (what the bot raised was rejected, or conceded on re-check)",
-  either: "either way (contested)",
+  either: "either way (follow the evidence)",
   review: "whole review (a signal about a review, never one finding)",
   ops: "operations (about the review system, not the code)",
 };
@@ -231,6 +232,11 @@ export function renderPacketMarkdown(p: OutcomesPacket): string {
   return `${out.join("\n").replace(/\n+$/, "")}\n`;
 }
 
+const ADOPTION_RULE =
+  "- **adopt** — write a TYPED lesson with `viking_write` and its `lesson` parameter `{kind, lens, class, paths, evidence}` into `" +
+  EXPERIENCES_URI +
+  "`. Cite every candidate the lesson adopts as `cand:c<id>` in `evidence` (one lesson may adopt a whole cluster). Reuse the cluster's class. A look-for lesson rests on a miss or a fix a human made, or on the reviewer's OWN re-check reversal (`recheck_flip`, labelled so — its conclusion, not a person's: adopt one only when the code it names shows the miss, and since a `recheck.*` cluster groups reversals by directory alone, a lesson adopts only the reversals that show the SAME miss, never the whole cluster on its count); a dont-raise lesson rests on a human refutation, a deletion or a `[feedback]` comment — never on a whole-review signal alone.";
+
 /**
  * The prompt section that tells the curator what to do with the packet. The
  * seed is frozen (rule 6), so this rides after it, like the layout note.
@@ -250,9 +256,7 @@ export function renderCurationSection(p: OutcomesPacket): string {
     "",
     "For EVERY candidate in the packet, decide one of:",
     "",
-    "- **adopt** — write a TYPED lesson with `viking_write` and its `lesson` parameter `{kind, lens, class, paths, evidence}` into `" +
-      EXPERIENCES_URI +
-      "`. Cite every candidate the lesson adopts as `cand:c<id>` in `evidence` (one lesson may adopt a whole cluster). Reuse the cluster's class. A look-for lesson rests on a miss or a fix a human made, or on the reviewer's OWN re-check reversal (`recheck_flip`, labelled so — its conclusion, not a person's: adopt one only when the code it names shows the miss, and since a `recheck.*` cluster groups reversals by directory alone, a lesson adopts only the reversals that show the SAME miss, never the whole cluster on its count); a dont-raise lesson rests on a human refutation, a deletion or a `[feedback]` comment — never on a whole-review signal alone.",
+    ADOPTION_RULE,
     "- **decline** — with a one-line reason (a one-off, noise, an ops note, already covered by a lesson the packet names).",
     "",
     "Then write ONE command file into `commands/` — the curation receipt:",
@@ -273,12 +277,7 @@ export function renderCurationSection(p: OutcomesPacket): string {
 export function receiptExample(day: string): {
   command: "eod-curation-receipt";
   day: string;
-  decisions: Array<{
-    candidates: string[];
-    decision: "adopted" | "declined" | "refused";
-    lesson?: string;
-    reason?: string;
-  }>;
+  decisions: Array<Omit<ReceiptDecision, "candidates"> & { candidates: string[] }>;
 } {
   return {
     command: "eod-curation-receipt",
@@ -329,6 +328,8 @@ export function renderNoPacketSection(day: string, why: NoPacketWhy): string {
     "Today's outcomes packet did not come with this prompt: the daemon failed to build it, or it was not ready in time.",
     "",
     `- If \`${rel}\` exists, it is today's packet: decide every candidate in it as §1 says, then write the receipt — one command file into \`commands/\`, shaped like this:`,
+    "",
+    ADOPTION_RULE,
     "",
     "```json",
     JSON.stringify(receiptExample(day)),

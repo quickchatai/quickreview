@@ -81,6 +81,8 @@
 // as data when rendered (src/memory/datafence.ts); whose words they are is
 // `quoteAuthor` (a person's, the review system's own digest bullet, or the
 // reviewer's own re-check conclusion).
+import { findingChains, walkFindingChain as outcomeChain } from "../finding-chain.js";
+import { prAuthorOf as prAuthor } from "../pr-author.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -304,14 +306,6 @@ function findingPhrase(f: FindingFacts): string {
 }
 
 /** The PR's author, when the record knows it. */
-function prAuthor(store: StateStore, pr: number): string | null {
-  const a = store.getPr(pr)?.author;
-  if (a) return a;
-  if (!tableExists(store, "backfill_pr_meta")) return null;
-  const row = store.db.prepare("SELECT author FROM backfill_pr_meta WHERE pr = ?").get(pr) as
-    { author: string } | undefined;
-  return row?.author || null;
-}
 
 /** The bot's verdict standing at `atIso` on `pr` — the latest
  * `verdict_applied` at or before it, or a post-approval recheck's flip
@@ -369,20 +363,7 @@ interface OutcomeRow {
 export function chainRoots(
   rows: readonly OutcomeRow[],
 ): Array<{ root: OutcomeRow; end: OutcomeRow }> {
-  const byKey = new Map(rows.map((r) => [carriedToRef(r.round_no, r.finding_key), r]));
-  const pointed = new Set(rows.map((r) => r.carried_to).filter((c): c is string => !!c));
-  const out: Array<{ root: OutcomeRow; end: OutcomeRow }> = [];
-  for (const r of rows) {
-    if (pointed.has(carriedToRef(r.round_no, r.finding_key))) continue;
-    let end = r;
-    const seen = new Set<string>();
-    while (end.carried_to && byKey.has(end.carried_to) && !seen.has(end.carried_to)) {
-      seen.add(end.carried_to);
-      end = byKey.get(end.carried_to)!;
-    }
-    out.push({ root: r, end });
-  }
-  return out;
+  return findingChains(rows);
 }
 
 /** The newest human reply in a bot comment's thread, when captured — newest
@@ -403,7 +384,7 @@ function isCandidateFate(fate: string): boolean {
   return (CANDIDATE_FATES as readonly string[]).includes(fate);
 }
 
-function outcomeRows(store: StateStore, pr: number): OutcomeRow[] {
+export function outcomeRows(store: StateStore, pr: number): OutcomeRow[] {
   return store.db
     .prepare("SELECT * FROM finding_outcomes WHERE pr = ? ORDER BY round_no, finding_key")
     .all(pr) as OutcomeRow[];
@@ -411,17 +392,7 @@ function outcomeRows(store: StateStore, pr: number): OutcomeRow[] {
 
 /** Did a human reply anywhere along the chain from `root` to `end`? */
 function chainHasHumanReply(rows: readonly OutcomeRow[], root: OutcomeRow): boolean {
-  const byKey = new Map(rows.map((r) => [carriedToRef(r.round_no, r.finding_key), r]));
-  const seen = new Set<string>();
-  let at: OutcomeRow | undefined = root;
-  while (at) {
-    const k = carriedToRef(at.round_no, at.finding_key);
-    if (seen.has(k)) break;
-    seen.add(k);
-    if ((at.human_replies ?? 0) > 0) return true;
-    at = at.carried_to ? byKey.get(at.carried_to) : undefined;
-  }
-  return false;
+  return outcomeChain(rows, root).some((row) => (row.human_replies ?? 0) > 0);
 }
 
 /**
@@ -554,19 +525,11 @@ export function reviewFateCandidates(
       continue;
     }
     // Not a root any more: some earlier posting carries to it.
-    const byKey = new Map(entry.rows.map((r) => [carriedToRef(r.round_no, r.finding_key), r]));
-    const holder = entry.chains.find((ch) => {
-      let at: OutcomeRow | undefined = ch.root;
-      const seen = new Set<string>();
-      while (at) {
-        const k = carriedToRef(at.round_no, at.finding_key);
-        if (k === key) return true;
-        if (seen.has(k) || !at.carried_to) return false;
-        seen.add(k);
-        at = byKey.get(at.carried_to);
-      }
-      return false;
-    });
+    const holder = entry.chains.find((chain) =>
+      outcomeChain(entry.rows, chain.root).some(
+        (row) => carriedToRef(row.round_no, row.finding_key) === key,
+      ),
+    );
     out.set(c.id, {
       kind: "gone",
       why: holder
@@ -791,7 +754,7 @@ export function mineHumanRecall(
     const author = prAuthor(store, c.pr);
     // Unknown author: kept (a reviewer's comment must not be lost to a
     // missing record); the PR's own author commenting is a note, not a miss.
-    if (author !== null && author === c.author) continue;
+    if (author !== null && author.toLowerCase() === c.author.toLowerCase()) continue;
     const at = c.created_at ?? c.captured_at;
     if (verdictAt(store, c.pr, at) !== "APPROVE") continue;
     const rc = c.source === "review";

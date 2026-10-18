@@ -22,8 +22,9 @@
 // — the case then runs today's full re-review (`round-re-review.md`), and the
 // case summary says why.
 
+import { deltaFollowUpEnabled } from "../followup-mode.js";
 import { basename, dirname } from "node:path";
-import { REVIEW_DEFAULTS, type Config } from "../config.js";
+import { type Config } from "../config.js";
 import {
   followUpSweepOwed,
   planFollowUp,
@@ -115,8 +116,7 @@ export function decideBenchFollowUp(
 ): BenchFollowUpDecision {
   const fu = c.followup;
   if (!fu) return { kind: "full", reason: "no-reviewed-head" };
-  if ((cfg.review.follow_up ?? REVIEW_DEFAULTS.follow_up) !== "delta")
-    return { kind: "full", reason: "follow_up_full" };
+  if (!deltaFollowUpEnabled(cfg)) return { kind: "full", reason: "follow_up_full" };
   const d = args.delta;
   if (!d) return { kind: "full", reason: "no-adapter" };
   if (!d.ok)

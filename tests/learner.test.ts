@@ -21,7 +21,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LESSONS_USAGE, parseLessonsArgs, renderLessons } from "../src/cli.js";
 import { MEMORY_DEFAULTS, parseConfig } from "../src/config.js";
 import {
@@ -44,7 +44,11 @@ import {
   quoteAuthor,
   type RecallGit,
 } from "../src/learner/miner.js";
-import { packetPointer } from "../src/learner/packet.js";
+import {
+  packetPointer,
+  renderNoPacketSection,
+  renderPacketMarkdown,
+} from "../src/learner/packet.js";
 import { validateReceipt } from "../src/learner/receipt.js";
 import { renderLessonHeader, validateLessonFields } from "../src/memory/lessons.js";
 import { OutcomeCapture } from "../src/outcomes.js";
@@ -63,7 +67,14 @@ interface Wake {
   message: string;
 }
 
-function harness(opts: { lessons?: LessonSource | null; git?: RecallGit; healthy?: boolean } = {}) {
+function harness(
+  opts: {
+    lessons?: LessonSource | null;
+    git?: RecallGit;
+    healthy?: boolean;
+    wake?: (kind: string, detail: string, message: string) => void;
+  } = {},
+) {
   let now = new Date("2026-10-07T10:00:00.000Z");
   const clock = () => now;
   const store = new StateStore(":memory:", clock);
@@ -88,7 +99,10 @@ function harness(opts: { lessons?: LessonSource | null; git?: RecallGit; healthy
     ...(opts.lessons === null ? {} : { lessons }),
     ...(opts.git ? { git: opts.git } : {}),
     healthy: () => healthy,
-    wake: (kind, detail, message) => wakes.push({ kind, detail, message }),
+    wake: (kind, detail, message) => {
+      opts.wake?.(kind, detail, message);
+      wakes.push({ kind, detail, message });
+    },
     now: clock,
   });
   let round = 0;
@@ -1844,6 +1858,7 @@ describe("the miner — candidates say what the record shows (integration review
       lens_ids: "[]",
     });
     // The reconcile sweep (or the case backfill) links bot comment 7200 later.
+    h.addMinutes(60 * 24 * 60);
     h.finding(72, { key: "F" }, "fixed", { roundNo: 1, comment: 7200 });
     const r = await h.learner.mine();
     expect(r.relinked).toBe(1);
@@ -2422,4 +2437,156 @@ describe("wire.ts: the learner is actually connected", () => {
       /if \(learner\) \{\s*try \{\s*base\.curation = learner\.status\(\);\s*\} catch \(err\) \{[\s\S]{0,120}?base\.curation = null;/,
     );
   });
+});
+
+describe("learner delayed evidence and durable incidents", () => {
+  it("revises secondary lens attribution even when the class and summary stay the same", async () => {
+    const h = harness();
+    h.pr(31);
+    h.finding(31, { key: "F" }, "refuted_conceded", { roundNo: 1 });
+    await h.learner.mine();
+    h.store.db
+      .prepare("UPDATE round_findings SET lens_ids=? WHERE pr=31")
+      .run('["pass-baseline","pass-delivery"]');
+    await h.learner.mine();
+    expect(JSON.parse(h.learner.candidate(1)!.lens_ids)).toEqual([
+      "pass-baseline",
+      "pass-delivery",
+    ]);
+  });
+  it("reinstates an old withdrawn candidate when fresh fate evidence arrives", async () => {
+    const h = harness();
+    h.pr(32);
+    h.finding(32, { key: "F" }, "refuted_conceded", { roundNo: 1 });
+    await h.learner.mine();
+    h.store.db.prepare("UPDATE finding_outcomes SET fate='fixed' WHERE pr=32").run();
+    await h.learner.mine();
+    h.setNow("2026-12-20T10:00:00Z");
+    h.store.db
+      .prepare(
+        "UPDATE finding_outcomes SET fate='refuted_conceded',decided_at=?,fate_changed_at=? WHERE pr=32",
+      )
+      .run("2026-12-20T10:00:00Z", "2026-12-20T10:00:00Z");
+    await h.learner.mine();
+    expect(h.learner.candidate(1)!.status).toBe("open");
+  });
+  it("reports zero recurrence when only older queued candidates remain", async () => {
+    const h = harness();
+    h.candidateRow({ ref: "old", cls: "baseline.scope", occurredAt: "2026-01-01T00:00:00Z" });
+    expect(h.learner.clusters()[0]!.recurrence).toBe(0);
+    expect((await h.learner.buildPacket("2026-10-07")).clusters[0]!.recurrence).toBe(0);
+  });
+  it("ignores author casing when mining another reviewer's recall", async () => {
+    const h = harness();
+    h.pr(33, "Alice");
+    h.verdict(33, "APPROVE");
+    h.addMinutes(1);
+    h.comment({ pr: 33, id: 330, author: "alice", body: "author's own note" });
+    await h.learner.mine();
+    expect(h.learner.allCandidates()).toEqual([]);
+  });
+  it("does not consume missing-receipt dedup when durable wake recording fails", async () => {
+    let fails = true;
+    const h = harness({
+      wake: () => {
+        if (fails) throw new Error("wake database unavailable");
+      },
+    });
+    h.candidateRow({ ref: "offered", cls: "baseline.scope", occurredAt: "2026-10-07T10:00:00Z" });
+    await h.learner.buildPacket("2026-10-07");
+    h.learner.eodFired("2026-10-07");
+    h.addMinutes(181);
+    expect(() => h.learner.checkMissing()).toThrow(/unavailable/);
+    fails = false;
+    h.learner.checkMissing();
+    expect(h.wakes.filter((wake) => wake.kind === LEARNER_WAKE.missing)).toHaveLength(1);
+  });
+  it("rolls back refusal and its dedup together when the wake cannot be durably recorded", async () => {
+    let fails = true;
+    const h = harness({
+      wake: () => {
+        if (fails) throw new Error("wake database unavailable");
+      },
+    });
+    h.candidateRow({ ref: "offered", cls: "baseline.scope", occurredAt: "2026-10-07T10:00:00Z" });
+    await h.learner.buildPacket("2026-10-07");
+    const receipt = {
+      day: "2026-10-07",
+      decisions: [{ candidates: [1], decision: "refused" as const, reason: "offline" }],
+    };
+    expect(() => h.learner.applyReceipt(receipt)).toThrow(/unavailable/);
+    fails = false;
+    expect(h.learner.applyReceipt(receipt).ok).toBe(true);
+    expect(h.wakes.filter((wake) => wake.kind === LEARNER_WAKE.notPersisted)).toHaveLength(1);
+  });
+  it("retains adoption verification until its not-persisted incident is durable", async () => {
+    let fails = false;
+    const h = harness({
+      wake: () => {
+        if (fails) throw new Error("wake database unavailable");
+      },
+    });
+    h.candidateRow({ ref: "offered", cls: "baseline.scope", occurredAt: "2026-10-07T10:00:00Z" });
+    await h.learner.buildPacket("2026-10-07");
+    h.learner.applyReceipt({
+      day: "2026-10-07",
+      decisions: [{ candidates: [1], decision: "adopted" }],
+    });
+    h.addMinutes(120);
+    fails = true;
+    await expect(h.learner.verify()).rejects.toThrow(/unavailable/);
+    expect(h.learner.candidate(1)!.status).toBe("adopting");
+    fails = false;
+    await h.learner.verify();
+    expect(h.wakes.filter((wake) => wake.kind === LEARNER_WAKE.notPersisted)).toHaveLength(1);
+  });
+  it("does not commit candidate expiry without its audit event", async () => {
+    const h = harness();
+    h.candidateRow({
+      ref: "expiring",
+      cls: "baseline.scope",
+      occurredAt: "2026-10-01T10:00:00Z",
+      offeredDay: "2026-10-01",
+    });
+    const original = h.store.logEvent.bind(h.store);
+    const spy = vi.spyOn(h.store, "logEvent").mockImplementation((kind, ...args) => {
+      if (kind === "lesson_candidates_expired") throw new Error("audit unavailable");
+      return original(kind, ...args);
+    });
+    await expect(h.learner.buildPacket("2026-10-09")).rejects.toThrow(/audit unavailable/);
+    spy.mockRestore();
+    expect(h.learner.candidate(1)!.status).toBe("open");
+    await h.learner.buildPacket("2026-10-09");
+    expect(
+      h.store.db
+        .prepare("SELECT COUNT(*) AS n FROM events WHERE kind='lesson_candidates_expired'")
+        .get(),
+    ).toEqual({ n: 1 });
+  });
+});
+
+it("counterweights keep the root posting's class when a chain's later classification changes", async () => {
+  const h = harness();
+  h.pr(34);
+  h.finding(34, { key: "root", kind: "authz" }, "fixed", { roundNo: 1, carriedTo: "2:end" });
+  h.finding(34, { key: "end", lens: "pass-delivery", kind: "retries" }, "fixed", { roundNo: 2 });
+  h.candidateRow({ ref: "candidate", cls: "baseline.authz", occurredAt: "2026-10-07T10:00:00Z" });
+  const packet = await h.learner.buildPacket("2026-10-07");
+  expect(packet.clusters[0]!.fixed).toBe(1);
+});
+
+it("unavailable packet recovery retains the normal adoption restrictions", () => {
+  const text = renderNoPacketSection("2026-10-07", "unavailable");
+  expect(text).toContain("never on a whole-review signal alone");
+  expect(text).toContain("SAME miss");
+  expect(text).toContain("TYPED lesson");
+});
+it("either-polarity candidates are not automatically described as contested", async () => {
+  const h = harness();
+  h.candidateRow({ ref: "uncertain", cls: "recheck.backend", occurredAt: "2026-10-07T10:00:00Z" });
+  h.store.db
+    .prepare("UPDATE lesson_candidates SET polarity='either',source='recheck',kind='recheck_flip'")
+    .run();
+  const text = renderPacketMarkdown(await h.learner.buildPacket("2026-10-07"));
+  expect(text).not.toContain("either way (contested)");
 });

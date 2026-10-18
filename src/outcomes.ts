@@ -96,12 +96,20 @@
 // read-only and memoised; a commit the clone does not hold is UNKNOWN, never a
 // change and never no-change. Every failure is the sweep's own — reconcile's
 // health (which lifts a deploy drain) never waits on it.
+import { carriedToRef } from "./finding-chain.js";
 import { parseFindingMarker } from "./findingkey.js";
 import { storedLensIds } from "./lensids.js";
 import type { ReviewCommentFull } from "./github.js";
 import { bareTag } from "./severity.js";
 import { yieldToLoop } from "./yieldloop.js";
-import type { PrCommentRow, PrStateRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
+import type {
+  PrCommentRow,
+  PrStateRow,
+  RoundFindingRow,
+  RoundRow,
+  StateStore,
+  PriorFindingCheckRow,
+} from "./state.js";
 
 export const FINDING_FATES = [
   "fixed",
@@ -140,7 +148,7 @@ export interface AnchorGit {
 }
 
 /** Bump when a rule changes, so every PR is re-captured once. */
-export const OUTCOME_RULES_VERSION = 4;
+export const OUTCOME_RULES_VERSION = 5;
 /** PRs captured per reconcile pass. */
 export const OUTCOME_SWEEP_MAX_PRS = 25;
 /** How long after a close a PR is still captured — the close is evidence. */
@@ -265,9 +273,7 @@ export function markerTwins(rows: readonly FindingCommentRow[]): Map<number, num
 }
 
 /** A `finding_outcomes.carried_to` address: `<round>:<key>`. */
-export function carriedToRef(roundNo: number, findingKey: string): string {
-  return `${roundNo}:${findingKey}`;
-}
+export { carriedToRef } from "./finding-chain.js";
 
 /** The finding a `carried_to` address names — split at the FIRST ':', since
  * the key itself may hold ':' — or null when the round part is not an
@@ -472,6 +478,7 @@ export function decideFate<E extends { fate: EvidenceFate; at: number }>(
 
 interface PrFacts {
   rows: RoundFindingRow[];
+  priorReports: PriorFindingCheckRow[];
   posted: RoundFindingRow[];
   byRound: Map<number, RoundFindingRow[]>;
   /** Rounds with a parsed findings record: when, and at which head. */
@@ -851,6 +858,7 @@ export class OutcomeCapture {
     ]);
     const facts: PrFacts = {
       rows,
+      priorReports: this.store.priorFindingChecks(pr),
       posted,
       byRound,
       recorded: this.recordedRounds(pr, rows),
@@ -912,7 +920,10 @@ export class OutcomeCapture {
     facts: PrFacts,
     threads: readonly number[],
   ): { strong: RoundFindingRow[]; next: { round: number; weak: RoundFindingRow[] } | null } {
-    const ownRound = facts.byRound.get(f.round_no) ?? [];
+    const ownRound = (facts.byRound.get(f.round_no) ?? []).filter(
+      (row) =>
+        row.disposition === "posted" && row.posted_as !== null && row.posted_as.trim() !== "",
+    );
     const strong: RoundFindingRow[] = [];
     for (const e of facts.rows) {
       if (e.round_no <= f.round_no) continue;
@@ -1226,7 +1237,14 @@ export class OutcomeCapture {
       next &&
       conceded.length === 0 &&
       next.weak.length === 0 &&
-      !strong.some((e) => e.round_no === next.round)
+      !strong.some((e) => e.round_no === next.round) &&
+      !facts.priorReports.some(
+        (report) =>
+          report.round_no === f.round_no &&
+          report.finding_key === f.finding_key &&
+          report.checked_round === next.round &&
+          (report.status === "open" || report.status === "unverifiable"),
+      )
     ) {
       // Gone at the next round. Fixed only if the code at its anchor changed.
       const head = facts.recorded.get(next.round)?.head ?? null;
@@ -1407,6 +1425,7 @@ export class OutcomeCapture {
           "('pingpong_decision_applied','pingpong_thread_resolved','head_push','pr_closed','findings_recorded')",
       ),
       get("SELECT COUNT(*) c, MAX(id) m FROM feedback_signals WHERE pr = ?"),
+      this.store.priorFindingChecks(pr),
       get(
         // `seen_at` moves when a comment's facts change (its anchor or head
         // corrected), which can re-link it with every count unchanged.

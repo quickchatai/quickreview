@@ -38,6 +38,7 @@
 //
 // Nothing here writes memory or GitHub, and nothing here is on the round
 // path. Its tables live on the state database beside the outcome capture's.
+import { withinBudget } from "../budget.js";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MEMORY_DEFAULTS } from "../config.js";
@@ -53,6 +54,8 @@ import {
 } from "../memory/lessons.js";
 import type { StateStore } from "../state.js";
 import {
+  chainRoots,
+  outcomeRows,
   findingClass,
   lensIdsOf,
   mineDigestBackfill,
@@ -355,26 +358,19 @@ const UNRESOLVED_SCAN_DAYS = 30;
 /** `p`, or "timeout" once `ms` passed. A rejection reads as "timeout" too —
  * the caller's fallback is the same — but its cause goes to `onReject`, so a
  * failure is never mistaken for a slow answer in the log. */
-function withTimeout<T>(
+async function withTimeout<T>(
   p: Promise<T>,
   ms: number,
   onReject: (err: unknown) => void,
 ): Promise<T | "timeout"> {
-  return new Promise((resolve) => {
-    const t = setTimeout(() => resolve("timeout"), ms);
-    t.unref?.();
-    p.then(
-      (v) => {
-        clearTimeout(t);
-        resolve(v);
-      },
-      (err: unknown) => {
-        clearTimeout(t);
-        onReject(err);
-        resolve("timeout");
-      },
-    );
-  });
+  const result = await withinBudget(
+    p.catch((error: unknown) => {
+      onReject(error);
+      return "timeout" as const;
+    }),
+    ms,
+  );
+  return result.kind === "done" ? result.value : "timeout";
 }
 
 /** The ops day a candidate's expiry clock runs from: the day it was
@@ -387,6 +383,23 @@ function writeAtomic(path: string, body: string): void {
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, body);
   renameSync(tmp, path);
+}
+
+/** Shared admission for the status incident and the durable wake. */
+function missingCuration(
+  row: CurationRow,
+  laterReceipt: boolean,
+  now: number,
+  waitMs: number,
+): boolean {
+  const fired = Date.parse(row.fired_at ?? "");
+  return (
+    !laterReceipt &&
+    row.receipt_at === null &&
+    jsonColumn<number[]>(row.offered, []).length > 0 &&
+    Number.isFinite(fired) &&
+    (row.missing_woken_at !== null || now - fired >= waitMs)
+  );
 }
 
 export class Learner {
@@ -536,7 +549,16 @@ export class Learner {
     if (recallAdded > 0)
       report.added_by_source.recall = (report.added_by_source.recall ?? 0) + recallAdded;
     try {
-      report.relinked = this.relink(drafts);
+      const oldest = this.store.db
+        .prepare(
+          "SELECT MIN(occurred_at) AS at FROM lesson_candidates WHERE status='open' AND source IN ('feedback','tagged-comment')",
+        )
+        .get() as { at: string | null };
+      const relinkDrafts =
+        oldest.at !== null && oldest.at < since
+          ? [...mineFeedback(this.store, oldest.at), ...mineTaggedComments(this.store, oldest.at)]
+          : drafts;
+      report.relinked = this.relink(relinkDrafts);
     } catch (err) {
       report.errors.push(`relink: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -687,9 +709,14 @@ export class Learner {
    */
   private reviseFates(sinceIso: string): MineReport["fates"] {
     const db = this.store.db;
+    const hasOutcomes = tableExists(this.store, "finding_outcomes");
+    const freshOutcome = hasOutcomes
+      ? "OR pr IN (SELECT pr FROM finding_outcomes WHERE COALESCE(decided_at,fate_changed_at)>=?)"
+      : "";
     const rows = this.candidates(
-      "source = 'fate' AND (status = 'open' OR (status = 'withdrawn' AND decided_at >= ?)) ORDER BY id",
+      `source = 'fate' AND (status='open' OR (status='withdrawn' AND (decided_at>=? ${freshOutcome}))) ORDER BY id`,
       sinceIso,
+      ...(hasOutcomes ? [sinceIso] : []),
     );
     const out = { revised: 0, withdrawn: 0, reinstated: 0 };
     if (rows.length === 0) return out;
@@ -742,6 +769,7 @@ export class Learner {
           d.kind === c.kind &&
           d.polarity === c.polarity &&
           d.class === c.class &&
+          JSON.stringify(d.lens_ids) === c.lens_ids &&
           d.summary === c.summary &&
           d.quote === c.quote &&
           d.path === c.path &&
@@ -812,27 +840,30 @@ export class Learner {
   private counterweights(sinceIso: string): Map<string, { fixed: number; ignored: number }> {
     const out = new Map<string, { fixed: number; ignored: number }>();
     if (!tableExists(this.store, "finding_outcomes")) return out;
-    const rows = this.store.db
+    const prs = this.store.db
       .prepare(
-        `SELECT o.fate, f.lens_ids, f.lens, f.kind FROM finding_outcomes o
-           JOIN round_findings f ON f.pr = o.pr AND f.round_no = o.round_no AND f.finding_key = o.finding_key
-          WHERE o.fate IN ('fixed', 'open_at_close') AND o.carried_to IS NULL
-            AND COALESCE(o.decided_at, o.fate_changed_at) >= ?`,
+        "SELECT DISTINCT pr FROM finding_outcomes WHERE fate IN ('fixed','open_at_close') AND COALESCE(decided_at,fate_changed_at)>=?",
       )
-      .all(sinceIso) as Array<{
-      fate: string;
-      lens_ids: string | null;
-      lens: string;
-      kind: string | null;
-    }>;
-    for (const r of rows) {
-      // The same class rule the miner applies to a candidate's finding.
-      const cls = findingClass(lensIdsOf(r.lens_ids, r.lens), r.kind);
-      const c = out.get(cls) ?? { fixed: 0, ignored: 0 };
-      if (r.fate === "fixed") c.fixed += 1;
-      else c.ignored += 1;
-      out.set(cls, c);
-    }
+      .all(sinceIso) as Array<{ pr: number }>;
+    const finding = this.store.db.prepare(
+      "SELECT lens_ids,lens,kind FROM round_findings WHERE pr=? AND round_no=? AND finding_key=?",
+    );
+    for (const { pr } of prs)
+      for (const { root, end } of chainRoots(outcomeRows(this.store, pr))) {
+        if (
+          !["fixed", "open_at_close"].includes(end.fate) ||
+          (end.decided_at ?? end.fate_changed_at) < sinceIso
+        )
+          continue;
+        const f = finding.get(pr, root.round_no, root.finding_key) as
+          { lens_ids: string | null; lens: string; kind: string | null } | undefined;
+        if (!f) continue;
+        const cls = findingClass(lensIdsOf(f.lens_ids, f.lens), f.kind);
+        const count = out.get(cls) ?? { fixed: 0, ignored: 0 };
+        if (end.fate === "fixed") count.fixed++;
+        else count.ignored++;
+        out.set(cls, count);
+      }
     return out;
   }
 
@@ -848,29 +879,36 @@ export class Learner {
     // offer, or from the day a refused write or an unfound adoption re-opened
     // it (that candidate was promised the next packet, and gets a full window).
     const expired: ExpiredCandidate[] = [];
-    for (const c of this.candidates("status = 'open' AND offered_day IS NOT NULL")) {
-      if (dayDiff(clockDay(c), day) < this.cfg.lessons_expiry_ops_days) continue;
-      db.prepare(
-        `UPDATE lesson_candidates SET status = 'expired', decided_at = ?, decided_day = ?, reason = ?, updated_at = ?
+    db.transaction(() => {
+      for (const c of this.candidates("status = 'open' AND offered_day IS NOT NULL")) {
+        if (dayDiff(clockDay(c), day) < this.cfg.lessons_expiry_ops_days) continue;
+        db.prepare(
+          `UPDATE lesson_candidates SET status = 'expired', decided_at = ?, decided_day = ?, reason = ?, updated_at = ?
           WHERE id = ? AND status = 'open'`,
-      ).run(
-        at,
-        day,
-        c.reopened_day
-          ? `undecided ${this.cfg.lessons_expiry_ops_days} ops days after it was re-opened (${c.reopened_day}; first offered ${c.offered_day})`
-          : `undecided ${this.cfg.lessons_expiry_ops_days} ops days after it was first offered (${c.offered_day})`,
-        at,
-        c.id,
-      );
-      expired.push({
-        id: c.id,
-        label: candidateLabel(c.id),
-        class: c.class,
-        summary: c.summary,
-        offered_day: c.offered_day!,
-      });
-    }
-    const newlyExpired = expired.length;
+        ).run(
+          at,
+          day,
+          c.reopened_day
+            ? `undecided ${this.cfg.lessons_expiry_ops_days} ops days after it was re-opened (${c.reopened_day}; first offered ${c.offered_day})`
+            : `undecided ${this.cfg.lessons_expiry_ops_days} ops days after it was first offered (${c.offered_day})`,
+          at,
+          c.id,
+        );
+        expired.push({
+          id: c.id,
+          label: candidateLabel(c.id),
+          class: c.class,
+          summary: c.summary,
+          offered_day: c.offered_day!,
+        });
+      }
+      if (expired.length > 0)
+        this.store.logEvent("lesson_candidates_expired", null, {
+          day,
+          ids: expired.map((e) => e.id),
+          after_ops_days: this.cfg.lessons_expiry_ops_days,
+        });
+    })();
     // Candidates expired by an earlier build of the same day stay listed —
     // the ones its record lists, and the ones its expiry committed before
     // that build was cut short (the rows say so: expired on this day).
@@ -889,12 +927,6 @@ export class Learner {
           offered_day: c.offered_day ?? day,
         });
     }
-    if (newlyExpired > 0)
-      this.store.logEvent("lesson_candidates_expired", null, {
-        day,
-        ids: expired.map((e) => e.id),
-        after_ops_days: this.cfg.lessons_expiry_ops_days,
-      });
     // Offer: queued candidates, look-for first, up to the day's cap — the
     // reviewer's own recheck reversals after every other source, so its own
     // conclusions never crowd a person's outcome out of the packet.
@@ -979,7 +1011,7 @@ export class Learner {
       return {
         class: cls,
         polarity: majorityPolarity(rows),
-        recurrence: recurrence.get(cls) ?? rows.length,
+        recurrence: recurrence.get(cls) ?? 0,
         fixed: w.fixed,
         ignored: w.ignored,
         covering: coverage(cls, lensIds),
@@ -1023,7 +1055,7 @@ export class Learner {
     const dir = join(this.deps.root, packetRelDir(day));
     mkdirSync(dir, { recursive: true });
     writeAtomic(join(dir, "outcomes.json"), `${JSON.stringify(packet, null, 2)}\n`);
-    writeAtomic(join(dir, "outcomes.md"), renderPacketMarkdown(packet));
+    writeAtomic(join(this.deps.root, packetMarkdownRel(day)), renderPacketMarkdown(packet));
     db.prepare(
       `INSERT INTO eod_curations (day, packet_at, offered, new_today, expired, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -1198,46 +1230,48 @@ export class Learner {
         at,
         receipt.day,
       );
+      this.store.logEvent("eod_curation_receipt", null, { day: receipt.day, ...counts });
+      if (refused.length > 0) this.notPersisted(receipt.day, refused);
     })();
-    this.store.logEvent("eod_curation_receipt", null, { day: receipt.day, ...counts });
-    if (refused.length > 0) this.notPersisted(receipt.day, refused);
     return { ok: true, day: receipt.day, ...counts };
   }
 
   /** Record adoptions memory does not hold / writes refused, and wake when
    * the list names something no earlier wake named. */
   private notPersisted(day: string, items: Array<{ id: number; why: string }>): void {
-    const row = this.curation(day);
-    const prev = jsonColumn<Array<{ id: number; why: string }>>(row?.not_persisted, []);
-    const merged = [...prev];
-    for (const i of items)
-      if (!merged.some((m) => m.id === i.id && m.why === i.why)) merged.push(i);
-    const woken = new Set(jsonColumn<string[]>(row?.not_persisted_woken, []));
-    const key = (m: { id: number; why: string }) => `${m.id}:${m.why}`;
-    const fresh = merged.filter((m) => !woken.has(key(m)));
-    const at = this.ts();
-    // The incident starts when the day's list goes from empty to non-empty.
-    const since = prev.length > 0 && row?.not_persisted_since ? row.not_persisted_since : at;
-    this.store.db
-      .prepare(
-        `INSERT INTO eod_curations (day, not_persisted, not_persisted_since, not_persisted_woken, updated_at)
+    this.store.db.transaction(() => {
+      const row = this.curation(day);
+      const prev = jsonColumn<Array<{ id: number; why: string }>>(row?.not_persisted, []);
+      const merged = [...prev];
+      for (const i of items)
+        if (!merged.some((m) => m.id === i.id && m.why === i.why)) merged.push(i);
+      const woken = new Set(jsonColumn<string[]>(row?.not_persisted_woken, []));
+      const key = (m: { id: number; why: string }) => `${m.id}:${m.why}`;
+      const fresh = merged.filter((m) => !woken.has(key(m)));
+      const at = this.ts();
+      // The incident starts when the day's list goes from empty to non-empty.
+      const since = prev.length > 0 && row?.not_persisted_since ? row.not_persisted_since : at;
+      this.store.db
+        .prepare(
+          `INSERT INTO eod_curations (day, not_persisted, not_persisted_since, not_persisted_woken, updated_at)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(day) DO UPDATE SET not_persisted = excluded.not_persisted,
            not_persisted_since = excluded.not_persisted_since,
            not_persisted_woken = excluded.not_persisted_woken, updated_at = excluded.updated_at`,
-      )
-      .run(day, JSON.stringify(merged), since, JSON.stringify([...woken, ...fresh.map(key)]), at);
-    if (fresh.length === 0) return;
-    const labels = merged.map((m) => candidateLabel(m.id)).join(", ");
-    this.deps.wake?.(
-      LEARNER_WAKE.notPersisted,
-      `EOD ${day}: ${merged.length} lesson(s) not persisted (${labels})`,
-      [
-        `EOD LESSONS NOT PERSISTED — the curation of ${day} did not land ${merged.length} lesson(s) in reviewer memory: ${labels}.`,
-        ...merged.slice(0, 8).map((m) => `- ${candidateLabel(m.id)}: ${m.why.slice(0, 200)}`),
-        "The candidates are open again and ride the next outcomes packet. Check memory health (`qcr status`) and the overseer's viking_write answers; a lesson counts only once its typed header cites the candidate (`cand:c<id>`).",
-      ].join("\n"),
-    );
+        )
+        .run(day, JSON.stringify(merged), since, JSON.stringify([...woken, ...fresh.map(key)]), at);
+      if (fresh.length === 0) return;
+      const labels = merged.map((m) => candidateLabel(m.id)).join(", ");
+      this.deps.wake?.(
+        LEARNER_WAKE.notPersisted,
+        `EOD ${day}: ${merged.length} lesson(s) not persisted (${labels})`,
+        [
+          `EOD LESSONS NOT PERSISTED — the curation of ${day} did not land ${merged.length} lesson(s) in reviewer memory: ${labels}.`,
+          ...merged.slice(0, 8).map((m) => `- ${candidateLabel(m.id)}: ${m.why.slice(0, 200)}`),
+          "The candidates are open again and ride the next outcomes packet. Check memory health (`qcr status`) and the overseer's viking_write answers; a lesson counts only once its typed header cites the candidate (`cand:c<id>`).",
+        ].join("\n"),
+      );
+    })();
   }
 
   // ---- 4. the tick: mine on time, verify, and wake when the receipt is late ----
@@ -1303,20 +1337,21 @@ export class Learner {
     for (const r of rows) {
       const offered = jsonColumn<number[]>(r.offered, []);
       if (offered.length === 0) continue;
-      const fired = Date.parse(r.fired_at!);
-      if (!Number.isFinite(fired) || now - fired < waitMs) continue;
-      const at = this.ts();
-      this.store.db
-        .prepare("UPDATE eod_curations SET missing_woken_at = ?, updated_at = ? WHERE day = ?")
-        .run(at, at, r.day);
-      this.deps.wake?.(
-        LEARNER_WAKE.missing,
-        `EOD ${r.day}: no curation receipt ${this.cfg.lessons_receipt_wait_min} min after the sweep`,
-        [
-          `EOD CURATION MISSING — the EOD sweep for ${r.day} was delivered at ${r.fired_at}, its outcomes packet offered ${offered.length} candidate(s) (\`${packetMarkdownRel(r.day)}\`), and no \`eod-curation-receipt\` arrived within ${this.cfg.lessons_receipt_wait_min} minutes.`,
-          "Nothing says the day's outcomes were curated. The candidates stay open and ride the next packet; undecided, they expire (recorded). Check the overseer session, then curate the packet and write the receipt.",
-        ].join("\n"),
-      );
+      if (!missingCuration(r, false, now, waitMs)) continue;
+      this.store.db.transaction(() => {
+        const at = this.ts();
+        this.store.db
+          .prepare("UPDATE eod_curations SET missing_woken_at = ?, updated_at = ? WHERE day = ?")
+          .run(at, at, r.day);
+        this.deps.wake?.(
+          LEARNER_WAKE.missing,
+          `EOD ${r.day}: no curation receipt ${this.cfg.lessons_receipt_wait_min} min after the sweep`,
+          [
+            `EOD CURATION MISSING — the EOD sweep for ${r.day} was delivered at ${r.fired_at}, its outcomes packet offered ${offered.length} candidate(s) (\`${packetMarkdownRel(r.day)}\`), and no \`eod-curation-receipt\` arrived within ${this.cfg.lessons_receipt_wait_min} minutes.`,
+            "Nothing says the day's outcomes were curated. The candidates stay open and ride the next packet; undecided, they expire (recorded). Check the overseer session, then curate the packet and write the receipt.",
+          ].join("\n"),
+        );
+      })();
     }
   }
 
@@ -1365,46 +1400,48 @@ export class Learner {
     // `pending` was read before the memory read awaited: a receipt applied
     // meanwhile may have settled a candidate or re-dated its adoption, so
     // every write below holds only against the state it was decided from.
-    for (const c of pending) {
-      const lessons = cited.get(c.id);
-      if (lessons) {
-        db.prepare(
-          `UPDATE lesson_candidates SET status = 'adopted', lesson_ids = ?, decided_at = COALESCE(decided_at, ?),
+    db.transaction(() => {
+      for (const c of pending) {
+        const lessons = cited.get(c.id);
+        if (lessons) {
+          db.prepare(
+            `UPDATE lesson_candidates SET status = 'adopted', lesson_ids = ?, decided_at = COALESCE(decided_at, ?),
              decided_day = COALESCE(decided_day, receipt_day, ?), updated_at = ?
            WHERE id = ? AND status IN ('open', 'adopting')`,
-        ).run(JSON.stringify(lessons), at, this.today(), at, c.id);
-        continue;
-      }
-      if (c.status !== "adopting" || !read.complete) continue;
-      const receiptAt = Date.parse(c.receipt_at ?? "");
-      if (!Number.isFinite(receiptAt) || this.now().getTime() - receiptAt < VERIFY_GRACE_MS)
-        continue;
-      // Back to the packet, with a fresh expiry clock: the wake promised the
-      // next packet, and a candidate first offered days ago must not expire
-      // at it.
-      const reopened = db
-        .prepare(
-          `UPDATE lesson_candidates SET status = 'open', reopened_day = ?, reason = ?, updated_at = ?
+          ).run(JSON.stringify(lessons), at, this.today(), at, c.id);
+          continue;
+        }
+        if (c.status !== "adopting" || !read.complete) continue;
+        const receiptAt = Date.parse(c.receipt_at ?? "");
+        if (!Number.isFinite(receiptAt) || this.now().getTime() - receiptAt < VERIFY_GRACE_MS)
+          continue;
+        // Back to the packet, with a fresh expiry clock: the wake promised the
+        // next packet, and a candidate first offered days ago must not expire
+        // at it.
+        const reopened = db
+          .prepare(
+            `UPDATE lesson_candidates SET status = 'open', reopened_day = ?, reason = ?, updated_at = ?
            WHERE id = ? AND status = 'adopting' AND receipt_at IS ?`,
-        )
-        .run(
-          this.today(),
-          `the receipt of ${c.receipt_day} said adopted, but no lesson in experiences/ cites cand:${candidateLabel(c.id)}`,
-          at,
-          c.id,
-          c.receipt_at,
-        );
-      if (reopened.changes === 0) continue;
-      const day = c.receipt_day ?? this.today();
-      missingByDay.set(day, [
-        ...(missingByDay.get(day) ?? []),
-        {
-          id: c.id,
-          why: `adopted${c.claimed_lesson ? ` as ${c.claimed_lesson}` : ""}, but no lesson in experiences/ cites cand:${candidateLabel(c.id)}`,
-        },
-      ]);
-    }
-    for (const [day, items] of missingByDay) this.notPersisted(day, items);
+          )
+          .run(
+            this.today(),
+            `the receipt of ${c.receipt_day} said adopted, but no lesson in experiences/ cites cand:${candidateLabel(c.id)}`,
+            at,
+            c.id,
+            c.receipt_at,
+          );
+        if (reopened.changes === 0) continue;
+        const day = c.receipt_day ?? this.today();
+        missingByDay.set(day, [
+          ...(missingByDay.get(day) ?? []),
+          {
+            id: c.id,
+            why: `adopted${c.claimed_lesson ? ` as ${c.claimed_lesson}` : ""}, but no lesson in experiences/ cites cand:${candidateLabel(c.id)}`,
+          },
+        ]);
+      }
+      for (const [day, items] of missingByDay) this.notPersisted(day, items);
+    })();
   }
 
   /** A candidate decided since leaves the not-persisted lists it was on: the
@@ -1496,13 +1533,7 @@ export class Learner {
         });
       const offered = jsonColumn<number[]>(r.offered, []);
       const fired = Date.parse(r.fired_at ?? "");
-      if (
-        !laterReceipt &&
-        r.receipt_at === null &&
-        offered.length > 0 &&
-        Number.isFinite(fired) &&
-        (r.missing_woken_at !== null || now - fired >= waitMs)
-      )
+      if (missingCuration(r, laterReceipt, now, waitMs))
         out.push({
           day: r.day,
           state: "missing",
@@ -1607,7 +1638,7 @@ export class Learner {
         polarity: majorityPolarity(e.rows),
         open: e.rows.length - e.queued,
         queued: e.queued,
-        recurrence: recurrence.get(cls) ?? e.rows.length,
+        recurrence: recurrence.get(cls) ?? 0,
       }))
       .sort((a, b) => b.open + b.queued - (a.open + a.queued) || a.class.localeCompare(b.class));
   }

@@ -533,6 +533,16 @@ function jsonDepthDelta(text: string): number {
  * `"config"` is configuration, not the release). A line whose place the patch
  * does not show is not proven to be the release. */
 export function versionOnly(patch: string, path?: string): boolean {
+  if (path !== undefined && ["VERSION", "version.txt"].includes(baseName(path))) {
+    const lines = parseHunks(patch).flatMap((h) => h.lines);
+    const version = /^v?\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.-]+)?$/;
+    return (
+      lines.some((line) => line.kind !== " ") &&
+      lines.every((line) =>
+        line.text.trim() === "" ? line.kind === " " : version.test(line.text.trim()),
+      )
+    );
+  }
   const toml = path !== undefined && /\.toml$/i.test(path);
   const json = path !== undefined && /\.json$/i.test(path);
   let changed = 0;
@@ -701,6 +711,7 @@ export type NoopReason =
   | "disabled"
   | "pingpong-owns-reply"
   | "no-standing-approval"
+  | "stale-head"
   | "pr-not-open"
   | "unchanged-head"
   | "empty-delta"
@@ -1083,6 +1094,8 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     return done({ action: "noop", reason: "paused", class: "empty" });
 
   const head = req.head_sha || row.head_sha;
+  if (head.toLowerCase() !== row.head_sha.toLowerCase())
+    return done({ action: "noop", reason: "stale-head", class: "empty" });
   const lastReviewed = mark!.head_sha;
   // Refuse before spending a single API call on a head we already decided.
   if (unchangedHeadNoop(req.trigger, head, lastReviewed, req.ci))
@@ -1164,6 +1177,8 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     resolvedFiles,
     ...(req.ci ? { ci: req.ci } : {}),
   });
+  if (store.getPr(req.pr)?.head_sha.toLowerCase() !== head.toLowerCase())
+    return done({ action: "noop", reason: "stale-head", class: "empty" });
   // Carry-forward: a withheld approval pinned to an old sha would be stranded
   // — the retry no-ops on "head-moved", and the recheck can never approve.
   // When the delta itself upholds (empty/trivial), the never-posted approval
@@ -1624,6 +1639,17 @@ export class RecheckWatcher {
     );
   }
 
+  private superseded(pr: number, head: string): boolean {
+    const { store } = this.deps;
+    const mark = store.reviewedHead(pr);
+    if (!mark || mark.head_sha.toLowerCase() === head.toLowerCase()) return false;
+    if (mark.head_sha.toLowerCase() === store.getPr(pr)?.head_sha.toLowerCase()) return true;
+    const claims = store
+      .rechecksFor(pr)
+      .filter((claim) => claim.head_sha.toLowerCase() === head.toLowerCase());
+    return claims.some((claim) => mark.reviewed_at > claim.created_at);
+  }
+
   async handleFile(name: string): Promise<boolean> {
     const match = RECHECK_FILE_RE.exec(name);
     if (!match || this.inFlight.has(name)) return false;
@@ -1676,11 +1702,24 @@ export class RecheckWatcher {
           applied: "uphold",
         });
 
+      if (this.superseded(pr, d.head_sha)) {
+        this.deps.store.logEvent("recheck_decision_superseded", pr, {
+          file: name,
+          head_sha: d.head_sha,
+        });
+        this.archive(name);
+        return true;
+      }
       if (d.outcome === "request_changes") {
         // The reasoning behind a backed-down approval. Best-effort
         // and strictly additive: a missing record here is logged and nothing
         // else — the decision above is what moves the PR.
         await this.recordRecheckFindings(pr, d.head_sha);
+        // Ingestion yields: a newer round may have settled in the meantime.
+        if (this.superseded(pr, d.head_sha)) {
+          this.archive(name);
+          return true;
+        }
         // Approval is off the table now — a lingering withheld mark would let
         // a later green CI re-queue "for the withheld approval" of a PR whose
         // standing verdict this very decision just flipped.
