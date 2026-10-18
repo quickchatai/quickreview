@@ -14,6 +14,7 @@
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
 // prompt renderer (src/templates.ts) is injected so this module has no content
 // dependency.
+import { deltaFollowUpEnabled } from "./followup-mode.js";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
@@ -1435,7 +1436,7 @@ export async function decideFollowUp(
   const { cfg, store } = deps;
   const full = (reason: FollowUpFullReason, detail?: Record<string, unknown>) =>
     ({ kind: "full", reason, ...(detail ? { detail } : {}) }) as const;
-  if ((cfg.review.follow_up ?? REVIEW_DEFAULTS.follow_up) !== "delta")
+  if (!deltaFollowUpEnabled(cfg))
     return full("follow_up_full");
   if (!args.markHead) return full("no-reviewed-head");
   if (!args.tree || !args.tree.merge_base || !deps.prOwnedDelta) return full("no-adapter");

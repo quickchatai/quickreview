@@ -636,13 +636,9 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
       return;
     }
     firing = true;
-    void fireSettled(date).then((outcome) => {
-      settle(date, outcome);
-      if (!stopped) {
-        target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
-        arm();
-      }
-    });
+    target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
+    arm();
+    void fireSettled(date).then((outcome) => settle(date, outcome));
   };
 
   arm();

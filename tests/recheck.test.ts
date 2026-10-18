@@ -51,6 +51,17 @@ function file(partial: Partial<DeltaFile> & { filename: string }): DeltaFile {
 // ---- the one classifier ---------------------------------------------------
 
 describe("trivial-delta classifier", () => {
+  it("recognizes a plain version-file release bump but keeps arbitrary text significant", () => {
+    for (const filename of ["VERSION", "nested/version.txt"]) {
+      expect(
+        classifyDelta([file({ filename, patch: "@@ -1 +1 @@\n-1.2.3\n+1.2.4" })]).files[0]?.reason,
+      ).toBe("version-bump");
+      expect(classifyDelta([file({ filename, patch: "@@ -1 +1 @@\n-alpha\n+beta" })]).class).toBe(
+        "significant",
+      );
+    }
+  });
+
   it("calls a real content change significant", () => {
     const d = classifyDelta([
       file({
@@ -701,6 +712,19 @@ function harness(over: Partial<RecheckDeps> = {}): Harness {
 }
 
 describe("runRecheck", () => {
+  it("does not spend or wake for CI completion at an obsolete head", async () => {
+    const h = harness();
+    const result = await runRecheck(h.deps, {
+      pr: PR,
+      trigger: "ci",
+      head_sha: OLD,
+      ci: { conclusion: "failure" },
+    });
+    expect(result.action).toBe("noop");
+    expect(h.adapter.calls).toEqual([]);
+    expect(h.injected).toEqual([]);
+  });
+
   it(
     "nudges the PR's own session once, and never again for the same trigger",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -741,6 +765,8 @@ describe("runRecheck", () => {
   // refused as a duplicate by the posting guard.
   it("a same-head CI recheck records new evidence on the mark guard 2 reads", async () => {
     const h = harness();
+    // CI concerns the current approved head; an obsolete head is refused separately.
+    h.store.db.prepare("UPDATE pr_state SET head_sha=? WHERE number=?").run(OLD, PR);
     expect(hasNewEvidence(h.store.reviewedHead(PR), OLD)).toBe(false);
     const out = await runRecheck(h.deps, {
       pr: PR,
@@ -770,6 +796,8 @@ describe("runRecheck", () => {
   // held while paused, asked once the pause lifts.
   it("defers a CI recheck on a paused PR and asks it after the resume", async () => {
     const h = harness();
+    // CI concerns the current approved head; an obsolete head is refused separately.
+    h.store.db.prepare("UPDATE pr_state SET head_sha=? WHERE number=?").run(OLD, PR);
     h.store.pausePr(PR, { issuer: "operator", expires_at: null }, "hold");
     const out = await runRecheck(h.deps, {
       pr: PR,
@@ -797,6 +825,8 @@ describe("runRecheck", () => {
   // keeps its claim and holds the nudge for the flush paths.
   it("holds a CI recheck whose injection fails instead of dropping it", async () => {
     const h = harness();
+    // CI concerns the current approved head; an obsolete head is refused separately.
+    h.store.db.prepare("UPDATE pr_state SET head_sha=? WHERE number=?").run(OLD, PR);
     h.deps.inject = async () => {
       throw new Error("session pr-5109 failed its readiness deadline");
     };
@@ -816,6 +846,8 @@ describe("runRecheck", () => {
   // delta read must not lose it: the question goes out with the delta unread.
   it("asks an adverse CI question with the delta unread when the read fails", async () => {
     const h = harness();
+    // CI concerns the current approved head; an obsolete head is refused separately.
+    h.store.db.prepare("UPDATE pr_state SET head_sha=? WHERE number=?").run(OLD, PR);
     h.adapter.compareFiles = async () => {
       throw new Error("GitHub 502");
     };
@@ -1182,6 +1214,23 @@ describe("recheck decisions", () => {
     (
       store.db.prepare("SELECT kind FROM events WHERE pr = ?").all(PR) as Array<{ kind: string }>
     ).map((e) => e.kind);
+
+  it.each(["APPROVE", "REQUEST_CHANGES"])(
+    "a superseded decision preserves a newer %s review lifecycle and withheld mark",
+    async (verdict) => {
+      const newer = "3".repeat(40);
+      store.db
+        .prepare("UPDATE pr_state SET head_sha=?,state='tracked' WHERE number=?")
+        .run(newer, PR);
+      store.recordReviewedHead(PR, { head_sha: newer, verdict, round_no: 2 });
+      store.recordApprovalWithheld(PR, { head_sha: newer, ci_state: "red", reason: "red-ci" });
+      write({ pr: PR, head_sha: HEAD, outcome: "request_changes", reason: "old result" });
+      await watcher.sweep();
+      expect(store.getPr(PR)?.state).toBe("tracked");
+      expect(standingVerdict(store.reviewedHead(PR))).toBe(verdict);
+      expect(store.approvalWithheld(PR)?.head_sha).toBe(newer);
+    },
+  );
 
   // fs.watch fires before the session's write completes; an eager single read
   // would archive a valid uphold as "unparseable".

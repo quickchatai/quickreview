@@ -109,6 +109,7 @@
 // stay owed, and the steps resume the first tick no round is in flight. An
 // answer `reviews` cannot give is UNKNOWN and holds the history the same way
 // — never read as "none in flight".
+import { prAuthorOf as prAuthorOf } from "./pr-author.js";
 import { createHash } from "node:crypto";
 import type { ReviewCommentFull } from "./github.js";
 import { cleanQuotedText, fenceAsData } from "./memory/datafence.js";
@@ -496,12 +497,6 @@ const OWED_ORDER = "owed_since, name";
 
 /** The PR's author's login, from the live row or the backfill's — null when
  * neither knows (every reply then reads "a human"). */
-function prAuthorOf(store: StateStore, pr: number): string | null {
-  const live = store.getPr(pr)?.author;
-  if (live) return live;
-  const meta = store.backfillPrMeta(pr)?.author;
-  return meta ? meta : null;
-}
 
 /**
  * The cases one PR's facts call for, and — for every posted finding — which
