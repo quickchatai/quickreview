@@ -26,11 +26,7 @@ export const LENS_WAVE_TOOL = "lens_wave";
  * launch_plan, which returns the same result). */
 export const LEGACY_LENS_TOOLS: readonly string[] = ["subagent", "launch_plan"];
 
-const LENS_TOOLS: ReadonlySet<string> = new Set([
-  LENS_TOOL,
-  LENS_WAVE_TOOL,
-  ...LEGACY_LENS_TOOLS,
-]);
+const LENS_TOOLS: ReadonlySet<string> = new Set([LENS_TOOL, LENS_WAVE_TOOL, ...LEGACY_LENS_TOOLS]);
 
 /** Whether `name` is a tool whose result lists lens children. */
 export function isLensTool(name: unknown): boolean {

@@ -40,15 +40,17 @@
 
 import { singleLineComment } from "./artifacts.js";
 import { childResults } from "./aacr.js";
+import { isLensTool, lensIdOf, LensOnce } from "../lensresult.js";
 import { findingRecordKey, recordSide } from "../findingkey.js";
 import { canonicalLensIds } from "../lensids.js";
 import { normalizeDisposition } from "../findingsrecord.js";
 
 // ---- the lens outputs in pi's JSON event stream -------------------------------
 
-/** One lens (or validator) pass, as the `subagent` tool reported it. */
+/** One lens (or validator) pass, as the lens tool (`subagent`, `launch_plan`,
+ * `lens`, `lens_wave`) reported it. */
 export interface LensOutput {
-  /** 0-based index of the `subagent` tool call in the stream. */
+  /** 0-based index of the lens tool call in the stream. */
   call: number;
   /** The built agent name, e.g. `pass-baseline--terra-med`. */
   agent: string;
@@ -89,6 +91,7 @@ function textOf(message: unknown): string {
  */
 export function lensOutputsFromEvents(lines: Iterable<string>): LensOutput[] {
   const out: LensOutput[] = [];
+  const once = new LensOnce();
   let call = 0;
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -98,14 +101,12 @@ export function lensOutputsFromEvents(lines: Iterable<string>): LensOutput[] {
     } catch {
       continue;
     }
-    // `launch_plan` returns the subagent tool's own parallel result.
-    if (
-      e["type"] !== "tool_execution_end" ||
-      (e["toolName"] !== "subagent" && e["toolName"] !== "launch_plan")
-    )
-      continue;
+    // `launch_plan` returns the subagent tool's own parallel result;
+    // `lens_wave` returns the wave's, which a later call can return again.
+    if (e["type"] !== "tool_execution_end" || !isLensTool(e["toolName"])) continue;
     const results = childResults(e);
     for (const r of results) {
+      if (!once.claim(lensIdOf(r))) continue;
       const row = (typeof r === "object" && r !== null ? r : {}) as Record<string, unknown>;
       const agent = typeof row["agent"] === "string" ? row["agent"] : "";
       const messages = Array.isArray(row["messages"]) ? (row["messages"] as unknown[]) : [];
