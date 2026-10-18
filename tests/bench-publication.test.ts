@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { BenchCase, CaseSet } from "../src/bench/aacr.js";
 import { claudeRebuildRun } from "../src/bench/claudecode.js";
 import { judgeCase, roundFile } from "../src/bench/defectjudge.js";
+import { writeWhatifRun } from "../src/bench/whatifrun.js";
 import { recordUnprefetched, writeResults } from "../src/bench/runner.js";
 
 const fault = vi.hoisted(() => ({ destination: "" }));
@@ -119,4 +120,37 @@ it("resumes an unreadable judgement checkpoint as unproven work", async () => {
   expect(rows).toHaveLength(1);
   expect(rows[0]?.error).toBeUndefined();
   expect(JSON.parse(readFileSync(roundFile(dir, c.instance_id, 1), "utf8")).model).toBe("m");
+});
+
+it("a byte-identical what-if rebuild keeps the existing completed variant untouched", () => {
+  const source = join(dir, "source/results/all");
+  mkdirSync(source, { recursive: true });
+  writeFileSync(
+    join(source, `${c.instance_id}.json`),
+    JSON.stringify({ review: { comments: [] } }),
+  );
+  writeWhatifRun(dir, [c]);
+  fault.destination = join(dir, "results/posted", `${c.instance_id}.json`);
+  expect(() => writeWhatifRun(dir, [c])).not.toThrow();
+});
+it("an interrupted changed what-if variant retains its old complete bytes", () => {
+  const source = join(dir, "source/results/all");
+  mkdirSync(source, { recursive: true });
+  const input = join(source, `${c.instance_id}.json`);
+  writeFileSync(input, JSON.stringify({ review: { comments: [] } }));
+  writeWhatifRun(dir, [c]);
+  const file = join(dir, "results/posted", `${c.instance_id}.json`);
+  const before = readFileSync(file, "utf8");
+  const metrics = join(dir, "results/posted/metrics_ocr_round_1.json");
+  writeFileSync(metrics, "{}");
+  writeFileSync(
+    input,
+    JSON.stringify({
+      review: { comments: [{ path: "a.ts", start_line: 1, end_line: 1, content: "New finding" }] },
+    }),
+  );
+  fault.destination = file;
+  expect(() => writeWhatifRun(dir, [c])).toThrow("publication interrupted");
+  expect(readFileSync(file, "utf8")).toBe(before);
+  expect(existsSync(metrics)).toBe(false);
 });

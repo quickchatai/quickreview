@@ -13,6 +13,7 @@
 // A slim re-score bundle has no transcripts: its case-summary.json carries
 // the price the export computed from the full case dir (`bench_cost_usd`,
 // null = unpriced), which wins for every arm, as compare.py reads it.
+import { finiteNumber as num, usageCost } from "./values.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -65,10 +66,6 @@ export interface CaseCost {
  * `SLIM_COST_KEY`). */
 export const SLIM_COST_KEY = "bench_cost_usd";
 
-function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
-}
-
 export function caseCostUsd(caseDir: string): CaseCost | null {
   const events = join(caseDir, "pi-events.jsonl");
   if (existsSync(events)) {
@@ -93,9 +90,7 @@ export function caseCostUsd(caseDir: string): CaseCost | null {
         (e.toolName === "subagent" || e.toolName === "launch_plan")
       )
         for (const r of e.result?.details?.results ?? []) {
-          const c = r.usage?.cost;
-          usd +=
-            typeof c === "object" && c !== null ? num((c as { total?: unknown }).total) : num(c);
+          usd += usageCost(r.usage?.cost);
         }
     }
     return { usd, source: "pi" };

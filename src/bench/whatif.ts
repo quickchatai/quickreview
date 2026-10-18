@@ -38,7 +38,10 @@
 // matches reachable exactly as before: any match the control makes and a
 // posted+ variant loses is judge noise, and the report says so.
 
+import { singleLineComment } from "./artifacts.js";
+import { childResults } from "./aacr.js";
 import { findingRecordKey, recordSide } from "../findingkey.js";
+import { canonicalLensIds } from "../lensids.js";
 import { normalizeDisposition } from "../findingsrecord.js";
 
 // ---- the lens outputs in pi's JSON event stream -------------------------------
@@ -101,9 +104,7 @@ export function lensOutputsFromEvents(lines: Iterable<string>): LensOutput[] {
       (e["toolName"] !== "subagent" && e["toolName"] !== "launch_plan")
     )
       continue;
-    const details = (e["result"] as Record<string, unknown> | undefined)?.["details"] as
-      Record<string, unknown> | undefined;
-    const results = Array.isArray(details?.["results"]) ? (details["results"] as unknown[]) : [];
+    const results = childResults(e);
     for (const r of results) {
       const row = (typeof r === "object" && r !== null ? r : {}) as Record<string, unknown>;
       const agent = typeof row["agent"] === "string" ? row["agent"] : "";
@@ -372,10 +373,7 @@ export function parseFindingsRecord(raw: unknown): RecordFinding[] {
     out.push({
       id: findingRecordKey(r, i),
       disposition: disposition === "unknown" ? written : disposition,
-      lenses: lensRaw
-        .split(/[,\s/+&]+/)
-        .map(normalizeLens)
-        .filter((x) => x !== "" && x !== "pass-"),
+      lenses: canonicalLensIds(lensRaw),
       path: cleanPath(str("path") ?? "").path,
       side: recordSide(r["side"]),
       ...(line !== undefined ? { line } : {}),
@@ -684,7 +682,11 @@ export function allCandidateExtras(
 /** Whether the scorer gets an extra at all (`toOcrComments`): a line, on the
  * head side. */
 function scoreable(x: ExtraCandidate): boolean {
-  return x.side !== "LEFT" && x.line !== undefined;
+  return exclusionOf(x) === null;
+}
+
+function exclusionOf(x: ExtraCandidate): keyof WhatifExcluded | null {
+  return x.side === "LEFT" ? "left_side" : x.line === undefined ? "no_line" : null;
 }
 
 export interface WhatifExcluded {
@@ -701,19 +703,13 @@ export function toOcrComments(extras: readonly ExtraCandidate[]): {
   const excluded = { left_side: 0, no_line: 0 };
   const comments: OcrComment[] = [];
   for (const x of extras) {
-    if (x.side === "LEFT") {
-      excluded.left_side++;
-      continue;
-    }
-    if (x.line === undefined) {
-      excluded.no_line++;
+    const reason = exclusionOf(x);
+    if (reason !== null) {
+      excluded[reason]++;
       continue;
     }
     comments.push({
-      path: x.path,
-      start_line: x.line,
-      end_line: x.line,
-      content: x.content,
+      ...singleLineComment(x.path, x.line!, x.content),
       qcr_whatif: x.prov,
     });
   }

@@ -11,10 +11,12 @@
 //   whatif/<id>/whatif-cases.json  per-case counts
 //   whatif/<id>/report.md          the numbers + what each variant newly matched
 
+import { singleLineComment } from "./artifacts.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CASE_FILES, safeId, type BenchCase, type CaseSet } from "./aacr.js";
 import { dropMetricsFiles, latestMetrics, metricsFiles } from "./report.js";
+import { publishChangedResult, readJsonValue as readJson } from "./publication.js";
 import { collectComments } from "./runner.js";
 import {
   ADDED_DISPOSITIONS,
@@ -45,14 +47,6 @@ interface SourceRun {
   qcr_commit?: string;
   pi?: string;
   models?: { conversation?: string };
-}
-
-function readJson(path: string): unknown {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return undefined;
-  }
 }
 
 export interface WhatifCaseSummary {
@@ -161,7 +155,7 @@ export function buildWhatifCase(
   let rebuilds: boolean | null = null;
   if (existsSync(join(caseDir, CASE_FILES.comments))) {
     const collected = collectComments(caseDir).comments.filter((x) => x.side !== "LEFT");
-    const want = collected.map((x) => [x.path, x.line, x.body] as [string, number, string]);
+    const want = scoredTuples({ review: { comments: collected.map((x) => singleLineComment(x.path, x.line, x.body)) } });
     rebuilds = JSON.stringify(want) === JSON.stringify(scoredTuples(posted));
   }
 
@@ -226,14 +220,9 @@ export function writeWhatifRun(outDir: string, cases: readonly BenchCase[]): Wha
     for (const v of WHATIF_VARIANTS) {
       const file = join(outDir, "results", v, `${id}.json`);
       const text = JSON.stringify(built.results[v], null, 2) + "\n";
-      let before: string | null = null;
-      try {
-        before = readFileSync(file, "utf8");
-      } catch {
-        // no earlier result for this case
-      }
-      if (before !== text) dropMetricsFiles(join(outDir, "results", v));
-      writeFileSync(file, text);
+      publishChangedResult(file, text, () => {
+        dropMetricsFiles(join(outDir, "results", v));
+      });
     }
     writeFileSync(
       join(outDir, "extract", `${id}.json`),

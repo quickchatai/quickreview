@@ -46,6 +46,8 @@
 // other arms'. PR-Agent carries no blocker/nit tags, so only the `all` variant
 // exists for this arm.
 
+import { bridgeApiBase } from "./values.js";
+import { integerOrNull as lineOf } from "./values.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { publishText, readJsonObject } from "./publication.js";
@@ -109,7 +111,7 @@ export function pragentDriverArgv(o: {
     "--model",
     o.model,
     "--api-base",
-    `${o.bridgeUrl.replace(/\/+$/, "")}/v1`,
+    bridgeApiBase(o.bridgeUrl),
     ...(o.titleFile === null && o.bodyFile === null
       ? ["--no-pr-text"]
       : [
@@ -183,12 +185,6 @@ export function readCapture(path: string): PragentCapture | null {
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "";
-}
-
-function lineOf(v: unknown): number | null {
-  if (typeof v === "number" && Number.isInteger(v)) return v;
-  if (typeof v === "string" && /^\s*\d+\s*$/.test(v)) return Number(v.trim());
-  return null;
 }
 
 /** A path as the scorer reads it: repo-relative, no `./`, no git `a/`/`b/`. */

@@ -357,6 +357,10 @@ export function parseClaudeProse(
       if (lineOnly && file) {
         const a = Number(lineOnly[1]);
         const e = lineOnly[2] ? Number(lineOnly[2]) : a;
+        if (a < 1 || e < 1) {
+          skipped.unlocated++;
+          continue;
+        }
         cands.push({
           written: file,
           start: Math.min(a, e),

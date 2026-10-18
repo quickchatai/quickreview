@@ -279,8 +279,8 @@ export function isPanelMeta(meta: PireviewMeta): boolean {
  * A panel's findings as the benchmark scores them: one per cluster, confirmed
  * clusters first, then the advisories — each the cluster's canonical source
  * finding (pi-review's own pick: the first actionable one, else the first),
- * with the cluster's path when the canonical finding has none and the first
- * location any of its source findings carries. A cluster whose source findings
+ * with a source finding's path and location kept together when an anchor is
+ * borrowed. The cluster path fills a missing path on that same source. A cluster whose source findings
  * are missing from the meta falls back to its own summary/severity/path.
  */
 export function panelFindings(meta: PireviewMeta): PireviewFinding[] {
@@ -291,15 +291,16 @@ export function panelFindings(meta: PireviewMeta): PireviewFinding[] {
       .map((id) => byId.get(id))
       .filter((f): f is PireviewFinding => f !== undefined);
     const canonical = sources.find((f) => f.actionable) ?? sources[0];
-    const location = canonical?.location ?? sources.find((f) => f.location)?.location;
-    const path = canonical?.path ?? sources.find((f) => f.path)?.path ?? cl.path;
+    const anchor = canonical?.location ? canonical : sources.find((f) => f.location);
+    const location = anchor?.location;
+    const path = anchor ? (anchor.path ?? cl.path) : (canonical?.path ?? cl.path);
     out.push({
       ...(canonical ?? { summary: cl.summary, actionable: cl.confirmed }),
       ...((canonical?.severity ?? cl.severity)
         ? { severity: canonical?.severity ?? cl.severity }
         : {}),
-      ...(path ? { path } : {}),
-      ...(location ? { location } : {}),
+      path,
+      location,
       actionable: cl.confirmed,
     });
   }

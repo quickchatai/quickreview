@@ -342,7 +342,7 @@ export function renderReport(
     reanchored += s.comments.reanchored ?? 0;
     const t = s.comments.by_tag;
     L.push(
-      `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status}${s.continued ? " (continued)" : ""} | ${s.verdict ?? "—"} | ${t["blocker"] ?? 0}/${t["question"] ?? 0}/${t["nit"] ?? 0}/${t["other"] ?? 0} | ${s.comments.body ?? 0} | ${s.comments.left_side} | ${s.planned_lenses.length} → ${s.executed_passes.length} | ${(s.duration_seconds / 60).toFixed(1)} | ${Math.round((s.usage.input + s.usage.cacheRead) / 1000)}k/${Math.round(s.usage.output / 1000)}k |`,
+      `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status}${s.continued ? " (continued)" : ""} | ${s.verdict ?? "—"} | ${t["blocker"] ?? 0}/${t["question"] ?? 0}/${t["nit"] ?? 0}/${t["other"] ?? 0} | ${s.comments.body ?? 0} | ${s.comments.left_side} | ${s.planned_lenses.length} → ${s.executed_passes.length} | ${(s.duration_seconds / 60).toFixed(1)} | ${kTokens(s.usage.input + s.usage.cacheRead)}/${kTokens(s.usage.output)} |`,
     );
   }
   const warned = summaries.filter(

@@ -26,6 +26,7 @@
 // scored as comments. Each inline comment's record entry is the one
 // `placePosted` pairs it with, one to one: cutting a comment marks ITS entry,
 // never a neighbour's, and a comment with none gets a synthesised entry.
+import { commentsEnvelope } from "./artifacts.js";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -37,7 +38,14 @@ import {
   type PostingPolicy,
   type WithholdWord,
 } from "../postingpolicy.js";
-import { markWithheld, postedClassOf, recordPostingKeys, withheldReason } from "../reviewrender.js";
+import {
+  entriesById,
+  rootCauseId,
+  markWithheld,
+  postedClassOf,
+  recordPostingKeys,
+  withheldReason,
+} from "../reviewrender.js";
 import { normalizeDisposition, recordSide } from "../findingkey.js";
 import { stripSanctionedTags } from "../severity.js";
 import {
@@ -206,13 +214,7 @@ export function policeBenchOutput(args: {
 }): { comments: unknown[]; reviewMd: string; record: unknown; report: BenchPostingReport } {
   const { policy } = args;
   const runs = args.patches ? runsByPath(args.patches) : undefined;
-  const rawRows: unknown[] = Array.isArray(args.comments)
-    ? args.comments
-    : typeof args.comments === "object" &&
-        args.comments !== null &&
-        Array.isArray((args.comments as { comments?: unknown }).comments)
-      ? (args.comments as { comments: unknown[] }).comments
-      : [];
+  const rawRows = commentsEnvelope(args.comments);
   const record =
     typeof args.record === "object" && args.record !== null && !Array.isArray(args.record)
       ? (structuredClone(args.record) as Record<string, unknown>)
@@ -340,7 +342,17 @@ export function policeBenchOutput(args: {
 
   // The body.
   const counts = { blocker: 0, nit: 0, question: 0 };
-  for (const it of sel.kept) if (it.cls !== "check") counts[it.cls] += 1;
+  const byId = entriesById(entries);
+  const representatives = new Map<string | Item, Item>();
+  const strength = (item: Item): number =>
+    ({ blocker: 3, question: 2, nit: 1, check: 0 })[item.cls];
+  for (const item of sel.kept) {
+    const id = str(item.entry?.id);
+    const key = id ? rootCauseId(id, str(item.entry?.same_as) || null, byId) : item;
+    const previous = representatives.get(key);
+    if (!previous || strength(item) > strength(previous)) representatives.set(key, item);
+  }
+  for (const item of representatives.values()) if (item.cls !== "check") counts[item.cls] += 1;
   const label = verdictLabel(args.reviewMd, args.outcome.verdict);
   let reviewMd: string;
   if (policy.body === "verdict") {

@@ -831,7 +831,7 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
         outDir: join(t, "b"),
         env: { PATH: process.env.PATH, ANTHROPIC_API_KEY: "k" },
       }),
-    ).rejects.toThrow(/another arm/);
+    ).rejects.toThrow(/belongs to .*Claude/);
   });
 });
 

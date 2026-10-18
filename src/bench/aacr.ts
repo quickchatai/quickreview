@@ -27,6 +27,8 @@
 // credential, so the override is backed by an environment in which posting is
 // impossible rather than merely forbidden.
 
+import { CASE_FILES, commentsEnvelope, prDescription, singleLineComment } from "./artifacts.js";
+import { usageCost } from "./values.js";
 import { postedSeverityTag, RENDER_RECORD_FIELDS } from "../reviewrender.js";
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, POSTING_TAG_WORDS } from "../severity.js";
 import type { PrFileEntry } from "../github.js";
@@ -694,12 +696,7 @@ export interface AppendixArgs {
 }
 
 /** Output files the session writes, relative to its case dir. */
-export const CASE_FILES = {
-  comments: "comments.json",
-  review: "review.md",
-  findings: "findings-record.json",
-  outcome: "outcome.json",
-} as const;
+export { CASE_FILES } from "./artifacts.js";
 
 /**
  * The benchmark override appended AFTER the rendered production round order.
@@ -792,11 +789,7 @@ export function benchAppendix(a: AppendixArgs): string {
       "_The title and description could not be retrieved for this replay. Review the code on its own._",
     );
   } else {
-    L.push(`Title: ${a.title ?? "(unavailable)"}`);
-    L.push("");
-    L.push("```text");
-    L.push((a.body ?? "(no description)").replaceAll("```", "ʼʼʼ"));
-    L.push("```");
+    L.push(...prDescription(a));
   }
   L.push("");
   return L.join("\n");
@@ -957,14 +950,7 @@ export function posInt(v: unknown): number | undefined {
  * never reached.
  */
 export function parseSessionComments(raw: unknown): { comments: BenchComment[]; dropped: number } {
-  const rows = Array.isArray(raw)
-    ? raw
-    : typeof raw === "object" &&
-        raw !== null &&
-        Array.isArray((raw as { comments?: unknown }).comments)
-      ? (raw as { comments: unknown[] }).comments
-      : null;
-  if (rows === null) return { comments: [], dropped: 0 };
+  const rows = commentsEnvelope(raw);
   const comments: BenchComment[] = [];
   let dropped = 0;
   for (const row of rows) {
@@ -1021,6 +1007,12 @@ export interface BenchSite {
  * record and comment order. A null entry never pairs. Per entry: the index of
  * its comment, or null.
  */
+/** Distance from one finding site to a comment's inclusive span. */
+function spanDistance(site: BenchSite, span: BenchSite): number {
+  const lo = Math.min(span.start_line ?? span.line, span.line);
+  return site.line < lo ? lo - site.line : site.line > span.line ? site.line - span.line : 0;
+}
+
 export function pairWithInline(
   entries: readonly (BenchSite | null)[],
   comments: readonly BenchSite[],
@@ -1030,8 +1022,7 @@ export function pairWithInline(
     if (!e) return;
     comments.forEach((c, ci) => {
       if (c.path !== e.path) return;
-      const lo = Math.min(c.start_line ?? c.line, c.line);
-      const d = e.line < lo ? lo - e.line : e.line > c.line ? e.line - c.line : 0;
+      const d = spanDistance(e, c);
       if (d > NEAR_LINES) return;
       const mismatch = e.tag !== undefined && c.tag !== undefined && e.tag !== c.tag ? 1 : 0;
       cands.push([d, mismatch, ei, ci]);
@@ -1100,8 +1091,7 @@ export function placePosted(
   const inBody: Array<{ site: BenchSite; posted: number }> = [];
   const near = (site: BenchSite, x: BenchSite): boolean =>
     x.path === site.path &&
-    site.line >= Math.min(x.start_line ?? x.line, x.line) - NEAR_LINES &&
-    site.line <= x.line + NEAR_LINES;
+    spanDistance(site, x) <= NEAR_LINES;
   return sites.map((site, i): PostedPlace | null => {
     if (!site) return null;
     const c = pairs[i];
@@ -1277,16 +1267,7 @@ export function toOcrResult(
       variant++;
       continue;
     }
-    out.push({
-      path: c.path,
-      // Single-line, as production posts it: scripts/post-review.sh keeps
-      // only path/line/side/body, so a multi-line span the session wrote is
-      // never what reaches GitHub — scoring the span would credit location
-      // matches production does not make.
-      start_line: c.line,
-      end_line: c.line,
-      content: c.body,
-    });
+    out.push(singleLineComment(c.path, c.line, c.body));
   }
   const { unparseable, ...rest } = meta;
   return {
@@ -1317,7 +1298,7 @@ function addUsage(into: Usage, x: unknown): void {
 
 /** The child results a `tool_execution_end` event of the native subagent
  * tool carries (`result.details.results`); [] for any other shape. */
-function childResults(e: Record<string, unknown>): unknown[] {
+export function childResults(e: Record<string, unknown>): unknown[] {
   const res = e["result"] as Record<string, unknown> | undefined;
   const details = res?.["details"] as Record<string, unknown> | undefined;
   return Array.isArray(details?.["results"]) ? (details["results"] as unknown[]) : [];
@@ -1407,14 +1388,6 @@ export interface Stages {
   phases: { delta: StageTotals; sweep: StageTotals };
 }
 
-function costOf(c: unknown): number {
-  if (typeof c === "number" && Number.isFinite(c)) return c;
-  if (typeof c === "object" && c !== null) {
-    const t = (c as { total?: unknown }).total;
-    return typeof t === "number" && Number.isFinite(t) ? t : 0;
-  }
-  return 0;
-}
 
 /**
  * Split one review's pi `--mode json` stream into its subagent calls, each
@@ -1491,7 +1464,7 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
         const u = r["usage"] as Record<string, unknown> | undefined;
         if (u) {
           addUsage(call.usage, u);
-          call.cost += costOf(u["cost"]);
+          call.cost += usageCost(u["cost"]);
           call.children++;
         }
         for (const msg of Array.isArray(r["messages"]) ? (r["messages"] as unknown[]) : []) {
