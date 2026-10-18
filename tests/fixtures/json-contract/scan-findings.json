@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "total": 2,
+  "validity": {
+    "confirmed": 0,
+    "likely": 0,
+    "doubtful": 0,
+    "unknown": 2
+  },
+  "findings": [
+    {
+      "fingerprint": "a40ea4791cda9cc9e09086f621285a7bbc21bf0a66216c157fecf927a5ac639d",
+      "file": "app/a.py",
+      "range": {
+        "start": 1,
+        "end": 2
+      },
+      "lens": "pass-scan",
+      "lenses": [
+        "pass-scan"
+      ],
+      "unit": "app",
+      "kind": "bug",
+      "severity": "P2",
+      "validity": "unknown",
+      "state": "new",
+      "claim": "it breaks",
+      "doubted": false,
+      "doubt": null,
+      "looks_like_dismissed": null,
+      "dismissal_reason": null,
+      "ticket": null,
+      "first_seen": {
+        "run": "scan-20260929T100001Z",
+        "sha": "0000000000000000000000000000000000000000"
+      },
+      "last_seen": {
+        "run": "scan-20260929T100001Z",
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "fingerprint": "a99df7ff7429270fb650db0b0a9e13f82b058848585b19fe5d7773c74a6659e6",
+      "file": "lib/b.py",
+      "range": {
+        "start": 1,
+        "end": 2
+      },
+      "lens": "pass-scan",
+      "lenses": [
+        "pass-scan"
+      ],
+      "unit": "lib",
+      "kind": "bug",
+      "severity": "P2",
+      "validity": "unknown",
+      "state": "new",
+      "claim": "it breaks",
+      "doubted": false,
+      "doubt": null,
+      "looks_like_dismissed": null,
+      "dismissal_reason": null,
+      "ticket": null,
+      "first_seen": {
+        "run": "scan-20260929T100001Z",
+        "sha": "0000000000000000000000000000000000000000"
+      },
+      "last_seen": {
+        "run": "scan-20260929T100001Z",
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    }
+  ]
+}

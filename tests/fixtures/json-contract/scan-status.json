@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "problems": [],
+  "run": {
+    "id": "scan-20260929T100001Z",
+    "mode": "calibration",
+    "sha": "0000000000000000000000000000000000000000",
+    "state": "complete",
+    "display": "complete",
+    "depth": "standard",
+    "started_at": "2026-09-29T10:00:01.000Z",
+    "finished_at": "2026-09-29T10:00:09.000Z",
+    "cap_usd": 3,
+    "estimate_usd": null,
+    "spent_usd": 0.04,
+    "unpriced_cases": 0,
+    "cases_total": 2,
+    "cases_done": 2,
+    "cases_failed": 0,
+    "findings": 2,
+    "doubted": 0,
+    "matching": {
+      "fixed": 0,
+      "pending": 0,
+      "not_reproduced": 0,
+      "dismissed_unreported": 0
+    },
+    "tickets_closed": 0,
+    "problems": [],
+    "cases": [
+      {
+        "id": "lib",
+        "unit": "lib",
+        "status": "done",
+        "findings": 1,
+        "doubted": 0,
+        "cost_usd": 0.02,
+        "error": null
+      },
+      {
+        "id": "app",
+        "unit": "app",
+        "status": "done",
+        "findings": 1,
+        "doubted": 0,
+        "cost_usd": 0.02,
+        "error": null
+      }
+    ]
+  },
+  "active": false,
+  "history": [],
+  "ledger": {
+    "files": 2,
+    "deep_files": 0,
+    "cost_usd": 0.04
+  }
+}

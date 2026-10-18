@@ -75,6 +75,7 @@ import { prepareHostRun } from "./hostroute.js";
 import { AuthExpiring } from "./piauthcopy.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
+import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
 import {
   branchTargetKey,
   prTargetKey,
@@ -396,7 +397,7 @@ async function runReview(
     }
     // A file-only destination still tells the terminal what happened.
     if (to.has("terminal") || !to.has("json")) deps.out(human);
-    if (to.has("json")) deps.out(JSON.stringify(data));
+    if (to.has("json")) deps.out(JSON.stringify(withSchemaVersion(REVIEW_SCHEMA_VERSION, data)));
   };
   const say = (human: string, data: Record<string, unknown>): void => deliver(human, data);
   const refuse = (code: number, errors: string[]): number => {

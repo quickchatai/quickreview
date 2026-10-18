@@ -1924,6 +1924,21 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdReview(rest, json);
       return;
     }
+    case "version": {
+      // The install's identity for a plugin: image version, JSON schema
+      // versions, pi pin (src/version.ts). Needs no config and no state.
+      const { versionInfo, renderVersion } = await import("./version.js");
+      let pin: { package: string; version: string } | null = null;
+      try {
+        const { package: pkg, version } = loadConfig().pi;
+        pin = { package: pkg, version };
+      } catch {
+        // a bare clone has no config.toml: package.json's pi block answers
+      }
+      const info = versionInfo(sandboxRoot(), pin);
+      console.log(json ? JSON.stringify(info) : renderVersion(info));
+      return;
+    }
     case "install": {
       process.exitCode = cmdInstall(rest);
       return;
@@ -1934,7 +1949,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
