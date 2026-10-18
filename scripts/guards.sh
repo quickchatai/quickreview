@@ -88,6 +88,8 @@ print("\t".join([state, head, author]))
 
 guard_require_open() { # refuses on merged/closed; fails closed in live mode
   if ! guard_enabled recheck_pr_state_before_post; then
+    # Head and author remain inputs to the other guards and posting identity.
+    guard_read_pr
     GUARD_PR_STATE="open"
     return 0
   fi

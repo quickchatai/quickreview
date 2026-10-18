@@ -232,12 +232,16 @@ if sys.argv[2]:
     out = []
     for i, c in enumerate(comments):
         if not isinstance(c, dict) or not isinstance(c.get("path"), str) \
-           or not isinstance(c.get("line"), int) or c["line"] < 1 \
+           or type(c.get("line")) is not int or c["line"] < 1 \
            or not isinstance(c.get("body"), str):
             raise SystemExit(f"post-review: comment {i}: need path(str), line(int>0), body(str)")
         if "side" in c and c["side"] not in ("RIGHT", "LEFT"):
             raise SystemExit(f"post-review: comment {i}: side must be RIGHT or LEFT")
-        keep = {k: c[k] for k in ("path", "line", "side", "body") if k in c}
+        if "start_line" in c and (type(c["start_line"]) is not int or not 1 <= c["start_line"] <= c["line"]):
+            raise SystemExit("invalid multiline anchor")
+        if "start_side" in c and ("start_line" not in c or c["start_side"] not in ("RIGHT", "LEFT")):
+            raise SystemExit("invalid multiline side")
+        keep = {k: c[k] for k in ("path", "line", "side", "start_line", "start_side", "body") if k in c}
         out.append(keep)
     payload["comments"] = out
 json.dump(payload, sys.stdout)
@@ -251,7 +255,7 @@ fi
 record() { # record <kind> <method> <path> <body-json> <note> — same shape as src/gate.ts
   mkdir -p "$DRYRUN_DIR"
   local file
-  file="$DRYRUN_DIR/$(date -u +%Y-%m-%dT%H-%M-%S-000Z)-0000-$1.json"
+  file="$DRYRUN_DIR/$(date -u +%Y-%m-%dT%H-%M-%S-000Z)-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')-$1.json"
   BODY_JSON="$4" python3 - "$file" "$1" "$2" "$3" "$5" "$PR" <<'PY'
 import json, os, sys, datetime
 path, kind, method, api_path, note, pr = sys.argv[1:7]
