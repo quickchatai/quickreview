@@ -15,6 +15,7 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { TuiConfig } from "../config.js";
+import { tmuxCaptureArgs } from "./termmirror.js";
 
 export interface RemoteResult {
   ok: boolean;
@@ -66,7 +67,8 @@ export function statusArgv(cfg: TuiConfig): string[] {
 function stateReadArgv(cfg: TuiConfig, path: string): string[] {
   return [
     ...(transportOf(cfg) === "local" ? [...dockerPrefix(cfg), cfg.container] : []),
-    "cat", `${cfg.remote_state_dir}/${path}`,
+    "cat",
+    `${cfg.remote_state_dir}/${path}`,
   ];
 }
 
@@ -181,33 +183,9 @@ export function scrolledRange(offset: number): CaptureRange | undefined {
 }
 
 /**
- * The tmux arguments of one embedded-terminal capture, after `tmux` and
- * before any transport: an optional `resize-window` to the painted rectangle,
- * then `capture-pane -e -p -J` over `range`. Both embedded terminals build
- * their capture from this — the board's PR pane through `captureArgv`, the
- * companion column through its local docker runner — so the capture protocol
- * is spelled once.
- */
-export function tmuxCaptureArgs(
-  session: string,
-  range?: CaptureRange,
-  size?: { cols: number; rows: number },
-): string[] {
-  const window: string[] = [];
-  if (range && range.startBack > 0) {
-    window.push("-S", `-${range.startBack}`);
-    if (range.endBack !== undefined && range.endBack > 0) window.push("-E", `-${range.endBack}`);
-  }
-  const resize: string[] = size
-    ? ["resize-window", "-t", session, "-x", String(size.cols), "-y", String(size.rows), ";"]
-    : [];
-  return [...resize, "capture-pane", "-e", "-p", "-J", ...window, "-t", session];
-}
-
-/**
  * Type into a live pi session without attaching to it — the board's mirror pane
  * is an embedded terminal, not a photograph. `parts` comes from `keysToTmux`
- * (pipane.ts): either `["-l", "--", "<literal text>"]` or a run of tmux key names
+ * (termmirror.ts): either `["-l", "--", "<literal text>"]` or a run of tmux key names
  * (`Enter`, `Up`, `C-c`, …).
  *
  * This is the one write the TUI makes against a VM tmux session. It touches
