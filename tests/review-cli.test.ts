@@ -365,3 +365,69 @@ describe("qcr review: the throwaway tree", () => {
     expect(git(repo, "status", "--porcelain")).toBe("");
   });
 });
+
+describe("qcr review: the sandbox", () => {
+  it("runs through the sandbox runner when there is one, on the throwaway tree, and says nothing of the host", async () => {
+    const repo = mkRepo("boxed");
+    setLimit(repo, 1000);
+    const pi = happyPi("boxed");
+    const h = harness({ repo, piBin: pi.bin });
+    const seen: string[] = [];
+    const { runOneShot } = await import("../src/oneshot.js");
+    const warned: string[] = [];
+    const code = await runReviewCli([], false, {
+      ...h.deps,
+      runner: async (i) => {
+        seen.push(i.tree);
+        return runOneShot(i);
+      },
+      warn: (l: string) => warned.push(l),
+    });
+    expect(code).toBe(0);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatch(/\/tree$/);
+    expect(warned).toEqual([]);
+  });
+
+  it("warns once, before the run, when it runs on the host for lack of a sandbox", async () => {
+    const repo = mkRepo("hostwarn");
+    setLimit(repo, 1000);
+    const h = harness({ repo, piBin: happyPi("hostwarn").bin });
+    const warned: string[] = [];
+    const code = await runReviewCli([], true, {
+      ...h.deps,
+      sandboxWarning: "Docker is not available: this review runs on the host",
+      warn: (l: string) => warned.push(l),
+    });
+    expect(code).toBe(0);
+    expect(warned).toEqual(["Docker is not available: this review runs on the host"]);
+    expect(JSON.parse(h.lines[0]!).warnings).toContain(
+      "Docker is not available: this review runs on the host",
+    );
+  });
+
+  it("does not warn for a preview, which runs nothing", async () => {
+    const h = harness({ repo: mkRepo("prevwarn"), piBin: "false" });
+    const warned: string[] = [];
+    await runReviewCli(["--preview"], false, {
+      ...h.deps,
+      sandboxWarning: "no docker",
+      warn: (l: string) => warned.push(l),
+    });
+    expect(warned).toEqual([]);
+  });
+
+  it("a sandbox that cannot run refuses with exit 1 and its reason", async () => {
+    const repo = mkRepo("boxfail");
+    setLimit(repo, 1000);
+    const h = harness({ repo, piBin: happyPi("boxfail").bin });
+    const code = await runReviewCli([], false, {
+      ...h.deps,
+      runner: async () => {
+        throw new Error("the pi login in pihome cannot be read");
+      },
+    });
+    expect(code).toBe(1);
+    expect(h.text()).toMatch(/pi login in pihome cannot be read/);
+  });
+});
