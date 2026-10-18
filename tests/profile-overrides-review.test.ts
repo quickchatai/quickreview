@@ -253,6 +253,21 @@ describe("qcr review under profile overrides", () => {
     for (const t of Object.values(agentFiles(join(pi.seen, "agents"))))
       expect(t).not.toContain("HEAD-ONLY");
   });
+
+  it("a base-commit profile with a bad value is refused, not a crash, in JSON and plain mode", async () => {
+    const repo = mkRepo("badvalue", {
+      "profile.toml": '[lenses.pass-security]\neffort = "bogus"\n',
+    });
+    const pi = spyPi("badvalue");
+    const json = harness(repo, pi.bin);
+    expect(await runReviewCli([], true, json.deps)).toBe(1);
+    const o = JSON.parse(json.lines.at(-1)!);
+    expect(o.ok).toBe(false);
+    expect(JSON.stringify(o)).toMatch(/the profile could not be loaded/);
+    const plain = harness(repo, pi.bin);
+    expect(await runReviewCli([], false, plain.deps)).toBe(1);
+    expect(plain.lines.join("\n")).toMatch(/the profile could not be loaded/);
+  });
 });
 
 describe("the bench under profile overrides", () => {

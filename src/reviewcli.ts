@@ -619,6 +619,9 @@ async function runReview(
   // and prompts move.
   let overrides: OverrideSet;
   let custom: Customisation;
+  let cfg: typeof deps.cfg;
+  let ecosystem: typeof deps.ecosystem;
+  cleanups.push(() => rmSync(join(runDir, "profile"), { recursive: true, force: true }));
   try {
     overrides = resolveOverrides({
       root: deps.root,
@@ -626,17 +629,23 @@ async function runReview(
       repo: { gitDir, baseRef: t.baseSha, destDir: join(runDir, "profile") },
     });
     custom = assessOverrides(deps.root, overrides);
+    // The same base-branch `.qcr/profile.toml` feeds the lens tuning and the
+    // ecosystem; a bad value there is the profile's fault, not a crash.
+    if (overrides.lookup.repoProfile !== undefined) {
+      cfg = applyProfileOverlays(deps.root, deps.cfg, overrides.lookup);
+      ecosystem = ecosystemFor(
+        loadProfileEcosystem(deps.root, deps.cfg.review.profile, overrides.lookup),
+      );
+    } else {
+      cfg = deps.cfg;
+      ecosystem = deps.ecosystem;
+    }
   } catch (err) {
     return refuse(1, [`the profile could not be loaded: ${String(err).slice(0, 300)}`]);
   }
-  cleanups.push(() => rmSync(join(runDir, "profile"), { recursive: true, force: true }));
   const readFile = overrideReader(deps.root, overrides);
   const profileLookup = overrides.lookup;
   const repoProfile = profileLookup.repoProfile !== undefined;
-  const cfg = repoProfile ? applyProfileOverlays(deps.root, deps.cfg, profileLookup) : deps.cfg;
-  const ecosystem = repoProfile
-    ? ecosystemFor(loadProfileEcosystem(deps.root, deps.cfg.review.profile, profileLookup))
-    : deps.ecosystem;
   const profileArgs = {
     ...(readFile ? { readFile } : {}),
     ...(repoProfile ? { profileLookup } : {}),
