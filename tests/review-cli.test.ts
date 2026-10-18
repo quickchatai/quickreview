@@ -526,6 +526,62 @@ describe("qcr review <PR>", () => {
     expect(left).not.toContain("repo");
   });
 
+  /** The stub API, with the PR's review comments answered by `comments`. */
+  const withComments = (comments: () => Response): typeof fetch =>
+    (async (u: string | URL | Request, init?: RequestInit) =>
+      String(u).includes("/pulls/7/comments") ? comments() : api(u, init)) as typeof fetch;
+  const botComment = {
+    path: "src/a.ts",
+    line: 2,
+    body: "**b is a magic number**\n\n<!-- qcr:f=1:f1 -->",
+  };
+
+  it("skips the findings the bot already posted on the PR, in every destination", async () => {
+    const repo = cwdRepo("pr-skip");
+    setLimit(repo, 1000);
+    const h = prHarness(repo, happyPi("pr-skip").bin, {
+      env: { GITHUB_TOKEN: "tok" },
+      ghAuthToken: () => null,
+      fetchFn: withComments(() => new Response(JSON.stringify([botComment]), { status: 200 })),
+    });
+    expect(await runReviewCli(["7"], true, h.deps)).toBe(0);
+    const done = JSON.parse(h.lines.at(-1)!);
+    const titles = Object.values(done.findings as Record<string, Array<{ title: string }>>)
+      .flat()
+      .map((f) => f.title);
+    expect(titles).toEqual(["c breaks the build"]);
+    expect(done.already_posted_skipped).toBe(1);
+  });
+
+  it("a PR with no bot comments is unaffected", async () => {
+    const repo = cwdRepo("pr-noskip");
+    setLimit(repo, 1000);
+    const h = prHarness(repo, happyPi("pr-noskip").bin, {
+      env: { GITHUB_TOKEN: "tok" },
+      ghAuthToken: () => null,
+      fetchFn: withComments(() => new Response("[]", { status: 200 })),
+    });
+    expect(await runReviewCli(["7"], true, h.deps)).toBe(0);
+    const done = JSON.parse(h.lines.at(-1)!);
+    expect(Object.values(done.findings).flat()).toHaveLength(2);
+    expect(done.already_posted_skipped).toBe(0);
+    expect(done.warnings.join("\n")).not.toMatch(/posted findings/);
+  });
+
+  it("a failure to read the comments warns and the review continues", async () => {
+    const repo = cwdRepo("pr-skipfail");
+    setLimit(repo, 1000);
+    const h = prHarness(repo, happyPi("pr-skipfail").bin, {
+      env: { GITHUB_TOKEN: "tok" },
+      ghAuthToken: () => null,
+      fetchFn: withComments(() => new Response("nope", { status: 500 })),
+    });
+    expect(await runReviewCli(["7"], true, h.deps)).toBe(0);
+    const done = JSON.parse(h.lines.at(-1)!);
+    expect(Object.values(done.findings).flat()).toHaveLength(2);
+    expect(done.warnings.join("\n")).toMatch(/posted findings.*500/);
+  });
+
   it("reviews a PR by URL, and --preview starts nothing", async () => {
     const repo = cwdRepo("pr-url");
     const pi = happyPi("pr-url");

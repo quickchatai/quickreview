@@ -63,6 +63,7 @@ import {
   type OneShotPrompts,
   type OneShotResult,
 } from "./oneshot.js";
+import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import {
   branchTargetKey,
@@ -262,6 +263,23 @@ const credentialLabel = (s: CredentialSource): string =>
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 
+/** An unfinished review's raw record, less the findings the bot already posted. */
+function rawWithout(record: unknown, posted: readonly PostedFinding[]): unknown {
+  const list = (record as { findings?: unknown } | null | undefined)?.findings;
+  if (posted.length === 0 || !Array.isArray(list)) return record;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const kept = skipPosted(
+    list.map((e: Record<string, unknown>) => ({
+      e,
+      key: str(e["id"]) ?? str(e["key"]),
+      path: str(e["path"]),
+      title: str(e["title"]),
+    })),
+    posted,
+  ).fresh.map((x) => x.e);
+  return { ...(record as object), findings: kept };
+}
+
 /** A finding an earlier review raised that no review has resolved. */
 interface StillOpen {
   path: string | null;
@@ -405,6 +423,8 @@ async function runReview(
     title: string;
     body: string | null;
     source: CredentialSource;
+    repo: string;
+    token: string;
   } | null = null;
   let runDir: string;
   let prToken = "";
@@ -437,6 +457,8 @@ async function runReview(
       title: fetched.title,
       body: fetched.body,
       source: cred.source,
+      repo: parsed.repo,
+      token: cred.token,
     };
   } else {
     const resolved = cmd.uncommitted
@@ -672,6 +694,21 @@ async function runReview(
   const sandboxWarnings = deps.sandboxWarning !== undefined ? [deps.sandboxWarning] : [];
   if (deps.sandboxWarning !== undefined)
     (deps.warn ?? ((l) => console.error(l)))(deps.sandboxWarning);
+  // On a PR the bot already reviewed, what it posted counts as raised: read
+  // through the resolved credential, skipped below. A failure only warns.
+  const bot = prInfo
+    ? await fetchBotFindings({
+        repo: prInfo.repo,
+        number: prInfo.number,
+        token: prInfo.token,
+        ...(deps.pr?.fetchFn ? { fetchFn: deps.pr.fetchFn } : {}),
+        ...(deps.pr?.apiBase ? { apiBase: deps.pr.apiBase } : {}),
+      })
+    : { findings: [] as PostedFinding[] };
+  if (bot.warning !== undefined) {
+    sandboxWarnings.push(bot.warning);
+    (deps.warn ?? ((l) => console.error(l)))(bot.warning);
+  }
   // Memory seasons the prompt; it never fails or holds up the review.
   const seeded = await seedReviewMemory(
     deps.memory,
@@ -734,14 +771,18 @@ async function runReview(
   const recorded = recordRound(scope === "delta" ? prev : null, targetKey, round, shot.findings);
   if (finished && prInfo === null && !cmd.uncommitted) saveState(statePath, recorded.state);
   const open = finished ? stillOpen(recorded.state, round.round_no) : [];
-  const groups = groupFindings({ findings: finished ? recorded.fresh : [] });
-  const unfinishedGroups = finished ? groups : groupFindings(shot.findings);
+  const skipped = skipPosted(recorded.fresh, bot.findings);
+  const groups = groupFindings({ findings: finished ? skipped.fresh : [] });
+  const unfinishedGroups = finished
+    ? groups
+    : groupFindings(rawWithout(shot.findings, bot.findings));
   const count = Object.values(unfinishedGroups).reduce((n, l) => n + l.length, 0);
   const data = {
     preview,
     findings: unfinishedGroups,
     still_open: open,
     repeats_suppressed: recorded.repeats.length,
+    already_posted_skipped: skipped.skipped,
     verdict,
     cost_usd: spent,
     out_dir: outDir,
@@ -801,7 +842,14 @@ async function runReview(
           `${recorded.repeats.length} re-raised finding${recorded.repeats.length === 1 ? "" : "s"} already open, not repeated.`,
         ]
       : []),
-    ...shot.warnings.slice(0, 5).map((w) => `warning: ${w}`),
+    ...(skipped.skipped
+      ? [
+          `${skipped.skipped} finding${skipped.skipped === 1 ? "" : "s"} the bot already posted on this PR, not repeated.`,
+        ]
+      : []),
+    ...[...(bot.warning !== undefined ? [bot.warning] : []), ...shot.warnings]
+      .slice(0, 5)
+      .map((w) => `warning: ${w}`),
     `Files: ${outDir}`,
   ].join("\n");
   // Posting to the PR: one comment-only review, marked, deduplicated.
