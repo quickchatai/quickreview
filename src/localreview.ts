@@ -5,21 +5,29 @@
 // (src/setup/scan.ts planKey) so a start must quote the price it was shown.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import type { PrFileEntry } from "./github.js";
 import { normalizeDisposition } from "./findingkey.js";
 import { severityRank } from "./severityrank.js";
 import { planKey } from "./plankey.js";
 
 /** A git command's stdout, trimmed; throws with git's own words. */
-function git(cwd: string, args: readonly string[]): string {
-  return execFileSync("git", [...args], {
+function git(
+  cwd: string,
+  args: readonly string[],
+  opts: { env?: Record<string, string>; input?: string; raw?: boolean } = {},
+): string {
+  const out = execFileSync("git", [...args], {
     cwd,
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}),
+    ...(opts.input !== undefined ? { input: opts.input } : {}),
+    stdio: [opts.input !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
     maxBuffer: 256 * 1024 * 1024,
-  }).trim();
+  });
+  return opts.raw ? out : out.trim();
 }
 
 function tryGit(cwd: string, args: readonly string[]): string | null {
@@ -44,6 +52,9 @@ export interface BranchTarget {
   files: PrFileEntry[];
   /** Added plus deleted lines over the diff. */
   lines: number;
+  /** Set when the target is the uncommitted working tree: the tree object of
+   * HEAD plus every uncommitted edit (the person's index is never touched). */
+  uncommitted?: { treeSha: string };
 }
 
 export type BranchResolution = { ok: true; target: BranchTarget } | { ok: false; error: string };
@@ -60,6 +71,45 @@ function baseOf(cwd: string, asked: string | undefined): string | null {
   if (origin && exists(origin)) return origin;
   for (const c of ["main", "master"]) if (exists(c)) return c;
   return null;
+}
+
+/** The files and changed-line count between two trees (or commits). */
+function diffFiles(cwd: string, from: string, to: string): { files: PrFileEntry[]; lines: number } {
+  const numstat = git(cwd, ["diff", "--no-renames", "--numstat", from, to]);
+  const names = new Map<string, string>();
+  for (const l of git(cwd, ["diff", "--no-renames", "--name-status", from, to])
+    .split("\n")
+    .filter(Boolean)) {
+    const [s, ...p] = l.split("\t");
+    names.set(p.join("\t"), STATUS[s![0]!] ?? "modified");
+  }
+  const files: PrFileEntry[] = [];
+  let lines = 0;
+  for (const l of numstat.split("\n").filter(Boolean)) {
+    const [a, d, ...p] = l.split("\t");
+    const path = p.join("\t");
+    const binary = a === "-";
+    const additions = binary ? 0 : Number(a);
+    const deletions = binary ? 0 : Number(d);
+    lines += additions + deletions;
+    const patch = binary ? undefined : git(cwd, ["diff", "--no-renames", from, to, "--", path]);
+    files.push({
+      filename: path,
+      additions,
+      deletions,
+      status: names.get(path) ?? "modified",
+      ...(patch ? { patch } : {}),
+    });
+  }
+  return { files, lines };
+}
+
+/** `owner/name` from the origin remote, else `local/<directory>`. */
+function repoName(cwd: string): string {
+  const top = tryGit(cwd, ["rev-parse", "--show-toplevel"]) ?? cwd;
+  const origin = tryGit(cwd, ["remote", "get-url", "origin"]);
+  const m = origin?.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?\/?$/);
+  return m ? m[1]! : `local/${basename(resolve(top))}`;
 }
 
 export function resolveBranch(cwd: string, asked?: string): BranchResolution {
@@ -84,43 +134,13 @@ export function resolveBranch(cwd: string, asked?: string): BranchResolution {
       error: `HEAD and ${base} share no history, so there is no branch to review`,
     };
   const branch = tryGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? "HEAD";
-  const numstat = git(cwd, ["diff", "--no-renames", "--numstat", mergeBase, headSha]);
-  const names = new Map<string, string>();
-  for (const l of git(cwd, ["diff", "--no-renames", "--name-status", mergeBase, headSha])
-    .split("\n")
-    .filter(Boolean)) {
-    const [s, ...p] = l.split("\t");
-    names.set(p.join("\t"), STATUS[s![0]!] ?? "modified");
-  }
-  const files: PrFileEntry[] = [];
-  let lines = 0;
-  for (const l of numstat.split("\n").filter(Boolean)) {
-    const [a, d, ...p] = l.split("\t");
-    const path = p.join("\t");
-    const binary = a === "-";
-    const additions = binary ? 0 : Number(a);
-    const deletions = binary ? 0 : Number(d);
-    lines += additions + deletions;
-    const patch = binary
-      ? undefined
-      : git(cwd, ["diff", "--no-renames", mergeBase, headSha, "--", path]);
-    files.push({
-      filename: path,
-      additions,
-      deletions,
-      status: names.get(path) ?? "modified",
-      ...(patch ? { patch } : {}),
-    });
-  }
+  const { files, lines } = diffFiles(cwd, mergeBase, headSha);
   if (files.length === 0)
     return { ok: false, error: `nothing to review: ${branch} has no changes against ${base}` };
-  const top = tryGit(cwd, ["rev-parse", "--show-toplevel"]) ?? cwd;
-  const origin = tryGit(cwd, ["remote", "get-url", "origin"]);
-  const m = origin?.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?\/?$/);
   return {
     ok: true,
     target: {
-      repo: m ? m[1]! : `local/${basename(resolve(top))}`,
+      repo: repoName(cwd),
       branch,
       base,
       headSha,
@@ -130,6 +150,55 @@ export function resolveBranch(cwd: string, asked?: string): BranchResolution {
       lines,
     },
   };
+}
+
+/** The uncommitted working tree against HEAD: staged, unstaged and new
+ * (untracked, not ignored) files, read without touching the person's index or
+ * files. The snapshot is a tree built in a throwaway index. */
+export function resolveUncommitted(cwd: string): BranchResolution {
+  if (tryGit(cwd, ["rev-parse", "--is-inside-work-tree"]) !== "true")
+    return { ok: false, error: `${cwd} is not a git repository` };
+  const headSha = tryGit(cwd, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+  if (headSha === null) return { ok: false, error: "the repository has no commits yet" };
+  const scratch = mkdtempSync(join(tmpdir(), "qcr-snap-"));
+  let treeSha: string;
+  try {
+    const env = { GIT_INDEX_FILE: join(scratch, "index") };
+    const top = git(cwd, ["rev-parse", "--show-toplevel"]);
+    git(top, ["read-tree", headSha], { env });
+    git(top, ["add", "-A"], { env });
+    treeSha = git(top, ["write-tree"], { env });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  const { files, lines } = diffFiles(cwd, headSha, treeSha);
+  if (files.length === 0)
+    return { ok: false, error: "nothing to review: the working tree has no uncommitted changes" };
+  const branch = tryGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? "HEAD";
+  return {
+    ok: true,
+    target: {
+      repo: repoName(cwd),
+      branch,
+      base: "HEAD",
+      headSha,
+      baseSha: headSha,
+      mergeBase: headSha,
+      files,
+      lines,
+      uncommitted: { treeSha },
+    },
+  };
+}
+
+/** The review's tree for an uncommitted target: HEAD, then the edits on top. */
+export function addUncommittedTree(cwd: string, dir: string, t: BranchTarget): void {
+  addReviewTree(cwd, dir, t.headSha);
+  if (!t.uncommitted) return;
+  const patch = git(cwd, ["diff", "--binary", "--no-renames", t.headSha, t.uncommitted.treeSha], {
+    raw: true,
+  });
+  if (patch) git(dir, ["apply", "--whitespace=nowarn"], { input: patch });
 }
 
 /** A throwaway detached checkout of `sha`, for the review to read. */
