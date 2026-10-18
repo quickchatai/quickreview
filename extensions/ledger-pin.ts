@@ -1,3 +1,4 @@
+import { parsePrIdentity as parseOwnPr } from "../src/pr-identity.js";
 // ledger-pin — keeps the review ledger alive across pi's native compaction.
 //
 // The PR session maintains a fenced block that starts with "LEDGER PR #<n> @
@@ -53,11 +54,7 @@ const LEDGER_RE =
 
 /** The session's own PR number from QCR_PR — undefined for the overseer (no
  * QCR_PR) and for anything that is not a plain digit string (fail safe). */
-export function parseOwnPr(raw: string | undefined): number | undefined {
-  const trimmed = raw?.trim();
-  if (!trimmed || !/^\d+$/.test(trimmed)) return undefined;
-  return Number(trimmed);
-}
+export { parsePrIdentity as parseOwnPr } from "../src/pr-identity.js";
 
 /** Deep-walk an unknown payload collecting every string that could be message
  * text. // VERIFY-ON-PIN: the event payload shape is undocumented, so this is

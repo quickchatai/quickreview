@@ -28,6 +28,9 @@ const OWN = "LEDGER PR #42 @ abc123def\n- fact: own session state\n- next: reply
 const SIBLING = "LEDGER PR #5288 @ 8c2edc01\n- fact: sibling session state";
 
 describe("parseOwnPr", () => {
+  it.each(["0", "9007199254740992", "9".repeat(400)])("refuses invalid PR identity %s", (raw) => {
+    expect(parseOwnPr(raw)).toBeUndefined();
+  });
   it("parses a plain digit string (with surrounding whitespace)", () => {
     expect(parseOwnPr("42")).toBe(42);
     expect(parseOwnPr(" 5288 ")).toBe(5288);

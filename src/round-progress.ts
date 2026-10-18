@@ -9,13 +9,24 @@
 import { appendFileSync, renameSync, statSync } from "node:fs";
 import { PASS_TIER_ORDER } from "./types.js";
 
-export type LiveAgentStatus = "running" | "completed" | "failed";
+export const LIVE_AGENT_STATUSES = ["running", "completed", "failed"] as const;
+export type LiveAgentStatus = (typeof LIVE_AGENT_STATUSES)[number];
+
+export function isLiveAgentStatus(value: unknown): value is LiveAgentStatus {
+  return typeof value === "string" && LIVE_AGENT_STATUSES.some((status) => status === value);
+}
+
+export type PassExecutionPhase = "plan" | "sweep" | "optional";
 
 export interface LiveAgentProgress {
   /** One subagent tool invocation, not merely an agent name. Repeated lenses
    * remain distinct so an older completion cannot satisfy a newer run. */
   execution_id?: string;
   agent: string;
+  /** Task-directory phase. Absent on legacy/free-form calls, which retain
+   * their original plan interpretation. Sweep completions never repair a
+   * different phase's required failure. */
+  phase?: PassExecutionPhase;
   status: LiveAgentStatus;
   duration_ms: number;
   tool_count: number;
@@ -185,7 +196,8 @@ export function parseRoundProgress(raw: string): RoundProgressSnapshot | undefin
       if (
         (value.version === 2 && typeof agent.execution_id !== "string") ||
         typeof agent.agent !== "string" ||
-        (agent.status !== "running" && agent.status !== "completed" && agent.status !== "failed") ||
+        (agent.phase !== undefined && !["plan", "sweep", "optional"].includes(agent.phase)) ||
+        !isLiveAgentStatus(agent.status) ||
         typeof agent.duration_ms !== "number" ||
         !Number.isFinite(agent.duration_ms) ||
         typeof agent.tool_count !== "number" ||
