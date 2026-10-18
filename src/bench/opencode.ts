@@ -1013,8 +1013,8 @@ export async function reviewCaseOpencode(
     bench: { status: summary.status, bridge: b, fingerprint: o.fingerprint },
   });
   summary.comments = (payload["review"] as { comments: unknown[] }).comments.length;
-  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writeOpencodeResult(o.outDir, c, payload);
+  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   log(
     `opencode: ${c.instance_id} ${summary.status} — ${summary.comments} comment(s) (${chosen.source}: mcp ${chosen.mcp}, text ${chosen.text ?? "raw"}), ${summary.duration_seconds}s` +
       (b

@@ -496,8 +496,8 @@ export async function reviewCaseOcr(
     bench: { status: summary.status, bridge: summary.bridge, fingerprint: o.fingerprint },
   });
   summary.comments = scoredOcrComments(payload);
-  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writeOcrResult(o.outDir, c, payload);
+  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   log(
     `ocr: ${c.instance_id} ${summary.status} — ${summary.comments} comment(s), ${summary.duration_seconds}s` +
       (summary.bridge

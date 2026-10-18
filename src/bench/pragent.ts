@@ -48,6 +48,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { publishText, readJsonObject } from "./publication.js";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
 import {
   aacrScoreTable,
@@ -757,9 +758,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
   };
   mkdirSync(r.outDir, { recursive: true });
   const runFile = join(r.outDir, "run.json");
-  const previous = existsSync(runFile)
-    ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
-    : null;
+  const previous = readJsonObject(runFile) ?? null;
   // run.json is about to carry THIS configuration: a case reviewed under
   // another goes now (not when the loop reaches it), its judge inputs with
   // it, so a stop partway can never leave it scored under this run's label.
@@ -797,7 +796,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
     ...runLifecycle(r.resume, previous, fingerprint),
     finished_at: null as string | null,
   };
-  writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
+  publishText(runFile, JSON.stringify(runRecord, null, 2) + "\n");
   const summaries: PragentCaseSummary[] = [];
   let stopped: string | null = null;
   for (const c of r.cases) {
@@ -852,7 +851,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
     );
   }
   runRecord.finished_at = new Date().toISOString();
-  writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
+  publishText(runFile, JSON.stringify(runRecord, null, 2) + "\n");
   const ok = summaries.filter((s) => s.status === "ok").length;
   r.log(
     `pragent: ${ok}/${r.cases.length} reviewed — results in ${join(r.outDir, "results", "all")}`,
@@ -923,7 +922,7 @@ export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCa
         L.push(`- \`${c.instance_id}\`: merge-base check failed — see case-summary.json`);
       for (const w of s.warnings)
         L.push(`- \`${c.instance_id}\`: ${w.replaceAll("\n", " ").slice(0, 400)}`);
-      if (s.error && !s.warnings.length)
+      if (s.error && !s.warnings.includes(s.error))
         L.push(`- \`${c.instance_id}\`: ${s.error.replaceAll("\n", " ").slice(0, 400)}`);
     }
   }

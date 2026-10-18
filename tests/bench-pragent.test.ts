@@ -677,6 +677,7 @@ describe("the run", () => {
       const out = join(tmp, "out");
       // An earlier result by another model.
       mkdirSync(join(out, "cases", CASE.instance_id), { recursive: true });
+      writeFileSync(join(out, "run.json"), "{");
       writeFileSync(
         join(out, "cases", CASE.instance_id, "case-summary.json"),
         JSON.stringify({
@@ -870,6 +871,22 @@ describe("the run", () => {
 });
 
 describe("the report", () => {
+  it("shows a command error alongside independent warnings", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-errors-"));
+    try {
+      const summary = unprefetchedPragentCase(tmp, CASE, FP, "primary command failure");
+      summary.warnings.push("independent merge-base warning");
+      writeFileSync(
+        join(tmp, "cases", CASE.instance_id, "case-summary.json"),
+        JSON.stringify(summary),
+      );
+      const md = renderPragentReport(SET, tmp, [CASE]);
+      expect(md).toContain("primary command failure");
+      expect(md).toContain("independent merge-base warning");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
   it("names the endpoint run.json recorded, the API-key route included", () => {
     const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-report-"));
     try {

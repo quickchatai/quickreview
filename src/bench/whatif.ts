@@ -38,7 +38,7 @@
 // matches reachable exactly as before: any match the control makes and a
 // posted+ variant loses is judge noise, and the report says so.
 
-import { findingRecordKey } from "../findingkey.js";
+import { findingRecordKey, recordSide } from "../findingkey.js";
 import { normalizeDisposition } from "../findingsrecord.js";
 
 // ---- the lens outputs in pi's JSON event stream -------------------------------
@@ -323,6 +323,7 @@ export interface RecordFinding {
   disposition: string;
   lenses: string[];
   path: string;
+  side?: "LEFT" | "RIGHT";
   line?: number;
   severity: string;
   evidence?: string;
@@ -376,6 +377,7 @@ export function parseFindingsRecord(raw: unknown): RecordFinding[] {
         .map(normalizeLens)
         .filter((x) => x !== "" && x !== "pass-"),
       path: cleanPath(str("path") ?? "").path,
+      side: recordSide(r["side"]),
       ...(line !== undefined ? { line } : {}),
       severity: severityOf(str("severity")),
       ...(evidence !== undefined ? { evidence } : {}),
@@ -629,7 +631,7 @@ export function recordExtras(
     out.push({
       path: l.record.path,
       ...(l.record.line !== undefined ? { line: l.record.line } : {}),
-      side: "RIGHT",
+      side: l.record.side ?? "RIGHT",
       content: l.record.evidence,
       prov: {
         origin,

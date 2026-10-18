@@ -8,6 +8,7 @@
 // (`defect-report`) with no model call at all.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { publishText, readJsonObject } from "./publication.js";
 import { usageFromEvents } from "./aacr.js";
 import { runJudgeSession } from "./runner.js";
 import {
@@ -112,8 +113,10 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
   const out: CaseJudgement[] = [];
   for (let k = 1; k <= o.rounds; k++) {
     const file = roundFile(o.outDir, o.pr.instance_id, k);
-    if (o.resume && existsSync(file)) {
-      const prior = JSON.parse(readFileSync(file, "utf8")) as CaseJudgement;
+    const prior = o.resume
+      ? (readJsonObject(file) as unknown as CaseJudgement | undefined)
+      : undefined;
+    if (prior) {
       // A round kept on resume must have judged THIS review against THIS
       // defect-set version (judgedReview) with THIS judge model — an explicit
       // `--label` reuses a judge dir across a model change, and a mixed dir
@@ -141,7 +144,7 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
     // An empty review with no defects needs no model: nothing to find, nothing to check.
     if (!o.defects.length && !o.review.comments.length) {
       out.push(base);
-      writeFileSync(file, JSON.stringify(base, null, 2) + "\n");
+      publishText(file, JSON.stringify(base, null, 2) + "\n");
       continue;
     }
     // runPi APPENDS to the events file and readJudgeEvents takes the last
@@ -166,7 +169,7 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
     o.log(
       `defect-judge: ${o.pr.instance_id} round ${k} — ${j.error ? `ERROR ${j.error}` : `${j.defects.filter((d) => d.verdict === "found").length}/${o.defects.length} found, ${j.comments.length} comment(s) checked`}`,
     );
-    writeFileSync(file, JSON.stringify(j, null, 2) + "\n");
+    publishText(file, JSON.stringify(j, null, 2) + "\n");
     out.push(j);
   }
   return out;

@@ -31,6 +31,7 @@ import { postedSeverityTag, RENDER_RECORD_FIELDS } from "../reviewrender.js";
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, POSTING_TAG_WORDS } from "../severity.js";
 import type { PrFileEntry } from "../github.js";
 import { parseHunkHeader } from "../hunkheader.js";
+import { normalizeDisposition, recordSide } from "../findingkey.js";
 
 // ---- the case set -------------------------------------------------------------
 
@@ -1189,7 +1190,7 @@ export function bodyPostedFindings(
       : [];
   const posted = rows
     .map((row) => (typeof row === "object" && row !== null ? row : {}) as Record<string, unknown>)
-    .filter((r) => r["disposition"] === "posted");
+    .filter((r) => normalizeDisposition(r["disposition"]) === "posted");
   const places = placePosted(posted, reviewMd, inline);
   const lines = reviewMd.split("\n");
   const used = new Set<number>();
@@ -1207,7 +1208,7 @@ export function bodyPostedFindings(
     out.push({
       path,
       line,
-      side: "RIGHT",
+      side: recordSide(r["side"]),
       body: `[${postedAs || "finding"}] ${text}`.trim(),
       tag: recordTag(r),
       source: "body",

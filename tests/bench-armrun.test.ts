@@ -54,6 +54,21 @@ function prep(resume: boolean, model: string, log: string[] = []) {
 }
 
 describe("a run dir set up for a new configuration", () => {
+  it.each(["missing", "unparseable"])(
+    "a matching summary cannot retain a %s result on resume",
+    (state) => {
+      seed(A, "m");
+      seed(B, "m");
+      const result = join(out, "results/all", `${A.instance_id}.json`);
+      if (state === "missing") rmSync(result);
+      else writeFileSync(result, "{");
+      const prepared = prep(true, "m");
+      expect(prepared.dropped).toContain(A.instance_id);
+      expect(has("cases", A.instance_id, "case-summary.json")).toBe(false);
+      expect(has("cases", B.instance_id, "case-summary.json")).toBe(true);
+      expect(has("results", "all", "metrics_ocr_round_1.json")).toBe(false);
+    },
+  );
   it("a fresh run drops every case, its judge inputs and the run's metrics", () => {
     seed(A, "m");
     seed(B, "m");

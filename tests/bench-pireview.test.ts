@@ -44,6 +44,20 @@ import {
 } from "../src/bench/pireview.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+it("a subprocess deadline terminates descendants that retain its output pipes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bench-deadline-"));
+  try {
+    const marker = join(dir, "descendant-finished");
+    const descendant = `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'finished'), 3000);`;
+    const driver = `const c = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { stdio: 'inherit' }); console.log('spawned'); setTimeout(() => {}, 10000);`;
+    const result = await run(process.execPath, ["-e", driver], { timeoutMs: 1500 });
+    expect(result.timedOut).toBe(true);
+    expect(result.stdout).toContain("spawned");
+    expect(existsSync(marker)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 const BASE = "a".repeat(40);
 const HEAD = "b".repeat(40);
 
@@ -314,6 +328,30 @@ describe("output → findings: pi-review's PI_REVIEW_META_JSON line", () => {
     ).toBe("ok");
   });
 
+  it("preserves real a/ paths removed from the head tree when the base tree contains them", () => {
+    const basePaths = new Set(["a/removed.ts"]);
+    expect(normalizeFindingPath("a/removed.ts", "/missing/head", basePaths).path).toBe(
+      "a/removed.ts",
+    );
+    expect(
+      normalizeFindingPath("a/src/removed.ts", "/missing/head", new Set(["src/removed.ts"])).path,
+    ).toBe("src/removed.ts");
+    expect(
+      toComments(
+        [
+          {
+            summary: "Removed guard",
+            actionable: true,
+            path: "a/removed.ts",
+            location: { startLine: 2, side: "base" },
+          },
+        ],
+        "/missing/head",
+        basePaths,
+      ).left[0]?.path,
+    ).toBe("a/removed.ts");
+  });
+
   it("the result file: harness keys, OCR-shaped comments the scorer and defect judge read", () => {
     const tmp = mkdtempSync(join(tmpdir(), "bench-pireview-result-"));
     try {
@@ -432,10 +470,13 @@ describe("one case end to end, pi-review stubbed", () => {
         ).trim();
       git("init", "-q");
       writeFileSync(join(src, "a.py"), "x = 1\n");
-      git("add", "a.py");
+      mkdirSync(join(src, "a"));
+      writeFileSync(join(src, "a", "removed.ts"), "guard();\n");
+      git("add", "a.py", "a/removed.ts");
       git("commit", "-q", "-m", "base");
       const base = git("rev-parse", "HEAD");
       writeFileSync(join(src, "a.py"), "x = 1\ny = 2\nz = 3\n");
+      git("rm", "a/removed.ts");
       git("commit", "-q", "-am", "head");
       const head = git("rev-parse", "HEAD");
       const c: BenchCase = { ...CASE, base_commit: base, head_commit: head };
@@ -479,7 +520,12 @@ describe("one case end to end, pi-review stubbed", () => {
           log,
           JSON.stringify({ type: "tool_execution_start", toolName: "read" }) + "\n",
         );
-        return { code: 1, stdout: STDOUT, stderr: "pi-review: review finished\n", timedOut: false };
+        return {
+          code: 1,
+          stdout: STDOUT.replace('"path":"b.py"', '"path":"./a/removed.ts"'),
+          stderr: "pi-review: review finished\n",
+          timedOut: false,
+        };
       };
       const s = await reviewCasePireview(c, meta, {
         work,
@@ -516,6 +562,9 @@ describe("one case end to end, pi-review stubbed", () => {
       const caseDir = join(outDir, "cases", c.instance_id);
       expect(readFileSync(join(caseDir, "review.md"), "utf8")).toContain("## Verdict");
       expect(JSON.parse(readFileSync(join(caseDir, "comments.json"), "utf8"))).toHaveLength(1);
+      expect(JSON.parse(readFileSync(join(caseDir, "comments.json"), "utf8"))[0].path).toBe(
+        "a/removed.ts",
+      );
       expect(existsSync(join(caseDir, "pi-events.jsonl"))).toBe(true);
       // The tree and the scratch (HOME, diff) are gone.
       expect(execFileSync("ls", ["-A", join(work, "wt")], { encoding: "utf8" }).trim()).toBe("");

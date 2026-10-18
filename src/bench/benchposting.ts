@@ -37,7 +37,8 @@ import {
   type PostingPolicy,
   type WithholdWord,
 } from "../postingpolicy.js";
-import { markWithheld, postedClassOf, withheldReason } from "../reviewrender.js";
+import { markWithheld, postedClassOf, recordPostingKeys, withheldReason } from "../reviewrender.js";
+import { normalizeDisposition, recordSide } from "../findingkey.js";
 import { stripSanctionedTags } from "../severity.js";
 import {
   benchPath,
@@ -78,7 +79,7 @@ interface Item {
   cls: PolicyClass;
   severity: string | null;
   title: string;
-  /** The side its line counts on (inline rows may say LEFT; body items RIGHT). */
+  /** The side its line counts on. */
   side: "LEFT" | "RIGHT";
   /** An inline comment's span start, when it spans lines. */
   start_line?: number;
@@ -221,7 +222,8 @@ export function policeBenchOutput(args: {
         (e): e is Record<string, unknown> => typeof e === "object" && e !== null,
       )
     : [];
-  const posted = entries.filter((e) => e["disposition"] === "posted");
+  const posted = entries.filter((e) => normalizeDisposition(e["disposition"]) === "posted");
+  const keys = recordPostingKeys(entries);
 
   const items: Item[] = [];
   const sites: BenchSite[] = [];
@@ -272,7 +274,7 @@ export function policeBenchOutput(args: {
       cls: postedClassOf(e),
       severity: str(e["severity"]) || null,
       title: str(e["title"]) || str(e["reason"]).split("\n", 1)[0] || `${path}:${line}`,
-      side: "RIGHT",
+      side: recordSide(e["side"]),
       entry: e,
     });
   });
@@ -282,7 +284,7 @@ export function policeBenchOutput(args: {
     (it) => ({
       cls: it.cls,
       severity: it.severity,
-      key: siteKey(it.title),
+      key: (it.entry && keys.get(it.entry)) ?? siteKey(it.title),
       // The whole anchor, span included, as production ranks it.
       ...(runs
         ? {

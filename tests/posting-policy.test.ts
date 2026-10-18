@@ -40,6 +40,35 @@ import type { PrStateRow } from "../src/state.js";
 import { renderRoundPrompt } from "../src/templates.js";
 
 const sandbox = join(import.meta.dirname, "..");
+it("the handwritten route follows same_as through withheld leads and differently titled followers", () => {
+  const record = {
+    findings: [
+      { id: "root", title: "Root cause", disposition: "withheld" },
+      { id: "middle", same_as: "root", title: "Middle", disposition: "withheld" },
+      ...["First site", "Second site"].map((title, i) => ({
+        id: `f${i}`,
+        same_as: "middle",
+        title,
+        path: "a.ts",
+        line: i + 1,
+        inline: false,
+        disposition: "POSTED",
+        posted_as: "nit",
+        severity: "nit",
+        reason: title,
+      })),
+    ],
+  };
+  const out = policeBenchOutput({
+    comments: [],
+    reviewMd: "",
+    record,
+    outcome: { verdict: "APPROVE", summary: "Review" },
+    policy: { ...DEFAULT_POSTING_POLICY, repeat_sites: false },
+  });
+  expect(out.report.kept).toBe(1);
+  expect(out.report.withheld).toHaveLength(1);
+});
 const fixture: Config = parseConfig(
   readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"),
 );

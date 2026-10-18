@@ -156,6 +156,29 @@ function effectiveTitle(entry: Record<string, unknown>): string {
   return str(entry.title) ?? policyFirstSentence(str(entry.reason) ?? "");
 }
 
+/** Posting identity across all entries, including withheld leads. Both
+ * handwritten and rendered outputs enforce repeat-site policy with this key. */
+export function recordPostingKeys(
+  entries: readonly unknown[],
+): ReadonlyMap<Record<string, unknown>, string> {
+  const byId = entriesById(entries);
+  const keys = new Map<Record<string, unknown>, string>();
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    const sameAs = str(e.same_as);
+    const root = rootCauseId(str(e.id) ?? "", sameAs, byId);
+    const lead = byId.get(root);
+    keys.set(
+      e,
+      sameAs !== null && lead === undefined
+        ? `same_as:${root}`
+        : siteKey(effectiveTitle(lead ?? e)),
+    );
+  }
+  return keys;
+}
+
 /** The parser's own coercion: a value the record stores is the value posted. */
 const num = recordNumber;
 
@@ -513,20 +536,14 @@ export function applyPostingPolicyToRecord(
   );
   const posted = entries.filter(isPostedEntry);
   // A withheld lead still owns the root-cause identity on later renders.
-  const byId = entriesById(entries);
+  const keys = recordPostingKeys(entries);
   const sel = selectPosted(
     posted,
     (e) => {
-      const sameAs = str(e.same_as);
-      const root = rootCauseId(str(e.id) ?? "", sameAs, byId);
-      const lead = byId.get(root);
       return {
         cls: postedClassOf(e),
         severity: typeof e.severity === "string" && e.severity.trim() ? e.severity.trim() : null,
-        key:
-          sameAs !== null && lead === undefined
-            ? `same_as:${root}`
-            : siteKey(effectiveTitle(lead ?? e)),
+        key: keys.get(e)!,
       };
     },
     policy,

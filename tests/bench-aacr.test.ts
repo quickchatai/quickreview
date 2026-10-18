@@ -530,6 +530,33 @@ describe("what the session wrote → what the scorer reads", () => {
     expect(bodyPostedFindings(undefined, "", [])).toEqual([]);
   });
 
+  it("folds legacy posted dispositions and preserves a body finding's base side", () => {
+    const comments = bodyPostedFindings(
+      {
+        findings: [
+          {
+            path: "f.ts",
+            line: 12,
+            side: "LEFT",
+            inline: false,
+            disposition: "POSTED",
+            posted_as: "blocker",
+            reason: "Guard removed",
+          },
+        ],
+      },
+      "",
+      [],
+    );
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toMatchObject({ side: "LEFT", line: 12 });
+    const moved = reanchorLeftComments(comments, {
+      "f.ts": "@@ -11,3 +11,2 @@\n context\n-guard\n context",
+    });
+    expect(moved.reanchored).toBe(1);
+    expect(moved.comments[0]?.side).toBe("RIGHT");
+  });
+
   describe("body findings on the rendered route (render_outputs)", () => {
     const entry = (over: Record<string, unknown>) => ({
       disposition: "posted",

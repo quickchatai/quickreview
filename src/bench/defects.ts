@@ -28,6 +28,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeRowsForJudge } from "./claudeshape.js";
+import { reanchorLeftLine } from "./aacr.js";
 
 export const SEVERITIES = ["high", "medium", "low"] as const;
 export type Severity = (typeof SEVERITIES)[number];
@@ -176,10 +177,11 @@ const MAX_BODY = 12_000;
 /** A posted comment's tag (`[blocker]` …) and its text without the tag or
  * the severity footer. */
 function postedText(raw: string): { tag: string | null; text: string } {
-  const m = TAG_RE.exec(raw);
+  const unmarked = raw.replace(/^\s*\[(?:ask your human|check this|deferred)\]\s*/i, "");
+  const m = TAG_RE.exec(unmarked);
   return {
     tag: m ? m[1]!.toLowerCase() : null,
-    text: raw.replace(TAG_RE, "").replace(FOOTER_RE, "").trim(),
+    text: unmarked.replace(TAG_RE, "").replace(FOOTER_RE, "").trim(),
   };
 }
 
@@ -227,12 +229,29 @@ export function reviewForJudge(runDir: string, instanceId: string): ReviewForJud
   // only the RIGHT side, so the scored file above leaves them out. A defect
   // review counts them. Appended last, so every other comment keeps its id.
   const posted = readJson(join(runDir, "cases", instanceId, "comments.json"));
+  const patches = readJson(join(runDir, "cases", instanceId, "head-patches.json")) as
+    Record<string, unknown> | undefined;
+  const matched = new Set<number>();
   for (const row of Array.isArray(posted) ? (posted as unknown[]) : []) {
     const r = (row ?? {}) as Record<string, unknown>;
     if (typeof r["side"] !== "string" || r["side"].toUpperCase() !== "LEFT") continue;
     const raw = typeof r["body"] === "string" ? r["body"] : "";
     if (!raw.trim()) continue;
     const line = typeof r["line"] === "number" ? r["line"] : null;
+    const path = typeof r["path"] === "string" ? r["path"] : null;
+    const patch = path === null ? undefined : patches?.[path];
+    const moved = line !== null && typeof patch === "string" ? reanchorLeftLine(patch, line) : null;
+    if (moved) {
+      const scoredIndex = rows.findIndex((row, i) => {
+        if (matched.has(i) || typeof row !== "object" || row === null) return false;
+        const scored = row as Record<string, unknown>;
+        return scored.path === path && scored.start_line === moved.line && scored.content === raw;
+      });
+      if (scoredIndex !== -1) {
+        matched.add(scoredIndex);
+        continue;
+      }
+    }
     comments.push({
       id: `C${comments.length + 1}`,
       path: typeof r["path"] === "string" ? `${r["path"]} (deleted line)` : null,
