@@ -463,13 +463,35 @@ export function findCiLinters(
   if (ci.length === 0) return [];
   // A wrapper counts only when a CI step calls it (`run lint`, `make lint`, `tox`).
   const ciText = ci.map((x) => x.text).join("\n");
-  const wrappers = WRAPPERS.map((f) => ({ f, text: readInside(root, realRoot, f) })).filter(
-    (x): x is { f: string; text: string } =>
-      x.text !== null &&
-      (/(npm|pnpm|yarn|bun)\s+(run\s+)?(lint|format|check|fmt)/.test(ciText) ||
-        /\bmake\s+(lint|format|check|fmt)/.test(ciText) ||
-        /\b(tox|nox|just|task)\b/.test(ciText)),
+  const candidates = WRAPPERS.map((f) => ({ f, text: readInside(root, realRoot, f) })).filter(
+    (x): x is { f: string; text: string } => x.text !== null,
   );
+  const wrappers: { f: string; text: string }[] = [];
+  const invoked = (f: string, text: string): boolean => {
+    if (f === "package.json") {
+      const calls = scriptCalls(text);
+      return calls === null || calls.length > 0;
+    }
+    if (f === "Makefile") return /\bg?make\s+(lint|format|check|fmt)\b/.test(text);
+    const command =
+      f === "justfile" ? "just" : f === "tox.ini" ? "tox" : f === "noxfile.py" ? "nox" : "task";
+    return new RegExp(`\\b(?:${command})\\b`).test(text);
+  };
+  // Follow only wrappers reached from CI. An unrelated readable Makefile
+  // cannot lend its linter to an npm-only job; reached wrappers may call one another.
+  for (;;) {
+    const callers = [
+      ciText,
+      ...wrappers.filter((w) => w.f !== "package.json").map((w) => w.text),
+    ].join("\n");
+    const pkg = wrappers.find((w) => w.f === "package.json");
+    const reachableText = pkg ? `${callers}\n${calledScripts(pkg.text, callers)}` : callers;
+    const next = candidates.filter(
+      (w) => !wrappers.some((v) => v.f === w.f) && invoked(w.f, reachableText),
+    );
+    if (next.length === 0) break;
+    wrappers.push(...next);
+  }
   // A package.json is read only through the scripts that CI, or another
   // wrapper CI calls (a Makefile's `lint:` running `npm run lint`), calls —
   // and the scripts those call: its other scripts and its dependency list run
