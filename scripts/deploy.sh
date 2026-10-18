@@ -236,6 +236,15 @@ effective_var() {
   group_vars_key "$1"
 }
 
+# Drift diagnostics name the source whose precedence actually supplied the value.
+effective_var_source() {
+  if [[ -n "$(inventory_host_var "$1" || true)" ]]; then
+    echo inventory
+  else
+    echo group_vars
+  fi
+}
+
 # The base clone's directory name, derived exactly as githubCloneDir
 # (src/config.ts) derives it: `[github] clone_dir` when set, else the repo
 # slug's basename (`.git` and trailing slashes stripped), else "repo".
@@ -466,16 +475,16 @@ if [[ -n "$CFG_OV" ]]; then
   if [[ -n "$CFG_OV_AUTH" ]]; then
     check_pin "openviking auth_mode" \
       'config.toml   [openviking] auth_mode' "$CFG_OV_AUTH" \
-      'group_vars    openviking_auth_mode' "$(group_vars_key openviking_auth_mode || true)"
+      "$(effective_var_source openviking_auth_mode)    openviking_auth_mode" "$(effective_var openviking_auth_mode || true)"
     check_pin "openviking root key file" \
       'config.toml   [openviking] root_key_file' "$(config_table_key openviking root_key_file || true)" \
-      'group_vars    openviking_root_key_file' "$(group_vars_key openviking_root_key_file || true)"
+      "$(effective_var_source openviking_root_key_file)    openviking_root_key_file" "$(effective_var openviking_root_key_file || true)"
     check_pin "openviking reviewer key file" \
       'config.toml   [openviking] reviewer_key_file' "$(config_table_key openviking reviewer_key_file || true)" \
-      'group_vars    openviking_reviewer_key_file' "$(group_vars_key openviking_reviewer_key_file || true)"
+      "$(effective_var_source openviking_reviewer_key_file)    openviking_reviewer_key_file" "$(effective_var openviking_reviewer_key_file || true)"
     check_pin "openviking provisioned users" \
       'config.toml   [openviking] provision_users' "$(config_list_key openviking provision_users || true)" \
-      'group_vars    openviking_provision_users' "$(group_vars_key openviking_provision_users || true)"
+      "$(effective_var_source openviking_provision_users)    openviking_provision_users" "$(effective_var openviking_provision_users || true)"
   fi
   # The embedder is mirrored the same way, against the value the boot
   # will actually render — a host var on the inventory line (how an opt-in is

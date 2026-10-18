@@ -482,7 +482,7 @@ git config --global credential.helper \
 # node_modules/.cache (the buildinfo) and forces the cold build.
 cd "$SANDBOX"
 marker=/opt/quickreview/state/.build-lock-hash
-current="$(sha256sum package-lock.json | cut -d' ' -f1)"
+current="$(sha256sum package-lock.json | cut -d' ' -f1):$(node -p '[process.platform, process.arch, process.versions.modules].join("-")')"
 if [[ ! -d dist || ! -d node_modules || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
   npm ci
   npm run build

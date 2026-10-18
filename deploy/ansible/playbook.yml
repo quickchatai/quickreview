@@ -333,28 +333,29 @@
           - "--include=/profiles/***"
           - "--exclude=*"
 
-    # rsync lands files with controller-side ownership; the container user
-    # (uid 1001) must own the tree to npm-ci/build on boot.
+    # rsync lands controller-side ownership. Leave the sealed operator
+    # subtree untouched: each pending file's root owner carries its authority.
     - name: Sandbox tree owned by the container user
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        owner: "{{ container_uid }}"
-        group: "{{ container_uid }}"
-        recurse: true
-      loop:
-        - "{{ sandbox_root }}/sandbox"
-        - "{{ sandbox_root }}/state"
-        - "{{ sandbox_root }}/config-home"
+      ansible.builtin.command:
+        argv:
+          - find
+          - "{{ sandbox_root }}/sandbox"
+          - "{{ sandbox_root }}/state"
+          - "{{ sandbox_root }}/config-home"
+          - -path
+          - "{{ sandbox_root }}/sandbox/commands/operator"
+          - -prune
+          - -o
+          - -exec
+          - chown
+          - -h
+          - "{{ container_uid }}:{{ container_uid }}"
+          - "{}"
+          - "+"
+      changed_when: true
 
-    # …except the operator command channel: `commands/operator/` is
-    # root-owned 0755 so no session (uid {{ container_uid }}) can write there,
-    # and that seal is the ONLY thing telling an operator's drain from a
-    # session's. The recurse above hands it to the container user on every
-    # deploy, and an unsealed channel serves the next operator command as a
-    # session's (bounded, and not lifted by the boot). Re-seal it; never
-    # create it here — a
-    # root-owned commands/ parent would lock the daemon out of its own dir.
+    # Re-seal an existing channel without granting authority to session-owned
+    # files, creating the daemon's commands/ parent, or following a symlink.
     - name: Operator command channel present?
       ansible.builtin.stat:
         path: "{{ sandbox_root }}/sandbox/commands/operator"

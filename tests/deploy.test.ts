@@ -876,6 +876,25 @@ describe("deploy.sh — OpenViking pin drift", () => {
       users: "reviewer,companion",
     };
 
+    it("compares auth against the inventory values actually deployed", () => {
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        configOv: AUTH,
+        groupVarsOv: {
+          ...AUTH,
+          auth: "dev",
+          rootKeyFile: "old-root",
+          reviewerKeyFile: "old-user",
+          users: "reviewer",
+        },
+        upstreamCommit: OV.extension!,
+        inventory:
+          "[quickreview]\nquickreview-vm openviking_auth_mode=api_key openviking_root_key_file=openviking_root_key openviking_reviewer_key_file=openviking_reviewer_key openviking_provision_users=reviewer,companion\n",
+      });
+      expect(run(env, ["--dry-run"]).code).toBe(0);
+    });
+
     it("names the auth mode in the plan when the mirror holds", () => {
       env = makeScratch({
         configPi: "0.84.1",
@@ -1743,4 +1762,44 @@ describe("deployment identity and Slack token configuration", () => {
     const dockerfile = readFileSync(join(root, "deploy/ansible/templates/Dockerfile.j2"), "utf8");
     expect(dockerfile).toContain("useradd --create-home --uid {{ container_uid }} review");
   });
+});
+
+it("the deployment ownership walk preserves pending operator-file authority", () => {
+  // MUTATION: remove the -prune branch — pending.json appears in chown's log.
+  const text = readFileSync(join(root, "deploy/ansible/playbook.yml"), "utf8");
+  const start = text.indexOf("- name: Sandbox tree owned by the container user");
+  const block = text.slice(start, text.indexOf("- name:", start + 1));
+  const listed = block
+    .split("\n")
+    .map((l) => /^\s+- (.+)$/.exec(l)?.[1])
+    .filter((v): v is string => v !== undefined);
+  expect(listed).toContain("-prune");
+  const dir = mkdtempSync(join(tmpdir(), "qcr-chown-"));
+  try {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    mkdirSync(join(dir, "sandbox/commands/operator"), { recursive: true });
+    mkdirSync(join(dir, "state"));
+    mkdirSync(join(dir, "config-home"));
+    const pending = join(dir, "sandbox/commands/operator/pending.json");
+    writeFileSync(pending, "{}");
+    const ordinary = join(dir, "sandbox/code.ts");
+    writeFileSync(ordinary, "code");
+    const log = join(dir, "chown.log");
+    writeFileSync(join(bin, "chown"), '#!/bin/sh\nprintf "%s\\n" "$@" >> "$CHOWN_LOG"\n', {
+      mode: 0o755,
+    });
+    const argv = listed.map((token) => {
+      const value = token.startsWith('"') ? (JSON.parse(token) as string) : token;
+      return value.replaceAll("{{ sandbox_root }}", dir).replaceAll("{{ container_uid }}", "1001");
+    });
+    execFileSync(argv[0]!, argv.slice(1), {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CHOWN_LOG: log },
+    });
+    const touched = readFileSync(log, "utf8");
+    expect(touched).toContain(ordinary);
+    expect(touched).not.toContain(pending);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
