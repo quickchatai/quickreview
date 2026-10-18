@@ -1,13 +1,16 @@
 // `qcr review` posting to a PR (src/reviewpost.ts): one COMMENT review, marked,
 // deduplicated. GitHub is a stub fetch; nothing is sent anywhere.
 
-import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { afterAll, describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { MutationGate, type MutationIntent } from "../src/gate.js";
 import {
   QCR_VISIBLE_MARKER,
   assemblePostReview,
+  localPostGate,
   postReviewToPr,
   type PostRequest,
 } from "../src/reviewpost.js";
@@ -88,15 +91,42 @@ function stubGitHub(existing: Array<{ path: string; line: number; body: string }
   return { calls, fetchFn };
 }
 
-const req = (fetchFn: typeof fetch, record_ = record("REQUEST_CHANGES")): PostRequest => ({
+const tmp = mkdtempSync(join(tmpdir(), "review-post-"));
+afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+
+const req = (
+  fetchFn: typeof fetch,
+  record_ = record("REQUEST_CHANGES"),
+  gate?: MutationGate,
+  dryRun = false,
+): PostRequest => ({
   repo: "o/r",
   number: 7,
   headSha: "abc",
   token: "tok",
   review: assemblePostReview(record_, { cfg, roundNo: 1, lenses: [] }),
+  gate:
+    gate ??
+    localPostGate({
+      dryRun,
+      dryrunDir: join(tmp, "dryrun"),
+      token: "tok",
+      fetchFn,
+      apiBase: "https://api.test",
+    }),
   fetchFn,
   apiBase: "https://api.test",
 });
+
+/** A gate that records what it is asked and executes nothing. */
+function fakeGate() {
+  const intents: MutationIntent[] = [];
+  const gate = new MutationGate(false, join(tmp, "unused"), async (i) => {
+    intents.push(i);
+    return { html_url: "https://x/review/1" };
+  });
+  return { gate, intents };
+}
 
 describe("postReviewToPr", () => {
   it("sends one COMMENT review with the head commit, as the given token", async () => {
@@ -148,6 +178,36 @@ describe("postReviewToPr", () => {
     expect(gh.calls.find((c) => c.method === "POST")!.body.comments).toHaveLength(1);
   });
 
+  it("posts through the gate as one create_review intent, not around it", async () => {
+    const gh = stubGitHub();
+    const g = fakeGate();
+    const res = await postReviewToPr(req(gh.fetchFn, record("APPROVE"), g.gate));
+    expect(res).toMatchObject({ ok: true, posted: 2, url: "https://x/review/1" });
+    // The fake gate's executor took the write; the route sent no POST itself.
+    expect(gh.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(g.intents).toHaveLength(1);
+    expect(g.intents[0]).toMatchObject({
+      kind: "create_review",
+      method: "POST",
+      path: "/repos/o/r/pulls/7/reviews",
+      pr: 7,
+    });
+    expect((g.intents[0]!.body as { event: string }).event).toBe("COMMENT");
+  });
+
+  it("in dry-run the gate records the review under the dryrun dir and sends nothing", async () => {
+    const gh = stubGitHub();
+    const res = await postReviewToPr(req(gh.fetchFn, record("COMMENT"), undefined, true));
+    expect(res).toMatchObject({ ok: true, posted: 0, wouldPost: 2, url: null });
+    expect(gh.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    const recorded = (res as { recorded: string }).recorded;
+    expect(recorded.startsWith(join(tmp, "dryrun"))).toBe(true);
+    expect(existsSync(recorded)).toBe(true);
+    const rec = JSON.parse(readFileSync(recorded, "utf8"));
+    expect(rec).toMatchObject({ kind: "create_review", pr: 7, body: { event: "COMMENT" } });
+    expect(rec.body.comments).toHaveLength(2);
+  });
+
   it("reports a GitHub refusal without throwing", async () => {
     const fetchFn = (async (_u: unknown, init?: RequestInit) =>
       (init?.method ?? "GET") === "POST"
@@ -160,6 +220,14 @@ describe("postReviewToPr", () => {
 });
 
 describe("the posting module stays out of the daemon", () => {
+  it("has no fetch write of its own: the review POST is a gate intent", () => {
+    const text = readFileSync(join(ROOT, "src", "reviewpost.ts"), "utf8");
+    // The one fetch with a method is the gate executor's; the reads carry none.
+    expect(text.match(/method:/g)?.length).toBe(2); // the intent's and the executor's
+    expect(text).toMatch(/req\.gate\.execute\(/);
+    expect(text).not.toMatch(/\/reviews`,\s*\{\s*method/);
+  });
+
   it("only the review CLI imports it", () => {
     const importers = readdirSync(join(ROOT, "src"))
       .filter((f) => f.endsWith(".ts") && f !== "reviewpost.ts")

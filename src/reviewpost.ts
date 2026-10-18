@@ -6,10 +6,14 @@
 // from qcr. A re-post is deduplicated against the comments already on the PR.
 //
 // This is the LOCAL route's write, made as the person with the credential
-// they already have (CLAUDE.md rule 3 carve-out). The daemon never imports
-// this module; its writes go through the MutationGate.
+// they already have (CLAUDE.md rule 3 carve-out). The write is a MutationIntent
+// through the one MutationGate, with the install's `dry_run`: in dry-run the
+// review is recorded under state/dryrun/ and nothing is sent (CLAUDE.md rule
+// 1). The reads stay direct, as every read does. The daemon never imports this
+// module; its writes go through its own gate.
 
 import { existsSync, readFileSync } from "node:fs";
+import { MutationGate, type MutationExecutor, type MutationIntent } from "./gate.js";
 import { settingsPath } from "./localreview.js";
 import { FINDING_MARKER_RE, parseFindingMarker, stripFindingMarkers } from "./findingkey.js";
 import {
@@ -70,14 +74,67 @@ export interface PostRequest {
   repo: string;
   number: number;
   headSha: string;
+  /** Reads the PR's existing comments; the write goes through `gate`. */
   token: string;
   review: PostReview;
+  /** The gate the review is posted through (see `localPostGate`). */
+  gate: MutationGate;
   fetchFn?: typeof fetch;
   apiBase?: string;
 }
 
 export type PostResult =
-  { ok: true; posted: number; skipped: number; url: string | null } | { ok: false; error: string };
+  | { ok: true; posted: number; skipped: number; url: string | null; recorded?: undefined }
+  // Dry run: the gate recorded the review to `recorded` and sent nothing.
+  | { ok: true; posted: 0; skipped: number; url: null; recorded: string; wouldPost: number }
+  | { ok: false; error: string };
+
+/** GitHub answered the gated write with a non-2xx. */
+class GitHubRefusal extends Error {
+  constructor(
+    readonly status: number,
+    readonly detail: string,
+  ) {
+    super(`GitHub answered ${status}`);
+  }
+}
+
+/**
+ * The gate for a local or Action review: the install's `dry_run`, its
+ * `state/dryrun/` directory, and a REST executor that sends an admitted
+ * intent as `token`. The executor is reachable only through `gate.execute`,
+ * so nothing here writes around dry-run.
+ */
+export function localPostGate(o: {
+  dryRun: boolean;
+  dryrunDir: string;
+  token: string;
+  fetchFn?: typeof fetch;
+  apiBase?: string;
+}): MutationGate {
+  const fetchFn = o.fetchFn ?? fetch;
+  const api = o.apiBase ?? "https://api.github.com";
+  const executor: MutationExecutor = async (intent) => {
+    const res = await fetchFn(`${api}${intent.path}`, {
+      method: intent.method,
+      headers: { ...githubHeaders(o.token), "content-type": "application/json" },
+      signal: AbortSignal.timeout(60_000),
+      body: JSON.stringify(intent.body),
+    });
+    if (!res.ok) {
+      const text = (await res.text().catch(() => "")).replaceAll(o.token, "***").slice(0, 200);
+      throw new GitHubRefusal(res.status, text);
+    }
+    return res.json().catch(() => ({}));
+  };
+  return new MutationGate(o.dryRun, o.dryrunDir, executor);
+}
+
+const githubHeaders = (token: string) => ({
+  authorization: `Bearer ${token}`,
+  accept: "application/vnd.github+json",
+  "x-github-api-version": "2022-11-28",
+});
 
 interface ExistingComment {
   path?: string;
@@ -110,11 +167,7 @@ export async function postReviewToPr(req: PostRequest): Promise<PostResult> {
     };
   const fetchFn = req.fetchFn ?? fetch;
   const api = req.apiBase ?? "https://api.github.com";
-  const headers = {
-    authorization: `Bearer ${req.token}`,
-    accept: "application/vnd.github+json",
-    "x-github-api-version": "2022-11-28",
-  };
+  const headers = githubHeaders(req.token);
   const where = `${req.repo}#${req.number}`;
   const existing: ExistingComment[] = [];
   try {
@@ -143,28 +196,40 @@ export async function postReviewToPr(req: PostRequest): Promise<PostResult> {
   // Everything was already there: a second review would only repeat the body.
   if (fresh.length === 0 && req.review.comments.length > 0)
     return { ok: true, posted: 0, skipped, url: null };
+  const intent: MutationIntent = {
+    kind: "create_review",
+    method: "POST",
+    path: `/repos/${req.repo}/pulls/${req.number}/reviews`,
+    body: {
+      commit_id: req.headSha,
+      event: POST_EVENT,
+      body: req.review.body,
+      comments: fresh,
+    },
+    note: `qcr review: ${fresh.length} comment${fresh.length === 1 ? "" : "s"} on ${where}`,
+    pr: req.number,
+  };
   try {
-    const res = await fetchFn(`${api}/repos/${req.repo}/pulls/${req.number}/reviews`, {
-      method: "POST",
-      headers: { ...headers, "content-type": "application/json" },
-      signal: AbortSignal.timeout(60_000),
-      body: JSON.stringify({
-        commit_id: req.headSha,
-        event: POST_EVENT,
-        body: req.review.body,
-        comments: fresh,
-      }),
-    });
-    if (!res.ok) {
-      const text = (await res.text().catch(() => "")).replaceAll(req.token, "***").slice(0, 200);
+    const out = await req.gate.execute(intent);
+    if (out.dryRunFile !== undefined)
+      return {
+        ok: true,
+        posted: 0,
+        skipped,
+        url: null,
+        recorded: out.dryRunFile,
+        wouldPost: fresh.length,
+      };
+    if (!out.executed)
+      return { ok: false, error: `the gate did not post the review on ${where} (${out.blocked})` };
+    const url = (out.response as { html_url?: string } | undefined)?.html_url;
+    return { ok: true, posted: fresh.length, skipped, url: url ?? null };
+  } catch (err) {
+    if (err instanceof GitHubRefusal)
       return {
         ok: false,
-        error: `GitHub refused the review on ${where} (${res.status}) ${text}`.trim(),
+        error: `GitHub refused the review on ${where} (${err.status}) ${err.detail}`.trim(),
       };
-    }
-    const out = (await res.json().catch(() => ({}))) as { html_url?: string };
-    return { ok: true, posted: fresh.length, skipped, url: out.html_url ?? null };
-  } catch (err) {
     return { ok: false, error: `could not post to ${where}: ${String(err).slice(0, 200)}` };
   }
 }

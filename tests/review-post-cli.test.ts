@@ -234,12 +234,20 @@ function cwdRepo(name: string): string {
   rich(repo);
   return repo;
 }
-function prHarness(repo: string, piBin: string, api: ReturnType<typeof stubApi>, pr: object = {}) {
+function prHarness(
+  repo: string,
+  piBin: string,
+  api: ReturnType<typeof stubApi>,
+  pr: object = {},
+  dryRun = false,
+) {
   const h = harness({ repo, piBin });
   return {
     ...h,
     deps: {
       ...h.deps,
+      // The posting gate takes the install's dry_run; these runs are live ones.
+      cfg: { ...h.deps.cfg, dry_run: dryRun },
       pr: {
         fetchFn: api.fetchFn,
         gitBase: gh,
@@ -268,6 +276,18 @@ describe("qcr review --to pr", () => {
       expect(c.body).toMatch(/<!-- qcr:f=1:f\d -->/);
     }
     expect(h.text()).toMatch(/Posted 2 comments/);
+  });
+
+  it("on a dry_run install records the review under state/dryrun/ and posts nothing", async () => {
+    const repo = cwdRepo("post-dry");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("post-dry").bin, api, {}, true);
+    expect(await runReviewCli(["7", "--to", "terminal,pr"], false, h.deps)).toBe(0);
+    expect(api.posts).toHaveLength(0);
+    expect(h.text()).toMatch(/Dry run .*recorded, not posted/);
+    const dir = join(root, "state", "dryrun");
+    const files = readdirSync(dir).filter((f) => f.endsWith("-create_review.json"));
+    expect(files.length).toBeGreaterThan(0);
   });
 
   it("a second review of the same PR with the same findings posts nothing new", async () => {
