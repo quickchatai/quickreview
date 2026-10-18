@@ -924,7 +924,6 @@ export function createForwarder(cfg, opts = {}) {
     counters.peakQueued = Math.max(counters.peakQueued, queue.length);
     conn.queueTimer = setTimeout(() => {
       if (!conn.queued) return;
-      dequeue(conn);
       refuse(conn, "timeout");
     }, limits.queueTimeoutMs);
     conn.queueTimer.unref?.();
@@ -938,9 +937,9 @@ export function createForwarder(cfg, opts = {}) {
   const refuse = (conn, why) => {
     if (conn.refused || conn.closed) return;
     conn.refused = true;
-    dequeue(conn);
     if (why === "full") counters.refusedFull += 1;
     else counters.refusedTimeout += 1;
+    dequeue(conn);
     const state = `${open}/${limits.maxRelays} relays open, ${queue.length} waiting`;
     const message =
       why === "full"
@@ -1344,23 +1343,39 @@ export function unitAuthSock(env = process.env) {
 
 /** The systemd --user unit. Pure so the test can read it. */
 export function unitText(cfg, env = process.env) {
+  const arg = (value) => {
+    const text = String(value).replaceAll("$", "$$");
+    return /[\s"\\]/.test(text) ? JSON.stringify(text) : text;
+  };
+  const pathArg = (value) => arg(String(value).replaceAll("%", "%%"));
   const script = join(ROOT, "scripts", "companion-memory-forward.mjs");
   const auth = unitAuthSock(env);
-  const runArgs = [
-    "run",
-    ...(cfg.local ? ["--local"] : ["--ssh-host", cfg.sshHost]),
-    "--container",
-    cfg.container,
-    "--port",
-    String(cfg.port),
-    "--gateway",
-    cfg.gateway,
-    ...(cfg.sudo ? [] : ["--no-sudo"]),
-    ...(cfg.identity ? ["--identity", cfg.identity] : []),
-    // The cap and the control socket ride the unit only when they
-    // differ from the defaults, so a later default reaches an installed unit.
-    ...unitLimitArgs(cfg),
-  ].join(" ");
+  const runArgs =
+    [
+      "run",
+      ...(cfg.local ? ["--local"] : ["--ssh-host", cfg.sshHost]),
+      "--container",
+      cfg.container,
+      "--port",
+      String(cfg.port),
+      "--gateway",
+      cfg.gateway,
+      ...(cfg.sudo ? [] : ["--no-sudo"]),
+      ...(cfg.identity ? ["--identity", cfg.identity] : []),
+      "--remote-host",
+      cfg.remoteHost,
+      "--remote-port",
+      String(cfg.remotePort),
+      "--bind",
+      cfg.binds.join(","),
+      // The cap and the control socket ride the unit only when they
+      // differ from the defaults, so a later default reaches an installed unit.
+    ]
+      .map(pathArg)
+      .join(" ") +
+    unitLimitArgs(cfg)
+      .map((value) => ` ${arg(value)}`)
+      .join("");
   // Name the transport truthfully — a local unit that claimed to
   // forward "OpenViking on <ssh host>" is the line an operator reads first in
   // `systemctl --user status` when the laptop route misbehaves.
@@ -1372,13 +1387,13 @@ After=default.target
 
 [Service]
 Type=simple
-${auth.value === "" ? "" : `Environment=SSH_AUTH_SOCK=${auth.value}\n`}ExecStartPre=${process.execPath} ${script} ensure-network --network ${cfg.network} --subnet ${cfg.subnet}
-ExecStart=${process.execPath} ${script} ${runArgs}
+${auth.value === "" ? "" : `Environment=SSH_AUTH_SOCK=${auth.value}\n`}ExecStartPre=${pathArg(process.execPath)} ${pathArg(script)} ensure-network --network ${arg(cfg.network)} --subnet ${arg(cfg.subnet)}
+ExecStart=${pathArg(process.execPath)} ${pathArg(script)} ${runArgs}
 Restart=always
 RestartSec=5
 # This process is the ONLY holder of a VM credential in the companion path.
 # It runs as the desktop user, never inside a container (root CLAUDE.md rule 8).
-NoNewPrivileges=yes
+NoNewPrivileges=${cfg.local && cfg.sudo ? "no" : "yes"}
 
 [Install]
 WantedBy=default.target
@@ -1606,7 +1621,14 @@ export async function runVerify({
       });
       continue;
     }
-    const r = await probePair(base, key, e.ns, env, fetchFn, write);
+    const read = await probePair(base, key, e.ns, env, fetchFn, false);
+    const written = write ? await probePair(base, key, e.ns, env, fetchFn, true) : null;
+    const probes = written ? [read, written] : [read];
+    // A pair passes only when every requested operation proves its confinement.
+    const r =
+      probes.find((probe) => verdictFor(e.want, probe.classification) === "FAIL") ??
+      probes.find((probe) => probe.classification === "inconclusive") ??
+      read;
     rows.push({
       ...e,
       observed: r.classification,
@@ -1720,8 +1742,10 @@ function run(bin, args) {
   return spawnSync(bin, args, { encoding: "utf8" });
 }
 
-function ensureNetwork(cfg) {
-  const inspect = run("docker", [
+/** @param {any} cfg
+ * @param {(bin: string, args: string[]) => {status: number | null, stdout: string, stderr: string}} execute */
+function ensureNetwork(cfg, execute = run) {
+  const inspect = execute("docker", [
     "network",
     "inspect",
     "--format",
@@ -1732,7 +1756,7 @@ function ensureNetwork(cfg) {
     console.log(`docker network ${cfg.network} present (gateway ${inspect.stdout.trim()})`);
     return 0;
   }
-  const created = run("docker", ["network", "create", "--subnet", cfg.subnet, cfg.network]);
+  const created = execute("docker", ["network", "create", "--subnet", cfg.subnet, cfg.network]);
   if (created.status !== 0) {
     console.error(
       `could not create docker network ${cfg.network}: ${(created.stderr || "").trim()}`,
@@ -1743,9 +1767,11 @@ function ensureNetwork(cfg) {
   return 0;
 }
 
-function install(cfg) {
-  if (ensureNetwork(cfg) !== 0) return 1;
-  const path = unitPath(cfg);
+/** @param {any} cfg
+ * @param {{execute?: (bin: string, args: string[]) => {status: number | null, stdout: string, stderr: string}, home?: string}} deps */
+export function install(cfg, { execute = run, home = homedir() } = {}) {
+  if (ensureNetwork(cfg, execute) !== 0) return 1;
+  const path = unitPath(cfg, home);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, unitText(cfg));
   console.log(`wrote ${path}`);
@@ -1760,9 +1786,10 @@ function install(cfg) {
   }
   for (const args of [
     ["--user", "daemon-reload"],
-    ["--user", "enable", "--now", `${cfg.unit}.service`],
+    ["--user", "enable", `${cfg.unit}.service`],
+    ["--user", "restart", `${cfg.unit}.service`],
   ]) {
-    const r = run("systemctl", args);
+    const r = execute("systemctl", args);
     if (r.status !== 0) {
       console.error(`systemctl ${args.join(" ")} failed: ${(r.stderr || "").trim()}`);
       return 1;
@@ -1775,8 +1802,14 @@ function install(cfg) {
   return 0;
 }
 
-function uninstall(cfg) {
-  run("systemctl", ["--user", "disable", "--now", `${cfg.unit}.service`]);
+/** @param {any} cfg
+ * @param {(bin: string, args: string[]) => {status: number | null, stdout: string, stderr: string}} execute */
+export function uninstall(cfg, execute = run) {
+  const result = execute("systemctl", ["--user", "disable", "--now", `${cfg.unit}.service`]);
+  if (result.status !== 0) {
+    console.error(`could not stop ${cfg.unit}.service: ${(result.stderr || "").trim()}`);
+    return 1;
+  }
   console.log(`${cfg.unit}.service disabled (unit file, docker network and keys left in place)`);
   return 0;
 }
