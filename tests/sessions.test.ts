@@ -245,6 +245,17 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+it("removes only the confirmed-gone session birth and bridge metadata", () => {
+  const directory = join(root, "state", "sessions");
+  mkdirSync(directory, { recursive: true });
+  const removed = ["smoke-fixture.json", "smoke-fixture.bridge-old.json", "smoke-fixture.bridge-new.json"];
+  const retained = ["pr-7.json", "pr-7.bridge-old.json", "smoke-fixture-other.bridge-old.json", "smoke-fixture.bridge-not-json"];
+  for (const name of [...removed, ...retained]) writeFileSync(join(directory, name), "fixture");
+  manager().removeSessionBirthMetadata("smoke-fixture");
+  for (const name of removed) expect(existsSync(join(directory, name))).toBe(false);
+  for (const name of retained) expect(existsSync(join(directory, name))).toBe(true);
+});
+
 describe("session naming", () => {
   it("maps PR numbers to session names and back", () => {
     expect(prSessionName(42)).toBe("pr-42");

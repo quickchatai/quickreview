@@ -1,6 +1,6 @@
 // `npm run smoke:session` — the scripted manual smoke for the daemon↔pi
 // boundary. It spawns a REAL tmux + pi session, injects a
-// hello prompt through the inject-bridge, and greps the session JSONL for the
+// hello prompt through the inject-bridge, and checks the session JSONL for the
 // agreed marker in the reply.
 //
 // pi is not installed on the build machine: this script is expected to bail
@@ -39,6 +39,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function hasAssistantMarker(jsonl: string): boolean {
+  return jsonl.split("\n").some((line) => {
+    try {
+      const entry = JSON.parse(line) as { message?: unknown; role?: unknown; content?: unknown };
+      const message = (entry.message ?? entry) as { role?: unknown; content?: unknown };
+      if (message.role !== "assistant") return false;
+      const text = typeof message.content === "string" ? message.content
+        : Array.isArray(message.content) ? message.content
+          .filter((part): part is { type: "text"; text: string } => part?.type === "text" && typeof part.text === "string")
+          .map((part) => part.text).join("") : "";
+      return text.trim() === MARKER;
+    } catch {
+      return false;
+    }
+  });
+}
+
 export async function main(): Promise<number> {
   const cfg = loadConfig();
   const root = sandboxRoot();
@@ -65,9 +82,9 @@ export async function main(): Promise<number> {
   const session = `smoke-${Date.now()}`;
   const mgr = new PiSessionManager({ cfg, root });
   console.log(`[smoke] spawning tmux session ${session} (model ${cfg.models.conversation})`);
-  await mgr.spawnSession(session, SYSTEM_PROMPT, cfg.models.conversation);
   let found = false;
   try {
+    await mgr.spawnSession(session, SYSTEM_PROMPT, cfg.models.conversation);
     const injected = mgr.injectFile(session, `Hello from the smoke test. Reply with the marker.\n`);
     console.log(`[smoke] injected ${injected}`);
 
@@ -76,12 +93,17 @@ export async function main(): Promise<number> {
     while (Date.now() < deadline && !found) {
       await sleep(POLL_MS);
       jsonl = mgr.newestSessionFile(session);
-      if (jsonl && existsSync(jsonl)) found = readFileSync(jsonl, "utf8").includes(MARKER);
+      if (jsonl && existsSync(jsonl)) found = hasAssistantMarker(readFileSync(jsonl, "utf8"));
     }
     console.log(`[smoke] session file: ${jsonl ?? "(none found)"}`);
   } finally {
     // Always: a throw between spawn and here must not leave a smoke-* pi alive.
     await mgr.tmux.killSession(session);
+    const remaining = await mgr.tmux.listSessionsKnown();
+    if (remaining === null || remaining.includes(session)) {
+      throw new Error(`[smoke] cannot confirm session absence; ${session} may still be running`);
+    }
+    mgr.removeSessionBirthMetadata(session);
     rmSync(mgr.sessionDir(session), { recursive: true, force: true });
     rmSync(mgr.injectDir(session), { recursive: true, force: true });
     rmSync(mgr.promptPath(session), { force: true });

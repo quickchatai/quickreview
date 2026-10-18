@@ -705,6 +705,24 @@ export class PiSessionManager implements SessionHooks {
     return join(this.root, "state", "sessions", `${session}.bridge-${generation}.json`);
   }
 
+  /** Remove routing metadata only after the caller has confirmed this session is gone. */
+  removeSessionBirthMetadata(session: string): void {
+    const directory = join(this.root, "state", "sessions");
+    let names: string[];
+    try {
+      names = readdirSync(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    rmSync(this.birthFile(session), { force: true });
+    for (const name of names) {
+      if (name.startsWith(`${session}.bridge-`) && name.endsWith(".json")) {
+        rmSync(join(directory, name), { force: true });
+      }
+    }
+  }
+
   private recordBirth(session: string, bridgeGeneration: string): void {
     this.writeAtomic(
       this.birthFile(session),
