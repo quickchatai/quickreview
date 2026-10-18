@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "partial": true,
+  "coverage": {
+    "planned": [
+      "pass-baseline--sol-high",
+      "pass-sweep--sol-high",
+      "pass-tests--terra-med",
+      "pass-validate--sol-high"
+    ],
+    "started": [],
+    "not_reached": [
+      "pass-baseline--sol-high",
+      "pass-sweep--sol-high",
+      "pass-tests--terra-med",
+      "pass-validate--sol-high"
+    ]
+  },
+  "preview": {
+    "repo": "local/capped",
+    "target": "branch",
+    "postable": false,
+    "branch": "feature",
+    "base": "main",
+    "head_sha": "0000000000000000000000000000000000000000",
+    "files": 1,
+    "lines": 2,
+    "scope": "full",
+    "lenses": [
+      "pass-baseline--sol-high",
+      "pass-sweep--sol-high",
+      "pass-tests--terra-med",
+      "pass-validate--sol-high"
+    ],
+    "estimate_usd": 0.61,
+    "cap_usd": 1.22,
+    "limit_usd": 1000,
+    "auto": true,
+    "key": "0000000000000000"
+  },
+  "findings": {},
+  "still_open": [],
+  "repeats_suppressed": 0,
+  "already_posted_skipped": 0,
+  "verdict": null,
+  "cost_usd": 9999,
+  "out_dir": "/tmp/work/runs-x/20260101000000000-0000000/out",
+  "warnings": [],
+  "memory": {
+    "used": false,
+    "notice": "memory: not set up on this install — reviewing without it"
+  }
+}

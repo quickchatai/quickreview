@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "run_id": "run1001000",
+  "state": "done",
+  "target": "feature",
+  "elapsed_s": 0,
+  "exit_code": 0,
+  "result": {
+    "schema_version": 1,
+    "ok": true,
+    "partial": false,
+    "preview": {
+      "repo": "local/done",
+      "target": "branch",
+      "postable": false,
+      "branch": "feature",
+      "base": "main",
+      "head_sha": "0000000000000000000000000000000000000000",
+      "files": 1,
+      "lines": 2,
+      "scope": "full",
+      "lenses": [
+        "pass-baseline--sol-high",
+        "pass-sweep--sol-high",
+        "pass-tests--terra-med",
+        "pass-validate--sol-high"
+      ],
+      "estimate_usd": 0.61,
+      "cap_usd": 1.22,
+      "limit_usd": 1000,
+      "auto": true,
+      "key": "0000000000000000"
+    },
+    "findings": {
+      "P0": [
+        {
+          "path": "src/a.ts",
+          "line": 3,
+          "severity": "P0",
+          "title": "c breaks the build",
+          "lens": null
+        }
+      ],
+      "P2": [
+        {
+          "path": "src/a.ts",
+          "line": 2,
+          "severity": "P2",
+          "title": "b is a magic number",
+          "lens": null
+        }
+      ]
+    },
+    "still_open": [],
+    "repeats_suppressed": 0,
+    "already_posted_skipped": 0,
+    "verdict": "REQUEST_CHANGES",
+    "cost_usd": 0.25,
+    "out_dir": "/tmp/work/runs-x/20260101000000000-0000000/out",
+    "warnings": [
+      "render: #1: posted_as undefined is outside the grammar — rendered as a question",
+      "render: #1: no body — the reason stands in",
+      "render: #2: posted_as undefined is outside the grammar — rendered as a question",
+      "render: #2: no body — the reason stands in",
+      "render: no summary — the body opens on the verdict line",
+      "render: no lenses_applied — the posted lenses stand in"
+    ],
+    "memory": {
+      "used": false,
+      "notice": "memory: not set up on this install — reviewing without it"
+    }
+  }
+}

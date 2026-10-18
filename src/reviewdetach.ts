@@ -31,6 +31,7 @@ import { haltPi, killPiGroups } from "./oneshot.js";
 import { originRepo, resolveBranch, resolveUncommitted } from "./localreview.js";
 import { parsePrTarget } from "./prtarget.js";
 import { parseReviewArgs } from "./reviewcli.js";
+import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
 
 export const DETACHED_USAGE =
   "usage: qcr review start [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] --json\n" +
@@ -227,7 +228,7 @@ export async function runDetachedVerb(
   deps: DetachDeps,
 ): Promise<number> {
   const emit: Emit = (code, human, data) => {
-    deps.out(json ? JSON.stringify(data) : human);
+    deps.out(json ? JSON.stringify(withSchemaVersion(REVIEW_SCHEMA_VERSION, data)) : human);
     return code;
   };
   const usage = (why: string): number => {
@@ -435,7 +436,12 @@ export async function runDetachedChild(o: {
     code = await o.run(out);
   } catch (err) {
     out(
-      JSON.stringify({ ok: false, errors: [`the review crashed: ${String(err).slice(0, 300)}`] }),
+      JSON.stringify(
+        withSchemaVersion(REVIEW_SCHEMA_VERSION, {
+          ok: false,
+          errors: [`the review crashed: ${String(err).slice(0, 300)}`],
+        }),
+      ),
     );
     code = 1;
   } finally {

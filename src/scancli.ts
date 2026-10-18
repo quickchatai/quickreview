@@ -78,6 +78,7 @@ import type { ScanRunner, ScanRun, ScanSettings, ScanStatus } from "./setup/scan
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "./setup/stage2.js";
 import type { StoredStage2Proposal } from "./setup/stage2request.js";
 import type { CloseFixedResult, ScanTriage } from "./setup/triage.js";
+import { SCAN_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
 
 export const SCAN_USAGE =
   "usage: qcr scan preview [--sha REF] [--delta] | start --key K [--sha REF] [--delta] [--foreground] | " +
@@ -492,7 +493,7 @@ export async function runScanCli(
   deps: ScanCliDeps,
 ): Promise<number> {
   const emit: Emit = (code, human, data) => {
-    deps.out(json ? JSON.stringify(data) : human);
+    deps.out(json ? JSON.stringify(withSchemaVersion(SCAN_SCHEMA_VERSION, data)) : human);
     return code;
   };
   const refusal = (what: string, errors: readonly string[], code = 1): number =>
@@ -748,7 +749,8 @@ export async function runScanCli(
       return emit(r.ok ? 0 : 1, renderDoctor(r), r as unknown as Record<string, unknown>);
     }
     case "login":
-      if (json) return refusal("Login", ["login is interactive; run qcr scan login without --json"]);
+      if (json)
+        return refusal("Login", ["login is interactive; run qcr scan login without --json"]);
       if (!deps.login) return refusal("Login", ["no login in this assembly"]);
       return deps.login(cmd.provider);
     case "rebuild": {

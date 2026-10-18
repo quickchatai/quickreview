@@ -163,6 +163,7 @@ describe("preview and start", () => {
     const stale = await h.run(["start", "--key", "stale"], true);
     expect(stale.code).toBe(1);
     expect(stale.json).toEqual({
+      schema_version: 1,
       ok: false,
       errors: [expect.stringMatching(/^the plan changed since that preview \(key stale/)],
     });
@@ -277,7 +278,11 @@ describe("stop", () => {
     const h = harness();
     const r = await h.run(["stop"], true);
     expect(r.code).toBe(1);
-    expect(r.json).toEqual({ ok: false, errors: ["no scan is recorded as running"] });
+    expect(r.json).toEqual({
+      schema_version: 1,
+      ok: false,
+      errors: ["no scan is recorded as running"],
+    });
   });
 
   it("asks the driving process through the stop channel and reports its answer", async () => {
@@ -296,6 +301,7 @@ describe("stop", () => {
     const r = await h.run(["stop"], true);
     expect(r.code).toBe(0);
     expect(r.json).toEqual({
+      schema_version: 1,
       ok: true,
       run: started.run.id,
       answer: `scan ${started.run.id} stopped — what finished is in the ledger`,
@@ -368,7 +374,7 @@ describe("findings", () => {
     expect((await h.run(["findings", "--limit", "1"], true)).json.findings).toHaveLength(1);
     const bad = await h.run(["findings", "--state", "bogus"], true);
     expect(bad.code).toBe(2);
-    expect(bad.json).toEqual({ ok: false, errors: ['Unknown state "bogus".'] });
+    expect(bad.json).toEqual({ schema_version: 1, ok: false, errors: ['Unknown state "bogus".'] });
     expect((await h.run(["findings", "--lens", "pass-scan"])).text).toMatch(
       /^- \[P2\] app\/a\.py:1-2 \(app, bug, new, unvalidated\) it breaks \[[0-9a-f]{12}\]$/m,
     );
@@ -384,6 +390,7 @@ describe("dismiss", () => {
     const r = await h.run(["dismiss", a!.slice(0, 12), b!, "--reason", "test fixture"], true);
     expect(r.code).toBe(0);
     expect(r.json).toEqual({
+      schema_version: 1,
       ok: true,
       dismissed: [
         {
@@ -406,6 +413,7 @@ describe("dismiss", () => {
     const miss = await h.run(["dismiss", "0".repeat(12), "--reason", "x"], true);
     expect(miss.code).toBe(1);
     expect(miss.json).toEqual({
+      schema_version: 1,
       ok: false,
       dismissed: [],
       errors: [`${"0".repeat(12)}: no stored finding has fingerprint ${"0".repeat(12)}`],
@@ -435,7 +443,11 @@ describe("matches and match", () => {
     const ok = await h.run(["match", "--key", q.question.key, pair], true);
     expect(ok.code).toBe(0);
     expect(ok.json).toMatchObject({ ok: true, matched: 1, fixed: 0, new: 0, tickets_closed: 0 });
-    expect((await h.run(["matches"], true)).json).toEqual({ ok: true, question: null });
+    expect((await h.run(["matches"], true)).json).toEqual({
+      schema_version: 1,
+      ok: true,
+      question: null,
+    });
   });
 });
 
@@ -682,6 +694,9 @@ it("refuses interactive login as structured JSON without invoking the adapter", 
   h.deps.login = vi.fn(async () => 0);
   const code = await runScanCli(["login"], true, h.deps);
   expect(code).toBe(1);
-  expect(JSON.parse(h.lines.join("\n"))).toMatchObject({ ok: false, errors: [expect.stringMatching(/interactive|json/i)] });
+  expect(JSON.parse(h.lines.join("\n"))).toMatchObject({
+    ok: false,
+    errors: [expect.stringMatching(/interactive|json/i)],
+  });
   expect(h.deps.login).not.toHaveBeenCalled();
 });
