@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Pi } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import activateInjectBridge from "../extensions/inject-bridge.js";
 import type { Config } from "../src/config.js";
 import { dispatchOnce } from "../src/dispatch.js";
@@ -1555,7 +1555,7 @@ describe("durable command ownership", () => {
                 handlers.set(event, list);
               },
               sendUserMessage() {},
-            } as unknown as Pi;
+            } as unknown as ExtensionAPI;
             activateInjectBridge(pi);
             for (const handler of handlers.get("session_start") ?? []) handler({});
           } finally {
@@ -1732,7 +1732,7 @@ describe("durable command ownership", () => {
             sendUserMessage(content: string) {
               sent.push(content);
             },
-          } as unknown as Pi;
+          } as unknown as ExtensionAPI;
           activateInjectBridge(pi);
           shutdownBridge = () => {
             for (const handler of handlers.get("session_shutdown") ?? []) handler({});

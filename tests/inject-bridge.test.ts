@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Pi } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import activate, { RETRY_BASE_MS, START_ACK_TIMEOUT_MS } from "../extensions/inject-bridge.js";
 import * as bridgeState from "../src/session-bridge.js";
 import { readSessionBridgeState } from "../src/session-bridge.js";
@@ -39,7 +39,7 @@ let savedEnv: {
   bridgeLedgerRequired?: string;
 };
 
-function fakePi(): Pi {
+function fakePi(): ExtensionAPI {
   return {
     on(event: string, handler: (...args: unknown[]) => unknown) {
       const list = handlers.get(event) ?? [];
@@ -50,7 +50,7 @@ function fakePi(): Pi {
       sends.push({ content, ...(options ? { options } : {}) });
       sendImpl(content);
     },
-  } as unknown as Pi;
+  } as unknown as ExtensionAPI;
 }
 
 function fire(event: string, payload: unknown = {}, context?: unknown): void {

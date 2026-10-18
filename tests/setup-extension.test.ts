@@ -8,7 +8,8 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { QcrTool, QcrToolResult } from "../extensions/pi-tool.js";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
@@ -49,12 +50,12 @@ function tree(root: string, files: Record<string, string>): void {
   }
 }
 
-function textOf(r: PiToolResult): string {
+function textOf(r: QcrToolResult): string {
   return r.content.map((c) => c.text).join("\n");
 }
 
 async function call(
-  defs: PiToolDefinition[],
+  defs: QcrTool[],
   name: string,
   params: Record<string, unknown> = {},
 ): Promise<string> {
@@ -64,7 +65,7 @@ async function call(
 }
 
 describe("the tool belt", () => {
-  function belt(): PiToolDefinition[] {
+  function belt(): QcrTool[] {
     const repo = join(dir, "repo");
     tree(repo, {
       "README.md": "# x\n",
@@ -220,14 +221,14 @@ describe("the tool belt", () => {
   it("activation degrades on a pi without registerTool, and registers every tool on one with it", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      activate({ on: () => {}, sendUserMessage: () => {} });
+      activate({ on: () => {}, sendUserMessage: () => {} } as unknown as ExtensionAPI);
       expect(err).toHaveBeenCalledWith(expect.stringMatching(/registerTool unavailable/));
       const registered: string[] = [];
       activate({
         on: () => {},
         sendUserMessage: () => {},
-        registerTool: (d) => registered.push(d.name),
-      });
+        registerTool: (d: { name: string }) => registered.push(d.name),
+      } as unknown as ExtensionAPI);
       expect(registered).toEqual([
         "setup_repo_facts",
         "setup_unit_cut",
@@ -282,7 +283,7 @@ describe("the tool belt", () => {
 });
 
 describe("the interview's profile tools", () => {
-  function profileBelt(profile: string): PiToolDefinition[] {
+  function profileBelt(profile: string): QcrTool[] {
     const cfgHome = join(dir, "config");
     tree(cfgHome, { "config.toml": `[review]\nprofile = ${JSON.stringify(profile)}\n` });
     const engine = buildEngine({

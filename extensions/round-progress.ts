@@ -15,7 +15,7 @@
 // activity, never to a session failure.
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Pi, PiEventPayload } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   appendProgressLog,
   isLiveAgentStatus,
@@ -81,16 +81,23 @@ function status(value: unknown, exitCode?: unknown): LiveAgentStatus {
   return exitCode === 0 ? "completed" : exitCode === undefined ? "running" : "failed";
 }
 
-function toolName(event: PiEventPayload): string {
-  return text(event.toolName) ?? text(event.name) ?? "tool";
+/** An event read field by field, whatever its declared type: every accessor
+ * below probes defensively (VERIFY-ON-PIN) rather than trusting the shape. */
+type EventBag = Record<string, unknown>;
+
+function toolName(event: object): string {
+  const e = event as EventBag;
+  return text(e.toolName) ?? text(e.name) ?? "tool";
 }
 
-function toolId(event: PiEventPayload): string {
-  return text(event.toolCallId) ?? text(event.id) ?? `${toolName(event)}:unknown`;
+function toolId(event: object): string {
+  const e = event as EventBag;
+  return text(e.toolCallId) ?? text(e.id) ?? `${toolName(event)}:unknown`;
 }
 
-function toolArgs(event: PiEventPayload): Record<string, unknown> {
-  return record(event.args) ?? record(event.input) ?? record(event.arguments) ?? {};
+function toolArgs(event: object): Record<string, unknown> {
+  const e = event as EventBag;
+  return record(e.args) ?? record(e.input) ?? record(e.arguments) ?? {};
 }
 
 /** Native subagent supports one `{agent, task}` or parallel `{tasks:[...]}`.
@@ -152,8 +159,8 @@ function argPreview(args: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function userMessageText(event: PiEventPayload): string | undefined {
-  const message = record(event.message);
+function userMessageText(event: object): string | undefined {
+  const message = record((event as EventBag).message);
   if (message?.role !== "user" || !Array.isArray(message.content)) return undefined;
   return message.content
     .map(record)
@@ -165,11 +172,8 @@ function userMessageText(event: PiEventPayload): string | undefined {
     .join("\n");
 }
 
-function resultsFrom(
-  event: PiEventPayload,
-  carrier: "partialResult" | "result",
-): SubagentResultLike[] {
-  const outer = record(event[carrier]);
+function resultsFrom(event: object, carrier: "partialResult" | "result"): SubagentResultLike[] {
+  const outer = record((event as EventBag)[carrier]);
   const details = record(outer?.details);
   return Array.isArray(details?.results)
     ? details.results.filter((x): x is SubagentResultLike => record(x) !== undefined)
@@ -247,7 +251,7 @@ function asAgent(
   };
 }
 
-export default function activate(pi: Pi): void {
+export default function activate(pi: ExtensionAPI): void {
   const pr = parsePrIdentity(process.env.QCR_PR);
   if (pr === undefined) return; // overseer and companion do not publish PR progress
   const session = process.env.QCR_SESSION_NAME?.trim() || `pr-${pr}`;

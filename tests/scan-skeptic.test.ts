@@ -16,7 +16,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { PiToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { QcrTool } from "../extensions/pi-tool.js";
 import { scanToolDefinitions } from "../extensions/setup-scan.js";
 import { triageToolDefinitions } from "../extensions/setup-triage.js";
 import { parseConfig, SCAN_DEFAULTS, type Config, type ScanConfig } from "../src/config.js";
@@ -831,7 +831,7 @@ function belt() {
 }
 
 async function call(
-  defs: PiToolDefinition[],
+  defs: QcrTool[],
   name: string,
   params: Record<string, unknown> = {},
 ): Promise<string> {

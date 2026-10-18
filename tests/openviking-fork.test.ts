@@ -7,8 +7,8 @@
 //     (they import only node builtins and plain .mjs siblings), so those
 //     patches are tested, not just grepped. `tools.ts` and `index.ts` are NOT
 //     importable — they pull `typebox`, `@earendil-works/pi-ai` and
-//     `@earendil-works/pi-coding-agent`, none of which is installed in this
-//     repo (pi lives only in the container).
+//     `@earendil-works/pi-coding-agent`, which load pi's whole runtime; pi is
+//     typechecked against (patch 0012), not run, in these tests.
 //   * STRUCTURE, for the two unimportable files and for every deletion. A
 //     deletion cannot be tested by calling it; the test is that the thing is
 //     absent. These are the assertions a careless rebase trips over — which is
@@ -166,7 +166,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(12); // 0000 scaffolding + eleven numbered
+    expect(upstream.patches.length).toBe(13); // 0000 scaffolding + eleven numbered + 0012 typing
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -1697,8 +1697,9 @@ describe("PATCH 8 — a PR session recalls for its PR, inside the round's areas"
   it("index.ts reads the hint for every prompt and queues ITS query and areas", () => {
     const index = code("index.ts");
     // [PATCH 11] through `recallScope`, which fails closed without a hint.
-    expect(index).toContain(
-      "const plan = recallScope(process.env[RECALL_HINT_FILE_ENV], event.prompt);",
+    // [PATCH 12] the prompt read is cast for pi 1.3.0's event union, unchanged.
+    expect(index).toMatch(
+      /const plan = recallScope\(\s*process\.env\[RECALL_HINT_FILE_ENV\],\s*\(event as \{ prompt: string \}\)\.prompt,?\s*\);/,
     );
     expect(index).toContain("recall.queueSearch(plan.query, plan.areas);");
     expect(index.match(/queueSearch\(/g)).toHaveLength(1);
@@ -2178,8 +2179,8 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
       expect(headerHashTags(text), text).toEqual(parseHashTags(text));
   });
 
-  it("ships the patch, recorded LAST in the series, with its markers", () => {
-    expect(upstream.patches.at(-1)).toBe("0011-review-session-memory-boundary.patch");
+  it("ships the patch, recorded in the series, with its markers", () => {
+    expect(upstream.patches.at(-2)).toBe("0011-review-session-memory-boundary.patch");
     const patch = read(join("patches", "0011-review-session-memory-boundary.patch"));
     expect(patch).toContain("QCR PATCH 11");
     for (const f of [
@@ -2196,5 +2197,17 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
     }
     expect(read("NOTICE")).toContain("11. A review session's recall fails closed");
     expect(read("README.md")).toContain("### 0011 — the review session's memory boundary");
+  });
+});
+
+describe("PATCH 12 — the fork is typechecked against the real pi, not ambient stand-ins", () => {
+  it("ships the patch, recorded LAST in the series, and the ambient shim is gone", () => {
+    expect(upstream.patches.at(-1)).toBe("0012-typecheck-against-the-real-pi.patch");
+    const patch = read(join("patches", "0012-typecheck-against-the-real-pi.patch"));
+    for (const f of ["index.ts", "vendor-pi-types.d.ts", "README.md"]) {
+      expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
+    }
+    expect(existsSync(join(FORK, "vendor-pi-types.d.ts"))).toBe(false);
+    expect(read("README.md")).toContain("### 0012 — typechecked against the real pi");
   });
 });

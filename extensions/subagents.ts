@@ -70,7 +70,8 @@
 //    simply never registered and the round templates' "Unknown agent = STOP"
 //    rule holds — logged FATAL below, never a crashed pi.
 import { CONTEXT_PACK_FILE, LEAF_PACK_ENV } from "../src/contextpack.js";
-import type { Pi, PiToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { toPiTool, type QcrTool, type QcrToolResult } from "./pi-tool.js";
 import { CACHE_GROUP_MAX_AGE_MS, CacheGrouper } from "../src/engine/lens/cache-group.js";
 import {
   type ParallelNativeResult,
@@ -222,7 +223,15 @@ export function callWeight(params: Record<string, unknown>, permits: number): nu
   return 1;
 }
 
-type ToolExecute = PiToolDefinition["execute"];
+/** The subagent tool's execute as this glue calls it: a Promise-returning
+ * `QcrTool["execute"]`. */
+type ToolExecute = (
+  id: string,
+  params: Record<string, unknown>,
+  signal?: AbortSignal,
+  onUpdate?: unknown,
+  ctx?: Parameters<QcrTool["execute"]>[4],
+) => Promise<QcrToolResult>;
 
 function parallelResult(value: unknown): ParallelNativeResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -585,7 +594,7 @@ function launchError(error: string): Awaited<ReturnType<ToolExecute>> {
     ],
     details: { launch_plan: { error } },
     isError: true,
-  } as Awaited<ReturnType<ToolExecute>>;
+  };
 }
 
 /** The `launch_plan` tool's execute over the subagent tool's WRAPPED execute
@@ -608,11 +617,11 @@ export function launchPlanExecute(
 }
 
 /** The `launch_plan` tool definition. Parameters are plain JSON Schema
- * (VERIFY-ON-PIN: equivalent to TypeBox at runtime — pi-api.d.ts). */
+ * (a TypeBox schema is plain JSON Schema at runtime). */
 export function launchPlanDefinition(
   wrapped: ToolExecute,
   env: Record<string, string | undefined> = process.env,
-): PiToolDefinition {
+): QcrTool {
   return {
     name: LAUNCH_PLAN_TOOL,
     label: "Launch plan",
@@ -975,7 +984,7 @@ export function nativeExtensionPath(examplesPath: string): string {
   return join(examplesPath, "extensions", "subagent", "index.ts");
 }
 
-export default async function activate(pi: Pi): Promise<void> {
+export default async function activate(pi: ExtensionAPI): Promise<void> {
   const log = (msg: string) => console.error(msg);
   // Before native is imported, so its `spawn` is the patched one.
   const cacheGroups = installLeafSpawnPatch(process.env, log);
@@ -1017,18 +1026,21 @@ export default async function activate(pi: Pi): Promise<void> {
   const shim = new Proxy(pi, {
     get(target, prop, receiver) {
       if (prop === "registerTool") {
-        return (definition: PiToolDefinition) => {
+        return (definition: ToolDefinition) => {
           const real = target.registerTool?.bind(target);
           if (!real) {
             log("subagents: DEGRADED — pi.registerTool unavailable; subagent tool not registered.");
             return;
           }
           if (definition?.name === "subagent" && typeof definition.execute === "function") {
-            const wrapped = wrapExecute(definition.execute.bind(definition), semaphore);
+            const wrapped = wrapExecute(
+              definition.execute.bind(definition) as ToolExecute,
+              semaphore,
+            );
             real({ ...definition, execute: wrapped });
             // launch_plan rides the same wrapped execute, so it exists exactly
             // where the subagent tool does and shares its semaphore.
-            real(launchPlanDefinition(wrapped));
+            real(toPiTool(launchPlanDefinition(wrapped)));
             log(
               `subagents: native subagent tool registered (pi ${version}, scope=${scope}, ` +
                 `max_concurrency=${maxConcurrency}, fanout=${resolveWideFanout() ? "wide" : "native"}, ` +

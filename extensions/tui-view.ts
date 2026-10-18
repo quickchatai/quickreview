@@ -29,10 +29,15 @@
 // (`/alerts/tui-actions/`, src/tui/actions.ts) with its own validation and its
 // own whitelist. Nothing here is a second one: no tool writes anything, anywhere.
 //
-// pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
+// pi is a dependency of this repo, so the pi API is typechecked against its own
+// declarations; what a live session does with it stays VERIFY-ON-PIN.
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  ExtensionAPI,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 
 /** The two files these tools read. Fixed names — never a tool parameter. */
 export const VIEW_FILE = "view.json";
@@ -95,7 +100,10 @@ export function freshness(writtenAt: string | undefined, now: Date, mtimeMs?: nu
   return `Live — as of ${stamp} (${ageS}s ago).`;
 }
 
-const text = (body: string): PiToolResult => ({ content: [{ type: "text", text: body }] });
+const text = (body: string): AgentToolResult<undefined> => ({
+  content: [{ type: "text", text: body }],
+  details: undefined,
+});
 
 /** No parameters, by design (see the header). VERIFY-ON-PIN: a plain JSON
  * Schema object where the vendored fork passes a TypeBox schema. */
@@ -414,10 +422,7 @@ export function boardAnswer(dir: string, now: Date): string {
 
 // ---- registration -----------------------------------------------------------
 
-export function toolDefinitions(
-  dir: string,
-  now: () => Date = () => new Date(),
-): PiToolDefinition[] {
+export function toolDefinitions(dir: string, now: () => Date = () => new Date()): ToolDefinition[] {
   const READ_ONLY =
     "Read-only: it reads a file the TUI already wrote; it cannot fetch anything, and it changes nothing.";
   return [
@@ -430,7 +435,7 @@ export function toolDefinitions(
         READ_ONLY,
       promptSnippet: "Read the operator's TUI screen as plain text",
       parameters: NO_PARAMS,
-      execute: () => text(screenAnswer(dir, now())),
+      execute: () => Promise.resolve(text(screenAnswer(dir, now()))),
     },
     {
       name: "tui_deploy",
@@ -440,7 +445,7 @@ export function toolDefinitions(
         READ_ONLY,
       promptSnippet: "Read the deployed commit and what is waiting to ship",
       parameters: NO_PARAMS,
-      execute: () => text(deployAnswer(dir, now())),
+      execute: () => Promise.resolve(text(deployAnswer(dir, now()))),
     },
     {
       name: "tui_board",
@@ -450,12 +455,12 @@ export function toolDefinitions(
         READ_ONLY,
       promptSnippet: "Read the board summary and the selected PR",
       parameters: NO_PARAMS,
-      execute: () => text(boardAnswer(dir, now())),
+      execute: () => Promise.resolve(text(boardAnswer(dir, now()))),
     },
   ];
 }
 
-export const activate = (pi: Pi, env: NodeJS.ProcessEnv = process.env): void => {
+export const activate = (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): void => {
   // A pi without registerTool registers nothing and says nothing — the
   // companion must still start (it never wedges).
   if (typeof pi.registerTool !== "function") return;

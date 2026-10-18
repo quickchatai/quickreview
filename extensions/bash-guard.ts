@@ -32,7 +32,7 @@
 //     RE-POINTING the pin (COMMAND_INJECTING_ENV).
 import { readFileSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
-import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 
 /**
  * Read-only programs a review session may run directly.
@@ -2949,9 +2949,11 @@ const READ_TOOLS = new Set(["read", "grep", "find", "ls", "read_file", "view", "
  * payload, and (following extensions/companion-guard.ts, which already vetoes
  * writes this way) `path`/`file_path` on a file tool's input.
  */
-export default function activate(pi: Pi): void {
+export default function activate(pi: ExtensionAPI): void {
   pi.on("tool_call", (event, ctx) => {
-    const ev = event as ToolCallEvent;
+    // `arguments` is not on pi 1.3.0's ToolCallEvent; the probe stays for a
+    // pi that names the field that way (VERIFY-ON-PIN).
+    const ev = event as ToolCallEvent & { arguments?: Record<string, unknown> };
     const input = (ev.input ?? ev.arguments) as
       | {
           command?: unknown;

@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { PiToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { QcrTool } from "../extensions/pi-tool.js";
 import { renderPreview, renderStatus, scanToolDefinitions } from "../extensions/setup-scan.js";
 import { parseConfig, SCAN_DEFAULTS, type Config, type ScanConfig } from "../src/config.js";
 import {
@@ -1006,7 +1006,7 @@ describe("a stage 2 start narrowed by row ids", () => {
 });
 
 describe("the propose tool", () => {
-  async function call(defs: PiToolDefinition[], params: Record<string, unknown>): Promise<string> {
+  async function call(defs: QcrTool[], params: Record<string, unknown>): Promise<string> {
     const def = defs.find((d) => d.name === "scan_stage2_propose")!;
     return (await def.execute("id", params)).content.map((c) => c.text).join("\n");
   }

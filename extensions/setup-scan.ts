@@ -36,7 +36,7 @@ import { usd, findingLocation } from "../src/setup/presentation.js";
 // result, never a throw.
 import { FINDING_STATES } from "../src/setup/findings.js";
 import { join } from "node:path";
-import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.js";
 import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
 import { scanCasesForEnv } from "../src/scanauth.js";
@@ -91,13 +91,7 @@ import { fileLease, type ScanLease } from "../src/setup/scanlease.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
-function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return details
-    ? { content: [{ type: "text", text: t }], details }
-    : { content: [{ type: "text", text: t }] };
-}
-
-function refused(what: string, r: Refusal): PiToolResult {
+function refused(what: string, r: Refusal): QcrToolResult {
   return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
 }
 
@@ -779,8 +773,8 @@ export function scanToolDefinitions(
   /** Where a stop of a run another process drives goes; null: only a run
    * this companion drives can be stopped. */
   stopChannel: StopChannel | null = null,
-): PiToolDefinition[] {
-  const preview: PiToolDefinition = {
+): QcrTool[] {
+  const preview: QcrTool = {
     name: "scan_preview",
     label: "Scan preview",
     description:
@@ -800,7 +794,7 @@ export function scanToolDefinitions(
       return text(renderPreview(r.preview), { preview: previewDetails(r.preview) });
     },
   };
-  const start: PiToolDefinition = {
+  const start: QcrTool = {
     name: "scan_start",
     label: "Start a scan",
     description:
@@ -823,7 +817,7 @@ export function scanToolDefinitions(
       return text(startedLine(r.run), { run: startedDetails(r.run) });
     },
   };
-  const status: PiToolDefinition = {
+  const status: QcrTool = {
     name: "scan_status",
     label: "Scan status",
     description:
@@ -837,7 +831,7 @@ export function scanToolDefinitions(
       });
     },
   };
-  const stop: PiToolDefinition = {
+  const stop: QcrTool = {
     name: "scan_stop",
     label: "Stop the scan",
     description:
@@ -856,7 +850,7 @@ export function scanToolDefinitions(
       );
     },
   };
-  const list: PiToolDefinition = {
+  const list: QcrTool = {
     name: "scan_findings",
     label: "Scan findings",
     description:
@@ -895,7 +889,7 @@ export function scanToolDefinitions(
       });
     },
   };
-  const matches: PiToolDefinition = {
+  const matches: QcrTool = {
     name: "scan_matches",
     label: "Scan match question",
     description:
@@ -910,7 +904,7 @@ export function scanToolDefinitions(
       return text(renderQuestion(question), { key: question?.key ?? null });
     },
   };
-  const match: PiToolDefinition = {
+  const match: QcrTool = {
     name: "scan_match",
     label: "Answer the match question",
     description:
@@ -944,7 +938,7 @@ export function scanToolDefinitions(
       return text(lines.join("\n"), { ...result, tickets_closed: tickets?.closed.length ?? 0 });
     },
   };
-  const suggestions: PiToolDefinition = {
+  const suggestions: QcrTool = {
     name: "scan_suggestions",
     label: "Scan stage 2 suggestions",
     description:
@@ -959,7 +953,7 @@ export function scanToolDefinitions(
       return text(renderSuggestions(sugs, s), { suggestions: sugs.length });
     },
   };
-  const propose: PiToolDefinition = {
+  const propose: QcrTool = {
     name: "scan_stage2_propose",
     label: "Propose scan stage 2",
     description:
@@ -1009,7 +1003,7 @@ export function scanToolDefinitions(
       return text(renderProposal(r.proposal), { proposal: proposalDetails(r.proposal) });
     },
   };
-  const start2: PiToolDefinition = {
+  const start2: QcrTool = {
     name: "scan_stage2_start",
     label: "Start scan stage 2",
     description:

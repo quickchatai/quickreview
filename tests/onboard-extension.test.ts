@@ -14,7 +14,7 @@ import {
   type OnboardAdapters,
 } from "../src/onboard/engine.js";
 import { preflightStep } from "../src/onboard/steps/preflight.js";
-import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import type { QcrTool, QcrToolResult } from "../extensions/pi-tool.js";
 
 let stateDir: string;
 
@@ -50,7 +50,7 @@ function fakeAdapters(opts: { dockerOk?: boolean } = {}): OnboardAdapters {
 }
 
 function belt(opts: { dockerOk?: boolean } = {}): {
-  defs: PiToolDefinition[];
+  defs: QcrTool[];
   shutdown: ReturnType<typeof vi.fn>;
 } {
   const engine = new OnboardingEngine([preflightStep()], fakeAdapters(opts));
@@ -58,11 +58,11 @@ function belt(opts: { dockerOk?: boolean } = {}): {
   return { defs: toolDefinitions(engine, shutdown), shutdown };
 }
 
-function textOf(result: PiToolResult): string {
+function textOf(result: QcrToolResult): string {
   return result.content.map((c) => c.text).join("\n");
 }
 
-async function call(defs: PiToolDefinition[], name: string): Promise<PiToolResult> {
+async function call(defs: QcrTool[], name: string): Promise<QcrToolResult> {
   const def = defs.find((d) => d.name === name);
   expect(def, `tool ${name} registered`).toBeDefined();
   return def!.execute("id", {});
@@ -129,7 +129,7 @@ describe("finish_and_exit", () => {
     await call(defs, "onboard_preflight");
     const finish = defs.find((d) => d.name === "finish_and_exit")!;
     const ctx = { shutdown: () => {} };
-    const out = textOf(await finish.execute("id", {}, undefined, undefined, ctx));
+    const out = textOf(await finish.execute("id", {}, undefined, undefined, ctx as never));
     expect(out).toMatch(/complete/);
     expect(existsSync(firstRunMarkerPath(stateDir))).toBe(true);
     expect(shutdown).not.toHaveBeenCalled(); // deferred — the result lands first
