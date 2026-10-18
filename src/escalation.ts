@@ -94,6 +94,9 @@
 // Both ride the ONE MutationGate. `request_reviewer` is an ORDINARY kind:
 // suppressed in dry-run like everything else, never `forceLive`, never in
 // `APP_SELF_CONFIG_KINDS`.
+import { createHash } from "node:crypto";
+import { GitHubRequestError } from "./github.js";
+import type { EscalationRecoveryRow, StateStore } from "./state.js";
 import type { EscalationConfig, EscalationRule, EscalationSeverityFloor } from "./config.js";
 import { codePath } from "./codespan.js";
 import { globBody } from "./glob.js";
@@ -813,10 +816,28 @@ export interface EscalationAdapter {
   /** POST /repos/{o}/{r}/pulls/{n}/requested_reviewers — the `request_reviewer`
    * gate kind. Absent on adapters that predate the feature. */
   requestEscalationReview?(pr: number, logins: string[]): Promise<GateResult>;
+  /** Read-only: exact marker/body, reviewed head and bot identity must match. */
+  findEscalationComment?(
+    pr: number,
+    head: string,
+    marker: string,
+    body: string,
+  ): Promise<{ id: number } | null>;
 }
 
 /** The ledger slice: the per-PR cap and the never-twice dedup. */
-export interface EscalationStore {
+export interface EscalationStore extends Pick<
+  StateStore,
+  | "escalationRecovery"
+  | "prepareEscalationRecovery"
+  | "claimEscalationComment"
+  | "escalationPostingCount"
+  | "retryEscalationComment"
+  | "noteEscalationRecovery"
+  | "settleEscalationComment"
+  | "finishEscalationRecovery"
+  | "pendingEscalationRecoveries"
+> {
   logEvent(kind: string, pr: number | null, payload?: unknown): void;
   escalationDelivered(pr: number, key: string): boolean;
   escalationCount(pr: number): number;
@@ -837,6 +858,10 @@ export interface EscalationDeps {
   cfg: EscalationConfig;
   store: EscalationStore;
   adapter: EscalationAdapter;
+  /** Snapshot of the operator flag; dry-run never leaves recovery debt. */
+  dryRun?: boolean;
+  /** Stops dispatching new recovery writes during watcher shutdown. */
+  isDraining?: () => boolean;
   log?: (msg: string, extra?: unknown) => void;
 }
 
@@ -853,6 +878,268 @@ export interface EscalationOutcome {
   comment_executed: boolean;
   /** Did the review request reach GitHub? Absent on the comment shape. */
   review_requested?: boolean;
+}
+
+/** Stable evidence attached to the one narrow comment, never a retry nonce. */
+function escalationMarker(pr: number, target: string, key: string, head: string): string {
+  return `<!-- qcr-escalation:${createHash("sha256")
+    .update(JSON.stringify([pr, target, key, head]))
+    .digest("hex")} -->`;
+}
+
+const activeEscalations = new WeakMap<EscalationStore, Set<number>>();
+function recoveryOutcome(
+  row: EscalationRecoveryRow,
+  executed: boolean,
+  requested?: boolean,
+): EscalationOutcome {
+  return {
+    target: row.target,
+    scope_key: row.scope_key,
+    origin: row.origin,
+    refused: null,
+    comment_executed: executed,
+    ...(row.shape === "review_request" ? { review_requested: requested ?? false } : {}),
+  };
+}
+
+/** A 422 is the existing terminal policy; network/5xx failures still owe the queue write. */
+function terminalRequestFailure(error: unknown): boolean {
+  const status =
+    typeof error === "object" && error !== null
+      ? (error as { status?: unknown }).status
+      : undefined;
+  return (
+    status === 422 ||
+    (status === undefined && /requested_reviewers[^\n]*(?:→|HTTP)\s*422\b/.test(String(error)))
+  );
+}
+
+async function continueEscalation(
+  deps: EscalationDeps,
+  row: EscalationRecoveryRow,
+  journal = true,
+): Promise<EscalationOutcome> {
+  const { store, adapter, cfg } = deps;
+  if (
+    deps.isDraining?.() ||
+    (row.next_attempt_at && row.next_attempt_at > new Date().toISOString())
+  )
+    return recoveryOutcome(row, row.phase === "request_pending");
+  const log = deps.log ?? (() => {});
+  const busy = activeEscalations.get(store) ?? new Set<number>();
+  activeEscalations.set(store, busy);
+  if (busy.has(row.pr)) return recoveryOutcome(row, false);
+  busy.add(row.pr);
+  const note = (error: string): void => {
+    if (journal) store.noteEscalationRecovery(row, error);
+  };
+  const finish = (): void => {
+    if (journal) store.finishEscalationRecovery(row);
+  };
+  try {
+    if (!cfg.targets.includes(row.target)) {
+      note("paused: target no longer configured");
+      return recoveryOutcome(row, false);
+    }
+    if (row.phase === "request_pending" && cfg.shape !== "review_request") {
+      note("paused: review-request shape disabled");
+      return recoveryOutcome(row, true);
+    }
+    let deliveredNow = false;
+    if (row.phase === "posting") {
+      let found: { id: number } | null | undefined;
+      let readError: string | undefined;
+      try {
+        found = await adapter.findEscalationComment?.(row.pr, row.head_sha, row.marker, row.body);
+      } catch (error) {
+        readError = `comment read unavailable: ${String(error)}`;
+      }
+      if (!found) {
+        note(readError ?? "comment delivery remains unknown; no matching marker confirmed");
+        store.logEvent("escalation_comment_unknown", row.pr, {
+          target: row.target,
+          scope_key: row.scope_key,
+        });
+        return recoveryOutcome(row, false);
+      }
+      store.settleEscalationComment(row);
+      deliveredNow = true;
+      store.logEvent("escalation_comment_recovered", row.pr, {
+        target: row.target,
+        scope_key: row.scope_key,
+        comment_id: found.id,
+      });
+      row = { ...row, phase: "request_pending" };
+    } else if (row.phase === "prepared") {
+      if (store.escalationCount(row.pr) >= cfg.max_per_pr) {
+        finish();
+        store.logEvent("escalation_capped", row.pr, {
+          target: row.target,
+          scope_key: row.scope_key,
+          max_per_pr: cfg.max_per_pr,
+        });
+        return { ...recoveryOutcome(row, false), refused: "capped" };
+      }
+      if (
+        journal &&
+        store.escalationCount(row.pr) + store.escalationPostingCount(row.pr) >= cfg.max_per_pr
+      ) {
+        note("capacity reserved by unresolved comment POST");
+        return { ...recoveryOutcome(row, false), refused: "capped" };
+      }
+      if (journal && !store.claimEscalationComment(row)) return recoveryOutcome(row, false);
+      let result: GateResult;
+      try {
+        result = await adapter.createReview(
+          row.pr,
+          { commit_id: row.head_sha, event: "COMMENT", body: row.body },
+          { purpose: "escalation" },
+        );
+      } catch (error) {
+        if (
+          journal &&
+          error instanceof GitHubRequestError &&
+          error.status >= 400 &&
+          error.status < 500 &&
+          error.status !== 408
+        ) {
+          if (error.status === 422 || error.status === 400 || error.status === 410) finish();
+          else
+            store.retryEscalationComment(
+              row,
+              `comment POST refused: ${String(error)}`,
+              new Date(Date.now() + Math.max(30_000, error.retryAfterMs ?? 0)).toISOString(),
+            );
+        } else note(`comment POST outcome unknown: ${String(error)}`);
+        store.logEvent("escalation_comment_failed", row.pr, {
+          target: row.target,
+          scope_key: row.scope_key,
+          origin: row.origin,
+          round_no: row.round_no,
+          error: String(error),
+        });
+        log(`escalation: #${row.pr} → @${row.target} comment failed: ${String(error)}`);
+        return recoveryOutcome(row, false);
+      }
+      if (result.blocked) {
+        finish();
+        store.logEvent("escalation_blocked", row.pr, {
+          target: row.target,
+          scope_key: row.scope_key,
+          reason: result.blocked,
+        });
+        return recoveryOutcome(row, false);
+      }
+      if (!result.executed) {
+        // Preserve both dry-run intents; neither spends a delivery cap slot.
+        let requested = false;
+        if (row.shape === "review_request" && adapter.requestEscalationReview) {
+          try {
+            requested = (await adapter.requestEscalationReview(row.pr, [row.target])).executed;
+          } catch (error) {
+            log(`escalation: dry-run reviewer intent failed`, error);
+          }
+        }
+        finish();
+        store.logEvent("escalation_not_executed", row.pr, {
+          target: row.target,
+          scope_key: row.scope_key,
+          shape: row.shape,
+          origin: row.origin,
+          round_no: row.round_no,
+          dry_run_file: result.dryRunFile ?? null,
+        });
+        return recoveryOutcome(row, false, requested);
+      }
+      if (journal) store.settleEscalationComment(row);
+      else store.recordEscalation(row.pr, row);
+      deliveredNow = true;
+      row = { ...row, phase: "request_pending" };
+    }
+    let requested = false;
+    if (row.shape === "review_request") {
+      if (deps.isDraining?.()) {
+        note("reviewer request pending while stopping");
+        return recoveryOutcome(row, true);
+      }
+      if (cfg.shape !== "review_request") {
+        note("paused: review-request shape disabled");
+        return recoveryOutcome(row, true);
+      }
+      if (!adapter.requestEscalationReview) note("reviewer request adapter unavailable");
+      else
+        try {
+          const result = await adapter.requestEscalationReview(row.pr, [row.target]);
+          requested = result.executed;
+          if (requested) finish();
+          else note(`reviewer request not executed: ${result.blocked ?? "dry run"}`);
+        } catch (error) {
+          if (terminalRequestFailure(error)) finish();
+          else note(`reviewer request pending: ${String(error)}`);
+          store.logEvent("escalation_request_failed", row.pr, {
+            target: row.target,
+            scope_key: row.scope_key,
+            error: String(error),
+          });
+          log(`escalation: #${row.pr} → @${row.target} review request failed: ${String(error)}`);
+        }
+    }
+    if (deliveredNow) {
+      store.logEvent("escalation_delivered", row.pr, {
+        target: row.target,
+        scope_key: row.scope_key,
+        shape: row.shape,
+        origin: row.origin,
+        rule: row.rule,
+        round_no: row.round_no,
+        comment_executed: true,
+        review_requested: requested,
+      });
+      log(
+        `escalation: #${row.pr} → @${row.target} (${row.scope_key}, ${row.shape}, ${row.origin})`,
+      );
+    } else if (requested)
+      store.logEvent("escalation_request_recovered", row.pr, {
+        target: row.target,
+        scope_key: row.scope_key,
+      });
+    return recoveryOutcome(row, true, requested);
+  } catch (error) {
+    // A successful POST followed by a local receipt failure remains in
+    // posting. Its marker is reconciled on a later sweep, never re-posted.
+    let confirmed = false;
+    try {
+      confirmed = store.escalationDelivered(row.pr, `${row.target}|${row.scope_key}`);
+      note(`local delivery checkpoint unavailable: ${String(error)}`);
+      store.logEvent("escalation_recovery_pending", row.pr, {
+        target: row.target,
+        scope_key: row.scope_key,
+        error: String(error),
+      });
+    } catch {
+      /* the previously durable journal still carries the obligation */
+    }
+    log(`escalation: local recovery checkpoint failed on #${row.pr}`, error);
+    return recoveryOutcome(row, confirmed);
+  } finally {
+    busy.delete(row.pr);
+  }
+}
+
+/** Resume durable obligations even when no later round proposes the candidate. */
+export async function resumeEscalations(deps: EscalationDeps): Promise<EscalationOutcome[]> {
+  if (!deps.cfg.enabled || deps.dryRun || deps.isDraining?.()) return [];
+  const outcomes: EscalationOutcome[] = [];
+  for (const row of deps.store.pendingEscalationRecoveries()) {
+    if (deps.isDraining?.()) break;
+    try {
+      outcomes.push(await continueEscalation(deps, row));
+    } catch (error) {
+      deps.log?.(`escalation: recovery failed on #${row.pr}`, error);
+    }
+  }
+  return outcomes;
 }
 
 /**
@@ -896,7 +1183,7 @@ export async function deliverEscalations(
   },
 ): Promise<EscalationOutcome[]> {
   const log = deps.log ?? (() => {});
-  const { cfg, store, adapter } = deps;
+  const { cfg, store } = deps;
   const outcomes: EscalationOutcome[] = [];
   if (!cfg.enabled || !args.head_sha) return outcomes;
 
@@ -930,6 +1217,14 @@ export async function deliverEscalations(
     }
     const req = v.request;
     const key = scopeKey(req.scope);
+    const pending = store.escalationRecovery(args.pr, req.target, key);
+    if (pending) {
+      // A replay in dry-run must leave the preexisting live obligation untouched.
+      outcomes.push(
+        deps.dryRun ? recoveryOutcome(pending, false) : await continueEscalation(deps, pending),
+      );
+      continue;
+    }
     if (store.escalationDelivered(args.pr, `${req.target}|${key}`)) {
       outcomes.push({
         target: req.target,
@@ -963,136 +1258,29 @@ export async function deliverEscalations(
       review_requested: wantsRequest,
       ...(args.review_posted !== undefined ? { review_posted: args.review_posted } : {}),
     });
-    let result: GateResult;
-    try {
-      result = await adapter.createReview(
-        args.pr,
-        { commit_id: args.head_sha, event: "COMMENT", body },
-        { purpose: "escalation" },
-      );
-    } catch (err) {
-      // One failed POST is this candidate's alone: nothing is recorded, so a
-      // later round may try again, and the remaining candidates still go.
-      store.logEvent("escalation_comment_failed", args.pr, {
-        target: req.target,
-        scope_key: key,
-        origin: req.origin,
-        round_no: args.round_no ?? null,
-        error: String(err),
-      });
-      log(`escalation: #${args.pr} → @${req.target} comment failed: ${String(err)}`);
-      outcomes.push({
-        target: req.target,
-        scope_key: key,
-        origin: req.origin,
-        refused: null,
-        comment_executed: false,
-      });
-      continue;
-    }
-    if (result.blocked) {
-      // A posting guard refused (merged, closed, head drift). Nothing was
-      // delivered and nothing is recorded, so a later round may try again.
-      store.logEvent("escalation_blocked", args.pr, {
-        target: req.target,
-        scope_key: key,
-        reason: result.blocked,
-      });
-      outcomes.push({
-        target: req.target,
-        scope_key: key,
-        origin: req.origin,
-        refused: null,
-        comment_executed: false,
-      });
-      continue;
-    }
-
-    // The review request rides ONLY behind a delivered comment: GitHub's queue
-    // entry says "review this pull request", and the narrow ask must already
-    // be on the PR before that framing reaches anyone.
-    let requested = false;
-    // The comment has already landed (or been recorded as intent), so a failed
-    // request (GitHub 422s the PR author or a non-collaborator) must not throw
-    // past the ledger below: that would leave a posted note unrecorded, re-post
-    // it every round, and skip every later candidate in this loop.
-    if (wantsRequest && adapter.requestEscalationReview) {
-      try {
-        const rr = await adapter.requestEscalationReview(args.pr, [req.target]);
-        requested = rr.executed;
-      } catch (err) {
-        store.logEvent("escalation_request_failed", args.pr, {
-          target: req.target,
-          scope_key: key,
-          error: String(err),
-        });
-        log(`escalation: #${args.pr} → @${req.target} review request failed: ${String(err)}`);
-      }
-    }
-
-    // ---- THE LEDGER RECORDS DELIVERIES, NOT ATTEMPTS -----------------------
-    //
-    // In dry-run the gate returns `{executed: false, dryRunFile}` with NO
-    // `blocked`, so this point is reached having written a file and touched
-    // nothing on GitHub. Recording that would let a dry-run bring-up
-    // permanently own those (pr, target, scope_key) pairs in
-    // `escalations_once` — so on go-live the real escalation would come back
-    // `already-delivered`, or `capped`, forever.
-    //
-    // So the ledger is keyed on what REACHED GITHUB, the same `result.executed`
-    // test `guards.ts after()` uses before it stamps a reviewed head. A dry-run
-    // escalation writes its intent to state/dryrun/ every round — which is what
-    // dry-run is for — and consumes neither the dedup key nor the cap.
-    if (!result.executed) {
-      store.logEvent("escalation_not_executed", args.pr, {
-        target: req.target,
-        scope_key: key,
-        shape: cfg.shape,
-        origin: req.origin,
-        round_no: args.round_no ?? null,
-        dry_run_file: result.dryRunFile ?? null,
-      });
-      log(
-        `escalation: #${args.pr} → @${req.target} recorded as an INTENT only (not executed) — nothing consumed`,
-      );
-      outcomes.push({
-        target: req.target,
-        scope_key: key,
-        origin: req.origin,
-        refused: null,
-        comment_executed: false,
-        ...(wantsRequest ? { review_requested: requested } : {}),
-      });
-      continue;
-    }
-
-    store.recordEscalation(args.pr, {
+    const marker = escalationMarker(args.pr, req.target, key, args.head_sha);
+    const input = {
+      pr: args.pr,
       target: req.target,
       scope_key: key,
+      head_sha: args.head_sha,
+      body: `${body}\n\n${marker}`,
+      marker,
       shape: cfg.shape,
       origin: req.origin,
       rule: req.rule ?? null,
       round_no: args.round_no ?? null,
-    });
-    store.logEvent("escalation_delivered", args.pr, {
-      target: req.target,
-      scope_key: key,
-      shape: cfg.shape,
-      origin: req.origin,
-      rule: req.rule ?? null,
-      round_no: args.round_no ?? null,
-      comment_executed: true,
-      review_requested: requested,
-    });
-    log(`escalation: #${args.pr} → @${req.target} (${key}, ${cfg.shape}, ${req.origin})`);
-    outcomes.push({
-      target: req.target,
-      scope_key: key,
-      origin: req.origin,
-      refused: null,
-      comment_executed: true,
-      ...(wantsRequest ? { review_requested: requested } : {}),
-    });
+    };
+    const row = deps.dryRun
+      ? {
+          ...input,
+          phase: "prepared" as const,
+          last_error: null,
+          next_attempt_at: null,
+          updated_at: new Date().toISOString(),
+        }
+      : store.prepareEscalationRecovery(input);
+    outcomes.push(await continueEscalation(deps, row, !deps.dryRun));
   }
   return outcomes;
 }

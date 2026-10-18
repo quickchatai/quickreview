@@ -39,6 +39,8 @@ import { join } from "node:path";
 import { checkOutcome, classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
 import {
   deliverEscalations,
+  resumeEscalations,
+  type EscalationDeps,
   evaluateEscalationRules,
   normalizeSessionEscalations,
   type EscalationFacts,
@@ -755,7 +757,7 @@ export class VerdictWatcher {
    * the boot resume never measures one of them a second time. */
   private readonly measuring = new Set<number>();
   private readonly working = new Set<string>();
-  /** Measurements handed to the background (`MeasureMode`), until they end. */
+  /** Background round work, tracked until it ends. */
   private readonly background = new Set<Promise<void>>();
   /** The once-per-watcher resume of measurements an earlier process owed. */
   private owedResumed = false;
@@ -763,6 +765,8 @@ export class VerdictWatcher {
   private deadlinesInFlight = false;
   /** Round transcripts, read off the event loop and kept by offset. */
   private readonly transcripts: TranscriptIndex;
+  private stopped = false;
+  private escalationRecoveryInFlight = false;
 
   constructor(private readonly deps: VerdictDeps) {
     this.processedDir = join(deps.verdictDir, "processed");
@@ -780,6 +784,7 @@ export class VerdictWatcher {
   /** Startup sweep + fs.watch. fs.watch is the fast path only; the sweep (also
    * run by the daemon's periodic tick) is the reliable one. */
   start(): void {
+    this.stopped = false;
     mkdirSync(this.deps.verdictDir, { recursive: true });
     void this.sweep();
     this.watcher = watch(this.deps.verdictDir, (_event, filename) => {
@@ -791,14 +796,14 @@ export class VerdictWatcher {
   }
 
   stop(): void {
+    this.stopped = true;
     this.watcher?.close();
     this.watcher = null;
   }
 
-  /** Resolves once every measurement this watcher handed to the background
-   * has ended. Nothing in the daemon waits on it — an owed measurement a
-   * shutdown cuts short is resumed at the next start — but a caller that
-   * reads a round's usage right after a background round end does. */
+  /** Resolves once this watcher's background work ends. The daemon does not
+   * wait here during shutdown: durable obligations resume at the next start.
+   * Tests use it before observing background round results. */
   async idle(): Promise<void> {
     while (this.background.size > 0) await Promise.allSettled([...this.background]);
   }
@@ -820,6 +825,7 @@ export class VerdictWatcher {
         }),
       "recorded findings hooks",
     );
+    this.resumeEscalationDeliveries();
     if (!existsSync(this.deps.verdictDir)) return [];
     const byPr = new Map<string, string[]>();
     const listed = readdirSync(this.deps.verdictDir).sort();
@@ -2593,6 +2599,65 @@ export class VerdictWatcher {
    * line returns before a single fact is read, so a default install makes no
    * extra API call, writes no row and logs no event.
    */
+  private escalationDeliveryDeps(): EscalationDeps | null {
+    const { adapter, store, cfg } = this.deps;
+    if (!cfg.escalation.enabled || !adapter.createReview) return null;
+    const bot = cfg.github.bot_login.toLowerCase();
+    return {
+      cfg: cfg.escalation,
+      store,
+      dryRun: cfg.dry_run,
+      isDraining: () => this.stopped,
+      adapter: {
+        createReview: adapter.createReview.bind(adapter),
+        ...(adapter.requestEscalationReview
+          ? { requestEscalationReview: adapter.requestEscalationReview.bind(adapter) }
+          : {}),
+        ...(adapter.listReviewsFull
+          ? {
+              findEscalationComment: async (
+                pr: number,
+                head: string,
+                marker: string,
+                body: string,
+              ) => {
+                const reviews = await adapter.listReviewsFull!(pr);
+                const found = reviews.find(
+                  (review) =>
+                    review.user.toLowerCase() === bot &&
+                    review.commit_id.toLowerCase() === head.toLowerCase() &&
+                    review.state === "COMMENTED" &&
+                    typeof review.submitted_at === "string" &&
+                    review.submitted_at.length > 0 &&
+                    Number.isSafeInteger(review.id) &&
+                    review.id > 0 &&
+                    review.body === body &&
+                    review.body.split(/\r?\n/).includes(marker),
+                );
+                return found ? { id: found.id } : null;
+              },
+            }
+          : {}),
+      },
+      log: this.log.bind(this),
+    };
+  }
+
+  /** Optional recovery never holds a fresh verdict behind a GitHub read. */
+  private resumeEscalationDeliveries(): void {
+    if (this.stopped || this.escalationRecoveryInFlight) return;
+    const deps = this.escalationDeliveryDeps();
+    if (!deps || deps.dryRun) return;
+    this.escalationRecoveryInFlight = true;
+    this.detach(async () => {
+      try {
+        await resumeEscalations(deps);
+      } finally {
+        this.escalationRecoveryInFlight = false;
+      }
+    }, "escalation delivery recovery");
+  }
+
   private async deliverEscalations(v: MeritsVerdictFile): Promise<void> {
     const cfg = this.deps.cfg.escalation;
     if (!cfg.enabled) return;
@@ -2634,37 +2699,24 @@ export class VerdictWatcher {
     });
     const sessionCandidates = cfg.session_judgement ? (v.escalations ?? []) : [];
     if (ruleRequests.length === 0 && sessionCandidates.length === 0) return;
-    await deliverEscalations(
-      {
-        cfg,
-        store,
-        adapter: {
-          createReview: adapter.createReview.bind(adapter),
-          ...(adapter.requestEscalationReview
-            ? { requestEscalationReview: adapter.requestEscalationReview.bind(adapter) }
-            : {}),
-        },
-        log: this.log.bind(this),
-      },
-      {
-        pr: v.pr,
-        verdict: v.verdict,
-        head_sha: v.head_sha,
-        round_no: v.round_no,
-        // The path-in-diff check's input. An unreadable
-        // listing is `[]`, which refuses every path-bearing scope rather than
-        // waving it through — the safe direction, same as every other fact.
-        changed_paths: facts.changed_paths,
-        // Whether the round's own review actually reached GitHub, from the
-        // posting receipt: the note must not claim a posting no confirmed
-        // receipt shows (a dry run, a legacy round, a review the marker
-        // reconcile proved without a local receipt). A guard-2 refusal never
-        // gets here — it settles as a guarded no-op, with no escalation.
-        review_posted: this.roundReviewConfirmed(v.pr, v.round_no, v.head_sha),
-        ruleRequests,
-        sessionCandidates,
-      },
-    );
+    await deliverEscalations(this.escalationDeliveryDeps()!, {
+      pr: v.pr,
+      verdict: v.verdict,
+      head_sha: v.head_sha,
+      round_no: v.round_no,
+      // The path-in-diff check's input. An unreadable
+      // listing is `[]`, which refuses every path-bearing scope rather than
+      // waving it through — the safe direction, same as every other fact.
+      changed_paths: facts.changed_paths,
+      // Whether the round's own review actually reached GitHub, from the
+      // posting receipt: the note must not claim a posting no confirmed
+      // receipt shows (a dry run, a legacy round, a review the marker
+      // reconcile proved without a local receipt). A guard-2 refusal never
+      // gets here — it settles as a guarded no-op, with no escalation.
+      review_posted: this.roundReviewConfirmed(v.pr, v.round_no, v.head_sha),
+      ruleRequests,
+      sessionCandidates,
+    });
   }
 
   /**

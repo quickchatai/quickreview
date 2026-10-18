@@ -767,6 +767,28 @@ const OVERDUE_ROUND_BURIABLE_SQL = `(
                AND r2.backfilled = 0 AND r2.verdict IS NOT NULL AND r2.round_no >= rounds.round_no)
 )`;
 
+/** Durable escalation obligations, separate from the deliveries-only cap. */
+export interface EscalationRecoveryRow {
+  pr: number;
+  target: string;
+  scope_key: string;
+  head_sha: string;
+  body: string;
+  marker: string;
+  shape: "comment" | "review_request";
+  origin: "rule" | "session";
+  rule: string | null;
+  round_no: number | null;
+  phase: "prepared" | "posting" | "request_pending";
+  last_error: string | null;
+  next_attempt_at: string | null;
+  updated_at: string;
+}
+export type EscalationRecoveryInput = Omit<
+  EscalationRecoveryRow,
+  "phase" | "last_error" | "next_attempt_at" | "updated_at"
+>;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS pr_state (
   number INTEGER PRIMARY KEY,
@@ -1184,6 +1206,24 @@ CREATE TABLE IF NOT EXISTS escalations (
   delivered_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS escalations_once ON escalations(pr, target, scope_key);
+-- Only confirmed deliveries spend ledger slots; ambiguous POSTs reserve capacity.
+CREATE TABLE IF NOT EXISTS escalation_recovery (
+  pr INTEGER NOT NULL,
+  target TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  head_sha TEXT NOT NULL,
+  body TEXT NOT NULL,
+  marker TEXT NOT NULL,
+  shape TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  rule TEXT,
+  round_no INTEGER,
+  phase TEXT NOT NULL,
+  last_error TEXT,
+  next_attempt_at TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (pr, target, scope_key)
+);
 CREATE TABLE IF NOT EXISTS slack_threads (
   pr           INTEGER PRIMARY KEY,
   channel      TEXT NOT NULL,
@@ -6635,6 +6675,99 @@ export class StateStore {
         "INSERT OR IGNORE INTO escalations (pr, target, scope_key, shape, origin, rule, round_no, delivered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(pr, row.target, row.scope_key, row.shape, row.origin, row.rule, row.round_no, this.ts());
+  }
+
+  escalationRecovery(pr: number, target: string, scope: string): EscalationRecoveryRow | null {
+    return (
+      (this.db
+        .prepare("SELECT * FROM escalation_recovery WHERE pr=? AND target=? AND scope_key=?")
+        .get(pr, target, scope) as EscalationRecoveryRow | undefined) ?? null
+    );
+  }
+
+  prepareEscalationRecovery(row: EscalationRecoveryInput): EscalationRecoveryRow {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO escalation_recovery
+      (pr,target,scope_key,head_sha,body,marker,shape,origin,rule,round_no,phase,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,'prepared',?)`,
+      )
+      .run(
+        row.pr,
+        row.target,
+        row.scope_key,
+        row.head_sha,
+        row.body,
+        row.marker,
+        row.shape,
+        row.origin,
+        row.rule,
+        row.round_no,
+        this.ts(),
+      );
+    return this.escalationRecovery(row.pr, row.target, row.scope_key)!;
+  }
+
+  claimEscalationComment(row: EscalationRecoveryRow): boolean {
+    return (
+      this.db
+        .prepare(
+          "UPDATE escalation_recovery SET phase='posting',updated_at=? WHERE pr=? AND target=? AND scope_key=? AND phase='prepared'",
+        )
+        .run(this.ts(), row.pr, row.target, row.scope_key).changes === 1
+    );
+  }
+
+  escalationPostingCount(pr: number): number {
+    return (
+      this.db
+        .prepare("SELECT COUNT(*) AS n FROM escalation_recovery WHERE pr=? AND phase='posting'")
+        .get(pr) as { n: number }
+    ).n;
+  }
+
+  retryEscalationComment(row: EscalationRecoveryRow, error: string, nextAttemptAt: string): void {
+    this.db
+      .prepare(
+        "UPDATE escalation_recovery SET phase='prepared',last_error=?,next_attempt_at=?,updated_at=? WHERE pr=? AND target=? AND scope_key=?",
+      )
+      .run(error, nextAttemptAt, this.ts(), row.pr, row.target, row.scope_key);
+  }
+
+  noteEscalationRecovery(row: EscalationRecoveryRow, error: string): void {
+    this.db
+      .prepare(
+        "UPDATE escalation_recovery SET last_error=?,updated_at=? WHERE pr=? AND target=? AND scope_key=?",
+      )
+      .run(error, this.ts(), row.pr, row.target, row.scope_key);
+  }
+
+  /** The delivery receipt and remaining queue obligation advance atomically. */
+  settleEscalationComment(row: EscalationRecoveryRow): void {
+    this.db.transaction(() => {
+      this.recordEscalation(row.pr, row);
+      if (row.shape === "review_request")
+        this.db
+          .prepare(
+            "UPDATE escalation_recovery SET phase='request_pending',last_error=NULL,updated_at=? WHERE pr=? AND target=? AND scope_key=?",
+          )
+          .run(this.ts(), row.pr, row.target, row.scope_key);
+      else this.finishEscalationRecovery(row);
+    })();
+  }
+
+  finishEscalationRecovery(row: EscalationRecoveryRow): void {
+    this.db
+      .prepare("DELETE FROM escalation_recovery WHERE pr=? AND target=? AND scope_key=?")
+      .run(row.pr, row.target, row.scope_key);
+  }
+
+  pendingEscalationRecoveries(limit = 20): EscalationRecoveryRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM escalation_recovery WHERE next_attempt_at IS NULL OR next_attempt_at<=? ORDER BY updated_at,pr,target,scope_key LIMIT ?",
+      )
+      .all(this.ts(), Math.max(1, Math.min(100, Math.floor(limit)))) as EscalationRecoveryRow[];
   }
 
   /** Every escalation on a PR, oldest first — the operator's audit view. */
