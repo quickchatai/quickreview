@@ -19,12 +19,14 @@
 #     first of AGENTS.override.md / AGENTS.md / CLAUDE.md from the cwd and each
 #     ancestor, and the engine's cwd here is /opt/qcr, so every session and
 #     lens reads the stub, never the contributor guide (the ruling on context
-#     files, tests/fixtures/context-files/inventory.json).
+#     files, tests/fixtures/context-files/inventory.json);
+#   - docker/entrypoint.sh, the one entrypoint (mode dispatch), and
+#     <root>/state, the one writable directory under /opt/qcr.
 #
 # Any uid: the image carries no passwd entry for the user it runs as. The
 # caller picks it (`docker run --user "$(id -u):$(id -g)"`), HOME is fixed at
-# /home/qcr and writable by every uid, and nothing under /opt/qcr is ever
-# written at run time. This replaces the companion image's 1001/1000 split
+# /home/qcr and writable by every uid, and nothing under /opt/qcr but state/
+# is ever written at run time. This replaces the companion image's 1001/1000 split
 # and its COMPANION_UID build arg.
 #
 # The build context is the repo root, narrowed by docker/Dockerfile.dockerignore
@@ -125,6 +127,9 @@ COPY profiles ./profiles
 COPY schemas ./schemas
 COPY scripts ./scripts
 COPY config.example.toml ./config.example.toml
+# The entrypoint and the tmux config the daemon and companion modes start from.
+COPY docker/entrypoint.sh ./docker/entrypoint.sh
+COPY docker/vm/tmux.conf ./docker/vm/tmux.conf
 # The seed manifest, at the path it has in the repo, so code that reads it
 # relative to the app root finds it in the image.
 COPY tests/fixtures/seed-manifest.json ./tests/fixtures/seed-manifest.json
@@ -158,6 +163,12 @@ RUN ! command -v claude
 # its own account: it is a policy surface, not data.
 RUN chmod -R a+rX,go-w /opt/qcr && chmod 0444 /opt/qcr/AGENTS.override.md
 
+# The one writable spot under the app root: <root>/state, where the MutationGate
+# writes state/dryrun and every mode keeps its state files. World-writable and
+# sticky, like HOME below; a state volume mounts over it. The entrypoint
+# refuses to start a mode whose uid cannot write here.
+RUN install -d -m 1777 /opt/qcr/state && chmod 0555 /opt/qcr/docker/entrypoint.sh
+
 # HOME for whatever uid the caller maps in: world-writable and sticky, so
 # `--user 1234:1234` can create ~/.pi and ~/.cache. The login and state
 # volumes mount over parts of it.
@@ -168,7 +179,7 @@ ENV HOME=/home/qcr
 USER 1000:1000
 WORKDIR /opt/qcr
 
-# The interim entrypoint: `docker run <img> version --json`. The mode
-# dispatcher (install, mint, cli, daemon, worker, tui, companion, login)
-# replaces it.
-ENTRYPOINT ["node", "/opt/qcr/dist/src/cli.js"]
+# One entrypoint, mode dispatch (docker/entrypoint.sh): install, mint, cli
+# (the default: `docker run <img> version --json`), daemon, worker, tui,
+# companion, login.
+ENTRYPOINT ["/opt/qcr/docker/entrypoint.sh"]

@@ -811,6 +811,7 @@ describe("the one install site", () => {
       "docker/Dockerfile", // COPY into the release image's cwd
       "docker/Dockerfile.dockerignore", // the build's allowlist
       "docker/daemon/entrypoint.sh", // a comment: it refuses to install
+      "docker/entrypoint.sh", // the release image's daemon mode: keeps the baked 0444 stub, in its own /opt/qcr
       "extensions/bash-guard.ts", // a policy surface no session may write
       "scripts/deploy.sh", // a name the base clone may not take
       "src/hostroute.ts", // the clone route's per-run copy, into the run's own out dir

@@ -114,7 +114,8 @@ describe("release image — any uid, a root-owned tree", () => {
   it("bakes /opt/qcr and runs from it", () => {
     expect(lines).toContain("WORKDIR /opt/qcr");
     expect(lines.at(-2)).toBe("WORKDIR /opt/qcr");
-    expect(lines.at(-1)).toMatch(/^ENTRYPOINT \["node", "\/opt\/qcr\/dist\/src\/cli\.js"\]$/);
+    // the one entrypoint, mode dispatch (tests/entrypoint.test.ts)
+    expect(lines.at(-1)).toBe('ENTRYPOINT ["/opt/qcr/docker/entrypoint.sh"]');
   });
 
   it("creates no user and chowns nothing: the caller picks the uid", () => {
@@ -377,7 +378,7 @@ describe.skipIf(!image)("release image — a locally built image", () => {
     expect(v.pi.version).toBe(cfg.pi.version);
   });
 
-  it("nothing under /opt/qcr is writable, HOME is, claude is absent", () => {
+  it("nothing under /opt/qcr but state/ is writable, HOME is, claude is absent", () => {
     const r = spawnSync(
       "docker",
       [
@@ -389,7 +390,7 @@ describe.skipIf(!image)("release image — a locally built image", () => {
         "sh",
         image!,
         "-c",
-        "! touch /opt/qcr/x 2>/dev/null && mkdir -p $HOME/.pi && ! command -v claude && tmux -V",
+        "! touch /opt/qcr/x 2>/dev/null && touch /opt/qcr/state/x && mkdir -p $HOME/.pi && ! command -v claude && tmux -V",
       ],
       { encoding: "utf8" },
     );

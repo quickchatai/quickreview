@@ -66,6 +66,7 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
     "deploy/ansible/templates/entrypoint.sh.j2",
     "docker/daemon/entrypoint.sh",
     "docker/companion/entrypoint.sh",
+    "docker/entrypoint.sh",
   ]) {
     it(`${file}: the merge writes every disable, drops a stale +builtin:mcp, and is idempotent`, () => {
       const home = mkdtempSync(join(tmpdir(), "qcr-pibuiltins-"));

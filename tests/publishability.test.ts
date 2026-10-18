@@ -328,6 +328,12 @@ const ALLOWLIST: AllowlistEntry[] = [
       "provisions the [companion] git identity (its commit email) — the mount path itself is generic",
   },
   {
+    path: "docker/entrypoint.sh",
+    tokens: ["quickchat"],
+    reason:
+      "the release image's companion mode provisions the same [companion] git identity (its commit email) — a port of docker/companion/entrypoint.sh until P7.8 replaces that image",
+  },
+  {
     path: "tests/tui-companion.test.ts",
     tokens: ["quickchat"],
     reason:
