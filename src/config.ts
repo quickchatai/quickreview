@@ -3058,6 +3058,11 @@ function checkSlackShape(slack: SlackConfig, owner: OwnerConfig): void {
       `[owner] slack_id '${owner.slack_id}' must appear as a key in [slack.users] (it is the only source of own-PR rights)`,
     );
   }
+  for (const key of ["daily_turns", "per_user_daily_turns", "thread_replies_per_day", "announcements_per_hour"] as const) {
+    const cap = slack.policy[key];
+    if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0)
+      fail(`policy.${key} must be a finite non-negative number`);
+  }
 }
 
 /** How validation reads a secret file. Injectable so tests never need real
@@ -3182,6 +3187,8 @@ export function validateLensKnobs(cfg: Pick<Config, "review" | "models">): void 
   if (typeof pins !== "object" || pins === null || Array.isArray(pins))
     throw new Error("config.toml [models.pass_tiers] must be a table of pass = tier");
   const risk = new Set(cfg.models.risk_passes ?? []);
+  if (risk.has("pass-validate"))
+    throw new Error("config.toml [models] risk_passes may not name pass-validate — use validate_tier");
   for (const [pass, tier] of Object.entries(pins as Record<string, unknown>)) {
     if (!known.has(pass))
       throw new Error(`config.toml [models.pass_tiers]: unknown pass "${pass}"`);
