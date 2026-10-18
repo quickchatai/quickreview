@@ -27,6 +27,7 @@ import {
   addUncommittedTree,
   groupFindings,
   loadReviewSettings,
+  hardStopFor,
   priceReview,
   removeReviewTree,
   renderGrouped,
@@ -94,9 +95,11 @@ export function reviewHelp(): string {
   return [
     REVIEW_USAGE,
     "",
-    "Review code in the terminal, with no daemon. The price is previewed first;",
-    "a review under the repo's limit starts at once, above it qcr asks, and the",
-    "run stops hard at the price shown.",
+    "Review code in the terminal, with no daemon. The estimated price is previewed",
+    "first; a review under the repo's limit starts at once, above it qcr asks, and",
+    "the run stops hard at the cap shown (twice the estimate). In the GitHub Action",
+    "(QCR_ROUTE=action, or GITHUB_ACTIONS=true) nothing is asked and nothing is",
+    "capped unless --limit is given; then the run stops hard at that limit.",
     "",
     "Targets",
     "  (none), branch    the current branch against its base (default)",
@@ -109,7 +112,7 @@ export function reviewHelp(): string {
     "  --base REF        the base to review against (default: origin's default branch, main, master)",
     "  --preview         show the plan, the price and the key; start nothing",
     "  --key K           start over the limit without asking, quoting the key a preview showed",
-    "  --limit USD       the limit for this run, over the repo's own",
+    "  --limit USD       the limit for this run, over the repo's own (in the Action: the hard stop)",
     "  --full            review the whole branch again, ignoring what an earlier review left",
     "  --json            one JSON object instead of text (the agent destination)",
     "  --to DEST         where the result goes, for this run: terminal, file, json, pr (comma-separated;\n                    pr posts a comment-only review to the PR and needs a PR target)",
@@ -140,7 +143,7 @@ export function reviewHelp(): string {
     "target at once are refused. Exit codes: 0 done, 1 refused, 2 usage, 3 wait timeout.",
     "",
     "The repo's limit and price rates live in `.git/qcr-review.json` (auto_limit_usd,",
-    "usd_per_lens, usd_per_kline). Exit codes: 0 done; 1 refused, declined or stopped",
+    "usd_base, usd_per_lens, usd_per_kline). Exit codes: 0 done; 1 refused, declined or stopped",
     "short (partial coverage); 2 usage.",
   ].join("\n");
 }
@@ -232,9 +235,21 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   };
 }
 
+export type ReviewRoute = "laptop" | "action";
+
+/** The route a process runs on: the Action sets QCR_ROUTE=action (or runs under
+ * GITHUB_ACTIONS), anything else is a person at a terminal. */
+export function routeFromEnv(env: NodeJS.ProcessEnv): ReviewRoute {
+  return env["QCR_ROUTE"] === "action" || env["GITHUB_ACTIONS"] === "true" ? "action" : "laptop";
+}
+
 export interface ReviewCliDeps {
   /** The repository (or a directory in it) to review. */
   cwd: string;
+  /** Who is asking. "laptop" (default) previews the estimate, asks above the
+   * limit and stops hard at twice the estimate. "action" never asks and has no
+   * cap of its own: only a `--limit` stops the run. */
+  route?: ReviewRoute;
   out: (line: string) => void;
   /** Ask a yes/no question of the person at the terminal. Null: nobody to ask. */
   confirm: ((question: string) => Promise<boolean>) | null;
@@ -492,7 +507,12 @@ async function runReview(
       ? `uncommitted changes on ${t.branch}`
       : `${t.branch} against ${t.base}`;
   const settings = loadReviewSettings(deps.cwd);
-  const limit = cmd.limit ?? settings.auto_limit_usd;
+  const action = (deps.route ?? "laptop") === "action";
+  // The laptop's confirm threshold is the person's limit; the Action has none,
+  // so only a limit given for this run applies, and it is the hard stop.
+  const limit: number | null = action
+    ? (cmd.limit ?? null)
+    : (cmd.limit ?? settings.auto_limit_usd);
 
   // What an earlier review of this target left (none with --full, or when it
   // cannot be trusted).
@@ -632,16 +652,17 @@ async function runReview(
   const since = scope === "delta" && prev !== null ? lastRound(prev).head_sha : undefined;
   const priceLines = scope === "delta" && delta !== null ? delta.lines : t.lines;
   const price = priceReview(lenses.length, priceLines, settings);
+  const cap: number | null = action ? limit : hardStopFor(price);
   const key = reviewKey({
     // an uncommitted review is keyed on the edits, so the key moves with them
     headSha: t.uncommitted?.treeSha ?? t.headSha,
     baseSha: t.baseSha,
     lenses,
     lines: priceLines,
-    cap_usd: price,
+    cap_usd: cap ?? 0,
     ...(since !== undefined ? { since } : {}),
   });
-  const auto = price <= limit;
+  const auto = action || price <= limit!;
   const priorCount = scope === "delta" ? openFindings(prev).findings.length : 0;
   const preview = {
     repo: t.repo,
@@ -658,7 +679,7 @@ async function runReview(
     ...(fallback !== null ? { fallback_reason: fallback.reason } : {}),
     lenses,
     estimate_usd: price,
-    cap_usd: price,
+    cap_usd: cap,
     limit_usd: limit,
     auto,
     key,
@@ -671,7 +692,9 @@ async function runReview(
       : `  ${t.files.length} file${t.files.length === 1 ? "" : "s"}, ${t.lines} changed line${t.lines === 1 ? "" : "s"}` +
         (fallback !== null ? ` — full review, not a delta: ${fallbackWords(fallback.reason)}` : ""),
     `  lenses: ${lenses.join(", ")}`,
-    `  price: ${usd(price)} — the run stops hard there (limit without asking: ${usd(limit)})`,
+    action
+      ? `  price: ${usd(price)} (estimate) — ${cap === null ? "no cap" : `the run stops hard at ${usd(cap)}`}`
+      : `  price: ${usd(price)} (estimate) — the run stops hard at ${usd(cap!)} (limit without asking: ${usd(limit!)})`,
     `  key: ${key}`,
     ...(prInfo ? [`  GitHub credential: ${credentialLabel(prInfo.source)}`] : []),
   ];
@@ -690,11 +713,11 @@ async function runReview(
         ]);
     } else if (deps.confirm === null) {
       return refuse(1, [
-        `the price ${usd(price)} is over the limit ${usd(limit)} and there is no terminal to ask: ` +
+        `the price ${usd(price)} is over the limit ${usd(limit!)} and there is no terminal to ask: ` +
           `qcr review --key ${key}`,
       ]);
-    } else if (!(await deps.confirm(`Run for ${usd(price)}, over the ${usd(limit)} limit?`))) {
-      return refuse(1, [`declined: ${usd(price)} is over the ${usd(limit)} limit`]);
+    } else if (!(await deps.confirm(`Run for ${usd(price)}, over the ${usd(limit!)} limit?`))) {
+      return refuse(1, [`declined: ${usd(price)} is over the ${usd(limit!)} limit`]);
     }
   }
 
@@ -770,7 +793,7 @@ async function runReview(
       ...(deps.piBin !== undefined ? { piBin: deps.piBin } : {}),
       // Rendered over the review tree, as production renders over its worktree.
       prompts: planRound(treeDir, seeded.memory).prompts,
-      capUsd: price,
+      ...(cap !== null ? { capUsd: cap } : {}),
       memory: seeded.memory,
       sessionName: `review-${(cmd.uncommitted ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`,
       label: `${t.repo}@${cmd.uncommitted ? "uncommitted" : t.branch}`,
@@ -830,7 +853,7 @@ async function runReview(
   if (shot.capped) {
     const human = [
       "",
-      `Stopped at the price shown (${usd(price)}; spent ${spent === null ? "unknown" : usd(spent)}).`,
+      `Stopped at the cap shown (${usd(cap!)}; spent ${spent === null ? "unknown" : usd(spent)}).`,
       `Partial coverage: ${started.length} of ${lenses.length} planned lenses had started` +
         (coverage.not_reached.length ? `; not reached: ${coverage.not_reached.join(", ")}` : "") +
         ".",
@@ -845,7 +868,7 @@ async function runReview(
           title: `Partial review of ${t.branch} against ${t.base} (${t.repo})`,
           verdict,
           notes: [
-            `Stopped at the price shown (${usd(price)}): ${started.length} of ${lenses.length} planned lenses had started.`,
+            `Stopped at the cap shown (${usd(cap!)}): ${started.length} of ${lenses.length} planned lenses had started.`,
           ],
         },
         groups,
@@ -1069,6 +1092,7 @@ export async function cmdReview(
     );
   return runReviewCli(rest, json, {
     cwd: process.cwd(),
+    route: routeFromEnv(process.env),
     out: io.out ?? ((l) => console.log(l)),
     confirm: interactive
       ? async (q) => {
