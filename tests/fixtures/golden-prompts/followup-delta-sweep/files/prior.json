@@ -1,0 +1,55 @@
+{
+  "pr": 7,
+  "round_no": 2,
+  "head_sha": "651e6a00f4a8848e711ff672ca9ced219283e2e8",
+  "incomplete": [],
+  "findings": [
+    {
+      "ref": "1:k-b3",
+      "round_no": 1,
+      "finding_key": "k-b3",
+      "origin_round": 1,
+      "earlier_refs": [],
+      "head_sha": "7f1da7099a57f72886f5a235843cd6559488db0a",
+      "path": "b.py",
+      "line": 4,
+      "posted_as": "[blocker]",
+      "severity": "P1",
+      "lens": "pass-baseline",
+      "lens_ids": [
+        "pass-baseline"
+      ],
+      "title": "y3 is wrong",
+      "thread_id": null,
+      "blocking": true,
+      "last_status": null,
+      "last_status_round": null,
+      "last_evidence": null,
+      "reason": "y3 must be 33",
+      "evidence": "b.py:4"
+    },
+    {
+      "ref": "1:k-nit",
+      "round_no": 1,
+      "finding_key": "k-nit",
+      "origin_round": 1,
+      "earlier_refs": [],
+      "head_sha": "7f1da7099a57f72886f5a235843cd6559488db0a",
+      "path": "b.py",
+      "line": 1,
+      "posted_as": "[nit]",
+      "severity": "P3",
+      "lens": "",
+      "lens_ids": [],
+      "title": "naming",
+      "thread_id": null,
+      "blocking": false,
+      "last_status": null,
+      "last_status_round": null,
+      "last_evidence": null,
+      "reason": null,
+      "evidence": null
+    }
+  ],
+  "dropped": []
+}
