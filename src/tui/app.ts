@@ -43,7 +43,8 @@ import {
 } from "./paint.js";
 import { ACCENT, RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
-import { PANE_ESCAPE, PiMirror, isEndKey, keysToTmux } from "./pipane.js";
+import { PiMirror } from "./pipane.js";
+import { PANE_ESCAPE, isEndKey, keysToTmux } from "./termmirror.js";
 import { Poller } from "./poll.js";
 import { parseRoundProgress } from "../round-progress.js";
 import { prUrl } from "./theme.js";
