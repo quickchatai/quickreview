@@ -1748,70 +1748,73 @@ export class VerdictWatcher {
     const standing: StandingDecidedVerdict | null =
       standingInfo.kind === "decided" ? standingInfo.verdict : null;
     const head7 = noop.head_sha.slice(0, 7);
-    store.markRoundCancelled(
-      round.id,
-      `posting refused by guard 2 — ${head7} already reviewed with no author reply since; ` +
-        `standing ${standing ?? "review (verdict unknown)"} stands, nothing was posted`,
-      "no_new_evidence",
-    );
-    // ---- claimed; the restoration below lands in this same turn --------------
-    // The round ran a full review and burned its tokens: measured like every
-    // other terminal path, never hidden behind a benign cause. Its window
-    // closes here, and the measurement is owed from here, durably; the reads
-    // (async — seconds, at most the usage budget) run last, after the
-    // restored lifecycle and the held-wake flush, so they
-    // never widen the window before either: no round dispatched while they
-    // run can receive this round's held wakes. A restart while they run
-    // resumes them.
-    //
-    // The restored lifecycle and the settlement event land synchronously
-    // with the cancel, before the first await: a replay of a cancelled round
-    // is inert, so a restart inside an await must find nothing left to do
-    // (the PR never stranded in `reviewing`). The successor is promoted only
-    // once this round's in-progress label is off, so that removal can never
-    // strip the label the successor's dispatch adds; a restart between the
-    // two leaves the durable successor obligation to reconcile's
-    // successor-obligations step.
-    const owed = this.oweMeasurement(round);
-
-    if (standingInfo.kind === "unknown") {
-      // A COMMENT-only mark: guard 2 was right to refuse, and nothing here
-      // may guess what that comment decided. Tracked, never an approve, with
-      // an anomaly naming the shape.
-      store.logAnomaly(
-        "standing_review_unknown",
-        round.pr,
-        round.round_no,
-        `round ${round.round_no}'s review was refused by posting guard 2 at ${head7} (already reviewed, no author reply since), ` +
-          `but the reviewed-head mark carries no verdict (posted_event=${standingInfo.posted_event ?? "null"}). ` +
-          `Nothing was posted and no verdict was guessed; the PR is tracked until the author pushes or replies.`,
+    const { owed, restored } = store.db.transaction(() => {
+      store.markRoundCancelled(
+        round.id,
+        `posting refused by guard 2 — ${head7} already reviewed with no author reply since; ` +
+          `standing ${standing ?? "review (verdict unknown)"} stands, nothing was posted`,
+        "no_new_evidence",
       );
-    }
-    const restored = restoreStandingLifecycle(store, round.pr, standing, {
-      botLogin: cfg.github.bot_login,
-      now: () => this.now(),
-      reason: standing
-        ? `posting-guarded-noop:${standing}`
-        : "posting-guarded-noop:standing-unknown",
-    });
-    store.logEvent("posting_guarded_noop", round.pr, {
-      stage: "posting",
-      via,
-      round_id: round.id,
-      round_no: round.round_no,
-      posting_key: round.posting_key,
-      head_sha: noop.head_sha,
-      guard: noop.skip_reason,
-      skipped_at: noop.skipped_at,
-      mode: noop.mode,
-      intended_event: noop.intended_event,
-      unposted_verdict: verdict?.verdict ?? null,
-      standing_verdict: standing,
-      standing_source: standingInfo.kind === "decided" ? standingInfo.source : null,
-      restored_state: restored,
-      trigger_ts: round.trigger_ts,
-      mark: snapshotMark(mark!),
-    });
+      // ---- claimed; the restoration below lands in this same turn --------------
+      // The round ran a full review and burned its tokens: measured like every
+      // other terminal path, never hidden behind a benign cause. Its window
+      // closes here, and the measurement is owed from here, durably; the reads
+      // (async — seconds, at most the usage budget) run last, after the
+      // restored lifecycle and the held-wake flush, so they
+      // never widen the window before either: no round dispatched while they
+      // run can receive this round's held wakes. A restart while they run
+      // resumes them.
+      //
+      // The restored lifecycle and the settlement event land synchronously
+      // with the cancel, in one SQLite transaction: a replay of a cancelled round
+      // is inert, so a restart or failed write must never expose partial settlement
+      // (the PR never stranded in `reviewing`). The successor is promoted only
+      // once this round's in-progress label is off, so that removal can never
+      // strip the label the successor's dispatch adds; a restart between the
+      // two leaves the durable successor obligation to reconcile's
+      // successor-obligations step.
+      const owed = this.oweMeasurement(round);
+
+      if (standingInfo.kind === "unknown") {
+        // A COMMENT-only mark: guard 2 was right to refuse, and nothing here
+        // may guess what that comment decided. Tracked, never an approve, with
+        // an anomaly naming the shape.
+        store.logAnomaly(
+          "standing_review_unknown",
+          round.pr,
+          round.round_no,
+          `round ${round.round_no}'s review was refused by posting guard 2 at ${head7} (already reviewed, no author reply since), ` +
+            `but the reviewed-head mark carries no verdict (posted_event=${standingInfo.posted_event ?? "null"}). ` +
+            `Nothing was posted and no verdict was guessed; the PR is tracked until the author pushes or replies.`,
+        );
+      }
+      const restored = restoreStandingLifecycle(store, round.pr, standing, {
+        botLogin: cfg.github.bot_login,
+        now: () => this.now(),
+        reason: standing
+          ? `posting-guarded-noop:${standing}`
+          : "posting-guarded-noop:standing-unknown",
+      });
+      store.logEvent("posting_guarded_noop", round.pr, {
+        stage: "posting",
+        via,
+        round_id: round.id,
+        round_no: round.round_no,
+        posting_key: round.posting_key,
+        head_sha: noop.head_sha,
+        guard: noop.skip_reason,
+        skipped_at: noop.skipped_at,
+        mode: noop.mode,
+        intended_event: noop.intended_event,
+        unposted_verdict: verdict?.verdict ?? null,
+        standing_verdict: standing,
+        standing_source: standingInfo.kind === "decided" ? standingInfo.source : null,
+        restored_state: restored,
+        trigger_ts: round.trigger_ts,
+        mark: snapshotMark(mark!),
+      });
+      return { owed, restored };
+    })();
     this.log(
       `verdicts: #${round.pr} round ${round.round_no} closed as a guarded no-op — guard 2 refused at ${head7}, ` +
         `standing ${standing ?? "unknown"} stands, PR ${restored} (via ${via})`,
@@ -2199,10 +2202,64 @@ export class VerdictWatcher {
         store.logEvent("posting_receipt_legacy_unknown", v.pr, { round_no: v.round_no });
     }
 
+    // Collect optional CI evidence before claiming the apply. Once the
+    // lifecycle is terminal, all current-decision marks publish in one turn;
+    // a later round must never be overwritten after an old network await.
+    let withheldCi: string | null = null;
+    if (v.head_sha && v.approval_withheld && v.verdict === "APPROVE" && adapter.listChecks) {
+      try {
+        withheldCi = classifyCi(await adapter.listChecks(v.head_sha));
+      } catch (err) {
+        this.log(`verdicts: checks read for withheld mark failed on #${v.pr}`, err);
+      }
+    }
+
+    const reportLostClaim = (): void => {
+      if (!round) return;
+      const now = this.runningRound(v.pr, v.round_no);
+      const nowStatus = now?.id === round.id ? now.status : "missing";
+      store.logEvent("verdict_apply_claim_lost", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        claimed_status: claimedStatus ?? null,
+        round_status: nowStatus,
+        verdict: v.verdict,
+        head_sha: v.head_sha,
+        file: name,
+        ...(proven
+          ? { source: "posting_receipt", via: proven.via, gh_review_id: proven.gh_review_id }
+          : {}),
+      });
+      this.log(
+        `verdicts: #${v.pr} round ${v.round_no} went ${claimedStatus ?? "?"} → ${nowStatus} while its verdict was being applied — ${v.verdict} is not applied over it`,
+      );
+    };
+    const ownsLabelAdmission = (): boolean =>
+      !round ||
+      (this.runningRound(v.pr, v.round_no)?.status === claimedStatus &&
+        (claimedStatus === "running" || !store.hasLaterRound(v.pr, v.round_no)));
+    const stopLostLabelApply = async (): Promise<void> => {
+      if (round && claimedStatus !== "running" && store.hasLaterRound(v.pr, v.round_no)) {
+        if (claimedStatus === "done")
+          await this.closeMeasurement(this.settleSupersededResume(round, name), measure);
+        else
+          this.ignoreAfterCancel(round, name, {
+            reason: "a later round started while the verdict was applied",
+          });
+      } else reportLostClaim();
+    };
+    if (!ownsLabelAdmission()) {
+      await stopLostLabelApply();
+      return "applied";
+    }
     await this.safe(
       () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
       `remove ${cfg.github.in_progress_label} on #${v.pr}`,
     );
+    if (!ownsLabelAdmission()) {
+      await stopLostLabelApply();
+      return "applied";
+    }
     await this.safe(
       () => adapter.addLabel(v.pr, cfg.github.reviewed_label),
       `add ${cfg.github.reviewed_label} on #${v.pr}`,
@@ -2235,23 +2292,7 @@ export class VerdictWatcher {
       return "applied";
     }
     if (round && !store.finishRound(round.id, v.verdict, null, v.summary ?? null, claimedStatus)) {
-      const now = this.runningRound(v.pr, v.round_no);
-      const nowStatus = now?.id === round.id ? now.status : "missing";
-      store.logEvent("verdict_apply_claim_lost", v.pr, {
-        round_id: round.id,
-        round_no: v.round_no,
-        claimed_status: claimedStatus ?? null,
-        round_status: nowStatus,
-        verdict: v.verdict,
-        head_sha: v.head_sha,
-        file: name,
-        ...(proven
-          ? { source: "posting_receipt", via: proven.via, gh_review_id: proven.gh_review_id }
-          : {}),
-      });
-      this.log(
-        `verdicts: #${v.pr} round ${v.round_no} went ${claimedStatus ?? "?"} → ${nowStatus} while its verdict was being applied — ${v.verdict} is not applied over it`,
-      );
+      reportLostClaim();
       return "applied";
     }
     if (round && v.head_sha && headBeforeApply && headBeforeApply !== v.head_sha) {
@@ -2280,7 +2321,6 @@ export class VerdictWatcher {
       { head_sha: v.head_sha },
       { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `verdict:${v.verdict}` },
     );
-    if (round) await this.recordPassTelemetry(v, round, sweepStatus);
     store.logEvent("verdict_applied", v.pr, {
       file: name,
       round_id: round?.id ?? null,
@@ -2324,27 +2364,20 @@ export class VerdictWatcher {
     // Anything else clears it: the verdict here supersedes whatever earlier
     // round withheld an approval.
     if (v.head_sha && v.approval_withheld && v.verdict === "APPROVE") {
-      // The mark carries the classifier verdict that caused the withhold
-      // (red/pending/none). The session route cannot say which it was, so the
-      // daemon re-reads the checks; an unreadable CI stores null — the mark
-      // itself never depends on the read.
-      let ci: string | null = null;
-      if (this.deps.adapter.listChecks) {
-        try {
-          ci = classifyCi(await this.deps.adapter.listChecks(v.head_sha));
-        } catch (err) {
-          this.log(`verdicts: checks read for withheld mark failed on #${v.pr}`, err);
-        }
-      }
-      store.recordApprovalWithheld(v.pr, { head_sha: v.head_sha, reason: "red-ci", ci_state: ci });
+      store.recordApprovalWithheld(v.pr, {
+        head_sha: v.head_sha,
+        reason: "red-ci",
+        ci_state: withheldCi,
+      });
       store.logEvent("approval_withheld_red_ci", v.pr, {
         head_sha: v.head_sha,
         source: proven ? "posting_receipt" : "verdict",
-        ci_state: ci,
+        ci_state: withheldCi,
       });
     } else {
       store.clearApprovalWithheld(v.pr);
     }
+    if (round) await this.recordPassTelemetry(v, round, sweepStatus);
     // Slack, in-thread and never broadcast. duration_s is computed
     // inside finishRound, so it is read back off the row rather than recomputed.
     const finished = round ? store.roundsFor(v.pr).find((r) => r.id === round.id) : undefined;
@@ -4096,12 +4129,14 @@ export class VerdictWatcher {
    *   - `kill_failed`: the session could not be stopped (logged) — nothing
    *     may be recovered over a session that may still write;
    *   - `verdict_won`: a verdict file is on disk (logged) — it is the sweep's;
+   *   - `posting_won`: posting or its durable retry won; the ordinary receipt
+   *     settlement sweep owns it, never a replacement review;
    *   - `fenced`: recover.
    */
   private async fenceForRecovery(
     round: RoundRow,
     mode: SelfRequeueMode,
-  ): Promise<"kill_failed" | "verdict_won" | "fenced"> {
+  ): Promise<"kill_failed" | "verdict_won" | "posting_won" | "fenced"> {
     const { store } = this.deps;
     const kill = this.deps.hooks.killSession;
     if ((mode === "alive_stuck" || mode === "infrastructure_active") && kill) {
@@ -4129,6 +4164,30 @@ export class VerdictWatcher {
         mode,
       });
       return "verdict_won";
+    }
+    if (fencedModes.includes(mode) && round.posting_key) {
+      const proof = await this.postingProof(round);
+      if (
+        proof.kind === "confirmed" ||
+        proof.kind === "skipped" ||
+        (proof.kind === "waiting" &&
+          (this.postInFlight(round) ||
+            pendingPosting(
+              this.postingReceiptDir(),
+              round.pr,
+              round.round_no,
+              round.posting_key,
+            ))) ||
+        (proof.kind === "failed" && proof.failure === "ambiguous")
+      ) {
+        store.logEvent("round_stage_posting_won", round.pr, {
+          round_id: round.id,
+          round_no: round.round_no,
+          mode,
+          proof: proof.kind,
+        });
+        return "posting_won";
+      }
     }
     return "fenced";
   }
@@ -4202,7 +4261,7 @@ export class VerdictWatcher {
     // quarantined here. A wedged session's (`alive_stuck`) is handled — the
     // deadline path neither requeues nor fails the round; an infrastructure
     // stage's is not, and the stage is checked again.
-    if (fence === "verdict_won") return mode === "alive_stuck";
+    if (fence === "verdict_won" || fence === "posting_won") return mode === "alive_stuck";
     if (infrastructure && this.runningRound(round.pr, round.round_no)?.status !== "running")
       return true;
     const cause = SELF_REQUEUE_CAUSE[mode];

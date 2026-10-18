@@ -1440,47 +1440,71 @@ describe("durable FAILED_LOUD review obligations", () => {
     });
   });
 
-  it("resolves a failed terminal round command after its round is cancelled", () => {
-    store.upsertPr(prRow(5426, { state: "reviewing", head_sha: "posted-head" }));
-    const roundId = store.startRound(5426, "re-review", [], 75);
-    const roundNo = store.roundsFor(5426)[0]!.round_no;
-    store.createSessionCommand({
-      id: "cmd-posting",
-      pr: 5426,
-      session: "pr-5426",
-      kind: "round",
-      round_no: roundNo,
-      payload_sha256: "hash",
-      payload_path: "/payload/posting.md",
-      inject_path: "/inject/posting.md",
-      next_check_at: T0.toISOString(),
-    });
-    store.failPendingSessionCommand("cmd-posting", "posting receipt absent");
-    store.markRoundCancelled(roundId, "posting receipt absent", "infrastructure_failure");
-    store.upsertPr(prRow(5426, { state: "closed", head_sha: "posted-head" }));
-    store.openReviewFailure({
-      pr: 5426,
-      command_id: "cmd-posting",
-      round_id: roundId,
-      round_no: roundNo,
-      head_sha: "posted-head",
-      stage: "posting_receipt",
-      detail: "receipt absent",
-      attempts: 1,
-      retry_cap: 0,
-    });
-
-    expect(
-      store.resolveTerminalReviewFailure({
+  it.each(["failed", "acked"] as const)(
+    "resolves a %s terminal round command after its round is cancelled",
+    (commandStatus) => {
+      store.upsertPr(prRow(5426, { state: "reviewing", head_sha: "posted-head" }));
+      const roundId = store.startRound(5426, "re-review", [], 75);
+      const roundNo = store.roundsFor(5426)[0]!.round_no;
+      store.createSessionCommand({
+        id: "cmd-posting",
         pr: 5426,
-        incident_id: "review-failure:cmd-posting",
+        session: "pr-5426",
+        kind: "round",
+        round_no: roundNo,
+        payload_sha256: "hash",
+        payload_path: "/payload/posting.md",
+        inject_path: "/inject/posting.md",
+        next_check_at: T0.toISOString(),
+      });
+      if (commandStatus === "failed")
+        store.failPendingSessionCommand("cmd-posting", "posting receipt absent");
+      else {
+        store.claimSessionCommand("cmd-posting", "bridge", T0.toISOString());
+        store.markSessionCommandStarted("cmd-posting", "bridge", T0.toISOString());
+        expect(store.ackSettledSessionCommand("cmd-posting")).toBe(true);
+      }
+      store.markRoundCancelled(roundId, "posting receipt absent", "infrastructure_failure");
+      store.upsertPr(prRow(5426, { state: "closed", head_sha: "posted-head" }));
+      store.openReviewFailure({
+        pr: 5426,
         command_id: "cmd-posting",
+        round_id: roundId,
+        round_no: roundNo,
         head_sha: "posted-head",
-        disposition: "closed",
-      }),
-    ).toMatchObject({ ok: true, command_status: "cancelled" });
-    expect(store.openReviewFailure(5426)).toBeUndefined();
-  });
+        stage: "posting_receipt",
+        detail: "receipt absent",
+        attempts: 1,
+        retry_cap: 0,
+      });
+
+      expect(
+        store.resolveTerminalReviewFailure({
+          pr: 5426,
+          incident_id: "review-failure:cmd-posting",
+          command_id: "cmd-posting",
+          head_sha: "posted-head",
+          disposition: "closed",
+        }),
+      ).toMatchObject({
+        ok: true,
+        command_status: commandStatus === "acked" ? "acked" : "cancelled",
+      });
+      expect(store.openReviewFailure(5426)).toBeUndefined();
+      expect(store.getSessionCommand("cmd-posting")?.status).toBe(
+        commandStatus === "acked" ? "acked" : "cancelled",
+      );
+      expect(
+        store.resolveTerminalReviewFailure({
+          pr: 5426,
+          incident_id: "review-failure:cmd-posting",
+          command_id: "cmd-posting",
+          head_sha: "posted-head",
+          disposition: "closed",
+        }),
+      ).toMatchObject({ ok: true, already_resolved: true });
+    },
+  );
 
   it("resolves an exact absent-PR debt idempotently without inventing PR state", () => {
     store.createSessionCommand({
