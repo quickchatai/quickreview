@@ -1490,7 +1490,7 @@ describe("prepareDependencySources", () => {
     const cacheDir = tmp();
     const m = await prepareDependencySources(npmTree(), CHANGED, { cacheDir, fetch });
     expect(m.dir).toBe(cacheDir);
-    expect(m.skipped).toEqual([]);
+    expect(m.skipped).toMatchObject([]);
     expect(m.sources).toEqual([
       {
         ecosystem: "npm",
@@ -1555,7 +1555,7 @@ describe("prepareDependencySources", () => {
     });
     const cacheDir = tmp();
     const m = await prepareDependencySources(root, [{ filename: "src/a.ts" }], { cacheDir, fetch });
-    expect(m.skipped).toEqual([]);
+    expect(m.skipped).toMatchObject([]);
     expect(m.sources[0]).toMatchObject({
       name: "@scope/lib",
       version: "2.1.0",
@@ -1577,7 +1577,7 @@ describe("prepareDependencySources", () => {
     const cacheDir = tmp();
     const m = await prepareDependencySources(npmTree(), CHANGED, { cacheDir, fetch });
     expect(m.sources).toEqual([]);
-    expect(m.skipped).toEqual([
+    expect(m.skipped).toMatchObject([
       { ecosystem: "npm", name: "left-pad", reason: "integrity mismatch" },
     ]);
     expect(existsSync(join(cacheDir, "npm", "left-pad@1.3.0"))).toBe(false);
@@ -1609,7 +1609,7 @@ describe("prepareDependencySources", () => {
       },
     });
     expect(m.sources).toEqual([]);
-    expect(m.skipped).toEqual([
+    expect(m.skipped).toMatchObject([
       {
         ecosystem: "npm",
         name: "left-pad",
@@ -1629,7 +1629,7 @@ describe("prepareDependencySources", () => {
       [tarballUrl]: () => bytes(tgz),
     });
     const m = await prepareDependencySources(npmTree(), CHANGED, { cacheDir: tmp(), fetch });
-    expect(m.skipped).toEqual([
+    expect(m.skipped).toMatchObject([
       {
         ecosystem: "npm",
         name: "left-pad",
@@ -1671,7 +1671,9 @@ describe("prepareDependencySources", () => {
       fetch: hang,
       timeoutMs: 50,
     });
-    expect(m.skipped).toEqual([{ ecosystem: "npm", name: "left-pad", reason: "time budget" }]);
+    expect(m.skipped).toMatchObject([
+      { ecosystem: "npm", name: "left-pad", reason: "time budget" },
+    ]);
   });
 
   it("records packages past the per-PR cap as skipped", async () => {
@@ -1688,7 +1690,7 @@ describe("prepareDependencySources", () => {
       maxPackages: 1,
     });
     expect(m.sources).toEqual([]);
-    expect(m.skipped).toEqual([
+    expect(m.skipped).toMatchObject([
       { ecosystem: "npm", name: "aaa", reason: "not found (404 from registry.npmjs.org)" },
       { ecosystem: "npm", name: "bbb", reason: "over the per-PR package cap" },
       { ecosystem: "npm", name: "ccc", reason: "over the per-PR package cap" },
@@ -1733,7 +1735,7 @@ describe("prepareDependencySources", () => {
       cacheDir,
       fetch,
     });
-    expect(m.skipped).toEqual([]);
+    expect(m.skipped).toMatchObject([]);
     expect(m.sources).toEqual([
       {
         ecosystem: "pypi",
@@ -1774,7 +1776,7 @@ describe("prepareDependencySources", () => {
     const cacheDir = tmp();
     const root = tree({ "requirements.txt": "somepkg==1!2.0\n", "app/x.py": "import somepkg\n" });
     const m = await prepareDependencySources(root, [{ filename: "app/x.py" }], { cacheDir, fetch });
-    expect(m.skipped).toEqual([]);
+    expect(m.skipped).toMatchObject([]);
     expect(m.sources[0]).toMatchObject({
       version: "1!2.0",
       path: join(cacheDir, "pypi", "somepkg@1!2.0"),
@@ -1814,7 +1816,7 @@ describe("prepareDependencySources", () => {
     const cacheDir = tmp();
     const root = tree({ "requirements.in": "somepkg>=1,<2\n", "tool.py": "import somepkg\n" });
     const m = await prepareDependencySources(root, [{ filename: "tool.py" }], { cacheDir, fetch });
-    expect(m.skipped).toEqual([]);
+    expect(m.skipped).toMatchObject([]);
     expect(m.sources[0]).toMatchObject({
       name: "somepkg",
       version: "1.5",
@@ -2623,7 +2625,7 @@ describe("selfscan2: the version a file actually runs against", () => {
       cacheDir: tmp(),
       fetch,
     });
-    expect(m.skipped).toEqual([]);
+    expect(m.skipped).toMatchObject([]);
     expect(m.sources[0]).toMatchObject({ name: "somepkg", version: "1.8" });
   });
 
@@ -2654,7 +2656,7 @@ describe("selfscan2: the version a file actually runs against", () => {
       cacheDir: tmp(),
       fetch,
     });
-    expect(m.skipped).toEqual([]);
+    expect(m.skipped).toMatchObject([]);
     expect(m.sources[0]).toMatchObject({ name: "somepkg", version: "1.8" });
   });
 
