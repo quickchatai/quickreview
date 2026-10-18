@@ -12,6 +12,8 @@ import {
   FeedbackEngine,
   dayScopedRebuild,
   feedbackDayAddendum,
+  feedbackEventFromRow,
+  memoryEntryForRow,
   isFeedbackBody,
   eventTagsFor,
   memoryEntryFor,
@@ -773,6 +775,68 @@ describe("FeedbackEngine.ingest", () => {
     expect(await engine.ingest(comment)).toBe("duplicate");
     expect(memory.applied).toHaveLength(1);
     expect(rebuildAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps deleted issue and review comment IDs in separate feedback namespaces", async () => {
+    const memory = new FakeMemoryStore();
+    const engine = new FeedbackEngine({ store, timezone: TZ, rebuildAgents: vi.fn(), memory });
+    expect(
+      await engine.ingest({
+        kind: "bot_comment_deleted",
+        pr: 7,
+        comment_id: 55,
+        scope: "review_comment",
+      }),
+    ).toBe("recorded");
+    expect(
+      await engine.ingest({
+        kind: "bot_comment_deleted",
+        pr: 7,
+        comment_id: 55,
+        scope: "issue_comment",
+      }),
+    ).toBe("recorded");
+    expect(await engine.ingest({ kind: "bot_comment_deleted", pr: 7, comment_id: 55 })).toBe(
+      "duplicate",
+    );
+    const rows = store.feedbackSignalsFor(7);
+    expect(rows).toHaveLength(2);
+    const issue = rows.find((r) => r.scope === "issue_comment")!;
+    expect(feedbackEventFromRow(issue)).toMatchObject({ scope: "issue_comment" });
+    expect(parseEventTags(memoryEntryForRow(issue)!)).toMatchObject({ scope: "issue_comment" });
+    expect(memory.applied).toHaveLength(2);
+  });
+
+  it("treats old unqualified deletion rows as review comments without consuming issue IDs", async () => {
+    store.recordFeedbackSignalRow({
+      kind: "bot_comment_deleted",
+      pr: 7,
+      comment_id: 55,
+      day: "2026-08-20",
+    });
+    const engine = new FeedbackEngine({
+      store,
+      timezone: TZ,
+      rebuildAgents: vi.fn(),
+      memory: new FakeMemoryStore(),
+    });
+    expect(
+      await engine.ingest({
+        kind: "bot_comment_deleted",
+        pr: 7,
+        comment_id: 55,
+        scope: "review_comment",
+      }),
+    ).toBe("duplicate");
+    expect(
+      await engine.ingest({
+        kind: "bot_comment_deleted",
+        pr: 7,
+        comment_id: 55,
+        scope: "issue_comment",
+      }),
+    ).toBe("recorded");
+    expect(store.feedbackSignalsFor(7)).toHaveLength(2);
   });
 
   it("behavioral signals write memory but never rebuild agents", async () => {
