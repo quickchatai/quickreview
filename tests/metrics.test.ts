@@ -445,6 +445,14 @@ describe("computeMetrics", () => {
     // #100 (2 rounds), #200 (approved import, 1), #300 (closed import, 1)
     expect(computeMetrics(store, { now }).windows.all.rounds_until_resolution.n).toBe(3);
   });
+  it("lets the live reopened state override a historical close in resolution metrics", () => {
+    const before = computeMetrics(store, { now }).windows.all.rounds_until_resolution.n;
+    insertEvent(store, "2026-08-14T11:00:00.000Z", "pr_closed", 101, {});
+    expect(computeMetrics(store, { now }).windows.all.rounds_until_resolution.n).toBe(before);
+    const row = store.getPr(101)!;
+    store.upsertPr({ ...row, state: "closed" });
+    expect(computeMetrics(store, { now }).windows.all.rounds_until_resolution.n).toBe(before + 1);
+  });
 
   it("keeps duration, overruns and spend free of backfilled rows", () => {
     const m = computeMetrics(store, { now });
