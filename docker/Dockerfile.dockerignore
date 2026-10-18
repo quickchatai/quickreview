@@ -1,0 +1,21 @@
+# The release image's build context (docker/Dockerfile). BuildKit reads this
+# file in preference to the root .dockerignore, which is the companion
+# image's allowlist (src/appstamp.ts BAKED_PATHS). Admits only what the
+# release image copies; everything else in the checkout stays out.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!src
+!extensions
+!agents
+!prompts
+!seeds
+!profiles
+!schemas
+!scripts
+!config.example.toml
+!tests/fixtures/seed-manifest.json
+!deploy/reviewer/AGENTS.override.md
+**/node_modules
+**/.git

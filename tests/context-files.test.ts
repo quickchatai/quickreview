@@ -429,6 +429,7 @@ beforeAll(async () => {
   const daemonDockerfile = read("docker/daemon/Dockerfile");
   const benchDockerfile = read("bench/aacr/Dockerfile");
   const companionDockerfile = read("docker/companion/Dockerfile");
+  const releaseDockerfile = read("docker/Dockerfile");
 
   // -- the tmux-hosted bot: VM and docker daemon ---------------------------------
   const tmuxRun = await captureTmuxSession();
@@ -498,6 +499,21 @@ beforeAll(async () => {
     note: "The same stub as production, copied into the image's cwd (bench/aacr/Dockerfile).",
   });
   observed.routes["bench-lens"] = { ...observed.routes["bench"], note: LENS_NOTE };
+
+  // -- the release image: the stub baked into the app dir that is the cwd -------
+  const releaseRoot = [...releaseDockerfile.matchAll(/^WORKDIR\s+(\S+)/gm)].pop()![1]!;
+  const releaseHome = mustMatch(releaseDockerfile, /^ENV HOME=(\S+)/m, "release HOME");
+  expect(releaseRoot).toBe("/opt/qcr");
+  observed.routes["release-image"] = row(dockerfileContext(releaseDockerfile), {
+    cwd: releaseRoot,
+    agentDir: join(releaseHome, ".pi", "agent"),
+    argv: ["pi"],
+    note: "The reviewer stub baked at the image's app dir (docker/Dockerfile), root-owned and read-only; the agentDir sits under the fixed HOME and holds no context file. A route that gives pi its own cwd (the clone route's out dir) gets its own copy of the stub.",
+  });
+  observed.routes["release-image-lens"] = {
+    ...observed.routes["release-image"],
+    note: LENS_NOTE,
+  };
 
   // -- the bench judge and the onboarding session: nothing -----------------------
   const judgeArgv = judgePiArgv(ROOT, "m");
@@ -686,6 +702,8 @@ describe("the context-file inventory", () => {
       "vm-lens",
       "bench",
       "bench-lens",
+      "release-image",
+      "release-image-lens",
       "clone-review",
       "clone-review-lens",
     ]) {
@@ -790,6 +808,8 @@ describe("the one install site", () => {
       "bench/aacr/bench.sh", // the build's allowlist
       "deploy/ansible/playbook.yml", // the sync's anchored exclude
       "deploy/ansible/templates/entrypoint.sh.j2", // the install
+      "docker/Dockerfile", // COPY into the release image's cwd
+      "docker/Dockerfile.dockerignore", // the build's allowlist
       "docker/daemon/entrypoint.sh", // a comment: it refuses to install
       "extensions/bash-guard.ts", // a policy surface no session may write
       "scripts/deploy.sh", // a name the base clone may not take
