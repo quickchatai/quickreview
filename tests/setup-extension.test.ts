@@ -648,12 +648,16 @@ describe("the pass-survey agent and the case runner", () => {
     const { command, args, cwd } = f.calls[0]!;
     expect(command).toBe("pi");
     expect(cwd).toBe("/workspace"); // never the reviewed checkout
-    expect(args.slice(0, 6)).toEqual([
+    expect(args.slice(0, 10)).toEqual([
       "--mode",
       "json",
       "-p",
       "--no-session",
-      "--no-extensions",
+      "-ne",
+      "-ns",
+      "-nc",
+      "--extension",
+      "/workspace/extensions/bash-guard.ts",
       "--approve",
     ]);
     expect(args).toEqual(

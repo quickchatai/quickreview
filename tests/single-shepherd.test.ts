@@ -168,8 +168,8 @@ describe("daemon topology", () => {
     // setup/caserunner.ts is the companion's survey/scan case
     // runner: it runs only inside the companion container (extensions/
     // setup.ts, never the daemon — the check below pins that no daemon module
-    // imports src/setup/), and each spawn is a `-p --no-session
-    // --no-extensions` leaf with read-only tools, not a session.
+    // imports src/setup/), and each spawn is a `-p --no-session -ne` leaf
+    // (bash-guard the one extension) with read-only tools, not a session.
     const allowed = ["sessions.ts", "smoke-session.ts", "companion.ts"];
     // scanbox.ts is the scan sandbox: its pi runs in a throwaway container
     // from the companion image (`qcr scan login` interactively, the doctor's

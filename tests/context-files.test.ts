@@ -7,9 +7,9 @@
 // the route's argv (`--no-context-files`), cwd, ancestors and agentDir decide
 // what rides each turn. The routes differ on purpose: the VM bot, the bench
 // image, the clone route (from the run's own dir outside the checkout, D34)
-// and their lenses load the reviewer stub; the docker daemon and host-side scan
-// load the full AGENTS.md; the bench judge and the onboarding session load
-// nothing.
+// and their lenses load the reviewer stub; the docker daemon loads the full
+// AGENTS.md; the bench judge, the onboarding session and the scan leaves
+// (-nc, on the host and in the container alike) load nothing.
 //
 // Each row is OBSERVED, not copied: the cwd, the argv and the agentDir come
 // from a fake-pi run of the route's own code (or, where the route is a deploy
@@ -583,7 +583,7 @@ beforeAll(async () => {
     cwd: leafInBox.cwd,
     agentDir: SCANBOX.agentDir,
     argv: leafInBox.argv,
-    note: "cwd is the app root in the scan container (QCR_ROOT=/opt/qcr), which the companion image fills with an explicit COPY list that has no context file.",
+    note: "cwd is the app root in the scan container (QCR_ROOT=/opt/qcr), which the companion image fills with an explicit COPY list that has no context file. The leaf passes -nc besides: it loads none whatever the root holds.",
   });
   const leafOnHost = await captureScanLeaf(ROOT);
   ran.push("scan-leaf-host");
@@ -591,7 +591,7 @@ beforeAll(async () => {
     cwd: at(leafOnHost.cwd, ROOT, CHECKOUT),
     agentDir: "/operator-pi-agent",
     argv: leafOnHost.argv,
-    note: '[scan] sandbox = "host": cwd is sandboxRoot(), the qcr checkout.',
+    note: '[scan] sandbox = "host": cwd is sandboxRoot(), the qcr checkout, whose AGENTS.md the leaf does not load (-nc, P1.1); nothing is written there or into the scanned tree.',
   });
 
   // -- the companion -------------------------------------------------------------
@@ -692,14 +692,14 @@ describe("the context-file inventory", () => {
       expect(files(r), r).toEqual([STUB]);
       expect(routes[r]!.effective[0]!.path.endsWith("/AGENTS.override.md"), r).toBe(true);
     }
-    // The full guide: the docker daemon, host-side scan, the companion.
-    for (const r of ["daemon-bot", "daemon-lens", "scan-leaf-host", "companion"])
+    // The full guide: the docker daemon and the companion.
+    for (const r of ["daemon-bot", "daemon-lens", "companion"])
       expect(files(r), r).toEqual(["AGENTS.md"]);
-    // Nothing: the judge, the onboarding session, the scan container.
-    for (const r of ["bench-judge", "onboard", "scan-leaf-container"])
+    // Nothing: the judge, the onboarding session, the scan leaves.
+    for (const r of ["bench-judge", "onboard", "scan-leaf-container", "scan-leaf-host"])
       expect(files(r), r).toEqual([]);
-    expect(routes["bench-judge"]!.contextFiles).toBe("disabled");
-    expect(routes["onboard"]!.contextFiles).toBe("disabled");
+    for (const r of ["bench-judge", "onboard", "scan-leaf-container", "scan-leaf-host"])
+      expect(routes[r]!.contextFiles, r).toBe("disabled");
   });
 
   it("fails when a route's argv, cwd, ancestors or agentDir change its context file", () => {
