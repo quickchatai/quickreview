@@ -46,6 +46,8 @@ import {
 } from "../oneshot.js";
 export { boundBody, jsonProblem, missingOutputs, renderBenchOutputs, runPi, unparseableOutputs };
 export type { PiRun };
+import type { Runtime, SessionSpec } from "../engine/port.js";
+import { procArgv, procRuntime } from "../engine/procruntime.js";
 import { publishChangedResult } from "./publication.js";
 import {} from "../reviewrender.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -777,34 +779,52 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
 }
 
 /**
- * The defect judge's pi argv (src/bench/defectjudge.ts): no session, no
+ * The defect judge's session (src/bench/defectjudge.ts): no session, no
  * skills/templates/context files, no project-local files, no extension but the
  * no-exec bash guard, and only the \`read\` and \`bash\` tools. The judge reads
  * code to check a claim; it never runs it and never writes.
  */
+export function judgeSessionSpec(
+  root: string,
+  model: string,
+  rest: Pick<SessionSpec, "cwd" | "env" | "eventsFile" | "stderrFile" | "limits">,
+): SessionSpec {
+  return {
+    ...rest,
+    model,
+    tools: ["read", "bash"],
+    extensions: [join(root, "extensions", "bash-guard.ts")],
+    cliFlags: [
+      "--no-approve",
+      "--no-extensions",
+      "--no-skills",
+      "--no-context-files",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--no-session",
+    ],
+  };
+}
+
+/** The pi argv the judge's process session runs (`-p` last, the prompt on stdin). */
 export function judgePiArgv(root: string, model: string): string[] {
   return [
+    ...procArgv(
+      judgeSessionSpec(root, model, {
+        cwd: "",
+        env: {},
+        eventsFile: "",
+        stderrFile: "",
+        limits: { timeoutMs: 0 },
+      }),
+    ),
     "-p",
-    "--no-session",
-    "--no-approve",
-    "--no-extensions",
-    "--extension",
-    join(root, "extensions", "bash-guard.ts"),
-    "--tools",
-    "read,bash",
-    "--no-skills",
-    "--no-context-files",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--model",
-    model,
-    "--mode",
-    "json",
   ];
 }
 
-/** One judge session: \`pi\` from the env's PATH, the prompt on stdin. */
-export function runJudgeSession(
+/** One judge session: \`pi\` from the env's PATH (or the injected runtime),
+ * the prompt on stdin. */
+export async function runJudgeSession(
   prompt: string,
   o: {
     root: string;
@@ -813,18 +833,23 @@ export function runJudgeSession(
     env: NodeJS.ProcessEnv;
     eventsPath: string;
     timeoutMs: number;
+    runtime?: Runtime;
   },
 ): Promise<PiRun> {
-  return runPi(
-    judgePiArgv(o.root, o.model),
-    o.env,
-    o.cwd,
-    o.eventsPath,
-    o.eventsPath.replace(/\.jsonl$/, ".stderr.log"),
-    o.timeoutMs,
-    "pi",
-    prompt,
+  const session = await (o.runtime ?? procRuntime()).create(
+    judgeSessionSpec(o.root, o.model, {
+      cwd: o.cwd,
+      env: o.env,
+      eventsFile: o.eventsPath,
+      stderrFile: o.eventsPath.replace(/\.jsonl$/, ".stderr.log"),
+      limits: { timeoutMs: o.timeoutMs },
+    }),
   );
+  try {
+    return await session.prompt(prompt);
+  } finally {
+    await session.dispose();
+  }
 }
 
 /** An attempt starts by removing what an earlier attempt wrote into the case

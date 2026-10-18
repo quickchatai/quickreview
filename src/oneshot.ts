@@ -9,19 +9,8 @@
 // daemon, tmux, inject bridge or memory: a process that exits when the round
 // settles (CLAUDE.md rule 8's boundary: no GitHub credential reaches it).
 
-import { spawn } from "node:child_process";
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import type { Readable } from "node:stream";
-import { StringDecoder } from "node:string_decoder";
 import { DEFAULT_SUBAGENT_CACHE_STAGGER_MS, type Config } from "./config.js";
 import {
   buildPassPlan,
@@ -73,11 +62,18 @@ import {
   type ModelErrors,
   type Stages,
 } from "./bench/aacr.js";
-import { caseCostUsd, EventCostMeter } from "./bench/cost.js";
+import { caseCostUsd } from "./bench/cost.js";
+import type { Runtime, RuntimeSession } from "./engine/port.js";
+import { procRuntime, type PiRun } from "./engine/procruntime.js";
 import { GIT_ISOLATION_ENV } from "./bench/exec.js";
 import { POLICED_ORIGINALS, type BenchPostingReport } from "./bench/benchposting.js";
 import { apiKeyEnv } from "./bench/auth.js";
 import { GITHUB_TOKEN_ENVS } from "./envstrip.js";
+
+// The pi child process moved to the process runtime; its callers still import
+// these from here.
+export { haltPi, killPiGroups, onLfLines, runPi } from "./engine/procruntime.js";
+export type { PiRun };
 
 /** Cut a PR body to a UTF-8 byte budget. The body is the one unbounded input
  * in the order, and it appears twice (the intent note and the override). */
@@ -126,173 +122,6 @@ export function benchContextPack(
     maxTokens: cfg.review.context_pack_max_tokens,
   });
   return { order: { ...built, context_pack_file: path }, file: { path, text: pack.text } };
-}
-
-/** Feed `onLine` each LF-terminated line of `input` (a trailing CR dropped, a
- * last unterminated line delivered at end). pi's JSON mode frames events by
- * LF alone: node's readline also splits on U+2028/U+2029 (which JSON leaves
- * unescaped inside strings) and on a bare CR, cutting one event into
- * fragments that parse as nothing, so the $ cap never saw their cost. */
-export function onLfLines(input: Readable, onLine: (line: string) => void): void {
-  const decoder = new StringDecoder("utf8");
-  let rest = "";
-  const emit = (line: string): void => onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
-  input.on("data", (chunk: Buffer | string) => {
-    rest += typeof chunk === "string" ? chunk : decoder.write(chunk);
-    let nl: number;
-    while ((nl = rest.indexOf("\n")) !== -1) {
-      const line = rest.slice(0, nl);
-      rest = rest.slice(nl + 1);
-      emit(line);
-    }
-  });
-  input.on("end", () => {
-    rest += decoder.end();
-    if (rest !== "") emit(rest);
-    rest = "";
-  });
-}
-
-export interface PiRun {
-  code: number | null;
-  timedOut: boolean;
-  streamError: string | null;
-  /** pi's own price for what this process spent (every lens child included). */
-  spentUsd?: number;
-  /** The process was killed because its spend reached `capUsd`. */
-  capped?: boolean;
-}
-
-/** Process groups of the pi children runPi has running right now, so a signal
- * handler elsewhere (reviewdetach.ts runDetachedChild) can reach them: each pi
- * leads its own group, which a kill aimed at the driver's group never touches. */
-const livePiGroups = new Set<number>();
-let piHalted = false;
-
-/** Signal every running pi's process group (its lens children with it). */
-export function killPiGroups(sig: NodeJS.Signals): void {
-  for (const pgid of livePiGroups) {
-    try {
-      process.kill(-pgid, sig);
-    } catch {
-      // already gone
-    }
-  }
-}
-
-/** The run is being stopped: no further pi is spawned by this process. */
-export function haltPi(): void {
-  piHalted = true;
-}
-
-/** The bench's ONE pi spawn (tests/single-shepherd.test.ts S2): the review
- * round and the defect judge (defectjudge.ts) both go through it. */
-export function runPi(
-  argv: string[],
-  env: NodeJS.ProcessEnv,
-  cwd: string,
-  eventsPath: string,
-  stderrPath: string,
-  timeoutMs: number,
-  piBin: string,
-  stdinText?: string,
-  /** Hard stop: kill the process group once pi's own price for the run reaches
-   * this many dollars. Omitted: no cap. */
-  capUsd?: number,
-): Promise<PiRun> {
-  return new Promise((resolve) => {
-    if (piHalted) {
-      resolve({ code: null, timedOut: false, streamError: "stopped" });
-      return;
-    }
-    const events = createWriteStream(eventsPath, { flags: "a" });
-    const errs = createWriteStream(stderrPath, { flags: "a" });
-    // detached: its own process group, so a timeout kills the lens children
-    // with it rather than orphaning six pi processes on the model API.
-    const child = spawn(piBin, argv, {
-      cwd,
-      env,
-      stdio: [stdinText === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-      detached: true,
-    });
-    if (child.pid) livePiGroups.add(child.pid);
-    let timedOut = false;
-    let capped = false;
-    const meter = new EventCostMeter();
-    let streamError: string | null = null;
-    const kill = (sig: NodeJS.Signals): void => {
-      try {
-        if (child.pid) process.kill(-child.pid, sig);
-      } catch {
-        // already gone
-      }
-    };
-    // A full disk must end THIS case as a recorded failure, not throw out of
-    // the CLI and lose every case after it.
-    const onStreamError = (e: Error): void => {
-      streamError = String(e);
-      kill("SIGKILL");
-    };
-    events.on("error", onStreamError);
-    errs.on("error", onStreamError);
-    // The round order goes in on stdin: pi -p takes piped stdin as the prompt,
-    // and an argv string caps at 128 KiB (MAX_ARG_STRLEN).
-    // A pi that dies before reading its prompt (bad model, auth refusal)
-    // EPIPEs this write asynchronously: unheard, that error kills the CLI.
-    if (stdinText !== undefined && child.stdin) {
-      child.stdin.on("error", (e) => onStreamError(new Error(`prompt delivery: ${String(e)}`)));
-      child.stdin.end(stdinText);
-    }
-    // `*_update` events re-emit a lens child's whole transcript on every
-    // update — the file grows quadratically, so they are not written. The $ cap
-    // does read them (a `subagent`/`launch_plan` update carries its children's
-    // spend so far, so the cap bites before the call ends); the cost in the
-    // file comes from `message_end` and `tool_execution_end`.
-    onLfLines(child.stdout!, (line) => {
-      if (capUsd !== undefined && !capped) {
-        meter.add(line);
-        if (meter.totalUsd >= capUsd) {
-          capped = true;
-          kill("SIGTERM");
-          setTimeout(() => kill("SIGKILL"), 5_000).unref();
-        }
-      }
-      if (
-        line.startsWith('{"type":"tool_execution_update"') ||
-        line.startsWith('{"type":"message_update"')
-      )
-        return;
-      events.write(line + "\n");
-    });
-    child.stderr!.pipe(errs);
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill("SIGTERM");
-      setTimeout(() => kill("SIGKILL"), 15_000).unref();
-    }, timeoutMs);
-    child.on("error", (e) => {
-      errs.write(`spawn error: ${String(e)}\n`);
-    });
-    // Resolve only once both files are flushed and closed: every caller reads
-    // them synchronously the moment this resolves (the judge's answer is the
-    // events file's LAST message_end).
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (child.pid) livePiGroups.delete(child.pid);
-      let open = 2;
-      const settled = (): void => {
-        if (--open === 0)
-          resolve({ code, timedOut, streamError, spentUsd: meter.totalUsd, capped });
-      };
-      for (const s of [events, errs]) {
-        if (s.closed) settled();
-        else {
-          s.once("close", settled);
-          s.end();
-        }
-      }
-    });
-  });
 }
 
 /**
@@ -823,6 +652,8 @@ export interface OneShotInput {
   ecosystem: Ecosystem;
   timeoutMs: number;
   piBin?: string;
+  /** Hosts the pi session. Omitted: a process runtime over `piBin`. */
+  runtime?: Runtime;
   /** pi's spill dir. Omitted: `<outDir>/tmp`, removed when the run ends. A
    * given dir is the caller's to create and remove. */
   tmpDir?: string;
@@ -891,6 +722,7 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
     rmSync(join(outDir, f), { force: true });
   rmSync(tmpDir, { recursive: true, force: true });
   mkdirSync(tmpDir, { recursive: true });
+  let session: RuntimeSession | undefined;
   try {
     const prompts =
       i.prompts ??
@@ -979,47 +811,33 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
     // children, which load only the agent dir's GLOBAL settings, get bash-guard
     // from there (the bench's and the host route's settings both register it).
     // `-nc` is deliberately absent: the cwd's context file is the reviewer stub.
-    const base = [
-      "--approve",
-      "-ne",
-      "-ns",
-      "--model",
-      cfg.models.conversation,
-      "--session-dir",
-      sessionDir,
-      "--system-prompt",
-      sysPath,
-      "--extension",
-      join(root, "extensions", "bash-guard.ts"),
-      "--extension",
-      join(root, "extensions", "ledger-pin.ts"),
-      "--extension",
-      join(root, "extensions", "subagents.ts"),
-      // The live PR session's `cluster_findings` tool (src/sessions.ts
-      // extensionPaths): the same grouping code on both routes.
-      "--extension",
-      join(root, "extensions", "finding-clusters.ts"),
-      "--name",
-      sessionName,
-      "--mode",
-      "json",
-    ];
     const piBin = i.piBin ?? "pi";
     const events = join(outDir, PI_RUN_FILES[0]);
     const stderr = join(outDir, PI_RUN_FILES[1]);
     log(`review: ${label} — ${i.files.length} files, lenses ${prompts.plannedLenses.join(" ")}`);
     const cwd = i.cwd ?? root;
-    let r = await runPi(
-      [...base, "-p"],
-      env,
+    session = await (i.runtime ?? procRuntime({ bin: piBin })).create({
       cwd,
-      events,
-      stderr,
-      i.timeoutMs,
-      piBin,
-      prompts.order,
-      i.capUsd,
-    );
+      env,
+      model: cfg.models.conversation,
+      systemPromptFile: sysPath,
+      // The extension list is the whole list: the session discovers none.
+      extensions: [
+        join(root, "extensions", "bash-guard.ts"),
+        join(root, "extensions", "ledger-pin.ts"),
+        join(root, "extensions", "subagents.ts"),
+        // The live PR session's `cluster_findings` tool (src/sessions.ts
+        // extensionPaths): the same grouping code on both routes.
+        join(root, "extensions", "finding-clusters.ts"),
+      ],
+      name: sessionName,
+      sessionDir,
+      eventsFile: events,
+      stderrFile: stderr,
+      limits: { timeoutMs: i.timeoutMs, ...(i.capUsd !== undefined ? { capUsd: i.capUsd } : {}) },
+      cliFlags: ["--approve", "-ne", "-ns"],
+    });
+    let r = await session.prompt(prompts.order);
     const result: OneShotResult = {
       prompts,
       plannedLenses: prompts.plannedLenses,
@@ -1063,26 +881,23 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
               ? `review: ${label} — ${missing.join(", ")} not written, one continuation`
               : `review: ${label} — no outcome.json yet, one continuation`,
         );
-        r = await runPi(
-          [
-            ...base,
-            "--continue",
-            "-p",
-            broken.length
-              ? `Your BENCHMARK MODE files in ${outDir} cannot be read: ${broken.join("; ")}. Rewrite ${broken.length > 1 ? "them" : "it"} as valid JSON with the same content — plain double quotes, no escaped quotes around keys or values — and write ${CASE_FILES.outcome} last.`
-              : cfg.review.render_outputs
-                ? `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.findings} (with the posting fields) and, last, ${CASE_FILES.outcome} in ${outDir}.`
-                : `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.comments}, ${CASE_FILES.review}, ${CASE_FILES.findings} and, last, ${CASE_FILES.outcome} in ${outDir}.`,
-          ],
-          env,
-          cwd,
-          events,
-          stderr,
-          left,
-          piBin,
-          undefined,
-          i.capUsd === undefined ? undefined : Math.max(0, i.capUsd - (r.spentUsd ?? 0)),
+        const delivery = await session.followUp(
+          broken.length
+            ? `Your BENCHMARK MODE files in ${outDir} cannot be read: ${broken.join("; ")}. Rewrite ${broken.length > 1 ? "them" : "it"} as valid JSON with the same content — plain double quotes, no escaped quotes around keys or values — and write ${CASE_FILES.outcome} last.`
+            : cfg.review.render_outputs
+              ? `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.findings} (with the posting fields) and, last, ${CASE_FILES.outcome} in ${outDir}.`
+              : `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.comments}, ${CASE_FILES.review}, ${CASE_FILES.findings} and, last, ${CASE_FILES.outcome} in ${outDir}.`,
+          {
+            timeoutMs: left,
+            ...(i.capUsd !== undefined
+              ? { capUsd: Math.max(0, i.capUsd - (r.spentUsd ?? 0)) }
+              : {}),
+          },
         );
+        // The session is idle after its first turn, so the follow-up ran now.
+        if (delivery.status !== "handled")
+          throw new Error(`the continuation was not run: ${delivery.status}`);
+        r = delivery.result;
         result.piRun = r;
         result.capped = r.capped === true;
       }
@@ -1181,6 +996,7 @@ export async function runOneShot(i: OneShotInput): Promise<OneShotResult> {
     if (existsSync(reviewPath)) result.review = readFileSync(reviewPath, "utf8");
     return result;
   } finally {
+    await session?.dispose();
     if (ownTmp) rmSync(tmpDir, { recursive: true, force: true });
   }
 }
