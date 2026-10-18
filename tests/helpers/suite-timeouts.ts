@@ -90,6 +90,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/install-shell.test.ts",
   "tests/lens-yield.test.ts",
   "tests/levers.test.ts",
+  "tests/localreview-readonly.test.ts",
   "tests/onboard-llmauth.test.ts",
   "tests/onboard-streamrunner.test.ts",
   "tests/openviking-embedder.test.ts",
