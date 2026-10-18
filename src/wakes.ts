@@ -71,17 +71,21 @@ export async function wakeOrHold(
   const { store } = deps;
   const log = deps.log ?? ((): void => {});
   if (opts.claim) {
-    const claimed = store.db.transaction(() => {
-      if (!opts.claim!()) return false;
-      hold(deps, pr, message, reason);
-      return true;
+    const id = store.db.transaction(() => {
+      if (!opts.claim!()) return null;
+      return hold(deps, pr, message, reason);
     })();
-    if (!claimed) return "held";
-    if ((opts.deferWhilePaused && store.getPr(pr)?.paused) ||
-      store.hasRunningRound(pr) || store.blockingSessionCommand(`pr-${pr}`)) return "held";
+    if (id === null) return "held";
+    if (
+      (opts.deferWhilePaused && store.getPr(pr)?.paused) ||
+      store.hasRunningRound(pr) ||
+      store.blockingSessionCommand(`pr-${pr}`)
+    )
+      return "held";
     // No network/process action runs inside the claim transaction.
-    await flushHeldWakes(deps, pr);
-    if (!stillHeld(store, pr, message)) return "injected";
+    const flushed = await flushHeldWakeBatches(deps, pr);
+    if (flushed.ids.includes(id)) return "injected";
+    if (!stillHeld(store, pr, id)) throw new Error(`wake ${id} was evicted before delivery`);
     store.logEvent("wake_inject_failed_held", pr, { reason });
     log(`wakes: #${pr} ${reason} wake not delivered — held for retry`);
     return "held";
