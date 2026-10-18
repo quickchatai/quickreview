@@ -55,7 +55,6 @@ import {
 } from "../extensions/setup.js";
 import { loadConfig, sandboxRoot, type CompanionConfig } from "./config.js";
 import { stateHome } from "./install.js";
-import { loginProvider } from "./scanlogin.js";
 import {
   IN_SANDBOX_ENV,
   STARTED_FILE_ENV,
@@ -1227,14 +1226,14 @@ async function sandboxPorts(
         return 1;
       }
       const companionCfg = cfg?.companion ?? cfgMod.COMPANION_DEFAULTS;
-      // The login the scan's stage 1 needs; the companion's model's when unset.
-      const provider = asked?.trim() || loginProvider(model() || companionCfg.model);
-      const route = await scanLoginRoute(docker, sandbox, companionCfg, provider);
-      console.log(route.say);
-      if (route.problem) {
-        console.log(`scan login: ${route.problem}`);
+      let route;
+      try {
+        route = await scanLoginRoute(docker, sandbox, companionCfg, asked?.trim() || undefined);
+      } catch (e) {
+        console.log((e as Error).message);
         return 1;
       }
+      console.log(route.say);
       const r = spawnSync("docker", route.argv, { stdio: "inherit" });
       if (r.error) {
         console.log(`scan login: docker could not start: ${r.error.message}`);

@@ -176,15 +176,7 @@ describe("daemon topology", () => {
     // one-shot `-p --no-session --no-extensions` probe), or — the doctor's
     // probe with `[scan] sandbox = "host"` — the same one-shot leaf on the
     // operator's machine. No daemon module imports it (pinned below).
-    // scanlogin.ts is `qcr scan login`'s login inside the companion image:
-    // after pi's OAuth login it runs `pi auth check` once — no session, no
-    // model call. Only the scan CLI reaches it (pinned below).
-    const allowedPaths = [
-      "/src/bench/runner.ts",
-      "/src/setup/caserunner.ts",
-      "/src/scanbox.ts",
-      "/src/scanlogin.ts",
-    ];
+    const allowedPaths = ["/src/bench/runner.ts", "/src/setup/caserunner.ts", "/src/scanbox.ts"];
     const offenders = srcFiles(src)
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))
@@ -231,12 +223,6 @@ describe("daemon topology", () => {
       .filter((f) => !f.endsWith("/src/scancli.ts"))
       .filter((f) => /["'][^"']*\/scanbox\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanBox).toEqual([]);
-    const reachesScanLogin = srcFiles(src)
-      .filter((f) => !f.endsWith("/src/scancli.ts"))
-      .filter((f) =>
-        /(from\s+|import\()["'][^"']*\/scanlogin\.js["']/.test(readFileSync(f, "utf8")),
-      );
-    expect(reachesScanLogin).toEqual([]);
     const reachesSetup = srcFiles(src)
       .filter((f) => !f.includes("/src/setup/"))
       .filter((f) => !operatorEntries.some((p) => f.endsWith(p)))
