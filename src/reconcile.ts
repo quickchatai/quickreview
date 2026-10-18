@@ -15,6 +15,7 @@ import {
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
 import { auditUngatedReviews, hasUngatedApproval, ungatedReviewMessage } from "./execboundary.js";
 import { ledgerFeedbackSignal } from "./feedback.js";
+import { wakeOrHold } from "./wakes.js";
 import { recheckFingerprint } from "./recheck.js";
 import { recheckPromptMarker } from "./types.js";
 import { standingVerdict } from "./standing-review.js";
@@ -598,6 +599,53 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       }
       if (landed !== false) {
         // No evidence either way — never guess; ask again on a later pass.
+        store.markRecheckReceiptChecked(claim.pr, claim.fingerprint);
+        continue;
+      }
+      if (claim.trigger === "ci" || claim.trigger === "base_advance") {
+        const enabled =
+          cfg.recheck.enabled &&
+          (claim.trigger === "ci" ? cfg.recheck.on_ci : cfg.recheck.on_base_advance);
+        if (!enabled || store.drainState().draining) {
+          store.markRecheckReceiptChecked(claim.pr, claim.fingerprint);
+          continue;
+        }
+        const delivery = store.recheckDelivery(claim.pr, claim.fingerprint);
+        if (
+          !delivery ||
+          delivery.reason !== `recheck:${claim.trigger}` ||
+          !delivery.payload
+            .split(/\r?\n/)
+            .includes(recheckPromptMarker(claim.pr, claim.fingerprint))
+        ) {
+          store.markRecheckReceiptChecked(claim.pr, claim.fingerprint);
+          if (!store.lastEventAt("recheck_payload_unknown", claim.pr))
+            store.logEvent("recheck_payload_unknown", claim.pr, { fingerprint: claim.fingerprint });
+          continue;
+        }
+        const row = store.getPr(claim.pr);
+        const standing = store.reviewedHead(claim.pr);
+        if (
+          row?.head_sha.toLowerCase() !== claim.head_sha.toLowerCase() ||
+          (standing && standingVerdict(standing) !== "APPROVE")
+        ) {
+          store.releaseRecheck(claim.pr, claim.fingerprint);
+          store.logEvent("recheck_delivery_superseded", claim.pr, {
+            fingerprint: claim.fingerprint,
+          });
+          continue;
+        }
+        if (!standing) {
+          store.markRecheckReceiptChecked(claim.pr, claim.fingerprint);
+          continue;
+        }
+        await wakeOrHold(
+          { store, inject: deps.hooks.inject.bind(deps.hooks), log: deps.log },
+          claim.pr,
+          delivery.payload,
+          delivery.reason,
+          { holdOnFailure: true, deferWhilePaused: true },
+        );
         store.markRecheckReceiptChecked(claim.pr, claim.fingerprint);
         continue;
       }

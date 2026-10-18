@@ -1042,7 +1042,7 @@ CREATE TABLE IF NOT EXISTS reviewed_heads (
   round_no             INTEGER,
   last_author_reply_at TEXT
 );
--- Post-approval delta rechecks: one row per nudge actually sent.
+-- Post-approval delta rechecks: one durable claim per question.
 -- The unique fingerprint is the runaway guard — a redelivered webhook or a
 -- reconcile replay re-asks the same question exactly zero times.
 CREATE TABLE IF NOT EXISTS rechecks (
@@ -1052,6 +1052,14 @@ CREATE TABLE IF NOT EXISTS rechecks (
   trigger      TEXT NOT NULL,
   reason       TEXT,
   created_at   TEXT NOT NULL,
+  PRIMARY KEY (pr, fingerprint)
+);
+-- Rendered non-push questions remain owed independently of capped active wakes.
+CREATE TABLE IF NOT EXISTS recheck_deliveries (
+  pr INTEGER NOT NULL,
+  fingerprint TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  reason TEXT NOT NULL,
   PRIMARY KEY (pr, fingerprint)
 );
 -- GitHub exposes label/team requests as levels, while review intent
@@ -1673,8 +1681,8 @@ export interface EvictedWake {
    * never sent). Null otherwise. */
   released_recheck: string | null;
   /** True only for a push recheck, which the reconcile backstop re-raises
-   * (`RECHECK_WITH_BACKSTOP_WAKE_REASON`); a released ci/base-advance claim
-   * waits on an identical webhook alone. */
+   * (`RECHECK_WITH_BACKSTOP_WAKE_REASON`). CI/base claims retain their
+   * independent rendered delivery obligation instead of being released. */
   re_raised_by_reconcile: boolean;
 }
 
@@ -3627,8 +3635,8 @@ export class StateStore {
    * again once its claim is released); then every other ordinary wake,
    * oldest first, a ci or base-advance recheck among them (nothing re-asks
    * those, so they get no priority to go). Every evicted recheck's claim is
-   * released: the nudge was never sent. Must run inside the caller's
-   * transaction: the delete and the claim release land together. */
+   * released for pushes; CI/base questions retain their exact payload.
+   * Must run inside the caller's transaction with the capped-wake delete. */
   private trimHeldWakes(pr: number, cap = MAX_HELD_WAKES): EvictedWake[] {
     const protectedCount = (
       this.db
@@ -3669,8 +3677,19 @@ export class StateStore {
       if (row.reason.startsWith(RECHECK_WAKE_PREFIX)) {
         const marker = parseRecheckPromptMarker(row.payload);
         if (marker && marker.pr === pr) {
-          this.releaseRecheck(pr, marker.fingerprint);
-          released = marker.fingerprint;
+          const claim = this.db
+            .prepare("SELECT trigger FROM rechecks WHERE pr=? AND fingerprint=?")
+            .get(pr, marker.fingerprint) as { trigger: string } | undefined;
+          if (claim?.trigger === "ci" || claim?.trigger === "base_advance") {
+            this.retainRecheckDelivery(pr, marker.fingerprint, row.payload, row.reason);
+            this.logEvent("recheck_wake_recovery_pending", pr, {
+              fingerprint: marker.fingerprint,
+              reason: row.reason,
+            });
+          } else {
+            this.releaseRecheck(pr, marker.fingerprint);
+            released = marker.fingerprint;
+          }
         }
       }
       evicted.push({
@@ -5691,27 +5710,54 @@ export class StateStore {
        * trivial-delta no-op, a dispatch short-circuit): it carries no receipt
        * token, so the undelivered sweep never reads it. Default true. */
       nudge?: boolean;
+      delivery?: { payload: string; reason: string };
     },
   ): boolean {
-    const info = this.db
-      .prepare(
-        `INSERT OR IGNORE INTO rechecks (pr, fingerprint, head_sha, trigger, reason, created_at, nudged)
+    return this.db.transaction(() => {
+      const info = this.db
+        .prepare(
+          `INSERT OR IGNORE INTO rechecks (pr, fingerprint, head_sha, trigger, reason, created_at, nudged)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        pr,
-        fingerprint,
-        mark.head_sha,
-        mark.trigger,
-        mark.reason ?? null,
-        this.ts(),
-        mark.nudge === false ? 0 : 1,
-      );
-    return info.changes === 1;
+        )
+        .run(
+          pr,
+          fingerprint,
+          mark.head_sha,
+          mark.trigger,
+          mark.reason ?? null,
+          this.ts(),
+          mark.nudge === false ? 0 : 1,
+        );
+      if (info.changes === 1 && mark.delivery)
+        this.retainRecheckDelivery(pr, fingerprint, mark.delivery.payload, mark.delivery.reason);
+      return info.changes === 1;
+    })();
   }
 
-  /** Has this exact recheck question already been claimed? (reconcile
-   * backstop pre-check — keeps the sweep from re-classifying per tick). */
+  /** Keep the exact question independently of its capped active wake. */
+  retainRecheckDelivery(
+    pr: number,
+    fingerprint: string,
+    payload: string,
+    reason: string,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO recheck_deliveries (pr,fingerprint,payload,reason)
+      SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM rechecks WHERE pr=? AND fingerprint=?)`,
+      )
+      .run(pr, fingerprint, payload, reason, pr, fingerprint);
+  }
+
+  recheckDelivery(pr: number, fingerprint: string): { payload: string; reason: string } | null {
+    return (
+      (this.db
+        .prepare("SELECT payload,reason FROM recheck_deliveries WHERE pr=? AND fingerprint=?")
+        .get(pr, fingerprint) as { payload: string; reason: string } | undefined) ?? null
+    );
+  }
+
+  /** Has this exact recheck question already been claimed? */
   hasRecheck(pr: number, fingerprint: string): boolean {
     return (
       this.db
@@ -5724,7 +5770,12 @@ export class StateStore {
    * outlive a nudge that never reached the session, or the head's only
    * recheck is spent on nothing. */
   releaseRecheck(pr: number, fingerprint: string): void {
-    this.db.prepare("DELETE FROM rechecks WHERE pr = ? AND fingerprint = ?").run(pr, fingerprint);
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM rechecks WHERE pr = ? AND fingerprint = ?").run(pr, fingerprint);
+      this.db
+        .prepare("DELETE FROM recheck_deliveries WHERE pr=? AND fingerprint=?")
+        .run(pr, fingerprint);
+    })();
   }
 
   /** The receipt guard's read (docs/archiving.md §8.1): the PR's
@@ -5776,9 +5827,14 @@ export class StateStore {
 
   /** The sweep found this claim's receipt token: delivered, never asked again. */
   markRecheckReceipt(pr: number, fingerprint: string): void {
-    this.db
-      .prepare("UPDATE rechecks SET receipt_at = ? WHERE pr = ? AND fingerprint = ?")
-      .run(this.ts(), pr, fingerprint);
+    this.db.transaction(() => {
+      this.db
+        .prepare("UPDATE rechecks SET receipt_at=? WHERE pr=? AND fingerprint=?")
+        .run(this.ts(), pr, fingerprint);
+      this.db
+        .prepare("DELETE FROM recheck_deliveries WHERE pr=? AND fingerprint=?")
+        .run(pr, fingerprint);
+    })();
   }
 
   /** The sweep asked about this claim and could not decide (no evidence

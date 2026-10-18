@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import {
   RecheckWatcher,
@@ -30,6 +30,7 @@ import {
   type RecheckAdapter,
   type RecheckDeps,
 } from "../src/recheck.js";
+import { reconcileOnce } from "../src/reconcile.js";
 import { hasNewEvidence } from "../src/guards.js";
 import { flushHeldWakes } from "../src/wakes.js";
 import { standingVerdict } from "../src/standing-review.js";
@@ -684,7 +685,7 @@ interface Harness {
 }
 
 function harness(over: Partial<RecheckDeps> = {}): Harness {
-  const store = new StateStore(":memory:");
+  const store = over.store ?? new StateStore(":memory:");
   store.upsertPr({
     number: PR,
     state: "tracked",
@@ -712,6 +713,130 @@ function harness(over: Partial<RecheckDeps> = {}): Harness {
 }
 
 describe("runRecheck", () => {
+  it("rolls back a claim when its durable payload checkpoint fails", () => {
+    const h = harness();
+    try {
+      h.store.db.exec(
+        "CREATE TRIGGER fail_recheck_payload BEFORE INSERT ON recheck_deliveries BEGIN SELECT RAISE(ABORT, 'payload unavailable'); END",
+      );
+      expect(() =>
+        h.store.claimRecheck(PR, "checkpoint-ci", {
+          head_sha: HEAD,
+          trigger: "ci",
+          delivery: {
+            payload: "question",
+            reason: "recheck:ci",
+          },
+        }),
+      ).toThrow("payload unavailable");
+      expect(h.store.hasRecheck(PR, "checkpoint-ci")).toBe(false);
+      expect(h.store.recheckDelivery(PR, "checkpoint-ci")).toBeNull();
+    } finally {
+      h.store.close();
+    }
+  });
+
+  it("does not consume a CI question while its reference facts are still being prepared", async () => {
+    let release!: (facts: string) => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const facts = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const h = harness({
+      repoFacts: async () => {
+        entered();
+        return facts;
+      },
+    });
+    const work = runRecheck(h.deps, {
+      pr: PR,
+      trigger: "ci",
+      head_sha: HEAD,
+      ci: { conclusion: "failure" },
+    });
+    try {
+      await waiting;
+      expect(h.store.rechecksFor(PR)).toHaveLength(0);
+    } finally {
+      release("durable reference facts");
+      await work;
+      h.store.close();
+    }
+  });
+
+  it.each(["ci", "base_advance"] as const)(
+    "recovers a %s question after restart between its claim and wake",
+    async (trigger) => {
+      const dir = mkdtempSync(join(tmpdir(), "qcr-recheck-recovery-"));
+      const path = join(dir, "state.db");
+      let state = new StateStore(path);
+      try {
+        const h = harness({ store: state, repoFacts: async () => "durable reference facts" });
+        vi.spyOn(state, "hasRunningRound").mockImplementationOnce(() => {
+          state.close(); // durable prefix of a process exit before wake publication
+          throw new Error("process interrupted");
+        });
+        await expect(
+          runRecheck(h.deps, {
+            pr: PR,
+            trigger,
+            head_sha: HEAD,
+            ...(trigger === "ci"
+              ? { ci: { conclusion: "failure" } }
+              : { base: { branch: "master", before: OLD, after: HEAD } }),
+          }),
+        ).rejects.toThrow();
+        state = new StateStore(path);
+        expect(state.rechecksFor(PR)).toHaveLength(1);
+        state.db.prepare("UPDATE rechecks SET created_at='2020-01-01T00:00:00.000Z'").run();
+        const injected: string[] = [];
+        const ref = {
+          number: PR,
+          title: "Rewrite trimToLimit",
+          author: "alice",
+          head_sha: HEAD,
+          base_ref: "master",
+          updated_at: new Date().toISOString(),
+          state: "open" as const,
+          draft: false,
+          merged: false,
+          labels: [],
+        };
+        const adapter = {
+          searchLabelTriggered: async () => [],
+          searchTeamTriggered: async () => [],
+          listOpenPrs: async () => [ref],
+          getPr: async () => ref,
+          listBotReviewComments: async () => [],
+        };
+        const hooks = {
+          dispatchRound: async () => {},
+          inject: async (_pr: number, message: string) => {
+            injected.push(message);
+          },
+          injectOverseer: async () => {},
+          archiveAndClose: async () => {},
+          wakeReceiptPresent: async () => false,
+          injectPending: async () => false,
+        };
+        await reconcileOnce({ cfg, store: state, adapter, hooks });
+        expect(injected).toHaveLength(1);
+        expect(injected[0]).toContain("durable reference facts");
+        expect(state.rechecksFor(PR)).toHaveLength(1);
+        hooks.wakeReceiptPresent = async () => true;
+        await reconcileOnce({ cfg, store: state, adapter, hooks });
+        expect(injected).toHaveLength(1);
+        expect(state.recheckDelivery(PR, state.rechecksFor(PR)[0]!.fingerprint)).toBeNull();
+      } finally {
+        state.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("does not spend or wake for CI completion at an obsolete head", async () => {
     const h = harness();
     const result = await runRecheck(h.deps, {
