@@ -11,10 +11,8 @@
 //     one class a sweep re-raises — then every other ordinary wake, oldest
 //     first, a ci or base-advance recheck among them (only the push recheck
 //     has a reconcile backstop);
-//   - every evicted recheck nudge releases its claim (an eviction is a
-//     provable non-delivery): the reconcile backstop asks a push question again; a ci
-//     or base-advance one waits for an identical webhook, and its eviction
-//     records the quiet `recheck_wake_dropped`;
+//   - an evicted push releases its claim for the existing reconcile backstop;
+//     a CI/base question remains owed independently of its capped active wake;
 //   - a backlog of author replies is delivered in chunks, never one unbounded
 //     prompt;
 //   - a dropped author reply, should the store ever produce one, is loud.
@@ -57,7 +55,11 @@ function authorReply(comment: number): string {
 
 /** A recheck nudge the way runRecheck sends one: claim first, then the
  * stamped wake. */
-async function recheckNudge(trigger: "push" | "ci", head: string, ci?: string): Promise<string> {
+async function recheckNudge(
+  trigger: "push" | "ci" | "base_advance",
+  head: string,
+  ci?: string,
+): Promise<string> {
   const req = { trigger, head_sha: head, ...(ci ? { ci: { conclusion: ci } } : {}) };
   const fingerprint = recheckFingerprint(req, head);
   expect(store.claimRecheck(PR, fingerprint, { head_sha: head, trigger })).toBe(true);
@@ -105,6 +107,19 @@ afterEach(() => {
 });
 
 describe("the held-wake cap", () => {
+  it.each(["ci", "base_advance"] as const)(
+    "retains an evicted %s question independently of its capped active wake",
+    async (trigger) => {
+      const ci = await recheckNudge(trigger, "aaaaaaa", "failure");
+      for (let i = 1; i <= MAX_HELD_WAKES; i++)
+        await wakeOrHold(deps(), PR, `nudge ${i}`, "ledger_stale");
+      expect(heldReasons()).not.toContain(`recheck:${trigger}`);
+      expect(store.hasRecheck(PR, ci)).toBe(true);
+      expect(store.recheckDelivery(PR, ci)).toMatchObject({ reason: `recheck:${trigger}` });
+      expect(store.recheckDelivery(PR, ci)?.payload).toContain(`recheck ${trigger} at aaaaaaa`);
+    },
+  );
+
   it("never evicts an author reply, evicts push recheck nudges first, then the oldest other wake", async () => {
     for (let c = 1; c <= 6; c++) await wakeOrHold(deps(), PR, authorReply(c), "author_reply");
     expect(heldReasons()).toEqual(Array(6).fill("author_reply"));
@@ -166,21 +181,17 @@ describe("the held-wake cap", () => {
     expect(store.hasRecheck(PR, ci)).toBe(true);
   });
 
-  it("an evicted ci recheck releases its claim and is recorded: nothing but an identical webhook asks it again", async () => {
-    const ci = await recheckNudge("ci", "aaaaaaa", "failure"); // the oldest ordinary wake
+  it("an evicted CI wake retains its durable question and records quiet recovery debt", async () => {
+    const ci = await recheckNudge("ci", "aaaaaaa", "failure");
     for (let i = 1; i <= MAX_HELD_WAKES; i++)
       await wakeOrHold(deps(), PR, `nudge ${i}`, "ledger_stale");
-
     expect(heldReasons()).not.toContain("recheck:ci");
-    expect(store.hasRecheck(PR, ci)).toBe(false); // released: the same trigger may ask again
-    expect(eventsOf("recheck_claim_released_evicted")).toMatchObject([
-      { reason: "recheck:ci", fingerprint: ci, re_raised_by: null },
+    expect(store.hasRecheck(PR, ci)).toBe(true);
+    expect(eventsOf("recheck_claim_released_evicted")).toEqual([]);
+    expect(eventsOf("recheck_wake_recovery_pending")).toMatchObject([
+      { fingerprint: ci, reason: "recheck:ci" },
     ]);
-    const [dropped] = anomaliesOf(RECHECK_WAKE_DROPPED_KIND);
-    expect(dropped).toMatchObject({ pr: PR });
-    expect(dropped.detail).toContain("recheck:ci");
-    expect(dropped.detail).toContain("only an identical webhook");
-    // Quiet grade: the daily heartbeat reads it; it wakes nobody.
+    expect(anomaliesOf(RECHECK_WAKE_DROPPED_KIND)).toEqual([]);
     expect(anomalySeverity(RECHECK_WAKE_DROPPED_KIND)).toBe("quiet");
   });
 

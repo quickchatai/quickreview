@@ -15,8 +15,8 @@
 // nudges first (their claim is
 // released and the reconcile push backstop asks the question again), then
 // every other ordinary wake, oldest first — a ci or base-advance recheck
-// among them: nothing re-raises those, so an eviction releases its claim and
-// records the quiet `recheck_wake_dropped`. A burst of author replies is
+// among them. Their rendered question remains durably owed independently of
+// this capped queue and the receipt sweep restores it. A burst of author replies is
 // delivered in chunks of at most MAX_AUTHOR_REPLIES_PER_DELIVERY, so the
 // never-evicted backlog cannot grow one prompt without bound.
 import { randomUUID } from "node:crypto";

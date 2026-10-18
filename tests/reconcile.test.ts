@@ -1152,6 +1152,69 @@ describe("undelivered recheck-claim sweep", () => {
       .run("2026-08-14T09:00:00.000Z", pr, fp);
   }
 
+  it("retains legacy non-push debt when no exact rendered payload survived", async () => {
+    gh.open = [ref(605)];
+    seed(605, "tracked");
+    store.claimRecheck(605, "legacy-ci", { head_sha: "sha605", trigger: "ci" });
+    store.db.prepare("UPDATE rechecks SET created_at='2020-01-01T00:00:00.000Z'").run();
+    const hooks = hooksWithReceipt(false);
+    const injected = vi.spyOn(hooks, "inject");
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(store.hasRecheck(605, "legacy-ci")).toBe(true);
+    expect(injected).not.toHaveBeenCalled();
+    expect(store.lastEventAt("recheck_payload_unknown", 605)).toBeDefined();
+  });
+
+  it("keeps an owed CI payload paused while its owner trigger is disabled", async () => {
+    gh.open = [ref(606)];
+    seed(606, "tracked");
+    const fingerprint = "owed-ci";
+    store.claimRecheck(606, fingerprint, {
+      head_sha: "sha606",
+      trigger: "ci",
+      delivery: {
+        payload: `question\n${recheckPromptMarker(606, fingerprint)}`,
+        reason: "recheck:ci",
+      },
+    });
+    store.db.prepare("UPDATE rechecks SET created_at='2020-01-01T00:00:00.000Z'").run();
+    store.recordReviewedHead(606, { head_sha: "sha606", verdict: "APPROVE", round_no: 1 });
+    const hooks = hooksWithReceipt(false);
+    const injected = vi.spyOn(hooks, "inject");
+    await reconcileOnce({
+      cfg: { ...cfg, recheck: { ...cfg.recheck, on_ci: false } },
+      store,
+      adapter: gh,
+      hooks,
+    });
+    expect(injected).not.toHaveBeenCalled();
+    expect(store.recheckDelivery(606, fingerprint)).not.toBeNull();
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(injected).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replay an owed question at a superseding current head", async () => {
+    gh.open = [ref(607, { head_sha: "new" })];
+    seed(607, "tracked", { head: "new" });
+    const fingerprint = "old-ci";
+    store.claimRecheck(607, fingerprint, {
+      head_sha: "old",
+      trigger: "ci",
+      delivery: {
+        payload: `old question\n${recheckPromptMarker(607, fingerprint)}`,
+        reason: "recheck:ci",
+      },
+    });
+    store.db.prepare("UPDATE rechecks SET created_at='2020-01-01T00:00:00.000Z'").run();
+    store.recordReviewedHead(607, { head_sha: "old", verdict: "APPROVE", round_no: 1 });
+    const hooks = hooksWithReceipt(false);
+    const injected = vi.spyOn(hooks, "inject");
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(injected).not.toHaveBeenCalled();
+    expect(store.hasRecheck(607, fingerprint)).toBe(false);
+    expect(store.recheckDelivery(607, fingerprint)).toBeNull();
+  });
+
   it("releases a claim whose nudge provably never reached the session", async () => {
     gh.open = [ref(600)];
     seed(600, "tracked");

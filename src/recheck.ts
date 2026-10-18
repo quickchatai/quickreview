@@ -1210,32 +1210,13 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   // reconcile replay or a redelivered webhook re-asks the same question and
   // pays for it every time.
   const fingerprint = recheckFingerprint(req, head);
-  if (
-    !store.claimRecheck(req.pr, fingerprint, {
-      head_sha: head,
-      trigger: req.trigger,
-      reason: plan.evidence,
-    })
-  )
+  if (store.hasRecheck(req.pr, fingerprint))
     return done({
       action: "noop",
       reason: "already-rechecked",
       class: plan.class,
       classification: plan.classification,
     });
-
-  // A same-head question (an adverse CI conclusion, a base advance) is new
-  // evidence at a head already reviewed. Recorded on the mark the posting
-  // guard reads, so the change request it may lead to is not refused as a
-  // duplicate of the review that stands (guard 2).
-  if (head === lastReviewed) {
-    store.noteNewEvidence(req.pr, now().toISOString());
-    store.logEvent("recheck_evidence_noted", req.pr, {
-      trigger: req.trigger,
-      head_sha: head,
-      evidence: plan.evidence,
-    });
-  }
 
   const order: RecheckOrder = {
     pr: req.pr,
@@ -1283,33 +1264,76 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   // Mid-round nudges are held and flushed at round end — the PR's one main
   // pi is never given two instructions at once.
   let delivered: "injected" | "held";
+  let claimed = false;
   try {
+    const payload = stampPrompt(
+      withRepoFacts(render(order), facts),
+      recheckPromptMarker(req.pr, fingerprint),
+    );
+    if (store.getPr(req.pr)?.head_sha.toLowerCase() !== head.toLowerCase())
+      return done({ action: "noop", reason: "stale-head", class: "empty" });
+    if (standingVerdict(store.reviewedHead(req.pr)) !== "APPROVE")
+      return done({ action: "noop", reason: "no-standing-approval", class: "empty" });
+    claimed = store.db.transaction(() => {
+      if (
+        !store.claimRecheck(req.pr, fingerprint, {
+          head_sha: head,
+          trigger: req.trigger,
+          reason: plan.evidence,
+          ...(req.trigger !== "push"
+            ? { delivery: { payload, reason: recheckWakeReason(req.trigger) } }
+            : {}),
+        })
+      )
+        return false;
+      // A same-head question (an adverse CI conclusion, a base advance) is new
+      // evidence at a head already reviewed. Recorded on the mark the posting
+      // guard reads, so the change request it may lead to is not refused as a
+      // duplicate of the review that stands (guard 2).
+      if (head === lastReviewed) {
+        store.noteNewEvidence(req.pr, now().toISOString());
+        store.logEvent("recheck_evidence_noted", req.pr, {
+          trigger: req.trigger,
+          head_sha: head,
+          evidence: plan.evidence,
+        });
+      }
+
+      return true;
+    })();
+    if (!claimed)
+      return done({
+        action: "noop",
+        reason: "already-rechecked",
+        class: plan.class,
+        classification: plan.classification,
+      });
     delivered = await wakeOrHold(
       { store, inject: deps.inject, log },
       req.pr,
-      // The receipt token. A recheck claim is written BEFORE the nudge goes
-      // out and released only on a synchronous throw — which a bridge-level
-      // drop is not — so the receipt is what lets the reconcile sweep release
-      // the claim of a nudge that never arrived.
-      stampPrompt(withRepoFacts(render(order), facts), recheckPromptMarker(req.pr, fingerprint)),
+      // The receipt token distinguishes confirmed delivery from owed work.
+      // Pushes can be regenerated; CI/base questions retain these exact bytes.
+      payload,
       recheckWakeReason(req.trigger),
       // A push question the reconcile backstop asks again; a CI or base-advance
-      // question has no such sweep, so its claim stays and the wake is held
+      // question uses its durable payload, so its claim stays and the wake is held
       // for the flush paths rather than released on a failed injection — and
       // held, not delivered, while the PR is paused.
       { holdOnFailure: req.trigger !== "push", deferWhilePaused: req.trigger !== "push" },
     );
   } catch (err) {
-    // A claim must not outlive a nudge that never reached the session — the
-    // fingerprint would otherwise dedupe every retry and the delta is never
-    // audited.
-    store.releaseRecheck(req.pr, fingerprint);
+    // Pushes have a backstop. Other triggers retain the claim and exact
+    // payload so a failed injection cannot consume their only question.
+    if (claimed && req.trigger === "push") store.releaseRecheck(req.pr, fingerprint);
     store.logEvent("recheck_delivery_failed", req.pr, {
       trigger: req.trigger,
       head_sha: head,
       error: String(err),
     });
-    log(`recheck: #${req.pr} delivery failed — claim released for retry`, err);
+    log(
+      `recheck: #${req.pr} delivery failed — ${req.trigger === "push" ? "claim released for retry" : "durable question retained when claimed"}`,
+      err,
+    );
     return done({
       action: "noop",
       reason: "delivery-failed",
