@@ -16,7 +16,7 @@
 //   * epoch cut — reviews submitted at/after the oldest natively-run round are
 //     already recorded by the daemon, so they are skipped;
 //   * round numbering — historical rounds are numbered *below* the PR's lowest
-//     existing round_no, so MAX(round_no) and running-round lookups are inert;
+//     native round_no, so MAX(round_no) and running-round lookups are inert;
 //     a PR's rounds are written in ONE transaction, so an interrupted import
 //     never leaves part of a PR to be numbered below its own later reviews.
 import type { Config } from "./config.js";
@@ -330,16 +330,18 @@ export async function runBackfill(
       for (const r of plan.rounds) {
         stats.reviews_imported++;
         log(
-          `  would import #${r.pr} round ${r.round_no} ${r.verdict} @ ${r.finished_at} (trigger ${r.trigger_ts ?? "—"})`,
+          `  would import #${r.pr} historical ${r.verdict} @ ${r.finished_at} (trigger ${r.trigger_ts ?? "—"}; chronological round number assigned on import)`,
         );
       }
       continue;
     }
     // All of a PR's rounds or none: the numbering is planned over the whole
     // PR (oldest first), so a resumed import must plan it whole again.
-    const inserted = store.db.transaction(() =>
-      plan.rounds.map((r) => store.insertBackfilledRound(r)),
-    )();
+    const inserted = store.db.transaction(() => {
+      const results = plan.rounds.map((r) => store.insertBackfilledRound(r));
+      if (results.some(Boolean)) store.resequenceBackfilledRounds(n);
+      return results;
+    })();
     plan.rounds.forEach((r, i) => {
       if (inserted[i]) {
         stats.reviews_imported++;
