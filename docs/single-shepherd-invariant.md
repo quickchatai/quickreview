@@ -2,12 +2,14 @@
 
 This document states the dispatch topology the sandbox is *required* to have,
 the audit of the code against it (2026-08-17), and the three fixes that make
-it structural rather than prompted.
+it structural rather than prompted. The last section is the transitional
+amendment (D9, ratified at P-1): what the invariant means while the tmux bot
+and the engine routes coexist.
 
 ## The invariant
 
 **S1 — Two daemon-owned pi session kinds, and only two.**
-`pr-<n>` is the PR's ONE main pi: it owns that PR's review for its whole life —
+`pr-<n>` is the PR's ONE main session (pi): it owns that PR's review for its whole life —
 every round, every staleness check, every author exchange. `overseer` is the
 global watcher over all reviews in flight (anomalies, commands, the EOD sweep).
 The daemon spawns nothing else, ever. (`companion` is a separate boundary and
@@ -24,12 +26,20 @@ Everything the daemon sends a session is a deterministic instruction computed
 in daemon code without an LLM: the `RoundOrder` (round type, pass plan, tiers,
 gates, escalation criteria) rendered into a wake file, or a ping-pong wake.
 The daemon never launches a pass, never runs `pi`, and never picks a lens at
-runtime.
+runtime. The SDK is the engine's session host, not a daemon facility:
+`@earendil-works/pi-coding-agent` is imported at runtime only by
+the engine's SDK host module (`pisdk`, in `src/engine/`) and the extension factory modules, and no daemon module's
+import closure reaches `src/engine/` (the engine installs a process-global HTTP
+dispatcher). Both are fenced in `tests/single-shepherd.test.ts` and
+`tests/fences-engine.test.ts`, which also keeps `src/engine/**` free of
+image-only paths (`/opt/qcr`, `/opt/quickreview`, state-home layout literals,
+`QCR_STATE_HOME`), so a post-v1 pi package stays possible.
 
-**S3 — Every agent runs through the `subagent` tool, launched by the
-PR's main pi.** (That tool is pi's own first-party subagent extension, loaded
-from the installed pi package by `extensions/subagents.ts`.) The main pi is
-the only scheduler of agents. Passes are
+**S3 — Every agent runs through a lens tool, launched by the PR's main
+session** (with one engine-side launcher, see the transitional amendment).
+On the tmux bot that tool is `subagent`: pi's own first-party subagent
+extension, loaded from the installed pi package by `extensions/subagents.ts`.
+The main session is the only scheduler of agents. Passes are
 **leaves**: a pass never launches another agent and never posts to GitHub.
 `launch_plan` (registered by the same glue beside the subagent tool)
 does not change this: the main pi calls it, and it launches the round's
@@ -41,7 +51,8 @@ every row in one turn does not reliably do so.
 
 **S4 — One instruction at a time per main pi.** A round in flight is never
 interleaved with another instruction to the same session. Wakes that arrive
-mid-round are held and delivered when the round ends.
+mid-round are held and delivered when the round ends. The one exception is an
+operator's steer, below.
 
 ## Audit against the shipped code (2026-08-17)
 
@@ -122,3 +133,32 @@ path, so a second such writer fails the suite.
 Known and accepted: the wake is *rendered* at claim time, so its ping-pong
 discipline counter reflects the moment the reply arrived. That counter only
 advances when the bot replies, which cannot happen while the wake is held.
+
+## Transitional amendment (D9, ratified at P-1)
+
+CLAUDE.md rule 9 is the authority for the wording; this section says what it
+covers while the tmux bot and the engine routes coexist.
+
+- **Two lens tools, one rule.** On the tmux bot `extensions/subagents.ts` stays
+  the lens tool (`subagent` / `launch_plan`) until the bot moves to workers. On
+  engine (SDK) routes our own lens tool runs: `lens` / `lens_wave`, in
+  `src/engine/lens/`. Both are called by the PR's main session, and nothing
+  else schedules a lens.
+- **Exactly two launchers.** The round's engine starts the *planned discovery
+  wave* — the task files the engine wrote for this round — at round start.
+  Everything else (rows the session raises, lenses it adds, the validator) is
+  launched by the PR's main session. The daemon launches nothing and the
+  engine never launches pass-validate. If the interim P7.11 is chosen (D36), a
+  kill-switched tmux-pi extension command launches the planned wave through the
+  native subagent path; it is the engine's launch, not a third launcher.
+- **Lenses are leaves by construction.** A lens session is never given a lens
+  tool, and `include.ts` strips agent-spawning tools at build time (G1), so a
+  pass cannot fan out on either route.
+- **Held wakes stay held.** Mid-round daemon wakes go to `pending_wakes` and
+  flush at round end (`src/wakes.ts`, G3); the new routes do not add a second
+  wake channel.
+- **The operator-steer exception.** A steer an operator sends from the viewer
+  goes straight to the running session, like the quick-message box above. It is
+  human-initiated, never automatic and carries no verdict. It applies with the
+  daemon's own wakes still held: the exception is for the operator, not for the
+  daemon.
