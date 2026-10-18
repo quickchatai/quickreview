@@ -990,3 +990,24 @@ describe("a survey run", () => {
     ).toBe(true);
   });
 });
+
+it("keeps earlier memory when the replacement survey drops notes at its cap", async () => {
+  const mem = new FakeMemory(["#survey kind=convention unit=web run=survey-old — web v1"]);
+  const fake = new FakeCases((spec) =>
+    answer(
+      spec.unit === "web"
+        ? Array.from(
+            { length: MAX_NOTES_PER_CASE + 1 },
+            (_, i) => `[convention] web rule ${i}`,
+          ).join("\n")
+        : `[convention] ${spec.unit} v2`,
+    ),
+  );
+  const { engine } = setup({ cases: fake, memory: mem });
+  const preview = await engine.surveyPreview();
+  if (!preview.ok) throw new Error(preview.errors.join("; "));
+  expect((await engine.surveyStart({ key: preview.preview.key })).ok).toBe(true);
+  await engine.surveyIdle();
+  expect(mem.live().some((entry) => entry.text.includes("web v1"))).toBe(true);
+  expect(engine.surveyStatus().run?.state).toBe("partial");
+});

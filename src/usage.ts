@@ -426,6 +426,8 @@ const GIT_CONFIG_SURFACE_WRITE_RE =
  * the guard, kept an independent implementation on purpose. */
 const POLICY_SURFACE_FILES = [
   "config.toml",
+  "qcr-profile-write.json",
+  ".qcr-profile-write.json.tmp",
   "AGENTS.override.md",
   "AGENTS.MD",
   "AGENTS.md",

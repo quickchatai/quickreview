@@ -1112,7 +1112,11 @@ describe("the preview's lines and the measured rate's lines agree (scan-loop)", 
   it("an empty __init__.py counts 0 lines on both sides", async () => {
     const tree = { ...TREE, "app/__init__.py": "", "web/empty.ts": "" };
     const s = new ScanRunner(
-      ports(runner({ perFile: 0.01 }), {}, fakeSource({ [SHA1]: tree }, SHA1)),
+      ports(
+        runner({ perFile: 0.01, answer: () => "NONE" }),
+        {},
+        fakeSource({ [SHA1]: tree }, SHA1),
+      ),
     );
     const cal = await runToEnd(s);
     expect(cal.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toContain(
@@ -1124,3 +1128,109 @@ describe("the preview's lines and the measured rate's lines agree (scan-loop)", 
     expect(next.rate!.usd_per_kline).toBeCloseTo((0.07 / cal.preview.lines) * 1000, 9);
   });
 });
+
+it("does not accept validator tiers for candidate files it never opened", async () => {
+  const source = fakeSource({ [SHA1]: TREE }, SHA1);
+  const root = `/state/scan/tree/${SHA1}`;
+  const cases = runner({
+    answer: (spec) =>
+      spec.files
+        .slice(0, 2)
+        .map((path) => {
+          const answer = scanAnswer({ ...spec, files: [path] }).split("SUGGEST")[0]!;
+          return spec.agent.startsWith("pass-validate")
+            ? answer
+                .replace("FINDINGS pass-scan", "FINDINGS pass-validate")
+                .replace(
+                  "  claim:",
+                  "  validity: confirmed\n  scenario: a traced caller fails\n  claim:",
+                )
+            : answer;
+        })
+        .join("\n"),
+    reads: (spec) =>
+      (spec.agent.startsWith("pass-validate") ? spec.files.slice(0, 1) : spec.files).map(
+        (path) => `${root}/${path}`,
+      ),
+  });
+  await runToEnd(new ScanRunner(ports(cases, { validator: true }, source)));
+  const findings = new FindingsStore(stateHomeFs(stateDir)).load().findings;
+  const unread = findings.filter((f) =>
+    cases.specs.some(
+      (spec) => spec.agent.startsWith("pass-validate") && spec.files.slice(1, 2).includes(f.path),
+    ),
+  );
+  expect(unread.length).toBeGreaterThan(0);
+  expect(unread.every((f) => f.validated === false && f.validity === null)).toBe(true);
+});
+
+it("aborts concurrent calibration cases as soon as spending becomes unknown", async () => {
+  let siblingAborted = false;
+  const r: FakeRunner = {
+    specs: [],
+    run: async (spec, signal) => {
+      r.specs.push(spec);
+      if (r.specs.length === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { ok: true, output: "NONE", cost_usd: null };
+      }
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+        setTimeout(resolve, 100);
+      });
+      siblingAborted = signal.aborted;
+      return { ok: false, reason: "stopped", cost_usd: 0 };
+    },
+  };
+  const { run } = await runToEnd(new ScanRunner(ports(r, { concurrency: 2 })));
+  expect(run.state).toBe("capped");
+  expect(siblingAborted).toBe(true);
+});
+
+it("refuses planning before opening a tree owned by another scan process", async () => {
+  const source = fakeSource({ [SHA1]: TREE }, SHA1);
+  const p = ports(runner(), {}, source);
+  p.lease = {
+    holder: "ours",
+    lastError: null,
+    claim: () => false,
+    renew: () => false,
+    release: () => {},
+    other: () => ({
+      holder: "other",
+      run: "running-scan",
+      pid: 9,
+      host: "host",
+      at: now.toISOString(),
+    }),
+  };
+  const result = await new ScanRunner(p).preview();
+  expect(result.ok).toBe(false);
+  expect(source.opened).toEqual([]);
+});
+
+it("does not record clean coverage when every parsed finding fails anchoring", async () => {
+  const r = runner({ answer: (spec) => scanAnswer(spec).replace("line: 2-3", "line: 999999") });
+  const { run } = await runToEnd(new ScanRunner(ports(r)));
+  expect(run.cases.every((c) => c.status === "failed")).toBe(true);
+  expect(stateHomeFs(stateDir).read(LEDGER_FILE)).toBeNull();
+});
+
+it.each(["read", "write"])(
+  "keeps deep leads retryable after suggestions %s fails",
+  async (operation) => {
+    const p = ports(runner(), { depth: "deep" });
+    const state = p.state;
+    p.state = {
+      ...state,
+      [operation]: (path: string, data?: string) => {
+        if (path.endsWith("suggestions.json")) throw new Error("temporary suggestions failure");
+        return operation === "read" ? state.read(path) : state.write(path, data!);
+      },
+    };
+    const { run } = await runToEnd(new ScanRunner(p));
+    expect(run.cases.every((c) => c.status === "failed")).toBe(true);
+    expect(state.read(LEDGER_FILE)).toBeNull();
+  },
+);

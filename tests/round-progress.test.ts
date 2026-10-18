@@ -920,3 +920,84 @@ describe("round progress — append-only transition log", () => {
     expect(existsSync(`${path}.2`)).toBe(false);
   });
 });
+
+describe("subagent event ordering", () => {
+  async function harness(
+    run: (
+      emit: (name: string, event?: Record<string, unknown>) => Promise<void>,
+      read: () => ReturnType<typeof parseRoundProgress>,
+    ) => Promise<void>,
+  ) {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-order-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    Object.assign(process.env, { QCR_SANDBOX_ROOT: root, QCR_SESSION_NAME: "pr-42", QCR_PR: "42" });
+    const handlers = new Map<string, PiEventHandler[]>();
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    try {
+      activate({
+        on(name: string, handler: PiEventHandler) {
+          handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+        },
+      } as never);
+      await emit("agent_start");
+      await run(emit, () =>
+        parseRoundProgress(readFileSync(join(root, "state/round-progress/pr-42.json"), "utf8")),
+      );
+    } finally {
+      process.env = previous;
+    }
+  }
+  it("publishes a readable snapshot when a chain is the first fanout", async () => {
+    await harness(async (emit, read) => {
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "c",
+        args: {
+          chain: [
+            { agent: "pass-a", task: "a" },
+            { agent: "pass-b", task: "b" },
+          ],
+        },
+      });
+      await emit("tool_execution_update", {
+        toolName: "subagent",
+        toolCallId: "c",
+        partialResult: { details: { mode: "chain", results: [{ agent: "pass-a", exitCode: 0 }] } },
+      });
+      expect(read()).toBeDefined();
+      expect(read()?.fanout_started_at).toBeDefined();
+    });
+  });
+  it("preserves completed siblings when a parallel call ends with no results", async () => {
+    await harness(async (emit, read) => {
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "c",
+        args: {
+          tasks: [
+            { agent: "pass-a", task: "a" },
+            { agent: "pass-b", task: "b" },
+          ],
+        },
+      });
+      await emit("tool_execution_update", {
+        toolName: "subagent",
+        toolCallId: "c",
+        partialResult: {
+          details: {
+            mode: "parallel",
+            results: [
+              { agent: "pass-a", exitCode: 0 },
+              { agent: "pass-b", exitCode: -1 },
+            ],
+          },
+        },
+      });
+      await emit("tool_execution_end", { toolName: "subagent", toolCallId: "c", isError: true });
+      expect(read()?.agents.map((a) => a.status)).toEqual(["completed", "failed"]);
+    });
+  });
+});

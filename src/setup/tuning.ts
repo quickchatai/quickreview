@@ -39,6 +39,7 @@ import type { Refusal, StateFs } from "./engine.js";
 import { BASELINES_KEPT, recordBaseline } from "./baselines.js";
 import {
   commitId,
+  profileContentHash,
   requestFile,
   resultFile,
   type CommitRequest,
@@ -184,7 +185,83 @@ function setupProfile(recorded: string | undefined, named: string | null): strin
   return recorded || named || "";
 }
 
+/** A profile update and its handoff/audit records share a durable intent.
+ * Explicit write retries finish it; previews refuse it without writing. */
+export const PROFILE_WRITE_FILE = "setup/qcr-profile-write.json";
+interface ProfileWriteIntent {
+  version: 1;
+  profile: string;
+  files: ProfileFiles;
+  before: Record<string, string>;
+  state: Record<string, string>;
+}
+
+export function recoverProfileWrite(
+  deps: TuningDeps,
+  write: boolean,
+): { ok: true; recovered: boolean } | Refusal {
+  try {
+    const text = deps.state.read(PROFILE_WRITE_FILE);
+    if (text === null || JSON.parse(text) === null) return { ok: true, recovered: false };
+    if (!write)
+      return {
+        ok: false,
+        errors: [
+          "a profile write is awaiting recovery — retry its explicit write before previewing or changing the profile",
+        ],
+      };
+    const intent = JSON.parse(text) as ProfileWriteIntent;
+    if (
+      intent?.version !== 1 ||
+      typeof intent.profile !== "string" ||
+      !intent.files ||
+      !intent.before ||
+      !intent.state ||
+      !deps.profiles
+    )
+      throw new Error("the profile write intent is not a supported record");
+    const target = writeTarget(deps.profiles, intent.profile);
+    if (!target.ok) return { ok: false, errors: [target.error] };
+    const stateWrites = Object.entries(intent.state);
+    for (const [path, bytes] of stateWrites) {
+      if (
+        !path.startsWith("setup/") ||
+        path.split("/").some((s) => s === ".." || s === "" || s === ".") ||
+        path === PROFILE_WRITE_FILE ||
+        typeof bytes !== "string"
+      )
+        throw new Error("the profile write intent contains an unsupported handoff path");
+    }
+    const remaining: ProfileFiles = {};
+    for (const [file, bytes] of Object.entries(intent.files)) {
+      if (
+        ![PROFILE_FILE, DRAFTED_GUIDE_FILE].includes(file) ||
+        typeof bytes !== "string" ||
+        typeof intent.before[file] !== "string"
+      )
+        throw new Error("the profile write intent contains an unsupported file");
+      const current = readProfileFile(target.dir, file);
+      if (current !== bytes && current !== intent.before[file])
+        throw new Error(`${file} changed after the pending write; its later edits were preserved`);
+      if (current !== bytes) remaining[file] = bytes;
+    }
+    writeProfileFiles(target.dir, remaining);
+    for (const [path, bytes] of stateWrites) deps.state.write(path, bytes);
+    deps.state.write(PROFILE_WRITE_FILE, "null\n");
+    return { ok: true, recovered: true };
+  } catch (err) {
+    return {
+      ok: false,
+      errors: [
+        `the pending profile write could not be completed: ${String(err)} — its recovery intent is retained`,
+      ],
+    };
+  }
+}
+
 export function profileStatus(deps: TuningDeps): ProfileStatus | Refusal {
+  const pending = recoverProfileWrite(deps, false);
+  if (!pending.ok) return pending;
   if (!deps.profiles)
     return { ok: false, errors: ["this assembly has no config home to read profiles from"] };
   const target = readProfileTarget(deps.profiles);
@@ -318,12 +395,18 @@ export function parseEmphasis(
 export function profileApply(
   deps: TuningDeps,
   input: ApplyInput,
-  opts: { message?: string; decide?: ReadonlySet<string> } = {},
+  opts: {
+    message?: string;
+    decide?: ReadonlySet<string>;
+    stateWrites?: (commit: { id: string } | null) => Record<string, string>;
+  } = {},
 ): ApplyResult | Refusal {
   if (!deps.profiles)
     return { ok: false, errors: ["this assembly has no config home to write profiles to"] };
   const home = deps.profiles;
   const write = input.write === true;
+  const recovered = recoverProfileWrite(deps, write);
+  if (!recovered.ok) return recovered;
   const rec = readRecord(deps.state);
   if (rec.state === "unreadable") return { ok: false, errors: [rec.error] };
   const record = rec.state === "ok" ? rec.record : null;
@@ -457,6 +540,7 @@ export function profileApply(
   let baseline: ApplyResult["baseline"] = null;
   if (write) {
     const now = deps.clock();
+    const stateWrites: Record<string, string> = {};
     if (!unchanged) {
       // What the write is about to replace, kept for the replay's
       // "old" side — BEFORE the files change, so a crash in between leaves a
@@ -501,19 +585,20 @@ export function profileApply(
           error: `the profile before this write was not recorded for a replay: ${String(err)}`,
         };
       }
-      try {
-        writeProfileFiles(where.dir, files);
-      } catch (err) {
-        return { ok: false, errors: [`writing ${where.dir} failed: ${String(err)}`] };
-      }
       const req: CommitRequest = {
         id,
         requested_at: now.toISOString(),
         profile,
         paths: Object.keys(files).map((f) => `${PROFILES_DIR}/${profile}/${f}`),
         message: opts.message ?? commitMessage(profile, priorities),
+        hashes: Object.fromEntries(
+          Object.entries(files).map(([path, text]) => [
+            `${PROFILES_DIR}/${profile}/${path}`,
+            profileContentHash(text),
+          ]),
+        ),
       };
-      deps.state.write(requestFile(id), `${JSON.stringify(req, null, 2)}\n`);
+      stateWrites[requestFile(id)] = `${JSON.stringify(req, null, 2)}\n`;
       commit = { id };
     }
     const next: InterviewRecord = {
@@ -527,7 +612,29 @@ export function profileApply(
         ...(commit ? [{ id: commit.id, requested_at: now.toISOString() }] : []),
       ].slice(-COMMITS_KEPT),
     };
-    deps.state.write(INTERVIEW_FILE, `${JSON.stringify(next, null, 2)}\n`);
+    stateWrites[INTERVIEW_FILE] = `${JSON.stringify(next, null, 2)}\n`;
+    Object.assign(stateWrites, opts.stateWrites?.(commit));
+    const intent: ProfileWriteIntent = {
+      version: 1,
+      profile,
+      files,
+      before: Object.fromEntries(
+        Object.keys(files).map((file) => [file, file === PROFILE_FILE ? before : guideBefore]),
+      ),
+      state: stateWrites,
+    };
+    try {
+      deps.state.write(PROFILE_WRITE_FILE, `${JSON.stringify(intent, null, 2)}\n`);
+    } catch (err) {
+      return {
+        ok: false,
+        errors: [
+          `the profile write intent could not be saved (${String(err)}) — no profile file was changed`,
+        ],
+      };
+    }
+    const completed = recoverProfileWrite(deps, true);
+    if (!completed.ok) return completed;
   }
   return {
     ok: true,

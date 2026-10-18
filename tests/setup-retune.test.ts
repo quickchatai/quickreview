@@ -89,10 +89,10 @@ const repo: RepoReader = {
   head: () => "abc123def4567890",
 };
 
-function engine(): SetupEngine {
+function engine(state = stateHomeFs(stateDir())): SetupEngine {
   return new SetupEngine({
     repo,
-    state: stateHomeFs(stateDir()),
+    state,
     config: configHomeFs(join(dir, "config-portrait")),
     profiles: { root: sandbox, env },
     clock: () => now,
@@ -827,4 +827,37 @@ describe("the deploy tab shows the pending re-tune", () => {
     } as DeployState;
     expect(stripAnsi(deployLines(st2, 200).join("\n"))).not.toContain("re-tune");
   });
+});
+
+it("recovers the audit report after a re-tune landed but its log write failed", () => {
+  const state = stateHomeFs(stateDir());
+  const e = engine(state);
+  setUp(e);
+  finishedScan();
+  const writeState = state.write.bind(state);
+  let fail = true;
+  state.write = (path, bytes) => {
+    if (fail && path === RETUNES_FILE) throw new Error("audit publication failed");
+    writeState(path, bytes);
+  };
+  const input = {
+    priorities: { security: "critical" },
+    reasons: { security: REASON },
+    write: true,
+  };
+  try {
+    e.retune(input);
+  } catch {
+    /* simulated storage failure */
+  }
+  fail = false;
+  e.retune(input);
+  const log = parseRetunes(state.read(RETUNES_FILE)!);
+  expect(log.state).toBe("ok");
+  if (log.state === "ok")
+    expect(log.retunes).toEqual([
+      expect.objectContaining({
+        changes: expect.arrayContaining([expect.objectContaining({ why: REASON })]),
+      }),
+    ]);
 });

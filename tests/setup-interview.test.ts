@@ -95,7 +95,10 @@ function fakeMemory(entries: MemoryEntry[]): MemoryStore {
   };
 }
 
-function engine(memory: MemoryStore | null = null): SetupEngine {
+function engine(
+  memory: MemoryStore | null = null,
+  state = stateHomeFs(join(dir, "state")),
+): SetupEngine {
   return new SetupEngine({
     repo: {
       location: "/r",
@@ -104,7 +107,7 @@ function engine(memory: MemoryStore | null = null): SetupEngine {
       lines: () => null,
       head: () => null,
     },
-    state: stateHomeFs(join(dir, "state")),
+    state,
     profiles: { root: sandbox, env },
     clock: () => now,
     memory,
@@ -575,9 +578,16 @@ describe("the commit hand-off (processProfileCommits)", () => {
       // A config home in a temp dir must never find this checkout's repo above it.
       env: { ...process.env, GIT_CEILING_DIRECTORIES: dir },
     });
-  const identityGit: GitRun = (args, cwd) => {
+  const identityGit: GitRun = (args, cwd, extraEnv) => {
     try {
-      return { code: 0, stdout: git(cwd, ...args), stderr: "" };
+      const stdout = extraEnv
+        ? execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+            cwd,
+            encoding: "utf8",
+            env: { ...process.env, GIT_CEILING_DIRECTORIES: dir, ...extraEnv },
+          })
+        : git(cwd, ...args);
+      return { code: 0, stdout, stderr: "" };
     } catch (err) {
       const e = err as { status?: number; stdout?: string; stderr?: string };
       return { code: e.status ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
@@ -594,6 +604,50 @@ describe("the commit hand-off (processProfileCommits)", () => {
       }),
     ).commit!.id;
   }
+
+  it("does not commit a newer profile version under an earlier pending request message", () => {
+    requestOne();
+    applied(engine().profileApply({ priorities: { security: "important" }, write: true }));
+    git(home(), "init", "-q");
+    const results = processProfileCommits({
+      stateHome: join(dir, "state"),
+      configHome: home(),
+      git: identityGit,
+    });
+    expect(results.map((r) => r.state)).toEqual(["refused", "committed"]);
+    expect(git(home(), "log", "-1", "--format=%s")).toContain("security important");
+  });
+
+  it("commits the requested bytes even when the worktree changes during git staging", () => {
+    requestOne();
+    git(home(), "init", "-q");
+    const file = join(home(), "profiles/acme/profile.toml");
+    const requested = readFileSync(file, "utf8");
+    let changed = false;
+    const racing: GitRun = (args, cwd, env) => {
+      if (!changed && ["add", "commit", "commit-tree"].includes(args[0]!)) {
+        changed = true;
+        writeFileSync(file, requested + "\n# a later profile version\n");
+      }
+      return identityGit(args, cwd, env);
+    };
+    expect(
+      processProfileCommits({ stateHome: join(dir, "state"), configHome: home(), git: racing })[0],
+    ).toMatchObject({ state: "committed" });
+    expect(changed).toBe(true);
+    expect(git(home(), "show", "HEAD:profiles/acme/profile.toml")).toBe(requested);
+    expect(readFileSync(file, "utf8")).toContain("a later profile version");
+  });
+
+  it("recovers a committed request's SHA when its result receipt was lost", () => {
+    const id = requestOne();
+    git(home(), "init", "-q");
+    const opts = { stateHome: join(dir, "state"), configHome: home(), git: identityGit };
+    const first = processProfileCommits(opts)[0]!;
+    rmSync(join(dir, "state", `setup/commits/${id}.result.json`));
+    expect(processProfileCommits(opts)[0]).toMatchObject({ state: "committed", sha: first.sha });
+    expect(git(home(), "rev-list", "--count", "HEAD").trim()).toBe("1");
+  });
 
   it("commits the profile's paths alone in a config home that is its own repo — never a staged secret", () => {
     const id = requestOne();
@@ -893,4 +947,72 @@ describe("pin proposals go to the operator", () => {
     expect(readdirSync(dir)).not.toContain("state");
     expect((await engine(null).proposePins([{ id: "a" }])).ok).toBe(false);
   });
+});
+
+it("recovers a profile write's commit request after a handoff write failed", () => {
+  liveConfig("acme");
+  const state = stateHomeFs(join(dir, "state"));
+  const writeState = state.write.bind(state);
+  let fail = true;
+  state.write = (path, bytes) => {
+    if (fail && path.endsWith(".request.json")) throw new Error("request publication failed");
+    writeState(path, bytes);
+  };
+  const e = engine(null, state);
+  const input = { priorities: answers({ security: "critical" }), goals: "g", write: true };
+  try {
+    e.profileApply(input);
+  } catch {
+    /* the simulated writer can refuse the handoff */
+  }
+  fail = false;
+  applied(e.profileApply(input));
+  const status = e.profileStatus();
+  if (!("commits" in status)) throw new Error("status refused");
+  expect(status.commits).toHaveLength(1);
+  expect(state.read(`setup/commits/${status.commits[0]!.id}.request.json`)).not.toBeNull();
+});
+
+it("refuses a profile intent before changing files when its handoff paths are unsupported", () => {
+  liveConfig("acme");
+  const e = engine();
+  const original = applied(e.profileApply({ priorities: answers(), goals: "g", write: true }));
+  const file = join(original.dir, "profile.toml");
+  const before = readFileSync(file, "utf8");
+  const state = stateHomeFs(join(dir, "state"));
+  state.write(
+    "setup/qcr-profile-write.json",
+    JSON.stringify({
+      version: 1,
+      profile: "acme",
+      files: { "profile.toml": before + "\n# forged update\n" },
+      before: { "profile.toml": before },
+      state: { "../outside": "bad" },
+    }),
+  );
+  expect(e.profileApply({ write: true })).toMatchObject({ ok: false });
+  expect(readFileSync(file, "utf8")).toBe(before);
+});
+
+it("keeps a later operator edit when recovering a partially completed profile write", () => {
+  liveConfig("acme");
+  const state = stateHomeFs(join(dir, "state"));
+  const writeState = state.write.bind(state);
+  let fail = true;
+  state.write = (path, bytes) => {
+    if (fail && path.endsWith(".request.json")) throw new Error("handoff unavailable");
+    writeState(path, bytes);
+  };
+  const e = engine(null, state);
+  const input = { priorities: answers({ security: "critical" }), goals: "g", write: true };
+  e.profileApply(input);
+  const file = join(home(), "profiles/acme/profile.toml");
+  const changed = readFileSync(file, "utf8") + "\n# later operator edit\n";
+  writeFileSync(file, changed);
+  fail = false;
+  expect(e.profileApply(input)).toMatchObject({
+    ok: false,
+    errors: [expect.stringContaining("changed after the pending write")],
+  });
+  expect(readFileSync(file, "utf8")).toBe(changed);
 });

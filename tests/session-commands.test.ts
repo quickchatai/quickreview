@@ -4,6 +4,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { StateStore } from "../src/state.js";
+import { SessionCommandLedger } from "../extensions/session-command-ledger.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const T0 = "2026-08-27T20:00:00.000Z";
@@ -627,4 +628,37 @@ describe("a replay starts the redelivery budget again", () => {
     ).toBe(true);
     expect(store.getSessionCommand("cmd-t")).toMatchObject({ status: "pending", redeliveries: 0 });
   });
+});
+
+it("adopts legacy transport after a failed round releases its lane", () => {
+  const dir = mkdtempSync(join(tmpdir(), "qcr-command-adopt-"));
+  const path = join(dir, "state.db");
+  const store = new StateStore(path, () => new Date(T0));
+  let ledger: SessionCommandLedger | undefined;
+  try {
+    store.upsertPr({
+      number: 5408,
+      state: "reviewing",
+      head_sha: "abc",
+      title: "PR",
+      author: "author",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const round = store.startRound(5408, "first", ["pass-baseline"], 75);
+    store.createSessionCommand({ ...input("failed"), round_no: 1 });
+    store.claimSessionCommand("failed", "bridge", "2026-08-27T20:02:00.000Z");
+    store.finishSessionCommand("failed", "bridge", "failed", "no start");
+    store.markRoundCancelled(round, "recovery", "infrastructure_failure");
+    ledger = new SessionCommandLedger(path, dir, "pr-5408");
+    expect(ledger.linkOrAdopt(join(dir, "legacy.md"), Buffer.from("wake"))).toMatchObject({
+      ok: true,
+      command: { kind: "legacy" },
+    });
+  } finally {
+    ledger?.close();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

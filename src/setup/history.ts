@@ -386,8 +386,16 @@ export async function saveHistoryThemes(
     );
     // The new themes land BEFORE the old ones go: a write memory refuses (or
     // a stop between the two) leaves the earlier themes live, never neither.
+    const retained = new Set<(typeof old)[number]>();
     for (const t of n.themes) {
-      const r = await deps.memory.apply({ op: "note", text: themeEntryText(t) });
+      const text = themeEntryText(t);
+      const existing = old.find((e) => e.text === text);
+      if (existing) {
+        retained.add(existing);
+        memory.written++;
+        continue;
+      }
+      const r = await deps.memory.apply({ op: "note", text });
       if (r.ok) memory.written++;
       else memory.problems.push(`could not write "${t.title}": ${r.message}`);
     }
@@ -397,6 +405,7 @@ export async function saveHistoryThemes(
       );
     } else {
       for (const e of old) {
+        if (retained.has(e)) continue;
         const r = await deps.memory.apply({ op: "retire", ...refOf(e) });
         if (r.ok) memory.retired++;
         else

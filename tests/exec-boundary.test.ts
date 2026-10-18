@@ -703,6 +703,27 @@ const CORPUS = [
     outcome: null,
     note: "a wake glob intersects the filename language beyond the old January sample",
   },
+  {
+    round: 16,
+    via: "write",
+    chain: "state/setup/qcr-profile-write.json",
+    outcome: null,
+    note: "a forged recovery intent can rewrite profile policy",
+  },
+  {
+    round: 16,
+    via: "write",
+    chain: "state/setup/.qcr-profile-write.json.tmp",
+    outcome: null,
+    note: "the recovery writer's atomic sibling carries the same policy",
+  },
+  {
+    round: 16,
+    via: "bash",
+    chain: "printf forged > state/setup/qcr-profile-write.js?n",
+    outcome: null,
+    note: "shell expansion must not reach the profile intent",
+  },
 ] as const;
 
 /**

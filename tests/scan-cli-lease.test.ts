@@ -54,10 +54,8 @@ describe("the scan driver lease", () => {
     expect(b.scan.status().run).toMatchObject({ id: run.id, display: "running" });
     expect(b.scan.status().active).toBe(false);
     const p = await b.scan.preview();
-    if (!p.ok) throw new Error("preview");
-    const refused = await b.scan.start({ key: p.preview.key });
-    expect(refused).toMatchObject({ ok: false });
-    expect(refused.ok ? "" : refused.errors.join(" ")).toMatch(
+    expect(p).toMatchObject({ ok: false });
+    expect(p.ok ? "" : p.errors.join(" ")).toMatch(
       new RegExp(`scan ${run.id} is running in another process`),
     );
     a.scan.stop();
@@ -336,4 +334,22 @@ describe("the request watcher", () => {
       vi.useRealTimers();
     }
   });
+});
+
+it("an expired holder cannot renew during another driver's takeover", () => {
+  let time = new Date("2026-09-29T10:00:00Z");
+  const clock = () => time;
+  const a = fileLease(dir, { holder: "a", clock });
+  expect(a.claim("run-a")).toBe(true);
+  time = new Date(time.getTime() + LEASE_TTL_MS + 1);
+  let renewed: boolean | undefined;
+  const b = fileLease(dir, {
+    holder: "b",
+    clock,
+    beforeCreate: () => {
+      renewed = a.renew("run-a");
+    },
+  });
+  expect(b.claim("run-b")).toBe(true);
+  expect(renewed).toBe(false);
 });
