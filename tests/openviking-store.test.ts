@@ -2338,3 +2338,43 @@ describe("the incremental sweep", () => {
     expect(store.lastSweepStats()).toEqual({ full: false, listed: 1, reread: 0, reused: 1 });
   });
 });
+
+it("empty replacement clears retrieval tags while empty append is a no-op", async () => {
+  const server = new FakeOpenViking();
+  const { client, store } = wire(server);
+  const uri = `${ROOT}/experiences/test.md`;
+  await client.setTags(uri, ["kind=feedback"]);
+  expect(await client.setTags(uri, [])).toBe(true);
+  expect(server.tags.get(uri)).toEqual([]);
+  await client.setTags(uri, ["kind=feedback"]);
+  await client.setTags(uri, [], "append");
+  expect(server.tags.get(uri)).toEqual(["kind=feedback"]);
+  await store.apply({ op: "note", text: "#feedback kind=feedback useful observation" });
+  const entry = (await store.read())[0]!;
+  expect(
+    (await store.apply({ op: "edit", ...refOf(entry), text: "ordinary observation" })).ok,
+  ).toBe(true);
+  expect(server.tags.get(`${ROOT}/${entry.id}`)).toEqual([]);
+});
+
+it("unpin publishes a revived URI immediately without waiting for a complete sweep", async () => {
+  const server = new FakeOpenViking();
+  const { client } = wire(server);
+  const published: string[][] = [];
+  const store = new OpenVikingStore({
+    client,
+    now: () => NOW,
+    initialRetired: [],
+    onRetired: (uris) => {
+      published.push([...uris]);
+    },
+  });
+  await store.apply({ op: "note", text: "#repo-gotcha an instruction" });
+  const original = (await store.read())[0]!;
+  await store.apply({ op: "pin", ...refOf(original) });
+  const pinned = (await store.read())[0]!;
+  expect(published.at(-1)).toContain(`${ROOT}/${original.id}`);
+  expect((await store.apply({ op: "unpin", ...refOf(pinned) })).ok).toBe(true);
+  expect(published.at(-1)).not.toContain(`${ROOT}/${original.id}`);
+  expect(published.at(-1)).toContain(`${ROOT}/${pinned.id}`);
+});

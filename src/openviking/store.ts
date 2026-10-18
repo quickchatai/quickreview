@@ -1230,6 +1230,7 @@ export class OpenVikingStore implements MemoryStore {
     const why = res.ok ? `the server accepted the batch without writing ${from}` : res.message;
     if (outcome === "landed") {
       this.noteRetired(fromUri);
+      this.noteLive(toUri);
       await this.mirrorTags(toUri, content);
       const confirmed = res.ok && batchWriteLanded(res.result, fromUri);
       return {
@@ -1374,6 +1375,12 @@ export class OpenVikingStore implements MemoryStore {
     }
     this.log(`openviking: rollback at ${uri} is ${outcome}`);
     return outcome;
+  }
+
+  /** A confirmed revival removes its former stub from recall exclusions. */
+  private noteLive(uri: string): void {
+    if (this.knownRetired?.includes(uri))
+      this.setKnownRetired(this.knownRetired.filter((retired) => retired !== uri));
   }
 
   /** A retirement this store wrote joins the published list at once. */
@@ -1837,7 +1844,6 @@ export class OpenVikingStore implements MemoryStore {
     const tags = formatEventTags(parseEventTags(body))
       .split(" ")
       .filter((t) => t !== "");
-    if (tags.length === 0) return;
     const ok = await this.client.setTags(uri, tags);
     if (!ok)
       this.log(

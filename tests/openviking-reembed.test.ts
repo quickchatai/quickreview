@@ -1315,3 +1315,44 @@ describe("the move to the local English embedder", () => {
     expect(existsSync(join(home, "reembed.json"))).toBe(false);
   });
 });
+
+it.each([false, true])(
+  "redacts a server or transport echo of its credential (%s)",
+  async (transport) => {
+    const key = "reviewer-private-secret";
+    const lines: string[] = [];
+    const out = await reembed.reindexNamespace({
+      base: "http://127.0.0.1:1933",
+      key,
+      user: "reviewer",
+      log: (s: string) => lines.push(s),
+      fetchFn: async () => {
+        if (transport) throw new Error(`refused Bearer ${key}`);
+        return {
+          status: 403,
+          json: async () => ({ status: "error", error: { message: `refused Bearer ${key}` } }),
+        };
+      },
+    });
+    expect(out.status).toBe("failed");
+    expect(JSON.stringify({ out, lines })).not.toContain(key);
+  },
+);
+
+it.each([
+  [["prepare"], 0],
+  [["prepare", "--strict"], 1],
+  [["rehearse"], 1],
+] as const)(
+  "keeps the command exit contract after unexpected I/O failure (%s)",
+  async (args, code) => {
+    await expect(
+      reembed.main([...args, "--home", home], {
+        env: {},
+        log: () => {
+          throw new Error("output unavailable");
+        },
+      }),
+    ).resolves.toBe(code);
+  },
+);

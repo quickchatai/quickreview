@@ -675,6 +675,10 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
     });
     await expect(m.ensurePrSession(42, "T", "wt/pr-42")).resolves.toBe("pr-42");
     expect(liveSessions.has("pr-42")).toBe(true);
+    const argv = tmuxArgs().find((a) => a[0] === "new-session")!;
+    expect(argv).not.toContain("QCR_OV_SESSION_ID=pr-42");
+    expect(argv).toContain("QCR_OV_SESSION_ID=");
+    expect(argv).toContain("OPENVIKING_SESSION_ID=");
     mkdirSync(join(root, "example-app", ".git"), { recursive: true });
     await expect(m.archiveAndClose(42)).resolves.toBeUndefined();
   });
@@ -2847,4 +2851,15 @@ describe("closed PR lifecycle across awaited session work", () => {
       store.close();
     }
   });
+});
+
+it("memory off sends no raw-tier birth or death request and attaches no raw id", async () => {
+  const off = { ...cfg(), openviking: { ...cfg().openviking, enabled: false } } as Config;
+  const m = manager(undefined, undefined, off);
+  await m.ensurePrSession(42, "T", "wt/pr-42");
+  expect(ovCalls).toEqual([]);
+  expect(tmuxArgs().find((a) => a[0] === "new-session")).not.toContain("QCR_OV_SESSION_ID=pr-42");
+  mkdirSync(join(root, "example-app", ".git"), { recursive: true });
+  await m.archiveAndClose(42);
+  expect(ovCalls).toEqual([]);
 });

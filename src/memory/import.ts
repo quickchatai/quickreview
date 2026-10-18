@@ -170,7 +170,7 @@ export function importKey(text: string): string {
   return `sha1:${createHash("sha1").update(normalized, "utf8").digest("hex").slice(0, 16)}`;
 }
 
-const HEADER_RE = new RegExp(`^#${IMPORT_TAG}\\b.*${IMPORT_KEY_PREFIX}\\S+.*\\n?`);
+const HEADER_RE = new RegExp(`^(?:#[\\w-]+[ \t]+)*#${IMPORT_TAG}\\b[^\\r\\n]*${IMPORT_KEY_PREFIX}\\S+[^\\r\\n]*(?:\\r?\\n|$)`);
 
 /** Drop the provenance header from an imported entry, so its key is computed
  * over the same words the source entry had. */
@@ -294,12 +294,14 @@ interface Plan {
  * store that can say what it could not read (`sweep()`, the OpenViking
  * implementation) is asked; one that cannot is taken at its `read()`.
  */
-async function readDestFully(dest: MemoryStore, written = 0): Promise<MemoryEntry[]> {
+type DestEntry = MemoryEntry & { importRetired?: boolean };
+
+async function readDestFully(dest: MemoryStore, written = 0): Promise<DestEntry[]> {
   const sweepable = dest as MemoryStore & {
-    sweep?: () => Promise<{ entries: MemoryEntry[]; unread: string[] }>;
+    sweep?: () => Promise<{ entries: MemoryEntry[]; retired?: MemoryEntry[]; unread: string[] }>;
   };
   if (typeof sweepable.sweep !== "function") return dest.read();
-  const { entries, unread } = await sweepable.sweep();
+  const { entries, retired = [], unread } = await sweepable.sweep();
   if (unread.length > 0) {
     // Between batches, earlier batches HAVE landed; a rerun recognises them.
     const sofar =
@@ -311,7 +313,7 @@ async function readDestFully(dest: MemoryStore, written = 0): Promise<MemoryEntr
         `${sofar}; rerun once it reads cleanly (${unread.join("; ")})`,
     );
   }
-  return entries;
+  return [...entries, ...retired.map((entry) => ({ ...entry, importRetired: true }))];
 }
 
 /**
@@ -348,11 +350,11 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
 
   // ---- plan
   const plans: Plan[] = [];
-  const seen = new Set<string>();
+  const candidates = new Map<string, { entry: MemoryEntry; category: ImportCategory }>();
   const repins: Array<{ ref: EntryRef; entry: MemoryEntry }> = [];
-  const skipImported = (ref: EntryRef, category: ImportCategory, entry: MemoryEntry): void => {
+  const skipImported = (ref: EntryRef, category: ImportCategory, entry: DestEntry): void => {
     report.skipped.push({ ...ref, reason: "already-imported" });
-    if (category === "pinned" && !entry.pinned) repins.push({ ref, entry });
+    if (category === "pinned" && !entry.pinned && !entry.importRetired) repins.push({ ref, entry });
   };
 
   for (const e of srcEntries) {
@@ -363,17 +365,23 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
       report.skipped.push({ ...ref, reason: verdict.reason });
       continue;
     }
-    if (seen.has(key)) {
+    const previous = candidates.get(key);
+    if (previous) {
       report.skipped.push({ ...ref, reason: "duplicate-in-source" });
+      // A pin is a standing instruction even when an unpinned copy appeared first.
+      if (verdict.category === "pinned") candidates.set(key, { entry: previous.entry, category: "pinned" });
       continue;
     }
-    seen.add(key);
+    candidates.set(key, { entry: e, category: verdict.category });
+  }
+  for (const [key, { entry: e, category }] of candidates) {
+    const ref = refFor(e, key);
     const already = existing.get(key);
     if (already) {
-      skipImported(ref, verdict.category, already);
+      skipImported(ref, category, already);
       continue;
     }
-    plans.push({ category: verdict.category, key, text: importedText(e, verdict.category, key), ref });
+    plans.push({ category, key, text: importedText(e, category, key), ref });
   }
 
   report.batches = Math.ceil(plans.length / batchSize);
@@ -466,8 +474,8 @@ async function runArchive(archive: () => Promise<ArchiveResult>): Promise<Archiv
   }
 }
 
-function indexByKey(entries: MemoryEntry[]): Map<string, MemoryEntry> {
-  const byKey = new Map<string, MemoryEntry>();
+function indexByKey(entries: DestEntry[]): Map<string, DestEntry> {
+  const byKey = new Map<string, DestEntry>();
   for (const e of entries) {
     const key = keyOfDestEntry(e);
     // Keep the FIRST occurrence: pin rewrites move an entry to the head, and

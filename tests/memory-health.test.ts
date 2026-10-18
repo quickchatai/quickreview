@@ -68,6 +68,7 @@ function harness(
   let draining = opts.draining ?? false;
   let serving: ServingAnswer | undefined = opts.serving;
   let probes = 0;
+  let failSaves = false;
   const monitor = new MemoryHealthMonitor({
     probes: {
       daemon: async () => {
@@ -83,6 +84,7 @@ function harness(
     incidents: {
       load: () => stored,
       save: (i) => {
+        if (failSaves) throw new Error("disk temporarily unavailable");
         stored = i;
         saved.push(i);
       },
@@ -91,6 +93,9 @@ function harness(
   });
   return {
     monitor,
+    failSaves: (on: boolean) => {
+      failSaves = on;
+    },
     wakes,
     saved,
     stored: () => stored,
@@ -920,4 +925,23 @@ describe("memory health — the module's defaults are the config's", () => {
     expect(MEMORY_HEALTH_DEFAULTS.bootGraceMs).toBe(MEMORY_DEFAULTS.boot_grace_min * MIN);
     expect(MEMORY_HEALTH_DEFAULTS.rewakeMs).toBe(MEMORY_DEFAULTS.rewake_h * 60 * MIN);
   });
+});
+
+it("retries failed incident persistence for both outage and recovery", async () => {
+  const h = harness({ daemon: AUTH });
+  h.failSaves(true);
+  await h.probeAt(0);
+  const incident = h.monitor.status().incident;
+  expect(incident).not.toBeNull();
+  expect(h.saved).toEqual([]);
+  h.failSaves(false);
+  await h.probeAt(1000);
+  expect(h.saved).toEqual([incident]);
+  h.failSaves(true);
+  h.set("daemon", OK);
+  await h.probeAt(2000);
+  expect(h.monitor.status().incident).toBeNull();
+  h.failSaves(false);
+  await h.probeAt(3000);
+  expect(h.saved).toEqual([incident, null]);
 });

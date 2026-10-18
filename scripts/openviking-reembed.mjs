@@ -546,13 +546,17 @@ export function reindexHeaders(key, user) {
 }
 
 async function call(fetchFn, url, init, timeoutMs) {
+  const key = init.headers?.Authorization?.replace(/^Bearer /, "") ?? "";
+  const scrub = (text) => (key.length >= 8 ? text.split(key).join("<redacted>") : text);
   try {
     const res = await fetchFn(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
     let body = {};
     if (typeof res.json === "function") body = await res.json().catch(() => ({}));
+    const serialized = JSON.stringify(body);
+    if (serialized !== undefined) body = JSON.parse(scrub(serialized));
     return { status: res.status, body };
   } catch (err) {
-    return { status: 0, body: {}, error: err instanceof Error ? err.message : String(err) };
+    return { status: 0, body: {}, error: scrub(err instanceof Error ? err.message : String(err)) };
   }
 }
 
@@ -851,6 +855,21 @@ function keyFor(cfg, env = process.env) {
 
 export async function main(argv, { env = process.env, log = (line) => console.log(line) } = {}) {
   const cfg = parseArgs(argv, env);
+  try {
+    return await runCommand(cfg, env, log);
+  } catch (err) {
+    try {
+      log(
+        `openviking: reembed failed (${err instanceof Error ? err.message : String(err)}) — the server may refuse to start until an operator looks`,
+      );
+    } catch {
+      /* A broken output stream must preserve the exit contract too. */
+    }
+    return cfg.strict || !["prepare", "resume"].includes(cfg.command) ? 1 : 0;
+  }
+}
+
+async function runCommand(cfg, env, log) {
   if (!cfg.home) {
     log("openviking-reembed: --home <openviking home> is required (the directory holding ov.conf)");
     return 2;
@@ -996,8 +1015,9 @@ if (invokedDirectly) {
       if (typeof code === "number" && code !== 0) process.exit(code);
     })
     .catch((err) => {
-      // Never a non-zero exit on an unexpected throw from the boot path:
-      // memory must not block the reviewer coming up.
+      // Parsing can also fail before main's command boundary. Boot commands
+      // remain soft; a strict invocation or rehearsal must report failure.
+      if (process.argv.includes("--strict") || process.argv[2] === "rehearse") process.exitCode = 1;
       console.log(
         `openviking: reembed failed (${err instanceof Error ? err.message : String(err)}) — the server may refuse to start until an operator looks`,
       );
