@@ -101,6 +101,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/openviking-reembed-lock.test.ts",
   "tests/openviking.test.ts",
   "tests/operator-host.test.ts", // real setup shell against fake SSH/rsync adapters
+  "tests/pi-canary/canary-3-abort-cpu-load.test.ts", // bash children spawned by pi's own bash tool
   "tests/pi-resolution.test.ts",
   "tests/pibuiltins.test.ts",
   "tests/pr-checks-why.test.ts",
