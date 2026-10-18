@@ -1,0 +1,676 @@
+{
+  "old-shape": {
+    "stages": {
+      "calls": [
+        {
+          "call": 0,
+          "tool_call_id": "c1",
+          "agents": [
+            "pass-baseline--terra-med",
+            "pass-security--terra-med"
+          ],
+          "kind": "lens",
+          "phase": "delta",
+          "start_ms": 1000,
+          "end_ms": 3600,
+          "usage": {
+            "input": 2100,
+            "output": 410,
+            "cacheRead": 9000
+          },
+          "cost": 0.09,
+          "children": 2
+        },
+        {
+          "call": 1,
+          "tool_call_id": "c2",
+          "agents": [
+            "pass-validate--terra-med"
+          ],
+          "kind": "validate",
+          "phase": "delta",
+          "start_ms": 6000,
+          "end_ms": 8500,
+          "usage": {
+            "input": 800,
+            "output": 100,
+            "cacheRead": 3000
+          },
+          "cost": 0.03,
+          "children": 1
+        },
+        {
+          "call": 2,
+          "tool_call_id": "c3",
+          "agents": [
+            "pass-data-safety--terra-med"
+          ],
+          "kind": "lens",
+          "phase": "sweep",
+          "start_ms": 9000,
+          "end_ms": 11000,
+          "usage": {
+            "input": 900,
+            "output": 150,
+            "cacheRead": 2000
+          },
+          "cost": 0.025,
+          "children": 1
+        }
+      ],
+      "phases": {
+        "delta": {
+          "calls": 2,
+          "agents": 3,
+          "usage": {
+            "input": 2900,
+            "output": 510,
+            "cacheRead": 12000
+          },
+          "cost": 0.12,
+          "start_ms": 1000,
+          "end_ms": 8500,
+          "wall_ms": 7500
+        },
+        "sweep": {
+          "calls": 1,
+          "agents": 1,
+          "usage": {
+            "input": 900,
+            "output": 150,
+            "cacheRead": 2000
+          },
+          "cost": 0.025,
+          "start_ms": 9000,
+          "end_ms": 11000,
+          "wall_ms": 2000
+        }
+      }
+    },
+    "cost": {
+      "usd": 0.18100000000000002,
+      "source": "pi"
+    },
+    "eventUsage": {
+      "input": 4850,
+      "output": 840,
+      "cacheRead": 14170,
+      "children": 4
+    },
+    "outputs": [
+      {
+        "call": 0,
+        "agent": "pass-baseline--terra-med",
+        "lens": "pass-baseline",
+        "exitCode": 0,
+        "text": "```findings\n[]\n```"
+      },
+      {
+        "call": 0,
+        "agent": "pass-security--terra-med",
+        "lens": "pass-security",
+        "exitCode": 0,
+        "text": "```findings\n[]\n```"
+      },
+      {
+        "call": 1,
+        "agent": "pass-validate--terra-med",
+        "lens": "pass-validate",
+        "exitCode": 0,
+        "text": "```findings\n[]\n```"
+      },
+      {
+        "call": 2,
+        "agent": "pass-data-safety--terra-med",
+        "lens": "pass-data-safety",
+        "exitCode": 0,
+        "text": "```findings\n[]\n```"
+      }
+    ],
+    "lineCosts": [
+      0.01,
+      0,
+      0.045,
+      0.09,
+      0.012,
+      0,
+      0,
+      0.03,
+      0.008,
+      0,
+      0.025,
+      0.006,
+      0
+    ],
+    "running": [
+      0.01,
+      0,
+      0.045,
+      0.045,
+      0.012,
+      0,
+      0,
+      0.03,
+      0.008,
+      0,
+      0.025,
+      0.006,
+      0
+    ],
+    "total": 0.18100000000000002,
+    "usage": {
+      "tokens_in": 4850,
+      "tokens_out": 840,
+      "tokens_cache_read": 14170,
+      "cost_usd": 0.18100000000000002,
+      "models": {
+        "openai-codex/gpt-6.1-sol": {
+          "in": 1050,
+          "out": 180
+        },
+        "gpt-6.1-sol": {
+          "in": 3800,
+          "out": 660
+        }
+      },
+      "passes_included": false,
+      "children_included": true
+    }
+  },
+  "whatif/comfyanonymous__ComfyUI@0bb6023": {
+    "stages": {
+      "calls": [],
+      "phases": {
+        "delta": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        },
+        "sweep": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        }
+      }
+    },
+    "cost": {
+      "usd": 0.8809250000000001,
+      "source": "pi"
+    },
+    "eventUsage": {
+      "input": 179105,
+      "output": 17635,
+      "cacheRead": 430592,
+      "children": 4
+    },
+    "outputs": [
+      {
+        "call": 0,
+        "agent": "pass-backcompat--terra-med",
+        "lens": "pass-backcompat",
+        "exitCode": 0,
+        "text": "FINDINGS backcompat PR#6033 @0bb60235132cc72daea81427107a40ba1ccb5ddf\n- path: notebooks/comfyui_colab.ipynb\n  line: 240\n  side: LEFT\n  severity: P1\n  confidence: 0.99\n  reachability: routine\n  kind: backcompat\n  title: Keep standalone notebook runner imports\n  claim: The alternative Colab runner cells no longer import modules they use, so either runner fails when selected independently.\n  detail: The localtunnel cell still uses `time`, `socket`, `urllib.request`, and `subprocess`, while the iframe cell uses `time` and `socket`; those imports now exist only in the cloudflared alternative. A user following either documented alternative from a fresh runtime gets a background-thread `NameError` rather than a tunnel/iframe, so each runnable cell must retain or reliably obtain its dependencies.\n  evidence: `notebooks/comfyui_colab.ipynb:242-253` references the four removed imports; `notebooks/comfyui_colab.ipynb:287-302` references `time` and `socket`; the imports were removed at base `notebooks/comfyui_colab.ipynb:240-244`.\n  fix: Restore the required imports in each standalone runner cell or move them to an unconditional setup cell."
+      },
+      {
+        "call": 1,
+        "agent": "pass-placement--terra-med",
+        "lens": "pass-placement",
+        "exitCode": 0,
+        "text": "FINDINGS placement PR#6033 @0bb60235132cc72daea81427107a40ba1ccb5ddf\n- path: ruff.toml\n  line: 9\n  side: RIGHT\n  severity: P3\n  confidence: 0.98\n  reachability: routine\n  claim: The `ignore = [\"ALL\"]` policy overrides the new `F` selection, so Pyflakes rules remain disabled in CI.\n  evidence: ruff.toml:2 ignores every rule while ruff.toml:9 selects `F`; .github/workflows/ruff.yml:23 runs `ruff check .`.\n  fix: Remove the blanket ignore or replace it with only the intended exclusions.\n- path: ruff.toml\n  line: 9\n  side: RIGHT\n  severity: P3\n  confidence: 0.99\n  reachability: routine\n  claim: Applying module-level Pyflakes rules to the notebook caused independent launch cells to lose their required imports.\n  evidence: notebooks/comfyui_colab.ipynb:242-258 uses `time`, `socket`, `urllib`, and `subprocess` after their cell-local imports were removed; the preceding cloudflared cell starts `main.py` at line 220 and therefore is not a usable prerequisite for the localtunnel alternative.\n  fix: Preserve each launch cell’s imports and exempt the notebook’s intentional cross-cell redefinitions in the Ruff configuration.\n"
+      },
+      {
+        "call": 2,
+        "agent": "pass-baseline--terra-med",
+        "lens": "pass-baseline",
+        "exitCode": 0,
+        "text": "FINDINGS baseline PR#6033 @0bb60235132cc72daea81427107a40ba1ccb5ddf\n- path: ruff.toml\n  line: 9\n  side: RIGHT\n  severity: P1\n  confidence: 0.98\n  reachability: routine\n  claim: The configuration still ignores every Ruff rule, so selecting `F` does not enforce any Pyflakes checks.\n  detail: Ruff applies `lint.ignore` after rule selection; `lint.ignore = [\"ALL\"]` at line 2 suppresses the newly selected `F` family (and `S307`), causing the CI `ruff check .` invocation to pass without reporting the rules this PR claims to enable. The configuration must leave the selected rules unignored.\n  evidence: ruff.toml:2 ignores `ALL` while ruff.toml:5-10 selects `S307` and `F`; .github/workflows/ruff.yml:23 invokes `ruff check .`, which consumes this configuration.\n  fix: Remove the blanket ignore or replace it with explicit exclusions that do not overlap selected rules.\n- path: notebooks/comfyui_colab.ipynb\n  severity: P1\n  confidence: 0.96\n  reachability: routine\n  claim: The alternative Colab launch cells now reference modules they no longer import, so they fail when run as the documented alternatives.\n  detail: The localtunnel cell uses `time`, `socket`, `urllib.request`, and `subprocess`, and the iframe cell uses `time` and `socket`, but this change removed their imports from those cells. The cloudflared cell cannot supply them in normal alternative use because it starts a foreground server; selecting either alternative in a fresh Colab runtime leaves the thread failing with `NameError` and no accessible tunnel/iframe. Each runnable launch option must import its own dependencies.\n  evidence: notebooks/comfyui_colab.ipynb:238-260 imports only `threading` but references `time` (244), `socket` (245), `urllib.request` (252), and `subprocess` (253); notebooks/comfyui_colab.ipynb:286-302 likewise imports only `threading` but references `time` (289) and `socket` (290). The removed imports existed in these cells in the merge-base diff.\n  fix: Restore the required imports in each independent launcher cell."
+      },
+      {
+        "call": 3,
+        "agent": "pass-validate--sol-high",
+        "lens": "pass-validate",
+        "exitCode": 0,
+        "text": "FINDINGS validation PR#6033 @0bb60235132cc72daea81427107a40ba1ccb5ddf\n- path: notebooks/comfyui_colab.ipynb\n  line: 240\n  side: LEFT\n  severity: P1\n  confidence: 0.99\n  reachability: routine\n  claim: Removing cell-local imports breaks both alternative Colab launch cells in a fresh runtime, preventing their tunnels from starting.\n  detail: First localtunnel cell now imports only threading but uses time, socket, urllib.request, and subprocess; the iframe cell imports only threading but uses time and socket. Imports exist in the cloudflared alternative cell, but it starts foreground main.py and is not an unconditional setup cell, so users selecting either alternative receive NameError failures.\n  evidence: The deleted imports were at base lines 240-244 and 291-292; the resulting localtunnel cell references the missing names at current lines 244-253, while the iframe cell references them at current lines 289-290.\n  fix: Restore each alternative cell’s dependencies locally or move them into an unconditional setup cell.\n\nKILLED\n- baseline-config ruff.toml:9 — refuted — Ruff resolves select/ignore conflicts by prefix specificity, so the more-specific `F` selection at ruff.toml:9 overrides the broad `ALL` ignore at ruff.toml:2.\nMERGED placement-config into baseline-config\nMERGED placement-notebook into baseline-notebook\nMERGED backcompat-notebook into baseline-notebook\n\nCOUNTS survivors=1 killed=1 merged=3 downgrades=0"
+      }
+    ],
+    "lineCosts": [
+      0,
+      0,
+      0,
+      0.2543708,
+      0.120592,
+      0.1310012,
+      0.374961,
+      0
+    ],
+    "running": [
+      0,
+      0,
+      0,
+      0.2543708,
+      0.120592,
+      0.1310012,
+      0.374961,
+      0
+    ],
+    "total": 0.8809250000000001,
+    "usage": null
+  },
+  "whatif/dbeaver__dbeaver@bc3ac7b": {
+    "stages": {
+      "calls": [],
+      "phases": {
+        "delta": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        },
+        "sweep": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        }
+      }
+    },
+    "cost": {
+      "usd": 0.6090494,
+      "source": "pi"
+    },
+    "eventUsage": {
+      "input": 89571,
+      "output": 12925,
+      "cacheRead": 381568,
+      "children": 3
+    },
+    "outputs": [
+      {
+        "call": 0,
+        "agent": "pass-baseline--terra-med",
+        "lens": "pass-baseline",
+        "exitCode": 0,
+        "text": "FINDINGS baseline PR#37564 @bc3ac7bb47092a934b344791d8aa3a1c41e6c8f7\n- path: plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java\n  line: 290\n  side: RIGHT\n  severity: P1\n  confidence: 0.99\n  reachability: routine\n  kind: correctness\n  title: Remote directories are still silently skipped\n  claim: The new fallback only copies remote files, so the stated directory copy/paste case still completes without copying anything.\n  detail: A TE directory represented by a location-less `DBNResource` has no `Path`, and it cannot provide the newly requested `InputStream` because that adapter is limited to `IFile`; `dropNodes` then continues and refreshes the target, falsely appearing successful. Directory copy must either be implemented recursively or fail explicitly rather than silently dropping the selected directory.\n  evidence: DBNPathBase.java:289-301 enters the new fallback and continues when the stream adapter is null; DBNResource.java:420-425 returns null for a location-less `IFolder` and only adapts `IFile` to `InputStream`; NavigatorHandlerObjectCreateCopy.java:100-104 invokes this path for clipboard paste.\n  fix: Handle directory resources according to the copy contract, or reject them with a visible error before reporting completion.\n- path: plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java\n  line: 293\n  side: RIGHT\n  severity: P2\n  confidence: 0.98\n  reachability: routine\n  kind: resource-management\n  title: Acquired remote file streams are never closed\n  claim: The stream-based copy path leaks the `IFile.getContents()` stream for every pasted remote file.\n  detail: `DBNResource.getAdapter(InputStream.class)` opens an `IFile` content stream, then `dropNodes` passes it to `Files.copy` without a try-with-resources; unlike the existing stream consumers, no owner closes it after successful or failed copying. The copy path must close every stream it obtains.\n  evidence: DBNResource.java:423-425 obtains the stream from `file.getContents()`; DBNPathBase.java:293-297 passes it to `copyInputStream`, whose Files.copy call at line 369 does not close its input; NavigatorHandlerObjectCreateCopy.java:211-213 and NavigatorDragSourceListener.java:180-184 demonstrate existing callers close comparable streams.\n  fix: Wrap the locally acquired adapter stream in try-with-resources around the copy.\n- path: plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java\n  line: 290\n  side: RIGHT\n  severity: P1\n  confidence: 0.99\n  reachability: routine\n  kind: testing\n  title: The new remote-stream paste behavior has no regression coverage\n  claim: This behavior change ships without a test covering the location-less resource and stream-adapter branch it introduces.\n  detail: The fix depends on `Path` being absent, `InputStream` being supplied by `DBNResource`, and the stream being copied into the target folder, but the PR changes only the two production files. A regression test must exercise that seam so future adapter or drop-path changes cannot silently restore the original no-op.\n  evidence: The PR diff contains only DBNResource.java and DBNPathBase.java; the guarded branch is DBNPathBase.java:289-301, with its source adapter added at DBNResource.java:423-425.\n  fix: Add a regression test that pastes a location-less `IFile` resource into a DBNPath target and asserts copied content and failure behavior."
+      },
+      {
+        "call": 0,
+        "agent": "pass-simplicity--terra-med",
+        "lens": "pass-simplicity",
+        "exitCode": 0,
+        "text": "FINDINGS simplicity PR#37564 @bc3ac7bb47092a934b344791d8aa3a1c41e6c8f7\n- path: plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java\n  line: 293\n  side: RIGHT\n  severity: P2\n  confidence: 0.98\n  reachability: routine\n  kind: correctness\n  title: Stream-backed paste leaks the source stream\n  claim: The new stream-backed paste path never closes the `InputStream`, leaking remote file handles/connections on every successful paste.\n  detail: `getAdapter(InputStream.class)` opens an `IFile` stream and `Files.copy(InputStream, Path, ...)` consumes but does not close it; repeated TE file pastes can therefore exhaust the backing EFS resources. The copy path must own and close every stream it opens.\n  evidence: DBNPathBase.java:293 obtains the stream and :296 passes it to `copyInputStream`; :359-365 only calls `Files.copy`. DBNResource.java:423-425 opens it with `IFile.getContents()`. The existing paste implementation closes the same resource with try-with-resources at NavigatorHandlerObjectCreateCopy.java:233-235.\n  fix: Use the existing `DBNStreamData.supportsStreamData/openInputStream` seam and wrap the returned stream in try-with-resources while copying."
+      },
+      {
+        "call": 1,
+        "agent": "pass-validate--sol-high",
+        "lens": "pass-validate",
+        "exitCode": 0,
+        "text": "FINDINGS validation PR#37564 @bc3ac7bb47092a934b344791d8aa3a1c41e6c8f7\n- path: plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java\n  line: 293\n  side: RIGHT\n  severity: P2\n  confidence: 0.98\n  reachability: routine\n  claim: Pasting a location-less file leaves the newly acquired source InputStream unclosed, potentially retaining remote filesystem resources after every copy.\n  detail: For a location-less DBNResource, getAdapter(Path.class) returns null and getAdapter(InputStream.class) opens IFile.getContents(); DBNPathBase passes that stream to Files.copy, which does not close supplied streams, and neither the success nor failure path closes it.\n  evidence: DBNResource.java:420-425 opens the stream; DBNPathBase.java:289-301 and :363-369 consume it without try-with-resources or close; NavigatorHandlerObjectCreateCopy.java:233-235 closes the same kind of IFile stream explicitly.\n  fix: Wrap the acquired InputStream in try-with-resources before copying it.\n\nKILLED\nMERGED simplicity-stream-leak into baseline-stream-leak\n- baseline-directory-skip plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java:290 — out-of-scope — base lines 291-294 already skipped all Path-null nodes, and the stated change supports files while explicitly excluding directories.\n- baseline-no-tests plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java:290 — below-bar — absence of a regression test does not independently establish a functional defect.\n\nCOUNTS survived=1 killed=2 downgraded=0"
+      }
+    ],
+    "lineCosts": [
+      0,
+      0,
+      0,
+      0.2782264,
+      0.33082300000000003,
+      0
+    ],
+    "running": [
+      0,
+      0,
+      0,
+      0.2782264,
+      0.33082300000000003,
+      0
+    ],
+    "total": 0.6090494,
+    "usage": null
+  },
+  "whatif/infiniflow__ragflow@7051234": {
+    "stages": {
+      "calls": [],
+      "phases": {
+        "delta": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        },
+        "sweep": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        }
+      }
+    },
+    "cost": {
+      "usd": 1.7042742000000002,
+      "source": "pi"
+    },
+    "eventUsage": {
+      "input": 265972,
+      "output": 27711,
+      "cacheRead": 935552,
+      "children": 7
+    },
+    "outputs": [
+      {
+        "call": 0,
+        "agent": "pass-intent--terra-med",
+        "lens": "pass-intent",
+        "exitCode": 0,
+        "text": "FINDINGS intent PR#6553 @705123406ec7cd5eb1f9be26f6c5c31357aeffc9\n- path: api/db/services/user_canvas_version.py\n  line: 36\n  side: RIGHT\n  severity: P3\n  confidence: 0.95\n  reachability: routine\n  claim: The stated avoidance of O(n) database I/O for canvas-version deletion is not achieved because indexed Peewee query access still issues a query for every version beyond the retention limit.\n  evidence: api/db/services/user_canvas_version.py:35-36 iterates `user_canvas_version[i]`; each indexed query access requires an offset/limit fetch, before the new batch delete at :38.\n  fix: Materialize the IDs in one query before calling `delete_by_ids`.\n- path: api/apps/api_app.py\n  line: 636\n  side: RIGHT\n  severity: P3\n  confidence: 0.92\n  reachability: routine\n  claim: The document-delete path still performs a per-document database lookup, so the body’s claim to avoid O(n) database I/O is only partially implemented.\n  evidence: api/apps/api_app.py:636 batch-loads documents, but the loop at :641-646 calls `DocumentService.get_tenant_id` once per ID; api/db/services/document_service.py:215-225 defines that call as a database select/join.\n  fix: Include the required tenant information in the batch lookup or retrieve it in a single bulk query."
+      },
+      {
+        "call": 1,
+        "agent": "pass-placement--terra-med",
+        "lens": "pass-placement",
+        "exitCode": 0,
+        "text": "FINDINGS placement PR#6553 @705123406ec7cd5eb1f9be26f6c5c31357aeffc9\n- path: api/db/services/document_service.py\n  line: 339\n  side: RIGHT\n  severity: P3\n  confidence: 0.99\n  reachability: routine\n  claim: The new batch lookup must return an empty collection for no matches, since its caller unconditionally treats its result as a collection.\n  evidence: DocumentService.get_doc_ids_by_doc_names returns None when no names match (api/db/services/document_service.py:337-340), while document_rm immediately evaluates `doc_id not in doc_ids` for supplied IDs (api/apps/api_app.py:618-621); therefore a delete request containing only doc_ids, or an unknown name plus a valid ID, raises TypeError.\n  fix: Return an empty list when the query finds no documents."
+      },
+      {
+        "call": 2,
+        "agent": "pass-backcompat--terra-med",
+        "lens": "pass-backcompat",
+        "exitCode": 0,
+        "text": "FINDINGS backcompat PR#6553 @705123406ec7cd5eb1f9be26f6c5c31357aeffc9\n- path: api/apps/api_app.py\n  line: 618\n  side: RIGHT\n  severity: P1\n  confidence: 0.99\n  reachability: routine\n  claim: ID-only document deletion requests now fail because an empty name lookup returns `None` before IDs are merged.\n  detail: Cached/current frontend callers send `{doc_ids: [...]}` without `doc_names`; the new service returns `None` for the implicit empty name list, so `if doc_id not in doc_ids` raises and the endpoint returns a server error instead of deleting the requested document. The merged identifier collection must tolerate absent or unmatched names as empty while preserving ID-only deletion.\n  evidence: api/db/services/document_service.py:333-340 returns `None` for no matches; api/apps/api_app.py:618-621 then performs containment and append; web/src/hooks/document-hooks.ts:421 sends only `doc_ids`.\n  fix: Initialize or normalize the name-resolution result to an empty collection before merging explicit IDs.\n- path: api/apps/api_app.py\n  line: 618\n  side: RIGHT\n  severity: P1\n  confidence: 0.96\n  reachability: routine\n  claim: Name-based deletion now expands one requested name into every globally matching document, allowing a single delete request to remove unrelated same-named documents.\n  detail: Document names are not unique and the new global `IN` query returns every matching row, whereas the prior lookup selected only one ID per supplied name; the deletion loop then removes each returned document without constraining it to the API token's tenant. A common filename such as `README.md` can therefore delete multiple tenants' documents after deployment. Name deletion must resolve only the caller's intended document set and must not silently expand ambiguous names.\n  evidence: api/db/db_models.py:615-644 defines `Document.name` as a non-unique indexed field; api/db/services/document_service.py:333-340 selects all rows with matching names; api/apps/api_app.py:618 and :641-655 delete every resulting ID without tenant filtering.\n  fix: Scope name resolution to the authenticated tenant and reject or otherwise safely handle ambiguous names."
+      },
+      {
+        "call": 3,
+        "agent": "pass-simplicity--terra-med",
+        "lens": "pass-simplicity",
+        "exitCode": 0,
+        "text": "FINDINGS simplicity PR#6553 @705123406ec7cd5eb1f9be26f6c5c31357aeffc9\n- path: api/db/services/user_canvas_version.py\n  line: 35\n  side: RIGHT\n  severity: P2\n  confidence: 0.98\n  reachability: routine\n  claim: The version-pruning path still performs one database query per obsolete version, defeating the stated bulk-delete performance goal.\n  detail: Peewee query indexing at `user_canvas_version[i]` applies a per-index LIMIT/OFFSET query, so canvases with many saved versions issue O(n) reads before the single bulk delete; the pruning path should fetch all obsolete IDs in one query before deleting them.\n  evidence: api/db/services/user_canvas_version.py:32 builds a lazy ordered query; :35-36 repeatedly call `.count()` and index that query once per version, before :38 performs the one batch deletion.\n  fix: Iterate a single offset ID-select query (or use a delete subquery) rather than indexing the query in a loop.\n- path: api/db/services/document_service.py\n  line: 339\n  side: RIGHT\n  severity: P3\n  confidence: 0.99\n  reachability: routine\n  claim: The new plural lookup returns `None` for an empty result even though its caller unconditionally treats it as a list, so document-ID-only deletes now fail before processing any supplied IDs.\n  evidence: api/db/services/document_service.py:333-340 returns `None` when `doc_names` is absent or has no match; api/apps/api_app.py:618 passes the optional `doc_names`, then :619-621 evaluates membership and `.append()` on that result for every supplied `doc_id`.\n  fix: Return an empty list from the plural lookup when no names match.\n- path: api/db/services/document_service.py\n  line: 336\n  side: RIGHT\n  severity: P3\n  confidence: 0.92\n  reachability: plausible\n  claim: Resolving delete names without tenant scope broadens a name delete to every document with that name, including documents owned by other tenants.\n  evidence: api/apps/api_app.py:615 obtains the API token tenant but api/db/services/document_service.py:335-336 filters only `Document.name`; api/db/db_models.py:615-638 defines no global uniqueness constraint on document names, while api/apps/document_app.py:166 only rejects duplicates within one knowledgebase.\n  fix: Ensure name-based deletion resolution is constrained to the authenticated tenant."
+      },
+      {
+        "call": 4,
+        "agent": "pass-baseline--terra-med",
+        "lens": "pass-baseline",
+        "exitCode": 0,
+        "text": "FINDINGS baseline PR#6553 @705123406ec7cd5eb1f9be26f6c5c31357aeffc9\n- path: api/apps/api_app.py\n  line: 618\n  side: RIGHT\n  severity: P1\n  confidence: 0.99\n  reachability: routine\n  claim: The new name lookup returns `None` rather than an empty collection, breaking valid ID-only document deletion requests.\n  detail: When `doc_names` is omitted or has no matches, `get_doc_ids_by_doc_names([])` returns `None`; the subsequent membership test against `doc_ids` raises `TypeError`, which the route converts to a server error before supplied `doc_ids` can be processed. The lookup result must remain iterable so either identifier form can be used independently.\n  evidence: api/db/services/document_service.py:333-340 returns bare `None` for an empty query; api/apps/api_app.py:618-621 immediately performs `doc_id not in doc_ids` and `append`, while the previous list-comprehension always produced a list.\n  fix: Return an empty list for no matching names.\n- path: api/db/services/document_service.py\n  line: 336\n  side: RIGHT\n  severity: P1\n  confidence: 0.96\n  reachability: plausible\n  claim: Name-based deletion is not tenant-scoped, so the new bulk lookup can delete every tenant's document sharing a requested filename.\n  detail: `Document.name` is indexed but not unique, and this query selects all matching IDs without joining/filtering by the authenticated token's tenant; `document_rm` then iterates every returned ID and replaces the token tenant with each document's tenant before removing it. Thus a valid tenant token deleting a common name such as `report.pdf` can remove matching documents owned by other tenants. Name resolution for this endpoint must be constrained to documents authorized for the caller.\n  evidence: api/db/db_models.py:615-649 defines `Document.name` without a uniqueness or tenant constraint; api/db/services/document_service.py:333-340 filters only by name; api/apps/api_app.py:610-615 obtains the token tenant, then api/apps/api_app.py:641-658 deletes each matched document after `get_tenant_id`. Shared machinery checked: `@DB.connection_context()` on the lookup and deletion service methods does not impose authorization.\n  fix: Scope the bulk lookup and subsequent deletion set to the authenticated tenant's knowledgebases.\n- path: api/db/services/user_canvas_version.py\n  line: 36\n  side: RIGHT\n  severity: P2\n  confidence: 0.9\n  reachability: routine\n  claim: The canvas-version path still performs O(n) database reads, so the claimed elimination of O(n) DB I/O is not achieved.\n  detail: Once a canvas has more than 20 versions, each positional `user_canvas_version[i]` fetches a row to obtain its ID before the eventual bulk delete, yielding one indexed query per obsolete version. The pruning path must obtain the obsolete IDs as a set/stream rather than individually indexing the query.\n  evidence: api/db/services/user_canvas_version.py:32-38 counts the query and then indexes it once for every value in `range(20, count)`; only the final delete is batched through api/db/services/common_service.py:267-275.\n  fix: Retrieve the obsolete IDs with one ID-only query before calling `delete_by_ids`."
+      },
+      {
+        "call": 5,
+        "agent": "pass-security--sol-high",
+        "lens": "pass-security",
+        "exitCode": 0,
+        "text": "FINDINGS security-tenancy PR#6553 @705123406ec7cd5eb1f9be26f6c5c31357aeffc9\n- path: api/db/services/document_service.py\n  line: 336\n  side: RIGHT\n  severity: P0\n  confidence: 0.99\n  reachability: routine\n  claim: Bulk document-name resolution must be tenant-scoped; the new global lookup causes delete-by-name requests to delete every same-named document belonging to other tenants.\n  detail: The authenticated tenant is read but never supplied to the new query, which returns all IDs matching globally non-unique names rather than the previous helper's single row; common filenames across tenants therefore enter the deletion loop, which replaces the caller tenant with each document's owning tenant and removes that tenant's database, search-index, file, and storage records. Every selected document must be authorized against the API token's tenant before deletion.\n  evidence: api/apps/api_app.py:609-618 authenticates and obtains the caller tenant but calls the lookup with names only; api/db/services/document_service.py:333-340 filters solely on Document.name and returns every match; api/db/db_models.py:615-624 defines name as a non-unique index, while api/apps/document_app.py:166-168 only prevents duplicates within one knowledgebase; api/apps/api_app.py:636-660 iterates every returned ID, overwrites tenant_id from that document, and deletes it.\n  fix: Restrict name resolution and the final deletion set to documents authorized for the authenticated tenant."
+      },
+      {
+        "call": 6,
+        "agent": "pass-validate--sol-high",
+        "lens": "pass-validate",
+        "exitCode": 0,
+        "text": "FINDINGS validation PR#6553 @705123406ec7cd5eb1f9be26f6c5c31357aeffc9\n- path: api/apps/api_app.py\n  line: 618\n  side: RIGHT\n  severity: P1\n  confidence: 0.99\n  claim: ID-only document deletion now raises a TypeError instead of deleting the requested documents.\n  detail: When `doc_names` is absent or unmatched, `get_doc_ids_by_doc_names()` returns `None`; the subsequent membership test against `doc_ids` fails before explicit IDs can be appended, including the routine web path that sends only `doc_ids`.\n  evidence: api/apps/api_app.py:618-629; api/db/services/document_service.py:333-340; web/src/hooks/document-hooks.ts:419-423\n  fix: Return an empty list for no name matches or coalesce the helper result before merging explicit IDs.\n- path: api/db/services/document_service.py\n  line: 336\n  side: RIGHT\n  severity: P0\n  confidence: 0.99\n  claim: Bulk name resolution allows an authenticated caller to delete every same-named document across tenants.\n  detail: `Document.name` is not unique, and the new query returns every global match without filtering by the API token tenant; the route then derives each matched document's owner and deletes its database, search, file-link, and storage state, so a common filename can erase other tenants' documents.\n  evidence: api/db/db_models.py:615-639; api/db/services/document_service.py:102-116,215-224,333-340; api/apps/api_app.py:609-618,636-661\n  fix: Resolve names within the authenticated tenant and verify ownership of every selected document before performing any deletion.\n- path: api/db/services/user_canvas_version.py\n  line: 36\n  side: RIGHT\n  severity: P3\n  confidence: 0.95\n  claim: The batch delete still performs an indexed lazy-query lookup for every obsolete canvas version, leaving linear database reads in the cleanup path.\n  evidence: api/db/services/user_canvas_version.py:32-38; api/apps/canvas_app.py:80-82; pyproject.toml:70\n  fix: Select the obsolete IDs in one query before calling `delete_by_ids`.\n- path: api/apps/api_app.py\n  line: 636\n  side: RIGHT\n  severity: P3\n  confidence: 0.92\n  claim: Document deletion still issues one tenant lookup per document after batch-loading the documents, leaving the bulk path with linear database I/O.\n  evidence: api/apps/api_app.py:636-646; api/db/services/document_service.py:215-224\n  fix: Include tenant information in the batch query or fetch it with one bulk join.\n\nKILLED\nMERGED placement-empty into C1\nMERGED simplicity-empty into C1\nMERGED backcompat-empty into C1\nMERGED simplicity-cross-tenant into C2\nMERGED backcompat-cross-tenant into C2\nMERGED baseline-cross-tenant into C2\nMERGED baseline-canvas-nplus1 into C3\nMERGED intent-canvas-nplus1 into C3\n\nDOWNGRADED\n- C3 api/db/services/user_canvas_version.py:36 — inflated — severity P2→P3: batch deletion does reduce writes, while the remaining indexed reads are a non-blocking performance concern rather than a correctness failure."
+      }
+    ],
+    "lineCosts": [
+      0,
+      0,
+      0,
+      0.0844928,
+      0.131092,
+      0.151014,
+      0.12218319999999999,
+      0.1276792,
+      0.40871700000000005,
+      0.6790960000000001,
+      0
+    ],
+    "running": [
+      0,
+      0,
+      0,
+      0.0844928,
+      0.131092,
+      0.151014,
+      0.12218319999999999,
+      0.1276792,
+      0.40871700000000005,
+      0.6790960000000001,
+      0
+    ],
+    "total": 1.7042742000000002,
+    "usage": null
+  },
+  "whatif/lvgl__lvgl@4a57db3": {
+    "stages": {
+      "calls": [],
+      "phases": {
+        "delta": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        },
+        "sweep": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        }
+      }
+    },
+    "cost": {
+      "usd": 1.1423484,
+      "source": "pi"
+    },
+    "eventUsage": {
+      "input": 274031,
+      "output": 13603,
+      "cacheRead": 1037440,
+      "children": 4
+    },
+    "outputs": [
+      {
+        "call": 0,
+        "agent": "pass-baseline--terra-med",
+        "lens": "pass-baseline",
+        "exitCode": 0,
+        "text": "FINDINGS baseline PR#8129 @4a57db33476f1caf3e85726a6b1e189c68c1f36b\n- path: src/draw/lv_draw_label.c\n  line: 221\n  side: RIGHT\n  severity: P2\n  confidence: 0.98\n  reachability: plausible\n  kind: performance\n  claim: The cached-size optimization does not cover the Nema GFX label renderer, so labels drawn through that backend still recalculate text size on every draw.\n  detail: The generic iterator now reads `dsc->text_size.x`, populated by label refresh, but the Nema GFX task route invokes its own iterator, which retains `lv_text_get_size`; consequently, a build using the Nema GFX draw unit receives none of the claimed repeated-draw sizing reduction. The invariant is that every label-rendering backend on the changed draw-task path must consume the same cached size or otherwise avoid the repeated measurement.\n  evidence: src/draw/lv_draw_label.c:215-221 uses the cache; src/widgets/label/lv_label.c:966-968 populates it; src/draw/nema_gfx/lv_draw_nema_gfx.c:314-315 routes label tasks to `lv_draw_nema_gfx_label`; src/draw/nema_gfx/lv_draw_nema_gfx_label.c:140 and :433-442 invoke its private iterator, which still calls `lv_text_get_size`.\n  fix: Update the Nema GFX iterator consistently with the generic path while preserving the descriptor contract."
+      },
+      {
+        "call": 0,
+        "agent": "pass-placement--terra-med",
+        "lens": "pass-placement",
+        "exitCode": 0,
+        "text": "FINDINGS placement PR#8129 @4a57db33476f1caf3e85726a6b1e189c68c1f36b\n- path: src/draw/lv_draw_label.c\n  line: 221\n  side: RIGHT\n  severity: P3\n  confidence: 0.99\n  reachability: routine\n  kind: correctness\n  claim: The generic label descriptor now requires a precomputed expanded-text width, but non-label producers do not uphold that new contract.\n  detail: `lv_draw_label_dsc_init` zeroes `text_size`, so any existing producer that sets `LV_TEXT_FLAG_EXPAND` without separately filling the new field passes width zero to line iteration; cropped table cells, roller selected text, and one-line textarea placeholders therefore wrap/render incorrectly under the standard draw path. The descriptor must remain self-consistent for every producer, or expanded rendering must retain a valid fallback.\n  evidence: src/draw/lv_draw_label.c:75-87 zero-initializes descriptors; src/draw/lv_draw_label.c:215-222 consumes `text_size.x`; src/widgets/table/lv_table.c:833-853 sets EXPAND and draws without setting `text_size`; src/widgets/roller/lv_roller.c:545-587 and src/widgets/textarea/lv_textarea.c:1400-1421 do likewise; src/draw/sw/lv_draw_sw.c:391-392 dispatches labels to the software renderer.\n  fix: Keep the width derivation within the generic drawing contract or populate a matching measured size at every EXPAND producer.\n"
+      },
+      {
+        "call": 0,
+        "agent": "pass-intent--terra-med",
+        "lens": "pass-intent",
+        "exitCode": 0,
+        "text": "FINDINGS intent PR#8129 @4a57db33476f1caf3e85726a6b1e189c68c1f36b\n- path: src/draw/lv_draw_label.c\n  line: 218\n  side: RIGHT\n  severity: P3\n  confidence: 0.96\n  reachability: plausible\n  claim: The claimed removal of repeated `lv_text_get_size` calls is incomplete because the Nema GFX label renderer still recalculates expanded-text size during drawing.\n  evidence: src/draw/nema_gfx/lv_draw_nema_gfx_label.c:433-444 retains the pre-change EXPAND branch and `lv_text_get_size` call, while this changed branch uses the cached descriptor size.\n  fix: Apply the cached-size optimization consistently to the Nema GFX renderer, or qualify the PR description to the affected renderers."
+      },
+      {
+        "call": 1,
+        "agent": "pass-validate--sol-high",
+        "lens": "pass-validate",
+        "exitCode": 0,
+        "text": "FINDINGS validation PR#8129 @4a57db33476f1caf3e85726a6b1e189c68c1f36b\n- path: src/draw/lv_draw_label.c\n  line: 221\n  side: RIGHT\n  severity: P3\n  confidence: 0.99\n  reachability: plausible\n  claim: The cached-size optimization misses Nema GFX’s private label iterator, so expanded labels rendered by that backend still call `lv_text_get_size` on every draw.\n  evidence: `src/draw/nema_gfx/lv_draw_nema_gfx.c:210-218,314-316` routes eligible label tasks directly to `lv_draw_nema_gfx_label`; `src/draw/nema_gfx/lv_draw_nema_gfx_label.c:119-140,433-442` invokes its private iterator and repeats the sizing call instead of consuming the cache populated at `src/widgets/label/lv_label.c:826,967-968`. inflated — severity P2→P3: this leaves a pre-existing cost on one optional backend rather than causing a functional regression.\n  fix: Have the Nema iterator consume the cached size or otherwise eliminate its redundant sizing call.\n\nKILLED\nMERGED intent-C1 into baseline-C1\nFOLDED placement-C1 under baseline-C1\n- placement-C1 src/draw/lv_draw_label.c:221 — refuted — `src/misc/lv_text.c:334-343` returns without consulting `max_width` whenever `LV_TEXT_FLAG_EXPAND` is set, so a zero `text_size.x` cannot cause the alleged wrapping or cropping."
+      }
+    ],
+    "lineCosts": [
+      0,
+      0,
+      0,
+      0.7697444,
+      0.37260400000000005,
+      0
+    ],
+    "running": [
+      0,
+      0,
+      0,
+      0.7697444,
+      0.37260400000000005,
+      0
+    ],
+    "total": 1.1423484,
+    "usage": null
+  },
+  "whatif/ollama__ollama@b6002f6": {
+    "stages": {
+      "calls": [],
+      "phases": {
+        "delta": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        },
+        "sweep": {
+          "calls": 0,
+          "agents": 0,
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0
+          },
+          "cost": 0,
+          "start_ms": null,
+          "end_ms": null,
+          "wall_ms": null
+        }
+      }
+    },
+    "cost": {
+      "usd": 3.537176,
+      "source": "pi"
+    },
+    "eventUsage": {
+      "input": 356214,
+      "output": 22987,
+      "cacheRead": 2132992,
+      "children": 5
+    },
+    "outputs": [
+      {
+        "call": 0,
+        "agent": "pass-placement--sol-med",
+        "lens": "pass-placement",
+        "exitCode": 0,
+        "text": "FINDINGS placement PR#12185 @b6002f6b6c69370f8c18a9e6c1cafa8463273a6b\nNONE"
+      },
+      {
+        "call": 1,
+        "agent": "pass-simplicity--sol-med",
+        "lens": "pass-simplicity",
+        "exitCode": 0,
+        "text": "FINDINGS simplicity PR#12185 @b6002f6b6c69370f8c18a9e6c1cafa8463273a6b\n- path: model/model.go\n  line: 285\n  side: RIGHT\n  severity: P3\n  confidence: 0.98\n  reachability: plausible\n  claim: A nil Positions tensor now panics before the existing invalid-batch error can be returned.\n  evidence: model/model.go:285 calls `batch.Positions.Dim(0)` unconditionally; the merge-base used `len(batch.Positions)`, so a zero-value `input.Batch` reached the explicit “batch size cannot be less than 1” error instead of dereferencing nil.\n  fix: Check `batch.Positions == nil` before calling `Dim`.\n- path: kvcache/wrapper.go\n  line: 50\n  side: RIGHT\n  severity: nit\n  confidence: 0.99\n  reachability: plausible\n  claim: The unwind path rematerializes the identical positions slice once for every cache being unwound.\n  evidence: kvcache/wrapper.go:49-52 places `batch.Positions.Ints()` inside the `j` loop; ml/backend/ggml/ggml.go:1029-1037 shows that `Ints()` may synchronize and allocate.\n  request: Move `curPositions := batch.Positions.Ints()` before the unwind loop.\n  fix: Read the positions once per failed `StartForward` call and reuse them for every prior cache."
+      },
+      {
+        "call": 2,
+        "agent": "pass-baseline--sol-med",
+        "lens": "pass-baseline",
+        "exitCode": 0,
+        "text": "FINDINGS baseline PR#12185 @b6002f6b6c69370f8c18a9e6c1cafa8463273a6b\n- path: kvcache/causal.go\n  line: 203\n  side: RIGHT\n  severity: P1\n  confidence: 0.99\n  reachability: routine\n  claim: Cache reservation must derive batch size without reading tensor storage, because no-allocation model-fit requests provide tensors with no backing data.\n  detail: `LoadOperationFit` disables allocation, so the newly created positions tensor has a nil data pointer and `Ints()` returns nil; `StartForward` consequently records a zero batch size, and the first cache `Put` panics when the model produces a nonzero batch, causing routine memory-fit requests for cached models to fail.\n  evidence: runner/ollamarunner/runner.go:1203-1205 selects `AllocMemory: false` for fit; ml/backend/ggml/ggml.go:926-935 does not populate `FromIntSlice` storage in that mode; ml/backend/ggml/ggml/src/ggml-backend.cpp:38-51 creates a no-allocation buffer with a null base; ml/backend/ggml/ggml.go:1029-1040 therefore returns nil from `Ints`; kvcache/causal.go:203-204 derives `curBatchSize` as zero, while kvcache/causal.go:584-591 compares it with the model tensor's actual batch dimension and panics.\n  fix: Derive the reserve-path batch size from tensor shape and avoid reading position values when reservation does not require them.\n- path: ml/backend/ggml/ggml.go\n  line: 1007\n  side: RIGHT\n  severity: P2\n  confidence: 0.96\n  reachability: plausible\n  claim: `Bytes` must not treat allocated destination storage as computed output, because doing so makes `ml.Dump` skip pending graph operations and return stale data.\n  detail: The new CPU-memory fallback returns bytes whenever `ggml_get_data` is nonnil, but graph operations such as `Copy` are views over a preallocated destination and have nonnil storage before execution; `ml.dump` interprets nonnil `Bytes()` as proof that computation is complete, so dumping converted F16 or quantized tensors reads the untouched destination instead of evaluating the copy.\n  evidence: ml/backend.go:551-555 creates an allocated F32 destination and assigns the pending `Copy` result; ml/backend.go:566-573 computes only when `Bytes()` is nil; ml/backend/ggml/ggml.go:1001-1010 now returns the destination bytes before computation; ml/backend/ggml/ggml.go:1280-1284 uses `ggml_cpy`, and ml/backend/ggml/ggml/src/ggml.c:3245-3263 shows that operation is a view of the destination carrying a pending `GGML_OP_CPY`.\n  fix: Expose CPU storage directly only for tensors known to contain initialized input data, while preserving nil-before-compute semantics for pending graph results."
+      },
+      {
+        "call": 3,
+        "agent": "pass-validate--sol-high",
+        "lens": "pass-validate",
+        "exitCode": 0,
+        "text": "FINDINGS validation PR#12185 @b6002f6\n- path: ml/backend/ggml/ggml.go\n  line: 1007\n  side: RIGHT\n  severity: P2\n  confidence: 0.99\n  reachability: plausible\n  kind: correctness\n  tag: \"[question]\"\n  title: CPU Bytes fallback mistakes pending graph output for computed data\n  claim: `Bytes` now exposes allocated CPU storage for pending operations, causing `ml.Dump` to skip required computation and decode uninitialized or stale data.\n  detail: `ml.Dump` for F16/quantized creates an allocated F32 destination and `t.Copy` returns a pending `ggml_cpy` view over that destination. `dump` checks `Bytes()==nil` to decide whether to execute; now nonnil destination storage makes it skip computation and decode untouched/stale bytes.\n  evidence: ml/backend.go:551-568 creates the copy and computes only when `Bytes` is nil; ml/backend/ggml/ggml.go:1001-1010 now returns any nonnil CPU data; ml/backend/ggml/ggml.go:1280-1284 creates the pending copy; ml/backend/ggml/ggml/src/ggml.c:3245-3263 confirms `ggml_cpy` is a graph operation represented as a view of the already-allocated destination.\n  fix: Distinguish materialized CPU tensors from pending graph-operation views before using storage presence as the readiness test.\n- path: model/model.go\n  line: 285\n  side: RIGHT\n  severity: P3\n  confidence: 0.98\n  reachability: plausible\n  kind: robustness\n  tag: \"[question]\"\n  title: Preserve the invalid-batch error for nil Positions\n  claim: A zero-value or otherwise malformed `input.Batch` now panics through a nil `Positions` interface instead of returning the prior batch-size validation error.\n  detail: `batch.Positions.Dim(0)` dereferences nil, whereas `len` on the former nil slice reached the explicit “batch size cannot be less than 1” error.\n  evidence: model/model.go:284-290 invokes `Dim` before any nil guard; model/input/input.go:53-59 declares `Positions` as an `ml.Tensor` interface.\n  fix: Check `batch.Positions == nil` before calling `Dim`.\n\nKILLED\n- pass-baseline kvcache/causal.go:203 — refuted: no-allocation buffers deliberately receive a nonnil aligned placeholder pointer at ml/backend/ggml/ggml/src/ggml-backend.cpp:127-137, so `Ints` preserves the tensor length; reserve-mode `buildMask` does not read position values at kvcache/causal.go:347-356, and `Put` only compares that length at kvcache/causal.go:584-592.\n- pass-simplicity kvcache/wrapper.go:50 — below-bar: this runs only while unwinding an already-failed cache start, and production positions are unsynchronized input tensors from runner/ollamarunner/runner.go:582, for which ml/backend/ggml/ggml.go:1035-1037 returns a zero-copy slice rather than synchronizing or allocating."
+      },
+      {
+        "call": 4,
+        "agent": "pass-validate--sol-high",
+        "lens": "pass-validate",
+        "exitCode": 0,
+        "text": "FINDINGS validation PR#12185 @b6002f6b6c69370f8c18a9e6c1cafa8463273a6b\n- path: model/models/llama4/model_text.go\n  line: 222\n  side: RIGHT\n  severity: P1\n  confidence: 0.97\n  reachability: routine\n  kind: correctness\n  claim: Llama 4’s default attention-temperature path dereferences an unallocated positions tensor during the mandatory Fit pass, causing model initialization to fail before memory requirements can be returned.\n  detail: LoadOperationFit sets AllocMemory=false, then reserveWorstCaseGraph wraps batchPositions with FromIntSlice and calls Model.Forward. In this mode FromIntSlice deliberately skips copying the values, while the tensor’s data pointer is only the backend’s small aligned placeholder address. Ints constructs a full-length unsafe slice over that address, and this loop reads every element to calculate attention scales. The same invalid read occurs at kvcache/encoder.go:94 for multimodal reserve batches. CPU-side graph construction must retain real position values rather than dereference no-allocation tensor storage.\n  evidence: llm/server.go:709 runs Fit before allocation; runner/ollamarunner/runner.go:1204 disables allocation and runner/ollamarunner/runner.go:1069-1080 creates the positions tensor then forwards it; ml/backend/ggml/ggml.go:926-935 skips the copy, ml/backend/ggml/ggml/src/ggml-backend.cpp:127-136 supplies only an aligned placeholder pointer, and ml/backend/ggml/ggml.go:1029-1038 exposes it through unsafe.Slice; model/models/llama4/model_text.go:204 defaults temperature tuning to true and lines 220-223 dereference the slice.\n  fix: Preserve host position values for CPU-side calculations during Fit, and do not expose no-allocation placeholder storage through Ints.\nKILLED\nNONE"
+      }
+    ],
+    "lineCosts": [
+      0,
+      0,
+      0,
+      0.661279,
+      0.551472,
+      1.056359,
+      0.6744060000000002,
+      0.59366,
+      0
+    ],
+    "running": [
+      0,
+      0,
+      0,
+      0.661279,
+      0.551472,
+      1.056359,
+      0.6744060000000002,
+      0.59366,
+      0
+    ],
+    "total": 3.537176,
+    "usage": null
+  }
+}
