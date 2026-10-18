@@ -1848,6 +1848,9 @@ export const POLICY_SURFACE_FILES = [
   "CLAUDE.md",
   "CLAUDE.MD",
 ] as const;
+/** Companion-owned policy intents change normally during a round, so they
+ * have the write veto without a round hash, like built state/agents bodies. */
+const DYNAMIC_POLICY_FILES = ["qcr-profile-write.json", ".qcr-profile-write.json.tmp"] as const;
 export const POLICY_SURFACE_DIRS = [
   "scripts",
   "dist",
@@ -1860,7 +1863,9 @@ export const POLICY_SURFACE_DIRS = [
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const POLICY_SURFACE_RE = [
-  new RegExp(`(^|/)(?:${POLICY_SURFACE_FILES.map(escapeRe).join("|")})$`),
+  new RegExp(
+    `(^|/)(?:${[...POLICY_SURFACE_FILES, ...DYNAMIC_POLICY_FILES].map(escapeRe).join("|")})$`,
+  ),
   new RegExp(`(^|/)(?:${POLICY_SURFACE_DIRS.map(escapeRe).join("|")})/.+`),
 ];
 
@@ -2026,6 +2031,7 @@ const PROTECTED_COMPONENT_NAMES: readonly string[] = [
   "config",
   ".gitattributes",
   ...POLICY_SURFACE_FILES,
+  ...DYNAMIC_POLICY_FILES,
   ...POLICY_SURFACE_DIRS,
   "recall-hints",
   "retired-uris.json",

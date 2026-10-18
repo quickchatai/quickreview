@@ -40,6 +40,7 @@ import {
   parseEmphasis,
   profileApply,
   readRecord,
+  recoverProfileWrite,
   type ApplyResult,
   type TuningDeps,
 } from "./tuning.js";
@@ -116,6 +117,26 @@ function lensEffects(
 export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Refusal {
   if (!deps.profiles)
     return { ok: false, errors: ["this assembly has no config home to write profiles to"] };
+  const recovered = recoverProfileWrite(deps, input.write === true);
+  if (!recovered.ok) return recovered;
+  if (recovered.recovered) {
+    const portrait = deps.refreshPortrait();
+    const saved = parseRetunes(deps.state.read(RETUNES_FILE));
+    if (saved.state === "ok") {
+      const last = saved.retunes.at(-1);
+      if (
+        last?.portrait &&
+        "error" in last.portrait &&
+        last.portrait.error === "portrait refresh pending"
+      ) {
+        last.portrait = portrait.ok ? { key: portrait.key } : { error: portrait.errors.join("; ") };
+        deps.state.write(
+          RETUNES_FILE,
+          `${JSON.stringify({ version: RETUNES_VERSION, retunes: saved.retunes }, null, 2)}\n`,
+        );
+      }
+    }
+  }
   const runs = finishedRuns(deps.state);
   if (runs.error !== null) return { ok: false, errors: [runs.error] };
   if (runs.runs.length === 0)
@@ -309,11 +330,8 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
       ),
     };
   }
-  const applied = write ? profileApply(deps, { ...applyInput, write: true }, opts) : staged;
-  if (!applied.ok) return applied;
-
-  // What each change moved in the resolved profile, before vs after.
-  const after = applied.summary.lenses;
+  // What each validated change moves in the resolved profile.
+  const after = staged.summary.lenses;
   const lenses = [
     ...new Set([...Object.keys(before.summary.lenses), ...Object.keys(after)]),
   ].sort();
@@ -335,7 +353,7 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
         after[STYLE_LENS] ?? {},
         ["guide"],
       );
-      const guideDiff = applied.diff.find((d) => d.file === DRAFTED_GUIDE_FILE);
+      const guideDiff = staged.diff.find((d) => d.file === DRAFTED_GUIDE_FILE);
       if (guideDiff)
         effects.push(
           `${STYLE_LENS}: ${DRAFTED_GUIDE_FILE} ${guideDiff.lines.length} line(s) changed`,
@@ -346,8 +364,7 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
 
   const scan = { run: run.id, sha: run.sha, mode: run.mode };
   let entry: RetuneRecord | null = null;
-  if (write) {
-    const portrait = deps.refreshPortrait();
+  const stateWrites = (commit: { id: string } | null): Record<string, string> => {
     const at = deps.clock().toISOString();
     entry = {
       id: `retune-${at.replace(/[-:.]/g, "")}`,
@@ -355,13 +372,27 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
       profile,
       scan,
       changes: report,
-      files: applied.diff.map((d) => `${PROFILES_DIR}/${profile}/${d.file}`),
-      commit: applied.commit?.id ?? null,
-      portrait: portrait.ok ? { key: portrait.key } : { error: portrait.errors.join("; ") },
+      files: staged.diff.map((d) => `${PROFILES_DIR}/${profile}/${d.file}`),
+      commit: commit?.id ?? null,
+      portrait: { error: "portrait refresh pending" },
     };
+    return {
+      [RETUNES_FILE]: `${JSON.stringify({ version: RETUNES_VERSION, retunes: [...prior, entry].slice(-RETUNES_KEPT) }, null, 2)}\n`,
+    };
+  };
+  const applied = write
+    ? profileApply(deps, { ...applyInput, write: true }, { ...opts, stateWrites })
+    : staged;
+  if (!applied.ok) return applied;
+  if (write && entry !== null) {
+    const portrait = deps.refreshPortrait();
+    // The report itself is already durable; refreshing this ancillary field
+    // can fail without losing what changed or why.
+    const recorded = entry as RetuneRecord;
+    recorded.portrait = portrait.ok ? { key: portrait.key } : { error: portrait.errors.join("; ") };
     deps.state.write(
       RETUNES_FILE,
-      `${JSON.stringify({ version: RETUNES_VERSION, retunes: [...prior, entry].slice(-RETUNES_KEPT) }, null, 2)}\n`,
+      `${JSON.stringify({ version: RETUNES_VERSION, retunes: [...prior, recorded].slice(-RETUNES_KEPT) }, null, 2)}\n`,
     );
   }
   return {

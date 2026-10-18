@@ -364,7 +364,7 @@ describe("saving themes", () => {
     put(digest());
     await e.saveHistoryThemes(GOOD);
     const r = await e.saveHistoryThemes([GOOD[0]]);
-    expect(r).toMatchObject({ ok: true, memory: { written: 1, retired: 2, problems: [] } });
+    expect(r).toMatchObject({ ok: true, memory: { written: 1, retired: 1, problems: [] } });
     expect(mem.entries.map((x) => x.text)).toEqual([
       "#history #manual the operator's own note",
       "#history pinned by the operator",
@@ -564,4 +564,19 @@ describe("reviewerMemoryFromEnv", () => {
       } as NodeJS.ProcessEnv),
     ).not.toBeNull();
   });
+});
+
+it("keeps identical content-addressed replacements live on a repeated theme save", async () => {
+  const mem = new MemFake();
+  const apply = mem.apply.bind(mem);
+  mem.apply = async (op) => {
+    if (op.op === "note" && mem.entries.some((entry) => entry.text === op.text))
+      return { ok: true, message: "same content address" };
+    return apply(op);
+  };
+  const { e, put } = engine(mem);
+  put(digest());
+  await e.saveHistoryThemes(GOOD);
+  await e.saveHistoryThemes([GOOD[0]]);
+  expect(mem.entries.map((entry) => entry.text)).toEqual([themeEntryText(GOOD[0] as never)]);
 });

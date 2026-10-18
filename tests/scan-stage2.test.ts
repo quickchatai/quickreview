@@ -759,3 +759,80 @@ describe("starting stage 2 from the TUI", () => {
     expect(s.status().run!.mode).toBe("calibration");
   });
 });
+
+it("recovers a successful start after its result publication failed, including another process", async () => {
+  const cases = runner();
+  const p = ports(cases);
+  const state = p.state;
+  let fail = true;
+  p.state = {
+    ...state,
+    write: (path, bytes) => {
+      if (path === STAGE2_RESULT_FILE && fail) throw new Error("temporary result failure");
+      state.write(path, bytes);
+    },
+  };
+  const s = new ScanRunner(p);
+  await calibrate(s);
+  const proposal = await propose(s, [CROSS]);
+  const click = clickStartStage2(stateDir, proposal.key);
+  expect(click.ok).toBe(true);
+  const first = await s.consumeStage2Request();
+  expect(first?.ok).toBe(true);
+  await s.idle();
+  const count = cases.specs.length;
+  fail = false;
+  const other = new ScanRunner(p);
+  expect(await other.consumeStage2Request()).toMatchObject({ ok: true, run: first!.run });
+  expect(cases.specs).toHaveLength(count);
+});
+
+it("settles an unlaunched run after its accepted-start checkpoint fails and permits a new retry", async () => {
+  const cases = runner();
+  const p = ports(cases);
+  const state = p.state;
+  let fail = true;
+  let held = false;
+  p.lease = {
+    holder: "driver",
+    lastError: null,
+    claim: () => {
+      held = true;
+      return true;
+    },
+    renew: () => held,
+    release: () => {
+      held = false;
+    },
+    other: () => null,
+  };
+  p.state = {
+    ...state,
+    write: (path, bytes) => {
+      if (fail && path.startsWith("scan/stage2-starts/"))
+        throw new Error("accepted-start checkpoint unavailable");
+      state.write(path, bytes);
+    },
+  };
+  const s = new ScanRunner(p);
+  await calibrate(s);
+  const proposal = await propose(s, [CROSS]);
+  const count = cases.specs.length;
+  expect(clickStartStage2(stateDir, proposal.key, new Date("2026-09-29T11:00:00Z")).ok).toBe(true);
+  expect(await s.consumeStage2Request()).toMatchObject({ ok: false });
+  expect(s.status()).toMatchObject({
+    active: false,
+    run: {
+      state: "partial",
+      problems: expect.arrayContaining([expect.stringMatching(/not launched.*checkpoint/i)]),
+    },
+  });
+  expect(cases.specs).toHaveLength(count);
+  expect(held).toBe(false);
+  fail = false;
+  expect(clickStartStage2(stateDir, proposal.key, new Date("2026-09-29T11:00:01Z")).ok).toBe(true);
+  expect(await s.consumeStage2Request()).toMatchObject({ ok: true });
+  await s.idle();
+  expect(s.status().run?.state).toBe("complete");
+  expect(cases.specs.length).toBeGreaterThan(count);
+});

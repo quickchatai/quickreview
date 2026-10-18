@@ -977,3 +977,44 @@ it("uses one durable note identity when a memory acknowledgement is lost", async
   expect(attempts).toBe(2);
   expect(landed.size).toBe(1);
 });
+
+it.each(["checkpoint", "lost acknowledgement"])(
+  "recovers a note after %s failure before accepting different notes",
+  async (failure) => {
+    const pattern = (i: number) => ({
+      text: `raw SQL assembled by string formatting, variant ${i}`,
+      occurrences: 3,
+    });
+    const { triage, memory, state } = setup();
+    const write = state.write.bind(state);
+    const apply = memory!.apply.bind(memory!);
+    const names = new Set<string>();
+    let fail = false;
+    let lostAcknowledgement = false;
+    memory!.apply = async (op) => {
+      if (op.op === "note" && op.name && names.has(op.name))
+        return { ok: true, message: "already landed" };
+      const result = await apply(op);
+      if (result.ok && op.op === "note") {
+        if (op.name) names.add(op.name);
+        if (failure === "lost acknowledgement" && !lostAcknowledgement) {
+          lostAcknowledgement = true;
+          throw new Error("connection closed after note landed");
+        }
+        if (failure === "checkpoint") fail = true;
+      }
+      return result;
+    };
+    state.write = (path, data) => {
+      if (path === SCAN_MEMORY_FILE && fail) throw new Error("temporary cap checkpoint failure");
+      write(path, data);
+    };
+    await triage.writeMemory({ patterns: [pattern(900)] });
+    expect(memory!.entries).toHaveLength(1);
+    fail = false;
+    expect(
+      await triage.writeMemory({ patterns: Array.from({ length: 20 }, (_, i) => pattern(i)) }),
+    ).toMatchObject({ ok: false });
+    expect(memory!.entries).toHaveLength(1);
+  },
+);

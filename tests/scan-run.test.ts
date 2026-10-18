@@ -1112,7 +1112,11 @@ describe("the preview's lines and the measured rate's lines agree (scan-loop)", 
   it("an empty __init__.py counts 0 lines on both sides", async () => {
     const tree = { ...TREE, "app/__init__.py": "", "web/empty.ts": "" };
     const s = new ScanRunner(
-      ports(runner({ perFile: 0.01 }), {}, fakeSource({ [SHA1]: tree }, SHA1)),
+      ports(
+        runner({ perFile: 0.01, answer: () => "NONE" }),
+        {},
+        fakeSource({ [SHA1]: tree }, SHA1),
+      ),
     );
     const cal = await runToEnd(s);
     expect(cal.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toContain(
@@ -1205,3 +1209,28 @@ it("refuses planning before opening a tree owned by another scan process", async
   expect(result.ok).toBe(false);
   expect(source.opened).toEqual([]);
 });
+
+it("does not record clean coverage when every parsed finding fails anchoring", async () => {
+  const r = runner({ answer: (spec) => scanAnswer(spec).replace("line: 2-3", "line: 999999") });
+  const { run } = await runToEnd(new ScanRunner(ports(r)));
+  expect(run.cases.every((c) => c.status === "failed")).toBe(true);
+  expect(stateHomeFs(stateDir).read(LEDGER_FILE)).toBeNull();
+});
+
+it.each(["read", "write"])(
+  "keeps deep leads retryable after suggestions %s fails",
+  async (operation) => {
+    const p = ports(runner(), { depth: "deep" });
+    const state = p.state;
+    p.state = {
+      ...state,
+      [operation]: (path: string, data?: string) => {
+        if (path.endsWith("suggestions.json")) throw new Error("temporary suggestions failure");
+        return operation === "read" ? state.read(path) : state.write(path, data!);
+      },
+    };
+    const { run } = await runToEnd(new ScanRunner(p));
+    expect(run.cases.every((c) => c.status === "failed")).toBe(true);
+    expect(state.read(LEDGER_FILE)).toBeNull();
+  },
+);

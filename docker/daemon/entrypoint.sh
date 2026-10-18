@@ -123,10 +123,20 @@ mkdir -p "$OV_HOME/workspace" || echo "openviking: could not create $OV_HOME/wor
 # Same migration idiom as the state symlink above: a real directory that
 # accumulated content is folded onto the volume once, then replaced by the link.
 if [[ -e "$HOME/.openviking" && ! -L "$HOME/.openviking" ]]; then
-  cp -a "$HOME/.openviking/." "$OV_HOME/"
-  rm -rf "$HOME/.openviking"
+  if cp -a "$HOME/.openviking/." "$OV_HOME/" && rm -rf "$HOME/.openviking"; then
+    :
+  else
+    export QCR_OPENVIKING_BOOT_DISABLED=1
+    echo "openviking: migration failed; original memory retained, reviewer starts with memory disabled for this boot" >&2
+  fi
 fi
-[[ -L "$HOME/.openviking" ]] || ln -sfn "$OV_HOME" "$HOME/.openviking"
+if [[ "${QCR_OPENVIKING_BOOT_DISABLED:-}" != 1 ]] && ! { [[ -L "$HOME/.openviking" ]] || ln -sfn "$OV_HOME" "$HOME/.openviking"; }; then
+  export QCR_OPENVIKING_BOOT_DISABLED=1
+  echo "openviking: state link failed; reviewer starts with memory disabled for this boot" >&2
+fi
+
+# OpenViking boot preparation only runs over a complete migration.
+if [[ "${QCR_OPENVIKING_BOOT_DISABLED:-}" != 1 ]]; then
 
 # ov.conf is RENDERED on every boot, so a knob change ships with a restart
 # rather than a hand-edit in the container. Rendered by node because ov.conf is
@@ -350,6 +360,8 @@ if [[ -f "$SANDBOX/scripts/openviking-provision.mjs" ]]; then
     || echo "openviking: boot provisioning did not complete — the daemon starts and memory degrades until it does" >&2
 else
   echo "openviking: scripts/openviking-provision.mjs not mounted — users not provisioned" >&2
+fi
+
 fi
 
 # pi extensions — register in $HOME/.pi/agent/settings.json (on the pihome

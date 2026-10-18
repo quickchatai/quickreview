@@ -1069,6 +1069,7 @@ export class ScanRunner {
     jobs: CaseJob[],
     tree: ScanTree,
     settings: ScanSettings,
+    onAccepted?: (run: ScanRun) => void,
   ): ScanRun {
     const now = this.ports.clock();
     const run: ScanRun = {
@@ -1119,6 +1120,20 @@ export class ScanRunner {
     }
     file.current = run;
     this.store(file);
+    try {
+      onAccepted?.(run);
+    } catch (err) {
+      const reason = `the scan was not launched: its acceptance checkpoint failed (${clean(err)})`;
+      run.problems.push(reason);
+      const at = this.ports.clock().toISOString();
+      for (const c of run.cases) {
+        c.status = "stopped";
+        c.error = reason;
+        c.finished_at = at;
+      }
+      this.settle(file, run, "partial");
+      throw err;
+    }
 
     const abort = new AbortController();
     const done = this.drive(file, run, jobs, tree, settings, abort)
@@ -1370,10 +1385,13 @@ export class ScanRunner {
    * only some of its runnable rows (the TUI's plan pane), exactly
    * those rows, stopped hard at their total.
    */
-  async startStage2(args: {
-    key?: unknown;
-    rows?: unknown;
-  }): Promise<{ ok: true; run: ScanRun } | Refusal> {
+  async startStage2(
+    args: {
+      key?: unknown;
+      rows?: unknown;
+    },
+    onAccepted?: (run: ScanRun) => void,
+  ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const busy = this.refuseBusy();
     if (busy !== null) return busy;
     if (typeof args.key !== "string" || args.key === "") {
@@ -1398,12 +1416,13 @@ export class ScanRunner {
       keep = args.rows;
     }
     const key = args.key;
-    return this.holdingStart(() => this.startStage2Planned(key, keep));
+    return this.holdingStart(() => this.startStage2Planned(key, keep, onAccepted));
   }
 
   private async startStage2Planned(
     key: string,
     keep: readonly string[] | undefined,
+    onAccepted?: (run: ScanRun) => void,
   ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const stored = this.stage2Proposal();
     if (stored.error !== null) return { ok: false, errors: [stored.error] };
@@ -1508,6 +1527,7 @@ export class ScanRunner {
       jobs,
       p.tree,
       p.settings,
+      onAccepted,
     );
     if (leadSource.error !== null) {
       run.problems.push(`stage-1 leads not carried into the cases: ${leadSource.error}`);
@@ -1542,25 +1562,72 @@ export class ScanRunner {
         // Unreadable: answer again rather than never.
       }
       if (prev !== null && parseStartResult(prev)?.request === req.id) return null;
-      const r = await this.startStage2({
-        key: req.key,
-        ...(req.rows !== undefined ? { rows: req.rows } : {}),
-      });
-      const result: Stage2StartResult = {
-        request: req.id,
-        key: req.key,
-        at: this.ports.clock().toISOString(),
-        ok: r.ok,
-        run: r.ok ? r.run.id : null,
-        errors: r.ok ? [] : r.errors,
-      };
+      const acceptedFile = `scan/stage2-starts/${encodeURIComponent(req.id)}.json`;
+      let accepted: Stage2StartResult | null = null;
+      try {
+        const saved = this.ports.state.read(acceptedFile);
+        if (saved !== null) {
+          accepted = parseStartResult(saved);
+          if (
+            accepted === null ||
+            accepted.request !== req.id ||
+            accepted.key !== req.key ||
+            !accepted.ok
+          )
+            throw new Error("the accepted start record does not match this request");
+        }
+      } catch (err) {
+        this.ports.log?.(`setup: accepted stage 2 start cannot be read: ${clean(err)}`);
+        return null;
+      }
+      let result: Stage2StartResult;
+      if (accepted !== null) result = accepted;
+      else {
+        try {
+          const r = await this.startStage2(
+            {
+              key: req.key,
+              ...(req.rows !== undefined ? { rows: req.rows } : {}),
+            },
+            (run) => {
+              accepted = {
+                request: req.id,
+                key: req.key,
+                at: this.ports.clock().toISOString(),
+                ok: true,
+                run: run.id,
+                errors: [],
+              };
+              // A successful start is recoverable before the first paid case.
+              this.ports.state.write(acceptedFile, `${JSON.stringify(accepted)}\n`);
+            },
+          );
+          result = accepted ?? {
+            request: req.id,
+            key: req.key,
+            at: this.ports.clock().toISOString(),
+            ok: r.ok,
+            run: r.ok ? r.run.id : null,
+            errors: r.ok ? [] : r.errors,
+          };
+        } catch (err) {
+          result = {
+            request: req.id,
+            key: req.key,
+            at: this.ports.clock().toISOString(),
+            ok: false,
+            run: null,
+            errors: [`the start was not launched: ${clean(err)}`],
+          };
+        }
+      }
       try {
         this.ports.state.write(STAGE2_RESULT_FILE, `${JSON.stringify(result)}\n`);
       } catch (err) {
         this.ports.log?.(`setup: the stage 2 start result could not be written: ${clean(err)}`);
       }
       this.ports.log?.(
-        `setup: the TUI asked to start stage 2 (${req.key}): ${r.ok ? `started ${r.run.id}` : r.errors.join("; ")}`,
+        `setup: the TUI asked to start stage 2 (${req.key}): ${result.ok ? `started ${result.run}` : result.errors.join("; ")}`,
       );
       return result;
     } finally {
@@ -1867,6 +1934,11 @@ export class ScanRunner {
       else anchored.push({ cand, ...at });
     }
 
+    if (answer.candidates.length > 0 && anchored.length === 0) {
+      c.dropped = dropped;
+      return finish("failed", "none of the reported findings could be anchored to this case");
+    }
+
     // The validator, when this scan runs one, is the skeptic: at the tier of
     // the lens it judges, it sorts every
     // candidate into a validity tier — and kills none. A survivor is
@@ -2046,7 +2118,10 @@ export class ScanRunner {
         .filter((s) => s.files.length > 0);
       dropped += answer.suggestions.length - suggestions.length;
       c.suggestions = suggestions;
-      this.storeSuggestions(run, plan.unit, suggestions, at);
+      if (!this.storeSuggestions(run, plan.unit, suggestions, at)) {
+        c.dropped = dropped;
+        return finish("failed", "its deep-lens suggestions could not be stored; not coverage");
+      }
     }
     c.dropped = dropped;
 
@@ -2101,12 +2176,12 @@ export class ScanRunner {
     unit: string,
     found: readonly ScanSuggestion[],
     at: string,
-  ): void {
-    if (found.length === 0) return;
+  ): boolean {
+    if (found.length === 0) return true;
     const { suggestions, error } = this.suggestions();
     if (error !== null) {
       run.problems.push(`deep-lens suggestions not stored: ${error}`);
-      return;
+      return false;
     }
     const key = (s: { unit: string; lens: string; files: string[] }): string =>
       `${s.unit}\0${s.lens}\0${[...s.files].sort().join(",")}`;
@@ -2122,7 +2197,9 @@ export class ScanRunner {
       );
     } catch (err) {
       run.problems.push(`deep-lens suggestions not stored: ${clean(err)}`);
+      return false;
     }
+    return true;
   }
 
   /** The run's end, whatever ended it: what re-read files no longer report

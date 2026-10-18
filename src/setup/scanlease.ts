@@ -269,7 +269,13 @@ export function fileLease(
     },
     renew(run) {
       const cur = current(dir);
-      if (mine === null || cur === null || cur.gen !== mine) {
+      if (
+        mine === null ||
+        cur === null ||
+        cur.gen !== mine ||
+        cur.record === null ||
+        !isLive(cur.record, clock())
+      ) {
         mine = null;
         return false;
       }

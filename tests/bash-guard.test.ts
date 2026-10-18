@@ -1750,3 +1750,16 @@ describe("wake patterns cover the delivery filename language", () => {
   );
   it("keeps unrelated filename patterns available", () => allow("printf text > /tmp/out-*.txt"));
 });
+
+describe("the dynamic profile recovery journal is protected policy", () => {
+  it.each(["state/setup/qcr-profile-write.json", "state/setup/.qcr-profile-write.json.tmp"])(
+    "refuses file tools and shell writes to %s",
+    (path) => {
+      expect(checkWritePath(path).allowed).toBe(false);
+      block(`printf forged > ${path}`);
+      allow(`cat ${path}`);
+    },
+  );
+  it("protects expansion onto the journal", () =>
+    block("printf forged > state/setup/qcr-profile-write.js?n"));
+});

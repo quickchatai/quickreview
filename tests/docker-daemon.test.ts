@@ -787,9 +787,12 @@ it.each(
     );
     expect(start).toBeGreaterThan(0);
     const block = text.slice(start);
-    const end = /\n\s*fi/.exec(block)!;
+    const end =
+      migration === "state"
+        ? /\n\s*fi/.exec(block)!.index + /\n\s*fi/.exec(block)![0].length
+        : block.indexOf("# OpenViking boot preparation");
     const fragment = block
-      .slice(0, end.index + end[0].length)
+      .slice(0, end)
       .replaceAll("$HOME/.openviking", "${SI_SOURCE}")
       .replaceAll("$SANDBOX/state", "${SI_SOURCE}")
       .replaceAll("$OV_HOME", "${SI_DEST}");
@@ -797,10 +800,43 @@ it.each(
       env: { ...process.env, SI_SOURCE: source, SI_DEST: destination },
       encoding: "utf8",
     });
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(migration === "state" ? 1 : 0);
     expect(readFileSync(join(source, "memory.json"), "utf8")).toBe("valuable state");
     expect(existsSync(source)).toBe(true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+it.each(["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"])(
+  "continues reviewer boot without opening partial memory after optional migration fails: %s",
+  (file) => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-optional-memory-failure-"));
+    const home = join(dir, "home");
+    const destination = join(dir, "destination");
+    mkdirSync(join(home, ".openviking"), { recursive: true });
+    mkdirSync(destination);
+    writeFileSync(join(home, ".openviking", "original"), "retained memory");
+    const text = readFileSync(join(root, file), "utf8");
+    const start = text.indexOf('if [[ -e "$HOME/.openviking"');
+    const end = text.indexOf("# pi extensions", start);
+    const fragment = text.slice(start, end);
+    const script =
+      'set -euo pipefail\ncp() { printf partial > "$OV_HOME/partial"; return 1; }\nnode() { printf opened > "$OV_HOME/opened"; }\n' +
+      fragment +
+      '\nprintf "reviewer-started:%s" "${QCR_OPENVIKING_BOOT_DISABLED:-0}"';
+    try {
+      const result = spawnSync("bash", ["-c", script], {
+        env: { ...process.env, HOME: home, OV_HOME: destination },
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("reviewer-started:1");
+      expect(readFileSync(join(home, ".openviking", "original"), "utf8")).toBe("retained memory");
+      expect(existsSync(join(destination, "partial"))).toBe(true);
+      expect(existsSync(join(destination, "opened"))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

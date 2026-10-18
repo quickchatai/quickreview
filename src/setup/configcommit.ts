@@ -15,13 +15,19 @@
 // (no `..`, no absolute path, nothing else in the home) — and only in a config
 // home that is its own repository: a home that merely sits inside a bigger
 // one (a dotfiles repo over `~/.config`) is reported, not committed into.
-// `git commit -- <paths>` takes those paths alone, so nothing else staged in
-// the home — least of all `secrets/` — rides along. Not a repo is an ordinary
+// New requests commit exact snapshotted bytes through a private index; legacy
+// requests use `git commit -- <paths>`. Nothing else staged in the home —
+// least of all `secrets/` — rides along. Not a repo is an ordinary
 // answer ("not-a-repo"), not a failure: a config home is a git repo only if
 // the operator made it one.
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  closeSync,
+  copyFileSync,
+  openSync,
+  mkdtempSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -31,7 +37,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { PROFILES_DIR } from "../install.js";
 
 /** Where requests and results live, relative to the state home. */
@@ -44,6 +51,13 @@ export interface CommitRequest {
   /** Config-home-relative paths the write touched. */
   paths: string[];
   message: string;
+  /** The exact bytes this request asked the host to commit. Legacy requests
+   * omit these and retain their original input contract. */
+  hashes?: Record<string, string>;
+}
+
+export function profileContentHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 export type CommitState = "committed" | "nothing-to-commit" | "not-a-repo" | "refused" | "failed";
@@ -91,10 +105,15 @@ export function refusePath(path: unknown): string | null {
 export type GitRun = (
   args: string[],
   cwd: string,
+  env?: Readonly<Record<string, string>>,
 ) => { code: number; stdout: string; stderr: string };
 
-export const realGit: GitRun = (args, cwd) => {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+export const realGit: GitRun = (args, cwd, env) => {
+  const r = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    ...(env ? { env: { ...process.env, ...env } } : {}),
+  });
   return {
     code: r.status ?? 1,
     stdout: r.stdout ?? "",
@@ -123,12 +142,24 @@ function parseRequest(text: string): CommitRequest | string {
     const why = refusePath(p);
     if (why !== null) return why;
   }
+  if (
+    r.hashes !== undefined &&
+    (r.hashes === null ||
+      typeof r.hashes !== "object" ||
+      Array.isArray(r.hashes) ||
+      Object.keys(r.hashes).length !== r.paths.length ||
+      r.paths.some(
+        (p) => typeof r.hashes![p] !== "string" || !/^[a-f0-9]{64}$/.test(r.hashes![p]!),
+      ))
+  )
+    return "the request's hashes do not describe every requested path";
   return {
     id: r.id,
     requested_at: typeof r.requested_at === "string" ? r.requested_at : "",
     profile: typeof r.profile === "string" ? r.profile : "",
     paths: r.paths,
     message: r.message,
+    ...(r.hashes === undefined ? {} : { hashes: r.hashes }),
   };
 }
 
@@ -165,17 +196,130 @@ function commitOne(
 ): Omit<CommitResult, "id" | "at"> {
   const repo = ownRepo(configHome, git);
   if (!repo.ok) return { state: repo.failed ? "failed" : "not-a-repo", detail: repo.detail };
+  const receipt = `QCR-Setup-Request: ${profileContentHash(req.id)}`;
+  const prior = git(["log", "--all", "-1", "--format=%H", `--grep=^${receipt}$`], configHome);
+  const priorSha = prior.stdout.trim();
+  if (prior.code === 0 && /^[a-f0-9]{40,64}$/.test(priorSha))
+    return { state: "committed", sha: priorSha, detail: `recovered committed request ${req.id}` };
+  if (req.hashes !== undefined) {
+    const snapshot = new Map<string, string>();
+    for (const path of req.paths) {
+      try {
+        const bytes = readFileSync(join(configHome, path), "utf8");
+        if (profileContentHash(bytes) !== req.hashes[path])
+          return {
+            state: "refused",
+            detail: `${path} no longer matches this request's profile version — newer bytes were not committed under its message`,
+          };
+        snapshot.set(path, bytes);
+      } catch (err) {
+        return {
+          state: "failed",
+          detail: `the requested profile version cannot be read: ${String(err)}`,
+        };
+      }
+    }
+    return commitSnapshot(req, configHome, git, snapshot, receipt);
+  }
   const add = git(["add", "-A", "--", ...req.paths], configHome);
   if (add.code !== 0)
     return { state: "failed", detail: `git add: ${(add.stderr || add.stdout).trim()}` };
   const staged = git(["diff", "--cached", "--quiet", "--", ...req.paths], configHome);
   if (staged.code === 0)
     return { state: "nothing-to-commit", detail: "the committed profile already matches" };
-  const commit = git(["commit", "--no-verify", "-m", req.message, "--", ...req.paths], configHome);
+  const commit = git(
+    ["commit", "--no-verify", "-m", req.message, "-m", receipt, "--", ...req.paths],
+    configHome,
+  );
   if (commit.code !== 0)
     return { state: "failed", detail: `git commit: ${(commit.stderr || commit.stdout).trim()}` };
   const sha = git(["rev-parse", "HEAD"], configHome).stdout.trim();
   return { state: "committed", sha, detail: `committed ${req.paths.join(", ")}` };
+}
+
+/** Build a commit from stable requested bytes, with a private index. The
+ * real index is locked and preserved, including unrelated staged paths;
+ * updating HEAD is conditional on its original value. */
+function commitSnapshot(
+  req: CommitRequest,
+  configHome: string,
+  git: GitRun,
+  snapshot: ReadonlyMap<string, string>,
+  receipt: string,
+): Omit<CommitResult, "id" | "at"> {
+  let scratch: string | null = null;
+  const run = (args: string[], env?: Readonly<Record<string, string>>): string => {
+    const result = git(args, configHome, env);
+    if (result.code !== 0)
+      throw new Error(
+        `git ${args[0]}: ${(result.stderr || result.stdout).trim() || `exit ${result.code}`}`,
+      );
+    return result.stdout.trim();
+  };
+  let lock: string | null = null;
+  let committed: string | null = null;
+  try {
+    scratch = mkdtempSync(join(tmpdir(), "qcr-profile-commit-"));
+    const index = resolve(configHome, run(["rev-parse", "--git-path", "index"]));
+    const held = `${index}.lock`;
+    const fd = openSync(held, "wx", 0o600);
+    lock = held;
+    closeSync(fd);
+    const parentResult = git(["rev-parse", "--verify", "HEAD"], configHome);
+    const parent = parentResult.code === 0 ? parentResult.stdout.trim() : null;
+    const privateEnv = { GIT_INDEX_FILE: join(scratch, "index") };
+    const savedEnv = { GIT_INDEX_FILE: join(scratch, "original-index") };
+    run(["read-tree", parent ?? "--empty"], privateEnv);
+    if (existsSync(index)) copyFileSync(index, savedEnv.GIT_INDEX_FILE);
+    else run(["read-tree", parent ?? "--empty"], savedEnv);
+    let n = 0;
+    for (const [path, bytes] of snapshot) {
+      const file = join(scratch, `blob-${n++}`);
+      writeFileSync(file, bytes, { mode: 0o600 });
+      const blob = run(["hash-object", "-w", "--no-filters", file]);
+      const mode = statSync(join(configHome, path)).mode & 0o111 ? "100755" : "100644";
+      run(["update-index", "--add", "--cacheinfo", `${mode},${blob},${path}`], privateEnv);
+    }
+    const tree = run(["write-tree"], privateEnv);
+    if (parent !== null && tree === run(["rev-parse", `${parent}^{tree}`]))
+      return { state: "nothing-to-commit", detail: "the committed profile already matches" };
+    const signing = git(["config", "--type=bool", "--get", "commit.gpgsign"], configHome);
+    if (signing.code !== 0 && signing.code !== 1)
+      throw new Error(`git signing configuration: ${signing.stderr.trim()}`);
+    const sha = run([
+      "commit-tree",
+      tree,
+      ...(parent === null ? [] : ["-p", parent]),
+      ...(signing.stdout.trim() === "true" ? ["-S"] : []),
+      "-m",
+      req.message,
+      "-m",
+      receipt,
+    ]);
+    run([
+      "update-ref",
+      "-m",
+      "qcr setup profile commit",
+      "HEAD",
+      sha,
+      parent ?? "0".repeat(sha.length),
+    ]);
+    committed = sha;
+    run(["reset", "-q", sha, "--", ...req.paths], savedEnv);
+    renameSync(savedEnv.GIT_INDEX_FILE, index);
+    return { state: "committed", sha, detail: `committed ${req.paths.join(", ")}` };
+  } catch (err) {
+    return committed === null
+      ? { state: "failed", detail: String(err) }
+      : {
+          state: "committed",
+          sha: committed,
+          detail: `committed; the index could not be refreshed: ${String(err)}`,
+        };
+  } finally {
+    if (lock !== null) rmSync(lock, { force: true });
+    if (scratch !== null) rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /**

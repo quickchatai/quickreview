@@ -335,3 +335,21 @@ describe("the request watcher", () => {
     }
   });
 });
+
+it("an expired holder cannot renew during another driver's takeover", () => {
+  let time = new Date("2026-09-29T10:00:00Z");
+  const clock = () => time;
+  const a = fileLease(dir, { holder: "a", clock });
+  expect(a.claim("run-a")).toBe(true);
+  time = new Date(time.getTime() + LEASE_TTL_MS + 1);
+  let renewed: boolean | undefined;
+  const b = fileLease(dir, {
+    holder: "b",
+    clock,
+    beforeCreate: () => {
+      renewed = a.renew("run-a");
+    },
+  });
+  expect(b.claim("run-b")).toBe(true);
+  expect(renewed).toBe(false);
+});

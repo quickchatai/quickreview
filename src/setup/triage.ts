@@ -139,8 +139,14 @@ export function findingTicket(
 
 // ---- the scan memory ledger -------------------------------------------------------
 
+type PendingScanNote =
+  | { kind: "pattern"; text: string; occurrences: number; at: string }
+  | { kind: "hotspot"; unit: string; text: string; at: string };
+
 export interface ScanMemoryRecord {
   run: string;
+  /** Durable reservation until both the named note and its cap count land. */
+  pending?: PendingScanNote;
   patterns: Array<{ text: string; occurrences: number; at: string }>;
   hotspots: Record<string, { text: string; at: string }>;
 }
@@ -247,7 +253,7 @@ export type ScanMemoryResult =
 export class ScanTriage {
   constructor(private readonly ports: TriagePorts) {}
 
-  private async note(text: string): Promise<"written" | { problem: string }> {
+  private async note(text: string): Promise<"written" | { problem: string; uncertain?: true }> {
     const memory = this.ports.memory;
     if (memory === null) return { problem: "no reviewer memory in this assembly" };
     try {
@@ -259,7 +265,7 @@ export class ScanTriage {
       const r = await memory.apply({ op: "note", text, name });
       return r.ok ? "written" : { problem: r.message };
     } catch (err) {
-      return { problem: `memory unreachable: ${clean(err)}` };
+      return { problem: `memory unreachable: ${clean(err)}`, uncertain: true };
     }
   }
 
@@ -510,8 +516,13 @@ export class ScanTriage {
       ok: true,
       sha: r.run.sha,
       run: r.run.id,
-      patterns: rec?.patterns.length ?? 0,
-      hotspots: Object.keys(rec?.hotspots ?? {}),
+      patterns: (rec?.patterns.length ?? 0) + (rec?.pending?.kind === "pattern" ? 1 : 0),
+      hotspots: [
+        ...new Set([
+          ...Object.keys(rec?.hotspots ?? {}),
+          ...(rec?.pending?.kind === "hotspot" ? [rec.pending.unit] : []),
+        ]),
+      ],
     };
   }
 
@@ -595,6 +606,54 @@ export class ScanTriage {
       hotspots: {},
     };
 
+    file.scans[run.sha] = rec;
+    const persist = (): void =>
+      this.ports.state.write(SCAN_MEMORY_FILE, `${JSON.stringify(file, null, 1)}\n`);
+    const settlePending = async (
+      recovering = false,
+    ): Promise<{ written: boolean; problem: string | null }> => {
+      const p = rec.pending!;
+      const result = await this.note(
+        p.kind === "pattern" ? patternMemoryText(p, run.sha) : hotspotMemoryText(p, run.sha),
+      );
+      if (result !== "written") {
+        // A newly refused note is not counted. A recovered reservation may
+        // already have landed before the prior process lost its checkpoint.
+        if (!recovering && !result.uncertain) {
+          delete rec.pending;
+          try {
+            persist();
+          } catch {
+            rec.pending = p;
+          }
+        }
+        return { written: false, problem: result.problem };
+      }
+      if (p.kind === "pattern")
+        rec.patterns.push({ text: p.text, occurrences: p.occurrences, at: p.at });
+      else rec.hotspots[p.unit] = { text: p.text, at: p.at };
+      delete rec.pending;
+      try {
+        persist();
+        return { written: true, problem: null };
+      } catch (err) {
+        return {
+          written: true,
+          problem: `the cap checkpoint was not saved: ${clean(err)}; its durable reservation will be recovered before more notes`,
+        };
+      }
+    };
+    const written = { patterns: 0, hotspots: 0 };
+    if (rec.pending) {
+      const kind = rec.pending.kind;
+      const recovery = await settlePending(true);
+      if (recovery.problem !== null)
+        return {
+          ok: false,
+          errors: [`the pending scan memory note could not be settled: ${recovery.problem}`],
+        };
+      written[kind === "pattern" ? "patterns" : "hotspots"]++;
+    }
     const errors: string[] = [];
     const rawP = req.patterns ?? [];
     const rawH = req.hotspots ?? [];
@@ -626,7 +685,8 @@ export class ScanTriage {
           `patterns[${i}].occurrences must be an integer ≥ 2 — a pattern recurs; one occurrence is a finding`,
         );
       }
-      patterns.push({ text, occurrences: occ as number });
+      if (!rec.patterns.some((p) => p.text === text && p.occurrences === occ))
+        patterns.push({ text, occurrences: occ as number });
     }
     const seenUnits = new Set<string>();
     for (const [i, raw] of (rawH as unknown[]).entries()) {
@@ -637,10 +697,13 @@ export class ScanTriage {
       if (units === null) errors.push(`hotspots[${i}]: no saved unit cut to name a unit from`);
       else if (!units.includes(unit))
         errors.push(`hotspots[${i}].unit ${JSON.stringify(unit)} is not a unit of the saved cut`);
-      else if (seenUnits.has(unit) || Object.hasOwn(rec.hotspots, unit))
+      else if (
+        seenUnits.has(unit) ||
+        (Object.hasOwn(rec.hotspots, unit) && rec.hotspots[unit]!.text !== text)
+      )
         errors.push(`hotspots[${i}]: ${unit} already has its one hotspot for this scan`);
       seenUnits.add(unit);
-      hotspots.push({ unit, text });
+      if (rec.hotspots[unit]?.text !== text) hotspots.push({ unit, text });
     }
     if (rec.patterns.length + patterns.length > MAX_PATTERNS_PER_SCAN) {
       errors.push(
@@ -648,46 +711,40 @@ export class ScanTriage {
           `${MAX_PATTERNS_PER_SCAN - rec.patterns.length} left (got ${patterns.length}) — keep the strongest`,
       );
     }
-    if (patterns.length === 0 && hotspots.length === 0)
+    if ((rawP as unknown[]).length === 0 && (rawH as unknown[]).length === 0)
       errors.push("nothing to write — give patterns, hotspots or both");
     if (errors.length > 0) return { ok: false, errors };
 
     const problems: string[] = [];
-    const written = { patterns: 0, hotspots: 0 };
-    const now = (): string => this.ports.clock().toISOString();
-    // The cap record is saved after EVERY note memory took, so an interrupted
-    // call leaves each landed note counted and a retry cannot exceed the caps.
-    file.scans[run.sha] = rec;
-    let unsaved = null as string | null; // set by save(), read after the loops
-    const save = (): void => {
+    const publish = async (pending: PendingScanNote): Promise<boolean> => {
+      rec.pending = pending;
       try {
-        this.ports.state.write(SCAN_MEMORY_FILE, `${JSON.stringify(file, null, 1)}\n`);
-        unsaved = null;
+        persist();
       } catch (err) {
-        unsaved = clean(err);
+        delete rec.pending;
+        problems.push(`the cap reservation could not be saved: ${clean(err)} — no note was sent`);
+        return false;
       }
+      const result = await settlePending();
+      if (result.written) written[pending.kind === "pattern" ? "patterns" : "hotspots"]++;
+      if (result.problem !== null) {
+        problems.push(result.problem);
+        return false;
+      }
+      return true;
     };
+    let ready = true;
     for (const p of patterns) {
-      const r = await this.note(patternMemoryText(p, run.sha));
-      if (r === "written") {
-        rec.patterns.push({ ...p, at: now() });
-        written.patterns++;
-        save();
-      } else problems.push(`pattern "${p.text.slice(0, 60)}" not written: ${r.problem}`);
+      if (!(await publish({ kind: "pattern", ...p, at: this.ports.clock().toISOString() }))) {
+        ready = false;
+        break;
+      }
     }
-    for (const h of hotspots) {
-      const r = await this.note(hotspotMemoryText(h, run.sha));
-      if (r === "written") {
-        rec.hotspots[h.unit] = { text: h.text, at: now() };
-        written.hotspots++;
-        save();
-      } else problems.push(`hotspot for ${h.unit} not written: ${r.problem}`);
-    }
-    if (unsaved !== null) {
-      problems.push(
-        `the cap record was not saved (${unsaved}) — memory was written, but the cap will not count these`,
-      );
-    }
+    if (ready)
+      for (const h of hotspots) {
+        if (!(await publish({ kind: "hotspot", ...h, at: this.ports.clock().toISOString() })))
+          break;
+      }
     return {
       ok: true,
       sha: run.sha,
@@ -695,8 +752,13 @@ export class ScanTriage {
       written,
       problems,
       left: {
-        patterns: MAX_PATTERNS_PER_SCAN - rec.patterns.length,
-        units_without_hotspot: (units ?? []).filter((u) => !Object.hasOwn(rec.hotspots, u)),
+        patterns:
+          MAX_PATTERNS_PER_SCAN - rec.patterns.length - (rec.pending?.kind === "pattern" ? 1 : 0),
+        units_without_hotspot: (units ?? []).filter(
+          (u) =>
+            !Object.hasOwn(rec.hotspots, u) &&
+            !(rec.pending?.kind === "hotspot" && rec.pending.unit === u),
+        ),
       },
     };
   }

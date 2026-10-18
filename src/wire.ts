@@ -152,6 +152,25 @@ export interface ProductionParts {
    * buildParts builds that client before the memory health monitor exists,
    * so createProductionDaemon points `sink` at the monitor once it does. */
   memoryRequests?: { sink: ((record: OvRequestRecord) => void) | null };
+  /** Configured memory whose optional boot migration could not complete. */
+  memoryBootFailure?: string;
+}
+
+/** A configured engine refused before it could open partial migrated state. */
+export function migrationMemoryStatus(reason: string, at: Date = new Date()): MemoryStatus {
+  return {
+    ...pendingMemoryStatus(at),
+    state: "down",
+    down_cause: "unanswered",
+    last_error: {
+      at: at.toISOString(),
+      op: "boot",
+      status: 0,
+      code: "migration_incomplete",
+      message: reason,
+    },
+    serving: { ok: false, since: at.toISOString(), reason },
+  };
 }
 
 export function buildParts(root = sandboxRoot(), loaded = loadConfig()): ProductionParts {
@@ -161,7 +180,17 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   // config.toml, the preset and the defaults. A malformed `[lenses]` table
   // fails the boot loudly, like every other profile loader.
   // The profile's `[posting]` policy rides the same overlay (src/postingpolicy.ts).
-  const cfg = applyProfileOverlays(root, loaded);
+  const overlaid = applyProfileOverlays(root, loaded);
+  // A failed optional boot migration leaves its destination incomplete. No
+  // client, raw session or supervisor may open it until the next clean boot.
+  const cfg =
+    process.env.QCR_OPENVIKING_BOOT_DISABLED === "1"
+      ? { ...overlaid, openviking: { ...overlaid.openviking, enabled: false } }
+      : overlaid;
+  const memoryBootFailure =
+    process.env.QCR_OPENVIKING_BOOT_DISABLED === "1" && overlaid.openviking.enabled
+      ? "OpenViking state migration is incomplete; memory is unavailable for this boot — original files were retained; retry after correcting storage and restarting"
+      : undefined;
   const minter = new TokenMinter(cfg.github.secrets_dir);
   const gate: MutationGate = new MutationGate(
     cfg.dry_run,
@@ -192,7 +221,16 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
     ovSessions,
     configPath: liveConfigPath(),
   });
-  return { cfg, root, minter, gate, adapter, sessions, memoryRequests };
+  return {
+    cfg,
+    root,
+    minter,
+    gate,
+    adapter,
+    sessions,
+    memoryRequests,
+    ...(memoryBootFailure ? { memoryBootFailure } : {}),
+  };
 }
 
 // Exit-code checked, cwd mandatory: a runner that ignored git's exit or
@@ -772,6 +810,7 @@ export function overseerOriginStore(
 
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
   const { cfg, root, gate, adapter, sessions } = parts;
+  const memoryBootAt = new Date();
   const log = (msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? "");
   // The last run's heartbeat, read before start() writes this boot's first
   // status.json over it: the Slack `daemon.up` downtime is measured from it.
@@ -1114,9 +1153,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     memoryStatus: (): MemoryStatus => {
       const base = memoryHealth
         ? memoryHealth.status()
-        : memoryUnmonitored !== null
-          ? disabledMemoryStatus(memoryUnmonitored)
-          : pendingMemoryStatus();
+        : parts.memoryBootFailure
+          ? migrationMemoryStatus(parts.memoryBootFailure, memoryBootAt)
+          : memoryUnmonitored !== null
+            ? disabledMemoryStatus(memoryUnmonitored)
+            : pendingMemoryStatus();
       // The finding-case ledger, when a case writer runs (the block is a
       // fresh object each call). Unread is unknown (null), never
       // "nothing owed".

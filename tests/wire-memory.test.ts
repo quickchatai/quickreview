@@ -6,10 +6,11 @@
 // if a refactor disconnects memory while leaving the suite green.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { MEMORY_DEFAULTS } from "../src/config.js";
+import { describe, expect, it, vi } from "vitest";
+import { MEMORY_DEFAULTS, parseConfig } from "../src/config.js";
+import { memoryStatusLine } from "../src/memory/health.js";
 import { DEFAULT_CATEGORY } from "../src/openviking/store.js";
-import { roundMemorySeed } from "../src/wire.js";
+import { buildParts, migrationMemoryStatus, roundMemorySeed } from "../src/wire.js";
 
 const wire = readFileSync(join(process.cwd(), "src", "wire.ts"), "utf8");
 
@@ -410,4 +411,35 @@ describe("wire.ts: lesson delivery is actually connected", () => {
       /lessonDeliveryStatus\(lessonLedger, cfg\.memory\.delivery, \{\s*selecting: lessonSelector !== null,\s*\}\)/,
     );
   });
+});
+
+it("a failed boot migration disables every assembled memory consumer without changing operator config", () => {
+  const loaded = parseConfig(
+    readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+  );
+  expect(loaded.openviking.enabled).toBe(true);
+  vi.stubEnv("QCR_OPENVIKING_BOOT_DISABLED", "1");
+  try {
+    const parts = buildParts(process.cwd(), loaded);
+    expect(parts.cfg.openviking.enabled).toBe(false);
+    expect(parts.sessions.cfg.openviking.enabled).toBe(false);
+    expect(parts.memoryBootFailure).toMatch(/migration.*incomplete/i);
+    const status = migrationMemoryStatus(parts.memoryBootFailure!);
+    expect(status).toMatchObject({
+      enabled: true,
+      state: "down",
+      last_error: { code: "migration_incomplete" },
+      serving: { ok: false },
+    });
+    expect(memoryStatusLine(status)).toMatch(/DOWN.*migration.*incomplete/i);
+    // MUTATION: remove the parts.memoryBootFailure branch from memoryStatus — this fails.
+    expect(wire).toMatch(
+      /memoryStatus:.*[\s\S]*?migrationMemoryStatus\(parts\.memoryBootFailure, memoryBootAt\)/,
+    );
+
+    expect(loaded.openviking.enabled).toBe(true);
+    expect(parts.cfg.dry_run).toBe(loaded.dry_run);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

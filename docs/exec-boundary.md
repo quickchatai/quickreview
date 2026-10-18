@@ -284,6 +284,14 @@ until runtime, was re-parsed as the empty string and allowed.
   channels, every spelling), relocated (`QCR_CONFIG`) or shadowed by a
   receipt-dir relocation (`QCR_POSTING_RECEIPT_DIR`) — and a rewrite
   that reaches it anyway is a `policy_surface_modified` wake at round end.
+- **The profile recovery journal is policy too.** Setup records a pending
+  profile update in `state/setup/qcr-profile-write.json` before it changes
+  profile files; an explicit write retry replays that intent. The reviewer
+  cannot write that basename or its `.qcr-profile-write.json.tmp` sibling,
+  through file tools or shell redirections, including pathname patterns.
+  The audit classifies these as `policy_surface_write`. Like built
+  `state/agents/**`, this companion-owned file changes during normal work,
+  so layer 4 does not hash it; the located profile outputs remain watched.
 - **Layer 4 watches the policy surface.** The same fingerprint dispatch takes
   and verdicts re-checks hashes `config.toml` and the seven directories,
   recursively by content, so `T=config.toml; cat p > $T` — the one spelling no
