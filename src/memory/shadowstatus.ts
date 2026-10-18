@@ -55,19 +55,30 @@ export interface LessonDeliveryStatus {
   as_of: string;
 }
 
+function deliveryMode(s: LessonDeliveryStatus): "off" | "killed" | "on" | "inactive" | "shadow" {
+  if (s.delivery === "off") return "off";
+  if (s.lessons_off) return "killed";
+  return s.delivering ? "on" : s.delivery === "on" ? "inactive" : "shadow";
+}
+
+/** The TUI section's short mode label, with the same precedence as its headline. */
+export function lessonSectionTitle(s: LessonDeliveryStatus): string {
+  const mode = deliveryMode(s);
+  if (mode === "off") return "LESSONS (delivery off)";
+  if (mode === "killed") return "LESSONS (kill switch OFF)";
+  return `LESSONS (${mode === "inactive" ? "on — nothing delivered" : mode}, ${s.window_days}d)`;
+}
+
 /** The headline as one phrase — the `qcr status` clause without its "; ",
  * and the first line the TUI's feedback tab paints. UNKNOWN when the daemon
  * could not read its ledger (null): never "nothing happened". */
 export function lessonHeadline(s: LessonDeliveryStatus | null): string {
   if (s === null) return "lessons UNKNOWN (the daemon could not read its lesson ledger)";
-  if (s.delivery === "off") return "lessons delivery off";
+  const delivery = deliveryMode(s);
+  if (delivery === "off") return "lessons delivery off";
   const supp = s.suppressed > 0 ? `, ${s.suppressed} suppressed` : "";
-  if (s.lessons_off) return `LESSONS OFF (operator kill switch)${supp}`;
-  const mode = s.delivering
-    ? "on"
-    : s.delivery === "on"
-      ? "on (nothing delivered — memory is off)"
-      : "shadow";
+  if (delivery === "killed") return `LESSONS OFF (operator kill switch)${supp}`;
+  const mode = delivery === "inactive" ? "on (nothing delivered — memory is off)" : delivery;
   const time = s.timeouts > 0 ? `, ${s.timeouts} prefetch timeouts` : "";
   const unread = s.unreadable > 0 ? `, ${s.unreadable} unreadable` : "";
   // The total holds lens-tier findings too, which the validator's license
@@ -77,12 +88,12 @@ export function lessonHeadline(s: LessonDeliveryStatus | null): string {
   const label = s.tiers === undefined ? "would-demote" : "marked";
   return (
     `lessons ${mode} ${s.window_days}d: ${s.rounds} rounds${time}${unread}, ` +
-    `${s.marks} ${label} (harm ${s.harm}, help ${s.help}, unknown ${s.unknown})${supp}`
+    `${outcomePhrase(label, s)}${supp}`
   );
 }
 
-function tierPhrase(name: string, label: string, t: LessonTierCounts): string {
-  return `${name} ${t.marks} ${label} (harm ${t.harm}, help ${t.help}, unknown ${t.unknown})`;
+function outcomePhrase(label: string, t: LessonTierCounts): string {
+  return `${t.marks} ${label} (harm ${t.harm}, help ${t.help}, unknown ${t.unknown})`;
 }
 
 /**
@@ -99,8 +110,8 @@ export function lessonTierLine(s: LessonDeliveryStatus | null): string | null {
   if (s.tiers === undefined)
     return "by tier: UNKNOWN (this daemon predates lens-level matching)";
   return (
-    `by tier: ${tierPhrase("class", "would-demote", s.tiers.class)} · ` +
-    tierPhrase("lens", "evidence only", s.tiers.lens)
+    `by tier: class ${outcomePhrase("would-demote", s.tiers.class)} · ` +
+    `lens ${outcomePhrase("evidence only", s.tiers.lens)}`
   );
 }
 
