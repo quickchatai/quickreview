@@ -307,13 +307,15 @@ export function recordCapturedComment(
   c: CapturedComment,
   via: "webhook" | "reconcile",
 ): boolean {
-  if (!store.recordPrComment({ ...c, captured_via: via })) return false;
-  store.logEvent("comment_captured", c.pr, {
-    source: c.source,
-    comment_id: c.comment_id,
-    author: c.author,
-    tagged: c.tagged,
-    via,
-  });
-  return true;
+  return store.db.transaction(() => {
+    if (!store.recordPrComment({ ...c, captured_via: via })) return false;
+    store.logEvent("comment_captured", c.pr, {
+      source: c.source,
+      comment_id: c.comment_id,
+      author: c.author,
+      tagged: c.tagged,
+      via,
+    });
+    return true;
+  })();
 }

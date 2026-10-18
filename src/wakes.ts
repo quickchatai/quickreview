@@ -61,6 +61,8 @@ export async function wakeOrHold(
      * injection leaves the wake held for the flush paths. Callers that
      * release their own claim on failure leave this off. */
     holdOnFailure?: boolean;
+    /** Synchronous claim on this same database, committed with its held wake. */
+    claim?: () => boolean;
     /** A recheck nudge (`recheck:*`) on a paused PR is held, not delivered:
      * the pause defers the question until it lifts (`RECHECK_WAKE_PREFIX`). */
     deferWhilePaused?: boolean;
@@ -68,6 +70,23 @@ export async function wakeOrHold(
 ): Promise<WakeDisposition> {
   const { store } = deps;
   const log = deps.log ?? ((): void => {});
+  if (opts.claim) {
+    const claimed = store.db.transaction(() => {
+      if (!opts.claim!()) return false;
+      hold(deps, pr, message, reason);
+      return true;
+    })();
+    if (!claimed) return "held";
+    if ((opts.deferWhilePaused && store.getPr(pr)?.paused) ||
+      store.hasRunningRound(pr) || store.blockingSessionCommand(`pr-${pr}`)) return "held";
+    // No network/process action runs inside the claim transaction.
+    await flushHeldWakes(deps, pr);
+    if (!stillHeld(store, pr, message)) return "injected";
+    store.logEvent("wake_inject_failed_held", pr, { reason });
+    log(`wakes: #${pr} ${reason} wake not delivered — held for retry`);
+    return "held";
+  }
+
   if (opts.deferWhilePaused && store.getPr(pr)?.paused) {
     hold(deps, pr, message, reason);
     store.logEvent("wake_deferred_paused", pr, { reason });

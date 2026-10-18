@@ -5,9 +5,10 @@
 // author-reply path.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   captureFromEvent,
+  recordCapturedComment,
   isBotIdentity,
   isHumanCapture,
   capturedFromReview,
@@ -913,4 +914,16 @@ describe("the reconcile capture sweep", () => {
     expect(report.errors.join(" ")).toContain("comment-capture #4242");
     store.close();
   });
+});
+
+it("rolls back a captured comment if its required audit event cannot persist", () => {
+  const store = trackedStore();
+  try {
+    const comment = capturedFromReviewComment(PR, {
+      id: 991234, user: "alice", body: "please reconsider", path: "app.ts", line: 1,
+    } as ReviewCommentFull);
+    vi.spyOn(store, "logEvent").mockImplementation(() => { throw new Error("audit unavailable"); });
+    expect(() => recordCapturedComment(store, comment, "webhook")).toThrow("audit unavailable");
+    expect(store.db.prepare("SELECT 1 FROM pr_comments WHERE comment_id = ?").get(comment.comment_id)).toBeUndefined();
+  } finally { store.close(); }
 });

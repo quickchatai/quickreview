@@ -357,7 +357,7 @@ export async function serveAuthorReply(
       return;
     }
   }
-  if (!pingpong.claimAuthorMessage(event)) return;
+  let claimed = false;
   const row = store.getPr(reply.pr);
   // The PR's one main pi never gets a second instruction while its round
   // is in flight — the wake is held and flushed at round end (rule 9).
@@ -379,8 +379,9 @@ export async function serveAuthorReply(
     // The message is already claimed: the wake is held before the
     // injection is awaited and stays held if it fails, or no redelivery
     // can ever answer it.
-    { holdOnFailure: true },
+    { holdOnFailure: true, claim: () => { claimed = pingpong.claimAuthorMessage(event); return claimed; } },
   );
+  if (!claimed) return;
   if (disposition === "held")
     log(`pingpong: #${reply.pr} reply held — round in flight, backlog or failed inject`);
 }
