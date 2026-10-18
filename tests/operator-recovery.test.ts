@@ -687,3 +687,24 @@ describe("operator PR recovery", () => {
     expect(store.blockingSessionCommand(`pr-${pr}`)?.id).toBe(c.row.id);
   });
 });
+
+describe("restart command delivery receipts", () => {
+  it("does not kill a replacement session when the same command delivery is replayed", async () => {
+    const { store } = setup();
+    const pump = vi.fn(async () => {});
+    const killSession = vi.fn(async () => {});
+    const deps = { store, pump, killSession, deliveryKey: "watcher/restart/version-1" };
+    const first = await recoverPrForOperator(deps, 5409, "restart-session");
+    expect(await recoverPrForOperator(deps, 5409, "restart-session")).toEqual(first);
+    expect(killSession).toHaveBeenCalledTimes(1);
+  });
+  it("retains an uncertain restart rather than repeating a potentially completed kill", async () => {
+    const { store } = setup();
+    const pump = vi.fn(async () => {});
+    const killSession = vi.fn().mockRejectedValueOnce(new Error("kill acknowledgement lost")).mockResolvedValue(undefined);
+    const deps = { store, pump, killSession, deliveryKey: "watcher/restart/version-2" };
+    await expect(recoverPrForOperator(deps, 5409, "restart-session")).rejects.toThrow("kill acknowledgement lost");
+    expect(await recoverPrForOperator(deps, 5409, "restart-session")).toMatchObject({ ok: false, reason: expect.stringMatching(/unknown/) });
+    expect(killSession).toHaveBeenCalledTimes(1);
+  });
+});

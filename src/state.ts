@@ -1139,6 +1139,10 @@ CREATE TABLE IF NOT EXISTS filed_items (
   ref TEXT,
   filed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS command_effect_receipts (
+  delivery_key TEXT PRIMARY KEY,
+  result TEXT
+);
 -- Stable command delivery receipts for issue filing; the cap reservation and
 -- pending receipt are committed together before the gated creation request.
 CREATE TABLE IF NOT EXISTS filing_receipts (
@@ -6499,6 +6503,21 @@ export class StateStore {
   /** Free a reserved slot whose creation GitHub definitely refused. */
   releaseFiledItem(id: number): void {
     this.db.prepare("DELETE FROM filed_items WHERE id = ?").run(id);
+  }
+
+  commandEffectReceipt(key: string): { result: string | null } | undefined {
+    return this.db.prepare("SELECT result FROM command_effect_receipts WHERE delivery_key = ?")
+      .get(key) as { result: string | null } | undefined;
+  }
+
+  reserveCommandEffect(key: string): boolean {
+    return this.db.prepare("INSERT OR IGNORE INTO command_effect_receipts (delivery_key) VALUES (?)")
+      .run(key).changes === 1;
+  }
+
+  settleCommandEffect(key: string, result: unknown): void {
+    this.db.prepare("UPDATE command_effect_receipts SET result = ? WHERE delivery_key = ? AND result IS NULL")
+      .run(JSON.stringify(result), key);
   }
 
   filingReceipt(key: string): { slot: number; result: string | null } | undefined {

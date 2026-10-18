@@ -936,3 +936,14 @@ describe("authorizeCommand (pure)", () => {
     ).toBe(false);
   });
 });
+
+it("passes trusted delivery identity to timed levers and restart without reading it from payload", async () => {
+  const deps = { ...makeDeps(), drain: vi.fn(async () => ({ ok: true })) };
+  const context = { file: "slack/request", issuer: "session" as const, delivery_key: "parsed/version" };
+  await executeCommand({ command: "restart-session", pr: 12 }, deps, context);
+  expect(deps.restartSession).toHaveBeenCalledWith(12, "parsed/version");
+  await executeCommand({ command: "pause-pr", pr: 12, reason: "fixture", for_min: 5 }, deps, context);
+  expect(deps.pausePr).toHaveBeenCalledWith(12, "fixture", "session", 5, "parsed/version");
+  await executeCommand({ command: "drain", on: true, for_min: 5 }, deps, context);
+  expect(deps.drain).toHaveBeenCalledWith(true, "session", 5, "parsed/version");
+});
