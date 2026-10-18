@@ -124,6 +124,21 @@ function withRepo(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.Process
   return { lc: new CompanionLifecycle(CFG, runner, env, noDirs, fs), calls };
 }
 
+/** Same, with the app built under the build context (the image copies its
+ * dist/) and the build stamp fixed, so a cold start may build the image. */
+function withBuiltApp(
+  answers: Parameters<typeof fakeDocker>[0],
+  env: NodeJS.ProcessEnv = HOST_ENV,
+) {
+  const { runner, calls } = fakeDocker(answers);
+  const fs: CompanionFs = {
+    exists: (p) => p === resolve(CFG.build_context, "dist/src/cli.js"),
+    read: () => undefined,
+    mode: () => undefined,
+  };
+  return { lc: new CompanionLifecycle(CFG, runner, env, noDirs, fs, () => "stamp"), calls };
+}
+
 /** ensureUp() resolves the memory wiring first (docker network …).
  * That is its own test file (companion-memory.test.ts); the lifecycle
  * assertions below are about the container, so the network calls are filtered
@@ -732,7 +747,7 @@ describe("CompanionLifecycle state machine", () => {
   });
 
   it("self-heals a missing image: builds it, then runs — never fails on first launch", async () => {
-    const { lc, calls } = lifecycle([
+    const { lc, calls } = withBuiltApp([
       inspect("absent"),
       (argv) =>
         argv[0] === "image"
@@ -769,7 +784,10 @@ describe("CompanionLifecycle state machine", () => {
   });
 
   it("reports a docker run failure with the stderr tail", async () => {
-    const { lc } = lifecycle([inspect("absent"), () => ({ ...FAIL, stderr: "boom: no image\n" })]);
+    const { lc } = withBuiltApp([
+      inspect("absent"),
+      () => ({ ...FAIL, stderr: "boom: no image\n" }),
+    ]);
     await expect(lc.ensureUp()).rejects.toThrow(/boom: no image/);
   });
 

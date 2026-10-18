@@ -140,6 +140,10 @@ _Avoid_: dry run, trial
 The process that drives a scan run's cases — the companion, or a `qcr scan` driver — holding the driver lease while it does; a run recorded as running that no live lease names was interrupted.
 _Avoid_: scan owner, scan host
 
+**Scan sandbox**:
+Where a `qcr scan start` driver runs by default: a throwaway container from the companion image, mounting only the reviewed repo (read-only), the state home, the scan's own pi home and the config, and refused when the image was built from other code than the checkout's.
+_Avoid_: scan container (it is one, but the term names the boundary), companion (the companion is the long-lived session)
+
 **Hard stop**:
 The cap a scan run never spends past — the estimate the operator approved (the calibration cap for a calibration run); reaching it aborts what is in flight, and the ledger holds only what finished.
 _Avoid_: budget (that is what the operator gives stage 2's proposal)

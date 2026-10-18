@@ -494,7 +494,7 @@ may be omitted entirely; its defaults constant then supplies the whole block.
 | `[escalation]` | yes (`ESCALATION_DEFAULTS`) | `parseEscalation` | `src/escalation.ts` |
 | `[levers]` | yes (`LEVERS_DEFAULTS`) | `parseLevers` | `src/levers.ts` |
 | `[archive]` | yes (`ARCHIVE_DEFAULTS`) | `parseArchive` | `src/archive/` |
-| `[scan]` | yes (`SCAN_DEFAULTS`) | `parseScan` | `src/setup/` (read only inside the companion) |
+| `[scan]` | yes (`SCAN_DEFAULTS`, `SCAN_SANDBOX_DEFAULTS`) | `parseScan`, `parseScanSandbox` | `src/setup/` (the scan engine); `sandbox` / `pihome_volume` / `image` by `src/scancli.ts` and `src/scanbox.ts` |
 | `[slack]` (+ `.users`, `.policy`, `.policy.causes`) | yes (`SLACK_DEFAULTS`) | `parseSlack` | `src/slack/` |
 
 Two sections validate rather than merely parse, and refuse to load on a
@@ -644,7 +644,8 @@ explicit, an empty `ssh_host` does not mean local), `ssh_host`, `container`
 `container_name` (`"qcr-companion"`), `image`, `pihome_volume`, `session`,
 `model`, and the host paths `repo_dir`, `tracker_dir`, `tracker_docs_dir`,
 `reviewed_repo_dir`, `evidence_dir`, `feed_dir`, `alerts_dir`, `ssh_dir`,
-`build_context` (the shipped path defaults are operator-specific — read
+`build_context` (the app root by default — the image copies its built app;
+the shipped path defaults are operator-specific — read
 `COMPANION_DEFAULTS` in `src/config.ts`), plus the watcher knobs
 `overdue_grace_min` (`30`), `stale_alert_s` (`300`), `awaiting_age_h` (`24`),
 `cooldown_min` (`20`). `resolveCompanionPaths` expands `~` and fills the empty

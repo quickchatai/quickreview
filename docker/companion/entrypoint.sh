@@ -4,10 +4,33 @@
 # spawned by the TUI through `docker exec` (src/tui/companion.ts), the same
 # adopt-don't-kill shape the VM sessions use — so a pi crash never takes the
 # container (and the conversation volume) with it.
+#
+# One-shot mode: given a command (`docker run … <image> <cmd…>`), it
+# provisions pi's settings and then execs that command instead of the tmux
+# server — how the scan sandbox runs its driver (src/scanbox.ts) and how
+# `qcr scan login` / `doctor` run pi. Its own lines go to stderr, so the
+# command's stdout is the command's; with QCR_DRIVER_LOG set, both go to that
+# file (the scan driver's log in the mounted state home).
 set -euo pipefail
 
+if [ "$#" -gt 0 ]; then
+  ENTRY_MODE=oneshot
+  if [ -n "${QCR_DRIVER_LOG:-}" ]; then
+    mkdir -p "$(dirname "$QCR_DRIVER_LOG")"
+    exec >>"$QCR_DRIVER_LOG" 2>&1
+  fi
+  exec 3>&1 1>&2
+else
+  ENTRY_MODE=companion
+fi
+# The settings merge below reads it: a one-shot container has no /workspace.
+export QCR_ENTRY_MODE="$ENTRY_MODE"
+
 PI_HOME_DIR="${HOME}/.pi"
-mkdir -p "$PI_HOME_DIR/agent" /workspace /tracker /feed /alerts 2>/dev/null || true
+mkdir -p "$PI_HOME_DIR/agent" 2>/dev/null || true
+if [ "$ENTRY_MODE" = companion ]; then
+  mkdir -p /workspace /tracker /feed /alerts 2>/dev/null || true
+fi
 
 # Durability guard. pi writes its OAuth token, settings and trust store under
 # $HOME/.pi. If that is NOT the mounted volume (a uid collision moving $HOME is
@@ -27,6 +50,10 @@ if ! awk -v d="$PI_HOME_DIR" '$2 == d { found = 1 } END { exit !found }' /proc/m
 else
   echo "pi home on the volume: $PI_HOME_DIR (OAuth + conversation are durable)"
 fi
+
+# Everything from here to the pi settings is the companion's: its mounts,
+# its tmux and its git identity. A one-shot container skips it.
+if [ "$ENTRY_MODE" = companion ]; then
 
 # Reviewed-repo mount. The reviewed repo's source arrives READ-ONLY at
 # /reviewed-repo so the companion can read the code a review is about. It is
@@ -109,6 +136,8 @@ git config --global user.email "companion@quickchat.ai" || true
 # confusing ownership error rather than a permission one.
 git config --global --add safe.directory /workspace || true
 
+fi
+
 # pi settings. ~/.pi lives on a named volume; the merge below preserves every
 # existing key (hand edits win, append-only extensions).
 #
@@ -122,6 +151,10 @@ mkdir -p "$PI_HOME_DIR/agent"
 # absent would skip every key once pi itself had written settings.json.
 node <<'PI_EXT_MERGE'
 const fs = require("fs");
+// A one-shot container (the scan sandbox, `qcr scan login`) mounts no
+// /workspace: the skills, the companion agent set and the /workspace trust
+// are the companion's alone, and are left untouched there.
+const oneshot = process.env.QCR_ENTRY_MODE === "oneshot";
 const path = process.env.HOME + "/.pi/agent/settings.json";
 let cfg = {};
 try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
@@ -166,7 +199,7 @@ cfg.extensions = cfg.extensions.filter((p) => !/^[-+!]?builtin:/.test(p)).concat
 // discipline as the vendored OpenViking extension in piArgv.
 const skillsDir = "/workspace/.claude/skills";
 if (!Array.isArray(cfg.skills)) cfg.skills = [];
-const skillsPresent = fs.existsSync(skillsDir);
+const skillsPresent = !oneshot && fs.existsSync(skillsDir);
 if (skillsPresent && !cfg.skills.includes(skillsDir)) cfg.skills.push(skillsDir);
 
 // OUR OWN skills, a SECOND registered directory. `.claude/skills` is
@@ -179,7 +212,7 @@ if (skillsPresent && !cfg.skills.includes(skillsDir)) cfg.skills.push(skillsDir)
 // Guarded independently and the same way: a missing dir leaves the companion
 // under-equipped (it keeps the vendored set), never unable to start.
 const ourSkillsDir = "/workspace/skills/companion";
-const ourSkillsPresent = fs.existsSync(ourSkillsDir);
+const ourSkillsPresent = !oneshot && fs.existsSync(ourSkillsDir);
 if (ourSkillsPresent && !cfg.skills.includes(ourSkillsDir)) cfg.skills.push(ourSkillsDir);
 // `/skill:<name>` from pi's own input line. The embedded companion column is a
 // TERMINAL (rule: every byte goes to pi), so the owner's `/` commands reach pi
@@ -190,6 +223,7 @@ cfg.enableSkillCommands = true;
 
 fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
 console.log("pi settings merged (extensions: " + (cfg.extensions.join(", ") || "none registered globally") + ")");
+if (!oneshot) {
 console.log(
   cfg.skills.length
     ? "pi skills registered: " + cfg.skills.join(", ") + " (/skill:<name> enabled)"
@@ -199,12 +233,14 @@ console.log(
 // "the vendored set is there" must never read as "adjudicate is there".
 if (!skillsPresent) console.log("!! " + skillsDir + " is missing — the vendored skill set is not registered.");
 if (!ourSkillsPresent) console.log("!! " + ourSkillsDir + " is missing — our own skills (adjudicate) are not registered.");
+}
 
 // Braces to that belt (mirrors the VM entrypoint): pre-seed the trust store
 // for the workspace, so even a settings regression — or a pihome volume
 // carrying an older settings.json — cannot re-surface the modal. The third
 // layer is `--approve` on the spawn itself (src/tui/companion.ts piArgv).
 // /workspace, not /opt/quickreview: that is where the repo is mounted here.
+if (!oneshot) {
 const trustFile = process.env.HOME + "/.pi/agent/trust.json";
 let trust = {};
 try { trust = JSON.parse(fs.readFileSync(trustFile, "utf8")); } catch {}
@@ -213,6 +249,7 @@ if (trust["/workspace"] !== true) {
   fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
 }
 console.log("pi project trust: defaultProjectTrust=always, /workspace pre-trusted");
+}
 
 // Agent discovery for the native subagent extension (loaded by the
 // first-party glue extensions/subagents.ts — the vendored pi-subagents is
@@ -222,6 +259,7 @@ console.log("pi project trust: defaultProjectTrust=always, /workspace pre-truste
 // /workspace leaves the link dangling and discovery simply finds no agents —
 // an under-equipped companion, never one that won't start. Symlink-or-absent
 // only: a REAL directory here is someone's own agents and is never clobbered.
+if (!oneshot) {
 const agentsLink = process.env.HOME + "/.pi/agent/agents";
 const companionAgents = "/workspace/docker/companion/agents";
 try {
@@ -236,7 +274,14 @@ try {
 } catch (e) {
   console.log("!! could not link " + agentsLink + ": " + e.message);
 }
+}
 PI_EXT_MERGE
+
+# One-shot: the command takes the container from here, its stdout restored.
+if [ "$ENTRY_MODE" = oneshot ]; then
+  exec 1>&3 3>&-
+  exec "$@"
+fi
 
 # OpenAI auth: the OAuth route (`/login` once inside a pi session) persists in
 # $PI_HOME_DIR/agent/auth.json on the volume and takes precedence over the env

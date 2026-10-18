@@ -8,9 +8,13 @@
 // quote the key `preview` handed out (a plan, sha, price or setting that
 // moved since is refused), and a run stops hard at the estimate it showed.
 //
-// Where a run is driven: by this CLI's own process. `start` (and `stage2
-// start`) launches a detached `qcr scan … --foreground` driver, waits until
-// it has recorded the run (or refused), and returns; the driver runs the
+// Where a run is driven: `start` (and `stage2 start`) launches a detached
+// `qcr scan … --foreground` driver, waits until it has recorded the run (or
+// refused), and returns. With `[scan] sandbox = "docker"` (the default) the
+// driver runs in a throwaway container from the companion image
+// (src/scanbox.ts); with `"host"` it is a detached process on this machine.
+// Either way its records are the state home's, so every other subcommand
+// reads them here, on the host. The driver runs the
 // cases, answers the stop channel (the TUI's `[8] scan` stop and
 // `qcr scan stop` alike), and holds the driver lease (src/setup/scanlease.ts)
 // so that the companion and other drivers read its run as running and start
@@ -18,19 +22,14 @@
 // to the run's end. `status --wait` blocks until the recorded run is no longer
 // driven by anyone.
 //
+// Host-side beside them: `units` — the setup belt's unit-cut tools
+// (extensions/setup.ts) — and the sandbox's `login` and `doctor`.
+//
 // Exit codes: 0 done; 1 refused (or a waited-for run that did not end
 // complete); 2 usage; 3 `status --wait` gave up at its `--timeout`.
-import { spawn, type SpawnOptions } from "node:child_process";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  statSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   CLI_VERBS,
   answerMatch,
@@ -48,8 +47,28 @@ import {
   startedLine,
   stopScan,
 } from "../extensions/setup-scan.js";
-import { loadConfig, sandboxRoot } from "./config.js";
+import {
+  CUT_CLI_VERBS,
+  renderCut,
+  renderDraft,
+  renderStatus as renderCutStatus,
+} from "../extensions/setup.js";
+import { loadConfig, sandboxRoot, type CompanionConfig } from "./config.js";
 import { stateHome } from "./install.js";
+import {
+  IN_SANDBOX_ENV,
+  STARTED_FILE_ENV,
+  renderDoctor,
+  writeStartedFile,
+  type DoctorReport,
+} from "./scanbox.js";
+import {
+  DETACH_TIMEOUT_MS,
+  DRIVER_LOG,
+  DRIVER_LOG_MAX,
+  prepareDriverLog,
+} from "./scandriverlog.js";
+import type { SetupEngine } from "./setup/engine.js";
 import type { FindingsStore, ScanFinding } from "./setup/findings.js";
 import { dismissedLookalike, validityOf } from "./setup/scanreport.js";
 import type { ScanRunner, ScanRun, ScanSettings, ScanStatus } from "./setup/scanrun.js";
@@ -63,10 +82,10 @@ export const SCAN_USAGE =
   "findings [--state S] [--lens L] [--unit U] [--severity P] [--validity V] [--doubted|--not-doubted] [--limit N] | " +
   "matches | match --key K [OLD=NEW…] | suggestions | " +
   "stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] | " +
-  "stage2 start --key K [--rows ID,ID…] [--foreground] | dismiss FP… --reason TEXT   (every subcommand takes --json)";
+  "stage2 start --key K [--rows ID,ID…] [--foreground] | dismiss FP… --reason TEXT | " +
+  "units show | units propose [--file F|-] | units adjust --file F|- | units save | login | doctor   (every subcommand takes --json)";
 
-/** Under the state home: the detached driver's output. */
-export const DRIVER_LOG = "scan/driver.log";
+export { DETACH_TIMEOUT_MS, DRIVER_LOG, DRIVER_LOG_MAX };
 /** How often `status --wait` and `stop` look again. */
 export const POLL_MS = 2000;
 
@@ -91,7 +110,13 @@ export type ScanCommand =
   | { verb: "suggestions" }
   | { verb: "stage2-propose"; rows?: string; budget?: number; deep?: boolean; sha?: string }
   | { verb: "stage2-start"; key: string; rows?: string[]; foreground: boolean }
-  | { verb: "dismiss"; fingerprints: string[]; reason: string };
+  | { verb: "dismiss"; fingerprints: string[]; reason: string }
+  | { verb: "units-show" }
+  | { verb: "units-propose"; file?: string }
+  | { verb: "units-adjust"; file: string }
+  | { verb: "units-save" }
+  | { verb: "login" }
+  | { verb: "doctor" };
 
 const usage = (why?: string): Error => new Error(why ? `${SCAN_USAGE}\n(${why})` : SCAN_USAGE);
 
@@ -101,8 +126,8 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
   const [first, ...more] = rest;
   let sub = first;
   let args = more;
-  if (first === "stage2") {
-    sub = `stage2-${more[0] ?? ""}`;
+  if (first === "stage2" || first === "units") {
+    sub = `${first}-${more[0] ?? ""}`;
     args = more.slice(1);
   }
   const flags = new Map<string, string | true>();
@@ -120,6 +145,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
     "--rows",
     "--budget",
     "--reason",
+    "--file",
   ]);
   const BARE = new Set([
     "--delta",
@@ -268,6 +294,27 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
       if (positional.length === 0) throw usage("dismiss needs at least one fingerprint");
       return { verb: "dismiss", fingerprints: positional, reason };
     }
+    case "units-show":
+    case "units-save":
+    case "login":
+    case "doctor":
+      allowed();
+      noPositional();
+      return { verb: sub };
+    case "units-propose": {
+      allowed("--file");
+      noPositional();
+      const file = str("--file");
+      return { verb: "units-propose", ...(file !== undefined ? { file } : {}) };
+    }
+    case "units-adjust": {
+      allowed("--file");
+      noPositional();
+      const file = str("--file");
+      if (file === undefined)
+        throw usage("units adjust needs --file — a JSON array of adjust ops (or - for stdin)");
+      return { verb: "units-adjust", file };
+    }
     default:
       throw usage();
   }
@@ -386,9 +433,13 @@ function proposalJson(p: StoredStage2Proposal): Record<string, unknown> {
 
 // ---- the verb ------------------------------------------------------------------
 
-/** What a detached driver answers once it has recorded its run (or refused). */
+/** What a detached driver answers once it has recorded its run (or refused);
+ * a sandboxed one names its container. */
 export type DetachOutcome =
-  { ok: true; run: ScanRun; log: string } | { ok: false; errors: string[] };
+  { ok: true; run: ScanRun; log: string; container?: string } | { ok: false; errors: string[] };
+
+/** The unit-cut verbs `qcr scan units` calls — the setup engine's. */
+export type UnitCutPort = Pick<SetupEngine, "status" | "propose" | "adjust" | "save">;
 
 export interface ScanCliDeps {
   scan: ScanRunner;
@@ -409,6 +460,12 @@ export interface ScanCliDeps {
   watchStops?: (scan: ScanRunner) => () => void;
   /** A foreground driver's start outcome, for the process that detached it. */
   onStart?: (r: DetachOutcome) => void;
+  /** `units`: the setup engine over the reviewed checkout. Absent: refused. */
+  units?: UnitCutPort | null;
+  /** `doctor`: the sandbox's readiness report. */
+  doctor?: () => Promise<DoctorReport>;
+  /** `login`: pi, interactive, over the scan's pi home; its exit code. */
+  login?: () => Promise<number>;
 }
 
 type Emit = (code: number, human: string, data: Record<string, unknown>) => number;
@@ -483,17 +540,22 @@ export async function runScanCli(
       if (!cmd.foreground) {
         const d = await deps.detach(argv);
         if (!d.ok) return refusal(what, d.errors);
-        return emit(0, `${line(d.run)}\nDriver output: ${d.log}`, {
-          ok: true,
-          run: {
-            id: d.run.id,
-            mode: d.run.mode,
-            sha: d.run.sha,
-            cases: d.run.cases.length,
-            cap_usd: d.run.cap_usd,
+        return emit(
+          0,
+          `${line(d.run)}\nDriver output: ${d.log}${d.container ? `\nContainer: ${d.container}` : ""}`,
+          {
+            ok: true,
+            run: {
+              id: d.run.id,
+              mode: d.run.mode,
+              sha: d.run.sha,
+              cases: d.run.cases.length,
+              cap_usd: d.run.cap_usd,
+            },
+            log: d.log,
+            ...(d.container ? { container: d.container } : {}),
           },
-          log: d.log,
-        });
+        );
       }
       const r =
         cmd.verb === "start"
@@ -671,6 +733,79 @@ export async function runScanCli(
         errors,
       });
     }
+    case "units-show":
+    case "units-propose":
+    case "units-adjust":
+    case "units-save":
+      return units(cmd, deps.units ?? null, emit, refusal);
+    case "doctor": {
+      if (!deps.doctor) return refusal("Doctor", ["no doctor in this assembly"]);
+      const r = await deps.doctor();
+      return emit(r.ok ? 0 : 1, renderDoctor(r), r as unknown as Record<string, unknown>);
+    }
+    case "login":
+      if (!deps.login) return refusal("Login", ["no login in this assembly"]);
+      return deps.login();
+  }
+}
+
+/** `qcr scan units …`: the setup belt's unit-cut tools, over the same
+ * engine and rendering, worded for the CLI. */
+function units(
+  cmd: Extract<ScanCommand, { verb: `units-${string}` }>,
+  engine: UnitCutPort | null,
+  emit: Emit,
+  refusal: (what: string, errors: readonly string[]) => number,
+): number {
+  if (engine === null) return refusal("Unit cut", ["no setup engine in this assembly"]);
+  const readJson = (file: string): { ok: true; value: unknown } | { ok: false; error: string } => {
+    try {
+      return { ok: true, value: JSON.parse(readFileSync(file === "-" ? 0 : file, "utf8")) };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `${file === "-" ? "stdin" : file} cannot be read as JSON: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  };
+  switch (cmd.verb) {
+    case "units-show": {
+      const s = engine.status();
+      return emit(0, renderCutStatus(s), { ok: true, status: s });
+    }
+    case "units-propose": {
+      let input: unknown;
+      if (cmd.file !== undefined) {
+        const j = readJson(cmd.file);
+        if (!j.ok) return refusal("Proposal", [j.error]);
+        input = j.value;
+      }
+      const r = engine.propose(input);
+      if (!r.ok) return refusal("Proposal", r.errors);
+      return emit(0, renderDraft("Draft stored", r.draft, CUT_CLI_VERBS), {
+        ok: true,
+        draft: r.draft,
+      });
+    }
+    case "units-adjust": {
+      const j = readJson(cmd.file);
+      if (!j.ok) return refusal("Adjustment", [j.error]);
+      // The tool's own parameter shape, `{ops: […]}`, or the ops alone.
+      const v = j.value;
+      const ops =
+        typeof v === "object" && v !== null && !Array.isArray(v) && "ops" in v ? v.ops : v;
+      const r = engine.adjust(ops);
+      if (!r.ok) return refusal("Adjustment", r.errors);
+      return emit(0, renderDraft("Draft adjusted", r.draft, CUT_CLI_VERBS), {
+        ok: true,
+        draft: r.draft,
+      });
+    }
+    case "units-save": {
+      const r = engine.save();
+      if (!r.ok) return refusal("Save", r.errors);
+      return emit(0, renderCut("Unit cut saved", r.saved), { ok: true, saved: r.saved });
+    }
   }
 }
 
@@ -705,13 +840,21 @@ async function stop(
 
 /** The env a host-side `qcr scan` assembles under: the reviewed checkout and
  * the tracker from `[companion]` when the env does not name them, so the CLI
- * reads the same repo the companion mounts. */
-export function scanEnv(env: NodeJS.ProcessEnv, defaultRepo: string): NodeJS.ProcessEnv {
+ * reads the same repo the companion mounts. Inside a scan sandbox neither is
+ * read — they are host paths — and the container's env decides. */
+export function scanEnv(
+  env: NodeJS.ProcessEnv,
+  defaultRepo: string,
+  companionOf: () => Pick<CompanionConfig, "reviewed_repo_dir" | "tracker_dir"> = () =>
+    loadConfig().companion,
+): NodeJS.ProcessEnv {
   let companion: { reviewed_repo_dir: string; tracker_dir: string } | null = null;
-  try {
-    companion = loadConfig().companion;
-  } catch {
-    // No readable config: the env and the defaults decide.
+  if (!env[IN_SANDBOX_ENV]?.trim()) {
+    try {
+      companion = companionOf();
+    } catch {
+      // No readable config: the env and the defaults decide.
+    }
   }
   const tracker = env.QCR_TRACKER_DIR?.trim() || companion?.tracker_dir || "";
   return {
@@ -721,12 +864,6 @@ export function scanEnv(env: NodeJS.ProcessEnv, defaultRepo: string): NodeJS.Pro
     ...(tracker ? { QCR_TRACKER_DIR: tracker } : {}),
   };
 }
-
-/** How long a launch waits for the driver to say it started: planning
- * reads the tree at the sha, so this is generous. */
-export const DETACH_TIMEOUT_MS = 120_000;
-/** The driver log is rotated (one generation kept) past this size. */
-export const DRIVER_LOG_MAX = 5 * 1024 * 1024;
 
 /** The child the launch needs — `child_process.spawn`'s, narrowed. */
 interface DriverChild {
@@ -760,11 +897,14 @@ export function detachDriver(
   const logMax = opts.logMax ?? DRIVER_LOG_MAX;
   return (argv) =>
     new Promise((resolve) => {
-      const log = join(home, DRIVER_LOG);
+      const prepared = prepareDriverLog(home, logMax);
+      if (!prepared.ok) {
+        resolve({ ok: false, errors: [prepared.error] });
+        return;
+      }
+      const log = prepared.path;
       let fd: number;
       try {
-        mkdirSync(dirname(log), { recursive: true });
-        if (existsSync(log) && statSync(log).size > logMax) renameSync(log, `${log}.1`);
         fd = openSync(log, "a");
       } catch (err) {
         resolve({
@@ -895,6 +1035,7 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
   const { buildScan, watchTuiRequests, STAGE2_POLL_MS } =
     await import("../extensions/setup-scan.js");
   const env = scanEnv(process.env, DEFAULT_REVIEWED_REPO);
+  const inSandbox = Boolean(env[IN_SANDBOX_ENV]?.trim());
   const shared = sharedPorts(env);
   const engine = buildEngine(env, shared);
   const home = stateHome(env);
@@ -912,7 +1053,9 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
     afterMatch: triage ? () => triage.closeFixed() : null,
     home,
     out: (line) => console.log(line),
-    detach: detachDriver(env, home),
+    ...(inSandbox
+      ? { detach: detachDriver(env, home) }
+      : await sandboxPorts(env, home, engine, settingsOf)),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => Date.now(),
     watchStops: (s) => {
@@ -939,6 +1082,109 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
         process.off("SIGTERM", onSignal);
       };
     },
-    onStart: (outcome) => sendStarted(process, outcome),
+    onStart: (outcome) => {
+      sendStarted(process, outcome);
+      // Inside a scan sandbox: the launching host reads it from the state home.
+      const file = env[STARTED_FILE_ENV]?.trim();
+      if (file) {
+        try {
+          writeStartedFile(file, outcome);
+        } catch (err) {
+          console.error(`scan: the start outcome could not be written to ${file}: ${String(err)}`);
+        }
+      }
+    },
   });
+}
+
+/** The host side of `[scan] sandbox`: the launch (a container for
+ * `"docker"`, a host process for `"host"`), the doctor and the login. */
+async function sandboxPorts(
+  env: NodeJS.ProcessEnv,
+  home: string,
+  engine: UnitCutPort,
+  settingsOf: () => { scan: { tier: string } } | null,
+): Promise<Pick<ScanCliDeps, "detach" | "units" | "doctor" | "login">> {
+  const [{ dockerDetach, scanDoctor, scanLoginArgv }, companion, { appStamp }, install, cfgMod] =
+    await Promise.all([
+      import("./scanbox.js"),
+      import("./tui/companion.js"),
+      import("./appstamp.js"),
+      import("./install.js"),
+      import("./config.js"),
+    ]);
+  let cfg: ReturnType<typeof loadConfig> | null = null;
+  try {
+    cfg = loadConfig();
+  } catch {
+    // No readable config: the sandbox defaults; a start then refuses for it.
+  }
+  const sandbox = cfg?.scan_sandbox ?? {
+    ...cfgMod.SCAN_SANDBOX_DEFAULTS,
+    image: cfgMod.COMPANION_DEFAULTS.image,
+  };
+  const appRoot = env.QCR_ROOT?.trim() || sandboxRoot();
+  // The checkout to mount: named by the env or `[companion]`, never the
+  // in-container default (a host path is what docker mounts).
+  const reviewedRepo =
+    process.env.QCR_REVIEWED_REPO?.trim() || cfg?.companion.reviewed_repo_dir || "";
+  const docker = companion.realDockerRunner;
+  // The model stage 1 runs on (the profile may move its tier): the login
+  // the doctor's probe needs.
+  const model = (): string => {
+    const tiers: Record<string, string> = cfg?.models.tiers ?? {};
+    const tier = settingsOf()?.scan.tier ?? cfg?.scan.tier ?? "";
+    return tiers[tier] ?? cfg?.models.default ?? "";
+  };
+  const detach =
+    sandbox.sandbox === "host"
+      ? detachDriver(env, home)
+      : dockerDetach<ScanRun>({
+          docker,
+          env,
+          sandbox,
+          reviewedRepo,
+          appRoot,
+          configSource: () => {
+            const located = install.locateConfig({ env });
+            return existsSync(located.path) ? located.path : undefined;
+          },
+          // The companion's own memory wiring: its network and key file.
+          memory: async () =>
+            cfg
+              ? new companion.CompanionLifecycle(cfg.companion, docker, env).resolveMemoryWiring(
+                  (note) => console.error(`scan sandbox: ${note}`),
+                )
+              : { network: "", endpoint: "", notes: [] },
+        });
+  return {
+    detach,
+    units: engine,
+    doctor: () =>
+      scanDoctor({
+        sandbox,
+        docker,
+        stamp: () => appStamp(appRoot),
+        reviewedRepo,
+        cut: () => {
+          const st = engine.status();
+          return { saved: st.saved !== null, problems: st.cut_file_unreadable ? st.problems : [] };
+        },
+        model: model(),
+      }),
+    login: async () => {
+      if (sandbox.sandbox === "host") {
+        console.log(
+          'scan login: [scan] sandbox = "host" — the scan runs this machine\'s `pi`; run `pi` and /login there.',
+        );
+        return 1;
+      }
+      const r = spawnSync("docker", scanLoginArgv(sandbox), { stdio: "inherit" });
+      if (r.error) {
+        console.log(`scan login: docker could not start: ${r.error.message}`);
+        return 1;
+      }
+      return r.status ?? 1;
+    },
+  };
 }

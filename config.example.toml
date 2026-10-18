@@ -546,7 +546,7 @@ local_embedder_threads = 1
 # (COMPANION_DEFAULTS) are the shipped configuration; uncomment to override.
 # enabled = true                  # `qcr tui` starts it unless --no-companion
 # container_name = "qcr-companion"
-# image = "qcr-companion"         # docker build -t qcr-companion docker/companion
+# image = "qcr-companion"         # built from the app root: qcr companion rebuild
 # pihome_volume = "companion-pihome"   # its OWN pi auth — never the VM's auth.json
 # session = "companion"           # tmux session inside the container
 # model = "openai-codex/gpt-6.1-sol:medium"
@@ -925,6 +925,15 @@ depth = "standard"             # "deep": stage 1 names a deep lens for every fil
 deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-maintainability"]
                                # the deep floor: each of these over every file stage 1 reads (one switched off by the profile is skipped);
                                # the order is the priority: under a budget the first lens covers the whole tree before the next starts
+# Where `qcr scan start` drives a run (not a profile key). "docker": in a throwaway
+# container from the companion image, mounting only the reviewed repo (read-only),
+# the state home, the scan's own pi home volume and this config (read-only) —
+# `qcr scan login` logs that volume in, `qcr scan doctor` checks it all, and an
+# image older than the checkout is refused until `qcr companion rebuild`.
+# "host": a detached process on this machine, running the `pi` on the PATH.
+sandbox = "docker"
+pihome_volume = "scan-pihome"  # the sandbox's pi home (its own login, apart from the companion's)
+# image = "qcr-companion"      # the sandbox's image; default [companion] image
 
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are

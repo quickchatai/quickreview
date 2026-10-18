@@ -137,7 +137,9 @@ export interface CompanionConfig {
   /** Accepted so an older config still loads, and read by nothing: the
    * companion never mounts `~/.ssh` (no ssh config, no agent socket). */
   ssh_dir: string;
-  /** Docker build context for the companion image (auto-built when missing). */
+  /** Docker build context for the companion image (auto-built when
+   * missing): the app root, whose built `dist/` and prompt trees the image
+   * copies; the Dockerfile is `docker/companion/Dockerfile` under it. */
   build_context: string;
   // --- watcher knobs ---
   /** A round overdue by more than this is worth waking the operator for. */
@@ -1994,6 +1996,10 @@ export interface Config {
    * table overrides the keys in `SCAN_PROFILE_KEYS` (`applyProfileScan`,
    * src/profiles.ts) — the profile wins, as for per-lens tuning. */
   scan: ScanConfig;
+  /** Where `qcr scan start` drives a run: `[scan] sandbox`,
+   * `pihome_volume` and `image`, read from the same table and kept out of
+   * the scan settings (a profile cannot set them). */
+  scan_sandbox: ScanSandboxConfig;
   /** The closed-PR archiver (`src/archive/`). Optional in the file;
    * the parser fills every key. */
   archive: ArchiveConfig;
@@ -2164,9 +2170,67 @@ export function parseScanTable(
   return out;
 }
 
-/** `[scan]` from config.toml: the defaults, overlaid by what it sets. */
+/** Where a `qcr scan start` driver runs. `docker`: in a throwaway
+ * container from the companion image that mounts only the reviewed repo
+ * (read-only), the state home, the scan's own pi home and the config
+ * (src/scanbox.ts). `host`: a detached process on this machine. */
+export const SCAN_SANDBOXES = ["docker", "host"] as const;
+export type ScanSandbox = (typeof SCAN_SANDBOXES)[number];
+
+export interface ScanSandboxConfig {
+  sandbox: ScanSandbox;
+  /** The named volume the sandbox mounts as pi's home — its own login,
+   * apart from the companion's (`qcr scan login`). */
+  pihome_volume: string;
+  /** The image the sandbox runs; empty in the file means the companion's. */
+  image: string;
+}
+
+/** The `[scan]` keys that say where a run is driven, not how it scans. */
+export const SCAN_SANDBOX_KEYS = ["sandbox", "pihome_volume", "image"] as const;
+
+export const SCAN_SANDBOX_DEFAULTS: Omit<ScanSandboxConfig, "image"> = {
+  sandbox: "docker",
+  pihome_volume: "scan-pihome",
+};
+
+/** `[scan] sandbox / pihome_volume / image`; the image defaults to
+ * `companionImage`. */
+export function parseScanSandbox(raw: unknown, companionImage: string): ScanSandboxConfig {
+  const t = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  const name = (key: string, fallback: string): string => {
+    const v = t[key];
+    if (v === undefined) return fallback;
+    if (typeof v !== "string" || v.trim() === "")
+      throw new Error(
+        `config.toml [scan] ${key} must be a non-empty name (got ${JSON.stringify(v)})`,
+      );
+    return v.trim();
+  };
+  const sandbox = t["sandbox"] ?? SCAN_SANDBOX_DEFAULTS.sandbox;
+  if (typeof sandbox !== "string" || !(SCAN_SANDBOXES as readonly string[]).includes(sandbox))
+    throw new Error(
+      `config.toml [scan] sandbox must be "docker" or "host" (got ${JSON.stringify(sandbox)})`,
+    );
+  return {
+    sandbox: sandbox as ScanSandbox,
+    pihome_volume: name("pihome_volume", SCAN_SANDBOX_DEFAULTS.pihome_volume),
+    image: name("image", companionImage),
+  };
+}
+
+/** `[scan]` from config.toml: the defaults, overlaid by what it sets. The
+ * sandbox keys are parsed apart (`parseScanSandbox`). */
 export function parseScan(raw: unknown): ScanConfig {
-  return { ...SCAN_DEFAULTS, ...parseScanTable("config.toml", raw ?? {}) };
+  const table =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? Object.fromEntries(
+          Object.entries(raw as Record<string, unknown>).filter(
+            ([k]) => !(SCAN_SANDBOX_KEYS as readonly string[]).includes(k),
+          ),
+        )
+      : (raw ?? {});
+  return { ...SCAN_DEFAULTS, ...parseScanTable("config.toml", table) };
 }
 
 /**
@@ -2383,7 +2447,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   feed_dir: "", // → <root>/state/companion/feed
   alerts_dir: "", // → <root>/state/companion/alerts
   ssh_dir: "~/.ssh",
-  build_context: "", // → <root>/docker/companion
+  build_context: "", // → <root> (the image copies the built app; Dockerfile at docker/companion/)
   overdue_grace_min: 30,
   stale_alert_s: 300,
   awaiting_age_h: 24,
@@ -2533,9 +2597,7 @@ export function resolveCompanionPaths(
       ? expandHome(c.alerts_dir)
       : resolve(root, "state", "companion", "alerts"),
     ssh_dir: expandHome(c.ssh_dir),
-    build_context: c.build_context
-      ? expandHome(c.build_context)
-      : resolve(root, "docker", "companion"),
+    build_context: c.build_context ? expandHome(c.build_context) : root,
   };
 }
 
@@ -2716,6 +2778,7 @@ export function parseConfig(toml: string): Config {
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
     scan: parseScan(raw.scan),
+    scan_sandbox: parseScanSandbox(raw.scan, companion.image),
     archive: parseArchive((raw.archive ?? {}) as Record<string, unknown>),
   };
   validateLensKnobs(cfg);

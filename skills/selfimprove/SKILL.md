@@ -30,9 +30,8 @@ If there is no settings file, ask the questions in [references/setup.md](referen
 
 Then check the environment:
 
-- `<scan> status --json` answers, and `<scan> preview --json` does not refuse for a missing unit cut. If it does, the scan has never been set up for this repo: stop and tell the user to save a unit cut first (for qcr, the companion's setup flow).
-- `pi` is on PATH and logged in (the scan's case runner uses it): a one-shot `pi -p "say ok"` answers.
-- The repo `qcr scan` reads (`[companion] reviewed_repo_dir` in the qcr config, or `QCR_REVIEWED_REPO`) is this same checkout (a worktree of it counts), not a separate clone, so commits made here resolve for `--sha`.
+- `<scan> doctor --json` reports `"ok": true`. It checks that the scan can run where it is configured to (docker, the image, the scan's pi login), that a reviewed repo is set, and that a unit cut is saved. For each failed check, show the user its `detail` and `fix`. If the only failure is `unit_cut`, offer to set one up: run `<scan> units propose`, then show the user `<scan> units show`, adjust it with `<scan> units adjust --file <ops.json>` as they ask, and run `<scan> units save` only after their ok. Then run doctor again. Stop on any other failure.
+- The doctor's `reviewed_repo` is this same checkout (a worktree of it counts), not a separate clone, so commits made here resolve for `--sha`.
 - The working tree is clean.
 - The baseline build and test commands pass. Record failures that already exist so they aren't blamed on fixes.
 

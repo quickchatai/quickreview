@@ -171,7 +171,12 @@ describe("daemon topology", () => {
     // imports src/setup/), and each spawn is a `-p --no-session
     // --no-extensions` leaf with read-only tools, not a session.
     const allowed = ["sessions.ts", "smoke-session.ts", "companion.ts"];
-    const allowedPaths = ["/src/bench/runner.ts", "/src/setup/caserunner.ts"];
+    // scanbox.ts is the scan sandbox: its pi runs in a throwaway container
+    // from the companion image (`qcr scan login` interactively, the doctor's
+    // one-shot `-p --no-session --no-extensions` probe), or — the doctor's
+    // probe with `[scan] sandbox = "host"` — the same one-shot leaf on the
+    // operator's machine. No daemon module imports it (pinned below).
+    const allowedPaths = ["/src/bench/runner.ts", "/src/setup/caserunner.ts", "/src/scanbox.ts"];
     const offenders = srcFiles(src)
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))
@@ -212,6 +217,12 @@ describe("daemon topology", () => {
       .filter((f) => !f.endsWith("/src/cli.ts"))
       .filter((f) => /["'][^"']*\/scancli\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanCli).toEqual([]);
+    // The scan sandbox's pi allowance above holds only while `qcr scan` is
+    // the one module that reaches it.
+    const reachesScanBox = srcFiles(src)
+      .filter((f) => !f.endsWith("/src/scancli.ts"))
+      .filter((f) => /["'][^"']*\/scanbox\.js["']/.test(readFileSync(f, "utf8")));
+    expect(reachesScanBox).toEqual([]);
     const reachesSetup = srcFiles(src)
       .filter((f) => !f.includes("/src/setup/"))
       .filter((f) => !operatorEntries.some((p) => f.endsWith(p)))

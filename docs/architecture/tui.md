@@ -465,15 +465,20 @@ the client environment, because tmux panes inherit the tmux *server*'s
 environment.
 
 **The image** (`docker/companion/Dockerfile`) is a plain `docker build` on the
-operator's machine: node base, tmux built from source for the key protocol,
-the pinned pi package, and a non-root `companion` user whose uid must match
+operator's machine, from the app root (`qcr companion rebuild`; the
+the root `.dockerignore` admits only what the image copies): node
+base, tmux built from source for the key protocol, the pinned pi package, the
+built app at `/opt/qcr` for the scan sandbox (stamped with its build hash,
+`src/appstamp.ts`), and a non-root `companion` user whose uid must match
 the invoking host user because every interesting mount is a host bind mount it
 writes. `ENV HOME` is set explicitly — the non-unique uid leaves two passwd
 entries, and docker resolving `USER companion` back through the uid to the
 other one silently moved `$HOME` off the mounted volume. The entrypoint
 provisions the git identity (commits are prefixed `[companion]`), registers
 the skill directories in pi's settings, and reports at boot whether the pi home
-really is a mount point.
+really is a mount point. Given a command it runs one-shot instead: pi's
+settings provisioned, then the command exec'd — the scan sandbox's driver and
+`qcr scan login` / `doctor` run that way.
 
 ## The file channels
 

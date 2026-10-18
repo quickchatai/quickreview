@@ -894,6 +894,14 @@ export function companionConfigMirrorDir(env: InstallEnv = process.env): string 
   return join(operatorStateHome(env), "companion-config");
 }
 
+/** Where `qcr scan start` copies the live config for a scan sandbox
+ * container (src/scanbox.ts), which mounts this directory read-only: the
+ * companion's mirror, kept apart so a scan never rewrites what a running
+ * companion reads. */
+export function scanConfigMirrorDir(env: InstallEnv = process.env): string {
+  return join(operatorStateHome(env), "scan-config");
+}
+
 export type KeysFileSource = "override" | "home";
 
 export interface LocatedKeysFile {

@@ -41,6 +41,7 @@ import {
   type InstallEnv,
 } from "../install.js";
 import type { CompanionConfig } from "../config.js";
+import { appStamp } from "../appstamp.js";
 import { TOKEN_FILE } from "./ghread.js";
 
 export interface DockerResult {
@@ -290,6 +291,41 @@ export interface MemoryWiring {
   notes: string[];
 }
 
+/**
+ * Non-secret memory env + the key file, for a container on `wiring`.
+ *
+ * The two USER keys ride `--env-file`, so the values never appear in this
+ * process's argv (and therefore never in `ps`). docker reads the file
+ * itself. Never switch these to `--env NAME=<value>`. The companion and the
+ * scan sandbox (src/scanbox.ts) both wire memory with it.
+ */
+export function memoryEnvArgv(wiring: MemoryWiring): string[] {
+  const argv: string[] = [];
+  if (wiring.endpoint !== "") {
+    argv.push(
+      // Read straight out of the vendored extension's credential resolver
+      // (shared/credentials.mjs): OPENVIKING_URL wins, OPENVIKING_BASE_URL is
+      // its documented alias, and the user/peer headers are what select the
+      // namespace a request addresses.
+      "--env",
+      `OPENVIKING_URL=${wiring.endpoint}`,
+      "--env",
+      `OPENVIKING_BASE_URL=${wiring.endpoint}`,
+      "--env",
+      `OPENVIKING_USER=${MEMORY.user}`,
+      "--env",
+      `OPENVIKING_PEER_ID=${MEMORY.peerId}`,
+      // Ours: the in-container health watcher (docker/companion/memory-health.mjs).
+      "--env",
+      `QCR_MEMORY_ENDPOINT=${wiring.endpoint}`,
+      "--env",
+      `QCR_MEMORY_ALERTS_DIR=${CONTAINER.alerts}`,
+    );
+  }
+  if (wiring.keysFile) argv.push("--env-file", wiring.keysFile);
+  return argv;
+}
+
 export function memoryEndpoint(gateway: string, port: number = MEMORY.port): string {
   return `http://${gateway}:${port}`;
 }
@@ -367,6 +403,9 @@ export class CompanionLifecycle {
     /** Filesystem seam: the keys file and the vendored extension are looked up,
      * never assumed. Injectable so argv assertions need no real files. */
     private readonly fs: CompanionFs = realCompanionFs,
+    /** The build stamp of the app under the build context (src/appstamp.ts).
+     * Injectable so the build argv is assertable without hashing a tree. */
+    private readonly stampOf: (root: string) => string = appStamp,
   ) {}
 
   /** The memory path this instance will wire (or has wired). */
@@ -402,38 +441,10 @@ export class CompanionLifecycle {
     return argv;
   }
 
-  /**
-   * Non-secret memory env + the key file.
-   *
-   * The two USER keys ride `--env-file`, so the values never appear in this
-   * process's argv (and therefore never in `ps`). docker reads the file
-   * itself. Never switch these to `--env NAME=<value>`.
-   */
+  /** Non-secret memory env + the key file, over this instance's wiring
+   * (the free `memoryEnvArgv`). */
   memoryEnvArgv(): string[] {
-    const argv: string[] = [];
-    if (this.wiring.endpoint !== "") {
-      argv.push(
-        // Read straight out of the vendored extension's credential resolver
-        // (shared/credentials.mjs): OPENVIKING_URL wins, OPENVIKING_BASE_URL is
-        // its documented alias, and the user/peer headers are what select the
-        // namespace a request addresses.
-        "--env",
-        `OPENVIKING_URL=${this.wiring.endpoint}`,
-        "--env",
-        `OPENVIKING_BASE_URL=${this.wiring.endpoint}`,
-        "--env",
-        `OPENVIKING_USER=${MEMORY.user}`,
-        "--env",
-        `OPENVIKING_PEER_ID=${MEMORY.peerId}`,
-        // Ours: the in-container health watcher (docker/companion/memory-health.mjs).
-        "--env",
-        `QCR_MEMORY_ENDPOINT=${this.wiring.endpoint}`,
-        "--env",
-        `QCR_MEMORY_ALERTS_DIR=${CONTAINER.alerts}`,
-      );
-    }
-    if (this.wiring.keysFile) argv.push("--env-file", this.wiring.keysFile);
-    return argv;
+    return memoryEnvArgv(this.wiring);
   }
 
   /**
@@ -740,9 +751,17 @@ export class CompanionLifecycle {
     if (!res.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(res)}`);
   }
 
-  /** Build the companion image from docker/companion (idempotent, cached).
-   * Runs with the caller's uid so the host bind mounts stay writable. */
+  /** Build the companion image (idempotent, cached) from the app root,
+   * with docker/companion/Dockerfile: the image copies the built app for the
+   * scan sandbox, so the app must be built first, and the image is stamped
+   * with the app's build stamp. Runs with the caller's uid so the host bind
+   * mounts stay writable. */
   async buildImage(onProgress?: (line: string) => void): Promise<void> {
+    const ctx = this.cfg.build_context;
+    if (!this.fs.exists(join(ctx, "dist", "src", "cli.js")))
+      throw new Error(
+        `the image copies the built app, and ${join(ctx, "dist")} has none — run \`npm run build\` in ${ctx} first`,
+      );
     onProgress?.(`building ${this.cfg.image} image (first run — takes a few minutes)…`);
     const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
     const res = await this.docker(
@@ -750,9 +769,13 @@ export class CompanionLifecycle {
         "build",
         "-t",
         this.cfg.image,
+        "-f",
+        join(ctx, "docker", "companion", "Dockerfile"),
         "--build-arg",
         `COMPANION_UID=${uid}`,
-        this.cfg.build_context,
+        "--build-arg",
+        `BUILD_SHA=${this.stampOf(ctx)}`,
+        ctx,
       ],
       { timeoutMs: 1_800_000 },
     );

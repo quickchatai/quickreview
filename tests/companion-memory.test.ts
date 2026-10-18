@@ -895,7 +895,10 @@ describe("companion image carries the memory path, not a credential", () => {
   const entrypoint = readFileSync(resolve(root, "docker/companion/entrypoint.sh"), "utf8");
 
   it("bakes the health watcher in (it must start with the container, not with a build)", () => {
-    expect(dockerfile).toContain("COPY memory-health.mjs /usr/local/lib/qcr/memory-health.mjs");
+    // The build context is the app root (the root .dockerignore).
+    expect(dockerfile).toContain(
+      "COPY docker/companion/memory-health.mjs /usr/local/lib/qcr/memory-health.mjs",
+    );
     expect(entrypoint).toContain("node /usr/local/lib/qcr/memory-health.mjs &");
     // Backgrounded and guarded: the watcher can never keep the container down.
     // PID 1 parks on `wait` rather than exec'ing sleep, so SIGTERM

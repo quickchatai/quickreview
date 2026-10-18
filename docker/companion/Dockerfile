@@ -1,9 +1,15 @@
 # Local companion container.
 #
 # Unlike the VM runtime image (deploy/ansible/templates/Dockerfile.j2, built by
-# ansible) this one is a plain `docker build` on the owner's PC:
+# ansible) this one is a plain `docker build` on the owner's PC, from the app
+# root (`qcr companion rebuild` runs it, after `npm run build`):
 #
-#   docker build -t qcr-companion --build-arg COMPANION_UID="$(id -u)" docker/companion
+#   docker build -t qcr-companion -f docker/companion/Dockerfile \
+#     --build-arg COMPANION_UID="$(id -u)" --build-arg BUILD_SHA=<stamp> .
+#
+# The context is the whole checkout, narrowed by the root .dockerignore to what
+# the image copies: the built app (below), for the scan sandbox. The companion
+# itself still runs its code off the /workspace mount.
 #
 # Deltas from the VM image:
 #   - node:22 base instead of ubuntu + NodeSource (same major, less plumbing).
@@ -61,11 +67,35 @@ RUN useradd --create-home --non-unique --uid ${COMPANION_UID} companion \
     && mkdir -p /home/companion/.pi /workspace /tracker /feed /alerts \
     && chown -R companion:companion /home/companion /feed /alerts
 
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY docker/companion/entrypoint.sh /usr/local/bin/entrypoint.sh
 # The memory health watcher. Baked into the image rather than read off
 # /workspace so it starts with the container, before any repo build exists.
-COPY memory-health.mjs /usr/local/lib/qcr/memory-health.mjs
+COPY docker/companion/memory-health.mjs /usr/local/lib/qcr/memory-health.mjs
 RUN chmod 0755 /usr/local/bin/entrypoint.sh && chmod 0644 /usr/local/lib/qcr/memory-health.mjs
+
+# The app, baked in for the scan sandbox (src/scanbox.ts): a `qcr scan`
+# driver runs from /opt/qcr and needs nothing from the checkout — the built
+# dist, its runtime dependencies, and the agent, prompt, seed and profile
+# trees the scan's agent build reads. src/ and extensions/ ride along so an
+# extension loaded from here resolves its imports. Root-owned: the companion
+# user reads it and never writes it. The list is src/appstamp.ts BAKED_PATHS.
+WORKDIR /opt/qcr
+COPY package.json package-lock.json /opt/qcr/
+RUN npm ci --omit=dev && npm cache clean --force
+COPY dist /opt/qcr/dist
+COPY src /opt/qcr/src
+COPY extensions /opt/qcr/extensions
+COPY agents /opt/qcr/agents
+COPY prompts /opt/qcr/prompts
+COPY seeds /opt/qcr/seeds
+COPY profiles /opt/qcr/profiles
+COPY docker/companion /opt/qcr/docker/companion
+# The build stamp: the hash `qcr companion rebuild` computed over exactly the
+# files copied above. `qcr scan start` refuses an image whose stamp is not
+# the checkout's (src/appstamp.ts).
+ARG BUILD_SHA=unstamped
+LABEL qcr.build-sha="${BUILD_SHA}"
+RUN printf '%s\n' "${BUILD_SHA}" > /opt/qcr/BUILD_SHA
 
 # Mount points — the lifecycle code (src/tui/companion.ts) wires the host side:
 #   /home/companion/.pi  named volume companion-pihome (OAuth, sessions, memory)
@@ -73,6 +103,11 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh && chmod 0644 /usr/local/lib/qcr/mem
 #   /tracker             the issue tracker, rw (actor `companion`)
 #   /feed                TUI → companion ambient snapshots
 #   /alerts             companion → TUI alert files
+#
+# A scan sandbox container (src/scanbox.ts) mounts a different, smaller set:
+# the reviewed repo read-only, the state home, its own pi home volume and the
+# config, and runs `node /opt/qcr/dist/src/cli.js scan … --foreground`
+# through the entrypoint's one-shot mode.
 #
 # There is NO ssh mount and NO agent socket (CLAUDE.md rule 8): the
 # container holds no VM credential. Its one reach into the VM is OpenViking

@@ -165,6 +165,23 @@ export function renderCut(title: string, v: CutView): string {
   return lines.join("\n");
 }
 
+/** How a rendering names the save that makes a draft the cut — the tool, or
+ * the `qcr scan units` verb. */
+export interface CutVerbs {
+  save: string;
+}
+export const CUT_TOOL_VERBS: CutVerbs = { save: "setup_unit_cut_save" };
+export const CUT_CLI_VERBS: CutVerbs = { save: "qcr scan units save" };
+
+/** A stored or adjusted draft, and that it is not in use until saved. */
+export function renderDraft(
+  title: string,
+  draft: CutView,
+  verbs: CutVerbs = CUT_TOOL_VERBS,
+): string {
+  return `${renderCut(title, draft)}\n\nNot in use until ${verbs.save}.`;
+}
+
 export function renderStatus(s: CutStatus): string {
   const out: string[] = [];
   for (const p of s.problems) out.push(`✗ ${p}`);
@@ -716,10 +733,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     execute: async (_id, params) => {
       const r = engine.propose(params && "units" in params ? params : undefined);
       if (!r.ok) return refused("Proposal", r);
-      return text(
-        `${renderCut("Draft stored", r.draft)}\n\nNot in use until setup_unit_cut_save.`,
-        { draft: r.draft },
-      );
+      return text(renderDraft("Draft stored", r.draft), { draft: r.draft });
     },
   };
 
@@ -740,10 +754,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     execute: async (_id, params) => {
       const r = engine.adjust((params as { ops?: unknown } | undefined)?.ops);
       if (!r.ok) return refused("Adjustment", r);
-      return text(
-        `${renderCut("Draft adjusted", r.draft)}\n\nNot in use until setup_unit_cut_save.`,
-        { draft: r.draft },
-      );
+      return text(renderDraft("Draft adjusted", r.draft), { draft: r.draft });
     },
   };
 
