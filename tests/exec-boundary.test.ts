@@ -2024,3 +2024,29 @@ describe("the config-scope pin, as the daemon builds it", () => {
     expect(pins.GIT_CONFIG_GLOBAL).not.toBe("/dev/null");
   });
 });
+
+// Secret reads do not mutate policy or post a review, so they have their own
+// corpus: the transcript mutation audit deliberately has no secret-read rule.
+const SECRET_READ_CORPUS = [
+  "cat /srv/custom-config/secrets/*",
+  "find /srv/custom-config/secrets -type f",
+];
+describe("custom config-home secret reads against source and compiled guard", () => {
+  it("refuses each expanded secrets-directory read and keeps public files readable", async () => {
+    const source = await import("../extensions/bash-guard.js");
+    const compiled = (await import(
+      resolve(process.cwd(), "dist/extensions/bash-guard.js")
+    )) as typeof source;
+    for (const guard of [source, compiled]) {
+      const ctx = guard.defaultSecretPathContext(
+        { HOME: "/home/op", QCR_CONFIG_HOME: "/srv/custom-config" },
+        "/work",
+      );
+      for (const chain of SECRET_READ_CORPUS)
+        expect(guard.checkSecretPaths(chain, ctx).allowed, chain).toBe(false);
+      expect(guard.checkSecretPaths("cat /srv/custom-config/public/readme.txt", ctx).allowed).toBe(
+        true,
+      );
+    }
+  });
+});

@@ -27,11 +27,14 @@
 //
 // Exit codes: 0 done; 1 refused (or a waited-for run that did not end
 // complete); 2 usage; 3 `status --wait` gave up at its `--timeout`.
+import { dismissedLine } from "./setup/presentation.js";
 import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   CLI_VERBS,
+  FINDINGS_LIMIT,
+  startedDetails,
   answerMatch,
   findingsFilter,
   listFindings,
@@ -557,13 +560,7 @@ export async function runScanCli(
           `${line(d.run)}\nDriver output: ${d.log}${d.container ? `\nContainer: ${d.container}` : ""}`,
           {
             ok: true,
-            run: {
-              id: d.run.id,
-              mode: d.run.mode,
-              sha: d.run.sha,
-              cases: d.run.cases.length,
-              cap_usd: d.run.cap_usd,
-            },
+            run: startedDetails(d.run),
             log: d.log,
             ...(d.container ? { container: d.container } : {}),
           },
@@ -630,7 +627,7 @@ export async function runScanCli(
       const listed = listFindings(deps.findings, f.filter);
       if (!listed.ok) return refusal("Findings", [listed.error]);
       const all = listed.findings;
-      const shown = all.slice(0, cmd.query.limit ?? (json ? all.length : 50));
+      const shown = all.slice(0, cmd.query.limit ?? (json ? all.length : FINDINGS_LIMIT));
       return emit(0, renderFindings(shown, all.length), {
         ok: true,
         total: all.length,
@@ -732,12 +729,7 @@ export async function runScanCli(
               ? { written: true }
               : { written: false, problem: r.memory.problem },
         });
-        lines.push(
-          `${r.finding.fingerprint.slice(0, 12)} ${r.again ? "re-dismissed" : "dismissed"}: ` +
-            (r.memory === "written"
-              ? "the memory note is written."
-              : `the memory note was NOT written (${r.memory.problem}) — dismiss it again later to retry.`),
-        );
+        lines.push(dismissedLine(r));
       }
       return emit(errors.length === 0 ? 0 : 1, lines.join("\n"), {
         ok: errors.length === 0,

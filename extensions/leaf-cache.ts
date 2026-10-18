@@ -41,6 +41,7 @@
 //    no rewrite;
 //  - a `developer` role input message is accepted by the codex backend (probed
 //    with this extension before it shipped; see docs/prompt-caching.md).
+import { LEAF_PACK_ENV } from "../src/contextpack.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -74,7 +75,7 @@ export function prefixDigest(payload: unknown): string {
 }
 
 /** Env var naming the round's context pack (set by the launcher per child). */
-export const LEAF_PACK_ENV = "QCR_LEAF_PACK";
+export { LEAF_PACK_ENV };
 
 /** The value of `--append-system-prompt` in a pi argv: a path to a file (as
  * pi's native subagent tool passes it) whose text is the lens body. */

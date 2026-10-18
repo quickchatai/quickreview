@@ -28,6 +28,8 @@ export type { FindingState, ScanFinding } from "./findings.js";
 export type { ScanCaseState, ScanRun, ScanRunSummary } from "./scanrun.js";
 export type { ScanSeverity } from "./scan.js";
 
+export const FINDING_STATES = ["new", "promoted", "dismissed", "fixed"] as const;
+
 export const RUN_FILE = "scan/run.json";
 export const RUN_VERSION = 1;
 export const FINDINGS_FILE = "scan/findings.json";

@@ -30,6 +30,7 @@
 // independent implementation on purpose (see execViolationKind).
 import {
   normalizeRedirections,
+  opensUnmodelledQuoting,
   redirectTargets,
   sedWords,
   splitShellSegments,
@@ -765,28 +766,6 @@ function assignmentPrefix(segment: string): string {
   return out.join(" ");
 }
 
-/** Whether `segment` opens ANSI-C (`$'…'`) or locale (`$"…"`) quoting
- * outside quotes — where it can spell any option; inside quotes `$'`/`$"` is
- * literal. */
-function opensAnsiOrLocaleQuote(segment: string): boolean {
-  let quote: "'" | '"' | null = null;
-  for (let i = 0; i < segment.length; i++) {
-    const c = segment[i]!;
-    if (quote === "'") {
-      if (c === "'") quote = null;
-    } else if (c === "\\") {
-      i++;
-    } else if (quote === '"') {
-      if (c === '"') quote = null;
-    } else if (c === "$" && (segment[i + 1] === "'" || segment[i + 1] === '"')) {
-      return true;
-    } else if (c === "'" || c === '"') {
-      quote = c;
-    }
-  }
-  return false;
-}
-
 /** sed's script words in a segment: every `-e X`/`-eX`/`--e…=X`/`--e… X`
  * value, else its first operand — with an `-i`/`-f` (or `--in-place`/`--file`
  * by any prefix) reported as `writes`. Read from the words bash hands sed, so
@@ -945,8 +924,8 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
   // which can spell any flag — is flagged until shown otherwise.
   if (ghApiWrites(segment) || ghApiWrites(bare) || GITHUB_DIRECT_WRITE_RE.test(segment))
     return "github_write";
-  if (prog === "gh" && opensAnsiOrLocaleQuote(segment)) return "github_write";
-  if (prog === "git" && opensAnsiOrLocaleQuote(segment)) return "git_config_injection";
+  if (prog === "gh" && opensUnmodelledQuoting(segment)) return "github_write";
+  if (prog === "git" && opensUnmodelledQuoting(segment)) return "git_config_injection";
   const gh = GH_SUBCOMMAND_RE.exec(segment);
   if (gh) {
     const ns = gh[1]!;

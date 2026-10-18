@@ -47,12 +47,17 @@
 // Convention (onboarding.ts, tui-view.ts): degrade, never wedge — a pi
 // without registerTool registers nothing and says so, and every tool answers
 // a refusal as its result rather than throwing.
+import { usd } from "../src/setup/presentation.js";
 import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
 import { configHome, stateHome } from "../src/install.js";
 import { SetupEngine, type CutStatus, type CutView, type Refusal } from "../src/setup/engine.js";
 import type { HistoryTheme, HistoryThemesFile } from "../src/setup/history.js";
 import {
+  HISTORY_SECTIONS,
+  HISTORY_PAGE_MAX,
+  QUOTE_WORDS,
+  type HistorySection,
   MAX_THEMES,
   THEME_SOURCES,
   THEME_SUMMARY_MAX,
@@ -79,7 +84,13 @@ import {
   type SectionDiff,
 } from "../src/setup/portrait.js";
 import { resolveMaxConcurrency } from "./subagents.js";
-import { ciText, displayRoot, evidenceText, type RepoFacts } from "../src/setup/facts.js";
+import {
+  ciText,
+  displayRoot,
+  evidenceText,
+  UNIT_KINDS,
+  type RepoFacts,
+} from "../src/setup/facts.js";
 import { ADJUST_OPS } from "../src/setup/unitcut.js";
 import {
   CONCERNS,
@@ -110,6 +121,9 @@ const NO_PARAMS = { type: "object", properties: {} } as const;
 /** Where the reviewed checkout sits in the companion (CONTAINER.reviewedRepo),
  * when the spawn does not say. */
 export const DEFAULT_REVIEWED_REPO = "/reviewed-repo";
+
+const reviewedCheckout = (env: NodeJS.ProcessEnv): string =>
+  env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO;
 
 function text(t: string, details?: Record<string, unknown>): PiToolResult {
   return details
@@ -265,7 +279,6 @@ export function renderHistory(h: ReturnType<SetupEngine["history"]>): string {
   return out.join("\n\n");
 }
 
-const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixed(2)}`);
 const scopeName = (unit: string): string =>
   unit === REPO_SCOPE ? "repo-wide read" : `unit ${unit}`;
 
@@ -503,7 +516,7 @@ export function renderInterviewTable(): string {
     "",
     "Concerns — give each a priority; the table below turns it into lens settings:",
   ];
-  for (const point of ["merge-blocking", "risk", "style-tests"] as const) {
+  for (const { name: point } of FIXED_POINTS.filter((p) => p.name !== "goals")) {
     out.push(`  ${point}:`);
     for (const c of CONCERNS.filter((x) => x.point === point))
       out.push(`    - ${c.name} — ${c.title} [${c.lenses.join(", ")}]`);
@@ -676,8 +689,7 @@ const UNIT_SCHEMA = {
     },
     kind: {
       type: "string",
-      description:
-        "django-app | js-package | python-package | go-module | rust-crate | directory | rest | custom",
+      description: UNIT_KINDS.join(" | "),
     },
     note: { type: "string", description: "Why this unit — shown beside it." },
   },
@@ -789,16 +801,19 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     parameters: {
       type: "object",
       properties: {
-        section: { type: "string", enum: ["human", "rounds", "feedback"] },
+        section: { type: "string", enum: HISTORY_SECTIONS },
         offset: { type: "number", description: "First item of the page (0-based)." },
-        limit: { type: "number", description: "Items per page (at most 200; default 50)." },
+        limit: {
+          type: "number",
+          description: `Items per page (at most ${HISTORY_PAGE_MAX}; default 50).`,
+        },
       },
     },
     execute: async (_id, params) => {
       const p = (params ?? {}) as { section?: unknown; offset?: unknown; limit?: unknown };
       const section =
-        p.section === "human" || p.section === "rounds" || p.section === "feedback"
-          ? p.section
+        typeof p.section === "string" && HISTORY_SECTIONS.some((s) => s === p.section)
+          ? (p.section as HistorySection)
           : null;
       const num = (v: unknown): number | undefined =>
         typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -823,7 +838,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     description:
       `Save the THEMES you condensed from the review history — at most ${MAX_THEMES}, each {title (≤${THEME_TITLE_MAX}), summary ` +
       `(≤${THEME_SUMMARY_MAX}), source: ${THEME_SOURCES.join("|")}, weight: items behind it}. Your own words about the code and ` +
-      "what reviewers ask for; a theme that quotes a raw comment (eight words running) or names a comment's author is refused. " +
+      `what reviewers ask for; a theme that quotes a raw comment (${QUOTE_WORDS} words running) or names a comment's author is refused. ` +
       "Saved to the state home (the portrait reads them) and written to reviewer memory as #history entries, replacing the " +
       "earlier unpinned ones. An empty list is valid for an empty history.",
     promptSnippet: "Save the review history themes",
@@ -1313,7 +1328,7 @@ export function buildEngine(
 ): SetupEngine {
   return new SetupEngine(
     {
-      repo: checkoutReader(env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO),
+      repo: checkoutReader(reviewedCheckout(env)),
       state: stateHomeFs(stateHome(env)),
       // The config home, for the portrait narrative. In the
       // companion only `profiles/` and `portrait/` of it are mounted
@@ -1367,7 +1382,7 @@ const activate = (pi: Pi): void => {
   // The scan tools, over the same engine's saved unit cut.
   const { scan, findings, settingsOf, triage, home } = buildScan(
     engine,
-    process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO,
+    reviewedCheckout(process.env),
     process.env,
     shared,
   );
@@ -1382,11 +1397,7 @@ const activate = (pi: Pi): void => {
   // Triage — dismiss, promote, close fixed, scan memory.
   if (triage) for (const def of triageToolDefinitions(triage)) pi.registerTool(def);
   // The PR replay — old vs new profile, cost first.
-  const replay = buildReplay(
-    process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO,
-    process.env,
-    resolveMaxConcurrency(),
-  );
+  const replay = buildReplay(reviewedCheckout(process.env), process.env, resolveMaxConcurrency());
   for (const def of replayToolDefinitions(replay)) pi.registerTool(def);
   // The TUI's stage-2 start click and its scan stop, answered while the
   // companion's session runs (the inject-bridge's lifecycle: start on

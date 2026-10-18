@@ -1434,6 +1434,21 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
     expect(res.reason).toContain("App's credentials");
   });
 
+  it("protects the entire secrets directory under an absolute QCR_CONFIG_HOME", () => {
+    const ctx = defaultSecretPathContext(
+      { HOME: "/home/op", QCR_CONFIG_HOME: " /srv/custom-config/// " },
+      "/work",
+    );
+    refused("cat /srv/custom-config/secrets/*", ctx);
+    refused("find /srv/custom-config/secrets -type f", ctx);
+    passes("cat /srv/custom-config/public/readme.txt", ctx);
+    const relative = defaultSecretPathContext(
+      { HOME: "/home/op", QCR_CONFIG_HOME: "relative" },
+      "/work",
+    );
+    expect(relative.dirs).not.toContain("relative/secrets");
+  });
+
   it("refuses every secret file by name, whatever program reads it", () => {
     for (const f of APP_SECRET_FILES) refused(`cat /opt/quickreview/secrets/${f}`);
     refused("head -c 64 /opt/quickreview/secrets/app.pem");

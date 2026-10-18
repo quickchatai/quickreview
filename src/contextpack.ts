@@ -45,6 +45,8 @@ export function readWorktreeFileForPack(
 
 /** The file the daemon writes into a round's pass directory. */
 export const CONTEXT_PACK_FILE = "context-pack.md";
+/** Pack location handed from the child launcher to its cache extension. */
+export const LEAF_PACK_ENV = "QCR_LEAF_PACK";
 
 /** A rough characters-per-token ratio for code and diffs, used only to turn
  * the token budget into a character cap. */

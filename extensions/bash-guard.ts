@@ -511,20 +511,17 @@ const GIT_READONLY_SUBVERBS: Readonly<Record<string, ReadonlySet<string>>> = {
  * `git clone` are both off the verb allowlist above — so the session cannot
  * create one. That is a real bound, but a different one from "cannot reach
  * config".
- */
-const GIT_COMMAND_INJECTING_OPTS =
-  /^(?:-c|--config-env|--upload-pack|--receive-pack|--exec|--exec-path|--git-dir|--work-tree)(?:=|$)/;
-
-/**
- * The same set MINUS bare `-c`, for the position after the verb.
+ *
+ * Options that can inject commands on either side of the verb. Top-level
+ * `-c` is checked separately before the verb.
  *
  * `git show -c` / `git log -c` / `git diff-tree -c` is git's COMBINED
  * MERGE DIFF option, not config injection — and it is exactly the tool the
  * recheck needs: a hand-resolved conflict is audited against BOTH merge
  * parents. Git's top-level `-c` must precede the subcommand anyway, so the
- * before-verb check above loses nothing.
+ * before-verb check loses nothing.
  */
-const GIT_COMMAND_INJECTING_OPTS_AFTER_VERB =
+const GIT_COMMAND_INJECTING_OPTS =
   /^(?:--config-env|--upload-pack|--receive-pack|--exec|--exec-path|--git-dir|--work-tree)(?:=|$)/;
 
 /**
@@ -572,7 +569,7 @@ function checkGit(rawGitArgs: string[]): BashCheck {
   // Leading global options, before the verb.
   let i = 0;
   while (i < args.length && args[i]!.startsWith("-")) {
-    if (GIT_COMMAND_INJECTING_OPTS.test(args[i]!)) {
+    if (/^-c(?:=|$)/.test(args[i]!) || GIT_COMMAND_INJECTING_OPTS.test(args[i]!)) {
       return block(
         `exec policy: 'git ${args[i]}' can hand git a command to run (alias/pager/sshCommand/diff.external) — the reviewer never executes anything`,
       );
@@ -585,7 +582,7 @@ function checkGit(rawGitArgs: string[]): BashCheck {
   // …and after it, where the program-naming and config-relocating forms are
   // equally effective. `-c` is excluded here: see the constant above.
   for (const a of args.slice(i + 1)) {
-    if (GIT_COMMAND_INJECTING_OPTS_AFTER_VERB.test(a)) {
+    if (GIT_COMMAND_INJECTING_OPTS.test(a)) {
       return block(
         `exec policy: 'git ${verb} ${a}' can hand git a command to run — the reviewer never executes anything`,
       );
@@ -1303,8 +1300,9 @@ export const APP_SECRET_FILES: readonly string[] = [
   "slack_bot_token",
   "slack_app_token",
 ];
-const APP_SECRET_NAME_RE =
-  /^(?:app\.pem|webhook_secret|tunnel_token|openai[A-Za-z0-9_.-]*key|slack_(?:bot|app)_token)$/;
+const APP_SECRET_NAME_RE = new RegExp(
+  `^(?:${APP_SECRET_FILES.map(escapeRe).join("|")}|openai[A-Za-z0-9_.-]*key)$`,
+);
 
 /** Secrets-dir spellings recognisable without any context. */
 const SECRET_DIR_SPELLINGS: readonly RegExp[] = [
@@ -1318,7 +1316,7 @@ const SECRET_DIR_SPELLINGS: readonly RegExp[] = [
  * bash-guard is registered GLOBALLY on the VM and in the bench sandbox, and
  * must load wherever pi finds it. Mirrors `locateSecrets` in src/install.ts:
  * the container mount, `$QCR_SECRETS_MOUNT`, `$QC_SECRETS_DIR`,
- * `<config home>/secrets`, the legacy `~/.config/quickreview-bot`, and a
+ * `<config home>/secrets` (including absolute `$QCR_CONFIG_HOME`), the legacy `~/.config/quickreview-bot`, and a
  * `[github] secrets_dir` read best-effort from `$QCR_CONFIG`.
  */
 export function defaultSecretPathContext(
@@ -1328,9 +1326,13 @@ export function defaultSecretPathContext(
   const home = homeFor(env);
   const xdg = (env.XDG_CONFIG_HOME ?? "").trim() || `${home}/.config`;
   const install = (env.QCR_INSTALL ?? "").trim() || "default";
+  const configOverride = (env.QCR_CONFIG_HOME ?? "").trim();
+  const configDir = configOverride.startsWith("/")
+    ? configOverride.replace(/\/+$/, "")
+    : `${xdg}/qcr/${install}`;
   const dirs = new Set<string>([
     CONTAINER_SECRETS_DIR,
-    `${xdg}/qcr/${install}/secrets`,
+    `${configDir}/secrets`,
     `${home}/.config/quickreview-bot`, // the legacy dir — refused, never read
   ]);
   for (const v of [
@@ -1766,11 +1768,18 @@ export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck 
  * script. Those remain the bash program allowlist's job, and the allowlist is
  * what keeps the set of programs that can write a file at all small.
  */
+const GIT_CONFIG_NAMES = {
+  directory: ".git",
+  global: ".gitconfig",
+  xdg: "git",
+  config: "config",
+  attributes: ".gitattributes",
+} as const;
 const GIT_CONFIG_SURFACE_RE = [
-  /(^|\/)\.git(\/|$)/, // inside a .git dir (or the file/symlink itself)
-  /(^|\/)\.gitconfig$/,
-  /(^|\/)git\/config$/,
-  /(^|\/)\.gitattributes$/,
+  new RegExp(`(^|/)${escapeRe(GIT_CONFIG_NAMES.directory)}(/|$)`),
+  new RegExp(`(^|/)${escapeRe(GIT_CONFIG_NAMES.global)}$`),
+  new RegExp(`(^|/)${GIT_CONFIG_NAMES.xdg}/${GIT_CONFIG_NAMES.config}$`),
+  new RegExp(`(^|/)${escapeRe(GIT_CONFIG_NAMES.attributes)}$`),
 ];
 
 /**
@@ -1778,10 +1787,14 @@ const GIT_CONFIG_SURFACE_RE = [
  * — the bash redirection scan below and the write/edit tool veto in `activate`
  * — ask ONE question, and a future third caller cannot ask a narrower one.
  */
+function protectedPathSpelling(path: string): string {
+  return path.replace(/^['"]+|['"]+$/g, "").replace(/\/+$/, "");
+}
+
 export function isGitConfigSurface(path: string): boolean {
   // Trailing shell noise a redirection token can carry; quotes are stripped by
   // the caller, and a bare `~` expansion never changes which rule matches.
-  const p = path.replace(/^['"]+|['"]+$/g, "").replace(/\/+$/, "");
+  const p = protectedPathSpelling(path);
   if (p.length === 0) return false;
   return GIT_CONFIG_SURFACE_RE.some((re) => re.test(p));
 }
@@ -1861,7 +1874,9 @@ export const POLICY_SURFACE_DIRS = [
   ".pi",
 ] as const;
 
-const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 const POLICY_SURFACE_RE = [
   new RegExp(
     `(^|/)(?:${[...POLICY_SURFACE_FILES, ...DYNAMIC_POLICY_FILES].map(escapeRe).join("|")})$`,
@@ -1872,7 +1887,7 @@ const POLICY_SURFACE_RE = [
 /** Is this path part of this system's own policy surface? Exported so both
  * boundaries ask ONE question — see `POLICY_SURFACE_RE`. */
 export function isPolicySurface(path: string): boolean {
-  const p = path.replace(/^['"]+|['"]+$/g, "").replace(/\/+$/, "");
+  const p = protectedPathSpelling(path);
   if (p.length === 0) return false;
   return POLICY_SURFACE_RE.some((re) => re.test(p));
 }
@@ -1912,7 +1927,7 @@ const MEMORY_SCOPE_SURFACE_RE = [
 /** Is this path one of the memory-scope files a session's recall reads?
  * Exported so both write boundaries ask ONE question. */
 export function isMemoryScopeSurface(path: string): boolean {
-  const p = path.replace(/^['"]+|['"]+$/g, "").replace(/\/+$/, "");
+  const p = protectedPathSpelling(path);
   if (p.length === 0) return false;
   return MEMORY_SCOPE_SURFACE_RE.some((re) => re.test(p));
 }
@@ -1949,7 +1964,7 @@ const DELIVERY_SURFACE_RE = [
 /** Is this path one of the wake-delivery files? Exported so both write
  * boundaries ask ONE question. */
 export function isDeliverySurface(path: string): boolean {
-  const p = path.replace(/^['"]+|['"]+$/g, "").replace(/\/+$/, "");
+  const p = protectedPathSpelling(path);
   if (p.length === 0) return false;
   return DELIVERY_SURFACE_RE.some((re) => re.test(p));
 }
@@ -2025,19 +2040,13 @@ const BRACE_GROUP_RE = /\{[^{}]*(?:,|\.\.)[^{}]*\}/g;
  * retired list's `.tmp-<pid>`; wake patterns are judged as a filename
  * family by possibleWakePattern below. */
 const PROTECTED_COMPONENT_NAMES: readonly string[] = [
-  ".git",
-  ".gitconfig",
-  "git",
-  "config",
-  ".gitattributes",
+  ...Object.values(GIT_CONFIG_NAMES),
   ...POLICY_SURFACE_FILES,
   ...DYNAMIC_POLICY_FILES,
   ...POLICY_SURFACE_DIRS,
-  "recall-hints",
-  "retired-uris.json",
-  "retired-uris.json.tmp-1",
-  "inject",
-  ".done",
+  ...MEMORY_SCOPE_SURFACE.map((p) => p.replace(/\/$/, "")),
+  `${MEMORY_SCOPE_SURFACE[1]}.tmp-1`,
+  ...DELIVERY_SURFACE.filter((p) => p.endsWith("/")).map((p) => p.slice(0, -1)),
 ];
 /** Past this many candidate paths a pattern is refused without enumerating
  * the rest — a target that broad is no reviewer's write. */
