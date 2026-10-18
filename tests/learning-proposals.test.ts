@@ -87,3 +87,85 @@ describe("the feedback tab's PROPOSED pane", () => {
     expect(screen).not.toContain("PROPOSED (0)");
   });
 });
+
+it("refuses accept while rejection of the same proposal awaits its memory receipt", async () => {
+  const root = checkout();
+  let finish!: (r: { ok: boolean; message: string }) => void;
+  let accepted = 0;
+  const mem = new FakeMemory();
+  mem.apply = () => new Promise((r) => (finish = r));
+  const rig = learningRig({
+    repoRoot: root,
+    mem,
+    accept: async () => {
+      accepted++;
+      return { ok: true, message: "accepted" };
+    },
+  });
+  const rejecting = rig.learning.store.reject(SLUG, "no");
+  expect((await rig.learning.store.accept(SLUG)).ok).toBe(false);
+  expect(accepted).toBe(0);
+  finish({ ok: true, message: "saved" });
+  await rejecting;
+});
+
+it("defers the initial change-register refresh until after the first feedback frame", async () => {
+  const rig = learningRig();
+  let called = false;
+  rig.changes.refresh = async () => {
+    called = true;
+    return undefined;
+  };
+  rig.app.hooks.tabs.feedback!.screen(rig.app, 140, 40);
+  expect(called).toBe(false);
+  await settle();
+  expect(called).toBe(true);
+});
+
+it("refreshes the change register after an accepted proposal", async () => {
+  const rig = learningRig({ accept: async () => ({ ok: true, message: "accepted" }) });
+  const tab = rig.app.hooks.tabs.feedback!;
+  tab.screen(rig.app, 140, 40);
+  await settle();
+  let refreshes = 0;
+  rig.changes.refresh = async () => {
+    refreshes++;
+    return undefined;
+  };
+  rig.learning.feedback.focus = "proposed";
+  tab.key!(rig.app, { kind: "char", ch: "A" });
+  await settle();
+  expect(refreshes).toBe(1);
+});
+
+it("keeps the selected proposal slug when a reload removes an earlier row", async () => {
+  let proposals = [
+    { slug: "a", head: [] },
+    { slug: "b", head: [] },
+  ];
+  const rig = learningRig({ fetchProposals: async () => ({ proposals, improvements: [] }) });
+  const tab = rig.app.hooks.tabs.feedback!;
+  tab.screen(rig.app, 140, 40);
+  await settle();
+  rig.learning.feedback.focus = "proposed";
+  tab.key!(rig.app, { kind: "down" });
+  proposals = [
+    { slug: "b", head: [] },
+    { slug: "c", head: [] },
+  ];
+  rig.learning.store.reloadProposals();
+  await settle();
+  expect(rig.learning.store.proposals[rig.learning.feedback.propSel]?.slug).toBe("b");
+});
+
+it("cancels an armed retirement when clicking a different memory row", async () => {
+  const rig = learningRig();
+  const tab = rig.app.hooks.tabs.memory!;
+  tab.screen(rig.app, 140, 40);
+  await settle();
+  const frame = tab.screen(rig.app, 140, 40);
+  rig.learning.memory.confirmRetire = "previous";
+  const zone = frame.zones.find((z) => (z.action as { t?: string }).t === "mem")!;
+  tab.click!(rig.app, zone.x1, zone.y1);
+  expect(rig.learning.memory.confirmRetire).toBeUndefined();
+});

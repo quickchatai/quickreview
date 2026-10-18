@@ -160,7 +160,7 @@ export function improvementsArgv(
   const gh = `GH_TOKEN="$(bash scripts/mint-token.sh)"`;
   return dockerSh(
     cfg,
-    `cd '${cfg.remote_sandbox_root}' && ` +
+    `cd ${shellQuote(cfg.remote_sandbox_root)} && ` +
       `{ ${gh} gh pr list -R '${repo}' --state all --limit 30 --search 'head:bot/improve' --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; } && echo '---' && ` +
       `{ ${gh} gh issue list -R '${repo}' --state all --limit 30 --label ${shellQuote(issueLabel)} --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; }`,
   );

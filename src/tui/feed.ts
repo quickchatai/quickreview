@@ -22,6 +22,7 @@
 // Feed changes never inject a companion chat turn: a synthetic "feed updated"
 // message interrupts an active conversation. The files are ambient short-term
 // state only; a real operator message or alert is a separate path.
+import Database from "better-sqlite3";
 import {
   appendFileSync,
   closeSync,
@@ -395,7 +396,9 @@ export class FeedWriter {
   writeView(view: TuiView, screen: string | undefined, nowMs: number = Date.now()): boolean {
     if (nowMs - this.lastViewMs < VIEW_MIN_INTERVAL_MS) return false;
     this.lastViewMs = nowMs;
-    this.start();
+    // Painting a projection must not initialize or lock the event journal.
+    mkdirSync(this.dir, { recursive: true });
+    rmSync(join(this.dir, "wake"), { force: true });
     this.writeAtomic(this.viewPath, JSON.stringify(view, null, 2));
     // A tab that renders as a bare string has no composed frame; leave the last
     // one on disk rather than blanking it — the tool stamps freshness anyway.
@@ -407,11 +410,19 @@ export class FeedWriter {
    * the seen-set from the retained tail, and bounds an over-long journal. */
   start(): void {
     if (this.started) return;
+    this.withJournalLock(() => this.startLocked());
+  }
+
+  private startLocked(): void {
+    if (this.started) return;
     this.started = true;
     mkdirSync(this.dir, { recursive: true });
     // Nothing reads a `wake` file; removing a leftover one is harmless.
     rmSync(join(this.dir, "wake"), { force: true });
-    if (!existsSync(this.eventsPath)) return;
+    if (!existsSync(this.eventsPath)) {
+      appendFileSync(this.eventsPath, "");
+      return;
+    }
 
     if (this.journalLines().length > EVENT_TAIL_CAP) this.keepJournalTail();
     // Seed through the same whole-lines reader every later write uses, so a
@@ -489,8 +500,38 @@ export class FeedWriter {
   }
 
   write(snapshot: StatusSnapshot, events: FeedEvent[], _health: FeedHealth): FeedWriteResult {
-    this.start();
+    mkdirSync(this.dir, { recursive: true });
     this.writeAtomic(this.snapshotPath, JSON.stringify(snapshot, null, 2));
+    return this.withJournalLock(() => this.writeEventsLocked(events)) ?? { appended: 0 };
+  }
+
+  /** SQLite is only the cross-process mutex; the feed remains plain files.
+   * Its zero timeout keeps a competing TUI from blocking this UI. A crashed
+   * writer releases the lock through the OS, and a skipped write retries on
+   * the next poll without advancing any journal cursor or seen keys. */
+  private withJournalLock<T>(job: () => T): T | undefined {
+    mkdirSync(this.dir, { recursive: true });
+    const lock = new Database(join(this.dir, "events-lock.sqlite"), { timeout: 0 });
+    try {
+      try {
+        lock.exec("BEGIN IMMEDIATE");
+      } catch (err) {
+        if (["SQLITE_BUSY", "SQLITE_LOCKED"].includes((err as { code?: string }).code ?? ""))
+          return undefined;
+        throw err;
+      }
+      try {
+        return job();
+      } finally {
+        lock.exec("ROLLBACK");
+      }
+    } finally {
+      lock.close();
+    }
+  }
+
+  private writeEventsLocked(events: FeedEvent[]): FeedWriteResult {
+    this.startLocked();
 
     // Events: oldest first on disk (the TUI holds them newest-first).
     this.syncJournal();

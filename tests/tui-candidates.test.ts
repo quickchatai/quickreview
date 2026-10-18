@@ -474,6 +474,26 @@ describe("the sweep and the empty answer", () => {
     );
   }
 
+  it("picks up a late expired manifest despite an unchanged reported round count", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
+    const store = new CandidateStore(dir);
+    const sweeper = new CandidateSweeper(store, { evidenceDir: dir });
+    const snap = snapshot([
+      {
+        number: 5181,
+        state: "closed",
+        title: "t",
+        head_sha: "abc",
+        stale_recheck: 0,
+        rounds: 0,
+      } as never,
+    ]);
+    expect((await sweeper.sweep(snap))!.coverage.rounds_with_local_record).toBe(0);
+    writeManifest(dir, 5181, 1, "expired", null);
+    expect((await sweeper.sweep(snap))!.coverage.rounds_with_local_record).toBe(0);
+    expect(listIn(store)!.candidates.some((c) => c.pr === 5181)).toBe(true);
+  });
+
   it("reads round facts out of the evidence manifests, ignoring half-copies", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-ev-"));
     writeManifest(dir, 5249, 2, "done", "REQUEST_CHANGES");
@@ -739,4 +759,15 @@ describe("the sweep and the empty answer", () => {
     await sweeper.sweep(snapshot([]));
     expect(listIn(store)?.version).toBe(1);
   });
+});
+
+it("does not let a quoted body hashtag mint an adjudication", () => {
+  const found = adjudicationsFrom([
+    {
+      ts: "2026-08-25 10:00:00",
+      text: "#feedback pr=44\nThe phrase #adjudication was quoted",
+      tags: ["feedback", "adjudication"],
+    },
+  ]);
+  expect(found.has(44)).toBe(false);
 });

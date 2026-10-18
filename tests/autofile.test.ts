@@ -194,3 +194,12 @@ describe("autofile", () => {
     expect(content).toMatch(/^Status: open$/m);
   });
 });
+
+it("keeps the dedup key stable across the store's pin provenance tag", () => {
+  const original = entry();
+  const pinned = entry({
+    text: original.text.replace("#bug", "#pinned #bug from=experiences"),
+    pinned: true,
+  });
+  expect(memoryKey(pinned)).toBe(memoryKey(original));
+});

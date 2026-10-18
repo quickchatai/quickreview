@@ -334,11 +334,20 @@ describe("detailLines", () => {
           },
           {
             execution_id: "security",
-            agent: "pass-security",
+            agent: "pass-validate",
             status: "running",
             duration_ms: 30_000,
             tool_count: 2,
             current_tool: "grep: bearer",
+            started_at: "2026-08-27T10:04:24Z",
+          },
+          {
+            execution_id: "validate-failed",
+            agent: "pass-validate",
+            status: "failed",
+            duration_ms: 30_000,
+            tool_count: 2,
+            error: "timeout",
             started_at: "2026-08-27T10:04:24Z",
           },
           {
@@ -358,8 +367,9 @@ describe("detailLines", () => {
       "  parent ACTIVE · fanout-started · signal 1s ago · subagent: pass-security",
     );
     expect(lines).toContain("  ✓ pass-baseline · done in 2m · 7 tools");
-    expect(lines).toContain("  ⟳ pass-security · running 30s · grep: bearer");
-    expect(lines).toContain("  ○ pass-validate · pending · sol-high");
+    expect(lines).toContain("  ⟳ pass-validate · running 30s · grep: bearer · sol-high");
+    expect(lines).toContain("  ○ pass-security · pending");
+    expect(lines).toContain("  ✗ pass-validate · failed after 30s · timeout · sol-high");
     expect(lines).toContain("  ✓ pass-architecture · done in 1m · 5 tools · added");
     expect(lines).toContain("  ○ final verdict · pending");
     expect(lines).toContain("  last activity 4s ago · pass-security · grep: bearer");
@@ -1167,4 +1177,10 @@ describe("the DOUBTED overflow", () => {
     const lines = doubtedLines(doubted, 80).map(stripAnsi);
     expect(lines.at(-1)).toBe("  … 2 more (qcr why <pr> --json)");
   });
+});
+
+it("fills every input-box row up to its companion border", () => {
+  const frame = renderBoard(view({ inputBox: { target: "#5012", text: "hello" } }), 100, 40);
+  const end = frame.meta["piTop"]! + frame.meta["piRows"]! - 1;
+  expect(stripAnsi(frame.lines[end]!)).toMatch(/^│.*│$/);
 });

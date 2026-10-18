@@ -97,7 +97,8 @@ export class ArchiveOpSender {
       try {
         parsed = JSON.parse(body);
       } catch {
-        return { ok: false, reason: "unreadable daemon result" };
+        // A concurrent reader can see the daemon still writing its receipt.
+        continue;
       }
       // Valid JSON is not yet a receipt: anything but an object is unreadable.
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))

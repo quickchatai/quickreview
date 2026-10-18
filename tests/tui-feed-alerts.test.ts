@@ -1,3 +1,4 @@
+import Database from "better-sqlite3";
 // Ambient feed writer, alert pipeline, companion surfaces.
 // I/O is a temp dir per test; nothing spawns docker, notify-send, ssh or pi.
 import { FG } from "../src/tui/theme.js";
@@ -124,6 +125,42 @@ describe("FeedWriter", () => {
     const res = restarted.write(snap(), [ev("2026-08-14T10:00:00Z")], "ok");
     expect(res.appended).toBe(0);
     expect(readFileSync(restarted.eventsPath, "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
+  it("leaves a contended journal pending and retries after the other writer releases it", () => {
+    const w = new FeedWriter(dir);
+    w.start();
+    const lock = new Database(join(dir, "events-lock.sqlite"), { timeout: 0 });
+    lock.exec("BEGIN IMMEDIATE");
+    const event = ev("2026-08-14T10:00:00Z");
+    try {
+      expect(w.write(snap(), [event], "ok").appended).toBe(0);
+      expect(readFileSync(w.eventsPath, "utf8")).toBe("");
+    } finally {
+      lock.exec("ROLLBACK");
+      lock.close();
+    }
+    expect(w.write(snap(), [event], "ok").appended).toBe(1);
+  });
+
+  it("does not compact another writer's journal before obtaining the lock", () => {
+    const original =
+      Array.from({ length: EVENT_TAIL_CAP + 1 }, (_, n) =>
+        JSON.stringify(ev(`2026-08-14T10:00:${n}Z`)),
+      ).join("\n") + "\n";
+    writeFileSync(join(dir, "events.jsonl"), original);
+    const lock = new Database(join(dir, "events-lock.sqlite"), { timeout: 0 });
+    lock.exec("BEGIN IMMEDIATE");
+    const w = new FeedWriter(dir);
+    try {
+      w.start();
+      expect(readFileSync(w.eventsPath, "utf8")).toBe(original);
+    } finally {
+      lock.exec("ROLLBACK");
+      lock.close();
+    }
+    w.start();
+    expect(readFileSync(w.eventsPath, "utf8").length).toBeLessThan(original.length);
   });
 
   it("two concurrent TUIs on one feed dir journal each event once", () => {
@@ -738,6 +775,18 @@ describe("companion tab", () => {
     // is no TUI-side draft for it to land in).
     expect(h.app.sidebar?.focused).toBe(true);
     expect("input" in (h.app.sidebar as unknown as Record<string, unknown>)).toBe(false);
+    await h.close();
+  });
+
+  it("clears the Enter action when the latest alert disappears", async () => {
+    const h = harness();
+    h.app.setAlertBadge({
+      count: 1,
+      folds: 0,
+      latest: { tier: "alert", title: "t", cause: "c", pr: 5012, ts: "x" },
+    });
+    h.app.setAlertBadge({ count: 0, folds: 0 });
+    expect(h.app.view.alertFocus).toBe(false);
     await h.close();
   });
 

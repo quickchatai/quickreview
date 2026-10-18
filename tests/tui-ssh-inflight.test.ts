@@ -17,12 +17,12 @@ function hangingChild(): EventEmitter & {
   kill: ReturnType<typeof vi.fn>;
   stdout: EventEmitter;
   stderr: EventEmitter;
-  stdin: { end: () => void };
+  stdin: EventEmitter & { end: () => void };
 } {
   const child = new EventEmitter() as ReturnType<typeof hangingChild>;
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  child.stdin = { end: () => {} };
+  child.stdin = Object.assign(new EventEmitter(), { end: () => {} });
   child.kill = vi.fn();
   return child;
 }
@@ -62,5 +62,20 @@ describe("in-flight ssh children", () => {
   it("is total — nothing in flight is a no-op, never a throw", () => {
     expect(() => killInFlightSsh()).not.toThrow();
     expect(killInFlightSsh()).toBe(0);
+  });
+});
+
+it("absorbs a child's stdin EPIPE into its failed result", async () => {
+  const child = hangingChild();
+  const stdin = new EventEmitter();
+  Object.assign(stdin, { end: () => {} });
+  child.stdin = stdin as unknown as typeof child.stdin;
+  spawnMock.mockReturnValueOnce(child);
+  const result = realSshRunner("my-vm", ["cat"], { stdin: "large payload" });
+  expect(() => stdin.emit("error", new Error("write EPIPE"))).not.toThrow();
+  child.emit("close", 1);
+  await expect(result).resolves.toMatchObject({
+    ok: false,
+    stderr: expect.stringContaining("EPIPE"),
   });
 });

@@ -605,3 +605,17 @@ describe("keys and endpoint", () => {
     );
   });
 });
+
+it("keeps contradictory successful listings visibly unread", async () => {
+  const server = new FakeOpenViking();
+  server.seed("reviewer", "20260819T181354-aaaa1111.md", "#lesson exists");
+  const store = tuiMemoryStore({
+    key: (n) => (n === "OPENVIKING_REVIEWER_KEY" ? KEYS.reviewer : KEYS.companion),
+    fetchFn: async (url, init) =>
+      new URL(url).pathname === "/api/v1/content/read"
+        ? err(404, "NOT_FOUND", "missing")
+        : server.fetch(url, init),
+  });
+  expect(await store.read()).toEqual([]);
+  expect(store.health().error ?? store.health().warning).toMatch(/listing|read|contradic/i);
+});

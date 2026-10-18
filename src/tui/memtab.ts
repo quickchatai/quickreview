@@ -493,6 +493,7 @@ export function installMemoryTab(app: App, store: LearningStore): MemoryTabState
           theApp.pressKey(action.key);
           return true;
         case "mem":
+          st.confirmRetire = undefined;
           select(action.i);
           theApp.repaint();
           return true;

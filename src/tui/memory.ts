@@ -384,6 +384,21 @@ export class TuiMemoryStore implements HealthyMemoryStore {
           }
         : {}),
     });
+    // Client gaps cover failed requests. A sweep can also reject a successful
+    // listing whose files all vanished; preserve that diagnostic at the TUI seam.
+    store.read = async () => {
+      const sweep = await store.sweep();
+      const slot = this.ns.find((n) => n.user === user);
+      if (slot && slot.gaps.length === 0)
+        for (const message of sweep.unread)
+          slot.gaps.push({
+            op: message.startsWith("ls ") ? "ls" : "read",
+            status: 200,
+            code: "incomplete_sweep",
+            message,
+          });
+      return sweep.entries;
+    };
     return store;
   }
 

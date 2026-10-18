@@ -490,3 +490,14 @@ describe("the three-way empty grammar has one spelling", () => {
     }
   });
 });
+
+it("recognizes wheel events with standard modifier bits", async () => {
+  const { extractMouseEvents } = await import("../src/tui/mouse.js");
+  for (const modifier of [4, 8, 16]) {
+    const { events, rest } = extractMouseEvents(
+      Buffer.from(`\x1b[<${64 + modifier};5;7M\x1b[<${65 + modifier};5;7M`),
+    );
+    expect(events.map((e) => e.kind)).toEqual(["wheel-up", "wheel-down"]);
+    expect(rest.length).toBe(0);
+  }
+});

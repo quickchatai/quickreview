@@ -30,8 +30,8 @@ export function extractMouseEvents(buf: Buffer): { events: MouseEvent[]; rest: B
     const x = Number(m[2]);
     const y = Number(m[3]);
     const press = m[4] === "M";
-    if (b === 64) events.push({ kind: "wheel-up", x, y });
-    else if (b === 65) events.push({ kind: "wheel-down", x, y });
+    if ((b & ~28) === 64) events.push({ kind: "wheel-up", x, y });
+    else if ((b & ~28) === 65) events.push({ kind: "wheel-down", x, y });
     // Motion carries bit 32; `32` is left-button-held motion, i.e. a drag.
     // Checked BEFORE the click case, which requires b < 32.
     else if (press && (b & 32) !== 0 && (b & 3) === 0) events.push({ kind: "drag", x, y });

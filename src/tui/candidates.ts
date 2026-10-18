@@ -45,7 +45,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { CapturedComment } from "../capture.js";
 import { readJsonFile, writeJsonFile } from "./jsonfile.js";
-import { parseEventTags } from "../memory/eventtags.js";
+import { parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import { normalizeTag } from "../memory/store.js";
 import type { StatusSnapshot } from "../state.js";
 import { MANIFEST_NAME, prSignature, type RoundManifest, type WhyRound } from "./evidence.js";
@@ -604,6 +604,14 @@ export function renderSurvey(list: CandidateList): string {
 
 // ---- reading the local record ------------------------------------------------
 
+function localManifestCount(evidenceDir: string, pr: number): number {
+  const dir = join(evidenceDir, `pr-${pr}`);
+  if (!existsSync(dir)) return 0;
+  return readdirSync(dir).filter(
+    (name) => /^round-\d+$/.test(name) && existsSync(join(dir, name, MANIFEST_NAME)),
+  ).length;
+}
+
 /**
  * Round facts for one PR out of the evidence store. Manifest-only by
  * design: `manifest.json` is written last and atomically, so a dir with one is
@@ -644,7 +652,7 @@ export function adjudicationsFrom(
 ): Map<number, string> {
   const out = new Map<number, string>();
   for (const e of entries) {
-    if (!e.tags.some((t) => normalizeTag(t) === "adjudication")) continue;
+    if (!parseHashTags(e.text).some((t) => normalizeTag(t) === "adjudication")) continue;
     const first = e.text.split("\n")[0] ?? "";
     const kv = parseEventTags(first);
     const pr = Number(kv.pr ?? "");
@@ -689,7 +697,7 @@ export class CandidateSweeper {
   private busy = false;
   private lastAdjudications = new Map<number, string>();
   /** Per-PR round facts, keyed by the PR's snapshot signature — an unchanged
-   * PR costs the 3-second poll zero manifest reads, since the reads are sync
+   * PR costs the 3-second poll zero manifest content reads, since the reads are sync
    * fs work on the paint process. In-memory on purpose: a TUI restart simply
    * re-reads once. */
   private readonly roundsCache = new Map<number, { signature: string; rounds: RoundFact[] }>();
@@ -791,11 +799,13 @@ export class CandidateSweeper {
       // only while genuinely short.) Both sides count the same thing: the
       // snapshot's `rounds` excludes `expired` rounds, so the local side must
       // too — or an expired manifest stands in for a reported round the
-      // copier has not landed yet, and the shortfall freezes.
+      // copier has not landed yet, and the shortfall freezes. New manifests
+      // also invalidate the cache when all newly copied rounds expired.
       const fresh =
         cached !== undefined &&
         cached.signature === sig &&
-        reportedRounds(cached.rounds) >= (pr.rounds ?? 0);
+        reportedRounds(cached.rounds) >= (pr.rounds ?? 0) &&
+        localManifestCount(this.deps.evidenceDir, pr.number) <= cached.rounds.length;
       const rounds = fresh
         ? cached.rounds
         : roundFactsFromEvidence(this.deps.evidenceDir, pr.number);

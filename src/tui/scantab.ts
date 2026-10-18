@@ -377,7 +377,7 @@ const MAX_ASK_LINES = 40;
 
 function findingLine(f: ScanFinding): string {
   const claim = f.claim.replace(/\s+/g, " ").trim();
-  return `- ${f.fingerprint.slice(0, 12)} ${f.severity} ${(f.lenses?.length ?? 0) > 1 ? f.lenses!.join("+") : f.lens} ${f.path}:${f.start} — ${claim.length > 140 ? `${claim.slice(0, 139)}…` : claim}`;
+  return `- ${f.fingerprint.slice(0, 12)} ${f.severity} ${(f.lenses?.length ?? 0) > 1 ? f.lenses!.join("+") : f.lens} ${sanitizeText(f.path).replace(/\s+/g, " ")}:${f.start} — ${claim.length > 140 ? `${claim.slice(0, 139)}…` : claim}`;
 }
 
 function listed(fs: readonly ScanFinding[]): string[] {
@@ -673,7 +673,7 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
 }
 
 function findingTitle(f: ScanFinding): string {
-  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${f.path}:${f.start}${f.doubt ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}${dismissedLookalike(f) ? "  ≈" : ""}`;
+  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${sanitizeText(f.path).replace(/\s+/g, " ")}:${f.start}${f.doubt ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}${dismissedLookalike(f) ? "  ≈" : ""}`;
 }
 
 const TIER_TITLE: Record<ValidityView, string> = {
@@ -728,7 +728,7 @@ function detailLines(i: ReportItem | undefined, width: number): string[] {
     out.push(`${MUTED}${states.map(([s, n]) => `${n} ${s}`).join(" · ")}${RESET}`);
     out.push(`${MUTED}examples:${RESET}`);
     for (const f of i.findings.slice(0, 5)) {
-      out.push(`${f.path}:${f.start}`);
+      out.push(`${sanitizeText(f.path).replace(/\s+/g, " ")}:${f.start}`);
       out.push(...wrap(sanitizeText(f.claim), width - 2).map((l) => `  ${l}`));
     }
     if (i.findings.length > 5)
@@ -737,7 +737,7 @@ function detailLines(i: ReportItem | undefined, width: number): string[] {
   }
   const f = i.finding;
   out.push(
-    `${STRONG}${f.severity} ${f.lens.replace(/^pass-/, "")} · ${f.path}:${f.start}${f.end !== f.start ? `-${f.end}` : ""}${RESET}  ${MUTED}${f.kind} · ${f.fingerprint.slice(0, 12)}${RESET}`,
+    `${STRONG}${f.severity} ${f.lens.replace(/^pass-/, "")} · ${sanitizeText(f.path).replace(/\s+/g, " ")}:${f.start}${f.end !== f.start ? `-${f.end}` : ""}${RESET}  ${MUTED}${f.kind} · ${f.fingerprint.slice(0, 12)}${RESET}`,
   );
   out.push(...wrap(sanitizeText(f.claim), width));
   if (f.detail) out.push(...wrap(sanitizeText(`detail: ${f.detail}`), width));
@@ -1002,13 +1002,17 @@ export function renderScanTab(
       const room = Math.max(0, bodyRows - right.length);
       const cap = lines.length > room ? Math.max(0, room - 1) : room;
       st.scrollMax = Math.max(0, lines.length - cap);
-      const from = Math.min(st.scroll, st.scrollMax);
+      st.scroll = Math.max(0, Math.min(st.scroll, st.scrollMax));
+      const from = st.scroll;
       for (const l of lines.slice(from, from + cap)) row([{ text: truncate(l, rightW - 3) }]);
       if (from + cap < lines.length)
         row([
           { text: `${MUTED}… ${lines.length - from - cap} more lines — the wheel scrolls${RESET}` },
         ]);
-    } else st.scrollMax = 0;
+    } else {
+      st.scrollMax = 0;
+      st.scroll = 0;
+    }
   }
 
   paintSplit(frame, { left, leftActions, right, leftW, rightW, top, bodyRows });

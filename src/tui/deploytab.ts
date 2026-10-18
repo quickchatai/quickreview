@@ -575,7 +575,9 @@ export function renderDeployTab(
   const bodyRows = rows - 3 - barHeight("deploy", cols, live.bar); // top bar + button row + command bar + bottom border
   if (run) {
     // Live log view: tail-follow; st.scroll counts lines BACK from the tail.
-    const all = run.partial ? [...run.lines, run.partial] : run.lines;
+    const all = run.partial
+      ? [...run.lines, stripAnsi(run.partial).split("\r").pop() ?? ""]
+      : run.lines;
     const maxOff = Math.max(0, all.length - bodyRows);
     const off = Math.min(st.scroll, maxOff);
     const start = Math.max(0, all.length - bodyRows - off);

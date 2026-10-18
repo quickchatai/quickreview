@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import type { StatusSnapshot } from "../src/state.js";
 import { App } from "../src/tui/app.js";
-import type { SshRunner } from "../src/tui/remote.js";
+import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
 
 function snap(head: string, state = "reviewing"): StatusSnapshot {
   return {
@@ -195,4 +195,21 @@ describe("the operator's `r` and the help overlay", () => {
     expect(h.app.view.help).toBe(false); // a click dismisses it, as any key does
     expect(h.app.currentPr()).toBe(5012);
   });
+});
+
+it("drops an events response after the app stopped", async () => {
+  const h = harness();
+  let finish!: (r: RemoteResult) => void;
+  let callbacks = 0;
+  (h.app as unknown as { ssh: SshRunner }).ssh = (() =>
+    new Promise<RemoteResult>((r) => (finish = r))) as SshRunner;
+  h.app.hooks.onPoll = () => {
+    callbacks++;
+  };
+  const app = h.app as unknown as { refreshEvents(): Promise<void>; stopped: boolean };
+  const request = app.refreshEvents();
+  app.stopped = true;
+  finish({ ok: true, stdout: JSON.stringify({ events: [] }), stderr: "", code: 0 });
+  await request;
+  expect(callbacks).toBe(0);
 });

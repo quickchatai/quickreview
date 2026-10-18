@@ -25,7 +25,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   companionConfigMirrorDir,
   CONFIG_FILE,
@@ -776,6 +776,7 @@ export class CompanionLifecycle {
    * conversation) survive — this replaces the container, never its memory. */
   async removeContainer(): Promise<void> {
     const st = await this.status();
+    if (st.unknown) throw new Error(`container status unknown: ${st.unknown}`);
     if (!st.exists) return;
     await this.forceRemove();
   }
@@ -982,6 +983,14 @@ export class CompanionLifecycle {
       { dest: CONTAINER.stateHome, source: homes.state, mode: "rw" },
       { dest: CONTAINER.githubRead, source: homes.github, mode: "ro" },
     );
+    // The locator also searches beside an explicit config file. Keep that
+    // fallback beside the mirrored config without mounting its secret home.
+    const override = (this.installEnv().QCR_CONFIG ?? "").trim();
+    const adjacent = override
+      ? join(dirname(locateConfig({ env: this.installEnv() }).path), PROFILES_DIR)
+      : undefined;
+    if (adjacent && adjacent !== homes.profiles && this.fs.exists(adjacent))
+      spec.push({ dest: `${CONTAINER.configLive}/profiles`, source: adjacent, mode: "rw" });
     return spec;
   }
 

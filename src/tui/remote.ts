@@ -330,6 +330,10 @@ function runChild(
     child.stderr.on("data", (d: Buffer) => (stderr += errDec.write(d)));
     child.on("error", (e: Error) => settle(false, null, e.message));
     child.on("close", (code) => settle(code === 0, code));
+    child.stdin.on("error", (e: Error) => {
+      child.kill("SIGKILL");
+      settle(false, null, e.message);
+    });
     if (opts?.stdin !== undefined) child.stdin.end(opts.stdin);
     else child.stdin.end();
   });

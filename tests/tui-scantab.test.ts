@@ -842,3 +842,20 @@ describe("validity tiers (the scan validator is the skeptic)", () => {
     });
   });
 });
+
+it("clamps stored detail scroll when the pane grows", () => {
+  const { app, s } = rig();
+  s.state.item = 0;
+  s.state.scroll = 100000;
+  app.hooks.tabs.scan!.screen(app, COLS, ROWS);
+  expect(s.state.scroll).toBeLessThanOrEqual(s.state.scrollMax);
+});
+
+it("sanitizes terminal controls in finding list paths", () => {
+  const { app } = rig({
+    findings: [scanFinding({ fingerprint: "e".repeat(64), path: "billing/evil\x1b[2J.py" })],
+  });
+  const screen = app.hooks.tabs.scan!.screen(app, COLS, ROWS).lines.join("\n");
+  expect(screen).toContain("evil");
+  expect(screen).not.toContain("\x1b[2J");
+});

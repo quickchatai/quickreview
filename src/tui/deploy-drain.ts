@@ -79,7 +79,8 @@ export class CommandDrainSender implements DeployDrainSender {
       try {
         value = JSON.parse(body) as typeof value;
       } catch {
-        return { ok: false, reason: "unreadable daemon result" };
+        // A concurrent reader can see the daemon still writing its receipt.
+        continue;
       }
       if (value.ok !== true)
         return { ok: false, reason: resultReason(value.reason, "no reason given") };
