@@ -35,6 +35,7 @@ import {
   reviewKey,
   type BranchTarget,
 } from "./localreview.js";
+import { seedReviewMemory, type ReviewMemorySource } from "./reviewmemory.js";
 import type { CredentialSource } from "./ghcred.js";
 import {
   fetchPrTarget,
@@ -228,6 +229,9 @@ export interface ReviewCliDeps {
   /** Where each run keeps its throwaway tree and its files. */
   runsDir: string;
   timeoutMs: number;
+  /** The install's OpenViking memory, when set up (src/reviewmemory.ts).
+   * Absent or null: the review runs without memory and says so once. */
+  memory?: ReviewMemorySource | null;
   log?: (line: string) => void;
   /** Test seams for a PR target: the credential sources and where GitHub is. */
   pr?: PrCredentialDeps & Pick<PrFetchRequest, "fetchFn" | "gitBase" | "apiBase">;
@@ -637,6 +641,14 @@ async function runReview(
   const sandboxWarnings = deps.sandboxWarning !== undefined ? [deps.sandboxWarning] : [];
   if (deps.sandboxWarning !== undefined)
     (deps.warn ?? ((l) => console.error(l)))(deps.sandboxWarning);
+  // Memory seasons the prompt; it never fails or holds up the review.
+  const seeded = await seedReviewMemory(
+    deps.memory,
+    { title: target.title, files: t.files },
+    deps.log,
+  );
+  if (seeded.notice !== null && !json) deps.out(seeded.notice);
+  const memoryReport = { used: seeded.used, notice: seeded.notice };
   let shot: OneShotResult;
   try {
     if (cmd.uncommitted) addUncommittedTree(gitDir, treeDir, t);
@@ -655,6 +667,7 @@ async function runReview(
       // Rendered over the review tree, as production renders over its worktree.
       prompts: planRound(treeDir).prompts,
       capUsd: price,
+      memory: seeded.memory,
       sessionName: `review-${(cmd.uncommitted ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`,
       label: `${t.repo}@${cmd.uncommitted ? "uncommitted" : t.branch}`,
       ...(deps.log ? { log: deps.log } : {}),
@@ -702,6 +715,7 @@ async function runReview(
     cost_usd: spent,
     out_dir: outDir,
     warnings: [...sandboxWarnings, ...shot.warnings],
+    memory: memoryReport,
   };
   const heading = scope === "delta" ? "New findings" : "Findings";
   const body = count > 0 ? ["", `${heading} (${count})`, ...renderGrouped(unfinishedGroups)] : [];
@@ -818,6 +832,7 @@ export async function cmdReview(rest: string[], json: boolean): Promise<number> 
   const { contextFor } = await import("./bench/runner.js");
   const { createInterface } = await import("node:readline/promises");
   const { homedir } = await import("node:os");
+  const { openReviewMemory } = await import("./reviewmemory.js");
   const root = sandboxRoot();
   const cfg0 = loadConfig();
   const { cfg, ecosystem } = contextFor(root, cfg0.review.profile);
@@ -871,6 +886,7 @@ export async function cmdReview(rest: string[], json: boolean): Promise<number> 
     cfg,
     ecosystem,
     runsDir: join(stateHome(), "review", "runs"),
+    memory: openReviewMemory(cfg0),
     timeoutMs: 60 * 60_000,
     log: (l) => console.error(l),
   });
