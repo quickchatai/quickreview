@@ -90,6 +90,12 @@ export interface ReceiptIndexStats {
   files: number;
 }
 
+class IncompleteReceiptScan extends Error {
+  constructor(readonly tokens: Set<string>) {
+    super("receipt scan reached EOF before the stated size");
+  }
+}
+
 interface FileEntry {
   dev: number;
   ino: number;
@@ -209,7 +215,9 @@ export class ReceiptIndex {
           found = indexed
             ? (await this.tokensOf(full, st)).has(marker)
             : await this.streamContains(full, st, marker);
-        } catch {
+        } catch (error) {
+          // Positive receipt bytes remain evidence even when a later read is incomplete.
+          if (error instanceof IncompleteReceiptScan && error.tokens.has(marker)) return true;
           // An unreadable file is not evidence of absence.
           unreadable = true;
           continue;
@@ -301,7 +309,7 @@ export class ReceiptIndex {
       while (pos < end) {
         const want = Math.min(this.chunkBytes, end - pos);
         const { bytesRead } = await fh.read(buf, have, want, pos);
-        if (bytesRead === 0) break; // truncated under us — what was read stands
+        if (bytesRead === 0) throw new IncompleteReceiptScan(tokens);
         pos += bytesRead;
         this.counters.bytes_read += bytesRead;
         const len = have + bytesRead;
@@ -336,7 +344,7 @@ export class ReceiptIndex {
       let have = 0;
       while (pos < st.size) {
         const { bytesRead } = await fh.read(buf, have, Math.min(chunk, st.size - pos), pos);
-        if (bytesRead === 0) break;
+        if (bytesRead === 0) throw new Error("receipt scan reached EOF before the stated size");
         pos += bytesRead;
         this.counters.bytes_read += bytesRead;
         const len = have + bytesRead;
