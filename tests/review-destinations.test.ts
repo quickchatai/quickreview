@@ -18,6 +18,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Destination } from "../src/reviewdest.js";
 
 vi.stubEnv(
   "QCR_CONFIG",
@@ -120,7 +121,7 @@ function harness(o: {
   piBin: string;
   confirm?: ((q: string) => Promise<boolean>) | null;
   /** Present: the session is interactive and answers the destination question. */
-  choose?: (options: string[]) => string;
+  choose?: (options: string[]) => Destination;
 }) {
   const lines: string[] = [];
   const asked: string[] = [];

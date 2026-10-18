@@ -17,6 +17,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Destination } from "../src/reviewdest.js";
 
 vi.stubEnv(
   "QCR_CONFIG",
@@ -131,7 +132,7 @@ function harness(o: {
   piBin: string;
   confirm?: ((q: string) => Promise<boolean>) | null;
   /** Present: the session is interactive and answers the destination question. */
-  choose?: (options: string[]) => string;
+  choose?: (options: string[]) => Destination;
 }) {
   const lines: string[] = [];
   const asked: string[] = [];
@@ -315,6 +316,33 @@ describe("qcr review --to pr", () => {
     const h = prHarness(repo, happyPi("post-saved-pr").bin, api);
     expect(await runReviewCli(["7"], false, h.deps)).toBe(0);
     expect(api.posts).toHaveLength(1);
+  });
+
+  it("a repeat run on an unchanged PR head spends nothing (the PR keeps local state)", async () => {
+    const repo = cwdRepo("pr-state");
+    const api = stubApi();
+    const pi = happyPi("pr-state");
+    const h1 = prHarness(repo, pi.bin, api);
+    expect(await runReviewCli(["7", "--to", "terminal"], false, h1.deps)).toBe(0);
+    expect(existsSync(join(repo, ".git", "qcr-review-state"))).toBe(true);
+    const h2 = prHarness(repo, pi.bin, api);
+    expect(await runReviewCli(["7", "--to", "terminal"], false, h2.deps)).toBe(0);
+    expect(h2.text()).toMatch(/nothing new/i);
+    expect(h2.text()).toMatch(/PR #7/);
+    // --full still reviews again
+    const h3 = prHarness(repo, pi.bin, api);
+    expect(await runReviewCli(["7", "--to", "terminal", "--full"], false, h3.deps)).toBe(0);
+    expect(h3.text()).not.toMatch(/nothing new/i);
+  });
+
+  it("PR state is keyed by the PR, apart from the branch of the same repo", async () => {
+    const repo = cwdRepo("pr-state-key");
+    const api = stubApi();
+    const pi = happyPi("pr-state-key");
+    await runReviewCli(["7", "--to", "terminal"], false, prHarness(repo, pi.bin, api).deps);
+    const h = harness({ repo, piBin: pi.bin });
+    expect(await runReviewCli(["--to", "terminal"], false, h.deps)).toBe(0);
+    expect(h.text()).not.toMatch(/nothing new/i);
   });
 
   it("posts as the configured identity, else the resolved credential", async () => {

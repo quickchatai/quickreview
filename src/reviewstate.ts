@@ -26,6 +26,11 @@ export function branchTargetKey(repo: string, branch: string): string {
   return `branch:${repo}@${branch}`;
 }
 
+/** A PR's key: the repo and the PR number, apart from any branch of the repo. */
+export function prTargetKey(repo: string, number: number): string {
+  return `pr:${repo}#${number}`;
+}
+
 /** The state file for a target: in the repo's common git dir, so every
  * worktree of the repo shares it. Null outside a git repository. */
 export function statePathFor(cwd: string, key: string): string | null {

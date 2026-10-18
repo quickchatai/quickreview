@@ -67,6 +67,7 @@ import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfin
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import {
   branchTargetKey,
+  prTargetKey,
   lastRound,
   loadState,
   openFindings,
@@ -478,11 +479,17 @@ async function runReview(
 
   // What an earlier review of this target left (none with --full, or when it
   // cannot be trusted).
-  const targetKey = branchTargetKey(t.repo, t.branch);
+  // A branch and a PR each keep state under their own key (the PR's delta is
+  // computed in its scratch repository); the uncommitted tree keeps none.
+  // A run that posts to a PR reviews in full: the findings already on the PR
+  // (the posted-findings skip) are its repeat protection, and an
+  // unchanged-head shortcut would also skip the post.
+  const targetKey = prInfo
+    ? prTargetKey(prInfo.repo, prInfo.number)
+    : branchTargetKey(t.repo, t.branch);
   const statePath = statePathFor(deps.cwd, targetKey);
-  // only a branch keeps local state: a PR and the uncommitted tree always review in full
-  const prev =
-    cmd.full || prInfo !== null || cmd.uncommitted ? null : loadState(statePath, targetKey);
+  const postsToPr = prInfo !== null && dests.includes("pr");
+  const prev = cmd.full || cmd.uncommitted || postsToPr ? null : loadState(statePath, targetKey);
   const short = (sha: string): string => sha.slice(0, 7);
   const stillOpen = (s: ReviewState | null, before?: number): StillOpen[] =>
     openFindings(s)
@@ -769,7 +776,7 @@ async function runReview(
     cost_usd: spent,
   };
   const recorded = recordRound(scope === "delta" ? prev : null, targetKey, round, shot.findings);
-  if (finished && prInfo === null && !cmd.uncommitted) saveState(statePath, recorded.state);
+  if (finished && !cmd.uncommitted) saveState(statePath, recorded.state);
   const open = finished ? stillOpen(recorded.state, round.round_no) : [];
   const skipped = skipPosted(recorded.fresh, bot.findings);
   const groups = groupFindings({ findings: finished ? skipped.fresh : [] });
