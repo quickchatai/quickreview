@@ -342,6 +342,7 @@ describe("the relay cap", () => {
     expect(r.all).toHaveLength(1);
     expect(r.all[0]!.killed).toBe(false);
     expect(fwd.stats()).toMatchObject({ refusedTimeout: 1, queued: 0 });
+    expect(lines.find((line) => line.startsWith("relay queue drained"))).toContain("1 refused");
     expect(lines.some((l) => l.startsWith("refused a request"))).toBe(true);
     // A's answer still arrives on its relay.
     r.all[0]!.respond("a");
