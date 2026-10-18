@@ -73,6 +73,13 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "factories (P3) take it. Delete this entry with the first import.",
     },
     {
+      file: "src/engine/lens/registry.ts",
+      why:
+        "the lens agent registry (P4.1): loads the built agents the SDK lens tool names. It is read only " +
+        "by tests/lens-registry.test.ts until the lens runner (P4.4) takes it. Delete this entry with the " +
+        "first import.",
+    },
+    {
       file: "src/reviewrendercli.ts",
       why:
         "the `[review] render_outputs` renderer's command line. Driven by scripts/render-review.sh, which a " +
