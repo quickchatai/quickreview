@@ -275,6 +275,8 @@ export function reviewKey(parts: {
   lenses: readonly string[];
   lines: number;
   cap_usd: number;
+  /** A delta review: the head it reviews from. */
+  since?: string;
 }): string {
   return planKey({ ...parts, cap: Math.round(parts.cap_usd * 100) });
 }
