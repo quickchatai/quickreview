@@ -7,9 +7,9 @@
 //      post is retried twice, then logged and dropped. Nothing throws into
 //      callers — failures come back as `{ ok: false, error }`. A NEW message
 //      is retried only after a definite refusal: when Slack may have taken it
-//      (a timeout, a reset, an unreadable 2xx answer) a resend could post it
-//      twice, so it is dropped instead — the caller's ledger records the
-//      failure, as it does for any other.
+//      (a timeout, a reset, a server error, an unreadable 2xx answer) a resend could post it
+//      twice, so it is returned as ambiguous — the caller keeps its reservation
+//      until an operator can reconcile the unknown delivery.
 //
 // This class reads no config and no files: tokens and intervals arrive as
 // plain options (the caller owns config).
@@ -224,7 +224,7 @@ export class SlackApiClient implements SlackWebApi {
     }
     // Dropped, deliberately: Slack must never block a verdict, label or round.
     this.log("slack.api.dropped", { method, error: last.error });
-    return { ok: false, error: last.error ?? "unknown" };
+    return { ok: false, error: last.error ?? "unknown", ...(last.ambiguous ? { ambiguous: true } : {}) };
   }
 
   /** One HTTP call, bounded by `requestTimeoutMs` end to end (the abort
@@ -254,10 +254,10 @@ export class SlackApiClient implements SlackWebApi {
         payload = (await res.json()) as SlackApiResponse;
       } catch {
         // A 2xx Slack answered but we cannot read: it may have done the work.
-        return { ok: false, error: `bad_json_${res.status}`, ambiguous: res.ok };
+        return { ok: false, error: `bad_json_${res.status}`, ambiguous: res.ok || res.status >= 500 };
       }
       if (!res.ok || payload?.ok !== true) {
-        return { ok: false, error: payload?.error ?? `http_${res.status}` };
+        return { ok: false, error: payload?.error ?? `http_${res.status}`, ...(res.status >= 500 ? { ambiguous: true } : {}) };
       }
       // ts is a string, always — never coerce it to a number.
       const ts = typeof payload.ts === "string" ? payload.ts : undefined;

@@ -328,7 +328,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     }
     this.claimedHere.add(req.idemKey);
 
-    let result: { ok: boolean; ts?: string; error?: string };
+    let result: { ok: boolean; ts?: string; error?: string; ambiguous?: boolean };
     try {
       result = await slack.postMessage({
         channel: cfg.slack.channel,
@@ -336,19 +336,28 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
         thread_ts: threadTs,
       });
     } catch (err) {
-      result = { ok: false, error: String(err) };
+      result = { ok: false, error: String(err), ambiguous: true };
     }
     if (!result.ok || !result.ts) {
+      if (result.ambiguous || result.ok) {
+        // Keep the existing reservation: Slack may have accepted this create.
+        store.noteSlackPostUnknown(req.idemKey, result.error ?? "no ts returned");
+        this.log(`slack: delivery unknown (${req.idemKey})`, result.error ?? "no ts returned");
+        return undefined;
+      }
       store.settleSlackPost(req.idemKey, { ok: false, error: result.error ?? "no ts returned" });
       this.log(`slack: post failed (${req.idemKey})`, result.error);
       return undefined;
     }
-    store.settleSlackPost(req.idemKey, { ok: true, ts: result.ts });
-    if (req.pr !== undefined) {
-      if (threadTs === undefined)
-        store.upsertSlackThread({ pr: req.pr, channel: cfg.slack.channel, root_ts: result.ts });
-      else store.touchSlackThread(req.pr);
-    }
+    const ts = result.ts;
+    store.db.transaction(() => {
+      store.settleSlackPost(req.idemKey, { ok: true, ts });
+      if (req.pr !== undefined) {
+        if (threadTs === undefined)
+          store.upsertSlackThread({ pr: req.pr, channel: cfg.slack.channel, root_ts: ts });
+        else store.touchSlackThread(req.pr);
+      }
+    })();
     return result.ts;
   }
 

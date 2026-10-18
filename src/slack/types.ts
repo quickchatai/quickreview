@@ -48,6 +48,8 @@ export interface SlackPostResult {
   ts?: string;
   /** Slack error code (`rate_limited`, `channel_not_found`, …) or a local reason. */
   error?: string;
+  /** The create may have succeeded; it must not be blindly sent again. */
+  ambiguous?: boolean;
 }
 
 /** A resolved Slack user, for id -> human name rendering. */

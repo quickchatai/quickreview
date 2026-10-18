@@ -49,6 +49,19 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("chat.postMessage", () => {
+  it("does not resend a server-error create and exposes its unknown delivery", async () => {
+    const f = fakeFetch(() => ({ status: 500, payload: { ok: false, error: "internal_error" } }));
+    const p = build(f.fetchFn).postMessage({ channel: "C1", text: "one announcement" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.calls).toHaveLength(1);
+    expect(await p).toMatchObject({ ok: false, ambiguous: true });
+  });
+  it("preserves ambiguity for callers after a lost create response", async () => {
+    const fetchFn = (async () => { throw new Error("ECONNRESET"); }) as SlackFetchFn;
+    const p = build(fetchFn).postMessage({ channel: "C1", text: "one announcement" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await p).toMatchObject({ ok: false, ambiguous: true });
+  });
   it("posts with the bot token and returns the ts as a string", async () => {
     const f = fakeFetch(() => ({ payload: { ok: true, ts: "1712345678.123456" } }));
     const api = build(f.fetchFn);
@@ -135,8 +148,8 @@ describe("rate limits and retries", () => {
     await expect(p).resolves.toEqual({ ok: true, ts: "1712345678.222222" });
   });
 
-  it("retries twice then gives up — logged and dropped, never thrown", async () => {
-    const f = fakeFetch(() => ({ status: 500, payload: { ok: false, error: "internal_error" } }));
+  it("retries a definite refusal twice then gives up — logged and dropped, never thrown", async () => {
+    const f = fakeFetch(() => ({ status: 400, payload: { ok: false, error: "internal_error" } }));
     const logs: string[] = [];
     const api = build(f.fetchFn, { log: (m) => void logs.push(m) });
 
@@ -152,7 +165,7 @@ describe("rate limits and retries", () => {
 
   it("a dropped post does not wedge the queue for the next one", async () => {
     const f = fakeFetch((_c, n) =>
-      n <= 3 ? { status: 500, payload: { ok: false, error: "boom" } } : {},
+      n === 1 ? { status: 500, payload: { ok: false, error: "boom" } } : {},
     );
     const api = build(f.fetchFn);
     const first = api.postMessage({ channel: "C1", text: "doomed" });
@@ -161,7 +174,7 @@ describe("rate limits and retries", () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect((await first).ok).toBe(false);
     expect((await second).ok).toBe(true);
-    expect(f.calls).toHaveLength(4);
+    expect(f.calls).toHaveLength(2);
   });
 
   it("a stalled request is abandoned at the per-attempt deadline, so it cannot wedge the queue", async () => {
