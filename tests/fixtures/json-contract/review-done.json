@@ -63,5 +63,7 @@
   "memory": {
     "used": false,
     "notice": "memory: not set up on this install — reviewing without it"
-  }
+  },
+  "customised": false,
+  "overrides": []
 }

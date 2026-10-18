@@ -33,7 +33,7 @@ import { identityVars } from "./include.js";
 import { lensEnabled } from "./lenstuning.js";
 import { MEMORY_LESS, type RoundMemory } from "./memory/context.js";
 import { renderPassTasks } from "./passtasks.js";
-import { loadProfileHeuristics } from "./profiles.js";
+import { loadProfileHeuristics, type ProfileLookup } from "./profiles.js";
 import { isDefaultPosting } from "./postingpolicy.js";
 import {
   postedRenderOptions,
@@ -245,8 +245,17 @@ export function renderOneShotPrompts(args: {
   dependencyNote?: string;
   /** The round's memory seed (src/reviewmemory.ts); absent => memory-less. */
   memory?: RoundMemory;
+  /** Reads a shipped `prompts/` file instead of the disk: where a profile's
+   * replacement is served (src/profileoverrides.ts). Absent: the file itself. */
+  readFile?: (path: string) => string;
+  /** The profile loaders' lookup, carrying the repo profile's layer. */
+  profileLookup?: ProfileLookup;
 }): OneShotPrompts {
   const { root, cfg, target, tree } = args;
+  const readPrompt = (name: string): string => {
+    const path = join(root, "prompts", name);
+    return args.readFile ? args.readFile(path) : readFileSync(path, "utf8");
+  };
   const identity = { ...identityVars(cfg), repo: target.repo };
   const title = target.title ?? target.fallbackTitle ?? `${target.repo}#${target.number}`;
   const body = boundBody(target.body);
@@ -280,7 +289,7 @@ export function renderOneShotPrompts(args: {
       ? { firstPartyDirectives: { files: directiveFiles, mention: "maintainer" } }
       : {}),
     ecosystem: args.ecosystem,
-    heuristics: loadProfileHeuristics(root, cfg.review.profile),
+    heuristics: loadProfileHeuristics(root, cfg.review.profile, args.profileLookup),
     ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
     // The repo's written style guide, as production finds it (dispatch.ts).
     ...(lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
@@ -311,7 +320,7 @@ export function renderOneShotPrompts(args: {
         pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
       }
     : unrendered;
-  const template = readFileSync(join(root, "prompts", roundTemplateFile("first")), "utf8");
+  const template = readPrompt(roundTemplateFile("first"));
   const rendered = renderRoundPrompt(
     template,
     order,
@@ -334,7 +343,7 @@ export function renderOneShotPrompts(args: {
       ...(cfg.review.render_outputs ? { renderOutputs: true } : {}),
     });
   const system = renderConversationSystemPrompt(
-    readFileSync(join(root, "prompts", "conversation-system.md"), "utf8"),
+    readPrompt("conversation-system.md"),
     { pr: target.number, title, worktree: tree },
     identity,
   );
@@ -403,6 +412,11 @@ export interface FollowUpOneShotArgs {
   prior: (sidecarPath: string) => { note: string; sidecar: string; list: PriorFindingsList };
   /** How many prior findings the full-round report counts. */
   priorCount: number;
+  /** Reads a shipped `prompts/` file instead of the disk: where a profile's
+   * replacement is served (src/profileoverrides.ts). Absent: the file itself. */
+  readFile?: (path: string) => string;
+  /** The profile loaders' lookup, carrying the repo profile's layer. */
+  profileLookup?: ProfileLookup;
 }
 
 /**
@@ -414,6 +428,10 @@ export interface FollowUpOneShotArgs {
  */
 export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowUpOneShotPrompts {
   const { root, cfg, target, tree } = args;
+  const readPrompt = (name: string): string => {
+    const path = join(root, "prompts", name);
+    return args.readFile ? args.readFile(path) : readFileSync(path, "utf8");
+  };
   const identity = { ...identityVars(cfg), repo: target.repo };
   const title = target.title ?? target.fallbackTitle ?? `${target.repo}#${target.number}`;
   const body = boundBody(target.body);
@@ -425,7 +443,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
     title,
     author: "",
   } as unknown as PrStateRow;
-  const heuristics = loadProfileHeuristics(root, cfg.review.profile);
+  const heuristics = loadProfileHeuristics(root, cfg.review.profile, args.profileLookup);
   const styleGuide = lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
     ? findStyleGuide(tree)
     : [];
@@ -578,7 +596,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
         }
       : {}),
   };
-  const template = readFileSync(join(root, "prompts", templateFileForOrder(order)), "utf8");
+  const template = readPrompt(templateFileForOrder(order));
   const rendered = renderRoundPrompt(
     template,
     order,
@@ -604,7 +622,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
       prevHead: args.prevHead,
     });
   const system = renderConversationSystemPrompt(
-    readFileSync(join(root, "prompts", "conversation-system.md"), "utf8"),
+    readPrompt("conversation-system.md"),
     { pr: target.number, title, worktree: tree },
     identity,
   );

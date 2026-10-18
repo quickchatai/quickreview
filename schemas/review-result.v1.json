@@ -119,6 +119,17 @@
         }
       }
     },
+    "customised": {
+      "type": "boolean",
+      "description": "True when a profile (the user's, or the repo's .qcr/ on the base commit) replaced a shipped agent or prompt with different bytes for this review; overrides lists them."
+    },
+    "overrides": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/override"
+      },
+      "description": "The shipped files a profile replaced; empty unless customised."
+    },
     "post": {
       "$ref": "#/$defs/post"
     },
@@ -163,6 +174,33 @@
     }
   },
   "$defs": {
+    "override": {
+      "type": "object",
+      "required": ["path", "origin", "layer", "sha256", "shipped_sha256", "seed"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The shipped file, relative to the app root (agents/pass-security.md)."
+        },
+        "origin": {
+          "enum": ["user", "repo"]
+        },
+        "layer": {
+          "type": "string",
+          "description": "The profile whose file won (.qcr for the repo profile)."
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "shipped_sha256": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "boolean",
+          "description": "True when the shipped file is a frozen seed."
+        }
+      }
+    },
     "preview": {
       "type": "object",
       "required": [

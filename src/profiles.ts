@@ -41,6 +41,11 @@
 // checkout's generic examples — every loader below resolves the name through
 // it, so a name that could escape `profiles/` is refused before any read.
 //
+// A repo profile (`.qcr/` on the base branch, src/profileoverrides.ts) rides
+// the same loaders as the lowest layer of the chain: `ProfileLookup.repoProfile`
+// names its extracted directory, and everything the named profile and its bases
+// set wins over it. The extraction has already dropped what a repo may not say.
+//
 // Inheritance: `profile.toml` may say `extends = "<profile>"`, and
 // the base may extend another, in chains. Every loader below resolves the
 // WHOLE chain (`profileChain` — base first, the selected profile last; a
@@ -102,7 +107,13 @@ import {
  * (default `process.env`). */
 export interface ProfileLookup {
   env?: InstallEnv;
+  /** The repo profile's extracted directory (`extractRepoProfile`): a layer
+   * under the whole named chain, present even when no profile is named. */
+  repoProfile?: { dir: string };
 }
+
+/** The name the repo profile's layer carries in errors. */
+const REPO_LAYER_NAME = ".qcr";
 
 /** Where a not-found looked — and, when the checkout still strands a profile
  * of that name (which is never read), the way out. */
@@ -149,6 +160,9 @@ interface ProfileLayer {
   scan?: unknown;
   /** The raw `[posting]` table, when this profile has one. */
   posting?: unknown;
+  /** The layer may omit `addenda/` without extending anything (the repo
+   * profile: a `.qcr/` that only tunes). */
+  optionalPack?: boolean;
 }
 
 /** Read one profile's `profile.toml` — an absent file is an empty one. Owns
@@ -242,6 +256,28 @@ function profileChain(root: string, profile: string, lookup: ProfileLookup): Pro
     dir = located.dir;
   }
   return chain.reverse();
+}
+
+/** The repo profile's layer, when the lookup carries one. */
+function repoLayer(lookup: ProfileLookup): ProfileLayer[] {
+  if (!lookup.repoProfile) return [];
+  return [{ ...readLayer(REPO_LAYER_NAME, lookup.repoProfile.dir), optionalPack: true }];
+}
+
+/** The chain every loader walks: the repo layer first (lowest), then the
+ * named profile's, base first. `soft` is the tuning loaders' contract: no
+ * profile, or one found nowhere, means no named chain rather than a throw. */
+function chainOf(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup,
+  soft: boolean,
+): ProfileLayer[] {
+  const named =
+    profile === "" || (soft && !locateProfile({ root, profile, ...lookup }))
+      ? []
+      : profileChain(root, profile, lookup);
+  return [...repoLayer(lookup), ...named];
 }
 
 /** The selected profile's resolved `extends` chain, base first — name and
@@ -346,7 +382,7 @@ function mustBeDir(path: string, what: string): void {
  * one that extends nothing must have it. */
 function loadOwnPack(layer: ProfileLayer): PassAddendum[] {
   const addendaDir = join(layer.dir, "addenda");
-  if (layer.extends !== undefined && !existsSync(addendaDir)) return [];
+  if ((layer.extends !== undefined || layer.optionalPack) && !existsSync(addendaDir)) return [];
   mustBeDir(addendaDir, `[review] profile "${layer.name}" has no addenda/ directory`);
   const files = readdirSync(addendaDir)
     .filter((f) => f.endsWith(".md"))
@@ -398,10 +434,9 @@ export function loadProfileAddenda(
   profile: string,
   lookup: ProfileLookup = {},
 ): PassAddendum[] {
-  if (profile === "") return [];
   const reserved = reservedAddendumIds();
   let merged: PassAddendum[] = [];
-  for (const layer of profileChain(root, profile, lookup)) {
+  for (const layer of chainOf(root, profile, lookup, false)) {
     for (const id of layer.drop) {
       if (!merged.some((a) => a.id === id)) {
         const why = reserved.has(id)
@@ -445,13 +480,11 @@ export function loadProfileEcosystem(
   profile: string,
   lookup: ProfileLookup = {},
 ): EcosystemName {
-  if (profile === "") return "none";
-  if (!locateProfile({ root, profile, ...lookup })) return "none";
   // Child wins — the nearest profile in the chain that sets the key.
   // Every layer's value is validated, an overridden one too: a base that
   // names an unknown ecosystem is broken for every other child of it.
   let chosen: EcosystemName = "none";
-  for (const layer of profileChain(root, profile, lookup)) {
+  for (const layer of chainOf(root, profile, lookup, true)) {
     const eco = layer.ecosystem;
     if (eco === undefined) continue;
     if (eco !== "django" && eco !== "none") {
@@ -484,10 +517,8 @@ export function loadProfileLensTuning(
   profile: string,
   lookup: ProfileLookup = {},
 ): Record<string, LensTuning> {
-  if (profile === "") return {};
-  if (!locateProfile({ root, profile, ...lookup })) return {};
   let merged: Record<string, LensTuning> = {};
-  for (const layer of profileChain(root, profile, lookup)) {
+  for (const layer of chainOf(root, profile, lookup, true)) {
     if (layer.lenses === undefined) continue;
     const where = `[review] profile "${layer.name}": ${layer.toml}`;
     merged = mergeLensTuning(merged, parseLensTable(where, layer.lenses, ALL_PASSES, layer.dir));
@@ -514,10 +545,8 @@ export function loadProfileScan(
   profile: string,
   lookup: ProfileLookup = {},
 ): Partial<ScanConfig> {
-  if (profile === "") return {};
-  if (!locateProfile({ root, profile, ...lookup })) return {};
   let merged: Partial<ScanConfig> = {};
-  for (const layer of profileChain(root, profile, lookup)) {
+  for (const layer of chainOf(root, profile, lookup, true)) {
     if (layer.scan === undefined) continue;
     const where = `[review] profile "${layer.name}": ${layer.toml}`;
     merged = { ...merged, ...parseScanTable(where, layer.scan, SCAN_PROFILE_KEYS) };
@@ -542,10 +571,8 @@ export function loadProfilePosting(
   profile: string,
   lookup: ProfileLookup = {},
 ): Partial<PostingPolicy> {
-  if (profile === "") return {};
-  if (!locateProfile({ root, profile, ...lookup })) return {};
   let merged: Partial<PostingPolicy> = {};
-  for (const layer of profileChain(root, profile, lookup)) {
+  for (const layer of chainOf(root, profile, lookup, true)) {
     if (layer.posting === undefined) continue;
     merged = {
       ...merged,
@@ -699,14 +726,13 @@ export function loadProfileHeuristics(
   profile: string,
   lookup: ProfileLookup = {},
 ): HeuristicsExtension {
-  if (profile === "") return EMPTY_HEURISTICS;
   // Unioned across the chain, per lens, base predicates first —
   // heuristics only ever ADD, so a child can neither drop nor narrow a
   // base's predicate (the same ADD-only contract as against the core).
   const paths: Record<string, RegExp[]> = {};
   const addedLines: Record<string, RegExp[]> = {};
   let any = false;
-  for (const layer of profileChain(root, profile, lookup)) {
+  for (const layer of chainOf(root, profile, lookup, false)) {
     const file = join(layer.dir, "heuristics.toml");
     if (!existsSync(file)) continue;
     any = true;

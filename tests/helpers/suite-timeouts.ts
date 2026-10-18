@@ -108,6 +108,8 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/pr-context-shell.test.ts",
   "tests/pr-self-shell.test.ts",
   "tests/pr-threads-shell.test.ts",
+  "tests/profile-overrides-review.test.ts",
+  "tests/profile-overrides.test.ts",
   "tests/proposals.test.ts",
   "tests/publish-snapshot.test.ts",
   "tests/publishability.test.ts",

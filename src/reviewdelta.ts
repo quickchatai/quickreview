@@ -12,6 +12,7 @@ import type { Ecosystem } from "./ecosystem.js";
 import type { PrFileEntry } from "./github.js";
 import {
   renderFollowUpOneShotPrompts,
+  type FollowUpOneShotArgs,
   type FollowUpOneShotPrompts,
   type OneShotTarget,
 } from "./oneshot.js";
@@ -110,6 +111,8 @@ export function renderDeltaRound(i: {
   issuedAt: string;
   state: ReviewState;
   delta: DeltaFound;
+  readFile?: FollowUpOneShotArgs["readFile"];
+  profileLookup?: FollowUpOneShotArgs["profileLookup"];
 }): FollowUpOneShotPrompts {
   const last = lastRound(i.state);
   const list = openFindings(i.state, last.round_no + 1);
@@ -125,6 +128,8 @@ export function renderDeltaRound(i: {
     roundNo: last.round_no + 1,
     reviewNo: last.round_no + 1,
     prevHead: last.head_sha,
+    ...(i.readFile ? { readFile: i.readFile } : {}),
+    ...(i.profileLookup ? { profileLookup: i.profileLookup } : {}),
     decide: (ctx) =>
       planFollowUp(i.cfg, ctx.heuristics, {
         delta: i.delta,

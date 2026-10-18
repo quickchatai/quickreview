@@ -33,6 +33,7 @@ import type { Config } from "./config.js";
 import { buildBenchAgents } from "./bench/runner.js";
 import { benchSettings } from "./bench/auth.js";
 import { copyPiAuth } from "./piauthcopy.js";
+import type { ProfileLookup } from "./profiles.js";
 
 /** The reviewer stub, relative to the production tree. */
 export const REVIEWER_STUB = join("deploy", "reviewer", "AGENTS.override.md");
@@ -128,6 +129,8 @@ export function prepareHostRun(o: {
   needMs: number;
   /** Checkouts the cwd must stay out of: the qcr tree, the reviewed repo. */
   checkouts: readonly string[];
+  /** A profile's replacements for the lens agents (src/profileoverrides.ts). */
+  profile?: { readFile?: (path: string) => string; lookup?: ProfileLookup };
   now?: () => number;
 }): HostRun {
   const cwd = resolve(o.cwd);
@@ -166,7 +169,7 @@ export function prepareHostRun(o: {
   // The lens agents, for the user scope (QCR_SUBAGENT_SCOPE=user): lens
   // children run in the parent's cwd and resolve them through the inherited
   // agent dir.
-  buildBenchAgents(o.root, o.cfg, join(o.agentDir, "agents"));
+  buildBenchAgents(o.root, o.cfg, join(o.agentDir, "agents"), o.profile);
   mkdirSync(cwd, { recursive: true });
   copyFileSync(join(o.root, REVIEWER_STUB), join(cwd, HOST_CONTEXT_STUB));
   return { agentDir: o.agentDir, cwd, strayContext: ancestorContextFiles(cwd) };
