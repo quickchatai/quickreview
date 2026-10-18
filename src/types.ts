@@ -1,5 +1,6 @@
 // Shared contracts: dispatch emits RoundOrder, the session manager consumes
 // it, and verdict files close the loop.
+import type { SessionCommandOwnership } from "./session-command.js";
 import type { MigrationCollision } from "./migrations.js";
 import type { PostingPolicy } from "./postingpolicy.js";
 import type { SessionBridgeCompaction } from "./session-bridge.js";
@@ -525,7 +526,7 @@ export interface MeritsVerdictFile {
  * against it, sessions.ts implements it, and a disk-logging stub lets the
  * daemon run end-to-end without pi. */
 export type SessionCommandRetryResult =
-  "retried" | "settled" | "round_finished" | "accepted_race" | "retry_failed";
+  "retried" | "settled" | "round_finished" | "accepted_race" | "raced" | "retry_failed";
 /** What one same-session REDELIVERY did
  * (`SessionHooks.redeliverSessionCommand`): `redelivered` — the row is back in
  * `pending` and its file rewritten, the session untouched; `started` /
@@ -612,8 +613,10 @@ export interface SessionHooks {
    * by the live-but-stuck self-requeue: an overdue round whose session is
    * alive but wedged is killed + requeued instead of left to the anomaly
    * path. Optional: absent ⇒ a live-but-stuck round is not requeued (a fresh
-   * round is never injected into a wedged live session). */
-  killSession?(pr: number): Promise<void>;
+   * round is never injected into a wedged live session). A supervisor passes
+   * its exact reservation; false means ownership changed and nothing was killed.
+   * Calls without an expected owner retain the operator's ordinary kill. */
+  killSession?(pr: number, expected?: SessionCommandOwnership): Promise<void | boolean>;
   /** Milliseconds-epoch mtime of the newest pi session JSONL for this PR, or
    * null when unknown. Read by the lost-prompt net: a round whose inject was
    * consumed while the session shows no activity since the round started

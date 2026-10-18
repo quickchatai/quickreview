@@ -53,6 +53,7 @@ import type { Pi, PiEventContext } from "@earendil-works/pi-coding-agent";
 import { sessionCommandMarker } from "../src/session-command.js";
 import {
   COMPACTION_REQUEST_FILE,
+  OVERSEER_RETIRE_REQUEST_FILE,
   writeSessionBridgeState,
   type SessionBridgeCompaction,
 } from "../src/session-bridge.js";
@@ -173,7 +174,9 @@ export const activate: (pi: Pi) => void = (pi) => {
         stage,
         updated_at: new Date().toISOString(),
         ...(failure ? { failed_stage: failure.failedStage, detail: failure.detail } : {}),
-        ...(stage === "ready" ? { compaction } : {}),
+        ...(stage === "ready"
+          ? { compaction, run_status: busy ? ("active" as const) : ("idle" as const) }
+          : {}),
       });
       if (stage === "ready") readyPublished = true;
     } catch (error) {
@@ -648,6 +651,48 @@ export const activate: (pi: Pi) => void = (pi) => {
   // empty files, but a non-empty submission always stops the drain until its
   // start is acknowledged and its run settles. A requested compaction goes
   // first: it is the end of the round the queued wakes follow.
+  const retireIdleOverseer = (): boolean => {
+    if (session !== "overseer" || !bridgeGeneration) return false;
+    try {
+      const requestPath = join(dir, OVERSEER_RETIRE_REQUEST_FILE);
+      if (!existsSync(requestPath) || statSync(requestPath).size > 4096) return false;
+      const request = JSON.parse(readFileSync(requestPath, "utf8")) as Record<string, unknown>;
+      if (
+        request["version"] !== 1 ||
+        request["generation"] !== bridgeGeneration ||
+        typeof request["nonce"] !== "string" ||
+        !request["nonce"]
+      )
+        return false;
+      if (
+        busy ||
+        submitted ||
+        activeWake ||
+        compacting ||
+        compactionRequestInFlight ||
+        piIdle() !== true ||
+        piHasPending() !== false ||
+        pendingFiles(dir).length > 0 ||
+        existsSync(join(dir, COMPACTION_REQUEST_FILE))
+      )
+        return false;
+      const birth = JSON.parse(
+        readFileSync(join(root, "state", "sessions", "overseer.json"), "utf8"),
+      ) as Record<string, unknown>;
+      if (birth["session"] !== session || birth["bridge_generation"] !== bridgeGeneration)
+        return false;
+      // Consume and exit in one synchronous callback: no fresh prompt can be
+      // admitted between the in-process idle proof and process termination.
+      unlinkSync(requestPath);
+      closed = true;
+      watcher?.close();
+      process.exit(0);
+      return true;
+    } catch {
+      return false; // Malformed/unreadable/stale requests never terminate work.
+    }
+  };
+
   let draining = false;
   let drainAgain = false;
   const drain = (): void => {
@@ -660,6 +705,7 @@ export const activate: (pi: Pi) => void = (pi) => {
     try {
       do {
         drainAgain = false;
+        if (retireIdleOverseer()) break;
         reclaimRedelivered();
         if (startRequestedCompaction()) break;
         for (const file of pendingFiles(dir)) {
@@ -715,7 +761,12 @@ export const activate: (pi: Pi) => void = (pi) => {
         // deliver): concurrent watch events cannot interleave or reorder —
         // pendingFiles() sorts, so delivery is strictly oldest-first.
         const name = String(filename);
-        if (name.endsWith(".md") || name === COMPACTION_REQUEST_FILE) drain();
+        if (
+          name.endsWith(".md") ||
+          name === COMPACTION_REQUEST_FILE ||
+          name === OVERSEER_RETIRE_REQUEST_FILE
+        )
+          drain();
       });
       stage = "initial_drain";
       drain(); // anything dropped before or during watch registration
@@ -781,6 +832,7 @@ export const activate: (pi: Pi) => void = (pi) => {
     // starts as separate runs or the mailbox would remain busy forever.
     if (!busy) runGeneration++;
     busy = true;
+    republish();
   });
   // A turn cannot start outside a run, so this reaffirms `busy` but is NOT a
   // correlated acceptance ack.
@@ -788,6 +840,7 @@ export const activate: (pi: Pi) => void = (pi) => {
     // Belt for a missed agent_start. Further turns belong to the same run.
     if (!busy) runGeneration++;
     busy = true;
+    republish();
   });
 
   // pi 1.0.0 `prompt()` emits `input` (source
@@ -836,6 +889,7 @@ export const activate: (pi: Pi) => void = (pi) => {
       runGeneration++;
       busy = true;
     }
+    republish();
     // The daemon may have handed this very command back for redelivery
     // a moment before pi started it: the row is `pending` again.
     // The run that just started IS that command, so take it back and accept
@@ -903,6 +957,7 @@ export const activate: (pi: Pi) => void = (pi) => {
         return;
       }
       activeWake = undefined;
+      republish(); // Only full settlement clears the run receipt, never agent_end.
       drain();
     }, 0);
   });

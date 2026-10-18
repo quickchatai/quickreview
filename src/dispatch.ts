@@ -2144,23 +2144,25 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       let withholdingSpent = false;
       spendWithholding = (roundId) => {
         if (!withheld || withholdingSpent) return;
+        store.db.transaction(() => {
+          const current = store.approvalWithheld(row.number);
+          if (
+            current &&
+            current.head_sha === withheld.head_sha &&
+            current.created_at === withheld.created_at
+          )
+            store.clearApprovalWithheld(row.number);
+          // The spend's own record: what `restoreInterruptedApprovalRetry`
+          // re-records should this round end without deciding.
+          if (withheldHere)
+            store.logEvent("approval_retry_dispatched", row.number, {
+              head_sha: row.head_sha,
+              round_id: roundId,
+              ci_state: withheld.ci_state,
+              reason: withheld.reason,
+            });
+        })();
         withholdingSpent = true;
-        const current = store.approvalWithheld(row.number);
-        if (
-          current &&
-          current.head_sha === withheld.head_sha &&
-          current.created_at === withheld.created_at
-        )
-          store.clearApprovalWithheld(row.number);
-        // The spend's own record: what `restoreInterruptedApprovalRetry`
-        // re-records should this round end without deciding.
-        if (withheldHere)
-          store.logEvent("approval_retry_dispatched", row.number, {
-            head_sha: row.head_sha,
-            round_id: roundId,
-            ci_state: withheld.ci_state,
-            reason: withheld.reason,
-          });
       };
       if (cfg.guards.skip_unchanged_head && !withheldHere && !hasNewEvidence(mark, row.head_sha)) {
         // Captured BEFORE the transition below clears them: current PR state
@@ -2967,7 +2969,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // The round is provisional until the worktree/session/prompt handoff
       // completes; publishing reviewing/running state any earlier would leave
       // an orphan round whenever worktree preparation fails.
-      await deps.hooks.dispatchRound(order, render(order, memory));
+      const prompt = render(order, memory);
+      // Rendering and optional preparation may have awaited or invoked callers
+      // that changed the operator hold. Re-admit at the actual handoff seam.
+      const admitted = store.getPr(row.number);
+      if (!admitted || admitted.state === "closed" || admitted.paused)
+        throw new Error(`#${row.number} closed or paused during preparation — not handed off`);
+      await deps.hooks.dispatchRound(order, prompt);
       // Record the receipt token this round's prompt carries, so the
       // recovery paths can tell "delivered" from "never arrived" instead of
       // inferring it. Stamped only AFTER dispatchRound resolved: the marker

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseSessionCommandMarker, sessionCommandMarker } from "../src/session-command.js";
 import { StateStore } from "../src/state.js";
 import { SessionCommandLedger } from "../extensions/session-command-ledger.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -22,6 +23,14 @@ function input(id: string, pr = 5408) {
     next_check_at: "2026-08-27T20:02:00.000Z",
   };
 }
+
+it("uses the bridge-appended final marker instead of embedded quoted receipts", () => {
+  expect(
+    parseSessionCommandMarker(
+      `${sessionCommandMarker("quoted", "a".repeat(64))}\nsource words\n${sessionCommandMarker("actual", "b".repeat(64))}`,
+    ),
+  ).toEqual({ id: "actual", payloadSha256: "b".repeat(64) });
+});
 
 describe("durable PR-session command slot", () => {
   const stores: StateStore[] = [];

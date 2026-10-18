@@ -2,12 +2,13 @@
 // is the seeded template plus — only when Slack is enabled — the appendix body,
 // concatenated at spawn time. The seed file itself is never modified.
 // All I/O is faked: no tmux, no pi, no Slack.
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Config } from "../src/config.js";
 import { PiSessionManager, OVERSEER_SESSION } from "../src/sessions.js";
+import { writeSessionBridgeState } from "../src/session-bridge.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
 import { renderOverseerSystemPrompt } from "../src/templates.js";
@@ -28,7 +29,24 @@ const fakeExec: ExecFn = async (cmd, args) => {
       const name = String(args[2]).replace(/^=/, "");
       return { code: liveSessions.has(name) ? 0 : 1, stdout: "", stderr: "" };
     }
-    if (args[0] === "new-session") liveSessions.add(String(args[3]));
+    if (args[0] === "new-session") {
+      const session = String(args[3]);
+      liveSessions.add(session);
+      const generation = args
+        .find((v) => v.startsWith("QCR_SESSION_BRIDGE_GENERATION="))
+        ?.split("=", 2)[1];
+      const path = args
+        .find((v) => v.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))
+        ?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
+      if (generation && path)
+        writeSessionBridgeState(path, {
+          version: 1,
+          session,
+          generation,
+          stage: "ready",
+          updated_at: "2026-08-17T10:00:00Z",
+        });
+    }
   }
   return { code: 0, stdout: "", stderr: "" };
 };
@@ -139,9 +157,27 @@ describe("overseer spawn-time Slack appendix", () => {
     );
   });
 
-  it("leaves a live overseer session alone (no respawn, no prompt rewrite)", async () => {
+  it("leaves a live bridge-ready overseer alone (no respawn, no prompt rewrite)", async () => {
     liveSessions.add(OVERSEER_SESSION);
-    await manager(true).ensureOverseerSession();
+    const m = manager(true);
+    const generation = "existing-overseer";
+    mkdirSync(join(root, "state", "sessions"), { recursive: true });
+    writeFileSync(
+      join(root, "state", "sessions", "overseer.json"),
+      JSON.stringify({
+        session: OVERSEER_SESSION,
+        bridge_generation: generation,
+        born_at: "2026-08-17T10:00:00Z",
+      }),
+    );
+    writeSessionBridgeState(m.bridgeStatePath(OVERSEER_SESSION, generation), {
+      version: 1,
+      session: OVERSEER_SESSION,
+      generation,
+      stage: "ready",
+      updated_at: "2026-08-17T10:00:00Z",
+    });
+    await m.ensureOverseerSession();
     expect(() => spawnedPrompt()).toThrow();
   });
 });

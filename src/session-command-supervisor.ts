@@ -21,7 +21,7 @@ import {
   DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
   type Config,
 } from "./config.js";
-import { sessionCommandMarker } from "./session-command.js";
+import { sameSessionCommandOwner, sessionCommandMarker } from "./session-command.js";
 import {
   isTerminalAgentStatus,
   executionsComplete,
@@ -161,7 +161,8 @@ export class SessionCommandSupervisor {
     // running row due and supervisor health red.
     if (!this.deps.hooks.killSession)
       throw new Error(`cannot release terminal-round command ${command.id}: kill hook unavailable`);
-    await this.deps.hooks.killSession(command.pr);
+    if ((await this.deps.hooks.killSession(command.pr, command)) === false) return;
+    if (!sameSessionCommandOwner(this.deps.store.getSessionCommand(command.id), command)) return;
     const released =
       command.started_at === null
         ? this.deps.store.failActiveSessionCommand(
@@ -210,6 +211,7 @@ export class SessionCommandSupervisor {
     const nowIso = this.now().toISOString();
     const due = command.next_check_at <= nowIso;
     const settled = this.progressShowsSettlement(command);
+    if (command.status === "running" && settled && this.awaitingSettlementAck(command)) return;
     let runningRound: RoundRow | undefined;
     if (command.kind === "round" && command.round_no !== null) {
       const round = this.deps.store
@@ -251,7 +253,7 @@ export class SessionCommandSupervisor {
         // to fail directly.
         if (command.status === "running") await this.finishTerminalRoundCommand(command);
         else if (command.status === "pending") {
-          this.deps.store.failActiveSessionCommand(
+          this.deps.store.failPendingSessionCommand(
             command.id,
             `round ${command.round_no} terminal before command start`,
           );
@@ -597,6 +599,12 @@ export class SessionCommandSupervisor {
         });
         return;
       }
+      if (result === "raced") {
+        this.deps.store.logEvent("session_command_recovery_owner_changed", command.pr, {
+          command_id: command.id,
+        });
+        return; // The current reservation retains its own finite check/deadline.
+      }
       if (result === "accepted_race") {
         const raced = `command ${command.id} became accepted while start recovery stopped its old session`;
         if (command.kind === "round" && command.round_no !== null)
@@ -842,6 +850,33 @@ export class SessionCommandSupervisor {
     );
   }
 
+  /** agent_settled progress precedes the bridge's zero-delay ack callback.
+   * Give that callback one finite grace, persisted across daemon restarts.
+   * Later observations never extend it and the immutable hard bound wins. */
+  private awaitingSettlementAck(command: SessionCommandRow): boolean {
+    const prior = this.deps.store.db
+      .prepare(
+        `SELECT json_extract(payload, '$.wait_until') AS wait_until FROM events
+       WHERE kind='session_command_settlement_ack_wait' AND pr=?
+         AND json_extract(payload, '$.command_id')=?
+         AND json_extract(payload, '$.attempt')=?
+       ORDER BY id DESC LIMIT 1`,
+      )
+      .get(command.pr, command.id, command.attempt) as { wait_until: string } | undefined;
+    const until = prior
+      ? Date.parse(prior.wait_until)
+      : Math.min(this.now().getTime() + 1_000, this.hardDeadlineMs(command.started_at!, command));
+    if (!Number.isFinite(until) || this.now().getTime() >= until) return false;
+    if (!prior)
+      this.deps.store.logEvent("session_command_settlement_ack_wait", command.pr, {
+        command_id: command.id,
+        attempt: command.attempt,
+        wait_until: new Date(until).toISOString(),
+      });
+    this.deps.store.scheduleSessionCommandCheck(command.id, new Date(until).toISOString());
+    return true;
+  }
+
   private async settledWithoutVerdict(command: SessionCommandRow): Promise<void> {
     const reason = `command ${command.id} settled without verdict for round ${command.round_no}`;
     if (command.status === "running") {
@@ -852,7 +887,8 @@ export class SessionCommandSupervisor {
         throw new Error(
           `cannot recover unacked settled command ${command.id}: kill hook unavailable`,
         );
-      await this.deps.hooks.killSession(command.pr);
+      if ((await this.deps.hooks.killSession(command.pr, command)) === false) return;
+      if (!sameSessionCommandOwner(this.deps.store.getSessionCommand(command.id), command)) return;
     }
     this.deps.store.logEvent("round_settled_without_verdict", command.pr, {
       command_id: command.id,
@@ -943,6 +979,12 @@ export class SessionCommandSupervisor {
         });
         return;
       }
+      if (result === "raced") {
+        this.deps.store.logEvent("session_command_recovery_owner_changed", command.pr, {
+          command_id: command.id,
+        });
+        return; // The current reservation retains its own finite check/deadline.
+      }
       if (result === "accepted_race") {
         const next = this.deadlineFromNowSeconds(
           this.deps.cfg.daemon.session_command_unknown_grace_s ??
@@ -967,7 +1009,7 @@ export class SessionCommandSupervisor {
     if (!this.deps.hooks.killSession) {
       throw new Error(`cannot exhaust non-round command ${command.id}: kill hook unavailable`);
     }
-    await this.deps.hooks.killSession(command.pr);
+    if ((await this.deps.hooks.killSession(command.pr, command)) === false) return;
     const current = this.deps.store.getSessionCommand(command.id);
     // Settlement or explicit operator cancellation may win while the fence is
     // in flight. Both terminalize this supervisor obligation; never reopen a

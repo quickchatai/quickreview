@@ -188,6 +188,57 @@ function supervisor(
   };
 }
 
+it("keeps a terminal round command reserved by the bridge after the pending snapshot", async () => {
+  const { id, roundId } = seedRoundCommand();
+  store.finishRound(roundId, "APPROVE", null);
+  const original = store.roundsFor.bind(store);
+  const spy = vi.spyOn(store, "roundsFor").mockImplementationOnce((pr) => {
+    store.claimSessionCommand(id, "bridge-raced", clock.toISOString());
+    return original(pr);
+  });
+  try {
+    await supervisor(hooks({ killSession: vi.fn(async () => {}) })).supervisor.scan();
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "running",
+      owner_token: "bridge-raced",
+    });
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it("does not release terminal work after its expected-owner kill fence declined", async () => {
+  const { id, pr, roundId } = seedRoundCommand({ status: "running", started: true });
+  store.markRoundCancelled(roundId, "operator replacement", "operator");
+  const expected = store.getSessionCommand(id)!;
+  const kill = vi.fn(async () => false);
+  await supervisor(hooks({ killSession: kill })).supervisor.scan();
+  expect(kill).toHaveBeenCalledWith(pr, expected);
+  expect(store.getSessionCommand(id)?.status).toBe("running");
+});
+
+it("leaves the bridge its deferred settlement acknowledgement before fencing it", async () => {
+  const { id, pr } = seedRoundCommand({ status: "running", started: true });
+  const kill = vi.fn(async () => {});
+  const progress = () => ({
+    version: 1 as const,
+    pr,
+    session: `pr-${pr}`,
+    run_started_at: clock.toISOString(),
+    updated_at: clock.toISOString(),
+    parent_status: "settled" as const,
+    command_id: id,
+    command_sha256: "a".repeat(64),
+    last_activity_at: clock.toISOString(),
+    last_activity: "just settled",
+    agents: [],
+  });
+  await supervisor(hooks({ killSession: kill }), undefined, baseCfg, progress).supervisor.scan();
+  expect(kill).not.toHaveBeenCalled();
+  expect(store.getSessionCommand(id)?.status).toBe("running");
+  expect(Date.parse(store.getSessionCommand(id)!.next_check_at)).toBeGreaterThan(clock.getTime());
+});
+
 describe("bounded round-stage supervision", () => {
   it(
     "replays a started ordinary wake at its hard bound instead of making it a permanent blocker",
@@ -271,7 +322,7 @@ describe("bounded round-stage supervision", () => {
     await s.scan();
 
     expect(retry).toHaveBeenCalledTimes(2);
-    expect(kill).toHaveBeenCalledWith(pr);
+    expect(kill).toHaveBeenCalledWith(pr, expect.objectContaining({ id }));
     expect(store.getSessionCommand(id)?.status).toBe("failed");
     expect(store.openReviewFailure(pr)).toMatchObject({
       command_id: id,
@@ -317,7 +368,7 @@ describe("bounded round-stage supervision", () => {
     await s.scan();
 
     expect(retry).toHaveBeenCalledTimes(2);
-    expect(kill).toHaveBeenCalledWith(pr);
+    expect(kill).toHaveBeenCalledWith(pr, expect.objectContaining({ id }));
     expect(store.getSessionCommand(id)).toMatchObject({
       status: "failed",
       attempt: 0,
@@ -342,7 +393,7 @@ describe("bounded round-stage supervision", () => {
 
     await supervisor(hooks({ killSession: kill })).supervisor.scan();
 
-    expect(kill).toHaveBeenCalledWith(pr);
+    expect(kill).toHaveBeenCalledWith(pr, expect.objectContaining({ id }));
     expect(store.getSessionCommand(id)?.status).toBe("cancelled");
     expect(store.openReviewFailure(pr)).toBeUndefined();
   });
@@ -590,7 +641,7 @@ describe("bounded round-stage supervision", () => {
     });
 
     const killed: number[] = [];
-    await supervisor(
+    const ackSupervisor = supervisor(
       hooks({
         killSession: async (n) => {
           killed.push(n);
@@ -599,7 +650,10 @@ describe("bounded round-stage supervision", () => {
       onRoundFailure,
       baseCfg,
       progress,
-    ).supervisor.scan();
+    ).supervisor;
+    await ackSupervisor.scan();
+    clock = new Date(clock.getTime() + 1_000);
+    await ackSupervisor.scan();
 
     expect(killed).toEqual([pr]);
     expect(store.getSessionCommand(id)?.status).toBe("failed");
@@ -1027,7 +1081,7 @@ describe("bounded round-stage supervision", () => {
     });
 
     const killed: number[] = [];
-    await supervisor(
+    const ackSupervisor = supervisor(
       hooks({
         killSession: async (n) => {
           killed.push(n);
@@ -1036,7 +1090,10 @@ describe("bounded round-stage supervision", () => {
       onRoundFailure,
       baseCfg,
       progress,
-    ).supervisor.scan();
+    ).supervisor;
+    await ackSupervisor.scan();
+    clock = new Date(clock.getTime() + 1_000);
+    await ackSupervisor.scan();
 
     expect(killed).toEqual([pr]);
     expect(store.getSessionCommand(id)?.status).toBe("acked");
@@ -1780,6 +1837,8 @@ describe("parent finalize waits for an active parent run", () => {
       progressWith("settled"),
     );
     await sup.scan();
+    clock = new Date(clock.getTime() + 1_000);
+    await sup.scan();
     expect(onRoundFailure).toHaveBeenCalledWith(
       pr,
       round.round_no,
@@ -1849,6 +1908,8 @@ it("honors a deferred settled-running recovery check across supervisor restarts"
   });
   const fresh = () =>
     supervisor(hooks({ killSession: kill }), failed, baseCfg, progress).supervisor;
+  await fresh().scan();
+  clock = new Date(clock.getTime() + 1_000);
   await fresh().scan();
   const next = store.getSessionCommand(id)!.next_check_at;
   expect(next > clock.toISOString()).toBe(true);
