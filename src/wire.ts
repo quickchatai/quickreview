@@ -1727,8 +1727,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           d.store.logEvent("flag_owner", null, { message });
           return { ok: true };
         },
-        fileImprovementPr(payload) {
+        fileImprovementPr(payload, deliveryKey) {
           return fileImprovementPr(payload, {
+            deliveryKey,
             cfg,
             adapter,
             gate,
@@ -1739,8 +1740,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             ensureRepoDir: () => sessions.worktrees.ensureBaseClone(),
           });
         },
-        fileIssue(payload) {
-          return fileIssue(payload, { cfg, adapter, gate, store: d.store });
+        fileIssue(payload, deliveryKey) {
+          return fileIssue(payload, { cfg, adapter, gate, store: d.store, deliveryKey });
         },
         retryThreadDecision(commentId) {
           return d.retryThreadDecision(commentId);

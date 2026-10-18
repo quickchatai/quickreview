@@ -162,6 +162,8 @@ export interface CommandContext {
    * watcher serving it has a `scope` — or "" for a direct executeCommand
    * call. It names one delivery, stable across that file's retries. */
   file: string;
+  /** Exact parsed file version; replacements are fresh deliveries. */
+  delivery_key?: string;
   issuer: CommandIssuer;
 }
 
@@ -182,8 +184,14 @@ export interface CommandDeps {
   ): Promise<FileOutcome | void> | FileOutcome | void;
   resumePr(pr: number, issuer: CommandIssuer): Promise<FileOutcome | void> | FileOutcome | void;
   flagOwner(message: string): Promise<FileOutcome | void> | FileOutcome | void;
-  fileImprovementPr(payload: ImprovementPayload): Promise<FileOutcome | void> | FileOutcome | void;
-  fileIssue(payload: IssuePayload): Promise<FileOutcome | void> | FileOutcome | void;
+  fileImprovementPr(
+    payload: ImprovementPayload,
+    deliveryKey?: string,
+  ): Promise<FileOutcome | void> | FileOutcome | void;
+  fileIssue(
+    payload: IssuePayload,
+    deliveryKey?: string,
+  ): Promise<FileOutcome | void> | FileOutcome | void;
   /** Deploy-window drain valve. Optional like `slackReply`: a daemon wired
    * without it rejects the command with a reason instead of pretending. */
   drain?(
@@ -701,20 +709,26 @@ export async function executeCommand(
       return normalize(await deps.flagOwner(command.message));
     case "file-improvement-pr":
       return normalize(
-        await deps.fileImprovementPr({
-          branch: command.branch,
-          title: command.title,
-          body: command.body,
-          slug: command.slug,
-        }),
+        await deps.fileImprovementPr(
+          {
+            branch: command.branch,
+            title: command.title,
+            body: command.body,
+            slug: command.slug,
+          },
+          ...(ctx.delivery_key ? ([ctx.delivery_key] as [string]) : []),
+        ),
       );
     case "file-issue":
       return normalize(
-        await deps.fileIssue({
-          title: command.title,
-          body: command.body,
-          ...(command.pr === undefined ? {} : { pr: command.pr }),
-        }),
+        await deps.fileIssue(
+          {
+            title: command.title,
+            body: command.body,
+            ...(command.pr === undefined ? {} : { pr: command.pr }),
+          },
+          ...(ctx.delivery_key ? ([ctx.delivery_key] as [string]) : []),
+        ),
       );
     case "slack_reply": {
       if (!deps.slackReply)
@@ -1290,6 +1304,7 @@ export class CommandWatcher {
       try {
         outcome = await executeCommand(validation.command, this.opts.deps, {
           file: this.opts.scope ? `${this.opts.scope}/${name}` : name,
+          delivery_key: `${this.opts.scope ?? "local"}/${read.identity}/${read.version}`,
           issuer,
         });
       } catch (err) {

@@ -901,6 +901,101 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     });
   }
 
+  it("does not settle a command receipt when a creation guard refuses", async () => {
+    liveWith(() => null);
+    const create = vi.spyOn(adapter, "createIssue");
+    gate.setGuard({
+      before: async (intent) => (intent.kind === "create_issue" ? { block: "pr-closed" } : {}),
+    });
+    const context = { cfg, adapter, gate, store, deliveryKey: "operator/blocked-issue" };
+    const payload = { title: "Retry loop misses jitter", body: "e" };
+    expect((await fileIssue(payload, context)).ok).toBe(false);
+    expect(store.filedSince("issue", today)).toBe(0);
+    gate.setGuard({ before: async () => ({}) });
+    expect(await fileIssue(payload, context)).toMatchObject({ ok: true, issue: 4242 });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(store.filedSince("issue", today)).toBe(1);
+  });
+
+  it("recovers an accepted improvement with its reserved cap slot before checking the cap", async () => {
+    liveWith((kind) => (kind === "create_pull" ? new TypeError("lost response") : null));
+    const { run } = liveRunner();
+    const context = { ...ctx(run), deliveryKey: "operator/pr-delivery-1" };
+    const payload = {
+      branch: "wip/docs",
+      title: "Docs: clarify retry",
+      body: "rationale",
+      slug: "clarify-retry",
+    };
+    const create = vi.spyOn(adapter, "createPull");
+    expect((await fileImprovementPr(payload, context)).ok).toBe(false);
+    Object.assign(adapter, { findFiledItem: vi.fn(async () => 4242) });
+    expect(await fileImprovementPr(payload, context)).toMatchObject({
+      ok: true,
+      pr: 4242,
+      branch: "bot/improve-clarify-retry",
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(store.filedSince("improvement_pr", today)).toBe(1);
+  });
+
+  it("keeps a successful issue receipt across reopening the state database", async () => {
+    store.close();
+    const dbPath = join(dir, "receipts.sqlite");
+    store = new StateStore(dbPath);
+    liveWith(() => null);
+    const create = vi.spyOn(adapter, "createIssue");
+    const payload = { title: "Retry loop misses jitter", body: "e" };
+    const context = () => ({ cfg, adapter, gate, store, deliveryKey: "operator/durable-issue-1" });
+    expect((await fileIssue(payload, context())).ok).toBe(true);
+    store.close();
+    store = new StateStore(dbPath);
+    expect(await fileIssue(payload, context())).toMatchObject({ ok: true, issue: 4242 });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(store.filedSince("issue", today)).toBe(1);
+  });
+
+  it("reconciles an uncertain issue from its exact marker without another POST", async () => {
+    liveWith((kind) => (kind === "create_issue" ? new TypeError("lost receipt") : null));
+    const context = { cfg, adapter, gate, store, deliveryKey: "session/reconcile-issue-1" };
+    const payload = { title: "Retry loop misses jitter", body: "e" };
+    const create = vi.spyOn(adapter, "createIssue");
+    expect((await fileIssue(payload, context)).ok).toBe(false);
+    Object.assign(adapter, { findFiledItem: vi.fn(async () => 555) });
+    expect(await fileIssue(payload, context)).toMatchObject({
+      ok: true,
+      issue: 555,
+      recovered: true,
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(store.filedSince("issue", today)).toBe(1);
+  });
+
+  it("replays a delivered issue command without relying on search visibility or charging twice", async () => {
+    liveWith(() => null);
+    const create = vi.spyOn(adapter, "createIssue");
+    const context = { cfg, adapter, gate, store, deliveryKey: "operator/issue-version-1" };
+    const payload = { title: "Retry loop misses jitter", body: "e" };
+    expect(await fileIssue(payload, context)).toMatchObject({ ok: true, issue: 4242 });
+    expect(await fileIssue(payload, context)).toMatchObject({ ok: true, issue: 4242 });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(store.filedSince("issue", today)).toBe(1);
+  });
+
+  it("does not repeat an issue command whose creation receipt was lost", async () => {
+    liveWith((kind) =>
+      kind === "create_issue" ? new TypeError("connection lost after acceptance") : null,
+    );
+    const create = vi.spyOn(adapter, "createIssue");
+    const context = { cfg, adapter, gate, store, deliveryKey: "session/issue-version-2" };
+    const payload = { title: "Retry loop misses jitter", body: "e" };
+    expect((await fileIssue(payload, context)).ok).toBe(false);
+    Object.assign(adapter, { findFiledItem: vi.fn(async () => null) });
+    expect(String((await fileIssue(payload, context)).reason)).toContain("outcome unknown");
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(store.filedSince("issue", today)).toBe(1);
+  });
+
   it("a definite 4xx refusal of create_pull / create_issue frees the slot — nothing was created", async () => {
     liveWith((k) =>
       k === "create_pull" || k === "create_issue"

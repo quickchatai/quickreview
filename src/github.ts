@@ -1320,6 +1320,36 @@ export class GitHubAdapter {
     return (await this.searchIssues(q)).map((i) => ({ number: i.number, title: i.title }));
   }
 
+  /** Recover only an exact daemon marker posted by our configured identity.
+   * Absence is not permission to repeat an uncertain creation. */
+  async findFiledItem(
+    kind: "issue" | "improvement_pr",
+    marker: string,
+    branch?: { head: string; base: string },
+  ): Promise<number | null> {
+    const path =
+      kind === "issue"
+        ? `/repos/${this.owner}/${this.repo}/issues?state=all&per_page=100`
+        : `/repos/${this.owner}/${this.repo}/pulls?state=all&per_page=100&head=${encodeURIComponent(`${this.owner}:${branch!.head}`)}&base=${encodeURIComponent(branch!.base)}`;
+    const { rows, truncated } = await this.pagedArray<any>(path);
+    if (truncated) throw new Error("filing reconciliation exceeded pagination bound");
+    const matches = rows.filter(
+      (row) =>
+        row.user?.login === this.cfg.github.bot_login &&
+        typeof row.body === "string" &&
+        row.body.split(/\r?\n/).includes(marker) &&
+        (kind === "issue"
+          ? !row.pull_request
+          : row.head?.ref === branch?.head && row.base?.ref === branch?.base),
+    );
+    if (matches.length > 1) throw new Error("ambiguous filing markers");
+    if (matches.length === 0) return null;
+    const number: unknown = matches[0].number;
+    if (typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0)
+      throw new Error("invalid filing receipt number");
+    return number;
+  }
+
   async createPull(head: string, base: string, title: string, body: string): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_pull",
