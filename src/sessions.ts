@@ -8,8 +8,9 @@
 // dropping a Markdown file into inject/<session>/, which the inject-bridge
 // extension picks up (tmux send-keys is not used).
 //
-// pi is not installed in this repo; every assumption about its CLI surface is
-// tagged VERIFY-ON-PIN and confined to buildPiCommand().
+// pi's package is a dependency here, but its CLI is not run in tests; every
+// assumption about its CLI surface is tagged VERIFY-ON-PIN and confined to
+// buildPiCommand().
 import { stripModelDocs } from "./promptdoc.js";
 import { createHash, randomUUID } from "node:crypto";
 import {

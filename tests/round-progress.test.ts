@@ -11,7 +11,8 @@ import {
   roundExecutionStage,
 } from "../src/round-progress.js";
 import { PASS_TIER_ORDER } from "../src/types.js";
-import type { PiEventHandler } from "@earendil-works/pi-coding-agent";
+/** A handler as the fake pi records it. */
+type PiEventHandler = (event: Record<string, unknown>) => unknown;
 
 const dirs: string[] = [];
 afterEach(() => {

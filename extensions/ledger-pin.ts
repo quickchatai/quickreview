@@ -30,7 +30,8 @@ import { parsePrIdentity as parseOwnPr } from "../src/pr-identity.js";
 // the session's own. A session with no / garbage
 // QCR_PR (the overseer) mirrors NO PR ledger, ever — fail safe is no mirror.
 //
-// pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
+// pi is a dependency of this repo, so the pi API is typechecked against its own
+// declarations; what a live session does with it stays VERIFY-ON-PIN.
 // The compaction contract was read out of pi 1.0.0's shipped dist (the
 // `qcr-bench:fast1` image, docker create + docker cp, no container run); each
 // tag below names the file and symbol it was checked against.
@@ -39,12 +40,14 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
-  CompactHandlerResult,
-  Pi,
-  PiCompactionPreparation,
-  PiEventContext,
-  PiEventPayload,
+  ExtensionAPI,
+  ExtensionContext,
+  SessionBeforeCompactEvent,
+  SessionBeforeCompactResult,
 } from "@earendil-works/pi-coding-agent";
+
+/** What `compact()` summarises: the preparation pi hands `session_before_compact`. */
+type CompactionPreparation = SessionBeforeCompactEvent["preparation"];
 
 // A block runs from its "LEDGER PR #<n>" header to the next fence / blank
 // line + heading / NEXT ledger header / end — the last terminator keeps a
@@ -179,7 +182,7 @@ export async function loadPiCompact(): Promise<CompactFn | undefined> {
   }
 }
 
-function isPreparation(value: unknown): value is PiCompactionPreparation {
+function isPreparation(value: unknown): value is CompactionPreparation {
   if (!value || typeof value !== "object") return false;
   const p = value as Record<string, unknown>;
   return typeof p.firstKeptEntryId === "string" && typeof p.tokensBefore === "number";
@@ -199,12 +202,12 @@ function isPreparation(value: unknown): value is PiCompactionPreparation {
  * has not yet run in a live session.
  */
 export async function pinnedCompaction(
-  event: PiEventPayload,
-  ctx: PiEventContext | undefined,
+  event: Partial<Pick<SessionBeforeCompactEvent, "preparation" | "customInstructions" | "signal">>,
+  ctx: Partial<Pick<ExtensionContext, "modelRegistry" | "model" | "thinkingLevel">> | undefined,
   pinned: string,
   compactFn: CompactFn | undefined,
   log: (msg: string) => void = (m) => console.error(m),
-): Promise<CompactHandlerResult | undefined> {
+): Promise<SessionBeforeCompactResult | undefined> {
   const fail = (why: string): undefined => {
     log(
       `[ledger-pin] pinned compaction unavailable (${why}); pi runs its default compaction and the ledger returns with the next round order`,
@@ -224,7 +227,7 @@ export async function pinnedCompaction(
     const auth = await registry.getApiKeyAndHeaders(model);
     if (!auth.ok) return fail(`auth: ${auth.error}`);
     const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
-    const forSummary: PiCompactionPreparation =
+    const forSummary: CompactionPreparation =
       typeof preparation.previousSummary === "string"
         ? { ...preparation, previousSummary: stripPinned(preparation.previousSummary) }
         : preparation;
@@ -235,7 +238,9 @@ export async function pinnedCompaction(
       forSummary,
       requestModel,
       auth.apiKey,
-      auth.headers,
+      // ProviderHeaders allows null values (a header to drop); compact() types
+      // them as strings, and pi hands its own summariser the same object.
+      auth.headers as Record<string, string> | undefined,
       custom,
       signal,
       ctx?.thinkingLevel,
@@ -268,7 +273,7 @@ export interface LedgerPinDeps {
   loadCompact?: () => Promise<CompactFn | undefined>;
 }
 
-export function activateWith(pi: Pi, deps: LedgerPinDeps = {}): void {
+export function activateWith(pi: ExtensionAPI, deps: LedgerPinDeps = {}): void {
   const loadCompact = deps.loadCompact ?? loadPiCompact;
   const env = process.env;
   const session = env.QCR_SESSION_NAME?.trim() || "session";
@@ -311,24 +316,27 @@ export function activateWith(pi: Pi, deps: LedgerPinDeps = {}): void {
   // `_runAutoCompaction()`). The ledger is looked for in `branchEntries`
   // (oldest first, so the newest own block wins), falling back to the whole
   // event if that field is ever missing.
-  pi.on("session_before_compact", async (event, ctx): Promise<CompactHandlerResult | void> => {
-    const ledger = capture(Array.isArray(event.branchEntries) ? event.branchEntries : event);
-    if (!ledger) return;
-    // Persist it into the session file too, so archival never depends on the
-    // summariser. VERIFY-ON-PIN: pi 1.0.0 `ExtensionAPI.appendEntry<T>(
-    // customType: string, data?: T): void` (dist/core/extensions/types.d.ts),
-    // implemented in dist/core/agent-session.js as
-    // `sessionManager.appendCustomEntry(customType, data)`: a `custom` entry,
-    // never sent to the model.
-    try {
-      pi.appendEntry?.(LEDGER_ENTRY_TYPE, { pr: ownPr, ledger, meta });
-    } catch (err) {
-      console.error(`[ledger-pin] appendEntry failed: ${String(err)}`);
-    }
-    return pinnedCompaction(event, ctx, pinnedBlock(meta, ledger), await loadCompact());
-  });
+  pi.on(
+    "session_before_compact",
+    async (event, ctx): Promise<SessionBeforeCompactResult | void> => {
+      const ledger = capture(Array.isArray(event.branchEntries) ? event.branchEntries : event);
+      if (!ledger) return;
+      // Persist it into the session file too, so archival never depends on the
+      // summariser. VERIFY-ON-PIN: pi 1.0.0 `ExtensionAPI.appendEntry<T>(
+      // customType: string, data?: T): void` (dist/core/extensions/types.d.ts),
+      // implemented in dist/core/agent-session.js as
+      // `sessionManager.appendCustomEntry(customType, data)`: a `custom` entry,
+      // never sent to the model.
+      try {
+        pi.appendEntry?.(LEDGER_ENTRY_TYPE, { pr: ownPr, ledger, meta });
+      } catch (err) {
+        console.error(`[ledger-pin] appendEntry failed: ${String(err)}`);
+      }
+      return pinnedCompaction(event, ctx, pinnedBlock(meta, ledger), await loadCompact());
+    },
+  );
 }
 
-export const activate: (pi: Pi) => void = (pi) => activateWith(pi);
+export const activate: (pi: ExtensionAPI) => void = (pi) => activateWith(pi);
 
 export default activate;

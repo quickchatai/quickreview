@@ -41,6 +41,7 @@
     "0008-pr-derived-recall.patch",
     "0009-pr-session-tools-in-round-areas.patch",
     "0010-typed-lessons.patch",
-    "0011-review-session-memory-boundary.patch"
+    "0011-review-session-memory-boundary.patch",
+    "0012-typecheck-against-the-real-pi.patch"
   ]
 }

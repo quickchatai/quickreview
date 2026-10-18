@@ -29,8 +29,8 @@ findings contradict the OpenViking docs, which lead the tag.
 ## The patch series
 
 Eleven numbered behaviour patches, applied in order over the vendored upstream
-files, plus one unnumbered scaffolding patch. They live in `patches/` as
-`git apply`-able diffs — verified by applying all twelve, in order, to a
+files, plus two unnumbered build patches (0000 scaffolding, 0012 typing). They live in `patches/` as
+`git apply`-able diffs — verified by applying all thirteen, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
 byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
@@ -45,8 +45,8 @@ grep -rn "QCR PATCH" extensions/vendor/openviking-pi
   the files were modified); this README.
 * `vendor-pi-types.d.ts` — ambient declarations for
   `@earendil-works/pi-coding-agent` (`ExtensionAPI`), `typebox` and
-  `@earendil-works/pi-ai`. None is installed here; pi lives only in the
-  container. This repo's `tsconfig.json` compiles `extensions/**/*.ts`, so the
+  `@earendil-works/pi-ai`, written while pi was not installed here. Retired
+  by 0012. This repo's `tsconfig.json` compiles `extensions/**/*.ts`, so the
   fork is typechecked even though it is never emitted.
 * Three `[QCR build conformance]` fixes in `client.ts` for `strict` +
   `noUncheckedIndexedAccess`.
@@ -434,6 +434,17 @@ ways through it once the case backfill filled `finding-cases/`:
 
 Touches: `qcr-hint.ts`, `qcr-lesson.ts`, `qcr-write.ts`, `tools.ts`,
 `index.ts`, `client.ts`.
+
+### 0012 — typechecked against the real pi *(not a behaviour patch)*
+
+pi and pi-ai are exact dependencies of this repo (package.json), so the fork is
+typechecked against pi's own types and `vendor-pi-types.d.ts` is deleted. The
+one type error that surfaced is `event.prompt` in `index.ts`'s
+`before_agent_start` hook: pi 1.3.0 types that event as a union whose custom
+variant has no `prompt`. The read is cast, not changed, so a custom event still
+passes `undefined` exactly as before. Marked `[QCR build conformance]`.
+
+Touches: `index.ts`, `vendor-pi-types.d.ts` (deleted), this README.
 
 ## Rebasing onto a newer upstream
 

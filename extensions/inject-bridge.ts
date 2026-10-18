@@ -37,7 +37,8 @@
 //      `input` event never carried its marker), its start lease has passed,
 //      and pi is idle with nothing queued.
 //
-// pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
+// pi is a dependency of this repo, so the pi API is typechecked against its own
+// declarations; what a live session does with it stays VERIFY-ON-PIN.
 import {
   existsSync,
   mkdirSync,
@@ -49,7 +50,7 @@ import {
   watch,
 } from "node:fs";
 import { basename, join } from "node:path";
-import type { Pi, PiEventContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { sessionCommandMarker } from "../src/session-command.js";
 import {
   COMPACTION_REQUEST_FILE,
@@ -63,19 +64,22 @@ import { SessionCommandLedger } from "./session-command-ledger.js";
  * Session name resolution, in order:
  *   1. QCR_SESSION_NAME — set by the daemon in the env it constructs for the
  *      tmux/pi process. Deterministic, so the bridge never has to guess.
- *   2. pi.session?.name — // VERIFY-ON-PIN: accessor name and availability at
- *      session_start.
+ *   2. pi.session?.name — pi 1.3.0's ExtensionAPI declares no `session`
+ *      accessor, so on a real pi this branch is inert. `getSessionName()` is
+ *      deliberately not used: it would change which inject dir a session with
+ *      no QCR_SESSION_NAME watches.
  *   3. "overseer" as the last resort (the only unnumbered session).
  */
-export function resolveSessionName(pi: Pi, env: NodeJS.ProcessEnv = process.env): string {
+export function resolveSessionName(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): string {
   const fromEnv = env.QCR_SESSION_NAME?.trim();
   if (fromEnv) return fromEnv;
-  const fromPi = typeof pi.session?.name === "string" ? pi.session.name.trim() : "";
+  const named = (pi as { session?: { name?: unknown } }).session?.name;
+  const fromPi = typeof named === "string" ? named.trim() : "";
   if (fromPi) return fromPi;
   return "overseer";
 }
 
-export function resolveInjectDir(pi: Pi, env: NodeJS.ProcessEnv = process.env): string {
+export function resolveInjectDir(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.QCR_INJECT_DIR?.trim();
   if (explicit) return explicit;
   const root = env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
@@ -138,7 +142,7 @@ function positiveEnvMs(name: string): number | undefined {
  */
 export const DELIVER_AS = "followUp" as const;
 
-export const activate: (pi: Pi) => void = (pi) => {
+export const activate: (pi: ExtensionAPI) => void = (pi) => {
   const dir = resolveInjectDir(pi);
   const doneDir = join(dir, ".done");
   const terminalDir = join(dir, ".terminal");
@@ -252,7 +256,7 @@ export const activate: (pi: Pi) => void = (pi) => {
   // resolve pi's state at CALL time (pi 1.0.0 `ExtensionRunner.createContext`),
   // so an old context still answers for the live session — and throws once the
   // runner is torn down, which every reader below turns into "unknown".
-  let piCtx: PiEventContext | undefined;
+  let piCtx: ExtensionContext | undefined;
   let compacting = false;
   // True from the bridge's own `ctx.compact()` call until pi reports its end:
   // pi sets its compaction flag only after an awaited abort, so in that first
@@ -260,7 +264,7 @@ export const activate: (pi: Pi) => void = (pi) => {
   let compactionRequestInFlight = false;
 
   const remember = (ctx: unknown): void => {
-    if (ctx && typeof ctx === "object") piCtx = ctx as PiEventContext;
+    if (ctx && typeof ctx === "object") piCtx = ctx as ExtensionContext;
   };
 
   /** pi's own answer to "may a prompt be submitted now?": no agent run AND no

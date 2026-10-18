@@ -9,10 +9,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  Pi,
-  PiCompactionPreparation,
-  PiEventContext,
-  PiEventHandler,
+  ExtensionAPI,
+  ExtensionContext,
+  SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
 import {
   activateWith,
@@ -25,6 +24,10 @@ import {
   pinnedCompaction,
   stripPinned,
 } from "../extensions/ledger-pin.js";
+
+type PiCompactionPreparation = SessionBeforeCompactEvent["preparation"];
+type PiEventContext = Pick<ExtensionContext, "modelRegistry" | "model" | "thinkingLevel">;
+type PiEventHandler = (event: Record<string, unknown>, ctx?: PiEventContext) => unknown;
 
 const FIXTURES = resolve(process.cwd(), "tests", "fixtures", "pi-1.0.0");
 const CONTRACT = readFileSync(join(FIXTURES, "compaction-contract.d.ts.txt"), "utf8");
@@ -59,10 +62,11 @@ function prep(over: Partial<PiCompactionPreparation> = {}): PiCompactionPreparat
     turnPrefixMessages: [],
     isSplitTurn: false,
     ...over,
-  };
+  } as PiCompactionPreparation;
 }
 
-function ctxWith(over: Partial<PiEventContext> = {}): PiEventContext {
+/** A partial ctx: the fake model and registry carry only what ledger-pin reads. */
+function ctxWith(over: Partial<Record<keyof PiEventContext, unknown>> = {}): PiEventContext {
   return {
     model: { provider: "openai-codex", id: "gpt-6.1-sol" },
     thinkingLevel: "high",
@@ -77,7 +81,7 @@ function ctxWith(over: Partial<PiEventContext> = {}): PiEventContext {
       streamSimple: vi.fn(() => "stream"),
     },
     ...over,
-  };
+  } as unknown as PiEventContext;
 }
 
 const defaultSummary = (): CompactFn =>
@@ -297,7 +301,7 @@ describe("the session_before_compact handler as registered", () => {
     const handlers = new Map<string, PiEventHandler>();
     const appendEntry = vi.fn();
     const pi = { on: (e: string, h: PiEventHandler) => handlers.set(e, h), appendEntry };
-    activateWith(pi as unknown as Pi, { loadCompact: async () => compactFn });
+    activateWith(pi as unknown as ExtensionAPI, { loadCompact: async () => compactFn });
     return { handler: handlers.get("session_before_compact")!, appendEntry };
   }
 

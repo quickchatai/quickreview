@@ -16,7 +16,7 @@
 //     queued prompts exist;
 //   - every prompt past the compaction refusal emits `input` (source
 //     "extension") before the rest of its preflight.
-import type { Pi } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 
@@ -71,7 +71,7 @@ export class FakePiSession {
   /** `withContext: false` models a pi that hands handlers no context. */
   constructor(private readonly opts: { withContext?: boolean } = {}) {}
 
-  pi(): Pi {
+  pi(): ExtensionAPI {
     return {
       on: (event: string, handler: Handler) => {
         const list = this.handlers.get(event) ?? [];
@@ -79,7 +79,7 @@ export class FakePiSession {
         this.handlers.set(event, list);
       },
       sendUserMessage: (content: string) => this.prompt(content),
-    } as unknown as Pi;
+    } as unknown as ExtensionAPI;
   }
 
   fire(event: string, payload: unknown = {}): void {

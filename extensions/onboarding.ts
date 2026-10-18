@@ -19,12 +19,8 @@
 // ctx.shutdown falls back to telling the operator to /exit.
 import { execFile } from "node:child_process";
 import { join } from "node:path";
-import type {
-  Pi,
-  PiToolContext,
-  PiToolDefinition,
-  PiToolResult,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { registerQcrTool, textResult as text, type QcrTool } from "./pi-tool.js";
 import {
   OnboardingEngine,
   type CheckResult,
@@ -36,10 +32,6 @@ import { defaultSteps } from "../src/onboard/steps/index.js";
 import { locateConfig } from "../src/install.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
-
-function text(t: string): PiToolResult {
-  return { content: [{ type: "text", text: t }] };
-}
 
 // ---- real adapters ----------------------------------------------------------
 
@@ -109,9 +101,9 @@ export function renderStatus(
  */
 export function toolDefinitions(
   engine: OnboardingEngine,
-  shutdown: (ctx?: PiToolContext) => void,
-): PiToolDefinition[] {
-  const stepTools: PiToolDefinition[] = engine.stepDefs().map((step) => ({
+  shutdown: (ctx?: Pick<ExtensionToolContext, "shutdown">) => void,
+): QcrTool[] {
+  const stepTools: QcrTool[] = engine.stepDefs().map((step) => ({
     name: `onboard_${step.id}`,
     label: step.title,
     description:
@@ -138,7 +130,7 @@ export function toolDefinitions(
     },
   }));
 
-  const status: PiToolDefinition = {
+  const status: QcrTool = {
     name: "onboard_status",
     label: "Onboarding status",
     description:
@@ -152,7 +144,7 @@ export function toolDefinitions(
     },
   };
 
-  const finish: PiToolDefinition = {
+  const finish: QcrTool = {
     name: "finish_and_exit",
     label: "Finish onboarding",
     description:
@@ -174,7 +166,7 @@ export function toolDefinitions(
       }
       // Green: shut down AFTER this result is returned. The 250ms defer is
       // belt-and-braces so the model sees the confirmation first.
-      // VERIFY-ON-PIN: ctx.shutdown's own idle-deferral (see pi-api.d.ts) may
+      // VERIFY-ON-PIN: ctx.shutdown's own idle-deferral (pi's ExtensionContext) may
       // make the timer redundant — the onboarding smoke step is the evidence.
       setTimeout(() => shutdown(ctx), 250);
       return text(
@@ -190,7 +182,7 @@ export function toolDefinitions(
 
 // ---- activation -------------------------------------------------------------
 
-const activate = (pi: Pi): void => {
+const activate = (pi: ExtensionAPI): void => {
   if (typeof pi.registerTool !== "function") {
     // Degrade loudly, never wedge: pi still starts, the guide can only talk.
     console.error(
@@ -200,11 +192,11 @@ const activate = (pi: Pi): void => {
   }
   const root = process.env.QCR_ROOT ?? process.cwd();
   const engine = buildEngine(root);
-  const shutdown = (ctx?: PiToolContext): void => {
+  const shutdown = (ctx?: Pick<ExtensionToolContext, "shutdown">): void => {
     const fn = ctx?.shutdown ?? (pi as { shutdown?: () => void | Promise<void> }).shutdown;
     if (typeof fn === "function") {
-      // VERIFY-ON-PIN: deferred clean shutdown with exit code 0 (pi-api.d.ts
-      // PiToolContext). Bound to the named onboarding smoke step.
+      // VERIFY-ON-PIN: deferred clean shutdown with exit code 0 (pi 1.3.0's
+      // ExtensionContext.shutdown). Bound to the named onboarding smoke step.
       void fn.call(ctx ?? pi);
     } else {
       console.error(
@@ -212,7 +204,7 @@ const activate = (pi: Pi): void => {
       );
     }
   };
-  for (const def of toolDefinitions(engine, shutdown)) pi.registerTool(def);
+  for (const def of toolDefinitions(engine, shutdown)) registerQcrTool(pi, def);
 };
 
 export default activate;

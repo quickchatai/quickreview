@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PiToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { QcrTool } from "../extensions/pi-tool.js";
 import {
   byValidity,
   renderFindings,
@@ -36,7 +36,7 @@ let tick = 0;
 function belt(
   trees: Record<string, Record<string, string>> = { [SHA]: FILES },
   head = SHA,
-): { defs: PiToolDefinition[]; scan: ScanRunner } {
+): { defs: QcrTool[]; scan: ScanRunner } {
   const state = stateHomeFs(join(dir, "state"));
   const listOf = (sha: string) =>
     Object.keys(trees[sha] ?? {}).map((path) => ({
@@ -88,7 +88,7 @@ function belt(
 }
 
 async function call(
-  defs: PiToolDefinition[],
+  defs: QcrTool[],
   name: string,
   params: Record<string, unknown> = {},
 ): Promise<string> {

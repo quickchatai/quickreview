@@ -100,6 +100,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/openviking-reembed-lock.test.ts",
   "tests/openviking.test.ts",
   "tests/operator-host.test.ts", // real setup shell against fake SSH/rsync adapters
+  "tests/pi-resolution.test.ts",
   "tests/pibuiltins.test.ts",
   "tests/pr-checks-why.test.ts",
   "tests/pr-context-shell.test.ts",

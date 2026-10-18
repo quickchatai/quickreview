@@ -39,7 +39,7 @@
 // for this hook.
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { shellWords, splitShellSegments } from "./bash-guard.js";
 
 export interface BashRule {
@@ -305,13 +305,15 @@ export function writeBlockReason(
  * returning { block, reason } is VERIFIED (pi control-surface findings §5); the
  * payload field names (`toolName`, `input`/`arguments`, write/edit's `path`)
  * stay VERIFY-ON-PIN, probed defensively. */
-export default function activate(pi: Pi): void {
+export default function activate(pi: ExtensionAPI): void {
   const root = process.env.QCR_ROOT ?? process.cwd();
   let frozen: Set<string> | undefined;
   let warnedDegraded = false;
 
   pi.on("tool_call", (event) => {
-    const ev = event as ToolCallEvent;
+    // `arguments` is not on pi 1.3.0's ToolCallEvent; the probe stays for a
+    // pi that names the field that way (VERIFY-ON-PIN).
+    const ev = event as ToolCallEvent & { arguments?: Record<string, unknown> };
     const input = (ev.input ?? ev.arguments) as
       { command?: unknown; path?: unknown; file_path?: unknown } | undefined;
 

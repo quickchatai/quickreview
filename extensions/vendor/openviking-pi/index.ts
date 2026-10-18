@@ -249,7 +249,12 @@ export default async function (pi: ExtensionAPI) {
     // unscoped. [QCR PATCH 11] A PR session whose hint is not there yet (a
     // recheck or ping-pong wake before its next round) asks with the prompt
     // INSIDE the round's areas — fail closed, as the tools do.
-    const plan = recallScope(process.env[RECALL_HINT_FILE_ENV], event.prompt);
+    // [QCR build conformance] pi 1.3.0 types the event as a union whose custom
+    // variant has no `prompt`; the cast keeps the read exactly as it was.
+    const plan = recallScope(
+      process.env[RECALL_HINT_FILE_ENV],
+      (event as { prompt: string }).prompt,
+    );
     recall.queueSearch(plan.query, plan.areas);
 
     // Compose system prompt additions

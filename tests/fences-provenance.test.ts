@@ -41,12 +41,6 @@ interface AllowEntry {
 
 const ALLOWLIST: readonly AllowEntry[] = [
   {
-    file: "extensions/pi-api.d.ts",
-    token: "FT-0028",
-    reason:
-      "a real path, assets/FT-0028/findings.md, the pi API reference the declarations are checked against",
-  },
-  {
     file: "src/memory/eventtags.ts",
     token: "FT-9999",
     reason: "a format example: the `filed=` tag a quoted comment must not be able to mint",

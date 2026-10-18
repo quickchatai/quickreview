@@ -59,7 +59,7 @@ Changed by the quickreviewd maintainers, 2026-08-20:
      refused (2026-10-07).
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
-tsconfig, ambient type declarations for uninstalled packages, three unused
-files dropped, and a guard that refuses to authenticate with the OpenViking
-server's root API key. The full delta is in `patches/` and every changed hunk
+tsconfig (ambient type declarations while pi was not installed, retired once
+it became a dependency), three unused files dropped, and a guard that refuses
+to authenticate with the OpenViking server's root API key. The full delta is in `patches/` and every changed hunk
 carries a `[QCR PATCH n]` or `[QCR build conformance]` marker. See README.md.

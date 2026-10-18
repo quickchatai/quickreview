@@ -15,14 +15,11 @@
 // packed into pass-sweep rows.
 //
 // VERIFY-ON-PIN: registerTool's definition shape and execute's positional
-// signature, as extensions/pi-api.d.ts records them.
-import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+// signature, as pi's ToolDefinition declares them.
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerQcrTool, textResult as text, type QcrTool } from "./pi-tool.js";
 import { CLOSE_LINES, clusterFindings, renderGroups, type ClusterCandidate } from "../src/dedup.js";
 import { coverageGaps, coverageReason, type CoverageFile } from "../src/coverage.js";
-
-function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return { content: [{ type: "text", text: t }], ...(details ? { details } : {}) };
-}
 
 /** Read the tool's `candidates` argument into ClusterCandidates; anything
  * malformed is reported, never thrown. */
@@ -69,7 +66,7 @@ function safeParse(s: string, problems: string[]): unknown {
   }
 }
 
-export const CLUSTER_TOOL: PiToolDefinition = {
+export const CLUSTER_TOOL: QcrTool = {
   name: "cluster_findings",
   label: "Cluster findings",
   description: `Group this round's candidate findings before pass-validate: candidates in the same file within ${CLOSE_LINES} lines, naming a shared identifier, or with the same fix target form one group. Returns the groups to paste verbatim into the validate task string under CANDIDATE GROUPS.`,
@@ -157,7 +154,7 @@ export function readCoverageArgs(params: Record<string, unknown>): {
   return { eligible, addressed, swept, problems };
 }
 
-export const COVERAGE_TOOL: PiToolDefinition = {
+export const COVERAGE_TOOL: QcrTool = {
   name: "coverage_gaps",
   label: "Coverage gaps",
   description:
@@ -206,15 +203,15 @@ export const COVERAGE_TOOL: PiToolDefinition = {
   },
 };
 
-const activate = (pi: Pi): void => {
+const activate = (pi: ExtensionAPI): void => {
   if (typeof pi.registerTool !== "function") {
     console.error(
       "finding-clusters: pi.registerTool unavailable — cluster_findings not registered.",
     );
     return;
   }
-  pi.registerTool(CLUSTER_TOOL);
-  pi.registerTool(COVERAGE_TOOL);
+  registerQcrTool(pi, CLUSTER_TOOL);
+  registerQcrTool(pi, COVERAGE_TOOL);
 };
 
 export default activate;
