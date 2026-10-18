@@ -15,7 +15,7 @@ import {
   type FollowUpOneShotArgs,
   type FollowUpOneShotPrompts,
   type OneShotTarget,
-} from "./oneshot.js";
+} from "./engine/prompts.js";
 import { priorSidecarText, renderPriorFindingsNote } from "./priorfindings.js";
 import { lastRound, openFindings, type ReviewState } from "./reviewstate.js";
 import { nodeExec, type ExecFn } from "./tmux.js";
