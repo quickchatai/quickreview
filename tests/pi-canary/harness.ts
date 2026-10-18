@@ -19,6 +19,7 @@ import {
   fauxProvider,
   registerSessionResourceCleanup,
 } from "@earendil-works/pi-ai";
+import { type PiHostOptions, PiHost } from "../../src/engine/pisdk.js";
 import {
   type AgentSession,
   type CreateAgentSessionOptions,
@@ -42,14 +43,28 @@ export interface NetworkLog {
   attempts: string[];
 }
 
+export interface OfflineGuardOptions {
+  /** Let TCP connects to this machine's loopback through (a canary that serves
+   * its own fixture, such as the dispatcher's timeout one). Everything else is
+   * still an attempt. */
+  loopback?: boolean;
+}
+
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1"]);
+
 /** Install the guard; the returned function removes it and hands back the log. */
-export function installOfflineGuard(): { log: NetworkLog; restore: () => NetworkLog } {
+export function installOfflineGuard(guardOptions: OfflineGuardOptions = {}): {
+  log: NetworkLog;
+  restore: () => NetworkLog;
+} {
   const log: NetworkLog = { attempts: [] };
   const realFetch = globalThis.fetch;
   const realConnect = net.Socket.prototype.connect;
-  globalThis.fetch = ((input: unknown) => {
+  globalThis.fetch = ((input: unknown, init?: unknown) => {
     const url =
       typeof input === "string" ? input : String((input as { url?: string })?.url ?? input);
+    if (guardOptions.loopback && LOOPBACK.has(new URL(url).hostname.replace(/^\[|\]$/g, "")))
+      return (realFetch as (...a: unknown[]) => Promise<Response>)(input, init);
     log.attempts.push(`fetch ${url}`);
     return Promise.reject(new Error(`offline canary: fetch ${url}`));
   }) as typeof fetch;
@@ -64,9 +79,14 @@ export function installOfflineGuard(): { log: NetworkLog; restore: () => Network
         : undefined;
     const unix = typeof first === "string" ? isNaN(Number(first)) : opts?.path !== undefined;
     if (!unix) {
-      const target = opts
-        ? `${opts.host ?? "localhost"}:${opts.port}`
-        : `${typeof args[1] === "string" ? args[1] : "localhost"}:${String(first)}`;
+      const host = opts
+        ? (opts.host ?? "localhost")
+        : typeof args[1] === "string"
+          ? args[1]
+          : "localhost";
+      if (guardOptions.loopback && LOOPBACK.has(host))
+        return (realConnect as (...a: unknown[]) => net.Socket).apply(this, args);
+      const target = `${host}:${opts ? opts.port : String(first)}`;
       log.attempts.push(`connect ${target}`);
       throw new Error(`offline canary: connect ${target}`);
     }
@@ -87,10 +107,10 @@ export function installOfflineGuard(): { log: NetworkLog; restore: () => Network
  * assertion after the last one (inside afterAll, so a late attempt fails the
  * file rather than passing silently).
  */
-export function useOfflineGuard(): void {
+export function useOfflineGuard(guardOptions: OfflineGuardOptions = {}): void {
   let guard: ReturnType<typeof installOfflineGuard> | undefined;
   beforeAll(() => {
-    guard = installOfflineGuard();
+    guard = installOfflineGuard(guardOptions);
   });
   afterAll(() => {
     const log = guard?.restore();
@@ -227,4 +247,35 @@ export async function waitFor(pred: () => boolean, ms = 4000, what = "condition"
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((r) => setTimeout(r, 10));
   }
+}
+
+/** A PiHost on the faux provider, with a private agentDir, as a route builds one. */
+export interface HostRig {
+  dir: string;
+  faux: FauxProviderHandle;
+  host: PiHost;
+  close(): void;
+}
+
+export async function createHostRig(options: Partial<PiHostOptions> = {}): Promise<HostRig> {
+  const dir = mkdtempSync(join(tmpdir(), "pi-host-"));
+  const faux = fauxProvider();
+  const host = await PiHost.create({
+    agentDir: join(dir, "agent"),
+    settings: { compaction: { enabled: false }, retry: { enabled: false } },
+    ...options,
+    configureModels: async (runtime) => {
+      runtime.registerNativeProvider(faux.provider);
+      await options.configureModels?.(runtime);
+    },
+  });
+  return {
+    dir,
+    faux,
+    host,
+    close() {
+      host.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
 }

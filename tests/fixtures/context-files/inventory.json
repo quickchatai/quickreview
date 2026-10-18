@@ -134,6 +134,30 @@
       ],
       "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
     },
+    "sdk": {
+      "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",
+      "agentDir": "/home/op/.local/state/qcr/default/review/runs/RUN/agent",
+      "contextFiles": "injected",
+      "effective": [
+        {
+          "path": "/home/op/.local/state/qcr/default/review/runs/RUN/out/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "PiHost.makeSession (src/engine/pisdk.ts): the ResourceLoader discovers nothing and agentsFilesOverride hands over the reviewer stub at the run's out dir; the file is never written, and the planted AGENTS.md in the cwd, its ancestor and the agentDir do not load."
+    },
+    "sdk-lens": {
+      "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",
+      "agentDir": "/home/op/.local/state/qcr/default/review/runs/RUN/agent",
+      "contextFiles": "injected",
+      "effective": [
+        {
+          "path": "/home/op/.local/state/qcr/default/review/runs/RUN/out/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "An SDK lens session comes from the same makeSession with the same context files (D34: the stub on every route)."
+    },
     "scan-leaf-container": {
       "cwd": "/opt/qcr",
       "agentDir": "/home/companion/.pi/agent",

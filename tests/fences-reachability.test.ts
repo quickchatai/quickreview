@@ -73,6 +73,13 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "factories (P3) take it. Delete this entry with the first import.",
     },
     {
+      file: "src/engine/pisdk.ts",
+      why:
+        "the isolated SDK session builder (P2.8): PiHost, the one module that imports the pi SDK. Only " +
+        "the canaries and tests/engine-pisdk.test.ts build a host until sdkRuntime (P2.9) and the lens " +
+        "runner (P4.4) take it. Delete this entry with the first import.",
+    },
+    {
       file: "src/engine/lens/registry.ts",
       why:
         "the lens agent registry (P4.1): loads the built agents the SDK lens tool names. It is read only " +

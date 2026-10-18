@@ -46,9 +46,11 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
+import { fauxProvider } from "@earendil-works/pi-ai";
 import { sanitizeParams } from "../extensions/subagents.js";
 import { COMPANION_AGENTS_DIR } from "../extensions/setup.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, sandboxRoot } from "../src/config.js";
+import { PiHost } from "../src/engine/pisdk.js";
 import { stateHome } from "../src/install.js";
 import { onboardingPiArgv } from "../src/onboard/launch.js";
 import { SCANBOX, scanRunArgv, type ScanBoxPlan } from "../src/scanbox.js";
@@ -351,6 +353,48 @@ async function captureReviewCli(
   return { ...pi.probe(), root: sandboxRoot(), runsDir, operatorAgent: agentDir };
 }
 
+/** The context files an SDK session's system prompt carries, as pi renders them. */
+function projectInstructions(systemPrompt: string): Array<{ path: string; content: string }> {
+  return [
+    ...systemPrompt.matchAll(
+      /<project_instructions path="([^"]*)">\n([\s\S]*?)\n?<\/project_instructions>/g,
+    ),
+  ].map((m) => ({ path: m[1]!, content: m[2]! }));
+}
+
+/** The SDK host as `qcr review` builds it (P2.8, D34): a run dir outside every
+ * checkout, the stub handed over as data at <out>/AGENTS.override.md and never
+ * written, and every lookalike a discovery would find planted around it. */
+async function captureSdkSessions(): Promise<{
+  out: string;
+  agent: string;
+  main: Array<{ path: string; content: string }>;
+  lens: Array<{ path: string; content: string }>;
+  outEntries: string[];
+}> {
+  const run = join(tmp, "sdk-run");
+  const out = join(run, "out");
+  const agent = join(run, "agent");
+  mkdirSync(out, { recursive: true });
+  mkdirSync(agent, { recursive: true });
+  for (const dir of [run, out, agent]) writeFileSync(join(dir, "AGENTS.md"), `DECOY in ${dir}\n`);
+  const faux = fauxProvider();
+  const host = await PiHost.create({
+    agentDir: agent,
+    agentsFiles: [{ path: join(out, "AGENTS.override.md"), content: read(STUB) }],
+    configureModels: (rt) => rt.registerNativeProvider(faux.provider),
+  });
+  try {
+    const make = () =>
+      host.makeSession({ cwd: out, env: {}, model: faux.getModel(), tools: [], systemPrompt: "S" });
+    const main = projectInstructions((await make()).systemPrompt);
+    const lens = projectInstructions((await make()).systemPrompt);
+    return { out, agent, main, lens, outEntries: readdirSync(out).sort() };
+  } finally {
+    host.dispose();
+  }
+}
+
 async function captureScanLeaf(cwd: string): Promise<{ cwd: string; argv: string[] }> {
   let seen: { cwd: string; argv: string[] } | undefined;
   const spawn: SpawnFn = (_command, args, opts) => {
@@ -574,6 +618,37 @@ beforeAll(async () => {
   });
   observed.routes["clone-review-lens"] = { ...observed.routes["clone-review"], note: LENS_NOTE };
 
+  // -- the SDK host: `qcr review` on the engine runtime (P2.8, D34) ---------------
+  // Discovery is off and the stub is injected as data. The path it carries is
+  // <out>/AGENTS.override.md, the same file the clone route's CLI pi loads, but
+  // nothing is written there; the planted AGENTS.md files around it never load.
+  const sdk = await captureSdkSessions();
+  expect(sdk.outEntries).toEqual(["AGENTS.md"]);
+  const sdkRow = (
+    loaded: Array<{ path: string; content: string }>,
+    note: string,
+  ): InventoryRow => ({
+    cwd: join(virtualRun, "out"),
+    agentDir: join(virtualRun, "agent"),
+    contextFiles: "injected",
+    effective: loaded.map((f) => ({
+      path: f.path.replace(sdk.out, join(virtualRun, "out")),
+      source:
+        [STUB, ...CONTEXT_CANDIDATES].find(
+          (c) => isFile(join(ROOT, c)) && read(c).trim() === f.content.trim(),
+        ) ?? `unknown:${f.path}`,
+    })),
+    note,
+  });
+  observed.routes["sdk"] = sdkRow(
+    sdk.main,
+    "PiHost.makeSession (src/engine/pisdk.ts): the ResourceLoader discovers nothing and agentsFilesOverride hands over the reviewer stub at the run's out dir; the file is never written, and the planted AGENTS.md in the cwd, its ancestor and the agentDir do not load.",
+  );
+  observed.routes["sdk-lens"] = sdkRow(
+    sdk.lens,
+    "An SDK lens session comes from the same makeSession with the same context files (D34: the stub on every route).",
+  );
+
   // -- scan leaves ---------------------------------------------------------------
   expect(read("extensions/setup-scan.ts")).toMatch(
     /const root = env\.QCR_ROOT\?\.trim\(\) \|\| sandboxRoot\(\);[\s\S]*?piCaseRunner\(\{ agentsDir, cwd: root,/,
@@ -706,10 +781,14 @@ describe("the context-file inventory", () => {
       "release-image-lens",
       "clone-review",
       "clone-review-lens",
+      "sdk",
+      "sdk-lens",
     ]) {
       expect(files(r), r).toEqual([STUB]);
       expect(routes[r]!.effective[0]!.path.endsWith("/AGENTS.override.md"), r).toBe(true);
     }
+    // The SDK host hands the stub over as data, with discovery off.
+    for (const r of ["sdk", "sdk-lens"]) expect(routes[r]!.contextFiles, r).toBe("injected");
     // The full guide: the docker daemon and the companion.
     for (const r of ["daemon-bot", "daemon-lens", "companion"])
       expect(files(r), r).toEqual(["AGENTS.md"]);
