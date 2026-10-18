@@ -18,7 +18,7 @@ import type { ExecFn, ExecResult } from "./tmux.js";
 import { nodeExec, runOrThrow } from "./tmux.js";
 import { parseHunkHeader } from "./hunkheader.js";
 import { repoCloneDirName } from "./clonedir.js";
-import { unquoteGitPath } from "./unifieddiff.js";
+import { gitDiffHeaderPaths, unquoteGitPath } from "./unifieddiff.js";
 
 export { unquoteGitPath };
 
@@ -244,27 +244,6 @@ function sectionPath(raw: string, prefix: "a/" | "b/" | ""): string | null {
   return p.startsWith(prefix) ? p.slice(prefix.length) : null;
 }
 
-/** The two paths of a `diff --git` header line's tail. */
-function headerPaths(tail: string): { a: string | null; b: string | null } {
-  if (tail.startsWith('"')) {
-    const m = /^("(?:[^"\\]|\\.)*") (.*)$/.exec(tail);
-    if (!m) return { a: null, b: null };
-    return { a: sectionPath(m[1]!, "a/"), b: sectionPath(m[2]!, "b/") };
-  }
-  if (tail.endsWith('"')) {
-    const m = /^(.*?) ("(?:[^"\\]|\\.)*")$/.exec(tail);
-    if (!m) return { a: null, b: null };
-    return { a: sectionPath(m[1]!, "a/"), b: sectionPath(m[2]!, "b/") };
-  }
-  // Unquoted: unambiguous only when both sides spell the same path.
-  const n = (tail.length - 5) / 2;
-  if (Number.isInteger(n) && n > 0 && tail.startsWith("a/") && tail.slice(2 + n, 5 + n) === " b/") {
-    const a = tail.slice(2, 2 + n);
-    if (a === tail.slice(5 + n)) return { a, b: a };
-  }
-  return { a: null, b: null };
-}
-
 /** Split `git diff` patch output (explicit `a/`/`b/` prefixes) into its
  * file sections. Pure. Inside a section only the lines before its first
  * `@@` are headers — a removed `-- comment` line is never read as one. */
@@ -278,7 +257,7 @@ export function parsePatchSections(diff: string): PatchSection[] {
       i += 1;
       continue;
     }
-    const hp = headerPaths(head.slice("diff --git ".length));
+    const hp = gitDiffHeaderPaths(head.slice("diff --git ".length));
     let minus: string | null | undefined;
     let plus: string | null | undefined;
     let renameFrom: string | null = null;

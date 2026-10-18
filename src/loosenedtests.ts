@@ -116,10 +116,35 @@ export function detectLoosenedAssertions(files: readonly PrFile[]): LoosenedHit[
     if (!isTestFile(f.filename) || !f.patch) continue;
     for (const h of hunks(f.patch)) {
       const usedAdded = new Set<number>();
-      for (const r of h.removed) {
+      const unchanged = new Set<number>();
+      const commented = new Map<number, { text: string; line: number }>();
+      for (const [ri, r] of h.removed.entries()) {
+        const ai = h.added.findIndex((a, i) => !usedAdded.has(i) && norm(a.text) === norm(r.text));
+        if (ai >= 0) {
+          unchanged.add(ri);
+          usedAdded.add(ai);
+        }
+      }
+      for (const [ri, r] of h.removed.entries()) {
+        if (unchanged.has(ri) || !isCheck(r.text)) continue;
+        const ai = h.added.findIndex((a, i) =>
+          !usedAdded.has(i) && COMMENT_PREFIX_RE.test(a.text) &&
+          norm(a.text.replace(COMMENT_PREFIX_RE, "")) === norm(r.text));
+        if (ai >= 0) {
+          commented.set(ri, h.added[ai]!);
+          usedAdded.add(ai);
+        }
+      }
+      for (const [ri, r] of h.removed.entries()) {
+        if (unchanged.has(ri)) continue;
         if (norm(r.text) === "") continue;
         // in a test file a comparison is a check whether or not an assert keyword wraps it
         const isAssert = isCheck(r.text);
+        const comment = commented.get(ri);
+        if (comment) {
+          hits.push({ file: f.filename, line: comment.line, kind: "assert-commented" });
+          continue;
+        }
         // its counterpart: the first unused added line of the same shape, or
         // (for an assertion) the first unused added assertion
         let ai = h.added.findIndex(
@@ -132,15 +157,6 @@ export function detectLoosenedAssertions(files: readonly PrFile[]): LoosenedHit[
           );
         const a = ai >= 0 ? h.added[ai]! : undefined;
         if (a) usedAdded.add(ai);
-        const commented = h.added.find(
-          (x) =>
-            COMMENT_PREFIX_RE.test(x.text) &&
-            norm(x.text.replace(COMMENT_PREFIX_RE, "")) === norm(r.text),
-        );
-        if (isAssert && commented) {
-          hits.push({ file: f.filename, line: commented.line, kind: "assert-commented" });
-          continue;
-        }
         if (a && shape(a.text) === shape(r.text)) {
           const grew = numberGrew(r.text, a.text);
           const shrank = numberGrew(a.text, r.text);

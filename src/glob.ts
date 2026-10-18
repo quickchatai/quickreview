@@ -30,8 +30,8 @@ export function globBody(pattern: string): string {
   return pattern
     .split(/(\*\*\/|\*\*|\*|\?)/)
     .map((part) => {
-      if (part === "**/") return "(?:.*/)?";
-      if (part === "**") return ".*";
+      if (part === "**/") return "(?:[\\s\\S]*/)?";
+      if (part === "**") return "[\\s\\S]*";
       if (part === "*") return "[^/]*";
       if (part === "?") return "[^/]";
       return part.replace(/[.+^${}()|[\]\\]/g, "\\$&");
@@ -44,7 +44,7 @@ export function globToRegExp(glob: string): RegExp {
   // A trailing slash adds nothing the `(?:/.*)?` tail does not already say.
   const g = glob.trim().replace(/\/+$/, "");
   const lead = g.includes("/") ? "^" : "(?:^|/)";
-  return new RegExp(`${lead}${globBody(g)}(?:/.*)?$`);
+  return new RegExp(`${lead}${globBody(g)}(?:/[\\s\\S]*)?$`);
 }
 
 /** A predicate over repo-relative paths: true when any glob matches. */

@@ -24,7 +24,7 @@
 import { proposalKey } from "../setup/pins.js";
 import { FEEDBACK_FULL_TEXT_LABEL, readFencedData } from "../memory/datafence.js";
 import { parseEventTags, parseHashTags } from "../memory/eventtags.js";
-import { lessonHeadline, lessonTierLine } from "../memory/shadowstatus.js";
+import { lessonHeadline, lessonSectionTitle, lessonTierLine } from "../memory/shadowstatus.js";
 import type { StatusSnapshot } from "../state.js";
 import type { App } from "./app.js";
 import {
@@ -799,15 +799,7 @@ export function lessonsHeadline(snapshot: StatusSnapshot | undefined): {
       title: "LESSONS (—)",
       lines: [`${WARN}${STRONG}${lessonHeadline(null)}${RESET}`],
     };
-  const title =
-    s.delivery === "off"
-      ? "LESSONS (delivery off)"
-      : s.lessons_off
-        ? "LESSONS (kill switch OFF)"
-        : // `on` is delivering only with a selector built (memory
-          // on); `on` without one runs nothing — never "shadow", which runs
-          // the selection and its ledger.
-          `LESSONS (${s.delivering ? "on" : s.delivery === "on" ? "on — nothing delivered" : "shadow"}, ${s.window_days}d)`;
+  const title = lessonSectionTitle(s);
   const line = lessonHeadline(s);
   // The marked findings by match tier — class the would-demote one, lens
   // evidence only — on a line of its own (the headline already fills the

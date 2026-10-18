@@ -53,6 +53,32 @@ export function unquoteGitPath(s: string): string | null {
   return Buffer.from(bytes).toString("utf8");
 }
 
+function headerPath(raw: string, prefix: string): string | null {
+  const path = unquoteGitPath(raw);
+  return path?.startsWith(prefix) ? path.slice(prefix.length) : null;
+}
+
+/** The two paths of a `diff --git` header line's tail. */
+export function gitDiffHeaderPaths(tail: string): { a: string | null; b: string | null } {
+  if (tail.startsWith('"')) {
+    const m = /^("(?:[^"\\]|\\.)*") (.*)$/.exec(tail);
+    if (!m) return { a: null, b: null };
+    return { a: headerPath(m[1]!, "a/"), b: headerPath(m[2]!, "b/") };
+  }
+  if (tail.endsWith('"')) {
+    const m = /^(.*?) ("(?:[^"\\]|\\.)*")$/.exec(tail);
+    if (!m) return { a: null, b: null };
+    return { a: headerPath(m[1]!, "a/"), b: headerPath(m[2]!, "b/") };
+  }
+  // Unquoted: unambiguous only when both sides spell the same path.
+  const n = (tail.length - 5) / 2;
+  if (Number.isInteger(n) && n > 0 && tail.startsWith("a/") && tail.slice(2 + n, 5 + n) === " b/") {
+    const a = tail.slice(2, 2 + n);
+    if (a === tail.slice(5 + n)) return { a, b: a };
+  }
+  return { a: null, b: null };
+}
+
 /**
  * The files of a unified diff (`git diff` output) in the shape GitHub's
  * files API returns and `buildPassPlan` reads: path, status, +/- counts and
@@ -109,7 +135,7 @@ export function parseUnifiedDiff(text: string): PrFileEntry[] {
       to ??= renameTo;
       from ??= renameFrom;
     }
-    const filename = to ?? from ?? /^diff --git a\/(.+?) b\//.exec(lines[0] ?? "")?.[1] ?? null;
+    const filename = to ?? from ?? gitDiffHeaderPaths((lines[0] ?? "").slice("diff --git ".length)).b;
     if (filename === null) continue;
     const entry: PrFileEntry = { filename, additions, deletions, status };
     if (hunkAt >= 0) entry.patch = lines.slice(hunkAt).join("\n").replace(/\n+$/, "");
