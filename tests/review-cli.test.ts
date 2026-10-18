@@ -164,12 +164,13 @@ describe("qcr review: usage", () => {
     expect(h.text()).toMatch(/uncommitted|working tree/i);
   });
 
-  it("refuses an unknown flag and targets this build cannot review, with exit 2", async () => {
+  it("refuses an unknown flag and arguments that do not fit, with exit 2", async () => {
     for (const rest of [
       ["--bogus"],
-      ["123"],
-      ["https://github.com/o/r/pull/3"],
       ["--uncommitted"],
+      ["--repo", "o/r"],
+      ["12", "--base", "main"],
+      ["12", "13"],
     ]) {
       expect(() => parseReviewArgs(rest), rest.join(" ")).toThrow(/usage: qcr review/);
     }
@@ -363,5 +364,90 @@ describe("qcr review: the throwaway tree", () => {
     await runReviewCli([], false, h.deps);
     expect(git(repo, "worktree", "list").split("\n")).toHaveLength(1);
     expect(git(repo, "status", "--porcelain")).toBe("");
+  });
+});
+
+describe("qcr review <PR>", () => {
+  // A "GitHub": a bare o/r.git holding main and pull/7/head, plus a stub API.
+  const gh = join(tmp, "gh-host");
+  const work = join(tmp, "gh-work");
+  mkdirSync(join(gh, "o"), { recursive: true });
+  mkdirSync(work, { recursive: true });
+  git(work, "init", "-q", "-b", "main");
+  writeFileSync(join(work, "a.ts"), "export const a = 1;\n");
+  git(work, "add", "-A");
+  git(work, "commit", "-q", "-m", "base");
+  const baseSha = git(work, "rev-parse", "HEAD");
+  git(work, "checkout", "-q", "-b", "feat");
+  writeFileSync(join(work, "a.ts"), "export const a = 1;\nexport const b = 2;\n");
+  git(work, "commit", "-q", "-am", "feat");
+  const headSha = git(work, "rev-parse", "HEAD");
+  git(gh, "init", "-q", "--bare", join(gh, "o", "r.git"));
+  git(work, "push", "-q", join(gh, "o", "r.git"), "main:refs/heads/main", "feat:refs/pull/7/head");
+
+  const seen: Array<string | null> = [];
+  const api = (async (_u: string | URL | Request, init?: RequestInit) => {
+    seen.push(new Headers(init?.headers).get("authorization"));
+    return new Response(
+      JSON.stringify({
+        title: "Add b",
+        body: null,
+        head: { sha: headSha },
+        base: { ref: "main", sha: baseSha },
+      }),
+      { status: 200 },
+    );
+  }) as typeof fetch;
+
+  /** A cwd repo whose origin is o/r. */
+  function cwdRepo(name: string, origin = "https://github.com/o/r.git"): string {
+    const repo = mkRepo(name);
+    git(repo, "remote", "add", "origin", origin);
+    return repo;
+  }
+  function prHarness(repo: string, piBin: string, pr: object) {
+    const h = harness({ repo, piBin });
+    return { ...h, deps: { ...h.deps, pr: { fetchFn: api, gitBase: gh, ...pr } } };
+  }
+
+  it("reviews a PR by number: fetched into a scratch tree, priced, run and cleaned up", async () => {
+    const repo = cwdRepo("pr-number");
+    setLimit(repo, 1000);
+    const pi = happyPi("pr-number");
+    const h = prHarness(repo, pi.bin, { env: { GITHUB_TOKEN: "tok" }, ghAuthToken: () => null });
+    expect(await runReviewCli(["7"], false, h.deps)).toBe(0);
+    expect(seen.at(-1)).toBe("Bearer tok");
+    expect(h.text()).toMatch(/Review PR #7 against main \(o\/r\)/);
+    expect(h.text()).toMatch(/GitHub credential: GITHUB_TOKEN/);
+    expect(h.text()).toMatch(/c breaks the build/);
+    expect(git(repo, "worktree", "list")).not.toMatch(/tree/);
+    const left = readdirSync(h.deps.runsDir).flatMap((r) => readdirSync(join(h.deps.runsDir, r)));
+    expect(left).not.toContain("repo");
+  });
+
+  it("reviews a PR by URL, and --preview starts nothing", async () => {
+    const repo = cwdRepo("pr-url");
+    const pi = happyPi("pr-url");
+    const h = prHarness(repo, pi.bin, { env: {}, ghAuthToken: () => "cli" });
+    expect(await runReviewCli(["https://github.com/o/r/pull/7", "--preview"], true, h.deps)).toBe(
+      0,
+    );
+    const o = JSON.parse(h.lines[0]!);
+    expect(o.preview).toMatchObject({ pr: 7, head_sha: headSha, base: "main", credential: "gh" });
+    expect(existsSync(pi.calls)).toBe(false);
+  });
+
+  it("refuses a PR on another repo unless --repo names it", async () => {
+    const repo = cwdRepo("pr-other");
+    const h = prHarness(repo, "false", { env: { GITHUB_TOKEN: "t" } });
+    expect(await runReviewCli(["https://github.com/o/other/pull/7"], false, h.deps)).toBe(1);
+    expect(h.text()).toMatch(/--repo o\/other/);
+  });
+
+  it("a missing credential is refused with the way to get one", async () => {
+    const repo = cwdRepo("pr-nocred");
+    const h = prHarness(repo, "false", { env: {}, ghAuthToken: () => null });
+    expect(await runReviewCli(["7"], false, h.deps)).toBe(1);
+    expect(h.text()).toMatch(/gh auth login/);
   });
 });

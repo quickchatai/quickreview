@@ -11,7 +11,7 @@
 //
 // Exit codes follow `qcr scan`: 0 done; 1 refused, declined, failed or
 // stopped short (partial); 2 usage.
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
 import type { Ecosystem } from "./ecosystem.js";
@@ -22,14 +22,23 @@ import {
   priceReview,
   removeReviewTree,
   renderGrouped,
+  originRepo,
   resolveBranch,
   reviewKey,
   type BranchTarget,
 } from "./localreview.js";
+import type { CredentialSource } from "./ghcred.js";
+import {
+  fetchPrTarget,
+  parsePrTarget,
+  resolvePrCredential,
+  type PrCredentialDeps,
+  type PrFetchRequest,
+} from "./prtarget.js";
 import { renderOneShotPrompts, runOneShot, type OneShotResult } from "./oneshot.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review [branch] [--base REF] [--preview] [--key K] [--limit USD] [--json] | --help";
+  "usage: qcr review [branch|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json] | --help";
 
 export function reviewHelp(): string {
   return [
@@ -41,15 +50,20 @@ export function reviewHelp(): string {
     "",
     "Targets",
     "  (none), branch    the current branch against its base (default)",
-    "  <PR number|URL>   a pull request — not available in this build yet",
+    "  <PR number|URL>   a pull request, fetched into a scratch tree and reviewed read-only;",
+    "                    a PR on another repo than this directory's needs --repo OWNER/NAME",
     "  --uncommitted     the uncommitted working tree — not available in this build yet",
     "",
     "Options",
+    "  --repo OWNER/NAME the repository of a PR number (default: this directory's origin)",
     "  --base REF        the base to review against (default: origin's default branch, main, master)",
     "  --preview         show the plan, the price and the key; start nothing",
     "  --key K           start over the limit without asking, quoting the key a preview showed",
     "  --limit USD       the limit for this run, over the repo's own",
     "  --json            one JSON object instead of text",
+    "",
+    "A PR is read with the first GitHub credential found: the App if configured, then",
+    "GITHUB_TOKEN/GH_TOKEN, then `gh auth token` (run `gh auth login` to set that up).",
     "",
     "The repo's limit and price rates live in `.git/qcr-review.json` (auto_limit_usd,",
     "usd_per_lens, usd_per_kline). Exit codes: 0 done; 1 refused, declined or stopped",
@@ -58,7 +72,16 @@ export function reviewHelp(): string {
 }
 
 export type ReviewCommand =
-  { help: true } | { help: false; base?: string; preview: boolean; key?: string; limit?: number };
+  | { help: true }
+  | {
+      help: false;
+      pr?: string;
+      repo?: string;
+      base?: string;
+      preview: boolean;
+      key?: string;
+      limit?: number;
+    };
 
 const usage = (why?: string): Error => new Error(why ? `${REVIEW_USAGE}\n(${why})` : REVIEW_USAGE);
 
@@ -68,6 +91,8 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   let help = false;
   let preview = false;
   let base: string | undefined;
+  let pr: string | undefined;
+  let repo: string | undefined;
   let key: string | undefined;
   let limit: number | undefined;
   const value = (i: number, flag: string): string => {
@@ -80,6 +105,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     if (a === "--help" || a === "-h") help = true;
     else if (a === "--preview") preview = true;
     else if (a === "--base") base = value(i++, a);
+    else if (a === "--repo") repo = value(i++, a);
     else if (a === "--key") key = value(i++, a);
     else if (a === "--limit") {
       const n = Number(value(i++, a));
@@ -87,13 +113,20 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
         throw usage("--limit must be a positive number of dollars");
       limit = n;
     } else if (a === "branch") continue;
-    else if (a === "--uncommitted" || /^#?\d+$/.test(a) || /^https?:\/\//.test(a))
-      throw usage(`${a}: only the current branch can be reviewed in this build`);
-    else throw usage(`unknown argument ${a}`);
+    else if (a === "--uncommitted")
+      throw usage(`${a}: only a branch or a PR can be reviewed in this build`);
+    else if (/^#?\d+$/.test(a) || /^https?:\/\//.test(a)) {
+      if (pr !== undefined) throw usage("one PR at a time");
+      pr = a;
+    } else throw usage(`unknown argument ${a}`);
   }
   if (help) return { help: true };
+  if (pr !== undefined && base !== undefined) throw usage("--base applies to a branch, not a PR");
+  if (pr === undefined && repo !== undefined) throw usage("--repo goes with a PR number or URL");
   return {
     help: false,
+    ...(pr !== undefined ? { pr } : {}),
+    ...(repo !== undefined ? { repo } : {}),
     preview,
     ...(base !== undefined ? { base } : {}),
     ...(key !== undefined ? { key } : {}),
@@ -118,7 +151,12 @@ export interface ReviewCliDeps {
   runsDir: string;
   timeoutMs: number;
   log?: (line: string) => void;
+  /** Test seams for a PR target: the credential sources and where GitHub is. */
+  pr?: PrCredentialDeps & Pick<PrFetchRequest, "fetchFn" | "gitBase" | "apiBase">;
 }
+
+const credentialLabel = (s: CredentialSource): string =>
+  s === "app" ? "the GitHub App" : s === "gh" ? "gh auth login" : s.slice("env:".length);
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 
@@ -144,6 +182,26 @@ export async function runReviewCli(
   json: boolean,
   deps: ReviewCliDeps,
 ): Promise<number> {
+  const cleanups: Array<() => void> = [];
+  try {
+    return await runReview(rest, json, deps, cleanups);
+  } finally {
+    for (const c of cleanups) {
+      try {
+        c();
+      } catch {
+        // a scratch tree that will not go is the OS temp cleaner's
+      }
+    }
+  }
+}
+
+async function runReview(
+  rest: readonly string[],
+  json: boolean,
+  deps: ReviewCliDeps,
+  cleanups: Array<() => void>,
+): Promise<number> {
   const say = (human: string, data: Record<string, unknown>): void =>
     deps.out(json ? JSON.stringify(data) : human);
   const refuse = (code: number, errors: string[]): number => {
@@ -160,20 +218,62 @@ export async function runReviewCli(
     deps.out(reviewHelp());
     return 0;
   }
-  const resolved = resolveBranch(deps.cwd, cmd.base);
-  if (!resolved.ok) return refuse(1, [resolved.error]);
-  const t: BranchTarget = resolved.target;
+  const stamp = new Date().toISOString().replace(/[^0-9]/g, "");
+  // Where git commands run: the checkout the person stands in, or for a PR
+  // the scratch repository its head and base were fetched into.
+  let gitDir = deps.cwd;
+  let t: BranchTarget;
+  let prInfo: {
+    number: number;
+    title: string;
+    body: string | null;
+    source: CredentialSource;
+  } | null = null;
+  let runDir: string;
+  if (cmd.pr !== undefined) {
+    const parsed = parsePrTarget(cmd.pr, {
+      cwdRepo: originRepo(deps.cwd),
+      ...(cmd.repo !== undefined ? { repo: cmd.repo } : {}),
+    });
+    if (!parsed.ok) return refuse(1, [parsed.error]);
+    const cred = await resolvePrCredential(deps.cfg.github.secrets_dir, deps.pr);
+    if (!cred.ok) return refuse(1, [cred.error]);
+    runDir = join(deps.runsDir, `${stamp}-pr${parsed.number}`);
+    const scratch = join(runDir, "repo");
+    cleanups.push(() => rmSync(scratch, { recursive: true, force: true }));
+    const fetched = await fetchPrTarget({
+      repo: parsed.repo,
+      number: parsed.number,
+      scratchDir: scratch,
+      token: cred.token,
+      ...(deps.pr?.fetchFn ? { fetchFn: deps.pr.fetchFn } : {}),
+      ...(deps.pr?.gitBase ? { gitBase: deps.pr.gitBase } : {}),
+      ...(deps.pr?.apiBase ? { apiBase: deps.pr.apiBase } : {}),
+    });
+    if (!fetched.ok) return refuse(1, [fetched.error]);
+    gitDir = fetched.gitDir;
+    t = fetched.target;
+    prInfo = {
+      number: fetched.number,
+      title: fetched.title,
+      body: fetched.body,
+      source: cred.source,
+    };
+  } else {
+    const resolved = resolveBranch(deps.cwd, cmd.base);
+    if (!resolved.ok) return refuse(1, [resolved.error]);
+    t = resolved.target;
+    runDir = join(deps.runsDir, `${stamp}-${t.headSha.slice(0, 7)}`);
+  }
   const settings = loadReviewSettings(deps.cwd);
   const limit = cmd.limit ?? settings.auto_limit_usd;
-  const runId = `${new Date().toISOString().replace(/[^0-9]/g, "")}-${t.headSha.slice(0, 7)}`;
-  const runDir = join(deps.runsDir, runId);
   const outDir = join(runDir, "out");
   const treeDir = join(runDir, "tree");
   const target = {
     repo: t.repo,
-    number: 0,
-    title: `${t.branch} against ${t.base}`,
-    body: null,
+    number: prInfo?.number ?? 0,
+    title: prInfo?.title ?? `${t.branch} against ${t.base}`,
+    body: prInfo?.body ?? null,
     headSha: t.headSha,
     baseRef: t.base,
     baseSha: t.baseSha,
@@ -188,7 +288,7 @@ export async function runReviewCli(
       cfg: deps.cfg,
       ecosystem: deps.ecosystem,
       target,
-      tree: deps.cwd,
+      tree: gitDir,
       caseDir: outDir,
       files: t.files,
       issuedAt: new Date().toISOString(),
@@ -218,6 +318,7 @@ export async function runReviewCli(
     limit_usd: limit,
     auto,
     key,
+    ...(prInfo ? { pr: prInfo.number, credential: prInfo.source } : {}),
   };
   const previewText = [
     `Review ${t.branch} against ${t.base} (${t.repo})`,
@@ -225,6 +326,7 @@ export async function runReviewCli(
     `  lenses: ${lenses.join(", ")}`,
     `  price: ${usd(price)} — the run stops hard there (limit without asking: ${usd(limit)})`,
     `  key: ${key}`,
+    ...(prInfo ? [`  GitHub credential: ${credentialLabel(prInfo.source)}`] : []),
   ];
   if (cmd.preview) {
     say(previewText.join("\n"), { ok: true, preview });
@@ -252,7 +354,7 @@ export async function runReviewCli(
   mkdirSync(runDir, { recursive: true });
   let shot: OneShotResult;
   try {
-    addReviewTree(deps.cwd, treeDir, t.headSha);
+    addReviewTree(gitDir, treeDir, t.headSha);
     shot = await runOneShot({
       root: deps.root,
       agentDir: deps.agentDir,
@@ -272,7 +374,7 @@ export async function runReviewCli(
   } catch (err) {
     return refuse(1, [`the review could not run: ${String(err).slice(0, 300)}`]);
   } finally {
-    removeReviewTree(deps.cwd, treeDir);
+    removeReviewTree(gitDir, treeDir);
   }
 
   const groups = groupFindings(shot.findings);

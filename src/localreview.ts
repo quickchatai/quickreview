@@ -62,6 +62,13 @@ function baseOf(cwd: string, asked: string | undefined): string | null {
   return null;
 }
 
+/** `owner/name` from the origin remote, or null when there is none. */
+export function originRepo(cwd: string): string | null {
+  const origin = tryGit(cwd, ["remote", "get-url", "origin"]);
+  const m = origin?.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?\/?$/);
+  return m ? m[1]! : null;
+}
+
 export function resolveBranch(cwd: string, asked?: string): BranchResolution {
   if (tryGit(cwd, ["rev-parse", "--is-inside-work-tree"]) !== "true")
     return { ok: false, error: `${cwd} is not a git repository` };
@@ -115,12 +122,10 @@ export function resolveBranch(cwd: string, asked?: string): BranchResolution {
   if (files.length === 0)
     return { ok: false, error: `nothing to review: ${branch} has no changes against ${base}` };
   const top = tryGit(cwd, ["rev-parse", "--show-toplevel"]) ?? cwd;
-  const origin = tryGit(cwd, ["remote", "get-url", "origin"]);
-  const m = origin?.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?\/?$/);
   return {
     ok: true,
     target: {
-      repo: m ? m[1]! : `local/${basename(resolve(top))}`,
+      repo: originRepo(cwd) ?? `local/${basename(resolve(top))}`,
       branch,
       base,
       headSha,
