@@ -70,6 +70,8 @@ import {
   type OneShotPrompts,
   type OneShotResult,
 } from "./oneshot.js";
+import { prepareHostRun } from "./hostroute.js";
+import { AuthExpiring } from "./piauthcopy.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import {
@@ -241,7 +243,8 @@ export interface ReviewCliDeps {
   choose?: (question: string, options: DestinationChoice[]) => Promise<Destination>;
   /** The production tree (prompts/, extensions/, agents/). */
   root: string;
-  /** pi's agent dir (its login). */
+  /** The operator's pi agent dir (its login): only read. The run's pi gets a
+   * private agent dir of its own (src/hostroute.ts). */
   agentDir: string;
   cfg: Config;
   ecosystem: Ecosystem;
@@ -697,6 +700,34 @@ async function runReview(
 
   mkdirSync(runDir, { recursive: true });
   const runWarnings: string[] = [];
+  // pi runs isolated from the operator's pi home, the qcr checkout and the
+  // reviewed repo: a private agent dir and, as its cwd, the run's out dir
+  // holding the reviewer stub (src/hostroute.ts).
+  let host: ReturnType<typeof prepareHostRun>;
+  try {
+    host = prepareHostRun({
+      root: deps.root,
+      srcAgentDir: deps.agentDir,
+      agentDir: join(runDir, "agent"),
+      cwd: outDir,
+      cfg: deps.cfg,
+      needMs: deps.timeoutMs,
+      checkouts: [deps.cwd, gitDir],
+    });
+  } catch (err) {
+    return refuse(1, [
+      err instanceof AuthExpiring
+        ? err.message
+        : `the review could not be isolated: ${String(err).slice(0, 300)}`,
+    ]);
+  }
+  // The private agent dir holds a copy of the login: it goes with the run.
+  cleanups.push(() => rmSync(host.agentDir, { recursive: true, force: true }));
+  if (host.strayContext.length > 0) {
+    const w = `a context file above the run directory is also loaded by pi, so the reviewer's context is more than the stub: ${host.strayContext.join(", ")}`;
+    runWarnings.push(w);
+    (deps.warn ?? ((l) => console.error(l)))(w);
+  }
   // On a PR the bot already reviewed, what it posted counts as raised: read
   // through the resolved credential, skipped below. A failure only warns.
   const bot = prInfo
@@ -726,7 +757,9 @@ async function runReview(
     else addReviewTree(gitDir, treeDir, t.headSha);
     shot = await runOneShot({
       root: deps.root,
-      agentDir: deps.agentDir,
+      cwd: host.cwd,
+      agentScope: "user",
+      agentDir: host.agentDir,
       tree: treeDir,
       files: t.files,
       target,

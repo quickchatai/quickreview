@@ -6,9 +6,10 @@
 // and every lens pass (helpers/context-files.ts models pi 1.3.0's loader). So
 // the route's argv (`--no-context-files`), cwd, ancestors and agentDir decide
 // what rides each turn. The routes differ on purpose: the VM bot, the bench
-// image and their lenses load the reviewer stub; the docker daemon and the
-// clone route load the full AGENTS.md; the bench judge and the onboarding
-// session load nothing.
+// image, the clone route (from the run's own dir outside the checkout, D34)
+// and their lenses load the reviewer stub; the docker daemon and host-side scan
+// load the full AGENTS.md; the bench judge and the onboarding session load
+// nothing.
 //
 // Each row is OBSERVED, not copied: the cwd, the argv and the agentDir come
 // from a fake-pi run of the route's own code (or, where the route is a deploy
@@ -158,6 +159,8 @@ interface Probe {
   cwd: string;
   agentDir: string;
   argv: string[];
+  /** The entries of the agentDir while pi ran. */
+  agentEntries: string[];
 }
 
 /** A fake pi that records its cwd, its agentDir env and its argv, then writes
@@ -174,6 +177,7 @@ function recordingPi(name: string, outputs: boolean): { bin: string; probe: () =
       "cat > /dev/null",
       `pwd -P > ${JSON.stringify(rec + ".cwd")}`,
       `printf '%s' "$PI_CODING_AGENT_DIR" > ${JSON.stringify(rec + ".agent")}`,
+      `ls -A "$PI_CODING_AGENT_DIR" > ${JSON.stringify(rec + ".agentls")} 2>/dev/null || :`,
       `: > ${JSON.stringify(rec + ".argv")}`,
       `for a in "$@"; do printf '%s\\n' "$a" >> ${JSON.stringify(rec + ".argv")}; done`,
       'sd=""; prev=""; for a in "$@"; do [ "$prev" = "--session-dir" ] && sd="$a"; prev="$a"; done',
@@ -197,6 +201,11 @@ function recordingPi(name: string, outputs: boolean): { bin: string; probe: () =
       argv: readFileSync(rec + ".argv", "utf8")
         .split("\n")
         .filter(Boolean),
+      agentEntries: existsSync(rec + ".agentls")
+        ? readFileSync(rec + ".agentls", "utf8")
+            .split("\n")
+            .filter(Boolean)
+        : [],
     }),
   };
 }
@@ -309,10 +318,22 @@ async function runOneShotProbe(root: string, agentDir: string): Promise<Probe> {
   return pi.probe();
 }
 
-async function captureReviewCli(repo: string): Promise<Probe & { root: string }> {
+async function captureReviewCli(
+  repo: string,
+): Promise<Probe & { root: string; runsDir: string; operatorAgent: string }> {
   const pi = recordingPi("review-cli", true);
   const ctx = contextFor(sandboxRoot(), "");
+  // The operator's own pi home: a login, its context file and an extension,
+  // none of which may reach the run.
   const agentDir = join(tmp, "operator-agent");
+  mkdirSync(join(agentDir, "extensions"), { recursive: true });
+  writeFileSync(
+    join(agentDir, "auth.json"),
+    JSON.stringify({ openai: { type: "api_key", key: "k" } }),
+  );
+  writeFileSync(join(agentDir, "AGENTS.md"), "the operator's own guide\n");
+  writeFileSync(join(agentDir, "extensions", "own.ts"), "export default () => {};\n");
+  const runsDir = join(tmp, "review-runs");
   const lines: string[] = [];
   const code = await runReviewCli([], true, {
     cwd: repo,
@@ -323,11 +344,11 @@ async function captureReviewCli(repo: string): Promise<Probe & { root: string }>
     cfg: ctx.cfg,
     ecosystem: ctx.ecosystem,
     piBin: pi.bin,
-    runsDir: join(tmp, "review-runs"),
+    runsDir,
     timeoutMs: 60_000,
   });
   if (code !== 0) throw new Error(`the fake-pi review failed (exit ${code}): ${lines.join(" ")}`);
-  return { ...pi.probe(), root: sandboxRoot() };
+  return { ...pi.probe(), root: sandboxRoot(), runsDir, operatorAgent: agentDir };
 }
 
 async function captureScanLeaf(cwd: string): Promise<{ cwd: string; argv: string[] }> {
@@ -492,21 +513,49 @@ beforeAll(async () => {
     argv: onboardingPiArgv({ package: "@earendil-works/pi-coding-agent", version: "1.3.0" }, ROOT),
   });
 
-  // -- the clone route: `qcr review` from the qcr checkout -------------------------
+  // -- the clone route: `qcr review` from the qcr checkout (D34) -------------------
+  // pi runs in the run's own out dir, outside every checkout, holding a copy of
+  // the reviewer stub; its agentDir is a private one with no context file.
   const clone = await captureReviewCli(reviewedRepo);
   ran.push("clone-review");
-  expect(clone.cwd).toBe(realpathSync(clone.root));
   expect(clone.root).toBe(ROOT);
   expect(read("src/reviewcli.ts")).toMatch(
     /const agentDir =\s*process\.env\["PI_CODING_AGENT_DIR"\]\?\.trim\(\) \|\|\s*join\(process\.env\["HOME"\] \|\| homedir\(\), "\.pi", "agent"\)/,
   );
-  observed.routes["clone-review"] = row(checkoutFs(CHECKOUT), {
-    cwd: at(clone.cwd, realpathSync(clone.root), CHECKOUT),
-    agentDir: "/operator-pi-agent",
+  expect(read("src/reviewcli.ts")).toMatch(
+    /runsDir: io\.runsDir \?\? join\(stateHome\(\), "review", "runs"\)/,
+  );
+  const cloneOut = realpathSync(clone.cwd);
+  const cloneRun = dirname(cloneOut);
+  expect(basename(cloneOut)).toBe("out");
+  expect(dirname(cloneRun)).toBe(realpathSync(clone.runsDir));
+  expect(clone.agentDir).toBe(join(cloneRun, "agent"));
+  expect(clone.agentDir).not.toBe(clone.operatorAgent);
+  // Nothing of the checkout's tree, the reviewed repo or the operator's pi home
+  // is the cwd or the agentDir, or sits above either.
+  for (const outside of [ROOT, reviewedRepo, clone.operatorAgent]) {
+    expect(cloneOut.startsWith(realpathSync(outside) + "/"), outside).toBe(false);
+    expect(cloneOut, outside).not.toBe(realpathSync(outside));
+  }
+  expect(clone.agentEntries.filter((n) => CONTEXT_CANDIDATES.includes(n))).toEqual([]);
+  // The state home's default layout, on a virtual disk: the run dir under it.
+  const virtualRun = join(stateHome({ HOME: "/home/op" }), "review", "runs", "RUN");
+  const cloneFs: ContextFs = new Map();
+  for (const name of CONTEXT_CANDIDATES) {
+    const f = join(cloneOut, name);
+    if (!isFile(f)) continue;
+    const text = readFileSync(f, "utf8");
+    const src = [STUB, ...CONTEXT_CANDIDATES].find(
+      (c) => isFile(join(ROOT, c)) && read(c) === text,
+    );
+    cloneFs.set(join(virtualRun, "out", name), src ?? `unknown:${name}`);
+  }
+  observed.routes["clone-review"] = row(cloneFs, {
+    cwd: join(virtualRun, "out"),
+    agentDir: join(virtualRun, "agent"),
     argv: clone.argv,
-    note: "cwd is the qcr checkout itself (root = sandboxRoot()); its ancestors are the developer's own disk, outside our control.",
+    note: "cwd is the run's own out dir under the state home, outside every checkout, holding a copy of the reviewer stub (src/hostroute.ts); the agentDir is a private one with no context file.",
   });
-  expect(clone.agentDir).toBe(join(tmp, "operator-agent"));
   observed.routes["clone-review-lens"] = { ...observed.routes["clone-review"], note: LENS_NOTE };
 
   // -- scan leaves ---------------------------------------------------------------
@@ -630,20 +679,21 @@ describe("the context-file inventory", () => {
   it("records the routes the plan names, with the files the plan says they load", () => {
     const { routes } = readInventory();
     const files = (r: string): string[] => routes[r]!.effective.map((f) => f.source);
-    // The reviewer stub: the VM bot, the bench image and their lenses.
-    for (const r of ["vm-bot", "vm-lens", "bench", "bench-lens"]) {
+    // The reviewer stub: the VM bot, the bench image, the clone route (from the
+    // run's own dir, D34) and their lenses.
+    for (const r of [
+      "vm-bot",
+      "vm-lens",
+      "bench",
+      "bench-lens",
+      "clone-review",
+      "clone-review-lens",
+    ]) {
       expect(files(r), r).toEqual([STUB]);
       expect(routes[r]!.effective[0]!.path.endsWith("/AGENTS.override.md"), r).toBe(true);
     }
-    // The full guide: the docker daemon, the clone route, host-side scan, the companion.
-    for (const r of [
-      "daemon-bot",
-      "daemon-lens",
-      "clone-review",
-      "clone-review-lens",
-      "scan-leaf-host",
-      "companion",
-    ])
+    // The full guide: the docker daemon, host-side scan, the companion.
+    for (const r of ["daemon-bot", "daemon-lens", "scan-leaf-host", "companion"])
       expect(files(r), r).toEqual(["AGENTS.md"]);
     // Nothing: the judge, the onboarding session, the scan container.
     for (const r of ["bench-judge", "onboard", "scan-leaf-container"])
@@ -671,6 +721,15 @@ describe("the context-file inventory", () => {
       rec.effective,
     );
     expect(same({ fs: new Map(fs).set("/opt/AGENTS.md", "AGENTS.md") })).not.toEqual(rec.effective);
+  });
+
+  it("the clone route runs outside the qcr checkout, so the checkout's guide is never shadowed", () => {
+    const { routes } = readInventory();
+    for (const r of ["clone-review", "clone-review-lens"]) {
+      expect(routes[r]!.cwd, r).not.toBe(CHECKOUT);
+      expect(routes[r]!.cwd.startsWith(CHECKOUT + "/"), r).toBe(false);
+      expect(routes[r]!.contextFiles, r).toBe("default");
+    }
   });
 
   it("no route carries a context file in an ancestor of its cwd", () => {
@@ -734,6 +793,7 @@ describe("the one install site", () => {
       "docker/daemon/entrypoint.sh", // a comment: it refuses to install
       "extensions/bash-guard.ts", // a policy surface no session may write
       "scripts/deploy.sh", // a name the base clone may not take
+      "src/hostroute.ts", // the clone route's per-run copy, into the run's own out dir
       "src/usage.ts", // the cost split counts it as a context file
     ]);
   });
@@ -748,6 +808,21 @@ describe("the one install site", () => {
         ),
       );
     expect(writers).toEqual([]);
+  });
+
+  it("the clone route's copy is the only source-side write, and it refuses a checkout", () => {
+    const users = git(ROOT, "ls-files", "-z", "--", "src", "extensions", "scripts")
+      .split("\0")
+      .filter((f) => /\.(ts|sh|mjs|js)$/.test(f))
+      .filter((f) => read(f).includes("HOST_CONTEXT_STUB"))
+      .sort();
+    expect(users).toEqual(["src/hostroute.ts"]);
+    const text = read("src/hostroute.ts");
+    expect(text.match(/copyFileSync\([^\n]*HOST_CONTEXT_STUB\)/g)).toHaveLength(1);
+    // …into the run's cwd only, after the guard that keeps it out of a checkout.
+    expect(text).toMatch(
+      /is inside the checkout[\s\S]*copyFileSync\(join\(o\.root, REVIEWER_STUB\), join\(cwd, HOST_CONTEXT_STUB\)\)/,
+    );
   });
 
   it("the stub's source is never at a checkout's root", () => {

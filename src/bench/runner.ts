@@ -518,9 +518,14 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
 /** Build the lens + validator agents into `<root>/.pi/agents` — the PROJECT
  * scope the subagents glue reads when QCR_SUBAGENT_SCOPE=project. The VM uses
  * the user scope (a symlink in its own pihome); here the user scope is the
- * companion's shared agent dir, whose `agents` belongs to the companion. */
-export function buildBenchAgents(root: string, cfg: Config): number {
-  const out = join(root, ".pi", "agents");
+ * companion's shared agent dir, whose `agents` belongs to the companion.
+ * `out` overrides the dir: the `qcr review` route builds into its private agent
+ * dir's `agents` (src/hostroute.ts) and runs with the user scope. */
+export function buildBenchAgents(
+  root: string,
+  cfg: Config,
+  out: string = join(root, ".pi", "agents"),
+): number {
   // Empty it rather than remove it: in the sandbox it is a tmpfs MOUNTPOINT
   // (the root filesystem is read-only), and a mountpoint cannot be rmdir'd.
   mkdirSync(out, { recursive: true });
@@ -1001,9 +1006,7 @@ export async function reviewCase(
     summary.comments.body = collected.body;
     summary.verdict = typeof outcome?.["verdict"] === "string" ? outcome["verdict"] : null;
     summary.executed_passes = Array.isArray(outcome?.["passes"])
-      ? (outcome["passes"] as Array<Record<string, unknown>>).map(
-          (p) => executedAgent(p),
-        )
+      ? (outcome["passes"] as Array<Record<string, unknown>>).map((p) => executedAgent(p))
       : [];
     // A follow-up case keeps the session's own phase and sweep
     // report, read the way production's verdict tail reads it.
@@ -1114,9 +1117,7 @@ function executedAgent(p: Record<string, unknown>): string {
 function caseFiles(outDir: string, c: BenchCase): [string, ...string[]] {
   return [
     join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
-    ...Object.keys(VARIANTS).map((v) =>
-      caseResultFile(outDir, c, v),
-    ),
+    ...Object.keys(VARIANTS).map((v) => caseResultFile(outDir, c, v)),
   ];
 }
 
