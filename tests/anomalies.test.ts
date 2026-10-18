@@ -591,6 +591,41 @@ describe("startHeartbeat — daily fire", () => {
     },
   );
 
+  it("keeps the next daily heartbeat owed when an earlier day's retry crosses its slot", async () => {
+    const store = new StateStore(":memory:");
+    const clock = new FakeClock(new Date("2026-08-19T06:00:00Z").getTime());
+    const delivered: string[] = [];
+    let fail = true;
+    const hb = startHeartbeat({
+      timeHHMM: "09:00",
+      timeZone: TZ,
+      lastFired: () => store.lastHeartbeatDate(),
+      recordFired: (date) => store.recordHeartbeat(date),
+      injectOverseer: async (message) => {
+        if (fail) {
+          fail = false;
+          throw new Error("temporarily unavailable");
+        }
+        delivered.push(message);
+      },
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      retryBackoffMs: [24 * 60 * 60_000 + 60_000],
+    });
+    try {
+      await hb.booted;
+      await clock.advanceTo("2026-08-20T07:02:00Z");
+      expect(
+        delivered.map((text) => /OVERSEER HEARTBEAT — (\d{4}-\d{2}-\d{2})/.exec(text)?.[1]),
+      ).toEqual(["2026-08-19", "2026-08-20"]);
+      expect(store.lastHeartbeatDate()).toBe("2026-08-20");
+    } finally {
+      hb.stop();
+      store.close();
+    }
+  });
+
   it("a failed inject is retried the same day, then the next day's slot is armed", async () => {
     const store = new StateStore(":memory:");
     const clock = new FakeClock(new Date("2026-08-19T06:00:00Z").getTime());
