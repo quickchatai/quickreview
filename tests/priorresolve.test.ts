@@ -104,6 +104,45 @@ describe("which threads a round resolves", () => {
     expect(priorThreadsToResolve(store, 7, 3).threads.map((t) => t.comment_id)).not.toContain(101);
   });
 
+  it("a newer open report on a carried ref supersedes an older posting's fixed report", () => {
+    const store = setup();
+    store.recordRoundFindings({ pr: 7, round_id: null, round_no: 2, head_sha: HEAD }, [
+      { ...finding("carried", 101), raised_in_round: 1 },
+    ]);
+    store.recordPriorReports(7, 4, HEAD, [
+      { round_no: 2, finding_key: "carried", status: "open", evidence: "still broken" },
+    ]);
+    expect(priorThreadsToResolve(store, 7, 3).threads.map((t) => t.comment_id)).not.toContain(101);
+  });
+
+  it("includes known duplicate-marker conversations beside the linked root", () => {
+    const store = setup();
+    store.db.exec(`CREATE TABLE finding_comments (
+      comment_id INTEGER PRIMARY KEY, pr INTEGER, round_no INTEGER, finding_key TEXT,
+      marker_round INTEGER, marker_key TEXT, via TEXT);
+      INSERT INTO finding_comments VALUES (201,7,1,'fixed1',1,'fixed1','marker');
+      INSERT INTO finding_comments VALUES (202,7,NULL,NULL,1,'fixed1',NULL);`);
+    expect(
+      priorThreadsToResolve(store, 7, 3)
+        .threads.filter((t) => t.finding_key === "fixed1")
+        .map((t) => t.comment_id),
+    ).toEqual([201, 202]);
+  });
+
+  it("expands known marker twins from the durable round thread when both capture links are absent", () => {
+    const store = setup();
+    store.db.exec(`CREATE TABLE finding_comments (
+      comment_id INTEGER PRIMARY KEY, pr INTEGER, round_no INTEGER, finding_key TEXT,
+      marker_round INTEGER, marker_key TEXT, via TEXT);
+      INSERT INTO finding_comments VALUES (101,7,NULL,NULL,1,'fixed1',NULL);
+      INSERT INTO finding_comments VALUES (202,7,NULL,NULL,1,'fixed1',NULL);`);
+    expect(
+      priorThreadsToResolve(store, 7, 3)
+        .threads.filter((t) => t.finding_key === "fixed1")
+        .map((t) => t.comment_id),
+    ).toEqual([101, 202]);
+  });
+
   it("a newer assignment without a report does not supersede a verified fix", () => {
     const store = setup();
     store.recordPriorListing(7, 4, HEAD, [{ round_no: 1, finding_key: "fixed1", blocking: false }]);
@@ -139,7 +178,7 @@ describe("resolving them", () => {
     };
     const tally = await resolveVerifiedPriorThreads({ store, adapter }, 7, 3);
     expect(calls).toEqual([101, 102, 104]);
-    expect(tally).toEqual({ resolved: 1, skipped: 1, failed: 1, unlinked: 1 });
+    expect(tally).toEqual({ resolved: 1, skipped: 1, failed: 1, unlinked: 1, readable: true });
     expect(events(store, "prior_thread_resolved")).toEqual([
       { round_no: 3, ref: "1:fixed1", comment_id: 101, status: "fixed" },
     ]);
@@ -295,7 +334,32 @@ describe("resolving them", () => {
       skipped: 0,
       failed: 0,
       unlinked: 0,
+      readable: true,
     });
     expect(called).toBe(false);
+  });
+});
+
+// Restart resumes unfinished work; a recorded terminal failure remains finite.
+describe("durable per-thread completion", () => {
+  it("does not repeat an exhausted resolution when another invocation resumes", async () => {
+    const store = new StateStore(":memory:");
+    store.recordRoundFindings({ pr: 7, round_id: null, round_no: 1, head_sha: HEAD }, [
+      finding("one", 101),
+    ]);
+    store.recordPriorReports(7, 3, HEAD, [
+      { round_no: 1, finding_key: "one", status: "fixed", evidence: "fixed" },
+    ]);
+    let calls = 0;
+    const adapter = {
+      async resolveOwnReviewThread() {
+        calls++;
+        throw new Error("transient exhausted");
+      },
+    };
+    await resolveVerifiedPriorThreads({ store, adapter, retryDelaysMs: [] }, 7, 3);
+    await resolveVerifiedPriorThreads({ store, adapter, retryDelaysMs: [] }, 7, 3);
+    expect(calls).toBe(1);
+    expect(events(store, "prior_thread_resolve_failed")).toHaveLength(1);
   });
 });

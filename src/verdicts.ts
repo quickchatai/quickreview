@@ -1,3 +1,9 @@
+import {
+  enqueueRoundWork,
+  pendingRoundWork,
+  finishRoundWork,
+  type RoundWork,
+} from "./round-work.js";
 // Verdict watcher. The PR session writes
 // verdict/pr-<n>-round-<k>.json at round end; the daemon owns everything that
 // touches GitHub from there: labels off/on, the escalation review request
@@ -33,6 +39,8 @@ import { join } from "node:path";
 import { checkOutcome, classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
 import {
   deliverEscalations,
+  resumeEscalations,
+  type EscalationDeps,
   evaluateEscalationRules,
   normalizeSessionEscalations,
   type EscalationFacts,
@@ -71,6 +79,7 @@ import {
   enforceFindingsRecord,
   findingsRecordPath,
   ingestRepairedFindingsRecords,
+  resumeFindingsRecordedHooks,
   readFindingsRecord,
 } from "./findingsrecord.js";
 import {
@@ -747,7 +756,8 @@ export class VerdictWatcher {
   /** Rounds whose owed measurement this process is running or about to run —
    * the boot resume never measures one of them a second time. */
   private readonly measuring = new Set<number>();
-  /** Measurements handed to the background (`MeasureMode`), until they end. */
+  private readonly working = new Set<string>();
+  /** Background round work, tracked until it ends. */
   private readonly background = new Set<Promise<void>>();
   /** The once-per-watcher resume of measurements an earlier process owed. */
   private owedResumed = false;
@@ -755,6 +765,8 @@ export class VerdictWatcher {
   private deadlinesInFlight = false;
   /** Round transcripts, read off the event loop and kept by offset. */
   private readonly transcripts: TranscriptIndex;
+  private stopped = false;
+  private escalationRecoveryInFlight = false;
 
   constructor(private readonly deps: VerdictDeps) {
     this.processedDir = join(deps.verdictDir, "processed");
@@ -772,6 +784,7 @@ export class VerdictWatcher {
   /** Startup sweep + fs.watch. fs.watch is the fast path only; the sweep (also
    * run by the daemon's periodic tick) is the reliable one. */
   start(): void {
+    this.stopped = false;
     mkdirSync(this.deps.verdictDir, { recursive: true });
     void this.sweep();
     this.watcher = watch(this.deps.verdictDir, (_event, filename) => {
@@ -783,14 +796,14 @@ export class VerdictWatcher {
   }
 
   stop(): void {
+    this.stopped = true;
     this.watcher?.close();
     this.watcher = null;
   }
 
-  /** Resolves once every measurement this watcher handed to the background
-   * has ended. Nothing in the daemon waits on it — an owed measurement a
-   * shutdown cuts short is resumed at the next start — but a caller that
-   * reads a round's usage right after a background round end does. */
+  /** Resolves once this watcher's background work ends. The daemon does not
+   * wait here during shutdown: durable obligations resume at the next start.
+   * Tests use it before observing background round results. */
   async idle(): Promise<void> {
     while (this.background.size > 0) await Promise.allSettled([...this.background]);
   }
@@ -802,6 +815,17 @@ export class VerdictWatcher {
    * in one line would hold every other PR's verdict behind it — the fs.watch
    * path handles PRs concurrently too. */
   async sweep(): Promise<string[]> {
+    this.resumeRoundWork();
+    this.detach(
+      () =>
+        resumeFindingsRecordedHooks({
+          store: this.deps.store,
+          ...(this.deps.onFindingsRecorded ? { onRecorded: this.deps.onFindingsRecorded } : {}),
+          log: this.log.bind(this),
+        }),
+      "recorded findings hooks",
+    );
+    this.resumeEscalationDeliveries();
     if (!existsSync(this.deps.verdictDir)) return [];
     const byPr = new Map<string, string[]>();
     const listed = readdirSync(this.deps.verdictDir).sort();
@@ -2407,6 +2431,22 @@ export class VerdictWatcher {
       // leaves the done apply eligible for replay, never silently unmeasured.
       owed = store.db.transaction(() => {
         const measurement = this.oweMeasurement(round, finished?.finished_at);
+        this.enqueueTail(
+          v.pr,
+          v.round_no,
+          round.id,
+          v.head_sha,
+          tailPlannedLenses(round, sweepStatus),
+        );
+        if (cfg.escalation.enabled)
+          enqueueRoundWork(store, {
+            key: `escalations:${round.id}`,
+            kind: "escalations",
+            pr: v.pr,
+            round_no: v.round_no,
+            payload: v,
+            due_at: this.now().toISOString(),
+          });
         store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
         return measurement;
       })();
@@ -2419,7 +2459,8 @@ export class VerdictWatcher {
     // delivery record and nothing else — there is no channel back into the
     // verdict — and the whole call is wrapped, so even a throw lands as a log
     // line on an already-applied verdict.
-    await this.safe(() => this.deliverEscalations(v), `escalations pr-${v.pr}`);
+    if (round && cfg.escalation.enabled) await this.runRoundWorkKey(`escalations:${round.id}`);
+    else await this.safe(() => this.deliverEscalations(v), `escalations pr-${v.pr}`);
     // Round is over: compact the sticky conversation. Cache re-reads of the
     // ever-growing prefix are a large share of measured cost; the continuity
     // that matters (SETTLED digest, ledger) survives compaction by design:
@@ -2461,6 +2502,27 @@ export class VerdictWatcher {
 
   /** The round-end ledger and findings-record checks, after the settle
    * delay — shared by a verdict and a receipt settlement. */
+  private enqueueTail(
+    pr: number,
+    roundNo: number,
+    roundId: number | null,
+    headSha: string,
+    lenses: string,
+  ): string {
+    const key = `tail:${roundId ?? `${pr}:${roundNo}`}`;
+    enqueueRoundWork(this.deps.store, {
+      key,
+      kind: "tail",
+      pr,
+      round_no: roundNo,
+      payload: { roundId, headSha, lenses },
+      due_at: new Date(
+        this.now().getTime() + Math.max(0, this.deps.ledgerCheckDelayMs ?? 90_000),
+      ).toISOString(),
+    });
+    return key;
+  }
+
   private async scheduleRoundTail(
     pr: number,
     roundNo: number,
@@ -2468,23 +2530,62 @@ export class VerdictWatcher {
     headSha: string,
     lenses: string,
   ): Promise<void> {
-    const planned = lenses ? lenses.split(",").filter(Boolean) : [];
-    const tail = async (): Promise<void> => {
-      await this.safe(() => this.checkLedger(pr, roundNo, headSha), `ledger check pr-${pr}`);
-      await this.safe(
-        () => this.checkFindingsRecord(pr, roundNo, roundId, headSha, planned),
-        `findings record check pr-${pr}`,
-      );
-    };
-    const settleMs = this.deps.ledgerCheckDelayMs ?? 90_000;
-    if (settleMs <= 0) {
-      await tail();
-    } else {
+    const key = this.enqueueTail(pr, roundNo, roundId, headSha, lenses);
+    const delay = this.deps.ledgerCheckDelayMs ?? 90_000;
+    if (delay <= 0) await this.runRoundWorkKey(key);
+    else {
       const timer = setTimeout(() => {
-        void tail();
-      }, settleMs);
+        this.detach(() => this.runRoundWorkKey(key), `round tail ${key}`);
+      }, delay);
       timer.unref?.();
     }
+  }
+
+  private async runRoundWorkKey(key: string): Promise<void> {
+    for (const kind of ["tail", "escalations"] as const) {
+      const work = pendingRoundWork(this.deps.store, kind, this.now().toISOString()).find(
+        (row) => row.key === key,
+      );
+      if (work) await this.runRoundWork(work);
+    }
+  }
+
+  private async runRoundWork(work: RoundWork): Promise<void> {
+    if (this.working.has(work.key)) return;
+    this.working.add(work.key);
+    try {
+      if (work.kind === "tail") {
+        const payload = JSON.parse(work.payload) as {
+          roundId: number | null;
+          headSha: string;
+          lenses: string;
+        };
+        await this.checkLedger(work.pr, work.round_no, payload.headSha);
+        await this.checkFindingsRecord(
+          work.pr,
+          work.round_no,
+          payload.roundId,
+          payload.headSha,
+          payload.lenses.split(",").filter(Boolean),
+        );
+      } else {
+        const parsed = validateVerdict(JSON.parse(work.payload));
+        if (!parsed.ok || !parsed.verdict || parsed.verdict.outcome === "head_moved")
+          throw new Error(`unreadable escalation intent ${work.key}`);
+        await this.deliverEscalations(parsed.verdict);
+      }
+      finishRoundWork(this.deps.store, work.key, this.now().toISOString());
+    } catch (err) {
+      this.log(`verdicts: owed ${work.kind} for #${work.pr} round ${work.round_no} failed`, err);
+    } finally {
+      this.working.delete(work.key);
+    }
+  }
+
+  private resumeRoundWork(): void {
+    for (const kind of ["tail", "escalations"] as const)
+      for (const work of pendingRoundWork(this.deps.store, kind, this.now().toISOString()))
+        this.detach(() => this.runRoundWork(work), `owed ${kind} ${work.key}`);
   }
 
   // ---- escalation (off by default) ---------------------------------------
@@ -2498,6 +2599,65 @@ export class VerdictWatcher {
    * line returns before a single fact is read, so a default install makes no
    * extra API call, writes no row and logs no event.
    */
+  private escalationDeliveryDeps(): EscalationDeps | null {
+    const { adapter, store, cfg } = this.deps;
+    if (!cfg.escalation.enabled || !adapter.createReview) return null;
+    const bot = cfg.github.bot_login.toLowerCase();
+    return {
+      cfg: cfg.escalation,
+      store,
+      dryRun: cfg.dry_run,
+      isDraining: () => this.stopped,
+      adapter: {
+        createReview: adapter.createReview.bind(adapter),
+        ...(adapter.requestEscalationReview
+          ? { requestEscalationReview: adapter.requestEscalationReview.bind(adapter) }
+          : {}),
+        ...(adapter.listReviewsFull
+          ? {
+              findEscalationComment: async (
+                pr: number,
+                head: string,
+                marker: string,
+                body: string,
+              ) => {
+                const reviews = await adapter.listReviewsFull!(pr);
+                const found = reviews.find(
+                  (review) =>
+                    review.user.toLowerCase() === bot &&
+                    review.commit_id.toLowerCase() === head.toLowerCase() &&
+                    review.state === "COMMENTED" &&
+                    typeof review.submitted_at === "string" &&
+                    review.submitted_at.length > 0 &&
+                    Number.isSafeInteger(review.id) &&
+                    review.id > 0 &&
+                    review.body === body &&
+                    review.body.split(/\r?\n/).includes(marker),
+                );
+                return found ? { id: found.id } : null;
+              },
+            }
+          : {}),
+      },
+      log: this.log.bind(this),
+    };
+  }
+
+  /** Optional recovery never holds a fresh verdict behind a GitHub read. */
+  private resumeEscalationDeliveries(): void {
+    if (this.stopped || this.escalationRecoveryInFlight) return;
+    const deps = this.escalationDeliveryDeps();
+    if (!deps || deps.dryRun) return;
+    this.escalationRecoveryInFlight = true;
+    this.detach(async () => {
+      try {
+        await resumeEscalations(deps);
+      } finally {
+        this.escalationRecoveryInFlight = false;
+      }
+    }, "escalation delivery recovery");
+  }
+
   private async deliverEscalations(v: MeritsVerdictFile): Promise<void> {
     const cfg = this.deps.cfg.escalation;
     if (!cfg.enabled) return;
@@ -2539,37 +2699,24 @@ export class VerdictWatcher {
     });
     const sessionCandidates = cfg.session_judgement ? (v.escalations ?? []) : [];
     if (ruleRequests.length === 0 && sessionCandidates.length === 0) return;
-    await deliverEscalations(
-      {
-        cfg,
-        store,
-        adapter: {
-          createReview: adapter.createReview.bind(adapter),
-          ...(adapter.requestEscalationReview
-            ? { requestEscalationReview: adapter.requestEscalationReview.bind(adapter) }
-            : {}),
-        },
-        log: this.log.bind(this),
-      },
-      {
-        pr: v.pr,
-        verdict: v.verdict,
-        head_sha: v.head_sha,
-        round_no: v.round_no,
-        // The path-in-diff check's input. An unreadable
-        // listing is `[]`, which refuses every path-bearing scope rather than
-        // waving it through — the safe direction, same as every other fact.
-        changed_paths: facts.changed_paths,
-        // Whether the round's own review actually reached GitHub, from the
-        // posting receipt: the note must not claim a posting no confirmed
-        // receipt shows (a dry run, a legacy round, a review the marker
-        // reconcile proved without a local receipt). A guard-2 refusal never
-        // gets here — it settles as a guarded no-op, with no escalation.
-        review_posted: this.roundReviewConfirmed(v.pr, v.round_no, v.head_sha),
-        ruleRequests,
-        sessionCandidates,
-      },
-    );
+    await deliverEscalations(this.escalationDeliveryDeps()!, {
+      pr: v.pr,
+      verdict: v.verdict,
+      head_sha: v.head_sha,
+      round_no: v.round_no,
+      // The path-in-diff check's input. An unreadable
+      // listing is `[]`, which refuses every path-bearing scope rather than
+      // waving it through — the safe direction, same as every other fact.
+      changed_paths: facts.changed_paths,
+      // Whether the round's own review actually reached GitHub, from the
+      // posting receipt: the note must not claim a posting no confirmed
+      // receipt shows (a dry run, a legacy round, a review the marker
+      // reconcile proved without a local receipt). A guard-2 refusal never
+      // gets here — it settles as a guarded no-op, with no escalation.
+      review_posted: this.roundReviewConfirmed(v.pr, v.round_no, v.head_sha),
+      ruleRequests,
+      sessionCandidates,
+    });
   }
 
   /**

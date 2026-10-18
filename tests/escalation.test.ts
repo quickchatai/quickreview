@@ -20,6 +20,7 @@ import {
   type Config,
   type EscalationConfig,
 } from "../src/config.js";
+import * as escalationModule from "../src/escalation.js";
 import {
   ESCALATION_TAG,
   asksForWholeReview,
@@ -40,6 +41,7 @@ import {
   type EscalationRequest,
 } from "../src/escalation.js";
 import { MutationGate, type MutationIntent } from "../src/gate.js";
+import { GitHubRequestError } from "../src/github.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import { makePostingGuard, type GuardAdapter } from "../src/guards.js";
 import { buildRoundOrder } from "../src/dispatch.js";
@@ -2208,4 +2210,530 @@ describe("the verdict path delivers what the rules found", () => {
       }
     },
   );
+});
+
+describe("durable escalation delivery recovery", () => {
+  const args = {
+    pr: 32,
+    verdict: "APPROVE",
+    head_sha: HEAD,
+    changed_paths: CHANGED,
+    ruleRequests: [request({ origin: "rule" })],
+  };
+  it("reserves capacity for uncertain posts without charging the delivery ledger", async () => {
+    const landed: string[] = [];
+    const adapter = {
+      createReview: vi.fn(async (_pr: number, payload: { body: string }) => {
+        landed.push(payload.body);
+        throw new Error("accepted response lost");
+      }),
+      findEscalationComment: vi.fn(async (_pr: number, _head: string, marker: string) =>
+        landed.some((body) => body.includes(marker)) ? { id: 44 } : null,
+      ),
+    };
+    const deps = { cfg: on({ max_per_pr: 1 }), store, adapter };
+    await deliverEscalations(deps, {
+      ...args,
+      ruleRequests: [
+        request({ origin: "rule" }),
+        request({ origin: "rule", scope: { kind: "decision", decision: "retry ordering" } }),
+      ],
+    });
+    expect(adapter.createReview).toHaveBeenCalledTimes(1);
+    expect(store.escalationCount(args.pr)).toBe(0);
+    await escalationModule.resumeEscalations(deps);
+    await escalationModule.resumeEscalations(deps);
+    expect(adapter.createReview).toHaveBeenCalledTimes(1);
+    expect(store.escalationCount(args.pr)).toBe(1);
+    expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+  });
+
+  it("preserves a prepared live obligation during dry-run replay", async () => {
+    const claim = vi.spyOn(store, "claimEscalationComment").mockReturnValue(false);
+    await deliverEscalations({ cfg: on(), store, adapter: fakeAdapter() }, args);
+    claim.mockRestore();
+    const pending = store.pendingEscalationRecoveries();
+    expect(pending).toHaveLength(1);
+    await deliverEscalations(
+      { cfg: on(), store, adapter: fakeAdapter({ dryRun: true }), dryRun: true },
+      args,
+    );
+    expect(store.pendingEscalationRecoveries()).toEqual(pending);
+    const live = fakeAdapter();
+    await escalationModule.resumeEscalations({ cfg: on(), store, adapter: live });
+    expect(live.reviews).toHaveLength(1);
+    expect(store.escalationCount(args.pr)).toBe(1);
+  });
+
+  it("retries a definite rate-limit refusal only after its durable retry deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-01T12:00:00Z"));
+    try {
+      const adapter = {
+        createReview: vi
+          .fn()
+          .mockRejectedValueOnce(
+            new GitHubRequestError("POST", "/reviews", 429, "rate limited", 60_000),
+          )
+          .mockResolvedValue({ executed: true }),
+      };
+      const deps = { cfg: on(), store, adapter };
+      await deliverEscalations(deps, args);
+      const row = store.escalationRecovery(
+        args.pr,
+        args.ruleRequests[0]!.target,
+        scopeKey(args.ruleRequests[0]!.scope),
+      );
+      expect(row?.phase).toBe("prepared");
+      expect(row?.last_error).toContain("429");
+      await escalationModule.resumeEscalations(deps);
+      expect(adapter.createReview).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(new Date("2026-09-01T12:01:01Z"));
+      await escalationModule.resumeEscalations(deps);
+      expect(adapter.createReview).toHaveBeenCalledTimes(2);
+      expect(store.escalationCount(args.pr)).toBe(1);
+      expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears definite permanent comment refusals while continuing other candidates", async () => {
+    const adapter = {
+      createReview: vi
+        .fn()
+        .mockRejectedValueOnce(new GitHubRequestError("POST", "/reviews", 422, "invalid"))
+        .mockResolvedValue({ executed: true }),
+    };
+    await deliverEscalations(
+      { cfg: on(), store, adapter },
+      {
+        ...args,
+        ruleRequests: [
+          request({ origin: "rule" }),
+          request({ origin: "rule", scope: { kind: "decision", decision: "retry ordering" } }),
+        ],
+      },
+    );
+    expect(adapter.createReview).toHaveBeenCalledTimes(2);
+    expect(store.escalationCount(args.pr)).toBe(1);
+    expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+  });
+
+  it("reconciles a landed comment after restart without another POST or duplicate cap charge", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-escalation-recovery-"));
+    let state = new StateStore(join(dir, "state.db"));
+    try {
+      const landed: string[] = [];
+      const adapter = {
+        createReview: vi.fn(async (_pr: number, payload: { body: string }) => {
+          landed.push(payload.body);
+          throw new Error("accepted POST lost its response");
+        }),
+        findEscalationComment: vi.fn(async (_pr: number, _head: string, marker: string) =>
+          landed.some((body) => body.includes(marker)) ? { id: 44 } : null,
+        ),
+      };
+      await deliverEscalations({ cfg: on(), store: state, adapter }, args);
+      expect(state.escalationCount(args.pr)).toBe(0);
+      state.close();
+      state = new StateStore(join(dir, "state.db"));
+      await deliverEscalations({ cfg: on(), store: state, adapter }, args);
+      expect(adapter.createReview).toHaveBeenCalledTimes(1);
+      expect(state.escalationCount(args.pr)).toBe(1);
+      expect(state.pendingEscalationRecoveries()).toHaveLength(0);
+    } finally {
+      state.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an ambiguous comment pending when reads find no marker or cannot be read", async () => {
+    const adapter = {
+      createReview: vi.fn().mockRejectedValue(new Error("connection lost")),
+      findEscalationComment: vi.fn().mockResolvedValue(null),
+    };
+    const deps = { cfg: on(), store, adapter };
+    await deliverEscalations(deps, args);
+    await deliverEscalations(deps, args);
+    expect(adapter.createReview).toHaveBeenCalledTimes(1);
+    expect(store.escalationCount(args.pr)).toBe(0);
+    adapter.findEscalationComment.mockRejectedValueOnce(new Error("read unavailable"));
+    await escalationModule.resumeEscalations?.(deps);
+    expect(adapter.createReview).toHaveBeenCalledTimes(1);
+    expect(store.pendingEscalationRecoveries()).toHaveLength(1);
+    expect(store.pendingEscalationRecoveries()[0]!.last_error).toContain("read unavailable");
+  });
+
+  it("retries a transient reviewer request independently without posting the delivered comment again", async () => {
+    const adapter = {
+      ...fakeAdapter(),
+      requestEscalationReview: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("HTTP 503 unavailable"))
+        .mockResolvedValue({ executed: true }),
+    };
+    const deps = { cfg: on({ shape: "review_request" }), store, adapter };
+    await deliverEscalations(deps, args);
+    expect(store.escalationCount(args.pr)).toBe(1);
+    await escalationModule.resumeEscalations?.(deps);
+    expect(adapter.requestEscalationReview).toHaveBeenCalledTimes(2);
+    expect(adapter.reviews).toHaveLength(1);
+    expect(store.escalationCount(args.pr)).toBe(1);
+    expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+  });
+
+  it("serializes concurrent delivery claims and retains a different deferred candidate", async () => {
+    let release!: (result: GateResult) => void;
+    const held = new Promise<GateResult>((resolve) => {
+      release = resolve;
+    });
+    const createReview = vi.fn().mockReturnValueOnce(held).mockResolvedValue({ executed: true });
+    const deps = { cfg: on(), store, adapter: { createReview } };
+    const first = deliverEscalations(deps, args);
+    const duplicate = deliverEscalations(deps, args);
+    const different = deliverEscalations(deps, {
+      ...args,
+      ruleRequests: [request({ origin: "rule", scope: { kind: "code", path: "a/x.py" } })],
+    });
+    try {
+      expect(createReview).toHaveBeenCalledTimes(1);
+    } finally {
+      release({ executed: true });
+      await Promise.all([first, duplicate, different]);
+    }
+    expect(store.escalationCount(args.pr)).toBe(1);
+    await escalationModule.resumeEscalations(deps);
+    expect(createReview).toHaveBeenCalledTimes(2);
+    expect(store.escalationCount(args.pr)).toBe(2);
+    expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+  });
+
+  it("resumes a prepared comment whose dispatch claim did not run", async () => {
+    const claim = store.claimEscalationComment.bind(store);
+    vi.spyOn(store, "claimEscalationComment").mockReturnValueOnce(false).mockImplementation(claim);
+    const adapter = fakeAdapter();
+    const deps = { cfg: on(), store, adapter };
+    await deliverEscalations(deps, args);
+    expect(adapter.reviews).toHaveLength(0);
+    await escalationModule.resumeEscalations(deps);
+    expect(adapter.reviews).toHaveLength(1);
+    expect(store.escalationCount(args.pr)).toBe(1);
+  });
+
+  it("recovers a failed local delivery checkpoint without skipping later candidates or reposting", async () => {
+    const base = fakeAdapter();
+    const adapter = {
+      ...base,
+      findEscalationComment: vi.fn(async (_pr: number, _head: string, marker: string) =>
+        base.reviews.some((r) => (r.payload as { body: string }).body.includes(marker))
+          ? { id: 44 }
+          : null,
+      ),
+    };
+    const settle = store.settleEscalationComment.bind(store);
+    vi.spyOn(store, "settleEscalationComment")
+      .mockImplementationOnce(() => {
+        throw new Error("SQLITE_BUSY after POST");
+      })
+      .mockImplementation(settle);
+    const deps = { cfg: on(), store, adapter };
+    const outcomes = await deliverEscalations(deps, {
+      ...args,
+      ruleRequests: [
+        ...args.ruleRequests,
+        request({ origin: "rule", scope: { kind: "code", path: "a/x.py" } }),
+      ],
+    });
+    expect(outcomes.map((o) => o.comment_executed)).toEqual([false, true]);
+    expect(store.escalationCount(args.pr)).toBe(1);
+    await escalationModule.resumeEscalations(deps);
+    expect(store.escalationCount(args.pr)).toBe(2);
+    expect(adapter.reviews).toHaveLength(2);
+    expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+  });
+
+  it("honors a changed comment-only shape while reconciling an earlier ambiguous comment", async () => {
+    let landed = "";
+    const adapter = {
+      createReview: vi.fn(async (_pr: number, payload: { body: string }) => {
+        landed = payload.body;
+        throw new Error("lost reply");
+      }),
+      findEscalationComment: vi.fn(async (_pr: number, _head: string, marker: string) =>
+        landed.includes(marker) ? { id: 44 } : null,
+      ),
+      requestEscalationReview: vi.fn().mockResolvedValue({ executed: true }),
+    };
+    await deliverEscalations({ cfg: on({ shape: "review_request" }), store, adapter }, args);
+    await escalationModule.resumeEscalations({ cfg: on({ shape: "comment" }), store, adapter });
+    expect(adapter.requestEscalationReview).not.toHaveBeenCalled();
+    expect(store.escalationCount(args.pr)).toBe(1);
+    await escalationModule.resumeEscalations({
+      cfg: on({ shape: "review_request" }),
+      store,
+      adapter,
+    });
+    expect(adapter.requestEscalationReview).toHaveBeenCalledTimes(1);
+    expect(adapter.createReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps new and remaining queue writes pending once the daemon is draining", async () => {
+    let draining = true;
+    const adapter = {
+      ...fakeAdapter(),
+      requestEscalationReview: vi.fn().mockResolvedValue({ executed: true }),
+    };
+    const create = adapter.createReview.bind(adapter);
+    adapter.createReview = async (...args) => {
+      const result = await create(...args);
+      draining = true;
+      return result;
+    };
+    const deps = {
+      cfg: on({ shape: "review_request" }),
+      store,
+      adapter,
+      isDraining: () => draining,
+    };
+    await deliverEscalations(deps, args);
+    expect(adapter.reviews).toHaveLength(0);
+    draining = false;
+    await escalationModule.resumeEscalations(deps);
+    expect(adapter.reviews).toHaveLength(1);
+    expect(adapter.requestEscalationReview).not.toHaveBeenCalled();
+    draining = false;
+    await escalationModule.resumeEscalations(deps);
+    expect(adapter.requestEscalationReview).toHaveBeenCalledTimes(1);
+    expect(adapter.reviews).toHaveLength(1);
+  });
+
+  it("does not leave an ambiguous live obligation after a known dry-run failure", async () => {
+    const deps = { cfg: on(), store, adapter: fakeAdapter({ throws: true }), dryRun: true };
+    await deliverEscalations(deps, args);
+    expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+    expect(store.escalationCount(args.pr)).toBe(0);
+    const live = fakeAdapter();
+    await deliverEscalations({ ...deps, adapter: live, dryRun: false }, args);
+    expect(live.reviews).toHaveLength(1);
+  });
+
+  it("consumes terminal 422 reviewer refusals and keeps dry-run journals empty", async () => {
+    const adapter = fakeAdapter({ requestThrows: true });
+    const deps = { cfg: on({ shape: "review_request" }), store, adapter };
+    await deliverEscalations(deps, args);
+    await escalationModule.resumeEscalations?.(deps);
+    expect(adapter.requests).toHaveLength(1);
+    expect(adapter.reviews).toHaveLength(1);
+    expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+    const dry = { ...deps, adapter: fakeAdapter({ dryRun: true }) };
+    await deliverEscalations(dry, { ...args, pr: 33 });
+    expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+    expect(store.escalationCount(33)).toBe(0);
+  });
+});
+
+// Recovery is driven by the daemon sweep even after all verdict files are gone.
+describe("escalation recovery through the verdict sweep", () => {
+  const args = {
+    pr: 32,
+    verdict: "APPROVE",
+    head_sha: HEAD,
+    changed_paths: CHANGED,
+    ruleRequests: [request({ origin: "rule" })],
+  };
+  const hooks: SessionHooks = {
+    async dispatchRound() {},
+    async inject() {},
+    async injectOverseer() {},
+    async archiveAndClose() {},
+  };
+  const watcher = (dir: string, adapter: VerdictAdapter, escalation = on()) =>
+    new VerdictWatcher({
+      cfg: { ...cfg, dry_run: false, escalation },
+      store,
+      adapter,
+      hooks,
+      verdictDir: dir,
+      root: dir,
+      usage: { globalStoreDir: null },
+      ledgerCheckDelayMs: 0,
+    });
+
+  it("reconciles only an exact bot/head/body marker from an independent sweep", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-escalation-sweep-"));
+    try {
+      let body = "";
+      await deliverEscalations(
+        {
+          cfg: on(),
+          store,
+          adapter: {
+            async createReview(_pr, payload) {
+              body = payload.body;
+              throw new Error("accepted reply lost");
+            },
+          },
+        },
+        args,
+      );
+      const good = {
+        id: 44,
+        user: cfg.github.bot_login,
+        user_type: "Bot",
+        state: "COMMENTED",
+        body,
+        commit_id: HEAD,
+        submitted_at: "2026-09-02T12:00:00Z",
+      };
+      const read = vi.fn().mockResolvedValue([
+        { ...good, user: "other[bot]" },
+        { ...good, commit_id: "wrong" },
+        { ...good, body: `quoted\n${body}` },
+      ]);
+      const createReview = vi.fn().mockResolvedValue({ executed: true });
+      const w = watcher(join(dir, "absent"), {
+        addLabel: vi.fn(),
+        removeLabel: vi.fn(),
+        createReview,
+        listReviewsFull: read,
+      });
+      await w.sweep();
+      await w.idle();
+      expect(store.escalationCount(32)).toBe(0);
+      read.mockResolvedValue([good]);
+      await w.sweep();
+      await w.idle();
+      expect(store.escalationCount(32)).toBe(1);
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(createReview).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes an owed reviewer request without a new candidate or another comment", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-escalation-queue-"));
+    try {
+      await deliverEscalations(
+        {
+          cfg: on({ shape: "review_request" }),
+          store,
+          adapter: {
+            ...fakeAdapter(),
+            async requestEscalationReview() {
+              throw new Error("HTTP503");
+            },
+          },
+        },
+        args,
+      );
+      const createReview = vi.fn().mockResolvedValue({ executed: true });
+      const requestEscalationReview = vi.fn().mockResolvedValue({ executed: true });
+      const w = watcher(
+        join(dir, "absent"),
+        { addLabel: vi.fn(), removeLabel: vi.fn(), createReview, requestEscalationReview },
+        on({ shape: "review_request" }),
+      );
+      await w.sweep();
+      await w.idle();
+      await w.sweep();
+      await w.idle();
+      expect(requestEscalationReview).toHaveBeenCalledTimes(1);
+      expect(createReview).not.toHaveBeenCalled();
+      expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not dispatch recovery writes after the watcher is stopped", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-escalation-stop-"));
+    try {
+      await deliverEscalations(
+        {
+          cfg: on({ shape: "review_request" }),
+          store,
+          adapter: {
+            ...fakeAdapter(),
+            async requestEscalationReview() {
+              throw new Error("HTTP503");
+            },
+          },
+        },
+        args,
+      );
+      const requestEscalationReview = vi.fn().mockResolvedValue({ executed: true });
+      const adapter = {
+        addLabel: vi.fn(),
+        removeLabel: vi.fn(),
+        createReview: vi.fn(),
+        requestEscalationReview,
+      };
+      const stopped = watcher(dir, adapter, on({ shape: "review_request" }));
+      stopped.stop();
+      await stopped.sweep();
+      await stopped.idle();
+      expect(requestEscalationReview).not.toHaveBeenCalled();
+      const restarted = watcher(dir, adapter, on({ shape: "review_request" }));
+      await restarted.sweep();
+      await restarted.idle();
+      expect(requestEscalationReview).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps fresh verdict settlement independent of a recovery read that has not answered", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-escalation-independent-"));
+    let release!: (
+      rows: Awaited<ReturnType<NonNullable<VerdictAdapter["listReviewsFull"]>>>,
+    ) => void;
+    const pending = new Promise<
+      Awaited<ReturnType<NonNullable<VerdictAdapter["listReviewsFull"]>>>
+    >((resolve) => {
+      release = resolve;
+    });
+    try {
+      await deliverEscalations({ cfg: on(), store, adapter: fakeAdapter({ throws: true }) }, args);
+      store.setAnomalySink(() => {});
+      store.upsertPr({
+        number: 50,
+        state: "reviewing",
+        head_sha: HEAD,
+        title: "T",
+        author: "a",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      store.startRound(50, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
+      writeFileSync(
+        join(dir, "pr-50-round-1.json"),
+        JSON.stringify({
+          pr: 50,
+          round_no: 1,
+          verdict: "REQUEST_CHANGES",
+          head_sha: HEAD,
+          finished_at: "2026-09-02T12:00:00Z",
+        }),
+      );
+      const read = vi.fn((pr: number) => (pr === 32 ? pending : Promise.resolve([])));
+      const w = watcher(dir, {
+        addLabel: vi.fn(),
+        removeLabel: vi.fn(),
+        createReview: vi.fn().mockResolvedValue({ executed: true }),
+        listReviewsFull: read,
+      });
+      const handled = await w.sweep();
+      expect(handled).toContain("pr-50-round-1.json");
+      expect(store.roundsFor(50)[0]!.verdict).toBe("REQUEST_CHANGES");
+      expect(read.mock.calls.some(([pr]) => pr === 32)).toBe(true);
+      release([]);
+      await w.idle();
+    } finally {
+      release([]);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

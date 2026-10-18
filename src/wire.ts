@@ -33,7 +33,7 @@ import { renderNoPacketSection } from "./learner/packet.js";
 import type { CurationReceipt } from "./learner/receipt.js";
 import { LessonLedger } from "./lessonledger.js";
 import { RoundLessonSelector, type RoundLessonHook } from "./lessonselect.js";
-import { lessonDeliveryStatus, markRound } from "./lessonshadow.js";
+import { lessonDeliveryStatus } from "./lessonshadow.js";
 import { RoundMemoryActivity } from "./memory/roundactivity.js";
 import type { LessonDeliveryStatus } from "./memory/shadowstatus.js";
 import { lessonFindClient, openVikingLessonEngine } from "./openviking/lessonfind.js";
@@ -46,7 +46,7 @@ import { opsDay, promptReader, startEodTimer, type EodTimer } from "./eod.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { priorSidecarPath } from "./priorfindings.js";
-import { resolveVerifiedPriorThreads } from "./priorresolve.js";
+import { completeRecordedFindings } from "./recordedfindings.js";
 import { makePostingGuard } from "./guards.js";
 import { classifyCi, ciBlocksApproval } from "./cigate.js";
 import { TokenMinter } from "./githubAuth.js";
@@ -1053,28 +1053,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // under `delivery = "on"`); and the matcher, told when a round's findings
     // record lands.
     lessons: lateLessons,
-    onFindingsRecorded: ({ pr, roundNo }) => {
-      // Resolve the bot's own threads of the prior findings this round
-      // verified fixed or obsolete — ping-pong resolves only threads the
-      // author replied in, so a fix pushed without a reply would stay open.
-      // Never awaited: GitHub reads and gated writes, each one total.
-      void resolveVerifiedPriorThreads(
+    onFindingsRecorded: (target) =>
+      completeRecordedFindings(
         {
           store: daemon.store,
+          ledger: lessonLedger,
           adapter,
           sidecarPath: (n, k) => priorSidecarPath(join(root, "state"), n, k),
           log,
         },
-        pr,
-        roundNo,
-      ).catch((err) => log(`priorresolve: #${pr} round ${roundNo} failed (ignored)`, err));
-      if (!lessonLedger) return;
-      try {
-        markRound(lessonLedger, daemon.store, pr, roundNo);
-      } catch (err) {
-        log(`lessons: #${pr} round ${roundNo} shadow marking failed (ignored)`, err);
-      }
-    },
+        target,
+      ),
     renderRecheckPrompt: renderRecheck,
     // Conflict resolutions are never trivial: git-level auto-merge comparison
     // in the base clone names the hand-resolved files.
