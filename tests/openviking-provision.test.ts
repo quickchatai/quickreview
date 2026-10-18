@@ -984,3 +984,23 @@ describe("raiseProvisionWake — the daemon's boot step over the report", () => 
     expect(h.store.lastEventPayload(PROVISION_WOKEN_EVENT)).toBeNull();
   });
 });
+
+it("recovers listed API keys from every supported nested listing envelope", () => {
+  const rows = [{ user_id: "reviewer", api_key: "fixture-key" }];
+  for (const envelope of [{ items: rows }, { data: { items: rows } }, { result: { accounts: rows } }]) {
+    expect(prov.usersFromListing(envelope)).toEqual(["reviewer"]);
+    expect(prov.userKeysFromListing(envelope)).toEqual({ reviewer: "fixture-key" });
+  }
+});
+
+it("rejects thread counts above the embedder's supported maximum before startup", () => {
+  const flags = new Map([
+    ["embedder-python", "python3"], ["embedder-script", "embedder.py"],
+    ["embedder-model", "fixture"], ["embedder-file", "fixture.gguf"],
+    ["embedder-sha256", "a".repeat(64)], ["embedder-port", "8901"],
+    ["embedder-threads", "17"],
+  ]);
+  expect(prov.embedderSpecFromFlags(flags)).toMatch(/thread count/);
+  flags.set("embedder-threads", "16");
+  expect(prov.embedderSpecFromFlags(flags)).toMatchObject({ threads: 16 });
+});

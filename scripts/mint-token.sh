@@ -142,7 +142,7 @@ trap 'rm -f "$RESP"; rmdir "$LOCK" 2>/dev/null || true' EXIT
 
 # api <method> <path> <jwt> — body lands in $RESP, HTTP status on stdout.
 api() {
-  curl -sS -X "$1" -o "$RESP" -w '%{http_code}' \
+  curl -sS --connect-timeout 10 --max-time 60 -X "$1" -o "$RESP" -w '%{http_code}' \
     -H "Authorization: Bearer $3" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \

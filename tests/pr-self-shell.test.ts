@@ -181,6 +181,16 @@ describe("scripts/pr-self.sh — reviews", () => {
     expect(new Set(methodsSeen)).toEqual(new Set(["GET"]));
   });
 
+  it("refuses a saturated review page limit instead of presenting a truncated history", async () => {
+    reviews = Array.from({ length: 3000 }, (_, i) => ({
+      id: i + 1, user: { login: "example-review[bot]" }, state: "COMMENTED", commit_id: HEAD,
+    }));
+    const res = await run(["5180", "reviews"]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toMatch(/incomplete|page limit/i);
+    expect(res.out).not.toContain("[1]");
+  });
+
   it("says so plainly when the bot has posted nothing", async () => {
     const res = await run(["5180", "reviews"]);
     expect(res.ok).toBe(true);

@@ -93,6 +93,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/openviking.test.ts",
   "tests/pibuiltins.test.ts",
   "tests/pr-checks-why.test.ts",
+  "tests/pr-context-shell.test.ts",
   "tests/pr-self-shell.test.ts",
   "tests/pr-threads-shell.test.ts",
   "tests/proposals.test.ts",

@@ -20,5 +20,5 @@ die() { echo "render-review: $*" >&2; exit 1; }
 PR="${1:-}"; ROUND="${2:-}"
 [[ "$PR" =~ ^[0-9]+$ && "$ROUND" =~ ^[0-9]+$ ]] || die "usage: render-review.sh <pr-number> <round-number>"
 
-BOT="$(sed -n '/^\[github\]/,/^\[/p' "$CONFIG" | sed -n 's/^[[:space:]]*bot_login[[:space:]]*=[[:space:]]*"\{0,1\}\([^"#]*\)"\{0,1\}.*/\1/p' | head -n1 | sed 's/[[:space:]]*$//')"
+BOT="$(sed -n '/^\[github\]/,/^\[/p' "$CONFIG" | sed -n 's/^[[:space:]]*bot_login[[:space:]]*=[[:space:]]*"\{0,1\}\([^"#]*\)"\{0,1\}.*/\1/p' | head -n1 | sed 's/[[:space:]]*$//' || true)"
 exec node "$ROOT/dist/src/reviewrendercli.js" "$ROOT" "$PR" "$ROUND" "$BOT"
