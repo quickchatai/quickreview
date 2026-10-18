@@ -30,13 +30,12 @@ import {
   type SweepStatus,
 } from "../sweepstatus.js";
 import {
-  benchContextPack,
   boundBody,
-  directiveFilesOf,
   jsonProblem,
   missingOutputs,
   readJson,
   renderBenchOutputs,
+  renderFollowUpOneShotPrompts,
   renderOneShotPrompts,
   runOneShot,
   runPi,
@@ -45,7 +44,6 @@ import {
   type OneShotPrompts,
   type PiRun,
 } from "../oneshot.js";
-import { renderPassTasks } from "../passtasks.js";
 export { boundBody, jsonProblem, missingOutputs, renderBenchOutputs, runPi, unparseableOutputs };
 export type { PiRun };
 import {} from "../reviewrender.js";
@@ -66,29 +64,17 @@ import {
   type Config,
   type ReviewPreset,
 } from "../config.js";
-import {
-  buildPassPlan,
-  buildRoundOrder,
-  renderDeltaPatch,
-  roundDeltaOf,
-  sweepOrderOf,
-  optionalOrderOf,
-} from "../dispatch.js";
-import { parseLedgerCarry, settledFromLedger } from "../ledgercarry.js";
+import {} from "../dispatch.js";
 import type { PrOwnedDelta } from "../worktrees.js";
 import { benchDelta, benchPriorFindings, decideBenchFollowUp } from "./followup.js";
 import { locateConfig } from "../install.js";
-import { findStyleGuide } from "../styleguide.js";
-import { findCiLinters } from "../lintconfig.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import {} from "../contextpack.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
 import { buildAgents, configAddenda, identityVars, PASS_ADDENDA } from "../include.js";
-import { MEMORY_LESS } from "../memory/context.js";
 import {
   applyProfileTuning,
-  lensEnabled,
   lensTuningAddenda,
   roundAgentModels,
   type LensTuning,
@@ -96,7 +82,6 @@ import {
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
-  loadProfileHeuristics,
   loadProfileLensTuning,
   loadProfilePosting,
 } from "../profiles.js";
@@ -108,16 +93,9 @@ import {
 } from "../postingpolicy.js";
 import { enforceBenchPosting, POLICED_ORIGINALS, type BenchPostingReport } from "./benchposting.js";
 import {} from "../severity.js";
-import type { PrStateRow } from "../state.js";
 import type { PassPlanEntry } from "../types.js";
+import {} from "../templates.js";
 import {
-  renderConversationSystemPrompt,
-  renderGateNotes,
-  renderRoundPrompt,
-  templateFileForOrder,
-} from "../templates.js";
-import {
-  benchAppendix,
   CASE_FILES,
   filesFromGitDiff,
   bodyPostedFindings,
@@ -741,226 +719,50 @@ export function followUpOutcomeOf(
 }
 
 /**
- * The order of a follow-up replay case: production's round k, built
- * from the same pieces dispatch uses — the full plan, `decideBenchFollowUp`
- * (dispatch's `planFollowUp`), the delta patch and order delta, the prior
- * findings note, the sweep's task files — rendered from the template
- * `templateFileForOrder` picks. Any doubt runs a full re-review.
+ * The order of a follow-up replay case: production's round k, built by the
+ * shared follow-up renderer (src/oneshot.ts) with the case's own answers to
+ * what the daemon's state would supply (`decideBenchFollowUp`, the recorded
+ * prior findings and ledger).
  */
 function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): CasePrompts {
-  const { root, cfg, c, meta, tree } = args;
+  const { c, meta } = args;
   const fu = c.followup!;
-  const identity = { ...identityVars(cfg), repo: c.repo };
-  const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
-  const body = boundBody(meta.body);
-  const directiveFiles = directiveFilesOf(cfg, args.files);
-  const row = {
-    number: c.pr,
-    state: "reviewing",
-    head_sha: c.head_commit,
-    title,
-    author: "",
-  } as unknown as PrStateRow;
-  const heuristics = loadProfileHeuristics(root, cfg.review.profile);
-  const styleGuide = lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
-    ? findStyleGuide(tree)
-    : [];
-  const ciLinters = lensEnabled(cfg.lenses, "pass-lint-conformance", cfg.review.lint_conformance)
-    ? findCiLinters(tree)
-    : [];
-  // The whole PR's plan, exactly as dispatch builds it before deciding.
-  const fullPlan = buildPassPlan(
-    cfg,
-    args.files,
-    { title, body: body ?? undefined },
-    args.ecosystem,
-    heuristics,
-    styleGuide,
-    ciLinters,
-  );
-  const decided = decideBenchFollowUp(cfg, heuristics, c, {
-    delta: args.followUpDelta,
-    files: args.files,
-    fullPlan,
+  return renderFollowUpOneShotPrompts({
+    root: args.root,
+    cfg: args.cfg,
     ecosystem: args.ecosystem,
-    styleGuide,
-    ciLinters,
-  });
-  const extraFiles: Array<{ path: string; text: string }> = [];
-  // The ledger the PR session held when the round was dispatched: carried as
-  // production's `ledger_carry` (and its SETTLED digest), and pinned as the
-  // case's ledger file (QCR_LEDGER_FILE) by the caller.
-  const ledgerPath = join(args.caseDir, "ledger.md");
-  const ledgerCarry =
-    fu.ledger !== undefined ? parseLedgerCarry(fu.ledger, c.pr, ledgerPath) : undefined;
-  const settledDigest =
-    ledgerCarry && fu.ledger !== undefined ? settledFromLedger(fu.ledger.trim()) : "";
-  if (fu.ledger !== undefined) extraFiles.push({ path: ledgerPath, text: fu.ledger });
-  let followUpArg: Parameters<typeof buildRoundOrder>[0]["followUp"];
-  let report: CaseFollowUp;
-  if (decided.kind === "delta") {
-    const d = decided.decision;
-    const patchPath = join(args.caseDir, "delta.patch");
-    extraFiles.push({ path: patchPath, text: renderDeltaPatch(d.delta.files) });
-    const prior = benchPriorFindings(c, join(args.caseDir, "prior.json"));
-    extraFiles.push({ path: join(args.caseDir, "prior.json"), text: prior.sidecar });
-    followUpArg = {
-      delta: roundDeltaOf(d, patchPath),
-      deltaFiles: d.deltaFiles,
-      priorFindingsNote: prior.note,
-      priorFindings: prior.list,
-      ...(d.optionalPlan ? { optionalPlan: d.optionalPlan } : {}),
-      ...(d.sweepPlan ? { sweepPlan: d.sweepPlan } : {}),
-      ...(d.sweepUnswept ? { sweepUnswept: d.sweepUnswept } : {}),
-    };
-    report = {
-      round_no: fu.round_no,
-      review_no: fu.review_no,
-      scope: "delta",
-      delta_lines: d.delta.lines,
-      delta_files: d.delta.files.length,
-      ...(d.delta.conflicted.length ? { conflicted: d.delta.conflicted } : {}),
-      sweep_owed: d.sweepPlan !== undefined,
-      prior_findings: prior.list.findings.length,
-    };
-  } else {
-    report = {
-      round_no: fu.round_no,
-      review_no: fu.review_no,
-      scope: "full",
-      reason: decided.reason,
-      ...(decided.detail ? { detail: decided.detail } : {}),
-      prior_findings: fu.prior_findings.length,
-    };
-  }
-  const built = buildRoundOrder({
-    cfg,
-    row,
+    target: {
+      repo: c.repo,
+      number: c.pr,
+      title: meta.title,
+      body: meta.body,
+      headSha: c.head_commit,
+      baseRef: meta.base_ref,
+      baseSha: meta.base_commit,
+      mergeBase: meta.merge_base,
+      fallbackTitle: `AACR-Bench ${c.repo}#${c.pr}`,
+    },
+    tree: args.tree,
+    caseDir: args.caseDir,
     files: args.files,
-    roundId: 1,
+    issuedAt: args.issuedAt,
+    ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
     roundNo: fu.round_no,
     reviewNo: fu.review_no,
-    roundType: "re-review",
-    worktree: tree,
-    settledDigest,
-    ...(ledgerCarry ? { ledgerCarry } : {}),
-    issuedAt: args.issuedAt,
-    tree: {
-      head_sha: c.head_commit,
-      base_ref: meta.base_ref,
-      base_sha: meta.base_commit,
-      merge_base: meta.merge_base,
-    },
-    ...(body !== null ? { prBody: body } : {}),
-    ...(directiveFiles.length
-      ? { firstPartyDirectives: { files: directiveFiles, mention: "maintainer" } }
-      : {}),
-    ecosystem: args.ecosystem,
-    heuristics,
-    ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
-    ...(styleGuide.length ? { styleGuide } : {}),
-    ...(ciLinters.length ? { ciLinters } : {}),
-    plan: decided.kind === "delta" ? decided.decision.plan : fullPlan,
-    ...(followUpArg ? { followUp: followUpArg } : {}),
+    prevHead: fu.prev_head,
+    ...(fu.ledger !== undefined ? { ledger: fu.ledger } : {}),
+    decide: (ctx) =>
+      decideBenchFollowUp(args.cfg, ctx.heuristics, c, {
+        delta: args.followUpDelta,
+        files: args.files,
+        fullPlan: ctx.fullPlan,
+        ecosystem: args.ecosystem,
+        styleGuide: ctx.styleGuide,
+        ciLinters: ctx.ciLinters,
+      }),
+    prior: (sidecarPath) => benchPriorFindings(c, sidecarPath),
+    priorCount: fu.prior_findings.length,
   });
-  const packed = benchContextPack(
-    cfg,
-    built,
-    args.files,
-    tree,
-    args.caseDir,
-    decided.kind === "delta" ? renderDeltaPatch(decided.decision.delta.files) : undefined,
-  );
-  const taskFiles = cfg.review.task_files
-    ? renderPassTasks(packed.order, renderGateNotes(built, args.ecosystem)).map((t) => ({
-        ...t,
-        path: join(args.caseDir, "tasks", t.file),
-      }))
-    : [];
-  // The sweep's own task files, from the same order dispatch renders them
-  // from (`sweepOrderOf`), in their own directory.
-  const sweepTasks =
-    cfg.review.task_files && built.sweep_plan && built.sweep_plan.length > 0
-      ? (() => {
-          const sweepOrder = sweepOrderOf(packed.order, built.sweep_plan);
-          return renderPassTasks(sweepOrder, renderGateNotes(sweepOrder, args.ecosystem)).map(
-            (t) => ({ ...t, path: join(args.caseDir, "tasks-sweep", t.file) }),
-          );
-        })()
-      : [];
-  // The optional rows' task files, from the same order dispatch
-  // renders them from (`optionalOrderOf`), in their own directory.
-  const optionalTasks =
-    cfg.review.task_files && built.optional_plan && built.optional_plan.length > 0
-      ? (() => {
-          const optionalOrder = optionalOrderOf(packed.order, built.optional_plan);
-          return renderPassTasks(optionalOrder, renderGateNotes(optionalOrder, args.ecosystem)).map(
-            (t) => ({ ...t, path: join(args.caseDir, "tasks-optional", t.file) }),
-          );
-        })()
-      : [];
-  const { render_outputs: _renderedByBench, ...unrendered } = built;
-  const order = {
-    ...unrendered,
-    ...(taskFiles.length
-      ? { pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
-      : {}),
-    ...(sweepTasks.length
-      ? { sweep_task_files: sweepTasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
-      : {}),
-    ...(optionalTasks.length
-      ? {
-          optional_task_files: optionalTasks.map((t) => ({
-            row: t.row,
-            agent: t.agent,
-            path: t.path,
-          })),
-        }
-      : {}),
-  };
-  const template = readFileSync(join(root, "prompts", templateFileForOrder(order)), "utf8");
-  const rendered = renderRoundPrompt(
-    template,
-    order,
-    MEMORY_LESS,
-    cfg.owner.name,
-    args.ecosystem,
-    identity,
-  );
-  const orderText =
-    rendered +
-    "\n\n" +
-    benchAppendix({
-      repo: c.repo,
-      pr: c.pr,
-      headSha: c.head_commit,
-      mergeBase: meta.merge_base,
-      caseDir: args.caseDir,
-      title: meta.title,
-      body,
-      ...(cfg.review.render_outputs ? { renderOutputs: true } : {}),
-      roundNo: fu.round_no,
-      privateReplay: true,
-      prevHead: fu.prev_head,
-    });
-  const system = renderConversationSystemPrompt(
-    readFileSync(join(root, "prompts", "conversation-system.md"), "utf8"),
-    { pr: c.pr, title, worktree: tree },
-    identity,
-  );
-  for (const t of sweepTasks) extraFiles.push({ path: t.path, text: t.text });
-  for (const t of optionalTasks) extraFiles.push({ path: t.path, text: t.text });
-  return {
-    system,
-    order: orderText,
-    plannedLenses: order.pass_plan.map((p) => p.agent),
-    passPlan: order.pass_plan,
-    taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
-    ...(packed.file ? { contextPack: packed.file } : {}),
-    extraFiles,
-    followUp: report,
-    ...(built.sweep_plan && built.sweep_plan.length > 0 ? { sweepPlan: built.sweep_plan } : {}),
-  };
 }
 
 /**
