@@ -31,7 +31,8 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  * node:child_process is here (the fence checks it); the rest spawn through the
  * code under test and were found by tracing ChildProcess.prototype.spawn and
  * the *Sync variants across a full run:
- *   bench-defects, bench-runpi-flush — the bench's runPi over a fake `pi`;
+ *   bench-defects, bench-live-cap, bench-runpi-flush — the bench's runPi over a
+ *     fake `pi`;
  *   guards-shell-* — the real posting scripts, spawned by their shared rig
  *     (tests/helpers/guards-shell-rig.ts);
  *   companion-memory — the forward's ssh probe (fails fast, no VM);
@@ -58,6 +59,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/bench-g61.test.ts",
   "tests/bench-harvest-upstream.test.ts",
   "tests/bench-image-default.test.ts",
+  "tests/bench-live-cap.test.ts",
   "tests/bench-opencode.test.ts",
   "tests/bench-pireview.test.ts",
   "tests/bench-pragent.test.ts",
