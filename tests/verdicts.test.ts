@@ -4682,3 +4682,77 @@ describe("review rework: loud where nothing repairs, measured where the window i
     expect(countOf("anomaly_round_ended", 722)).toBe(1);
   });
 });
+
+describe("grouped plan telemetry retains every row policy", () => {
+  const row = (tier: string, raises: string[] = []) => ({
+    lens: "pass-sweep",
+    agent: `pass-sweep--${tier}`,
+    tier,
+    raisable_to: raises,
+  });
+  const mismatch = () => {
+    const event = store.db
+      .prepare(
+        "SELECT payload FROM events WHERE kind = 'pass_plan_mismatch' ORDER BY id DESC LIMIT 1",
+      )
+      .get() as { payload: string } | undefined;
+    return event ? JSON.parse(event.payload) : undefined;
+  };
+  async function run(rows: ReturnType<typeof row>[], tiers: string[], optional = false) {
+    const id = policyRound(820);
+    store.db.prepare("UPDATE rounds SET pass_plan=?,addable_passes=? WHERE id=?").run(
+      JSON.stringify(optional ? [] : rows),
+      JSON.stringify(
+        optional
+          ? rows.map((r) => ({
+              lens: r.lens,
+              tier: r.tier,
+              raisable_to: r.raisable_to,
+              optional: true,
+            }))
+          : [],
+      ),
+      id,
+    );
+    const { hooks } = recordingHooks();
+    await watcher({}, hooks).handleFile(
+      write(
+        820,
+        1,
+        verdictFile({
+          pr: 820,
+          passes: tiers.map((tier) => ({ name: "pass-sweep", tier, findings: 0 })),
+        }),
+      ),
+    );
+  }
+  it("does not let the final low-tier row license every production sweep", async () => {
+    await run(
+      [row("sol-high"), row("sol-high"), row("terra-med")],
+      ["terra-med", "terra-med", "terra-med"],
+    );
+    expect(mismatch()?.wrong_tier).toHaveLength(2);
+  });
+  it("accepts each row's actual tier regardless of row or execution order", async () => {
+    await run(
+      [row("sol-high"), row("sol-high"), row("terra-med")],
+      ["terra-med", "sol-high", "sol-high"],
+    );
+    expect(mismatch()).toBeUndefined();
+  });
+  it("assigns a raise without consuming the only row a lower tier can satisfy", async () => {
+    await run(
+      [row("terra-med", ["pass-sweep--sol-high"]), row("sol-high")],
+      ["sol-high", "terra-med"],
+    );
+    expect(mismatch()).toBeUndefined();
+  });
+  it("counts missing executions for repeated rows of the same lens", async () => {
+    await run([row("terra-med"), row("terra-med")], ["terra-med"]);
+    expect(mismatch()?.missing).toEqual(["pass-sweep"]);
+  });
+  it("retains all offered optional tiers", async () => {
+    await run([row("sol-high"), row("terra-med")], ["sol-high"], true);
+    expect(mismatch()).toBeUndefined();
+  });
+});

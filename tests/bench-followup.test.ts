@@ -283,7 +283,11 @@ describe("the follow-up round the bench runs is production's", () => {
     await prepareTree(storeDir(store, c), tree, meta);
   });
 
-  const render = async (c: BenchCase, over: Partial<typeof cfg.review> = {}) =>
+  const render = async (
+    c: BenchCase,
+    over: Partial<typeof cfg.review> = {},
+    selectedFiles: import("../src/github.js").PrFileEntry[] = files,
+  ) =>
     renderCasePrompts({
       root: ROOT,
       cfg: { ...cfg, review: { ...cfg.review, ...over } },
@@ -292,7 +296,7 @@ describe("the follow-up round the bench runs is production's", () => {
       meta,
       tree,
       caseDir,
-      files,
+      files: selectedFiles,
       issuedAt: "2026-10-08T00:00:00Z",
       followUpDelta: await benchDelta(tree, c, meta),
     });
@@ -344,6 +348,23 @@ describe("the follow-up round the bench runs is production's", () => {
     const list = benchPriorList(followCase());
     expect(list.findings.map((f) => f.ref)).toEqual(["1:k-b3", "1:k-nit"]);
     expect(list.findings[0]!.blocking).toBe(true);
+  });
+
+  it("the benchmark forwards the full sweep's behaviour-delta omissions", async () => {
+    const risky = ["b.py", "second.py", "third.py"].map((filename) => ({
+      filename,
+      additions: 10,
+      deletions: 1,
+      status: "modified",
+      patch: "@@ -1 +1 @@\n-return old\n+return changed",
+    }));
+    const p = await render(
+      followCase(),
+      { behaviour_delta: true, behaviour_delta_max_groups: 1, sweep_group_lines: 1 },
+      risky,
+    );
+    expect(p.order).toContain("Base behaviour not compared");
+    expect(p.order).toContain("second.py");
   });
 
   it("no sweep when it was not owed", async () => {

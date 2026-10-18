@@ -433,6 +433,46 @@ interface PlanComparison {
 
 type PlanRow = { lens: string; tier: string; raisable_to?: string[] };
 
+function allowsTier(policy: PlanRow, tier: string | null | undefined): boolean {
+  return (
+    !!tier &&
+    [policy.tier, ...(policy.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!)].includes(
+      tier,
+    )
+  );
+}
+
+/** Match executions to distinct rows before judging any excess retries. */
+function plannedTierMismatches(passes: VerdictPassEntry[], rows: PlanRow[]): string[] {
+  const byLens = new Map<string, PlanRow[]>();
+  for (const row of rows) byLens.set(row.lens, [...(byLens.get(row.lens) ?? []), row]);
+  const wrong: string[] = [];
+  for (const [lens, policies] of byLens) {
+    const runs = passes.filter((pass) => pass.name === lens);
+    const assigned = new Map<number, number>();
+    const place = (run: number, seen: Set<number>): boolean => {
+      for (let row = 0; row < policies.length; row++) {
+        if (seen.has(row) || !allowsTier(policies[row]!, runs[run]!.tier)) continue;
+        seen.add(row);
+        const previous = assigned.get(row);
+        if (previous === undefined || place(previous, seen)) {
+          assigned.set(row, run);
+          return true;
+        }
+      }
+      return false;
+    };
+    const excess = runs.filter((_pass, run) => !place(run, new Set()));
+    for (const pass of excess)
+      if (
+        assigned.size < policies.length ||
+        !policies.some((policy) => allowsTier(policy, pass.tier))
+      )
+        wrong.push(lens);
+  }
+  return wrong;
+}
+
 function comparePlan(
   passes: VerdictPassEntry[],
   plan: PlanRow[] | null,
@@ -451,39 +491,30 @@ function comparePlan(
   };
   if (plan && addable) {
     out.planned = plan.map((p) => p.lens);
-    const byAddable = new Map(addable.map((p) => [p.lens, p]));
-    const byPlan = new Map(plan.map((p) => [p.lens, p]));
+    const byAddable = new Map<string, RecordedAddablePass[]>();
+    for (const policy of addable)
+      byAddable.set(policy.lens, [...(byAddable.get(policy.lens) ?? []), policy]);
+    out.wrongTier = plannedTierMismatches(passes, plan);
+    const plannedNames = new Set(plan.map((p) => p.lens));
     for (const pass of passes) {
-      const plannedPass = byPlan.get(pass.name);
-      if (plannedPass) {
-        const tiers = [
-          plannedPass.tier,
-          ...(plannedPass.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!),
-        ];
-        if (!pass.tier || !tiers.includes(pass.tier)) out.wrongTier.push(pass.name);
-        continue;
-      }
-      const policy = byAddable.get(pass.name);
-      if (!policy) {
+      if (plannedNames.has(pass.name)) continue;
+      const policies = byAddable.get(pass.name);
+      if (!policies) {
         out.unknownAdditions.push(pass.name);
         continue;
       }
-      if (policy.optional) {
-        // An optional row the order offered: its tier or a rung it may raise
-        // to, and no reason owed.
-        const tiers = [
-          policy.tier,
-          ...(policy.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!),
-        ];
-        if (pass.tier && tiers.includes(pass.tier))
+      const optional = policies.filter((policy) => policy.optional);
+      if (optional.length > 0) {
+        if (optional.some((policy) => allowsTier(policy, pass.tier)))
           out.allowedAdditions.push({
             name: pass.name,
-            tier: pass.tier,
+            tier: pass.tier!,
             reason: pass.reason ?? "optional row",
           });
         else out.wrongTier.push(pass.name);
         continue;
       }
+      const policy = policies[0]!;
       if (!pass.tier || pass.tier !== policy.tier) out.wrongTier.push(pass.name);
       if (!pass.reason) out.missingReason.push(pass.name);
       if (pass.tier === policy.tier && pass.reason) {
@@ -495,7 +526,16 @@ function comparePlan(
     // by lens name only.
     out.unknownAdditions = [...new Set(executed.filter((lens) => !out.planned.includes(lens)))];
   }
-  if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
+  if (checkMissing) {
+    const remaining = new Map<string, number>();
+    for (const lens of executed) remaining.set(lens, (remaining.get(lens) ?? 0) + 1);
+    out.missing = out.planned.filter((lens) => {
+      const count = remaining.get(lens) ?? 0;
+      if (count === 0) return true;
+      remaining.set(lens, count - 1);
+      return false;
+    });
+  }
   return out;
 }
 
