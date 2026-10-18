@@ -1,0 +1,140 @@
+{
+  "plannedLenses": [
+    "pass-baseline--sol-high",
+    "pass-data-safety--sol-high",
+    "pass-behaviour-delta--sol-high",
+    "pass-sweep--sol-high",
+    "pass-ui--sol-med",
+    "pass-backcompat--sol-med",
+    "pass-claims--sol-med",
+    "pass-tests--sol-med",
+    "pass-maintainability--sol-med",
+    "pass-duplication--sol-med",
+    "pass-abstraction--sol-med",
+    "pass-consistency--sol-med",
+    "pass-validate--sol-high"
+  ],
+  "passPlan": [
+    {
+      "lens": "pass-baseline",
+      "agent": "pass-baseline--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "every round: the PR against its own claims",
+      "required": true
+    },
+    {
+      "lens": "pass-data-safety",
+      "agent": "pass-data-safety--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "the diff touches shop/migrations/0007_add_sku.py",
+      "required": true
+    },
+    {
+      "lens": "pass-behaviour-delta",
+      "agent": "pass-behaviour-delta--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "base behaviour is at risk in 2 files: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch",
+      "focus": [
+        "shop/models.py",
+        "shop/views.py"
+      ]
+    },
+    {
+      "lens": "pass-sweep",
+      "agent": "pass-sweep--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "every changed line of 5 changed files, read one by one",
+      "focus": [
+        "shop/models.py",
+        "shop/migrations/0007_add_sku.py",
+        "shop/views.py",
+        "shop/templates/shop/detail.html",
+        "shop/tests/test_views.py"
+      ]
+    },
+    {
+      "lens": "pass-ui",
+      "agent": "pass-ui--sol-med",
+      "tier": "sol-med",
+      "raisable_to": [
+        "pass-ui--sol-high"
+      ],
+      "why": "the diff touches shop/templates/shop/detail.html"
+    },
+    {
+      "lens": "pass-backcompat",
+      "agent": "pass-backcompat--sol-med",
+      "tier": "sol-med",
+      "raisable_to": [
+        "pass-backcompat--sol-high"
+      ],
+      "why": "the diff touches shop/migrations/0007_add_sku.py"
+    },
+    {
+      "lens": "pass-claims",
+      "agent": "pass-claims--sol-med",
+      "tier": "sol-med",
+      "raisable_to": [
+        "pass-claims--sol-high"
+      ],
+      "why": "the PR text claims \"lint rules\""
+    },
+    {
+      "lens": "pass-tests",
+      "agent": "pass-tests--sol-med",
+      "tier": "sol-med",
+      "raisable_to": [
+        "pass-tests--sol-high"
+      ],
+      "why": "the PR changes code: existing tests are its consumers, and its own tests are claims"
+    },
+    {
+      "lens": "pass-maintainability",
+      "agent": "pass-maintainability--sol-med",
+      "tier": "sol-med",
+      "raisable_to": [
+        "pass-maintainability--sol-high"
+      ],
+      "why": "the change adds 70 lines of non-test code (at least 20)"
+    },
+    {
+      "lens": "pass-duplication",
+      "agent": "pass-duplication--sol-med",
+      "tier": "sol-med",
+      "raisable_to": [
+        "pass-duplication--sol-high"
+      ],
+      "why": "the change adds 70 lines of non-test code (at least 20)"
+    },
+    {
+      "lens": "pass-abstraction",
+      "agent": "pass-abstraction--sol-med",
+      "tier": "sol-med",
+      "raisable_to": [
+        "pass-abstraction--sol-high"
+      ],
+      "why": "the change adds 70 lines of non-test code (at least 20)"
+    },
+    {
+      "lens": "pass-consistency",
+      "agent": "pass-consistency--sol-med",
+      "tier": "sol-med",
+      "raisable_to": [
+        "pass-consistency--sol-high"
+      ],
+      "why": "the change adds 70 lines of non-test code (at least 20)"
+    },
+    {
+      "lens": "pass-validate",
+      "agent": "pass-validate--sol-high",
+      "tier": "sol-high",
+      "raisable_to": []
+    }
+  ],
+  "sweepPlan": null,
+  "followUp": null
+}
