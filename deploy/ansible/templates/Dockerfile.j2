@@ -97,7 +97,7 @@ RUN mkdir -p {{ openviking_local_embedder_dir }} \
     && chmod 0444 "{{ openviking_local_embedder_dir }}/{{ openviking_local_embedder_model }}.gguf" \
     || { echo "FATAL: the local embedder model {{ openviking_local_embedder_model }} failed to download or does not match its pinned sha256" >&2; exit 1; }
 
-RUN useradd --create-home --uid 1001 review
+RUN useradd --create-home --uid {{ container_uid }} review
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 USER review

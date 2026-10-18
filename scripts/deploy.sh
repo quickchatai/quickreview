@@ -590,12 +590,36 @@ if [[ "$MODE" != "verify" && "$SANDBOX_SRC" =~ [[:space:]\"\'{}] ]]; then
   die "the sandbox path '$SANDBOX_SRC' contains whitespace, quotes or braces — the playbook cannot be handed it; deploy from a checkout at a plain path"
 fi
 
+# Slack tokens ride the secrets mount under their configured flat filenames.
+SLACK_ENABLED="$(config_table_key slack enabled)"
+SLACK_BOT_TOKEN_FILE="$(config_table_key slack bot_token_file)"
+SLACK_APP_TOKEN_FILE="$(config_table_key slack app_token_file)"
+SLACK_BOT_TOKEN_FILE="${SLACK_BOT_TOKEN_FILE:-slack_bot_token}"
+SLACK_APP_TOKEN_FILE="${SLACK_APP_TOKEN_FILE:-slack_app_token}"
+if [[ "$MODE" != verify ]]; then
+  for token_key in bot_token_file app_token_file; do
+    token_name="$SLACK_BOT_TOKEN_FILE"
+    [[ "$token_key" == app_token_file ]] && token_name="$SLACK_APP_TOKEN_FILE"
+    if [[ ! "$token_name" =~ ^[A-Za-z0-9_.-]+$ || "$token_name" == . || "$token_name" == .. ]]; then
+      if [[ "$SLACK_ENABLED" == true ]]; then
+        die "[slack] $token_key must be a flat filename for VM deployment; move the token into the configured secrets directory and use its filename"
+      fi
+      # Disabled Slack's unused host paths never widen the secrets copy.
+      if [[ "$token_key" == app_token_file ]]; then
+        SLACK_APP_TOKEN_FILE=slack_app_token
+      else
+        SLACK_BOT_TOKEN_FILE=slack_bot_token
+      fi
+    fi
+  done
+fi
+
 # ---- plan --------------------------------------------------------------------
 
 ANSIBLE_CMD=(ansible-playbook -i "$INVENTORY" "$PLAYBOOK")
 case "$MODE" in
   sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
-  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e force_restart=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
+  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e force_restart=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC" -e "slack_bot_token_file=$SLACK_BOT_TOKEN_FILE" -e "slack_app_token_file=$SLACK_APP_TOKEN_FILE" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
   verify)  ANSIBLE_CMD=() ;;
 esac
 

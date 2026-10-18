@@ -693,9 +693,9 @@ describe("ansible decoupling", () => {
     expect(at).toBeGreaterThan(0);
     const next = playbook.indexOf("- name:", at + 1);
     const block = playbook.slice(at, next === -1 ? undefined : next);
-    expect(block).toContain(
-      `loop: [${SLACK_DEFAULTS.bot_token_file}, ${SLACK_DEFAULTS.app_token_file}]`,
-    );
+    expect(block).toContain('loop: ["{{ slack_bot_token_file }}", "{{ slack_app_token_file }}"]');
+    expect(gv("slack_bot_token_file")).toBe(SLACK_DEFAULTS.bot_token_file);
+    expect(gv("slack_app_token_file")).toBe(SLACK_DEFAULTS.app_token_file);
     expect(block).toContain('dest: "{{ sandbox_root }}/secrets/{{ item }}"');
     expect(block).toContain('mode: "0400"');
     expect(block).toContain("no_log: true");

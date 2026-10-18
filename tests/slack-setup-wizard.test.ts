@@ -576,3 +576,40 @@ describe("finalChecks", () => {
     expect(fails({ owner_id_conflict: true })).toBe(1);
   });
 });
+
+describe("Slack setup config compatibility", () => {
+  it("reads and patches table headers with trailing comments", () => {
+    const source = shipped.replace(
+      /^\[(slack(?:\.users)?|owner|github)\]$/gm,
+      "$& # operator comment",
+    );
+    const patched = wiz.patchConfigToml(source, PATCH);
+    expect(parseConfig(patched).slack.channel).toBe(PATCH.channel);
+    expect(parseConfig(patched).slack.users).toEqual(Object.fromEntries(PATCH.users));
+    expect(wiz.readSlackValues(patched).channel).toBe(PATCH.channel);
+    expect(patched).toContain("[slack.users] # operator comment");
+    expect(wiz.readSecretsDir(source)).toBe(wiz.readSecretsDir(shipped));
+  });
+
+  it("inserts absent scalar assignments and remains idempotent", () => {
+    const source = shipped.replace(/^(channel|channel_kind|legacy_owner_slack_id)\s*=.*\n/gm, "");
+    const patched = wiz.patchConfigToml(source, PATCH);
+    const cfg = parseConfig(patched);
+    expect(cfg.slack.channel).toBe(PATCH.channel);
+    expect(cfg.slack.channel_kind).toBe(PATCH.channel_kind);
+    expect(cfg.owner.slack_id).toBe(PATCH.legacy_owner_slack_id);
+    expect(wiz.patchConfigToml(patched, PATCH)).toBe(patched);
+  });
+
+  it("resolves literal-quoted secrets directories", () => {
+    expect(wiz.readSecretsDir("[github]\nsecrets_dir = '/srv/slack-secrets'\n")).toBe(
+      "/srv/slack-secrets",
+    );
+  });
+
+  it("grants the channel metadata scopes used by verification", () => {
+    expect(wiz.manifestYaml("public")).toMatch(/^ +- channels:read$/m);
+    expect(wiz.manifestYaml("public")).not.toMatch(/^ +- groups:read$/m);
+    expect(wiz.manifestYaml("private")).toMatch(/^ +- groups:read$/m);
+  });
+});

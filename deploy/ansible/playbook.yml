@@ -218,7 +218,7 @@
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
 
-    # The Slack concierge's tokens, under the default [slack] token file
+    # The Slack concierge's tokens, under the configured [slack] token file
     # names. Copied-if-present: Slack is
     # optional and off by default, but with `[slack] enabled = true` a missing
     # token is a hard startup error (validateSlackConfig), so whatever the
@@ -230,7 +230,7 @@
         mode: "0400"
         owner: "{{ container_uid }}"
         group: "{{ container_uid }}"
-      loop: [slack_bot_token, slack_app_token]
+      loop: ["{{ slack_bot_token_file }}", "{{ slack_app_token_file }}"]
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
 
