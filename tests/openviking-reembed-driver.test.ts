@@ -596,3 +596,35 @@ describe("reembedNamespaces — qcr memory reembed", () => {
     expect(r.results[0]!.detail).toContain("2 FAILED (run it again)");
   });
 });
+
+it("redacts driver outcomes, logs and thrown errors before publishing them", async () => {
+  const state: FakeState = { journal: { state: "pending" }, resumes: [], outcomes: [] };
+  const module = fakeModule(state);
+  module.resume = async (opts) => {
+    opts.log?.(`server echoed ${opts.key}`);
+    throw new Error(`transport echoed ${opts.key}`);
+  };
+  const { d, clock, lines } = await started(state, { load: async () => module });
+  await clock.fire();
+  expect(JSON.stringify({ status: d.status(), lines })).not.toContain("reviewer-secret");
+  d.stop();
+});
+
+it("retries a transient journal read failure during an outstanding migration", async () => {
+  const state: FakeState = { journal: { state: "pending" }, resumes: [], outcomes: [] };
+  const module = fakeModule(state);
+  let unreadable = false;
+  module.journalStatus = () => {
+    if (unreadable) throw new Error("temporary read failure");
+    return state.journal;
+  };
+  const { d, clock } = await started(state, { load: async () => module });
+  unreadable = true;
+  await clock.fire();
+  expect(d.status().state).toBe("unknown");
+  expect(clock.live()).toHaveLength(1);
+  unreadable = false;
+  await clock.fire();
+  expect(state.resumes).toHaveLength(1);
+  d.stop();
+});

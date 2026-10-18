@@ -653,3 +653,32 @@ describe("lifecycle.list", () => {
     expect(openVikingSessionLifecycle(base).list).toBeUndefined();
   });
 });
+
+it("a timed-out deletion keeps the id fenced until the underlying deletion settles", async () => {
+  let finish!: (out: { ok: boolean; status: number }) => void;
+  let creates = 0;
+  let deletes = 0;
+  const life = openVikingSessionLifecycle(
+    {
+      createSession: async () => {
+        creates++;
+        return { ok: true, status: 200 };
+      },
+      deleteSession: () => {
+        deletes++;
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+    },
+    { timeoutMs: 5 },
+  );
+  expect(await life.remove("pr-7")).toBe(false);
+  expect(await life.create("pr-7")).toBe(false);
+  expect(creates).toBe(0);
+  expect(await life.remove("pr-7")).toBe(false);
+  expect(deletes).toBe(1);
+  finish({ ok: true, status: 200 });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(await life.create("pr-7")).toBe(true);
+});

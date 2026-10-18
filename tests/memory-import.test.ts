@@ -570,3 +570,45 @@ describe("destination provenance identity", () => {
     ).toBe("actual-key");
   });
 });
+
+describe("import identity after destination housekeeping", () => {
+  it("recognizes an imported header after pin prepends a tag", async () => {
+    const entry = sourceEntries()[1]!;
+    const dest = recordingMemoryStore();
+    const source = recordingMemoryStore([entry]);
+    await importMemory({ source, dest });
+    const landed = dest.entries[0]!;
+    dest.entries[0] = { ...landed, text: "#pinned " + landed.text, pinned: true };
+    expect((await importMemory({ source, dest })).imported).toHaveLength(0);
+    expect(dest.entries).toHaveLength(1);
+  });
+
+  it.each([false, true])("honors a pinned duplicate regardless of order (%s)", async (reverse) => {
+    const plain = sourceEntries()[1]!;
+    const pinned = { ...plain, id: "pinned-copy", text: "#pinned " + plain.text, pinned: true };
+    const dest = recordingMemoryStore();
+    const source = recordingMemoryStore(reverse ? [pinned, plain] : [plain, pinned]);
+    const report = await importMemory({ source, dest });
+    expect(report.imported).toHaveLength(1);
+    expect(report.imported[0]!.id).toBe(reverse ? pinned.id : plain.id);
+    expect(report.skipped[0]!.id).toBe(reverse ? plain.id : pinned.id);
+    expect(dest.entries[0]!.pinned).toBe(true);
+  });
+
+  it("does not resurrect or repin an imported retired entry", async () => {
+    const entry = sourceEntries()[0]!;
+    const inner = recordingMemoryStore();
+    const retired = {
+      ...entry,
+      text: "#retired " + importedText(entry, "pinned", importKey(entry.text)),
+      pinned: false,
+    };
+    const dest = Object.assign(inner, {
+      sweep: async () => ({ entries: [], retired: [retired], unread: [] }),
+    });
+    const report = await importMemory({ source: recordingMemoryStore([entry]), dest });
+    expect(report.imported).toHaveLength(0);
+    expect(report.pins).toHaveLength(0);
+    expect(inner.entries).toHaveLength(0);
+  });
+});

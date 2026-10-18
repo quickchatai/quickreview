@@ -438,6 +438,7 @@ export class MemoryHealthMonitor {
   private readonly gaps: Record<string, number> = {};
   private window: Array<{ at: number; failed: boolean }> = [];
   private incident: MemoryIncident | null = null;
+  private incidentSavePending = false;
   /** Loaded from persistence and not yet confirmed or closed by a measurement. */
   private storedIncident: MemoryIncident | null;
   private lastAuthWakeAt: number | null = null;
@@ -753,6 +754,7 @@ export class MemoryHealthMonitor {
   }
 
   private trackIncident(t: number): void {
+    if (this.incidentSavePending) this.save(this.incident ?? this.storedIncident);
     const s = this.state;
     if (s === "auth_failed" || s === "down") {
       if (!this.incident) {
@@ -815,7 +817,9 @@ export class MemoryHealthMonitor {
   private save(incident: MemoryIncident | null): void {
     try {
       this.deps.incidents?.save(incident);
+      this.incidentSavePending = false;
     } catch (err) {
+      this.incidentSavePending = true;
       this.log("memory health: could not persist the incident", err);
     }
   }
