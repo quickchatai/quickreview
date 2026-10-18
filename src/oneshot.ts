@@ -20,7 +20,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import { createInterface } from "node:readline";
+import type { Readable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import { DEFAULT_SUBAGENT_CACHE_STAGGER_MS, type Config } from "./config.js";
 import {
   buildPassPlan,
@@ -126,6 +127,31 @@ export function benchContextPack(
   return { order: { ...built, context_pack_file: path }, file: { path, text: pack.text } };
 }
 
+/** Feed `onLine` each LF-terminated line of `input` (a trailing CR dropped, a
+ * last unterminated line delivered at end). pi's JSON mode frames events by
+ * LF alone: node's readline also splits on U+2028/U+2029 (which JSON leaves
+ * unescaped inside strings) and on a bare CR, cutting one event into
+ * fragments that parse as nothing, so the $ cap never saw their cost. */
+export function onLfLines(input: Readable, onLine: (line: string) => void): void {
+  const decoder = new StringDecoder("utf8");
+  let rest = "";
+  const emit = (line: string): void => onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+  input.on("data", (chunk: Buffer | string) => {
+    rest += typeof chunk === "string" ? chunk : decoder.write(chunk);
+    let nl: number;
+    while ((nl = rest.indexOf("\n")) !== -1) {
+      const line = rest.slice(0, nl);
+      rest = rest.slice(nl + 1);
+      emit(line);
+    }
+  });
+  input.on("end", () => {
+    rest += decoder.end();
+    if (rest !== "") emit(rest);
+    rest = "";
+  });
+}
+
 export interface PiRun {
   code: number | null;
   timedOut: boolean;
@@ -192,8 +218,7 @@ export function runPi(
     // `*_update` events re-emit a lens child's whole transcript on every
     // update — the file grows quadratically. Nothing reads them: usage comes
     // from `message_end` and `tool_execution_end`.
-    const lines = createInterface({ input: child.stdout! });
-    lines.on("line", (line) => {
+    onLfLines(child.stdout!, (line) => {
       if (capUsd !== undefined && !capped) {
         spent += eventLineCostUsd(line);
         if (spent >= capUsd) {

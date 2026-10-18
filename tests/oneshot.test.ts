@@ -5,6 +5,7 @@
 // dir, and knows nothing about bench cases. pi is a fake shell script: no
 // network, no model.
 
+import { PassThrough } from "node:stream";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
@@ -26,7 +27,7 @@ vi.stubEnv(
   resolve(dirname(fileURLToPath(import.meta.url)), "fixtures", "config.toml"),
 );
 
-const { runOneShot } = await import("../src/oneshot.js");
+const { runOneShot, onLfLines } = await import("../src/oneshot.js");
 const { benchConfig } = await import("../src/bench/runner.js");
 const { ecosystemFor } = await import("../src/ecosystem.js");
 
@@ -211,6 +212,31 @@ describe("runOneShot", () => {
     expect(r.costUsd).toBeGreaterThanOrEqual(5);
   });
 
+  it("counts the cost of an event whose JSON holds U+2028 and U+2029 toward capUsd", async () => {
+    // JSON leaves U+2028/U+2029 unescaped inside strings; a splitter that
+    // breaks on them cuts the event in two and neither half parses.
+    const pi = fakePi("capped-ls", [
+      `printf '{"type":"message_end","message":{"role":"assistant","content":"a\u2028b\u2029c","usage":{"cost":{"total":5}}}}\\n'`,
+      "sleep 60",
+    ]);
+    const t0 = Date.now();
+    const r = await runOneShot({
+      root: mkRoot("root-capped-ls"),
+      agentDir: join(tmp, "agent"),
+      tree: mkTree("tree-capped-ls"),
+      files,
+      target,
+      outDir: join(tmp, "out-capped-ls"),
+      cfg: benchConfig(""),
+      ecosystem: ecosystemFor("none"),
+      timeoutMs: 10 * 60_000,
+      piBin: pi.bin,
+      capUsd: 1,
+    });
+    expect(Date.now() - t0).toBeLessThan(30_000);
+    expect(r.capped).toBe(true);
+  });
+
   it("a run under capUsd is not capped", async () => {
     const pi = fakePi("uncapped", [
       `printf '%s' ${JSON.stringify(record)} > "$cd/findings-record.json"`,
@@ -230,5 +256,33 @@ describe("runOneShot", () => {
       capUsd: 1,
     });
     expect(r.capped).toBe(false);
+  });
+});
+
+describe("onLfLines", () => {
+  async function split(chunks: Array<string | Buffer>): Promise<string[]> {
+    const input = new PassThrough();
+    const out: string[] = [];
+    const ended = new Promise((res) => input.once("end", res));
+    onLfLines(input, (l) => out.push(l));
+    for (const c of chunks) input.write(c);
+    input.end();
+    await ended;
+    return out;
+  }
+
+  it("splits on LF only: U+2028, U+2029 and a bare CR stay inside the line", async () => {
+    expect(await split(["a\u2028b\u2029c\rd\ne\n"])).toEqual(["a\u2028b\u2029c\rd", "e"]);
+  });
+
+  it("drops one CR before the LF and delivers a last unterminated line", async () => {
+    expect(await split(["x\r\ny\n\nz"])).toEqual(["x", "y", "", "z"]);
+  });
+
+  it("joins a line and a multibyte character cut across chunks", async () => {
+    const b = Buffer.from("h\u00e9llo\u2028w\n");
+    expect(await split([b.subarray(0, 2), b.subarray(2, 9), b.subarray(9)])).toEqual([
+      "h\u00e9llo\u2028w",
+    ]);
   });
 });
