@@ -820,7 +820,7 @@ export const BEHAVIOUR_DELTA_PASS = "pass-behaviour-delta";
 // and a file whose patch is not available, stay at risk: no signal is never
 // read as no risk.
 const DELTA_RISK_RE =
-  /\b(if|elif|else|unless|guard|while|for|foreach|switch|case|match|when|try|catch|except|finally|rescue|ensure|defer|raise|throw|throws|return|yield|await|assert|require|default|break|continue|goto|null|nil|None|undefined)\b|&&|\|\||\?\?|[!=]==?|[<>]=|\w\s*[<>]\s*\w|[^=!<>:+\-*/%&|^]=[^=>]|\w\s*\(/;
+  /\b(if|elif|else|unless|guard|while|for|foreach|switch|case|match|when|try|catch|except|finally|rescue|ensure|defer|raise|throw|throws|return|yield|await|assert|require|default|break|continue|goto|null|nil|None|undefined)\b|&&|\|\||\?\?|[!=]==?|[<>]=|\w\s*[<>]\s*\w|(?:[+\-*/%&|^]|<<|>>)=|[^=!<>:+\-*/%&|^]=[^=>]|\w\s*\(/;
 const DELTA_NEW_BRANCH_RE =
   /^\s*(\}\s*)?(if|elif|else|unless|guard|switch|case|match|try|catch|except|rescue|when)\b/;
 const DELTA_INERT_RE =
@@ -850,7 +850,12 @@ export function behaviourDeltaRisk(f: PrFile): boolean {
     // check below; the same statement at the same indent re-added elsewhere is
     // a reorder, which changes behaviour, so it falls through to the risk test.
     if (addedNorm.has(n) && !addedExact.has(r)) continue;
-    if (DELTA_INERT_RE.test(r) || DELTA_LOG_ONLY_RE.test(r)) continue;
+    // A leading star can also dereference a C/C++ pointer for a write.
+    const pointerWrite =
+      /^\s*\*\s*[A-Za-z_$][\w$]*(?:\s*(?:\.[\w$]+|->\s*[\w$]+|\[[^\]]+\]))*\s*(?:[+\-*/%&|^]|<<|>>)?=(?!=)/.test(
+        r,
+      );
+    if ((!pointerWrite && DELTA_INERT_RE.test(r)) || DELTA_LOG_ONLY_RE.test(r)) continue;
     if (DELTA_RISK_RE.test(r)) return true;
   }
   // existing code wrapped in a NEW branch: a guard rewrapped, a value changed in a new else
@@ -975,7 +980,7 @@ export function qualityReason(files: PrFileEntry[], minAdded: number): string {
  * vendored trees, snapshots, binaries and prose — and translation catalogs
  * (`TRANSLATION_FILE_RE`). */
 const SWEEP_SKIP_RE =
-  /((^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|composer\.lock|Gemfile\.lock)$|\.(min\.js|map|snap|lock|svg|png|jpe?g|gif|ico|pdf|woff2?|ttf|md|rst|txt)$|(^|\/)(vendor|third_party|node_modules|dist|build|generated)\/)/i;
+  /((^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|composer\.lock|Gemfile\.lock)$|\.(min\.js|map|snap|lock|svg|png|jpe?g|gif|ico|pdf|woff2?|ttf|mdx?|rst|adoc|txt)$|(^|\/)(vendor|third_party|node_modules|dist|build|generated)\/)/i;
 
 /** Translation catalogs: a data file under a locale /
  * translation directory, or a gettext / XLIFF / ARB catalog anywhere. A
