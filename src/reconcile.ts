@@ -802,7 +802,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         if (local.state === "closed") continue;
         try {
           for (const id of await adapter.listBotReviewComments(local.number)) {
-            if (store.isBotComment(id)) continue;
+            if (store.isBotComment(id, "review_comment")) continue;
             store.registerBotComment(id, local.number);
             report.backfilled_comments++;
           }

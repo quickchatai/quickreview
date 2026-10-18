@@ -50,6 +50,9 @@ import {
   RecheckWatcher,
   runBaseAdvance,
   runRecheck,
+  recheckFingerprint,
+  type RecheckRequest,
+  type RecheckOutcome,
   type RecheckAdapter,
   type RecheckDeps,
   type RecheckOrder,
@@ -640,11 +643,32 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   let server: ReturnType<typeof createWebhookServer> | null = null;
   let stopping = false;
 
-  const onInterpretation = async (i: Interpretation): Promise<void> => {
+  const onInterpretation = async (i: Interpretation, ctx?: { guid: string }): Promise<void> => {
+    const ingressGuard = async (what: string, fn: () => Promise<unknown>): Promise<void> => {
+      if (!ctx?.guid) return guard(what, fn);
+      try {
+        await fn();
+      } catch (err) {
+        log(`${what} failed`, err);
+        store.logEvent("daemon_error", null, { what, error: String(err) });
+        throw err;
+      }
+    };
+    const requireRecheckHandoff = (req: RecheckRequest, outcome: RecheckOutcome): void => {
+      if (!ctx?.guid || outcome.action !== "noop" || outcome.reason !== "delivery-failed") return;
+      const head = req.head_sha ?? store.getPr(req.pr)?.head_sha ?? "";
+      if (!store.recheckDelivery(req.pr, recheckFingerprint(req, head))) {
+        throw new Error(`recheck #${req.pr} failed before durable question handoff`);
+      }
+    };
+    const ingressRecheck = async (req: RecheckRequest): Promise<void> => {
+      requireRecheckHandoff(req, await runRecheck(recheckDeps, req));
+    };
     await applyInterpretation(
       {
         cfg,
         store,
+        deliveryGuid: ctx?.guid,
         onPrTouched: async () => {
           await pump();
         },
@@ -669,14 +693,14 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         },
         // A push after an approve: the recheck audits the new delta.
         onSynchronize: async (sync) => {
-          await guard(`recheck #${sync.pr}`, () =>
-            runRecheck(recheckDeps, { pr: sync.pr, trigger: "push", head_sha: sync.meta.head_sha }),
+          await ingressGuard(`recheck #${sync.pr}`, () =>
+            ingressRecheck({ pr: sync.pr, trigger: "push", head_sha: sync.meta.head_sha }),
           );
         },
         onCiCompleted: async (ci) => {
           for (const pr of ci.prs) {
-            await guard(`recheck #${pr}`, () =>
-              runRecheck(recheckDeps, {
+            await ingressGuard(`recheck #${pr}`, () =>
+              ingressRecheck({
                 pr,
                 trigger: "ci",
                 head_sha: ci.head_sha,
@@ -687,7 +711,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
             // was withheld for red CI is re-queued the moment CI goes green at
             // that head — without this the gate turns every infra flake into a
             // permanently stuck PR.
-            await guard(`approval retry #${pr}`, async () => {
+            await ingressGuard(`approval retry #${pr}`, async () => {
               const outcome = await retryWithheldApproval(ciDeps, {
                 pr,
                 head_sha: ci.head_sha,
@@ -698,20 +722,22 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           }
         },
         onBaseAdvanced: async (advance) => {
-          await guard(`recheck base ${advance.branch}`, () =>
-            runBaseAdvance(recheckDeps, {
+          await ingressGuard(`recheck base ${advance.branch}`, async () => {
+            const outcomes = await runBaseAdvance(recheckDeps, {
               branch: advance.branch,
               before: advance.before,
               after: advance.after,
-            }),
-          );
+            });
+            for (const [pr, outcome] of outcomes)
+              requireRecheckHandoff({ pr, trigger: "base_advance", base: advance }, outcome);
+          });
         },
         // Forward tuning-loop signals to the engine. A review set
         // aside right after a head push is GitHub's own stale-review sweep,
         // classified here (the store holds the push clock), not a human verdict.
         onFeedbackSignal: async (e) => {
           if (!deps.onFeedback) return;
-          await guard(`feedback #${e.pr}`, async () => {
+          await ingressGuard(`feedback #${e.pr}`, async () => {
             if (e.kind === "review_set_aside") {
               const lastPush = store.lastEventAt("head_push", e.pr);
               const stale =
@@ -1033,6 +1059,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           store,
           secret,
           onInterpretation,
+          ...(gh.listReviewCommentsFull
+            ? { listReviewCommentsFull: (pr: number) => gh.listReviewCommentsFull!(pr) }
+            : {}),
           // Only the pipeline block — never the whole snapshot (every PR,
           // every round) on each probe: `/health` is what a stalled loop is
           // measured by, so it must cost almost nothing itself.

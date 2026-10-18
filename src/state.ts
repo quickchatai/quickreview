@@ -802,6 +802,18 @@ export type EscalationRecoveryInput = Omit<
   "phase" | "last_error" | "next_attempt_at" | "updated_at"
 >;
 
+export interface WebhookInboxRow {
+  guid: string;
+  event: string;
+  action: string | null;
+  payload: string;
+  interpretation: string | null;
+  local_result: string | null;
+  received_at: string;
+  attempted_at: string | null;
+  next_attempt_at: string | null;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS pr_state (
   number INTEGER PRIMARY KEY,
@@ -837,11 +849,16 @@ CREATE TABLE IF NOT EXISTS rounds (
 -- of the table: 0.14 ms a call, 2,548 calls a reconcile pass, and 70-140 ms
 -- for each heartbeat and each command-supervisor scan on 2,434 live rows.
 CREATE INDEX IF NOT EXISTS rounds_pr_round ON rounds(pr, round_no);
+CREATE TABLE IF NOT EXISTS webhook_inbox (
+  guid TEXT PRIMARY KEY,event TEXT NOT NULL,action TEXT,payload TEXT NOT NULL,
+  interpretation TEXT,local_result TEXT,received_at TEXT NOT NULL,attempted_at TEXT,next_attempt_at TEXT,last_error TEXT
+);
 CREATE TABLE IF NOT EXISTS bot_comments (
-  comment_id INTEGER PRIMARY KEY,
+  comment_id INTEGER NOT NULL,
   pr INTEGER NOT NULL,
   kind TEXT NOT NULL DEFAULT 'review_comment',
-  posted_at TEXT NOT NULL
+  posted_at TEXT NOT NULL,
+  PRIMARY KEY (kind, comment_id)
 );
 -- The per-PR count of the bot's comments (qcr why, the outcome capture's
 -- signature) read the whole table; closed-PR history stays live here, so it
@@ -1895,6 +1912,8 @@ export class StateStore {
       "ALTER TABLE pr_comments ADD COLUMN review_state TEXT",
     ])
       this.addColumn(ddl);
+    this.migrateBotCommentNamespaces();
+    this.db.exec("CREATE INDEX IF NOT EXISTS bot_comments_id ON bot_comments(comment_id)");
     this.migrateRecheckReceipts();
     this.migrateSessionCommandCancelledStatus();
     this.runDataMigrations();
@@ -1916,6 +1935,23 @@ export class StateStore {
       if (/duplicate column name/i.test(message)) return false;
       throw new Error(`state.db migration failed: ${ddl}: ${message}`, { cause: err });
     }
+  }
+
+  /** Preserve GitHub's independent numeric comment namespaces across upgrades. */
+  private migrateBotCommentNamespaces(): void {
+    const keys = (this.db.pragma("table_info(bot_comments)") as Array<{ name: string; pk: number }>)
+      .filter((c) => c.pk > 0)
+      .map((c) => c.name);
+    if (keys.length === 2 && keys.includes("kind") && keys.includes("comment_id")) return;
+    this.db.transaction(() => {
+      this.db.exec(`CREATE TABLE bot_comments_namespace_upgrade (
+        comment_id INTEGER NOT NULL,pr INTEGER NOT NULL,kind TEXT NOT NULL DEFAULT 'review_comment',
+        posted_at TEXT NOT NULL,round_no INTEGER,PRIMARY KEY(kind,comment_id));
+        INSERT INTO bot_comments_namespace_upgrade SELECT comment_id,pr,kind,posted_at,round_no FROM bot_comments;
+        DROP TABLE bot_comments;
+        ALTER TABLE bot_comments_namespace_upgrade RENAME TO bot_comments;
+        CREATE INDEX bot_comments_pr ON bot_comments(pr);`);
+    })();
   }
 
   /**
@@ -4165,35 +4201,39 @@ export class StateStore {
       .run(commentId, pr, kind, this.ts(), linked);
   }
 
-  botCommentPr(commentId: number): number | undefined {
-    const row = this.db
-      .prepare("SELECT pr FROM bot_comments WHERE comment_id = ?")
-      .get(commentId) as { pr: number } | undefined;
-    return row?.pr;
+  /** Legacy unqualified reads answer only when the numeric ID is unambiguous. */
+  private botCommentRecord(
+    commentId: number,
+    kind?: string,
+  ): { pr: number; posted_at: string | null; round_no: number | null } | undefined {
+    const rows = (
+      kind === undefined
+        ? this.db
+            .prepare("SELECT pr,posted_at,round_no FROM bot_comments WHERE comment_id=? LIMIT 2")
+            .all(commentId)
+        : this.db
+            .prepare("SELECT pr,posted_at,round_no FROM bot_comments WHERE kind=? AND comment_id=?")
+            .all(kind, commentId)
+    ) as Array<{ pr: number; posted_at: string | null; round_no: number | null }>;
+    return rows.length === 1 ? rows[0] : undefined;
   }
 
-  isBotComment(commentId: number): boolean {
-    return this.botCommentPr(commentId) !== undefined;
+  botCommentPr(commentId: number, kind?: string): number | undefined {
+    return this.botCommentRecord(commentId, kind)?.pr;
   }
 
-  /** When the daemon REGISTERED a bot comment (the outcome linker's posting
-   * time for a comment it knows only from a reply or a record). For a comment
-   * the daemon posted, or saw arrive by webhook, that is its posting time;
-   * one the reconcile backfill found later was posted earlier than this. */
-  botCommentPostedAt(commentId: number): string | null {
-    const row = this.db
-      .prepare("SELECT posted_at FROM bot_comments WHERE comment_id = ?")
-      .get(commentId) as { posted_at: string | null } | undefined;
-    return row?.posted_at ?? null;
+  isBotComment(commentId: number, kind?: string): boolean {
+    return this.botCommentPr(commentId, kind) !== undefined;
   }
 
-  /** The round a registered bot comment was attributed to, when it was (the
-   * outcome linker's fallback when the comment's review id names no round). */
-  botCommentRound(commentId: number): number | null {
-    const row = this.db
-      .prepare("SELECT round_no FROM bot_comments WHERE comment_id = ?")
-      .get(commentId) as { round_no: number | null } | undefined;
-    return row?.round_no ?? null;
+  /** Registration time, for the outcome linker's known namespace. */
+  botCommentPostedAt(commentId: number, kind?: string): string | null {
+    return this.botCommentRecord(commentId, kind)?.posted_at ?? null;
+  }
+
+  /** The round attributed to a comment in its own namespace. */
+  botCommentRound(commentId: number, kind?: string): number | null {
+    return this.botCommentRecord(commentId, kind)?.round_no ?? null;
   }
 
   // ---- reviewed-head mark (guard 2; the delta recheck reuses it) ----------
@@ -5741,12 +5781,7 @@ export class StateStore {
   }
 
   /** Keep the exact question independently of its capped active wake. */
-  retainRecheckDelivery(
-    pr: number,
-    fingerprint: string,
-    payload: string,
-    reason: string,
-  ): void {
+  retainRecheckDelivery(pr: number, fingerprint: string, payload: string, reason: string): void {
     this.db
       .prepare(
         `INSERT OR IGNORE INTO recheck_deliveries (pr,fingerprint,payload,reason)
@@ -5869,6 +5904,69 @@ export class StateStore {
       )
       .run(guid, event, action, this.ts());
     return info.changes === 1;
+  }
+
+  /** Acceptance and its replay payload commit together. Legacy GUIDs remain consumed. */
+  acceptWebhookDelivery(
+    guid: string,
+    event: string,
+    action: string | null,
+    payload: string,
+  ): boolean {
+    return this.db.transaction(() => {
+      if (this.webhookInbox(guid) || !this.recordDelivery(guid, event, action)) return false;
+      this.db
+        .prepare(
+          "INSERT INTO webhook_inbox (guid,event,action,payload,received_at) VALUES (?,?,?,?,?)",
+        )
+        .run(guid, event, action, payload, this.ts());
+      return true;
+    })();
+  }
+
+  webhookInbox(guid: string): WebhookInboxRow | undefined {
+    return this.db.prepare("SELECT * FROM webhook_inbox WHERE guid=?").get(guid) as
+      WebhookInboxRow | undefined;
+  }
+
+  readyWebhookInbox(now: string, limit = 20): WebhookInboxRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM webhook_inbox WHERE next_attempt_at IS NULL OR next_attempt_at<=? ORDER BY COALESCE(attempted_at,''),received_at,guid LIMIT ?",
+      )
+      .all(now, limit) as WebhookInboxRow[];
+  }
+
+  prepareWebhookInbox(guid: string, interpretation: string): void {
+    this.db
+      .prepare("UPDATE webhook_inbox SET interpretation=? WHERE guid=?")
+      .run(interpretation, guid);
+  }
+
+  webhookLocalOnce<T>(guid: string | undefined, run: () => T): T {
+    if (!guid) return this.db.transaction(run)();
+    return this.db.transaction(() => {
+      const row = this.webhookInbox(guid);
+      if (!row) throw new Error("webhook delivery has no durable inbox receipt");
+      if (row.local_result !== null) return (JSON.parse(row.local_result) as { value: T }).value;
+      const value = run();
+      this.db
+        .prepare("UPDATE webhook_inbox SET local_result=? WHERE guid=?")
+        .run(JSON.stringify({ value }), guid);
+      return value;
+    })();
+  }
+
+  deferWebhookDelivery(guid: string, error: string, now: number): void {
+    this.db
+      .prepare(
+        "UPDATE webhook_inbox SET attempted_at=?,next_attempt_at=?,last_error=? WHERE guid=?",
+      )
+      .run(new Date(now).toISOString(), new Date(now + 30_000).toISOString(), error, guid);
+  }
+
+  completeWebhookDelivery(guid: string): void {
+    this.db.prepare("DELETE FROM webhook_inbox WHERE guid=?").run(guid);
   }
 
   // ---- feedback signals ---------------------------------------------------

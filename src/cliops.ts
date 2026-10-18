@@ -143,7 +143,7 @@ function pingPongSimulation(cfg: Config, root: string) {
         botLogin: cfg.github.bot_login,
         triggerLabel: cfg.github.trigger_label,
         reviewTeam: cfg.github.review_team,
-        botCommentPr: (id) => store.botCommentPr(id),
+        botCommentPr: (id) => store.botCommentPr(id, "review_comment"),
       });
       await applyInterpretation(
         {
