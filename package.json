@@ -20,6 +20,8 @@
     "dev": "bash scripts/dev-tui.sh",
     "onboard": "bash scripts/qcr onboard",
     "test": "vitest run",
+    "//canary:pi": "The offline pi canaries (tests/pi-canary/): the real pi SDK at the pinned version on pi-ai's faux provider, so no network and no cost. They also run inside `npm test`; this is the named entry point CI requires whenever the pi dependencies change (a bump is gated by it).",
+    "canary:pi": "vitest run tests/pi-canary",
     "//lint": "Deliberately NOT chained into `test` or `build`: scripts/dev-tui.sh blocks on the build before the TUI paints (ruling 5), and an ESLint pass there is seconds of blank terminal. CI runs it as its own step.",
     "lint": "node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js .",
     "lint:fix": "eslint . --fix",
