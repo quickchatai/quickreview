@@ -77,7 +77,7 @@ import {
 import type { ReviewRunner, ReviewSandboxChoice } from "./reviewbox.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--json] | --help";
+  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--json] | --help";
 
 export function reviewHelp(): string {
   return [
@@ -117,6 +117,11 @@ export function reviewHelp(): string {
     "A second run on an unchanged head spends nothing. After a push it reviews only",
     "the change since the last reviewed head and does not repeat findings that are",
     "still open; a history rewrite or a delta it cannot trust is reviewed in full.",
+    "",
+    "Detached runs (for plugins): `qcr review start <target…> --json` returns at once with a",
+    "run id; `qcr review status [RUN_ID] [--wait [--timeout S]] --json` reports progress and,",
+    "when done, the findings JSON; `qcr review stop [RUN_ID]` cancels. Two reviews of the same",
+    "target at once are refused. Exit codes: 0 done, 1 refused, 2 usage, 3 wait timeout.",
     "",
     "The repo's limit and price rates live in `.git/qcr-review.json` (auto_limit_usd,",
     "usd_per_lens, usd_per_kline). Exit codes: 0 done; 1 refused, declined or stopped",
@@ -542,7 +547,11 @@ async function runReview(
       if (fu.followUp.scope === "delta") return { prompts: fu, scope: "delta", fallback: null };
       why = { reason: fu.followUp.reason ?? "follow-up-full" };
     }
-    return { prompts: renderOneShotPrompts(memory ? { ...common, memory } : common), scope: "full", fallback: why };
+    return {
+      prompts: renderOneShotPrompts(memory ? { ...common, memory } : common),
+      scope: "full",
+      fallback: why,
+    };
   };
   let planned: ReturnType<typeof planRound>;
   try {
@@ -815,7 +824,72 @@ async function chooseSandbox(): Promise<ReviewSandboxChoice> {
 }
 
 /** The terminal side: the real repo, root, login and a prompt on stdin. */
-export async function cmdReview(rest: string[], json: boolean): Promise<number> {
+export async function cmdReview(
+  rest: string[],
+  json: boolean,
+  io: { out?: (line: string) => void; runsDir?: string } = {},
+): Promise<number> {
+  // Detached runs for plugins (src/reviewdetach.ts): `start | status | stop`,
+  // and the child `start` launches.
+  if (rest[0] === "start" || rest[0] === "status" || rest[0] === "stop") {
+    const verb = rest[0];
+    const { randomBytes } = await import("node:crypto");
+    const det = await import("./reviewdetach.js");
+    const { stateHome } = await import("./install.js");
+    return det.runDetachedVerb(verb, rest.slice(1), json, {
+      home: join(stateHome(), "review", "detached"),
+      out: (l) => console.log(l),
+      now: Date.now,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      newId: () =>
+        `${new Date()
+          .toISOString()
+          .replace(/[^0-9]/g, "")
+          .slice(0, 14)}-${randomBytes(3).toString("hex")}`,
+      alive: (pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      kill: (pid, sig) => process.kill(-pid, sig),
+      identify: (args) => det.identifyTarget(args, process.cwd()),
+      launch: (l) =>
+        det.launchDetached({
+          command: process.execPath,
+          args: [
+            ...process.execArgv,
+            process.argv[1]!,
+            "review",
+            "--detached-run",
+            l.dir,
+            l.key,
+            ...l.argv,
+            "--json",
+          ],
+          dir: l.dir,
+          env: process.env,
+        }),
+    });
+  }
+  if (rest[0] === "--detached-run") {
+    const dir = rest[1];
+    const key = rest[2];
+    if (!dir || !key) return 2;
+    const det = await import("./reviewdetach.js");
+    let code = 1;
+    await det.runDetachedChild({
+      dir,
+      key,
+      run: async (out) => {
+        code = await cmdReview(rest.slice(3), true, { out, runsDir: join(dir, "work") });
+        return code;
+      },
+    });
+    return code;
+  }
   // The container's entry: `qcr review --run-spec <file>` (src/reviewbox.ts).
   if (rest[0] === "--run-spec") {
     const spec = rest[1];
@@ -851,7 +925,7 @@ export async function cmdReview(rest: string[], json: boolean): Promise<number> 
     ...(choice.runner ? { runner: choice.runner } : {}),
     ...(choice.warning !== undefined ? { sandboxWarning: choice.warning } : {}),
     cwd: process.cwd(),
-    out: (l) => console.log(l),
+    out: io.out ?? ((l) => console.log(l)),
     confirm: interactive
       ? async (q) => {
           const rl = createInterface({ input: process.stdin, output: process.stderr });
@@ -887,7 +961,7 @@ export async function cmdReview(rest: string[], json: boolean): Promise<number> 
     agentDir,
     cfg,
     ecosystem,
-    runsDir: join(stateHome(), "review", "runs"),
+    runsDir: io.runsDir ?? join(stateHome(), "review", "runs"),
     memory: openReviewMemory(cfg0),
     timeoutMs: 60 * 60_000,
     log: (l) => console.error(l),
