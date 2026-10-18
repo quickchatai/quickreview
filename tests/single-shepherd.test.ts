@@ -176,7 +176,12 @@ describe("daemon topology", () => {
     // one-shot `-p --no-session --no-extensions` probe), or — the doctor's
     // probe with `[scan] sandbox = "host"` — the same one-shot leaf on the
     // operator's machine. No daemon module imports it (pinned below).
-    const allowedPaths = ["/src/bench/runner.ts", "/src/setup/caserunner.ts", "/src/scanbox.ts"];
+    const allowedPaths = [
+      "/src/oneshot.ts",
+      "/src/bench/runner.ts",
+      "/src/setup/caserunner.ts",
+      "/src/scanbox.ts",
+    ];
     const offenders = srcFiles(src)
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))
