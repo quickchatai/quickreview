@@ -227,9 +227,11 @@ describe("daemon topology", () => {
       .filter((f) => /["'][^"']*\/scancli\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanCli).toEqual([]);
     // The scan sandbox's pi allowance above holds only while `qcr scan` is
-    // the one module that reaches it.
+    // the one module that reaches it — and `qcr review`'s sandbox
+    // (src/reviewbox.ts), the same operator CLI's container launcher, which
+    // takes only scanbox's docker mounts and login checks, never its pi probe.
     const reachesScanBox = srcFiles(src)
-      .filter((f) => !f.endsWith("/src/scancli.ts"))
+      .filter((f) => !f.endsWith("/src/scancli.ts") && !f.endsWith("/src/reviewbox.ts"))
       .filter((f) => /["'][^"']*\/scanbox\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanBox).toEqual([]);
     const reachesSetup = srcFiles(src)
