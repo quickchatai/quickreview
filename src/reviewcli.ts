@@ -11,9 +11,9 @@
 // review.
 //
 // The seams the sibling tickets plug into: `ReviewTargetSource` (a PR, the
-// uncommitted tree), the sandbox (docker), the destination and posting and
-// the detached run all hang off `runReviewCli`'s steps without changing its
-// shape; a PR keys its state with its own target key.
+// uncommitted tree), the destination and posting and the detached run all
+// hang off `runReviewCli`'s steps without changing its shape; a PR keys its
+// state with its own target key.
 //
 // Exit codes follow `qcr scan`: 0 done; 1 refused, declined, failed or
 // stopped short (partial); 2 usage.
@@ -78,8 +78,6 @@ import {
   type ReviewState,
 } from "./reviewstate.js";
 
-import type { ReviewRunner, ReviewSandboxChoice } from "./reviewbox.js";
-
 export const REVIEW_USAGE =
   "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--json] | --help";
 
@@ -120,9 +118,6 @@ export function reviewHelp(): string {
     "",
     "A PR is read with the first GitHub credential found: the App if configured, then",
     "GITHUB_TOKEN/GH_TOKEN, then `gh auth token` (run `gh auth login` to set that up).",
-    "",
-    "With Docker the review runs in a throwaway container with the repo read-only and no",
-    "GitHub token; without Docker it runs on the host and says so.",
     "",
     "A second run on an unchanged head spends nothing. After a push it reviews only",
     "the change since the last reviewed head and does not repeat findings that are",
@@ -251,11 +246,7 @@ export interface ReviewCliDeps {
   log?: (line: string) => void;
   /** Test seams for a PR target: the credential sources and where GitHub is. */
   pr?: PrCredentialDeps & Pick<PrFetchRequest, "fetchFn" | "gitBase" | "apiBase">;
-  /** Runs the review: the sandbox's container, or (absent) this process. */
-  runner?: ReviewRunner;
-  /** Said once, before a run starts, when it has no sandbox (src/reviewbox.ts). */
-  sandboxWarning?: string;
-  /** Where that warning is said (stderr). */
+  /** Where a warning is said before the run (stderr). */
   warn?: (line: string) => void;
 }
 
@@ -696,11 +687,7 @@ async function runReview(
     reportPath = cmd.out !== undefined ? resolve(deps.cwd, cmd.out) : join(runDir, "report.md");
 
   mkdirSync(runDir, { recursive: true });
-  // A host run is said once, so a laptop without Docker is never silently
-  // unsandboxed. A preview runs nothing, so it says nothing.
-  const sandboxWarnings = deps.sandboxWarning !== undefined ? [deps.sandboxWarning] : [];
-  if (deps.sandboxWarning !== undefined)
-    (deps.warn ?? ((l) => console.error(l)))(deps.sandboxWarning);
+  const runWarnings: string[] = [];
   // On a PR the bot already reviewed, what it posted counts as raised: read
   // through the resolved credential, skipped below. A failure only warns.
   const bot = prInfo
@@ -713,7 +700,7 @@ async function runReview(
       })
     : { findings: [] as PostedFinding[] };
   if (bot.warning !== undefined) {
-    sandboxWarnings.push(bot.warning);
+    runWarnings.push(bot.warning);
     (deps.warn ?? ((l) => console.error(l)))(bot.warning);
   }
   // Memory seasons the prompt; it never fails or holds up the review.
@@ -728,7 +715,7 @@ async function runReview(
   try {
     if (cmd.uncommitted) addUncommittedTree(gitDir, treeDir, t);
     else addReviewTree(gitDir, treeDir, t.headSha);
-    shot = await (deps.runner ?? runOneShot)({
+    shot = await runOneShot({
       root: deps.root,
       agentDir: deps.agentDir,
       tree: treeDir,
@@ -793,7 +780,7 @@ async function runReview(
     verdict,
     cost_usd: spent,
     out_dir: outDir,
-    warnings: [...sandboxWarnings, ...shot.warnings],
+    warnings: [...runWarnings, ...shot.warnings],
     memory: memoryReport,
   };
   const heading = scope === "delta" ? "New findings" : "Findings";
@@ -908,41 +895,6 @@ async function runReview(
   return postFailed ? 1 : 0;
 }
 
-/** Docker when present and usable, else the host (with its warning). Only
- * asked for a real run: a preview and help never reach docker. */
-async function chooseSandbox(): Promise<ReviewSandboxChoice> {
-  const [{ chooseReviewSandbox }, companion, { appStamp }, install, cfgMod] = await Promise.all([
-    import("./reviewbox.js"),
-    import("./tui/companion.js"),
-    import("./appstamp.js"),
-    import("./install.js"),
-    import("./config.js"),
-  ]);
-  const env = process.env;
-  let sandbox = {
-    ...cfgMod.SCAN_SANDBOX_DEFAULTS,
-    pihome_volume: cfgMod.COMPANION_DEFAULTS.pihome_volume,
-    image: cfgMod.COMPANION_DEFAULTS.image,
-  };
-  try {
-    sandbox = cfgMod.loadConfig().scan_sandbox;
-  } catch {
-    // No readable config: the defaults.
-  }
-  const appRoot = env["QCR_ROOT"]?.trim() || cfgMod.sandboxRoot();
-  return chooseReviewSandbox({
-    docker: companion.realDockerRunner,
-    env,
-    sandbox,
-    appRoot,
-    stamp: () => appStamp(appRoot),
-    configSource: () => {
-      const located = install.locateConfig({ env });
-      return existsSync(located.path) ? located.path : undefined;
-    },
-  });
-}
-
 /** The terminal side: the real repo, root, login and a prompt on stdin. */
 export async function cmdReview(
   rest: string[],
@@ -1010,19 +962,6 @@ export async function cmdReview(
     });
     return code;
   }
-  // The container's entry: `qcr review --run-spec <file>` (src/reviewbox.ts).
-  if (rest[0] === "--run-spec") {
-    const spec = rest[1];
-    if (!spec) return 2;
-    const { runReviewSpec } = await import("./reviewbox.js");
-    const { contextFor } = await import("./bench/runner.js");
-    return runReviewSpec(spec, {
-      env: process.env,
-      context: contextFor,
-      log: (l) => console.error(l),
-    });
-  }
-  const wantsRun = !rest.some((a) => a === "--preview" || a === "--help" || a === "-h");
   const { sandboxRoot, loadConfig } = await import("./config.js");
   const { stateHome } = await import("./install.js");
   const { contextFor } = await import("./bench/runner.js");
@@ -1040,10 +979,7 @@ export async function cmdReview(
     console.error(
       `note: no pi login at ${agentDir} — run \`qcr scan login\` first if the review fails`,
     );
-  const choice = wantsRun ? await chooseSandbox() : {};
   return runReviewCli(rest, json, {
-    ...(choice.runner ? { runner: choice.runner } : {}),
-    ...(choice.warning !== undefined ? { sandboxWarning: choice.warning } : {}),
     cwd: process.cwd(),
     out: io.out ?? ((l) => console.log(l)),
     confirm: interactive
