@@ -223,6 +223,16 @@ if (ourSkillsPresent && !cfg.skills.includes(ourSkillsDir)) cfg.skills.push(ourS
 // model. Set unconditionally, like defaultProjectTrust: seed-only-if-absent is
 // how keys silently stopped landing once pi had written settings.json itself.
 cfg.enableSkillCommands = true;
+// The configured model ("provider/model[:thinking]", [companion] model) is
+// pi's default on every start, so a fresh login or a bare `pi` never falls
+// back to a model an older login stored.
+const defModel = process.env.QCR_PI_DEFAULT_MODEL || "";
+const defMatch = /^([^/:\s]+)\/([^:\s]+)(?::([a-z]+))?$/.exec(defModel);
+if (defMatch) {
+  cfg.defaultProvider = defMatch[1];
+  cfg.defaultModel = defMatch[2];
+  if (defMatch[3]) cfg.defaultThinkingLevel = defMatch[3];
+}
 
 fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
 console.log("pi settings merged (extensions: " + (cfg.extensions.join(", ") || "none registered globally") + ")");

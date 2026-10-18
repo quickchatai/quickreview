@@ -279,10 +279,12 @@ export interface ScanLoginRoute {
 }
 
 /** pi itself, with `/login` (or `/login <provider>`) typed and sent for the
- * user: pi runs in a fresh tmux session, the keys go in once pi's prompt is
- * up (its startup hint names "/ commands"; after 30 s they go in anyway —
- * keys sent while pi starts lose the Enter), and the terminal attaches, so
- * every login pi offers is there and quitting pi ends it. */
+ * user: pi runs in a fresh tmux session; once its input box is drawn (two
+ * editor borders on screen) the keys go in, and again every 0.3 s until pi's
+ * login menu shows — an Enter sent while pi still starts is lost, and a
+ * `/login` left in the editor then only needs the Enter. After 30 s the
+ * terminal attaches regardless, so every login pi offers is there and
+ * quitting pi ends it. */
 export function loginInPi(provider?: string): string[] {
   if (provider !== undefined && !/^[A-Za-z0-9._-]+$/.test(provider))
     throw new Error(
@@ -292,9 +294,13 @@ export function loginInPi(provider?: string): string[] {
   return [
     "sh",
     "-c",
-    `s=qcr-login-$$; tmux new-session -d -s "$s" pi || exit 1; ` +
-      `i=0; while [ $i -lt 150 ] && ! tmux capture-pane -p -t "$s" | grep -q "/ commands"; do sleep 0.2; i=$((i+1)); done; ` +
-      `sleep 1; tmux send-keys -t "$s" -l '${keys}'; sleep 0.3; tmux send-keys -t "$s" Enter; ` +
+    `s=qcr-login-$$; tmux new-session -d -s "$s" pi || exit 1; i=0; ` +
+      `while [ $i -lt 100 ]; do p=$(tmux capture-pane -p -t "$s"); ` +
+      `case "$p" in *"Select authentication"*|*"Select provider"*) break;; esac; ` +
+      `if [ "$(printf '%s\\n' "$p" | grep -cF '──────────')" -ge 2 ]; then ` +
+      `if printf '%s\\n' "$p" | grep -qxF '${keys}'; then tmux send-keys -t "$s" Enter; ` +
+      `else tmux send-keys -t "$s" -l '${keys}'; tmux send-keys -t "$s" Enter; fi; fi; ` +
+      `sleep 0.3; i=$((i+1)); done; ` +
       `exec tmux attach -t "$s"`,
   ];
 }
@@ -308,7 +314,7 @@ export function loginInPi(provider?: string): string[] {
 export async function scanLoginRoute(
   docker: DockerRunner,
   s: ScanSandboxConfig,
-  companion: { container_name: string; pihome_volume: string },
+  companion: { container_name: string; pihome_volume: string; model: string },
   provider?: string,
 ): Promise<ScanLoginRoute> {
   const vol = s.pihome_volume;
@@ -333,6 +339,8 @@ export async function scanLoginRoute(
       ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
       "--mount",
       mountSpec({ dest: SCANBOX.piHome, source: vol }),
+      "--env",
+      `QCR_PI_DEFAULT_MODEL=${companion.model}`,
       s.image,
       ...pi,
     ],

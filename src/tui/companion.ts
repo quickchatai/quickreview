@@ -468,6 +468,8 @@ export class CompanionLifecycle {
     for (const m of this.mountSpec())
       argv.push("--volume", `${m.source}:${m.dest}${m.mode ? `:${m.mode}` : ""}`);
     argv.push(...this.memoryEnvArgv());
+    // pi's default model, set by the entrypoint on every start.
+    argv.push("--env", `QCR_PI_DEFAULT_MODEL=${this.cfg.model}`);
     argv.push(this.cfg.image);
     return argv;
   }

@@ -443,7 +443,11 @@ describe("the scan container's argv", () => {
     expect(argv.join(" ")).not.toMatch(/OPENVIKING|--env-file/);
   });
 
-  const companionOf = { container_name: "qcr-companion", pihome_volume: "companion-pihome" };
+  const companionOf = {
+    container_name: "qcr-companion",
+    pihome_volume: "companion-pihome",
+    model: "openai-codex/gpt-6.1-sol:medium",
+  };
   const LOGIN = loginInPi();
   const companionDocker =
     (state: string | null): DockerRunner =>
@@ -458,10 +462,12 @@ describe("the scan container's argv", () => {
     const [sh, c, script] = loginInPi();
     expect([sh, c]).toEqual(["sh", "-c"]);
     expect(script).toMatch(/tmux new-session -d -s "\$s" pi/);
-    expect(script).toMatch(/grep -q "\/ commands"/);
-    expect(script).toMatch(
-      /tmux send-keys -t "\$s" -l '\/login'; sleep 0\.3; tmux send-keys -t "\$s" Enter/,
-    );
+    // Keys go in once pi's input box is drawn, and again until its login
+    // menu shows: an Enter sent while pi still starts is lost.
+    expect(script).toContain("grep -cF '──────────'");
+    expect(script).toContain("Select authentication");
+    expect(script).toMatch(/tmux send-keys -t "\$s" -l '\/login'/);
+    expect(script).not.toContain("/ commands");
     expect(script).toMatch(/exec tmux attach -t "\$s"/);
   });
 
@@ -489,6 +495,8 @@ describe("the scan container's argv", () => {
         ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
         "--mount",
         "type=volume,src=companion-pihome,dst=/home/companion/.pi",
+        "--env",
+        "QCR_PI_DEFAULT_MODEL=openai-codex/gpt-6.1-sol:medium",
         "qcr-companion",
         ...LOGIN,
       ]);

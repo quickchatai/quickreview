@@ -188,6 +188,13 @@ describe("companion config", () => {
 describe("CompanionLifecycle argv", () => {
   const { lc } = lifecycle([]);
 
+  it("hands the configured model to the entrypoint as pi's default", () => {
+    const argv = lc.runArgv();
+    const envs = argv.filter((_, i) => argv[i - 1] === "--env");
+    expect(envs).toContain(`QCR_PI_DEFAULT_MODEL=${COMPANION_DEFAULTS.model}`);
+    expect(argv.lastIndexOf("--env")).toBeLessThan(argv.lastIndexOf(COMPANION_DEFAULTS.image));
+  });
+
   it("mounts pihome, repo, tracker, feed and alerts — and no credential", () => {
     const argv = lc.runArgv();
     expect(argv.slice(0, 4)).toEqual(["run", "--detach", "--name", "qcr-companion"]);
@@ -1035,6 +1042,11 @@ describe("companion image", () => {
     // terminal, so the operator's `/` commands land in pi. Unconditional,
     // because seed-only-if-absent stops landing keys once pi writes settings.
     expect(entrypoint).toContain("cfg.enableSkillCommands = true");
+    // The configured model is pi's default on every start, so a login (or a
+    // bare `pi`) never falls back to a model an older login stored.
+    expect(entrypoint).toMatch(/process\.env\.QCR_PI_DEFAULT_MODEL/);
+    for (const k of ["defaultProvider", "defaultModel", "defaultThinkingLevel"])
+      expect(entrypoint).toContain(`cfg.${k} =`);
     const guard = entrypoint.indexOf("const skillsDir");
     expect(guard).toBeGreaterThan(0);
     expect(entrypoint.indexOf("fs.writeFileSync(path,")).toBeGreaterThan(guard);
