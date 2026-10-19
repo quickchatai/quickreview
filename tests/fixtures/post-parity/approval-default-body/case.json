@@ -1,0 +1,8 @@
+{
+  "about": "An unkeyed approval with no body file: the stock approval text, no marker.",
+  "kind": "approval",
+  "round": null,
+  "body": null,
+  "comments": null,
+  "records": ["create_review", "remove_label", "delete_team_review_request"]
+}

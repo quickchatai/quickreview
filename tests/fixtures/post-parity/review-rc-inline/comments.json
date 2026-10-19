@@ -1,0 +1,6 @@
+[
+  {"path": "src/parse.ts", "line": 12, "side": "RIGHT", "body": "[blocker] drops the accent: é → e", "extra": "dropped", "id": 5},
+  {"path": "src/join.ts", "line": 30, "start_line": 28, "side": "RIGHT", "start_side": "RIGHT", "body": "[blocker] backslash \\ join\nsecond line with 日本語"},
+  {"path": "src/old.ts", "line": 4, "side": "LEFT", "body": "[nit] removed here"},
+  {"path": "src/bare.ts", "line": 1, "body": "no side given"}
+]
