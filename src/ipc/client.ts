@@ -32,7 +32,7 @@ export interface IpcClientOptions {
 interface Waiting {
   resolve(r: ResponseMessage): void;
   reject(e: unknown): void;
-  timer: NodeJS.Timeout;
+  timer: NodeJS.Timeout | undefined;
 }
 
 export class IpcClient {
@@ -109,7 +109,11 @@ export class IpcClient {
   }
 
   /** Call an op and wait for its answer; a refusal rejects with the typed error. */
-  async request<T = unknown>(op: string, body?: unknown, opts: { pr?: number } = {}): Promise<T> {
+  async request<T = unknown>(
+    op: string,
+    body?: unknown,
+    opts: { pr?: number; timeoutMs?: number } = {},
+  ): Promise<T> {
     if (this.ended) throw this.ended;
     const id = String(this.nextId++);
     const msg: IpcMessage = {
@@ -122,11 +126,17 @@ export class IpcClient {
       ...(body !== undefined ? { body } : {}),
     };
     const line = encodeMessage(msg, this.opts.maxLineBytes);
+    // `timeoutMs: 0` waits without a timer: a permit grant (P8.10) may queue behind
+    // every other worker's lenses, and the worker's own wall clock bounds it.
+    const waitMs = opts.timeoutMs ?? this.opts.timeoutMs ?? 10_000;
     const res = await new Promise<ResponseMessage>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.waiting.delete(id);
-        reject(new IpcError("timeout", `no answer to ${op}`));
-      }, this.opts.timeoutMs ?? 10_000);
+      const timer =
+        waitMs > 0
+          ? setTimeout(() => {
+              this.waiting.delete(id);
+              reject(new IpcError("timeout", `no answer to ${op}`));
+            }, waitMs)
+          : undefined;
       this.waiting.set(id, { resolve, reject, timer });
       this.socket.write(line);
     });

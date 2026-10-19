@@ -401,6 +401,9 @@ describe("[P8.3] the planned wave and the lens JSONLs", () => {
     const text = readFileSync(file, "utf8");
     expect(text).toContain(`from the task files in ${tasks}`);
     expect(text).toContain("pass-a, pass-b");
+    // Both passes took a permit from the daemon's broker (D25) and gave it back.
+    expect(daemon.permitAsks).toHaveLength(2);
+    expect(daemon.permits.status()).toMatchObject({ in_use: 0, queued: 0 });
     // Both passes ran once, their JSONLs beside the round's lens ledger.
     const kept = readdirSync(join(world.lensDir, "lens-sessions"));
     expect(kept).toHaveLength(2);

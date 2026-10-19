@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CapabilityStore, socketPathOf } from "../../src/ipc/capability.js";
 import { IpcClient } from "../../src/ipc/client.js";
+import { PermitBroker, permitOps } from "../../src/ipc/permits.js";
 import type { CommandState, IpcEventKind } from "../../src/ipc/protocol.js";
 import { IpcServer } from "../../src/ipc/server.js";
 import {
@@ -245,11 +246,20 @@ export class FakeDaemon {
   /** Runs inside `wakes.take`, before it answers; a test drops the connection here. */
   onTake: (() => Promise<void>) | undefined;
   readonly acked: string[] = [];
+  /** The daemon's real permit broker (P8.10), no stagger: a worker's passes ask it. */
+  readonly permits = new PermitBroker({ ceiling: 20, staggerMs: 0 });
+  /** The lens ids that asked the broker for a permit, in order. */
+  readonly permitAsks: string[] = [];
   readonly server: IpcServer;
   readonly sock: string;
   private readonly clients: IpcClient[] = [];
 
   constructor() {
+    const ask = this.permits.acquire.bind(this.permits);
+    this.permits.acquire = (who, lensId, weight) => (
+      this.permitAsks.push(lensId),
+      ask(who, lensId, weight)
+    );
     const sockDir = mkdtempSync(join(tmpdir(), "bw-sock-"));
     this.sock = socketPathOf(sockDir);
     this.server = new IpcServer({
@@ -262,6 +272,7 @@ export class FakeDaemon {
         void ctx;
       },
       ops: {
+        ...permitOps(this.permits),
         [WORKER_SPEC_OP]: {
           roles: ["worker"],
           handle: (ctx) => {
@@ -296,6 +307,7 @@ export class FakeDaemon {
   }
 
   stop(): Promise<void> {
+    this.permits.stop();
     return this.server.stop();
   }
 

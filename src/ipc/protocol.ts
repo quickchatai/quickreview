@@ -52,6 +52,7 @@ export const IPC_ERROR_CODES = [
   "lease_takeover", // the PR is under a takeover lease: it can post nothing
   "may_post_required", // an answer worker whose message did not carry may_post
   "bad_path", // a result file outside the PR's own dir, or not a plain readable file
+  "cancelled", // a permit wait ended by a release or by the command ending (P8.10)
   "blocked", // the gate or a guard refused the mutation: nothing was posted
   "post_failed", // GitHub answered the post with a refusal
   "internal",

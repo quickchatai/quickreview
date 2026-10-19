@@ -48,6 +48,7 @@ import {
 import { agentDirSettings } from "./engine/agentdir.js";
 import { botSdkRuntime } from "./engine/botsdk.js";
 import { engineLensTools, type EngineLensTools } from "./engine/lens/engine-tools.js";
+import type { Permits } from "./engine/lens/permits.js";
 import { planLaunch, type LaunchUnit } from "./engine/lens/launch-plan.js";
 import { engineLensSection } from "./engine/lens/section.js";
 import { LensWave, launchWave, type WaveRow } from "./engine/lens/wave.js";
@@ -60,6 +61,7 @@ import { engineLensConfig } from "./engine/reviewsdk.js";
 import { loginSourceDirs } from "./engine/toolfence.js";
 import { checkToolUid, toolIdsOf } from "./engine/tooluid.js";
 import { connectFromEnv, type IpcClient } from "./ipc/client.js";
+import { brokerPermits } from "./ipc/permits.js";
 import { IpcError, type IpcEventKind } from "./ipc/protocol.js";
 import {
   WAKES_ACK_OP,
@@ -350,7 +352,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         credentials: auth.credentials,
         settings: agentDirSettings(spec.agent_dir),
       });
-      opened = await openSession(host, spec, env, wave, marker, deps, log, (run) => {
+      // The lens cap is the daemon's, over every worker (D25): a pass asks the broker.
+      const permits = brokerPermits(client, (m) => log(`botworker: ${m}`));
+      opened = await openSession(host, spec, env, wave, marker, deps, log, permits, (run) => {
         lensUsd += run.result.usage.cost;
         lensRuns++;
       });
@@ -644,6 +648,7 @@ async function openSession(
   marker: string,
   deps: WorkerDeps,
   log: (line: string) => void,
+  permitPort: Permits,
   tap: (run: LensRun) => void,
 ): Promise<Opened> {
   const round = spec.round_no ?? 0;
@@ -664,6 +669,7 @@ async function openSession(
   const tools = engineLensTools(
     {
       ...base,
+      permitPort,
       ledgerPath: lensLedgerOf(spec),
       sessionsDir: join(lensDir, LENS_SESSIONS_DIR),
       ...(base.cache && pack ? { cache: { ...base.cache, pack } } : {}),
