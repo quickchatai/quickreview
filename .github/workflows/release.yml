@@ -1,0 +1,373 @@
+# Release: build both images on both architectures, smoke each offline, run
+# one paid end-to-end review behind a human approval, then push to ghcr with
+# provenance attestations.
+#
+#   plan -> build (image x arch) -> e2e (release-e2e) -> publish (image)
+#
+# Triggers: a v* tag pushed by hand, or workflow_dispatch. Nothing here runs
+# on a branch push or a pull request (ci.yml owns those), and no job but
+# `publish` ever logs in to a registry or pushes.
+#
+# The images (docker/Dockerfile and docker/memory/Dockerfile):
+#   ghcr.io/quickchatai/quickreview:<version>          the release image
+#   ghcr.io/quickchatai/quickreview-memory:<version>   the memory sidecar
+# <version> is the tag without its leading v, and equals package.json's
+# version (the image's own `version --json`). Each is one multi-arch index
+# over linux/amd64 and linux/arm64. There is no `latest` tag, and the floating
+# v1 major tag of the Action is moved by hand, not by this workflow.
+#
+# ARM runners (D15): native by default, so the arm64 smoke runs on real arm64
+# and the memory image's llama-cpp-python compiles natively. The repo variable
+# RELEASE_ARM64_RUNNER picks the label (default ubuntu-24.04-arm; a private
+# repo needs a larger-runner label there). Set it to `qemu` and the arm64 legs
+# run on ubuntu-latest under QEMU instead: the fallback, slow, and the memory
+# image can take hours under emulation.
+#
+# What the owner sets up once (this file creates none of it):
+#   - environment `release-e2e`, with the owner as the required reviewer;
+#     the e2e job is the only job that reads a secret;
+#   - secret `RELEASE_E2E_PI_AUTH` in that environment: the contents of a pi
+#     auth.json (a login for the model the e2e reaches), nothing else;
+#   - optional repo variables RELEASE_ARM64_RUNNER (above) and
+#     RELEASE_E2E_LIMIT_USD (the per-run cap handed to `review --limit`).
+#   - packages: the repo needs write access to both ghcr packages. Artifact
+#     attestations on a private repo need a plan that offers them.
+#
+# The paid e2e is counted against the small separate release grant (D37), not
+# the bench budget. Each run writes its ledger line (version, run, cap, spend)
+# to the job summary and to the e2e-ledger artifact.
+#
+# Scratch runs: a version with `-scratch` in it (v0.0.0-scratch.1) may skip the
+# e2e (workflow_dispatch input run_e2e=false). A scratch version never moves
+# any tag but its own. A real version cannot skip the e2e, and cannot be
+# published from anything but its own tag.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the leading v (X.Y.Z, or X.Y.Z-scratch.N for a scratch run)"
+        required: true
+        type: string
+      run_e2e:
+        description: "Run the paid e2e (only a -scratch version may turn it off)"
+        required: false
+        default: true
+        type: boolean
+      publish:
+        description: "Push to ghcr after the gates (a tag push always does)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      scratch: ${{ steps.plan.outputs.scratch }}
+      e2e: ${{ steps.plan.outputs.e2e }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: resolve and check the version
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_E2E: ${{ inputs.run_e2e }}
+          IN_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          die() { echo "::error::release plan: $*"; exit 1; }
+          if [ "$EVENT" = push ]; then
+            version="${REF_NAME#v}"
+            want_e2e=true
+            publish=true
+          else
+            version="$IN_VERSION"
+            want_e2e="$IN_E2E"
+            publish="$IN_PUBLISH"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
+            die "'$version' is not X.Y.Z or X.Y.Z-suffix"
+          scratch=false
+          [[ "$version" == *-scratch* ]] && scratch=true
+          e2e="$want_e2e"
+          if [ "$scratch" = true ]; then
+            # A tag push has no inputs, so a scratch tag always skips the paid run.
+            [ "$EVENT" != push ] || e2e=false
+          else
+            [ "$e2e" = true ] || die "only a -scratch version may skip the e2e"
+            [ "$REF_TYPE" = tag ] && [ "$REF_NAME" = "v$version" ] ||
+              die "a real release runs from its own tag v$version (this is $REF_TYPE $REF_NAME)"
+            pkg="$(node -p 'require("./package.json").version')"
+            [ "$pkg" = "$version" ] || die "package.json is $pkg, the release is $version"
+          fi
+          {
+            echo "version=$version"
+            echo "scratch=$scratch"
+            echo "e2e=$e2e"
+            echo "publish=$publish"
+          } >>"$GITHUB_OUTPUT"
+          printf '### Release plan\n\n- version: %s (scratch: %s)\n- paid e2e: %s\n- push to ghcr: %s\n' \
+            "$version" "$scratch" "$e2e" "$publish" >>"$GITHUB_STEP_SUMMARY"
+
+  # One leg per image and architecture. Builds with plain buildx (no push),
+  # smokes offline, and hands the tested image to the later jobs as a tarball,
+  # so what is pushed is byte-for-byte what was smoked.
+  build:
+    needs: plan
+    name: build ${{ matrix.image }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [release, memory]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            qemu: "false"
+          - arch: arm64
+            runner: ${{ vars.RELEASE_ARM64_RUNNER == 'qemu' && 'ubuntu-latest' || vars.RELEASE_ARM64_RUNNER || 'ubuntu-24.04-arm' }}
+            qemu: ${{ vars.RELEASE_ARM64_RUNNER == 'qemu' && 'true' || 'false' }}
+          - image: release
+            file: docker/Dockerfile
+          - image: memory
+            file: docker/memory/Dockerfile
+    env:
+      LOCAL_TAG: qcr-${{ matrix.image }}:${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.qemu == 'true'
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - name: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.LOCAL_TAG }}
+          build-args: ${{ matrix.image == 'release' && format('BUILD_SHA={0}', github.sha) || '' }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }},mode=max
+      - name: the image is the architecture it claims
+        run: |
+          got="$(docker image inspect --format '{{.Architecture}}' "$LOCAL_TAG")"
+          [ "$got" = "${{ matrix.arch }}" ] || { echo "::error::$LOCAL_TAG is $got, not ${{ matrix.arch }}"; exit 1; }
+      - name: offline smoke (release image)
+        if: matrix.image == 'release'
+        run: |
+          .github/ci/image-smoke.sh "$LOCAL_TAG"
+          # The image's version is package.json's, and the image carries no claude (rule 5).
+          want="$(node -p 'require("./package.json").version')"
+          got="$(docker run --rm --init --cap-drop ALL --security-opt no-new-privileges "$LOCAL_TAG" version --json | jq -r .image.version)"
+          [ "$got" = "$want" ] || { echo "::error::image version $got, package.json $want"; exit 1; }
+          if docker run --rm --entrypoint sh "$LOCAL_TAG" -c 'command -v claude' >/dev/null 2>&1; then
+            echo "::error::the release image carries claude"
+            exit 1
+          fi
+      - name: offline smoke (memory sidecar)
+        if: matrix.image == 'memory'
+        run: |
+          set -euo pipefail
+          box() { docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --entrypoint "$@"; }
+          want_ov="$(sed -n 's/^ARG OPENVIKING_VERSION=//p' docker/memory/Dockerfile)"
+          want_llama="$(sed -n 's/^ARG LLAMA_CPP_PYTHON_VERSION=//p' docker/memory/Dockerfile)"
+          want_sha="$(sed -n 's/^ARG LOCAL_EMBEDDER_SHA256=//p' docker/memory/Dockerfile)"
+          [ -n "$want_ov" ] && [ -n "$want_llama" ] && [ -n "$want_sha" ] || { echo "::error::a pin is missing from docker/memory/Dockerfile"; exit 1; }
+          py=/opt/openviking/venv/bin/python
+          got="$(box "$py" "$LOCAL_TAG" -c 'import importlib.metadata as m, llama_cpp; print(m.version("openviking"), m.version("llama-cpp-python"))')"
+          [ "$got" = "$want_ov $want_llama" ] || { echo "::error::sidecar pins are '$got', want '$want_ov $want_llama'"; exit 1; }
+          sum="$(box sha256sum "$LOCAL_TAG" /opt/openviking/models/bge-small-en-v1.5-f16.gguf | cut -d' ' -f1)"
+          [ "$sum" = "$want_sha" ] || { echo "::error::the embedder GGUF is $sum, want $want_sha"; exit 1; }
+          box test "$LOCAL_TAG" -x /opt/openviking/venv/bin/openviking-server
+          printf '### Memory sidecar smoke (%s)\n\n- openviking %s, llama-cpp-python %s, GGUF sha256 verified\n' \
+            "${{ matrix.arch }}" "$want_ov" "$want_llama" >>"$GITHUB_STEP_SUMMARY"
+      - name: save the tested image
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          docker save "$LOCAL_TAG" | gzip -1 >"$RUNNER_TEMP/out/image.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/out/image.tar.gz
+          retention-days: 1
+          compression-level: 0
+
+  # The one paid step: the release image reviews a tiny fixture diff with a
+  # real model. The environment's required reviewer is the approval; the
+  # pi login is that environment's only secret. Counted per D37.
+  e2e:
+    needs: [plan, build]
+    if: needs.plan.outputs.e2e == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release-e2e
+    env:
+      LIMIT_USD: ${{ vars.RELEASE_E2E_LIMIT_USD || '2' }}
+      LOCAL_TAG: qcr-release:amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-release-amd64
+          path: ${{ runner.temp }}/in
+      - name: load the tested image
+        run: gunzip -c "$RUNNER_TEMP/in/image.tar.gz" | docker load
+      - name: review a fixture diff with the real model
+        env:
+          PI_AUTH: ${{ secrets.RELEASE_E2E_PI_AUTH }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          [ -n "$PI_AUTH" ] || { echo "::error::secret RELEASE_E2E_PI_AUTH is empty or missing from the release-e2e environment"; exit 1; }
+          work="$RUNNER_TEMP/e2e"
+          rm -rf "$work"
+          mkdir -p "$work/home/agent" "$work/repo"
+          # Group access only: the model's tool uid shares the run gid (D32) and
+          # pi, running as it, reads its login from here.
+          chmod 0770 "$work/home" "$work/home/agent"
+          (umask 007 && printf '%s' "$PI_AUTH" >"$work/home/agent/auth.json")
+          repo="$work/repo"
+          g() { git -C "$repo" -c user.email=e2e@example.com -c user.name=e2e "$@"; }
+          g init -q -b main
+          printf 'def total(xs):\n    return sum(xs)\n' >"$repo/calc.py"
+          g add . && g commit -qm base
+          g checkout -qb feat
+          printf 'def total(xs):\n    t = 0\n    for i in range(len(xs) - 1):\n        t += xs[i]\n    return t\n' >"$repo/calc.py"
+          g commit -qam "rewrite total"
+          chmod -R a+rX "$repo"
+          # A model-reaching run starts as root and drops to the run uid; the
+          # model's tools get another uid (docker/entrypoint.sh, D32).
+          set +e
+          docker run --rm -i --init --user 0:0 --cap-drop ALL --cap-add SETUID --cap-add SETGID \
+            --security-opt no-new-privileges \
+            -e QCR_RUN_UID="$(id -u)" -e QCR_RUN_GID="$(id -g)" \
+            -e QCR_CONFIG=/opt/qcr/config.example.toml \
+            -v "$repo:/repo:ro" -w /repo -v "$work/home:/home/qcr/.pi" \
+            "$LOCAL_TAG" review --json --limit "$LIMIT_USD" >"$work/result.json" 2>"$work/stderr.log"
+          rc=$?
+          set -e
+          tail -n 20 "$work/stderr.log" >&2 || true
+          spend="$(jq -r '.cost_usd // "unknown"' "$work/result.json" 2>/dev/null || echo unknown)"
+          mkdir -p "$RUNNER_TEMP/ledger"
+          line="$(printf '%s release-e2e v%s run %s cap=%s spend=%s exit=%s' \
+            "$(date -u +%Y-%m-%dT%H:%MZ)" "$VERSION" "$GITHUB_RUN_ID" "$LIMIT_USD" "$spend" "$rc")"
+          echo "$line" >"$RUNNER_TEMP/ledger/e2e-ledger.txt"
+          printf '### Paid e2e (D37 ledger)\n\n`%s`\n\nCounts against the separate release grant, not the bench budget.\n' "$line" >>"$GITHUB_STEP_SUMMARY"
+          [ "$rc" = 0 ] || { echo "::error::the e2e review exited $rc"; exit 1; }
+          jq -e '.schema_version == 1 and .ok == true and (.partial // false) == false' "$work/result.json" >/dev/null ||
+            { echo "::error::the e2e review did not finish ok"; exit 1; }
+      - name: remove the login from the runner
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/e2e"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-ledger
+          path: ${{ runner.temp }}/ledger/e2e-ledger.txt
+          if-no-files-found: ignore
+
+  # The only job with a registry login. Runs when every gate passed: the e2e
+  # succeeded, or was skipped on purpose for a scratch version.
+  publish:
+    needs: [plan, build, e2e]
+    if: >-
+      ${{ !cancelled()
+      && needs.plan.outputs.publish == 'true'
+      && needs.build.result == 'success'
+      && (needs.e2e.result == 'success' || (needs.e2e.result == 'skipped' && needs.plan.outputs.e2e != 'true')) }}
+    name: publish ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [release, memory]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      REPO: ${{ matrix.image == 'release' && 'ghcr.io/quickchatai/quickreview' || 'ghcr.io/quickchatai/quickreview-memory' }}
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-${{ matrix.image }}-*
+          path: ${{ runner.temp }}/in
+      - name: push each architecture, then the index
+        id: push
+        run: |
+          set -euo pipefail
+          digest_of() {
+            docker image inspect "$1" --format '{{json .RepoDigests}}' |
+              jq -r --arg r "$REPO@" 'map(select(startswith($r))) | .[0] | sub("^.*@"; "")'
+          }
+          for arch in amd64 arm64; do
+            gunzip -c "$RUNNER_TEMP/in/image-${{ matrix.image }}-$arch/image.tar.gz" | docker load
+            docker tag "qcr-${{ matrix.image }}:$arch" "$REPO:$VERSION-$arch"
+            docker push "$REPO:$VERSION-$arch"
+            d="$(digest_of "$REPO:$VERSION-$arch")"
+            [ -n "$d" ] && [ "$d" != null ] || { echo "::error::no digest for $arch"; exit 1; }
+            echo "$arch=$d" >>"$GITHUB_OUTPUT"
+          done
+          docker buildx imagetools create -t "$REPO:$VERSION" \
+            "$REPO@$(grep '^amd64=' "$GITHUB_OUTPUT" | cut -d= -f2)" \
+            "$REPO@$(grep '^arm64=' "$GITHUB_OUTPUT" | cut -d= -f2)"
+          echo "index=$(docker buildx imagetools inspect "$REPO:$VERSION" --format '{{.Manifest.Digest}}')" >>"$GITHUB_OUTPUT"
+      - name: provenance for the amd64 image
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REPO }}
+          subject-digest: ${{ steps.push.outputs.amd64 }}
+          push-to-registry: true
+      - name: provenance for the arm64 image
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REPO }}
+          subject-digest: ${{ steps.push.outputs.arm64 }}
+          push-to-registry: true
+      - name: provenance for the index
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REPO }}
+          subject-digest: ${{ steps.push.outputs.index }}
+          push-to-registry: true
+      - name: summary
+        run: |
+          printf '### Published\n\n- `%s:%s` (index %s)\n- amd64 %s\n- arm64 %s\n' \
+            "$REPO" "$VERSION" "${{ steps.push.outputs.index }}" \
+            "${{ steps.push.outputs.amd64 }}" "${{ steps.push.outputs.arm64 }}" >>"$GITHUB_STEP_SUMMARY"
