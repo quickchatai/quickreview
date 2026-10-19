@@ -5,7 +5,7 @@
 // same `wave` and `runner`; the session's `lens_wave` joins it.
 import { lensTools } from "../../../extensions/lens.js";
 import type { RoundLensTools } from "../roundsdk.js";
-import { createLensRunner, type LensRunConfig, type LensRunner } from "./runlens.js";
+import { createLensRunner, type LensRun, type LensRunConfig, type LensRunner } from "./runlens.js";
 import { LENS_TOOL, LENS_WAVE_TOOL } from "./tool.js";
 import { LensWave } from "./wave.js";
 
@@ -16,8 +16,28 @@ export interface EngineLensTools extends RoundLensTools {
   wave: LensWave;
 }
 
-export function engineLensTools(config: LensRunConfig, wave = new LensWave()): EngineLensTools {
-  const runner = createLensRunner(config);
+/** `tap` hears every finished pass, however it was started (the wave, a `lens`
+ * call): a route that totals the passes' spend reads it there. */
+export function engineLensTools(
+  config: LensRunConfig,
+  wave = new LensWave(),
+  tap?: (run: LensRun) => void,
+): EngineLensTools {
+  const inner = createLensRunner(config);
+  const runner: LensRunner = tap
+    ? {
+        run: async (request) => {
+          const run = await inner.run(request);
+          try {
+            tap(run);
+          } catch {
+            // a listener's failure is not the pass's
+          }
+          return run;
+        },
+        liveSessions: () => inner.liveSessions(),
+      }
+    : inner;
   return {
     factories: [],
     customTools: lensTools({ runner, wave, env: config.env }),

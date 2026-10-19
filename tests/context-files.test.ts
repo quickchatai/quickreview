@@ -900,6 +900,7 @@ describe("the one install site", () => {
       "scripts/deploy.sh", // a name the base clone may not take
       "src/engine/roundsdk.ts", // the SDK round's stub as in-memory data for the session, never written to a checkout
       "src/hostroute.ts", // the clone route's per-run copy, into the run's own out dir
+      "src/reviewerstub.ts", // the neutral home of the stub's two names; constants only
       "src/usage.ts", // the cost split counts it as a context file
     ]);
   });
@@ -923,8 +924,12 @@ describe("the one install site", () => {
       .filter((f) => read(f).includes("HOST_CONTEXT_STUB"))
       .sort();
     // roundsdk.ts only hands the stub to the SDK session as data; it writes nothing.
-    expect(users).toEqual(["src/engine/roundsdk.ts", "src/hostroute.ts"]);
+    // reviewerstub.ts is the neutral home of the two names and only declares them.
+    expect(users).toEqual(["src/engine/roundsdk.ts", "src/hostroute.ts", "src/reviewerstub.ts"]);
     expect(read("src/engine/roundsdk.ts")).not.toMatch(
+      /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
+    );
+    expect(read("src/reviewerstub.ts")).not.toMatch(
       /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
     );
     const text = read("src/hostroute.ts");

@@ -73,19 +73,6 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "factories (P3) take it. Delete this entry with the first import.",
     },
     {
-      file: "src/engine/botsdk.ts",
-      why:
-        "the bot worker's SDK session factory (P8.2). It is read only by its tests " +
-        "(tests/bot-sdk.test.ts, canary 10 bot shape) until botworker.ts (P8.3) builds the PR session with it. " +
-        "Delete this entry with that import.",
-    },
-    {
-      file: "src/live/publish.ts",
-      why:
-        "the round-progress publisher the bot worker's session feeds (P8.2, through src/engine/botsdk.ts). " +
-        "Delete this entry with the worker's import.",
-    },
-    {
       file: "src/piauthcopy.ts",
       why:
         "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +
@@ -115,14 +102,16 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       file: "src/memory/legacy-file.ts",
       why: "the READ-ONLY reader over the archived MEMORY.md that the import above consumes. Same driver, same reason.",
     },
-    // The worker-daemon IPC (P7.2a, D23): a neutral module that P7.2 (the daemon's post ops), P8.3 (the
-    // worker) and P8.5 (the supervisor) wire in. Delete each entry with the first production import.
-    ...["protocol.ts", "capability.ts", "server.ts", "client.ts", "launcher.ts"].map((f) => ({
+    // The worker-daemon IPC (P7.2a, D23): a neutral module. The worker (P8.3) reads protocol, capability,
+    // client and workerspec; the daemon's end (server.ts) is the WorkerSupervisor's (P8.5), and launcher.ts
+    // is the pane-side entry point tmux runs for a takeover or debug pi (P8.13). Delete each entry with the
+    // first production import.
+    ...["server.ts", "launcher.ts"].map((f) => ({
       file: `src/ipc/${f}`,
       why:
-        "the worker-daemon IPC (P7.2a): line framing, the capability handoff, the socket server and client. " +
-        "Read only by tests/ipc.test.ts until P7.2 (post ops), P8.3 (botworker) and P8.5 (WorkerSupervisor) " +
-        "import it; launcher.ts is the pane-side entry point tmux runs for a takeover or debug pi.",
+        "the worker-daemon IPC (P7.2a): the socket server and the pane-side launcher. Read only by " +
+        "tests/ipc.test.ts until P8.5 (WorkerSupervisor) starts the socket; launcher.ts is the pane-side " +
+        "entry point tmux runs for a takeover or debug pi.",
     })),
     // The daemon's post ops (P7.2). The daemon does not start the worker socket yet: that is the
     // WorkerSupervisor's (P8.5), which mints the commands the socket authenticates, and P8.7 wires these
@@ -167,7 +156,8 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       // (bench/aacr/in-container.sh) launches it; `openviking/sidecar-main.ts`
       // because the memory image's entrypoint (docker/memory/entrypoint.sh)
       // execs it out of dist/; `loginrefresh/main.ts` because the daemon
-      // spawns it by path (src/loginrefresh/supervisor.ts, P8.22).
+      // spawns it by path (src/loginrefresh/supervisor.ts, P8.22); `botworker.ts`
+      // because the WorkerSupervisor spawns it by path for each round (P8.5).
       const roots = [
         "src/wire.ts",
         "src/cli.ts",
@@ -175,6 +165,7 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "src/bench/cli.ts",
         "src/openviking/sidecar-main.ts",
         "src/loginrefresh/main.ts",
+        "src/botworker.ts",
       ].map((p) => join(ROOT, p));
       for (const f of tsFiles(join(ROOT, "extensions"))) {
         for (const m of stripComments(readFileSync(f, "utf8")).matchAll(

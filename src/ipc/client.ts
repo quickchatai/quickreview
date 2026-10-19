@@ -40,6 +40,8 @@ export class IpcClient {
   private readonly waiting = new Map<string, Waiting>();
   private controlHandler: ((kind: string, body: unknown) => void) | null = null;
   private errorHandler: ((e: IpcError) => void) | null = null;
+  private closeHandler: ((e: IpcError) => void) | null = null;
+  private closedBySelf = false;
   private ended: IpcError | null = null;
 
   private constructor(
@@ -149,6 +151,13 @@ export class IpcClient {
     );
   }
 
+  /** Resolves once everything written so far has left this process: a worker
+   * that sends its last event and exits calls it first. */
+  drain(): Promise<void> {
+    if (this.ended) return Promise.resolve();
+    return new Promise((resolve) => this.socket.write("", () => resolve()));
+  }
+
   onControl(fn: (kind: string, body: unknown) => void): void {
     this.controlHandler = fn;
   }
@@ -157,7 +166,14 @@ export class IpcClient {
     this.errorHandler = fn;
   }
 
+  /** The daemon's end of the connection went away (it restarted, or revoked the
+   * capability). Not called for a `close()` of this side. */
+  onClose(fn: (e: IpcError) => void): void {
+    this.closeHandler = fn;
+  }
+
   close(): void {
+    this.closedBySelf = true;
     this.socket.end();
     this.end(new IpcError("closed", "closed by this side"));
   }
@@ -200,6 +216,7 @@ export class IpcClient {
       w.reject(e);
     }
     this.waiting.clear();
+    if (!this.closedBySelf) this.closeHandler?.(e);
   }
 }
 

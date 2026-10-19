@@ -160,24 +160,35 @@ function shellPath(): string {
  * holds open is waited for (pi's own grace). */
 const EXIT_STDIO_GRACE_MS = 100;
 
-/**
- * The SDK bash tool's execution, with the model's command run as the tool uid.
- *
- * The command is `setpriv … -- bash -c <command>` in a process group of its
- * own. A timeout or an abort ends that group through setpriv too: the run uid
- * may not signal a process of another uid (kill(2): the sender's uid must match
- * the target's real or saved uid, and this process holds no CAP_KILL), so pi's
- * own kill of the tree would silently do nothing and the command would run on.
- * The saved uid cannot be left as the run uid to allow it: the tool could then
- * switch back.
- */
-export function isolatedBashOperations(ids: ToolIds, setprivBin?: string): BashOperations {
-  const switches = setprivSwitches(ids);
-  const setpriv = setprivBin ?? trustedSetpriv();
+/** What differs between the two ways the SDK bash tool starts a command: the
+ * program that runs the shell, and how a process group is ended. */
+interface ShellPlan {
+  /** Throws where the command cannot be started at all. */
+  ready(): void;
+  start(command: string): { bin: string; argv: string[] };
+  /** End the group `pgid` leads. Best effort. */
+  killGroup(pgid: number): void;
+}
+
+/** The stdio of a command: nothing in, its output out, and each of `inherit`
+ * handed to it at the SAME fd number. Node closes every descriptor a child is
+ * not listed with, so an fd a command (or a script under it) must read has to be
+ * named here. */
+export function commandStdio(inherit: readonly number[]): Array<"ignore" | "pipe" | number> {
+  const stdio: Array<"ignore" | "pipe" | number> = ["ignore", "pipe", "pipe"];
+  for (const fd of inherit) {
+    if (!Number.isInteger(fd) || fd < 3) throw new Error(`cannot hand a command fd ${fd}`);
+    while (stdio.length < fd) stdio.push("ignore");
+    stdio[fd] = fd;
+  }
+  return stdio;
+}
+
+function shellOperations(plan: ShellPlan, inherit: readonly number[]): BashOperations {
+  const stdio = commandStdio(inherit);
   return {
     exec: async (command, cwd, { onData, signal, timeout, env }) => {
-      if (setpriv === null)
-        throw new Error("setpriv is in none of " + SETPRIV_PATH + ": the tool uid cannot be used");
+      plan.ready();
       if (signal?.aborted) throw new Error("aborted");
       if (timeout !== undefined && !(Number.isFinite(timeout) && timeout > 0))
         throw new Error("Invalid timeout: must be a finite number of seconds");
@@ -186,29 +197,11 @@ export function isolatedBashOperations(ids: ToolIds, setprivBin?: string): BashO
       } catch {
         throw new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`);
       }
-      const child = spawn(setpriv, [...switches, "--", shellPath(), "-c", command], {
-        cwd,
-        env: env ?? process.env,
-        detached: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const { bin, argv } = plan.start(command);
+      const child = spawn(bin, argv, { cwd, env: env ?? process.env, detached: true, stdio });
       const pgid = child.pid;
-      // The group's end, as the tool uid. Best effort: a failure leaves the
-      // command running, as pi's own kill does when it cannot signal.
       const killGroup = (): void => {
-        if (pgid === undefined) return;
-        try {
-          spawn(
-            setpriv,
-            [...switches, "--", shellPath(), "-c", 'kill -KILL -- "-$0" 2>/dev/null', String(pgid)],
-            // the killing shell needs no PATH of the model's
-            { stdio: "ignore", env: { PATH: SETPRIV_PATH } },
-          )
-            .once("error", () => {})
-            .unref();
-        } catch {
-          // setpriv could not be started: nothing more can be done from here
-        }
+        if (pgid !== undefined) plan.killGroup(pgid);
       };
       let timedOut = false;
       const timer =
@@ -221,16 +214,16 @@ export function isolatedBashOperations(ids: ToolIds, setprivBin?: string): BashO
       const onAbort = (): void => killGroup();
       signal?.addEventListener("abort", onAbort, { once: true });
       try {
-        child.stdout.on("data", onData);
-        child.stderr.on("data", onData);
+        child.stdout!.on("data", onData);
+        child.stderr!.on("data", onData);
         const exitCode = await new Promise<number | null>((resolve, reject) => {
           let exited = false;
           let code: number | null = null;
           let idle: NodeJS.Timeout | undefined;
           const done = (): void => {
             if (idle) clearTimeout(idle);
-            child.stdout.destroy();
-            child.stderr.destroy();
+            child.stdout!.destroy();
+            child.stderr!.destroy();
             resolve(code);
           };
           const arm = (): void => {
@@ -248,8 +241,8 @@ export function isolatedBashOperations(ids: ToolIds, setprivBin?: string): BashO
             done();
           });
           // output still arriving after the exit keeps the wait open
-          child.stdout.on("data", () => exited && arm());
-          child.stderr.on("data", () => exited && arm());
+          child.stdout!.on("data", () => exited && arm());
+          child.stderr!.on("data", () => exited && arm());
         });
         if (signal?.aborted) throw new Error("aborted");
         if (timedOut) throw new Error(`timeout:${timeout}`);
@@ -262,4 +255,79 @@ export function isolatedBashOperations(ids: ToolIds, setprivBin?: string): BashO
       }
     },
   };
+}
+
+/**
+ * The SDK bash tool's execution, with the model's command run as the tool uid.
+ *
+ * The command is `setpriv … -- bash -c <command>` in a process group of its
+ * own. A timeout or an abort ends that group through setpriv too: the run uid
+ * may not signal a process of another uid (kill(2): the sender's uid must match
+ * the target's real or saved uid, and this process holds no CAP_KILL), so pi's
+ * own kill of the tree would silently do nothing and the command would run on.
+ * The saved uid cannot be left as the run uid to allow it: the tool could then
+ * switch back.
+ *
+ * `inherit` lists descriptors every command gets at the same number (the
+ * bot worker's IPC capability, P8.3).
+ */
+export function isolatedBashOperations(
+  ids: ToolIds,
+  setprivBin?: string,
+  inherit: readonly number[] = [],
+): BashOperations {
+  const switches = setprivSwitches(ids);
+  const setpriv = setprivBin ?? trustedSetpriv();
+  return shellOperations(
+    {
+      ready: () => {
+        if (setpriv === null)
+          throw new Error(
+            "setpriv is in none of " + SETPRIV_PATH + ": the tool uid cannot be used",
+          );
+      },
+      start: (command) => ({
+        bin: setpriv!,
+        argv: [...switches, "--", shellPath(), "-c", command],
+      }),
+      // The group's end, as the tool uid. Best effort: a failure leaves the
+      // command running, as pi's own kill does when it cannot signal.
+      killGroup: (pgid) => {
+        try {
+          spawn(
+            setpriv!,
+            [...switches, "--", shellPath(), "-c", 'kill -KILL -- "-$0" 2>/dev/null', String(pgid)],
+            // the killing shell needs no PATH of the model's
+            { stdio: "ignore", env: { PATH: SETPRIV_PATH } },
+          )
+            .once("error", () => {})
+            .unref();
+        } catch {
+          // setpriv could not be started: nothing more can be done from here
+        }
+      },
+    },
+    inherit,
+  );
+}
+
+/** The same execution with no uid change, for a host whose commands must
+ * inherit descriptors (`inherit`): pi's own local operations start a command
+ * with nothing but stdio. The command runs in a process group of its own, which
+ * a timeout or an abort ends. */
+export function inheritingBashOperations(inherit: readonly number[]): BashOperations {
+  return shellOperations(
+    {
+      ready: () => {},
+      start: (command) => ({ bin: shellPath(), argv: ["-c", command] }),
+      killGroup: (pgid) => {
+        try {
+          process.kill(-pgid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      },
+    },
+    inherit,
+  );
 }

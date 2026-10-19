@@ -35,6 +35,7 @@ import { trackSession } from "./livesessions.js";
 import type { HostSessionSpec, PiHost } from "./pisdk.js";
 import {
   RuntimeUnsupportedError,
+  type CompactOutcome,
   type Delivery,
   type Runtime,
   type RuntimeSession,
@@ -59,6 +60,7 @@ export type SessionExtras = Pick<
   | "tools"
   | "agentsFiles"
   | "bashEnv"
+  | "inheritFds"
   | "thinkingLevel"
   | "appendSystemPrompt"
 >;
@@ -156,6 +158,21 @@ class SdkSession implements RuntimeSession {
     if (this.pending === 0 || this.disposed) return this.followUp(text);
     await this.session.steer(text);
     return { status: "queued" };
+  }
+
+  async compact(): Promise<CompactOutcome> {
+    if (this.disposed) return { status: "failed", reason: "session disposed" };
+    // Behind the turn in flight and everything queued after it: pi refuses a
+    // prompt while it compacts, and a compaction under a running turn is not
+    // what a caller means.
+    await this.tail.catch(() => {});
+    if (this.disposed) return { status: "failed", reason: "session disposed" };
+    try {
+      const result = await this.session.compact();
+      return { status: "compacted", tokensBefore: result.tokensBefore };
+    } catch (e) {
+      return { status: "failed", reason: e instanceof Error ? e.message : String(e) };
+    }
   }
 
   async abort(): Promise<void> {

@@ -15,7 +15,6 @@ import {
   mkdirSync,
   readdirSync,
   renameSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -28,6 +27,7 @@ import {
   planStaleOvSessions,
   type OvSessionLifecycle,
 } from "./memory/ovsession.js";
+import { newestSessionFile } from "./sessionjsonl.js";
 import type { StateStore } from "./state.js";
 import type { OvSessionSweepReport, RoundOrder } from "./types.js";
 import type { WorktreeManager } from "./worktrees.js";
@@ -493,31 +493,9 @@ export class PrSessionLifecycle {
 
   // ---- archive -----------------------------------------------------------
 
-  /** Newest *.jsonl anywhere under a session's --session-dir. Ties break on the
-   * filename — pi names sessions `<timestamp>_<uuid>.jsonl`. */
+  /** Newest *.jsonl anywhere under a session's --session-dir (src/sessionjsonl.ts). */
   newestSessionFile(session: string): string | undefined {
-    const root = this.sessionDir(session);
-    let newest: { path: string; mtime: number; name: string } | undefined;
-    const walk = (dir: string): void => {
-      let entries;
-      try {
-        entries = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const e of entries) {
-        const full = join(dir, e.name);
-        if (e.isDirectory()) walk(full);
-        else if (e.name.endsWith(".jsonl")) {
-          const mtime = statSync(full).mtimeMs;
-          const better =
-            !newest || mtime > newest.mtime || (mtime === newest.mtime && e.name > newest.name);
-          if (better) newest = { path: full, mtime, name: e.name };
-        }
-      }
-    };
-    walk(root);
-    return newest?.path;
+    return newestSessionFile(this.sessionDir(session));
   }
 
   /**

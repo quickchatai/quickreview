@@ -41,12 +41,19 @@ export function readTsconfig(root = ROOT) {
  * source by pi's jiti) can change, and a checker that disagrees with the
  * compiler is worse than no checker.
  * `.d.ts` files declare types and emit nothing.
+ * The explicit `.mjs` include (allowJs, for the vendored OpenViking helpers)
+ * lists those files too: tsc copies them, and the worker needs them in dist/.
  */
 export function inputFiles(root = ROOT, cfg = readTsconfig(root)) {
   const includeRoots = (cfg.include ?? [])
     .map((pattern) => pattern.split("/")[0])
     .filter((dir, i, all) => all.indexOf(dir) === i);
   const excluded = new Set((cfg.exclude ?? []).map((p) => p.replace(/\/+$/, "")));
+  // A plain-JS tree the include names (`dir/**/*.mjs`, with allowJs) is emitted
+  // too, under the same name.
+  const jsDirs = (cfg.include ?? [])
+    .filter((pattern) => pattern.endsWith(".mjs"))
+    .map((pattern) => pattern.split("/**")[0]);
   const out = [];
   const walk = (relDir) => {
     if (excluded.has(relDir)) return;
@@ -61,6 +68,8 @@ export function inputFiles(root = ROOT, cfg = readTsconfig(root)) {
       if (excluded.has(rel)) continue;
       if (entry.isDirectory()) walk(rel);
       else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) out.push(rel);
+      else if (entry.name.endsWith(".mjs") && jsDirs.some((dir) => rel.startsWith(`${dir}/`)))
+        out.push(rel);
     }
   };
   for (const dir of includeRoots) walk(dir);
@@ -68,7 +77,8 @@ export function inputFiles(root = ROOT, cfg = readTsconfig(root)) {
 }
 
 /** Where tsc puts a given input. No `rootDir` is set, so the inferred one is
- * the repo root and the tree is mirrored under `outDir` (`dist/src/…`). */
+ * the repo root and the tree is mirrored under `outDir` (`dist/src/…`). A `.mjs`
+ * keeps its name. */
 export function emittedPath(relTs, cfg = readTsconfig()) {
   return `${cfg.compilerOptions?.outDir ?? "dist"}/${relTs.replace(/\.ts$/, ".js")}`;
 }

@@ -31,7 +31,7 @@ import {
   createFindingClusters,
 } from "../../extensions/finding-clusters.js";
 import { createLedgerPin, ledgerPinConfigFromEnv } from "../../extensions/ledger-pin.js";
-import { HOST_CONTEXT_STUB, REVIEWER_STUB } from "../hostroute.js";
+import { HOST_CONTEXT_STUB, REVIEWER_STUB } from "../reviewerstub.js";
 import { DEFAULT_TOOLS } from "./pisdk.js";
 import type { SessionSpec } from "./port.js";
 import type { SessionExtras } from "./sdkruntime.js";

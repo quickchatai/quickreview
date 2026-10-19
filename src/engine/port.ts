@@ -107,6 +107,11 @@ export type Delivery =
   | { status: "handled"; result: TurnResult }
   | { status: "unsupported"; reason: string };
 
+/** What a compaction did. A compaction is an optimisation, never owed work: a
+ * failure is reported, not thrown. */
+export type CompactOutcome =
+  { status: "compacted"; tokensBefore: number } | { status: "failed"; reason: string };
+
 export interface RuntimeSession {
   /** The session's id. */
   readonly id: string;
@@ -124,6 +129,11 @@ export interface RuntimeSession {
   abort(): Promise<void>;
   /** Hear each event as it is written; returns the unsubscribe. */
   subscribe(listener: (event: SessionEvent) => void, options?: SubscribeOptions): () => void;
+  /** Compact the conversation once nothing is in flight, through pi's own
+   * `compact()` (so the session's `session_before_compact` extensions, ledger-pin
+   * among them, run). Only a runtime that hosts the session in this process can:
+   * absent elsewhere. */
+  compact?(): Promise<CompactOutcome>;
   stats(): SessionStats;
   /** Release the session; aborts a running turn. Idempotent. */
   dispose(): Promise<void>;
