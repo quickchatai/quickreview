@@ -43,7 +43,8 @@ import { engineLensTools, type EngineLensTools } from "./lens/engine-tools.js";
 import type { LensRunConfig } from "./lens/runlens.js";
 import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave.js";
 import { PiHost, type PiHostOptions } from "./pisdk.js";
-import { checkToolUid } from "./tooluid.js";
+import { loginSourceDirs } from "./toolfence.js";
+import { checkToolUid, toolIdsOf } from "./tooluid.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
 import { BASH_ENV_ALLOW, reviewerStub, roundSdkExtras, type RoundLensTools } from "./roundsdk.js";
 import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
@@ -188,9 +189,15 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
           srcDir: agentDir,
           needMs: spec.limits.timeoutMs,
         });
+        const ids = toolIdsOf(procEnv);
         const hostOptions: PiHostOptions = {
           agentDir,
           ownsProcess: true,
+          // The model's bash and every lens session's, as the tool uid (D32).
+          ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
+          // The round's agent dir is a copy: the login it was copied from (the
+          // wrapper's /qcr-login, group-readable by this uid) is fenced too.
+          fenceDirs: loginSourceDirs(procEnv),
           credentials: auth.credentials,
           settings: agentDirSettings(agentDir),
           configureModels: async (runtime) => {
@@ -220,14 +227,23 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
     spec: SessionSpec,
     start: (rt: Runtime) => Promise<RuntimeSession>,
   ): Promise<RuntimeSession> {
-    checkToolUid(procEnv);
+    // The native lens tool runs its passes as `pi` children of this process,
+    // and their bash would share its uid: that asks for the shared uid. Every
+    // other session is ours and runs its tools as the tool uid.
+    const native = options.lens === undefined && options.extras === undefined && !engine;
+    checkToolUid(
+      procEnv,
+      native
+        ? {
+            what: "the SDK runtime with the native lens tool",
+            instead: "set [pi] lens_runtime = engine, or use [engine] runtime = proc here",
+          }
+        : { what: "the SDK runtime", instead: "", isolated: true },
+    );
     const rt = await runtimeFor(spec);
     // Before the session: the native lens factory reads the env as the session
     // is made. A route that hands its own lens tool has no such children.
-    const scoped =
-      options.lens === undefined && options.extras === undefined && !engine
-        ? scopeProcessEnv(procEnv, spec, options.childEnv)
-        : null;
+    const scoped = native ? scopeProcessEnv(procEnv, spec, options.childEnv) : null;
     try {
       const session = await start(rt);
       return scoped === null ? session : releasing(session, scoped.restore);

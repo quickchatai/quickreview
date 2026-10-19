@@ -37,15 +37,19 @@
 #     SETGID), the cli mode re-executes this script as QCR_RUN_UID:QCR_RUN_GID
 #     (default 1000:1000) with CAP_SETUID/CAP_SETGID as ambient capabilities,
 #     and exports QCR_TOOL_UID/QCR_TOOL_GID (QCR_TOOLS_AS, default 65534, and the run gid);
-#   - the engine's one pi spawn (src/engine/procruntime.ts toolIsolation) then
-#     goes through setpriv: pi and every bash it runs get the tool uid, no
-#     capabilities and no_new_privs. The tool uid shares the run gid, which is
-#     how it reaches the group-writable state and its own pi home; it is a
-#     different uid, so /proc/<node pid>/mem and environ are closed to it;
+#   - the engine then runs everything that executes the model's commands
+#     through setpriv (src/engine/tooluid.ts): the SDK session's bash tool
+#     (src/engine/pisdk.ts), a pi child (toolIsolation), a debug round's
+#     interactive pi (src/engine/debugpi.ts). They get the tool uid, no
+#     capabilities and no_new_privs. The SDK session's file tools (read, grep,
+#     find, ls, edit, write) run in the engine's own uid, so they are fenced off
+#     /proc, /run/qcr-in and the agent dir (src/engine/toolfence.ts). The tool
+#     uid shares the run gid, which is how it reaches the group-writable state;
+#     it is a different uid, so /proc/<node pid>/mem and environ are closed to it;
 #   - started as any other uid, no separation is possible: the cli mode says
 #     so, exports QCR_TOOL_UID_REQUIRED=1, and the engine then refuses to
-#     start pi unless QCR_ALLOW_SHARED_TOOL_UID=1 (version, doctor and every
-#     other verb that spawns no pi are unaffected).
+#     run the model's tools unless QCR_ALLOW_SHARED_TOOL_UID=1 (version, doctor
+#     and every other verb that runs none are unaffected).
 # The login and tui modes run no engine and hold no GitHub token: they are
 # not separated. pi holds its own OAuth token as the tools' uid, which no
 # split hides from the tools it runs; the split protects the GitHub token.

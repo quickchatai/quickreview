@@ -20,6 +20,13 @@
 //     spec's env, with the GitHub token names always stripped (envstrip.ts).
 //   - The tool list is an allowlist of exact names. A tool an extension
 //     registers that is not on it is dropped.
+//   - The model's tools do not reach what holds the run's secrets (D32). Its
+//     bash runs as the separate tool uid when the host is given one
+//     (`toolUid`, from the image's QCR_TOOL_UID), which the kernel keeps out of
+//     /proc/<pid>/mem and environ of this process. Its file tools (read, grep,
+//     find, ls, edit, write) run in this process, so each path they are handed
+//     goes through a fence (toolfence.ts) that refuses /proc, /run/qcr-in and
+//     the agent dirs and the login's source, after resolving symlinks.
 //
 // The HTTP dispatcher follows D4. pi's CLI installs an undici dispatcher at
 // startup (configureHttpDispatcher, which the package does not export); an
@@ -31,6 +38,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { dirname, join, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -48,9 +56,25 @@ import {
   SettingsManager,
   createAgentSession,
   createBashToolDefinition,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createReadToolDefinition,
+  createEditToolDefinition,
+  createWriteToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import type { AgentsFile } from "./port.js";
+import {
+  FENCED_TOOLS,
+  createToolFence,
+  fencedOperations,
+  guardedTool,
+  loginSourceDirs,
+  type ImageSniffer,
+  type ToolFence,
+} from "./toolfence.js";
+import { isolatedBashOperations, type ToolIds } from "./tooluid.js";
 
 // ---- the HTTP dispatcher (D4) -------------------------------------------------
 
@@ -129,6 +153,28 @@ export async function loadConfigureHttpDispatcher(): Promise<ConfigureHttpDispat
       `pi's configureHttpDispatcher is gone from ${file}: the pinned pi drifted from what pisdk.ts deep-imports (canary 6)`,
     );
   return mod.configureHttpDispatcher as ConfigureHttpDispatcher;
+}
+
+let imageSniffer: Promise<ImageSniffer | null> | undefined;
+
+/** pi's own image sniffer (utils/mime.js), deep-imported the way the dispatcher
+ * is: the fenced read tool tells an image from its first bytes with it. Null
+ * where pi moved it: a file is then read as text, never as an image. */
+export function loadImageSniffer(): Promise<ImageSniffer | null> {
+  imageSniffer ??= (async () => {
+    try {
+      const file = join(piPackageDir(), "dist", "utils", "mime.js");
+      const mod = (await import(pathToFileURL(file).href)) as {
+        detectSupportedImageMimeType?: unknown;
+      };
+      return typeof mod.detectSupportedImageMimeType === "function"
+        ? (mod.detectSupportedImageMimeType as ImageSniffer)
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+  return imageSniffer;
 }
 
 /**
@@ -328,6 +374,22 @@ export interface PiHostOptions {
   settings?: Parameters<typeof SettingsManager.inMemory>[0];
   /** Context files every session gets unless its spec says otherwise (D34). */
   agentsFiles?: readonly AgentsFile[];
+  /** The uid and gid the model's bash runs as (D32): every command of every
+   * session of this host is started through setpriv to them. The process must
+   * hold CAP_SETUID/CAP_SETGID (the image's cli mode does). Omitted: the
+   * model's bash runs as this process. */
+  toolUid?: ToolIds;
+  /** The setpriv binary for `toolUid`: omitted, a system one by absolute path
+   * (tooluid.ts trustedSetpriv). Tests hand a stand-in. */
+  setprivBin?: string;
+  /** What the file tools may not reach. Omitted: /proc, /run/qcr-in, /qcr-login,
+   * the host's agent dir, this home's pi dir, the login sources this process's
+   * env names (PI_CODING_AGENT_DIR, QCR_SCAN_AUTH_SRC) and `fenceDirs`.
+   * `false` turns the fence off. */
+  fence?: ToolFence | false;
+  /** More directories for the default fence: where a caller's login source is
+   * when it is not in the process env (reviewsdk's processEnv). */
+  fenceDirs?: readonly string[];
 }
 
 export interface HostSessionSpec {
@@ -472,6 +534,8 @@ export class PiHost {
   /** What the host found or did about the HTTP dispatcher. */
   readonly dispatcher: DispatcherOutcome;
   readonly httpIdleTimeoutMs: number;
+  /** What the file tools are kept out of, or null. */
+  readonly fence: ToolFence | null;
   private readonly sessions = new Set<AgentSession>();
 
   private constructor(
@@ -483,6 +547,18 @@ export class PiHost {
     this.modelRuntime = modelRuntime;
     this.dispatcher = dispatcher;
     this.httpIdleTimeoutMs = options.httpIdleTimeoutMs ?? DEFAULT_HTTP_IDLE_TIMEOUT_MS;
+    this.fence =
+      options.fence === false
+        ? null
+        : (options.fence ??
+          createToolFence({
+            dirs: [
+              options.agentDir,
+              join(homedir(), ".pi"),
+              ...loginSourceDirs(process.env),
+              ...(options.fenceDirs ?? []),
+            ],
+          }));
   }
 
   static async create(options: PiHostOptions): Promise<PiHost> {
@@ -517,6 +593,24 @@ export class PiHost {
     );
   }
 
+  /** The file tools of the allowlist, behind the fence. None when there is no fence. */
+  private async fileTools(cwd: string, names: readonly string[]): Promise<ToolDefinition[]> {
+    const fence = this.fence;
+    if (fence === null) return [];
+    const ops = fencedOperations(fence, await loadImageSniffer());
+    const make: Record<(typeof FENCED_TOOLS)[number], () => unknown> = {
+      read: () => createReadToolDefinition(cwd, { operations: ops.read }),
+      grep: () => createGrepToolDefinition(cwd, { operations: ops.grep }),
+      find: () => createFindToolDefinition(cwd),
+      ls: () => createLsToolDefinition(cwd, { operations: ops.ls }),
+      edit: () => createEditToolDefinition(cwd, { operations: ops.edit }),
+      write: () => createWriteToolDefinition(cwd, { operations: ops.write }),
+    };
+    return FENCED_TOOLS.filter((n) => names.includes(n)).map((n) =>
+      guardedTool(make[n]() as ToolDefinition, fence, cwd),
+    );
+  }
+
   /**
    * One isolated, extension-bound session. The caller owns it: dispose it, or
    * dispose the host to dispose every session it made.
@@ -536,13 +630,19 @@ export class PiHost {
       agentsFiles: spec.agentsFiles ?? this.options.agentsFiles ?? [],
     });
     await resourceLoader.reload();
+    // The model's bash: its environment from the allowlist, and, where the host
+    // has a tool uid, its command run as that uid (tooluid.ts).
     const bash = createBashToolDefinition(spec.cwd, {
       spawnHook: (ctx) => ({
         command: ctx.command,
         cwd: ctx.cwd,
         env: buildBashEnv(spec.env, ctx.env, spec.bashEnv),
       }),
+      ...(this.options.toolUid
+        ? { operations: isolatedBashOperations(this.options.toolUid, this.options.setprivBin) }
+        : {}),
     });
+    const files = await this.fileTools(spec.cwd, tools);
     const { session } = await createAgentSession({
       cwd: spec.cwd,
       agentDir: this.agentDir,
@@ -553,7 +653,7 @@ export class PiHost {
       sessionManager,
       settingsManager,
       tools,
-      customTools: [bash as unknown as ToolDefinition, ...(spec.customTools ?? [])],
+      customTools: [bash as unknown as ToolDefinition, ...files, ...(spec.customTools ?? [])],
     });
     try {
       await session.bindExtensions({ onError: spec.onExtensionError });

@@ -1238,17 +1238,20 @@ describe("open and --debug-pi: -it on the state volume", () => {
   );
 
   it.skipIf(!HAS_SCRIPT)(
-    "qcr review --debug-pi in a pty is -it on the state volume, accepts the shared tool uid and holds no token",
+    "qcr review --debug-pi in a pty is -it on the state volume, takes the root start for the tool uid split and holds no token",
     () => {
       const r = rig();
       expect(inPty(r, ["review", "--debug-pi", "12"], { GITHUB_TOKEN: TOKEN })).toBe(0);
       const argv = runCall(r);
       expect(argv.slice(0, 4)).toEqual(["run", "--rm", "-it", "--init"]);
       expect(mounts(argv)).toContain("type=volume,src=qcr-state,dst=/opt/qcr/state");
-      // the person watches this session in their own terminal: pi's bash runs in the
-      // process's own uid, which the image's tool-uid check refuses without this
-      expect(envs(argv)).toContain("QCR_ALLOW_SHARED_TOOL_UID=1");
-      // pi's bash shares the uid of the process that would hold the token: none is staged
+      // the person watches this session in their own terminal: the image starts that
+      // pi as the separate tool uid, from the root start of every model-reaching call
+      expect(argv.join(" ")).toContain(
+        "--user 0:0 --cap-drop ALL --cap-add SETUID --cap-add SETGID",
+      );
+      expect(envs(argv).join(" ")).not.toContain("QCR_ALLOW_SHARED_TOOL_UID");
+      // no token is staged: a debug round takes a branch or uncommitted target
       expect(mounts(argv).join(" ")).not.toContain("/run/qcr-in");
       expect(envs(argv).join(" ")).not.toContain("QCR_GH_TOKEN_FILE");
       expect(argv.join("\n")).not.toContain(TOKEN);
@@ -1265,7 +1268,7 @@ describe("open and --debug-pi: -it on the state volume", () => {
   });
 
   it.skipIf(!HAS_SCRIPT)(
-    "a plain review in a pty stays without -t, and only --debug-pi allows the shared uid",
+    "a plain review in a pty stays without -t, and no review allows the shared uid",
     () => {
       const r = rig();
       expect(inPty(r, ["review", "--preview"])).toBe(0);

@@ -216,7 +216,6 @@ tty=0
 split=1
 drop=0
 gh=1
-shared_uid=0
 case "$verb" in
   '')
     mode=tui
@@ -244,16 +243,12 @@ case "$verb" in
   debug) tty=1 ;;
   review)
     # --debug-pi runs the round in pi's own interactive UI, in this terminal.
-    # The model's bash there runs in the Node process's own uid, which the
-    # image's tool-uid check (src/engine/tooluid.ts) refuses unless it is told
-    # the shared uid is accepted; the person asking to watch has accepted it.
-    # That bash would then share a uid with the process that holds the GitHub
-    # token, so a debug round is given none: branch and uncommitted targets
-    # only, until the owner accepts a token beside the shared uid.
+    # The image starts that pi as the separate tool uid (src/engine/debugpi.ts),
+    # so the call keeps the root start of every model-reaching call; it is still
+    # given no GitHub token: branch and uncommitted targets only.
     for a in "$@"; do
       if [ "$a" = --debug-pi ]; then
         tty=1
-        shared_uid=1
         gh=0
       fi
     done
@@ -677,7 +672,6 @@ if [ "$mode" = cli ]; then
     # The login volume is only a source: the review copies it, refresh disabled.
     set -- "$@" -e PI_CODING_AGENT_DIR=/qcr-login
   fi
-  if [ "$shared_uid" = 1 ]; then set -- "$@" -e QCR_ALLOW_SHARED_TOOL_UID=1; fi
   if [ -n "$phase" ]; then
     set -- "$@" -e "QCR_RUN_ID=$run_id" -e "QCR_REVIEW_CONTAINER=$review_container"
   fi

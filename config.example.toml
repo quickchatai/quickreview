@@ -319,6 +319,10 @@ subagent_max_concurrency = 12
 # tool. A route that has no host yet refuses "sdk" instead of running on proc.
 # `qcr-bench review --runtime` and `defect-judge --runtime` override it; so does
 # `--config engine.runtime=sdk,pi.lens_runtime=engine`.
+# In the image the SDK runs the model's bash as the separate tool uid (D32) and
+# fences the file tools off /proc, /run/qcr-in and the agent dir; pi's native
+# lens tool spawns `pi` children that could not take that uid, so under the
+# split it refuses and `lens_runtime = "engine"` is the setting that runs.
 # The scan runs its leaves on the SDK inside its own detached driver process
 # (`qcr scan start`), never inside the companion's pi; a scan the companion
 # drives itself refuses "sdk". The daemon's own tmux hosting does not read it.

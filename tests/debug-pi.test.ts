@@ -7,6 +7,7 @@
 // session resumes under the same id.
 import { spawn, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -169,13 +170,110 @@ describe("[debug-pi] the tool uid", () => {
   const spec = (outDir: string) =>
     ({ outDir, target: { repo: "o/r", number: 1 }, cfg: {}, root: "/nowhere" }) as never;
 
-  it("is refused where the image asks for the model's tools to run as another uid", async () => {
-    const outDir = join(tmp, "uid-refused");
-    await expect(
-      runDebugRound(spec(outDir), { env: { QCR_TOOL_UID: "1001" }, run: async () => 0 }),
-    ).rejects.toThrow(/debug round in pi.*another uid.*without --debug-pi/);
-    // nothing was written
-    expect(existsSync(outDir)).toBe(false);
+  it("is refused where the entrypoint could not arrange the split, or named ids that are no ids", async () => {
+    for (const env of [
+      { QCR_TOOL_UID_REQUIRED: "1" },
+      { QCR_TOOL_UID: "0", QCR_TOOL_GID: "1000" },
+      { QCR_TOOL_UID: "1001" },
+    ]) {
+      const outDir = join(tmp, "uid-refused");
+      await expect(runDebugRound(spec(outDir), { env, run: async () => 0 })).rejects.toThrow(
+        /debug round in pi: .*(--cap-add SETUID|non-zero numeric ids)/,
+      );
+      // nothing was written
+      expect(existsSync(outDir)).toBe(false);
+    }
+  });
+
+  it("starts pi through setpriv as the tool uid, with its own argv and env after it", async () => {
+    const dir = mkdtempSync(join(tmp, "uid-split-"));
+    const root = mkRoot(dir, "root");
+    const outDir = join(dir, "out");
+    const cwd = join(dir, "work");
+    mkdirSync(cwd);
+    const cfg = benchConfig("");
+    let launched: { bin: string; args: string[]; env: NodeJS.ProcessEnv } | undefined;
+    await runDebugRound(
+      {
+        root,
+        cwd,
+        agentScope: "user",
+        agentDir: join(dir, "agent"),
+        tree: mkTree(dir, "tree"),
+        files: FILES,
+        target: TARGET,
+        outDir,
+        cfg,
+        ecosystem: ecosystemFor("none"),
+        timeoutMs: 60_000,
+        prompts: {
+          system: "You are the reviewer.",
+          order: "ROUND ORDER",
+          plannedLenses: [],
+          passPlan: [],
+          taskFiles: [],
+        },
+      },
+      {
+        piBin: "pi-under-test",
+        env: { PATH: "/usr/bin", QCR_TOOL_UID: "65534", QCR_TOOL_GID: "1000", GITHUB_TOKEN: "x" },
+        run: async (cmd) => {
+          launched = cmd;
+          return 0;
+        },
+      },
+    );
+    expect(launched!.bin).toBe("setpriv");
+    expect(launched!.args.slice(0, 7)).toEqual([
+      "--reuid=65534",
+      "--regid=1000",
+      "--clear-groups",
+      "--inh-caps=-all",
+      "--ambient-caps=-all",
+      "--no-new-privs",
+      "--",
+    ]);
+    expect(launched!.args[7]).toBe("pi-under-test");
+    expect(launched!.args).toContain(DEBUG_START_MESSAGE);
+    expect(launched!.env["GITHUB_TOKEN"]).toBeUndefined();
+  });
+
+  it("starts pi as it is where nothing asks for a split, or the shared uid was accepted", async () => {
+    for (const env of [{}, { QCR_TOOL_UID_REQUIRED: "1", QCR_ALLOW_SHARED_TOOL_UID: "1" }]) {
+      const dir = mkdtempSync(join(tmp, "uid-none-"));
+      let bin = "";
+      await runDebugRound(
+        {
+          root: mkRoot(dir, "root"),
+          cwd: dir,
+          agentScope: "user",
+          agentDir: join(dir, "agent"),
+          tree: mkTree(dir, "tree"),
+          files: FILES,
+          target: TARGET,
+          outDir: join(dir, "out"),
+          cfg: benchConfig(""),
+          ecosystem: ecosystemFor("none"),
+          timeoutMs: 60_000,
+          prompts: {
+            system: "s",
+            order: "o",
+            plannedLenses: [],
+            passPlan: [],
+            taskFiles: [],
+          },
+        },
+        {
+          piBin: "pi-under-test",
+          env,
+          run: async (cmd) => {
+            bin = cmd.bin;
+            return 0;
+          },
+        },
+      );
+      expect(bin).toBe("pi-under-test");
+    }
   });
 });
 
@@ -307,6 +405,13 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
 
     it("starts the round from /qcr-round, runs the wave in-process, keeps every JSONL, and the main session resumes under its id", async () => {
       const dir = mkdtempSync(join(tmp, "smoke-"));
+      // Under the image's tool-uid split (tests/tool-uid-container.test.ts runs this
+      // smoke so) pi is another uid of the same gid: it must reach what mkdtemp
+      // made private. The login copy is opened by the route itself (debugpi.ts).
+      if (process.env["QCR_TOOL_UID"] !== undefined) {
+        chmodSync(tmp, 0o775);
+        chmodSync(dir, 0o775);
+      }
       const agentDir = join(dir, "agent");
       writeFakeProvider(agentDir, server.baseUrl);
       writeFileSync(join(agentDir, "auth.json"), "{}\n", { mode: 0o600 });
