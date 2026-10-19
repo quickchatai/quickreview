@@ -129,7 +129,7 @@ describe("daemon wiring", () => {
         listen: false,
         log: () => {},
         now: () => new Date(Date.now() + 2000),
-        hooks: { inject, dispatchRound, async injectOverseer() {}, async archiveAndClose() {} },
+        hooks: { inject, dispatchRound, async archiveAndClose() {} },
       });
       await daemon.reconcile();
       expect(inject).toHaveBeenCalledOnce();
@@ -191,7 +191,6 @@ describe("daemon wiring", () => {
         hooks: {
           inject: async () => {},
           dispatchRound,
-          async injectOverseer() {},
           async archiveAndClose() {},
         },
       });
@@ -236,7 +235,6 @@ describe("daemon wiring", () => {
         hooks: {
           inject: async () => {},
           dispatchRound,
-          async injectOverseer() {},
           async archiveAndClose() {},
         },
       });
@@ -475,7 +473,6 @@ describe("daemon wiring", () => {
             });
           },
           async inject() {},
-          async injectOverseer() {},
           async archiveAndClose() {},
           async killSession(pr) {
             killed.push(pr);
@@ -649,7 +646,6 @@ describe("daemon wiring", () => {
             });
           },
           async inject() {},
-          async injectOverseer() {},
           async archiveAndClose() {},
         },
         listen: false,

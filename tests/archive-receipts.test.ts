@@ -126,7 +126,6 @@ describe("the receipt guard (acceptance 5)", () => {
       const hooks: SessionHooks = {
         async dispatchRound() {},
         async inject() {},
-        async injectOverseer() {},
         async archiveAndClose() {},
         injectPending: async () => false,
         wakeReceiptPresent: (pr, m, since) => rig.m.wakeReceiptPresent(pr, m, since),

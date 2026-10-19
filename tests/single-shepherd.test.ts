@@ -382,6 +382,10 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
           why: "the daemon's own drop-box implementation — this IS the mailbox wakes.ts nudges through, and the bridge that drains it",
         },
         {
+          file: "src/companioninbox.ts",
+          why: "the companion inbox (inject/companion-inbox/): a directory of alert items the companion's TUI pulls and acks, never a session's drop-box and never delivered to a pi session (the overseer it replaced is retired)",
+        },
+        {
           file: "src/tui/msg.ts",
           why:
             "RATIFIED operator exception: the quick-message box (`m`) addresses a session the operator is NOT focused on. " +

@@ -775,7 +775,7 @@ describe("memory wakes through the REAL anomaly wake policy", () => {
     const injected: string[] = [];
     const store = new StateStore(":memory:");
     const policy = new AnomalyWakePolicy({
-      injectOverseer: async (m) => {
+      writeInbox: async (m) => {
         injected.push(m);
       },
       now: () => new Date(clock),

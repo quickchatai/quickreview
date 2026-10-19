@@ -19,8 +19,8 @@ describe("stubSessionHooks", () => {
     const hooks = stubSessionHooks(dir);
     await hooks.inject(7, "first");
     await hooks.inject(7, "second");
-    await hooks.injectOverseer("one");
-    await hooks.injectOverseer("two");
+    await hooks.inject(8, "one");
+    await hooks.inject(8, "two");
     await hooks.archiveAndClose(7);
     await hooks.archiveAndClose(7);
     const paths = stubHookPaths(dir);

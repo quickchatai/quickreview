@@ -374,20 +374,22 @@ export interface EodTimerDeps {
   /** Called when an owed day fires from the set — deferred, or loaded at boot
    * after a restart interrupted its fire — before its injection. */
   onDeferredFire?: (date: string) => void;
-  /** SessionHooks.injectOverseer. `date` is the day the prompt sweeps — a
-   * deferred day's, not today's — so a wrapper (the pin watch) can name the
-   * window after the day it watches. */
-  injectOverseer: (message: string, date: string) => Promise<void>;
-  /** The waits before each RETRY of a failed injection — its
+  /** Writes the day's sweep as one companion-inbox item (class `eod`, id
+   * `eod-<date>`). `date` is the day the prompt sweeps — a deferred day's, not
+   * today's — so a wrapper (the pin watch) can name the window after the day it
+   * watches. Delivered once the item is on disk: the companion picks it up
+   * whenever it is next running, so the sweep runs late, never not at all. */
+  writeInbox: (message: string, date: string) => Promise<void>;
+  /** The waits before each RETRY of a failed inbox write — its
    * length is the retry count. Defaults to `EOD_DEFAULTS.retryBackoffMs`. */
   retryBackoffMs?: readonly number[];
-  /** Every attempt failed: the day's sweep did not reach the overseer.
+  /** Every attempt failed: the day's sweep did not reach the inbox.
    * wire.ts raises the `eod_inject_failed` wake. */
   onInjectFailed?: (date: string, err: unknown, attempts: number) => void;
   now?: () => Date;
   setTimer?: (cb: () => void, ms: number) => TimerHandle;
   clearTimer?: (handle: TimerHandle) => void;
-  /** Called after a successful injection, with the local date that fired. */
+  /** Called after a successful inbox write, with the local date that fired. */
   onFire?: (date: string) => void;
   /** Every failed attempt, retried or not. */
   onError?: (err: unknown) => void;
@@ -428,7 +430,7 @@ function safely(fn: () => void): void {
 
 /**
  * Arm the daily EOD injection: at each fire, render prompts/eod-sweep.md with
- * the zone-local date and inject it into the overseer, then reschedule.
+ * the zone-local date and write it to the companion inbox, then reschedule.
  * Long waits are chunked around the 2^31-1 ms setTimeout ceiling.
  *
  * Two guarantees ride on top. A drain DEFERS the day rather than
@@ -547,7 +549,7 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
     for (let attempt = 0; attempt <= backoff.length; attempt += 1) {
       if (stopped) return "stopped";
       try {
-        await deps.injectOverseer(
+        await deps.writeInbox(
           renderEodPrompt(
             deps.readPrompt(),
             date,

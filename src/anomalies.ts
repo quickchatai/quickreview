@@ -1,17 +1,17 @@
-// Overseer wake policy — which anomalies WAKE the overseer, and the daily
-// heartbeat that wakes it even when nothing does.
+// Companion-inbox policy — which anomalies reach the companion's inbox at once,
+// and the daily heartbeat that reaches it even when nothing does. (The overseer
+// they used to wake is retired; the inbox is src/companioninbox.ts.)
 //
 // Anomaly EVENTS land durably in the DB through `store.logAnomaly`, the ONE
 // durable funnel. It forwards each record to an optional sink
 // (`StateStore.setAnomalySink`), and the sink built here applies the severity
-// map + dedup and writes the overseer inject for WAKE classes. Call sites keep
+// map + dedup and writes one inbox item for WAKE classes. Call sites keep
 // their bespoke wake text by passing it as `injectMessage` — they never inject
 // themselves, so policy and dedup live in exactly one place. Severe classes
 // wake at once; everything else waits for the daily heartbeat.
 //
-// Single-shepherd (rule 9): this module only writes inject files through
-// SessionHooks.injectOverseer — it never schedules an agent and never touches
-// GitHub.
+// Single-shepherd (rule 9): this module only writes inbox items — it never
+// schedules an agent and never touches GitHub.
 
 import {
   localWallClockToInstant,
@@ -20,13 +20,14 @@ import {
   zonedParts,
   zoneDateString,
 } from "./eod.js";
+import { inboxClassForAnomaly, type InboxClass, type InboxWriter } from "./companioninbox.js";
 import type { AnomalyRecord } from "./state.js";
 
 export type AnomalySeverity = "wake" | "quiet";
 
 /**
- * The severity map. WAKE = the overseer sees an
- * inject immediately; QUIET = DB-only, reviewed at the daily heartbeat.
+ * The severity map. WAKE = an inbox item at once; QUIET = DB-only, reviewed
+ * at the daily heartbeat.
  *
  *   wake:  malformed / overdue verdicts, plan≠executed passes, degraded
  *          migration pre-check — each one means a review ran unsoundly NOW.
@@ -34,7 +35,7 @@ export type AnomalySeverity = "wake" | "quiet";
  *          self-healing (the reconcile poll comes round again), heartbeat-tier.
  *
  * Any UNLISTED kind defaults to quiet: a new anomaly class never spams the
- * overseer until someone deliberately promotes it here.
+ * inbox until someone deliberately promotes it here.
  *
  * `slack_connections` is deliberately NOT listed: its wake rides the announcer
  * seam in wire.ts (`onAnomalySignal`, its own origin reason) — the default-
@@ -60,7 +61,7 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // AFTER its one re-nudge — the session ignored the nudge, which is
   // human-attention grade. First detection ("findings_record_missing") stays
   // quiet: the nudge IS the response, and a wake there would double every
-  // missing record into overseer traffic.
+  // missing record into inbox traffic.
   "findings_record_unresolved",
   // pi sessions failing API calls with token-expired errors — every round in
   // flight is doomed until someone logs in again, so this
@@ -118,7 +119,7 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   //   memory_provision_failed — the boot's provisioning report says a user
   //                        could not be ensured, the reviewer key does not
   //                        authenticate, or a user was (re)created.
-  // The overseer is NOT the main audience: the same facts ride status.json
+  // The inbox is NOT the main audience: the same facts ride status.json
   // `memory`, which the TUI turns into a board banner, a desktop notification
   // and a tracker ticket.
   "memory_auth_failed",
@@ -129,7 +130,7 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // memory is healthy), or rows the pump gave up on. Raised by the pump on the crossing and every 6 h while it
   // lasts, never per row.
   "memory_write_backlog",
-  // The EOD sweep's inject failed four times (one try and three backed-off
+  // The EOD sweep's inbox write failed four times (one try and three backed-off
   // retries): the day's curation did not happen.
   "eod_inject_failed",
   // The learner (src/learner/learner.ts): the curation of a day's
@@ -192,7 +193,7 @@ export function wakeKinds(): string[] {
  * reasons:
  *
  *   `round_stopped_dead` — human-attention grade, but its wake already exists:
- *     the self-requeue path writes its own bespoke overseer inject beside the
+ *     the self-requeue path writes its own bespoke inbox item beside the
  *     anomaly row. Listing it here would inject the same event twice.
  *   the orphan sweep — no anomaly row at ALL, by design. tmux lives in the
  *     container, so a clean redeploy orphans every in-flight round, and it is
@@ -217,7 +218,7 @@ export const ANOMALY_DEDUP_WINDOW_MS = 10 * 60_000;
  * boot raises `memory_provision_failed` once per report. Keyed on kind alone,
  * a SECOND transition inside 10 minutes — the sessions' credential failing
  * after the daemon's — would be swallowed until the 6 h re-wake. Keyed on the
- * detail, a different transition always reaches the overseer, while an
+ * detail, a different transition always reaches the inbox, while an
  * identical repeat (a credential flapping between refused and accepted) is
  * still held back by the window. Pinned by deep equality in
  * `tests/anomalies.test.ts`.
@@ -228,7 +229,7 @@ const DETAIL_KEYED_KINDS: ReadonlySet<string> = new Set([
   "memory_provision_failed",
   // The pump raises it on the backlog crossing (every 6 h while
   // it lasts) and once per tick that gave rows up — a give-up minutes after a
-  // backlog wake is a different fact and must still reach the overseer.
+  // backlog wake is a different fact and must still reach the inbox.
   "memory_write_backlog",
   // Raised once per DAY by the learner; deferred days fire back
   // to back after a drain, so two days' wakes can land minutes apart.
@@ -242,24 +243,24 @@ export function detailKeyedKinds(): string[] {
 
 /** What logAnomaly forwards: the record plus the caller's richer wake text. */
 export interface AnomalySignal extends AnomalyRecord {
-  /** Bespoke inject body from the call site; absent ⇒ a generic one is built. */
+  /** Bespoke item text from the call site; absent ⇒ a generic one is built. */
   injectMessage?: string | undefined;
 }
 
 export interface AnomalyWakePolicyDeps {
-  /** SessionHooks.injectOverseer (wire.ts hands the origin-stamping wrapper). */
-  injectOverseer: (message: string) => Promise<void>;
+  /** Writes one inbox item (src/companioninbox.ts `CompanionInbox.writer()`). */
+  writeInbox: InboxWriter;
   now?: () => Date;
   dedupWindowMs?: number;
   log?: (msg: string, extra?: unknown) => void;
-  /** The waits before each RETRY of a failed wake inject — its length is the
+  /** The waits before each RETRY of a failed wake write — its length is the
    * retry count. Defaults to `WAKE_RETRY_BACKOFF_MS`. */
   retryBackoffMs?: readonly number[];
   setTimer?: (cb: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
 }
 
-/** A failed wake inject is retried after these waits: a producer that records
+/** A failed inbox write is retried after these waits: a producer that records
  * its incident once (a stranded round, a withheld comment) never signals
  * again, so the policy owns the retry. Past the last one the wake is lost and
  * the row stays for the heartbeat's review. */
@@ -304,7 +305,7 @@ export class AnomalyWakePolicy {
     const nowMs = this.now().getTime();
     const prev = this.lastInject.get(key);
     if (prev !== undefined && nowMs - prev < this.windowMs) {
-      this.log(`anomaly wake suppressed (dedup ${key}) — row written, inject skipped`);
+      this.log(`anomaly wake suppressed (dedup ${key}) — row written, inbox item skipped`);
       return;
     }
     const message =
@@ -320,7 +321,7 @@ export class AnomalyWakePolicy {
     }
     const chain = {};
     this.chains.set(key, chain);
-    this.deliver(key, message, 0, chain);
+    this.deliver(key, message, inboxClassForAnomaly(signal.kind), 0, chain);
   }
 
   /** Disarm every pending retry (daemon shutdown). */
@@ -331,18 +332,24 @@ export class AnomalyWakePolicy {
     this.chains.clear();
   }
 
-  /** Inject one wake, holding the dedup window from now. A failed inject —
+  /** Write one inbox item, holding the dedup window from now. A failed write —
    * a rejection, or a hook that throws before it returns its promise —
    * releases the window (the next identical signal injects again) and is
    * retried after `backoff[attempt]` unless a later identical signal has
    * taken the key meanwhile. */
-  private deliver(key: string, message: string, attempt: number, chain: { retry?: unknown }): void {
+  private deliver(
+    key: string,
+    message: string,
+    cls: InboxClass,
+    attempt: number,
+    chain: { retry?: unknown },
+  ): void {
     if (this.stopped || this.chains.get(key) !== chain) return;
     const stampMs = this.now().getTime();
     this.lastInject.set(key, stampMs);
     let sent: Promise<void>;
     try {
-      sent = this.deps.injectOverseer(message);
+      sent = this.deps.writeInbox(message, cls);
     } catch (err) {
       sent = Promise.reject(err instanceof Error ? err : new Error(String(err)));
     }
@@ -356,18 +363,18 @@ export class AnomalyWakePolicy {
         const wait = this.backoff[attempt];
         if (this.stopped || wait === undefined) {
           this.chains.delete(key);
-          this.log(`anomaly wake inject failed (${key}) — row is written, wake lost`, err);
+          this.log(`anomaly inbox write failed (${key}) — row is written, item lost`, err);
           return;
         }
         this.log(
-          `anomaly wake inject failed (${key}) — retried in ${Math.round(wait / 1000)} s`,
+          `anomaly inbox write failed (${key}) — retried in ${Math.round(wait / 1000)} s`,
           err,
         );
         const handle = this.setTimer(() => {
           this.retries.delete(handle);
           delete chain.retry;
           if (this.stopped || this.chains.get(key) !== chain || this.lastInject.has(key)) return;
-          this.deliver(key, message, attempt + 1, chain);
+          this.deliver(key, message, cls, attempt + 1, chain);
         }, wait);
         chain.retry = handle;
         this.retries.add(handle);
@@ -378,14 +385,14 @@ export class AnomalyWakePolicy {
 
 // ---- daily heartbeat -------------------------------------------------------
 //
-// One overseer inject each morning (config `[eod] heartbeat_time` + timezone,
+// One heartbeat inbox item each morning (config `[eod] heartbeat_time` + timezone,
 // same DST-correct Intl machinery as the EOD sweep): review the anomaly table
 // and the digest since the last heartbeat, flag-owner what matters. The
 // QUIET classes above are exactly what this pass is for.
 
 export function renderHeartbeatMessage(date: string, lastFired: string | null): string {
   return [
-    `OVERSEER HEARTBEAT — ${date}`,
+    `HEARTBEAT — ${date}`,
     `Daily check-in. Review the anomaly table (qcr status / the anomaly events in state.db) and the digest ` +
       `since the last heartbeat${lastFired ? ` (${lastFired})` : " (first heartbeat on record)"}.`,
     "Flag-owner (commands/flag-owner) anything that matters — recurring quiet anomalies, degraded checks, stuck PRs.",
@@ -401,25 +408,26 @@ export interface HeartbeatDeps {
   /** Last fired local date ("YYYY-MM-DD"), persisted; null = never. */
   lastFired: () => string | null;
   recordFired: (date: string) => void;
-  injectOverseer: (message: string) => Promise<void>;
+  /** Writes one inbox item; the heartbeat is class `heartbeat`, one per day. */
+  writeInbox: (message: string, date: string) => Promise<void>;
   now?: () => Date;
   setTimer?: (cb: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
   log?: (msg: string, extra?: unknown) => void;
   onError?: (err: unknown) => void;
-  /** The waits before each RETRY of a failed inject on the same day — its
+  /** The waits before each RETRY of a failed write on the same day — its
    * length is the retry count. Defaults to `HEARTBEAT_RETRY_BACKOFF_MS`. */
   retryBackoffMs?: readonly number[];
 }
 
-/** A failed heartbeat inject is retried after these waits, the same day's
+/** A failed heartbeat write is retried after these waits, the same day's
  * check-in each time; past the last one the next day's slot is armed. */
 export const HEARTBEAT_RETRY_BACKOFF_MS: readonly number[] = WAKE_RETRY_BACKOFF_MS;
 
 export interface HeartbeatTimer {
   nextFire(): Date;
   stop(): void;
-  /** Resolves when the boot catch-up decision (and any resulting inject) is done. */
+  /** Resolves when the boot catch-up decision (and any resulting write) is done. */
   readonly booted: Promise<void>;
 }
 
@@ -437,7 +445,7 @@ export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
   const clearT =
     deps.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
   const log = deps.log ?? (() => {});
-  const onError = deps.onError ?? ((err: unknown) => log("heartbeat inject failed", err));
+  const onError = deps.onError ?? ((err: unknown) => log("heartbeat inbox write failed", err));
   const { hour, minute } = parseHHMM(deps.timeHHMM);
 
   const backoff = deps.retryBackoffMs ?? HEARTBEAT_RETRY_BACKOFF_MS;
@@ -447,22 +455,22 @@ export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
   let target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
   // Retain the next scheduled day independently of a prior day's retries.
   let dailyTarget = target;
-  /** The day a failed inject is being retried for, and the retries spent. */
+  /** The day a failed write is being retried for, and the retries spent. */
   let retry: { date: string; attempt: number } | null = null;
 
-  /** Inject one day's check-in. True when it is delivered (or was already).
+  /** Write one day's check-in. True when it is delivered (or was already).
    * A delivered check-in whose stamp could not be recorded is still
-   * delivered: it is never injected again for that. */
+   * delivered: it is never written again for that. */
   const fire = async (date: string): Promise<boolean> => {
     const last = deps.lastFired();
     if (last === date) return true; // already fired this local day (restart, race)
     try {
-      await deps.injectOverseer(renderHeartbeatMessage(date, last));
+      await deps.writeInbox(renderHeartbeatMessage(date, last), date);
     } catch (err) {
       onError(err);
       return false;
     }
-    log(`heartbeat injected for ${date}`);
+    log(`heartbeat written to the inbox for ${date}`);
     try {
       deps.recordFired(date);
     } catch (err) {

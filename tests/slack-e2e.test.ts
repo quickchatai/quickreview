@@ -1,27 +1,29 @@
 // The Slack concierge, end to end through the PRODUCTION assembly. Style
 // model: tests/e2e-dryrun.test.ts — real modules, fake everything at the edges. No live Slack, no tmux, no pi, no real fetch.
 //
-// The loop under test is the whole feature:
+// Inbound is retired with the overseer: an inbound Slack message is recorded
+// and refused (`dropped_no_overseer`) — no inject file, no origin record, no
+// turn, no post. What stays is the outbound half:
 //
-//   inbound Slack message
-//     → SlackRouter (channel/echo/subtype/dedupe/staleness/cap)
-//     → overseer inject file carrying the `<!-- qcr:slack v1 -->` envelope
-//     → origin record on disk (the rights, written down, next to the inject)
-//     → overseer writes commands/slack/<file>.json  { command: "slack_reply" }
+//   a command file in commands/slack/<file>.json  { command: "slack_reply" }
 //     → the tier-checked CommandWatcher validates + authorizes it
 //     → exactly ONE post, in the right channel, in the right thread
 //     → a `slack_posts` ledger row
+//   announcements, and the connection signal (to the companion inbox)
 //
 // Plus the two invariants that make the feature safe to ship: a tier-denied
 // command lands a `tier: ` reason and does nothing else, and NOT ONE GitHub
 // fetch happens anywhere in the Slack path — this feature adds no GitHub
 // mutation, so the MutationGate has nothing new to guard.
+//
+// The origin belt itself (a recorded Slack turn limits what `commands/` may do)
+// still ships until its own removal, so its tests seed an origin record
+// directly: nothing in production writes one any more.
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -33,7 +35,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { CommandWatcher, type CommandDeps } from "../src/commands.js";
 import { StateStore } from "../src/state.js";
-import { SLACK_INJECT_MARKER } from "../src/slack/router.js";
 import type { SlackInboundEvent, SlackInboundHandler, SlackTransport } from "../src/slack/types.js";
 import { startSlack, type SlackRuntime } from "../src/wire.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -58,7 +59,7 @@ let runtime: SlackRuntime;
 let transport: FakeTransport;
 let fetchSpy: ReturnType<typeof vi.fn>;
 let injectSeq = 0;
-let overseerWakes: string[];
+let inboxItems: Array<{ cls: string; text: string }>;
 
 interface FakeTransport extends SlackTransport {
   posts: Array<{ channel: string; text: string; thread_ts?: string }>;
@@ -118,15 +119,6 @@ function commandDeps(): CommandDeps {
   };
 }
 
-/** Stand-in for PiSessionManager.injectOverseerFile: a real file, a real path. */
-async function injectOverseerFile(message: string): Promise<string> {
-  const d = join(dir, "inject", "overseer");
-  mkdirSync(d, { recursive: true });
-  const path = join(d, `2026-08-17T09-00-00-${String(++injectSeq).padStart(4, "0")}.md`);
-  writeFileSync(path, message);
-  return path;
-}
-
 function event(over: Partial<SlackInboundEvent> = {}): SlackInboundEvent {
   const ts = slackTs(now(), 1);
   return {
@@ -146,8 +138,18 @@ async function deliver(ev: SlackInboundEvent): Promise<void> {
   expect(transport.handler).toBeTypeOf("function");
   void transport.handler!(ev);
   await vi.waitFor(() => expect(store.slackEvent(ev.event_id)).toBeDefined());
-  // the handler is fire-and-forget; let the inject + origin write settle
+  // the handler is fire-and-forget; let the routing settle
   await new Promise((r) => setTimeout(r, 0));
+}
+
+/** The origin record a Slack turn used to leave: the belt's only input. */
+function seedSlackTurn(ev: SlackInboundEvent, tier: "owner" | "author"): void {
+  runtime.origins.write(`event-${ev.event_id}`, {
+    event_id: ev.event_id,
+    slack_user: ev.user ?? "",
+    tier,
+    authorized_prs: tier === "author" ? [PR] : [],
+  });
 }
 
 function writeSlackCommand(name: string, body: Record<string, unknown>): string {
@@ -173,7 +175,7 @@ function ledger(): Array<Record<string, unknown>> {
 beforeEach(async () => {
   clock = new Date("2026-08-17T09:00:00.000Z");
   injectSeq = 0;
-  overseerWakes = [];
+  inboxItems = [];
   dir = mkdtempSync(join(tmpdir(), "qcr-slack-e2e-"));
   mkdirSync(join(dir, "state"), { recursive: true });
   store = new StateStore(":memory:", now);
@@ -206,9 +208,8 @@ beforeEach(async () => {
     root: dir,
     store,
     commandDeps: commandDeps(),
-    injectOverseerFile,
-    injectOverseer: async (m) => {
-      overseerWakes.push(m);
+    writeInbox: async (text, cls) => {
+      inboxItems.push({ cls, text });
     },
     log: () => {},
     now,
@@ -226,44 +227,45 @@ afterEach(async () => {
 
 describe("the full concierge loop", () => {
   it(
-    "carries one Slack message to one threaded reply, and ledgers it",
+    "refuses an inbound message: one row, no inject, no origin, no post, no GitHub call",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const ev = event();
+      const postsBefore = transport.posts.length;
+      await deliver(ev);
+
+      // recorded, and refused with the reason that names the retirement
+      expect(store.slackEvent(ev.event_id)?.disposition).toBe("dropped_no_overseer");
+      expect(store.slackEvent(ev.event_id)?.injected_at).toBeNull();
+      // nothing was handed to a session and no rights record was written
+      expect(existsSync(join(dir, "inject"))).toBe(false);
+      expect(runtime.origins.latestAny()).toBeNull();
+      // the model never speaks, and the bot does not answer the channel
+      expect(transport.posts).toHaveLength(postsBefore);
+      expect(inboxItems).toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses the owner's inbound message too, and a redelivery stays one row", async () => {
+    const ev = event({ user: OWNER });
+    await deliver(ev);
+    await deliver(ev);
+    expect(store.slackEvent(ev.event_id)).toMatchObject({
+      tier: "owner",
+      disposition: "dropped_no_overseer",
+    });
+    expect(existsSync(join(dir, "inject"))).toBe(false);
+  });
+
+  it(
+    "a command file still posts one threaded reply and ledgers it",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const ev = event();
       await deliver(ev);
+      seedSlackTurn(ev, "author");
 
-      // (1) the turn was injected, once
-      expect(store.slackEvent(ev.event_id)?.disposition).toBe("injected");
-
-      // (2) the inject file exists and carries the trusted envelope
-      const injects = readdirSync(join(dir, "inject", "overseer"));
-      expect(injects).toHaveLength(1);
-      const body = readFileSync(join(dir, "inject", "overseer", injects[0]!), "utf8");
-      expect(body.startsWith(SLACK_INJECT_MARKER)).toBe(true);
-      expect(body).toContain(`| thread | ${ev.ts} |`);
-      expect(body).toContain("| tier | author |");
-      expect(body).toContain("| github_login | alice-gh |");
-      expect(body).toContain("> any news on the review for 4242?");
-
-      // (3) the rights were written down next to it, under state/slack/origin
-      const originPath = join(
-        dir,
-        "state",
-        "slack",
-        "origin",
-        injects[0]!.replace(/\.md$/, ".json"),
-      );
-      expect(existsSync(originPath)).toBe(true);
-      const origin = JSON.parse(readFileSync(originPath, "utf8"));
-      expect(origin).toMatchObject({
-        event_id: ev.event_id,
-        slack_user: ALICE,
-        tier: "author",
-        authorized_prs: [PR],
-      });
-      expect(runtime.origins.latest()?.event_id).toBe(ev.event_id);
-
-      // (4) the overseer answers by writing a command file into commands/slack/
       writeSlackCommand("reply-1", {
         command: "slack_reply",
         thread: ev.ts,
@@ -271,7 +273,7 @@ describe("the full concierge loop", () => {
       });
       await runtime.commands.sweep();
 
-      // (5) exactly one post, right channel, right thread, right text
+      // exactly one post, right channel, right thread, right text
       const replies = transport.posts.filter((p) => p.thread_ts === ev.ts);
       expect(replies).toHaveLength(1);
       expect(replies[0]).toEqual({
@@ -285,13 +287,13 @@ describe("the full concierge loop", () => {
         thread: ev.ts,
       });
 
-      // (6) ledgered under the command file's own idem key (one post per file),
+      // ledgered under the command file's own idem key (one post per file),
       // named by the directory that served it
       const row = store.slackPost("reply:slack/reply-1");
       expect(row).toMatchObject({ kind: "reply", thread_ts: ev.ts, ok: 1 });
       expect(row?.ts).toMatch(/^\d{10}\.\d{6}$/); // the delivered message's ts, as a string
 
-      // (7) not one GitHub call anywhere in that loop
+      // not one GitHub call anywhere in that loop
       expect(fetchSpy).not.toHaveBeenCalled();
     },
   );
@@ -299,6 +301,7 @@ describe("the full concierge loop", () => {
   it("refuses a second post for the same command file (replayed sweep)", async () => {
     const ev = event();
     await deliver(ev);
+    seedSlackTurn(ev, "author");
     writeSlackCommand("reply-2", { command: "slack_reply", thread: ev.ts, text: "once" });
     await runtime.commands.sweep();
     // The processed file is archived; re-writing the SAME name is a replay.
@@ -316,6 +319,7 @@ describe("the full concierge loop", () => {
   it("treats a new sealed operator file version as fresh while repeated sweeps stay deduplicated", async () => {
     const ev = event();
     await deliver(ev);
+    seedSlackTurn(ev, "author");
     const operator = join(dir, "commands", "operator");
     mkdirSync(operator, { recursive: true });
     const path = join(operator, "reply.json");
@@ -357,6 +361,7 @@ describe("the full concierge loop", () => {
   it("a same-named reply served from commands/ is a different delivery, not a replay", async () => {
     const ev = event();
     await deliver(ev);
+    seedSlackTurn(ev, "author");
     writeSlackCommand("reply-3", { command: "slack_reply", thread: ev.ts, text: "from slack/" });
     await runtime.commands.sweep();
     // What the commands/ watcher hands the same handler for its reply-3.json.
@@ -378,6 +383,7 @@ describe("tier enforcement in the production path", () => {
   it("denies file-issue from an author-tier turn: a `tier: ` reason, no GitHub call, no post", async () => {
     const ev = event();
     await deliver(ev);
+    seedSlackTurn(ev, "author");
     expect(runtime.origins.latest()?.tier).toBe("author");
 
     const postsBefore = transport.posts.length;
@@ -411,7 +417,7 @@ describe("tier enforcement in the production path", () => {
   });
 
   it("lets the owner through the same door", async () => {
-    await deliver(event({ user: OWNER, text: "re-run 4242 please" }));
+    seedSlackTurn(event({ user: OWNER, text: "re-run 4242 please" }), "owner");
     writeSlackCommand("rerun-2", { command: "rerun-round", pr: PR });
     await runtime.commands.sweep();
     expect(resultFile("rerun-2")).toMatchObject({ ok: true, command: "rerun-round" });
@@ -464,11 +470,12 @@ describe("announcements own the thread", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("routes the duplicate-consumer signal to the overseer, never to the channel", async () => {
+  it("routes the duplicate-consumer signal to the companion inbox, never to the channel", async () => {
     const postsBefore = transport.posts.length;
     runtime.announcer.noteConnections(3);
-    await vi.waitFor(() => expect(overseerWakes).toHaveLength(1));
-    expect(overseerWakes[0]).toContain("3 connections");
+    await vi.waitFor(() => expect(inboxItems).toHaveLength(1));
+    expect(inboxItems[0]?.cls).toBe("anomaly");
+    expect(inboxItems[0]?.text).toContain("3 connections");
     expect(transport.posts).toHaveLength(postsBefore);
     expect(fetchSpy).not.toHaveBeenCalled();
   });

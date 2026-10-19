@@ -101,7 +101,6 @@ function recordingHooks(): { hooks: SessionHooks; archived: number[] } {
     hooks: {
       async dispatchRound() {},
       async inject() {},
-      async injectOverseer() {},
       async archiveAndClose(pr) {
         archived.push(pr);
       },
@@ -834,7 +833,6 @@ describe("dry-run re-trigger suppression", () => {
   const hooks: SessionHooks = {
     dispatchRound: async () => {},
     inject: async () => {},
-    injectOverseer: async () => {},
     archiveAndClose: async () => {},
   };
 

@@ -320,7 +320,6 @@ async function dispatchRound(
       prompts.push(prompt);
     },
     async inject() {},
-    async injectOverseer() {},
     async archiveAndClose() {},
   };
   const eco = ecosystemFor("django");
@@ -754,7 +753,6 @@ describe("on: the selection is awaited beside the seed, within the budget (fake 
           prompts.push(prompt);
         },
         async inject() {},
-        async injectOverseer() {},
         async archiveAndClose() {},
       },
       renderPrompt: (o, memory) =>
@@ -1394,7 +1392,6 @@ describe("a round discarded before its handoff leaves no lesson record", () => {
               throw new Error("tmux refused the session");
             },
             async inject() {},
-            async injectOverseer() {},
             async archiveAndClose() {},
           },
           ecosystem: eco,

@@ -208,7 +208,7 @@ describe("the watchdog never delays or blocks the sweep", () => {
       timeZone: TZ,
       now: () => clock,
       readPrompt: () => "sweep {{date}}",
-      injectOverseer: h.watch.wrapInject(async (m) => {
+      writeInbox: h.watch.wrapInject(async (m) => {
         injected.push(m);
       }),
       setTimer: (cb, ms) => {

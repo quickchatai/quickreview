@@ -260,7 +260,6 @@ describe("an evicted recheck is asked again by the reconcile backstop (#5362 ④
   const hooks: SessionHooks = {
     async dispatchRound() {},
     async inject() {},
-    async injectOverseer() {},
     async archiveAndClose() {},
   };
 

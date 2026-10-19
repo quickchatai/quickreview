@@ -1201,11 +1201,9 @@ function stubDaemon(
     root,
     store,
     adapter,
-    hooks: {
-      ...stubSessionHooks(root),
-      injectOverseer: async (m: string) => {
-        opts.injected?.push(m);
-      },
+    hooks: stubSessionHooks(root),
+    writeInbox: async (m: string) => {
+      opts.injected?.push(m);
     },
     listen: false,
     log: () => {},

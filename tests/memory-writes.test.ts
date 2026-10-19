@@ -1641,7 +1641,7 @@ describe("the two S2 wake kinds", () => {
 
   it("a give-up minutes after a backlog wake still reaches the overseer", () => {
     const injected: string[] = [];
-    const policy = new AnomalyWakePolicy({ injectOverseer: async (m) => void injected.push(m) });
+    const policy = new AnomalyWakePolicy({ writeInbox: async (m) => void injected.push(m) });
     const store = new StateStore(":memory:");
     store.setAnomalySink((sig) => policy.onAnomaly(sig));
     store.logAnomaly(
@@ -1689,7 +1689,7 @@ function eodHarness(opts: {
     onFire: (d) => events.push(`fired ${d}`),
     onError: () => events.push("error"),
     onInjectFailed: (d, _err, n) => events.push(`failed ${d} after ${n}`),
-    injectOverseer:
+    writeInbox:
       opts.inject ??
       (async (m) => {
         injected.push(m);
@@ -1958,7 +1958,7 @@ describe("deferred days fire oldest first, ONE SWEEP at a time", () => {
         },
       },
       onDeferredStoreFailed: (op, dates) => failures.push([op, dates]),
-      injectOverseer: async () => {},
+      writeInbox: async () => {},
       setTimer: (cb) => {
         timers.push(cb);
         return timers.length - 1;

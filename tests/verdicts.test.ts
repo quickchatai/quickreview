@@ -23,6 +23,7 @@ import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { PassPlanEntry, SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
+import type { InboxWriter } from "../src/companioninbox.js";
 import {
   OWED_MEASUREMENT_RESUME_MAX_MS,
   STAGED_FILE_MAX_AGE_MS,
@@ -59,28 +60,26 @@ class FakeAdapter implements VerdictAdapter {
 }
 
 /** Mirror daemon.ts's wiring: anomaly wakes flow store → sink → hooks. */
+/** The inbox writer each recording hooks object collects into. */
+const inboxWriters = new WeakMap<SessionHooks, InboxWriter>();
+
 function wireWake(s: StateStore, hooks: SessionHooks): void {
-  const policy = new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m) });
+  const policy = new AnomalyWakePolicy({ writeInbox: inboxWriters.get(hooks) ?? (async () => {}) });
   s.setAnomalySink((sig) => policy.onAnomaly(sig));
 }
 
 function recordingHooks(): { hooks: SessionHooks; overseer: string[]; injects: string[] } {
   const overseer: string[] = [];
   const injects: string[] = [];
-  return {
-    overseer,
-    injects,
-    hooks: {
-      async dispatchRound() {},
-      async inject(pr, msg) {
-        injects.push(`${pr}:${msg}`);
-      },
-      async injectOverseer(msg) {
-        overseer.push(msg);
-      },
-      async archiveAndClose() {},
+  const hooks: SessionHooks = {
+    async dispatchRound() {},
+    async inject(pr, msg) {
+      injects.push(`${pr}:${msg}`);
     },
+    async archiveAndClose() {},
   };
+  inboxWriters.set(hooks, async (msg) => void overseer.push(msg));
+  return { overseer, injects, hooks };
 }
 
 let dir: string;
@@ -236,6 +235,7 @@ function watcher(
     store,
     adapter,
     hooks: h,
+    ...(inboxWriters.has(h) ? { writeInbox: inboxWriters.get(h)! } : {}),
     verdictDir: dir,
     root: dir, // usage measurement stays inside the temp dir…
     usage: { globalStoreDir: null }, // …and never scans the real ~/.pi store

@@ -20,6 +20,7 @@ import { roundPromptMarker } from "../src/types.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
+import type { InboxWriter } from "../src/companioninbox.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -39,6 +40,9 @@ class FakeVerdictAdapter implements VerdictAdapter {
   }
 }
 
+/** The inbox writer each `hooksWith` hooks object collects into. */
+const inboxWriters = new WeakMap<SessionHooks, InboxWriter>();
+
 /** SessionHooks with a controllable liveness signal. `alive === undefined`
  * models a stub with no signal at all (the hook is absent). */
 function hooksWith(alive?: boolean | (() => boolean)): {
@@ -53,11 +57,9 @@ function hooksWith(alive?: boolean | (() => boolean)): {
     async inject(pr, msg) {
       injects.push(`${pr}:${msg}`);
     },
-    async injectOverseer(msg) {
-      overseer.push(msg);
-    },
     async archiveAndClose() {},
   };
+  inboxWriters.set(hooks, async (msg) => void overseer.push(msg));
   if (alive !== undefined) {
     hooks.sessionAlive = async () => (typeof alive === "function" ? alive() : alive);
   }
@@ -107,13 +109,15 @@ function reviewingRound(pr: number, head = "abc123", opts: { stampMarker?: boole
 
 function watcher(hooks: SessionHooks, cfg: Config = baseCfg): VerdictWatcher {
   // Mirror daemon.ts's wiring: anomaly wakes flow store → sink → hooks.
-  const policy = new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m) });
+  const writeInbox = inboxWriters.get(hooks) ?? (async () => {});
+  const policy = new AnomalyWakePolicy({ writeInbox });
   store.setAnomalySink((sig) => policy.onAnomaly(sig));
   return new VerdictWatcher({
     cfg,
     store,
     adapter,
     hooks,
+    writeInbox,
     verdictDir: dir,
     root: dir,
     usage: { globalStoreDir: null },
@@ -572,7 +576,6 @@ function dispatchHooks(): { hooks: SessionHooks; orders: RoundOrder[] } {
         orders.push(order);
       },
       async inject() {},
-      async injectOverseer() {},
       async archiveAndClose() {},
     },
   };

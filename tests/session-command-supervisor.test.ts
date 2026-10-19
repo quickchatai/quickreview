@@ -151,7 +151,6 @@ function hooks(overrides: Partial<SessionHooks> = {}): SessionHooks {
   return {
     async dispatchRound() {},
     async inject() {},
-    async injectOverseer() {},
     async archiveAndClose() {},
     ...overrides,
   };

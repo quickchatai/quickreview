@@ -219,7 +219,6 @@ function wire(live = false): { watcher: VerdictWatcher; supervisor: SessionComma
   const hooks: SessionHooks = {
     async dispatchRound() {},
     async inject() {},
-    async injectOverseer() {},
     async archiveAndClose() {},
     async killSession(pr) {
       killed.push(pr);

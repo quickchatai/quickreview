@@ -801,7 +801,6 @@ describe("dispatch holds the round's window from the seed until the selection ta
         if (opts.handoff) await opts.handoff();
       },
       async inject() {},
-      async injectOverseer() {},
       async archiveAndClose() {},
     };
     const selector =

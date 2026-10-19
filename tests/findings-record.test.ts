@@ -501,7 +501,6 @@ function hooksOf(injects: string[]): SessionHooks {
     async inject(pr, msg) {
       injects.push(`${pr}:${msg}`);
     },
-    async injectOverseer() {},
     async archiveAndClose() {},
     async compactSession() {},
   };

@@ -145,7 +145,7 @@ describe("startEodTimer", () => {
       timeZone: TZ,
       now: () => clock,
       readPrompt: () => "sweep",
-      injectOverseer: async () => pending,
+      writeInbox: async () => pending,
       setTimer: (cb) => {
         timers.push(cb);
         return timers.length;
@@ -180,7 +180,7 @@ describe("startEodTimer", () => {
       timeZone: TZ,
       now: () => clock,
       readPrompt: () => "sweep for {{date}} — {{date}}",
-      injectOverseer: async (m) => {
+      writeInbox: async (m) => {
         injected.push(m);
       },
       setTimer: (cb, ms) => {
@@ -214,7 +214,7 @@ describe("startEodTimer", () => {
       timeZone: TZ,
       now: () => clock,
       readPrompt: () => "x {{date}}",
-      injectOverseer: async (m) => {
+      writeInbox: async (m) => {
         injected.push(m);
       },
       setTimer: (cb, ms) => {
@@ -275,7 +275,7 @@ describe("startEodTimer", () => {
         return `cancelled: none (${d})`;
       },
       onContextMissing: (d, why) => missing.push(`${d}: ${String(why)}`),
-      injectOverseer: async (m) => {
+      writeInbox: async (m) => {
         injected.push(m);
       },
       setTimer: (cb, ms) => {
@@ -322,7 +322,7 @@ describe("startEodTimer", () => {
           curation: "Decide every candidate, then write the receipt.",
         };
       },
-      injectOverseer: async (m) => {
+      writeInbox: async (m) => {
         injected.push(m);
       },
       setTimer: (cb, ms) => {
@@ -371,7 +371,7 @@ describe("startEodTimer", () => {
       dayContext: () => new Promise<string>(() => {}),
       dayContextTimeoutMs: 20,
       onContextMissing: (d, why) => missing.push(`${d}: ${String(why)}`),
-      injectOverseer: async (m) => {
+      writeInbox: async (m) => {
         injected.push(m);
       },
       setTimer: (cb, ms) => {

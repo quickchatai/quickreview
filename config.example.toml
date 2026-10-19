@@ -1012,7 +1012,7 @@ legacy_owner_slack_id = ""             # LEGACY alias of [owner] slack_id — se
 post_min_interval_ms = 1100       # Slack chat.postMessage is ~1 msg/s per channel
 reconnect_backoff_ms = [1000, 2000, 5000, 15000, 30000]
 server_ping_timeout_ms = 30000    # no server ping within this ⇒ reconnect
-catchup_max_age_s = 300           # older backlog messages are dropped, not replayed
+catchup_max_age_s = 300           # accepted, unused: Slack inbound turns are retired
 max_reply_chars = 3000
 name_cache_ttl_s = 86400
 

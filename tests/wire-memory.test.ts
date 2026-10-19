@@ -85,7 +85,7 @@ describe("wire.ts: the memory phase is actually connected", () => {
 
   it("the EOD inject is wrapped by the pinned-area watchdog", () => {
     expect(wire).toContain("startEodPinWatch");
-    expect(wire).toMatch(/injectOverseer:\s*pinWatch \? pinWatch\.wrapInject/);
+    expect(wire).toMatch(/writeInbox:\s*pinWatch \? pinWatch\.wrapInject/);
   });
 
   it("the daemon materializes the memory root when the server comes up", () => {
@@ -243,12 +243,6 @@ describe("wire.ts: bounded sessions, shed load", () => {
     const tui = readFileSync(join(process.cwd(), "src", "tui", "index.ts"), "utf8");
     expect(tui).toMatch(
       /const memStore = tuiMemoryStore\(\{\s*retiredFiles: \{ companion: join\(memStateHome\(\), COMPANION_MEMORY\.retiredFile\) \},\s*\}\);/,
-    );
-  });
-
-  it("the reconcile pass's raw-tier sweep survives the daemon-origin wrap", () => {
-    expect(wire).toMatch(
-      /hooks\.sweepStaleOvSessions\s*\?\s*\{ sweepStaleOvSessions: \(\) => hooks\.sweepStaleOvSessions!\(\) \}/,
     );
   });
 });

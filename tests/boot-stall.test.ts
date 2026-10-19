@@ -140,7 +140,6 @@ describe("the undelivered-recheck sweep at the live data's shape", () => {
       const hooks: SessionHooks = {
         async dispatchRound() {},
         async inject() {},
-        async injectOverseer() {},
         async archiveAndClose() {},
         async injectPending() {
           return false;
@@ -567,7 +566,6 @@ describe("the daemon's reconcile (boot stall)", () => {
         hooks: {
           async dispatchRound() {},
           async inject() {},
-          async injectOverseer() {},
           async archiveAndClose() {},
           async injectPending() {
             return false;

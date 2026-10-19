@@ -562,9 +562,7 @@ describe("fences — daemon bookkeeping only", () => {
   it("src/archive/ never spawns pi, injects, wakes or kills a session (root rule 9)", () => {
     const offenders = sources
       .filter(([, text]) =>
-        /["'`]pi["'`]\s*,|piBin|--no-session|\.inject\(|injectOverseer|killSession|child_process/.test(
-          text,
-        ),
+        /["'`]pi["'`]\s*,|piBin|--no-session|\.inject\(|killSession|child_process/.test(text),
       )
       .map(([f]) => f);
     expect(offenders).toEqual([]);

@@ -423,7 +423,6 @@ describe("the verdict path requeues instead of applying", () => {
   const hooks: SessionHooks = {
     async dispatchRound() {},
     async inject() {},
-    async injectOverseer() {},
     async archiveAndClose() {},
   };
   const watcher = () =>

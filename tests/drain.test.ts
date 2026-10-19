@@ -227,7 +227,6 @@ describe("dispatch pump while draining", () => {
           orders.push(order);
         },
         async inject() {},
-        async injectOverseer() {},
         async archiveAndClose() {},
       };
       store.engageDrain({ issuer: "operator", expires_at: null });
@@ -329,7 +328,7 @@ describe("EOD sweep while draining", () => {
       readPrompt: () => "sweep {{date}}",
       shouldHold: () => draining,
       onHeld: (d) => held.push(d),
-      injectOverseer: async (m) => {
+      writeInbox: async (m) => {
         injected.push(m);
       },
       setTimer: (cb, ms) => {

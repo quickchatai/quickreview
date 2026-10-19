@@ -594,8 +594,6 @@ export interface SessionHooks {
   dispatchRound(order: RoundOrder, renderedPrompt: string): Promise<void>;
   /** Wake the session outside a round (ping-pong, anomaly follow-ups). */
   inject(pr: number, message: string): Promise<void>;
-  /** Inject into the overseer session (anomalies, EOD sweep). */
-  injectOverseer(message: string): Promise<void>;
   /** PR merged/closed: archive session JSONL + ledger, drop worktree, kill tmux. */
   archiveAndClose(pr: number): Promise<void>;
   /** The reconcile pass's sweep over the raw tier: delete the

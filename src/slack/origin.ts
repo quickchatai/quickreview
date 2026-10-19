@@ -215,6 +215,28 @@ function byDeliveryDesc(a: Held, b: Held): number {
   return a.stem < b.stem ? 1 : a.stem > b.stem ? -1 : b.seq - a.seq;
 }
 
+/**
+ * Delete every record under an origin directory (and its torn tmp files).
+ * Best effort and never throws: with no Slack turn left to describe, a record
+ * is only a stale restriction.
+ */
+export function clearOriginRecords(dir: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json") && !name.includes(".tmp")) continue;
+    try {
+      rmSync(join(dir, name), { force: true });
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 export class OriginStore {
   private seq = 0;
   /** The records THIS process wrote, keyed by file path — the only authority. */

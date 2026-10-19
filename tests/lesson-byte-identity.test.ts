@@ -190,7 +190,6 @@ async function renderRound(
         prompts.push(prompt);
       },
       async inject() {},
-      async injectOverseer() {},
       async archiveAndClose() {},
     };
     const eco = ecosystemFor("django");
