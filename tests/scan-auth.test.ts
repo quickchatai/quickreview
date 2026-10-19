@@ -1,4 +1,4 @@
-// The scan sandbox's pi login (src/scanauth.ts over src/piauthcopy.ts): the
+// The scan sandbox's pi login (src/engine/auth.ts): the
 // companion's pi home is the only login and the only refresher. A scan reads
 // it read-only and, before every case, takes a fresh private copy of its
 // auth.json with every refresh token neutralised — the copy the benchmark
@@ -20,14 +20,16 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { benchAuthFrom, DISABLED_REFRESH as BENCH_DISABLED } from "../src/bench/auth.js";
-import { AuthExpiring, DISABLED_REFRESH, loginSummary } from "../src/piauthcopy.js";
 import {
+  AuthExpiring,
+  DISABLED_REFRESH,
+  loginSummary,
   scanAuthCases,
   scanCasesForEnv,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
   syncScanAuth,
-} from "../src/scanauth.js";
+} from "../src/engine/auth.js";
 import { LOGIN_SUMMARY_SCRIPT, SCAN_AUTH_COPY_SCRIPT, SCANBOX } from "../src/scanbox.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "../src/setup/engine.js";
 
@@ -234,14 +236,26 @@ it("stops a borrowed-login case before its admission budget ends and retains spe
   try {
     writeFileSync(join(src, "auth.json"), login("tok-A", 10 * HOUR));
     let observed: AbortSignal | undefined;
-    const cases = scanAuthCases({ run: async (_spec: string, signal: AbortSignal) => {
-      observed = signal;
-      return new Promise<CaseOutcome>((resolve) => signal.addEventListener("abort", () =>
-        resolve({ ok: false, reason: "stopped", cost_usd: 0.25 }), { once: true }));
-    } }, { srcDir: src, dstDir: dst, needMs: 60_000, now: () => 0, onExpired: () => {} });
+    const cases = scanAuthCases(
+      {
+        run: async (_spec: string, signal: AbortSignal) => {
+          observed = signal;
+          return new Promise<CaseOutcome>((resolve) =>
+            signal.addEventListener(
+              "abort",
+              () => resolve({ ok: false, reason: "stopped", cost_usd: 0.25 }),
+              { once: true },
+            ),
+          );
+        },
+      },
+      { srcDir: src, dstDir: dst, needMs: 60_000, now: () => 0, onExpired: () => {} },
+    );
     const result = cases.run("fixture", new AbortController().signal);
     await vi.advanceTimersByTimeAsync(55_000);
     expect(observed?.aborted).toBe(true);
     expect(await result).toMatchObject({ ok: false, cost_usd: 0.25 });
-  } finally { vi.useRealTimers(); }
+  } finally {
+    vi.useRealTimers();
+  }
 });

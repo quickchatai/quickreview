@@ -195,7 +195,7 @@ describe("qcr scan doctor and login", () => {
     const h = harness({ doctor: async () => report });
     const j = await h.run(["doctor"], true);
     expect(j.code).toBe(1);
-    expect(j.json).toEqual(report);
+    expect(j.json).toEqual({ schema_version: 1, ...report });
     const t = await h.run(["doctor"]);
     expect(t.text).toMatch(/✗ image — stamp differs\n {2}fix: qcr scan rebuild/);
     const ok = harness({
@@ -213,6 +213,7 @@ describe("qcr scan doctor and login", () => {
     expect(t.text).toMatch(/^Scan image qcr-companion built \(stamp abcd\)/);
     expect(t.text).toMatch(/no container was stopped or replaced/);
     expect((await h.run(["rebuild"], true)).json).toEqual({
+      schema_version: 1,
       ok: true,
       image: "qcr-companion",
       stamp: "abcd",

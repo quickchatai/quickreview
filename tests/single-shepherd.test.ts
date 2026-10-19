@@ -1,8 +1,9 @@
 // The single-shepherd invariant (docs/single-shepherd-invariant.md): one main
-// pi per PR owns the review, the daemon only nudges, every agent runs through
-// the `subagent` tool (pi's native subagent extension, loaded per spawn by the
-// first-party glue) launched by that one pi, and it is never given
-// two instructions at once.
+// pi per PR owns the review, the daemon only nudges, agents are launched only
+// by the round's engine (the planned discovery wave) and by that one pi (the
+// `subagent` / `launch_plan` tools on the tmux bot, the `lens` / `lens_wave`
+// tools on engine routes), lenses are leaves, and the main pi is never given
+// two instructions at once, bar an operator's steer.
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import {
   existsSync,
@@ -16,15 +17,17 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkBashCommand } from "../extensions/bash-guard.js";
-import type { Config } from "../src/config.js";
+import { COMPANION_DEFAULTS, resolveCompanionPaths, type Config } from "../src/config.js";
 import { LEAF_MEMORY_TOOLS, buildAgents, stripAgentSpawnTools } from "../src/include.js";
 import { writeSessionBridgeState } from "../src/session-bridge.js";
 import { OVERSEER_SESSION, PiSessionManager, isSandboxSession } from "../src/sessions.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
 import { Tmux } from "../src/tmux.js";
+import { CompanionLifecycle } from "../src/tui/companion.js";
 import type { ExecFn } from "../src/tmux.js";
 import { flushHeldWakes, pauseDefersAllHeldWakes, wakeOrHold } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
+import { runtimeSdkImporters } from "./helpers/engine-fences.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 // ---- S1/S2: the daemon spawns two session kinds and launches no agent ------
@@ -156,6 +159,41 @@ describe("daemon topology", () => {
     }
   });
 
+  it("S2: only pisdk.ts and the extension factories import the pi SDK at runtime", () => {
+    // The SDK is the engine's session host, not a daemon facility: the daemon
+    // never reaches it, and runLens gets its sessions from PiHost.makeSession
+    // rather than importing the SDK itself. Type-only imports (erased at
+    // build) are free; extensions/ are the factory modules pi loads. The scan
+    // and its planted cases are in tests/fences-engine.test.ts.
+    const offenders = runtimeSdkImporters(join(import.meta.dirname, "..")).filter(
+      (f) => f !== "src/engine/pisdk.ts" && !f.startsWith("extensions/"),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("CLAUDE.md rule 9 is the ratified text (D9)", () => {
+    // Rule text changes only by the owner's ratification, so the test pins it
+    // verbatim (whitespace folded: CLAUDE.md wraps it). The same words open
+    // docs/single-shepherd-invariant.md's amendment.
+    const RATIFIED =
+      "[private rule text removed]";
+    const text = readFileSync(join(import.meta.dirname, "..", "CLAUDE.md"), "utf8");
+    const start = text.indexOf("\n9. ");
+    const end = text.indexOf("\n10. ", start);
+    expect(start).toBeGreaterThan(-1);
+    const rule = text
+      .slice(start + 4, end)
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(rule).toBe(RATIFIED);
+    const doc = readFileSync(
+      join(import.meta.dirname, "..", "docs", "single-shepherd-invariant.md"),
+      "utf8",
+    );
+    expect(doc).toContain("Exactly two launchers");
+    expect(doc).toContain("`lens` / `lens_wave`");
+  });
+
   it("S2: no daemon module invokes pi outside the session manager", () => {
     // sessions.ts owns the daemon's pi argv. smoke-session.ts is the operator's
     // one-shot session smoke. tui/companion.ts is the COMPANION boundary — a
@@ -168,15 +206,29 @@ describe("daemon topology", () => {
     // setup/caserunner.ts is the companion's survey/scan case
     // runner: it runs only inside the companion container (extensions/
     // setup.ts, never the daemon — the check below pins that no daemon module
-    // imports src/setup/), and each spawn is a `-p --no-session
-    // --no-extensions` leaf with read-only tools, not a session.
+    // imports src/setup/), and each spawn is a `-p --no-session -ne` leaf
+    // (bash-guard the one extension) with read-only tools, not a session.
     const allowed = ["sessions.ts", "smoke-session.ts", "companion.ts"];
     // scanbox.ts is the scan sandbox: its pi runs in a throwaway container
     // from the companion image (`qcr scan login` interactively, the doctor's
     // one-shot `-p --no-session --no-extensions` probe), or — the doctor's
     // probe with `[scan] sandbox = "host"` — the same one-shot leaf on the
     // operator's machine. No daemon module imports it (pinned below).
-    const allowedPaths = ["/src/bench/runner.ts", "/src/setup/caserunner.ts", "/src/scanbox.ts"];
+    // reviewcli.ts is `qcr review`: the operator's own terminal, the shared
+    // one-shot runner (oneshot.ts) with a pi binary override. Only cli.ts
+    // imports it (dynamically); no daemon module does.
+    // opencli.ts is `qcr open` and engine/debugpi.ts is `qcr review --debug-pi`:
+    // the operator's own terminal, pi on its interactive UI over a finished or a
+    // starting round (P5.9). Only cli.ts and reviewcli.ts import them (dynamically).
+    const allowedPaths = [
+      "/src/oneshot.ts",
+      "/src/reviewcli.ts",
+      "/src/opencli.ts",
+      "/src/engine/debugpi.ts",
+      "/src/bench/runner.ts",
+      "/src/setup/caserunner.ts",
+      "/src/scanbox.ts",
+    ];
     const offenders = srcFiles(src)
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))
@@ -212,13 +264,21 @@ describe("daemon topology", () => {
     // case runner in the operator's own one-shot process (as the companion
     // drives it in its container). It holds only while nothing but the CLI's
     // dispatch reaches it, which the check after this one pins.
-    const operatorEntries = ["/src/scancli.ts"];
+    // src/engine/caserunner-sdk.ts is the same runner's SDK twin (P5.7): it
+    // reads the leaf's agent file and event stream with the process runner's
+    // own helpers, so it reaches setup/caserunner.js at runtime. Only
+    // scancli.ts loads it (on demand, in the detached driver), pinned below.
+    const operatorEntries = ["/src/scancli.ts", "/src/engine/caserunner-sdk.ts"];
     const reachesScanCli = srcFiles(src)
       .filter((f) => !f.endsWith("/src/cli.ts"))
       .filter((f) => /["'][^"']*\/scancli\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanCli).toEqual([]);
     // The scan sandbox's pi allowance above holds only while `qcr scan` is
     // the one module that reaches it.
+    const reachesSdkLeaves = srcFiles(src)
+      .filter((f) => !f.endsWith("/src/scancli.ts"))
+      .filter((f) => /["'][^"']*\/caserunner-sdk\.js["']/.test(readFileSync(f, "utf8")));
+    expect(reachesSdkLeaves).toEqual([]);
     const reachesScanBox = srcFiles(src)
       .filter((f) => !f.endsWith("/src/scancli.ts"))
       .filter((f) => /["'][^"']*\/scanbox\.js["']/.test(readFileSync(f, "utf8")));
@@ -405,6 +465,15 @@ describe("stripAgentSpawnTools", () => {
     expect(stripAgentSpawnTools("tools: read, launch_plan, grep\n")).toBe("tools: read, grep\n");
   });
 
+  it("drops the engine routes' lens tools (D3) the same way", () => {
+    expect(stripAgentSpawnTools("tools: read, lens, grep\n")).toBe("tools: read, grep\n");
+    expect(stripAgentSpawnTools("tools: read, lens_wave, grep\n")).toBe("tools: read, grep\n");
+    expect(stripAgentSpawnTools("tools: read, Lens_Wave, lens, bash\n")).toBe(
+      "tools: read, bash\n",
+    );
+    expect(stripAgentSpawnTools("name: x\ntools: lens, lens_wave\n")).not.toContain("tools:");
+  });
+
   it("leaves a clean tools line untouched", () => {
     expect(stripAgentSpawnTools("name: x\ntools: read, bash, grep, glob\n")).toBe(
       "name: x\ntools: read, bash, grep, glob\n",
@@ -447,6 +516,26 @@ describe("buildAgents — built passes cannot launch agents", () => {
       expect(frontmatter).toContain("read, bash, grep");
       expect(text).toContain("You are a leaf");
       expect(text).toContain("never launch another agent");
+    }
+  });
+
+  it("strips the engine routes' lens tools a seed might grow (D3)", () => {
+    const src = join(dir, "agents");
+    const out = join(dir, "built");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(
+      join(src, "pass-baseline.md"),
+      "---\nname: pass-baseline\ntools: read, lens, bash, lens_wave, grep\nmodel: openai/x\n---\n\nbody\n",
+    );
+    for (const agent of buildAgents(src, out, { riskPasses: [], validateTier: "terra-med" })) {
+      const text = readFileSync(agent.output, "utf8");
+      const tools = /^tools:[ \t]*(.*)$/m
+        .exec(text)![1]!
+        .split(",")
+        .map((t) => t.trim());
+      expect(tools).toEqual(expect.arrayContaining(["read", "bash", "grep"]));
+      expect(tools).not.toContain("lens");
+      expect(tools).not.toContain("lens_wave");
     }
   });
 
@@ -495,7 +584,20 @@ describe("buildAgents — built passes cannot launch agents", () => {
 // out, and it holds no matter what a frontmatter says.
 describe("subagents glue is never registered globally", () => {
   const root = join(import.meta.dirname, "..");
-  for (const file of ["deploy/ansible/templates/entrypoint.sh.j2", "docker/daemon/entrypoint.sh"]) {
+  // The release image's entrypoint (the VM's, since the cutover) names its one
+  // required global extension on the daemon mode's call into the settings merge.
+  it("docker/entrypoint.sh: the global extension list carries no subagent loader", () => {
+    const text = readFileSync(join(root, "docker/entrypoint.sh"), "utf8");
+    const wanted = [...text.matchAll(/QCR_PI_REQUIRE_EXT="([^"]*)"/g)].map((m) => m[1] ?? "");
+    const paths = wanted.flatMap((w) => w.split(":")).filter(Boolean);
+    expect(paths).toEqual(["$APP/extensions/bash-guard.ts"]);
+    for (const p of paths) {
+      expect(p, `${p} must not hand children an agent launcher or memory`).not.toMatch(
+        /subagent|openviking|register-lens|extensions\/lens/,
+      );
+    }
+  });
+  for (const file of ["docker/daemon/entrypoint.sh"]) {
     it(`${file}: the global extension list carries no subagent loader`, () => {
       const text = readFileSync(join(root, file), "utf8");
       const wanted = /const wanted = \[([\s\S]*?)\];/.exec(text)?.[1] ?? "";
@@ -503,11 +605,34 @@ describe("subagents glue is never registered globally", () => {
       expect(paths.length).toBeGreaterThan(0);
       for (const p of paths) {
         expect(p, `${p} must not hand children an agent launcher or memory`).not.toMatch(
-          /subagent|openviking|register-lens/,
+          /subagent|openviking|register-lens|extensions\/lens/,
         );
       }
     });
   }
+
+  // extensions/lens.ts hosts SDK lens sessions in an interactive pi (a debug
+  // round, the companion since P7.8). The tmux bot runs the native pair
+  // through extensions/subagents.ts and never loads it: the argv lists that
+  // start its sessions and the bench's must not name it.
+  for (const file of ["src/sessions.ts", "src/bench/runner.ts"]) {
+    it(`${file}: the tmux bot's and the bench's pi never load extensions/lens.ts`, () => {
+      const text = readFileSync(join(root, file), "utf8");
+      expect(text).not.toMatch(/extensions\/lens\b|["']lens\.ts["']/);
+    });
+  }
+
+  it("src/tui/companion.ts: the companion loads our lens tool, not the example-subagent glue", () => {
+    const argv = new CompanionLifecycle(
+      resolveCompanionPaths({ ...COMPANION_DEFAULTS, repo_dir: "/r" }, "/r"),
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      { HOME: "/h" },
+      () => {},
+      { exists: () => false, read: () => undefined, mode: () => undefined },
+    ).piArgv();
+    expect(argv).toContain("/opt/qcr/extensions/lens.ts");
+    expect(argv.filter((a) => /subagents?\.ts$|register-lens/.test(a))).toEqual([]);
+  });
 });
 
 // ---- S3: bash is never an agent launcher ----------------------------------

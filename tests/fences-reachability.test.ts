@@ -66,6 +66,27 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "does, this entry is the debt being VISIBLE rather than silent, which is the whole point of [T8].",
     },
     {
+      file: "src/engine/envmap.ts",
+      why:
+        "the table classifying every QCR_* and OPENVIKING_* name the extensions carry (P1.2). It is read " +
+        "only by tests/extension-envmap.test.ts until the SDK session builder (P2) and the extension " +
+        "factories (P3) take it. Delete this entry with the first import.",
+    },
+    {
+      file: "src/piauthcopy.ts",
+      why:
+        "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +
+        "(`dist/src/piauthcopy.js`, src/scanbox.ts LOGIN_SUMMARY_SCRIPT), a driver this static scan cannot " +
+        "follow. Delete it, and point the script at engine/auth.js, with the companion rebuild.",
+    },
+    {
+      file: "src/scanauth.ts",
+      why:
+        "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +
+        "(`dist/src/scanauth.js`, src/scanbox.ts SCAN_AUTH_COPY_SCRIPT), a driver this static scan cannot " +
+        "follow. Delete it, and point the script at engine/auth.js, with the companion rebuild.",
+    },
+    {
       file: "src/reviewrendercli.ts",
       why:
         "the `[review] render_outputs` renderer's command line. Driven by scripts/render-review.sh, which a " +
@@ -97,10 +118,16 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       // whatever the pi extensions reach into. `smoke-session.ts` is a root
       // rather than an orphan because `npm run smoke:session` launches it;
       // `bench/cli.ts` because the qcr-bench sandbox image's entrypoint
-      // (bench/aacr/in-container.sh) launches it.
-      const roots = ["src/wire.ts", "src/cli.ts", "src/smoke-session.ts", "src/bench/cli.ts"].map(
-        (p) => join(ROOT, p),
-      );
+      // (bench/aacr/in-container.sh) launches it; `openviking/sidecar-main.ts`
+      // because the memory image's entrypoint (docker/memory/entrypoint.sh)
+      // execs it out of dist/.
+      const roots = [
+        "src/wire.ts",
+        "src/cli.ts",
+        "src/smoke-session.ts",
+        "src/bench/cli.ts",
+        "src/openviking/sidecar-main.ts",
+      ].map((p) => join(ROOT, p));
       for (const f of tsFiles(join(ROOT, "extensions"))) {
         for (const m of stripComments(readFileSync(f, "utf8")).matchAll(
           /["'](\.[^"']+)\.js["']/g,

@@ -26,6 +26,7 @@ import { connect, type Socket } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, type CompanionConfig } from "../src/config.js";
 import {
+  COMPANION_MODE,
   CompanionLifecycle,
   CONTAINER,
   KEY_NAMES,
@@ -229,7 +230,7 @@ describe("memory wiring on the container", () => {
     const argv = lc.runArgv();
     expect(argv).not.toContain("--network");
     expect(argv.join(" ")).not.toContain("OPENVIKING_URL");
-    expect(argv[argv.length - 1]).toBe(CFG.image); // still a runnable container
+    expect(argv.slice(-2)).toEqual([CFG.image, COMPANION_MODE]); // still a runnable container
     expect(calls.some((c) => c[1] === "create")).toBe(true);
   });
 
@@ -287,18 +288,12 @@ describe("memory wiring on the container", () => {
     expect(connect).toBeGreaterThan(start);
   });
 
-  it("loads the vendored patched extension when it is present, and shrugs when it is not", async () => {
+  it("loads the vendored patched extension from the image, whatever the checkout holds", async () => {
     const { runner } = docker([networkUp()]);
-    const without = new CompanionLifecycle(CFG, runner, {}, () => {}, fakeFs({}));
-    expect(without.piArgv().join(" ")).not.toContain("openviking-pi");
-    const withExt = new CompanionLifecycle(
-      CFG,
-      runner,
-      {},
-      () => {},
-      fakeFs({ [`${CFG.repo_dir}/extensions/vendor/openviking-pi/index.ts`]: "" }),
-    );
-    const argv = withExt.piArgv();
+    // The extension rides the image (D20), so the host checkout is not asked.
+    const lc = new CompanionLifecycle(CFG, runner, {}, () => {}, fakeFs({}));
+    const argv = lc.piArgv();
+    expect(MEMORY.extension).toBe(`${CONTAINER.app}/extensions/vendor/openviking-pi/index.ts`);
     expect(argv).toContain(MEMORY.extension);
     expect(argv[argv.indexOf(MEMORY.extension) - 1]).toBe("--extension");
   });
@@ -384,17 +379,53 @@ describe("the memory forward", () => {
     expect(forward.DEFAULTS.port).toBe(MEMORY.port);
   });
 
-  it("relays into the VM container's own netns — nothing is published on the VM", () => {
+  it("relays into the memory SIDECAR's own netns — nothing is published on the VM", () => {
     const argv = forward.relayArgv(cfg) as string[];
     const remote = argv[argv.length - 1]!;
     expect(argv[argv.length - 2]).toBe("my-vm");
-    expect(remote).toContain("sudo docker exec -i quickreview-sandbox node -e");
+    expect(remote).toContain("sudo docker exec -i quickreview-memory node -e");
     // The last hop is loopback INSIDE that container: no VM port, no bridge IP.
     expect(remote).toContain('connect(1933,"127.0.0.1")');
     // A shared control connection, or every HTTP request pays an ssh login.
     expect(argv).toContain("ControlMaster=auto");
     expect(argv).toContain("ControlPersist=4h");
     expect(argv).toContain("BatchMode=yes");
+  });
+
+  it("the ssh default target is the sidecar the playbook runs, and rolling back is one flag", () => {
+    const groupVars = readFileSync(
+      join(root, "deploy", "ansible", "group_vars", "all.yml"),
+      "utf8",
+    );
+    const name = /^memory_container_name:\s*(\S+)/m.exec(groupVars)?.[1];
+    expect(forward.DEFAULTS.container).toBe(name);
+    const dflt = forward.parseArgs(["run"], {} as NodeJS.ProcessEnv).cfg;
+    expect(dflt.container).toBe("quickreview-memory");
+    // [openviking] endpoint = "local": OpenViking is the daemon container's child again.
+    const back = forward.parseArgs(
+      ["run", "--container", "quickreview-sandbox"],
+      {} as NodeJS.ProcessEnv,
+    ).cfg;
+    expect(forward.relayArgv(back).at(-1)).toContain("docker exec -i quickreview-sandbox node -e");
+    const viaEnv = forward.parseArgs(["run"], {
+      QCR_VM_CONTAINER: "quickreview-sandbox",
+    } as NodeJS.ProcessEnv).cfg;
+    expect(viaEnv.container).toBe("quickreview-sandbox");
+  });
+
+  it("a one-machine (--local) forward keeps the daemon container as its default: the sidecar is opt-in there", () => {
+    const local = forward.parseArgs(["run", "--local"], {} as NodeJS.ProcessEnv).cfg;
+    expect(local.container).toBe("quickreview-sandbox");
+    const withSidecar = forward.parseArgs(
+      ["run", "--local", "--container", "qcr-memory-box"],
+      {} as NodeJS.ProcessEnv,
+    ).cfg;
+    expect((forward.localRelayArgv(withSidecar) as string[]).includes("qcr-memory-box")).toBe(true);
+  });
+
+  it("the unit the installer writes carries the container it relays into", () => {
+    const unit = forward.unitText({ ...cfg, unit: "qcr-memory-forward" }, {}) as string;
+    expect(unit).toMatch(/--container quickreview-memory\b/);
   });
 
   it("keeps the remote bridge free of single quotes (it is single-quoted for the remote shell)", () => {
@@ -891,15 +922,19 @@ describe("memory health watcher", () => {
 // ---- the container image ----------------------------------------------------
 
 describe("companion image carries the memory path, not a credential", () => {
-  const dockerfile = readFileSync(resolve(root, "docker/companion/Dockerfile"), "utf8");
-  const entrypoint = readFileSync(resolve(root, "docker/companion/entrypoint.sh"), "utf8");
+  const dockerfile = readFileSync(resolve(root, "docker/Dockerfile"), "utf8");
+  const entrypoint = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
 
   it("bakes the health watcher in (it must start with the container, not with a build)", () => {
-    // The build context is the app root (the root .dockerignore).
+    // The build context is the app root (docker/Dockerfile.dockerignore).
     expect(dockerfile).toContain(
-      "COPY docker/companion/memory-health.mjs /usr/local/lib/qcr/memory-health.mjs",
+      "COPY docker/companion/memory-health.mjs ./docker/companion/memory-health.mjs",
     );
-    expect(entrypoint).toContain("node /usr/local/lib/qcr/memory-health.mjs &");
+    expect(readFileSync(resolve(root, "docker/Dockerfile.dockerignore"), "utf8")).toContain(
+      "!docker/companion/memory-health.mjs",
+    );
+    expect(entrypoint).toContain('local watcher="$APP/docker/companion/memory-health.mjs"');
+    expect(entrypoint).toContain('node "$watcher" &');
     // Backgrounded and guarded: the watcher can never keep the container down.
     // PID 1 parks on `wait` rather than exec'ing sleep, so SIGTERM
     // is actually handled — but it still parks, which is what this asserts.

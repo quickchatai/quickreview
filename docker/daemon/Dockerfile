@@ -1,8 +1,8 @@
 # Review-sandbox runtime — plain (non-templated) Docker path.
 #
-# The Ansible route renders deploy/ansible/templates/Dockerfile.j2 for the
-# live VM; THIS file is the same image for any Docker host, with the Jinja
-# variables replaced by build ARGs. The ARG defaults below are a MIRROR of the
+# The Ansible route used to render deploy/ansible/templates/Dockerfile.j2 for
+# the live VM (retired by the release image cutover); THIS file was the same
+# image for any Docker host, with the Jinja variables replaced by build ARGs. The ARG defaults below are a MIRROR of the
 # pins in config.toml ([pi] / [openviking]) and deploy/ansible/group_vars/
 # all.yml — tests/docker-daemon.test.ts fails the moment any default drifts
 # from those sources of truth, the same discipline the templated image gets

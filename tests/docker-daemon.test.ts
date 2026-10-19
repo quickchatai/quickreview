@@ -176,8 +176,6 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     const dirs = prep![1]!.split(/\s+/);
     expect(dirs).toContain("/home/review/.pi");
     expect(dirs).toContain("/opt/quickreview/state");
-    expect(compose).toContain("qcr-pihome:/home/review/.pi");
-    expect(compose).toContain("qcr-state:/opt/quickreview/state");
     expect(dockerfile.indexOf(prep![0])).toBeGreaterThan(dockerfile.indexOf("RUN useradd"));
     expect(dockerfile.indexOf(prep![0])).toBeLessThan(dockerfile.indexOf("USER review"));
   });
@@ -313,6 +311,48 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   });
 });
 
+// The release image's entrypoint (docker/entrypoint.sh, daemon mode) carries
+// the plain boot's no-stall and guard invariants over unchanged; the executed
+// per-mode checks are tests/entrypoint.test.ts. What it drops is the plain
+// boot's checkout dance: no state symlink, no npm build, and no OpenViking
+// (the memory sidecar owns that, P6.12).
+describe("release entrypoint (daemon mode) — same invariants as the plain boot", () => {
+  const release = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
+
+  it("keeps the no-stall trust layers: defaultProjectTrust=always + a pre-seeded trust.json", () => {
+    expect(release).toContain('settings.defaultProjectTrust = "always"');
+    expect(release).toContain("trust[trustDir] = true");
+    expect(release).toContain('QCR_PI_TRUST_DIR="$APP"');
+  });
+
+  it("registers ONLY bash-guard globally, hard-failing when it is missing", () => {
+    expect(release).toContain("FATAL: pi extension missing");
+    expect([...release.matchAll(/QCR_PI_REQUIRE_EXT="([^"]+)"/g)].map((m) => m[1])).toEqual([
+      "$APP/extensions/bash-guard.ts",
+    ]);
+  });
+
+  it("links the pi user agents dir at the built state/agents, never clobbering a real directory", () => {
+    expect(release).toContain('QCR_PI_AGENTS_TARGET="$STATE/agents"');
+    expect(release).toContain("is not a symlink — NOT touching it");
+  });
+
+  it("names the secrets mount to the install locator and links <config home>/secrets to it", () => {
+    expect(release).toMatch(/^\s+export QCR_SECRETS_MOUNT="\$secrets"$/m);
+    expect(release).toContain('ln -sfn "$secrets" "$secrets_home"');
+  });
+
+  it("keeps the examples/subagent FATAL until the lens tool replaces it", () => {
+    expect(release).toContain("does not ship examples/extensions/subagent");
+  });
+
+  it("has none of the checkout dance: no state symlink, no boot-time npm build", () => {
+    expect(release).not.toMatch(/npm (ci|run build)/);
+    expect(release).not.toMatch(/ln -sfn [^\n]*state/);
+    expect(release).not.toContain(".build-lock-hash");
+  });
+});
+
 // The boot build, checked by execution: the block is lifted out of the
 // entrypoint and run against a temp checkout with a stub npm that logs its
 // argv. The checkout is bind-mounted, so a source change must reach dist/
@@ -367,7 +407,7 @@ describe("the boot build (executed)", () => {
     });
   }
 
-  it.each(["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"])(
+  it.each(["docker/daemon/entrypoint.sh"])(
     "reinstalls native dependencies when Node ABI changes in %s",
     (path) => {
       setup();
@@ -587,29 +627,11 @@ describe("docker-compose topology", () => {
     expect(mappings[0]).not.toContain("1933");
   });
 
-  it("state on a volume, secrets read-only, pihome persistent, repo as the sandbox", () => {
-    expect(compose).toContain("qcr-state:/opt/quickreview/state");
-    expect(compose).toContain(
-      "${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro",
-    );
-    expect(compose).not.toContain("quickreview-bot"); // the legacy dir is never mounted
-    expect(compose).toContain("qcr-pihome:/home/review/.pi");
-    expect(compose).toContain("./:/opt/quickreview/sandbox");
-  });
-
-  // The config the install locator found on the host reaches the container
-  // read-only, and the entrypoint always names the config in it: a checkout
-  // config is never a fallback, so an empty mount fails the boot.
-  it("mounts the install's config home read-only and ALWAYS names the config in it", () => {
-    expect(compose).toContain(
-      "${QCR_CONFIG_HOME:-./docker/daemon/no-config-home}:/opt/quickreview/config-home:ro",
-    );
-    // The unset default is a tracked dir holding NO config.toml — never a
-    // path under the operator's home that Docker would create owned by root.
-    const fallback = join(root, "docker/daemon/no-config-home");
-    expect(existsSync(fallback)).toBe(true);
-    expect(existsSync(join(fallback, "config.toml"))).toBe(false);
-    expect(compose).toMatch(/QCR_CONFIG_NAME: \$\{QCR_CONFIG_NAME:-config\.toml\}/);
+  // The plain entrypoint (the VM's image until P7.10) always names the config
+  // in the config home: a checkout config is never a fallback, so an empty
+  // mount fails the boot. (The compose stack runs the release image and has
+  // its own test: tests/compose-stack.test.ts.)
+  it("the plain entrypoint ALWAYS names the config in the config home", () => {
     // No "only when present": there is no sandbox config to fall back to, so
     // an empty mount fails the boot naming this file.
     expect(entrypoint).toContain(
@@ -619,20 +641,6 @@ describe("docker-compose topology", () => {
     expect(entrypoint.indexOf("export QCR_CONFIG=")).toBeLessThan(
       entrypoint.indexOf('exec node "$SANDBOX/dist/src/wire.js"'),
     );
-  });
-
-  // The sandbox is a bind mount of the operator's checkout, and <root>/state
-  // holds host-side files the TUI and the onboarding wizard read directly
-  // (the checklist, the companion's rollover/alert state, the first-run
-  // marker). Replacing that directory with a symlink to a container-only path
-  // would break them, so both volumes are mounted at both spellings, and the
-  // entrypoint detects the double mount by inode instead of running its
-  // destructive migration.
-  it("the state and ingress volumes are mounted at both the absolute and the sandbox path", () => {
-    expect(compose).toContain("qcr-state:/opt/quickreview/state");
-    expect(compose).toContain("qcr-state:/opt/quickreview/sandbox/state");
-    expect(compose).toContain("qcr-ingress:/opt/quickreview/state/ingress");
-    expect(compose).toContain("qcr-ingress:/opt/quickreview/sandbox/state/ingress");
   });
 
   it("the entrypoint never rm -rf's the operator's state dir when the volume is already mounted there", () => {
@@ -737,7 +745,7 @@ describe("entrypoint secrets link", () => {
   // A configured [github] secrets_dir names a HOST path; the container sees
   // the secrets only at the mount. The entrypoint names the mount to the
   // locator, which the daemon, its sessions and mint-token.sh all inherit.
-  for (const rel of ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"]) {
+  for (const rel of ["docker/daemon/entrypoint.sh"]) {
     it(`${rel} names the secrets mount to the install locator`, () => {
       const text = readFileSync(resolve(root, rel), "utf8");
       expect(text).toMatch(/^export QCR_SECRETS_MOUNT="\$SECRETS"$/m);
@@ -748,7 +756,7 @@ describe("entrypoint secrets link", () => {
     expect(compose).toMatch(/^\s+QCR_SECRETS_MOUNT: \/opt\/quickreview\/secrets$/m);
     expect(compose).toContain(":/opt/quickreview/secrets:ro");
   });
-  for (const rel of ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"]) {
+  for (const rel of ["docker/daemon/entrypoint.sh"]) {
     it(`${rel} links <config home>/secrets to the mount, where the locator looks`, async () => {
       const { locateSecrets } = await import("../src/install.js");
       const text = readFileSync(resolve(root, rel), "utf8");
@@ -788,7 +796,7 @@ describe("entrypoint secrets link", () => {
 });
 
 it.each(
-  ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"].flatMap((file) =>
+  ["docker/daemon/entrypoint.sh"].flatMap((file) =>
     ["state", "memory"].map((migration) => [file, migration] as const),
   ),
 )("preserves migrated %s / %s after a failed copy", (file, migration) => {
@@ -826,7 +834,7 @@ it.each(
   }
 });
 
-it.each(["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"])(
+it.each(["docker/daemon/entrypoint.sh"])(
   "continues reviewer boot without opening partial memory after optional migration fails: %s",
   (file) => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-optional-memory-failure-"));

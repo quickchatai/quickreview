@@ -164,7 +164,12 @@ function harness(
       if (args.includes("ps"))
         return {
           code: 0,
-          stdout: JSON.stringify(o.services ?? [{ Service: "daemon", State: "running" }]),
+          stdout: JSON.stringify(
+            o.services ?? [
+              { Service: "daemon", State: "running" },
+              { Service: "memory", State: "running" },
+            ],
+          ),
           stderr: "",
         };
       return { code: 1, stdout: "", stderr: "unexpected" };
@@ -213,6 +218,7 @@ describe("all three layers green", () => {
     const h = harness({
       services: [
         { Service: "daemon", State: "running" },
+        { Service: "memory", State: "running" },
         { Service: "tunnel-named", State: "running" },
       ],
     });
@@ -229,6 +235,7 @@ describe("all three layers green", () => {
     const h = harness({
       services: [
         { Service: "daemon", State: "running" },
+        { Service: "memory", State: "running" },
         { Service: "tunnel-quick", State: "running" },
       ],
     });
@@ -236,6 +243,7 @@ describe("all three layers green", () => {
     expect(result.ok).toBe(true);
     expect(result.checks.map((c) => c.name)).toEqual([
       "containers",
+      "memory-sidecar",
       "ingress-sidecar",
       "health",
       "webhook-url",
@@ -258,7 +266,12 @@ describe("the polling topology", () => {
     const h = harness({ deliveries: [ping({ status_code: 502, status: "Bad Gateway" })] });
     const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
     expect(result.ok).toBe(true);
-    expect(result.checks.map((c) => c.name)).toEqual(["containers", "health", "ping-delivery"]);
+    expect(result.checks.map((c) => c.name)).toEqual([
+      "containers",
+      "memory-sidecar",
+      "health",
+      "ping-delivery",
+    ]);
     expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(/polling/);
     expect(h.urls.filter((u) => u.includes(API))).toEqual([]);
   });

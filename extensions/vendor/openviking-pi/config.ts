@@ -149,11 +149,25 @@ const DEFAULT_CONFIG: OVConfig = {
   logLevel: "error",
 };
 
-export function loadConfigFromModuleUrl(moduleUrl: string): OVConfig {
-  return loadConfig(dirname(fileURLToPath(moduleUrl)));
+/**
+ * [QCR PATCH 12] What `loadConfig` needs from the process, handed in rather
+ * than read: the environment the credentials resolve from, the working
+ * directory the peer id derives from, and the env overlay (qcr-shim.ts
+ * `envOverlay`) that runs between the file merge and the clamps. A caller that
+ * passes nothing gets the live process, as before.
+ */
+export interface LoadConfigOptions {
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+  overlay?: (config: OVConfig) => void;
 }
 
-export function loadConfig(extensionDir: string): OVConfig {
+export function loadConfigFromModuleUrl(moduleUrl: string, opts: LoadConfigOptions = {}): OVConfig {
+  return loadConfig(dirname(fileURLToPath(moduleUrl)), opts);
+}
+
+export function loadConfig(extensionDir: string, opts: LoadConfigOptions = {}): OVConfig {
+  const env = opts.env ?? process.env;
   const configPath = join(extensionDir, "config.json");
   let file: any = {};
   try {
@@ -163,7 +177,7 @@ export function loadConfig(extensionDir: string): OVConfig {
   }
 
   const takeover = file.takeover && typeof file.takeover === "object" ? file.takeover : {};
-  const creds = withoutRootKey(resolveOpenVikingCredentials());
+  const creds = withoutRootKey(resolveOpenVikingCredentials(env), env);
   const config: OVConfig = {
     ...DEFAULT_CONFIG,
     ...file,
@@ -187,25 +201,11 @@ export function loadConfig(extensionDir: string): OVConfig {
     takeoverOverviewPollMax: takeover.overviewPollMax ?? file.takeoverOverviewPollMax ?? DEFAULT_CONFIG.takeoverOverviewPollMax,
   };
 
-  if (process.env.OPENVIKING_URL || process.env.OPENVIKING_BASE_URL) config.endpoint = creds.baseUrl;
-  if (process.env.OPENVIKING_API_KEY || process.env.OPENVIKING_BEARER_TOKEN) config.apiKey = creds.apiKey;
-  if (process.env.OPENVIKING_ACCOUNT) config.account = creds.account;
-  if (process.env.OPENVIKING_USER) config.user = creds.user;
-  if (process.env.OPENVIKING_PEER_ID) config.peerId = creds.peerId;
-  if (process.env.OPENVIKING_WORKSPACE_PEER !== undefined) {
-    config.workspacePeer = envBool(process.env.OPENVIKING_WORKSPACE_PEER, config.workspacePeer);
-  }
-  if (process.env.OPENVIKING_RECALL_PEER_SCOPE) {
-    config.recallPeerScope = process.env.OPENVIKING_RECALL_PEER_SCOPE === "actor" ? "actor" : "all";
-  }
-  if (process.env.OPENVIKING_RECALL_LIMIT) {
-    config.recallLimit = Number(process.env.OPENVIKING_RECALL_LIMIT);
-    config.recallLimitConfigured = true;
-  }
-  if (process.env.OPENVIKING_RECALL_QUERY_EXPANSION) {
-    config.recallQueryExpansion = process.env.OPENVIKING_RECALL_QUERY_EXPANSION === "off" ? "off" : "auto";
-    config.recallQueryExpansionConfigured = true;
-  }
+  // [QCR PATCH 12] The env overlay that sat here moved to qcr-shim.ts: five
+  // re-assignments of what `creds` had already resolved from the same env
+  // (endpoint, key, account, user, peer id: no-ops, dropped) and the
+  // workspace-peer and recall overrides. The overlay still runs at this point.
+  opts.overlay?.(config);
 
   config.recallLimit = clampInt(config.recallLimit, 1, 50, DEFAULT_CONFIG.recallLimit);
   config.recallMaxContentChars = clampInt(config.recallMaxContentChars, 100, 5000, DEFAULT_CONFIG.recallMaxContentChars);
@@ -247,11 +247,11 @@ export function loadConfig(extensionDir: string): OVConfig {
   config.recallQueryExpansion = "off";
   config.recallQueryExpansionConfigured = true;
   if (!Array.isArray(config.bypassPatterns)) config.bypassPatterns = [];
-  config.peerId = resolveEffectivePeerId({ cfg: config as any, cwd: process.cwd() }).peerId;
+  config.peerId = resolveEffectivePeerId({ cfg: config as any, cwd: opts.cwd ?? process.cwd() }).peerId;
   return config;
 }
 
-function envBool(value: string, fallback: boolean): boolean {
+export function envBool(value: string, fallback: boolean): boolean {
   const lower = String(value || "").trim().toLowerCase();
   if (lower === "0" || lower === "false" || lower === "no" || lower === "off") return false;
   if (lower === "1" || lower === "true" || lower === "yes" || lower === "on") return true;

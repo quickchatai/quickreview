@@ -292,8 +292,8 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    *
    * MUTATION: change `version` in the `pi` block of package.json — this fails.
    *
-   * The five are split below into the four that ship in every tree and the
-   * one that does not; two more spellings (rule 7 and the deploying skill)
+   * The spellings are split below into those that ship in every tree and the
+   * ones that do not; two more spellings (rule 7 and the deploying skill)
    * follow, both private-only.
    */
   /**
@@ -314,11 +314,28 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
   const tomlPiVersion = (rel: string) =>
     /version\s*=\s*"([^"]+)"/.exec(/\[pi\]([\s\S]*?)(?=\n\[|\n*$)/.exec(read(rel))?.[1] ?? "")?.[1];
 
-  /** The four spellings that ship in every tree. */
+  const lockVersion = (name: string) =>
+    (
+      JSON.parse(read("package-lock.json")) as {
+        packages?: Record<string, { version?: string } | undefined>;
+      }
+    ).packages?.[`node_modules/${name}`]?.version;
+  const dependency = (name: string) =>
+    (JSON.parse(read("package.json")) as { dependencies?: Record<string, string> }).dependencies?.[
+      name
+    ];
+
+  /** The spellings that ship in every tree. pi and pi-ai are exact
+   * dependencies (rule 7), so the lockfile and the dependency ranges are two
+   * more of them. */
   const publicPins = () => ({
     "config.example.toml [pi] version": tomlPiVersion("config.example.toml"),
     "package.json pi.version": (JSON.parse(read("package.json")) as { pi?: { version?: string } })
       .pi?.version,
+    "package.json dependency pi-coding-agent": dependency("@earendil-works/pi-coding-agent"),
+    "package.json dependency pi-ai": dependency("@earendil-works/pi-ai"),
+    "package-lock.json pi-coding-agent": lockVersion("@earendil-works/pi-coding-agent"),
+    "package-lock.json pi-ai": lockVersion("@earendil-works/pi-ai"),
     "group_vars pi_version": /^pi_version:\s*"([^"]+)"/m.exec(
       read("deploy/ansible/group_vars/all.yml"),
     )?.[1],
@@ -330,7 +347,7 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
   /** The one fact, read from a file that is in every tree. */
   const realPin = () => publicPins()["config.example.toml [pi] version"];
 
-  it("all four published spellings agree, and none is missing", () => {
+  it("every published spelling agrees, and none is missing", () => {
     const found = publicPins();
     for (const [where, value] of Object.entries(found)) {
       expect(
@@ -343,6 +360,21 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
       `pi version drift: ${JSON.stringify(found, null, 2)}`,
     ).toBe(1);
   });
+
+  /**
+   * The other two images install the same pi (`npm install -g`), each from its
+   * own `ARG PI_VERSION`. Guarded on the file existing: the bench image is not
+   * in every tree.
+   *
+   * MUTATION: change `ARG PI_VERSION` in docker/companion/Dockerfile — this fails.
+   */
+  it.each(["docker/Dockerfile", "docker/companion/Dockerfile", "bench/aacr/Dockerfile"])(
+    "%s installs the same pi version (where the file exists)",
+    (rel) => {
+      if (!has(rel)) return;
+      expect(/^ARG PI_VERSION=(\S+)/m.exec(read(rel))?.[1], `${rel}'s pi pin`).toBe(realPin());
+    },
+  );
 
   /**
    * The test fixture is the fifth spelling. The live config — the one

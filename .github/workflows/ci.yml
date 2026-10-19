@@ -1,10 +1,15 @@
-# Public CI for the quickreviewd snapshot. Rides the assembled tree;
-# harmless in the private repo, which has no GitHub remote (local git only).
+# CI for qcr. Runs wherever this tree is pushed to GitHub: the private repo
+# and the public snapshot alike.
 #
-# Deliberately minimal and offline-true: no secrets, no external services —
-# the suite mocks all I/O, and the publishability lint
+# Deliberately minimal and offline-true: no secrets, no external services, no
+# model. The suite mocks all I/O, and the publishability lint
 # (tests/publishability.test.ts, part of `npm test`) re-verifies on every
-# push that no private token entered the tree.
+# push that no private token entered the tree. The `image` job builds the
+# release image (docker/Dockerfile) and smokes it with no model either
+# (.github/ci/image-smoke.sh); it pushes nothing, and release.yml owns that. The
+# `clone` job keeps the native developer install honest (a fresh checkout,
+# npm ci, npm run build, then the wrapper's version and review --preview on a
+# fixture repo): no docker, no model, and the user docs leave that route out.
 name: CI
 
 on:
@@ -38,3 +43,70 @@ jobs:
       # with "Cannot find module .../dist/...".
       - run: npm run build
       - run: timeout 900 npm test # full suite incl. the publishability lint
+      # The pi canaries (tests/pi-canary/) already ran inside `npm test`. A bump
+      # of the pi pin is gated by them by name: when the pi dependencies moved
+      # (declared in package.json or resolved in the lockfile), run them again
+      # on their own, so a bump cannot merge without a separate canary result.
+      # The comparison base is the pull request's base branch, or the previous
+      # head of a push; an unknown base (a first push) counts as changed.
+      - name: pi dependencies changed?
+        id: pi
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base="${BASE_REF:-$BEFORE}"
+          changed=true
+          if [ -n "$base" ] && ! [[ "$base" =~ ^0+$ ]] && git fetch --no-tags --depth=1 origin "$base"; then
+            changed=$(node --input-type=commonjs - <<'JS'
+          const { execFileSync } = require("node:child_process");
+          const { readFileSync } = require("node:fs");
+          const PI = ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"];
+          const pins = (rev) => {
+            const read = (f) => JSON.parse(rev ? execFileSync("git", ["show", `${rev}:${f}`], { encoding: "utf8" }) : readFileSync(f, "utf8"));
+            const declared = read("package.json").dependencies ?? {};
+            const resolved = read("package-lock.json").packages ?? {};
+            return JSON.stringify(PI.map((n) => [declared[n] ?? null, resolved[`node_modules/${n}`]?.version ?? null]));
+          };
+          process.stdout.write(pins("FETCH_HEAD") === pins("") ? "false" : "true");
+          JS
+            )
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+      - name: pi canaries (required when the pi dependencies change)
+        if: steps.pi.outputs.changed == 'true'
+        run: timeout 300 npm run canary:pi
+
+  # The release image, built and run once with no model: version, the schema
+  # versions, review --preview on a fixture repo, the host wrapper installed
+  # into a temp dir, and the runner's kernel.yama.ptrace_scope in the summary.
+  # amd64 only (the runner's own arch); the per-arch smoke is the release
+  # workflow's. BuildKit is named because docker/Dockerfile.dockerignore (the
+  # release context's allowlist) is only read by it.
+  image:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILDKIT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the release image
+        run: docker build -f docker/Dockerfile --build-arg "BUILD_SHA=${GITHUB_SHA}" -t qcr-ci:smoke .
+      - name: offline smoke
+        run: .github/ci/image-smoke.sh qcr-ci:smoke
+
+  # The clone route, with no Docker: a fresh checkout built the way a developer
+  # builds it, then scripts/qcr answers `version --json` and `review --preview
+  # --json` on a fixture repo (.github/ci/clone-smoke.sh). Offline and with no
+  # model, like the image job, and nothing is pushed.
+  clone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: offline smoke
+        run: .github/ci/clone-smoke.sh

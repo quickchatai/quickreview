@@ -22,15 +22,16 @@ by the session through gated shell scripts.
 
 ## Processes in the container
 
-One container runs everything (`docker-compose.yml`,
+One container runs the daemon and its sessions; on the compose route the memory
+engine is a second container beside it (`docker-compose.yml`,
 [docker/daemon/README.md](../../docker/daemon/README.md)):
 
 | process | started by | what it is |
 |---|---|---|
 | tini (PID 1) | `init: true` in `docker-compose.yml` | reaps orphans and forwards signals; required because the daemon supervises a second long-lived process |
-| the daemon | `docker/daemon/entrypoint.sh` → `node dist/src/wire.js` | the whole deterministic core (`src/wire.ts` assembles it, `src/daemon.ts` is its stub-wired core) |
-| the OpenViking memory server | supervised child of the daemon, `src/openviking/supervisor.ts` | reviewer memory, HTTP on loopback `:1933`; the port is deliberately not published anywhere |
-| a tmux server | `docker/daemon/entrypoint.sh` | holds the LLM sessions; also the jump-in surface for `qcr attach` |
+| the daemon | `docker/entrypoint.sh` daemon mode (the VM route: `docker/daemon/entrypoint.sh`) → `node dist/src/wire.js` | the whole deterministic core (`src/wire.ts` assembles it, `src/daemon.ts` is its stub-wired core) |
+| the OpenViking memory server | on the compose route the `memory` service (`docker/memory/`, `[openviking] endpoint = "remote"`); on the VM route a supervised child of the daemon, `src/openviking/supervisor.ts` | reviewer memory, HTTP on `:1933`; the port is deliberately not published anywhere |
+| a tmux server | `docker/entrypoint.sh` daemon mode | holds the LLM sessions; also the jump-in surface for `qcr attach` |
 | one **pi** session per triggered PR, plus one `overseer` | `src/sessions.ts` (via `src/tmux.ts`) | the review conversations; see [sessions.md](sessions.md) |
 
 The daemon publishes exactly one port, `8787`, on loopback by default: `POST
@@ -44,7 +45,7 @@ front of that; the four supported ingress shapes are in
 |---|---|---|
 | `qcr` CLI | `scripts/qcr` → `src/cli.ts` | read-only over `state/` — `status`, `today`, `why <pr>`, `spend`, `metrics`, `events`, plus `attach`, `drain`, `onboard`, `companion`, `memory reembed`, `memory relayout` |
 | the TUI | `qcr tui` → `src/tui/` | the operator board, memory management, deploy and metrics tabs; reaches a remote daemon over ssh or a local one over Docker per `config.toml [tui] target`. See [tui.md](tui.md) and [../tui.md](../tui.md) |
-| the companion | `src/tui/companion.ts`, `docker/companion/` | a local pi session beside the TUI, for asking questions about the running system; it reaches the daemon only by injecting into the overseer |
+| the companion | `src/tui/companion.ts`, the release image's `companion` mode | a local pi session beside the TUI, for asking questions about the running system; it reaches the daemon only by injecting into the overseer |
 | Slack concierge | `src/slack/` | optional; a Socket Mode client (`src/slack/socket.ts`) with a router, reply path and policy layer over one public channel |
 | onboarding wizard | `scripts/qcr onboard` → `src/onboard/` | the guided install; see [../onboarding.md](../onboarding.md) |
 
@@ -164,7 +165,7 @@ Both are summarised in [boundaries.md](boundaries.md).
 | `agents/` | the lens pass definitions (`pass-*.md`). Mostly frozen seeds |
 | `seeds/` | the canonical byte-for-byte copies of every frozen file under `prompts/` and `agents/`; `tests/seed-integrity.test.ts` compares the two and fails on drift |
 | `profiles/` | repo profiles: house-rule addenda packs plus lens-selection heuristics — see [../profiles.md](../profiles.md) |
-| `docker/` | the daemon image, the companion image, the ingress sidecars |
+| `docker/` | the release image (daemon, companion and cli modes), the scan sandbox image, the ingress sidecars |
 | `deploy/` | the Ansible route for a managed VM, plus the secrets wizards |
 | `tests/` | the suite (vitest); all I/O is mocked except the worktree tests, which drive a real scratch git repo |
 | `docs/` | this documentation set |
@@ -218,7 +219,7 @@ All three must be green. `npm run build` emits to `dist/`; the daemon runs
 ```sh
 npm run daemon           # run the daemon locally (needs a secrets dir)
 npm run dev              # build, then tsc --watch in the background + qcr tui
-docker compose up -d --build   # the container route
+docker compose up -d           # the container route (pulled images; docker/daemon/README.md)
 ```
 
 `npm run dev` writes the compiler's output to `state/tsc-watch.log` rather

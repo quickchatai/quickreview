@@ -141,7 +141,7 @@ The process that drives a scan run's cases — the companion, or a `qcr scan` dr
 _Avoid_: scan owner, scan host
 
 **Scan sandbox**:
-Where a `qcr scan start` driver runs by default: a throwaway container from the companion image, mounting only the reviewed repo (read-only), the state home, the companion's pi login (read-only — each case runs on a private, refresh-disabled copy) and the config, and refused when the image was built from other code than the checkout's.
+Where a `qcr scan start` driver runs by default: a throwaway container from the scan sandbox image (`qcr scan rebuild`; not the companion's), mounting only the reviewed repo (read-only), the state home, the companion's pi login (read-only — each case runs on a private, refresh-disabled copy) and the config, and refused when the image was built from other code than the checkout's.
 _Avoid_: scan container (it is one, but the term names the boundary), companion (the companion is the long-lived session)
 
 **Hard stop**:

@@ -17,7 +17,7 @@
 // result, never a throw.
 import { usd, findingLocation } from "../src/setup/presentation.js";
 import { readFileSync } from "node:fs";
-import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.js";
 import { parseConfig, sandboxRoot } from "../src/config.js";
 import { locateConfig, stateHome } from "../src/install.js";
 import { stateHomeFs, tokenFileGitHubReader } from "../src/setup/adapters.js";
@@ -45,13 +45,7 @@ import { gitReplaySource } from "../src/setup/replaysource.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
-function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return details
-    ? { content: [{ type: "text", text: t }], details }
-    : { content: [{ type: "text", text: t }] };
-}
-
-function refused(what: string, r: Refusal): PiToolResult {
+function refused(what: string, r: Refusal): QcrToolResult {
   return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
 }
 
@@ -222,8 +216,8 @@ const NEW_PARAM = {
     "The NEW side's profile. Default: the one setup works on (the interview's, else the live config's).",
 } as const;
 
-export function replayToolDefinitions(replay: ReplayRunner): PiToolDefinition[] {
-  const preview: PiToolDefinition = {
+export function replayToolDefinitions(replay: ReplayRunner): QcrTool[] {
+  const preview: QcrTool = {
     name: "setup_replay_preview",
     label: "Replay preview",
     description:
@@ -254,7 +248,7 @@ export function replayToolDefinitions(replay: ReplayRunner): PiToolDefinition[] 
       });
     },
   };
-  const start: PiToolDefinition = {
+  const start: QcrTool = {
     name: "setup_replay_start",
     label: "Start the replay",
     description:
@@ -273,7 +267,7 @@ export function replayToolDefinitions(replay: ReplayRunner): PiToolDefinition[] 
       );
     },
   };
-  const status: PiToolDefinition = {
+  const status: QcrTool = {
     name: "setup_replay_status",
     label: "Replay status",
     description:
@@ -286,7 +280,7 @@ export function replayToolDefinitions(replay: ReplayRunner): PiToolDefinition[] 
       return text(renderReplayStatus(s), { state: s.run?.display ?? null });
     },
   };
-  const stop: PiToolDefinition = {
+  const stop: QcrTool = {
     name: "setup_replay_stop",
     label: "Stop the replay",
     description:

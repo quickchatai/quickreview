@@ -31,8 +31,14 @@ import type { CompanionConfig } from "../config.js";
 import type { DockerRunner } from "./companion.js";
 import { ACCENT, BAD, MUTED, OK, RESET, SEP, WARN } from "./design.js";
 import { displayWidth, fit } from "./paint.js";
-import { clampScrollback, keysToTmux, SCROLL_STEP, splitCapture } from "./pipane.js";
-import { scrolledRange, tmuxCaptureArgs } from "./remote.js";
+import { scrolledRange } from "./remote.js";
+import {
+  clampScrollback,
+  keysToTmux,
+  SCROLL_STEP,
+  splitCapture,
+  tmuxCaptureArgs,
+} from "./termmirror.js";
 
 /** Marks the paste-buffer lines appended after the capture (see `onCopy`). A
  * capture line would have to start with this exact text to be mistaken for
@@ -615,7 +621,7 @@ export class CompanionSidebar {
     this.afterWrite();
   }
 
-  /** Raw stdin passthrough while focused (pipane's keysToTmux grouping). */
+  /** Raw stdin passthrough while focused (termmirror's keysToTmux grouping). */
   async sendKeys(buf: Buffer): Promise<void> {
     const groups = keysToTmux(buf);
     if (groups.length === 0) return;

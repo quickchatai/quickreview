@@ -14,15 +14,19 @@
 // lenses return, the eligible changed files nothing addressed or swept,
 // packed into pass-sweep rows.
 //
-// VERIFY-ON-PIN: registerTool's definition shape and execute's positional
-// signature, as extensions/pi-api.d.ts records them.
-import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+// `CLUSTER_TOOL` / `COVERAGE_TOOL` are the QcrTool literals; the two tools pi
+// sees are their `defineTool` ToolDefinitions (FINDING_CLUSTERS_TOOLS), so a
+// tmux pi (the default export, which registers them) and an SDK session
+// (`createFindingClusters()` as an extension factory, or the same list as
+// customTools) carry identical objects. The extension reads no config and no env.
+//
+// VERIFY-ON-PIN: defineTool's and registerTool's definition shape and execute's
+// positional signature, as pi's ToolDefinition declares them.
+import { defineTool } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { textResult as text, toPiTool, type QcrTool } from "./pi-tool.js";
 import { CLOSE_LINES, clusterFindings, renderGroups, type ClusterCandidate } from "../src/dedup.js";
 import { coverageGaps, coverageReason, type CoverageFile } from "../src/coverage.js";
-
-function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return { content: [{ type: "text", text: t }], ...(details ? { details } : {}) };
-}
 
 /** Read the tool's `candidates` argument into ClusterCandidates; anything
  * malformed is reported, never thrown. */
@@ -69,7 +73,7 @@ function safeParse(s: string, problems: string[]): unknown {
   }
 }
 
-export const CLUSTER_TOOL: PiToolDefinition = {
+export const CLUSTER_TOOL: QcrTool = {
   name: "cluster_findings",
   label: "Cluster findings",
   description: `Group this round's candidate findings before pass-validate: candidates in the same file within ${CLOSE_LINES} lines, naming a shared identifier, or with the same fix target form one group. Returns the groups to paste verbatim into the validate task string under CANDIDATE GROUPS.`,
@@ -157,7 +161,7 @@ export function readCoverageArgs(params: Record<string, unknown>): {
   return { eligible, addressed, swept, problems };
 }
 
-export const COVERAGE_TOOL: PiToolDefinition = {
+export const COVERAGE_TOOL: QcrTool = {
   name: "coverage_gaps",
   label: "Coverage gaps",
   description:
@@ -206,15 +210,32 @@ export const COVERAGE_TOOL: PiToolDefinition = {
   },
 };
 
-const activate = (pi: Pi): void => {
+/** The two tools as pi ToolDefinitions: registered by the extension, or handed
+ * to an SDK session as `customTools`. */
+export const FINDING_CLUSTERS_TOOLS: ToolDefinition[] = [CLUSTER_TOOL, COVERAGE_TOOL].map((t) =>
+  defineTool(toPiTool(t)),
+);
+
+/** The extension has nothing to configure: both tools are pure. */
+export type FindingClustersConfig = Record<string, never>;
+
+/** The factory an SDK session loads. The default export below is its env shim. */
+export function createFindingClusters(
+  _config: FindingClustersConfig = {},
+): (pi: ExtensionAPI) => void {
+  return (pi: ExtensionAPI): void => {
+    for (const tool of FINDING_CLUSTERS_TOOLS) pi.registerTool(tool);
+  };
+}
+
+const activate = (pi: ExtensionAPI): void => {
   if (typeof pi.registerTool !== "function") {
     console.error(
       "finding-clusters: pi.registerTool unavailable — cluster_findings not registered.",
     );
     return;
   }
-  pi.registerTool(CLUSTER_TOOL);
-  pi.registerTool(COVERAGE_TOOL);
+  createFindingClusters()(pi);
 };
 
 export default activate;

@@ -21,18 +21,20 @@ import { describe, expect, it } from "vitest";
 import { parseSkillFrontmatter, type ScalarValue } from "./helpers/skill-frontmatter.js";
 
 const ROOT = process.cwd();
-const ENTRYPOINT = readFileSync(join(ROOT, "docker/companion/entrypoint.sh"), "utf8");
+const ENTRYPOINT = readFileSync(join(ROOT, "docker/entrypoint.sh"), "utf8");
 
-/** The skill directories the entrypoint pushes into pi's `skills` setting,
+/** The skill directories the companion mode pushes into pi's `skills` setting,
  * taken from the entrypoint itself, so a third registered dir is covered the
  * day it is added. `/workspace` is this checkout, mounted. */
 function registeredSkillDirs(): string[] {
-  const vars = [...ENTRYPOINT.matchAll(/cfg\.skills\.push\((\w+)\)/g)].map((m) => m[1]!);
-  return vars.map((v) => {
-    const decl = new RegExp(`const ${v} = "/workspace/([^"]+)";`).exec(ENTRYPOINT);
-    if (!decl) throw new Error(`entrypoint pushes ${v} but never declares it as a /workspace path`);
-    return resolve(ROOT, decl[1]!);
-  });
+  const list = /const skillDirs = \[([^\]]*)\];/.exec(ENTRYPOINT);
+  if (!list) throw new Error("the companion mode declares no skillDirs array");
+  const dirs = [...list[1]!.matchAll(/"\/workspace\/([^"]+)"/g)].map((m) => m[1]!);
+  if (dirs.length === 0) throw new Error("skillDirs holds no /workspace path");
+  // …and the loop really pushes them.
+  if (!/cfg\.skills\.push\(d\)/.test(ENTRYPOINT))
+    throw new Error("the entrypoint never pushes skillDirs into cfg.skills");
+  return dirs.map((d) => resolve(ROOT, d));
 }
 
 /** Every SKILL.md under a registered dir, at any depth: pi recurses until it

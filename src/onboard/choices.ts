@@ -57,7 +57,7 @@ export type MemoryChoice = (typeof MEMORY_CHOICE_IDS)[number];
  * the value here and every side moves together.
  */
 export const CHOICE_KEYS = {
-  /** The operator's uid, captured by preflight so the images are built with it. */
+  /** The operator's uid, captured by preflight: the containers run as it. */
   uid: "qcr_uid",
 
   /** `Topology`. Written by the topology step; read by everything that has to

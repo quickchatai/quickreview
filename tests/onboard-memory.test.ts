@@ -1119,7 +1119,7 @@ describe("reaching the server", () => {
     expect(detail).toContain(
       `cd ${dirname(stateDir)} && node scripts/companion-memory-forward.mjs run --local`,
     );
-    expect(detail).toContain(`--container "$(sudo docker compose ps --format '{{.Name}}' daemon)"`);
+    expect(detail).toContain(`--container "$(sudo docker compose ps --format '{{.Name}}' memory)"`);
   });
 
   it("on the server route the forward command carries THIS install's alias, container and sudo — never the script's defaults", async () => {

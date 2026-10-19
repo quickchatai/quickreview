@@ -6,11 +6,13 @@ import type { TransportOptions } from "./transport.js";
 //   OAuth (a ChatGPT subscription) — the shipped default. pi's tokens live in
 //     `auth.json` under the pi home of the process that logged in, and they do
 //     NOT transfer between the host and the containers. So the OAuth route
-//     costs up to THREE separate browser logins: this wizard's own pi session,
-//     the daemon container, and the companion container. Each container login
-//     must land on that container's named pi-home volume or a recreate
-//     silently costs it — this step verifies exactly that,
-//     per surface, at the moment the surface exists.
+//     costs up to THREE separate browser logins: this wizard's own pi session
+//     (on the image route, `qcr login` into the `qcr-login` volume), the daemon
+//     container, and the companion container. Each container login must land
+//     on that container's named pi-home volume (the daemon's is `qcr-pihome`,
+//     mounted at /home/qcr/.pi in the released image) or a recreate silently
+//     costs it — this step verifies exactly that, per surface, at the moment
+//     the surface exists.
 //   API key — one paste covers the daemon and its review sessions at once (the
 //     daemon container's entrypoint exports the secrets-dir file as
 //     OPENAI_API_KEY for every pi process in it), and every model string must
@@ -366,7 +368,7 @@ export interface LoginProbe {
  *
  * The question is deliberately asked about the MOUNT, not about `$HOME`: a
  * container whose HOME has drifted off the mounted volume has pi write a
- * perfectly good auth.json into the writable layer, and every rebuild
+ * perfectly good auth.json into the writable layer, and every recreate
  * silently costs the login. Testing `<mount destination>/agent/
  * auth.json` proves the token is on the volume, which is the only claim worth
  * making. Never throws, never prompts: an undetectable docker is a note.

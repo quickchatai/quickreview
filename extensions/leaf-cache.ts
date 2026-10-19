@@ -42,37 +42,16 @@
 //  - a `developer` role input message is accepted by the codex backend (probed
 //    with this extension before it shipped; see docs/prompt-caching.md).
 import { LEAF_PACK_ENV } from "../src/contextpack.js";
-import { createHash } from "node:crypto";
+import { packFirstPayload, prefixDigest } from "../src/engine/lens/leaf-cache.js";
 import { readFileSync } from "node:fs";
 
-const ADDENDUM_OPEN = "<addendum>";
-const ADDENDUM_CLOSE = "</addendum>";
+// The pure payload rewrite lives in src/engine/lens/leaf-cache.ts, where the
+// SDK lens runner's in-process extension shares it.
+export { packFirstPayload, prefixDigest };
 
 /** Env var: "1" prints a digest of each request's prefix parts to stderr, so
  * two children's requests can be compared for where they diverge. */
 export const LEAF_CACHE_DEBUG_ENV = "QCR_LEAF_CACHE_DEBUG";
-
-/** Short hashes of the parts that make up a request's cacheable prefix, in
- * request order (never their content). */
-export function prefixDigest(payload: unknown): string {
-  const h = (v: unknown) =>
-    createHash("sha256")
-      .update(JSON.stringify(v ?? null))
-      .digest("hex")
-      .slice(0, 10);
-  if (typeof payload !== "object" || payload === null) return "no payload";
-  const p = payload as Record<string, unknown>;
-  const input = Array.isArray(p.input) ? p.input : [];
-  const rest = Object.fromEntries(
-    Object.entries(p).filter(([k]) => !["instructions", "input", "tools"].includes(k)),
-  );
-  return [
-    `other=${h(rest)}`,
-    `instructions=${h(p.instructions)}`,
-    `tools=${h(p.tools)}`,
-    ...input.slice(0, 3).map((m, i) => `input${i}=${h(m)}`),
-  ].join(" ");
-}
 
 /** Env var naming the round's context pack (set by the launcher per child). */
 export { LEAF_PACK_ENV };
@@ -82,60 +61,6 @@ export { LEAF_PACK_ENV };
 export function appendedPromptPath(argv: readonly string[]): string | undefined {
   const i = argv.lastIndexOf("--append-system-prompt");
   return i >= 0 ? argv[i + 1] : undefined;
-}
-
-interface InputMessage {
-  role: string;
-  content: Array<{ type: string; text?: string }>;
-}
-
-function textMessage(role: string, text: string): InputMessage {
-  return { role, content: [{ type: "input_text", text }] };
-}
-
-/**
- * The pack-first payload, or undefined to send the original. Pure.
- * `appended` is the lens body as pi appended it; `pack` the pack's text.
- */
-export function packFirstPayload(
-  payload: unknown,
-  appended: string,
-  pack: string,
-): Record<string, unknown> | undefined {
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
-  const p = payload as Record<string, unknown>;
-  const instructions = p.instructions;
-  const input = p.input;
-  const body = appended.trim();
-  if (typeof instructions !== "string" || !Array.isArray(input) || !pack.trim()) return undefined;
-  // A group's WARM-UP (no lens text): only the pack goes first, so its request
-  // is exactly the prefix every lens request of the group extends.
-  if (!body) return { ...p, input: [textMessage("user", pack), ...input] };
-  const at = instructions.indexOf(body);
-  if (at < 0 || instructions.indexOf(body, at + 1) >= 0) return undefined;
-  let start = at;
-  let end = at + body.length;
-  // The whole `<addendum>…</addendum>` block when the body is all it holds.
-  const open = instructions.lastIndexOf(ADDENDUM_OPEN, at);
-  const close = instructions.indexOf(ADDENDUM_CLOSE, end);
-  if (
-    open >= 0 &&
-    close >= 0 &&
-    instructions.slice(open + ADDENDUM_OPEN.length, at).trim() === "" &&
-    instructions.slice(end, close).trim() === ""
-  ) {
-    start = open;
-    end = close + ADDENDUM_CLOSE.length;
-  }
-  const before = instructions.slice(0, start).trimEnd();
-  const after = instructions.slice(end).trim();
-  if (!before) return undefined;
-  const base = after ? `${before}\n\n${after}` : before;
-  return {
-    ...p,
-    instructions: base,
-    input: [textMessage("user", pack), textMessage("developer", body), ...input],
-  };
 }
 
 export default function activate(pi: {

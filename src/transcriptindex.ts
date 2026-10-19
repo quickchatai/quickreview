@@ -82,6 +82,7 @@ import {
   type LineContribution,
   type RoundUsage,
 } from "./usage.js";
+import { LensOnce } from "./lensresult.js";
 import { yieldToLoop } from "./yieldloop.js";
 
 /** One synchronous parse step: a chunk's complete lines. */
@@ -381,8 +382,9 @@ export class TranscriptIndex {
           usage,
         );
       const seen = new Map<string, ExecViolationKind>();
+      const lenses = new LensOnce();
       for (const part of parts) {
-        this.fold(part, start, end, usage, seen);
+        this.fold(part, start, end, usage, seen, lenses);
         await yieldToLoop();
       }
       return {
@@ -522,13 +524,19 @@ export class TranscriptIndex {
     end: number,
     usage: RoundUsage,
     seen: Map<string, ExecViolationKind>,
+    lenses: LensOnce,
   ): void {
     const visit = (c: LineContribution): void => {
       if (!part.whole && (c.ts === null || c.ts < start || c.ts > end)) return;
       if (c.usage !== undefined) addLineUsage(usage, c.usage);
       if (c.childUsage !== undefined) {
-        for (const u of c.childUsage) addLineUsage(usage, u);
-        usage.children_included = true;
+        // A lens run with an id counts once: its tool result, a later
+        // lens_wave repeating it and its ledger line are one run.
+        for (const u of c.childUsage) {
+          if (!lenses.claim(u.lensId ?? null)) continue;
+          addLineUsage(usage, u);
+          usage.children_included = true;
+        }
       }
       if (c.audit !== undefined)
         for (const v of c.audit) if (!seen.has(v.command)) seen.set(v.command, v.kind);

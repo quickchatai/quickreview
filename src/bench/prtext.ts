@@ -15,7 +15,7 @@
 
 import { prDescription } from "./artifacts.js";
 import type { PrefetchMeta } from "./aacr.js";
-import { boundBody } from "./runner.js";
+import { boundBody } from "../engine/prompts.js";
 
 export const PR_TEXT_ENV = "QCR_BENCH_PR_TEXT";
 

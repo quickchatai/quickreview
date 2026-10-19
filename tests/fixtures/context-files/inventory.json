@@ -1,0 +1,188 @@
+{
+  "pi": "1.3.0",
+  "routes": {
+    "vm-bot": {
+      "cwd": "/opt/qcr",
+      "agentDir": "/home/qcr/.pi/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/qcr/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "The reviewer stub, baked into the release image's app dir (docker/Dockerfile) and re-installed 0444 by the daemon mode if missing; the dev build's rsync keeps its own anchored exclude."
+    },
+    "vm-lens": {
+      "cwd": "/opt/qcr",
+      "agentDir": "/home/qcr/.pi/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/qcr/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+    },
+    "daemon-bot": {
+      "cwd": "/opt/quickreview/sandbox",
+      "agentDir": "/home/review/.pi/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/quickreview/sandbox/AGENTS.md",
+          "source": "AGENTS.md"
+        }
+      ],
+      "note": "The full AGENTS.md: the entrypoint refuses to install the stub because this root is the operator's own checkout."
+    },
+    "daemon-lens": {
+      "cwd": "/opt/quickreview/sandbox",
+      "agentDir": "/home/review/.pi/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/quickreview/sandbox/AGENTS.md",
+          "source": "AGENTS.md"
+        }
+      ],
+      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+    },
+    "bench": {
+      "cwd": "/opt/quickreview/sandbox",
+      "agentDir": "/tmp/pi-agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/quickreview/sandbox/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "The same stub as production, copied into the image's cwd (bench/aacr/Dockerfile)."
+    },
+    "bench-lens": {
+      "cwd": "/opt/quickreview/sandbox",
+      "agentDir": "/tmp/pi-agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/quickreview/sandbox/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+    },
+    "release-image": {
+      "cwd": "/opt/qcr",
+      "agentDir": "/home/qcr/.pi/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/qcr/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "The reviewer stub baked at the image's app dir (docker/Dockerfile), root-owned and read-only; the agentDir sits under the fixed HOME and holds no context file. A route that gives pi its own cwd (the clone route's out dir) gets its own copy of the stub."
+    },
+    "release-image-lens": {
+      "cwd": "/opt/qcr",
+      "agentDir": "/home/qcr/.pi/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/opt/qcr/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+    },
+    "bench-judge": {
+      "cwd": "/case-tree",
+      "agentDir": "/tmp/pi-agent",
+      "contextFiles": "disabled",
+      "effective": [],
+      "note": "Runs in the PR's own checkout, whose AGENTS.md must not reach the judge."
+    },
+    "onboard": {
+      "cwd": "/qcr-checkout",
+      "agentDir": "/operator-pi-agent",
+      "contextFiles": "disabled",
+      "effective": []
+    },
+    "clone-review": {
+      "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",
+      "agentDir": "/home/op/.local/state/qcr/default/review/runs/RUN/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/home/op/.local/state/qcr/default/review/runs/RUN/out/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "cwd is the run's own out dir under the state home, outside every checkout, holding a copy of the reviewer stub (src/hostroute.ts); the agentDir is a private one with no context file."
+    },
+    "clone-review-lens": {
+      "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",
+      "agentDir": "/home/op/.local/state/qcr/default/review/runs/RUN/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/home/op/.local/state/qcr/default/review/runs/RUN/out/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+    },
+    "sdk": {
+      "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",
+      "agentDir": "/home/op/.local/state/qcr/default/review/runs/RUN/agent",
+      "contextFiles": "injected",
+      "effective": [
+        {
+          "path": "/home/op/.local/state/qcr/default/review/runs/RUN/out/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "PiHost.makeSession (src/engine/pisdk.ts): the ResourceLoader discovers nothing and agentsFilesOverride hands over the reviewer stub at the run's out dir; the file is never written, and the planted AGENTS.md in the cwd, its ancestor and the agentDir do not load."
+    },
+    "sdk-lens": {
+      "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",
+      "agentDir": "/home/op/.local/state/qcr/default/review/runs/RUN/agent",
+      "contextFiles": "injected",
+      "effective": [
+        {
+          "path": "/home/op/.local/state/qcr/default/review/runs/RUN/out/AGENTS.override.md",
+          "source": "deploy/reviewer/AGENTS.override.md"
+        }
+      ],
+      "note": "An SDK lens session comes from the same makeSession with the same context files (D34: the stub on every route)."
+    },
+    "scan-leaf-container": {
+      "cwd": "/opt/qcr",
+      "agentDir": "/home/companion/.pi/agent",
+      "contextFiles": "disabled",
+      "effective": [],
+      "note": "cwd is the app root in the scan container (QCR_ROOT=/opt/qcr), which the companion image fills with an explicit COPY list that has no context file. The leaf passes -nc besides: it loads none whatever the root holds."
+    },
+    "scan-leaf-host": {
+      "cwd": "/qcr-checkout",
+      "agentDir": "/operator-pi-agent",
+      "contextFiles": "disabled",
+      "effective": [],
+      "note": "[scan] sandbox = \"host\": cwd is sandboxRoot(), the qcr checkout, whose AGENTS.md the leaf does not load (-nc, P1.1); nothing is written there or into the scanned tree."
+    },
+    "companion": {
+      "cwd": "/workspace",
+      "agentDir": "/home/qcr/.pi/agent",
+      "contextFiles": "default",
+      "effective": [
+        {
+          "path": "/workspace/AGENTS.md",
+          "source": "AGENTS.md"
+        }
+      ],
+      "note": "/workspace is the qcr checkout, bind-mounted; no stub. The release image in companion mode: its WORKDIR (/opt/qcr, where the stub sits) is overridden by the run."
+    }
+  }
+}

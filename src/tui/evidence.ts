@@ -187,7 +187,7 @@ export const ARCHIVE_MANIFEST_LINE = "archive-manifest";
 
 /** A VM-reported path is interpolated into the next command's shell script,
  * so it must be plainly shell-safe: no quote, space or metacharacter. */
-const isShellSafePath = (path: string): boolean => /^[\w./@:+-]+$/.test(path);
+export const isShellSafePath = (path: string): boolean => /^[\w./@:+-]+$/.test(path);
 
 /** The PR's archive manifest, when the listing named one — with the same
  * trust-boundary checks as an artefact path, and it must be the manifest of

@@ -1,0 +1,402 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scan-result.v1.json",
+  "title": "qcr scan --json, version 1",
+  "description": "One JSON object per `qcr scan <verb> --json`. schema_version leads every payload; ok says whether the call succeeded. Fields beyond those named may appear without a version change; a caller ignores what it does not know and refuses a schema_version it does not know. A refusal is {ok:false, errors:[\u2026]}. Verbs not named here (stage2, units, doctor, dismiss, match, suggestions) carry their own fields beside ok and schema_version.",
+  "type": "object",
+  "required": ["schema_version", "ok"],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "This schema's version."
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "preview": {
+      "$ref": "#/$defs/preview"
+    },
+    "start": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "string"
+      },
+      "description": "preview: the arguments that start this exact scan; null when a blocker stands in the way."
+    },
+    "run": {
+      "type": ["object", "null"],
+      "description": "status, start --foreground: the run, or null when none has run.",
+      "required": [
+        "id",
+        "mode",
+        "sha",
+        "state",
+        "display",
+        "started_at",
+        "cases_total",
+        "cases_done",
+        "cases_failed",
+        "findings",
+        "doubted",
+        "cases"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "sha": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "display": {
+          "type": "string"
+        },
+        "depth": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "finished_at": {
+          "type": ["string", "null"]
+        },
+        "cap_usd": {
+          "type": ["number", "null"]
+        },
+        "estimate_usd": {
+          "type": ["number", "null"]
+        },
+        "spent_usd": {
+          "type": ["number", "null"]
+        },
+        "unpriced_cases": {
+          "type": "integer"
+        },
+        "cases_total": {
+          "type": "integer"
+        },
+        "cases_done": {
+          "type": "integer"
+        },
+        "cases_failed": {
+          "type": "integer"
+        },
+        "findings": {
+          "type": "integer"
+        },
+        "doubted": {
+          "type": "integer"
+        },
+        "matching": {
+          "type": ["object", "null"]
+        },
+        "tickets_closed": {
+          "type": "integer"
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "unit", "status", "findings", "doubted", "cost_usd", "error"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "findings": {
+                "type": "integer"
+              },
+              "doubted": {
+                "type": "integer"
+              },
+              "cost_usd": {
+                "type": ["number", "null"]
+              },
+              "error": {
+                "type": ["string", "null"]
+              },
+              "lens": {
+                "type": "string"
+              },
+              "tier": {
+                "type": ["string", "null"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "problems": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "history": {
+      "type": "array"
+    },
+    "ledger": {
+      "type": "object"
+    },
+    "timed_out": {
+      "type": "boolean",
+      "description": "status --wait gave up after --timeout; the scan is still going."
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "findings: how many match, before --limit."
+    },
+    "validity": {
+      "type": "object",
+      "description": "findings: the matching findings counted by validity."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "question": {
+      "type": ["object", "null"]
+    },
+    "log": {
+      "type": "string"
+    },
+    "container": {
+      "type": "string"
+    },
+    "image": {
+      "type": "string"
+    },
+    "stamp": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "seen": {
+      "type": "object",
+      "required": ["run", "sha"],
+      "properties": {
+        "run": {
+          "type": "string"
+        },
+        "sha": {
+          "type": "string"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "fingerprint",
+        "file",
+        "range",
+        "lens",
+        "lenses",
+        "unit",
+        "kind",
+        "severity",
+        "validity",
+        "state",
+        "claim",
+        "doubted",
+        "doubt",
+        "looks_like_dismissed",
+        "dismissal_reason",
+        "ticket",
+        "first_seen",
+        "last_seen"
+      ],
+      "properties": {
+        "fingerprint": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "range": {
+          "type": "object",
+          "required": ["start", "end"],
+          "properties": {
+            "start": {
+              "type": "integer"
+            },
+            "end": {
+              "type": "integer"
+            }
+          }
+        },
+        "lens": {
+          "type": "string"
+        },
+        "lenses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unit": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "validity": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "claim": {
+          "type": "string"
+        },
+        "doubted": {
+          "type": "boolean"
+        },
+        "doubt": {
+          "type": ["object", "null"],
+          "properties": {
+            "word": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "class": {
+              "type": ["string", "null"]
+            }
+          }
+        },
+        "looks_like_dismissed": {
+          "type": ["object", "null"],
+          "properties": {
+            "fingerprint": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        "dismissal_reason": {
+          "type": ["string", "null"]
+        },
+        "ticket": {
+          "type": ["string", "null"]
+        },
+        "first_seen": {
+          "$ref": "#/$defs/seen"
+        },
+        "last_seen": {
+          "$ref": "#/$defs/seen"
+        }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "required": [
+        "key",
+        "mode",
+        "sha",
+        "cases",
+        "files",
+        "lines",
+        "estimate_usd",
+        "cap_usd",
+        "depth",
+        "blockers"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Quote it with start --key to confirm exactly this scan."
+        },
+        "mode": {
+          "type": "string"
+        },
+        "sha": {
+          "type": "string"
+        },
+        "cases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "files", "lines", "estimate_usd"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "files": {
+                "type": "integer"
+              },
+              "lines": {
+                "type": "integer"
+              },
+              "estimate_usd": {
+                "type": ["number", "null"]
+              }
+            }
+          }
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimate_usd": {
+          "type": ["number", "null"]
+        },
+        "cap_usd": {
+          "type": ["number", "null"]
+        },
+        "depth": {
+          "type": "string"
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "settings": {
+          "type": "object"
+        },
+        "delta": {
+          "type": ["object", "null"]
+        }
+      }
+    }
+  }
+}

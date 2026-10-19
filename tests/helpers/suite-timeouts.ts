@@ -31,7 +31,8 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  * node:child_process is here (the fence checks it); the rest spawn through the
  * code under test and were found by tracing ChildProcess.prototype.spawn and
  * the *Sync variants across a full run:
- *   bench-defects, bench-runpi-flush — the bench's runPi over a fake `pi`;
+ *   bench-defects, bench-live-cap, bench-runpi-flush — the bench's runPi over a
+ *     fake `pi`;
  *   guards-shell-* — the real posting scripts, spawned by their shared rig
  *     (tests/helpers/guards-shell-rig.ts);
  *   companion-memory — the forward's ssh probe (fails fast, no VM);
@@ -42,6 +43,7 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  *     that does not exist.
  */
 export const PROCESS_SUITES: readonly string[] = [
+  "tests/action.test.ts",
   "tests/archive-evidence-shell.test.ts",
   "tests/bash-guard-sed-differential.test.ts",
   "tests/bench-apikey.test.ts",
@@ -58,6 +60,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/bench-g61.test.ts",
   "tests/bench-harvest-upstream.test.ts",
   "tests/bench-image-default.test.ts",
+  "tests/bench-live-cap.test.ts",
   "tests/bench-opencode.test.ts",
   "tests/bench-pireview.test.ts",
   "tests/bench-pragent.test.ts",
@@ -65,16 +68,26 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/bench-rerun-all.test.ts",
   "tests/bench-runpi-flush.test.ts",
   "tests/bench-whatif.test.ts",
+  "tests/ci-clone-smoke.test.ts",
+  "tests/ci-image-smoke.test.ts",
   "tests/collect-secrets.test.ts",
   "tests/commit-verdict-shell.test.ts",
   "tests/companion-github.test.ts",
   "tests/companion-memory.test.ts",
+  "tests/compose-stack.test.ts",
+  "tests/context-files.test.ts",
+  "tests/cpu-gate.test.ts",
+  "tests/debug-pi.test.ts",
   "tests/deploy.test.ts",
   "tests/docker-daemon.test.ts",
+  "tests/engine-port-contract.test.ts",
+  "tests/entrypoint.test.ts",
   "tests/exec-boundary.test.ts",
   "tests/fences-cigate.test.ts",
   "tests/fences-gate.test.ts",
   "tests/fences-provenance.test.ts",
+  "tests/ghcred-handoff.test.ts",
+  "tests/golden-prompts.test.ts",
   "tests/guards-shell-cigate.test.ts",
   "tests/guards-shell-closed.test.ts",
   "tests/guards-shell-deferred.test.ts",
@@ -84,26 +97,51 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/guards-shell-post.test.ts",
   "tests/guards-shell-receipts.test.ts",
   "tests/hf-export.test.ts",
+  "tests/host-isolation.test.ts",
+  "tests/host-wrapper.test.ts",
   "tests/improvements-e2e.test.ts",
   "tests/install-shell.test.ts",
+  "tests/json-contract.test.ts",
+  "tests/lens-prompt-parity.test.ts", // a real pi child per agent, against a loopback endpoint
   "tests/lens-yield.test.ts",
   "tests/levers.test.ts",
+  "tests/localreview-readonly.test.ts",
+  "tests/memory-image.test.ts",
   "tests/onboard-llmauth.test.ts",
   "tests/onboard-streamrunner.test.ts",
+  "tests/open-pr.test.ts", // sh -c against a fixture root, a real pi child in a pty
   "tests/openviking-embedder.test.ts",
   "tests/openviking-reembed-lock.test.ts",
   "tests/openviking.test.ts",
   "tests/operator-host.test.ts", // real setup shell against fake SSH/rsync adapters
+  "tests/pi-canary/canary-10-oneshot-request.test.ts", // a real pi child per round, against a loopback endpoint
+  "tests/pi-canary/canary-3-abort-cpu-load.test.ts", // bash children spawned by pi's own bash tool
+  "tests/pi-resolution.test.ts",
   "tests/pibuiltins.test.ts",
+  "tests/plugin-qcr.test.ts", // the plugin's shell scripts against a fake docker, gh and qcr
   "tests/pr-checks-why.test.ts",
   "tests/pr-context-shell.test.ts",
   "tests/pr-self-shell.test.ts",
   "tests/pr-threads-shell.test.ts",
+  "tests/profile-overrides-review.test.ts",
+  "tests/profile-overrides.test.ts",
   "tests/proposals.test.ts",
   "tests/publish-snapshot.test.ts",
   "tests/publishability.test.ts",
+  "tests/release-image.test.ts",
+  "tests/release-workflow.test.ts",
   "tests/required-passes.test.ts",
+  "tests/review-cli.test.ts",
+  "tests/review-container.test.ts",
+  "tests/review-core-defects.test.ts",
+  "tests/review-delta.test.ts",
+  "tests/review-destinations.test.ts",
+  "tests/review-detached.test.ts",
+  "tests/review-post-cli.test.ts",
+  "tests/review-pr-target.test.ts",
+  "tests/review-watchdog.test.ts",
   "tests/reviewrender.test.ts",
+  "tests/reviewstore.test.ts",
   "tests/scan-auth.test.ts",
   "tests/scan-run.test.ts",
   "tests/scan-sandbox.test.ts",
@@ -118,7 +156,9 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/tui-deploy-process.test.ts",
   "tests/tui-openurl.test.ts",
   "tests/tui-rollover.test.ts",
+  "tests/tui-socket-mode.test.ts",
   "tests/tui-sshtriage-probe.test.ts",
   "tests/tui-startup.test.ts",
+  "tests/tui-tmux-socket.test.ts",
   "tests/worktrees.test.ts",
 ];

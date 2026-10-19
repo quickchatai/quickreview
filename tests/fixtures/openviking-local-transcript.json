@@ -1,0 +1,361 @@
+{
+  "log": [
+    "openviking: local embedder started (pid 2000) — bge-small-en-v1.5-f16 on 127.0.0.1:1934",
+    "openviking: waiting for the local embedder before starting the server",
+    "openviking: local embedder ready — bge-small-en-v1.5-f16 serving on 127.0.0.1:1934",
+    "openviking: the local embedder is ready — starting the server",
+    "openviking: server started (pid 2001) on 127.0.0.1:1933",
+    "openviking: INFO listening",
+    "openviking: partial line",
+    "onReady",
+    "openviking: server exited (code=1 signal=null) after 2s",
+    "openviking: restarting in 1000ms (attempt 1)",
+    "openviking: server started (pid 2002) on 127.0.0.1:1933",
+    "openviking: local embedder exited (code=null signal=SIGKILL) after 9s",
+    "openviking: local embedder restarting in 1000ms (attempt 1)",
+    "openviking: server stopped"
+  ],
+  "spawns": [
+    {
+      "cmd": "/opt/openviking/venv/bin/python",
+      "args": [
+        "/opt/quickreview/sandbox/scripts/openviking-embedder.py",
+        "--model-path",
+        "/opt/openviking/models/bge-small-en-v1.5-f16.gguf",
+        "--model-name",
+        "bge-small-en-v1.5-f16",
+        "--sha256",
+        "f0b2fef971e8366438bfd2d9aefea1b0115919389448806d290237f638bae999",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "1934",
+        "--threads",
+        "1"
+      ]
+    },
+    {
+      "cmd": "/opt/openviking/venv/bin/openviking-server",
+      "args": [
+        "--config",
+        "/opt/quickreview/state/openviking/ov.conf",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "1933"
+      ],
+      "cwd": "/opt/quickreview/state/openviking",
+      "conf": "/opt/quickreview/state/openviking/ov.conf"
+    },
+    {
+      "cmd": "/opt/openviking/venv/bin/openviking-server",
+      "args": [
+        "--config",
+        "/opt/quickreview/state/openviking/ov.conf",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "1933"
+      ],
+      "cwd": "/opt/quickreview/state/openviking",
+      "conf": "/opt/quickreview/state/openviking/ov.conf"
+    }
+  ],
+  "steps": [
+    {
+      "step": "started: embedder spawned, server held by the gate",
+      "embedder": {
+        "state": "supervised",
+        "model": "bge-small-en-v1.5-f16",
+        "port": 1934,
+        "threads": 1,
+        "running": true,
+        "ready": false,
+        "restarts": 0,
+        "pid": 2000,
+        "started_at": "2026-10-19T10:00:00.000Z"
+      },
+      "server": {
+        "enabled": true,
+        "running": false,
+        "reachable": false,
+        "ready": false,
+        "not_ready_polls": 0,
+        "pinned_version": "0.4.15",
+        "restarts": 0,
+        "waiting_for": "the local embedder (since 2026-10-19T10:00:01.000Z)"
+      },
+      "serving": {
+        "ok": false,
+        "reason": "the local embedder on 127.0.0.1:1934 is starting (it has not answered /health yet)"
+      },
+      "delays": [
+        500,
+        500
+      ],
+      "gateOpen": false
+    },
+    {
+      "step": "embedder answers /health",
+      "embedder": {
+        "state": "supervised",
+        "model": "bge-small-en-v1.5-f16",
+        "port": 1934,
+        "threads": 1,
+        "running": true,
+        "ready": true,
+        "restarts": 0,
+        "pid": 2000,
+        "started_at": "2026-10-19T10:00:00.000Z",
+        "checked_at": "2026-10-19T10:00:02.000Z"
+      },
+      "server": {
+        "enabled": true,
+        "running": false,
+        "reachable": false,
+        "ready": false,
+        "not_ready_polls": 0,
+        "pinned_version": "0.4.15",
+        "restarts": 0,
+        "waiting_for": "the local embedder (since 2026-10-19T10:00:01.000Z)"
+      },
+      "serving": {
+        "ok": null
+      },
+      "delays": [
+        500,
+        500
+      ],
+      "gateOpen": true
+    },
+    {
+      "step": "gate poll: server spawned",
+      "embedder": {
+        "state": "supervised",
+        "model": "bge-small-en-v1.5-f16",
+        "port": 1934,
+        "threads": 1,
+        "running": true,
+        "ready": true,
+        "restarts": 0,
+        "pid": 2000,
+        "started_at": "2026-10-19T10:00:00.000Z",
+        "checked_at": "2026-10-19T10:00:02.000Z"
+      },
+      "server": {
+        "enabled": true,
+        "running": true,
+        "reachable": false,
+        "ready": false,
+        "not_ready_polls": 0,
+        "pinned_version": "0.4.15",
+        "restarts": 0,
+        "pid": 2001,
+        "started_at": "2026-10-19T10:00:04.000Z"
+      },
+      "serving": {
+        "ok": null
+      },
+      "delays": [
+        500,
+        30000
+      ],
+      "gateOpen": true
+    },
+    {
+      "step": "server /ready",
+      "embedder": {
+        "state": "supervised",
+        "model": "bge-small-en-v1.5-f16",
+        "port": 1934,
+        "threads": 1,
+        "running": true,
+        "ready": true,
+        "restarts": 0,
+        "pid": 2000,
+        "started_at": "2026-10-19T10:00:00.000Z",
+        "checked_at": "2026-10-19T10:00:02.000Z"
+      },
+      "server": {
+        "enabled": true,
+        "running": true,
+        "reachable": true,
+        "ready": true,
+        "not_ready_polls": 0,
+        "pinned_version": "0.4.15",
+        "restarts": 0,
+        "pid": 2001,
+        "version": "0.4.15",
+        "version_drift": false,
+        "started_at": "2026-10-19T10:00:04.000Z",
+        "checked_at": "2026-10-19T10:00:05.000Z"
+      },
+      "serving": {
+        "ok": true
+      },
+      "delays": [
+        500,
+        30000
+      ],
+      "gateOpen": true
+    },
+    {
+      "step": "server crash",
+      "embedder": {
+        "state": "supervised",
+        "model": "bge-small-en-v1.5-f16",
+        "port": 1934,
+        "threads": 1,
+        "running": true,
+        "ready": true,
+        "restarts": 0,
+        "pid": 2000,
+        "started_at": "2026-10-19T10:00:00.000Z",
+        "checked_at": "2026-10-19T10:00:02.000Z"
+      },
+      "server": {
+        "enabled": true,
+        "running": false,
+        "reachable": false,
+        "ready": false,
+        "not_ready_polls": 0,
+        "pinned_version": "0.4.15",
+        "restarts": 1,
+        "last_exit": {
+          "code": 1,
+          "signal": null,
+          "at": "2026-10-19T10:00:07.000Z"
+        }
+      },
+      "serving": {
+        "ok": null
+      },
+      "delays": [
+        500,
+        30000,
+        1000
+      ],
+      "gateOpen": true
+    },
+    {
+      "step": "server respawned",
+      "embedder": {
+        "state": "supervised",
+        "model": "bge-small-en-v1.5-f16",
+        "port": 1934,
+        "threads": 1,
+        "running": true,
+        "ready": true,
+        "restarts": 0,
+        "pid": 2000,
+        "started_at": "2026-10-19T10:00:00.000Z",
+        "checked_at": "2026-10-19T10:00:02.000Z"
+      },
+      "server": {
+        "enabled": true,
+        "running": true,
+        "reachable": false,
+        "ready": false,
+        "not_ready_polls": 0,
+        "pinned_version": "0.4.15",
+        "restarts": 1,
+        "pid": 2002,
+        "started_at": "2026-10-19T10:00:08.000Z",
+        "last_exit": {
+          "code": 1,
+          "signal": null,
+          "at": "2026-10-19T10:00:07.000Z"
+        }
+      },
+      "serving": {
+        "ok": null
+      },
+      "delays": [
+        500,
+        30000
+      ],
+      "gateOpen": true
+    },
+    {
+      "step": "embedder crash",
+      "embedder": {
+        "state": "supervised",
+        "model": "bge-small-en-v1.5-f16",
+        "port": 1934,
+        "threads": 1,
+        "running": false,
+        "ready": false,
+        "restarts": 1,
+        "last_exit": {
+          "code": null,
+          "signal": "SIGKILL",
+          "at": "2026-10-19T10:00:10.000Z"
+        },
+        "checked_at": "2026-10-19T10:00:02.000Z"
+      },
+      "server": {
+        "enabled": true,
+        "running": true,
+        "reachable": false,
+        "ready": false,
+        "not_ready_polls": 0,
+        "pinned_version": "0.4.15",
+        "restarts": 1,
+        "pid": 2002,
+        "started_at": "2026-10-19T10:00:08.000Z",
+        "last_exit": {
+          "code": 1,
+          "signal": null,
+          "at": "2026-10-19T10:00:07.000Z"
+        }
+      },
+      "serving": {
+        "ok": false,
+        "reason": "the local embedder on 127.0.0.1:1934 is not running (last exit code=null signal=SIGKILL at 2026-10-19T10:00:10.000Z), 1 restart(s)"
+      },
+      "delays": [
+        30000,
+        1000
+      ],
+      "gateOpen": false
+    },
+    {
+      "step": "stopped",
+      "embedder": {
+        "state": "supervised",
+        "model": "bge-small-en-v1.5-f16",
+        "port": 1934,
+        "threads": 1,
+        "running": false,
+        "ready": false,
+        "restarts": 1,
+        "last_exit": {
+          "code": null,
+          "signal": "SIGKILL",
+          "at": "2026-10-19T10:00:10.000Z"
+        },
+        "checked_at": "2026-10-19T10:00:02.000Z"
+      },
+      "server": {
+        "enabled": true,
+        "running": false,
+        "reachable": false,
+        "ready": false,
+        "not_ready_polls": 0,
+        "pinned_version": "0.4.15",
+        "restarts": 1,
+        "last_exit": {
+          "code": 0,
+          "signal": "SIGTERM",
+          "at": "2026-10-19T10:00:12.000Z"
+        }
+      },
+      "serving": {
+        "ok": false,
+        "reason": "the local embedder on 127.0.0.1:1934 is not running (last exit code=null signal=SIGKILL at 2026-10-19T10:00:10.000Z), 1 restart(s)"
+      },
+      "delays": [],
+      "gateOpen": true
+    }
+  ]
+}

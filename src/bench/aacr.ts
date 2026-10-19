@@ -29,6 +29,8 @@
 
 import { CASE_FILES, commentsEnvelope, prDescription, singleLineComment } from "./artifacts.js";
 import { usageCost } from "./values.js";
+import { isLensTool, LENS_WAVE_TOOL, lensIdOf, LensOnce, lensResultsOf } from "../lensresult.js";
+import { launchVocab } from "../launchvocab.js";
 import { postedSeverityTag, RENDER_RECORD_FIELDS } from "../reviewrender.js";
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, POSTING_TAG_WORDS } from "../severity.js";
 import type { PrFileEntry } from "../github.js";
@@ -693,6 +695,9 @@ export interface AppendixArgs {
   privateReplay?: boolean;
   /** A follow-up replay — the head the previous round reviewed. */
   prevHead?: string;
+  /** `[pi] lens_runtime = engine`: the step names the engine's lens tool, as
+   * the round order above does (src/launchvocab.ts). Absent ⇒ native. */
+  lens_runtime?: "engine";
 }
 
 /** Output files the session writes, relative to its case dir. */
@@ -730,7 +735,7 @@ export function benchAppendix(a: AppendixArgs): string {
   L.push("**What stays exactly as written above:**");
   L.push("");
   L.push(
-    "- Steps 1–4 — Sync, Dispatch passes (the `subagent` tool, the pass plan, raise/add protocols, pass-validate last), Merge, Validate.",
+    `- Steps 1–4 — Sync, Dispatch passes (the \`${launchVocab(a).lens}\` tool, the pass plan, raise/add protocols, pass-validate last), Merge, Validate.`,
   );
   L.push(
     "- The verdict logic of step 5 on the merits (any surviving `[blocker]` ⇒ REQUEST_CHANGES, otherwise APPROVE), the posting map and the reachability gate.",
@@ -1295,12 +1300,12 @@ function addUsage(into: Usage, x: unknown): void {
   into.cacheRead += n("cacheRead");
 }
 
-/** The child results a `tool_execution_end` event of the native subagent
- * tool carries (`result.details.results`); [] for any other shape. */
+/** The child results a `tool_execution_end` event of a lens tool carries
+ * (`result.details.results`); [] for any other shape. A result with an `id`
+ * (LensResult v1) can come back from more than one call — claim it on a
+ * `LensOnce` before counting it. */
 export function childResults(e: Record<string, unknown>): unknown[] {
-  const res = e["result"] as Record<string, unknown> | undefined;
-  const details = res?.["details"] as Record<string, unknown> | undefined;
-  return Array.isArray(details?.["results"]) ? (details["results"] as unknown[]) : [];
+  return lensResultsOf(e["result"]);
 }
 
 /**
@@ -1313,6 +1318,7 @@ export function childResults(e: Record<string, unknown>): unknown[] {
 export function usageFromEvents(lines: Iterable<string>): Usage & { children: number } {
   const u = { input: 0, output: 0, cacheRead: 0, children: 0 };
   const add = (x: unknown): void => addUsage(u, x);
+  const once = new LensOnce();
   for (const line of lines) {
     if (!line.trim()) continue;
     let e: Record<string, unknown>;
@@ -1328,7 +1334,7 @@ export function usageFromEvents(lines: Iterable<string>): Usage & { children: nu
     if (e["type"] === "tool_execution_end") {
       for (const r of childResults(e)) {
         const usage = (r as Record<string, unknown> | null)?.["usage"];
-        if (usage) {
+        if (usage && once.claim(lensIdOf(r))) {
           add(usage);
           u.children++;
         }
@@ -1340,8 +1346,8 @@ export function usageFromEvents(lines: Iterable<string>): Usage & { children: nu
 
 // ---- per-stage cost and time -------------------------------------------------
 
-/** One `subagent` tool call of the main session: a lens fan-out, a validator,
- * a re-run. */
+/** One lens tool call (`subagent`, `launch_plan`, `lens`, `lens_wave`) of the
+ * main session: a lens fan-out, a validator, a re-run. */
 export interface StageCall {
   /** Launch order, from 0. */
   call: number;
@@ -1399,6 +1405,7 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
   const calls: StageCall[] = [];
   const open = new Map<string, StageCall>();
   const awaitingEnd: StageCall[] = [];
+  const once = new LensOnce();
   let lastTs: number | null = null;
   let firstValidateDone = false;
   for (const line of lines) {
@@ -1417,7 +1424,8 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
     }
     // `launch_plan` launches lenses through the subagent tool's own
     // execute; its args name task dirs, so its agents come from the result.
-    if (e["toolName"] !== "subagent" && e["toolName"] !== "launch_plan") continue;
+    // `lens_wave` joins a wave the engine launched: no args at all.
+    if (!isLensTool(e["toolName"])) continue;
     const id = typeof e["toolCallId"] === "string" ? e["toolCallId"] : null;
     if (e["type"] === "tool_execution_start") {
       const args = (e["args"] ?? {}) as Record<string, unknown>;
@@ -1451,25 +1459,36 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
       if (!call) continue;
       open.delete(id!);
       const results = childResults(e);
+      // A run a lens-id'd result already reported (a `lens_wave` joining a
+      // wave, or joining it again) is counted by its first call only.
+      const fresh = new Set(results.filter((r) => once.claim(lensIdOf(r))));
       // A launch_plan call named no agent at start: its results do.
       if (call.agents.length === 0)
         call.agents = results
+          .filter((r) => fresh.has(r))
           .map((r) => (r as Record<string, unknown> | null)?.["agent"])
           .filter((a): a is string => typeof a === "string");
       let last: number | null = null;
+      let first: number | null = null;
       for (const r0 of results) {
         const r = (r0 ?? {}) as Record<string, unknown>;
         const u = r["usage"] as Record<string, unknown> | undefined;
-        if (u) {
+        if (u && fresh.has(r0)) {
           addUsage(call.usage, u);
           call.cost += usageCost(u["cost"]);
           call.children++;
         }
         for (const msg of Array.isArray(r["messages"]) ? (r["messages"] as unknown[]) : []) {
           const t = (msg as Record<string, unknown> | null)?.["timestamp"];
-          if (typeof t === "number" && (last === null || t > last)) last = t;
+          if (typeof t !== "number") continue;
+          if (last === null || t > last) last = t;
+          if (fresh.has(r0) && (first === null || t < first)) first = t;
         }
       }
+      // A `lens_wave` joins a wave the engine started at round start: the
+      // wave's window opens with its first lens message, not with the join.
+      if (e["toolName"] === LENS_WAVE_TOOL && first !== null)
+        call.start_ms = call.start_ms === null ? first : Math.min(call.start_ms, first);
       if (last !== null) call.end_ms = last;
       else awaitingEnd.push(call);
       if (call.kind === "validate") firstValidateDone = true;

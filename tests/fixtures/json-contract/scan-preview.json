@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "preview": {
+    "key": "0000000000000000",
+    "mode": "calibration",
+    "sha": "0000000000000000000000000000000000000000",
+    "cases": [
+      {
+        "id": "lib",
+        "files": 1,
+        "lines": 2,
+        "estimate_usd": null
+      },
+      {
+        "id": "app",
+        "files": 1,
+        "lines": 3,
+        "estimate_usd": null
+      }
+    ],
+    "files": 2,
+    "lines": 5,
+    "estimate_usd": null,
+    "cap_usd": 3,
+    "rate": null,
+    "depth": "standard",
+    "rate_across_depth": false,
+    "calibration": {
+      "measured": 0,
+      "wanted": 3
+    },
+    "remaining_cases": 0,
+    "excluded": {
+      "test": 1,
+      "migration": 0,
+      "unreadable-kind": 0,
+      "excluded-glob": 0
+    },
+    "covered": 0,
+    "unassigned": [],
+    "unreadable": 0,
+    "skipped": [],
+    "settings": {
+      "tier": "sol-med",
+      "effort": "low",
+      "validator": false,
+      "validate_tier": null,
+      "exclude": [],
+      "concurrency": 8
+    },
+    "delta": null,
+    "blockers": []
+  },
+  "start": ["--key", "76756845f96e3e70", "--sha", "0000000000000000000000000000000000000000"]
+}

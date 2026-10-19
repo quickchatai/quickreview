@@ -11,7 +11,7 @@
 // Where a run is driven: `start` (and `stage2 start`) launches a detached
 // `qcr scan … --foreground` driver, waits until it has recorded the run (or
 // refused), and returns. With `[scan] sandbox = "docker"` (the default) the
-// driver runs in a throwaway container from the companion image
+// driver runs in a throwaway container from the scan sandbox image
 // (src/scanbox.ts); with `"host"` it is a detached process on this machine.
 // Either way its records are the state home's, so every other subcommand
 // reads them here, on the host. The driver runs the
@@ -78,6 +78,7 @@ import type { ScanRunner, ScanRun, ScanSettings, ScanStatus } from "./setup/scan
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "./setup/stage2.js";
 import type { StoredStage2Proposal } from "./setup/stage2request.js";
 import type { CloseFixedResult, ScanTriage } from "./setup/triage.js";
+import { SCAN_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
 
 export const SCAN_USAGE =
   "usage: qcr scan preview [--sha REF] [--delta] | start --key K [--sha REF] [--delta] [--foreground] | " +
@@ -91,6 +92,10 @@ export const SCAN_USAGE =
 export { DETACH_TIMEOUT_MS, DRIVER_LOG, DRIVER_LOG_MAX };
 /** How often `status --wait` and `stop` look again. */
 export const POLL_MS = 2000;
+
+/** The SDK leaf host's private agent dir, under the state home: its own models
+ * list lives here, never in the operator's pi home. */
+const SCAN_SDK_AGENT_DIR = "scan/sdk-agent";
 
 export interface FindingsQuery {
   state?: string;
@@ -492,7 +497,7 @@ export async function runScanCli(
   deps: ScanCliDeps,
 ): Promise<number> {
   const emit: Emit = (code, human, data) => {
-    deps.out(json ? JSON.stringify(data) : human);
+    deps.out(json ? JSON.stringify(withSchemaVersion(SCAN_SCHEMA_VERSION, data)) : human);
     return code;
   };
   const refusal = (what: string, errors: readonly string[], code = 1): number =>
@@ -748,7 +753,8 @@ export async function runScanCli(
       return emit(r.ok ? 0 : 1, renderDoctor(r), r as unknown as Record<string, unknown>);
     }
     case "login":
-      if (json) return refusal("Login", ["login is interactive; run qcr scan login without --json"]);
+      if (json)
+        return refusal("Login", ["login is interactive; run qcr scan login without --json"]);
       if (!deps.login) return refusal("Login", ["no login in this assembly"]);
       return deps.login(cmd.provider);
     case "rebuild": {
@@ -1019,9 +1025,9 @@ export function sendStarted(
 }
 
 /** A foreground driver's SIGINT/SIGTERM: the first stops the run (in-flight
- * cases aborted, their pi children killed by the case runner); a second
- * kills the driver's whole process group — the pi children with it — and
- * exits. */
+ * cases aborted: a pi child is killed by the case runner, an SDK leaf session
+ * is aborted and disposed in this process); a second kills the driver's whole
+ * process group — any pi children with it — and exits. */
 export function foregroundSignals(
   scan: Pick<ScanRunner, "stop">,
   io: { killGroup: () => void; exit: (code: number) => void; log: (line: string) => void },
@@ -1060,6 +1066,14 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
     env.QCR_REVIEWED_REPO!,
     env,
     shared,
+    null,
+    // This process is the scan's disposable driver (or a one-shot CLI that
+    // never runs a case): the one place scan leaves may be SDK sessions, loaded
+    // on first use. The companion's pi builds its scan without this.
+    async (o) => {
+      const { scanSdkCases } = await import("./engine/caserunner-sdk.js");
+      return scanSdkCases({ ...o, agentDir: join(home, SCAN_SDK_AGENT_DIR) });
+    },
   );
   return runScanCli(rest, json, {
     scan,
@@ -1143,7 +1157,7 @@ async function sandboxPorts(
   const configured = cfg?.scan_sandbox ?? {
     ...cfgMod.SCAN_SANDBOX_DEFAULTS,
     pihome_volume: cfgMod.COMPANION_DEFAULTS.pihome_volume,
-    image: cfgMod.COMPANION_DEFAULTS.image,
+    image: cfgMod.SCAN_IMAGE_DEFAULT,
   };
   const docker = companion.realDockerRunner;
   // Inside the companion container an unset sandbox is the host: there is

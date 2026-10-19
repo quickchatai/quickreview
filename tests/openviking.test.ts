@@ -34,8 +34,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // drift (pinned in tests/deploy.test.ts, "OpenViking pin drift").
 const configToml = readFileSync(resolve(root, "config.example.toml"), "utf8");
 const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
-const dockerfile = readFileSync(resolve(root, "deploy/ansible/templates/Dockerfile.j2"), "utf8");
-const entrypoint = readFileSync(resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"), "utf8");
+// The memory sidecar is the only place OpenViking runs on the VM now: the release
+// image carries none. Its image, its entrypoint and the ov.conf renderer it runs.
+const dockerfile = readFileSync(resolve(root, "docker/memory/Dockerfile"), "utf8");
+const entrypoint = readFileSync(resolve(root, "docker/memory/entrypoint.sh"), "utf8");
+const ovConfScript = readFileSync(resolve(root, "scripts/openviking-ov-conf.mjs"), "utf8");
 const playbook = readFileSync(resolve(root, "deploy/ansible/playbook.yml"), "utf8");
 
 const cfg = parseConfig(configToml);
@@ -90,15 +93,17 @@ describe("[openviking] config block", () => {
   });
 });
 
-describe("triple-mirror version pin (config.toml ↔ group_vars ↔ Dockerfile)", () => {
+describe("triple-mirror version pin (config.toml ↔ group_vars ↔ the memory image)", () => {
   it("config.toml and group_vars agree on both pinned versions", () => {
     expect(gv("openviking_version")).toBe(cfg.openviking.version);
     expect(gv("llama_cpp_python_version")).toBe(cfg.openviking.llama_cpp_python_version);
   });
 
-  it("the Dockerfile pins BOTH packages through the group_vars, never a literal", () => {
-    expect(dockerfile).toContain('"openviking=={{ openviking_version }}"');
-    expect(dockerfile).toContain('"llama-cpp-python=={{ llama_cpp_python_version }}"');
+  it("the memory image pins BOTH packages through ARGs the playbook feeds from the group_vars, never a literal", () => {
+    expect(dockerfile).toContain('"openviking==${OPENVIKING_VERSION}"');
+    expect(dockerfile).toContain('"llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}"');
+    expect(playbook).toContain('"OPENVIKING_VERSION={{ openviking_version }}"');
+    expect(playbook).toContain('"LLAMA_CPP_PYTHON_VERSION={{ llama_cpp_python_version }}"');
     // A literal version in the image is exactly the drift the mirror prevents.
     expect(dockerfile).not.toMatch(/openviking==\d/);
     expect(dockerfile).not.toMatch(/llama-cpp-python==\d/);
@@ -107,13 +112,13 @@ describe("triple-mirror version pin (config.toml ↔ group_vars ↔ Dockerfile)"
   it("the image hard-fails unless the INSTALLED versions match the pins", () => {
     expect(dockerfile).toContain("importlib.metadata");
     expect(dockerfile).toContain("import llama_cpp");
-    expect(dockerfile).toMatch(/test -x \{\{ openviking_venv \}\}\/bin\/openviking-server/);
+    expect(dockerfile).toMatch(/test -x "\$\{OPENVIKING_VENV\}\/bin\/openviking-server"/);
   });
 
   it("llama-cpp-python is installed even though openviking does not depend on it", () => {
     // Verified live: without it the default local dense embedder raises
     // EmbeddingConfigurationError and the server cannot boot at all.
-    const llama = dockerfile.indexOf("llama-cpp-python==");
+    const llama = dockerfile.indexOf('"llama-cpp-python==');
     const ov = dockerfile.indexOf('"openviking==');
     expect(llama).toBeGreaterThan(0);
     expect(llama).toBeLessThan(ov);
@@ -208,57 +213,56 @@ describe("a hosted opt-in never inherits the local embedder (selfscan)", () => {
 
 describe("boot-time ov.conf (never the interactive wizard)", () => {
   it("never invokes `openviking-server init` — an interactive prompt would stall the boot", () => {
-    expect(entrypoint).not.toMatch(/openviking-server\s+init/);
+    const code = entrypoint
+      .split("\n")
+      .filter((l) => !/^\s*#/.test(l))
+      .join("\n");
+    expect(code).not.toMatch(/openviking-server\s+init/);
     expect(entrypoint).toContain("ov.conf");
   });
 
-  it("never starts the server itself — the DAEMON supervises it", () => {
+  it("never starts the server itself — the sidecar's supervisor does", () => {
     expect(entrypoint).not.toMatch(/^\s*(nohup\s+)?[^#\n]*openviking-server(?!\s*`)[^\n]*&\s*$/m);
   });
 
   it("symlinks ~/.openviking onto the state volume so memory survives a rebuild", () => {
-    expect(entrypoint).toContain("OV_HOME={{ openviking_home }}");
+    expect(entrypoint).toContain(
+      'OV_HOME="${QCR_OPENVIKING_HOME:-/opt/quickreview/state/openviking}"',
+    );
     expect(entrypoint).toMatch(/ln -sfn "\$OV_HOME" "\$HOME\/\.openviking"/);
   });
 
-  it("renders the CONFIGURED auth mode on loopback, one worker, reduced queue workers, and NO vlm section", () => {
-    const render = entrypoint.slice(
-      entrypoint.indexOf("OV_CONF_RENDER"),
-      entrypoint.lastIndexOf("OV_CONF_RENDER"),
-    );
-    // The mode is a group_var, never a literal. `dev` bypasses
+  it("renders the CONFIGURED auth mode, one worker, reduced queue workers, and NO vlm section", () => {
+    const render = ovConfScript.slice(ovConfScript.indexOf("export function renderOvConf"));
+    // The mode is configuration, never a literal. `dev` bypasses
     // authentication, which makes the two-user confinement nominal.
-    expect(render).toContain('auth_mode: "{{ openviking_auth_mode }}"');
+    expect(render).toContain("auth_mode: env.QCR_OV_AUTH_MODE");
     expect(render).not.toContain('auth_mode: "dev",');
-    expect(render).toContain('host: "127.0.0.1"');
-    expect(render).toContain("port: {{ openviking_port }}");
-    expect(render).toContain("workers: {{ openviking_workers }}");
-    expect(render).toContain("max_concurrent: {{ openviking_queue_concurrency }}");
+    expect(render).toContain('host: env.QCR_OV_HOST || "127.0.0.1"');
+    expect(render).toContain("port: Number(env.QCR_OV_PORT)");
+    expect(render).toContain("workers: Number(env.QCR_OV_WORKERS)");
+    expect(render).toContain("max_concurrent: Number(env.QCR_OV_QUEUE_CONCURRENCY)");
     // The absent `vlm` is load-bearing: extraction/summaries/digest stay off,
     // and it is why `doctor` can never be the health gate.
     expect(render).not.toMatch(/\bvlm\b\s*:/);
     expect(render).toContain("extraction_enabled: false");
   });
 
-  it("the embedding PROVIDER is a group_var, never a literal, and pi's key is never its credential", () => {
-    const render = entrypoint.slice(
-      entrypoint.indexOf("OV_CONF_RENDER"),
-      entrypoint.lastIndexOf("OV_CONF_RENDER"),
-    );
-    expect(entrypoint).toContain('QCR_SECRETS="$SECRETS"');
-    expect(render).toContain('provider: "{{ openviking_embedding_provider }}"');
+  it("the embedding PROVIDER is configuration, never a literal, and pi's key is never its credential", () => {
+    const render = ovConfScript.slice(ovConfScript.indexOf("export function renderOvConf"));
+    expect(render).toContain("provider: env.QCR_OV_EMBEDDING_PROVIDER");
     // The one literal "openai" is the local embedder's WIRE
     // provider, inside the `local` branch, beside the loopback api_base — never
     // the operator's provider.
     expect(render.match(/provider: "openai"/g)).toHaveLength(1);
     expect(render).toMatch(
-      /if \(conf\.embedding\.dense\.provider === "local"\) \{[\s\S]*provider: "openai",[\s\S]*api_base: "http:\/\/127\.0\.0\.1:\{\{ openviking_local_embedder_port \}\}\/v1"/,
+      /if \(conf\.embedding\.dense\.provider === "local"\) \{[\s\S]*provider: "openai",[\s\S]*api_base: "http:\/\/127\.0\.0\.1:" \+ Number\(env\.QCR_OV_LOCAL_EMBEDDER_PORT\)/,
     );
     // The render never reads pi's model credential: the two are independent.
     expect(render).not.toContain("openai_api_key");
-    expect(render).toContain("{{ openviking_embedding_key_file }}");
+    expect(render).toContain("env.QCR_OV_EMBEDDING_KEY_FILE");
     // ov.conf holds a credential: it is written 0600, never world-readable.
-    expect(render).toContain("0o600");
+    expect(ovConfScript).toContain("0o600");
   });
 
   it("runs the embedder migration check BEFORE provisioning starts a server", () => {
@@ -270,16 +274,16 @@ describe("boot-time ov.conf (never the interactive wizard)", () => {
     expect(entrypoint).toMatch(/\|\| echo "openviking: embedder migration check did not complete/);
   });
 
-  it("a failed render never fails the boot — the daemon comes up memory-less", () => {
-    expect(entrypoint).toMatch(/OV_CONF_RENDER' \|\| echo "openviking: ov\.conf render FAILED/);
+  it("a failed render never fails the boot — the sidecar comes up and memory degrades", () => {
+    expect(entrypoint).toMatch(/\|\| echo "openviking: ov\.conf render FAILED/);
   });
 });
 
-// The sovereignty claim, checked by execution: the render heredoc is
-// lifted out of the template, its Jinja variables filled from the SAME
-// group_vars the playbook uses, and run with node against a temp secrets dir.
-// Reading the guard would only prove what the text says; this proves what the
-// boot does.
+// The sovereignty claim, checked by execution: the sidecar's renderer
+// (scripts/openviking-ov-conf.mjs, what docker/memory/entrypoint.sh runs) is
+// fed the SAME values the playbook hands the sidecar from group_vars, and run
+// with node against a temp secrets dir. Reading the guard would only prove what
+// the text says; this proves what the boot does.
 describe("the rendered ov.conf (executed)", () => {
   let dir: string;
   afterEach(() => {
@@ -304,20 +308,34 @@ describe("the rendered ov.conf (executed)", () => {
     mkdirSync(secretsDir, { recursive: true });
     for (const [name, value] of Object.entries(secrets))
       writeFileSync(join(secretsDir, name), value);
-    const start = entrypoint.indexOf("<<'OV_CONF_RENDER'");
-    const body = entrypoint.slice(
-      entrypoint.indexOf("\n", start) + 1,
-      entrypoint.lastIndexOf("\nOV_CONF_RENDER"),
-    );
-    const js = body.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, name: string) => {
+    // group_vars name -> the renderer's environment variable.
+    const ENV_OF: Record<string, string> = {
+      openviking_port: "QCR_OV_PORT",
+      openviking_workers: "QCR_OV_WORKERS",
+      openviking_queue_concurrency: "QCR_OV_QUEUE_CONCURRENCY",
+      openviking_auth_mode: "QCR_OV_AUTH_MODE",
+      openviking_embedding_provider: "QCR_OV_EMBEDDING_PROVIDER",
+      openviking_embedding_model: "QCR_OV_EMBEDDING_MODEL",
+      openviking_embedding_dimension: "QCR_OV_EMBEDDING_DIMENSION",
+      openviking_embedding_key_file: "QCR_OV_EMBEDDING_KEY_FILE",
+      openviking_local_embedder_model: "QCR_OV_LOCAL_EMBEDDER_MODEL",
+      openviking_local_embedder_dimension: "QCR_OV_LOCAL_EMBEDDER_DIMENSION",
+      openviking_local_embedder_port: "QCR_OV_LOCAL_EMBEDDER_PORT",
+      openviking_root_key_file: "QCR_OV_ROOT_KEY_FILE",
+    };
+    const fed: Record<string, string> = {};
+    for (const [name, variable] of Object.entries(ENV_OF)) {
       const value = overrides[name] ?? gv(name);
       if (value === undefined) throw new Error(`no group_var ${name}`);
-      return value;
-    });
-    const script = join(dir, "render.cjs");
-    writeFileSync(script, js);
-    const result = spawnSync(process.execPath, [script], {
-      env: { ...process.env, OPENVIKING_CONF: join(home, "ov.conf"), QCR_SECRETS: secretsDir },
+      fed[variable] = value;
+    }
+    const result = spawnSync(process.execPath, [resolve(root, "scripts/openviking-ov-conf.mjs")], {
+      env: {
+        PATH: process.env.PATH,
+        ...fed,
+        OPENVIKING_CONF: join(home, "ov.conf"),
+        QCR_SECRETS: secretsDir,
+      },
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
     });
@@ -416,12 +434,8 @@ describe("the rendered ov.conf (executed)", () => {
     // Bounded well under the server's default of 10.
     expect(conf.embedding.max_concurrent).toBeLessThan(4);
     // The knob, never a literal.
-    const body = entrypoint.slice(
-      entrypoint.indexOf("<<'OV_CONF_RENDER'"),
-      entrypoint.lastIndexOf("\nOV_CONF_RENDER"),
-    );
-    expect(body).toMatch(
-      /conf\.embedding = \{\s*(?:\/\/[^\n]*\n\s*)*max_concurrent: \{\{ openviking_queue_concurrency \}\},/,
+    expect(ovConfScript).toMatch(
+      /conf\.embedding = \{\s*max_concurrent: Number\(env\.QCR_OV_QUEUE_CONCURRENCY\),/,
     );
   });
 
@@ -464,44 +478,36 @@ describe("api_key confinement", () => {
     expect(parseConfig(without).openviking.auth_mode).toBe("api_key");
   });
 
-  it("the root key is read from the SECRETS MOUNT, never a literal in the template", () => {
-    const render = entrypoint.slice(
-      entrypoint.indexOf("OV_CONF_RENDER"),
-      entrypoint.lastIndexOf("OV_CONF_RENDER"),
-    );
-    expect(render).toContain("{{ openviking_root_key_file }}");
+  it("the root key is read from the SECRETS MOUNT, never a literal in the renderer", () => {
+    const render = ovConfScript.slice(ovConfScript.indexOf("export function renderOvConf"));
+    expect(render).toContain("env.QCR_OV_ROOT_KEY_FILE");
     expect(render).toContain("conf.server.root_api_key");
     // The value only ever comes off disk.
-    expect(render).toMatch(/root_api_key = fs\.readFileSync\(rootFile/);
+    expect(render).toMatch(/root_api_key = readFileSync\(rootFile/);
     expect(render).not.toMatch(/root_api_key\s*[:=]\s*"[A-Za-z0-9_-]{8,}"/);
   });
 
   it("a missing root key DEGRADES loudly to dev instead of wedging the server", () => {
-    const render = entrypoint.slice(
-      entrypoint.indexOf("OV_CONF_RENDER"),
-      entrypoint.lastIndexOf("OV_CONF_RENDER"),
-    );
+    const render = ovConfScript.slice(ovConfScript.indexOf("export function renderOvConf"));
     expect(render).toContain('conf.server.auth_mode = "dev"');
     expect(render).toContain("Per-user confinement is NOT enforced");
   });
 
-  it("boot provisioning runs, from the synced script, and never fails the boot", () => {
+  it("boot provisioning runs, from the image's script, and never fails the boot", () => {
     expect(entrypoint).toContain("scripts/openviking-provision.mjs");
-    expect(entrypoint).toContain('--users "{{ openviking_provision_users }}"');
-    expect(entrypoint).toContain('--root-key-file "$SECRETS/{{ openviking_root_key_file }}"');
-    expect(entrypoint).toContain(
-      '--reviewer-key-file "$SECRETS/{{ openviking_reviewer_key_file }}"',
-    );
+    expect(entrypoint).toContain('--users "$OV_PROVISION_USERS"');
+    expect(entrypoint).toContain('--root-key-file "$SECRETS/$OV_ROOT_KEY_FILE"');
+    expect(entrypoint).toContain('--reviewer-key-file "$SECRETS/$OV_REVIEWER_KEY_FILE"');
     expect(entrypoint).toMatch(/\|\| echo "openviking: boot provisioning did not complete/);
   });
 
   it("provisioning starts a server in the FOREGROUND and leaves none running", () => {
-    // The daemon is still the only supervisor of the long-lived server: the
-    // provisioning step needs one to talk to (admin routes are HTTP), starts
-    // it itself, and stops it before the entrypoint execs the daemon.
+    // The sidecar's supervisor is still the only owner of the long-lived server:
+    // the provisioning step needs one to talk to (admin routes are HTTP), starts
+    // it itself, and stops it before the entrypoint execs the supervisor.
     expect(entrypoint).toContain("--start-server");
     expect(entrypoint).not.toMatch(/openviking-provision\.mjs[^\n]*&\s*$/m);
-    expect(entrypoint).toMatch(/exec node "\$SANDBOX\/dist\/src\/wire\.js"/);
+    expect(entrypoint).toMatch(/exec node "\$APP\/dist\/src\/openviking\/sidecar-main\.js"/);
   });
 
   it("the COMPANION key is never provisioned into this container", () => {
@@ -526,6 +532,8 @@ describe("container topology", () => {
     expect(published).toContain("webhook_port");
     expect(published).not.toContain("1933");
     expect(published).not.toContain("openviking");
+    // The only published_ports in the playbook is the daemon's: the sidecar has none.
+    expect(playbook.match(/^\s+published_ports:/gm)).toHaveLength(1);
   });
 
   it("PID 1 reaps — a second supervised process needs an init", () => {
@@ -541,7 +549,7 @@ describe("container topology", () => {
 // file is a new pin, so it gets rule 7's discipline: config.toml ==
 // group_vars == the image layer, by URL and sha256, never a literal in the
 // layer, and the deploy preflight refuses on drift (tests/deploy.test.ts).
-describe("the local English embedder pin (config.toml ↔ group_vars ↔ Dockerfile)", () => {
+describe("the local English embedder pin (config.toml ↔ group_vars ↔ the memory image)", () => {
   const ov = cfg.openviking;
   const gvFile = `${gv("openviking_local_embedder_dir")}/${gv("openviking_local_embedder_model")}.gguf`;
 
@@ -571,21 +579,29 @@ describe("the local English embedder pin (config.toml ↔ group_vars ↔ Dockerf
     expect(gv("openviking_embedding_dimension")).toBe(String(LOCAL_EMBEDDING.dimension));
   });
 
-  it("the image downloads the model at BUILD time through the group_vars and hard-fails unless its sha256 matches", () => {
-    const layer = dockerfile.slice(
-      dockerfile.indexOf("RUN mkdir -p {{ openviking_local_embedder_dir }}"),
-    );
-    expect(layer).toContain('"{{ openviking_local_embedder_url }}"');
+  it("the image downloads the model at BUILD time through the ARGs and hard-fails unless its sha256 matches", () => {
+    const layer = dockerfile.slice(dockerfile.indexOf('RUN mkdir -p "${LOCAL_EMBEDDER_DIR}"'));
+    expect(layer).toContain('"${LOCAL_EMBEDDER_URL}"');
     expect(layer).toContain(
-      'echo "{{ openviking_local_embedder_sha256 }}  {{ openviking_local_embedder_dir }}/{{ openviking_local_embedder_model }}.gguf" | sha256sum -c -',
+      'echo "${LOCAL_EMBEDDER_SHA256}  ${LOCAL_EMBEDDER_DIR}/${LOCAL_EMBEDDER_MODEL}.gguf" | sha256sum -c -',
     );
     expect(layer).toMatch(/\|\| \{ echo "FATAL: the local embedder model/);
-    // Never a literal: the drift the pin prevents.
-    expect(dockerfile).not.toContain(ov.local_embedder_sha256);
-    expect(dockerfile).not.toContain("huggingface.co");
+    // The playbook feeds those ARGs from the group_vars.
+    for (const [arg, key] of [
+      ["LOCAL_EMBEDDER_URL", "openviking_local_embedder_url"],
+      ["LOCAL_EMBEDDER_SHA256", "openviking_local_embedder_sha256"],
+      ["LOCAL_EMBEDDER_MODEL", "openviking_local_embedder_model"],
+      ["LOCAL_EMBEDDER_DIR", "openviking_local_embedder_dir"],
+    ] as const) {
+      expect(playbook).toContain(`"${arg}={{ ${key} }}"`);
+    }
+    // The ARG defaults are the pin itself (tests/memory-image.test.ts holds them
+    // to config.toml); a literal in a RUN line would be the drift it prevents.
+    expect(layer).not.toContain(ov.local_embedder_sha256);
+    expect(layer).not.toContain("huggingface.co");
     // After the venv layer, whose llama-cpp-python is its runtime.
-    expect(dockerfile.indexOf("openviking_local_embedder_url")).toBeGreaterThan(
-      dockerfile.indexOf('"llama-cpp-python=={{ llama_cpp_python_version }}"'),
+    expect(dockerfile.indexOf('RUN mkdir -p "${LOCAL_EMBEDDER_DIR}"')).toBeGreaterThan(
+      dockerfile.indexOf('"llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}"'),
     );
   });
 
@@ -594,14 +610,14 @@ describe("the local English embedder pin (config.toml ↔ group_vars ↔ Dockerf
       entrypoint.indexOf("OV_EMBEDDER_ARGS=()"),
       entrypoint.indexOf('scripts/openviking-provision.mjs" \\'),
     );
-    expect(block).toContain('if [[ "{{ openviking_embedding_provider }}" == "local" ]]; then');
-    expect(block).toContain('--embedder-python "{{ openviking_venv }}/bin/python"');
-    expect(block).toContain('--embedder-script "$SANDBOX/scripts/openviking-embedder.py"');
+    expect(block).toContain('if [[ "$OV_EMBEDDING_PROVIDER" == "local" ]]; then');
+    expect(block).toContain('--embedder-python "$OV_VENV/bin/python"');
+    expect(block).toContain('--embedder-script "$APP/scripts/openviking-embedder.py"');
     expect(block).toContain(
-      '--embedder-file "{{ openviking_local_embedder_dir }}/{{ openviking_local_embedder_model }}.gguf"',
+      '--embedder-file "$OV_LOCAL_EMBEDDER_DIR/$OV_LOCAL_EMBEDDER_MODEL.gguf"',
     );
-    expect(block).toContain('--embedder-sha256 "{{ openviking_local_embedder_sha256 }}"');
-    expect(block).toContain("--embedder-port {{ openviking_local_embedder_port }}");
+    expect(block).toContain('--embedder-sha256 "$OV_LOCAL_EMBEDDER_SHA256"');
+    expect(block).toContain('--embedder-port "$OV_LOCAL_EMBEDDER_PORT"');
     expect(entrypoint).toContain('"${OV_EMBEDDER_ARGS[@]}" \\');
     // Never backgrounded: still one foreground step.
     expect(entrypoint).not.toMatch(/openviking-embedder\.py[^\n]*&\s*$/m);

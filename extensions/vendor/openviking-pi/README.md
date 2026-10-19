@@ -1,7 +1,7 @@
 # openviking-pi — vendored, patched fork
 
 The OpenViking pi extension our sessions load. Vendored, not depended on:
-upstream ships it as an `examples/` directory, not a package, and we need eleven
+upstream ships it as an `examples/` directory, not a package, and we need twelve
 behaviour changes that upstream has no reason to make.
 
 | | |
@@ -20,7 +20,7 @@ fails on drift between the two.
 
 ## Why a fork rather than configuration
 
-Every one of the eleven patches was tried as configuration first and does not
+Every one of the twelve patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
 the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
 with transcripts. Read it before changing anything here; several of its
@@ -28,11 +28,12 @@ findings contradict the OpenViking docs, which lead the tag.
 
 ## The patch series
 
-Eleven numbered behaviour patches, applied in order over the vendored upstream
-files, plus one unnumbered scaffolding patch. They live in `patches/` as
-`git apply`-able diffs — verified by applying all twelve, in order, to a
+Twelve numbered behaviour patches, applied in order over the vendored upstream
+files, plus two unnumbered build patches (0000 scaffolding, 0012 typing). They live in `patches/` as
+`git apply`-able diffs — verified by applying the first thirteen, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
-byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
+byte-identical. (0013 is checked to apply on the tree the first thirteen
+produce; the full pristine-extraction replay has not been re-run with it.) (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
 
 ```sh
@@ -45,8 +46,8 @@ grep -rn "QCR PATCH" extensions/vendor/openviking-pi
   the files were modified); this README.
 * `vendor-pi-types.d.ts` — ambient declarations for
   `@earendil-works/pi-coding-agent` (`ExtensionAPI`), `typebox` and
-  `@earendil-works/pi-ai`. None is installed here; pi lives only in the
-  container. This repo's `tsconfig.json` compiles `extensions/**/*.ts`, so the
+  `@earendil-works/pi-ai`, written while pi was not installed here. Retired
+  by 0012. This repo's `tsconfig.json` compiles `extensions/**/*.ts`, so the
   fork is typechecked even though it is never emitted.
 * Three `[QCR build conformance]` fixes in `client.ts` for `strict` +
   `noUncheckedIndexedAccess`.
@@ -434,6 +435,57 @@ ways through it once the case backfill filled `finding-cases/`:
 
 Touches: `qcr-hint.ts`, `qcr-lesson.ts`, `qcr-write.ts`, `tools.ts`,
 `index.ts`, `client.ts`.
+
+### 0012 — typechecked against the real pi *(not a behaviour patch)*
+
+pi and pi-ai are exact dependencies of this repo (package.json), so the fork is
+typechecked against pi's own types and `vendor-pi-types.d.ts` is deleted. The
+one type error that surfaced is `event.prompt` in `index.ts`'s
+`before_agent_start` hook: pi 1.3.0 types that event as a union whose custom
+variant has no `prompt`. The read is cast, not changed, so a custom event still
+passes `undefined` exactly as before. Marked `[QCR build conformance]`.
+
+Touches: `index.ts`, `vendor-pi-types.d.ts` (deleted), this README.
+
+### 0013 — `createOpenViking(cfg)`: a factory over a value (`[QCR PATCH 12]`, P3.4)
+
+The extension no longer reads the process. `index.ts` exports
+`createOpenViking(cfg): ExtensionFactory`, and its default export is the shim:
+it reads the process once (`qcr-shim.ts`) and calls the factory, so a tmux pi
+that loads this file by path and an SDK session that attaches the factory run
+the same code. `cfg` (`OpenVikingConfig`) carries the resolved `OVConfig`, the
+leaf flag, the extra namespaces' credentials, the credential env the key
+re-reader resolves from, the daemon's OV session id, the cwd, the retired-URI
+and recall-hint files, the debug log and the offline queue's settings.
+
+* **The overlay moves.** The env overlay in `config.ts` `loadConfig` (the
+  workspace-peer and recall overrides) is now `envOverlay` in `qcr-shim.ts`,
+  passed to `loadConfig` as an option and applied at the same point. Its first
+  five lines re-assigned what the credential resolver had already read from the
+  same env, and are dropped. Old and new `loadConfig` were compared on ten
+  environments and agree field for field.
+* **The pending queue's home moves.** `shared/pending-queue.mjs` no longer
+  reads `OPENVIKING_PENDING_*` or the home directory; each function takes the
+  queue's `{ dir, maxRetries?, ttlDays?, replayLimit? }`. Without a `dir` the
+  queue is off. `SyncManager` takes it, and the debug log, as constructor
+  options.
+* **Leaf detection is shim-only.** `isLeafProcess(argv, env)` has no process
+  defaults and only `qcr-shim.ts` calls it; the factory takes `leaf` as a
+  value. The stale comment in `qcr-leaf.ts` (it said a leaf "structurally
+  never loads this file" and cited pi 0.84.1 as the pin) is rewritten.
+* **Every hook gets a deadline and a catch** (`qcr-hooks.ts`
+  `boundedHook`, defaults in `HOOK_TIMEOUT_MS`). A hook that throws or misses
+  its deadline carries on as though it had done nothing, and says so in the
+  debug log. `tool_call` is a guard and fails closed instead: a failure
+  refuses the call, which is also what pi does with a throwing handler.
+
+Not moved: `shared/credentials.mjs` still resolves `~/.openviking` through the
+home directory and `shared/recall-core.mjs` still reads `OPENVIKING_STATE_DIR`
+for its legacy cache; both are upstream files outside this patch's scope.
+
+Touches: `index.ts`, `config.ts`, `sync.ts`, `qcr-leaf.ts`, `qcr-shim.ts`
+(new), `qcr-hooks.ts` (new), `shared/pending-queue.mjs` and `.d.mts`, `NOTICE`,
+this README.
 
 ## Rebasing onto a newer upstream
 

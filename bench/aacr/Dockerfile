@@ -1,16 +1,19 @@
-# qcr-bench — the AACR-Bench sandbox image.
+# qcr-bench — the AACR-Bench sandbox image: the release image plus the harness.
+#
+# bench.sh builds docker/Dockerfile first (tag qcr-release:<distro>, or the image
+# QCR_BENCH_RELEASE_IMAGE names) and this file on top of it:
 #
 #   docker build --target runtime -t qcr-bench -f bench/aacr/Dockerfile .      (bench.sh build)
-#   docker build --target ocr --build-arg RUNTIME_BASE=node:22-trixie \
+#   docker build --target ocr --build-arg RELEASE_IMAGE=qcr-release:trixie \
 #                -t qcr-bench-ocr -f bench/aacr/Dockerfile .                  (bench.sh build --arm ocr)
 #   docker build --target codex -t qcr-bench-codex -f bench/aacr/Dockerfile .  (bench.sh build --arm codex)
 #   docker build --target opencode -t qcr-bench-opencode -f bench/aacr/Dockerfile .
 #                                                                        (bench.sh build --arm opencode)
-#   docker build --target claude --build-arg RUNTIME_BASE=node:22-trixie \
+#   docker build --target claude --build-arg RELEASE_IMAGE=qcr-release:trixie \
 #                -t qcr-bench-claude -f bench/aacr/Dockerfile .               (bench.sh build --arm claude)
 #   docker build --target pireview -t qcr-bench-pireview -f bench/aacr/Dockerfile .
 #                                                                        (bench.sh build --arm pireview)
-#   docker build --target pragent --build-arg RUNTIME_BASE=node:22-trixie \
+#   docker build --target pragent --build-arg RELEASE_IMAGE=qcr-release:trixie \
 #                -t qcr-bench-pragent -f bench/aacr/Dockerfile .              (bench.sh build --arm pragent)
 #
 # One image, three uses, each run by bench.sh with its own minimal mounts:
@@ -18,16 +21,22 @@
 #   review    pi + the production reviewer, model API only, repos read-only
 #   eval      Alibaba's own scorer (alibaba/aacr-bench evaluation/, pinned)
 #
-# The `ocr` target is the SAME runtime (same harness, dataset, pi and judge
-# shim) plus the open-code-review baseline arm: the pinned OCR binary and the
-# loopback Codex bridge (codex_bridge.py). It needs git >= 2.41 (OCR's
-# documented floor), which bookworm (2.39) and bookworm-backports lack — hence
-# RUNTIME_BASE=node:22-trixie (git 2.47) for that target only.
+# The compiled app, its production dependencies, pi, the seeds and the
+# profiles are the release image's (docker/Dockerfile); this file adds only
+# the harness: the scorer, the dataset, the judge shim, the sets, the bench
+# config, and each arm's tool. The release tree is moved to the VM's own path
+# (/opt/quickreview/sandbox), so every path the prompts, the agents and the
+# extensions mention means here what it means live.
+#
+# The `ocr`, `claude` and `pragent` targets are the SAME runtime built on the
+# trixie release (NODE_DISTRO=trixie): OCR needs git >= 2.41 (its documented
+# floor; bookworm has 2.39) and pr-agent needs Python >= 3.12.
 #
 # What it deliberately does NOT contain: `scripts/` (the posting route,
 # mint-token.sh), the `gh` CLI, any GitHub credential, the OpenViking memory
-# server, tmux, or the daemon's secrets dir. A review in here cannot post,
-# because nothing in the image knows how.
+# server, or the daemon's secrets dir. A review in here cannot
+# post, because nothing in the image knows how. The release image carries
+# scripts/ and gh for its daemon mode; the runtime stage below removes both.
 #
 # Pins — each one a rule-7-style pin, bumped only on purpose:
 #   pi 1.3.0                           = config.toml [pi], package.json "pi"
@@ -46,29 +55,33 @@
 #   pr-agent 0.46.0 (pragent only)     = qodo-ai/pr-agent's PyPI wheel, its sha256 pinned
 #                                        (= PyPI's digest); Python 3.13 (trixie)
 
-ARG RUNTIME_BASE=node:22-bookworm
-
-# ---- build: compile the repo exactly as `npm run build` does ------------------
-FROM node:22-bookworm AS build
-WORKDIR /src
-COPY package.json package-lock.json tsconfig.json ./
-RUN npm ci --no-audit --no-fund
-COPY src ./src
-COPY extensions ./extensions
-RUN npx tsc -p tsconfig.json && npm prune --omit=dev --no-audit --no-fund
+# The release image docker/Dockerfile builds: bookworm for qcr and the arms that
+# run on it, trixie (NODE_DISTRO) for ocr, claude and pragent. bench.sh names it.
+ARG RELEASE_IMAGE=qcr-release:bookworm
 
 # ---- runtime -------------------------------------------------------------------
-FROM ${RUNTIME_BASE} AS runtime
+FROM ${RELEASE_IMAGE} AS runtime
 
+# The release image runs as 1000:1000 by default; the harness installs as root
+# and bench.sh maps the host uid in at run time (--user).
+USER root
 ENV DEBIAN_FRONTEND=noninteractive TZ=UTC LANG=C.UTF-8
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates git jq ripgrep fd-find python3 python3-venv \
+# What the harness adds to the release's packages (python3-venv for the
+# scorer's venv, fd for the reviewers) and what the release carries for its
+# daemon mode but a bench review must not have: gh, and the apt source that
+# installed it.
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv fd-find \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+    && apt-get purge -y gh \
+    && rm -f /etc/apt/sources.list.d/github-cli.list /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
+# pi is the release's (config.toml [pi]); this reinstalls it only when
+# QCR_BENCH_PI_VERSION asks for another, e.g. the pi an earlier run's image carried.
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.3.0
-RUN npm install -g ${PI_PACKAGE}@${PI_VERSION} --no-audit --no-fund
+RUN [ "$(node -p "require('$(npm root -g)/${PI_PACKAGE}/package.json').version")" = "${PI_VERSION}" ] \
+    || npm install -g ${PI_PACKAGE}@${PI_VERSION} --no-audit --no-fund
 
 # The scorer, at a pinned commit, in its own venv with its own locked deps.
 ARG AACR_BENCH_REPO=https://github.com/alibaba/aacr-bench.git
@@ -89,16 +102,18 @@ RUN git clone --quiet ${AACR_BENCH_REPO} /opt/aacr-bench \
     && test "$(wc -l < /opt/aacr-data/aacr_bench_v1.jsonl)" = "196"
 
 # The production tree at the VM's own path, so every path the prompts, the
-# agents and the extensions mention means the same thing it means live. Only
-# what a review round reads: no scripts/, no deploy/, no docs/, no tests/.
+# agents and the extensions mention means the same thing it means live. It is
+# the release's tree (compiled app, production node_modules, src, extensions,
+# agents, prompts, profiles), moved here, minus its scripts/ (the posting
+# route, mint-token.sh): no /opt/qcr remains.
+RUN cd / && mkdir -p /opt/quickreview && mv /opt/qcr /opt/quickreview/sandbox \
+    && rm -rf /opt/quickreview/sandbox/scripts
 WORKDIR /opt/quickreview/sandbox
-COPY --from=build /src/node_modules ./node_modules
-COPY --from=build /src/dist ./dist
 # AGENTS.md, as the VM's rsync ships it: pi loads the FIRST of
 # AGENTS.override.md → AGENTS.md → CLAUDE.md from the cwd. The image ships the
 # override (below), so a CLAUDE.md would never be read — and it is not part of
 # the public tree, so it is not copied.
-COPY package.json config.toml AGENTS.md ./
+COPY config.toml AGENTS.md ./
 # That config.toml is the one bench.sh baked in (QCR_BENCH_CONFIG, else the
 # operator's own via the install locator, else config.example.toml).
 # Named explicitly so the locator inside the image takes it as given.
@@ -113,10 +128,9 @@ COPY deploy/reviewer/AGENTS.override.md ./AGENTS.override.md
 # then IGNORES the file ("Invalid settings file"), i.e. runs without the
 # production project settings.
 COPY .pi /opt/quickreview/bench/pi-project
-COPY src ./src
-COPY extensions ./extensions
-COPY prompts ./prompts
-COPY agents ./agents
+# The profiles bench.sh assembled replace the release's: the image's profiles/
+# holds exactly what the locator reads.
+RUN rm -rf profiles
 COPY profiles ./profiles
 COPY bench/aacr/sets /opt/quickreview/bench/sets
 COPY bench/aacr/defects /opt/quickreview/bench/defects
@@ -140,7 +154,7 @@ ENTRYPOINT ["/opt/quickreview/bench/in-container.sh"]
 
 # ---- codex: the Codex CLI arm (bench.sh build --arm codex) ----------------------
 # Placed BEFORE `ocr`: the legacy builder builds every stage up to the target
-# in file order, and `ocr` needs a trixie base.
+# in file order, and `ocr` needs the trixie release.
 # The SAME runtime plus the Codex CLI at a pinned version, run the way the
 # AACR harness's own evaluation/reviewers/codex.py runs it (bench/aacr/
 # codex_arm.py imports that runner). Bump: change CODEX_VERSION (and the
@@ -161,7 +175,7 @@ ENV QCR_CODEX_VERSION=${CODEX_VERSION}
 # ---- opencode: the OpenCode arm ----------------------------------------------------
 # Placed ABOVE `ocr` on purpose: without BuildKit (this PC has no buildx),
 # `docker build --target X` builds every stage above X, and the ocr stage
-# refuses bookworm's git — a stage on the default runtime base below it would
+# refuses the bookworm release's git — a stage on the default runtime base below it would
 # never build.
 # Built on top of `runtime`, so the scorer, the dataset, pi, the judge shim and
 # the harness's own MCP findings server (evaluation/mcp_codex_finding_server.py,
@@ -285,7 +299,7 @@ RUN HOME=/tmp/cc-build /opt/aacr-venv/bin/python /opt/quickreview/bench/claude_d
 ENV QCR_CLAUDE_VERSION=${CLAUDE_CODE_VERSION}
 
 # ---- pragent: PR-Agent (qodo-ai/pr-agent, MIT) --------------------------------------
-# Last, on the trixie runtime (RUNTIME_BASE=node:22-trixie, as for ocr/claude):
+# Last, on the trixie runtime (RELEASE_IMAGE=qcr-release:trixie, as for ocr/claude):
 # pr-agent requires Python >= 3.12 and bookworm ships 3.11. Built on `runtime`,
 # so the scorer, the dataset, pi and the judge shim are the ones every other arm
 # is scored with. The PyPI WHEEL is downloaded alone (--no-deps), checked against

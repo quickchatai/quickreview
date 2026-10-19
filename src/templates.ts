@@ -5,6 +5,7 @@
 // edited independently of this renderer).
 import { stripModelDocs } from "./promptdoc.js";
 import { renderDeltaNote, renderPassTaskNote, taskDirOf } from "./passtasks.js";
+import { launchVocab, NATIVE_VOCAB, type LaunchVocab } from "./launchvocab.js";
 
 export { renderDeltaNote };
 import { renderRenderNote } from "./reviewrender.js";
@@ -326,9 +327,11 @@ export function renderPassPlan(
   /** The pre-approval sweep's table: its rows take the prior findings as
    * "do not re-raise", so the split note does not assign them to one row.
    * `behaviourUnread`: the files the behaviour-delta group cap left
-   * uncompared, named so a capped lens never reads as full coverage. */
-  opts: { sweep?: boolean; behaviourUnread?: readonly string[] } = {},
+   * uncompared, named so a capped lens never reads as full coverage.
+   * `vocab`: the launch tools' names (src/launchvocab.ts); native when absent. */
+  opts: { sweep?: boolean; behaviourUnread?: readonly string[]; vocab?: LaunchVocab } = {},
 ): string {
+  const vocab = opts.vocab ?? NATIVE_VOCAB;
   const notes = plan.some((p) => p.focus !== undefined || p.why !== undefined);
   const rows = plan.map((p) => {
     const cells = [
@@ -353,10 +356,10 @@ export function renderPassPlan(
   });
   const head = notes
     ? [
-        "| lens | subagent to call | tier | may raise to | focus / why |",
+        `| lens | ${vocab.lensToCall} | tier | may raise to | focus / why |`,
         "| --- | --- | --- | --- | --- |",
       ]
-    : ["| lens | subagent to call | tier | may raise to |", "| --- | --- | --- | --- |"];
+    : [`| lens | ${vocab.lensToCall} | tier | may raise to |`, "| --- | --- | --- | --- |"];
   // A split pass-baseline says what its rows are, and which one a
   // prior finding goes to — exactly one. Absent on every unsplit plan.
   const baselineRows = plan.filter(isSplitBaselineRow).length;
@@ -437,7 +440,7 @@ export function renderValidatorNote(order: Pick<RoundOrder, "pass_plan">): strin
  * answer in hand.
  */
 export function renderValidatorShardNote(
-  order: Pick<RoundOrder, "pass_plan" | "validator_shards">,
+  order: Pick<RoundOrder, "pass_plan" | "validator_shards" | "lens_runtime">,
 ): string {
   const n = order.validator_shards ?? 1;
   if (n <= 1 || !order.pass_plan.some((p) => p.lens === "pass-validate")) return "";
@@ -447,7 +450,7 @@ export function renderValidatorShardNote(
     "groups by FILE: every candidate of one file in the same group, every",
     "candidate of one root cause in the same group even across files, the groups",
     `as even as that allows. Launch the planned \`pass-validate\` variant ${n} times in`,
-    "ONE `subagent` call (`tasks:[…]`), each with its own group, the WHOLE SETTLED",
+    `ONE \`${launchVocab(order).lens}\` call (\`tasks:[…]\`), each with its own group, the WHOLE SETTLED`,
     "list and the MERGED/FOLDED lines that concern its group. Then merge their",
     "answers into one kill log: survivors, kills, doubts and downgrades are the",
     "union. Two duties no group can do alone are yours at the merge: two survivors",
@@ -524,7 +527,9 @@ export function renderValidatorOutputNote(
  * session checks that assignment instead of making it — the findings already
  * ride their lenses' task files. Otherwise the plain step-1 text.
  */
-export function renderPriorAssignNote(order: Pick<RoundOrder, "prior_assignments">): string {
+export function renderPriorAssignNote(
+  order: Pick<RoundOrder, "prior_assignments" | "lens_runtime">,
+): string {
   if ((order.prior_assignments?.length ?? 0) === 0)
     return [
       "**assign every listed prior",
@@ -539,7 +544,7 @@ export function renderPriorAssignNote(order: Pick<RoundOrder, "prior_assignments
     "it — the lens that raised it when it is planned, else `pass-baseline` — and that",
     "lens answers with one `PRIOR <ref> <status> — <evidence>` line per finding; those",
     "lines are the statuses you record. A finding only your ledger holds is yours to",
-    "assign the same way, through `launch_plan`'s `extra`. No prior finding goes",
+    `assign the same way, through \`${launchVocab(order).wave}\`'s \`extra\`. No prior finding goes`,
     "unassigned.",
   ].join("\n");
 }
@@ -553,9 +558,10 @@ export function renderPriorAssignNote(order: Pick<RoundOrder, "prior_assignments
 export function renderExtentNote(
   order: Pick<
     RoundOrder,
-    "optional_plan" | "optional_task_files" | "follow_up_extent" | "worktree"
+    "optional_plan" | "optional_task_files" | "follow_up_extent" | "worktree" | "lens_runtime"
   >,
 ): string {
+  const vocab = launchVocab(order);
   const rows = order.optional_plan ?? [];
   if (order.follow_up_extent !== "session" || rows.length === 0) return "";
   const files = order.optional_task_files ?? [];
@@ -587,11 +593,11 @@ export function renderExtentNote(
     "Decide from the change (step 1) BEFORE the launch turn, and launch the rows you",
     "run in the SAME turn as the core:",
     dir
-      ? `add \`${dir}\` to the \`launch_plan\` call's \`dirs\`, with \`skip\` naming each optional row you do not run (\`optional:<row>\`).`
-      : "one `subagent` call per row you run, with its focus files, in the launch turn.",
+      ? `add \`${dir}\` to the \`${vocab.wave}\` call's \`dirs\`, with \`skip\` naming each optional row you do not run (\`optional:<row>\`).`
+      : `one \`${vocab.lens}\` call per row you run, with its focus files, in the launch turn.`,
     "Record the decision in the verdict's `extent` and `extent_reason` (step 7).",
     "",
-    `| row | subagent | focus |${dir ? " task file |" : ""}`,
+    `| row | ${vocab.lens} | focus |${dir ? " task file |" : ""}`,
     `| --- | --- | --- |${dir ? " --- |" : ""}`,
     ...table,
   ].join("\n");
@@ -690,9 +696,14 @@ export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): s
 export function renderSweepNote(
   order: Pick<
     RoundOrder,
-    "sweep_plan" | "sweep_task_files" | "sweep_plan_unswept" | "sweep_plan_behaviour_unread"
+    | "sweep_plan"
+    | "sweep_task_files"
+    | "sweep_plan_unswept"
+    | "sweep_plan_behaviour_unread"
+    | "lens_runtime"
   >,
 ): string {
+  const vocab = launchVocab(order);
   const plan = order.sweep_plan;
   if (!plan || plan.length === 0) return "";
   const head = [
@@ -706,24 +717,25 @@ export function renderSweepNote(
     renderPassPlan(plan, order.sweep_plan_unswept ?? [], {
       sweep: true,
       behaviourUnread: order.sweep_plan_behaviour_unread,
+      vocab,
     }),
   ];
   const files = order.sweep_task_files;
   if (files && files.length > 0) {
-    // The sweep launches through `launch_plan` too, as its own call.
+    // The sweep launches through the wave tool too, as its own call.
     const dir = taskDirOf(files);
     out.push(
       "",
       `The sweep's task files are written, in \`${dir}\`. Launch them through`,
-      "`launch_plan`, never by hand-written task strings: each row gets its pointer",
+      `\`${vocab.wave}\`, never by hand-written task strings: each row gets its pointer`,
       "as the whole task — `Task file: <path>. Read it first; it is your complete",
       "task.` — and `extra` keyed `sweep:*` carries the already-known findings",
       "every sweep row must not re-raise (`sweep:<row>` for one row).",
-      `It is its own call: \`launch_plan({ dirs: ["${dir}"], extra: { "sweep:*": … } })\`.`,
-      "Raised and added sweep rows go through `subagent` in the same turn; only if",
-      "`launch_plan` is unavailable or errs, launch every row through `subagent`.",
+      `It is its own call: \`${vocab.wave}({ dirs: ["${dir}"], extra: { "sweep:*": … } })\`.`,
+      `Raised and added sweep rows go through \`${vocab.lens}\` in the same turn; only if`,
+      `\`${vocab.wave}\` is unavailable or errs, launch every row through \`${vocab.lens}\`.`,
       "",
-      "| row | subagent | task file |",
+      `| row | ${vocab.lens} | task file |`,
       "| --- | --- | --- |",
       ...files.map((f) => `| ${f.row + 1} | \`${f.agent}\` | \`${f.path}\` |`),
     );
@@ -840,6 +852,11 @@ export function roundVars(
     // that delivered nothing all render the plain paragraph.
     bleed_note: renderBleedNote(memory.lessons),
     lessons_note: renderLessonsNote(memory.lessons),
+    // The launch tools' names (src/launchvocab.ts): native unless the order
+    // was built for an engine route.
+    lens_tool: launchVocab(order).lens,
+    wave_tool: launchVocab(order).wave,
+    lens_to_call: launchVocab(order).lensToCall,
     n: String(order.pr),
     title: promptTitle(order.title),
     worktree: order.worktree,
@@ -849,6 +866,7 @@ export function roundVars(
     lenses: order.lenses.join(", "),
     pass_plan: renderPassPlan(order.pass_plan, order.sweep_unswept ?? [], {
       ...(order.behaviour_unread ? { behaviourUnread: order.behaviour_unread } : {}),
+      vocab: launchVocab(order),
     }),
     // Third-party sources (src/depsources.ts) — "" when nothing was unpacked.
     dependency_note: order.dependency_note ? `\n${order.dependency_note}\n` : "",

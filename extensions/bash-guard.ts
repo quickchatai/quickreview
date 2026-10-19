@@ -32,7 +32,11 @@
 //     RE-POINTING the pin (COMMAND_INJECTING_ENV).
 import { readFileSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
-import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionFactory,
+  ToolCallEvent,
+} from "@earendil-works/pi-coding-agent";
 
 /**
  * Read-only programs a review session may run directly.
@@ -184,33 +188,43 @@ function block(reason: string): BashCheck {
   return { allowed: false, reason };
 }
 
-/** A regression replay session (src/replay.ts) — spawned with
- * `QCR_REPLAY=1` on its pi's own environment, which no bash command can
- * change. It posts nothing and reads nothing from GitHub, so no sandbox script
- * is sanctioned in it at all: the relative-spelling rule alone was reachable by
- * `cd <sandbox root> && bash scripts/post-review.sh …`. */
-function inReplaySession(): boolean {
-  return process.env.QCR_REPLAY === "1";
+/**
+ * What the guard's policy is judged against, resolved: the sandbox root that
+ * owns the sanctioned script bytes, whether this is a regression replay
+ * session, and the secrets dirs. `createBashGuard` builds one from its config
+ * at construction; the exported pure checkers build one from the process (the
+ * ambient policy below) when a caller passes none.
+ */
+interface GuardPolicy {
+  sandboxRoot: string;
+  /** A regression replay session (src/replay.ts), spawned with `QCR_REPLAY=1`
+   * on its pi's own environment, which no bash command can change. It posts
+   * nothing and reads nothing from GitHub, so no sandbox script is sanctioned
+   * in it at all: the relative-spelling rule alone was reachable by
+   * `cd <sandbox root> && bash scripts/post-review.sh …`. */
+  replay: boolean;
+  /** The secret-path context minus the cwd, which is per call. */
+  secrets: Omit<SecretPathContext, "cwd">;
 }
 
 function sanctionedScript(
   token: string,
   cwd: string | null,
+  policy: GuardPolicy,
 ): { sanctioned: boolean; name?: string } {
   const m = SCRIPT_PATH_RE.exec(token);
   if (!m) return { sanctioned: false };
   return {
-    sanctioned: !inReplaySession() && trustedScriptCwd(cwd) && SANCTIONED_SCRIPTS.has(m[1]!),
+    sanctioned: !policy.replay && trustedScriptCwd(cwd, policy) && SANCTIONED_SCRIPTS.has(m[1]!),
     name: m[1]!,
   };
 }
 
 /** Only the daemon-selected checkout owns the sanctioned script bytes. */
-function trustedScriptCwd(cwd: string | null): boolean {
-  const root = process.env.QCR_SANDBOX_ROOT ?? process.cwd();
+function trustedScriptCwd(cwd: string | null, policy: GuardPolicy): boolean {
   if (cwd === null) return false;
   try {
-    return realpathSync.native(cwd) === realpathSync.native(root);
+    return realpathSync.native(cwd) === realpathSync.native(policy.sandboxRoot);
   } catch {
     return false;
   }
@@ -219,7 +233,7 @@ function trustedScriptCwd(cwd: string | null): boolean {
 /** A changed shell directory is not inferred from a reviewed path. Only an
  * explicit cd to the daemon's absolute root preserves script authorization;
  * every other cd conservatively invalidates it for this whole command. */
-function scriptCwdForCommand(cmd: string, cwd: string | null): string | null {
+function scriptCwdForCommand(cmd: string, cwd: string | null, policy: GuardPolicy): string | null {
   for (const segment of splitShellSegments(cmd)) {
     const words = shellWords(segment).words;
     let at = 0;
@@ -227,7 +241,8 @@ function scriptCwdForCommand(cmd: string, cwd: string | null): string | null {
     const program = (words[at] ?? "").replace(/^\(+/, "");
     if (program.slice(program.lastIndexOf("/") + 1) !== "cd") continue;
     const args = words.slice(at + 1).filter((word) => word !== "--");
-    if (args.length !== 1 || !args[0]!.startsWith("/") || !trustedScriptCwd(args[0]!)) return null;
+    if (args.length !== 1 || !args[0]!.startsWith("/") || !trustedScriptCwd(args[0]!, policy))
+      return null;
   }
   return cwd;
 }
@@ -786,6 +801,7 @@ function checkSegment(
   tokens: string[],
   depth: number,
   cwd: string | null,
+  policy: GuardPolicy,
 ): BashCheck {
   let i = 0;
   let afterEnv = false;
@@ -824,11 +840,11 @@ function checkSegment(
       if (lifted.kind === "payload") {
         if (depth >= MAX_NESTED_COMMAND_DEPTH)
           return block("exec policy: 'bash -c' nested too deep to analyse — refused");
-        return checkBashCommand(lifted.payload, depth + 1, cwd);
+        return checkBashCommand(lifted.payload, depth + 1, cwd, policy);
       }
       if (lifted.kind === "unliftable") return block(lifted.reason);
     }
-    return checkProgram(raw, args, rawArgs, depth, textAfterWords(segment, i + 1), cwd);
+    return checkProgram(raw, args, rawArgs, depth, textAfterWords(segment, i + 1), cwd, policy);
   }
   return { allowed: true }; // empty segment
 }
@@ -994,18 +1010,17 @@ function checkProgram(
   depth: number,
   /** The segment's text after `prog`, verbatim — quotes, and the newlines a
    * whitespace split loses, intact. */
-  rawText?: string,
-  cwd: string | null = process.cwd(),
+  rawText: string | undefined,
+  cwd: string | null,
+  policy: GuardPolicy,
 ): BashCheck {
   // Sanctioned scripts, invoked directly.
-  const direct = sanctionedScript(prog, cwd);
+  const direct = sanctionedScript(prog, cwd, policy);
   if (direct.name !== undefined || /(^|\/)scripts\//.test(prog)) {
     return direct.sanctioned
       ? { allowed: true }
       : block(
-          inReplaySession()
-            ? REPLAY_NO_SCRIPTS
-            : `exec policy: '${prog}' is not a sanctioned script`,
+          policy.replay ? REPLAY_NO_SCRIPTS : `exec policy: '${prog}' is not a sanctioned script`,
         );
   }
   const base = prog.slice(prog.lastIndexOf("/") + 1);
@@ -1032,10 +1047,10 @@ function checkProgram(
     // after the script is the script's own argument).
     for (const a of args) {
       if (!a.startsWith("-")) {
-        return sanctionedScript(a, cwd).sanctioned
+        return sanctionedScript(a, cwd, policy).sanctioned
           ? { allowed: true }
           : block(
-              inReplaySession()
+              policy.replay
                 ? REPLAY_NO_SCRIPTS
                 : `exec policy: 'bash ${a}' is not a sanctioned scripts/*.sh`,
             );
@@ -1086,6 +1101,7 @@ function checkProgram(
       depth,
       rawText === undefined ? undefined : textAfterWords(rawText, from),
       cwd,
+      policy,
     );
     if (!checked.allowed) return checked;
     const reader = basenameOf(dequote(target));
@@ -1724,7 +1740,126 @@ export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck 
   if (!root.allowed) return root;
   const c = ctx ?? processSecretContext();
   const p = path.startsWith("@") ? path.slice(1) : path;
-  return judgeSecretPath(expandShellWord(p, c.env), c);
+  const w = expandShellWord(p, c.env);
+  const proc = judgeProcPath(w, c.cwd);
+  if (!proc.allowed) return proc;
+  return judgeSecretPath(w, c);
+}
+
+/**
+ * A process's environment, memory and command line — `/proc/<pid>/environ`,
+ * `/mem` and `/cmdline`.
+ *
+ * Same family as the secret belt above, different payload: a review session's
+ * parent process holds credentials in memory and argv (the engine's env, the
+ * token handed over at spawn), and `cat` is a sanctioned reader, so
+ * `cat /proc/$PPID/environ` would hand them to the model. Yama's
+ * `ptrace_scope >= 1` blocks a sibling's `/proc/<pid>/mem` where the host sets
+ * it; this rule is the same refusal everywhere, in the policy itself, and it
+ * is not configurable.
+ *
+ * Judged on the SPELLING of every word, whatever program reads it (`cat`,
+ * `head`, `xxd`, `strings`, `tr … <`, a redirect, `dd if=`): the path is
+ * normalised against the cwd (a `cd /proc/self` earlier in the command moves
+ * it), `/proc/<pid>/root/…` hops are followed, `$PPID`/`$$`/`$(…)` in a
+ * component stand for any pid, and a glob is tried against concrete
+ * candidates (`/proc/[0-9]*` + `/e*`, `/proc/self/*`). A grep/rg PATTERN is
+ * exempt, as above: reviewing code that reads `/proc/self/environ` is
+ * ordinary. `/proc/cpuinfo`, `/proc/self/status` and `ls /proc` stay open.
+ *
+ * Same reach as the secret belt: variable indirection into the directory
+ * (`p=/proc/self; cat $p/environ`) is not followed.
+ */
+const PROC_PID = String.raw`(?:self|thread-self|\d+)`;
+const PROC_SECRET_RE = new RegExp(`^/proc/${PROC_PID}(?:/task/\\d+)?/(?:environ|mem|cmdline)$`);
+const PROC_ROOT_RE = new RegExp(`^/proc/${PROC_PID}(?:/task/\\d+)?/root(/.*)?$`);
+const PROC_GLOB_CANDIDATES: readonly string[] = (() => {
+  const out: string[] = [];
+  for (const pid of ["1", "4242", "self", "thread-self"]) {
+    for (const leaf of ["environ", "mem", "cmdline"]) {
+      out.push(`/proc/${pid}/${leaf}`, `/proc/${pid}/task/1/${leaf}`);
+    }
+  }
+  out.push("/proc/self/root/proc/self/environ", "/proc/1/root/proc/1/environ");
+  return out;
+})();
+
+/** A dynamic part of a word (`$VAR`, `${…}`, `$$`, `$(…)`, backticks) becomes
+ * a one-component wildcard, so `/proc/$PPID/environ` reads as a glob. */
+function procDynamicToGlob(text: string): string {
+  return text
+    .replace(/\$\((?:[^()]|\([^()]*\))*\)/g, "*")
+    .replace(/`[^`]*`/g, "*")
+    .replace(/\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[$!?#@*0-9-])/g, "*");
+}
+
+/** The command with substitutions opened up, so the words inside `$(…)` and
+ * backticks are judged as words of their own. */
+function procOpenSubstitutions(text: string): string {
+  return text.replace(/\$\(|[`()]/g, " ");
+}
+
+function procSecretBlock(word: string): BashCheck {
+  return block(
+    `exec policy: '${word}' reads a process's environment, memory or command line — never sanctioned; /proc/<pid>/environ, /mem and /cmdline hold credentials and argv that a review session has no business reading`,
+  );
+}
+
+/** One expanded word judged as a path. */
+export function judgeProcPath(w: string, cwd: string): BashCheck {
+  if (w === "") return { allowed: true };
+  let abs = posix.resolve(cwd, w);
+  for (let m = PROC_ROOT_RE.exec(abs); m !== null; m = PROC_ROOT_RE.exec(abs)) abs = m[1] || "/";
+  if (GLOB_CHARS.test(abs)) {
+    const re = globToRegex(abs);
+    if (PROC_GLOB_CANDIDATES.some((c) => re.test(c))) return procSecretBlock(w);
+    return { allowed: true };
+  }
+  return PROC_SECRET_RE.test(abs) ? procSecretBlock(w) : { allowed: true };
+}
+
+function judgeProcWord(raw: string, cwd: string): BashCheck {
+  const pieces = new Set<string>();
+  for (const piece of dequoteShellWord(raw).split(/[\s<>|;&()]+/)) {
+    if (piece === "") continue;
+    pieces.add(piece);
+    for (let eq = piece.indexOf("="); eq >= 0; eq = piece.indexOf("=", eq + 1))
+      pieces.add(piece.slice(eq + 1));
+    if (/^-[A-Za-z]./.test(piece)) pieces.add(piece.slice(2));
+    if (piece.startsWith("@")) pieces.add(piece.slice(1));
+  }
+  for (const piece of pieces) {
+    for (const w of braceExpand(piece)) {
+      const res = judgeProcPath(w, cwd);
+      if (!res.allowed) return res;
+    }
+  }
+  return { allowed: true };
+}
+
+/** Refuse a command that names `/proc/<pid>/{environ,mem,cmdline}`. */
+export function checkProcSecrets(cmd: string, cwd: string = process.cwd()): BashCheck {
+  for (const text of [procOpenSubstitutions(cmd), procDynamicToGlob(cmd)]) {
+    let at = cwd;
+    for (const segment of splitShellSegments(text)) {
+      const words = rawShellWords(segment);
+      const exempt = patternWordIndexes(words);
+      for (let i = 0; i < words.length; i++) {
+        if (exempt.has(i)) continue;
+        const res = judgeProcWord(words[i]!, at);
+        if (!res.allowed) return res;
+      }
+      const p = programIndex(words);
+      if (p >= 0 && basenameOf(dequoteShellWord(words[p]!)) === "cd") {
+        const target = words.slice(p + 1).find((w) => !w.startsWith("-"));
+        if (target !== undefined) {
+          const t = dequoteShellWord(target);
+          if (!/[*?[$]/.test(t)) at = posix.resolve(at, t);
+        }
+      }
+    }
+  }
+  return { allowed: true };
 }
 
 /**
@@ -2321,14 +2456,18 @@ export function checkBashCommand(
   cmd: string,
   depth = 0,
   cwd: string | null = process.cwd(),
+  policy: GuardPolicy = ambientPolicy(),
 ): BashCheck {
   const normalized = normalizeRedirections(cmd);
-  const scriptCwd = scriptCwdForCommand(normalized, cwd);
+  const scriptCwd = scriptCwdForCommand(normalized, cwd, policy);
   // Checked over the WHOLE command, before the per-segment program check: the
   // programs that would read a root credential (cat, grep, jq…) are all
   // legitimately allowed, so the path is the only thing that distinguishes it.
-  const secret = checkSecretPaths(normalized);
+  const secret = checkSecretPaths(normalized, { ...policy.secrets, cwd: cwd ?? process.cwd() });
   if (!secret.allowed) return secret;
+  // Same reason again: `/proc/<pid>/environ` is read by `cat`.
+  const proc = checkProcSecrets(normalized, cwd ?? process.cwd());
+  if (!proc.allowed) return proc;
   // Same shape, same reason: a PROTECTED write surface
   // (`isProtectedWriteTarget`). A redirection target is not a program token,
   // so the per-segment walk below never sees it.
@@ -2340,7 +2479,7 @@ export function checkBashCommand(
       .split(/\s+/)
       .filter((t) => t.length > 0);
     if (tokens.length === 0) continue;
-    const res = checkSegment(segment, tokens, depth, scriptCwd);
+    const res = checkSegment(segment, tokens, depth, scriptCwd, policy);
     if (!res.allowed) return res;
   }
   return { allowed: true };
@@ -2818,57 +2957,139 @@ const WRITE_TOOLS = new Set([
 const READ_TOOLS = new Set(["read", "grep", "find", "ls", "read_file", "view", "cat"]);
 
 /**
- * pi activation. VERIFIED (pi control-surface findings §5): a tool_call
- * handler can return { block: true, reason } to veto the call, and event.input
- * is mutable. pi 1.0.0 emits `{ type: "tool_call", toolName, toolCallId,
- * input }` (dist/core/agent-session.js) and its read/grep/find/ls tools take
- * `path` (grep also `glob`) — read off the 1.0.0 dist, not yet a live session.
+ * What one bash-guard needs, resolved: no env is read past this. Only these
+ * three inputs are configurable. The policy itself (the program allowlist, the
+ * secret-path and /proc rules, the protected write surfaces) is code in this
+ * file, and the secrets dirs below are a FLOOR the guard adds the container's
+ * own mount to; no profile layer (src/profileoverrides.ts) reaches either, and
+ * the engine host builds this from the install, never from a profile (D13).
+ */
+export interface BashGuardConfig {
+  /** The daemon-selected checkout that owns the sanctioned script bytes. */
+  sandboxRoot: string;
+  /** A regression replay session: no sandbox script is sanctioned at all. */
+  replay: boolean;
+  /** Every secrets dir this install could be using, absolute. The container
+   * mount (`CONTAINER_SECRETS_DIR`) is always added. */
+  secretDirs: readonly string[];
+  /** HOME, XDG_CONFIG_HOME and QCR_INSTALL, the variables a secrets path is
+   * spelled with in a command. Unset falls back to the defaults the env
+   * shim's `defaultSecretPathContext` uses. */
+  pathEnv?: Readonly<Record<string, string | undefined>>;
+}
+
+function policyFromConfig(config: BashGuardConfig): GuardPolicy {
+  const dirs = new Set<string>([CONTAINER_SECRETS_DIR, ...config.secretDirs]);
+  return {
+    sandboxRoot: config.sandboxRoot,
+    replay: config.replay,
+    secrets: {
+      env: config.pathEnv ?? {},
+      dirs: [...dirs]
+        .filter((d) => d.startsWith("/"))
+        .map((d) => posix.normalize(d).replace(/(.)\/+$/, "$1")),
+    },
+  };
+}
+
+/** The config the env describes: QCR_SANDBOX_ROOT (else the cwd), QCR_REPLAY,
+ * and the secrets dirs `defaultSecretPathContext` resolves from the same env. */
+export function bashGuardConfigFromEnv(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  cwd: string = process.cwd(),
+): BashGuardConfig {
+  return {
+    sandboxRoot: env.QCR_SANDBOX_ROOT ?? cwd,
+    replay: env.QCR_REPLAY === "1",
+    secretDirs: defaultSecretPathContext(env, cwd).dirs,
+    pathEnv: {
+      HOME: env.HOME,
+      XDG_CONFIG_HOME: env.XDG_CONFIG_HOME,
+      QCR_INSTALL: env.QCR_INSTALL,
+    },
+  };
+}
+
+/** The policy the process describes, read at each call: what the exported
+ * pure checkers use when a caller passes none, so a test (or tool) that sets
+ * QCR_SANDBOX_ROOT or QCR_REPLAY sees it at once. The secrets dirs are
+ * resolved once, as they always were. */
+function ambientPolicy(): GuardPolicy {
+  const { cwd: _cwd, ...secrets } = processSecretContext();
+  return {
+    sandboxRoot: process.env.QCR_SANDBOX_ROOT ?? process.cwd(),
+    replay: process.env.QCR_REPLAY === "1",
+    secrets,
+  };
+}
+
+/**
+ * The factory a session loads: the guard over this config. Both hosts carry
+ * the same object, a tmux pi through the default export below and an SDK
+ * session as an extension factory. VERIFIED (pi control-surface findings §5):
+ * a tool_call handler can return { block: true, reason } to veto the call, and
+ * event.input is mutable. pi 1.3.0 emits `{ type: "tool_call", toolName,
+ * toolCallId, input }` and its read/grep/find/ls tools take `path` (grep also
+ * `glob`).
  * // VERIFY-ON-PIN: field names `toolName` and `input`/`arguments` on the event
  * payload, and (following extensions/companion-guard.ts, which already vetoes
  * writes this way) `path`/`file_path` on a file tool's input.
  */
-export default function activate(pi: Pi): void {
-  pi.on("tool_call", (event, ctx) => {
-    const ev = event as ToolCallEvent;
-    const input = (ev.input ?? ev.arguments) as
-      | {
-          command?: unknown;
-          path?: unknown;
-          file_path?: unknown;
-          filePath?: unknown;
-          glob?: unknown;
+export function createBashGuard(config: BashGuardConfig): ExtensionFactory {
+  const policy = policyFromConfig(config);
+  return (pi: ExtensionAPI): void => {
+    pi.on("tool_call", (event, ctx) => {
+      // `arguments` is not on pi 1.3.0's ToolCallEvent; the probe stays for a
+      // pi that names the field that way (VERIFY-ON-PIN).
+      const ev = event as ToolCallEvent & { arguments?: Record<string, unknown> };
+      const input = (ev.input ?? ev.arguments) as
+        | {
+            command?: unknown;
+            path?: unknown;
+            file_path?: unknown;
+            filePath?: unknown;
+            glob?: unknown;
+          }
+        | undefined;
+      // The session's own cwd: an SDK session shares its host's process.
+      const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd();
+
+      // The App-secret belt on every file tool, read AND write: an
+      // `edit` that fails to match still answers with what it read.
+      if (
+        typeof ev.toolName === "string" &&
+        (READ_TOOLS.has(ev.toolName) || WRITE_TOOLS.has(ev.toolName))
+      ) {
+        for (const p of [input?.path, input?.file_path, input?.filePath, input?.glob]) {
+          if (typeof p !== "string") continue;
+          const res = checkReadPath(p, { ...policy.secrets, cwd });
+          if (!res.allowed)
+            return { block: true, reason: res.reason ?? "exec policy: secret path blocked" };
         }
-      | undefined;
-
-    // The App-secret belt on every file tool, read AND write: an
-    // `edit` that fails to match still answers with what it read.
-    if (
-      typeof ev.toolName === "string" &&
-      (READ_TOOLS.has(ev.toolName) || WRITE_TOOLS.has(ev.toolName))
-    ) {
-      for (const p of [input?.path, input?.file_path, input?.filePath, input?.glob]) {
-        if (typeof p !== "string") continue;
-        const res = checkReadPath(p);
-        if (!res.allowed)
-          return { block: true, reason: res.reason ?? "exec policy: secret path blocked" };
       }
-    }
 
-    if (ev.toolName === "bash") {
-      const cmd = input?.command;
-      if (typeof cmd !== "string") return;
-      const res = checkBashCommand(cmd, 0, typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd());
-      if (!res.allowed)
-        return { block: true, reason: res.reason ?? "exec policy: command blocked" };
+      if (ev.toolName === "bash") {
+        const cmd = input?.command;
+        if (typeof cmd !== "string") return;
+        const res = checkBashCommand(cmd, 0, cwd, policy);
+        if (!res.allowed)
+          return { block: true, reason: res.reason ?? "exec policy: command blocked" };
+        return;
+      }
+
+      if (typeof ev.toolName === "string" && WRITE_TOOLS.has(ev.toolName)) {
+        const target = input?.path ?? input?.file_path ?? input?.filePath;
+        if (typeof target !== "string") return;
+        const res = checkWritePath(target);
+        if (!res.allowed)
+          return { block: true, reason: res.reason ?? "exec policy: write blocked" };
+      }
       return;
-    }
+    });
+  };
+}
 
-    if (typeof ev.toolName === "string" && WRITE_TOOLS.has(ev.toolName)) {
-      const target = input?.path ?? input?.file_path ?? input?.filePath;
-      if (typeof target !== "string") return;
-      const res = checkWritePath(target);
-      if (!res.allowed) return { block: true, reason: res.reason ?? "exec policy: write blocked" };
-    }
-    return;
-  });
+/** pi activation: the env shim. The env is read here, once, at activation. */
+export default function activate(pi: ExtensionAPI): void {
+  void createBashGuard(bashGuardConfigFromEnv(process.env))(pi);
 }

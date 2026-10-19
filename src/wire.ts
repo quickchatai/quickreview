@@ -138,6 +138,7 @@ import {
   renderRoundPrompt,
   templateFileForOrder,
 } from "./templates.js";
+import { assertNativeHost, assertNativeOrder } from "./launchvocab.js";
 import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionCommandObservation, SessionHooks } from "./types.js";
 import { WebhookHealer } from "./webhookheal.js";
@@ -852,8 +853,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // The identity variable map every prompt render and agent build
   // resolves {{owner_name}}/{{repo}}/{{bot_login}} against.
   const identity = identityVars(cfg);
-  const renderPrompt = (order: RoundOrder, memory: RoundMemory): string =>
-    renderRoundPrompt(
+  // The tmux host launches lenses through `subagent` / `launch_plan` only: it
+  // refuses an engine config and an engine-written order (src/launchvocab.ts).
+  assertNativeHost(cfg.pi.lens_runtime);
+  const renderPrompt = (order: RoundOrder, memory: RoundMemory): string => {
+    assertNativeOrder(order);
+    return renderRoundPrompt(
       readFileSync(join(root, "prompts", templateFileForOrder(order)), "utf8"),
       order,
       memory,
@@ -861,6 +866,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       ecosystem,
       identity,
     );
+  };
   // The recheck's own template — a nudge, not a round order.
   const renderRecheck = (order: RecheckOrder): string =>
     renderRecheckPrompt(
@@ -1273,14 +1279,19 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       });
       openviking.start();
       const supervisor = openviking;
-      reembed = new ReembedDriver({
-        cfg: cfg.openviking,
-        repoRoot: root,
-        keyPath: join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET),
-        ready: () => supervisor.status().ready,
-        log,
-      });
-      reembed.start();
+      // Under the memory sidecar (endpoint = remote) the store, its journal
+      // and the re-embed migration live in the sidecar, which runs its own
+      // driver at its boot: this daemon has neither the journal nor ov.conf.
+      if (cfg.openviking.endpoint === "local") {
+        reembed = new ReembedDriver({
+          cfg: cfg.openviking,
+          repoRoot: root,
+          keyPath: join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET),
+          ready: () => supervisor.status().ready,
+          log,
+        });
+        reembed.start();
+      }
 
       // Bind the daemon's durable command slot before any PR session is
       // adopted or born. Pending rows reconstruct their exact inject bytes;

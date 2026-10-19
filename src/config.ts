@@ -76,6 +76,11 @@ export interface TuiConfig {
   /** ssh alias of the box running the container. Ignored when target = "local". */
   ssh_host: string;
   container: string;
+  /** The container the memory forward relays into, when OpenViking does not
+   * live in `container`: the memory sidecar (`[openviking] endpoint =
+   * "remote"`, docker/memory/). Empty = `container` (the in-container
+   * server). See `tuiMemoryContainer`. */
+  memory_container: string;
   remote_state_dir: string;
   remote_sandbox_root: string;
   sudo_docker: boolean;
@@ -138,8 +143,8 @@ export interface CompanionConfig {
    * companion never mounts `~/.ssh` (no ssh config, no agent socket). */
   ssh_dir: string;
   /** Docker build context for the companion image (auto-built when
-   * missing): the app root, whose built `dist/` and prompt trees the image
-   * copies; the Dockerfile is `docker/companion/Dockerfile` under it. */
+   * missing): the app root. The image is the release image, built from
+   * `docker/Dockerfile` under it, which compiles the app itself. */
   build_context: string;
   // --- watcher knobs ---
   /** A round overdue by more than this is worth waking the operator for. */
@@ -501,7 +506,9 @@ export interface ReviewConfig {
    *
    * `wide_lens_fanout`: a batched `tasks:[…]` lens launch runs as wide as
    * `[pi] subagent_max_concurrency`, not native pi's in-call four
-   * (extensions/subagents.ts, `QCR_SUBAGENT_WIDE_FANOUT`). */
+   * (extensions/subagents.ts, `QCR_SUBAGENT_WIDE_FANOUT`).
+   * Deprecated: it steers only the native glue, and is a no-op on an SDK
+   * session (`[engine] runtime = sdk`), where our lens tool sets its own width. */
   wide_lens_fanout: boolean;
   /** `task_files`: the daemon (or the bench) writes each plan row's complete
    * lens task to a file (src/passtasks.ts), so the session launches a lens
@@ -1114,6 +1121,54 @@ export const DEFAULT_SUBAGENT_PASS_DEADLINE_MIN = 8;
  * imports nothing from the daemon), pinned equal by a test. */
 export const DEFAULT_SUBAGENT_CACHE_STAGGER_MS = 2500;
 
+/** What hosts a pi session (`[engine] runtime`). `proc` runs pi as a child
+ * process, as every route does today; `sdk` runs it in-process on the pi SDK
+ * (src/engine/sdkruntime.ts). A route that has no SDK host yet refuses `sdk`
+ * (src/engine/select.ts). */
+export type EngineRuntimeKind = "proc" | "sdk";
+export const ENGINE_RUNTIME_KINDS: readonly EngineRuntimeKind[] = ["proc", "sdk"];
+
+/** Who launches the lenses (`[pi] lens_runtime`). `native` is pi's own
+ * subagent glue, as today; `engine` is our lens tool and discovery wave. */
+export type LensRuntimeKind = "native" | "engine";
+export const LENS_RUNTIME_KINDS: readonly LensRuntimeKind[] = ["native", "engine"];
+
+/** `[engine]`: which runtime hosts pi sessions on the review, bench and scan
+ * routes. The daemon's tmux hosting does not read it. */
+export interface EngineConfig {
+  runtime: EngineRuntimeKind;
+}
+
+export const ENGINE_DEFAULTS: EngineConfig = { runtime: "proc" };
+
+/** Refuse a value outside a closed set. A typo must not silently become the
+ * default runtime. */
+function oneOf<T extends string>(where: string, v: unknown, allowed: readonly T[]): T {
+  if (typeof v !== "string" || !(allowed as readonly string[]).includes(v))
+    throw new Error(
+      `config.toml ${where} must be one of ${allowed.join(" | ")} (got ${JSON.stringify(v)})`,
+    );
+  return v as T;
+}
+
+function parseEngine(raw: Record<string, unknown>): EngineConfig {
+  const e = { ...ENGINE_DEFAULTS, ...raw };
+  return { runtime: oneOf("[engine] runtime", e.runtime, ENGINE_RUNTIME_KINDS) };
+}
+
+function parsePiLensRuntime<T extends { lens_runtime: unknown; engine_wave: unknown }>(pi: T): T {
+  oneOf("[pi] lens_runtime", pi.lens_runtime, LENS_RUNTIME_KINDS);
+  if (typeof pi.engine_wave !== "boolean")
+    throw new Error(
+      `config.toml [pi] engine_wave must be true or false (got ${JSON.stringify(pi.engine_wave)})`,
+    );
+  // A wave only the engine route can launch: a typo must not run the main
+  // session's own launch while the config says the engine's.
+  if (pi.engine_wave && pi.lens_runtime !== "engine")
+    throw new Error('config.toml [pi] engine_wave = true needs lens_runtime = "engine"');
+  return pi;
+}
+
 /** Refuse a per-pass deadline that is not a number of minutes in 0..240
  * (0 = off). A typo must not silently become "no deadline". */
 function parsePiPassDeadline<T extends { subagent_pass_deadline_min: unknown }>(pi: T): T {
@@ -1173,6 +1228,13 @@ export const MODELS_TIER_DEFAULTS: Pick<
 export interface OpenVikingConfig {
   /** Off ⇒ the supervisor is never constructed and status.json says so. */
   enabled: boolean;
+  /** Who runs the server. `local` (the default, and what every live daemon
+   * does) supervises it, and the local embedder, as children of this process.
+   * `remote` is the memory sidecar (docker/memory/): `host`:`port` names a
+   * server some other container runs, the daemon only probes its health, and
+   * the sidecar owns the processes, the boot provisioning and the re-embed
+   * migration. */
+  endpoint: OpenVikingEndpoint;
   /** The pinned server version (mirror 1 of 3). */
   version: string;
   /** Pinned llama-cpp-python: an OPTIONAL extra openviking does not declare,
@@ -1296,6 +1358,9 @@ export interface OpenVikingConfig {
    * review round to run. Mirrored as `openviking_local_embedder_threads`. */
   local_embedder_threads: number;
 }
+
+export const OPENVIKING_ENDPOINTS = ["local", "remote"] as const;
+export type OpenVikingEndpoint = (typeof OPENVIKING_ENDPOINTS)[number];
 
 export const EMBEDDING_PROVIDERS = ["local", "openai"] as const;
 export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
@@ -1577,6 +1642,7 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
  * configuration, exactly like [tui]/[companion]. */
 export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   enabled: true,
+  endpoint: "local",
   version: "0.4.15",
   llama_cpp_python_version: "0.3.35",
   extension_commit: "d436baa23c83938b22bb0aab08b0ce48568b5ff4",
@@ -1624,6 +1690,11 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
  */
 export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig {
   const merged = { ...OPENVIKING_DEFAULTS, ...(raw as Partial<OpenVikingConfig>) };
+  if (!(OPENVIKING_ENDPOINTS as readonly string[]).includes(merged.endpoint)) {
+    throw new Error(
+      `config.toml: [openviking] endpoint must be one of ${OPENVIKING_ENDPOINTS.join(", ")} (got '${String(merged.endpoint)}')`,
+    );
+  }
   // Bounded, never a tight loop or an unbounded wait.
   merged.search_timeout_ms = clampMs(
     merged.search_timeout_ms,
@@ -1952,6 +2023,7 @@ export interface Config {
     improvement_pr_deny_prefixes: string[];
   };
   models: ModelsConfig;
+  engine: EngineConfig;
   pi: {
     package: string;
     version: string;
@@ -1978,6 +2050,15 @@ export interface Config {
      * fresh deadline, and a second timeout returns a failed result for that
      * pass alone. 0 ⇒ no deadline. */
     subagent_pass_deadline_min: number;
+    /** Who launches a round's lenses: `native` (pi's own subagent glue, the
+     * default) or `engine` (our lens tool and discovery wave, on an SDK
+     * session). Only the SDK routes read it. */
+    lens_runtime: LensRuntimeKind;
+    /** `lens_runtime = engine` only: the round's engine starts the planned
+     * discovery wave itself at round start (rule 9) and the main session joins
+     * it through `lens_wave`. Off (the default): the main session launches the
+     * wave, with the same tools. */
+    engine_wave: boolean;
   };
   openviking: OpenVikingConfig;
   memory: MemoryConfig;
@@ -2171,7 +2252,7 @@ export function parseScanTable(
 }
 
 /** Where a `qcr scan start` driver runs. `docker`: in a throwaway
- * container from the companion image that mounts only the reviewed repo
+ * container from the scan sandbox image that mounts only the reviewed repo
  * (read-only), the state home, the scan's own pi home and the config
  * (src/scanbox.ts). `host`: a detached process on this machine. */
 export const SCAN_SANDBOXES = ["docker", "host"] as const;
@@ -2186,9 +2267,15 @@ export interface ScanSandboxConfig {
    * refresh-disabled copy per case; by default the companion's own
    * (`[companion] pihome_volume`), which alone refreshes it. */
   pihome_volume: string;
-  /** The image the sandbox runs; empty in the file means the companion's. */
+  /** The image the sandbox runs; empty in the file means `SCAN_IMAGE_DEFAULT`. */
   image: string;
 }
+
+/** The scan sandbox's own image (docker/companion/Dockerfile, built by
+ * `qcr scan rebuild`). Not the companion's: since P7.8 that is the release
+ * image in `companion` mode, which the sandbox's one-shot entrypoint does not
+ * serve. */
+export const SCAN_IMAGE_DEFAULT = "qcr-scan";
 
 /** The `[scan]` keys that say where a run is driven, not how it scans. */
 export const SCAN_SANDBOX_KEYS = ["sandbox", "pihome_volume", "image"] as const;
@@ -2198,11 +2285,11 @@ export const SCAN_SANDBOX_DEFAULTS: Omit<ScanSandboxConfig, "image" | "pihome_vo
   sandbox_set: false,
 };
 
-/** `[scan] sandbox / pihome_volume / image`; the image and the pi home
- * volume default to the companion's. */
+/** `[scan] sandbox / pihome_volume / image`; the pi home volume defaults to
+ * the companion's, the image to `SCAN_IMAGE_DEFAULT`. */
 export function parseScanSandbox(
   raw: unknown,
-  companion: { image: string; pihome_volume: string },
+  companion: { pihome_volume: string },
 ): ScanSandboxConfig {
   const t = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   const name = (key: string, fallback: string): string => {
@@ -2223,7 +2310,7 @@ export function parseScanSandbox(
     sandbox: sandbox as ScanSandbox,
     sandbox_set: t["sandbox"] !== undefined,
     pihome_volume: name("pihome_volume", companion.pihome_volume),
-    image: name("image", companion.image),
+    image: name("image", SCAN_IMAGE_DEFAULT),
   };
 }
 
@@ -2429,6 +2516,7 @@ export const TUI_DEFAULTS: TuiConfig = {
   target: "ssh",
   ssh_host: "my-vm",
   container: "quickreview-sandbox",
+  memory_container: "",
   remote_state_dir: "/opt/quickreview/state",
   remote_sandbox_root: "/opt/quickreview/sandbox",
   sudo_docker: true,
@@ -2439,11 +2527,19 @@ export const TUI_DEFAULTS: TuiConfig = {
   evidence_why_interval_s: 10,
 };
 
+/** The local companion image's tag: the release image (docker/Dockerfile) in
+ * `companion` mode, built on the host. */
+export const COMPANION_IMAGE = "qcr-companion:release";
+
 /** [companion] is optional in config.toml, exactly like [tui]. */
 export const COMPANION_DEFAULTS: CompanionConfig = {
   enabled: true,
   container_name: "qcr-companion",
-  image: "qcr-companion",
+  // The release image, locally built (`qcr companion rebuild`). A tag of its own:
+  // the name `qcr-companion` is the retired companion image on an existing
+  // PC, which the new container's entrypoint modes do not serve, so a
+  // recreate must find no image here and build the right one.
+  image: COMPANION_IMAGE,
   pihome_volume: "companion-pihome",
   session: "companion",
   model: "openai-codex/gpt-6.1-sol:medium",
@@ -2455,7 +2551,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   feed_dir: "", // → <root>/state/companion/feed
   alerts_dir: "", // → <root>/state/companion/alerts
   ssh_dir: "~/.ssh",
-  build_context: "", // → <root> (the image copies the built app; Dockerfile at docker/companion/)
+  build_context: "", // → <root> (the release image is built from it; Dockerfile at docker/Dockerfile)
   overdue_grace_min: 30,
   stale_alert_s: 300,
   awaiting_age_h: 24,
@@ -2736,28 +2832,37 @@ export function parseConfig(toml: string): Config {
     ),
     caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
     models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
-    pi: parsePiPassDeadline({
-      subagent_max_concurrency: 4,
-      subagent_cache_group: 5,
-      subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
-      subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
-      ...(req(raw, "pi") as Omit<
-        Config["pi"],
-        | "subagent_max_concurrency"
-        | "subagent_cache_group"
-        | "subagent_cache_stagger_ms"
-        | "subagent_pass_deadline_min"
-      > &
-        Partial<
-          Pick<
-            Config["pi"],
-            | "subagent_max_concurrency"
-            | "subagent_cache_group"
-            | "subagent_cache_stagger_ms"
-            | "subagent_pass_deadline_min"
-          >
-        >),
-    }),
+    engine: parseEngine((raw.engine ?? {}) as Record<string, unknown>),
+    pi: parsePiLensRuntime(
+      parsePiPassDeadline({
+        subagent_max_concurrency: 4,
+        subagent_cache_group: 5,
+        subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
+        subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
+        lens_runtime: "native",
+        engine_wave: false,
+        ...(req(raw, "pi") as Omit<
+          Config["pi"],
+          | "subagent_max_concurrency"
+          | "subagent_cache_group"
+          | "subagent_cache_stagger_ms"
+          | "subagent_pass_deadline_min"
+          | "lens_runtime"
+          | "engine_wave"
+        > &
+          Partial<
+            Pick<
+              Config["pi"],
+              | "subagent_max_concurrency"
+              | "subagent_cache_group"
+              | "subagent_cache_stagger_ms"
+              | "subagent_pass_deadline_min"
+              | "lens_runtime"
+              | "engine_wave"
+            >
+          >),
+      }),
+    ),
     openviking: parseOpenViking((raw.openviking ?? {}) as Record<string, unknown>),
     memory: parseMemory((raw.memory ?? {}) as Record<string, unknown>),
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
@@ -3058,7 +3163,12 @@ function checkSlackShape(slack: SlackConfig, owner: OwnerConfig): void {
       `[owner] slack_id '${owner.slack_id}' must appear as a key in [slack.users] (it is the only source of own-PR rights)`,
     );
   }
-  for (const key of ["daily_turns", "per_user_daily_turns", "thread_replies_per_day", "announcements_per_hour"] as const) {
+  for (const key of [
+    "daily_turns",
+    "per_user_daily_turns",
+    "thread_replies_per_day",
+    "announcements_per_hour",
+  ] as const) {
     const cap = slack.policy[key];
     if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0)
       fail(`policy.${key} must be a finite non-negative number`);
@@ -3188,7 +3298,9 @@ export function validateLensKnobs(cfg: Pick<Config, "review" | "models">): void 
     throw new Error("config.toml [models.pass_tiers] must be a table of pass = tier");
   const risk = new Set(cfg.models.risk_passes ?? []);
   if (risk.has("pass-validate"))
-    throw new Error("config.toml [models] risk_passes may not name pass-validate — use validate_tier");
+    throw new Error(
+      "config.toml [models] risk_passes may not name pass-validate — use validate_tier",
+    );
   for (const [pass, tier] of Object.entries(pins as Record<string, unknown>)) {
     if (!known.has(pass))
       throw new Error(`config.toml [models.pass_tiers]: unknown pass "${pass}"`);

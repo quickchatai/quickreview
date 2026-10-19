@@ -15,7 +15,7 @@
 // activity, never to a session failure.
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Pi, PiEventPayload } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   appendProgressLog,
   isLiveAgentStatus,
@@ -29,9 +29,15 @@ import {
 import { parsePrIdentity } from "../src/pr-identity.js";
 import { parseSessionCommandMarker } from "../src/session-command.js";
 import { LAUNCH_PLAN_TOOL, planLaunch } from "./subagents.js";
+import { isLensTool, lensIdOf } from "../src/lensresult.js";
 
 /**
- * One subagent's slot in the tool result's `details.results` array.
+ * One subagent's (or lens's) slot in the tool result's `details.results` array.
+ * The tmux bot's tools are `subagent` and `launch_plan`; the engine's are
+ * `lens` (the same `{agent, task}` / `{tasks:[...]}` arguments) and
+ * `lens_wave` (no arguments: it joins the wave the engine launched, so its
+ * agents are known only from its results). A lens run's result carries an `id`
+ * (LensResult v1), and one run is ONE slot however many calls report it.
  *
  * Two shapes are read: a `progress` record
  * (status/durationMs/toolCount/lastMessage/error), and pi's native subagent
@@ -75,16 +81,23 @@ function status(value: unknown, exitCode?: unknown): LiveAgentStatus {
   return exitCode === 0 ? "completed" : exitCode === undefined ? "running" : "failed";
 }
 
-function toolName(event: PiEventPayload): string {
-  return text(event.toolName) ?? text(event.name) ?? "tool";
+/** An event read field by field, whatever its declared type: every accessor
+ * below probes defensively (VERIFY-ON-PIN) rather than trusting the shape. */
+type EventBag = Record<string, unknown>;
+
+function toolName(event: object): string {
+  const e = event as EventBag;
+  return text(e.toolName) ?? text(e.name) ?? "tool";
 }
 
-function toolId(event: PiEventPayload): string {
-  return text(event.toolCallId) ?? text(event.id) ?? `${toolName(event)}:unknown`;
+function toolId(event: object): string {
+  const e = event as EventBag;
+  return text(e.toolCallId) ?? text(e.id) ?? `${toolName(event)}:unknown`;
 }
 
-function toolArgs(event: PiEventPayload): Record<string, unknown> {
-  return record(event.args) ?? record(event.input) ?? record(event.arguments) ?? {};
+function toolArgs(event: object): Record<string, unknown> {
+  const e = event as EventBag;
+  return record(e.args) ?? record(e.input) ?? record(e.arguments) ?? {};
 }
 
 /** Native subagent supports one `{agent, task}` or parallel `{tasks:[...]}`.
@@ -146,8 +159,8 @@ function argPreview(args: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function userMessageText(event: PiEventPayload): string | undefined {
-  const message = record(event.message);
+function userMessageText(event: object): string | undefined {
+  const message = record((event as EventBag).message);
   if (message?.role !== "user" || !Array.isArray(message.content)) return undefined;
   return message.content
     .map(record)
@@ -159,11 +172,8 @@ function userMessageText(event: PiEventPayload): string | undefined {
     .join("\n");
 }
 
-function resultsFrom(
-  event: PiEventPayload,
-  carrier: "partialResult" | "result",
-): SubagentResultLike[] {
-  const outer = record(event[carrier]);
+function resultsFrom(event: object, carrier: "partialResult" | "result"): SubagentResultLike[] {
+  const outer = record((event as EventBag)[carrier]);
   const details = record(outer?.details);
   return Array.isArray(details?.results)
     ? details.results.filter((x): x is SubagentResultLike => record(x) !== undefined)
@@ -241,7 +251,7 @@ function asAgent(
   };
 }
 
-export default function activate(pi: Pi): void {
+export default function activate(pi: ExtensionAPI): void {
   const pr = parsePrIdentity(process.env.QCR_PR);
   if (pr === undefined) return; // overseer and companion do not publish PR progress
   const session = process.env.QCR_SESSION_NAME?.trim() || `pr-${pr}`;
@@ -257,6 +267,16 @@ export default function activate(pi: Pi): void {
   // one `<call>:<agent>#<n>` — the n-th task of that agent in the call's order.
   const agents = new Map<string, LiveAgentProgress>();
   const callAgents = new Map<string, string[]>();
+  // A lens run reported under an id keeps the slot of the call that reported
+  // it first: a `lens_wave` that joins the wave again adds no second row.
+  const runKeys = new Map<string, string>();
+  const bindRun = (run: string | null, key: string): string => {
+    if (run === null) return key;
+    const held = runKeys.get(run);
+    if (held !== undefined) return held;
+    runKeys.set(run, key);
+    return key;
+  };
   const executionKeys = (callId: string, names: readonly string[]): string[] => {
     const seen = new Map<string, number>();
     return names.map((agent) => {
@@ -308,6 +328,15 @@ export default function activate(pi: Pi): void {
     transition({ event: "pass_end", execution_id: key, agent: agent.agent, status: agent.status });
   };
 
+  // A lens_wave names no agents at start (the engine launched the wave before
+  // the main session joined it), so its rows can first appear in an update or
+  // an end — the fan-out milestones are stamped then, as a start would.
+  const fanoutSeen = (): void => {
+    if (!snapshot || agents.size === 0) return;
+    snapshot.first_lens_started_at ??= nowIso();
+    snapshot.fanout_started_at ??= snapshot.first_lens_started_at;
+  };
+
   const activity = (description: string): void => {
     if (!snapshot) return;
     snapshot.last_activity = description;
@@ -327,6 +356,7 @@ export default function activate(pi: Pi): void {
     const at = nowIso();
     agents.clear();
     callAgents.clear();
+    runKeys.clear();
     endLogged.clear();
     return {
       version: 2,
@@ -392,9 +422,9 @@ export default function activate(pi: Pi): void {
     if (!snapshot) return;
     const name = toolName(event);
     const args = toolArgs(event);
-    if (name === "subagent" || name === LAUNCH_PLAN_TOOL) {
+    if (isLensTool(name)) {
       const executions =
-        name === "subagent" ? subagentExecutions(args) : launchPlanExecutions(args);
+        name === LAUNCH_PLAN_TOOL ? launchPlanExecutions(args) : subagentExecutions(args);
       const names = executions.map(({ agent }) => agent);
       if (names.length > 0) {
         const at = nowIso();
@@ -435,21 +465,20 @@ export default function activate(pi: Pi): void {
     // while streaming, so mid-update they read as running regardless.
     const mode = record(record(event.partialResult)?.details)?.mode;
     let changed = false;
-    const updated = reported
-      .map((result, index) =>
-        asAgent(
-          result,
-          fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined),
-          mode === "parallel" ? result.exitCode === -1 : true,
-        ),
-      )
-      .filter((agent): agent is LiveAgentProgress => agent !== undefined);
+    const updated = reported.flatMap((result, index) => {
+      const agent = asAgent(
+        result,
+        fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined),
+        mode === "parallel" ? result.exitCode === -1 : true,
+      );
+      return agent ? [{ agent, run: lensIdOf(result) }] : [];
+    });
     const updateKeys = executionKeys(
       toolId(event),
-      updated.map((agent) => agent.agent),
+      updated.map(({ agent }) => agent.agent),
     );
-    for (const [index, agent] of updated.entries()) {
-      const key = updateKeys[index]!;
+    for (const [index, { agent, run }] of updated.entries()) {
+      const key = bindRun(run, updateKeys[index]!);
       const previous = agents.get(key);
       // A parallel slot can finish while its siblings still run: a terminal
       // record carries its completion milestone from the first update that
@@ -467,6 +496,7 @@ export default function activate(pi: Pi): void {
       snapshot.active_tool = `subagent: ${agent.agent}`;
       changed = true;
     }
+    fanoutSeen();
     if (changed) write();
     else heartbeat();
   });
@@ -477,17 +507,19 @@ export default function activate(pi: Pi): void {
     const fallbacks = callAgents.get(id) ?? [];
     const reported = resultsFrom(event, "result");
     const finalAgents: LiveAgentProgress[] = [];
-    const ended = reported
-      .map((result, index) =>
-        asAgent(result, fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined)),
-      )
-      .filter((agent): agent is LiveAgentProgress => agent !== undefined);
+    const ended = reported.flatMap((result, index) => {
+      const agent = asAgent(
+        result,
+        fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined),
+      );
+      return agent ? [{ agent, run: lensIdOf(result) }] : [];
+    });
     const endKeys = executionKeys(
       id,
-      ended.map((agent) => agent.agent),
+      ended.map(({ agent }) => agent.agent),
     );
-    for (const [index, agent] of ended.entries()) {
-      const key = endKeys[index]!;
+    for (const [index, { agent, run }] of ended.entries()) {
+      const key = bindRun(run, endKeys[index]!);
       const previous = agents.get(key);
       const finalAgent: LiveAgentProgress = {
         ...previous,
@@ -526,6 +558,7 @@ export default function activate(pi: Pi): void {
         passEnded(finalAgent);
       }
     }
+    fanoutSeen();
     callAgents.delete(id);
     snapshot.active_tool = undefined;
     activity(

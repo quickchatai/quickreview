@@ -1,5 +1,5 @@
 // The TUI's one hard-kill chord. (Ctrl-q, which releases an embedded
-// surface's focus — pipane.ts PANE_ESCAPE — is a single byte, not a chord.)
+// surface's focus — termmirror.ts PANE_ESCAPE — is a single byte, not a chord.)
 export const CTRL_C = 0x03;
 export const KILL_WINDOW_MS = 1200;
 

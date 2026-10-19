@@ -1,5 +1,6 @@
-# The one image built from the app root is the companion's
-# (docker/companion/Dockerfile; every other build has its own context). This
+# The scan sandbox's image is built from the app root with this list
+# (docker/companion/Dockerfile; the release image, which is also the companion's,
+# has docker/Dockerfile.dockerignore, and every other build its own context). This
 # list admits only what it copies (src/appstamp.ts BAKED_PATHS, entry for entry —
 # the stamp is a hash over exactly these). Everything else in the checkout —
 # state, evidence, node_modules, the operator's files — stays out.

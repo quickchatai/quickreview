@@ -19,7 +19,7 @@
 // Convention (setup.ts): every tool answers a refusal as its result, never a
 // throw.
 import { dismissedLine } from "../src/setup/presentation.js";
-import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.js";
 import type { Refusal } from "../src/setup/engine.js";
 import {
   MAX_PATTERNS_PER_SCAN,
@@ -28,13 +28,7 @@ import {
   type ScanTriage,
 } from "../src/setup/triage.js";
 
-function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return details
-    ? { content: [{ type: "text", text: t }], details }
-    : { content: [{ type: "text", text: t }] };
-}
-
-function refused(what: string, r: Refusal): PiToolResult {
+function refused(what: string, r: Refusal): QcrToolResult {
   return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
 }
 
@@ -44,8 +38,8 @@ const FP_PARAM = {
     "The finding's fingerprint as scan_findings shows it (the first 12 characters are enough).",
 } as const;
 
-export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
-  const dismiss: PiToolDefinition = {
+export function triageToolDefinitions(triage: ScanTriage): QcrTool[] {
+  const dismiss: QcrTool = {
     name: "scan_dismiss",
     label: "Dismiss a scan finding",
     description:
@@ -70,7 +64,7 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
       });
     },
   };
-  const promote: PiToolDefinition = {
+  const promote: QcrTool = {
     name: "scan_promote",
     label: "Promote a scan finding",
     description:
@@ -125,7 +119,7 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
       });
     },
   };
-  const closeFixed: PiToolDefinition = {
+  const closeFixed: QcrTool = {
     name: "scan_close_fixed",
     label: "Close fixed findings' tickets",
     description:
@@ -146,7 +140,7 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
       return text(out.join("\n"), { closed: r.closed.length, problems: r.problems.length });
     },
   };
-  const memory: PiToolDefinition = {
+  const memory: QcrTool = {
     name: "scan_memory",
     label: "Write scan memory",
     description:

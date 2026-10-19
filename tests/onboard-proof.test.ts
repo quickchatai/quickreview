@@ -283,7 +283,7 @@ describe("reading the daemon's own state", () => {
       "daemon",
       "ls",
       "-1",
-      "/opt/quickreview/state/dryrun",
+      "/opt/qcr/state/dryrun",
     ]);
     // not-json.txt was never read.
     expect(seen).toHaveLength(3);

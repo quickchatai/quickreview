@@ -29,104 +29,83 @@ import {
   type SweepClaim,
   type SweepStatus,
 } from "../sweepstatus.js";
-import { renderPassTasks } from "../passtasks.js";
+import {
+  jsonProblem,
+  missingOutputs,
+  readJson,
+  runOneShot,
+  runPi,
+  unparseableOutputs,
+  PI_RUN_FILES,
+  type PiRun,
+} from "../oneshot.js";
+import {
+  boundBody,
+  renderFollowUpOneShotPrompts,
+  renderOneShotPrompts,
+  type OneShotPrompts,
+} from "../engine/prompts.js";
+import { renderBenchOutputs } from "../engine/render.js";
+
+// The prompts, render and context moved to src/engine/; their callers still
+// import them from here.
+export { boundBody, jsonProblem, missingOutputs, renderBenchOutputs, runPi, unparseableOutputs };
+export type { PiRun };
+export {
+  applyConfigOverrides,
+  benchConfig,
+  contextFor,
+  OPEN_MAP_KEYS,
+  withAuthModels,
+  withPresetInToml,
+} from "../engine/context.js";
+import type { Runtime, SessionSpec } from "../engine/port.js";
+import { procArgv, procRuntime } from "../engine/procruntime.js";
 import { publishChangedResult } from "./publication.js";
-import {
-  postedRenderOptions,
-  renderPostedReview,
-  type PostedRenderConfig,
-} from "../reviewrender.js";
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import {} from "../reviewrender.js";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
-import { delimiter, dirname, join } from "node:path";
+import {} from "node:child_process";
+import {} from "node:readline";
+import { dirname, join } from "node:path";
 import {
-  applyReviewEffort,
   DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
-  loadConfig,
-  parseConfig,
-  parseEffort,
-  parsePreset,
   REVIEW_DEFAULTS,
-  validateLensKnobs,
   type Config,
-  type ReviewPreset,
+  type EngineRuntimeKind,
+  type LensRuntimeKind,
 } from "../config.js";
-import {
-  buildPassPlan,
-  buildRoundOrder,
-  renderDeltaPatch,
-  roundDeltaOf,
-  sweepOrderOf,
-  optionalOrderOf,
-} from "../dispatch.js";
-import { parseLedgerCarry, settledFromLedger } from "../ledgercarry.js";
+import {} from "../dispatch.js";
 import type { PrOwnedDelta } from "../worktrees.js";
 import { benchDelta, benchPriorFindings, decideBenchFollowUp } from "./followup.js";
-import { locateConfig } from "../install.js";
-import { findStyleGuide } from "../styleguide.js";
-import { findCiLinters } from "../lintconfig.js";
-import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
+import type { Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
-import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "../contextpack.js";
+import {} from "../contextpack.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
+import {
+  assessOverrides,
+  overrideReader,
+  resolveOverrides,
+  type Customisation,
+} from "../profileoverrides.js";
 import { buildAgents, configAddenda, identityVars, PASS_ADDENDA } from "../include.js";
-import { MEMORY_LESS } from "../memory/context.js";
-import {
-  applyProfileTuning,
-  lensEnabled,
-  lensTuningAddenda,
-  roundAgentModels,
-  type LensTuning,
-} from "../lenstuning.js";
-import {
-  loadProfileAddenda,
-  loadProfileEcosystem,
-  loadProfileHeuristics,
-  loadProfileLensTuning,
-  loadProfilePosting,
-} from "../profiles.js";
-import {
-  applyProfilePosting,
-  isDefaultPosting,
-  postingPolicyAddenda,
-  type PostingPolicy,
-} from "../postingpolicy.js";
+import { lensTuningAddenda, roundAgentModels, type LensTuning } from "../lenstuning.js";
+import { loadProfileAddenda, loadProfileEcosystem, type ProfileLookup } from "../profiles.js";
+import { isDefaultPosting, postingPolicyAddenda, type PostingPolicy } from "../postingpolicy.js";
 import { enforceBenchPosting, POLICED_ORIGINALS, type BenchPostingReport } from "./benchposting.js";
-import { directiveVocabulary, isFirstPartyDirectivePath } from "../severity.js";
-import type { PrStateRow } from "../state.js";
-import type { PassPlanEntry, RoundOrder } from "../types.js";
+import {} from "../severity.js";
+import type { PassPlanEntry } from "../types.js";
+import {} from "../templates.js";
 import {
-  renderConversationSystemPrompt,
-  renderGateNotes,
-  renderRoundPrompt,
-  roundTemplateFile,
-  templateFileForOrder,
-} from "../templates.js";
-import {
-  benchAppendix,
   CASE_FILES,
   filesFromGitDiff,
   bodyPostedFindings,
-  modelErrorKind,
-  modelErrorsFromEvents,
   type ModelErrors,
   parseSessionComments,
   reanchorLeftComments,
   patchFromGitDiff,
   safeId,
   toOcrResult,
-  usageFromEvents,
-  stagesFromEvents,
   type Stages,
   VARIANTS,
   type BenchCase,
@@ -136,13 +115,7 @@ import {
 } from "./aacr.js";
 import { GIT_ISOLATION_ENV, must, run } from "./exec.js";
 import { dropMetricsFiles } from "./report.js";
-import {
-  apiKeyEnv,
-  authFingerprint,
-  benchAuthMode,
-  modelForAuth,
-  type BenchAuthMode,
-} from "./auth.js";
+import { authFingerprint } from "./auth.js";
 
 export interface RunnerOptions {
   /** The production tree inside the image (`/opt/quickreview/sandbox`) — the
@@ -157,6 +130,9 @@ export interface RunnerOptions {
   agentDir: string;
   timeoutMs: number;
   piBin?: string;
+  /** Hosts the review session (`--runtime`). Omitted: a process runtime over
+   * `piBin`. */
+  runtime?: Runtime;
   keepTree?: boolean;
   log?: (line: string) => void;
 }
@@ -291,6 +267,15 @@ export interface RunFingerprint {
   /** The profile's `[posting]` policy. Absent at the default posting, so a run
    * without one keeps its fingerprint. */
   posting?: PostingPolicy;
+  /** Present only on an SDK run (`[engine] runtime = "sdk"`), with the lens tool
+   * it ran: a proc run keeps its fingerprint, and `--resume` never mixes a
+   * case reviewed on one host with one reviewed on the other. */
+  engine?: { runtime: "sdk"; lens_runtime: LensRuntimeKind };
+  /** Set only on a run whose profile replaced shipped agents or prompts and
+   * was allowed to (`--allow-customised`); an uncustomised run keeps its
+   * fingerprint. */
+  customised?: true;
+  profile_overrides?: Array<{ path: string; origin: string; sha256: string }>;
   /** sha256 of the whole effective `[review]` table and the subagent
    * settings the case's pi runs under: a setting none of the named fields
    * above records (task files, rendered outputs, the context pack, a lever
@@ -335,7 +320,14 @@ function fingerprintLenses(
   return out;
 }
 
-export function runFingerprint(cfg: Config, profile: string, overrides = ""): RunFingerprint {
+export function runFingerprint(
+  cfg: Config,
+  profile: string,
+  overrides = "",
+  custom?: Customisation,
+  /** What hosts the sessions, when it is not the process runtime. */
+  host?: { runtime: EngineRuntimeKind; lens_runtime: LensRuntimeKind },
+): RunFingerprint {
   // A lever at its shipped default is left out, so a run fingerprints the
   // same as one from before the lever existed.
   const D = REVIEW_DEFAULTS;
@@ -392,19 +384,45 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
     ...(isDefaultPosting(cfg.posting) ? {} : { posting: { ...cfg.posting! } }),
+    ...(custom?.customised
+      ? {
+          customised: true as const,
+          profile_overrides: custom.overrides.map((o) => ({
+            path: o.path,
+            origin: o.origin,
+            sha256: o.sha256,
+          })),
+        }
+      : {}),
+    ...(host?.runtime === "sdk"
+      ? { engine: { runtime: "sdk" as const, lens_runtime: host.lens_runtime } }
+      : {}),
     settings_sha256: reviewSettingsDigest(cfg),
   };
 }
 
-/** Cut a PR body to a UTF-8 byte budget. The body is the one unbounded input
- * in the order, and it appears twice (the intent note and the override). */
-export function boundBody(body: string | null, maxBytes = 20_000): string | null {
-  if (body === null || Buffer.byteLength(body, "utf8") <= maxBytes) return body;
-  const cut = Buffer.from(body, "utf8")
-    .subarray(0, maxBytes)
-    .toString("utf8")
-    .replace(/\uFFFD$/, "");
-  return `${cut}\n…(truncated for the benchmark)`;
+/**
+ * The profile's replacements of shipped agents and prompts for a bench run.
+ * A bench run measures the shipped files, so a profile that replaces any is
+ * refused unless `allow` (`--allow-customised`); an allowed run is served the
+ * replacements and records them in its fingerprint. With none, `readFile` is
+ * absent and the run is exactly what it always was.
+ */
+export function benchCustomisation(
+  root: string,
+  profile: string,
+  allow: boolean,
+): { readFile?: (path: string) => string; custom: Customisation } {
+  const set = resolveOverrides({ root, profile });
+  const custom = assessOverrides(root, set);
+  if (custom.customised && !allow)
+    throw new Error(
+      `bench: profile "${profile}" replaces shipped files, so this run would not measure them: ` +
+        `${custom.overrides.map((o) => o.path).join(", ")}. Pass --allow-customised to run it anyway ` +
+        "(the run is recorded as customised).",
+    );
+  const readFile = overrideReader(root, set);
+  return { ...(readFile ? { readFile } : {}), custom };
 }
 
 /** Git reads no system or global configuration and never prompts — for the
@@ -415,150 +433,21 @@ async function git(tree: string, args: string[]): Promise<string> {
   return must("git", ["-C", tree, ...args], { env: GIT_ENV, timeoutMs: 10 * 60_000 });
 }
 
-/** The bench config: production config.toml with only the profile swapped.
- * Escalation stays whatever it ships as (off), so no escalation note renders.
- * "Production config.toml" is the install locator's answer — inside
- * the bench image that is the copy bench.sh baked from the operator's own. */
-export function benchConfig(profile: string): Config {
-  const cfg = structuredClone(loadConfig(locateConfig().path));
-  cfg.review.profile = profile;
-  return cfg;
-}
-
-/**
- * `--config a.b=v,c.d=w`: one bench run's config levers, set on the loaded
- * production config — so two arms of one experiment share ONE image and differ
- * only in the knobs named on the command line (recorded in the fingerprint).
- * A key must already exist in the config (a typo fails loudly instead of
- * measuring nothing) — except inside an OPEN map (`OPEN_MAP_KEYS`, e.g.
- * `models.pass_tiers.pass-sweep=sol-high`), whose keys are data. `true`/`false`
- * and numbers are coerced to the type the key already holds; an array-valued
- * key takes `|`-separated items (`,` separates pairs), empty = `[]`.
- * `models.effort` is re-applied to every model spec, and the per-lens knobs
- * are re-validated exactly as config parsing validates them.
- */
-/** Config maps whose keys are data rather than schema — `--config` may add a
- * key to them. Every other path must already exist. */
-export const OPEN_MAP_KEYS: ReadonlySet<string> = new Set([
-  "models.pass_tiers",
-  "models.pass_models",
-]);
-/** The config text with `[review] preset` set to `preset` — replaced when the
- * section already names one, inserted under the section header otherwise. */
-export function withPresetInToml(toml: string, preset: ReviewPreset): string {
-  const lines = toml.split("\n");
-  const head = lines.findIndex((l) => /^\s*\[review\]\s*(#.*)?$/.test(l));
-  if (head < 0) return `${toml}\n[review]\npreset = "${preset}"\n`;
-  let end = lines.findIndex((l, i) => i > head && /^\s*\[/.test(l));
-  if (end < 0) end = lines.length;
-  for (let i = head + 1; i < end; i++)
-    if (/^\s*preset\s*=/.test(lines[i] as string)) {
-      lines[i] = `preset = "${preset}"`;
-      return lines.join("\n");
-    }
-  lines.splice(head + 1, 0, `preset = "${preset}"`);
-  return lines.join("\n");
-}
-
-/**
- * `--config a.b=v,c.d=w`: one bench run's levers (see above). `review.preset=X`
- * means "as if config.toml said `preset = X`": the config TEXT is re-parsed
- * with that preset, so the preset resolves exactly as in production — its
- * reasoning level replaces whatever level the file's own preset baked into the
- * specs, and a key the file sets explicitly still beats it. It therefore needs
- * the config text (`toml`); every other pair then overrides on top.
- */
-export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): Config {
-  const pairs = spec
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
-  if (pairs.length === 0) return cfg;
-  const keyOf = (p: string): string => p.slice(0, Math.max(p.indexOf("="), 0)).trim();
-  const presetPairs = pairs.filter((p) => keyOf(p) === "review.preset");
-  if (presetPairs.length > 1) throw new Error("--config: review.preset given more than once");
-  const presetPair = presetPairs[0];
-  let base = cfg;
-  if (presetPair) {
-    const preset = parsePreset(presetPair.slice(presetPair.indexOf("=") + 1));
-    if (toml === undefined)
-      throw new Error("--config: review.preset needs the config text to re-parse");
-    base = parseConfig(withPresetInToml(toml, preset));
-    base.review.profile = cfg.review.profile;
-  }
-  const rest = pairs.filter((p) => p !== presetPair);
-  if (rest.length === 0) return base;
-  const out = structuredClone(base) as unknown as Record<string, unknown>;
-  for (const pair of rest) {
-    const eq = pair.indexOf("=");
-    if (eq <= 0) throw new Error(`--config: "${pair}" is not key=value`);
-    const path = pair.slice(0, eq).trim().split(".");
-    const raw = pair.slice(eq + 1).trim();
-    let node = out;
-    for (const k of path.slice(0, -1)) {
-      const next = node[k];
-      if (typeof next !== "object" || next === null)
-        throw new Error(`--config: no section "${path.join(".")}" in config.toml`);
-      node = next as Record<string, unknown>;
-    }
-    const leaf = path[path.length - 1] as string;
-    const open = OPEN_MAP_KEYS.has(path.slice(0, -1).join("."));
-    if (!open && !Object.hasOwn(node, leaf))
-      throw new Error(`--config: no key "${path.join(".")}" in config.toml`);
-    const cur = node[leaf];
-    const num = (v: string): number => {
-      const n = Number(v);
-      if (v === "" || !Number.isFinite(n))
-        throw new Error(`--config: ${path.join(".")} takes a number (got "${v}")`);
-      return n;
-    };
-    if (Array.isArray(cur)) {
-      const items = raw === "" ? [] : raw.split("|").map((x) => x.trim());
-      if (items.some((x) => x === ""))
-        throw new Error(`--config: ${path.join(".")} has an empty item in "${raw}"`);
-      node[leaf] = cur.length > 0 && typeof cur[0] === "number" ? items.map(num) : items;
-      continue;
-    }
-    if (typeof cur === "object" && cur !== null)
-      throw new Error(
-        `--config: ${path.join(".")} is a table — set one of its keys (${path.join(".")}.<key>=…)`,
-      );
-    node[leaf] =
-      typeof cur === "boolean"
-        ? raw === "true"
-          ? true
-          : raw === "false"
-            ? false
-            : (() => {
-                throw new Error(`--config: ${path.join(".")} takes true|false`);
-              })()
-        : typeof cur === "number"
-          ? num(raw)
-          : raw;
-  }
-  const next = out as unknown as Config;
-  if (rest.some((p) => p.startsWith("models.effort"))) {
-    // Re-parse through the same validation the config file gets.
-    let effort: ReturnType<typeof parseEffort>;
-    try {
-      effort = parseEffort(next.models.effort);
-    } catch (err) {
-      throw new Error(`--config: ${err instanceof Error ? err.message : String(err)}`, {
-        cause: err,
-      });
-    }
-    next.models = applyReviewEffort({ ...next.models, effort });
-  }
-  validateLensKnobs(next);
-  return next;
-}
-
 /** Build the lens + validator agents into `<root>/.pi/agents` — the PROJECT
  * scope the subagents glue reads when QCR_SUBAGENT_SCOPE=project. The VM uses
  * the user scope (a symlink in its own pihome); here the user scope is the
- * companion's shared agent dir, whose `agents` belongs to the companion. */
-export function buildBenchAgents(root: string, cfg: Config): number {
-  const out = join(root, ".pi", "agents");
+ * companion's shared agent dir, whose `agents` belongs to the companion.
+ * `out` overrides the dir: the `qcr review` route builds into its private agent
+ * dir's `agents` (src/hostroute.ts) and runs with the user scope. */
+export function buildBenchAgents(
+  root: string,
+  cfg: Config,
+  out: string = join(root, ".pi", "agents"),
+  /** A profile's replacements (src/profileoverrides.ts): `readFile` serves a
+   * replaced agent or prompt, `lookup` adds the repo profile's layer. Absent:
+   * the shipped files and the named profile alone, as always. */
+  profile: { readFile?: (path: string) => string; lookup?: ProfileLookup } = {},
+): number {
   // Empty it rather than remove it: in the sandbox it is a tmpfs MOUNTPOINT
   // (the root filesystem is read-only), and a mountpoint cannot be rmdir'd.
   mkdirSync(out, { recursive: true });
@@ -567,16 +456,17 @@ export function buildBenchAgents(root: string, cfg: Config): number {
     // The bench round runs without the memory extension (header: memory off).
     memory: false,
     root,
+    ...(profile.readFile ? { readFile: profile.readFile } : {}),
     tiers: cfg.models.tiers,
     riskPasses: cfg.models.risk_passes,
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
-    ecosystem: loadProfileEcosystem(root, cfg.review.profile),
+    ecosystem: loadProfileEcosystem(root, cfg.review.profile, profile.lookup),
     models: roundAgentModels(cfg),
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),
-      ...loadProfileAddenda(root, cfg.review.profile),
+      ...loadProfileAddenda(root, cfg.review.profile, profile.lookup),
       ...lensTuningAddenda(cfg.lenses),
       // The profile's `[posting]` policy, compiled for the validator.
       ...postingPolicyAddenda(cfg.posting),
@@ -637,44 +527,6 @@ export async function changedFiles(tree: string, meta: PrefetchMeta): Promise<Pr
   return filesFromGitDiff(nameStatus, numstat, patches);
 }
 
-/** The PR's first-party agent-directive files (src/severity.ts), which the
- * round order names — the same for a first round and a follow-up. */
-function directiveFilesOf(cfg: Config, files: readonly PrFileEntry[]): string[] {
-  const vocab = directiveVocabulary(cfg.review.directives);
-  return files.filter((f) => isFirstPartyDirectivePath(f.filename, vocab)).map((f) => f.filename);
-}
-
-/** `[review] context_pack = "pack-first"`, as dispatch writes it:
- * the case's context pack beside its task dirs (`<case>/context-pack.md` —
- * where the glue looks for a task file's pack), and the order the task files
- * render from, which then points at it. Off ⇒ the order unchanged, no file. */
-function benchContextPack(
-  cfg: Config,
-  built: RoundOrder,
-  files: PrFileEntry[],
-  tree: string,
-  caseDir: string,
-  deltaPatch?: string,
-): { order: RoundOrder; file?: { path: string; text: string } } {
-  if (
-    !cfg.review.task_files ||
-    cfg.review.context_pack !== "pack-first" ||
-    cfg.pi.subagent_cache_group <= 0
-  )
-    return { order: built };
-  const path = join(caseDir, CONTEXT_PACK_FILE);
-  const pack = renderContextPack({
-    pr: built.pr,
-    headSha: built.head_sha,
-    mergeBase: built.merge_base,
-    files,
-    ...(deltaPatch ? { deltaPatch } : {}),
-    readFile: (p) => readWorktreeFileForPack(tree, p),
-    maxTokens: cfg.review.context_pack_max_tokens,
-  });
-  return { order: { ...built, context_pack_file: path }, file: { path, text: pack.text } };
-}
-
 /** The round order + system prompt this case runs — production renderers. */
 export function renderCasePrompts(args: {
   root: string;
@@ -691,124 +543,38 @@ export function renderCasePrompts(args: {
   /** A follow-up case: the PR-owned delta `benchDelta` computed over
    * the tree (undefined = none could be — the round runs in full). */
   followUpDelta?: PrOwnedDelta;
+  /** A customised run's replacements (`benchCustomisation`). */
+  readFile?: (path: string) => string;
 }): CasePrompts {
   if (args.c.followup) return renderFollowUpPrompts(args);
-  const { root, cfg, c, meta, tree } = args;
-  const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
-  const body = boundBody(meta.body);
-  const directiveFiles = directiveFilesOf(cfg, args.files);
-  const row = {
-    number: c.pr,
-    state: "reviewing",
-    head_sha: c.head_commit,
-    title,
-    author: "",
-  } as unknown as PrStateRow;
-  const built = buildRoundOrder({
-    cfg,
-    row,
-    files: args.files,
-    roundId: 1,
-    roundNo: 1,
-    reviewNo: 1,
-    roundType: "first",
-    worktree: tree,
-    settledDigest: "",
-    issuedAt: args.issuedAt,
-    tree: {
-      head_sha: c.head_commit,
-      base_ref: meta.base_ref,
-      base_sha: meta.base_commit,
-      merge_base: meta.merge_base,
-    },
-    ...(body !== null ? { prBody: body } : {}),
-    ...(directiveFiles.length
-      ? { firstPartyDirectives: { files: directiveFiles, mention: "maintainer" } }
-      : {}),
+  const { c, meta } = args;
+  return renderOneShotPrompts({
+    root: args.root,
+    cfg: args.cfg,
     ecosystem: args.ecosystem,
-    heuristics: loadProfileHeuristics(root, cfg.review.profile),
+    target: {
+      repo: c.repo,
+      number: c.pr,
+      title: meta.title,
+      body: meta.body,
+      headSha: c.head_commit,
+      baseRef: meta.base_ref,
+      baseSha: meta.base_commit,
+      mergeBase: meta.merge_base,
+      fallbackTitle: `AACR-Bench ${c.repo}#${c.pr}`,
+    },
+    tree: args.tree,
+    caseDir: args.caseDir,
+    files: args.files,
+    issuedAt: args.issuedAt,
     ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
-    // The repo's written style guide, as production finds it (dispatch.ts).
-    ...(lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
-      ? { styleGuide: findStyleGuide(tree) }
-      : {}),
-    // The linters a CI job of the repo runs, as production finds them.
-    ...(lensEnabled(cfg.lenses, "pass-lint-conformance", cfg.review.lint_conformance)
-      ? { ciLinters: findCiLinters(tree) }
-      : {}),
+    ...(args.readFile ? { readFile: args.readFile } : {}),
   });
-  // `[review] task_files`, as production writes them (dispatch.ts): one
-  // complete lens task per discovery row, in the case dir.
-  // Rendered here, written by the caller (renderCasePrompts stays pure).
-  const packed = benchContextPack(cfg, built, args.files, tree, args.caseDir);
-  const taskFiles = cfg.review.task_files
-    ? renderPassTasks(packed.order, renderGateNotes(built, args.ecosystem)).map((t) => ({
-        ...t,
-        path: join(args.caseDir, "tasks", t.file),
-      }))
-    : [];
-  // The bench renders comments.json and review.md itself after the session
-  // (`[review] render_outputs`, benchAppendix), so the order never carries
-  // production's render-review.sh note: the replay has no scripts/.
-  const { render_outputs: _renderedByBench, ...unrendered } = built;
-  const order = taskFiles.length
-    ? {
-        ...unrendered,
-        pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
-      }
-    : unrendered;
-  const { system, order: orderText } = renderBenchPrompts(args, order, roundTemplateFile("first"));
-  return {
-    system,
-    order: orderText,
-    plannedLenses: order.pass_plan.map((p) => p.agent),
-    passPlan: order.pass_plan,
-    taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
-    ...(packed.file ? { contextPack: packed.file } : {}),
-  };
 }
 
-/** Both round routes apply the same memory-free rendering and benchmark override. */
-function renderBenchPrompts(
-  args: Parameters<typeof renderCasePrompts>[0],
-  order: Parameters<typeof renderRoundPrompt>[1],
-  templateFile: string,
-): { system: string; order: string } {
-  const { root, cfg, c, meta, tree } = args;
-  const identity = { ...identityVars(cfg), repo: c.repo };
-  const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
-  const template = readFileSync(join(root, "prompts", templateFile), "utf8");
-  const rendered = renderRoundPrompt(template, order, MEMORY_LESS, cfg.owner.name, args.ecosystem, identity);
-  return {
-    system: renderConversationSystemPrompt(
-      readFileSync(join(root, "prompts", "conversation-system.md"), "utf8"),
-      { pr: c.pr, title, worktree: tree }, identity,
-    ),
-    order: rendered + "\n\n" + benchAppendix({
-      repo: c.repo, pr: c.pr, headSha: c.head_commit, mergeBase: meta.merge_base,
-      caseDir: args.caseDir, title: meta.title, body: boundBody(meta.body),
-      ...(cfg.review.render_outputs ? { renderOutputs: true } : {}),
-      ...(c.followup ? { roundNo: c.followup.round_no, privateReplay: true, prevHead: c.followup.prev_head } : {}),
-    }),
-  };
-}
-
-export interface CasePrompts {
-  system: string;
-  order: string;
-  plannedLenses: string[];
-  passPlan: PassPlanEntry[];
-  /** `[review] task_files`: the lens task files the order points at, for the
-   * caller to write before the session starts. */
-  taskFiles: Array<{ path: string; text: string }>;
-  /** The case's context pack, for the caller to write (absent ⇒
-   * remove any stale one). */
-  contextPack?: { path: string; text: string };
-  /** A follow-up case only: every other file the order names (the
-   * delta patch, the prior-findings sidecar, the sweep's task files, the
-   * pinned ledger), for the caller to write; what the round runs as; and the
+export interface CasePrompts extends OneShotPrompts {
+  /** A follow-up case only: what the round runs as; and the
    * pre-approval sweep's plan when one is owed. */
-  extraFiles?: Array<{ path: string; text: string }>;
   followUp?: CaseFollowUp;
   sweepPlan?: PassPlanEntry[];
 }
@@ -890,350 +656,100 @@ export function followUpOutcomeOf(
 }
 
 /**
- * The order of a follow-up replay case: production's round k, built
- * from the same pieces dispatch uses — the full plan, `decideBenchFollowUp`
- * (dispatch's `planFollowUp`), the delta patch and order delta, the prior
- * findings note, the sweep's task files — rendered from the template
- * `templateFileForOrder` picks. Any doubt runs a full re-review.
+ * The order of a follow-up replay case: production's round k, built by the
+ * shared follow-up renderer (src/oneshot.ts) with the case's own answers to
+ * what the daemon's state would supply (`decideBenchFollowUp`, the recorded
+ * prior findings and ledger).
  */
 function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): CasePrompts {
-  const { root, cfg, c, meta, tree } = args;
+  const { c, meta } = args;
   const fu = c.followup!;
-  const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
-  const body = boundBody(meta.body);
-  const directiveFiles = directiveFilesOf(cfg, args.files);
-  const row = {
-    number: c.pr,
-    state: "reviewing",
-    head_sha: c.head_commit,
-    title,
-    author: "",
-  } as unknown as PrStateRow;
-  const heuristics = loadProfileHeuristics(root, cfg.review.profile);
-  const styleGuide = lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
-    ? findStyleGuide(tree)
-    : [];
-  const ciLinters = lensEnabled(cfg.lenses, "pass-lint-conformance", cfg.review.lint_conformance)
-    ? findCiLinters(tree)
-    : [];
-  // The whole PR's plan, exactly as dispatch builds it before deciding.
-  const fullPlan = buildPassPlan(
-    cfg,
-    args.files,
-    { title, body: body ?? undefined },
-    args.ecosystem,
-    heuristics,
-    styleGuide,
-    ciLinters,
-  );
-  const decided = decideBenchFollowUp(cfg, heuristics, c, {
-    delta: args.followUpDelta,
-    files: args.files,
-    fullPlan,
+  return renderFollowUpOneShotPrompts({
+    root: args.root,
+    ...(args.readFile ? { readFile: args.readFile } : {}),
+    cfg: args.cfg,
     ecosystem: args.ecosystem,
-    styleGuide,
-    ciLinters,
-  });
-  const extraFiles: Array<{ path: string; text: string }> = [];
-  // The ledger the PR session held when the round was dispatched: carried as
-  // production's `ledger_carry` (and its SETTLED digest), and pinned as the
-  // case's ledger file (QCR_LEDGER_FILE) by the caller.
-  const ledgerPath = join(args.caseDir, "ledger.md");
-  const ledgerCarry =
-    fu.ledger !== undefined ? parseLedgerCarry(fu.ledger, c.pr, ledgerPath) : undefined;
-  const settledDigest =
-    ledgerCarry && fu.ledger !== undefined ? settledFromLedger(fu.ledger.trim()) : "";
-  if (fu.ledger !== undefined) extraFiles.push({ path: ledgerPath, text: fu.ledger });
-  let followUpArg: Parameters<typeof buildRoundOrder>[0]["followUp"];
-  let report: CaseFollowUp;
-  if (decided.kind === "delta") {
-    const d = decided.decision;
-    const patchPath = join(args.caseDir, "delta.patch");
-    extraFiles.push({ path: patchPath, text: renderDeltaPatch(d.delta.files) });
-    const prior = benchPriorFindings(c, join(args.caseDir, "prior.json"));
-    extraFiles.push({ path: join(args.caseDir, "prior.json"), text: prior.sidecar });
-    followUpArg = {
-      delta: roundDeltaOf(d, patchPath),
-      deltaFiles: d.deltaFiles,
-      priorFindingsNote: prior.note,
-      priorFindings: prior.list,
-      ...(d.optionalPlan ? { optionalPlan: d.optionalPlan } : {}),
-      ...(d.sweepPlan ? { sweepPlan: d.sweepPlan } : {}),
-      ...(d.sweepUnswept ? { sweepUnswept: d.sweepUnswept } : {}),
-      ...(d.sweepBehaviourUnread ? { sweepBehaviourUnread: d.sweepBehaviourUnread } : {}),
-    };
-    report = {
-      round_no: fu.round_no,
-      review_no: fu.review_no,
-      scope: "delta",
-      delta_lines: d.delta.lines,
-      delta_files: d.delta.files.length,
-      ...(d.delta.conflicted.length ? { conflicted: d.delta.conflicted } : {}),
-      sweep_owed: d.sweepPlan !== undefined,
-      prior_findings: prior.list.findings.length,
-    };
-  } else {
-    report = {
-      round_no: fu.round_no,
-      review_no: fu.review_no,
-      scope: "full",
-      reason: decided.reason,
-      ...(decided.detail ? { detail: decided.detail } : {}),
-      prior_findings: fu.prior_findings.length,
-    };
-  }
-  const built = buildRoundOrder({
-    cfg,
-    row,
+    target: {
+      repo: c.repo,
+      number: c.pr,
+      title: meta.title,
+      body: meta.body,
+      headSha: c.head_commit,
+      baseRef: meta.base_ref,
+      baseSha: meta.base_commit,
+      mergeBase: meta.merge_base,
+      fallbackTitle: `AACR-Bench ${c.repo}#${c.pr}`,
+    },
+    tree: args.tree,
+    caseDir: args.caseDir,
     files: args.files,
-    roundId: 1,
+    issuedAt: args.issuedAt,
+    ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
     roundNo: fu.round_no,
     reviewNo: fu.review_no,
-    roundType: "re-review",
-    worktree: tree,
-    settledDigest,
-    ...(ledgerCarry ? { ledgerCarry } : {}),
-    issuedAt: args.issuedAt,
-    tree: {
-      head_sha: c.head_commit,
-      base_ref: meta.base_ref,
-      base_sha: meta.base_commit,
-      merge_base: meta.merge_base,
-    },
-    ...(body !== null ? { prBody: body } : {}),
-    ...(directiveFiles.length
-      ? { firstPartyDirectives: { files: directiveFiles, mention: "maintainer" } }
-      : {}),
-    ecosystem: args.ecosystem,
-    heuristics,
-    ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
-    ...(styleGuide.length ? { styleGuide } : {}),
-    ...(ciLinters.length ? { ciLinters } : {}),
-    plan: decided.kind === "delta" ? decided.decision.plan : fullPlan,
-    ...(followUpArg ? { followUp: followUpArg } : {}),
-  });
-  const packed = benchContextPack(
-    cfg,
-    built,
-    args.files,
-    tree,
-    args.caseDir,
-    decided.kind === "delta" ? renderDeltaPatch(decided.decision.delta.files) : undefined,
-  );
-  const taskFiles = cfg.review.task_files
-    ? renderPassTasks(packed.order, renderGateNotes(built, args.ecosystem)).map((t) => ({
-        ...t,
-        path: join(args.caseDir, "tasks", t.file),
-      }))
-    : [];
-  // The sweep's own task files, from the same order dispatch renders them
-  // from (`sweepOrderOf`), in their own directory.
-  const sweepTasks =
-    cfg.review.task_files && built.sweep_plan && built.sweep_plan.length > 0
-      ? (() => {
-          const sweepOrder = sweepOrderOf(packed.order, built.sweep_plan);
-          return renderPassTasks(sweepOrder, renderGateNotes(sweepOrder, args.ecosystem)).map(
-            (t) => ({ ...t, path: join(args.caseDir, "tasks-sweep", t.file) }),
-          );
-        })()
-      : [];
-  // The optional rows' task files, from the same order dispatch
-  // renders them from (`optionalOrderOf`), in their own directory.
-  const optionalTasks =
-    cfg.review.task_files && built.optional_plan && built.optional_plan.length > 0
-      ? (() => {
-          const optionalOrder = optionalOrderOf(packed.order, built.optional_plan);
-          return renderPassTasks(optionalOrder, renderGateNotes(optionalOrder, args.ecosystem)).map(
-            (t) => ({ ...t, path: join(args.caseDir, "tasks-optional", t.file) }),
-          );
-        })()
-      : [];
-  const { render_outputs: _renderedByBench, ...unrendered } = built;
-  const order = {
-    ...unrendered,
-    ...(taskFiles.length
-      ? { pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
-      : {}),
-    ...(sweepTasks.length
-      ? { sweep_task_files: sweepTasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
-      : {}),
-    ...(optionalTasks.length
-      ? {
-          optional_task_files: optionalTasks.map((t) => ({
-            row: t.row,
-            agent: t.agent,
-            path: t.path,
-          })),
-        }
-      : {}),
-  };
-  const { system, order: orderText } = renderBenchPrompts(args, order, templateFileForOrder(order));
-  for (const t of sweepTasks) extraFiles.push({ path: t.path, text: t.text });
-  for (const t of optionalTasks) extraFiles.push({ path: t.path, text: t.text });
-  return {
-    system,
-    order: orderText,
-    plannedLenses: order.pass_plan.map((p) => p.agent),
-    passPlan: order.pass_plan,
-    taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
-    ...(packed.file ? { contextPack: packed.file } : {}),
-    extraFiles,
-    followUp: report,
-    ...(built.sweep_plan && built.sweep_plan.length > 0 ? { sweepPlan: built.sweep_plan } : {}),
-  };
-}
-
-export interface PiRun {
-  code: number | null;
-  timedOut: boolean;
-  streamError: string | null;
-}
-
-/** The bench's ONE pi spawn (tests/single-shepherd.test.ts S2): the review
- * round and the defect judge (defectjudge.ts) both go through it. */
-export function runPi(
-  argv: string[],
-  env: NodeJS.ProcessEnv,
-  cwd: string,
-  eventsPath: string,
-  stderrPath: string,
-  timeoutMs: number,
-  piBin: string,
-  stdinText?: string,
-): Promise<PiRun> {
-  return new Promise((resolve) => {
-    const events = createWriteStream(eventsPath, { flags: "a" });
-    const errs = createWriteStream(stderrPath, { flags: "a" });
-    // detached: its own process group, so a timeout kills the lens children
-    // with it rather than orphaning six pi processes on the model API.
-    const child = spawn(piBin, argv, {
-      cwd,
-      env,
-      stdio: [stdinText === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-      detached: true,
-    });
-    let timedOut = false;
-    let streamError: string | null = null;
-    const kill = (sig: NodeJS.Signals): void => {
-      try {
-        if (child.pid) process.kill(-child.pid, sig);
-      } catch {
-        // already gone
-      }
-    };
-    // A full disk must end THIS case as a recorded failure, not throw out of
-    // the CLI and lose every case after it.
-    const onStreamError = (e: Error): void => {
-      streamError = String(e);
-      kill("SIGKILL");
-    };
-    events.on("error", onStreamError);
-    errs.on("error", onStreamError);
-    // The round order goes in on stdin: pi -p takes piped stdin as the prompt,
-    // and an argv string caps at 128 KiB (MAX_ARG_STRLEN).
-    // A pi that dies before reading its prompt (bad model, auth refusal)
-    // EPIPEs this write asynchronously: unheard, that error kills the CLI.
-    if (stdinText !== undefined && child.stdin) {
-      child.stdin.on("error", (e) => onStreamError(new Error(`prompt delivery: ${String(e)}`)));
-      child.stdin.end(stdinText);
-    }
-    // `*_update` events re-emit a lens child's whole transcript on every
-    // update — the file grows quadratically. Nothing reads them: usage comes
-    // from `message_end` and `tool_execution_end`.
-    const lines = createInterface({ input: child.stdout! });
-    lines.on("line", (line) => {
-      if (
-        line.startsWith('{"type":"tool_execution_update"') ||
-        line.startsWith('{"type":"message_update"')
-      )
-        return;
-      events.write(line + "\n");
-    });
-    child.stderr!.pipe(errs);
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill("SIGTERM");
-      setTimeout(() => kill("SIGKILL"), 15_000).unref();
-    }, timeoutMs);
-    child.on("error", (e) => {
-      errs.write(`spawn error: ${String(e)}\n`);
-    });
-    // Resolve only once both files are flushed and closed: every caller reads
-    // them synchronously the moment this resolves (the judge's answer is the
-    // events file's LAST message_end).
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      let open = 2;
-      const settled = (): void => {
-        if (--open === 0) resolve({ code, timedOut, streamError });
-      };
-      for (const s of [events, errs]) {
-        if (s.closed) settled();
-        else {
-          s.once("close", settled);
-          s.end();
-        }
-      }
-    });
+    prevHead: fu.prev_head,
+    ...(fu.ledger !== undefined ? { ledger: fu.ledger } : {}),
+    decide: (ctx) =>
+      decideBenchFollowUp(args.cfg, ctx.heuristics, c, {
+        delta: args.followUpDelta,
+        files: args.files,
+        fullPlan: ctx.fullPlan,
+        ecosystem: args.ecosystem,
+        styleGuide: ctx.styleGuide,
+        ciLinters: ctx.ciLinters,
+      }),
+    prior: (sidecarPath) => benchPriorFindings(c, sidecarPath),
+    priorCount: fu.prior_findings.length,
   });
 }
 
 /**
- * The bench's render step (`[review] render_outputs`): the SAME two calls the
- * live route's scripts/render-review.sh makes (src/reviewrendercli.ts
- * renderRound) — `postedRenderOptions(cfg)` then `renderPostedReview` — with
- * the case's outcome as the fallback verdict, summary and lenses line. Pinned
- * equal to the live route by tests/dedup-parity.test.ts.
- */
-export function renderBenchOutputs(
-  record: unknown,
-  outcome: Record<string, unknown> | undefined,
-  cfg: PostedRenderConfig,
-): ReturnType<typeof renderPostedReview> {
-  const passes = Array.isArray(outcome?.["passes"])
-    ? (outcome["passes"] as Array<Record<string, unknown>>)
-        .map((p) => String(p["name"] ?? ""))
-        .filter((n) => n && n !== "pass-validate")
-    : [];
-  return renderPostedReview(
-    record,
-    postedRenderOptions(cfg, {
-      verdict: typeof outcome?.["verdict"] === "string" ? outcome["verdict"] : null,
-      summary: typeof outcome?.["summary"] === "string" ? outcome["summary"] : null,
-      lensesApplied: passes.length ? passes.join(", ") : null,
-    }),
-  );
-}
-
-/**
- * The defect judge's pi argv (src/bench/defectjudge.ts): no session, no
+ * The defect judge's session (src/bench/defectjudge.ts): no session, no
  * skills/templates/context files, no project-local files, no extension but the
  * no-exec bash guard, and only the \`read\` and \`bash\` tools. The judge reads
  * code to check a claim; it never runs it and never writes.
  */
+export function judgeSessionSpec(
+  root: string,
+  model: string,
+  rest: Pick<SessionSpec, "cwd" | "env" | "eventsFile" | "stderrFile" | "limits">,
+): SessionSpec {
+  return {
+    ...rest,
+    model,
+    tools: ["read", "bash"],
+    extensions: [join(root, "extensions", "bash-guard.ts")],
+    cliFlags: [
+      "--no-approve",
+      "--no-extensions",
+      "--no-skills",
+      "--no-context-files",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--no-session",
+    ],
+  };
+}
+
+/** The pi argv the judge's process session runs (`-p` last, the prompt on stdin). */
 export function judgePiArgv(root: string, model: string): string[] {
   return [
+    ...procArgv(
+      judgeSessionSpec(root, model, {
+        cwd: "",
+        env: {},
+        eventsFile: "",
+        stderrFile: "",
+        limits: { timeoutMs: 0 },
+      }),
+    ),
     "-p",
-    "--no-session",
-    "--no-approve",
-    "--no-extensions",
-    "--extension",
-    join(root, "extensions", "bash-guard.ts"),
-    "--tools",
-    "read,bash",
-    "--no-skills",
-    "--no-context-files",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--model",
-    model,
-    "--mode",
-    "json",
   ];
 }
 
-/** One judge session: \`pi\` from the env's PATH, the prompt on stdin. */
-export function runJudgeSession(
+/** One judge session: \`pi\` from the env's PATH (or the injected runtime),
+ * the prompt on stdin. */
+export async function runJudgeSession(
   prompt: string,
   o: {
     root: string;
@@ -1242,75 +758,31 @@ export function runJudgeSession(
     env: NodeJS.ProcessEnv;
     eventsPath: string;
     timeoutMs: number;
+    runtime?: Runtime;
   },
 ): Promise<PiRun> {
-  return runPi(
-    judgePiArgv(o.root, o.model),
-    o.env,
-    o.cwd,
-    o.eventsPath,
-    o.eventsPath.replace(/\.jsonl$/, ".stderr.log"),
-    o.timeoutMs,
-    "pi",
-    prompt,
+  const session = await (o.runtime ?? procRuntime()).create(
+    judgeSessionSpec(o.root, o.model, {
+      cwd: o.cwd,
+      env: o.env,
+      eventsFile: o.eventsPath,
+      stderrFile: o.eventsPath.replace(/\.jsonl$/, ".stderr.log"),
+      limits: { timeoutMs: o.timeoutMs },
+    }),
   );
-}
-
-function readJson(path: string): unknown {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return undefined;
+    return await session.prompt(prompt);
+  } finally {
+    await session.dispose();
   }
 }
-
-/** Why a session's JSON output file cannot be used: `undefined` when it parses,
- * `"missing"` when absent, otherwise the parser's message. */
-export function jsonProblem(path: string): string | undefined {
-  if (!existsSync(path)) return "missing";
-  try {
-    JSON.parse(readFileSync(path, "utf8"));
-    return undefined;
-  } catch (err) {
-    return String(err instanceof Error ? err.message : err).slice(0, 300);
-  }
-}
-
-/** The BENCHMARK MODE files a scorer reads as JSON: the outcome always; the
- * findings record when the bench renders the posted review from it, else the
- * session's own comments. */
-function scoredOutputs(renderOutputs: boolean): string[] {
-  return renderOutputs
-    ? [CASE_FILES.findings, CASE_FILES.outcome]
-    : [CASE_FILES.comments, CASE_FILES.outcome];
-}
-
-/** The scored BENCHMARK MODE files the session wrote that do not parse. A
- * missing file is not listed here (`missingOutputs` lists it). */
-export function unparseableOutputs(caseDir: string, renderOutputs: boolean): string[] {
-  const names = scoredOutputs(renderOutputs);
-  const out: string[] = [];
-  for (const n of names) {
-    const p = jsonProblem(join(caseDir, n));
-    if (p !== undefined && p !== "missing") out.push(`${n} is not valid JSON (${p})`);
-  }
-  return out;
-}
-
-/** The scored BENCHMARK MODE files the session has not written. */
-export function missingOutputs(caseDir: string, renderOutputs: boolean): string[] {
-  return scoredOutputs(renderOutputs).filter((n) => !existsSync(join(caseDir, n)));
-}
-
-/** The session's event stream and stderr in a case dir. */
-const PI_RUN_FILES = ["pi-events.jsonl", "pi-stderr.log"] as const;
 
 /** An attempt starts by removing what an earlier attempt wrote into the case
  * dir — the session's files, the posting policy's originals, the kept
  * patches, the event stream (the cost reader prices it whatever the
  * attempt's outcome) — so nothing this attempt did not produce is read as
  * its review, by the scorer, a results rebuild or the defect judge. */
-function clearAttemptFiles(caseDir: string): void {
+export function clearAttemptFiles(caseDir: string): void {
   for (const f of [
     ...Object.values(CASE_FILES),
     ...POLICED_ORIGINALS,
@@ -1327,7 +799,12 @@ export async function reviewCase(
   c: BenchCase,
   meta: PrefetchMeta,
   o: RunnerOptions,
-  ctx: { cfg: Config; ecosystem: Ecosystem; fingerprint: RunFingerprint },
+  ctx: {
+    cfg: Config;
+    ecosystem: Ecosystem;
+    fingerprint: RunFingerprint;
+    readFile?: (path: string) => string;
+  },
 ): Promise<CaseSummary> {
   const log = o.log ?? (() => {});
   const safe = safeId(c.instance_id);
@@ -1400,6 +877,7 @@ export async function reviewCase(
       issuedAt: new Date().toISOString(),
       dependencyNote,
       ...(followUpDelta ? { followUpDelta } : {}),
+      ...(ctx.readFile ? { readFile: ctx.readFile } : {}),
     });
     summary.planned_lenses = prompts.plannedLenses;
     writeFileSync(join(caseDir, "pass-plan.json"), JSON.stringify(prompts.passPlan, null, 2));
@@ -1422,246 +900,44 @@ export async function reviewCase(
         );
       }
     }
-    // An earlier attempt's task files never leak into this one: launch_plan
-    // launches every task file the dir holds.
-    rmSync(join(caseDir, "tasks"), { recursive: true, force: true });
-    rmSync(join(caseDir, CONTEXT_PACK_FILE), { force: true });
-    if (prompts.contextPack) writeFileSync(prompts.contextPack.path, prompts.contextPack.text);
-    if (prompts.taskFiles.length) {
-      mkdirSync(join(caseDir, "tasks"), { recursive: true });
-      for (const t of prompts.taskFiles) writeFileSync(t.path, t.text);
-    }
-    const sysPath = join(caseDir, "system-prompt.md");
-    writeFileSync(sysPath, prompts.system);
-    writeFileSync(join(caseDir, "round-order.md"), prompts.order);
-    writeFileSync(
-      join(caseDir, "files.json"),
-      JSON.stringify(
-        files.map(({ patch: _p, ...f }) => f),
-        null,
-        2,
-      ),
-    );
-
-    const env: NodeJS.ProcessEnv = {
-      PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-      HOME: process.env.HOME ?? "/tmp",
-      TMPDIR: tmpDir,
-      LANG: "C.UTF-8",
-      PI_CODING_AGENT_DIR: o.agentDir,
-      QCR_SUBAGENT_SCOPE: "project",
-      QCR_SUBAGENT_MAX_CONCURRENCY: String(ctx.cfg.pi.subagent_max_concurrency),
-      QCR_SUBAGENT_WIDE_FANOUT: ctx.cfg.review?.wide_lens_fanout === false ? "0" : "1",
-      QCR_SUBAGENT_CACHE_GROUP: String(ctx.cfg.pi.subagent_cache_group ?? 0),
-      QCR_SUBAGENT_CACHE_STAGGER_MS: String(
-        ctx.cfg.pi.subagent_cache_stagger_ms ?? DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
-      ),
-      QCR_LEAF_CACHE_EXT: join(o.root, "extensions", "leaf-cache.ts"),
-      // The case's task dirs are this replay's sanctioned launch_plan
-      // dirs (production's live under state/pr-<n>-round-<k>-passes/).
-      QCR_LAUNCH_PLAN_DIRS: [
-        join(caseDir, "tasks"),
-        join(caseDir, "tasks-optional"),
-        join(caseDir, "tasks-sweep"),
-      ].join(delimiter),
-      QCR_SANDBOX_ROOT: o.root,
-      QCR_SESSION_NAME: `bench-${safe}`,
-      QCR_PR: String(c.pr),
-      QCR_PR_META: `PR #${c.pr} — ${meta.title ?? c.repo} (worktree ${tree})`,
-      QCR_WORKTREE: tree,
-      QCR_LEDGER_FILE: join(caseDir, "ledger.md"),
-      QCR_PI_VERSION: ctx.cfg.pi.version,
-      ...GIT_ISOLATION_ENV,
-      // An `anthropic/` model arm: pi's anthropic provider reads this key. bench.sh
-      // passes it by --env-file only when --config names an anthropic/ model.
-      ...(process.env.ANTHROPIC_API_KEY
-        ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
-        : {}),
-      // The API-key route (src/bench/auth.ts): OPENAI_API_KEY for the `openai/`
-      // specs, from bench.sh's --env-file. Nothing on the login route.
-      ...apiKeyEnv(),
-    };
-    const sessionDir = join(caseDir, "session");
-    // This attempt's session only: an earlier attempt's JSONL left here would
-    // make `resumable` true and `--continue` would resume THAT conversation.
-    rmSync(sessionDir, { recursive: true, force: true });
-    const base = [
-      "--approve",
-      "--model",
-      ctx.cfg.models.conversation,
-      "--session-dir",
-      sessionDir,
-      "--system-prompt",
-      sysPath,
-      "--extension",
-      join(o.root, "extensions", "ledger-pin.ts"),
-      "--extension",
-      join(o.root, "extensions", "subagents.ts"),
-      // The live PR session's `cluster_findings` tool (src/sessions.ts
-      // extensionPaths): the same grouping code on both routes.
-      "--extension",
-      join(o.root, "extensions", "finding-clusters.ts"),
-      "--name",
-      `bench-${safe}`,
-      "--mode",
-      "json",
-    ];
-    const piBin = o.piBin ?? "pi";
-    const events = join(caseDir, PI_RUN_FILES[0]);
-    const stderr = join(caseDir, PI_RUN_FILES[1]);
-    log(
-      `review: ${c.instance_id} — ${files.length} files, lenses ${prompts.plannedLenses.join(" ")}`,
-    );
-    let r = await runPi(
-      [...base, "-p"],
-      env,
-      o.root,
-      events,
-      stderr,
-      o.timeoutMs,
-      piBin,
-      prompts.order,
-    );
-    const outcomePath = join(caseDir, CASE_FILES.outcome);
-    // One continuation, never more: the live system's answer to a round that
-    // stopped short is redelivery, not a fresh review. Same session —
-    // and only if there IS one: pi persists a session after its first
-    // assistant message, and `--continue` on an empty session dir silently
-    // starts a NEW session that would review with no round order at all.
-    // A round whose files are there but do not parse stopped short too (a
-    // model that broke its own JSON escaping): the same one continuation,
-    // told which file and what the parser said. So did one that wrote its
-    // outcome (the file written last) without a file the scorer reads.
-    const broken = existsSync(outcomePath)
-      ? unparseableOutputs(caseDir, ctx.cfg.review.render_outputs)
-      : [];
-    const missing = existsSync(outcomePath)
-      ? missingOutputs(caseDir, ctx.cfg.review.render_outputs)
-      : [];
-    const resumable =
-      existsSync(sessionDir) && readdirSync(sessionDir).some((f) => f.endsWith(".jsonl"));
-    if (!r.timedOut && !r.streamError && !existsSync(outcomePath) && !resumable) {
-      summary.error = `pi exited ${String(r.code)} before any assistant message — nothing to continue`;
-    }
-    const stoppedShort = !existsSync(outcomePath) || broken.length > 0 || missing.length > 0;
-    if (!r.timedOut && !r.streamError && stoppedShort && resumable) {
-      const left = o.timeoutMs - (Date.now() - started);
-      if (left > 120_000) {
-        summary.continued = true;
-        log(
-          broken.length
-            ? `review: ${c.instance_id} — ${broken.join("; ")}, one continuation`
-            : missing.length
-              ? `review: ${c.instance_id} — ${missing.join(", ")} not written, one continuation`
-              : `review: ${c.instance_id} — no outcome.json yet, one continuation`,
-        );
-        r = await runPi(
-          [
-            ...base,
-            "--continue",
-            "-p",
-            broken.length
-              ? `Your BENCHMARK MODE files in ${caseDir} cannot be read: ${broken.join("; ")}. Rewrite ${broken.length > 1 ? "them" : "it"} as valid JSON with the same content — plain double quotes, no escaped quotes around keys or values — and write ${CASE_FILES.outcome} last.`
-              : ctx.cfg.review.render_outputs
-                ? `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.findings} (with the posting fields) and, last, ${CASE_FILES.outcome} in ${caseDir}.`
-                : `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.comments}, ${CASE_FILES.review}, ${CASE_FILES.findings} and, last, ${CASE_FILES.outcome} in ${caseDir}.`,
-          ],
-          env,
-          o.root,
-          events,
-          stderr,
-          left,
-          piBin,
-        );
-      }
-    }
-    summary.warnings = [
-      ...new Set(
-        readFileSync(stderr, "utf8")
-          .split("\n")
-          .filter((l) => /warn|error|fatal|failed/i.test(l))
-          .map((l) => l.trim().slice(0, 300)),
-      ),
-    ].slice(0, 20);
-    if (r.streamError) summary.error = `output stream failed: ${r.streamError}`;
-    // Usage is telemetry: a failure to read it must never cost the review.
-    try {
-      const lines = readFileSync(events, "utf8").split("\n");
-      summary.usage = usageFromEvents(lines);
-      summary.model_errors = modelErrorsFromEvents(lines);
-      // Per-stage cost and time (stages.json; the per-phase totals
-      // ride the summary).
-      const stages = stagesFromEvents(lines);
-      writeFileSync(join(caseDir, "stages.json"), JSON.stringify(stages, null, 2) + "\n");
-      summary.stages = stages.phases;
-      // pi's own stderr reports what never reached a message (a refused
-      // connection, a 429 before the first token).
-      for (const w of summary.warnings) {
-        const kind = modelErrorKind(w);
-        if (kind === "usage_limit")
-          summary.model_errors.usage_limit = (summary.model_errors.usage_limit ?? 0) + 1;
-        else if (kind === "rate_limited") summary.model_errors.rate_limited++;
-        else if (kind === "overloaded") summary.model_errors.overloaded++;
-      }
-    } catch (err) {
-      summary.warnings.push(`usage unreadable: ${String(err).slice(0, 200)}`);
-    }
-    const outcome = readJson(outcomePath) as Record<string, unknown> | undefined;
-    // `[review] render_outputs`: comments.json and review.md rendered from the
-    // findings record, as production's render-review.sh renders them. A
-    // session that wrote its own files anyway is overruled: the record is the
-    // source.
-    let renderedPosting: BenchPostingReport | undefined;
-    const record = ctx.cfg.review.render_outputs
-      ? readJson(join(caseDir, CASE_FILES.findings))
-      : undefined;
-    if (ctx.cfg.review.render_outputs) {
-      if (record !== undefined) {
-        const out = renderBenchOutputs(record, outcome, ctx.cfg);
-        writeFileSync(
-          join(caseDir, CASE_FILES.comments),
-          JSON.stringify(out.rendered.comments, null, 2) + "\n",
-        );
-        writeFileSync(join(caseDir, CASE_FILES.review), out.rendered.body);
-        // The duplicate-merge post-check's and the posting policy's
-        // dispositions, kept in the record (the session's own beside it).
-        if (out.record !== record) {
-          writeFileSync(
-            join(caseDir, POLICED_ORIGINALS[2]),
-            JSON.stringify(record, null, 2) + "\n",
-          );
-          writeFileSync(
-            join(caseDir, CASE_FILES.findings),
-            JSON.stringify(out.record, null, 2) + "\n",
-          );
-        }
-        // The `[posting]` cut ran inside the render step, as on the live
-        // route — so enforceBenchPosting below must not cut a second time.
-        if (!isDefaultPosting(ctx.cfg.posting)) {
-          renderedPosting = {
-            kept: out.rendered.comments.length + out.rendered.in_body,
-            withheld: out.withheld.map((w) => ({
-              path: w.path ?? "",
-              line: w.line ?? 0,
-              source: w.inline ? ("inline" as const) : ("body" as const),
-              cls: w.cls,
-              severity: w.severity,
-              word: w.word,
-              title: w.title,
-            })),
-            body: ctx.cfg.posting!.body,
-          };
-          writeFileSync(
-            join(caseDir, POLICED_ORIGINALS[3]),
-            JSON.stringify(renderedPosting, null, 2) + "\n",
-          );
-        }
-        if (out.rendered.problems.length)
-          summary.warnings.push(
-            ...out.rendered.problems.slice(0, 10).map((p) => `render: ${p}`.slice(0, 300)),
-          );
-      }
-    }
+    const shot = await runOneShot({
+      root: o.root,
+      agentDir: o.agentDir,
+      tree,
+      files,
+      target: {
+        repo: c.repo,
+        number: c.pr,
+        title: meta.title,
+        body: meta.body,
+        headSha: c.head_commit,
+        baseRef: meta.base_ref,
+        baseSha: meta.base_commit,
+        mergeBase: meta.merge_base,
+      },
+      outDir: caseDir,
+      cfg: ctx.cfg,
+      ecosystem: ctx.ecosystem,
+      timeoutMs: o.timeoutMs,
+      ...(o.piBin !== undefined ? { piBin: o.piBin } : {}),
+      ...(o.runtime !== undefined ? { runtime: o.runtime } : {}),
+      tmpDir,
+      prompts,
+      label: c.instance_id,
+      sessionName: `bench-${safe}`,
+      startedAt: started,
+      log,
+    });
+    const r = shot.piRun;
+    summary.continued = shot.continued;
+    if (shot.error !== undefined) summary.error = shot.error;
+    summary.warnings = shot.warnings;
+    if (shot.usage) summary.usage = shot.usage;
+    if (shot.modelErrors) summary.model_errors = shot.modelErrors;
+    if (shot.stages) summary.stages = shot.stages;
+    const outcome = shot.outcome;
+    const renderedPosting = shot.renderedPosting;
+    const record = ctx.cfg.review.render_outputs ? shot.findings : undefined;
     // The profile's `[posting]` policy, applied to what the session wrote
     // exactly as production posting applies it: an over-posting session is
     // still cut, and what is cut is recorded `withheld` (originals kept beside).
@@ -1687,9 +963,7 @@ export async function reviewCase(
     summary.comments.body = collected.body;
     summary.verdict = typeof outcome?.["verdict"] === "string" ? outcome["verdict"] : null;
     summary.executed_passes = Array.isArray(outcome?.["passes"])
-      ? (outcome["passes"] as Array<Record<string, unknown>>).map(
-          (p) => executedAgent(p),
-        )
+      ? (outcome["passes"] as Array<Record<string, unknown>>).map((p) => executedAgent(p))
       : [];
     // A follow-up case keeps the session's own phase and sweep
     // report, read the way production's verdict tail reads it.
@@ -1800,9 +1074,7 @@ function executedAgent(p: Record<string, unknown>): string {
 function caseFiles(outDir: string, c: BenchCase): [string, ...string[]] {
   return [
     join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
-    ...Object.keys(VARIANTS).map((v) =>
-      caseResultFile(outDir, c, v),
-    ),
+    ...Object.keys(VARIANTS).map((v) => caseResultFile(outDir, c, v)),
   ];
 }
 
@@ -1909,6 +1181,32 @@ export function recordUnprefetched(
   return s;
 }
 
+/** A case whose host process died, was killed or outlived its wall clock
+ * (src/bench/casehost.ts): a failed case with an EMPTY result file, as an
+ * unprefetched one has (the scorer would otherwise drop it from both
+ * denominators). Unlike `recordUnprefetched` it keeps what the dead host wrote
+ * into the case dir — the event stream above all, which the cost reader prices:
+ * the caller cleared the attempt's files before the host started, so what is
+ * there is this attempt's. */
+export function recordHostFailure(
+  outDir: string,
+  c: BenchCase,
+  error: string,
+  fingerprint: RunFingerprint,
+  durationSeconds: number,
+): CaseSummary {
+  const s: CaseSummary = {
+    ...emptyCaseSummary(c, fingerprint),
+    error,
+    duration_seconds: durationSeconds,
+  };
+  const caseDir = join(outDir, "cases", safeId(c.instance_id));
+  mkdirSync(caseDir, { recursive: true });
+  writeResults(outDir, c, [], s);
+  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(s, null, 2) + "\n");
+  return s;
+}
+
 /** A failed case's summary before anything is known of it — every count
  * zero, no verdict. Each route adds what it knows. */
 function emptyCaseSummary(c: BenchCase, fingerprint: RunFingerprint): CaseSummary {
@@ -2009,47 +1307,4 @@ export function rebuildResults(
     logDroppedMetrics(writeResults(outDir, c, collected.comments, s), log, "results");
     writeFileSync(sPath, JSON.stringify(s, null, 2) + "\n");
   }
-}
-
-export function contextFor(
-  root: string,
-  profile: string,
-  overrides = "",
-): { cfg: Config; ecosystem: Ecosystem } {
-  const levered = applyConfigOverrides(
-    benchConfig(profile),
-    overrides,
-    readFileSync(locateConfig().path, "utf8"),
-  );
-  // The profile the run reviews under: `--profile`, or `--config
-  // review.profile=<name>` (arm.sh's spelling) — every loader reads the same
-  // one, so a profile chosen either way is the whole profile.
-  const chosen = levered.review.profile;
-  // The profile's lens tuning (and its `[posting]` policy) is
-  // overlaid LAST — after the `--config` levers and any preset re-parse —
-  // exactly as production overlays it after config.toml: the profile wins.
-  const cfg = withAuthModels(
-    applyProfilePosting(
-      applyProfileTuning(levered, loadProfileLensTuning(root, chosen)),
-      loadProfilePosting(root, chosen),
-    ),
-  );
-  return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, chosen)) };
-}
-
-/** Every model spec of the config as it runs on the bench's credential route
- * (src/bench/auth.ts): on the API-key route `openai-codex/` → `openai/`, the
- * same model on the public API; on the login route the config unchanged. */
-export function withAuthModels(cfg: Config, mode: BenchAuthMode = benchAuthMode()): Config {
-  if (mode !== "api-key") return cfg;
-  const out = structuredClone(cfg);
-  const m = out.models;
-  m.default = modelForAuth(m.default, mode);
-  m.conversation = modelForAuth(m.conversation, mode);
-  m.overseer = modelForAuth(m.overseer, mode);
-  for (const k of Object.keys(m.tiers) as (keyof typeof m.tiers)[])
-    m.tiers[k] = modelForAuth(m.tiers[k], mode);
-  for (const pass of Object.keys(m.pass_models))
-    m.pass_models[pass] = modelForAuth(m.pass_models[pass]!, mode);
-  return out;
 }

@@ -41,6 +41,15 @@
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 
+/** The container OpenViking runs in, as the TUI and the memory forward reach
+ * it: the memory sidecar when `[tui] memory_container` names one, else the
+ * daemon container (the server is its child). A config that predates the key
+ * reads as the daemon container, so no existing install changes. */
+export function tuiMemoryContainer(tui: { container: string; memory_container?: string }): string {
+  const named = (tui.memory_container ?? "").trim();
+  return named !== "" ? named : tui.container;
+}
+
 /** What the forward's `stats()` reports — the fields painted. */
 export interface ForwardStats {
   maxRelays: number;

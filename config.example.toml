@@ -253,6 +253,10 @@ target = "ssh"
 ssh_host = ""                                # ← FILL (7): ssh alias of the VM running the container
                                              #   (leave "" when target = "local" — it is unused)
 container = "quickreview-sandbox"       # bundled local Compose: "quickreview-daemon-1" (onboarding fills this)
+memory_container = ""             # the container the memory forward relays into. "" = `container`
+                                  # (OpenViking is the daemon container's child). On a VM running
+                                  # the memory sidecar (the openviking table's endpoint =
+                                  # "remote") set "quickreview-memory"; flip it back with the endpoint.
 remote_state_dir = "/opt/quickreview/state"  # host path on ssh; inside the daemon container on local
 remote_sandbox_root = "/opt/quickreview/sandbox"
 sudo_docker = true                # docker on the VM needs sudo (root-owned socket)
@@ -295,6 +299,31 @@ subagent_max_concurrency = 12
 # the round's posting and the round is requeued (within max_self_requeues).
 # 0 = no deadline.
 # subagent_pass_deadline_min = 8
+# Who launches a round's lenses: "native" (pi's own subagent glue, as today)
+# or "engine" (our lens tool and discovery wave, on an SDK session). Read only
+# by the routes that have an SDK host; with [engine] runtime = "proc" it has no
+# effect.
+# lens_runtime = "native"
+# With lens_runtime = "engine": the round's engine starts the planned discovery
+# wave itself at round start (rule 9) and the main session joins it with
+# lens_wave. false = the main session launches the wave, with the same tools.
+# Needs lens_runtime = "engine". Off until the bench evidence is in.
+# engine_wave = false
+
+# What hosts a pi session on the review, bench and scan routes: "proc" runs pi
+# as a child process (every route today), "sdk" runs it in-process on the pi
+# SDK. `qcr review` has an SDK host (with pi's own lens tool); the bench has one
+# too (`qcr-bench review`, `defect-judge`): there each case, and each case of the
+# judge's pool, runs in a host process of its own, so one crash or frozen loop
+# costs one case, and `[pi] lens_runtime = "engine"` gives the review our lens
+# tool. A route that has no host yet refuses "sdk" instead of running on proc.
+# `qcr-bench review --runtime` and `defect-judge --runtime` override it; so does
+# `--config engine.runtime=sdk,pi.lens_runtime=engine`.
+# The scan runs its leaves on the SDK inside its own detached driver process
+# (`qcr scan start`), never inside the companion's pi; a scan the companion
+# drives itself refuses "sdk". The daemon's own tmux hosting does not read it.
+# [engine]
+# runtime = "proc"
 
 [memory]
 # Round seeding — how much memory rides each round prompt and how
@@ -431,6 +460,12 @@ context_quotas = { experiences = 24 }
 # Every path below is a CONTAINER path. On a dev PC the binary is absent: the
 # supervisor logs once, reports unavailable, and never crash-loops.
 enabled = true
+# Who runs the server. "local" (the default): the daemon supervises it, and the
+# local embedder, as children of this container. "remote": the memory sidecar
+# (docker/memory/) runs both on `host`:`port` — set host to the sidecar's name
+# on the container network — and the daemon only probes its health. The sidecar
+# owns the boot provisioning and the embedder re-embed. Never publish its port.
+endpoint = "local"
 version = "0.4.15"
 # The vendored pi extension's upstream base commit (extensions/vendor/
 # openviking-pi). Pinned beside the server version so a bump re-verifies the
@@ -546,7 +581,7 @@ local_embedder_threads = 1
 # (COMPANION_DEFAULTS) are the shipped configuration; uncomment to override.
 # enabled = true                  # `qcr tui` starts it unless --no-companion
 # container_name = "qcr-companion"
-# image = "qcr-companion"         # built from the app root: qcr companion rebuild
+# image = "qcr-companion:release" # the release image (docker/Dockerfile) in companion mode, built from the app root: qcr companion rebuild
 # pihome_volume = "companion-pihome"   # its OWN pi auth — never the VM's auth.json
 # session = "companion"           # tmux session inside the container
 # model = "openai-codex/gpt-6.1-sol:medium"
@@ -712,7 +747,7 @@ preset = "default"
 #     19-lens PR (PERF.md §7): the validator got SLOWER (101 -> 225 s) and the
 #     merged record dropped every doubted and downgraded mark, so it never
 #     earned the default; kept as a knob, not a recommended setting.
-# wide_lens_fanout = false
+# wide_lens_fanout = false   # deprecated: a no-op when [engine] runtime = "sdk"
 # task_files = false
 # render_outputs = false
 # validator_shards = 2
@@ -942,7 +977,7 @@ deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-ma
 # or a case it would not outlive is refused; open the companion so it refreshes.
 sandbox = "docker"
 # pihome_volume = "companion-pihome"  # whose login the scan reads; default [companion] pihome_volume
-# image = "qcr-companion"      # the sandbox's image; default [companion] image
+# image = "qcr-scan"           # the sandbox's image (docker/companion/Dockerfile): qcr scan rebuild
 
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are

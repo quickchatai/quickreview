@@ -14,6 +14,7 @@
 // the price the export computed from the full case dir (`bench_cost_usd`,
 // null = unpriced), which wins for every arm, as compare.py reads it.
 import { finiteNumber as num, usageCost } from "./values.js";
+import { isLensTool, ledgerLineFrom, lensIdOf, lensResultsOf } from "../lensresult.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -66,34 +67,146 @@ export interface CaseCost {
  * `SLIM_COST_KEY`). */
 export const SLIM_COST_KEY = "bench_cost_usd";
 
+/** What the lens children of one lens tool event (`subagent`, `launch_plan`,
+ * `lens`, `lens_wave`) report so far: the sum of their per-child prices. A
+ * result carrying an `id` (LensResult v1) counts only when `owns` says this
+ * call owns that lens run — a `lens_wave` result repeats runs the engine
+ * already launched, and a second call can repeat them again. */
+function toolEventCostUsd(
+  e: { partialResult?: unknown; result?: unknown },
+  owns: (id: string) => boolean,
+): number {
+  let usd = 0;
+  for (const r of lensResultsOf(e.partialResult ?? e.result)) {
+    const id = lensIdOf(r);
+    if (id !== null && !owns(id)) continue;
+    usd += usageCost((r as { usage?: { cost?: unknown } } | null)?.usage?.cost);
+  }
+  return usd;
+}
+
+/** Owner key of every lens run a ledger line prices. */
+const LEDGER = "\0ledger";
+
+/** A pi `--mode json` stream's running price. An assistant `message_end` adds
+ * its own price. A lens tool call (`subagent`/`launch_plan`, or `lens`/
+ * `lens_wave`) prices its lens children twice over its life: each `tool_execution_update` carries what they have
+ * spent so far (counted as the largest value seen for that toolCallId — the
+ * figure only grows, and a repeated or reordered update adds nothing), and the
+ * `tool_execution_end` carries the final figure, which REPLACES that value
+ * rather than adding to it. A stream with no updates (every pi-events.jsonl
+ * runPi writes) prices as it always did: the ends alone.
+ *
+ * Each LENS RUN counts once. A result with an `id` (LensResult v1) is owned by
+ * the first call — or ledger line — that reports it; every later carrier of
+ * the same run adds nothing. A result without an `id` is the native shape and
+ * always counts. A lens-ledger line (`add` takes the lines of
+ * lens-ledger.jsonl too) prices a run no tool result reported, and a cache
+ * warm-up, which only the ledger records. */
+export class EventCostMeter {
+  private readonly perCall = new Map<string, number>();
+  /** Open tool call → its instance key (a repeated toolCallId after an end is
+   * a new call). */
+  private readonly instance = new Map<string, string>();
+  /** Lens run id → the instance (or the ledger) that owns its price. */
+  private readonly owner = new Map<string, string>();
+  private total = 0;
+  private settled = 0;
+
+  private claim(id: string, who: string): boolean {
+    const held = this.owner.get(id);
+    if (held === undefined) {
+      this.owner.set(id, who);
+      return true;
+    }
+    return held === who;
+  }
+
+  /** Feed one event line; returns the change in the running price (negative
+   * only when a call's final figure comes in under its largest live one). */
+  add(line: string): number {
+    if (!line.startsWith("{")) return 0;
+    let e: {
+      type?: string;
+      toolName?: string;
+      toolCallId?: unknown;
+      message?: { role?: string; usage?: { cost?: { total?: unknown } } };
+      partialResult?: unknown;
+      result?: unknown;
+    };
+    try {
+      e = JSON.parse(line) as typeof e;
+    } catch {
+      return 0;
+    }
+    const ledger = ledgerLineFrom(e);
+    if (ledger !== null) {
+      // One-shot: a ledger line read twice, or for a run a tool result owns,
+      // adds nothing.
+      if (this.owner.has(ledger.id)) return 0;
+      this.owner.set(ledger.id, LEDGER);
+      this.total += ledger.usage.cost;
+      return ledger.usage.cost;
+    }
+    if (e.type === "message_end" && e.message?.role === "assistant") {
+      const usd = num(e.message.usage?.cost?.total);
+      this.total += usd;
+      return usd;
+    }
+    if (
+      (e.type !== "tool_execution_update" && e.type !== "tool_execution_end") ||
+      !isLensTool(e.toolName)
+    )
+      return 0;
+    // A call with no id cannot be matched to its end: it is its own entry.
+    const id = typeof e.toolCallId === "string" ? e.toolCallId : `\0anon${this.settled++}`;
+    const prev = this.perCall.get(id) ?? 0;
+    const who = this.instance.get(id) ?? `${id}\0${this.settled++}`;
+    this.instance.set(id, who);
+    const usd = toolEventCostUsd(e, (lensId) => this.claim(lensId, who));
+    const next = e.type === "tool_execution_end" ? usd : Math.max(prev, usd);
+    // A finished call is closed under a fresh key: the same id turning up
+    // again (pi-events.jsonl appends across a continuation's processes) is a
+    // new call, priced on its own, as a line-by-line sum always did.
+    if (e.type === "tool_execution_end") {
+      this.instance.delete(id);
+      this.perCall.delete(id);
+      this.perCall.set(`\0end${this.settled++}`, next);
+    } else this.perCall.set(id, next);
+    // Added in stream order, so a stream with no updates sums exactly as a
+    // line-by-line sum of the prices would (float addition is not associative).
+    this.total += next - prev;
+    return next - prev;
+  }
+
+  /** The running price over everything fed so far. */
+  get totalUsd(): number {
+    return this.total;
+  }
+}
+
+/** What one pi `--mode json` event line costs on its own: an assistant
+ * `message_end`'s price, or the children a lens tool update or end reports. Zero for any other line, or one that is not JSON. Summing it
+ * over a stream that carries updates counts a call once per update — price a
+ * stream with an EventCostMeter. */
+export function eventLineCostUsd(line: string): number {
+  return new EventCostMeter().add(line);
+}
+
+/** The round's lens ledger, beside the events in a case dir. */
+export const LENS_LEDGER_FILE = "lens-ledger.jsonl";
+
 export function caseCostUsd(caseDir: string): CaseCost | null {
   const events = join(caseDir, "pi-events.jsonl");
   if (existsSync(events)) {
-    let usd = 0;
-    for (const line of readFileSync(events, "utf8").split("\n")) {
-      if (!line.startsWith("{")) continue;
-      let e: {
-        type?: string;
-        toolName?: string;
-        message?: { role?: string; usage?: { cost?: { total?: unknown } } };
-        result?: { details?: { results?: { usage?: { cost?: unknown } }[] } };
-      };
-      try {
-        e = JSON.parse(line) as typeof e;
-      } catch {
-        continue;
-      }
-      if (e.type === "message_end" && e.message?.role === "assistant")
-        usd += num(e.message.usage?.cost?.total);
-      else if (
-        e.type === "tool_execution_end" &&
-        (e.toolName === "subagent" || e.toolName === "launch_plan")
-      )
-        for (const r of e.result?.details?.results ?? []) {
-          usd += usageCost(r.usage?.cost);
-        }
-    }
-    return { usd, source: "pi" };
+    const meter = new EventCostMeter();
+    for (const line of readFileSync(events, "utf8").split("\n")) meter.add(line);
+    // The ledger after the events: a run a tool result already reported is
+    // owned there and adds nothing here; a warm-up is added.
+    const ledger = join(caseDir, LENS_LEDGER_FILE);
+    if (existsSync(ledger))
+      for (const line of readFileSync(ledger, "utf8").split("\n")) meter.add(line);
+    return { usd: meter.totalUsd, source: "pi" };
   }
   const summary = join(caseDir, "case-summary.json");
   if (!existsSync(summary)) return null;

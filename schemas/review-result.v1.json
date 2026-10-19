@@ -1,0 +1,387 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-result.v1.json",
+  "title": "qcr review --json, version 1",
+  "description": "One JSON object per line from `qcr review` (also `--to json`), `qcr review start`, `status` and `stop`. schema_version leads every payload; ok says whether the call succeeded. Fields beyond those named may appear without a version change; a caller ignores what it does not know and refuses a schema_version it does not know. A failure is {ok:false, errors:[\u2026]}; a review stopped at its cap is {ok:false, partial:true, coverage, \u2026} with the findings written before the stop.",
+  "type": "object",
+  "required": ["schema_version", "ok"],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "This schema's version."
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Why the call failed; present when ok is false and no result exists."
+    },
+    "partial": {
+      "type": "boolean",
+      "description": "True when the review stopped at its cap before finishing."
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["planned", "started", "not_reached"],
+      "properties": {
+        "planned": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "started": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "not_reached": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Which planned lenses had started when a capped review stopped."
+    },
+    "preview": {
+      "$ref": "#/$defs/preview"
+    },
+    "findings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/finding"
+        }
+      },
+      "description": "This round's findings by severity (P0, P1, P2, \u2026 nit, other), worst first."
+    },
+    "still_open": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/still_open"
+      },
+      "description": "Findings from earlier rounds that are still open."
+    },
+    "unchanged": {
+      "type": "boolean",
+      "description": "True when nothing new was reviewed because the branch had not changed."
+    },
+    "head_sha": {
+      "type": "string"
+    },
+    "reviewed_at": {
+      "type": "string"
+    },
+    "repeats_suppressed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "already_posted_skipped": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "verdict": {
+      "type": ["string", "null"]
+    },
+    "cost_usd": {
+      "type": ["number", "null"]
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "The run's output directory, with the findings record and stage files."
+    },
+    "report": {
+      "type": "string",
+      "description": "Path of the markdown report, when the file destination was asked for."
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "memory": {
+      "type": "object",
+      "required": ["used", "notice"],
+      "properties": {
+        "used": {
+          "type": "boolean"
+        },
+        "notice": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "customised": {
+      "type": "boolean",
+      "description": "True when a profile (the user's, or the repo's .qcr/ on the base commit) replaced a shipped agent or prompt with different bytes for this review; overrides lists them."
+    },
+    "overrides": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/override"
+      },
+      "description": "The shipped files a profile replaced; empty unless customised."
+    },
+    "post": {
+      "$ref": "#/$defs/post"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "A detached run's id (start, status, stop)."
+    },
+    "state": {
+      "enum": ["running", "done", "failed", "stopped"],
+      "description": "A detached run's state."
+    },
+    "target": {
+      "type": "string",
+      "description": "What a detached run reviews."
+    },
+    "elapsed_s": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exit_code": {
+      "type": ["integer", "null"]
+    },
+    "progress": {
+      "type": ["object", "null"],
+      "description": "While a detached run is running: the lenses started so far.",
+      "properties": {
+        "lenses_started": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "result": {
+      "$ref": "#",
+      "description": "A finished detached run's last JSON line: the review's own result (null if it printed none)."
+    },
+    "timed_out": {
+      "type": "boolean",
+      "description": "status --wait gave up after --timeout; the run is still going."
+    }
+  },
+  "$defs": {
+    "override": {
+      "type": "object",
+      "required": ["path", "origin", "layer", "sha256", "shipped_sha256", "seed"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The shipped file, relative to the app root (agents/pass-security.md)."
+        },
+        "origin": {
+          "enum": ["user", "repo"]
+        },
+        "layer": {
+          "type": "string",
+          "description": "The profile whose file won (.qcr for the repo profile)."
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "shipped_sha256": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "boolean",
+          "description": "True when the shipped file is a frozen seed."
+        }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "required": [
+        "repo",
+        "target",
+        "postable",
+        "base",
+        "head_sha",
+        "files",
+        "lines",
+        "scope",
+        "lenses",
+        "estimate_usd",
+        "cap_usd",
+        "limit_usd",
+        "auto",
+        "key"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "target": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "enum": ["pr", "branch", "uncommitted", "diff"],
+              "description": "What is reviewed: a pull request, the current branch against its base, the uncommitted working tree, or a unified diff handed in (`--diff`). Only a pr target can be posted."
+            }
+          }
+        },
+        "postable": {
+          "type": "boolean",
+          "description": "True when a PR is behind the target, so --to pr applies."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Absent for a diff target."
+        },
+        "base": {
+          "type": "string"
+        },
+        "head_sha": {
+          "type": "string",
+          "description": "The reviewed head; for a diff target a hash of the diff's text."
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scope": {
+          "enum": ["full", "delta"]
+        },
+        "since": {
+          "type": "string",
+          "description": "Delta rounds: the head the earlier review was of."
+        },
+        "prior_open": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fallback_reason": {
+          "type": "string",
+          "description": "Why a follow-up round is a full review, not a delta."
+        },
+        "lenses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "estimate_usd": {
+          "type": "number"
+        },
+        "cap_usd": {
+          "type": ["number", "null"],
+          "description": "The hard stop; null on the Action route without --limit."
+        },
+        "limit_usd": {
+          "type": ["number", "null"],
+          "description": "What runs without asking."
+        },
+        "auto": {
+          "type": "boolean",
+          "description": "True when the review runs without a confirmation."
+        },
+        "key": {
+          "type": "string",
+          "description": "Quote it with --key to confirm a review over the limit."
+        },
+        "pr": {
+          "type": "integer"
+        },
+        "credential": {
+          "type": "string"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["path", "line", "severity", "title", "lens"],
+      "properties": {
+        "path": {
+          "type": ["string", "null"]
+        },
+        "line": {
+          "type": ["integer", "null"]
+        },
+        "severity": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "lens": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "still_open": {
+      "type": "object",
+      "required": ["path", "line", "severity", "title", "lens", "head_sha"],
+      "properties": {
+        "path": {
+          "type": ["string", "null"]
+        },
+        "line": {
+          "type": ["integer", "null"]
+        },
+        "severity": {
+          "type": ["string", "null"]
+        },
+        "title": {
+          "type": "string"
+        },
+        "lens": {
+          "type": ["string", "null"]
+        },
+        "head_sha": {
+          "type": "string"
+        }
+      }
+    },
+    "post": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "posted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "url": {
+          "type": ["string", "null"]
+        },
+        "error": {
+          "type": "string"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "would_post": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recorded": {
+          "type": "string"
+        }
+      },
+      "description": "What --to pr did. In a dry-run install the review is recorded, not sent."
+    }
+  }
+}

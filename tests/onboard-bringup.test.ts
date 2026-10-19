@@ -2,12 +2,14 @@
 //
 // Bring-up is the one step in the wizard that takes a long time, so two of its
 // properties are behavioural rather than incidental and are pinned here: the
-// slow-first-build warning is emitted BEFORE the build starts, and build
-// output is streamed line by line rather than swallowed.
+// slow-first-pull note is emitted BEFORE the pull starts, and Docker's output
+// is streamed line by line rather than swallowed. The stack is pulled, never
+// built; and where there is no Docker (the wizard inside the image, D16) the
+// step starts nothing and prints the host's commands.
 //
-// Everything faked: a fake StreamRunner stands in for `docker compose up`, a
-// fake ProcessRunner for `docker compose ps`, temp dirs for the root. No test
-// starts a container and no test waits on wall-clock time.
+// Everything faked: a fake StreamRunner stands in for `docker compose pull`
+// and `up`, a fake ProcessRunner for `docker compose ps`, temp dirs for the
+// root. No test starts a container and no test waits on wall-clock time.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -24,13 +26,24 @@ import {
 import {
   BRINGUP_STEP_ID,
   BROUGHT_UP_CHOICE_KEY,
-  FIRST_BUILD_WARNING,
+  FIRST_PULL_NOTICE,
   bringUpArgs,
   bringUpStep,
+  memoryEndpointPatch,
 } from "../src/onboard/steps/bringup.js";
-import type { StreamRunner } from "../src/onboard/steps/compose.js";
+import {
+  extractCommand,
+  hostCommands,
+  pullArgs,
+  type StreamRunner,
+} from "../src/onboard/steps/compose.js";
 import { CHOICE_KEYS } from "../src/onboard/steps/configfill.js";
-import { INGRESS_CHOICE_KEY, readEnvKey, setTomlKey } from "../src/onboard/steps/ingress.js";
+import {
+  INGRESS_CHOICE_KEY,
+  readEnvKey,
+  readTomlKey,
+  setTomlKey,
+} from "../src/onboard/steps/ingress.js";
 import { MEMORY_CHOICE_KEY } from "../src/onboard/steps/memory.js";
 import { MEMORY_KEYS_STEP_ID, memoryUserKeysStep } from "../src/onboard/steps/memorykeys.js";
 import { UID_CHOICE_KEY } from "../src/onboard/steps/preflight.js";
@@ -82,6 +95,8 @@ function harness(
     lines?: string[];
     services?: Array<{ Service: string; State: string }>;
     psCode?: number;
+    /** `docker compose version` exits nonzero: no Docker here (the image). */
+    noDocker?: boolean;
     uid?: number | null;
     step?: OnboardingStep;
     configPath?: string;
@@ -104,13 +119,23 @@ function harness(
   };
   const runner = {
     run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
+      if (args[0] === "compose" && args[1] === "version") {
+        return o.noDocker
+          ? { code: 127, stdout: "", stderr: "docker: command not found" }
+          : { code: 0, stdout: "Docker Compose version v2.29.0\n", stderr: "" };
+      }
       if (args.includes("ps")) {
         state.psCalls += 1;
         if (o.psCode)
           return { code: o.psCode, stdout: "", stderr: "cannot connect to the Docker daemon" };
         return {
           code: 0,
-          stdout: JSON.stringify(o.services ?? [{ Service: "daemon", State: "running" }]),
+          stdout: JSON.stringify(
+            o.services ?? [
+              { Service: "daemon", State: "running" },
+              { Service: "memory", State: "running" },
+            ],
+          ),
           stderr: "",
         };
       }
@@ -194,7 +219,7 @@ describe("the registered sequence's tail", () => {
   });
 });
 
-describe("bringUpArgs", () => {
+describe("bringUpArgs and pullArgs", () => {
   it("passes the chosen profile explicitly, and omits it entirely for the polling shape", () => {
     expect(bringUpArgs("/repo", "quick-tunnel")).toEqual([
       "compose",
@@ -204,7 +229,6 @@ describe("bringUpArgs", () => {
       "quick-tunnel",
       "up",
       "-d",
-      "--build",
     ]);
     expect(bringUpArgs("/repo", "")).toEqual([
       "compose",
@@ -212,17 +236,33 @@ describe("bringUpArgs", () => {
       "/repo",
       "up",
       "-d",
-      "--build",
+    ]);
+  });
+
+  it("never builds the app: no --build anywhere, and the pull skips what is built (the tunnels)", () => {
+    for (const profile of ["", "quick-tunnel"]) {
+      expect(bringUpArgs("/repo", profile)).not.toContain("--build");
+      expect(pullArgs("/repo", profile)).toContain("pull");
+      expect(pullArgs("/repo", profile)).toContain("--ignore-buildable");
+      expect(pullArgs("/repo", profile)).not.toContain("--build");
+    }
+    expect(pullArgs("/repo", "ngrok").slice(0, 5)).toEqual([
+      "compose",
+      "--project-directory",
+      "/repo",
+      "--profile",
+      "ngrok",
     ]);
   });
 });
 
 describe("bring-up, happy path", () => {
-  it("writes the captured uid and the chosen profile into .env, and brings the stack up", async () => {
+  it("writes the captured uid and the chosen profile into .env, and pulls then brings the stack up", async () => {
     seedChoices({ [UID_CHOICE_KEY]: 1234, [INGRESS_CHOICE_KEY]: "quick" });
     const h = harness({
       services: [
         { Service: "daemon", State: "running" },
+        { Service: "memory", State: "running" },
         { Service: "tunnel-quick", State: "running" },
       ],
     });
@@ -230,9 +270,27 @@ describe("bring-up, happy path", () => {
     expect(result.ok).toBe(true);
     expect(readEnvKey(envText(), "QCR_UID")).toBe("1234");
     expect(readEnvKey(envText(), "COMPOSE_PROFILES")).toBe("quick-tunnel");
-    expect(h.streamed[0]).toEqual(["docker", ...bringUpArgs(root, "quick-tunnel")]);
+    expect(h.streamed).toEqual([
+      ["docker", ...pullArgs(root, "quick-tunnel")],
+      ["docker", ...bringUpArgs(root, "quick-tunnel")],
+    ]);
     expect(h.engine.choices()[BROUGHT_UP_CHOICE_KEY]).toBe("2026-08-30T12:00:00.000Z");
     expect(result.checks.find((c) => c.name === "ingress-sidecar")!.ok).toBe(true);
+  });
+
+  // The stack is pinned: the release the images are pulled at is in .env, and
+  // a later run keeps the pin an earlier one wrote.
+  it("pins QCR_VERSION in .env from the package, and keeps a pin already there", async () => {
+    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
+      version: string;
+    };
+    let h = harness();
+    expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);
+    expect(readEnvKey(envText(), "QCR_VERSION")).toBe(pkg.version);
+    writeFileSync(join(root, ".env"), "QCR_VERSION=9.9.9\n");
+    h = harness();
+    expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);
+    expect(readEnvKey(envText(), "QCR_VERSION")).toBe("9.9.9");
   });
 
   // The container reads the config the install locator found on the
@@ -354,56 +412,162 @@ describe("bring-up, happy path", () => {
   });
 });
 
-describe("the honest warning and the progress", () => {
-  it("warns about the slow first build BEFORE the build starts, never after", async () => {
-    const h = harness({ lines: ["#1 building"] });
+describe("the memory sidecar endpoint", () => {
+  it("writes [openviking] endpoint = remote and host = memory into config.toml, parseable, once", async () => {
+    const before = readFileSync(join(root, "config.toml"), "utf8");
+    expect(readTomlKey(before, "openviking", "endpoint")).toBe("local");
+    const h = harness();
+    const result = await h.engine.runStep(BRINGUP_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(result.checks.find((c) => c.name === "memory-endpoint")?.ok).toBe(true);
+    const after = readFileSync(join(root, "config.toml"), "utf8");
+    expect(readTomlKey(after, "openviking", "endpoint")).toBe("remote");
+    expect(readTomlKey(after, "openviking", "host")).toBe("memory");
+    // only those two keys moved, and never dry_run
+    expect(readTomlKey(after, "daemon", "dry_run")).toBe(readTomlKey(before, "daemon", "dry_run"));
+    expect(memoryEndpointPatch(after)).toBeNull();
+    const again = await harness().engine.runStep(BRINGUP_STEP_ID);
+    expect(again.checks.some((c) => c.name === "memory-endpoint")).toBe(false);
+    expect(readFileSync(join(root, "config.toml"), "utf8")).toBe(after);
+  });
+
+  it("leaves a memory-less install alone (a declined memory setup says enabled = false)", async () => {
+    const cfg = join(root, "config.toml");
+    writeFileSync(cfg, setTomlKey(readFileSync(cfg, "utf8"), "openviking", "enabled", "false")!);
+    const before = readFileSync(cfg, "utf8");
+    const h = harness({ services: [{ Service: "daemon", State: "running" }] });
+    const result = await h.engine.runStep(BRINGUP_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(readFileSync(cfg, "utf8")).toBe(before);
+    expect(result.checks.some((c) => c.name === "memory-sidecar")).toBe(false);
+  });
+
+  it("a stack with the memory sidecar down is red, with its log command", async () => {
+    const h = harness({ services: [{ Service: "daemon", State: "running" }] });
+    const result = await h.engine.runStep(BRINGUP_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(" ")).toMatch(/docker compose logs --tail 200 memory/);
+  });
+});
+
+describe("the honest note and the progress", () => {
+  it("notes the slow first pull BEFORE the pull starts, never after", async () => {
+    const h = harness({ lines: ["#1 pulling"] });
     await h.engine.runStep(BRINGUP_STEP_ID);
-    const firstWarning = h.events.findIndex((e) =>
-      e.includes("compiles the memory engine's local embedder"),
-    );
+    const firstNote = h.events.findIndex((e) => e.includes("The FIRST pull is the slow one"));
     const firstStream = h.events.findIndex((e) => e.startsWith("stream:"));
-    expect(firstWarning).toBeGreaterThanOrEqual(0);
-    expect(firstWarning).toBeLessThan(firstStream);
+    expect(firstNote).toBeGreaterThanOrEqual(0);
+    expect(firstNote).toBeLessThan(firstStream);
   });
 
-  it("says what it says: source compile, how long, and that it is expected", () => {
-    expect(FIRST_BUILD_WARNING).toMatch(/llama-cpp-python/);
-    expect(FIRST_BUILD_WARNING).toMatch(/ten minutes to an hour/);
-    expect(FIRST_BUILD_WARNING).toMatch(/expected, not a hang/);
+  it("says what it says: two images, the model inside the memory one, and that it is expected", () => {
+    expect(FIRST_PULL_NOTICE).toMatch(/daemon image and the memory image/);
+    expect(FIRST_PULL_NOTICE).toMatch(/embedding model/);
+    expect(FIRST_PULL_NOTICE).toMatch(/expected, not a hang/);
+    expect(FIRST_PULL_NOTICE).toMatch(/read:packages/);
+    expect(FIRST_PULL_NOTICE).not.toMatch(/compil/i);
   });
 
-  it("streams every build line and marks elapsed time so a long wait looks alive", async () => {
+  it("streams every Docker line and marks elapsed time so a long wait looks alive", async () => {
     const h = harness({
-      lines: [
-        "#1 [internal] load build definition",
-        "#2 resolve image",
-        "#3 compiling llama",
-        "#4 done",
-      ],
+      lines: ["#1 pulling daemon", "#2 pulling memory", "#3 extracting", "#4 done"],
     });
     const result = await h.engine.runStep(BRINGUP_STEP_ID);
     expect(result.ok).toBe(true);
-    for (const line of ["#1 [internal] load build definition", "#4 done"]) {
+    for (const line of ["#1 pulling daemon", "#4 done"]) {
       expect(h.events).toContain(`log:${BRINGUP_STEP_ID}: ${line}`);
     }
-    // progressEvery: 2 in this harness ⇒ a marker after lines 2 and 4.
-    expect(h.events.filter((e) => e.includes("still working"))).toHaveLength(2);
+    // progressEvery: 2 in this harness, and the fake emits 4 lines for the pull
+    // and 4 for the up ⇒ a marker after every second line of the eight.
+    expect(h.events.filter((e) => e.includes("still working"))).toHaveLength(4);
+  });
+});
+
+describe("no Docker where the wizard runs (D16)", () => {
+  it("starts nothing and prints the exact host commands, in order, red until the stack is seen", async () => {
+    seedChoices({ [UID_CHOICE_KEY]: 1234, [INGRESS_CHOICE_KEY]: "quick" });
+    const h = harness({ noDocker: true });
+    const result = await h.engine.runStep(BRINGUP_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(h.streamed).toEqual([]);
+    expect(existsSync(join(root, ".env"))).toBe(false);
+    const detail = result.checks.find((c) => c.name === "host-commands")!.detail;
+    const order = [
+      "mkdir -p ~/qcr-bot && cd ~/qcr-bot",
+      'mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/qcr/',
+      "# Put config.toml in ",
+      'host = "memory"',
+      "docker run --rm --entrypoint tar ghcr.io/quickchatai/quickreview:",
+      "cat > .env <<'QCR_ENV'",
+      "QCR_UID=1234",
+      "COMPOSE_PROFILES=quick-tunnel",
+      "docker compose --profile quick-tunnel pull --ignore-buildable",
+      "docker compose --profile quick-tunnel up -d",
+    ].map((needle) => detail.indexOf(needle));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // the same commands reach the wizard's log, line by line
+    expect(h.events.some((e) => e.includes("pull --ignore-buildable"))).toBe(true);
+    // no secret and no token in it: only paths, a port knob, a uid and a pin
+    expect(detail).not.toMatch(/ghp_|github_pat_|BEGIN .*PRIVATE KEY/);
+    expect(detail).toMatch(/QCR_SECRETS_DIR=/);
+    expect(detail).toMatch(/XDG_CONFIG_HOME/);
+  });
+
+  it("hostCommands creates the directories and says what to place there when given them", () => {
+    const cmds = hostCommands({
+      version: "1.2.3",
+      projectDir: "~/qcr-bot",
+      env: ["QCR_VERSION=1.2.3"],
+      dirs: ['"$HOME/c"', '"$HOME/c/secrets"'],
+      notes: ["# put config.toml there"],
+      profile: "",
+    });
+    expect(cmds.slice(0, 4)).toEqual([
+      "mkdir -p ~/qcr-bot && cd ~/qcr-bot",
+      'mkdir -p "$HOME/c" "$HOME/c/secrets"',
+      "# put config.toml there",
+      extractCommand("1.2.3"),
+    ]);
+  });
+
+  it("hostCommands is pure: image, directory, env and profile in, five commands out", () => {
+    const cmds = hostCommands({
+      version: "1.2.3",
+      projectDir: "~/qcr-bot",
+      env: ["QCR_VERSION=1.2.3", "QCR_UID=1000"],
+      profile: "",
+    });
+    expect(cmds).toEqual([
+      "mkdir -p ~/qcr-bot && cd ~/qcr-bot",
+      extractCommand("1.2.3"),
+      "cat > .env <<'QCR_ENV'\nQCR_VERSION=1.2.3\nQCR_UID=1000\nQCR_ENV",
+      "docker compose pull --ignore-buildable",
+      "docker compose up -d",
+    ]);
+    expect(extractCommand("1.2.3")).toBe(
+      "docker run --rm --entrypoint tar ghcr.io/quickchatai/quickreview:1.2.3 -C /opt/qcr -cf - docker-compose.yml docker/tunnel | tar -xf -",
+    );
   });
 });
 
 describe("bring-up failures — every one of them plain and re-runnable", () => {
-  it("a failed build reports Docker's own tail and the three usual causes", async () => {
-    const h = harness({ streamCode: 1, lines: ["#12 ERROR: process did not complete"] });
+  it("a failed pull reports Docker's own tail and the usual causes, login first", async () => {
+    const h = harness({ streamCode: 1, lines: ["#12 ERROR: pull access denied"] });
     const result = await h.engine.runStep(BRINGUP_STEP_ID);
     expect(result.ok).toBe(false);
     const detail = result.failures.join("\n");
     expect(detail).toMatch(/no space left on device/);
+    expect(detail).toMatch(/gh auth refresh -s read:packages/);
+    expect(detail).toMatch(/docker login ghcr\.io/);
     expect(detail).toMatch(/docker system prune/);
     expect(detail).toMatch(/safe to retry/);
+    // the pull failed, so nothing was started
+    expect(h.streamed).toHaveLength(1);
     expect(h.engine.choices()[BROUGHT_UP_CHOICE_KEY]).toBeUndefined();
   });
 
-  it("a build that succeeds but leaves the daemon dead is red, with the log command", async () => {
+  it("a start that succeeds but leaves the daemon dead is red, with the log command", async () => {
     const h = harness({ services: [{ Service: "daemon", State: "exited (1)" }] });
     const result = await h.engine.runStep(BRINGUP_STEP_ID);
     expect(result.ok).toBe(false);
@@ -412,7 +576,12 @@ describe("bring-up failures — every one of them plain and re-runnable", () => 
 
   it("a missing tunnel sidecar names the profile that starts it", async () => {
     seedChoices({ [INGRESS_CHOICE_KEY]: "ngrok" });
-    const h = harness({ services: [{ Service: "daemon", State: "running" }] });
+    const h = harness({
+      services: [
+        { Service: "daemon", State: "running" },
+        { Service: "memory", State: "running" },
+      ],
+    });
     const result = await h.engine.runStep(BRINGUP_STEP_ID);
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(/COMPOSE_PROFILES=ngrok docker compose up -d/);
@@ -443,17 +612,21 @@ describe("bring-up failures — every one of them plain and re-runnable", () => 
     expect(h.streamed).toEqual([]);
   });
 
-  it("a checkout without the compose file is refused before anything else", async () => {
+  it("a project directory without the compose file is refused before anything else", async () => {
     rmSync(join(root, "docker-compose.yml"));
     const h = harness();
     const result = await h.engine.runStep(BRINGUP_STEP_ID);
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(/docker-compose\.yml is missing/);
+    // and says how to get it from the image, not from a clone
+    expect(result.failures.join(" ")).toMatch(
+      /docker run --rm --entrypoint tar ghcr\.io\/quickchatai\/quickreview:/,
+    );
   });
 });
 
 describe("verify-only and resumability", () => {
-  it("verify NEVER builds — it asks Docker what is running", async () => {
+  it("verify NEVER pulls or starts — it asks Docker what is running", async () => {
     const h = harness();
     const all = await h.engine.verifyAll();
     expect(all.ok).toBe(true);

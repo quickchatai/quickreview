@@ -36,12 +36,13 @@ import { usd, findingLocation } from "../src/setup/presentation.js";
 // result, never a throw.
 import { FINDING_STATES } from "../src/setup/findings.js";
 import { join } from "node:path";
-import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.js";
 import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
-import { scanCasesForEnv } from "../src/scanauth.js";
+import { scanCasesForEnv } from "../src/engine/auth.js";
+import { checkLensRuntime } from "../src/engine/select.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
-import type { Refusal, SetupEngine } from "../src/setup/engine.js";
+import type { CaseRunner, Refusal, SetupEngine } from "../src/setup/engine.js";
 import type {
   FindingsFilter,
   FindingState,
@@ -91,13 +92,7 @@ import { fileLease, type ScanLease } from "../src/setup/scanlease.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
-function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return details
-    ? { content: [{ type: "text", text: t }], details }
-    : { content: [{ type: "text", text: t }] };
-}
-
-function refused(what: string, r: Refusal): PiToolResult {
+function refused(what: string, r: Refusal): QcrToolResult {
   return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
 }
 
@@ -779,8 +774,8 @@ export function scanToolDefinitions(
   /** Where a stop of a run another process drives goes; null: only a run
    * this companion drives can be stopped. */
   stopChannel: StopChannel | null = null,
-): PiToolDefinition[] {
-  const preview: PiToolDefinition = {
+): QcrTool[] {
+  const preview: QcrTool = {
     name: "scan_preview",
     label: "Scan preview",
     description:
@@ -800,7 +795,7 @@ export function scanToolDefinitions(
       return text(renderPreview(r.preview), { preview: previewDetails(r.preview) });
     },
   };
-  const start: PiToolDefinition = {
+  const start: QcrTool = {
     name: "scan_start",
     label: "Start a scan",
     description:
@@ -823,7 +818,7 @@ export function scanToolDefinitions(
       return text(startedLine(r.run), { run: startedDetails(r.run) });
     },
   };
-  const status: PiToolDefinition = {
+  const status: QcrTool = {
     name: "scan_status",
     label: "Scan status",
     description:
@@ -837,7 +832,7 @@ export function scanToolDefinitions(
       });
     },
   };
-  const stop: PiToolDefinition = {
+  const stop: QcrTool = {
     name: "scan_stop",
     label: "Stop the scan",
     description:
@@ -856,7 +851,7 @@ export function scanToolDefinitions(
       );
     },
   };
-  const list: PiToolDefinition = {
+  const list: QcrTool = {
     name: "scan_findings",
     label: "Scan findings",
     description:
@@ -895,7 +890,7 @@ export function scanToolDefinitions(
       });
     },
   };
-  const matches: PiToolDefinition = {
+  const matches: QcrTool = {
     name: "scan_matches",
     label: "Scan match question",
     description:
@@ -910,7 +905,7 @@ export function scanToolDefinitions(
       return text(renderQuestion(question), { key: question?.key ?? null });
     },
   };
-  const match: PiToolDefinition = {
+  const match: QcrTool = {
     name: "scan_match",
     label: "Answer the match question",
     description:
@@ -944,7 +939,7 @@ export function scanToolDefinitions(
       return text(lines.join("\n"), { ...result, tickets_closed: tickets?.closed.length ?? 0 });
     },
   };
-  const suggestions: PiToolDefinition = {
+  const suggestions: QcrTool = {
     name: "scan_suggestions",
     label: "Scan stage 2 suggestions",
     description:
@@ -959,7 +954,7 @@ export function scanToolDefinitions(
       return text(renderSuggestions(sugs, s), { suggestions: sugs.length });
     },
   };
-  const propose: PiToolDefinition = {
+  const propose: QcrTool = {
     name: "scan_stage2_propose",
     label: "Propose scan stage 2",
     description:
@@ -1009,7 +1004,7 @@ export function scanToolDefinitions(
       return text(renderProposal(r.proposal), { proposal: proposalDetails(r.proposal) });
     },
   };
-  const start2: PiToolDefinition = {
+  const start2: QcrTool = {
     name: "scan_stage2_start",
     label: "Start scan stage 2",
     description:
@@ -1075,6 +1070,59 @@ export function watchTuiRequests(
 
 // ---- assembly ------------------------------------------------------------------
 
+/** Where the scan driver's SDK leaves come from: built on first use, by
+ * whoever owns the process they run in (scancli's detached driver). */
+export type SdkLeaves = (o: {
+  agentsDir: string;
+  cwd: string;
+  transcriptDir: string;
+  env: NodeJS.ProcessEnv;
+  onExpired: (reason: string) => void;
+}) => CaseRunner | Promise<CaseRunner>;
+
+/** The scan leaf runner under `[engine] runtime`: the process runner
+ * (`piCaseRunner`) on proc, and on sdk the driver's SDK runner (`sdkLeaves`,
+ * built on first use). A process that has none — the companion's own pi, which
+ * must never host SDK sessions — refuses every case instead. The key is read
+ * per case, as `settingsOf` reads the live config; an unreadable config is
+ * proc, the runner's behaviour before the key existed. */
+export function scanLeafRunner(
+  proc: CaseRunner,
+  root: string,
+  env: NodeJS.ProcessEnv,
+  sdkLeaves?: () => CaseRunner | Promise<CaseRunner>,
+): CaseRunner {
+  let sdk: Promise<CaseRunner> | undefined;
+  return {
+    async run(spec, signal, onCost) {
+      const loaded = loadScanConfig(root, env);
+      try {
+        if (loaded.ok) checkLensRuntime(loaded.cfg.pi.lens_runtime, "scan");
+      } catch (err) {
+        return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+      }
+      if (!loaded.ok || loaded.cfg.engine.runtime === "proc") return proc.run(spec, signal, onCost);
+      if (sdkLeaves === undefined)
+        return {
+          ok: false,
+          reason:
+            "[engine] runtime = sdk is not available on the scan route in this process: scan leaves run on the SDK only in the `qcr scan` driver. Set it to proc here",
+        };
+      try {
+        sdk ??= Promise.resolve(sdkLeaves());
+        return (await sdk).run(spec, signal, onCost);
+      } catch (err) {
+        sdk = undefined;
+        return {
+          ok: false,
+          reason: `the SDK leaf runner could not be built: ${err instanceof Error ? err.message : String(err)}`,
+          cost_usd: 0,
+        };
+      }
+    },
+  };
+}
+
 /** The scan runner the companion's belt drives: the reviewed checkout as a
  * source of trees, the state home for every record, the saved unit cut from
  * the setup engine, the live config under the profile, and a case runner
@@ -1088,6 +1136,10 @@ export function buildScan(
   /** The driver lease; default the state home's file lease, shared with every
    * other runner over it. */
   lease: ScanLease | null = null,
+  /** The SDK leaf runner, in a process that may host one (scancli's detached
+   * driver). Omitted — the companion's pi — a scan on `[engine] runtime = sdk`
+   * refuses its cases. */
+  sdkLeaves?: SdkLeaves,
 ): {
   scan: ScanRunner;
   findings: FindingsStore;
@@ -1104,6 +1156,12 @@ export function buildScan(
     return loaded.ok ? scanSettings(loaded.cfg) : null;
   };
   const findings = new FindingsStore(state);
+  const transcriptDir = join(home, SCAN_TRANSCRIPTS_DIR);
+  // A token a case would not outlive stops the run, on either host.
+  const stopOnExpired = (reason: string): void => {
+    console.error(`scan: stopping — ${reason}`);
+    scan.stop();
+  };
   // Assigned below: the triage reads the runner's runs, the runner closes
   // the triage's tickets at every run's end.
   let triage: ScanTriage | null = null;
@@ -1113,12 +1171,15 @@ export function buildScan(
     // In the scan container: each case on a fresh refresh-disabled copy of
     // the companion's login; a token a case would not outlive stops the run.
     cases: scanCasesForEnv(
-      piCaseRunner({ agentsDir, cwd: root, transcriptDir: join(home, SCAN_TRANSCRIPTS_DIR) }),
+      scanLeafRunner(
+        piCaseRunner({ agentsDir, cwd: root, transcriptDir }),
+        root,
+        env,
+        sdkLeaves &&
+          (() => sdkLeaves({ agentsDir, cwd: root, transcriptDir, env, onExpired: stopOnExpired })),
+      ),
       env,
-      (reason) => {
-        console.error(`scan: stopping — ${reason}`);
-        scan.stop();
-      },
+      stopOnExpired,
     ),
     source: gitScanSource(reviewedRepo, home),
     savedCut: () => {

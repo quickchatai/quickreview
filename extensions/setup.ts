@@ -48,7 +48,13 @@
 // without registerTool registers nothing and says so, and every tool answers
 // a refusal as its result rather than throwing.
 import { usd } from "../src/setup/presentation.js";
-import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  registerQcrTool,
+  textResult as text,
+  type QcrTool,
+  type QcrToolResult,
+} from "./pi-tool.js";
 import { fileURLToPath } from "node:url";
 import { configHome, stateHome } from "../src/install.js";
 import { SetupEngine, type CutStatus, type CutView, type Refusal } from "../src/setup/engine.js";
@@ -125,13 +131,7 @@ export const DEFAULT_REVIEWED_REPO = "/reviewed-repo";
 const reviewedCheckout = (env: NodeJS.ProcessEnv): string =>
   env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO;
 
-function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return details
-    ? { content: [{ type: "text", text: t }], details }
-    : { content: [{ type: "text", text: t }] };
-}
-
-function refused(what: string, r: Refusal): PiToolResult {
+function refused(what: string, r: Refusal): QcrToolResult {
   return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
 }
 
@@ -696,8 +696,8 @@ const UNIT_SCHEMA = {
   required: ["name", "roots"],
 } as const;
 
-export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
-  const facts: PiToolDefinition = {
+export function toolDefinitions(engine: SetupEngine): QcrTool[] {
+  const facts: QcrTool = {
     name: "setup_repo_facts",
     label: "Repo facts",
     description:
@@ -713,7 +713,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const status: PiToolDefinition = {
+  const status: QcrTool = {
     name: "setup_unit_cut",
     label: "Unit cut",
     description:
@@ -727,7 +727,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const propose: PiToolDefinition = {
+  const propose: QcrTool = {
     name: "setup_unit_cut_propose",
     label: "Propose a unit cut",
     description:
@@ -753,7 +753,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const adjust: PiToolDefinition = {
+  const adjust: QcrTool = {
     name: "setup_unit_cut_adjust",
     label: "Adjust the unit cut",
     description:
@@ -774,7 +774,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const save: PiToolDefinition = {
+  const save: QcrTool = {
     name: "setup_unit_cut_save",
     label: "Save the unit cut",
     description:
@@ -789,7 +789,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const history: PiToolDefinition = {
+  const history: QcrTool = {
     name: "setup_review_history",
     label: "Review history",
     description:
@@ -832,7 +832,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const themes: PiToolDefinition = {
+  const themes: QcrTool = {
     name: "setup_review_history_themes",
     label: "Save review history themes",
     description:
@@ -877,7 +877,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const surveyPreview: PiToolDefinition = {
+  const surveyPreview: QcrTool = {
     name: "setup_survey_preview",
     label: "Survey preview",
     description:
@@ -893,7 +893,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const surveyStart: PiToolDefinition = {
+  const surveyStart: QcrTool = {
     name: "setup_survey_start",
     label: "Start the survey",
     description:
@@ -925,7 +925,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const surveyStatus: PiToolDefinition = {
+  const surveyStatus: QcrTool = {
     name: "setup_survey_status",
     label: "Survey status",
     description:
@@ -939,7 +939,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const surveyStop: PiToolDefinition = {
+  const surveyStop: QcrTool = {
     name: "setup_survey_stop",
     label: "Stop the survey",
     description:
@@ -953,7 +953,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const portraitAssemble: PiToolDefinition = {
+  const portraitAssemble: QcrTool = {
     name: "setup_portrait_assemble",
     label: "Assemble the portrait facts",
     description:
@@ -992,7 +992,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const portrait: PiToolDefinition = {
+  const portrait: QcrTool = {
     name: "setup_portrait",
     label: "Repo portrait",
     description:
@@ -1020,7 +1020,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const narrative: PiToolDefinition = {
+  const narrative: QcrTool = {
     name: "setup_portrait_narrative",
     label: "Store the portrait narrative",
     description:
@@ -1066,7 +1066,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const interview: PiToolDefinition = {
+  const interview: QcrTool = {
     name: "setup_interview",
     label: "Setup interview",
     description:
@@ -1078,7 +1078,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     execute: async () => text(renderInterviewTable()),
   };
 
-  const profileState: PiToolDefinition = {
+  const profileState: QcrTool = {
     name: "setup_profile",
     label: "Repo profile",
     description:
@@ -1098,7 +1098,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const profileApply: PiToolDefinition = {
+  const profileApply: QcrTool = {
     name: "setup_profile_apply",
     label: "Apply the interview to the profile",
     description:
@@ -1154,7 +1154,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const retune: PiToolDefinition = {
+  const retune: QcrTool = {
     name: "setup_retune",
     label: "Re-tune the profile after a scan",
     description:
@@ -1207,7 +1207,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const profileValidate: PiToolDefinition = {
+  const profileValidate: QcrTool = {
     name: "setup_profile_validate",
     label: "Validate the repo profile",
     description:
@@ -1223,7 +1223,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  const pins: PiToolDefinition = {
+  const pins: QcrTool = {
     name: "setup_pin_propose",
     label: "Propose memory pins",
     description:
@@ -1362,7 +1362,7 @@ export function buildEngine(
   );
 }
 
-const activate = (pi: Pi): void => {
+const activate = (pi: ExtensionAPI): void => {
   if (typeof pi.registerTool !== "function") {
     console.error("setup: pi.registerTool unavailable — no setup tools registered.");
     return;
@@ -1378,7 +1378,7 @@ const activate = (pi: Pi): void => {
     console.error(`setup: not registered — ${String(err)}`);
     return;
   }
-  for (const def of toolDefinitions(engine)) pi.registerTool(def);
+  for (const def of toolDefinitions(engine)) registerQcrTool(pi, def);
   // The scan tools, over the same engine's saved unit cut.
   const { scan, findings, settingsOf, triage, home } = buildScan(
     engine,
@@ -1393,12 +1393,12 @@ const activate = (pi: Pi): void => {
     triage ? () => triage.closeFixed() : null,
     { home },
   ))
-    pi.registerTool(def);
+    registerQcrTool(pi, def);
   // Triage — dismiss, promote, close fixed, scan memory.
-  if (triage) for (const def of triageToolDefinitions(triage)) pi.registerTool(def);
+  if (triage) for (const def of triageToolDefinitions(triage)) registerQcrTool(pi, def);
   // The PR replay — old vs new profile, cost first.
   const replay = buildReplay(reviewedCheckout(process.env), process.env, resolveMaxConcurrency());
-  for (const def of replayToolDefinitions(replay)) pi.registerTool(def);
+  for (const def of replayToolDefinitions(replay)) registerQcrTool(pi, def);
   // The TUI's stage-2 start click and its scan stop, answered while the
   // companion's session runs (the inject-bridge's lifecycle: start on
   // session_start, stop on session_shutdown).

@@ -14,6 +14,7 @@ import {
   parseConfig,
   tierModel,
 } from "../src/config.js";
+import { tuiMemoryContainer } from "../src/tui/memforward.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The suite parses the neutral fixture, never the operator's live config
@@ -507,5 +508,35 @@ describe("config.example.toml", () => {
     for (const key of ["repo", "app_slug", "bot_login", "review_team"] as const) {
       expect(cfg.github[key], `github.${key} must be a fill-me placeholder`).toBe("");
     }
+  });
+});
+
+describe("[tui] memory_container", () => {
+  const base = readFileSync(configPath, "utf8");
+
+  it("defaults to empty, so a config that predates the sidecar relays into the daemon container", () => {
+    const cfg = parseConfig(base);
+    expect(cfg.tui.memory_container).toBe("");
+    expect(tuiMemoryContainer(cfg.tui)).toBe(cfg.tui.container);
+  });
+
+  it("names the memory sidecar once the VM runs it, and only the memory path follows", () => {
+    const cfg = parseConfig(
+      base.replace(/^\[tui\]$/m, '[tui]\nmemory_container = "quickreview-memory"'),
+    );
+    expect(tuiMemoryContainer(cfg.tui)).toBe("quickreview-memory");
+    // The board still reads the daemon's container.
+    expect(cfg.tui.container).not.toBe("quickreview-memory");
+  });
+
+  it("a blank or padded value is the daemon container, never an empty docker target", () => {
+    expect(tuiMemoryContainer({ container: "d", memory_container: "   " })).toBe("d");
+    expect(tuiMemoryContainer({ container: "d", memory_container: " m " })).toBe("m");
+  });
+
+  it("the shipped example documents the key and keeps it empty", () => {
+    const example = readFileSync(resolve(root, "config.example.toml"), "utf8");
+    expect(example).toMatch(/^memory_container = ""/m);
+    expect(parseConfig(example).tui.memory_container).toBe("");
   });
 });

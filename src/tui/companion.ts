@@ -112,11 +112,21 @@ export const realCompanionFs: CompanionFs = {
   },
 };
 
-/** In-container paths. Fixed by the image (docker/companion/Dockerfile), so
- * they are constants rather than knobs — the host side of each is configured. */
+/** In-container paths. Fixed by the image (docker/Dockerfile, run in its
+ * `companion` mode), so they are constants rather than knobs — the host side
+ * of each is configured. */
 export const CONTAINER = {
-  home: "/home/companion",
-  piHome: "/home/companion/.pi",
+  /** The release image's fixed HOME (`ENV HOME` in docker/Dockerfile),
+   * writable by whatever uid the container runs as. */
+  home: "/home/qcr",
+  piHome: "/home/qcr/.pi",
+  /** The image's app root: the companion's extensions, its system prompt and
+   * its agent set are loaded from here (D20), never from the /workspace
+   * mount, so a change to them lands with `qcr companion rebuild`. */
+  app: "/opt/qcr",
+  /** The owner's checkout, read-write: the repo the companion works on and
+   * commits to. It is the working directory, and the data it is about — not
+   * where its code comes from. */
   workspace: "/workspace",
   tracker: "/tracker",
   /** The tracker's protocol docs, read-only. `/tracker` carries the
@@ -169,7 +179,38 @@ export const CONTAINER = {
   evidence: "/evidence",
   feed: "/feed",
   alerts: "/alerts",
+  /** The shared tmux-socket volume (`tmux-socket` mode, D35): the companion's
+   * tmux server listens inside it, and the containerised TUI mounts the same
+   * volume to drive that server with `tmux -S`. The image creates the dir
+   * 1777, so a fresh named volume is writable by whatever uid runs. */
+  tmuxDir: "/run/qcr-tmux",
 } as const;
+
+/** How the companion's tmux server is reached.
+ *
+ *   docker        `docker exec <container> tmux …`, the server on tmux's
+ *                 default socket inside the container. The clone route, where
+ *                 this process can run docker.
+ *   tmux-socket   the server listens on a socket in a named volume that the
+ *                 containerised TUI shares (D35), so the TUI drives it with
+ *                 `tmux -S <socket>` and holds no docker.sock. The container
+ *                 itself is run by the host wrapper (scripts/qcr-host.sh),
+ *                 from the argv `qcr companion plan` prints. */
+export type CompanionMode = "docker" | "tmux-socket";
+
+/** The named volume holding the companion's tmux socket. */
+export function tmuxVolume(cfg: Pick<CompanionConfig, "container_name">): string {
+  return `${cfg.container_name}-tmux`;
+}
+
+/** The companion's tmux server socket, the same path in both containers. */
+export function tmuxSocketPath(cfg: Pick<CompanionConfig, "session">): string {
+  return `${CONTAINER.tmuxDir}/${cfg.session}.sock`;
+}
+
+/** Set on the companion container in `tmux-socket` mode: the socket its
+ * entrypoint starts the tmux server on (docker/entrypoint.sh). */
+export const TMUX_SOCKET_ENV = "QCR_TMUX_SOCKET";
 
 // No `~/.ssh` and no ssh-agent socket are mounted, on purpose: the companion's
 // only reach into the VM is OpenViking memory over a forward the host owns
@@ -177,10 +218,13 @@ export const CONTAINER = {
 // holds no VM ssh credential of any kind and cannot ssh anywhere. Never mount
 // either — the boundary is structural, not prompted (root CLAUDE.md rule 8).
 
+/** How long a containerised TUI waits for the wrapper-run companion's tmux
+ * server (the wrapper starts the container just before it starts the TUI). */
+const WRAPPER_START_WAIT_MS = 20_000;
+
 export type EnsureOutcome = "adopted" | "started" | "created" | "recreated";
 
-/** The vendored patched OpenViking pi extension, relative to the repo root —
- * checked on the host and loaded from the container's bind mount of it. */
+/** The vendored patched OpenViking pi extension, relative to the app root. */
 const VENDOR_EXTENSION = "extensions/vendor/openviking-pi/index.ts";
 
 // ---- the memory forward -----------------------------------------------------
@@ -208,8 +252,8 @@ export const MEMORY = {
    * verified to override the path-derived default. Same
    * identity as `user` for the companion — one surface, one actor. */
   peerId: "companion",
-  /** The vendored patched OpenViking pi extension, inside /workspace. */
-  extension: `${CONTAINER.workspace}/${VENDOR_EXTENSION}`,
+  /** The vendored patched OpenViking pi extension, inside the image. */
+  extension: `${CONTAINER.app}/${VENDOR_EXTENSION}`,
   /** The companion namespace's retired URIs, relative to the state home.
    * The TUI's memory store publishes them there on the host
    * (no daemon sweeps the companion's tree); the extension's per-turn recall
@@ -219,25 +263,21 @@ export const MEMORY = {
   retiredFile: "openviking/companion-retired-uris.json",
 } as const;
 
-/** The first-party subagents glue — loads pi's own subagent
- * extension out of the installed pinned package (no vendored copy, nothing
- * that can drift from the rule-7 pin) and pins scope + the process-wide
- * concurrency cap; see extensions/subagents.ts. The companion agent set
- * (explore/evidence/study) lives in docker/companion/agents/, which the
- * entrypoint symlinks to ~/.pi/agent/agents — the native extension's
- * default "user" discovery scope. Children spawn as isolated
- * `pi --mode json -p --no-session` processes that never load per-spawn argv
- * extensions, so a subagent cannot fan out further or reach memory —
- * leaves, structurally (the glue additionally strips per-task cwd, so a
- * child never runs where repo-controlled `.pi/` config could load). */
-export const SUBAGENTS = {
-  extension: `${CONTAINER.workspace}/extensions/subagents.ts`,
-  /** The companion's process-wide child cap: 8, up from the glue's
-   * desktop default of 4, because a survey or scan fans out one case per
-   * unit. Rides `QCR_SUBAGENT_MAX_CONCURRENCY` on the pi command line (the
-   * glue reads nothing else). One `tasks:[…]` call still runs at most 4 —
-   * the native extension's own in-call cap — so 8 is reached by two calls
-   * in one turn. Pinned by tests/tui-companion.test.ts. */
+/** The companion's lens tools (`lens`, `lens_wave`; extensions/lens.ts), which
+ * stand where pi's example subagent extension used to. They run a lens pass as
+ * an SDK session of the companion's own pi process, over its own login and
+ * reusing pi's HTTP dispatcher, and read their agents from the agents dir
+ * under pi's agent dir, which the entrypoint links at the companion agent set
+ * (explore/evidence/study, docker/companion/agents in the image). A lens
+ * session is never given a lens tool (leaves, rule 9), and there is no cwd or
+ * scope knob to pin: the tool takes `{agent, task}` and nothing else. */
+export const LENS = {
+  extension: `${CONTAINER.app}/extensions/lens.ts`,
+  /** The companion's process-wide pass cap: 8, because a survey or scan fans
+   * out one case per unit. Rides `QCR_SUBAGENT_MAX_CONCURRENCY` on the pi
+   * command line (the name extensions/subagents.ts gave it, which
+   * extensions/lens.ts and extensions/setup.ts still read). Pinned by
+   * tests/tui-companion.test.ts. */
   maxConcurrency: 8,
 } as const;
 
@@ -386,31 +426,44 @@ export function companionInjectDir(cfg: Pick<CompanionConfig, "repo_dir" | "sess
  * `qcr scan` the companion runs) knows it is inside the companion container. */
 export const IN_COMPANION_ENV = "QCR_IN_COMPANION";
 
-/** Why the app image cannot be built from `ctx`, or null: it copies the
- * built app, so `dist/` must be there. */
-export function appBuildProblem(ctx: string, exists: (p: string) => boolean): string | null {
-  return exists(join(ctx, "dist", "src", "cli.js"))
+/** The release image's mode word for the companion container
+ * (docker/entrypoint.sh): provision pi, start the tmux server, stay alive. */
+export const COMPANION_MODE = "companion";
+
+/** Why the companion image cannot be built from `ctx`, or null: the build
+ * compiles the app itself, so all it needs is the release Dockerfile. */
+export function imageBuildProblem(ctx: string, exists: (p: string) => boolean): string | null {
+  const dockerfile = join(ctx, "docker", "Dockerfile");
+  return exists(dockerfile)
     ? null
-    : `the image copies the built app, and ${join(ctx, "dist")} has none — run \`npm run build\` in ${ctx} first`;
+    : `the companion image is built from the release Dockerfile, and ${dockerfile} is not there — is ${ctx} a qcr checkout?`;
 }
 
-/** `docker build` of the app image (docker/companion/Dockerfile) from the
- * app root `ctx`, as `image`, stamped. Builds an image and nothing else:
- * no container is touched. */
+/** `docker build` of the companion image: the release image
+ * (docker/Dockerfile, which compiles the app in its own build stage) from the
+ * app root `ctx`, as `image`, stamped. Builds an image and nothing else: no
+ * container is touched. No uid is baked in: the container is started as the
+ * host user (`hostUser`). */
 export function appImageBuildArgv(image: string, ctx: string, stamp: string): string[] {
-  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
   return [
     "build",
     "-t",
     image,
     "-f",
-    join(ctx, "docker", "companion", "Dockerfile"),
-    "--build-arg",
-    `COMPANION_UID=${uid}`,
+    join(ctx, "docker", "Dockerfile"),
     "--build-arg",
     `BUILD_SHA=${stamp}`,
     ctx,
   ];
+}
+
+/** `uid:gid` the companion container runs as: the invoking host user, so the
+ * host bind mounts it writes (/workspace, /tracker, /feed, /alerts) stay
+ * writable and its files stay yours. The release image bakes no user. */
+export function hostUser(): string {
+  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+  const gid = typeof process.getgid === "function" ? process.getgid() : 1000;
+  return `${uid}:${gid}`;
 }
 
 export class CompanionLifecycle {
@@ -437,7 +490,31 @@ export class CompanionLifecycle {
     /** The build stamp of the app under the build context (src/appstamp.ts).
      * Injectable so the build argv is assertable without hashing a tree. */
     private readonly stampOf: (root: string) => string = appStamp,
+    /** How the tmux server is reached — see `CompanionMode`. */
+    readonly mode: CompanionMode = "docker",
   ) {}
+
+  /** How long `ensureUp` waits, in `tmux-socket` mode, for the wrapper-run
+   * companion's tmux server. A field so tests need not wait it out. */
+  wrapperStartWaitMs = WRAPPER_START_WAIT_MS;
+
+  /** The shared socket in `tmux-socket` mode, else undefined. */
+  get socketPath(): string | undefined {
+    return this.mode === "tmux-socket" ? tmuxSocketPath(this.cfg) : undefined;
+  }
+
+  /** `tmux <argv…>`, on the shared socket when there is one. */
+  private tmuxArgv(...args: string[]): string[] {
+    const socket = this.socketPath;
+    return socket === undefined ? ["tmux", ...args] : ["tmux", "-S", socket, ...args];
+  }
+
+  /** Start without memory: no network, no endpoint env (the laptop route, where
+   * the memory sidecar is opt-in). Pure; for the argv a host wrapper runs. */
+  withoutMemory(): this {
+    this.wiring = { network: "", endpoint: "", notes: [] };
+    return this;
+  }
 
   /** The memory path this instance will wire (or has wired). */
   get memory(): MemoryWiring {
@@ -465,12 +542,23 @@ export class CompanionLifecycle {
     if (this.wiring.network !== "") argv.push("--network", this.wiring.network);
     // Network-roaming survival: see PUBLIC_DNS.
     for (const ip of PUBLIC_DNS) argv.push("--dns", ip);
+    // The host user (the image bakes none), and the checkout as the working
+    // directory: pi reads the repo's own context files from there, and the
+    // image's WORKDIR is its app root, whose reviewer stub is not the
+    // companion's to load.
+    argv.push("--user", hostUser(), "--workdir", CONTAINER.workspace);
+    // The wrapper-run companion (D35) is hardened like every other container
+    // the wrapper starts; nothing it does needs a capability.
+    if (this.socketPath !== undefined)
+      argv.push("--init", "--cap-drop", "ALL", "--security-opt", "no-new-privileges");
     for (const m of this.mountSpec())
       argv.push("--volume", `${m.source}:${m.dest}${m.mode ? `:${m.mode}` : ""}`);
     argv.push(...this.memoryEnvArgv());
     // pi's default model, set by the entrypoint on every start.
     argv.push("--env", `QCR_PI_DEFAULT_MODEL=${this.cfg.model}`);
-    argv.push(this.cfg.image);
+    if (this.socketPath !== undefined) argv.push("--env", `${TMUX_SOCKET_ENV}=${this.socketPath}`);
+    // The release image, in its companion mode (docker/entrypoint.sh).
+    argv.push(this.cfg.image, COMPANION_MODE);
     return argv;
   }
 
@@ -482,6 +570,11 @@ export class CompanionLifecycle {
 
   /**
    * The pi argv inside the companion's tmux session.
+   *
+   * Every extension, the theme and the system prompt are the IMAGE's
+   * (`CONTAINER.app`, D20): the companion runs the code it was built with, and
+   * the checkout at /workspace is the repo it works on, not where its hands
+   * come from.
    *
    * VERIFY-ON-PIN, every flag (same list as sessions.ts buildPiCommand):
    * `--model` is documented; `--session-dir` is documented for RPC mode only
@@ -495,13 +588,7 @@ export class CompanionLifecycle {
    * fresh start), and so daily rollover can archive "the newest .jsonl".
    */
   piArgv(): string[] {
-    // The vendored patched OpenViking extension — the companion's
-    // memory hands. Loaded only when the vendor dir is actually present: a
-    // missing extension must degrade to memory-less, never to a pi that
-    // refuses to start (the companion never wedges).
-    const openviking = this.fs.exists(this.hostVendorExtension())
-      ? ["--extension", MEMORY.extension]
-      : [];
+    const ext = `${CONTAINER.app}/extensions`;
     return [
       "pi",
       // --approve: pre-trust project-local .pi resources for this run. Without
@@ -509,64 +596,66 @@ export class CompanionLifecycle {
       // modal and the session stalls forever. Same flag sessions.ts passes
       // (the never-block-on-pi-input decision in root CLAUDE.md).
       "--approve",
-      ...openviking,
+      // The vendored patched OpenViking extension — the companion's memory
+      // hands. It rides the image, so it is always there; with no memory
+      // wiring it finds no endpoint and stays idle (the companion never wedges).
+      "--extension",
+      MEMORY.extension,
       // Ambient /feed state is deliberately not an extension: one would turn
       // every meaningful poll into a synthetic user message in the operator's
       // active conversation. The model reads the bounded feed files on demand
       // instead.
       "--extension",
-      `${CONTAINER.workspace}/extensions/muted-theme.ts`,
+      `${ext}/muted-theme.ts`,
       "--theme",
-      `${CONTAINER.workspace}/extensions/muted-theme.json`,
+      `${ext}/muted-theme.json`,
       "--extension",
       // Day-open channel: the daemon's inject bridge, unmodified. It
       // drains its directory on session_start before it starts watching, so
       // the rollover can queue the opening message before pi is spawned and
       // the delivery is race-free. QCR_INJECT_DIR (below) points it at the
       // companion's own dir. VERIFY-ON-PIN: `--extension <path>` again.
-      `${CONTAINER.workspace}/extensions/inject-bridge.ts`,
+      `${ext}/inject-bridge.ts`,
       "--extension",
       // The read-only `tui_*` tools over what the TUI published to
       // /feed (screen.txt + view.json). Reads only — it holds no credential and
       // cannot fetch; see the header of extensions/tui-view.ts for why that is
       // structural and not a promise. QCR_FEED_DIR (below) points it at the
       // same dir the FeedWriter writes. VERIFY-ON-PIN: `--extension <path>`.
-      `${CONTAINER.workspace}/extensions/tui-view.ts`,
+      `${ext}/tui-view.ts`,
       "--extension",
-      // First-party glue over pi's own subagent extension (loaded
-      // out of the installed pinned package — see SUBAGENTS above and
-      // extensions/subagents.ts). First-party and always in the repo, so it
-      // loads unconditionally like inject-bridge; a failed native import
-      // inside it degrades to "no subagent tool", never a pi that won't
-      // start. Its cap rides QCR_SUBAGENT_MAX_CONCURRENCY in piEnvPrefix
-      // (SUBAGENTS.maxConcurrency).
-      SUBAGENTS.extension,
+      // Our lens tools (`lens`, `lens_wave`) at cap 8 — see LENS and
+      // extensions/lens.ts. First-party and always in the image, so it loads
+      // unconditionally like inject-bridge; its lens sessions are SDK
+      // sessions of this pi, over pi's own dispatcher. The cap rides
+      // QCR_SUBAGENT_MAX_CONCURRENCY in piEnvPrefix (LENS.maxConcurrency).
+      LENS.extension,
       "--extension",
       // The companion's bright lines (frozen seeds, no-GitHub,
       // no-discard in the shared checkout) as tool_call vetoes — see the
       // header of extensions/companion-guard.ts. Companion only; the VM has
       // the gate + guards.sh.
-      `${CONTAINER.workspace}/extensions/companion-guard.ts`,
+      `${ext}/companion-guard.ts`,
       "--extension",
       // The setup & scan tool belt — the deterministic SetupEngine
       // (repo facts, the unit cut) as `setup_*` tools. Reads the reviewed
       // checkout (`:ro`) and writes only the state home; see the header of
-      // extensions/setup.ts. Unconditional like every other repo extension:
+      // extensions/setup.ts. Unconditional like every other extension:
       // a missing checkout is a refusal from the tools, never a pi that
       // won't start.
-      `${CONTAINER.workspace}/extensions/setup.ts`,
+      `${ext}/setup.ts`,
       "--extension",
       // `!{cmd}` inline expansion in typed prompts — vendored
       // verbatim from the pinned pi package's shipped examples (see its
       // header; byte-identical at 0.84.1 and 0.84.4). QoL for the operator
       // typing into the mirrored terminal.
-      `${CONTAINER.workspace}/extensions/inline-bash.ts`,
+      `${ext}/inline-bash.ts`,
       "--model",
       this.cfg.model,
       "--session-dir",
       companionSessionDir(this.cfg.session),
       "--system-prompt",
-      `${CONTAINER.workspace}/prompts/companion.md`,
+      `${CONTAINER.app}/prompts/companion.md`,
       "--name",
       this.cfg.session,
     ];
@@ -598,8 +687,11 @@ export class CompanionLifecycle {
       // Where the setup tools read the reviewed checkout.
       `QCR_REVIEWED_REPO=${CONTAINER.reviewedRepo}`,
       `QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/${TOKEN_FILE}`,
-      // Survey and scan fan out one case per unit — see SUBAGENTS.
-      `QCR_SUBAGENT_MAX_CONCURRENCY=${SUBAGENTS.maxConcurrency}`,
+      // Survey and scan fan out one case per unit — see LENS.
+      `QCR_SUBAGENT_MAX_CONCURRENCY=${LENS.maxConcurrency}`,
+      // The lens tool builds its SDK host over pi's own agent dir and refuses
+      // a relative or absent one (extensions/lens.ts); name the one pi uses.
+      `PI_CODING_AGENT_DIR=${CONTAINER.piHome}/agent`,
       // The retired URIs the recall excludes — see MEMORY.retiredFile.
       `QCR_OV_RETIRED_FILE=${CONTAINER.stateHome}/${MEMORY.retiredFile}`,
       // What a `qcr scan` run here reads to default its sandbox to the host.
@@ -656,11 +748,7 @@ export class CompanionLifecycle {
     return [
       "exec",
       this.cfg.container_name,
-      "tmux",
-      "new-session",
-      "-d",
-      "-s",
-      this.cfg.session,
+      ...this.tmuxArgv("new-session", "-d", "-s", this.cfg.session),
       ...this.piEnvPrefix(),
       ...this.piArgv(),
     ];
@@ -669,7 +757,12 @@ export class CompanionLifecycle {
   /** Local attach — plain `docker exec -it`, no ssh (this box owns the
    * container). Returned argv is everything after the `docker` binary. */
   attachArgv(): string[] {
-    return ["exec", "-it", this.cfg.container_name, "tmux", "attach", "-t", this.cfg.session];
+    return [
+      "exec",
+      "-it",
+      this.cfg.container_name,
+      ...this.tmuxArgv("attach", "-t", this.cfg.session),
+    ];
   }
 
   /** Host side of `/workspace/inject/<session>` — where the rollover drops the
@@ -690,11 +783,6 @@ export class CompanionLifecycle {
    */
   reviewedRepoPresent(): boolean {
     return this.cfg.reviewed_repo_dir !== "" && this.fs.exists(this.cfg.reviewed_repo_dir);
-  }
-
-  /** Host side of the vendored extension (the repo is bind-mounted). */
-  hostVendorExtension(): string {
-    return `${this.cfg.repo_dir}/${VENDOR_EXTENSION}`;
   }
 
   // ---- state --------------------------------------------------------------
@@ -756,10 +844,18 @@ export class CompanionLifecycle {
     const res = await this.docker([
       "exec",
       this.cfg.container_name,
-      "tmux",
-      "has-session",
-      "-t",
-      this.cfg.session,
+      ...this.tmuxArgv("has-session", "-t", this.cfg.session),
+    ]);
+    return res.ok;
+  }
+
+  /** Is the companion's tmux server answering on its socket? `show-options`
+   * never starts a server, so asking cannot birth one in the wrong container. */
+  async serverUp(): Promise<boolean> {
+    const res = await this.docker([
+      "exec",
+      this.cfg.container_name,
+      ...this.tmuxArgv("show-options", "-s", "exit-empty"),
     ]);
     return res.ok;
   }
@@ -787,18 +883,18 @@ export class CompanionLifecycle {
     if (!res.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(res)}`);
   }
 
-  /** Throws when the image cannot be built (`appBuildProblem`) — asked
+  /** Throws when the image cannot be built (`imageBuildProblem`) — asked
    * before anything is removed for a rebuild. */
   checkBuildable(): void {
-    const problem = appBuildProblem(this.cfg.build_context, (p) => this.fs.exists(p));
+    const problem = imageBuildProblem(this.cfg.build_context, (p) => this.fs.exists(p));
     if (problem !== null) throw new Error(problem);
   }
 
-  /** Build the companion image (idempotent, cached) from the app root,
-   * with docker/companion/Dockerfile: the image copies the built app for the
-   * scan sandbox, so the app must be built first, and the image is stamped
-   * with the app's build stamp. Runs with the caller's uid so the host bind
-   * mounts stay writable. */
+  /** Build the companion image (idempotent, cached) from the app root, with
+   * the release Dockerfile (docker/Dockerfile): the image compiles the app
+   * itself, so nothing needs building on the host first, and it is stamped
+   * with the checkout's build stamp. The companion's extensions come from this
+   * image (D20), so a change to them lands only with a rebuild. */
   async buildImage(onProgress?: (line: string) => void): Promise<void> {
     this.checkBuildable();
     const ctx = this.cfg.build_context;
@@ -952,6 +1048,10 @@ export class CompanionLifecycle {
       { dest: CONTAINER.piHome, source: this.cfg.pihome_volume },
       { dest: CONTAINER.workspace, source: this.cfg.repo_dir, mode: "rw" },
     ];
+    // The tmux socket volume, shared with the containerised TUI (D35). The only
+    // thing in it is the socket; it is no ssh agent and no docker.sock.
+    if (this.socketPath !== undefined)
+      spec.push({ dest: CONTAINER.tmuxDir, source: tmuxVolume(this.cfg), mode: "rw" });
     // The tracker and its protocol docs are optional: mounted only when the
     // operator configured them ([companion] tracker_dir / tracker_docs_dir).
     if (this.cfg.tracker_dir !== "")
@@ -1001,6 +1101,7 @@ export class CompanionLifecycle {
 
   /** Idempotent: running → adopt; stopped → start; absent → run. */
   async ensureUp(onProgress?: (line: string) => void): Promise<EnsureOutcome> {
+    if (this.socketPath !== undefined) return this.adoptWrapperRun(onProgress);
     await this.resolveMemoryWiring(onProgress);
     // Say which of the two worlds this start is in, either way. A missing
     // checkout is a normal, non-fatal state — but a companion silently reading
@@ -1073,6 +1174,21 @@ export class CompanionLifecycle {
   }
 
   /**
+   * `tmux-socket` mode: the host wrapper started (or adopted) the companion
+   * container before this process existed, and this one has no docker, so the
+   * start is only a wait for the tmux server to answer on the shared socket.
+   * A server that never answers is the wrapper's failure to report, not ours
+   * to repair.
+   */
+  private async adoptWrapperRun(onProgress?: (line: string) => void): Promise<EnsureOutcome> {
+    onProgress?.(`companion container run by the qcr wrapper — tmux socket ${this.socketPath}`);
+    if (await this.waitRunning(this.wrapperStartWaitMs, 250)) return "adopted";
+    throw new Error(
+      `the companion's tmux server is not answering on ${this.socketPath} — the qcr wrapper starts the companion container before the TUI (is ${this.cfg.container_name} running?)`,
+    );
+  }
+
+  /**
    * Wait until the container is actually running.
    *
    * `docker run --detach` returns once the container is created, and a
@@ -1083,6 +1199,13 @@ export class CompanionLifecycle {
   async waitRunning(timeoutMs = 5_000, stepMs = 100): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
+      if (this.socketPath !== undefined) {
+        // No docker to ask: the server answering is "running".
+        if (await this.serverUp()) return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise((r) => setTimeout(r, stepMs));
+        continue;
+      }
       const st = await this.status();
       if (st.running) return true;
       // Gone rather than starting: waiting cannot help, and the caller's own
@@ -1103,7 +1226,7 @@ export class CompanionLifecycle {
     // running", which would report the companion unavailable for the whole
     // session. Wait for it once and try again;
     // anything else is a real failure and is raised as one.
-    if (!res.ok && /is not running/i.test(errText(res))) {
+    if (!res.ok && /is not running|tmux server is not up/i.test(errText(res))) {
       await this.waitRunning();
       res = await this.docker(this.spawnArgv());
     }
@@ -1118,6 +1241,9 @@ export class CompanionLifecycle {
    * A container docker could not be asked about is not a stopped one: that
    * throws rather than return as if the stop had happened. */
   async gracefulStop(): Promise<void> {
+    // The wrapper that ran the container stops it, after the TUI container
+    // has exited; this process cannot, and must not pretend to.
+    if (this.socketPath !== undefined) return;
     const st = await this.status();
     if (st.unknown !== undefined)
       throw new Error(

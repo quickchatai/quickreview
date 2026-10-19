@@ -7,8 +7,8 @@
 //     (they import only node builtins and plain .mjs siblings), so those
 //     patches are tested, not just grepped. `tools.ts` and `index.ts` are NOT
 //     importable — they pull `typebox`, `@earendil-works/pi-ai` and
-//     `@earendil-works/pi-coding-agent`, none of which is installed in this
-//     repo (pi lives only in the container).
+//     `@earendil-works/pi-coding-agent`, which load pi's whole runtime; pi is
+//     typechecked against (patch 0012), not run, in these tests.
 //   * STRUCTURE, for the two unimportable files and for every deletion. A
 //     deletion cannot be tested by calling it; the test is that the thing is
 //     absent. These are the assertions a careless rebase trips over — which is
@@ -166,7 +166,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(12); // 0000 scaffolding + eleven numbered
+    expect(upstream.patches.length).toBe(14); // 0000 scaffolding + eleven numbered + 0012 typing + 0013 (patch 12)
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -645,8 +645,9 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
   describe("structure — the parts no test can call", () => {
     it("builds the extra clients only outside a leaf, from the same config", () => {
       const src = read("index.ts");
-      expect(src).toContain("leaf ? [] : resolveExtraNamespaces(config)");
-      expect(src).toContain("new OVClient({ ...config, apiKey: ns.apiKey, user: ns.user })");
+      // [PATCH 12] the credentials come from the factory config, resolved by the shim.
+      expect(src).toContain("leaf ? [] : cfg.extraNamespaces");
+      expect(src).toContain("makeClient({ ...config, apiKey: ns.apiKey, user: ns.user })");
       // The leaf path registers tools with no namespaces at all.
       expect(src).toContain("registerTools(pi, client, sync, { leaf: true, areas: toolAreas })");
     });
@@ -659,7 +660,7 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
 
     it("keeps ambient work single-namespace: sync and recall hold the primary client", () => {
       const src = code("index.ts");
-      expect(src).toContain("new SyncManager(client, config)");
+      expect(src).toContain("new SyncManager(client, config, {");
       expect(src).toContain("new RecallManager(client, config,");
       // No extra client is ever handed to the session/recall machinery.
       expect(src).not.toMatch(/new (SyncManager|RecallManager)\(\s*ns\./);
@@ -1030,7 +1031,7 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
       expect(code("config.ts")).toMatch(
         /export function rereadApiKey[\s\S]*?withoutRootKey\(resolveOpenVikingCredentials\(env\), env\)/,
       );
-      expect(code("index.ts")).toContain("client.rekey = () => rereadApiKey()");
+      expect(code("index.ts")).toContain("client.rekey = () => rereadApiKey(cfg.credentialEnv)");
       expect(code("index.ts").match(/\.rekey =/g)).toHaveLength(1);
     });
 
@@ -1444,24 +1445,31 @@ describe("PATCH 7 — bounded recall, no commit", () => {
     });
 
     it("a commit an older build queued on disk is dropped on replay, never sent", async () => {
+      // [PATCH 12] the queue's directory is handed in, not read from the env.
       const dir = mkdtempSync(join(tmpdir(), "qcr-pending-"));
-      const prior = process.env.OPENVIKING_PENDING_DIR;
-      process.env.OPENVIKING_PENDING_DIR = dir;
+      const queue = { dir };
       try {
         const { enqueue, listPending } =
           (await import("../extensions/vendor/openviking-pi/shared/pending-queue.mjs")) as unknown as {
-            enqueue: (type: string, sessionId: string, payload: unknown) => Promise<unknown>;
-            listPending: () => Promise<unknown[]>;
+            enqueue: (
+              type: string,
+              sessionId: string,
+              payload: unknown,
+              options: { queue: typeof queue },
+            ) => Promise<{ ok: boolean }>;
+            listPending: (queue: { dir: string }) => Promise<unknown[]>;
           };
-        await enqueue("commitSession", "pr-42", { keep_recent_count: 10 });
+        expect(
+          (await enqueue("commitSession", "pr-42", { keep_recent_count: 10 }, { queue })).ok,
+        ).toBe(true);
+        expect(await listPending(queue)).toHaveLength(1);
         const { client, calls } = stub();
-        const sync = new SyncManager(client, loaded());
+        const sync = new SyncManager(client, loaded(), { queue });
         await sync.replayPending();
         expect(calls.filter((c) => c.includes("/commit"))).toEqual([]);
-        expect(await listPending()).toEqual([]);
+        expect(await listPending(queue)).toEqual([]);
       } finally {
-        if (prior === undefined) delete process.env.OPENVIKING_PENDING_DIR;
-        else process.env.OPENVIKING_PENDING_DIR = prior;
+        rmSync(dir, { recursive: true, force: true });
       }
       expect(isCommitPath("/api/v1/sessions/pr-42/commit")).toBe(true);
       expect(isCommitPath("/api/v1/sessions/pr-42/messages")).toBe(false);
@@ -1491,7 +1499,7 @@ describe("PATCH 7 — bounded recall, no commit", () => {
     expect(hook).toContain("await recall.searchPending(RECALL_WAIT_MS);");
     expect(index.match(/searchPending\(/g)).toHaveLength(1);
     // The retired list comes from the file the daemon publishes.
-    expect(index).toContain("readRetiredUris(process.env[RETIRED_FILE_ENV])");
+    expect(index).toContain("readRetiredUris(cfg.retiredFile)");
     expect(RETIRED_FILE_ENV).toBe("QCR_OV_RETIRED_FILE");
   });
 
@@ -1697,8 +1705,9 @@ describe("PATCH 8 — a PR session recalls for its PR, inside the round's areas"
   it("index.ts reads the hint for every prompt and queues ITS query and areas", () => {
     const index = code("index.ts");
     // [PATCH 11] through `recallScope`, which fails closed without a hint.
-    expect(index).toContain(
-      "const plan = recallScope(process.env[RECALL_HINT_FILE_ENV], event.prompt);",
+    // [PATCH 12] the prompt read is cast for pi 1.3.0's event union, unchanged.
+    expect(index).toMatch(
+      /const plan = recallScope\(\s*cfg\.recallHintFile,\s*\(event as \{ prompt: string \}\)\.prompt,?\s*\);/,
     );
     expect(index).toContain("recall.queueSearch(plan.query, plan.areas);");
     expect(index.match(/queueSearch\(/g)).toHaveLength(1);
@@ -1815,9 +1824,7 @@ describe("PATCH 9 — a PR session's memory tools stay inside the round's areas"
 
   it("index.ts hands both registrations the provider, and says the scope in the prompt", () => {
     const index = code("index.ts");
-    expect(index).toContain(
-      "const toolAreas = () => toolScopeAreas(process.env[RECALL_HINT_FILE_ENV]);",
-    );
+    expect(index).toContain("const toolAreas = () => toolScopeAreas(cfg.recallHintFile);");
     expect(index).toContain("registerTools(pi, client, sync, { leaf: true, areas: toolAreas });");
     expect(index).toContain(
       "registerTools(pi, client, sync, { leaf: false, namespaces, areas: toolAreas });",
@@ -2178,8 +2185,8 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
       expect(headerHashTags(text), text).toEqual(parseHashTags(text));
   });
 
-  it("ships the patch, recorded LAST in the series, with its markers", () => {
-    expect(upstream.patches.at(-1)).toBe("0011-review-session-memory-boundary.patch");
+  it("ships the patch, recorded in the series, with its markers", () => {
+    expect(upstream.patches.at(-3)).toBe("0011-review-session-memory-boundary.patch");
     const patch = read(join("patches", "0011-review-session-memory-boundary.patch"));
     expect(patch).toContain("QCR PATCH 11");
     for (const f of [
@@ -2196,5 +2203,52 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
     }
     expect(read("NOTICE")).toContain("11. A review session's recall fails closed");
     expect(read("README.md")).toContain("### 0011 — the review session's memory boundary");
+  });
+});
+
+describe("PATCH 12 — the fork is typechecked against the real pi, not ambient stand-ins", () => {
+  it("ships the patch, recorded after 0011, and the ambient shim is gone", () => {
+    expect(upstream.patches.at(-2)).toBe("0012-typecheck-against-the-real-pi.patch");
+    const patch = read(join("patches", "0012-typecheck-against-the-real-pi.patch"));
+    for (const f of ["index.ts", "vendor-pi-types.d.ts", "README.md"]) {
+      expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
+    }
+    expect(existsSync(join(FORK, "vendor-pi-types.d.ts"))).toBe(false);
+    expect(read("README.md")).toContain("### 0012 — typechecked against the real pi");
+  });
+});
+
+describe("PATCH 12 — createOpenViking(cfg), file 0013", () => {
+  // Behaviour is tested in tests/openviking-factory.test.ts (the shim, the hook
+  // deadline, the factory over a fake pi and client), the parity case in
+  // extension-factory-parity.test.ts and canary 9. This is the provenance.
+  it("ships the patch, recorded LAST in the series, with its markers and files", () => {
+    expect(upstream.patches.at(-1)).toBe("0013-createopenviking-factory.patch");
+    const patch = read(join("patches", "0013-createopenviking-factory.patch"));
+    expect(patch).toContain("QCR PATCH 12");
+    for (const f of [
+      "index.ts",
+      "config.ts",
+      "sync.ts",
+      "qcr-leaf.ts",
+      "qcr-shim.ts",
+      "qcr-hooks.ts",
+      "shared/pending-queue.mjs",
+      "NOTICE",
+      "README.md",
+    ]) {
+      expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
+    }
+    expect(read("NOTICE")).toContain("12. The extension is a factory over a configuration value");
+    expect(read("README.md")).toContain("### 0013 — `createOpenViking(cfg)`");
+  });
+
+  it("leaves the base commit where it was", () => {
+    // Rule 7's extension-commit double mirror: the factory patch rides the same
+    // base as the eleven before it, so it touches neither pin file.
+    const patch = read(join("patches", "0013-createopenviking-factory.patch"));
+    expect(patch).not.toContain("diff --git a/extensions/vendor/openviking-pi/upstream.json");
+    expect(patch).not.toMatch(/^[+-].*extension_commit/m);
+    expect(read("NOTICE")).toContain(upstream.commit);
   });
 });

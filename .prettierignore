@@ -74,3 +74,6 @@ publish-manifest.json
 # and the dataset export publishes byte for byte; a formatter rewriting them
 # produces a diff no generator would, and the next regeneration undoes it.
 bench/aacr/**/*.json
+
+# Recorded prompt output (tests/golden-prompts.test.ts): byte-exact, never reformatted.
+tests/fixtures/golden-prompts/

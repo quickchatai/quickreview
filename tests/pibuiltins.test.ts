@@ -63,9 +63,9 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
   });
 
   for (const file of [
-    "deploy/ansible/templates/entrypoint.sh.j2",
     "docker/daemon/entrypoint.sh",
     "docker/companion/entrypoint.sh",
+    "docker/entrypoint.sh",
   ]) {
     it(`${file}: the merge writes every disable, drops a stale +builtin:mcp, and is idempotent`, () => {
       const home = mkdtempSync(join(tmpdir(), "qcr-pibuiltins-"));
@@ -117,7 +117,7 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
 });
 
 it.each(
-  ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"].flatMap((file) =>
+  ["docker/daemon/entrypoint.sh"].flatMap((file) =>
     ["settings.json", "trust.json"].map((name) => [file, name] as const),
   ),
 )("preserves %s / %s after a failed JSON replacement", (file, name) => {

@@ -38,7 +38,7 @@ import {
   toolDefinitions,
   activate,
 } from "../extensions/tui-view.js";
-import type { Pi, PiToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 let dir = "";
 beforeEach(() => {
@@ -540,18 +540,18 @@ describe("tui_* tools — the read surface", () => {
   });
 
   it("registers through pi, and degrades to registering nothing when registerTool is absent", () => {
-    const registered: PiToolDefinition[] = [];
+    const registered: ToolDefinition[] = [];
     const pi = {
       on: () => {},
       sendUserMessage: () => {},
-      registerTool: (d: PiToolDefinition) => registered.push(d),
-    } as unknown as Pi;
+      registerTool: (d: ToolDefinition) => registered.push(d),
+    } as unknown as ExtensionAPI;
     activate(pi, { QCR_FEED_DIR: dir } as NodeJS.ProcessEnv);
     expect(registered.map((d) => d.name)).toEqual([...TOOL_NAMES]);
     // A pi without the API must leave the companion starting, not wedged.
     expect(() =>
       activate(
-        { on: () => {}, sendUserMessage: () => {} } as unknown as Pi,
+        { on: () => {}, sendUserMessage: () => {} } as unknown as ExtensionAPI,
         {} as NodeJS.ProcessEnv,
       ),
     ).not.toThrow();
@@ -645,7 +645,8 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
       () => {},
       { exists: () => false, read: () => undefined, mode: () => undefined },
     );
-    expect(pi.piArgv()).toContain("/workspace/extensions/tui-view.ts");
+    // The companion's extensions are the image's (D20), not the checkout's.
+    expect(pi.piArgv()).toContain("/opt/qcr/extensions/tui-view.ts");
     expect(pi.piEnvPrefix().some((v) => v.startsWith("QCR_FEED_DIR="))).toBe(true);
   });
 });

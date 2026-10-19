@@ -25,6 +25,7 @@ import { lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { codePath, flatControls, promptTitle } from "./codespan.js";
 import { isSplitBaselineRow } from "./heuristics.js";
+import { launchVocab } from "./launchvocab.js";
 import {
   renderLensLessonsSection,
   renderLessonsFile,
@@ -364,9 +365,10 @@ export function taskDirOf(files: ReadonlyArray<{ path: string }>): string {
 export function renderPassTaskNote(
   order: Pick<
     RoundOrder,
-    "pass_plan" | "pass_task_files" | "scope" | "delta" | "prior_assignments"
+    "pass_plan" | "pass_task_files" | "scope" | "delta" | "prior_assignments" | "lens_runtime"
   >,
 ): string {
+  const vocab = launchVocab(order);
   const files = order.pass_task_files;
   if (!files || files.length === 0) return "";
   const rows = files.map((f) => `| ${f.row + 1} | \`${f.agent}\` | \`${f.path}\` |`);
@@ -418,20 +420,20 @@ export function renderPassTaskNote(
     "",
     ...intro,
     "",
-    `**Launch them with ONE \`launch_plan\` call:** \`launch_plan({ dirs: ["${dir}"] })\``,
+    `**Launch them with ONE \`${vocab.wave}\` call:** \`${vocab.wave}({ dirs: ["${dir}"] })\``,
     "launches every discovery row below at once, in the table's order (the daemon",
     "lists the slowest first), each with its pointer as the whole task —",
     "`Task file: <path>. Read it first; it is your complete task.` — and never",
     "pass-validate. Do NOT write task strings out for these rows.",
     ...extra,
-    "A row you RAISE goes in `skip` and is launched through `subagent` at the",
+    `A row you RAISE goes in \`skip\` and is launched through \`${vocab.lens}\` at the`,
     "higher variant with the same pointer; an ADDED lens has no file — write its",
-    "task string and launch it through `subagent`. Both in the SAME turn as the",
-    "`launch_plan` call. Only if `launch_plan` is unavailable or answers with an",
-    "error, launch every row through `subagent` with its pointer (plus what",
+    `task string and launch it through \`${vocab.lens}\`. Both in the SAME turn as the`,
+    `\`${vocab.wave}\` call. Only if \`${vocab.wave}\` is unavailable or answers with an`,
+    `error, launch every row through \`${vocab.lens}\` with its pointer (plus what`,
     "`extra` would have carried), all in that one turn, in the table's order.",
     "",
-    "| row | subagent | task file |",
+    `| row | ${vocab.lens} | task file |`,
     "| --- | --- | --- |",
     ...rows,
   ].join("\n");

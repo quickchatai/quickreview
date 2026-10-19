@@ -1,0 +1,145 @@
+{
+  "plannedLenses": [
+    "pass-baseline--sol-high",
+    "pass-security--sol-high",
+    "pass-prod-risk--sol-high",
+    "pass-behaviour-delta--sol-high",
+    "pass-sweep--sol-high",
+    "pass-backcompat--terra-med",
+    "pass-claims--terra-med",
+    "pass-tests--terra-med",
+    "pass-maintainability--terra-med",
+    "pass-duplication--terra-med",
+    "pass-abstraction--terra-med",
+    "pass-consistency--terra-med",
+    "pass-validate--sol-high"
+  ],
+  "passPlan": [
+    {
+      "lens": "pass-baseline",
+      "agent": "pass-baseline--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "every round: the PR against its own claims",
+      "required": true
+    },
+    {
+      "lens": "pass-security",
+      "agent": "pass-security--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "the diff adds lines to the dependency manifest package.json",
+      "required": true
+    },
+    {
+      "lens": "pass-prod-risk",
+      "agent": "pass-prod-risk--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "the diff touches .github/workflows/ci.yml",
+      "required": true
+    },
+    {
+      "lens": "pass-behaviour-delta",
+      "agent": "pass-behaviour-delta--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "base behaviour is at risk in src/api/client.ts: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch",
+      "focus": [
+        "src/api/client.ts"
+      ]
+    },
+    {
+      "lens": "pass-sweep",
+      "agent": "pass-sweep--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "every changed line of 5 changed files, read one by one",
+      "focus": [
+        "src/api/client.ts",
+        ".github/workflows/ci.yml",
+        "package.json",
+        "src/api/client.test.ts",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "lens": "pass-backcompat",
+      "agent": "pass-backcompat--terra-med",
+      "tier": "terra-med",
+      "raisable_to": [
+        "pass-backcompat--sol-med",
+        "pass-backcompat--sol-high"
+      ],
+      "why": "the diff touches src/api/client.ts"
+    },
+    {
+      "lens": "pass-claims",
+      "agent": "pass-claims--terra-med",
+      "tier": "terra-med",
+      "raisable_to": [
+        "pass-claims--sol-med",
+        "pass-claims--sol-high"
+      ],
+      "why": "the PR text claims \"lint rules\""
+    },
+    {
+      "lens": "pass-tests",
+      "agent": "pass-tests--terra-med",
+      "tier": "terra-med",
+      "raisable_to": [
+        "pass-tests--sol-med",
+        "pass-tests--sol-high"
+      ],
+      "why": "the PR changes code: existing tests are its consumers, and its own tests are claims"
+    },
+    {
+      "lens": "pass-maintainability",
+      "agent": "pass-maintainability--terra-med",
+      "tier": "terra-med",
+      "raisable_to": [
+        "pass-maintainability--sol-med",
+        "pass-maintainability--sol-high"
+      ],
+      "why": "the change adds 55 lines of non-test code (at least 20)"
+    },
+    {
+      "lens": "pass-duplication",
+      "agent": "pass-duplication--terra-med",
+      "tier": "terra-med",
+      "raisable_to": [
+        "pass-duplication--sol-med",
+        "pass-duplication--sol-high"
+      ],
+      "why": "the change adds 55 lines of non-test code (at least 20)"
+    },
+    {
+      "lens": "pass-abstraction",
+      "agent": "pass-abstraction--terra-med",
+      "tier": "terra-med",
+      "raisable_to": [
+        "pass-abstraction--sol-med",
+        "pass-abstraction--sol-high"
+      ],
+      "why": "the change adds 55 lines of non-test code (at least 20)"
+    },
+    {
+      "lens": "pass-consistency",
+      "agent": "pass-consistency--terra-med",
+      "tier": "terra-med",
+      "raisable_to": [
+        "pass-consistency--sol-med",
+        "pass-consistency--sol-high"
+      ],
+      "why": "the change adds 55 lines of non-test code (at least 20)"
+    },
+    {
+      "lens": "pass-validate",
+      "agent": "pass-validate--sol-high",
+      "tier": "sol-high",
+      "raisable_to": []
+    }
+  ],
+  "sweepPlan": null,
+  "followUp": null
+}

@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { takeHandoffToken } from "./ghcred.js";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import { daemonLoadLine } from "./eventloop.js";
 import {
@@ -1311,8 +1312,15 @@ export async function rebuildCompanion(
   );
 }
 
-/** `qcr companion up|down|status|rebuild` — thin over CompanionLifecycle. */
+/** `qcr companion up|down|status|rebuild|plan` — thin over CompanionLifecycle. */
 export async function cmdCompanion(sub: string | undefined): Promise<void> {
+  if (sub === "plan") {
+    // For the host wrapper: the docker run it makes for the containerised TUI's
+    // companion (D35). Needs no config and runs no docker.
+    const { companionPlan, renderPlan } = await import("./tui/companionplan.js");
+    process.stdout.write(renderPlan(companionPlan(process.env)));
+    return;
+  }
   const { CompanionLifecycle, companionStateWord, realDockerRunner } =
     await import("./tui/companion.js");
   const cfg = loadConfig().companion;
@@ -1371,7 +1379,7 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
       return;
     }
     default:
-      throw new Error("usage: qcr companion <up|down|status|rebuild>");
+      throw new Error("usage: qcr companion <up|down|status|rebuild|plan>");
   }
 }
 
@@ -1424,12 +1432,20 @@ export async function cmdMemory(rest: string[]): Promise<number> {
   });
   for (const r of results) console.log(`  ${r.user}: ${r.status} — ${r.detail}`);
   if (ok) {
+    // The journal lives with the store: in the daemon container, or in the
+    // memory sidecar (whose app root is /opt/qcr) under `endpoint = "remote"`.
+    const { tuiMemoryContainer } = await import("./tui/memforward.js");
+    const memoryContainer = tuiMemoryContainer(cfg.tui);
+    const script =
+      memoryContainer === cfg.tui.container
+        ? "/opt/quickreview/sandbox/scripts/openviking-reembed.mjs"
+        : "/opt/qcr/scripts/openviking-reembed.mjs";
     console.log(
       "done. The daemon's journal still lists these namespaces as awaiting you; receipt them in the container so the heartbeat stops naming them:\n" +
         users
           .map(
             (u) =>
-              `  docker exec ${cfg.tui.container} node /opt/quickreview/sandbox/scripts/openviking-reembed.mjs settle --home ${cfg.openviking.home} --user ${u}`,
+              `  docker exec ${memoryContainer} node ${script} settle --home ${cfg.openviking.home} --user ${u}`,
           )
           .join("\n"),
     );
@@ -1803,6 +1819,18 @@ async function cmdArchive(rest: readonly string[], json: boolean): Promise<numbe
 export async function main(argv: string[]): Promise<void> {
   const json = argv.includes("--json");
   argv = argv.filter((a) => a !== "--json");
+  // A GitHub token handed over as a file (src/ghcred.ts, D39) is read and
+  // unlinked here, before any verb can start a pi or bash child. A file that
+  // is named but cannot be taken is a one-line failure, never a stack trace.
+  try {
+    takeHandoffToken();
+  } catch (err) {
+    const error = `the GitHub token handoff failed: ${err instanceof Error ? err.message : String(err)}`;
+    if (json) console.log(JSON.stringify({ error }));
+    else console.error(`qcr: ${error}`);
+    process.exitCode = 1;
+    return;
+  }
   const [cmd, ...rest] = argv;
   switch (cmd) {
     case "checklist": {
@@ -1888,7 +1916,7 @@ export async function main(argv: string[]): Promise<void> {
       return runTui(rest);
     }
     case "companion":
-      if (rest.length !== 1) throw new Error("usage: qcr companion <up|down|status|rebuild>");
+      if (rest.length !== 1) throw new Error("usage: qcr companion <up|down|status|rebuild|plan>");
       return cmdCompanion(rest[0]);
     case "memory": {
       process.exitCode = await cmdMemory(rest);
@@ -1910,11 +1938,62 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdArchive(rest, json);
       return;
     }
+    case "live": {
+      // A review's LiveEvent log as a transcript (src/livecli.ts). Usage
+      // errors are its own exit code 2.
+      const { runLive } = await import("./livecli.js");
+      const { liveContainersFromEnv } = await import("./reviewdetach.js");
+      const { stateHome } = await import("./install.js");
+      process.exitCode = await runLive(rest, json, {
+        home: join(stateHome(), "review", "detached"),
+        liveContainers: () => liveContainersFromEnv(process.env),
+        out: (l) => console.log(l),
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        alive: (pid) => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      });
+      return;
+    }
     case "scan": {
       // Scan stage 1 and 2, the companion's scan tools as a scriptable verb
       // (src/scancli.ts). Usage errors are its own exit code 2.
       const { cmdScan } = await import("./scancli.js");
       process.exitCode = await cmdScan(rest, json);
+      return;
+    }
+    case "review": {
+      // A daemonless review in the terminal (src/reviewcli.ts). Usage errors
+      // are its own exit code 2.
+      const { cmdReview } = await import("./reviewcli.js");
+      process.exitCode = await cmdReview(rest, json);
+      return;
+    }
+    case "open": {
+      // A finished review session in pi's own UI (src/opencli.ts). Usage
+      // errors are its own exit code 2.
+      const { cmdOpen } = await import("./opencli.js");
+      process.exitCode = await cmdOpen(rest, json);
+      return;
+    }
+    case "version": {
+      // The install's identity for a plugin: image version, JSON schema
+      // versions, pi pin (src/version.ts). Needs no config and no state.
+      const { versionInfo, renderVersion } = await import("./version.js");
+      let pin: { package: string; version: string } | null = null;
+      try {
+        const { package: pkg, version } = loadConfig().pi;
+        pin = { package: pkg, version };
+      } catch {
+        // a bare clone has no config.toml: package.json's pi block answers
+      }
+      const info = versionInfo(sandboxRoot(), pin);
+      console.log(json ? JSON.stringify(info) : renderVersion(info));
       return;
     }
     case "install": {
@@ -1927,8 +2006,8 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
-          "companion <up|down|status|rebuild>|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
+        "usage: qcr <version|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+          "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       // A bare `qcr` (or an explicit help) is a usage request; anything else

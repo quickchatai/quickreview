@@ -26,6 +26,7 @@ export {
   EMBEDDER_FAST_POLL_MS,
   EMBEDDER_GATE_MAX_WAIT_MS,
   LocalEmbedderSupervisor,
+  REMOTE_EMBEDDER_REASON,
   localEmbedderArgv,
   localEmbedderOffReason,
   localEmbedderSpec,

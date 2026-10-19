@@ -1,0 +1,52 @@
+{
+  "plannedLenses": [
+    "pass-baseline--sol-high",
+    "pass-sweep--sol-high",
+    "pass-tests--terra-med",
+    "pass-validate--sol-high"
+  ],
+  "passPlan": [
+    {
+      "lens": "pass-baseline",
+      "agent": "pass-baseline--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "every round: the PR against its own claims",
+      "required": true
+    },
+    {
+      "lens": "pass-sweep",
+      "agent": "pass-sweep--sol-high",
+      "tier": "sol-high",
+      "raisable_to": [],
+      "why": "every changed line of b.py, read one by one",
+      "focus": [
+        "b.py"
+      ]
+    },
+    {
+      "lens": "pass-tests",
+      "agent": "pass-tests--terra-med",
+      "tier": "terra-med",
+      "raisable_to": [
+        "pass-tests--sol-med",
+        "pass-tests--sol-high"
+      ],
+      "why": "the PR changes code: existing tests are its consumers, and its own tests are claims"
+    },
+    {
+      "lens": "pass-validate",
+      "agent": "pass-validate--sol-high",
+      "tier": "sol-high",
+      "raisable_to": []
+    }
+  ],
+  "sweepPlan": null,
+  "followUp": {
+    "round_no": 2,
+    "review_no": 2,
+    "scope": "full",
+    "reason": "follow_up_full",
+    "prior_findings": 2
+  }
+}

@@ -1,0 +1,2662 @@
+{
+  "vm": [
+    {
+      "name": "pass-abstraction--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-abstraction--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-abstraction--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-ask-human--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-ask-human--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-ask-human--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-backcompat--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-backcompat--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-backcompat--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-baseline--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-baseline--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-baseline--terra-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--terra-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-bounds--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-bounds--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-bounds--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-claims--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-claims--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-claims--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-concurrency--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-concurrency--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-concurrency--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-consistency--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-consistency--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-consistency--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-contracts--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-contracts--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-contracts--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-data-safety--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-deferred--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-deferred--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-deferred--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-delivery--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-delivery--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-delivery--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-duplication--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-duplication--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-duplication--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-intent--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-intent--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-intent--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-maintainability--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-maintainability--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-maintainability--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-placement--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-placement--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-placement--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-prod-risk--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-rollout--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-rollout--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-rollout--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-security--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-simplicity--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-simplicity--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-simplicity--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-statelessness--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-statelessness--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-statelessness--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-style--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-style--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-style--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-sweep--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-sweep--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-sweep--terra-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-tests--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-tests--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-tests--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-ui--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-ui--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-ui--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-validate--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-widened--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-widened--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    },
+    {
+      "name": "pass-widened--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob",
+        "viking_search",
+        "viking_read"
+      ]
+    }
+  ],
+  "bench": [
+    {
+      "name": "pass-abstraction--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-abstraction--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-abstraction--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-ask-human--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-ask-human--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-ask-human--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-backcompat--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-backcompat--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-backcompat--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-baseline--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-baseline--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-baseline--terra-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--terra-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-bounds--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-bounds--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-bounds--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-claims--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-claims--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-claims--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-concurrency--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-concurrency--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-concurrency--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-consistency--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-consistency--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-consistency--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-contracts--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-contracts--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-contracts--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-data-safety--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-deferred--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-deferred--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-deferred--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-delivery--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-delivery--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-delivery--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-duplication--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-duplication--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-duplication--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-intent--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-intent--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-intent--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-maintainability--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-maintainability--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-maintainability--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-placement--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-placement--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-placement--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-prod-risk--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-rollout--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-rollout--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-rollout--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-security--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-simplicity--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-simplicity--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-simplicity--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-statelessness--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-statelessness--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-statelessness--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-style--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-style--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-style--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-sweep--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-sweep--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-sweep--terra-med",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-tests--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-tests--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-tests--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-ui--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-ui--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-ui--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-validate--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-widened--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-widened--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    },
+    {
+      "name": "pass-widened--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "glob"
+      ]
+    }
+  ],
+  "scan": [
+    {
+      "name": "pass-abstraction--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-abstraction--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-abstraction--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-ask-human--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-ask-human--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-ask-human--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-backcompat--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-backcompat--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-backcompat--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-baseline--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-baseline--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-baseline--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-bounds--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-bounds--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-bounds--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-claims--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-claims--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-claims--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-concurrency--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-concurrency--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-concurrency--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-consistency--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-consistency--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-consistency--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-contracts--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-contracts--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-contracts--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-data-safety--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-deferred--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-deferred--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-deferred--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-delivery--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-delivery--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-delivery--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-duplication--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-duplication--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-duplication--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-intent--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-intent--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-intent--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-maintainability--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-maintainability--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-maintainability--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-placement--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-placement--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-placement--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-prod-risk--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-rollout--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-rollout--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-rollout--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-scan--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:low",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-security--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-simplicity--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-simplicity--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-simplicity--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-statelessness--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-statelessness--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-statelessness--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-style--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-style--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-style--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sweep--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sweep--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sweep--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-tests--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-tests--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-tests--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-ui--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-ui--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-ui--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-validate--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-validate--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-validate--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-widened--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-widened--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-widened--terra-med",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    }
+  ]
+}

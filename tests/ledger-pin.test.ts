@@ -6,8 +6,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Pi, PiEventHandler } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { activate, extractLedger, parseOwnPr } from "../extensions/ledger-pin.js";
+
+/** A handler as the fake pi records it. */
+type PiEventHandler = (event: Record<string, unknown>) => unknown;
 
 const snapshotFault = vi.hoisted(() => ({ active: false }));
 vi.mock("node:fs", async (original) => {
@@ -105,7 +108,7 @@ describe("activate (mirror path)", () => {
     process.env.QCR_LEDGER_FILE = snapshot;
     const handlers = new Map<string, PiEventHandler>();
     const pi = { on: (event: string, handler: PiEventHandler) => handlers.set(event, handler) };
-    activate(pi as unknown as Pi);
+    activate(pi as unknown as ExtensionAPI);
     const fire = (event: Record<string, unknown>): void => {
       void handlers.get("turn_end")?.(event);
     };

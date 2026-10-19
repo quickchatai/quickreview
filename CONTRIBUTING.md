@@ -21,6 +21,27 @@ listed in `tests/AGENTS.md`.
 Conventions: TypeScript strict, ESM (`"type": "module"`, NodeNext — local
 imports use the `.js` suffix), Node ≥ 22, minimal dependencies.
 
+## Running from a clone
+
+Users run QuickReview from the released image (`qcr`, [README](README.md#quickstart)).
+A clone is the developer route: it is tested in CI (the `clone` job: a fresh
+checkout, `npm ci`, `npm run build`, `scripts/qcr version --json` and
+`scripts/qcr review --preview --json` on a fixture, no Docker and no model) but
+not promised in the user docs.
+
+```sh
+scripts/qcr onboard     # or: npm run onboard — the guided setup, from the checkout
+scripts/qcr tui         # the operator board
+npm run lint            # ESLint with type-aware rules
+npm run format          # Prettier; `npm run format:check` to verify
+```
+
+Lint and format are not chained into `npm test` or `npm run build`; CI runs
+both. From a clone the wizard drives Docker on your machine directly, the same
+as the image's wizard does where it can; to run a locally built image through
+`docker-compose.yml`, see the last section of
+[docker/daemon/README.md](docker/daemon/README.md).
+
 ## The rules that will surprise you
 
 1. **Frozen prompt seeds.** `prompts/` + `agents/` seeded content is

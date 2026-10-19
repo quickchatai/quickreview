@@ -11,6 +11,9 @@
 #              --phase: arm.sh's split of one run into one container per case (init/finish
 #              run --network none with no login; see src/bench/cli.ts)
 #              --config: config.toml levers for THIS run only, so two arms share one image
+#                (the SDK arm: --config engine.runtime=sdk,pi.lens_runtime=engine; each case then runs
+#                in a host process of its own, and the judge's pool likewise)
+#              --runtime proc|sdk: the same switch as engine.runtime, for one command (review, judge)
 #   bench/aacr/bench.sh eval     --run ID [--set smoke10] [--judge mock|openai|codex] [--rounds 3] [--line-k N]
 #                                [--shards N] [--variants all,no-nits,blockers]
 #              --shards N: split the instances into N harness processes per variant (variants
@@ -43,7 +46,8 @@
 #   QCR_BENCH_OCR_EFFORT=L   the OCR arm's reasoning effort (low|medium|high|xhigh|max; default medium)
 #   QCR_BENCH_PR_TEXT=1      hand the PR title/body to the ocr/codex/opencode/pireview arm the way
 #                            that tool takes review context (src/bench/prtext.ts; default off)
-#   QCR_BENCH_PI_VERSION=V   `build`: install pi V in the image instead of the Dockerfile's pin
+#   QCR_BENCH_PI_VERSION=V   `build`: install pi V in the image instead of the release's pin
+#   QCR_BENCH_RELEASE_IMAGE=I `build`: build on release image I instead of building docker/Dockerfile
 #   QCR_BENCH_{OCR,OPENCODE,CODEX,PIREVIEW}_MODEL=ID   `review`: the model that third-party arm
 #                            runs, a Codex model id (default gpt-6-sol, the published runs); e.g.
 #                            gpt-6.1-sol — pi-review then needs an image on pi >= 0.99 (its catalog)
@@ -167,7 +171,7 @@ while (($#)); do
     --line-k) LINE_K="$2"; shift 2 ;;
     --judge-model) JARGS+=(--model "$2"); JUDGE_MODEL="$2"; shift 2 ;;
     --label) JARGS+=(--label "$2"); shift 2 ;;
-    --profile|--timeout-min|--concurrency|--ocr-concurrency|--max-tools|--config) EXTRA+=("$1" "$2"); shift 2 ;;
+    --profile|--timeout-min|--concurrency|--ocr-concurrency|--max-tools|--config|--runtime) EXTRA+=("$1" "$2"); shift 2 ;;
     --phase) PHASE="$2"; EXTRA+=("$1" "$2"); shift 2 ;;
     --shards) SHARDS="$2"; shift 2 ;;
     --variants) VARIANTS="$2"; shift 2 ;;
@@ -177,11 +181,14 @@ while (($#)); do
     *) die "unknown flag $1 (see the header of $0)" ;;
   esac
 done
+# The Debian release of the release image the bench image is built on; the arms that need
+# git >= 2.41 or Python >= 3.12 take trixie's.
+DISTRO=bookworm
 case "$ARM" in
   qcr) IMAGE="${QCR_BENCH_IMAGE:-qcr-bench:latest}"; TARGET=runtime; BASE_ARGS=(); REVIEW_ENTRY=review ;;
-  # OCR needs git >= 2.41; bookworm ships 2.39 (Dockerfile header).
+  # OCR needs git >= 2.41; bookworm ships 2.39 (Dockerfile header): the trixie release.
   ocr) IMAGE="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"; TARGET=ocr
-       BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=ocr-review ;;
+       DISTRO=trixie; BASE_ARGS=(); REVIEW_ENTRY=ocr-review ;;
   # Codex CLI arm: the harness's own reviewers/codex.py (Dockerfile target `codex`).
   codex) IMAGE="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"; TARGET=codex; BASE_ARGS=(); REVIEW_ENTRY=codex-review
        [[ -n "${QCR_BENCH_CODEX_VERSION:-}" ]] && BASE_ARGS=(--build-arg "CODEX_VERSION=$QCR_BENCH_CODEX_VERSION" --build-arg "CODEX_SHA256_LINUX_X64=${QCR_BENCH_CODEX_SHA256:?set QCR_BENCH_CODEX_SHA256 with QCR_BENCH_CODEX_VERSION}") ;;
@@ -192,15 +199,15 @@ case "$ARM" in
   # --- the Claude Code arm (the one sanctioned place to run it: inside this image only) ---
   # trixie as for OCR: the classic builder builds every stage before the target, ocr's included.
   claude) IMAGE="${QCR_BENCH_CLAUDE_IMAGE:-qcr-bench-claude:latest}"; TARGET=claude
-       BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=claude-review ;;
+       DISTRO=trixie; BASE_ARGS=(); REVIEW_ENTRY=claude-review ;;
   # pi-review: its own target on the same runtime (PIREVIEW_VERSION build arg, Dockerfile).
   pireview) IMAGE="${QCR_BENCH_PIREVIEW_IMAGE:-qcr-bench-pireview:latest}"; TARGET=pireview
        BASE_ARGS=(); REVIEW_ENTRY=pireview-review
        [[ -n "${QCR_BENCH_PIREVIEW_VERSION:-}" ]] && BASE_ARGS=(--build-arg "PIREVIEW_VERSION=$QCR_BENCH_PIREVIEW_VERSION" --build-arg "PIREVIEW_SHA512=${QCR_BENCH_PIREVIEW_SHA512:?set QCR_BENCH_PIREVIEW_SHA512 with QCR_BENCH_PIREVIEW_VERSION}") ;;
   # PR-Agent: its own target; pr-agent needs Python >= 3.12, so the runtime is trixie's (3.13),
-  # as for ocr/claude (the classic builder builds every stage above the target on that base).
+  # as for ocr/claude (the classic builder builds every stage above the target on that release).
   pragent) IMAGE="${QCR_BENCH_PRAGENT_IMAGE:-qcr-bench-pragent:latest}"; TARGET=pragent
-       BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=pragent-review
+       DISTRO=trixie; BASE_ARGS=(); REVIEW_ENTRY=pragent-review
        [[ -n "${QCR_BENCH_PRAGENT_VERSION:-}" ]] && BASE_ARGS+=(--build-arg "PRAGENT_VERSION=$QCR_BENCH_PRAGENT_VERSION" --build-arg "PRAGENT_SHA256=${QCR_BENCH_PRAGENT_SHA256:?set QCR_BENCH_PRAGENT_SHA256 with QCR_BENCH_PRAGENT_VERSION}") ;;
   *) die "--arm must be qcr | ocr | codex | opencode | pireview | pragent | claude" ;;
 esac
@@ -398,14 +405,13 @@ case "$cmd" in
   build)
     commit="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
     [[ -z "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]] || commit="$commit-dirty"
-    # The build context is ASSEMBLED from an explicit allowlist — only what a
-    # review round reads. .git, state/, secrets, scripts/ (the posting route),
-    # deploy/ (bar the reviewer context stub production installs at boot),
+    # The harness's build context is ASSEMBLED from an explicit allowlist — only what
+    # the bench adds to the release. .git, state/, secrets, scripts/ (the posting
+    # route), deploy/ (bar the reviewer context stub production installs at boot),
     # docs/, tests/ and every run output never reach the builder.
-    ctx="$(mktemp -d)"; trap 'rm -rf "$ctx"' EXIT
+    ctx="$(mktemp -d)"; trap 'rm -rf "$ctx" "${rctx:-}"' EXIT
     ( cd "$REPO" && tar -cf - --exclude=node_modules --exclude='*.tsbuildinfo' \
-        package.json package-lock.json tsconfig.json AGENTS.md .pi \
-        src extensions prompts agents \
+        AGENTS.md .pi \
         bench/aacr/Dockerfile bench/aacr/sets bench/aacr/defects bench/aacr/judge_shim.py \
         bench/aacr/in-container.sh bench/aacr/codex_bridge.py bench/aacr/eval_shards.py \
         bench/aacr/codex_arm.py \
@@ -461,6 +467,25 @@ case "$cmd" in
       [[ "$QCR_BENCH_PI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "QCR_BENCH_PI_VERSION must be x.y.z"
       BASE_ARGS+=(--build-arg "PI_VERSION=$QCR_BENCH_PI_VERSION")
     fi
+    # The release image is built (or named) before the bench image: docker/Dockerfile
+    # from the checkout (the compiled app, its dependencies, pi, the seeds, the
+    # profiles), tagged qcr-release:<distro>.
+    # QCR_BENCH_RELEASE_IMAGE=IMAGE builds on that image instead and builds nothing.
+    if [[ -n "${QCR_BENCH_RELEASE_IMAGE:-}" ]]; then
+      RELEASE_IMAGE="$QCR_BENCH_RELEASE_IMAGE"
+    else
+      RELEASE_IMAGE="qcr-release:$DISTRO"
+      # Its context is assembled the way its own .dockerignore allowlists it, so the
+      # legacy builder (which reads only the root .dockerignore) builds the same tree.
+      rctx="$(mktemp -d)"
+      ( cd "$REPO" && tar -cf - --exclude=node_modules --exclude='*.tsbuildinfo' --exclude=.git \
+          docker/Dockerfile docker/Dockerfile.dockerignore \
+          $(sed -n 's/^!//p' docker/Dockerfile.dockerignore) ) | tar -xf - -C "$rctx"
+      docker build -f "$rctx/docker/Dockerfile" -t "$RELEASE_IMAGE" \
+        --build-arg "NODE_DISTRO=$DISTRO" --build-arg "BUILD_SHA=$commit" "$rctx"
+      rm -rf "$rctx"
+    fi
+    BASE_ARGS+=(--build-arg "RELEASE_IMAGE=$RELEASE_IMAGE")
     docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
       --build-arg "QCR_BENCH_COMMIT=$commit" -f "$ctx/bench/aacr/Dockerfile" "$ctx"
     ;;

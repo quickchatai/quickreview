@@ -66,9 +66,9 @@ describe("cluster_findings on both routes", () => {
       /join\(this\.root, "extensions", "finding-clusters\.ts"\)/,
     );
   });
-  it("the bench session loads it (runner.ts argv)", () => {
-    expect(readFileSync(join(root, "src/bench/runner.ts"), "utf8")).toMatch(
-      /"--extension",\s*join\(o\.root, "extensions", "finding-clusters\.ts"\)/,
+  it("the bench session loads it (round.ts session spec)", () => {
+    expect(readFileSync(join(root, "src/engine/round.ts"), "utf8")).toMatch(
+      /extensions: \[[^\]]*join\(root, "extensions", "finding-clusters\.ts"\)/,
     );
   });
   it("answers groups for the validator, and reports malformed input instead of throwing", async () => {

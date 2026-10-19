@@ -11,7 +11,8 @@ import {
   roundExecutionStage,
 } from "../src/round-progress.js";
 import { PASS_TIER_ORDER } from "../src/types.js";
-import type { PiEventHandler } from "@earendil-works/pi-coding-agent";
+/** A handler as the fake pi records it. */
+type PiEventHandler = (event: Record<string, unknown>) => unknown;
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -787,6 +788,124 @@ describe("round progress — launch_plan", () => {
       }
     },
   );
+});
+
+// D3: the engine's tools are `lens` and `lens_wave`; the tmux bot still runs
+// `subagent` and `launch_plan`. The extension reads both, and one lens run
+// (one LensResult `id`) is one row however many calls report it.
+describe("round progress — lens and lens_wave", () => {
+  async function rig(pr: string) {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-lens-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    process.env.QCR_SANDBOX_ROOT = root;
+    process.env.QCR_SESSION_NAME = `pr-${pr}`;
+    process.env.QCR_PR = pr;
+    const handlers = new Map<string, PiEventHandler[]>();
+    const pi = {
+      on(name: string, handler: PiEventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    };
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    activate(pi as never);
+    await emit("agent_start");
+    await emit("message_start", {
+      message: {
+        role: "user",
+        content: [{ type: "text", text: `<!-- qcr-command:cmd-${pr}:${"d".repeat(64)} -->` }],
+      },
+    });
+    const read = () =>
+      parseRoundProgress(
+        readFileSync(join(root, "state", "round-progress", `pr-${pr}.json`), "utf8"),
+      )!;
+    return { emit, read, restore: () => void (process.env = previous) };
+  }
+
+  it("reads a lens call's tasks at start, like subagent", async () => {
+    const t = await rig("5501");
+    try {
+      await t.emit("tool_execution_start", {
+        toolName: "lens",
+        toolCallId: "l-1",
+        args: {
+          tasks: [
+            { agent: "pass-security", task: "a" },
+            { agent: "pass-baseline", task: "b" },
+          ],
+        },
+      });
+      const started = t.read();
+      expect(started.agents.map((a) => [a.execution_id, a.status])).toEqual([
+        ["l-1:pass-security", "running"],
+        ["l-1:pass-baseline", "running"],
+      ]);
+      expect(started.first_lens_started_at).toEqual(expect.any(String));
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("a lens_wave has no arguments: its rows come from its results, and a repeat call adds none", async () => {
+    const t = await rig("5502");
+    try {
+      await t.emit("tool_execution_start", { toolName: "lens_wave", toolCallId: "w-1", args: {} });
+      expect(t.read().agents).toEqual([]);
+      const wave = [
+        { id: "L1", agent: "pass-security", exitCode: 0 },
+        { id: "L2", agent: "pass-baseline", exitCode: -1 },
+      ];
+      await t.emit("tool_execution_update", {
+        toolName: "lens_wave",
+        toolCallId: "w-1",
+        partialResult: { details: { mode: "parallel", results: wave } },
+      });
+      expect(t.read().agents.map((a) => [a.execution_id, a.status])).toEqual([
+        ["w-1:pass-security", "completed"],
+        ["w-1:pass-baseline", "running"],
+      ]);
+      await t.emit("tool_execution_end", {
+        toolName: "lens_wave",
+        toolCallId: "w-1",
+        result: { details: { results: wave.map((r) => ({ ...r, exitCode: 0 })) } },
+      });
+      // The main session joins the same wave a second time.
+      await t.emit("tool_execution_start", { toolName: "lens_wave", toolCallId: "w-2", args: {} });
+      await t.emit("tool_execution_end", {
+        toolName: "lens_wave",
+        toolCallId: "w-2",
+        result: { details: { results: wave.map((r) => ({ ...r, exitCode: 0 })) } },
+      });
+      const done = t.read();
+      expect(done.agents.map((a) => [a.execution_id, a.status])).toEqual([
+        ["w-1:pass-security", "completed"],
+        ["w-1:pass-baseline", "completed"],
+      ]);
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("results without an id (the native shape) still get a row per call", async () => {
+    const t = await rig("5503");
+    try {
+      for (const call of ["s-1", "s-2"])
+        await t.emit("tool_execution_end", {
+          toolName: "subagent",
+          toolCallId: call,
+          result: { details: { results: [{ agent: "pass-security", exitCode: 0 }] } },
+        });
+      expect(t.read().agents.map((a) => a.execution_id)).toEqual([
+        "s-1:pass-security",
+        "s-2:pass-security",
+      ]);
+    } finally {
+      t.restore();
+    }
+  });
 });
 
 // The snapshot is rewritten on every event; the transition log

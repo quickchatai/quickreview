@@ -92,7 +92,7 @@ export class CompanionSidebar {
   /** Atomically resizes the tmux window and captures the resulting pane. */
   refresh(): Promise<void>;
   send(text: string): Promise<void>;
-  /** Raw stdin passthrough while focused (pipane's keysToTmux). */
+  /** Raw stdin passthrough while focused (termmirror's keysToTmux). */
   sendKeys(buf: Buffer): Promise<void>;
   focus(seed?: string): void;
   blur(): void;
@@ -103,7 +103,7 @@ export class CompanionSidebar {
 }
 ```
 
-Reuse from `pipane.ts`, do not reimplement: `keepSgrOnly`, `splitCapture`,
+Reuse from `termmirror.ts`, do not reimplement: `keepSgrOnly`, `splitCapture`,
 `keysToTmux`, `SCROLL_STEP`. Capture with `-e` (colors kept — that is the whole
 point of the restyle work) and `-J`, through the same local `DockerRunner`
 seam.

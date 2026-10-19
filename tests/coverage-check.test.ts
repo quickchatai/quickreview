@@ -174,11 +174,9 @@ describe("the knob and the note", () => {
 describe("coverage_gaps on both routes", () => {
   it("rides the finding-clusters extension both routes load", () => {
     const ext = readFileSync(join(root, "extensions/finding-clusters.ts"), "utf8");
-    expect(ext).toContain("pi.registerTool(COVERAGE_TOOL)");
+    expect(ext).toContain("FINDING_CLUSTERS_TOOLS");
     expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
-    expect(readFileSync(join(root, "src/bench/runner.ts"), "utf8")).toMatch(
-      /"finding-clusters\.ts"/,
-    );
+    expect(readFileSync(join(root, "src/engine/round.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
   });
   it("answers rows with reasons, and reports malformed input instead of throwing", async () => {
     const res = await COVERAGE_TOOL.execute("t1", {

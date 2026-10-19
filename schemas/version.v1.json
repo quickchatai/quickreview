@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "version.v1.json",
+  "title": "qcr version --json, version 1",
+  "description": "What a plugin checks before it talks to this install: the image's version, the schema versions of the review and scan payloads, and the pi pin.",
+  "type": "object",
+  "required": ["schema_version", "image", "schemas", "pi"],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "This schema's version."
+    },
+    "image": {
+      "type": "object",
+      "required": ["version", "build_sha"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "package.json's version."
+        },
+        "build_sha": {
+          "type": ["string", "null"],
+          "description": "The stamp baked into a rebuilt image; null on a bare checkout."
+        }
+      }
+    },
+    "schemas": {
+      "type": "object",
+      "required": ["review", "scan"],
+      "properties": {
+        "review": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "schema_version of review-result payloads."
+        },
+        "scan": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "schema_version of scan-result payloads."
+        }
+      }
+    },
+    "pi": {
+      "type": ["object", "null"],
+      "required": ["package", "version"],
+      "properties": {
+        "package": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "description": "The pinned pi; null when no pin is found."
+    }
+  }
+}

@@ -7,8 +7,29 @@
 sandbox_root: /opt/quickreview          # on the VM
 webhook_port: 8787
 
+# The daemon container's name, and the repository name of the images built on the VM.
 image_name: quickreview-sandbox
+# The LEGACY image (Ubuntu + the rendered Dockerfile.j2, retired by the release
+# image cutover). Nothing here builds or runs it any more; it stays on the VM
+# under this tag as the rollback image (README, "Rollback to the legacy image").
 image_tag: v1
+
+# Which image the daemon container runs. `release` pulls the published images
+# (release_image / release_memory_image at -e release_version=X.Y.Z, set by
+# `scripts/deploy.sh release X.Y.Z`); `dev` builds docker/Dockerfile on the VM
+# from the rsynced checkout and tags it <image_name>:<dev_image_tag>
+# (`scripts/deploy.sh sync|rebuild`). Never `latest`: no such tag exists.
+image_source: dev
+dev_image_tag: dev
+release_image: ghcr.io/quickchatai/quickreview
+release_memory_image: ghcr.io/quickchatai/quickreview-memory
+# The release image's app root: root-owned, read-only to the container user,
+# with the runtime directories bind-mounted into it from sandbox_root.
+app_root: /opt/qcr
+# Where the legacy container mounted the sandbox root. The playbook mounts the
+# worktree directory and the base clone there too, so absolute paths recorded
+# before the cutover (git worktree metadata, pi session headers) still resolve.
+legacy_sandbox_root: /opt/quickreview/sandbox
 
 node_major: "22"
 # pi CLI npm package + exact version pin (registry-verified). The image never
@@ -32,8 +53,9 @@ pi_version: "1.3.0"
 # bumping is a deliberate edit + `-e rebuild_image=true`.
 #
 # TRIPLE MIRROR: openviking_version / llama_cpp_python_version here ==
-# config.toml [openviking] version / llama_cpp_python_version == the Dockerfile
-# venv layer (which interpolates THESE vars, never a literal).
+# config.toml [openviking] version / llama_cpp_python_version == the memory
+# image's ARG defaults (docker/memory/Dockerfile, tests/memory-image.test.ts)
+# == the build-args a dev build passes from THESE vars, never a literal.
 # tests/openviking.test.ts fails on drift.
 #
 # llama-cpp-python is NOT an openviking dependency — it is an undeclared
@@ -45,7 +67,17 @@ pi_version: "1.3.0"
 openviking_version: "0.4.15"
 llama_cpp_python_version: "0.3.35"
 openviking_venv: /opt/openviking/venv
-openviking_port: 1933                 # loopback only — NEVER a published port
+openviking_port: 1933                 # never a published port: loopback in the container that runs it
+# WHO RUNS THE SERVER. "remote" (the VM's value) is the memory SIDECAR: a
+# second container beside the daemon's (docker/memory/, the `memory_*` knobs
+# below) runs OpenViking and its local embedder, owns the boot provisioning and
+# the embedder re-embed, and holds its own copy of the store. The daemon then
+# only probes it. "local" is the pre-sidecar layout — OpenViking a child of the
+# daemon's container — which the release image cannot run (it carries no
+# OpenViking), so the playbook and scripts/deploy.sh refuse it: the way back to
+# it is the legacy image and the old playbook (README, "Rollback").
+# MIRRORS config.toml [openviking] endpoint.
+openviking_endpoint: "remote"
 # ~/.openviking is symlinked here at boot, so memory lives on the state volume
 # and survives an image rebuild. Must equal config.toml [openviking] home.
 openviking_home: /opt/quickreview/state/openviking
@@ -55,7 +87,7 @@ openviking_queue_concurrency: 2       # ov.conf queue_workers.* (defaults 4/4/8)
 # ENGLISH embedding model served on loopback INSIDE the container by
 # scripts/openviking-embedder.py (over the pinned llama_cpp_python above), so
 # no memory text ever leaves the machine — nothing but the model call does.
-# Under "local" the entrypoint renders ov.conf's OpenAI-COMPATIBLE provider
+# Under "local" the sidecar's entrypoint renders ov.conf's OpenAI-COMPATIBLE provider
 # with api_base http://127.0.0.1:{{ openviking_local_embedder_port }}/v1 and no
 # key — the engine's async client, so a search does not block the server.
 # A HOSTED embedder is an explicit opt-in, written as INVENTORY HOST VARS on the
@@ -64,7 +96,7 @@ openviking_queue_concurrency: 2       # ov.conf queue_workers.* (defaults 4/4/8)
 #     openviking_embedding_provider=openai openviking_embedding_model=text-embedding-3-small openviking_embedding_dimension=1536
 # plus the credential in <secrets_src>/<openviking_embedding_key_file> — a
 # SEPARATE file from pi's openai_api_key, so either can be set without the
-# other. The entrypoint renders these into ov.conf `embedding.dense`; ov.conf
+# other. The sidecar's entrypoint (docker/memory/entrypoint.sh) renders these into ov.conf `embedding.dense`; ov.conf
 # carries NO `vlm` section either way (extraction, summaries and digest are
 # off — memories are authored, never extracted).
 # MIRRORS config.toml [openviking] embedding_provider / embedding_model /
@@ -81,7 +113,7 @@ openviking_embedding_key_file: "openai_embeddings_api_key"
 # The LOCAL EMBEDDER's model file — a rule-7 pin like
 # openviking_version. TRIPLE MIRROR: these == config.toml [openviking]
 # local_embedder_file (== dir/model.gguf) / local_embedder_url /
-# local_embedder_sha256 == the Dockerfile model layer, which downloads the
+# local_embedder_sha256 == the memory image's model layer, which downloads the
 # GGUF at BUILD time and refuses it unless the sha256 matches (the service
 # re-checks it at every start). The image carries it whatever the provider, so
 # a hosted opt-in can return to local without a rebuild; changing the pin needs
@@ -119,12 +151,34 @@ openviking_reviewer_key_file: "openviking_reviewer_key"
 # present, never rotated (a rotation orphans the distributed keys).
 openviking_provision_users: "reviewer,companion"
 
-# tmux ≥3.5 for csi-u extended keys end-to-end:
-# Ubuntu 24.04 apt ships 3.4, so the image builds this release from source.
+# The memory sidecar (used under openviking_endpoint: remote). The container
+# name is also its DNS name on the network below, so it MIRRORS config.toml
+# [openviking] host (scripts/deploy.sh refuses drift). The port is
+# openviking_port above, on the container network only — never published.
+memory_container_name: quickreview-memory
+memory_image_name: quickreview-memory
+memory_image_tag: v1
+# A user-defined bridge, because Docker resolves container names only there.
+# The daemon's container joins it (and keeps its published webhook port); the
+# network is not internal — the daemon still needs the internet.
+memory_network: quickreview-memory
+# The sidecar's OWN copy of the store, on the VM. Seeded ONCE from the daemon's
+# `openviking_home` while the daemon container is stopped, verified file by
+# file, and never deleted or overwritten afterwards (the .seeded marker). The
+# old directory stays untouched as the rollback's store.
+memory_state_dir: /opt/quickreview/memory-state
+# Hard caps like the daemon's. PROVISIONAL: sized from the daemon container's
+# 2 CPU / 8 GiB, which carried the server and the embedder as children; re-size
+# from `docker stats quickreview-memory` once it has run under load.
+memory_container_cpus: "1"
+memory_container_memory: "3g"
+
+# tmux ≥3.5 for csi-u extended keys end-to-end: the release image builds this
+# release from source (docker/Dockerfile ARG TMUX_VERSION, passed by a dev build).
 tmux_version: "3.5a"
 
 timezone: Europe/Warsaw
-container_uid: 1001                   # the in-container 'review' user (Dockerfile)
+container_uid: 1001                   # the uid the daemon runs as and the host directories belong to
 
 # Hard Docker limits — the VM may be shared with other workloads.
 container_cpus: "2"

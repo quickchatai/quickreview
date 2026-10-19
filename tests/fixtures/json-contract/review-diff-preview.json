@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "preview": {
+    "repo": "local/diff-repo",
+    "target": {
+      "kind": "diff"
+    },
+    "postable": false,
+    "base": "diff",
+    "head_sha": "0000000000000000000000000000000000000000",
+    "files": 1,
+    "lines": 1,
+    "scope": "full",
+    "lenses": [
+      "pass-baseline--sol-high",
+      "pass-sweep--sol-high",
+      "pass-tests--terra-med",
+      "pass-validate--sol-high"
+    ],
+    "estimate_usd": 0.61,
+    "cap_usd": 1.22,
+    "limit_usd": 2,
+    "auto": true,
+    "key": "0000000000000000"
+  }
+}

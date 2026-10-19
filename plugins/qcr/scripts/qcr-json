@@ -1,0 +1,86 @@
+#!/bin/sh
+# qcr-json — run one qcr verb with --json and refuse a payload whose
+# schema_version this plugin does not know.
+#
+#   qcr-json review|scan|version [qcr arguments…]
+#
+# The plugin's skills call this and never `qcr` directly. qcr's JSON contract
+# (schemas/*.v<N>.json in the quickreview repo) leads every payload with
+# schema_version; a skill that read fields of a version it was not written for
+# would act on a guess. So: stdout is passed through only when every top-level
+# payload leads with a known version.
+#
+#   exit 0..N   qcr's own exit status, payload on stdout
+#   exit 3      an unknown schema_version: nothing on stdout, the reason on stderr
+#   exit 4      qcr printed no versioned payload and exited 0
+#   exit 2      usage
+#
+# Bump a KNOWN_* list only after reading the new schema and changing the skills.
+# POSIX sh and awk: no jq, no node.
+set -eu
+
+KNOWN_review="1"
+KNOWN_scan="1"
+KNOWN_version="1"
+
+verb="${1:-}"
+case "$verb" in
+  review) known="$KNOWN_review" ;;
+  scan) known="$KNOWN_scan" ;;
+  version) known="$KNOWN_version" ;;
+  *)
+    echo "usage: qcr-json review|scan|version [qcr arguments…]" >&2
+    exit 2
+    ;;
+esac
+
+# --json once, unless the caller already said it.
+has_json=0
+for a in "$@"; do
+  [ "$a" != --json ] || has_json=1
+done
+[ "$has_json" = 1 ] || set -- "$@" --json
+
+out="$(mktemp "${TMPDIR:-/tmp}/qcr-json.XXXXXX")"
+trap 'rm -f "$out"' EXIT
+
+rc=0
+"${QCR_BIN:-qcr}" "$@" >"$out" || rc=$?
+
+# Every top-level object is `{` alone on a line followed by an indented
+# "schema_version", or `{"schema_version":N,…` on one line. Nested objects
+# (a status payload's `result`) are indented and not looked at. Prints one
+# version per top-level object, or "none" for an object that does not lead
+# with it.
+versions="$(awk '
+  function take(s,   v) {
+    if (match(s, /^[ \t]*"schema_version"[ \t]*:[ \t]*[0-9]+/) == 0) { print "none"; return }
+    v = substr(s, RSTART, RLENGTH); sub(/^.*:[ \t]*/, "", v); print v
+  }
+  /^\{[ \t]*$/ { want = 1; next }
+  want { want = 0; take($0); next }
+  /^\{/ { take(substr($0, 2)) }
+' "$out")"
+
+if [ -z "$versions" ]; then
+  if [ "$rc" != 0 ]; then
+    echo "qcr-json: qcr $verb exited $rc and printed no versioned JSON payload" >&2
+    exit "$rc"
+  fi
+  echo "qcr-json: qcr $verb printed no versioned JSON payload" >&2
+  exit 4
+fi
+
+for v in $versions; do
+  ok=0
+  for k in $known; do
+    [ "$v" != "$k" ] || ok=1
+  done
+  if [ "$ok" = 0 ]; then
+    echo "qcr-json: qcr printed $verb schema_version $v; this plugin understands $known. Update the qcr plugin (and \`qcr update\`) rather than reading a payload it was not written for." >&2
+    exit 3
+  fi
+done
+
+cat "$out"
+exit "$rc"

@@ -141,7 +141,10 @@ const DENYLIST: { token: string; why: string }[] = [
   { token: t("oper", "ator-box"), why: "the private shared operator terminal's host name" },
   { token: t("your-dev-", "project"), why: "the private GCP project id" },
   { token: t("issue-", "tracker"), why: "the private issue tracker's repository and paths" },
-  { token: t("/home/", "user"), why: "the original operator's home directory (absolute private paths)" },
+  {
+    token: t("/home/", "user"),
+    why: "the original operator's home directory (absolute private paths)",
+  },
   {
     token: t("-home-", "user"),
     why: "the operator's home directory in dashed form (Claude Code project dirs)",
@@ -328,6 +331,123 @@ const ALLOWLIST: AllowlistEntry[] = [
       "provisions the [companion] git identity (its commit email) — the mount path itself is generic",
   },
   {
+    path: "docker/entrypoint.sh",
+    tokens: ["quickchat"],
+    reason:
+      "the release image's companion mode provisions the [companion] git identity (its commit email) — the companion's entrypoint since P7.8 (docker/companion/entrypoint.sh stays only for the scan sandbox's one-shot mode)",
+  },
+  {
+    path: ".github/workflows/release.yml",
+    tokens: ["quickchat"],
+    reason:
+      "names the release and memory-sidecar images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "docs/action/qcr-review.yml",
+    tokens: ["quickchat"],
+    reason:
+      "the workflow template names the Action under the publishing org (quickchatai/quickreview@v1), the one line a user copies; the Action's repository moves at the public leg",
+  },
+  {
+    path: "docs/action.md",
+    tokens: ["quickchat"],
+    reason:
+      "the Action's user doc names it under the publishing org (quickchatai/quickreview@v1), as the template does",
+  },
+  {
+    path: "plugins/qcr/scripts/qcr-setup.sh",
+    tokens: ["quickchat"],
+    reason:
+      "names the default release image under the publishing org's registry namespace (ghcr.io/quickchatai/quickreview), the one place the plugin can learn it before a wrapper pins it",
+  },
+  {
+    path: "docker-compose.yml",
+    tokens: ["quickchat"],
+    reason:
+      "names the daemon and memory-sidecar images it pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "README.md",
+    tokens: ["quickchat"],
+    reason:
+      "the install commands name the release image under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "docs/onboarding.md",
+    tokens: ["quickchat"],
+    reason:
+      "the install and bring-up commands name the release image under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "docker/daemon/README.md",
+    tokens: ["quickchat"],
+    reason:
+      "the compose stack's quick start names the release and memory images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "src/onboard/steps/compose.ts",
+    tokens: ["quickchat"],
+    reason:
+      "the RELEASE_IMAGE_REPO / MEMORY_IMAGE_REPO constants: the images bring-up pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...), the ones release.yml pushes",
+  },
+  {
+    path: "src/onboard/steps/bringup.ts",
+    tokens: ["quickchat"],
+    reason: "its header comment names the images it pulls (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "tests/onboard-bringup.test.ts",
+    tokens: ["quickchat"],
+    reason: "pins the extraction command and image names bring-up prints (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "tests/onboard-engine.test.ts",
+    tokens: ["quickchat"],
+    reason: "pins the manifest probe's image name (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "tests/compose-stack.test.ts",
+    tokens: ["quickchat"],
+    reason:
+      "pins the image names the compose file pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "tests/onboarding-docs.test.ts",
+    tokens: ["quickchat"],
+    reason:
+      "pins that the user docs name the release image under the registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "deploy/ansible/group_vars/all.yml",
+    tokens: ["quickchat"],
+    reason:
+      "release_image / release_memory_image: the images the VM route pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...), the ones release.yml pushes",
+  },
+  {
+    path: "deploy/ansible/playbook.yml",
+    tokens: ["quickchat"],
+    reason:
+      "its header comment names the release image the VM route pulls (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "deploy/ansible/README.md",
+    tokens: ["quickchat"],
+    reason:
+      "the VM route's docs name the release and memory images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "scripts/deploy.sh",
+    tokens: ["quickchat"],
+    reason:
+      "release <version> names the daemon and memory images it has the VM pull, under the publishing org's registry namespace (ghcr.io/quickchatai/...), as a fallback for an inventory that sets none",
+  },
+  {
+    path: "tests/deploy.test.ts",
+    tokens: ["quickchat"],
+    reason:
+      "pins the image names deploy.sh release plans and the VM-layout probe reads (ghcr.io/quickchatai/...)",
+  },
+  {
     path: "tests/tui-companion.test.ts",
     tokens: ["quickchat"],
     reason:
@@ -413,7 +533,16 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "tests/publishability.test.ts",
-    tokens: ["owner_legacy", "quickchat", "gfrost", "jbennett", "dwinchester", "avasquez-", "pmercier", "review.example.com"],
+    tokens: [
+      "owner_legacy",
+      "quickchat",
+      "gfrost",
+      "jbennett",
+      "dwinchester",
+      "avasquez-",
+      "pmercier",
+      "review.example.com",
+    ],
     reason:
       "this lint — the denylist itself plus the negative-control plants (the operator-specific tokens are built from parts, so the file never spells them)",
   },

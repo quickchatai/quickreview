@@ -1,8 +1,10 @@
 // The scan sandbox: where `qcr scan start` (and `stage2 start`) drives a run
 // when `[scan] sandbox = "docker"` — the default. Instead of a detached host
 // process, the launch runs the same `qcr scan … --foreground` driver in a
-// throwaway container (`docker run --rm`) from the companion image, which
-// carries the built app at /opt/qcr (docker/companion/Dockerfile). The
+// throwaway container (`docker run --rm`) from the scan sandbox image, which
+// carries the built app at /opt/qcr (docker/companion/Dockerfile; the local
+// companion is the release image since P7.8, so this image is the scan's
+// alone, `qcr-scan` by default). The
 // container sees only what a scan needs:
 //
 //   the reviewed repo         /reviewed-repo         read-only
@@ -19,7 +21,7 @@
 //
 // The login is the companion's: one login, refreshed by the companion alone.
 // Before every case the driver copies its auth.json into the tmpfs pi home
-// with the refresh token neutralised (src/scanauth.ts), so the scan never
+// with the refresh token neutralised (src/engine/auth.ts), so the scan never
 // refreshes and never writes anything the companion reads; a case the access
 // token would not outlive is refused.
 //
@@ -37,6 +39,12 @@
 //
 // Before any of that, the image's build stamp must be the checkout's
 // (src/appstamp.ts): a container never drives a scan with other code.
+//
+// This launch is the clone route's (the operator's TUI and companion). A scan
+// started through the host wrapper (scripts/qcr-host.sh, docs/host-wrapper.md)
+// never gets here: the wrapper's per-call release-image container IS the
+// sandbox, so it sets IN_SANDBOX_ENV and `--foreground`, and the driver runs in
+// that container with no docker of its own.
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
@@ -52,14 +60,14 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { appStamp } from "./appstamp.js";
 import type { ScanSandboxConfig } from "./config.js";
-import type { LoginSummary } from "./piauthcopy.js";
+import type { LoginSummary } from "./engine/auth.js";
 import {
   SCAN_AUTH_FIX,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
   scanAuthExpiring,
   scanAuthMissing,
-} from "./scanauth.js";
+} from "./engine/auth.js";
 import {
   configHome,
   installName,
@@ -71,8 +79,6 @@ import {
 } from "./install.js";
 import { DETACH_TIMEOUT_MS, DRIVER_LOG, prepareDriverLog } from "./scandriverlog.js";
 import {
-  appBuildProblem,
-  appImageBuildArgv,
   CONTAINER,
   dockerFailureLine,
   IN_COMPANION_ENV,
@@ -104,11 +110,13 @@ export const SCANBOX = {
   configLive: CONTAINER.configLive,
   configFile: CONTAINER.configFile,
   profiles: CONTAINER.profiles,
-  piHome: CONTAINER.piHome,
+  /** The scan image's own fixed HOME (docker/companion/Dockerfile): not the
+   * companion's, which is the release image's. */
+  piHome: "/home/companion/.pi",
   /** The companion's agent dir, read-only: the login the scan copies. */
   authSrc: "/pi-agent-src",
   /** The scan's own pi agent dir, on the tmpfs pi home. */
-  agentDir: `${CONTAINER.piHome}/agent`,
+  agentDir: "/home/companion/.pi/agent",
 } as const;
 
 /** The companion's pi home is its login: only its `agent/` dir is mounted. */
@@ -354,7 +362,9 @@ export async function scanLoginRoute(
 // ---- the companion's login, read-only --------------------------------------------
 
 /** Prints the login summary of the agent dir named by its argument
- * (`loginSummary`: providers and expiries, never a token). */
+ * (`loginSummary`: providers and expiries, never a token). Both scripts import
+ * the container's built dist by path: src/piauthcopy.js and src/scanauth.js are
+ * re-exports of src/engine/auth.js until the companion image is rebuilt. */
 export const LOGIN_SUMMARY_SCRIPT =
   `const { readFileSync } = await import("node:fs");` +
   `const { loginSummary } = await import("${SCANBOX.app}/dist/src/piauthcopy.js");` +
@@ -777,10 +787,35 @@ export async function effectiveSandbox(
   return v.ok ? { sandbox: s } : host;
 }
 
+/** Why the scan image cannot be built from `ctx`, or null: it copies the
+ * built app, so `dist/` must be there. */
+export function scanBuildProblem(ctx: string, exists: (p: string) => boolean): string | null {
+  return exists(join(ctx, "dist", "src", "cli.js"))
+    ? null
+    : `the image copies the built app, and ${join(ctx, "dist")} has none — run \`npm run build\` in ${ctx} first`;
+}
+
+/** `docker build` of the scan sandbox image (docker/companion/Dockerfile) from
+ * the app root `ctx`, as `image`, stamped. Builds an image and nothing else. */
+export function scanImageBuildArgv(image: string, ctx: string, stamp: string): string[] {
+  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+  return [
+    "build",
+    "-t",
+    image,
+    "-f",
+    join(ctx, "docker", "companion", "Dockerfile"),
+    "--build-arg",
+    `COMPANION_UID=${uid}`,
+    "--build-arg",
+    `BUILD_SHA=${stamp}`,
+    ctx,
+  ];
+}
+
 /** `qcr scan rebuild`: build `[scan] image` from the app root, stamped, and
  * nothing else — no container is removed, stopped or started, so a running
- * companion on the same image keeps running (it moves to the new image at
- * its own next recreate, `qcr companion rebuild`). */
+ * companion keeps running (the scan image is not the companion's). */
 export async function buildScanImage(o: {
   docker: DockerRunner;
   image: string;
@@ -789,11 +824,11 @@ export async function buildScanImage(o: {
   stamp: (root: string) => string;
   onProgress?: (line: string) => void;
 }): Promise<{ ok: true; image: string; stamp: string } | { ok: false; errors: string[] }> {
-  const problem = appBuildProblem(o.buildContext, o.exists);
+  const problem = scanBuildProblem(o.buildContext, o.exists);
   if (problem !== null) return { ok: false, errors: [problem] };
   const stamp = o.stamp(o.buildContext);
   o.onProgress?.(`building ${o.image} (stamp ${stamp}) — takes a few minutes…`);
-  const r = await o.docker(appImageBuildArgv(o.image, o.buildContext, stamp), {
+  const r = await o.docker(scanImageBuildArgv(o.image, o.buildContext, stamp), {
     timeoutMs: 1_800_000,
   });
   if (!r.ok)
