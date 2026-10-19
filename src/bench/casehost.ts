@@ -8,8 +8,15 @@
 // exits. A child that dies, is killed or outlives its wall clock costs that case,
 // recorded as a failure, and the others carry on.
 //
+// A host also ends with its parent. The parent holds the write end of a pipe on
+// the host's stdin; when the parent dies by any means, SIGKILL and the OOM killer
+// included, the pipe closes and the host takes its own process group down
+// (`exitWithParent`). Without that, a plain `bench.sh review --concurrency N`
+// whose parent was killed would leave its hosts and their lens children running.
+//
 // The proc runtime is unchanged: its pi is already a child per session.
 import { spawn } from "node:child_process";
+import type { Readable } from "node:stream";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase } from "./aacr.js";
@@ -77,6 +84,25 @@ export function caseHostArgv(
   ];
 }
 
+/**
+ * Called by a case host at its start: when its stdin, the pipe the pool holds the
+ * other end of, ends, the pool is gone, and the host stops with whatever it
+ * started (it leads its process group). A stdin that is a terminal (a person
+ * running a host by hand) is left alone. `orphaned` is the stop, replaceable in a test.
+ */
+export function exitWithParent(
+  stdin: Readable & { isTTY?: boolean } = process.stdin,
+  orphaned: () => void = () => {
+    killGroup(process.pid, "SIGKILL");
+    process.exit(1);
+  },
+): void {
+  if (stdin.isTTY) return;
+  stdin.once("end", orphaned);
+  stdin.once("error", orphaned);
+  stdin.resume();
+}
+
 /** Every host process alive, so the parent can take them down with it. */
 const live = new Set<number>();
 
@@ -118,7 +144,8 @@ export function runCaseHost(argv: readonly string[], o: CaseHostOptions): Promis
     try {
       child = spawn(o.node ?? process.execPath, [...(o.execArgv ?? []), o.entry, ...argv], {
         env: o.env ?? process.env,
-        stdio: ["ignore", "inherit", "inherit"],
+        // stdin is the pipe a host watches to learn its parent has died.
+        stdio: ["pipe", "inherit", "inherit"],
         detached: true,
       });
     } catch (e) {

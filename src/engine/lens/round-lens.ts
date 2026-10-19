@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { lensRunConfigFromEnv } from "../../../extensions/lens.js";
 import type { PiHost } from "../pisdk.js";
 import type { SessionSpec } from "../port.js";
+import { BASH_ENV_ALLOW } from "../roundsdk.js";
 import { engineLensTools, type EngineLensTools } from "./engine-tools.js";
 import { loadBuiltAgents } from "./registry.js";
 
@@ -32,8 +33,14 @@ export function lensAgentsDir(
   }
 }
 
-/** `lens` and `lens_wave` for the round `spec` opens, running its passes on `host`. */
+/** `lens` and `lens_wave` for the round `spec` opens, running its passes on `host`.
+ * A pass's bash draws from the same names as the main session's (the git
+ * isolation pins, QCR_*): on proc a pass child inherits the whole env, and the
+ * pins must reach it all the same. */
 export function roundLensTools(spec: SessionSpec, host: PiHost): EngineLensTools {
   const registry = loadBuiltAgents(lensAgentsDir(spec.env, spec.cwd));
-  return engineLensTools(lensRunConfigFromEnv(spec.env, host, spec.cwd, registry));
+  return engineLensTools({
+    ...lensRunConfigFromEnv(spec.env, host, spec.cwd, registry),
+    bashEnv: { allow: BASH_ENV_ALLOW },
+  });
 }

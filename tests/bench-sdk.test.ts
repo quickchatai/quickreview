@@ -113,49 +113,68 @@ const toolNamesIn = (context: unknown): string[] => {
   return (first.toolsAdded ?? []).map((t) => t.name);
 };
 
+/** One review round on the engine lens setting over a faux model that plays
+ * `script`; the round's outputs are written on the main session's first turn. */
+async function engineLensRound(
+  script: Array<(context: unknown) => ReturnType<typeof fauxAssistantMessage>>,
+  seen: unknown[],
+) {
+  const agentDir = agentDirWith(["pass-a"]);
+  const outDir = join(tmp, `out-${n++}`);
+  const write = (): void => {
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, "findings-record.json"), RECORD);
+    writeFileSync(join(outDir, "outcome.json"), OUTCOME);
+  };
+  const [first, ...rest] = script;
+  const runtime = benchSdkRuntime({
+    lens: "engine",
+    makeHost: fauxHost(
+      [
+        (c) => {
+          write();
+          return first!(c);
+        },
+        ...rest,
+      ],
+      seen,
+    ),
+  });
+  const cfg = benchConfig("");
+  cfg.models.conversation = "faux/m";
+  const r = await runRound(
+    {
+      root: mkRoot(tmp, `root-${n++}`),
+      agentDir,
+      agentScope: "user",
+      tree: mkTree(tmp, `tree-${n++}`),
+      files: FILES,
+      target: TARGET,
+      outDir,
+      cfg,
+      ecosystem: ecosystemFor("none"),
+      timeoutMs: 10 * 60_000,
+    },
+    runtime,
+  );
+  return { r, outDir };
+}
+
+const callLens = (): ReturnType<typeof fauxAssistantMessage> =>
+  fauxAssistantMessage([fauxToolCall("lens", { agent: "pass-a", task: "look at src/a.ts" })], {
+    stopReason: "toolUse",
+  });
+
 describe("a bench review round on the SDK with the engine's lens tool", () => {
   it("runs a lens pass in this process and leaves the ledger beside the case", async () => {
-    const agentDir = agentDirWith(["pass-a"]);
-    const outDir = join(tmp, `out-${n++}`);
     const seen: unknown[] = [];
-    const write = (): void => {
-      mkdirSync(outDir, { recursive: true });
-      writeFileSync(join(outDir, "findings-record.json"), RECORD);
-      writeFileSync(join(outDir, "outcome.json"), OUTCOME);
-    };
-    const runtime = benchSdkRuntime({
-      lens: "engine",
-      makeHost: fauxHost(
-        [
-          () => {
-            write();
-            return fauxAssistantMessage(
-              [fauxToolCall("lens", { agent: "pass-a", task: "look at src/a.ts" })],
-              { stopReason: "toolUse" },
-            );
-          },
-          () => fauxAssistantMessage("pass-a found nothing"),
-          () => fauxAssistantMessage("done"),
-        ],
-        seen,
-      ),
-    });
-    const cfg = benchConfig("");
-    cfg.models.conversation = "faux/m";
-    const r = await runRound(
-      {
-        root: mkRoot(tmp, `root-${n++}`),
-        agentDir,
-        agentScope: "user",
-        tree: mkTree(tmp, `tree-${n++}`),
-        files: FILES,
-        target: TARGET,
-        outDir,
-        cfg,
-        ecosystem: ecosystemFor("none"),
-        timeoutMs: 10 * 60_000,
-      },
-      runtime,
+    const { r, outDir } = await engineLensRound(
+      [
+        callLens,
+        () => fauxAssistantMessage("pass-a found nothing"),
+        () => fauxAssistantMessage("done"),
+      ],
+      seen,
     );
     expect(r.error).toBeUndefined();
     expect(r.outcome).toMatchObject({ verdict: "REQUEST_CHANGES" });
@@ -171,6 +190,30 @@ describe("a bench review round on the SDK with the engine's lens tool", () => {
     expect(ledger).toHaveLength(1);
     expect(r.usage?.children).toBe(1);
     expect(r.costUsd).toBeGreaterThan(0.1);
+  });
+
+  it("gives a pass's bash the git isolation pins the main session's bash has", async () => {
+    const seen: unknown[] = [];
+    const { r } = await engineLensRound(
+      [
+        callLens,
+        () =>
+          fauxAssistantMessage(
+            [
+              fauxToolCall("bash", {
+                command: 'echo "pin=[$GIT_CONFIG_GLOBAL][$GIT_TERMINAL_PROMPT]"',
+              }),
+            ],
+            { stopReason: "toolUse" },
+          ),
+        () => fauxAssistantMessage("pass-a found nothing"),
+        () => fauxAssistantMessage("done"),
+      ],
+      seen,
+    );
+    expect(r.error).toBeUndefined();
+    // The pass's second request carries its bash call's result.
+    expect(JSON.stringify(seen[2])).toContain("pin=[/dev/null][0]");
   });
 });
 

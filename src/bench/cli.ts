@@ -139,9 +139,15 @@ import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectj
 import { codexCommand } from "./codexcli.js";
 import { LENS_RUNTIME_KINDS, type EngineRuntimeKind, type LensRuntimeKind } from "../config.js";
 import type { Runtime } from "../engine/port.js";
-import { checkLensRuntime, parseRuntimeKind, selectRuntime } from "../engine/select.js";
+import {
+  checkLensNeedsSdk,
+  checkLensRuntime,
+  parseRuntimeKind,
+  selectRuntime,
+} from "../engine/select.js";
 import {
   CASE_HOST_AUTH_STOP,
+  exitWithParent,
   judgeCaseHosted,
   killCaseHosts,
   reviewCaseHosted,
@@ -311,6 +317,7 @@ async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Prom
 
 async function main(): Promise<number> {
   const f = flags(process.argv.slice(2));
+  if (f.has("--case-host")) exitWithParent();
   const root = resolve(f.get("--root") ?? DEFAULTS.root);
   const store = resolve(f.get("--store") ?? DEFAULTS.store);
 
@@ -416,6 +423,7 @@ async function main(): Promise<number> {
     const bench = benchCustomisation(root, profile, f.has("--allow-customised"));
     const runtimeKind = benchRuntimeKind(f, base.cfg.engine.runtime);
     const lensKind = benchLensKind(base.cfg.pi.lens_runtime);
+    checkLensNeedsSdk(lensKind, runtimeKind);
     const ctx = {
       ...base,
       fingerprint: runFingerprint(base.cfg, profile, overrides, bench.custom, {

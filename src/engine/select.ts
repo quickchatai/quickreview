@@ -31,6 +31,16 @@ export function checkLensRuntime(kind: LensRuntimeKind, route: string, engine = 
     );
 }
 
+/** `lens_runtime = engine` is the SDK runtime's: on proc the lens tool is pi's own
+ * subagent and the key is ignored, so an arm that sets only it would run (and be
+ * fingerprinted) as the proc baseline. Refused rather than ignored. */
+export function checkLensNeedsSdk(lens: LensRuntimeKind, runtime: EngineRuntimeKind): void {
+  if (lens === "engine" && runtime !== "sdk")
+    throw new Error(
+      "[pi] lens_runtime = engine needs [engine] runtime = sdk (the runtime is proc)",
+    );
+}
+
 /**
  * The runtime to inject into a route, or undefined for "the route's own
  * process runtime".

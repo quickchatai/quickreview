@@ -5,11 +5,13 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   CASE_HOST_AUTH_STOP,
   caseHostArgv,
   describeHostEnd,
+  exitWithParent,
   judgeCaseHosted,
   reviewCaseHosted,
   runCaseHost,
@@ -48,6 +50,11 @@ if (caseDir) fs.mkdirSync(caseDir, { recursive: true });
 if (id.includes("crash")) {
   if (caseDir) fs.writeFileSync(path.join(caseDir, "pi-events.jsonl"), '{"type":"session"}\\n');
   process.kill(process.pid, "SIGKILL");
+}
+if (id.includes("pipe")) {
+  // What the pool hands a host as stdin: an open pipe, not /dev/null.
+  const st = fs.fstatSync(0);
+  process.exit(st.isFIFO() || st.isSocket() ? 0 : 1);
 }
 if (id.includes("hang")) setInterval(() => {}, 1000);
 else if (id.includes("stop")) process.exit(${CASE_HOST_AUTH_STOP});
@@ -180,10 +187,40 @@ describe("runCaseHost", () => {
     expect(describeHostEnd(end, 300)).toMatch(/outlived its wall clock/);
   });
 
+  it("gives the host a pipe on stdin, the one it watches for its parent's death", async () => {
+    expect(await run("pipe")).toMatchObject({ code: 0 });
+  });
+
   it("reports a host that cannot be started, without rejecting", async () => {
     const end = await runCaseHost(["x"], { entry, node: "/nonexistent/node", timeoutMs: 1000 });
     expect(end.spawnError).toBeDefined();
     expect(describeHostEnd(end, 1000)).toMatch(/could not be started/);
+  });
+});
+
+describe("exitWithParent", () => {
+  it("stops the host when its stdin ends, and not before", () => {
+    const stdin = new PassThrough();
+    const orphaned = vi.fn();
+    exitWithParent(stdin, orphaned);
+    stdin.write("noise");
+    expect(orphaned).not.toHaveBeenCalled();
+    stdin.end();
+    return new Promise<void>((done) =>
+      setImmediate(() => {
+        expect(orphaned).toHaveBeenCalledTimes(1);
+        done();
+      }),
+    );
+  });
+
+  it("leaves a terminal alone", () => {
+    const stdin = Object.assign(new PassThrough(), { isTTY: true });
+    const orphaned = vi.fn();
+    exitWithParent(stdin, orphaned);
+    stdin.end();
+    expect(stdin.listenerCount("end")).toBe(0);
+    expect(orphaned).not.toHaveBeenCalled();
   });
 });
 
