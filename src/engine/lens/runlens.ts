@@ -6,9 +6,10 @@
 //     factory, and never a lens tool: the runner hands the host no customTools
 //     and refuses an agent file that names one (include.ts checks the same at
 //     build time). The runner cannot be asked to nest.
-//   - Capped. One WeightedSemaphore per PiHost bounds the passes in flight; a
-//     pass holds its permit from before its session exists until the session is
-//     read and disposed, retry included.
+//   - Capped. A Permits port bounds the passes in flight: one WeightedSemaphore
+//     per PiHost on a one-shot route, the daemon's central broker in a bot worker
+//     (D25). A pass holds its permit from before its session exists until the
+//     session is read and disposed, retry included.
 //   - Isolated. The session comes from PiHost.makeSession (the P2.1 fence: no
 //     other module builds an SDK session), in memory unless `sessionsDir` keeps
 //     its JSONL (D10), under an id of its own, so
@@ -69,6 +70,7 @@ import {
 import { passTimeoutMessage, runUnderDeadline } from "./deadline.js";
 import { leafCache } from "./leaf-cache.js";
 import type { AgentRegistry, LensAgent } from "./registry.js";
+import { localPermits, type Permit, type Permits } from "./permits.js";
 import { WeightedSemaphore } from "./semaphore.js";
 
 /** Where a round's lifecycle events go: the `pr-<n>.jsonl` transition log the
@@ -104,8 +106,12 @@ export const DEFAULT_SESSION_GAP_MS = 25;
 export interface LensRunConfig {
   host: PiHost;
   /** The cap on passes in flight for this host. The first runner on a host sets
-   * it; a later runner on the same host must ask for the same number. */
+   * it; a later runner on the same host must ask for the same number. Unused when
+   * `permitPort` is given. */
   permits: number;
+  /** Where a pass gets its permit. Omitted: the host's local semaphore, sized by
+   * `permits`. A bot worker passes the daemon's broker client (D25). */
+  permitPort?: Permits;
   registry: AgentRegistry;
   /** The passes' working directory (also their bash tool's). */
   cwd: string;
@@ -271,7 +277,8 @@ function leafViolation(agent: LensAgent): string | undefined {
 }
 
 export function createLensRunner(config: LensRunConfig): LensRunner {
-  const semaphore = lensSemaphoreFor(config.host, config.permits);
+  const permitPort =
+    config.permitPort ?? localPermits(lensSemaphoreFor(config.host, config.permits));
   const now = config.now ?? Date.now;
   const newId = config.newId ?? randomUUID;
   const warn = config.warn ?? ((m: string): void => console.error(`[lens] ${m}`));
@@ -368,7 +375,20 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     const violation = leafViolation(agent);
     if (violation !== undefined) return finish(failed(ZERO_USAGE, violation));
 
-    await semaphore.acquire(1);
+    let permit: Permit;
+    try {
+      permit = await permitPort.acquire(id, 1, request.signal);
+    } catch (e) {
+      return finish(
+        failed(
+          ZERO_USAGE,
+          request.signal?.aborted
+            ? "lens aborted before it started"
+            : `no lens permit: ${e instanceof Error ? e.message : String(e)}`,
+          request.signal?.aborted ? { stopReason: "aborted" } : {},
+        ),
+      );
+    }
     let out: LensRun;
     let started = false;
     try {
@@ -380,7 +400,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         out = await execute(id, agent, request);
       }
     } finally {
-      semaphore.release(1);
+      permit.release();
     }
     if (started) {
       const status: LiveAgentStatus = out.result.exitCode === 0 ? "completed" : "failed";

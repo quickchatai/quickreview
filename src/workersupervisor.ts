@@ -45,6 +45,7 @@ import {
   stdioWithCapability,
 } from "./ipc/capability.js";
 import { IpcError, type CommandLookup, type CommandState, type IpcEventKind } from "./ipc/protocol.js";
+import { type PermitBroker, permitOps } from "./ipc/permits.js";
 import type { EventHandler, OpHandler, RequestContext } from "./ipc/server.js";
 import {
   WAKES_ACK_OP,
@@ -251,6 +252,10 @@ export interface WorkerSupervisorDeps {
     take(ctx: RequestContext): WakeBatch[];
     ack(ctx: RequestContext, id: string): void;
   };
+  /** The central lens permit broker (D25). Given: its two ops ride `ops()`, its
+   * permits return when a worker's capability is revoked (the worker exited) or
+   * its command goes stale, and `start`/`stop` run and end its reaper. */
+  permits?: PermitBroker;
   /** The refresher's hold while a login rewrites auth.json (P8.22): a spawn waits. */
   loginGate?: { paused(): boolean; whenResumed(timeoutMs: number): Promise<boolean> };
   loginWaitMs?: number;
@@ -343,6 +348,7 @@ export class WorkerSupervisor {
     this.signal = deps.signal ?? sendSignal;
     this.now = deps.now ?? Date.now;
     this.log = deps.log ?? ((): void => {});
+    deps.permits?.attach(deps.capabilities);
   }
 
   // ---- what the IPC server asks the daemon ---------------------------------
@@ -382,6 +388,7 @@ export class WorkerSupervisor {
         },
       },
     };
+    if (this.deps.permits) Object.assign(ops, permitOps(this.deps.permits));
     const wakes = this.deps.wakes;
     if (wakes) {
       ops[WAKES_TAKE_OP] = {
@@ -707,6 +714,7 @@ export class WorkerSupervisor {
     if (this.timer) return;
     this.timer = setInterval(() => this.tick(), this.limits.tickMs);
     this.timer.unref();
+    this.deps.permits?.start(this.lookup);
   }
 
   /** One pass of the deadlines. Pure of I/O but for the signals it sends. */
@@ -888,6 +896,7 @@ export class WorkerSupervisor {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.deps.permits?.stop();
     const live = [...this.byCommand.values()];
     for (const rec of live) this.end(rec, "shutdown");
     await Promise.all(live.map((rec) => rec.done));

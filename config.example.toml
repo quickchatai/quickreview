@@ -143,6 +143,14 @@ session_command_max_start_retries = 2
 # bounded same-session redelivery (max_prompt_redeliveries), and only then the
 # kill-and-replay recovery, take over.
 session_compaction_max_s = 600
+# The central lens permit broker (bot workers): the most lens sessions alive at
+# once across EVERY worker, granted first-in first-out. 20 is the VM's ruling
+# (the CPU gate measured 20 sessions fine on 2 cores). Grants are spaced at
+# least lens_grant_stagger_ms apart so a full wave never creates its sessions
+# in one burst (the gate measured a 0.7-2.5 s loop stall for 8-20 at once);
+# 0 turns the spacing off. status.json `permits` shows the use and the queue.
+lens_permits = 20
+lens_grant_stagger_ms = 250
 round_stage_supervisor_stale_s = 180
 # The daemon watches its own event loop (status.json
 # `daemon.event_loop`, `qcr status`, the TUI board). One delay of

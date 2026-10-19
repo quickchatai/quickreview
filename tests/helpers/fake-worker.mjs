@@ -13,6 +13,8 @@
 //   stale     sends a request and an event for generation - 1, records the codes, then ok
 //   mute      never connects: alive for a minute
 //   group     spawns a sleeping child in its own group, records its pid, then busy
+//   permit-crash  ready, accepted, takes two lens permits from the broker (P8.10),
+//             records the answers, then SIGKILL on itself
 //
 // FAKE_WORKER_OUT is a directory it may write to; FAKE_WORKER_BEAT_MS the beat.
 import { spawn } from "node:child_process";
@@ -48,11 +50,11 @@ let pending = "";
 const waiting = new Map();
 let nextId = 1;
 const send = (m) => sock.write(JSON.stringify({ v: "1.0", ...m }) + "\n");
-const request = (op, gen = generation) =>
+const request = (op, gen = generation, body = undefined) =>
   new Promise((resolve) => {
     const id = String(nextId++);
     waiting.set(id, resolve);
-    send({ type: "request", id, op, generation: gen });
+    send({ type: "request", id, op, generation: gen, ...(body === undefined ? {} : { body }) });
   });
 const event = (kind, body = {}, gen = generation) => send({ type: "event", kind, generation: gen, body });
 const errors = [];
@@ -104,6 +106,12 @@ async function onHello(m) {
     record("stale-event.txt", errors.join(","));
   }
   if (mode === "crash") process.kill(process.pid, "SIGKILL");
+  if (mode === "permit-crash") {
+    const a = await request("permits.acquire", generation, { lens_id: "L1", weight: 1 });
+    const b = await request("permits.acquire", generation, { lens_id: "L2", weight: 1 });
+    record("permits.json", [a.ok, b.ok]);
+    process.kill(process.pid, "SIGKILL");
+  }
   if (mode === "group") {
     const child = spawn("sleep", ["300"], { stdio: "ignore" });
     record("grandchild.txt", String(child.pid));

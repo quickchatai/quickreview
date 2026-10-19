@@ -128,6 +128,19 @@ describe("parseConfig", () => {
     );
   });
 
+  it("the lens permit ceiling defaults to 20 with a 250 ms grant stagger, and both are checked", () => {
+    expect(cfg.daemon.lens_permits).toBe(20);
+    expect(cfg.daemon.lens_grant_stagger_ms).toBe(250);
+    const set = (line: string) =>
+      readFileSync(configPath, "utf8").replace(/^\[daemon\]$/m, `[daemon]\n${line}`);
+    expect(parseConfig(set("lens_permits = 12")).daemon.lens_permits).toBe(12);
+    expect(parseConfig(set("lens_grant_stagger_ms = 0")).daemon.lens_grant_stagger_ms).toBe(0);
+    for (const bad of ["lens_permits = 0", "lens_permits = 2.5", 'lens_permits = "20"'])
+      expect(() => parseConfig(set(bad)), bad).toThrow(/lens_permits/);
+    for (const bad of ["lens_grant_stagger_ms = -1", 'lens_grant_stagger_ms = "250"'])
+      expect(() => parseConfig(set(bad)), bad).toThrow(/lens_grant_stagger_ms/);
+  });
+
   it("expands secrets_dir to an absolute path", () => {
     expect(cfg.github.secrets_dir.startsWith("~")).toBe(false);
     expect(cfg.github.secrets_dir).toBe(resolve(homedir(), ".config/example-review-bot"));

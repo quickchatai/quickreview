@@ -21,6 +21,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CapabilityStore } from "../src/ipc/capability.js";
 import { IpcClient } from "../src/ipc/client.js";
+import { PermitBroker } from "../src/ipc/permits.js";
 import { IpcServer, type OpHandler } from "../src/ipc/server.js";
 import type { WorkerSpec } from "../src/ipc/workerspec.js";
 import { StateStore, type SessionCommandRow } from "../src/state.js";
@@ -58,6 +59,8 @@ interface RigOptions {
   extraEnv?: Record<string, string>;
   now?: () => number;
   buildEnv?: Record<string, string>;
+  /** The central lens permit broker (P8.10), handed to the supervisor. */
+  permits?: PermitBroker;
 }
 
 let dir: string;
@@ -137,6 +140,7 @@ async function rig(o: RigOptions = {}) {
     },
     limits: { tickMs: 20, killGraceMs: 200, wallGraceMs: 0, ...o.limits },
     observe: (x) => observed.push(x),
+    ...(o.permits ? { permits: o.permits } : {}),
     ...(o.now ? { now: o.now } : {}),
   });
   supervisors.push(sup);
@@ -150,7 +154,15 @@ async function rig(o: RigOptions = {}) {
     socketPath: join(runDir, "q.sock"),
     capabilities: caps,
     commands: (id) => current.sup.lookup(id),
-    ops: { "worker.spec": delegate("worker.spec") },
+    ops: {
+      "worker.spec": delegate("worker.spec"),
+      ...(o.permits
+        ? {
+            "permits.acquire": delegate("permits.acquire"),
+            "permits.release": delegate("permits.release"),
+          }
+        : {}),
+    },
     onEvent: (ctx, kind, b) => current.sup.onEvent(ctx, kind, b),
     helloTimeoutMs: 2000,
   });
@@ -733,3 +745,32 @@ function plantLease(
     ...over,
   });
 }
+
+describe("[P8.10] the permit broker behind the supervisor", () => {
+  it("serves the permit ops only when it was given a broker", async () => {
+    const without = await rig();
+    expect(Object.keys(without.sup.ops())).not.toContain("permits.acquire");
+    const withIt = await rig({ permits: new PermitBroker() });
+    expect(Object.keys(withIt.sup.ops())).toEqual(
+      expect.arrayContaining(["permits.acquire", "permits.release"]),
+    );
+  });
+
+  it("takes a killed worker's permits back when the process is gone, and the requeued one starts clean", async () => {
+    const lines: string[] = [];
+    const broker = new PermitBroker({ ceiling: 3, staggerMs: 0, log: (m) => lines.push(m) });
+    const r = await rig({ mode: "permit-crash", permits: broker });
+    const row = r.submit();
+    await r.sup.launch(row.id);
+    await until(finished(r.sup));
+    // The worker took two permits (both granted) and died holding them.
+    expect(JSON.parse(r.out(row.id, "permits.json"))).toEqual([true, true]);
+    expect(lines.filter((l) => l.includes("came back"))).toHaveLength(2);
+    expect(broker.status()).toMatchObject({ in_use: 0, queued: 0, commands: [] });
+    // Its requeued successor can take them again: nothing leaked.
+    const again = await r.sup.launch(row.id);
+    expect(again.generation).toBe(2);
+    await until(finished(r.sup));
+    expect(broker.status().in_use).toBe(0);
+  });
+});

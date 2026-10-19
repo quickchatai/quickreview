@@ -21,6 +21,7 @@ import {
   SWEEP_MAX_LINES_PER_GROUP,
   SWEEP_WIDE_FILES_PER_GROUP,
 } from "./heuristics.js";
+import { DEFAULT_LENS_GRANT_STAGGER_MS, DEFAULT_LENS_PERMITS } from "./ipc/permits.js";
 import type { LensTuningMap } from "./lenstuning.js";
 import type { PostingPolicy } from "./postingpolicy.js";
 import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES } from "./passes.js";
@@ -2009,6 +2010,14 @@ export interface Config {
      * and the bounded redelivery → kill-and-replay recovery takes over.
      * Readers default to DEFAULT_SESSION_COMPACTION_MAX_S. */
     session_compaction_max_s?: number;
+    /** The central lens permit ceiling (D25): the most lens sessions alive at
+     * once across every worker. Readers default to DEFAULT_LENS_PERMITS (20,
+     * ruled for the VM: the CPU gate measured 20 sessions fine on 2 cores). */
+    lens_permits?: number;
+    /** The least gap, in ms, between two permit grants, so a wave never creates
+     * its sessions in one burst (the gate measured a 0.7 to 2.5 s loop stall for
+     * 8 to 20 at once). 0 turns it off. Default DEFAULT_LENS_GRANT_STAGGER_MS (250). */
+    lens_grant_stagger_ms?: number;
     round_stage_supervisor_stale_s?: number;
     /** The daemon's event-loop watch (src/eventloop.ts). All
      * optional — `eventLoopPolicy` defaults each (300 s window, a 10 s single
@@ -2905,6 +2914,8 @@ export function parseConfig(toml: string): Config {
       session_command_unknown_max_checks: DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
       session_command_max_start_retries: DEFAULT_SESSION_COMMAND_MAX_START_RETRIES,
       session_compaction_max_s: DEFAULT_SESSION_COMPACTION_MAX_S,
+      lens_permits: DEFAULT_LENS_PERMITS,
+      lens_grant_stagger_ms: DEFAULT_LENS_GRANT_STAGGER_MS,
       round_stage_supervisor_stale_s: DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S,
       ...(req(raw, "daemon") as Partial<Config["daemon"]>),
     } as Config["daemon"],
@@ -3177,6 +3188,14 @@ export function parseConfig(toml: string): Config {
     throw new Error(
       "config.toml: require posting_retry_offsets_min = a non-empty, strictly increasing list of minutes, each > 0 and < posting_retry_window_min (> 0)",
     );
+  }
+  const lensPermits = cfg.daemon.lens_permits ?? DEFAULT_LENS_PERMITS;
+  if (!(Number.isSafeInteger(lensPermits) && lensPermits >= 1)) {
+    throw new Error("config.toml: require an integer [daemon] lens_permits >= 1");
+  }
+  const lensStagger = cfg.daemon.lens_grant_stagger_ms ?? DEFAULT_LENS_GRANT_STAGGER_MS;
+  if (!(typeof lensStagger === "number" && Number.isFinite(lensStagger) && lensStagger >= 0)) {
+    throw new Error("config.toml: require a finite number [daemon] lens_grant_stagger_ms >= 0");
   }
   const compactionMax = cfg.daemon.session_compaction_max_s ?? DEFAULT_SESSION_COMPACTION_MAX_S;
   if (!(typeof compactionMax === "number" && Number.isFinite(compactionMax) && compactionMax > 0)) {

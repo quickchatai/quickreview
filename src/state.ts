@@ -8,6 +8,7 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
 import type { ArchiveStatus } from "./archive/status.js";
+import type { PermitStatus } from "./ipc/permits.js";
 import type { LoginRefreshStatus } from "./loginrefresh/types.js";
 import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
@@ -7668,6 +7669,11 @@ export interface StatusSnapshot {
    * `paused`. Absent unless `[login_refresh] enabled`; readers say "not
    * reported". */
   login_refresh?: LoginRefreshStatus;
+  /** The central lens permit broker (D25, src/ipc/permits.ts): the ceiling,
+   * the permits in use and the grants queued, with the split per command.
+   * Absent while no daemon broker runs (the tmux bot, a stub daemon) —
+   * readers say "not reported". */
+  permits?: PermitStatus;
   /** Deploy-window drain: present (and true) only while
    * draining, beside the count of webhook deliveries dropped so far and when
    * the drain was engaged. Absent in older snapshots — readers default to
@@ -7847,6 +7853,7 @@ export function buildStatusSnapshot(
   daemonLoad?: DaemonLoadStatus,
   archive?: ArchiveStatus,
   loginRefresh?: LoginRefreshStatus,
+  permits?: PermitStatus,
 ): StatusSnapshot {
   const at = now();
   const today = at.toISOString().slice(0, 10);
@@ -7970,6 +7977,7 @@ export function buildStatusSnapshot(
     ...(daemonLoad ? { daemon: daemonLoad } : {}),
     ...(archive ? { archive } : {}),
     ...(loginRefresh ? { login_refresh: loginRefresh } : {}),
+    ...(permits ? { permits } : {}),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
     ...(pipeline ? { pipeline } : {}),

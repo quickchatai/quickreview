@@ -214,6 +214,10 @@ export interface DaemonDeps {
    * `login_refresh` key; a throwing implementation is swallowed like the others.
    */
   loginRefreshStatus?: () => import("./loginrefresh/types.js").LoginRefreshStatus | undefined;
+  /** The central lens permit broker's counts (D25), for status.json `permits`.
+   * wire.ts hands the broker's `status()` once the WorkerSupervisor runs in the
+   * daemon (P8.6). Absent ⇒ no `permits` key. */
+  permitStatus?: () => import("./ipc/permits.js").PermitStatus | undefined;
   /**
    * Seams of the daemon's event-loop watch (src/eventloop.ts):
    * the sampler, the cpu.stat reader, the clock and the evaluation timer.
@@ -1012,6 +1016,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     } catch (err) {
       log("login refresh status read failed (heartbeat continues)", err);
     }
+    let permits: import("./ipc/permits.js").PermitStatus | undefined;
+    try {
+      permits = deps.permitStatus?.();
+    } catch (err) {
+      log("permit status read failed (heartbeat continues)", err);
+    }
     try {
       const snapshot = buildStatusSnapshot(
         store,
@@ -1028,6 +1038,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         daemonLoad,
         archive,
         loginRefresh,
+        permits,
       );
       if (postingOutbox)
         for (const pr of snapshot.prs) {

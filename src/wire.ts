@@ -29,6 +29,7 @@ import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js
 import { CaseWriter } from "./cases.js";
 import { Archiver } from "./archive/archiver.js";
 import { piGlobalSessionsDir } from "./archive/piglobal.js";
+import { PermitBroker } from "./ipc/permits.js";
 import { LoginRefreshSupervisor } from "./loginrefresh/supervisor.js";
 import { pendingArchiveStatus } from "./archive/status.js";
 import { Learner, learnerKnobsOf } from "./learner/learner.js";
@@ -828,6 +829,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // path so this process imports neither pi nor src/engine/. Only built when
   // `[login_refresh] enabled`.
   let loginRefresh: LoginRefreshSupervisor | null = null;
+  // The central lens permit broker (D25, src/ipc/permits.ts): one count of lens
+  // sessions across every worker. P8.6 hands this same broker to the
+  // WorkerSupervisor, which serves its ops on the worker socket; until a worker
+  // runs it holds nothing and status.json shows it idle.
+  const lensPermits = new PermitBroker({
+    ceiling: cfg.daemon.lens_permits,
+    staggerMs: cfg.daemon.lens_grant_stagger_ms,
+    log: (m) => log(m),
+  });
   // The webhook-URL self-heal. Only ever constructed when [ingress]
   // shape = "tunnel-file".
   let webhookHeal: WebhookHealer | null = null;
@@ -1018,6 +1028,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // The login refresher's block — a cached synchronous read; absent when the
     // refresher is not configured.
     loginRefreshStatus: () => loginRefresh?.status(),
+    // The lens permit broker's use and queue.
+    permitStatus: () => lensPermits.status(),
     // Whether memory works, beside whether the server is up — and what memory
     // still owes the [feedback] ledger.
     memoryStatus: (): MemoryStatus => {

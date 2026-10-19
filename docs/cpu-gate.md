@@ -79,6 +79,11 @@ VM and vary run to run; the three runs are all kept.
    seconds to get every child streaming. If waves of lenses are started in one
    process, session creation should be staggered or moved off the hot path; the
    gate does not cover it and the owner may want a start-up bound in D6.
+   Answered by the central permit broker (P8.10, `src/ipc/permits.ts`): lens
+   sessions in bot workers are granted FIFO across workers under
+   `[daemon] lens_permits` (20), at least `lens_grant_stagger_ms` (250) apart,
+   so a full wave of 20 is created over about 5 s and never in one burst
+   (`tests/permit-broker.test.ts` measures the loop lag against the D6 bar).
 5. **Proc is worse for the parent's loop under 2 cores.** With 12 to 20 children
    competing for the same two cores, the parent's lag p99 was 32 to 193 ms,
    higher than sdk's in every pair of cells, with ticks over 200 ms at 20 sessions
