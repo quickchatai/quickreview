@@ -15,7 +15,10 @@
 #   a worktree's common git dir              at its own path     read-only
 #   the qcr-state volume                     /opt/qcr/state      read-write
 #   the qcr-login volume                     /qcr-login          read-only
-#                                            (only `login` mounts it read-write)
+#                                            (only `login` mounts it read-write,
+#                                            at pi's agent dir; its files are in
+#                                            group 4747, which every call joins,
+#                                            so a uid change never loses the login)
 #   ~/.config/qcr/profiles                   /qcr-config/profiles read-only
 #   the GitHub token's one-shot file         /run/qcr-in         read-write
 #
@@ -38,6 +41,10 @@ set -eu
 # Written by the installer. QCR_IMAGE tries another image without repinning.
 QCR_PINNED_IMAGE='@@QCR_IMAGE@@'
 IMAGE="${QCR_IMAGE:-$QCR_PINNED_IMAGE}"
+
+# The group that owns the login volume's files, so that a login made under one
+# uid is readable under any other (the entrypoint's share_login, P6.7).
+LOGIN_GID=4747
 
 PULL_HINT='the image is private: gh auth refresh -s read:packages, then  gh auth token | docker login ghcr.io -u <your github user> --password-stdin'
 
@@ -312,6 +319,8 @@ else
   set -- "$@" --user "$uid:$gid" --cap-drop ALL
 fi
 set -- "$@" --security-opt no-new-privileges
+# Every call that can touch the login volume is in its group.
+set -- "$@" --group-add "$LOGIN_GID" -e "QCR_LOGIN_GID=$LOGIN_GID"
 
 if [ "$mode" = login ]; then
   # pi's own /login, written to the login volume: the only read-write mount of

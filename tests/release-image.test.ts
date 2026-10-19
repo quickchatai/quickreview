@@ -128,7 +128,13 @@ describe("release image — any uid, a root-owned tree", () => {
 
   it("fixes HOME at a world-writable sticky dir, so every uid has one", () => {
     expect(lines).toContain("ENV HOME=/home/qcr");
-    expect(runWith("/home/qcr")).toBe("install -d -m 1777 /home/qcr");
+    expect(lines).toContain("RUN install -d -m 1777 /home/qcr");
+  });
+
+  it("makes pi's agent dir writable by any uid, so a new login volume starts that way (P6.7)", () => {
+    expect(runWith("/home/qcr/.pi")).toBe(
+      "install -d -m 1777 /home/qcr/.pi && install -d -m 0777 /home/qcr/.pi/agent",
+    );
   });
 
   it("makes the tree world-readable and writable by no runtime uid", () => {

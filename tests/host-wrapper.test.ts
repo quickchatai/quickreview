@@ -500,6 +500,29 @@ describe("the other verbs", () => {
     ]);
   });
 
+  it("only login mounts the login volume read-write; every call joins its group", () => {
+    const r = rig();
+    const verbs = [["review"], ["scan", "start"], ["open"], ["debug"], [], ["tui"], ["version"]];
+    for (const v of verbs) r.run(v);
+    r.run(["login"]);
+    const calls = r.calls();
+    const loginCall = calls.pop()!;
+    for (const argv of calls) {
+      const login = mounts(argv).filter((m) => m.includes("qcr-login"));
+      expect(login.every((m) => m.endsWith(",readonly"))).toBe(true);
+    }
+    expect(mounts(loginCall).filter((m) => m.includes("qcr-login"))).toEqual([
+      "type=volume,src=qcr-login,dst=/home/qcr/.pi/agent",
+    ]);
+    // the login's files are in one fixed group, whichever uid wrote them
+    for (const argv of [...calls, loginCall]) {
+      expect(argv[argv.indexOf("--group-add") + 1]).toBe("4747");
+      expect(envs(argv)).toContain("QCR_LOGIN_GID=4747");
+    }
+    // a login needs no model key and no token: nothing but the volume
+    expect(envs(loginCall).filter((e) => /KEY|TOKEN/.test(e))).toEqual([]);
+  });
+
   const script = spawnSync("script", ["--version"]).status === 0;
   it.skipIf(!script)("tui, open, login and debug get a terminal; review does not", () => {
     const r = rig();

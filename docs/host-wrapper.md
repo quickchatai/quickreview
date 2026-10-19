@@ -44,6 +44,35 @@ and `CAP_SETGID` and drops to your uid inside, so the model's tools run as
 another uid (D32, `docker/entrypoint.sh`). `version`, `help`, `install`, `tui`
 and `login` start as you.
 
+## The login
+
+`qcr login` is pi's own `/login`, typed for you in a throwaway container: the
+same script the clone route's `qcr scan login` uses (`loginInPi`,
+`src/scanbox.ts`). It is the only call that mounts the `qcr-login` volume
+read-write (at pi's agent dir); it holds no repo, no state, no profiles and no
+GitHub token. Every other call mounts it read-only at `/qcr-login`, and the
+engine takes a refresh-disabled copy of it (`src/engine/auth.ts`): only a
+login ever refreshes. A headless run with `OPENAI_API_KEY` (or another model
+key) in the environment reads no login at all, and nothing ever starts one.
+
+The volume outlives every uid. Each call joins a fixed group (gid 4747,
+`--group-add`, `QCR_LOGIN_GID`); when pi exits, `login` moves everything pi
+wrote into that group at `0660` (directories `2770`); the cli mode keeps the
+group when it drops to `QCR_RUN_UID`, while the model's tools, which clear
+their groups, never hold it. So a login made under one uid is read under any
+other, and a later login under a third can rewrite it. The files stay closed
+to every uid outside the group. (`0660`, not `0640`, because a re-login under
+another uid must be able to write.)
+
+A new volume starts as the image's `/home/qcr/.pi/agent` is, which the
+Dockerfile makes `0777` so that any uid can log in the first time.
+
+To check a login by hand, with no model call: `qcr login`, finish pi's
+`/login`, quit pi; then
+`docker run --rm --mount type=volume,src=qcr-login,dst=/l,readonly --user 4321:4321 --group-add 4747 --entrypoint ls <image> -ln /l`
+lists `auth.json` as `0660`, group 4747, and `cat`ing it works under that
+other uid; the same line without `--group-add 4747` is refused.
+
 ## The GitHub token
 
 No GitHub App on a laptop (D14). The wrapper takes `GITHUB_TOKEN`, then
@@ -59,7 +88,8 @@ environment.
 ## Verbs
 
 - `qcr` opens the TUI (`tui` mode); `qcr tui [pr|overseer]` the same with arguments.
-- `qcr login [provider]` runs pi's own `/login` over the `qcr-login` volume.
+- `qcr login [provider]` runs pi's own `/login` over the `qcr-login` volume
+  (see "The login" below).
 - `qcr scan …` runs in the call's own container, which is the scan sandbox
   (`QCR_IN_SCAN_SANDBOX=1`); `scan start` and `scan stage2 start` get
   `--foreground`, because a driver detached in a throwaway container would end
