@@ -430,6 +430,30 @@ describe("[sdkRuntime] against a real pi CLI on a local endpoint", () => {
     expect(after.filter((l) => JSON.parse(l).type === "session")).toHaveLength(1);
   });
 
+  it("hands message_update and tool_execution_update only to a listener that asked", async () => {
+    server.script([
+      {
+        text: "looking",
+        toolCalls: [{ id: "call_1", name: "bash", args: { command: "echo hi" } }],
+        usage: { prompt: 100, completion: 10 },
+      },
+      { text: "all done", usage: { prompt: 150, completion: 20 } },
+    ]);
+    const s = await sdkRuntime(host).create(spec("sdk"));
+    const plain: string[] = [];
+    const withUpdates: string[] = [];
+    s.subscribe((e) => plain.push(String(e["type"])));
+    s.subscribe((e) => withUpdates.push(String(e["type"])), { updates: true });
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    expect(plain).not.toContain("message_update");
+    expect(withUpdates).toContain("message_update");
+    expect(
+      withUpdates.filter((t) => t !== "message_update" && t !== "tool_execution_update"),
+    ).toEqual(plain);
+    expect(jsonl(spec("sdk").eventsFile).join("\n")).not.toMatch(/_update/);
+  });
+
   it("the aacr parsers read an SDK events file the way they read a CLI one", async () => {
     const script = [
       {

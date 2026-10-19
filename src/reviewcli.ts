@@ -918,6 +918,8 @@ async function runReview(
   );
   if (seeded.notice !== null && !json) deps.out(seeded.notice);
   const memoryReport = { used: seeded.used, notice: seeded.notice };
+  const sessionName = `review-${(kind === "diff" ? "diff" : cmd.uncommitted ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`;
+  const roundNo = scope === "delta" && prev !== null ? lastRound(prev).round_no + 1 : 1;
   let shot: OneShotResult;
   try {
     if (kind === "diff") {
@@ -947,7 +949,10 @@ async function runReview(
       prompts: planRound(treeDir, seeded.memory).prompts,
       ...(cap !== null ? { capUsd: cap } : {}),
       memory: seeded.memory,
-      sessionName: `review-${(kind === "diff" ? "diff" : cmd.uncommitted ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`,
+      sessionName,
+      // The round's LiveEvent log (src/live/): `qcr review status` and `qcr live`
+      // read it from the run's own directory.
+      live: { root: runDir, key: sessionName, round: roundNo },
       label: `${t.repo}@${kind === "diff" ? "diff" : cmd.uncommitted ? "uncommitted" : t.branch}`,
       ...(deps.log ? { log: deps.log } : {}),
     });
@@ -971,7 +976,7 @@ async function runReview(
   // round's own: a re-raised open finding is listed as still open, once.
   const finished = !shot.capped && shot.error === undefined && shot.findings !== undefined;
   const round: ReviewRound = {
-    round_no: scope === "delta" && prev !== null ? lastRound(prev).round_no + 1 : 1,
+    round_no: roundNo,
     head_sha: t.headSha,
     base_sha: t.baseSha,
     merge_base: t.mergeBase,

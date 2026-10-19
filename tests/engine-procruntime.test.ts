@@ -94,6 +94,24 @@ describe("procRuntime event stream", () => {
   });
 });
 
+describe("procRuntime update events", () => {
+  it("hands the *_update lines only to a listener that asked, and still keeps them out of the file", async () => {
+    const session = await procRuntime({ bin: FAKE_PI }).create(specIn());
+    const plain: string[] = [];
+    const withUpdates: string[] = [];
+    session.subscribe((e) => plain.push(String(e["type"])));
+    const off = session.subscribe((e) => withUpdates.push(String(e["type"])), { updates: true });
+    await session.prompt("prompt");
+    off();
+    await session.dispose();
+    expect(plain.filter((t) => t.endsWith("_update"))).toEqual([]);
+    expect(withUpdates.filter((t) => t.endsWith("_update")).length).toBeGreaterThan(0);
+    // everything the plain listener heard, in order, the update listener heard too
+    expect(withUpdates.filter((t) => !t.endsWith("_update"))).toEqual(plain);
+    expect(readFileSync(join(dir, "pi-events.jsonl"), "utf8")).not.toMatch(/_update/);
+  });
+});
+
 describe("procRuntime turns", () => {
   it("sends the prompt on stdin, and a follow-up is a --continue respawn with its text on argv", async () => {
     const pi = recordingPi('echo \'{"type":"agent_end"}\'');

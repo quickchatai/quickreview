@@ -40,6 +40,8 @@ import { GIT_ISOLATION_ENV } from "../bench/exec.js";
 import { POLICED_ORIGINALS, type BenchPostingReport } from "../bench/benchposting.js";
 import { apiKeyEnv } from "../bench/auth.js";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
+import { openRoundSink, type RoundLive } from "./livewire.js";
+import type { LiveSink } from "../live/writer.js";
 import { renderOneShotPrompts, type OneShotPrompts, type OneShotTarget } from "./prompts.js";
 import { renderBenchOutputs } from "./render.js";
 
@@ -145,6 +147,8 @@ export interface RoundSpec {
   /** Hard stop in dollars: the session (lens children with it) is killed once
    * pi's own price for the round reaches this. The result says `capped`. */
   capUsd?: number;
+  /** Where the round's LiveEvent log goes (src/live/). Omitted: none is written. */
+  live?: RoundLive;
   log?: (line: string) => void;
 }
 
@@ -226,6 +230,8 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
   rmSync(tmpDir, { recursive: true, force: true });
   mkdirSync(tmpDir, { recursive: true });
   let session: RuntimeSession | undefined;
+  let sink: LiveSink | undefined;
+  let unhear: (() => void) | undefined;
   try {
     const prompts =
       i.prompts ??
@@ -339,6 +345,22 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
       limits: { timeoutMs: i.timeoutMs, ...(i.capUsd !== undefined ? { capUsd: i.capUsd } : {}) },
       cliFlags: ["--approve", "-ne", "-ns"],
     });
+    // The live log hears every event, the `*_update`s too, from the first
+    // prompt on; a log that cannot be opened never costs the review.
+    if (i.live) {
+      try {
+        const heard = openRoundSink(
+          i.live,
+          { pr: i.target.number, session: sessionName },
+          env,
+          (m) => log(`review: ${label} — ${m}`),
+        );
+        sink = heard;
+        unhear = session.subscribe((event) => heard.feed(event), { updates: true });
+      } catch (err) {
+        log(`review: ${label} — live log not started: ${String(err).slice(0, 200)}`);
+      }
+    }
     let r = await session.prompt(prompts.order);
     const result: RoundResult = {
       prompts,
@@ -516,6 +538,8 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     if (existsSync(reviewPath)) result.review = readFileSync(reviewPath, "utf8");
     return result;
   } finally {
+    unhear?.();
+    sink?.close();
     await session?.dispose();
     if (ownTmp) rmSync(tmpDir, { recursive: true, force: true });
   }

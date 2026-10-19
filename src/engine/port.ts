@@ -79,6 +79,14 @@ export interface TurnResult {
 /** One event of the stream, as the harness wrote it. */
 export type SessionEvent = Record<string, unknown>;
 
+/** What a listener hears. By default the stream `pi --mode json` writes to the
+ * events file, which leaves out the `message_update` and `tool_execution_update`
+ * re-emissions (each restates a whole transcript). `updates` adds them: the live
+ * log (src/live/) coalesces them, a listener must not mutate what it is given. */
+export interface SubscribeOptions {
+  updates?: boolean;
+}
+
 export interface SessionStats {
   /** Turns that have settled. */
   turns: number;
@@ -115,7 +123,7 @@ export interface RuntimeSession {
   /** Stop the running turn (and everything it started). */
   abort(): Promise<void>;
   /** Hear each event as it is written; returns the unsubscribe. */
-  subscribe(listener: (event: SessionEvent) => void): () => void;
+  subscribe(listener: (event: SessionEvent) => void, options?: SubscribeOptions): () => void;
   stats(): SessionStats;
   /** Release the session; aborts a running turn. Idempotent. */
   dispose(): Promise<void>;
