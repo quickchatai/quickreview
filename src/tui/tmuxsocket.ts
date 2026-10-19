@@ -7,9 +7,10 @@
 // the same argv and runs it against that socket:
 //
 //   exec <name> tmux <args…>   →  tmux -S <socket> <args…>
-//   exec <name> sh -c <script> →  tmux -S <socket> run-shell <script>
-//                                  (the script runs inside the companion's tmux
-//                                  server, so it sees the companion's pi home)
+//   exec <name> sh -c <script> →  tmux -S <socket> run-shell <script>, its stdout
+//                                  read back through a tmux buffer (the script
+//                                  runs inside the companion's tmux server, so
+//                                  it sees the companion's pi home)
 //
 // Anything else is refused by name: the host wrapper owns the container's
 // lifecycle, and a call that wanted docker is a bug to see, not to absorb.
@@ -18,6 +19,7 @@
 // that would put the companion's pi inside the TUI container (with the ssh
 // agent) instead of the companion's. So a command that can start a server runs
 // only after `show-options` proved one is answering on the socket.
+import { randomBytes } from "node:crypto";
 import { runCommand, type DockerResult, type DockerRunner } from "./companion.js";
 
 /** Env var that puts the TUI in this mode, naming the mode. The wrapper sets it
@@ -41,19 +43,29 @@ export interface TmuxSocketDeps {
 
 const refuse = (stderr: string): DockerResult => ({ ok: false, stdout: "", stderr, code: null });
 
-/** `tmux run-shell` prints `'<script>' returned N` on a failing script. Move it
- * out of stdout, so a failed script leaves only its own output. */
-function stripReturned(script: string, res: DockerResult): DockerResult {
-  if (res.ok) return res;
-  const marker = `'${script}' returned `;
-  const at = res.stdout.lastIndexOf(marker);
-  if (at < 0) return res;
-  const code = /^(\d+)/.exec(res.stdout.slice(at + marker.length))?.[1];
-  return {
-    ...res,
-    stdout: res.stdout.slice(0, at),
-    stderr: res.stderr || `exit ${code ?? res.code}`,
-  };
+const shellQuote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
+
+/** The `run-shell` command that runs `script` and hands its stdout back through
+ * a tmux buffer, with the script's exit status appended as `x<code>`.
+ *
+ * `tmux run-shell` is not a reliable way to read a script's output: tmux 3.4
+ * (Ubuntu 24.04) never sends it to the invoking client's stdout. It lands in
+ * the active pane's view-mode, or is dropped when no session exists, and the
+ * client prints nothing. Newer tmux prints it. Worse, the view-mode swallows
+ * the keys meant for the companion's pi. A buffer is read the same way on every
+ * version, and the `x<code>` suffix keeps trailing newlines (the `$( )` would
+ * strip them) and the exit status, which `run-shell` reports as its own. */
+function captureCommand(socket: string, buffer: string, script: string): string {
+  return (
+    `o=$(sh -c ${shellQuote(script)}; printf 'x%s' "$?"); ` +
+    `printf '%s' "$o" | tmux -S ${shellQuote(socket)} load-buffer -b ${buffer} -`
+  );
+}
+
+/** Splits a captured buffer into the script's stdout and its exit status. */
+function parseCaptured(text: string): { stdout: string; code: number } | undefined {
+  const m = /^([\s\S]*)x(\d+)$/.exec(text);
+  return m ? { stdout: m[1]!, code: Number(m[2]) } : undefined;
 }
 
 export function tmuxSocketRunner(
@@ -81,7 +93,20 @@ export function tmuxSocketRunner(
     }
     if (bin === "sh" && rest[0] === "-c" && rest.length === 2) {
       const script = rest[1]!;
-      return stripReturned(script, await run(["-S", socket, "run-shell", script], opts));
+      const buffer = `qcr-run-${randomBytes(6).toString("hex")}`;
+      const ran = await run(
+        ["-S", socket, "run-shell", captureCommand(socket, buffer, script)],
+        opts,
+      );
+      if (!ran.ok) return ran;
+      const read = await run(["-S", socket, "show-buffer", "-b", buffer], opts);
+      void run(["-S", socket, "delete-buffer", "-b", buffer], { timeoutMs: 5_000 });
+      if (!read.ok) return read;
+      const got = parseCaptured(read.stdout);
+      if (!got) return refuse(`tmux returned no output for the script on ${socket}`);
+      return got.code === 0
+        ? { ok: true, stdout: got.stdout, stderr: ran.stderr, code: 0 }
+        : { ok: false, stdout: got.stdout, stderr: `exit ${got.code}`, code: got.code };
     }
     return refuse(
       `docker exec ${bin ?? ""} is not available in the tui container — only tmux and sh -c reach the companion (D35)`,
