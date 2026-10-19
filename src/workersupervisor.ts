@@ -874,11 +874,12 @@ export class WorkerSupervisor {
 
   /** Tell the breaker how the worker ended. A served round is a success; a
    * non-zero exit, a `failed` event or a deadline kill is a failure; the daemon's
-   * own stop and the operator's end are neither. A PR parked by this failure has
+   * own stop, the operator's end and a recovery fence are neither. A PR parked by this failure has
    * no round to retry, so a requeue it just got is failed instead. */
   private count(rec: LiveWorker, outcome: Outcome, code: number | null): void {
     const { pr } = rec.row;
-    if (rec.killedFor === "shutdown" || rec.killedFor === "operator") return;
+    // A fenced worker was ended by the caller, who owns the row's fate: not a worker failure.
+    if (rec.killedFor === "shutdown" || rec.killedFor === "operator" || outcome.kind === "leave") return;
     if (outcome.kind === "acked" && rec.failedReason === undefined) {
       this.breaker.success(pr);
       return;
