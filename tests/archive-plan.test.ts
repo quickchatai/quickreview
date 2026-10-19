@@ -108,6 +108,12 @@ function fixture(): Fixture {
   const stale = put(root, "inject/pr-100/stale.md", 83);
   put(root, "verdict/processed/20261001T000000Z-pr-100-round-1.json", 90);
   put(root, "verdict/failed/20261001T000000Z-pr-100-thread-1-comment-2.json", 91);
+  // The per-round worker trees (P8.16): the LiveEvent logs and the lens passes' JSONLs.
+  put(root, "state/live/pr-100/r1/main.jsonl", 20);
+  put(root, "state/live/pr-100/r1/lens-L1.jsonl", 21);
+  put(root, "state/lens/pr-100/r1/lens-sessions/L1/2026-10-01T10-00-00-000Z_x.jsonl", 200);
+  put(root, "state/lens/pr-100/r1/lens-ledger.jsonl", 22);
+  put(root, "state/live/pr-400/r1/main.jsonl", 23); // an open PR's: not in the plan
   put(root, "state/ledgers/pr-100.md", 95);
   put(root, "archive/pr-100/session.jsonl", 900);
   put(root, "archive/pr-100/ledger.md", 10);
@@ -253,9 +259,11 @@ describe("the plan — what a pass would move (§7.2)", () => {
           inject_done: { files: 3, bytes: 243 },
           stale_injects: { files: 1, bytes: 83 },
           verdicts: { files: 2, bytes: 181 },
+          live_logs: { files: 2, bytes: 41 },
+          lens_sessions: { files: 2, bytes: 222 },
         });
-        const bytes = 1500 + 30 + 100 + 40 + 101 + 183 + 435 + 243 + 83 + 181;
-        expect(p.candidates[0]).toMatchObject({ files: 22, bytes });
+        const bytes = 1500 + 30 + 100 + 40 + 101 + 183 + 435 + 243 + 83 + 181 + 41 + 222;
+        expect(p.candidates[0]).toMatchObject({ files: 26, bytes });
         expect(p.ledger_snapshots).toEqual({ files: 1, bytes: 95 });
         expect(p.legacy_copies).toEqual({ files: 1, bytes: 900 });
         expect(p.backlog).toEqual({ prs: 2, bytes, event_rows: 2, delivery_rows: 2 });
@@ -324,7 +332,7 @@ describe("the plan — what a pass would move (§7.2)", () => {
           first: ["state/pr-100-notes.md", "state/pr-1000-scratch/x.txt"],
         });
         // Kept live: never counted as backlog or as a candidate's file.
-        expect(p.candidates[0]).toMatchObject({ files: 23 });
+        expect(p.candidates[0]).toMatchObject({ files: 27 });
         expect(p.empty).toEqual([1000]);
         const text = renderArchiveReport({
           block: undefined,

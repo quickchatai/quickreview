@@ -34,6 +34,8 @@ describe("[archive] parsing", () => {
       disk_headroom_gb: 2,
       db_batch_rows: 500,
       gzip_level: 6,
+      live_retention_days: 30,
+      live_cap_gb: 20,
     });
     // The suite's fixture carries no [archive]: the parser fills it.
     expect(loadConfig(FIXTURE).archive).toEqual(ARCHIVE_DEFAULTS);
@@ -69,6 +71,9 @@ describe("[archive] parsing", () => {
     expect(parseArchive({ disk_headroom_gb: 0.75 }).disk_headroom_gb).toBe(0.75);
     expect(parseArchive({ gzip_level: 12 }).gzip_level).toBe(9);
     expect(parseArchive({ db_batch_rows: 10_000 }).db_batch_rows).toBe(2000);
+    expect(parseArchive({ live_retention_days: 1 }).live_retention_days).toBe(7);
+    expect(parseArchive({ live_cap_gb: -3 }).live_cap_gb).toBe(0);
+    expect(parseArchive({ live_cap_gb: 0.5 }).live_cap_gb).toBe(0.5);
     // A TOML integer too big for a double arrives as a bigint and clamps too.
     expect(parseArchive({ after_days: 10n ** 30n }).after_days).toBe(3650);
   });

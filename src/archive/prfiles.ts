@@ -31,8 +31,17 @@ export const ARTIFACT_CLASSES = [
   "inject_done",
   "stale_injects",
   "verdicts",
+  "live_logs",
+  "lens_sessions",
 ] as const;
 export type ArtifactClass = (typeof ARTIFACT_CLASSES)[number];
+
+/** The classes archived as one gzip per file whatever their size, so an
+ * extraction lays a worker round out whole under `files/state/<tree>/pr-<n>/r<k>/`
+ * (a lens JSONL is a pi session `qcr open` reads; it must not split between a
+ * bundle and a `files/` gzip by its size). Both trees are written by the
+ * per-round workers (P8.3, D10). */
+export const OWN_GZIP_CLASSES: ReadonlySet<ArtifactClass> = new Set(["live_logs", "lens_sessions"]);
 
 /** The small (bundled) classes — every class but the transcripts. */
 export type SmallClass = Exclude<ArtifactClass, "transcripts">;
@@ -156,6 +165,14 @@ export interface LiveListing {
   unclassified: Groups;
 }
 
+/** The per-round worker trees under `state/` (P8.3, D10), each holding one
+ * `pr-<n>/r<k>/` dir per PR round: the LiveEvent logs, and the lens passes'
+ * session JSONLs with their ledger. */
+export const LIVE_TREES = [
+  ["live_logs", "live"],
+  ["lens_sessions", "lens"],
+] as const satisfies ReadonlyArray<readonly [SmallClass, string]>;
+
 /** List every live directory once. Throws when one cannot be listed (an
  * unreadable listing is never "nothing there"). */
 export async function listLiveTree(
@@ -197,6 +214,7 @@ export async function listLiveTree(
   await listing("verdicts", join(root, "verdict", "processed"), VERDICT, "any");
   await listing("verdicts", join(root, "verdict", "failed"), VERDICT, "any");
   await listing("ledger", join(stateDir, "ledgers"), LEDGER);
+  for (const [cls, tree] of LIVE_TREES) await listing(cls, join(stateDir, tree), PR_DIR, "dir");
   return { sessionDirs, injectDirs, archiveDirs, flat, unclassified };
 }
 

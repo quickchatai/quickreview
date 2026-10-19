@@ -56,6 +56,24 @@ export interface ArchiveTotals {
   duplicates_removed: number;
 }
 
+/** The per-round worker trees `state/live/` and `state/lens/` (P8.16): their
+ * size at the last sweep against the cap, and what retention did. Null before
+ * the first sweep. */
+export interface ArchiveLiveStatus {
+  at: string;
+  bytes: number;
+  files: number;
+  /** The cap in bytes; null when `live_cap_gb = 0` turns it off. */
+  cap_bytes: number | null;
+  over_cap: boolean;
+  /** Removed by retention (verified in the PR's archive) at the last sweep. */
+  removed_files: number;
+  removed_bytes: number;
+  /** Past the retention but with no verified archive copy: kept. */
+  unarchived_files: number;
+  unarchived_bytes: number;
+}
+
 export interface ArchiveDisk {
   archive_free: number;
   state_free: number;
@@ -182,6 +200,9 @@ export interface ArchiveStatus {
   /** The stores that belong to no PR; null from an older daemon or
    * before the archiver exists, each store null until its pass has run. */
   stores: { overseer: ArchiveStoreStatus | null; pi_global: ArchiveStoreStatus | null } | null;
+  /** The worker trees' size and retention; null before the first sweep and
+   * from an older daemon's block. */
+  live: ArchiveLiveStatus | null;
 }
 
 /** The block before the archiver exists (the daemon is still assembling):
@@ -209,6 +230,7 @@ export function pendingArchiveStatus(mode: ArchiveMode): ArchiveStatus {
     db: null,
     files: null,
     stores: null,
+    live: null,
   };
 }
 
@@ -357,6 +379,37 @@ function readStores(v: unknown): ArchiveStatus["stores"] {
   };
 }
 
+const LIVE_NUMBERS = [
+  "bytes",
+  "files",
+  "removed_files",
+  "removed_bytes",
+  "unarchived_files",
+  "unarchived_bytes",
+] as const;
+
+/** The `live` sub-block: absent (an older daemon) and null read as null. */
+function readLive(v: unknown): ArchiveLiveStatus | null {
+  if (v === undefined || v === null) return null;
+  if (!isObj(v)) return bad(`live is ${shown(v)}, not an object or null`);
+  const phase = v;
+  if (!isStr(phase.at)) bad(`live.at is ${shown(phase.at)}, not a string`);
+  if (typeof phase.over_cap !== "boolean")
+    bad(`live.over_cap is ${shown(phase.over_cap)}, not a boolean`);
+  if (phase.cap_bytes !== null && !isNum(phase.cap_bytes))
+    bad(`live.cap_bytes is ${shown(phase.cap_bytes)}, not a number or null`);
+  const out = {
+    at: phase.at as string,
+    cap_bytes: phase.cap_bytes as number | null,
+    over_cap: phase.over_cap as boolean,
+  } as ArchiveLiveStatus;
+  for (const k of LIVE_NUMBERS) {
+    if (!isNum(phase[k])) bad(`live.${k} is ${shown(phase[k])}, not a number`);
+    out[k] = phase[k] as number;
+  }
+  return out;
+}
+
 /** The backlog's figures, as both readers check them. */
 const BACKLOG_KEYS = ["prs", "bytes", "event_rows", "delivery_rows"] as const;
 
@@ -444,6 +497,7 @@ export function readArchiveStatus(v: unknown): ArchiveStatusRead {
       db: readDb(v.db),
       files: readFiles(v.files),
       stores: readStores(v.stores),
+      live: readLive(v.live),
     };
     return { kind: "read", view };
   } catch (err) {
@@ -555,6 +609,13 @@ export function storesAlertPhrase(s: ArchiveStatus): string {
   return parts.join("; ");
 }
 
+/** The worker-trees phrase: only an over-cap tree needs a look. */
+export function livePhrase(s: ArchiveStatus): string {
+  const l = s.live;
+  if (!l || !l.over_cap) return "";
+  return `WORKER LOGS OVER CAP (${fmtBytes(l.bytes)} of ${fmtBytes(l.cap_bytes ?? 0)} in state/live + state/lens${l.unarchived_files ? `, ${l.unarchived_files} unarchived file(s) past retention kept` : ""})`;
+}
+
 /** How many reopened PRs wait for their archived files to come back, and
  * who will bring them: in mode `on` a birth or the next tick; in any other
  * mode nothing does (§8.3), so the phrase names the verb. ""
@@ -587,6 +648,10 @@ export function archiveAttention(s: ArchiveStatus): string[] {
     );
   if (s.verify_failures_24h !== null && s.verify_failures_24h >= 3)
     out.push(`${s.verify_failures_24h} VERIFY FAILURES in 24h`);
+  if (s.live?.over_cap)
+    out.push(
+      `worker logs ${fmtBytes(s.live.bytes)} past the ${fmtBytes(s.live.cap_bytes ?? 0)} cap (state/live + state/lens)`,
+    );
   return out;
 }
 
@@ -622,6 +687,8 @@ export function archiveStatusLine(v: unknown): string {
   if (files) extras.push(files);
   const stores = storesAlertPhrase(s);
   if (stores) extras.push(stores);
+  const live = livePhrase(s);
+  if (live) extras.push(live);
   const tail = extras.length > 0 ? `; ${extras.join("; ")}` : "";
   const mode = `mode ${s.mode}`;
   switch (s.state) {

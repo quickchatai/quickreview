@@ -51,6 +51,8 @@ function fakePlan(at: number, prs = 3): ArchivePlan {
       inject_done: tally,
       stale_injects: tally,
       verdicts: tally,
+      live_logs: tally,
+      lens_sessions: tally,
     },
     ledger_snapshots: tally,
     legacy_copies: tally,
@@ -132,6 +134,18 @@ function rig(cfg: Partial<ArchiveConfig> = {}, extra: Partial<ArchiverDeps> = {}
       r.plans += 1;
       return fakePlan(clock.ms);
     },
+    // The worker-log sweep does real directory IO; this file's clocks are fake.
+    sweepLive: async (o) => ({
+      at: o.now.toISOString(),
+      bytes: 0,
+      files: 0,
+      bytes_after: 0,
+      removed_files: 0,
+      removed_bytes: 0,
+      unarchived_files: 0,
+      unarchived_bytes: 0,
+      manifest_unreadable: [],
+    }),
     now: () => new Date(clock.ms),
     schedule: (fn, ms) => {
       const entry = { fn, ms, cancelled: false };
@@ -503,6 +517,8 @@ describe("the policy reads every [archive] knob", () => {
       diskHeadroomBytes: 0.5 * GB,
       dbBatchRows: 500,
       gzipLevel: 6,
+      liveRetentionMs: 30 * 24 * 60 * MIN,
+      liveCapBytes: 20 * GB,
     });
   });
 });

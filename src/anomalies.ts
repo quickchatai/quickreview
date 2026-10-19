@@ -170,9 +170,14 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   //                            archived window UNKNOWN (never absent), so the
   //                            PR's pre-close recheck claims stay standing
   //                            until a person looks. Once per incident per PR.
+  //   archive_live_cap       — `state/live/` plus `state/lens/` (the per-round
+  //                            worker logs) is over `[archive] live_cap_gb`.
+  //                            Nothing is deleted to get under it. Once per
+  //                            incident and every 6 h while it lasts.
   // The archiver's verify failures stay the QUIET `archive_verify_failed`
   // (a status counter; a source that fails to verify is simply kept).
   "archive_disk_low",
+  "archive_live_cap",
   "archive_restore_failed",
   // src/wakes.ts: the held-wake cap evicted an author reply or
   // an operator-recovered obligation. The store never selects either for

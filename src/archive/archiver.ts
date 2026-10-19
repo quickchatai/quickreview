@@ -88,6 +88,12 @@ import {
   type PlanMemo,
 } from "./plan.js";
 import { OVERSEER_STORE, archiveOverseer } from "./overseer.js";
+import {
+  overLiveCap,
+  sweepLiveTrees,
+  type LiveSweepOptions,
+  type LiveSweepResult,
+} from "./liveretention.js";
 import { archivePiGlobal } from "./piglobal.js";
 import { archivePr, type PrPassResult } from "./prarchive.js";
 import { SpanMeter, injectDirOf, listLiveTree, knownInjectFiles } from "./prfiles.js";
@@ -107,6 +113,7 @@ import {
   type ArchiveDisk,
   type ArchiveFilesStatus,
   type ArchiveHoldReason,
+  type ArchiveLiveStatus,
   type ArchiveState,
   type ArchiveStatus,
   type ArchiveStoreStatus,
@@ -117,6 +124,7 @@ import { emptyStoreResult, type StorePassResult } from "./storepass.js";
 export { OPERATOR_WAIT_MS };
 
 const MIN_MS = 60_000;
+const DAY_MS = 24 * 60 * MIN_MS;
 const GB = 1024 ** 3;
 
 /** A plan is recomputed at most this often — the inventory is a few thousand
@@ -154,6 +162,9 @@ export interface ArchivePolicy {
   diskHeadroomBytes: number;
   dbBatchRows: number;
   gzipLevel: number;
+  liveRetentionMs: number;
+  /** 0 = no cap. */
+  liveCapBytes: number;
 }
 
 export function archivePolicy(c: ArchiveConfig): ArchivePolicy {
@@ -169,6 +180,8 @@ export function archivePolicy(c: ArchiveConfig): ArchivePolicy {
     diskHeadroomBytes: Math.round(c.disk_headroom_gb * GB),
     dbBatchRows: c.db_batch_rows,
     gzipLevel: c.gzip_level,
+    liveRetentionMs: c.live_retention_days * DAY_MS,
+    liveCapBytes: Math.round(c.live_cap_gb * GB),
   };
 }
 
@@ -293,6 +306,8 @@ export interface ArchiverDeps {
   step?: StepFn;
   /** Seam: the plan computation (default: src/archive/plan.ts). */
   plan?: (opts: { signal: AbortSignal; memo: PlanMemo }) => Promise<ArchivePlan>;
+  /** Seam: the worker-log sweep (default: `sweepLiveTrees`). */
+  sweepLive?: (o: LiveSweepOptions) => Promise<LiveSweepResult>;
   /** The DB mover's pause between batches (default: a real 100 ms timer). */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** The DB mover's span clock (default `performance.now`). */
@@ -363,6 +378,9 @@ export class Archiver {
   private lastTickLine = new Map<string, string>();
   /** The file phase's last run. */
   private files: ArchiveFilesStatus | null = null;
+  /** The worker trees' last sweep (P8.16), and when it ran (ms). */
+  private live: ArchiveLiveStatus | null = null;
+  private liveSweptAtMs: number | null = null;
   /** Crash recovery (§7.6) has run once this start. */
   private filesRecovered = false;
   /** PRs whose crash recovery failed (an unreadable archive or live dir), by
@@ -584,6 +602,9 @@ export class Archiver {
           if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
         }
       }
+      // The worker trees' retention and cap (P8.16): at the plan's cadence, and
+      // never a reason to fail or hold a tick.
+      if (failure === null) await this.livePhase(at, on, force || planned);
       // Sealing comes last (§10), and only after a DB phase that did not fail.
       // It starts nothing under a hold (re-read now, the disk included) or once
       // the tick budget is spent.
@@ -1706,6 +1727,67 @@ export class Archiver {
     }
   }
 
+  /**
+   * `state/live/` and `state/lens/` (P8.16, D10): measure them against the cap
+   * and, in mode `on`, apply the retention (a file leaves only when the PR's
+   * archive holds it verified, `liveretention.ts`). Past the cap the
+   * `archive_live_cap` wake fires, once per incident and every 6 h; nothing is
+   * ever deleted to get under it. Runs when a plan was just computed and
+   * otherwise at the plan's cadence. A failure is logged and retried; it never
+   * fails the tick.
+   */
+  private async livePhase(at: Date, on: boolean, due: boolean): Promise<void> {
+    const nowMs = at.getTime();
+    if (!due && this.liveSweptAtMs !== null && nowMs - this.liveSweptAtMs < PLAN_REFRESH_MS) return;
+    try {
+      const r = await (this.deps.sweepLive ?? sweepLiveTrees)({
+        root: this.deps.root,
+        now: this.now(),
+        retentionMs: this.policy.liveRetentionMs,
+        remove: on,
+        signal: this.abort.signal,
+      });
+      this.liveSweptAtMs = nowMs;
+      const cap = this.policy.liveCapBytes;
+      const over = overLiveCap(r.bytes_after, cap);
+      this.live = {
+        at: r.at,
+        bytes: r.bytes_after,
+        files: r.files - r.removed_files,
+        cap_bytes: cap > 0 ? cap : null,
+        over_cap: over,
+        removed_files: r.removed_files,
+        removed_bytes: r.removed_bytes,
+        unarchived_files: r.unarchived_files,
+        unarchived_bytes: r.unarchived_bytes,
+      };
+      if (r.removed_files > 0 || over)
+        this.log(
+          `archive: worker logs — ${r.removed_files} file(s), ${r.removed_bytes} bytes past retention and archived removed; ` +
+            `${r.bytes_after} bytes left under state/live + state/lens${over ? `, OVER the ${cap} byte cap` : ""}`,
+        );
+      for (const pr of r.manifest_unreadable)
+        this.raiseQuiet(
+          `live:${pr}`,
+          `archive pr-${pr}: manifest unreadable — its worker logs were kept`,
+        );
+      if (over) {
+        this.raiseWake(
+          "archive_live_cap",
+          null,
+          "live_cap",
+          `worker logs are over the disk cap: state/live + state/lens hold ${r.bytes_after} bytes in ` +
+            `${r.files - r.removed_files} file(s), the cap is ${cap} bytes ([archive] live_cap_gb). ` +
+            `${r.unarchived_files} file(s) (${r.unarchived_bytes} bytes) are past the retention with no verified archive copy ` +
+            "and are kept: nothing is deleted to get under the cap. Close or archive the PRs that hold them, or raise the cap.",
+        );
+      } else this.raised.delete("live_cap");
+    } catch (err) {
+      if (this.abort.signal.aborted) return;
+      this.log("archive: worker-log sweep failed — retried next tick", err);
+    }
+  }
+
   /** A WAKE kind, once per incident (`key`) and again only after
    * ANOMALY_REPEAT_MS. */
   private raiseWake(kind: string, pr: number | null, key: string, detail: string): void {
@@ -1826,6 +1908,7 @@ export class Archiver {
       max_sync_span_ms: this.maxSyncSpanMs,
       db: this.db ? { ...this.db } : null,
       files: this.files ? { ...this.files } : null,
+      live: this.live ? { ...this.live } : null,
       stores: {
         overseer: this.stores.overseer ? { ...this.stores.overseer } : null,
         pi_global: this.stores.pi_global ? { ...this.stores.pi_global } : null,
