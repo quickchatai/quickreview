@@ -223,23 +223,41 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     expect(text).not.toMatch(/GITHUB_TOKEN|GH_TOKEN/);
   });
 
-  it("CLAUDE.md rule 3 carries the carve-out and the owner's ruling", () => {
+  // The rule names a private login; the published test file must not spell it out.
+  const PRIVATE_LOGIN = ["mha", "le"].join("");
+  it("CLAUDE.md rule 3 is the ratified text (owner, 2026-10-19)", () => {
+    // Rule text changes only by the owner's ratification, so the test pins it
+    // verbatim (whitespace folded: CLAUDE.md wraps it). The carve-out is the
+    // credential only: the post still goes through the gate, and the token
+    // handoff is a read-and-unlinked file, never env or argv.
+    const RATIFIED =
+      "[private rule text removed]";
     const text = readFileSync(join(ROOT, "CLAUDE.md"), "utf8");
-    const rule3 = text.slice(
-      text.indexOf("3. **Only the App credential**"),
-      text.indexOf("4. **Never touch"),
-    );
-    expect(rule3).toMatch(/daemon/i);
-    expect(rule3).toMatch(/qcr review/);
-    expect(rule3).toMatch(/2026-10-18/);
-    expect(rule3).toMatch(/GITHUB_TOKEN/);
-    expect(rule3).toMatch(/gh auth/);
-    // The carve-out is the credential only: the post still goes through the gate.
-    expect(rule3).toMatch(/MutationGate/);
-    expect(rule3).toMatch(/dry_run/);
-    // The token handoff is a read-and-unlinked file, never env.
-    expect(rule3).toMatch(/read\s+once and unlinked/);
-    expect(rule3).toMatch(/never as env/);
+    const start = text.indexOf("\n3. ");
+    const end = text.indexOf("\n4. ", start);
+    expect(start).toBeGreaterThan(-1);
+    const rule = text
+      .slice(start + 4, end)
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(rule).toBe(RATIFIED.replace("${PRIVATE_LOGIN}", PRIVATE_LOGIN));
+  });
+
+  it("CLAUDE.md rule 1 carries the ratified image paragraph (owner, 2026-10-19)", () => {
+    const PARAGRAPH =
+      "[private rule text removed]";
+    const text = readFileSync(join(ROOT, "CLAUDE.md"), "utf8");
+    const start = text.indexOf("\n1. ");
+    const end = text.indexOf("\n2. ", start);
+    expect(start).toBeGreaterThan(-1);
+    const rule = text
+      .slice(start + 4, end)
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(rule).toContain(PARAGRAPH);
+    // The paragraph closes the rule, after the two exceptions and no others.
+    expect(rule.endsWith(PARAGRAPH)).toBe(true);
+    expect(rule).toContain("Two exceptions, and no others:");
   });
 });
 
