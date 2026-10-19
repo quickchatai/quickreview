@@ -110,7 +110,7 @@ describe("the mounts land on the release image's own paths", () => {
     expect(dockerfile).toMatch(
       /^RUN install -d -m 1777 \/opt\/qcr\/state \/opt\/qcr\/state\/ingress /m,
     );
-    expect(dockerfile).toMatch(/^RUN install -d -m 1777 \/home\/qcr \/home\/qcr\/\.pi$/m);
+    expect(dockerfile).toMatch(/^RUN install -d -m 1777 \/home\/qcr \/home\/qcr\/\.pi /m);
   });
 
   it("secrets and config are read-only, and required rather than defaulted into the home directory", () => {
