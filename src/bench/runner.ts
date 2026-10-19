@@ -124,6 +124,9 @@ export interface RunnerOptions {
   agentDir: string;
   timeoutMs: number;
   piBin?: string;
+  /** Hosts the review session (`--runtime`). Omitted: a process runtime over
+   * `piBin`. */
+  runtime?: Runtime;
   keepTree?: boolean;
   log?: (line: string) => void;
 }
@@ -902,6 +905,7 @@ export async function reviewCase(
       ecosystem: ctx.ecosystem,
       timeoutMs: o.timeoutMs,
       ...(o.piBin !== undefined ? { piBin: o.piBin } : {}),
+      ...(o.runtime !== undefined ? { runtime: o.runtime } : {}),
       tmpDir,
       prompts,
       label: c.instance_id,

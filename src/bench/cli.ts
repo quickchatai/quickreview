@@ -8,6 +8,7 @@
 //             [--allow-customised]   run although the profile replaces shipped
 //                                    agents or prompts (refused otherwise)
 //             [--config a.b=v,c.d=w]   config levers for this run (runner.ts)
+//             [--runtime proc|sdk]     what hosts pi (default [engine] runtime; sdk is refused until the bench has an SDK host)
 //             [--phase all|init|case|finish]   arm.sh's one-container-per-case split;
 //             every case ends with a `result: <id> <status> retry= limited=` line
 //   results   --set <file> --out DIR     rebuild result files from case dirs
@@ -54,6 +55,7 @@
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):
 //   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
 //                 [--model openai-codex/gpt-6-sol:high] [--concurrency 3] [--resume] [--label L]
+//                 [--runtime proc|sdk]   what hosts the judge (default proc)
 //   defect-report --set <file> --defects <file> --out RUN_DIR [--label L]   rescore, no model calls
 //
 // Nothing here can reach GitHub except `prefetch` (anonymous, read-only), and
@@ -130,6 +132,9 @@ import {
 } from "./defects.js";
 import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectjudge.js";
 import { codexCommand } from "./codexcli.js";
+import type { EngineRuntimeKind, LensRuntimeKind } from "../config.js";
+import type { Runtime } from "../engine/port.js";
+import { checkLensRuntime, parseRuntimeKind, selectRuntime } from "../engine/select.js";
 import { caseTokenCounts, runCostUsd } from "./cost.js";
 
 const DEFAULTS = {
@@ -160,6 +165,18 @@ function flags(argv: string[]): {
     },
     has: (k) => rest.includes(k),
   };
+}
+
+/** The runtime a bench command hosts pi on: `--runtime`, else `fallback`.
+ * Undefined is the process runtime each runner already defaults to. */
+function benchRuntime(
+  f: { get: (k: string) => string | undefined },
+  fallback: EngineRuntimeKind,
+  lens: LensRuntimeKind = "native",
+): Runtime | undefined {
+  checkLensRuntime(lens, "bench");
+  const flag = f.get("--runtime");
+  return selectRuntime(flag === undefined ? fallback : parseRuntimeKind(flag), "bench");
 }
 
 function log(line: string): void {
@@ -339,6 +356,7 @@ async function main(): Promise<number> {
     };
     const authSrc = f.get("--auth-src") ?? DEFAULTS.authSrc;
     const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
+    const runtime = benchRuntime(f, base.cfg.engine.runtime, base.cfg.pi.lens_runtime);
     // A case container always resumes: its run was set up (and, if fresh,
     // cleared) by the init phase, so a finished case it finds is this run's.
     const resume = f.has("--resume") || phase === "case";
@@ -440,6 +458,7 @@ async function main(): Promise<number> {
           outDir,
           agentDir,
           timeoutMs,
+          ...(runtime !== undefined ? { runtime } : {}),
           keepTree: f.has("--keep-tree"),
           log,
         },
@@ -980,6 +999,7 @@ async function main(): Promise<number> {
       const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
       const timeoutMs = Number(f.get("--timeout-min") ?? "30") * 60_000;
       const resume = f.has("--resume");
+      const runtime = benchRuntime(f, "proc");
       mkdirSync(judgeDir, { recursive: true });
       let authStop: string | null = null;
       const unjudged: string[] = [];
@@ -1031,6 +1051,7 @@ async function main(): Promise<number> {
               cwd: tree,
               model,
               timeoutMs,
+              ...(runtime !== undefined ? { runtime } : {}),
               env: {
                 PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
                 HOME: process.env.HOME ?? "/tmp",
