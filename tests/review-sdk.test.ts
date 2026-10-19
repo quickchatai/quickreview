@@ -262,19 +262,23 @@ describe("selectReviewRuntime ([engine] runtime for qcr review)", () => {
     }
   });
 
-  it("still refuses lens_runtime = engine, which the review route has no lens tool for yet", async () => {
+  it("lens_runtime = engine needs the SDK runtime, and carries the engine route with it", async () => {
     const { selectReviewRuntime } = await import("../src/reviewcli.js");
+    const { resetLiveSessions } = await import("../src/engine/livesessions.js");
     const { parseConfig } = await import("../src/config.js");
     const base = readFileSync(join(REPO_ROOT, "tests", "fixtures", "config.toml"), "utf8");
-    expect(() =>
-      selectReviewRuntime(
-        parseConfig(
-          `${base}\n[engine]\nruntime = "sdk"\n`.replace(
-            /^\[pi\]\s*$/m,
-            '[pi]\nlens_runtime = "engine"',
-          ),
-        ),
-      ),
-    ).toThrow(/lens_runtime = engine is not available on the review route/);
+    const engine = (extra: string) =>
+      parseConfig(`${base}\n${extra}`.replace(/^\[pi\]\s*$/m, '[pi]\nlens_runtime = "engine"'));
+    expect(() => selectReviewRuntime(engine(""))).toThrow(/set \[engine\] runtime = sdk/);
+    try {
+      const rt = selectReviewRuntime(engine('[engine]\nruntime = "sdk"\n'));
+      expect(rt?.engineLens).toMatchObject({ plannedWave: false });
+      // the native default has no engine route
+      expect(
+        selectReviewRuntime(parseConfig(`${base}\n[engine]\nruntime = "sdk"\n`))?.engineLens,
+      ).toBeUndefined();
+    } finally {
+      resetLiveSessions();
+    }
   });
 });

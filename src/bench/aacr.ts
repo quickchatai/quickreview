@@ -29,7 +29,7 @@
 
 import { CASE_FILES, commentsEnvelope, prDescription, singleLineComment } from "./artifacts.js";
 import { usageCost } from "./values.js";
-import { isLensTool, lensIdOf, LensOnce, lensResultsOf } from "../lensresult.js";
+import { isLensTool, LENS_WAVE_TOOL, lensIdOf, LensOnce, lensResultsOf } from "../lensresult.js";
 import { postedSeverityTag, RENDER_RECORD_FIELDS } from "../reviewrender.js";
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, POSTING_TAG_WORDS } from "../severity.js";
 import type { PrFileEntry } from "../github.js";
@@ -1091,8 +1091,7 @@ export function placePosted(
   );
   const inBody: Array<{ site: BenchSite; posted: number }> = [];
   const near = (site: BenchSite, x: BenchSite): boolean =>
-    x.path === site.path &&
-    spanDistance(site, x) <= NEAR_LINES;
+    x.path === site.path && spanDistance(site, x) <= NEAR_LINES;
   return sites.map((site, i): PostedPlace | null => {
     if (!site) return null;
     const c = pairs[i];
@@ -1390,7 +1389,6 @@ export interface Stages {
   phases: { delta: StageTotals; sweep: StageTotals };
 }
 
-
 /**
  * Split one review's pi `--mode json` stream into its subagent calls, each
  * with its agents, its phase (by launch order relative to the first
@@ -1467,6 +1465,7 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
           .map((r) => (r as Record<string, unknown> | null)?.["agent"])
           .filter((a): a is string => typeof a === "string");
       let last: number | null = null;
+      let first: number | null = null;
       for (const r0 of results) {
         const r = (r0 ?? {}) as Record<string, unknown>;
         const u = r["usage"] as Record<string, unknown> | undefined;
@@ -1477,9 +1476,15 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
         }
         for (const msg of Array.isArray(r["messages"]) ? (r["messages"] as unknown[]) : []) {
           const t = (msg as Record<string, unknown> | null)?.["timestamp"];
-          if (typeof t === "number" && (last === null || t > last)) last = t;
+          if (typeof t !== "number") continue;
+          if (last === null || t > last) last = t;
+          if (fresh.has(r0) && (first === null || t < first)) first = t;
         }
       }
+      // A `lens_wave` joins a wave the engine started at round start: the
+      // wave's window opens with its first lens message, not with the join.
+      if (e["toolName"] === LENS_WAVE_TOOL && first !== null)
+        call.start_ms = call.start_ms === null ? first : Math.min(call.start_ms, first);
       if (last !== null) call.end_ms = last;
       else awaitingEnd.push(call);
       if (call.kind === "validate") firstValidateDone = true;

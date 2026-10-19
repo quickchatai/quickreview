@@ -53,12 +53,12 @@ export interface RoundSdkOptions {
 /** The names the model's bash may draw from the spec's env besides the host
  * defaults: the git isolation pins and the QCR_* names the round's scripts read.
  * The proc route's bash saw the whole env; the API keys in it are not carried. */
-const BASH_ENV_ALLOW = ["GIT_*", "QCR_*"] as const;
+export const BASH_ENV_ALLOW = ["GIT_*", "QCR_*"] as const;
 
 /** The reviewer stub (D34) as a context file at `<cwd>/AGENTS.override.md`. A
  * round without the stub fails here, loudly: a context file is never dropped
  * silently. */
-function reviewerStub(root: string, cwd: string): { path: string; content: string } {
+export function reviewerStub(root: string, cwd: string): { path: string; content: string } {
   const source = join(root, REVIEWER_STUB);
   try {
     return { path: join(cwd, HOST_CONTEXT_STUB), content: readFileSync(source, "utf8") };

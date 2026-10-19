@@ -73,14 +73,6 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "factories (P3) take it. Delete this entry with the first import.",
     },
     {
-      file: "src/engine/lens/engine-tools.ts",
-      why:
-        "the lens tools of an engine route's main session (P4.5): `lens` and `lens_wave` over one runner and " +
-        "one wave, handed over as customTools. Driven only by tests/lens-tool.test.ts until a route takes it " +
-        "(P5.4, behind `[pi] lens_runtime = engine`; src/engine/reviewsdk.ts keeps the native tool as its default). " +
-        "Delete this entry with the first production import.",
-    },
-    {
       file: "src/piauthcopy.ts",
       why:
         "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +

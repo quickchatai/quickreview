@@ -42,7 +42,14 @@ import { apiKeyEnv } from "../bench/auth.js";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import { openRoundSink, type RoundLive } from "./livewire.js";
 import type { LiveSink } from "../live/writer.js";
-import { renderOneShotPrompts, type OneShotPrompts, type OneShotTarget } from "./prompts.js";
+import { planLaunch, type LaunchUnit } from "./lens/launch-plan.js";
+import { launchWave, type EngineRouteRuntime, type WaveRow } from "./lens/wave.js";
+import {
+  engineLensSection,
+  renderOneShotPrompts,
+  type OneShotPrompts,
+  type OneShotTarget,
+} from "./prompts.js";
 import { renderBenchOutputs } from "./render.js";
 
 export type { PiRun };
@@ -132,7 +139,8 @@ export interface RoundSpec {
    * given dir is the caller's to create and remove. */
   tmpDir?: string;
   /** Prompts rendered by the caller (a bench follow-up). Omitted: the first
-   * round's, rendered here. */
+   * round's, rendered here. On an engine lens route the round appends the
+   * engine-only section to their order (`result.prompts` carries the sent one). */
   prompts?: OneShotPrompts;
   dependencyNote?: string;
   /** The memory seed for the first round's prompt (ignored with `prompts`). */
@@ -210,9 +218,20 @@ function authRefusal(
   return undefined;
 }
 
+/** How long a round waits for the engine's wave rows to settle once it has
+ * ended them (each ends its session and writes its ledger line). */
+const WAVE_SETTLE_MS = 15_000;
+
 /** Run one review round on `runtime`. A round that fails is a returned outcome
  * (`error`, absent `outcome`), never a throw; only an unwritable output dir, or
- * a login that cannot cover the run (`auth`), throws. */
+ * a login that cannot cover the run (`auth`), throws.
+ *
+ * A runtime that hosts the engine's lens tools (`runtime.engineLens`, wave.ts)
+ * makes this an engine lens route: the order gains the engine-only section
+ * (prompts.ts engineLensSection), and with `plannedWave` the round starts the
+ * planned discovery wave itself, from the round's `tasks/` (never pass-validate),
+ * after the main session exists and before its first prompt; the session joins it
+ * through `lens_wave` (rule 9). Everything else stays the session's. */
 export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundResult> {
   const log = i.log ?? (() => {});
   const label = i.label ?? `${i.target.repo}#${i.target.number}`;
@@ -232,8 +251,9 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
   let session: RuntimeSession | undefined;
   let sink: LiveSink | undefined;
   let unhear: (() => void) | undefined;
+  let endWave: () => Promise<void> = async () => {};
   try {
-    const prompts =
+    const rendered =
       i.prompts ??
       renderOneShotPrompts({
         root,
@@ -251,18 +271,17 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     // launches every task file the dir holds.
     rmSync(join(outDir, "tasks"), { recursive: true, force: true });
     rmSync(join(outDir, CONTEXT_PACK_FILE), { force: true });
-    for (const f of prompts.extraFiles ?? []) {
+    for (const f of rendered.extraFiles ?? []) {
       mkdirSync(dirname(f.path), { recursive: true });
       writeFileSync(f.path, f.text);
     }
-    if (prompts.contextPack) writeFileSync(prompts.contextPack.path, prompts.contextPack.text);
-    if (prompts.taskFiles.length) {
+    if (rendered.contextPack) writeFileSync(rendered.contextPack.path, rendered.contextPack.text);
+    if (rendered.taskFiles.length) {
       mkdirSync(join(outDir, "tasks"), { recursive: true });
-      for (const t of prompts.taskFiles) writeFileSync(t.path, t.text);
+      for (const t of rendered.taskFiles) writeFileSync(t.path, t.text);
     }
     const sysPath = join(outDir, "system-prompt.md");
-    writeFileSync(sysPath, prompts.system);
-    writeFileSync(join(outDir, "round-order.md"), prompts.order);
+    writeFileSync(sysPath, rendered.system);
     writeFileSync(
       join(outDir, "files.json"),
       JSON.stringify(
@@ -310,6 +329,29 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     };
     // No GitHub credential reaches a process whose model runs bash.
     for (const k of GITHUB_TOKEN_ENVS) delete env[k];
+    // The engine lens route (wave.ts EngineRoute): the planned wave is what
+    // `planLaunch` reads from this run's `tasks/` (pass-validate excluded), the
+    // same plan `lens_wave` resolves its dirs to. Nothing is started yet.
+    const route = (runtime as EngineRouteRuntime).engineLens;
+    const startWarnings: string[] = [];
+    let waveUnits: LaunchUnit[] = [];
+    if (route?.plannedWave && rendered.taskFiles.length) {
+      const plan = planLaunch({ dirs: [join(outDir, "tasks")] }, env);
+      if (plan.ok) waveUnits = plan.units;
+      else startWarnings.push(`engine wave not planned: ${plan.error}`.slice(0, 300));
+    }
+    const prompts: OneShotPrompts = route
+      ? {
+          ...rendered,
+          order: `${rendered.order}\n\n${engineLensSection(
+            join(outDir, "tasks"),
+            waveUnits.length
+              ? { dir: dirname(waveUnits[0]!.path), agents: waveUnits.map((u) => u.agent) }
+              : null,
+          )}`,
+        }
+      : rendered;
+    writeFileSync(join(outDir, "round-order.md"), prompts.order);
     const sessionDir = join(outDir, "session");
     // This attempt's session only: an earlier attempt's JSONL left here would
     // make `resumable` true and `--continue` would resume THAT conversation.
@@ -359,6 +401,29 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
         unhear = session.subscribe((event) => heard.feed(event), { updates: true });
       } catch (err) {
         log(`review: ${label} — live log not started: ${String(err).slice(0, 200)}`);
+      }
+    }
+    // The engine starts the planned wave before the main session's first turn,
+    // so the lenses are in flight while it reads. The runner paces the sessions
+    // (its cap, its cache groups and its creation stagger, cpu-gate finding 4).
+    if (route) {
+      route.wave.clear();
+      if (waveUnits.length) {
+        const stop = new AbortController();
+        const rows: WaveRow[] = launchWave(route.wave, route.runner, waveUnits, stop.signal);
+        log(`review: ${label} — engine wave: ${rows.length} lenses started`);
+        // Ends what the session did not join, and waits for the rows to write
+        // their ledger lines (the round's price counts them).
+        endWave = async () => {
+          stop.abort();
+          let timer: NodeJS.Timeout | undefined;
+          await Promise.race([
+            Promise.allSettled(rows.map((row) => row.done)),
+            new Promise((resolve) => (timer = setTimeout(resolve, WAVE_SETTLE_MS))),
+          ]);
+          clearTimeout(timer);
+          endWave = async () => {};
+        };
       }
     }
     let r = await session.prompt(prompts.order);
@@ -431,8 +496,11 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
         result.capped = r.capped === true;
       }
     }
+    // The turns are over: a wave row nobody joined is not wanted any more.
+    await endWave();
     const stderrLines = readFileSync(stderr, "utf8").split("\n");
     result.warnings = [
+      ...startWarnings,
       ...new Set(
         stderrLines
           .filter((l) => /warn|error|fatal|failed/i.test(l))
@@ -540,6 +608,7 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
   } finally {
     unhear?.();
     sink?.close();
+    await endWave();
     await session?.dispose();
     if (ownTmp) rmSync(tmpDir, { recursive: true, force: true });
   }

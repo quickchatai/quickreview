@@ -13,6 +13,7 @@
 // call. A row is forgotten only when the call that launched it was aborted: a
 // lens that failed or timed out stays on the board as the failure it was, and
 // the session re-runs it through `lens` if it wants it again.
+import type { Runtime } from "../port.js";
 import type { LaunchUnit } from "./launch-plan.js";
 import type { LensRequest, LensRun } from "./runlens.js";
 
@@ -131,3 +132,16 @@ export function launchWave(
 ): WaveRow[] {
   return units.map((unit) => wave.start(runner, unit, "engine", signal).row);
 }
+
+/** What a runtime that hosts the engine's lens tools hands the round: the board
+ * its `lens_wave` reads, the runner behind it, and whether the engine starts the
+ * planned wave (`[pi] engine_wave`) or leaves the launch to the main session. */
+export interface EngineRoute {
+  wave: LensWave;
+  runner: WaveRunner;
+  plannedWave: boolean;
+}
+
+/** A runtime that carries an engine route (src/engine/reviewsdk.ts). The round
+ * (round.ts) reads it off the runtime it is given. */
+export type EngineRouteRuntime = Runtime & { readonly engineLens?: EngineRoute };

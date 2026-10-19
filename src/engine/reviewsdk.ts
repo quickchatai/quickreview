@@ -22,18 +22,29 @@
 //                no GitHub token (a lens child runs the model's bash, rule 3).
 //                The engine's own tools (`lens`, `lens_wave`: engineLensTools,
 //                src/engine/lens/engine-tools.ts) take this slot through the
-//                `lens` option; the route's selection key (P5.1) flips the default.
+//                `lens` option, or, with the `engine` option (`[pi] lens_runtime
+//                = engine`), over a runner this module builds on the host: the
+//                passes are SDK sessions of this process, not `pi` children.
+//                The runtime then carries the round's `engineLens` (wave.ts), which
+//                the round reads: its board and runner, and whether the engine starts
+//                the planned wave (`[pi] engine_wave`).
 //
 // Stopping: every session is in the live registry (livesessions.ts), which the
 // detached driver's signal handler aborts and disposes before it exits.
-import { isAbsolute } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
+import { lensRunConfigFromEnv } from "../../extensions/lens.js";
 import subagents from "../../extensions/subagents.js";
+import { CONTEXT_PACK_FILE } from "../contextpack.js";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import { agentDirSettings } from "./agentdir.js";
 import { applyEnvApiKeys, engineCredentials, type EngineAuth } from "./auth.js";
+import { engineLensTools, type EngineLensTools } from "./lens/engine-tools.js";
+import type { LensRunConfig } from "./lens/runlens.js";
+import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave.js";
 import { PiHost, type PiHostOptions } from "./pisdk.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
-import { roundSdkExtras, type RoundLensTools } from "./roundsdk.js";
+import { BASH_ENV_ALLOW, reviewerStub, roundSdkExtras, type RoundLensTools } from "./roundsdk.js";
 import { sdkRuntime } from "./sdkruntime.js";
 
 export interface ReviewSdkOptions {
@@ -46,6 +57,34 @@ export interface ReviewSdkOptions {
   /** The process env the native lens tool's children inherit. Omitted:
    * `process.env`. */
   processEnv?: NodeJS.ProcessEnv;
+  /** `[pi] lens_runtime = engine`: the round's lens tools are ours (`lens`,
+   * `lens_wave`), their passes SDK sessions on the session's host. `wave` is the
+   * round's board (given, so a route can name it before the host exists);
+   * `plannedWave` is `[pi] engine_wave`. Takes the `lens` slot. */
+  engine?: { wave?: LensWave; plannedWave: boolean };
+}
+
+/** The review SDK runtime: a runtime, carrying the engine route when it has one. */
+export type ReviewSdkRuntime = EngineRouteRuntime;
+
+/** The lens runner's config on the review route's host: the passes read the agent
+ * dir's agents, carry the reviewer stub (D34) and the same bash env allowlist as
+ * the main session, and (with a context pack beside the round's ledger) warm
+ * their cache groups with it. */
+export function engineLensConfig(host: PiHost, spec: SessionSpec): LensRunConfig {
+  const base = lensRunConfigFromEnv(spec.env, host, spec.cwd);
+  const root = spec.env["QCR_SANDBOX_ROOT"];
+  if (root === undefined)
+    throw new Error("a round's spec names its production tree (QCR_SANDBOX_ROOT)");
+  const ledger = spec.env["QCR_LEDGER_FILE"];
+  const packPath = ledger === undefined ? undefined : join(dirname(ledger), CONTEXT_PACK_FILE);
+  const pack = packPath !== undefined && existsSync(packPath) ? readFileSync(packPath, "utf8") : "";
+  return {
+    ...base,
+    agentsFiles: [reviewerStub(root, spec.cwd)],
+    bashEnv: { allow: BASH_ENV_ALLOW },
+    ...(base.cache && pack ? { cache: { ...base.cache, pack } } : {}),
+  };
 }
 
 /** `SessionSpec.env` names this dir: the run's private pi agent dir. */
@@ -128,9 +167,13 @@ function releasing(session: RuntimeSession, after: () => void): RuntimeSession {
  * The review route's SDK runtime. One host per agent dir, built lazily at the
  * first session; no session, no host, no network and no env change.
  */
-export function reviewSdkRuntime(options: ReviewSdkOptions = {}): Runtime {
+export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRuntime {
   const procEnv = options.processEnv ?? process.env;
   const hosts = new Map<string, Promise<Runtime>>();
+  const engine = options.engine;
+  const wave = engine?.wave ?? new LensWave();
+  // The tools of the host built last: one agent dir per review, so one.
+  let lens: EngineLensTools | undefined;
 
   function runtimeFor(spec: SessionSpec): Promise<Runtime> {
     const agentDir = spec.env[AGENT_DIR_ENV];
@@ -155,8 +198,10 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): Runtime {
           },
         };
         const host = await (options.makeHost ?? PiHost.create)(hostOptions);
+        const tools = engine ? engineLensTools(engineLensConfig(host, spec), wave) : undefined;
+        if (tools) lens = tools;
         return sdkRuntime(host, {
-          extras: (s) => roundSdkExtras({ lens: (options.lens ?? nativeLens)(s) })(s),
+          extras: (s) => roundSdkExtras({ lens: tools ?? (options.lens ?? nativeLens)(s) })(s),
         });
       })();
       // A host that failed to build is not kept: the next ask tries again.
@@ -174,7 +219,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): Runtime {
     const rt = await runtimeFor(spec);
     // Before the session: the native lens factory reads the env as the session
     // is made. A route that hands its own lens tool has no such children.
-    const scoped = options.lens === undefined ? scopeProcessEnv(procEnv, spec) : null;
+    const scoped = options.lens === undefined && !engine ? scopeProcessEnv(procEnv, spec) : null;
     try {
       const session = await start(rt);
       return scoped === null ? session : releasing(session, scoped.restore);
@@ -184,8 +229,21 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): Runtime {
     }
   }
 
+  const route: EngineRoute | undefined = engine && {
+    wave,
+    // Built with the host, which the round's session has by the time it launches.
+    runner: {
+      run: (request) => {
+        if (lens === undefined)
+          return Promise.reject(new Error("the lens runner is not built: no session was created"));
+        return lens.runner.run(request);
+      },
+    },
+    plannedWave: engine.plannedWave,
+  };
   return {
     create: (spec) => open(spec, (rt) => rt.create(spec)),
     resume: (file, spec) => open(spec, (rt) => rt.resume(file, spec)),
+    ...(route ? { engineLens: route } : {}),
   };
 }
