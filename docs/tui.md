@@ -65,13 +65,23 @@ overlay and setup are about the whole repo.
 
 | key | does |
 | --- | --- |
-| `⏎` / `a` | focus the selected PR's pi pane (embedded below the list; Ctrl-q back) |
+| `⏎` / `a` | focus the selected PR's pane (embedded below the list; Ctrl-q back) |
+| `[` / `]` | transcript viewer only: previous / next stream of the shown round — the main session, then each lens (a click on a lens row of the progress panel picks that lens) |
+| `<` / `>` | transcript viewer only: an earlier / later round; the newest round is followed |
 | `m` | quick-message the selected PR's session |
 | `g` | open the PR on GitHub (PR numbers are Ctrl+clickable links) |
 | `e` | the events overlay — j/k scroll, e/Esc close, click an event to jump to its PR |
 | `u` | unwedge: cancel the running round and re-queue it — nothing posted, no GitHub write |
 | `F` | clear the board filter the PRS title is advertising |
 | `I` | set up the repo: the companion runs its setup skill — survey, interview, the repo profile (same as `qcr setup`) |
+
+The pane below the list takes its surface from the PR's `runtime` in
+status.json, with no toggle: absent or `tmux` mirrors the tmux session (a
+terminal, as above); `worker`, `answer` or `idle` is the **transcript viewer**,
+a read-only rendering of the PR's LiveEvent logs (`state/live/pr-<n>/r<round>/`)
+that follows the tail until `PgUp` or the wheel parks it and `End` follows it
+again; `debug` or `takeover` is the pi terminal of `debug-pr-<n>` /
+`takeover-pr-<n>`, with every byte but `Ctrl-q` going to pi.
 
 ### memory
 

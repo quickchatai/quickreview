@@ -37,6 +37,7 @@ import {
   wrap,
 } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
+import { paneSurface } from "./viewer.js";
 import type { Health } from "./poll.js";
 import {
   lensForAgent,
@@ -53,6 +54,7 @@ export type BoardAction =
   | { t: "open-github"; pr: number }
   | { t: "event-jump"; pr: number }
   | { t: "pi-focus" } // the live pi pane: clicking it types into the session in place
+  | { t: "viewer-lens"; lens: string; nth: number } // a progress row: its lens in the viewer
   | { t: "companion" }; // the alert badge: hand the keyboard to the companion column
 
 export interface BoardView {
@@ -188,6 +190,12 @@ export function boardKeys(
   const inline: string[] = [];
   if (selected) inline.push("a");
   if (view.boardFilter != null) inline.push("F");
+  // A worker-hosted PR's pane is the transcript viewer: `[ ]` step its streams
+  // and `< >` its rounds. They are the pane header's keys (painted there), so
+  // they exist only while the selected PR's pane is the viewer.
+  const pr = visiblePrs(view)[view.selected];
+  if (pr !== undefined && paneSurface(pr.runtime, pr.number).kind === "viewer")
+    inline.push("[", "]", "<", ">");
   return { bar, inline };
 }
 
@@ -586,11 +594,21 @@ type CurrentRound = Pick<
   };
 };
 
+/** A lens row of the progress panel, by its line in the detail: what a click on
+ * it selects in the viewer (the `nth` run of `lens` the round started). */
+export interface ProgressRow {
+  line: number;
+  lens: string;
+  nth: number;
+}
+
 function currentProgressLines(
   round: CurrentRound,
   progress: RoundProgressSnapshot | undefined,
   width: number,
   now: Date,
+  rowsOut?: ProgressRow[],
+  firstLine = 0,
 ): string[] {
   const lines: string[] = [];
   const started = Date.parse(round.started_at);
@@ -688,13 +706,21 @@ function currentProgressLines(
   for (const name of new Set(planned)) {
     const executions = runs.get(name) ?? [];
     const rows = Math.max(planned.filter((p) => p === name).length, executions.length);
-    for (let i = 0; i < rows; i++) lines.push(truncate(agentLine(name, executions[i]), width));
+    for (let i = 0; i < rows; i++) {
+      rowsOut?.push({ line: firstLine + lines.length, lens: name, nth: i });
+      lines.push(truncate(agentLine(name, executions[i]), width));
+    }
   }
   // The parent may justify and add a lens outside the dispatch plan. Those
   // agents are real work too; omitting them would make "all agents" false.
+  const added = new Map<string, number>();
   for (const agent of current.agents.filter(
     (item) => !planned.includes(lensForAgent(item.agent)),
   )) {
+    const lens = lensForAgent(agent.agent);
+    const nth = added.get(lens) ?? 0;
+    added.set(lens, nth + 1);
+    rowsOut?.push({ line: firstLine + lines.length, lens, nth });
     const rendered = agentLine(agent.agent, agent).replace(`${RESET}`, ` · added${RESET}`);
     lines.push(truncate(rendered, width));
   }
@@ -758,6 +784,7 @@ export function detailLines(
   width: number,
   now: Date = new Date(0),
   progress?: RoundProgressSnapshot,
+  progressRows?: ProgressRow[],
 ): string[] {
   const lines: string[] = [];
   if (!pr) return ["no PR selected"];
@@ -847,7 +874,10 @@ export function detailLines(
     (pr.state === "reviewing"
       ? [...detail.rounds].reverse().find((r) => r.status === "running")
       : undefined);
-  if (runningRound) lines.push(...currentProgressLines(runningRound, progress, width, now));
+  if (runningRound)
+    lines.push(
+      ...currentProgressLines(runningRound, progress, width, now, progressRows, lines.length),
+    );
   const lastSummary = [...detail.rounds]
     .reverse()
     .find((r) => r.summary && r.summary.trim().length > 0)?.summary;
@@ -968,6 +998,8 @@ export const HELP_LINES = [
   "j/k ↓/↑        select PR (mouse: click a row; click again to focus its pi pane)",
   "⏎ / a          focus the selected PR's pi pane (embedded, below the list; Ctrl-q back) — it is a live terminal, not a picture",
   "g              open the PR on GitHub (PR numbers are Ctrl+clickable links)",
+  "[ / ]          a worker-hosted PR's pane is a transcript viewer, not a terminal: previous / next stream (main, then each lens); a click on a progress row picks its lens",
+  "< / >          past / later round in the viewer; PgUp / wheel parks it, End follows the tail again",
   "m              quick-message the selected PR's session",
   "u              unwedge: cancel the running round and re-queue it (nothing posted, no GitHub write)",
   "e              events overlay (j/k scroll, e/Esc close; click an event → its PR)",
@@ -999,6 +1031,26 @@ export const HELP_LINES = [
 
 // ---- live pi pane ----------------------------------------------------------
 
+/** The viewer header after its name: where it is in the PR's logs, whether it
+ * follows the tail, and the keys that move it. */
+function viewerHeaderTail(
+  pane: PiPaneView,
+  viewer: NonNullable<PiPaneView["viewer"]>,
+  focused: boolean,
+): string {
+  if (viewer.round === undefined) return `${FG.dim} · no round log yet${RESET}`;
+  const round = `r${viewer.round}${viewer.rounds > 1 ? ` (${viewer.roundIndex}/${viewer.rounds})` : ""}${viewer.atLatest ? "" : " · past"}`;
+  const stream = `${viewer.stream}${viewer.streams > 1 ? ` (${viewer.streamIndex}/${viewer.streams})` : ""}`;
+  const state = viewer.live === true ? "running" : viewer.live === false ? "settled" : "";
+  const follow =
+    pane.offset > 0
+      ? `${FG.accent} · ↑ ${pane.offset} rows back${RESET}${FG.dim} · End follows${RESET}`
+      : `${FG.dim} · following${RESET}`;
+  const keys = " · [ ] stream · < > round";
+  const mode = focused ? " · read-only · Ctrl-q back to board" : "";
+  return `${FG.dim} · ${round} · ${stream}${state ? ` · ${state}` : ""}${RESET}${follow}${FG.dim}${keys}${mode}${RESET}`;
+}
+
 /**
  * Header of the pane: which session, whether it is live, whether it currently
  * owns the keyboard, and how far back in scrollback it is parked.
@@ -1009,11 +1061,18 @@ export function piHeader(
   focused = false,
 ): string {
   if (pr === undefined) return `${FG.dim}PI — no PR selected${RESET}`;
-  const name = focused
-    ? `${ACCENT_BG}PI pr-${pr}${DRESET}`
-    : `${MUTED}PI ${DRESET}${ACCENT}pr-${pr}${DRESET}`;
   const mine = pane && pane.pr === pr ? pane : undefined;
+  const session = mine?.session ?? `pr-${pr}`;
+  const viewer = mine?.viewer;
+  const name = viewer
+    ? focused
+      ? `${ACCENT_BG}LIVE pr-${pr}${DRESET}`
+      : `${MUTED}LIVE ${DRESET}${ACCENT}pr-${pr}${DRESET}`
+    : focused
+      ? `${ACCENT_BG}PI ${session}${DRESET}`
+      : `${MUTED}PI ${DRESET}${ACCENT}${session}${DRESET}`;
   if (!mine) return `${name}${FG.dim} · connecting…${RESET}`;
+  if (viewer) return `${name}${viewerHeaderTail(mine, viewer, focused)}`;
   if (mine.missing) {
     return `${name}${FG.dim} · no pi session for #${pr}${mine.stale ? " · (stale)" : ""}${RESET}`;
   }
@@ -1235,6 +1294,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
       action: { t: "open-github", pr: pr.number } satisfies BoardAction,
     });
   });
+  const progressRows: ProgressRow[] = [];
   const dLines = known
     ? detailLines(
         view.detail,
@@ -1242,8 +1302,24 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
         detailW - 2,
         now,
         view.progress?.pr === selectedPr?.number ? view.progress : undefined,
+        progressRows,
       )
     : unknownDetailLines(view.connection, detailW - 2);
+  // With the transcript viewer in the pane, a lens row of the progress panel is
+  // a click target: it selects that lens's transcript. A painted row only (an
+  // off-screen one would be a phantom target), and only while the viewer is up.
+  if (view.pi?.viewer && view.pi.pr === selectedPr?.number) {
+    for (const row of progressRows) {
+      if (row.line >= bodyRows) continue;
+      frame.zones.push({
+        x1: listW + 3,
+        y1: row.line + 2,
+        x2: cols - 1,
+        y2: row.line + 2,
+        action: { t: "viewer-lens", lens: row.lens, nth: row.nth } satisfies BoardAction,
+      });
+    }
+  }
   for (let r = 0; r < bodyRows; r++) {
     const isLegendRow = r === bodyRows - 1;
     frame.boxRow(1 + r, [

@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import type { WhyPayload } from "../src/cli.js";
 import type { StatusSnapshot } from "../src/state.js";
 import {
+  piHeader,
   piPaneSize,
   piRows,
   renderBoard,
   topBar,
   detailLines,
   overlayInputBox,
+  type BoardAction,
   type BoardView,
 } from "../src/tui/board.js";
 import { decodeKey, decodeInputKey } from "../src/tui/keys.js";
@@ -1211,4 +1213,247 @@ it("fills every input-box row up to its companion border", () => {
   const frame = renderBoard(view({ inputBox: { target: "#5012", text: "hello" } }), 100, 40);
   const end = frame.meta["piTop"]! + frame.meta["piRows"]! - 1;
   expect(stripAnsi(frame.lines[end]!)).toMatch(/^│.*│$/);
+});
+
+describe("the transcript viewer in the board's pane", () => {
+  const why: WhyPayload = {
+    pr: 5012,
+    known: true,
+    state: "reviewing",
+    title: "fix(crm): retry send_message",
+    head_sha: "a2e380ff11",
+    trigger_ts: "2026-10-19T11:00:00Z",
+    spend_usd: 1.3,
+    rounds: [],
+    threads: { open: 0, total: 0 },
+    ledger: "",
+  };
+  const RUNNING = {
+    round_no: 3,
+    round_type: "re-review",
+    status: "running" as const,
+    started_at: "2026-10-19T11:50:00Z",
+    deadline_at: "2026-10-19T12:50:00Z",
+    lenses: "pass-baseline,pass-security,pass-security",
+    validate_tier: null,
+    command_id: "cmd-3",
+    command_sha256: "b".repeat(64),
+    head_sha: "head-1",
+  };
+  const PROGRESS = {
+    version: 2 as const,
+    pr: 5012,
+    session: "pr-5012",
+    command_id: "cmd-3",
+    command_sha256: "b".repeat(64),
+    command_accepted_at: "2026-10-19T11:50:01Z",
+    preparing_at: "2026-10-19T11:50:01Z",
+    round_no: 3,
+    head_sha: "head-1",
+    run_started_at: "2026-10-19T11:50:01Z",
+    updated_at: "2026-10-19T11:59:59Z",
+    parent_status: "active" as const,
+    last_activity_at: "2026-10-19T11:59:58Z",
+    last_activity: "pass-security · grep",
+    agents: [
+      {
+        execution_id: "a",
+        agent: "pass-baseline--sol-high",
+        status: "completed" as const,
+        duration_ms: 1000,
+        tool_count: 1,
+        started_at: "2026-10-19T11:51:00Z",
+      },
+      {
+        execution_id: "b",
+        agent: "pass-security--sol-high",
+        status: "running" as const,
+        duration_ms: 1000,
+        tool_count: 1,
+        started_at: "2026-10-19T11:51:00Z",
+      },
+      {
+        execution_id: "c",
+        agent: "pass-security--sol-high",
+        status: "running" as const,
+        duration_ms: 1000,
+        tool_count: 1,
+        started_at: "2026-10-19T11:51:00Z",
+      },
+      {
+        execution_id: "d",
+        agent: "pass-extra--sol-high",
+        status: "completed" as const,
+        duration_ms: 1000,
+        tool_count: 1,
+        started_at: "2026-10-19T11:51:00Z",
+      },
+    ],
+  };
+  const NOW = new Date("2026-10-19T12:00:00Z");
+  const running = { ...snapshot.prs[0]!, runtime: "worker" as const, current_round: RUNNING };
+  const workerSnapshot: StatusSnapshot = { ...snapshot, prs: [running, snapshot.prs[1]!] };
+  const viewerPane: PiPaneView = {
+    pr: 5012,
+    lines: ["12:00:01  tool lens pass-security", "    the diff reads clean", "last line"],
+    missing: false,
+    stale: false,
+    offset: 0,
+    viewer: {
+      round: 3,
+      rounds: 3,
+      roundIndex: 3,
+      atLatest: true,
+      stream: "main",
+      streamIndex: 1,
+      streams: 3,
+      live: true,
+    },
+  };
+  const liveView = (over: Partial<BoardView> = {}): BoardView =>
+    view({
+      snapshot: workerSnapshot,
+      detail: { ...why, pr: 5012, rounds: [] },
+      progress: PROGRESS,
+      pi: viewerPane,
+      now: NOW,
+      ...over,
+    });
+
+  it("detailLines names each lens row by line, lens and which run of it", () => {
+    const rows: import("../src/tui/board.js").ProgressRow[] = [];
+    const lines = detailLines(
+      { ...why, pr: 5012, rounds: [] },
+      running,
+      80,
+      NOW,
+      PROGRESS,
+      rows,
+    ).map(stripAnsi);
+    expect(rows.map((r) => [r.lens, r.nth])).toEqual([
+      ["pass-baseline", 0],
+      ["pass-security", 0],
+      ["pass-security", 1],
+      ["pass-extra", 0], // a lens the session added: a row too
+    ]);
+    for (const r of rows) expect(lines[r.line]).toContain(r.lens);
+    expect(lines[rows[2]!.line]).toContain("pass-security · running");
+  });
+
+  it("a click on a progress row is a viewer-lens zone over exactly that painted row", () => {
+    const frame = renderBoard(liveView(), 100, 40);
+    const zones = (frame.zones as Zone<BoardAction>[]).filter((z) => z.action.t === "viewer-lens");
+    expect(zones.map((z) => z.action)).toEqual([
+      { t: "viewer-lens", lens: "pass-baseline", nth: 0 },
+      { t: "viewer-lens", lens: "pass-security", nth: 0 },
+      { t: "viewer-lens", lens: "pass-security", nth: 1 },
+      { t: "viewer-lens", lens: "pass-extra", nth: 0 },
+    ]);
+    for (const z of zones) {
+      expect(z.y1).toBe(z.y2);
+      const action = z.action as { lens: string };
+      expect(stripAnsi(frame.lines[z.y1 - 1]!)).toContain(action.lens);
+      // a hit lands on the row, in the detail column, and nowhere in the list
+      expect(hitTest(frame.zones as Zone<unknown>[], z.x1, z.y1)).toEqual(z.action);
+      expect(z.x1).toBeGreaterThan(frame.meta["listW"] ?? 0);
+    }
+  });
+
+  it("declares no lens zones while the pane is a mirror, or for another PR's viewer", () => {
+    const mirror = renderBoard(liveView({ pi: { ...viewerPane, viewer: undefined } }), 100, 40);
+    expect((mirror.zones as Zone<BoardAction>[]).some((z) => z.action.t === "viewer-lens")).toBe(
+      false,
+    );
+    const other = renderBoard(liveView({ pi: { ...viewerPane, pr: 5049 } }), 100, 40);
+    expect((other.zones as Zone<BoardAction>[]).some((z) => z.action.t === "viewer-lens")).toBe(
+      false,
+    );
+  });
+
+  it("paints the transcript bottom-anchored, parked by the offset", () => {
+    const rows = 30;
+    const frame = renderBoard(liveView(), 100, rows);
+    const text = frame.lines.map(stripAnsi).join("\n");
+    expect(text).toContain("the diff reads clean");
+    expect(text).toContain("last line");
+    const parked = renderBoard(liveView({ pi: { ...viewerPane, offset: 1 } }), 100, rows);
+    const ptext = parked.lines.map(stripAnsi).join("\n");
+    expect(ptext).toContain("the diff reads clean");
+    expect(ptext).not.toContain("last line");
+  });
+
+  it("the header says where the viewer is, and its keys", () => {
+    const h = stripAnsi(piHeader(5012, viewerPane));
+    expect(h).toContain("LIVE pr-5012");
+    expect(h).toContain("r3 (3/3)");
+    expect(h).toContain("main (1/3)");
+    expect(h).toContain("running");
+    expect(h).toContain("following");
+    expect(h).toContain("[ ] stream · < > round");
+    expect(h).not.toContain("read-only");
+
+    const past = stripAnsi(
+      piHeader(5012, {
+        ...viewerPane,
+        offset: 12,
+        viewer: { ...viewerPane.viewer!, roundIndex: 1, atLatest: false, live: false },
+      }),
+    );
+    expect(past).toContain("r3 (1/3) · past");
+    expect(past).toContain("settled");
+    expect(past).toContain("↑ 12 rows back");
+    expect(past).toContain("End follows");
+
+    const focused = stripAnsi(piHeader(5012, viewerPane, true));
+    expect(focused).toContain("read-only");
+    expect(focused).toContain("Ctrl-q");
+
+    const none = stripAnsi(
+      piHeader(5012, { ...viewerPane, viewer: { ...viewerPane.viewer!, round: undefined } }),
+    );
+    expect(none).toContain("no round log yet");
+  });
+
+  it("a terminal surface names its own tmux session in the header", () => {
+    const h = stripAnsi(
+      piHeader(5012, {
+        pr: 5012,
+        lines: ["x"],
+        missing: false,
+        stale: false,
+        offset: 0,
+        session: "debug-pr-5012",
+      }),
+    );
+    expect(h).toContain("PI debug-pr-5012");
+    const gone = stripAnsi(
+      piHeader(5012, {
+        pr: 5012,
+        lines: [],
+        missing: true,
+        stale: false,
+        offset: 0,
+        session: "takeover-pr-5012",
+      }),
+    );
+    expect(gone).toContain("takeover-pr-5012");
+  });
+
+  it("the viewer's keys are registered only for a viewer PR", async () => {
+    const { boardKeys } = await import("../src/tui/board.js");
+    const keysFor = (runtime: string | undefined) =>
+      boardKeys({
+        snapshot: {
+          ...snapshot,
+          prs: [{ ...snapshot.prs[0]!, ...(runtime ? { runtime: runtime as never } : {}) }],
+        },
+        selected: 0,
+        boardFilter: null,
+        repo: undefined,
+      }).inline;
+    for (const rt of ["worker", "answer", "idle"])
+      expect(keysFor(rt), rt).toEqual(["a", "[", "]", "<", ">"]);
+    for (const rt of [undefined, "tmux", "debug", "takeover", "other"])
+      expect(keysFor(rt), String(rt)).toEqual(["a"]);
+  });
 });

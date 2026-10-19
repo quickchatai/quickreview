@@ -44,6 +44,7 @@ import {
 import { ACCENT, RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
 import { PiMirror } from "./pipane.js";
+import { TranscriptViewer, paneSurface, surfaceSession, type PaneSurface } from "./viewer.js";
 import { PANE_ESCAPE, isEndKey, keysToTmux } from "./termmirror.js";
 import { Poller } from "./poll.js";
 import { parseRoundProgress } from "../round-progress.js";
@@ -185,6 +186,9 @@ export class App {
   readonly poller: Poller;
   /** Live mirror of the selected PR's pi session (board's lower region). */
   readonly pi: PiMirror;
+  /** The same region for a worker-hosted PR: its transcript, read-only. Which
+   * of the two a PR gets is `surfaceOf` — status.json's `runtime`, no toggle. */
+  readonly viewer: TranscriptViewer;
   /** Raw event rows behind view.events — the ambient feed writes these
    * verbatim, so the companion sees what the daemon logged, not our prose. */
   rawEvents: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> = [];
@@ -221,20 +225,74 @@ export class App {
   ) {
     this.hooks = { ...hooks, tabs: hooks.tabs ?? {} };
     this.poller = new Poller(cfg, ssh, () => this.onPoll(), now);
-    this.pi = new PiMirror(cfg, ssh, () => {
+    this.pi = new PiMirror(
+      cfg,
+      ssh,
+      () => {
+        this.syncPiPane();
+        // The session we were typing into went away — say so and hand the
+        // keyboard back rather than swallowing keystrokes into nothing.
+        if (this.view.piFocus && this.view.pi?.missing && this.piFocusPr !== undefined)
+          this.blurPiPane(
+            `pi session ${this.sessionFor(this.piFocusPr)} is gone — keyboard back on the board`,
+          );
+        this.repaint();
+      },
+      300,
+      (pr) => this.sessionFor(pr),
+    );
+    this.viewer = new TranscriptViewer(cfg, ssh, () => {
       this.syncPiPane();
-      // The session we were typing into went away — say so and hand the
-      // keyboard back rather than swallowing keystrokes into nothing.
-      if (this.view.piFocus && this.view.pi?.missing)
-        this.blurPiPane(`pi session pr-${this.piFocusPr} is gone — keyboard back on the board`);
       this.repaint();
     });
+  }
+
+  // ---- which surface the PR pane is -----------------------------------------
+
+  /** What the pane shows for `pr`, from the PR's `runtime` in status.json — a
+   * tmux mirror (absent or `tmux`), the transcript viewer (`worker`, `answer`,
+   * `idle`) or a pi terminal (`debug`, `takeover`). */
+  private surfaceOf(pr: number): PaneSurface {
+    return paneSurface(this.view.snapshot?.prs.find((p) => p.number === pr)?.runtime, pr);
+  }
+
+  /** The tmux session a mirror/terminal pane types into and captures. */
+  private sessionFor(pr: number): string {
+    return surfaceSession(this.surfaceOf(pr)) ?? `pr-${pr}`;
+  }
+
+  private viewerOn(pr: number | undefined): pr is number {
+    return pr !== undefined && this.surfaceOf(pr).kind === "viewer";
+  }
+
+  /** Read the PR pane's source now: the transcript logs or the tmux capture. */
+  private refreshPane(pr: number | undefined): Promise<void> {
+    if (pr === undefined) return Promise.resolve();
+    return this.viewerOn(pr) ? this.viewer.refresh(pr) : this.pi.refresh(pr);
+  }
+
+  /** Selection moved: read the PR pane's source behind a debounce. */
+  private selectPane(pr: number | undefined): void {
+    if (this.viewerOn(pr)) this.viewer.select(pr);
+    else this.pi.select(pr);
+  }
+
+  private paneOffset(pr: number): number {
+    return this.viewerOn(pr) ? this.viewer.offsetFor(pr) : this.pi.offsetFor(pr);
+  }
+
+  private setPaneOffset(pr: number, n: number): void {
+    if (this.viewerOn(pr)) this.viewer.setOffset(pr, n);
+    else this.pi.setOffset(pr, n);
   }
 
   // ---- the pi pane as an embedded terminal --------------------------------
 
   /** The session the pane types into while focused (locked at focus time). */
   private piFocusPr: number | undefined;
+  /** Whether that pane was the viewer when it took the keyboard: a PR whose
+   * runtime flips surface under the operator's hands gets the keyboard back. */
+  private piFocusViewer = false;
   /** While focused the capture runs far faster than the poll tick, so typing
    * echoes back at something close to terminal speed. */
   private piTimer: NodeJS.Timeout | undefined;
@@ -246,14 +304,15 @@ export class App {
     if (pr === undefined) return;
     if (this.view.piFocus && this.piFocusPr === pr) return;
     this.piFocusPr = pr;
+    this.piFocusViewer = this.viewerOn(pr);
     this.view.piFocus = true;
     this.sidebar?.blur(); // one keyboard owner at a time
     this.syncPiPane();
-    void this.pi.refresh(pr);
+    void this.refreshPane(pr);
     if (!this.piTimer) {
       const t = setInterval(() => {
         if (this.suspended || this.tab !== "board" || !this.view.piFocus) return;
-        void this.pi.refresh(this.piFocusPr);
+        void this.refreshPane(this.piFocusPr);
       }, App.PI_FOCUS_POLL_MS);
       t.unref?.();
       this.piTimer = t;
@@ -270,7 +329,7 @@ export class App {
     this.piFocusPr = undefined;
     this.syncPiPane();
     if (notice !== undefined) this.view.noticeLine = notice;
-    this.pi.select(this.selectedPr); // follow resumes where the list is
+    this.selectPane(this.selectedPr); // follow resumes where the list is
   }
 
   /** True while the pane owns the keyboard (tests + hot-reload read this). */
@@ -286,8 +345,8 @@ export class App {
     if (pr === undefined) return;
     const groups = keysToTmux(buf);
     if (groups.length === 0) return;
-    if (this.pi.offsetFor(pr) !== 0) {
-      this.pi.setOffset(pr, 0);
+    if (this.paneOffset(pr) !== 0) {
+      this.setPaneOffset(pr, 0);
       this.syncPiPane();
       this.repaint();
     }
@@ -303,13 +362,15 @@ export class App {
       .then(async () => {
         for (const parts of groups) {
           if (this.paneSendDropped) return;
-          const res = await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), {
-            timeoutMs: 5_000,
-          });
+          const res = await this.ssh(
+            this.cfg.ssh_host,
+            sendKeysArgv(this.cfg, this.sessionFor(pr), parts),
+            { timeoutMs: 5_000 },
+          );
           if (!res.ok) {
             this.paneSendDropped = true;
             this.notice(
-              `✖ pr-${pr}: keys not delivered (${res.stderr.trim() || `exit ${res.code}`}) — input after them dropped`,
+              `✖ ${this.sessionFor(pr)}: keys not delivered (${res.stderr.trim() || `exit ${res.code}`}) — input after them dropped`,
             );
             return;
           }
@@ -318,7 +379,7 @@ export class App {
       .catch((err: unknown) => {
         this.paneSendDropped = true;
         this.notice(
-          `✖ pr-${pr}: keys not delivered (${err instanceof Error ? err.message : String(err)}) — input after them dropped`,
+          `✖ ${this.sessionFor(pr)}: keys not delivered (${err instanceof Error ? err.message : String(err)}) — input after them dropped`,
         );
       })
       .finally(() => {
@@ -337,10 +398,11 @@ export class App {
   private scrollPiPane(notches: number): void {
     const pr = this.panePr();
     if (pr === undefined) return;
-    this.pi.scroll(pr, notches);
+    if (this.viewerOn(pr)) this.viewer.scroll(pr, notches);
+    else this.pi.scroll(pr, notches);
     this.syncPiPane();
     this.repaint();
-    void this.pi.refresh(pr);
+    void this.refreshPane(pr);
   }
 
   /** The PR whose session the pane is showing. While the pane has the keyboard
@@ -355,7 +417,7 @@ export class App {
   private syncPiPane(): void {
     const pr = this.panePr();
     this.view.piPr = pr;
-    this.view.pi = this.pi.view(pr);
+    this.view.pi = this.viewerOn(pr) ? this.viewer.view(pr) : this.pi.view(pr);
   }
 
   /** Selection moved: paint the cached mirror at once, capture behind it.
@@ -363,7 +425,7 @@ export class App {
   private followSelection(): void {
     this.syncPiPane();
     if (this.view.piFocus) return;
-    this.pi.select(this.selectedPr);
+    this.selectPane(this.selectedPr);
   }
 
   // ---- lifecycle ---------------------------------------------------------
@@ -406,6 +468,7 @@ export class App {
     this.stopped = true;
     this.poller.stop();
     this.pi.stop();
+    this.viewer.stop();
     this.sidebar?.stop();
     if (this.piTimer) clearInterval(this.piTimer);
     this.piTimer = undefined;
@@ -513,7 +576,7 @@ export class App {
     this.out.write(CLEAR + MOUSE_ON);
     void this.refreshDetail();
     void this.refreshProgress();
-    void this.pi.refresh(this.panePr()); // the mirror caught up while attached
+    void this.refreshPane(this.panePr()); // the pane caught up while attached
     this.repaint();
   }
 
@@ -565,9 +628,20 @@ export class App {
     // Live progress is a cheap host-volume read, separate from `why` because
     // refreshing the enriched detail would call GitHub on every poll.
     if (this.tab === "board" && !this.suspended) void this.refreshProgress();
-    // The mirror only costs an ssh while the board is the visible tab.
+    // A PR whose runtime flipped the pane's surface under a focused keyboard
+    // (a worker round ended, a debug round began) hands it back: the same
+    // keys would now mean something else.
+    if (
+      this.view.piFocus &&
+      this.piFocusPr !== undefined &&
+      this.viewerOn(this.piFocusPr) !== this.piFocusViewer
+    )
+      this.blurPiPane(
+        `#${this.piFocusPr}'s pane changed what it shows — keyboard back on the board`,
+      );
+    // The pane only costs an ssh while the board is the visible tab.
     this.syncPiPane();
-    if (this.tab === "board" && !this.suspended) void this.pi.refresh(this.panePr());
+    if (this.tab === "board" && !this.suspended) void this.refreshPane(this.panePr());
     try {
       this.hooks.onPoll?.(this);
     } catch {
@@ -1109,6 +1183,17 @@ export class App {
         // Clicking the pane types into it in place — no full-screen takeover.
         this.focusPiPane();
         return;
+      case "viewer-lens": {
+        // A lens row of the progress panel, with the transcript viewer in the pane.
+        const pr = this.selectedPr;
+        if (!this.viewerOn(pr)) return;
+        if (this.viewer.selectLens(pr, action.lens, action.nth)) {
+          this.syncPiPane();
+          this.repaint();
+          void this.viewer.refresh(pr);
+        } else this.notice(`${action.lens}: no transcript yet — its lens has not started logging`);
+        return;
+      }
       case "companion":
         // The top-bar alert badge: hand the keyboard to the companion column.
         this.openCompanion();
@@ -1151,6 +1236,12 @@ export class App {
       if (buf.length === 1 && buf[0] === PANE_ESCAPE) {
         this.blurPiPane();
         this.repaint();
+        return;
+      }
+      // The transcript viewer is not a terminal: its keys are its own, and
+      // nothing else goes anywhere.
+      if (this.piFocusViewer && this.piFocusPr !== undefined) {
+        this.handleViewerKey(buf, this.piFocusPr);
         return;
       }
       // End, while parked in scrollback, is the "back to live" key the header
@@ -1258,7 +1349,7 @@ export class App {
       case "refresh":
         void this.poller.tick();
         void this.refreshDetail({ force: true });
-        void this.pi.refresh(this.panePr());
+        void this.refreshPane(this.panePr());
         break;
       case "reconnect":
         if (this.hooks.reconnect) this.hooks.reconnect(this);
@@ -1306,7 +1397,22 @@ export class App {
         else this.notice("unwedge: not wired (no remote runner)");
         break;
       }
+      case "older":
+      case "newer":
+        // `[ ]` step the viewer's streams — registered only while it is up.
+        if (this.tab === "board" && this.viewerOn(this.selectedPr))
+          this.stepViewer(this.selectedPr, "stream", key.kind === "older" ? -1 : 1);
+        return;
       case "char":
+        // `< >` step the viewer's rounds.
+        if (
+          (key.ch === "<" || key.ch === ">") &&
+          this.tab === "board" &&
+          this.viewerOn(this.selectedPr)
+        ) {
+          this.stepViewer(this.selectedPr, "round", key.ch === "<" ? -1 : 1);
+          return;
+        }
         // F clears the board filter — the indicator promises it.
         if (key.ch === "F" && this.tab === "board" && this.view.boardFilter != null) {
           this.setBoardFilter(null);
@@ -1323,6 +1429,35 @@ export class App {
         return; // unknown keys repaint nothing
     }
     this.repaint();
+  }
+
+  /** Step the viewer's stream (`[ ]`) or round (`< >`) and read what it now shows. */
+  private stepViewer(pr: number, what: "stream" | "round", dir: 1 | -1): void {
+    if (what === "stream") this.viewer.stepStream(pr, dir);
+    else this.viewer.stepRound(pr, dir);
+    this.syncPiPane();
+    this.repaint();
+    void this.viewer.refresh(pr);
+  }
+
+  /**
+   * Keys while the transcript viewer holds the keyboard. It is not a terminal
+   * — there is no pi behind it — so nothing is forwarded, and what it does not
+   * answer to is dropped. Ctrl-q (handled by the caller) releases it.
+   */
+  private handleViewerKey(buf: Buffer, pr: number): void {
+    const raw = buf.toString("utf8");
+    if (raw === "[" || raw === "]") return this.stepViewer(pr, "stream", raw === "[" ? -1 : 1);
+    if (raw === "<" || raw === ">") return this.stepViewer(pr, "round", raw === "<" ? -1 : 1);
+    if (raw === "\x1b[5~") this.viewer.page(pr, 1);
+    else if (raw === "\x1b[6~") this.viewer.page(pr, -1);
+    else if (raw === "\x1b[A") this.viewer.setOffset(pr, this.viewer.offsetFor(pr) + 1);
+    else if (raw === "\x1b[B") this.viewer.setOffset(pr, this.viewer.offsetFor(pr) - 1);
+    else if (isEndKey(raw)) this.viewer.setOffset(pr, 0);
+    else return;
+    this.syncPiPane();
+    this.repaint();
+    void this.viewer.refresh(pr);
   }
 
   /**
@@ -1740,7 +1875,9 @@ export class App {
     // window stuck at 80×24, so without this it wraps at 80 columns however
     // wide we paint the mirror. Fed here, applied by the next capture — and
     // sized against the bar rows THIS frame's board actually paints.
-    this.pi.setViewport(piPaneSize(inner, rows, boardBarHeight(this.view, inner)));
+    const paneSize = piPaneSize(inner, rows, boardBarHeight(this.view, inner));
+    this.pi.setViewport(paneSize);
+    this.viewer.setViewport(paneSize);
     paint(renderBoard(this.view, inner, rows), "");
   }
 }

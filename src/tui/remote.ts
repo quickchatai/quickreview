@@ -85,6 +85,40 @@ export function progressArgv(cfg: TuiConfig, pr: number): string[] {
   return stateReadArgv(cfg, `round-progress/pr-${pr}.json`);
 }
 
+/** One path component of a LiveEvent log location: a plain token, never a `..`
+ * or a separator. Everything the viewer interpolates into a path goes through
+ * this, because the names come from a directory listing on the box. */
+const LIVE_PART = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function livePath(cfg: TuiConfig, rel: readonly string[]): string {
+  for (const part of rel)
+    if (!LIVE_PART.test(part)) throw new Error(`not a live log path: ${part}`);
+  return [cfg.remote_state_dir, "live", ...rel].join("/");
+}
+
+/**
+ * Read a LiveEvent log (src/live/events.ts) from byte `fromOffset` on: `cat`
+ * for the whole file, `tail -c +<offset+1>` for what has been appended since.
+ * The argv is the same on both transports, like every other state read here —
+ * `stateReadArgv`'s container prefix on the laptop, a bare command on the VM
+ * (state is host-mounted) — so the runner is the only thing that differs.
+ * `rel` is the path under `state/live/`, e.g. `["pr-7", "r2", "main.jsonl"]`.
+ */
+export function liveReadArgv(cfg: TuiConfig, rel: readonly string[], fromOffset = 0): string[] {
+  const prefix = transportOf(cfg) === "local" ? [...dockerPrefix(cfg), cfg.container] : [];
+  const path = livePath(cfg, rel);
+  return fromOffset > 0
+    ? [...prefix, "tail", "-c", `+${Math.floor(fromOffset) + 1}`, path]
+    : [...prefix, "cat", path];
+}
+
+/** The names in a directory under `state/live/` (`ls -1`): a PR's rounds, or a
+ * round's logs. */
+export function liveListArgv(cfg: TuiConfig, rel: readonly string[]): string[] {
+  const prefix = transportOf(cfg) === "local" ? [...dockerPrefix(cfg), cfg.container] : [];
+  return [...prefix, "ls", "-1", livePath(cfg, rel)];
+}
+
 /** In-container `qcr events --tail <k> --json`. */
 export function eventsArgv(cfg: TuiConfig, tail: number): string[] {
   return cliArgv(cfg, "events", "--tail", String(tail), "--json");

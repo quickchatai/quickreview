@@ -135,12 +135,14 @@ export const TAB_VOCABULARY: Readonly<Record<Tab, readonly BarButton[]>> = {
  * Every printable a tab can ever paint beside its object rather than on the
  * bar — the `inline` half of a `LiveKeys`, as a universe. `boardKeys` offers
  * `a` (⏎'s twin) only with a PR selected and `F` only with a filter to clear;
+ * `[ ] < >` only while the selected PR's pane is the transcript viewer (the
+ * pane header paints them);
  * memory paints `e p x` next to the selected entry; the feedback tab's `y`
  * confirms an armed revert; the metrics `# <pr>` box reads every digit; the
  * scan tab's `F` clears the filter its FINDINGS title is advertising.
  */
 export const TAB_INLINE_KEYS: Readonly<Record<Tab, readonly string[]>> = {
-  board: ["a", "F"],
+  board: ["a", "F", "[", "]", "<", ">"],
   memory: ["e", "p", "x", "F"],
   digest: [],
   tickets: [],

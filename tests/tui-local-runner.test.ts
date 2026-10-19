@@ -22,8 +22,15 @@ vi.mock("node:child_process", () => ({
 const { TUI_DEFAULTS, loadConfig, parseConfig } = await import("../src/config.js");
 type TuiConfig = import("../src/config.js").TuiConfig;
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const { killInFlightSsh, realLocalCommandRunner, realSshRunner, runnerFor, transportOf } =
-  await import("../src/tui/remote.js");
+const {
+  killInFlightSsh,
+  liveListArgv,
+  liveReadArgv,
+  realLocalCommandRunner,
+  realSshRunner,
+  runnerFor,
+  transportOf,
+} = await import("../src/tui/remote.js");
 const { powerCommand, powerSpawnArgv } = await import("../src/tui/deploytab.js");
 const { ensureSshMaster } = await import("../src/tui/connect.js");
 type SyncSsh = import("../src/tui/connect.js").SyncSsh;
@@ -208,5 +215,52 @@ describe("ensureSshMaster in local mode", () => {
     expect(ensureSshMaster(LOCAL, undefined, () => {}).kind).toBe("local");
     expect(spawnSyncMock).not.toHaveBeenCalled();
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("the transcript viewer's live reads", () => {
+  // One builder, two runners: the argv is the same words over ssh and locally,
+  // and the runner is the only thing that differs.
+  const rel = ["pr-7", "r2", "main.jsonl"];
+
+  it("local mode runs the argv exactly as built — cat, then tail -c +offset — with no ssh", async () => {
+    for (const offset of [0, 4096]) {
+      const argv = liveReadArgv(LOCAL, rel, offset);
+      const child = fakeChild();
+      spawnMock.mockReturnValueOnce(child);
+      const done = realLocalCommandRunner("ignored", argv);
+      child.stdout.emit("data", Buffer.from("{}\n"));
+      child.emit("close", 0);
+      await expect(done).resolves.toMatchObject({ ok: true, stdout: "{}\n" });
+      const [bin, args] = spawnMock.mock.calls.at(-1) as [string, string[]];
+      expect([bin, ...args]).toEqual(argv);
+      expect(bin).not.toBe("ssh");
+      expect(argv.slice(argv.indexOf("exec") + 2)).toEqual(
+        offset === 0
+          ? ["cat", "/opt/quickreview/state/live/pr-7/r2/main.jsonl"]
+          : ["tail", "-c", "+4097", "/opt/quickreview/state/live/pr-7/r2/main.jsonl"],
+      );
+    }
+  });
+
+  it("ssh mode ships the same words, shell-quoted, to the host", async () => {
+    const argv = liveReadArgv(TUI_DEFAULTS, rel, 4096);
+    const child = fakeChild();
+    spawnMock.mockReturnValueOnce(child);
+    const done = realSshRunner("my-vm", argv);
+    child.emit("close", 0);
+    await done;
+    const [bin, args] = spawnMock.mock.calls.at(-1) as [string, string[]];
+    expect(bin).toBe("ssh");
+    expect(args.slice(-2)).toEqual([
+      "my-vm",
+      "tail -c '+4097' /opt/quickreview/state/live/pr-7/r2/main.jsonl",
+    ]);
+    // the listing rides the same runners
+    expect(liveListArgv(TUI_DEFAULTS, ["pr-7"])).toEqual([
+      "ls",
+      "-1",
+      "/opt/quickreview/state/live/pr-7",
+    ]);
   });
 });

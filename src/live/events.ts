@@ -199,7 +199,11 @@ function isEvent(value: unknown): value is LiveEvent {
 
 /** Parse the complete lines of `text`; the bytes of a trailing partial line are
  * not counted in `consumed`. */
-function parseLines(text: Buffer): { events: LiveEvent[]; consumed: number; skipped: number } {
+export function parseLiveLines(text: Buffer): {
+  events: LiveEvent[];
+  consumed: number;
+  skipped: number;
+} {
   const end = text.lastIndexOf(0x0a);
   if (end < 0) return { events: [], consumed: 0, skipped: 0 };
   const events: LiveEvent[] = [];
@@ -240,7 +244,7 @@ export function readLiveEvents(path: string, fromOffset = 0): LiveRead {
       if (n === 0) break;
       got += n;
     }
-    const { events, consumed, skipped } = parseLines(buf.subarray(0, got));
+    const { events, consumed, skipped } = parseLiveLines(buf.subarray(0, got));
     return { events, nextOffset: fromOffset + consumed, skipped };
   } finally {
     closeSync(fd);

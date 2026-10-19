@@ -7432,12 +7432,21 @@ export interface RoundStageBounds {
   follow_up_sweep_extra_min?: number;
 }
 
+/** What hosts a PR's session, as status.json reports it per PR. Absent means
+ * `tmux` (a daemon that predates the field). The TUI's PR pane picks its
+ * surface from it (src/tui/viewer.ts `paneSurface`); a value outside this list
+ * is read as `tmux`, never guessed at. */
+export const PR_RUNTIMES = ["tmux", "worker", "answer", "idle", "debug", "takeover"] as const;
+export type PrRuntime = (typeof PR_RUNTIMES)[number];
+
 export interface StatusSnapshot {
   written_at: string;
   dry_run: boolean;
   prs: Array<
     Pick<PrStateRow, "number" | "state" | "title" | "head_sha" | "stale_recheck"> &
       Partial<Pick<PrStateRow, "trigger_ts" | "updated_at" | "author" | "paused">> & {
+        /** What hosts this PR's session now. Absent: `tmux`. */
+        runtime?: PrRuntime;
         rounds?: number;
         last_verdict?: string | null;
         /** The authoritative running plan/timing. Live lens activity is a
