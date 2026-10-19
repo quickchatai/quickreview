@@ -22,6 +22,23 @@ import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
 import { applyInterpretation } from "../src/webhook.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
+import {
+  WORLD_HEAD,
+  routes,
+  seedMark,
+  setGuardKnobs,
+  setPr,
+  type Blocked,
+  type Outcome,
+  type PostAction,
+  type Route,
+} from "./helpers/guards-parity.js";
+import {
+  exec as rigExec,
+  root as rigRoot,
+  useGuardsShellRig,
+  type GuardsShellRig,
+} from "./helpers/guards-shell-rig.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
@@ -990,5 +1007,600 @@ describe("postingRetry — a deferred session review delivered at its original h
     const { gate, executor } = harness();
     await expect(gate.execute(intent)).rejects.toThrow(/postingRetry|reviewPurpose/);
     expect(executor).not.toHaveBeenCalled();
+  });
+});
+
+// ---- parity: the shell route and this gate answer the same cases ------------
+//
+// The sessions post through scripts/post-review.sh, approve-pr.sh and
+// reply-thread.sh (scripts/guards.sh), the daemon through the gate above.
+// Until the shell guards are deleted (P9.3) the shell stays the reference the
+// Node guards must match, so every case here runs on BOTH routes against ONE
+// world — the shell rig's loopback GitHub stub, state.db and config.toml, read
+// by the real scripts on one side and by the real GitHubAdapter plus
+// makePostingGuard on the other (tests/helpers/guards-parity.ts). Asserting
+// each side in its own file would let them drift; here a case that one route
+// answers differently fails by name, unless the case says so itself, in a
+// `shell`/`node` override with the reason beside it.
+//
+// This block is the port of tests/guards-shell-*.test.ts, file by file:
+//   guards-shell-post       guard 1 and guard 2 on post-review.sh        ported
+//   guards-shell-parity     the guard-2 table and the reviewed-head stamp ported
+//   guards-shell-closed     guard 3 on all three scripts                  ported
+//   guards-shell-drift      guard 5 (the message wording stays shell-only) ported
+//   guards-shell-cigate     guard 4 (the receipt withdrawal stays shell-only) ported
+//   guards-shell-receipts, -noop, -deferred
+//       the shell's posting-receipt.py / outbox / deferred-handoff plumbing,
+//       its comments-file validation and its error wording. The Node route
+//       has no counterpart to compare (the daemon's outbox is tested in
+//       posting-outbox*.test.ts); P9.3 replaces them with the Node client's
+//       own tests.
+// The guards-shell files stay as they are until P9.3 deletes the scripts.
+
+const RIG_MOVED = "5b71a80ffee0987654321fedcba09876543210ab";
+
+interface Want {
+  /** The review event sent, "REPLY" for a thread reply, null for nothing. */
+  sent: string | null;
+  blocked?: Blocked;
+  bodyHas?: string[];
+  bodyLacks?: string[];
+  noteHas?: string;
+  commitId?: string;
+}
+
+interface ParityCase {
+  what: string;
+  action: PostAction;
+  /** The sha the session names as the head it reviewed; null = none named. */
+  expectedHead?: string | null;
+  world?: (s: GuardsShellRig) => void;
+  want: Want;
+  /** A route-specific answer, with the reason the routes differ. */
+  shell?: Partial<Want>;
+  node?: Partial<Want>;
+  why?: string;
+}
+
+const RC: PostAction = { kind: "review", event: "REQUEST_CHANGES" };
+const COMMENT: PostAction = { kind: "review", event: "COMMENT" };
+const APPROVE: PostAction = { kind: "approve" };
+const REPLY: PostAction = { kind: "reply" };
+
+const rv = (user: string, state: string, commit_id = WORLD_HEAD, id = 1) => ({
+  id,
+  user: { login: user },
+  state,
+  commit_id,
+});
+const run1 = (name: string, conclusion: string, status = "completed", started_at?: string) => ({
+  name,
+  status,
+  conclusion: conclusion === "" ? null : conclusion,
+  ...(started_at !== undefined ? { started_at } : {}),
+});
+
+const guard1: ParityCase[] = [
+  {
+    what: "a human approval at the head softens REQUEST_CHANGES to COMMENT, findings intact",
+    action: RC,
+    world: (s) => (s.reviews = [rv("mhale", "APPROVED")]),
+    want: {
+      sent: "COMMENT",
+      bodyHas: ["Automated review body.", "@mhale"],
+      commitId: WORLD_HEAD,
+      noteHas: "downgraded",
+    },
+  },
+  {
+    what: "an approval of an older head leaves REQUEST_CHANGES alone",
+    action: RC,
+    world: (s) => (s.reviews = [rv("mhale", "APPROVED", "0ldhead")]),
+    want: { sent: "REQUEST_CHANGES" },
+  },
+  {
+    what: "the bot's own approval and the PR author's are ignored",
+    action: RC,
+    world: (s) =>
+      (s.reviews = [
+        rv("example-review[bot]", "APPROVED", WORLD_HEAD, 1),
+        rv("pr-author", "APPROVED", WORLD_HEAD, 2),
+      ]),
+    want: { sent: "REQUEST_CHANGES" },
+  },
+  {
+    what: "any other [bot] identity's approval is ignored",
+    action: RC,
+    world: (s) => (s.reviews = [rv("dependabot[bot]", "APPROVED")]),
+    want: { sent: "REQUEST_CHANGES" },
+  },
+  {
+    what: "an approval the same human has since retired is ignored",
+    action: RC,
+    world: (s) =>
+      (s.reviews = [
+        rv("mhale", "APPROVED", WORLD_HEAD, 1),
+        rv("mhale", "CHANGES_REQUESTED", WORLD_HEAD, 2),
+      ]),
+    want: { sent: "REQUEST_CHANGES" },
+  },
+  {
+    what: "a later plain comment from the approver does not retire the approval",
+    action: RC,
+    world: (s) =>
+      (s.reviews = [
+        rv("mhale", "APPROVED", WORLD_HEAD, 1),
+        rv("mhale", "COMMENTED", WORLD_HEAD, 2),
+      ]),
+    want: { sent: "COMMENT", bodyHas: ["@mhale"] },
+  },
+  {
+    what: "sees a human approval past the first 100 reviews (selfscan 91382fae)",
+    action: RC,
+    world: (s) =>
+      (s.reviews = [
+        ...Array.from({ length: 120 }, (_, i) =>
+          rv("example-review[bot]", "COMMENTED", "0ldhead", i + 1),
+        ),
+        rv("mhale", "APPROVED", WORLD_HEAD, 500),
+      ]),
+    want: { sent: "COMMENT", bodyHas: ["@mhale"] },
+  },
+  {
+    what: "reads every page, with no page bound: the approval is on page 31",
+    action: RC,
+    world: (s) =>
+      (s.reviews = [
+        ...Array.from({ length: 3050 }, (_, i) =>
+          rv("example-review[bot]", "COMMENTED", "0ldhead", i + 1),
+        ),
+        rv("mhale", "APPROVED", WORLD_HEAD, 5000),
+      ]),
+    want: { sent: "COMMENT", bodyHas: ["@mhale"] },
+  },
+  {
+    what: "a COMMENT is never touched by a human approval",
+    action: COMMENT,
+    world: (s) => (s.reviews = [rv("mhale", "APPROVED")]),
+    want: { sent: "COMMENT", bodyLacks: ["@mhale"] },
+  },
+  {
+    what: "an APPROVE is never softened for a human approval",
+    action: APPROVE,
+    world: (s) => (s.reviews = [rv("mhale", "APPROVED")]),
+    want: { sent: "APPROVE" },
+  },
+  {
+    what: "downgrade_on_human_approval = false leaves REQUEST_CHANGES alone",
+    action: RC,
+    world: (s) => {
+      s.reviews = [rv("mhale", "APPROVED")];
+      setGuardKnobs(s, { downgrade_on_human_approval: false });
+    },
+    want: { sent: "REQUEST_CHANGES" },
+  },
+];
+
+// The guard-2 table the shell's parity file pinned against hasNewEvidence,
+// now answered by both posting routes.
+const guard2Marks: Array<[string, Parameters<typeof seedMark>[1] | null, boolean]> = [
+  [
+    "same head, decided, no author reply",
+    { head_sha: WORLD_HEAD, verdict: "REQUEST_CHANGES" },
+    false,
+  ],
+  ["same head, APPROVE, no author reply", { head_sha: WORLD_HEAD, verdict: "APPROVE" }, false],
+  [
+    "same head, NEEDS_HUMAN — undecided is not reviewed",
+    { head_sha: WORLD_HEAD, verdict: "NEEDS_HUMAN" },
+    true,
+  ],
+  ["same head, legacy ESCALATE spelling", { head_sha: WORLD_HEAD, verdict: "ESCALATE" }, true],
+  ["same head, undecided in lower case", { head_sha: WORLD_HEAD, verdict: "needs_human" }, true],
+  ["a different head", { head_sha: "an0therhead", verdict: "REQUEST_CHANGES" }, true],
+  [
+    "same head with an author reply since",
+    { head_sha: WORLD_HEAD, verdict: "REQUEST_CHANGES", reply_at: "2099-01-01T00:00:00.000Z" },
+    true,
+  ],
+  ["same head, verdict column null (a legacy row)", { head_sha: WORLD_HEAD, verdict: null }, false],
+  ["no mark at all", null, true],
+];
+
+const guard2: ParityCase[] = [
+  ...guard2Marks.map(([what, mark, newEvidence]): ParityCase => ({
+    what: `${what} → ${newEvidence ? "posts" : "refused"}`,
+    action: COMMENT,
+    world: (s) => mark && seedMark(s, mark),
+    want: newEvidence ? { sent: "COMMENT" } : { sent: null, blocked: "no-new-evidence" },
+  })),
+  {
+    what: "a REQUEST_CHANGES at an already-reviewed head is refused too",
+    action: RC,
+    world: (s) => seedMark(s, { head_sha: WORLD_HEAD, verdict: "REQUEST_CHANGES" }),
+    want: { sent: null, blocked: "no-new-evidence" },
+  },
+  {
+    what: "an APPROVE is never gated by guard 2 (the CI-green retry of a withheld approval)",
+    action: APPROVE,
+    world: (s) => seedMark(s, { head_sha: WORLD_HEAD, verdict: "REQUEST_CHANGES" }),
+    want: { sent: "APPROVE" },
+  },
+  {
+    what: "a thread reply is not a review of the head, so guard 2 has nothing to say",
+    action: REPLY,
+    world: (s) => seedMark(s, { head_sha: WORLD_HEAD, verdict: "REQUEST_CHANGES" }),
+    want: { sent: "REPLY" },
+  },
+  {
+    what: "skip_unchanged_head = false posts a second review of the same head",
+    action: COMMENT,
+    world: (s) => {
+      seedMark(s, { head_sha: WORLD_HEAD, verdict: "REQUEST_CHANGES" });
+      setGuardKnobs(s, { skip_unchanged_head: false });
+    },
+    want: { sent: "COMMENT" },
+  },
+];
+
+const guard3: ParityCase[] = [
+  ...(
+    [
+      ["post-review.sh / create_review", RC],
+      ["approve-pr.sh / APPROVE", APPROVE],
+      ["reply-thread.sh / thread reply", REPLY],
+    ] as const
+  ).flatMap(([route, action]): ParityCase[] => [
+    {
+      what: `${route} refuses a merged PR`,
+      action,
+      world: (s) => setPr(s, { state: "closed", merged: true }),
+      want: { sent: null, blocked: "pr-merged" },
+    },
+    {
+      what: `${route} refuses a closed PR`,
+      action,
+      world: (s) => setPr(s, { state: "closed", merged: false }),
+      want: { sent: null, blocked: "pr-closed" },
+    },
+    {
+      what: `${route} posts on an open PR`,
+      action,
+      want: {
+        sent:
+          action.kind === "reply"
+            ? "REPLY"
+            : action.kind === "approve"
+              ? "APPROVE"
+              : "REQUEST_CHANGES",
+      },
+    },
+  ]),
+  {
+    what: "a PR whose state cannot be read",
+    action: COMMENT,
+    world: (s) => (s.pr = null), // the stub 404s
+    want: { sent: null, blocked: "pr-unreadable" },
+    shell: { sent: "COMMENT", blocked: undefined },
+    why:
+      "the gate fails closed in dry-run too; the script only fails closed in live mode and " +
+      "continues in dry-run, where nothing is sent anyway",
+  },
+  {
+    what: "recheck_pr_state_before_post = false posts onto a merged PR",
+    action: COMMENT,
+    world: (s) => {
+      setPr(s, { state: "closed", merged: true });
+      setGuardKnobs(s, { recheck_pr_state_before_post: false });
+    },
+    want: { sent: "COMMENT" },
+  },
+];
+
+const guard5: ParityCase[] = [
+  {
+    what: "post-review posts when the expectation matches the live head",
+    action: COMMENT,
+    want: { sent: "COMMENT", commitId: WORLD_HEAD },
+  },
+  {
+    what: "post-review refuses when the PR advanced past the reviewed head",
+    action: RC,
+    world: (s) => setPr(s, { head: { sha: RIG_MOVED } }),
+    want: { sent: null, blocked: "head-drift" },
+  },
+  {
+    what: "approve-pr refuses a moved head",
+    action: APPROVE,
+    world: (s) => setPr(s, { head: { sha: RIG_MOVED } }),
+    want: { sent: null, blocked: "head-drift" },
+  },
+  {
+    what: "approve-pr approves when the expectation matches",
+    action: APPROVE,
+    want: { sent: "APPROVE" },
+  },
+  {
+    what: "no expectation named (an older prompt): proceeds, never wedges",
+    action: COMMENT,
+    expectedHead: null,
+    want: { sent: "COMMENT" },
+  },
+  {
+    what: "a case-only sha difference is not drift",
+    action: COMMENT,
+    expectedHead: WORLD_HEAD.toUpperCase(),
+    want: { sent: "COMMENT" },
+  },
+  {
+    what: "refuse_on_head_drift = false posts onto a moved head",
+    action: COMMENT,
+    world: (s) => {
+      setPr(s, { head: { sha: RIG_MOVED } });
+      setGuardKnobs(s, { refuse_on_head_drift: false });
+    },
+    want: { sent: "COMMENT" },
+  },
+  {
+    what: "a thread reply is not a review of a head, so guard 5 has nothing to say",
+    action: REPLY,
+    world: (s) => setPr(s, { head: { sha: RIG_MOVED } }),
+    want: { sent: "REPLY" },
+  },
+  {
+    what: "recheck_pr_state_before_post = false on a moved head",
+    action: COMMENT,
+    world: (s) => {
+      setPr(s, { head: { sha: RIG_MOVED } });
+      setGuardKnobs(s, { recheck_pr_state_before_post: false });
+    },
+    want: { sent: null, blocked: "head-drift" },
+    node: { sent: "COMMENT", blocked: undefined },
+    why:
+      "the script still reads the PR with guard 3 switched off and keeps checking the head; " +
+      "the gate makes no read then, so guard 5 has no live head to compare with. Pinned, not " +
+      "endorsed: the Node route fails open here",
+  },
+];
+
+// A failing check refuses the approval on the shell route and softens it to a
+// COMMENT on the gate; the shell case follows the refusal with the COMMENT the
+// round template prescribes (guards-parity.ts), so both end with the review
+// posted as a COMMENT and no APPROVE sent.
+const WITHHELD: Want = { sent: "COMMENT" };
+const guard4: ParityCase[] = [
+  {
+    what: "a green suite lets the approval through",
+    action: APPROVE,
+    want: { sent: "APPROVE" },
+  },
+  {
+    what: "a failing check withholds the approval",
+    action: APPROVE,
+    world: (s) => (s.checkRuns = [run1("unit", "success"), run1("e2e", "failure")]),
+    want: WITHHELD,
+    node: { bodyHas: ["Approval is withheld"] },
+  },
+  {
+    what: "an infra cancellation is red too, with no special-casing",
+    action: APPROVE,
+    world: (s) => (s.checkRuns = [run1("unit", "cancelled")]),
+    want: WITHHELD,
+  },
+  {
+    what: "a check still running withholds the approval",
+    action: APPROVE,
+    world: (s) => (s.checkRuns = [run1("unit", "", "in_progress")]),
+    want: WITHHELD,
+  },
+  {
+    what: "a cancelled husk is ignored when a newer run of the same name succeeded",
+    action: APPROVE,
+    world: (s) =>
+      (s.checkRuns = [
+        run1("sync", "cancelled", "completed", "2026-08-19T08:00:00Z"),
+        run1("sync", "cancelled", "completed", "2026-08-19T08:05:00Z"),
+        run1("sync", "success", "completed", "2026-08-19T08:10:00Z"),
+      ]),
+    want: { sent: "APPROVE" },
+  },
+  {
+    what: "the LATEST run of a name being cancelled still withholds",
+    action: APPROVE,
+    world: (s) =>
+      (s.checkRuns = [
+        run1("sync", "success", "completed", "2026-08-19T08:00:00Z"),
+        run1("sync", "cancelled", "completed", "2026-08-19T08:10:00Z"),
+      ]),
+    want: WITHHELD,
+  },
+  ...(["failure", "error", "pending"] as const).map((state): ParityCase => ({
+    what: `a ${state} commit status sharing a passing check-run's name withholds`,
+    action: APPROVE,
+    world: (s) => {
+      s.checkRuns = [run1("ci", "success", "completed", "2026-09-01T10:00:00Z")];
+      s.statuses = [{ context: "ci", state }];
+    },
+    want: WITHHELD,
+  })),
+  {
+    what: "a queued run with a null started_at is pending, not green off the older run of its name",
+    action: APPROVE,
+    world: (s) =>
+      (s.checkRuns = [
+        run1("ci", "success", "completed", "2026-09-01T10:00:00Z"),
+        run1("ci", "", "queued"),
+      ]),
+    want: WITHHELD,
+  },
+  ...(
+    [
+      ["queued", ""],
+      ["completed", "failure"],
+    ] as const
+  ).map(([status, conclusion]): ParityCase => ({
+    what: `an untimestamped ${status}/${conclusion || "none"} run is not masked by a passing status of its name`,
+    action: APPROVE,
+    world: (s) => {
+      s.checkRuns = [run1("ci", conclusion, status)];
+      s.statuses = [{ context: "ci", state: "success" }];
+    },
+    want: WITHHELD,
+  })),
+  {
+    what: "a passing status beside a passing run of its name still approves",
+    action: APPROVE,
+    world: (s) => {
+      s.checkRuns = [run1("ci", "success", "completed", "2026-09-01T10:00:00Z")];
+      s.statuses = [{ context: "ci", state: "success" }];
+    },
+    want: { sent: "APPROVE" },
+  },
+  {
+    what: "no_checks_is_red withholds an approval at a zero-checks head",
+    action: APPROVE,
+    world: (s) => {
+      s.checkRuns = [];
+      setGuardKnobs(s, { no_checks_is_red: true });
+    },
+    want: WITHHELD,
+  },
+  {
+    what: "a zero-checks head approves while no_checks_is_red is off",
+    action: APPROVE,
+    world: (s) => (s.checkRuns = []),
+    want: { sent: "APPROVE" },
+  },
+  {
+    what: "block_approve_on_red_ci = false approves over red CI",
+    action: APPROVE,
+    world: (s) => {
+      s.checkRuns = [run1("unit", "failure")];
+      setGuardKnobs(s, { block_approve_on_red_ci: false });
+    },
+    want: { sent: "APPROVE" },
+  },
+  {
+    what: "the withheld review posts as a COMMENT, which red CI never refuses",
+    action: COMMENT,
+    world: (s) => (s.checkRuns = [run1("unit", "failure")]),
+    want: { sent: "COMMENT" },
+  },
+  {
+    what: "a REQUEST_CHANGES is not a CI matter",
+    action: RC,
+    world: (s) => (s.checkRuns = [run1("unit", "failure")]),
+    want: { sent: "REQUEST_CHANGES" },
+  },
+];
+
+function expectOutcome(route: Route, got: Outcome, c: ParityCase): void {
+  const want: Want = { ...c.want, ...(c[route.name] ?? {}) };
+  const at = `${route.name} route`;
+  expect(got.sent, `${at}: the event sent`).toBe(want.sent);
+  expect(got.blocked, `${at}: the guard that refused`).toBe(want.blocked ?? null);
+  for (const t of want.bodyHas ?? []) expect(got.body, `${at}: body`).toContain(t);
+  for (const t of want.bodyLacks ?? []) expect(got.body, `${at}: body`).not.toContain(t);
+  if (want.noteHas) expect(got.note, `${at}: note`).toContain(want.noteHas);
+  if (want.commitId) expect(got.commitId, `${at}: commit_id`).toBe(want.commitId);
+}
+
+describe("parity — scripts/guards.sh and src/guards.ts answer the same cases", () => {
+  const rig = useGuardsShellRig();
+
+  const groups: Array<[string, ParityCase[]]> = [
+    ["guard 1 (a human approval at this head)", guard1],
+    ["guard 2 (no new evidence)", guard2],
+    ["guard 3 (merged or closed)", guard3],
+    ["guard 4 (red CI withholds an approval)", guard4],
+    ["guard 5 (the head moved)", guard5],
+  ];
+  for (const [title, cases] of groups) {
+    describe(title, () => {
+      for (const c of cases) {
+        it(c.what, async () => {
+          const s = rig;
+          setPr(s);
+          c.world?.(s);
+          const opts = c.expectedHead === undefined ? {} : { expectedHead: c.expectedHead };
+          const outcomes: Outcome[] = [];
+          for (const route of routes(s)) {
+            const got = await route.post(c.action, opts);
+            expectOutcome(route, got, c);
+            outcomes.push(got);
+          }
+          // Where the case names no difference, the routes agree outright.
+          if (!c.shell && !c.node) {
+            const [shell, node] = outcomes as [Outcome, Outcome];
+            expect({ sent: node.sent, blocked: node.blocked }).toEqual({
+              sent: shell.sent,
+              blocked: shell.blocked,
+            });
+          }
+        });
+      }
+    });
+  }
+
+  describe("the reviewed-head stamp", () => {
+    // The gate's after-step stamps the mark on its own route; the shell stamps it
+    // itself, for the posting scripts. Same starting row, same posted review,
+    // same row after (reviewed_at aside, which is the stamp's own clock).
+    const stamps: Array<[string, Parameters<typeof seedMark>[1], string, string]> = [
+      [
+        "the same head keeps the verdict and round, clears the author reply",
+        {
+          head_sha: WORLD_HEAD,
+          verdict: "REQUEST_CHANGES",
+          round_no: 2,
+          reply_at: "2099-01-01T00:00:00.000Z",
+        },
+        WORLD_HEAD,
+        "COMMENT",
+      ],
+      [
+        "a new head replaces the row wholesale",
+        { head_sha: "0ldhead", verdict: "REQUEST_CHANGES", round_no: 1 },
+        WORLD_HEAD,
+        "REQUEST_CHANGES",
+      ],
+    ];
+
+    it.each(stamps)("%s", async (_what, seed, head, event) => {
+      const shellDb = rig.dbPath;
+      const nodeDb = join(rig.dir, "node-state.db");
+      seedMark(rig, seed, shellDb);
+      seedMark(rig, seed, nodeDb);
+
+      const script = [
+        `ROOT=${JSON.stringify(rigRoot)}`,
+        "API=http://127.0.0.1:1 CONFIG=/dev/null REPO=o/r PR=5180 LIVE=1",
+        'die() { echo "$*" >&2; exit 1; }',
+        "cfg() { :; }",
+        `. ${JSON.stringify(join(rigRoot, "scripts", "guards.sh"))}`,
+        `guard_stamp_reviewed_head ${JSON.stringify(head)} ${JSON.stringify(event)}`,
+      ].join("\n");
+      await rigExec("bash", ["-c", script], { env: { ...process.env, QCR_STATE_DB: shellDb } });
+
+      const nodeStore = new StateStore(nodeDb);
+      await makePostingGuard({
+        store: nodeStore,
+        adapter: new FakeGuardAdapter(),
+        botLogin: BOT,
+        guards: GUARDS_DEFAULTS,
+      }).after?.({ ...reviewIntent(event as "COMMENT", head), pr: 5180 }, { executed: true });
+
+      const shellStore = new StateStore(shellDb);
+      const { reviewed_at: _a, ...shellRow } = shellStore.reviewedHead(5180)!;
+      const { reviewed_at: _b, ...nodeRow } = nodeStore.reviewedHead(5180)!;
+      shellStore.close();
+      nodeStore.close();
+      expect(nodeRow).toEqual(shellRow);
+      expect(nodeRow).toMatchObject({
+        head_sha: head,
+        posted_event: event,
+        last_author_reply_at: null,
+      });
+    });
   });
 });

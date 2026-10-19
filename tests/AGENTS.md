@@ -33,10 +33,16 @@
 
 `guards-shell-*.test.ts` is the proof that the shell posting route and the
 TypeScript gate agree. The files run the real scripts against a loopback
-stub over the same cases `guards.test.ts` runs against the gate. They are
-split by area so they run in parallel, each with its own stub from
-`helpers/guards-shell-rig.ts`. Change a guard on one side and you change it
-on both, with both tests.
+stub, and the parity block at the end of `guards.test.ts` runs every guard
+case through both routes over the same world (the rig's stub, state.db and
+config.toml; the drivers are in `helpers/guards-parity.ts`): the real scripts
+on one side, the real gate and `GitHubAdapter` on the other. A route that
+answers differently fails by case name unless the case records the difference
+and its reason. The shell files are split by area so they run in parallel,
+each with its own stub from `helpers/guards-shell-rig.ts`; they keep the
+shell-only plumbing (receipts, outbox, deferred handoff, error wording) until
+P9.3 deletes the scripts. Change a guard on one side and you change it on
+both, with both tests.
 
 ## Timeouts under load
 
