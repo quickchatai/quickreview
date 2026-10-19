@@ -42,6 +42,7 @@ import { randomUUID } from "node:crypto";
 import type {
   ExtensionAPI,
   ExtensionContext,
+  ExtensionFactory,
   SessionBeforeCompactEvent,
   SessionBeforeCompactResult,
 } from "@earendil-works/pi-coding-agent";
@@ -273,13 +274,49 @@ export interface LedgerPinDeps {
   loadCompact?: () => Promise<CompactFn | undefined>;
 }
 
-export function activateWith(pi: ExtensionAPI, deps: LedgerPinDeps = {}): void {
-  const loadCompact = deps.loadCompact ?? loadPiCompact;
-  const env = process.env;
+/** What one ledger-pin extension needs, resolved: no env is read past here. */
+export interface LedgerPinConfig extends LedgerPinDeps {
+  /** The session name (identity; snapshotPath is already derived from it). */
+  session: string;
+  /** PR meta line appended above the pinned ledger ("" for none). */
+  prMeta: string;
+  /** The session's own PR; undefined (the overseer) mirrors and pins nothing. */
+  ownPr: number | undefined;
+  /** Where the newest own ledger block is mirrored after every turn. */
+  snapshotPath: string;
+}
+
+/** The config the env describes (QCR_SESSION_NAME, QCR_PR_META, QCR_PR, and
+ * the snapshot path from ledgerSnapshotPath). */
+export function ledgerPinConfigFromEnv(
+  env: NodeJS.ProcessEnv,
+  deps: LedgerPinDeps = {},
+): LedgerPinConfig {
   const session = env.QCR_SESSION_NAME?.trim() || "session";
-  const meta = env.QCR_PR_META?.trim() ?? "";
-  const ownPr = parseOwnPr(env.QCR_PR);
-  const snapshotPath = ledgerSnapshotPath(env, session);
+  return {
+    session,
+    prMeta: env.QCR_PR_META?.trim() ?? "",
+    ownPr: parseOwnPr(env.QCR_PR),
+    snapshotPath: ledgerSnapshotPath(env, session),
+    ...deps,
+  };
+}
+
+/** The factory an SDK session loads. The default export is its env shim. */
+export function createLedgerPin(config: LedgerPinConfig): ExtensionFactory {
+  return (pi: ExtensionAPI): void => {
+    registerLedgerPin(pi, config);
+  };
+}
+
+/** Env shim with injectable deps: the env is read at activation, as before. */
+export function activateWith(pi: ExtensionAPI, deps: LedgerPinDeps = {}): void {
+  createLedgerPin(ledgerPinConfigFromEnv(process.env, deps))(pi);
+}
+
+function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
+  const loadCompact = config.loadCompact ?? loadPiCompact;
+  const { prMeta: meta, ownPr, snapshotPath } = config;
   let lastLedger = "";
   let persistedLedger = "";
 

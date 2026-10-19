@@ -12,7 +12,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import ledgerPin, { LEDGER_ENTRY_TYPE, PIN_CLOSE, PIN_OPEN } from "../../extensions/ledger-pin.js";
+import ledgerPin, {
+  LEDGER_ENTRY_TYPE,
+  PIN_CLOSE,
+  PIN_OPEN,
+  createLedgerPin,
+} from "../../extensions/ledger-pin.js";
 import { type Rig, createRig, useOfflineGuard } from "./harness.js";
 
 useOfflineGuard();
@@ -91,6 +96,32 @@ describe("[canary 7] a session_before_compact result is honoured", () => {
     expect(context).toContain(PIN_OPEN);
     // And the snapshot file ledger-pin keeps for archival was written.
     expect(readFileSync(join(scratch, "pr-42.md"), "utf8")).toContain("LEDGER PR #42");
+  });
+
+  it("createLedgerPin(config) pins the same way, with no env read", async () => {
+    vi.unstubAllEnvs();
+    const snapshotPath = join(scratch, "factory-pr-42.md");
+    const session = await rig.open({
+      extensionFactories: [
+        createLedgerPin({
+          session: "pr-42",
+          prMeta: "PR #42 — canary",
+          ownPr: 42,
+          snapshotPath,
+        }),
+      ],
+      keepRecentTokens: 300,
+    });
+    await fillHistory(session);
+    summariserSays("PI DEFAULT SUMMARY");
+
+    const result = await session.compact();
+
+    expect(result.summary).toContain("PI DEFAULT SUMMARY");
+    expect(result.summary).toContain(PIN_OPEN);
+    expect(result.summary).toContain(LEDGER);
+    expect(result.summary).toContain("PR #42 — canary");
+    expect(readFileSync(snapshotPath, "utf8")).toContain("LEDGER PR #42");
   });
 
   it("without a ledger for its own PR the hook stays out of the way: pi's own summary stands", async () => {
