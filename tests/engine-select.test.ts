@@ -50,6 +50,18 @@ describe("[engine] runtime and [pi] lens_runtime", () => {
       /\[pi\] lens_runtime must be one of native \| engine/,
     );
   });
+
+  it("[pi] engine_wave defaults off, reads true only with the engine lens runtime, and is a boolean", () => {
+    for (const text of [FIXTURE, EXAMPLE]) expect(parseConfig(text).pi.engine_wave).toBe(false);
+    const on = underPi(FIXTURE, 'lens_runtime = "engine"\nengine_wave = true');
+    expect(parseConfig(on).pi.engine_wave).toBe(true);
+    expect(() => parseConfig(underPi(FIXTURE, "engine_wave = true"))).toThrow(
+      /engine_wave = true needs lens_runtime = "engine"/,
+    );
+    expect(() => parseConfig(underPi(FIXTURE, 'engine_wave = "yes"'))).toThrow(
+      /\[pi\] engine_wave must be true or false/,
+    );
+  });
 });
 
 describe("selectRuntime", () => {

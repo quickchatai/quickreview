@@ -1156,8 +1156,16 @@ function parseEngine(raw: Record<string, unknown>): EngineConfig {
   return { runtime: oneOf("[engine] runtime", e.runtime, ENGINE_RUNTIME_KINDS) };
 }
 
-function parsePiLensRuntime<T extends { lens_runtime: unknown }>(pi: T): T {
+function parsePiLensRuntime<T extends { lens_runtime: unknown; engine_wave: unknown }>(pi: T): T {
   oneOf("[pi] lens_runtime", pi.lens_runtime, LENS_RUNTIME_KINDS);
+  if (typeof pi.engine_wave !== "boolean")
+    throw new Error(
+      `config.toml [pi] engine_wave must be true or false (got ${JSON.stringify(pi.engine_wave)})`,
+    );
+  // A wave only the engine route can launch: a typo must not run the main
+  // session's own launch while the config says the engine's.
+  if (pi.engine_wave && pi.lens_runtime !== "engine")
+    throw new Error('config.toml [pi] engine_wave = true needs lens_runtime = "engine"');
   return pi;
 }
 
@@ -2046,6 +2054,11 @@ export interface Config {
      * default) or `engine` (our lens tool and discovery wave, on an SDK
      * session). Only the SDK routes read it. */
     lens_runtime: LensRuntimeKind;
+    /** `lens_runtime = engine` only: the round's engine starts the planned
+     * discovery wave itself at round start (rule 9) and the main session joins
+     * it through `lens_wave`. Off (the default): the main session launches the
+     * wave, with the same tools. */
+    engine_wave: boolean;
   };
   openviking: OpenVikingConfig;
   memory: MemoryConfig;
@@ -2813,6 +2826,7 @@ export function parseConfig(toml: string): Config {
         subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
         subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
         lens_runtime: "native",
+        engine_wave: false,
         ...(req(raw, "pi") as Omit<
           Config["pi"],
           | "subagent_max_concurrency"
@@ -2820,6 +2834,7 @@ export function parseConfig(toml: string): Config {
           | "subagent_cache_stagger_ms"
           | "subagent_pass_deadline_min"
           | "lens_runtime"
+          | "engine_wave"
         > &
           Partial<
             Pick<
@@ -2829,6 +2844,7 @@ export function parseConfig(toml: string): Config {
               | "subagent_cache_stagger_ms"
               | "subagent_pass_deadline_min"
               | "lens_runtime"
+              | "engine_wave"
             >
           >),
       }),

@@ -304,6 +304,11 @@ subagent_max_concurrency = 12
 # by the routes that have an SDK host; with [engine] runtime = "proc" it has no
 # effect.
 # lens_runtime = "native"
+# With lens_runtime = "engine": the round's engine starts the planned discovery
+# wave itself at round start (rule 9) and the main session joins it with
+# lens_wave. false = the main session launches the wave, with the same tools.
+# Needs lens_runtime = "engine". Off until the bench evidence is in.
+# engine_wave = false
 
 # What hosts a pi session on the review, bench and scan routes: "proc" runs pi
 # as a child process (every route today), "sdk" runs it in-process on the pi

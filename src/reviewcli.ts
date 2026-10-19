@@ -78,7 +78,8 @@ import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { prepareHostRun } from "./hostroute.js";
 import { AuthExpiring } from "./engine/auth.js";
 import type { Runtime } from "./engine/port.js";
-import { checkLensRuntime, selectRuntime } from "./engine/select.js";
+import { selectRuntime } from "./engine/select.js";
+import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./engine/lens/wave.js";
 import { markSdkRoute } from "./engine/livesessions.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
@@ -1205,20 +1206,39 @@ export function watchdogCommand(
 
 /** The runtime `[engine] runtime` selects for `qcr review`: undefined on proc
  * (the review keeps its process runtime), the SDK runtime on sdk. Throws where
- * the config asks for what the route cannot do. */
-export function selectReviewRuntime(cfg: Pick<Config, "engine" | "pi">): Runtime | undefined {
-  checkLensRuntime(cfg.pi.lens_runtime, "review");
+ * the config asks for what the route cannot do. `[pi] lens_runtime = engine` is
+ * the SDK runtime with our lens tools; with `[pi] engine_wave` the runtime
+ * carries the board the round starts the planned wave on. */
+export function selectReviewRuntime(
+  cfg: Pick<Config, "engine" | "pi">,
+): EngineRouteRuntime | undefined {
+  const engine = cfg.pi.lens_runtime === "engine";
+  if (engine && cfg.engine.runtime !== "sdk")
+    throw new Error(
+      "[pi] lens_runtime = engine runs the lenses in this process: set [engine] runtime = sdk, or lens_runtime = native",
+    );
   return selectRuntime(cfg.engine.runtime, "review", () => {
     // The SDK host loads on the first session, not at startup: a preview, a
     // refusal and `review status` never pay for the pi SDK. A stop signal that
     // arrives before it is built already ends the run as an SDK stop.
     markSdkRoute();
-    let host: Promise<Runtime> | undefined;
-    const load = (): Promise<Runtime> =>
-      (host ??= import("./engine/reviewsdk.js").then((m) => m.reviewSdkRuntime()));
+    const wave = new LensWave();
+    let host: Promise<EngineRouteRuntime> | undefined;
+    const load = (): Promise<EngineRouteRuntime> =>
+      (host ??= import("./engine/reviewsdk.js").then((m) =>
+        m.reviewSdkRuntime(engine ? { engine: { wave, plannedWave: cfg.pi.engine_wave } } : {}),
+      ));
+    const engineLens: EngineRoute = {
+      wave,
+      runner: { run: async (request) => (await load()).engineLens!.runner.run(request) },
+      plannedWave: cfg.pi.engine_wave,
+    };
     return {
       create: async (spec) => (await load()).create(spec),
       resume: async (file, spec) => (await load()).resume(file, spec),
+      // The round reads this before any session exists, so it is named here and
+      // reaches the runner the host builds.
+      ...(engine ? { engineLens } : {}),
     };
   });
 }
