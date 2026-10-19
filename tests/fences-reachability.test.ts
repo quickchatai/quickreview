@@ -124,15 +124,17 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     // (P8.6): built and tested. The daemon constructs the host (supervisor, capability store, IPC server,
     // spec builder) when the worker world is wired into wire.ts; until then the tmux host is the one it
     // builds. Delete each entry with that import.
-    ...["workersupervisor.ts", "workerbreaker.ts", "workerlog.ts", "worker-session-host.ts"].map((f) => ({
-      file: `src/${f}`,
-      why:
-        "the worker world's session host (P8.5/P8.6): the supervisor (spawn, heartbeat, deadlines, lease, " +
-        "restart, crash-loop breaker, worker log) and WorkerSessionHost, the SessionHooks over " +
-        "them. Read only by tests/worker-supervisor.test.ts, " +
-        "tests/worker-session-host.test.ts and the conformance suite until the daemon's wiring constructs " +
-        "the host. Delete this entry with that import.",
-    })),
+    ...["workersupervisor.ts", "workerbreaker.ts", "workerlog.ts", "worker-session-host.ts"].map(
+      (f) => ({
+        file: `src/${f}`,
+        why:
+          "the worker world's session host (P8.5/P8.6): the supervisor (spawn, heartbeat, deadlines, lease, " +
+          "restart, crash-loop breaker, worker log) and WorkerSessionHost, the SessionHooks over " +
+          "them. Read only by tests/worker-supervisor.test.ts, " +
+          "tests/worker-session-host.test.ts and the conformance suite until the daemon's wiring constructs " +
+          "the host. Delete this entry with that import.",
+      }),
+    ),
     // The operator's controls on a worker-hosted PR (P8.12): the daemon's operatorControl handler and
     // status.json's per-PR runtime reader. Read only by tests/worker-control.test.ts until the daemon's
     // wiring constructs the worker host (it hands `workerOperatorControl` to the command deps and
@@ -227,9 +229,7 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
           .filter((p) => files.includes(p));
 
       // The roots: the two process entrypoints, the operator one-shots, and
-      // whatever the pi extensions reach into. `smoke-session.ts` is a root
-      // rather than an orphan because `npm run smoke:session` launches it;
-      // `bench/cli.ts` because the qcr-bench sandbox image's entrypoint
+      // whatever the pi extensions reach into. `bench/cli.ts` because the qcr-bench sandbox image's entrypoint
       // (bench/aacr/in-container.sh) launches it; `openviking/sidecar-main.ts`
       // because the memory image's entrypoint (docker/memory/entrypoint.sh)
       // execs it out of dist/; `loginrefresh/main.ts` because the daemon
@@ -238,7 +238,6 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       const roots = [
         "src/wire.ts",
         "src/cli.ts",
-        "src/smoke-session.ts",
         "src/bench/cli.ts",
         "src/openviking/sidecar-main.ts",
         "src/loginrefresh/main.ts",

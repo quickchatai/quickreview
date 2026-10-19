@@ -595,6 +595,11 @@ export interface SessionHooks {
    * and the unknown-evidence deferral (a transcript that could not be read). The
    * worker host sets it; the tmux host leaves it unset. */
   readonly ackIsReceipt?: true;
+  /** The tools this host's sessions launch lenses with (src/launchvocab.ts):
+   * `engine` for the worker host (`lens`, `lens_wave`), absent for the tmux host
+   * (`subagent`, `launch_plan`). Every round order the daemon builds for the host
+   * is written in that host's names, so one fleet never mixes the two. */
+  readonly lensRuntime?: "engine";
   /** Ensure the per-PR session exists (birth on first trigger) and inject the
    * rendered round prompt. */
   dispatchRound(order: RoundOrder, renderedPrompt: string): Promise<void>;

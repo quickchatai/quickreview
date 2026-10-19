@@ -46,22 +46,16 @@ function srcFiles(dir: string): string[] {
 describe("daemon topology", () => {
   const src = join(import.meta.dirname, "..", "src");
 
-  it("S1: only sessions.ts and the smoke script may birth a pi session", () => {
-    // sessions.ts owns the two DAEMON-OWNED kinds. smoke-session.ts and
-    // replay.ts are operator one-shots, not daemon topology: both
-    // run only under an explicit `qcr`/`npm run` invocation, spawn a session
-    // whose name is outside the `pr-<n>`/`overseer` namespace (so `adopt()`
-    // can never pick one up — pinned in tests/replay.test.ts), and kill it
-    // before returning. The replay's session additionally owns no PR, holds no
-    // gate and posts nothing; its whole contract is "read a scratch tree,
-    // write one JSON file".
+  it("S1: only sessions.ts and the replay may birth a pi session", () => {
+    // sessions.ts owns the two DAEMON-OWNED kinds. replay.ts is an
+    // operator one-shot, not daemon topology: it runs only under an explicit
+    // `qcr` invocation, spawns a session whose name is outside the
+    // `pr-<n>`/`overseer` namespace (so `adopt()` can never pick one up —
+    // pinned in tests/replay.test.ts), and kills it before returning. Its
+    // session owns no PR, holds no gate and posts nothing; its whole contract
+    // is "read a scratch tree, write one JSON file".
     const offenders = srcFiles(src)
-      .filter(
-        (f) =>
-          !["sessions.ts", "smoke-session.ts", "replay.ts"].includes(
-            f.slice(f.lastIndexOf("/") + 1),
-          ),
-      )
+      .filter((f) => !["sessions.ts", "replay.ts"].includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => /\bspawnSession\s*\(/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
   });
@@ -195,8 +189,7 @@ describe("daemon topology", () => {
   });
 
   it("S2: no daemon module invokes pi outside the session manager", () => {
-    // sessions.ts owns the daemon's pi argv. smoke-session.ts is the operator's
-    // one-shot session smoke. tui/companion.ts is the COMPANION boundary — a
+    // sessions.ts owns the daemon's pi argv. tui/companion.ts is the COMPANION boundary — a
     // local container on the owner's PC that never reaches GitHub or the gate
     // (CLAUDE.md hard rule 8), so its own pi argv is not a daemon spawn.
     // bench/runner.ts is the AACR-Bench sandbox's one-shot `pi -p` round: it
@@ -208,7 +201,7 @@ describe("daemon topology", () => {
     // setup.ts, never the daemon — the check below pins that no daemon module
     // imports src/setup/), and each spawn is a `-p --no-session -ne` leaf
     // (bash-guard the one extension) with read-only tools, not a session.
-    const allowed = ["sessions.ts", "smoke-session.ts", "companion.ts"];
+    const allowed = ["sessions.ts", "companion.ts"];
     // scanbox.ts is the scan sandbox: its pi runs in a throwaway container
     // from the companion image (`qcr scan login` interactively, the doctor's
     // one-shot `-p --no-session --no-extensions` probe), or — the doctor's

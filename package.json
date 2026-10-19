@@ -30,7 +30,8 @@
     "//typecheck:tests": "tests/ is excluded from the BUILD (it emits nothing), so nothing type-checked it and ~40 latent errors accumulated — three of them tests that were asserting nothing, plus three more that read the real filesystem while claiming to drive an injected seam. Deliberately NOT chained into `build`: `scripts/dev-tui.sh` blocks on that build before the TUI paints (ruling 5), and a second full tsc pass there is 7s of blank terminal. `tests/fences-gate.test.ts` runs this as part of the suite instead, which is this repo's CI.",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "daemon": "npm run build && node dist/src/wire.js",
-    "smoke:session": "npm run build && node dist/src/smoke-session.js",
+    "//smoke:worker": "The scripted worker smoke (P8.14, replaces smoke:session): a worker is born, runs a round and is resumed on pi's SDK over pi-ai's faux provider. No tmux, no pi binary, no model, no network.",
+    "smoke:worker": "timeout 300 vitest run tests/smoke-worker.test.ts",
     "slack:setup": "node deploy/collect-slack-secrets.mjs",
     "smoke:companion": "bash scripts/smoke-companion.sh",
     "e2e:companion": "bash scripts/companion-e2e.sh"
