@@ -152,7 +152,9 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/tui-deploy-process.test.ts",
   "tests/tui-openurl.test.ts",
   "tests/tui-rollover.test.ts",
+  "tests/tui-socket-mode.test.ts",
   "tests/tui-sshtriage-probe.test.ts",
   "tests/tui-startup.test.ts",
+  "tests/tui-tmux-socket.test.ts",
   "tests/worktrees.test.ts",
 ];

@@ -21,6 +21,8 @@ import {
 } from "./memtab.js";
 import { refOf } from "../memory/store.js";
 import { isTab } from "./tabs.js";
+import { laptopCompanionConfig, laptopInstallEnv, laptopLifecycle } from "./companionplan.js";
+import { TUI_COMPANION_ENV, TUI_COMPANION_TMUX_SOCKET, tmuxSocketRunner } from "./tmuxsocket.js";
 import {
   HotReloader,
   parseResumeArg,
@@ -418,7 +420,14 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
 
   // ---- phase 0: local only, ending in the first frame -----------------------
 
-  const full = deps.config ?? loadConfig();
+  const loaded = deps.config ?? loadConfig();
+  // D35: in the containerised TUI the companion is a container the host wrapper
+  // runs, reached through a shared tmux socket. Its channel dirs are the
+  // host's, named by the wrapper in env; nothing here can run docker.
+  const socketMode = process.env[TUI_COMPANION_ENV] === TUI_COMPANION_TMUX_SOCKET;
+  const full: Config = socketMode
+    ? { ...loaded, companion: laptopCompanionConfig(process.env, loaded.companion) }
+    : loaded;
   const cfg = full.tui;
   // One transport decision for every remote op — ssh to the VM, or the same
   // commands against local docker on the laptop topology.
@@ -515,8 +524,15 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // sidebar is only `available()` once the container answers, and the
   // container fills a column that was already the right size.
   const { CompanionSidebar, restorePreferredSidebarWidth } = await import("./sidebar.js");
-  const { CompanionLifecycle, realDockerRunner } = await import("./companion.js");
-  const companion = new CompanionLifecycle(full.companion, realDockerRunner);
+  const { CompanionLifecycle, realDockerRunner, tmuxSocketPath } = await import("./companion.js");
+  // The one seam the lifecycle, the column and the rollover reach the companion
+  // through: docker exec, or tmux -S over the shared socket.
+  const companionDocker = socketMode
+    ? tmuxSocketRunner(tmuxSocketPath(full.companion), full.companion.container_name)
+    : realDockerRunner;
+  const companion = socketMode
+    ? laptopLifecycle(process.env, companionDocker, loaded.companion)
+    : new CompanionLifecycle(full.companion, realDockerRunner);
   // The companion's read-only GitHub token, minted here from the App
   // credential this host holds and handed over as an env file in a dir the
   // container mounts read-only. Refreshed while the TUI runs (it lives an
@@ -524,7 +540,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const { CompanionGithubToken, tokenOutcomeLine } = await import("./ghread.js");
   const { companionGithubDir } = await import("../install.js");
   const ghToken = new CompanionGithubToken({
-    dir: companionGithubDir(),
+    dir: companionGithubDir(socketMode ? laptopInstallEnv(process.env) : undefined),
     repo: full.github.repo,
     secretsDir: full.github.secrets_dir,
   });
@@ -539,7 +555,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // The column exists in every configuration: `--no-companion` and
   // `[companion] enabled = false` decide what runs and what the column says,
   // never whether the right half of the screen is there.
-  app.sidebar = new CompanionSidebar(full.companion, realDockerRunner, {
+  app.sidebar = new CompanionSidebar(full.companion, companionDocker, {
     available: () => companionUp,
     onUpdate: () => app.repaint(),
     // pi's `/copy` inside the container lands in a tmux paste buffer; the
@@ -1015,7 +1031,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       progress.begin("rollover");
       const { CompanionRollover } = await import("./rollover.js");
       const { latestDigestHeadline } = await import("../digest.js");
-      const rollover = new CompanionRollover(full.companion, realDockerRunner, {
+      const rollover = new CompanionRollover(full.companion, companionDocker, {
         statePath: join(companionStateDir, "rollover.json"),
         policyStatePath,
         templatePath: join(sandboxRoot(), "prompts", "companion-day-open.md"),
@@ -1413,7 +1429,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // PID 1 ignores SIGTERM (so `docker stop` runs to its full timeout), must
   // not look like a hang.
   await stopCompanionOnQuit({
-    containerStarted: companionContainerStarted || companionUp,
+    // The wrapper that ran the container stops it (D35): nothing here can.
+    containerStarted: !socketMode && (companionContainerStarted || companionUp),
     stop: () => companion.gracefulStop(),
     write: (line) => out.write(line),
   });

@@ -521,7 +521,16 @@ mode_companion() {
   }
   trap term TERM INT
 
-  tmux start-server
+  if [ -n "${QCR_TMUX_SOCKET:-}" ]; then
+    # D35: the server listens on a socket in the volume the containerised TUI
+    # shares (`tmux -S`), and stays up with no session so the TUI can find it
+    # before pi is spawned. A socket left by an earlier run is stale.
+    mkdir -p "$(dirname "$QCR_TMUX_SOCKET")" 2>/dev/null || true
+    rm -f "$QCR_TMUX_SOCKET"
+    tmux -S "$QCR_TMUX_SOCKET" start-server \; set -s exit-empty off
+  else
+    tmux start-server
+  fi
 
   sleep infinity &
   child=$!
@@ -559,6 +568,24 @@ share_login() {
   find "$dir" -mindepth 1 -type f -exec chmod 0660 {} + 2>/dev/null || true
 }
 
+# ssh will not run for a uid the image has no passwd entry for, and the wrapper
+# starts the tui mode as the caller's own uid. When the entry is missing,
+# nss_wrapper answers the lookup with one (its HOME is this HOME, where the
+# wrapper mounts ~/.ssh/config and known_hosts). Needed by the ssh runner only
+# (src/tui/remote.ts); a missing library is said, never fatal.
+tui_identity() {
+  getent passwd "$(id -u)" >/dev/null 2>&1 && return 0
+  local lib dir="$HOME/.qcr-nss"
+  lib="${QCR_NSS_WRAPPER_LIB:-$(find /usr/lib /lib -name 'libnss_wrapper.so*' 2>/dev/null | head -n 1)}"
+  if [ ! -f "$lib" ] || ! mkdir -p "$dir" 2>/dev/null; then
+    say "WARNING: uid $(id -u) has no passwd entry and nss_wrapper is not usable - ssh to the VM will refuse to run"
+    return 0
+  fi
+  { cat /etc/passwd; printf 'qcr:x:%s:%s:qcr:%s:/bin/sh\n' "$(id -u)" "$(id -g)" "$HOME"; } >"$dir/passwd"
+  { cat /etc/group; printf 'qcr:x:%s:\n' "$(id -g)"; } >"$dir/group"
+  export LD_PRELOAD="$lib" NSS_WRAPPER_PASSWD="$dir/passwd" NSS_WRAPPER_GROUP="$dir/group"
+}
+
 # ---- dispatch -----------------------------------------------------------------
 
 assert_pi_pin
@@ -592,6 +619,7 @@ case "$mode" in
     exec node "$APP/dist/src/cli.js" "$@"
     ;;
   tui)
+    tui_identity
     exec node "$APP/dist/src/cli.js" tui "$@"
     ;;
   login)

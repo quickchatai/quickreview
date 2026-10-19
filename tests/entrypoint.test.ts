@@ -737,6 +737,106 @@ describe("companion mode", () => {
   });
 });
 
+describe("D35: the tmux socket and the TUI's identity", () => {
+  it("companion mode with QCR_TMUX_SOCKET starts the server on that socket and keeps it up with no session", async () => {
+    const r = rig();
+    const socket = join(r.dir, "tmux", "companion.sock");
+    const child = spawn(ENTRYPOINT, ["companion"], {
+      env: { ...r.env, QCR_TMUX_SOCKET: socket },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const exited = new Promise<number | null>((res) => child.on("exit", (code) => res(code)));
+    const log = join(r.dir, "tmux.log");
+    for (let i = 0; i < 200 && !existsSync(log); i++) await new Promise((r2) => setTimeout(r2, 50));
+    expect(existsSync(log)).toBe(true);
+    // one invocation: the server and the option that stops it exiting empty
+    expect(readFileSync(log, "utf8")).toContain(
+      `tmux -S ${socket} start-server ; set -s exit-empty off`,
+    );
+    expect(readFileSync(log, "utf8")).not.toContain("tmux start-server");
+    expect(existsSync(dirname(socket))).toBe(true);
+    child.kill("SIGTERM");
+    expect(await exited).toBe(0);
+  });
+
+  it("a stale socket left in the volume by an earlier run is removed before the server starts", async () => {
+    const r = rig();
+    const socket = join(r.dir, "tmux", "companion.sock");
+    put(socket, "stale");
+    const child = spawn(ENTRYPOINT, ["companion"], {
+      env: { ...r.env, QCR_TMUX_SOCKET: socket },
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    const exited = new Promise<number | null>((res) => child.on("exit", (code) => res(code)));
+    const log = join(r.dir, "tmux.log");
+    for (let i = 0; i < 200 && !existsSync(log); i++) await new Promise((r2) => setTimeout(r2, 50));
+    expect(existsSync(socket)).toBe(false);
+    child.kill("SIGTERM");
+    await exited;
+  });
+
+  // the cli stub of a rig prints argv only; this one prints what the TUI would see
+  const seeIdentity = (r: Rig): void =>
+    put(
+      join(r.app, "dist/src/cli.js"),
+      `console.log(JSON.stringify({ argv: process.argv.slice(2), preload: process.env.LD_PRELOAD ?? null, passwd: process.env.NSS_WRAPPER_PASSWD ?? null, group: process.env.NSS_WRAPPER_GROUP ?? null }));\n`,
+    );
+  /** A getent that knows nobody, as the image does for a caller's own uid. */
+  const unknownUid = (r: Rig): void => put(join(r.bin, "getent"), "#!/bin/sh\nexit 2\n", 0o755);
+
+  it("the tui mode gives ssh a passwd entry for a uid the image does not know", () => {
+    const r = rig();
+    seeIdentity(r);
+    unknownUid(r);
+    const lib = join(r.dir, "libnss_wrapper.so");
+    put(lib, "");
+    const out = run(r, ["tui", "--no-reload"], { QCR_NSS_WRAPPER_LIB: lib });
+    expect(out.status, out.stderr).toBe(0);
+    const seen = JSON.parse(out.stdout) as Record<string, string | string[] | null>;
+    expect(seen["argv"]).toEqual(["tui", "--no-reload"]);
+    expect(seen["preload"]).toBe(lib);
+    const passwd = readFileSync(String(seen["passwd"]), "utf8");
+    // the home the wrapper mounts ~/.ssh under, and the caller's own ids
+    expect(passwd).toContain(
+      `qcr:x:${process.getuid!()}:${process.getgid!()}:qcr:${r.home}:/bin/sh`,
+    );
+    expect(readFileSync(String(seen["group"]), "utf8")).toContain(`qcr:x:${process.getgid!()}:`);
+  });
+
+  it("does nothing when the uid is already known, and says so when the library is missing", () => {
+    const r = rig();
+    seeIdentity(r);
+    const known = JSON.parse(run(r, ["tui"]).stdout) as Record<string, unknown>;
+    expect(known["preload"]).toBeNull();
+    unknownUid(r);
+    const none = run(r, ["tui"], { QCR_NSS_WRAPPER_LIB: join(r.dir, "missing.so") });
+    // never fatal, never a LD_PRELOAD of a file that is not there, and said
+    expect(none.status, none.stderr).toBe(0);
+    expect((JSON.parse(none.stdout) as Record<string, unknown>)["preload"]).toBeNull();
+    expect(none.stderr).toContain("nss_wrapper is not usable");
+  });
+
+  it("only the tui mode asks for it: the cli mode never preloads anything", () => {
+    const r = rig();
+    seeIdentity(r);
+    unknownUid(r);
+    const lib = join(r.dir, "libnss_wrapper.so");
+    put(lib, "");
+    const out = JSON.parse(run(r, ["review"], { QCR_NSS_WRAPPER_LIB: lib }).stdout) as Record<
+      string,
+      unknown
+    >;
+    expect(out["preload"]).toBeNull();
+  });
+
+  it("the Dockerfile ships nss_wrapper and the tmux socket dir, writable by any uid", () => {
+    const df = read("docker/Dockerfile");
+    expect(df).toContain("libnss-wrapper");
+    expect(df).toContain("install -d -m 1777 /run/qcr-tmux");
+    expect(df).not.toMatch(/docker\.sock/);
+  });
+});
+
 describe("the image wires it", () => {
   it("the Dockerfile bakes the entrypoint executable, the tmux config and a writable state dir", () => {
     const df = read("docker/Dockerfile");
