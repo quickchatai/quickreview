@@ -629,6 +629,85 @@ describe("measured round usage", () => {
     expect(round.spend_usd).toBeNull();
   });
 
+  // P8.9: a worker that closed its report is the round's est_usd; the tokens stay
+  // the transcripts'. Anything short of one closed, single-worker report falls back.
+  describe("the worker's own report", () => {
+    const costLine = (total: number): string =>
+      JSON.stringify({
+        type: "message",
+        timestamp: new Date().toISOString(),
+        message: { role: "assistant", usage: { input: 500, output: 50, cost: { total } } },
+      });
+    const command = (pr: number, id: string, claims = 1): void => {
+      store.createSessionCommand({
+        id,
+        pr,
+        session: `pr-${pr}`,
+        kind: "round",
+        round_no: 1,
+        payload_sha256: "a".repeat(64),
+        payload_path: `/payload/${id}.md`,
+        inject_path: `/inject/${id}.md`,
+        next_check_at: new Date().toISOString(),
+      });
+      for (let i = 0; i < claims; i++) {
+        if (i > 0)
+          store.db.prepare("UPDATE session_commands SET status='pending' WHERE id=?").run(id);
+        store.claimSessionCommand(id, "worker", new Date().toISOString());
+      }
+    };
+    const estOf = async (pr: number, roundId: number): Promise<number | null> => {
+      writeSessionJsonl(pr, [modelLine(), costLine(0.5)]);
+      await watcher({ usage: { globalStoreDir: null, pricing: {} } }).handleFile(
+        write(pr, 1, verdictFile({ pr })),
+      );
+      const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+      expect(round.tokens_in).toBe(500); // always the transcripts'
+      return round.est_usd as number | null;
+    };
+
+    it("is est_usd when the worker closed it, warm-ups and all", async () => {
+      const roundId = reviewingRound(110);
+      command(110, "cmd-110");
+      store.recordCommandUsage("cmd-110", { est_usd: 0.4, lens_usd: 0.1, final: false });
+      store.recordCommandUsage("cmd-110", { est_usd: 0.53, lens_usd: 0.2, final: true });
+      expect(await estOf(110, roundId)).toBeCloseTo(0.53, 9); // 0.03 of warm-ups over the transcript
+    });
+
+    it("falls back to the transcripts for a worker that crashed before closing", async () => {
+      const roundId = reviewingRound(111);
+      command(111, "cmd-111");
+      store.recordCommandUsage("cmd-111", { est_usd: 0.3, lens_usd: 0, final: false });
+      expect(await estOf(111, roundId)).toBeCloseTo(0.5, 9);
+    });
+
+    it("falls back when the command was claimed again: the last worker did not see the first's spend", async () => {
+      const roundId = reviewingRound(112);
+      command(112, "cmd-112", 2);
+      store.recordCommandUsage("cmd-112", { est_usd: 0.2, lens_usd: 0, final: true });
+      expect(await estOf(112, roundId)).toBeCloseTo(0.5, 9);
+    });
+
+    it("re-states est_usd when the closing report lands after the round was measured", async () => {
+      // The production order: the verdict is applied while the session still runs,
+      // and `done` comes last (after the turns, compaction and the warm-up fold).
+      const roundId = reviewingRound(114);
+      command(114, "cmd-114");
+      store.recordCommandUsage("cmd-114", { est_usd: 0.4, lens_usd: 0.1, final: false });
+      expect(await estOf(114, roundId)).toBeCloseTo(0.5, 9); // measured first: the transcripts'
+      store.recordCommandUsage("cmd-114", { est_usd: 0.53, lens_usd: 0.2, final: true });
+      const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+      expect(round.est_usd).toBeCloseTo(0.53, 9);
+      expect(round.tokens_in).toBe(500); // the tokens stay the transcripts'
+    });
+
+    it("falls back on the tmux routes, which report nothing", async () => {
+      const roundId = reviewingRound(113);
+      command(113, "cmd-113");
+      expect(await estOf(113, roundId)).toBeCloseTo(0.5, 9);
+    });
+  });
+
   it("records est_usd null when the model has no price entry", async () => {
     const roundId = reviewingRound(101);
     writeSessionJsonl(101, [modelLine(), jsonlLine(1000, 100)]);

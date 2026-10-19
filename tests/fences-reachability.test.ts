@@ -133,6 +133,13 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     // WorkerSupervisor (P8.5) that mints the commands the socket authenticates, and P8.7 registers these
     // ops on it. Delete each entry with the first production import.
     {
+      file: "src/workerusage.ts",
+      why:
+        "the daemon's intake of a worker's spend report (P8.9): the onEvent handler that keeps usage/done " +
+        "figures on the command row. Read only by tests/workerusage.test.ts until the WorkerSupervisor " +
+        "(P8.5) starts the socket and composes it into its onEvent. Delete this entry with that import.",
+    },
+    {
       file: "src/postops.ts",
       why:
         "the daemon's post.review / post.approval / post.reply ops on the worker socket (P7.2). Read only " +

@@ -38,6 +38,7 @@ import { createCapabilityFd, ipcEnv, runDirOf } from "../src/ipc/capability.js";
 import { DISABLED_REFRESH } from "../src/engine/auth.js";
 import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
 import { parseWorkerSpec, type WorkerSpec } from "../src/ipc/workerspec.js";
+import { TranscriptIndex } from "../src/transcriptindex.js";
 import { sessionCommandMarker } from "../src/session-command.js";
 import { newestSessionFile } from "../src/sessionjsonl.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
@@ -422,6 +423,27 @@ describe("[P8.3] the planned wave and the lens JSONLs", () => {
     expect(daemon.of("done")[0]!.body["lens_usd"]).toBeCloseTo(0.75);
     expect(daemon.of("done")[0]!.body["total_usd"]).toBeCloseTo(1.25);
     expect(daemon.of("usage").at(-1)!.body["total_usd"]).toBeCloseTo(1.25);
+  });
+
+  it("reports the very figure the daemon's transcript measurement reads off the same JSONL (P8.9)", async () => {
+    faux = pricedFaux(() => 0.25);
+    writeTasks(world, 1, ["pass-a", "pass-b"]);
+    const { code } = await round(
+      "ORDER\n",
+      script([tool("lens_wave"), say("wave collected")], {
+        lens: { "pass-a": [say("a")], "pass-b": [say("b")] },
+      }),
+      { planned_wave: true },
+    );
+    expect(code).toBe(EXIT.ok);
+    const measured = await new TranscriptIndex().measure({
+      sessionDir: world.sessionDir,
+      startedAt: "2000-01-01T00:00:00.000Z",
+      finishedAt: "2100-01-01T00:00:00.000Z",
+    });
+    expect(measured.usage?.cost_usd).toBeCloseTo(1.0, 9); // main: 2 messages, the passes: 1 each
+    const reported = daemon.of("done")[0]!.body["total_usd"] as number;
+    expect(reported).toBeCloseTo(measured.usage!.cost_usd!, 9);
   });
 
   it("without the planned wave the order tells the session to launch it itself", async () => {
