@@ -1,0 +1,163 @@
+[
+  {
+    "file": "src/backfill.ts",
+    "fn": "runBackfill",
+    "note": "deferred; reads via resequenceBackfilledRounds; writes via insertBackfilledRound, resequenceBackfilledRounds"
+  },
+  {
+    "file": "src/cases.ts",
+    "fn": "CaseWriter.syncPr",
+    "note": "deferred; reads via activityOf; writes via .run"
+  },
+  {
+    "file": "src/commandeffects.ts",
+    "fn": "atomicCommandEffect",
+    "note": "deferred; reads via commandEffectReceipt; writes via reserveCommandEffect, settleCommandEffect"
+  },
+  {
+    "file": "src/dispatch.ts",
+    "fn": "dispatchUnlocked",
+    "note": "deferred; reads via approvalWithheld; writes via clearApprovalWithheld, logEvent"
+  },
+  {
+    "file": "src/learner/learner.ts",
+    "fn": "Learner.applyReceipt",
+    "note": "deferred; reads via .get, notPersisted; writes via .run, logEvent, notPersisted"
+  },
+  {
+    "file": "src/learner/learner.ts",
+    "fn": "Learner.buildPacket",
+    "note": "deferred; reads via candidates; writes via .run, logEvent"
+  },
+  {
+    "file": "src/learner/learner.ts",
+    "fn": "Learner.notPersisted",
+    "note": "deferred; reads via curation; writes via .run"
+  },
+  {
+    "file": "src/learner/learner.ts",
+    "fn": "Learner.verifyAgainstMemory",
+    "note": "deferred; reads via notPersisted; writes via .run, notPersisted"
+  },
+  {
+    "file": "src/lessonledger.ts",
+    "fn": "LessonLedger.apply",
+    "note": "deferred; reads via lessonsOff; writes via .run"
+  },
+  {
+    "file": "src/outcomes.ts",
+    "fn": "OutcomeCapture.ingestLocalFacts",
+    "note": "deferred; reads via add, isBotComment, prComments; writes via add"
+  },
+  {
+    "file": "src/reconcile.ts",
+    "fn": "reconcileOnce",
+    "count": 2,
+    "note": "deferred; reads via applyEvent, getPr, ledgerFeedbackSignal; writes via applyEvent, logEvent, ledgerFeedbackSignal"
+  },
+  {
+    "file": "src/reconcile.ts",
+    "fn": "reconcileOrphanedRounds",
+    "note": "deferred; reads via getPr, hasLaterRound, promoteSuccessor; writes via logEvent, markRoundCancelled, promoteSuccessor"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.ackHeldWakeBatch",
+    "note": "deferred; reads via .get; writes via .run"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.activateDueReviewFailureRetries",
+    "note": "deferred; reads via .get, getPr, getSessionCommand; writes via .run, deferAutoRetry, insertRecoveryInstruction"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.cancelBlockingSessionCommandsForOperator",
+    "note": "deferred; reads via blockingSessionCommandsForPr, trimHeldWakes; writes via .run, trimHeldWakes"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.cancelRoundAndQueueRecovery",
+    "note": "deferred; reads via .get, getPr, nextRoundNo; writes via .run, insertRecoveryInstruction"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.cancelSessionCommandsForClosedPr",
+    "note": "deferred; reads via .all; writes via .run"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.claimHeldWakeBatch",
+    "note": "deferred; reads via .all, heldWakes; writes via .run"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.holdWakeWithIdentity",
+    "note": "deferred; reads via trimHeldWakes; writes via .run, trimHeldWakes"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.openReviewFailure",
+    "note": "deferred; reads via .get, getPr, successorFor; writes via .run"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.promoteSuccessor",
+    "note": "deferred; reads via getPr, hasRunningRound, successorFor; writes via .run"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.recoverReviewFailure",
+    "note": "deferred; reads via .get, getPr, getSessionCommand; writes via .run, insertRecoveryInstruction"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.releaseHeldWakeBatch",
+    "note": "deferred; reads via .get; writes via .run"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.resequenceBackfilledRounds",
+    "note": "deferred; reads via .all, .get; writes via .run"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.resolveExactHeadReviewedFailure",
+    "note": "deferred; reads via .get, getPr, getSessionCommand; writes via .run, logEvent"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.resolveTerminalReviewFailure",
+    "note": "deferred; reads via .get, getPr, getSessionCommand; writes via .run, logEvent"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.retrySessionCommandAfterFence",
+    "note": "deferred; reads via .get, getSessionCommand; writes via .run"
+  },
+  {
+    "file": "src/state.ts",
+    "fn": "StateStore.terminalizeInfrastructureReviewFailure",
+    "note": "deferred; reads via .get, getSessionCommand; writes via .run"
+  },
+  {
+    "file": "src/statemachine.ts",
+    "fn": "applyEvent",
+    "note": "deferred; reads via applyEventTransaction; writes via applyEventTransaction"
+  },
+  {
+    "file": "src/verdicts.ts",
+    "fn": "VerdictWatcher.settleGuardedNoop",
+    "note": "deferred; reads via restoreStandingLifecycle; writes via logAnomaly, logEvent, markRoundCancelled"
+  },
+  {
+    "file": "src/wakes.ts",
+    "fn": "wakeOrHold",
+    "note": "deferred; reads via hold; writes via hold"
+  },
+  {
+    "file": "src/webhook.ts",
+    "fn": "prepareAcceptedWebhook",
+    "note": "deferred; reads via blockedPrAuthor, botCommentPr, captureComment; writes via captureComment, logEvent, prepareWebhookInbox"
+  }
+]
