@@ -87,6 +87,8 @@ export const DAEMON_ROOTS = [
   // spawns the worker BY PATH and imports its env allowlist's one shared name from
   // src/envstrip.ts, so the engine's dispatcher and sessions never enter the daemon.
   "src/workersupervisor.ts",
+  // The worker host (P8.6) is the SessionHooks the daemon speaks over that supervisor.
+  "src/worker-session-host.ts",
 ];
 
 /**

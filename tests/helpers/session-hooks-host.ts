@@ -3,15 +3,21 @@
 //
 // `SessionHooks` (src/types.ts) is the one seam between the daemon's state
 // machine and whatever runs the per-PR pi. The conformance suite states the
-// contract once and runs it against every host in `SESSION_HOSTS`; a new host
-// (the per-round worker of Phase 8) joins by adding one entry here and passing
-// the same cases. The suite never reaches below the hooks except through the
-// `SessionHooksRig` verbs, which are the world the host runs in: what has
-// reached a session's mailbox, what pi accepted, whether the session is up.
+// contract once and runs it against every host in `SESSION_HOSTS`; a host joins
+// by adding one entry here and passing the same cases. The suite never reaches
+// below the hooks except through the `SessionHooksRig` verbs, which are the world
+// the host runs in: what has reached a session's mailbox, what pi accepted,
+// whether the session is up.
 //
 // The tmux host is today's `PiSessionManager` over a recording fake exec — no
-// tmux, no pi and no git is ever spawned.
+// tmux, no pi and no git is ever spawned. The worker host (P8.6) is
+// `WorkerSessionHost` over a real `WorkerSupervisor` whose spawn, process table
+// and signals are fakes — no process, no socket, no model. Where the two differ
+// by nature (a tmux session outlives its commands and has a bridge to redeliver
+// into; a worker is a command), `SessionHooksHost` says so and the suite asks.
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
+import type { spawn as nodeSpawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -24,16 +30,23 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../../src/config.js";
-import { writeSessionBridgeState } from "../../src/session-bridge.js";
+import { CapabilityStore } from "../../src/ipc/capability.js";
+import type { WorkerSpec } from "../../src/ipc/workerspec.js";
+import { COMPACTION_REQUEST_FILE, writeSessionBridgeState } from "../../src/session-bridge.js";
 import { PiSessionManager, prSessionName } from "../../src/sessions.js";
 import { StateStore } from "../../src/state.js";
 import { Tmux, type ExecFn } from "../../src/tmux.js";
 import type { SessionHooks } from "../../src/types.js";
+import { WorkerSessionHost } from "../../src/worker-session-host.js";
+import { WorkerSupervisor } from "../../src/workersupervisor.js";
 import { WorktreeManager } from "../../src/worktrees.js";
 
 /** The hooks a conforming host provides in full. The optional members of
- * `SessionHooks` are optional for stubs; a real host has all of them. */
-export type FullSessionHooks = Required<SessionHooks>;
+ * `SessionHooks` are optional for stubs; a real host has all of them, but for the
+ * two the worker host bypasses (its worker compacts) and its own marker. */
+export type FullSessionHooks = Required<
+  Omit<SessionHooks, "compactSession" | "sessionCompaction" | "ackIsReceipt">
+>;
 
 export const HOST_NOW = new Date("2026-08-13T10:00:00Z");
 
@@ -43,25 +56,36 @@ export interface SessionHooksRig {
   readonly store: StateStore;
   /** Is the PR's (or the overseer's) session up in the host? */
   isRunning(session: string): boolean;
-  /** A session the host already runs, ready to take a wake — as left by an
-   * earlier daemon. Birth goes through the hooks; this is only for a session
-   * that exists before the case starts. */
-  seedRunningSession(session: string): void;
+  /** A session the host already runs, with work in flight for it — as left by an
+   * earlier daemon (a tmux session; a worker holding a command). Birth goes
+   * through the hooks; this is only for a session that exists before the case
+   * starts. */
+  seedRunningSession(session: string): void | Promise<void>;
+  /** The PR's session is there and takes a wake, with nothing in flight: a tmux
+   * session waiting at its prompt; for a worker, an idle PR, which has no process. */
+  seedIdleSession(session: string): void | Promise<void>;
   /** Messages that reached the session's mailbox and are not consumed yet,
    * as the exact bytes, in arrival order. */
   mailbox(session: string): string[];
   /** The session consumed what was in its mailbox and finished it: the
    * durable command is acked and the mailbox is empty. */
-  settleDelivered(pr: number): void;
+  settleDelivered(pr: number): void | Promise<void>;
   /** pi accepted this user message into the PR session's transcript. */
   recordAccepted(pr: number, text: string): void;
   /** pi wrote something to the PR session's transcript that is not a prompt. */
   recordActivity(pr: number): void;
   /** The session consumed what was in its mailbox without settling it (the
-   * wake file is gone, the durable command is untouched). */
+   * wake file is gone, the durable command is untouched). Bridge hosts only. */
   consumeMailbox(session: string): void;
-  /** The session's bridge now reports a generation the host did not birth. */
+  /** The session's bridge now reports a generation the host did not birth.
+   * Bridge hosts only. */
   staleBridge(session: string): void;
+  /** The order the session was handed is gone without a receipt: consumed and
+   * never written to its transcript (tmux), or its worker ended before it
+   * accepted (worker). The silent-round net's case. */
+  loseDeliveredOrder(pr: number): void | Promise<void>;
+  /** How many compactions the daemon has asked of the session. */
+  compactionRequests(session: string): number;
   /** The session dies on its own — the container restarted, pi crashed. */
   killOutOfBand(session: string): void;
   /** From now on a kill of this session does not take. */
@@ -73,7 +97,9 @@ export interface SessionHooksRig {
    * where a replayed command is reserved — or as a kill lands. */
   onBirth(fn: (session: string) => void): void;
   onKill(fn: (session: string) => void): void;
-  /** The daemon restarts: fresh hooks over the same world and the same store. */
+  /** The daemon restarts: fresh hooks over the same world and the same store.
+   * Hosts whose sessions survive a restart only (a tmux session does; a worker
+   * dies with its daemon, which `worker-session-host.test.ts` covers). */
   restart(): FullSessionHooks;
   dispose(): void;
 }
@@ -82,6 +108,19 @@ export interface SessionHooksHost {
   /** Names the host in the suite's output. */
   readonly name: string;
   open(): SessionHooksRig;
+  /** The host delivers through an inject bridge: a mailbox a session consumes,
+   * a bridge generation, a redelivery into a live session, a restart that adopts
+   * the live sessions. False for the worker host, whose command IS the delivery. */
+  readonly bridge: boolean;
+  /** A session outlives its commands, so a wake into a live one births nothing. */
+  readonly persistent: boolean;
+  /** The row a dispatched round's command is in right after `dispatchRound`:
+   * the bridge claims it later; a worker claims it as it launches. */
+  readonly dispatchedRow: { status: string; attempt: number };
+  /** What a receipt read says when the session has done other work but not yet
+   * this order: a transcript scan can say it was absent (false); a command's ack
+   * cannot yet tell (null). */
+  readonly receiptBeforeAck: boolean | null;
 }
 
 const TITLE = "Add rate limiting";
@@ -223,6 +262,9 @@ function openTmuxHost(): SessionHooksRig {
     },
     store,
     isRunning: (session) => live.has(session),
+    seedIdleSession(session) {
+      return this.seedRunningSession(session);
+    },
     seedRunningSession(session) {
       const generation = `existing-${session}`;
       live.add(session);
@@ -272,6 +314,20 @@ function openTmuxHost(): SessionHooksRig {
       });
     },
     killOutOfBand: (session) => void live.delete(session),
+    loseDeliveredOrder(pr) {
+      const session = prSessionName(pr);
+      for (const f of existsSync(manager.injectDir(session))
+        ? readdirSync(manager.injectDir(session))
+        : [])
+        if (f.endsWith(".md")) rmSync(join(manager.injectDir(session), f));
+      // pi wrote something since, but not the order: the receipt is absent, not unknown.
+      writeFileSync(
+        jsonlFor(pr),
+        `${JSON.stringify({ message: { role: "assistant", content: [{ type: "text", text: "working" }] } })}\n`,
+      );
+    },
+    compactionRequests: (session) =>
+      existsSync(join(manager.injectDir(session), COMPACTION_REQUEST_FILE)) ? 1 : 0,
     recordAccepted(pr, text) {
       writeFileSync(
         jsonlFor(pr),
@@ -303,10 +359,264 @@ function openTmuxHost(): SessionHooksRig {
   };
 }
 
-export const tmuxHost: SessionHooksHost = { name: "tmux", open: openTmuxHost };
+export const tmuxHost: SessionHooksHost = {
+  name: "tmux",
+  open: openTmuxHost,
+  bridge: true,
+  persistent: true,
+  dispatchedRow: { status: "pending", attempt: 0 },
+  receiptBeforeAck: false,
+};
+
+// ---- the worker host ---------------------------------------------------------
+
+/** A worker process that is only a name: it is up until something ends it. */
+class FakeWorker extends EventEmitter {
+  exited = false;
+  constructor(
+    readonly pid: number,
+    readonly session: string,
+  ) {
+    super();
+  }
+
+  end(code: number | null, signal: NodeJS.Signals | null): void {
+    if (this.exited) return;
+    this.exited = true;
+    this.emit("exit", code, signal);
+  }
+}
+
+const untilGone = async (gone: () => boolean): Promise<void> => {
+  const end = Date.now() + 2_000;
+  while (!gone()) {
+    if (Date.now() > end) throw new Error("the worker did not settle");
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+};
+
+/** The worker rig, with the pieces the worker-specific cases drive directly. */
+export interface WorkerHostRig extends SessionHooksRig {
+  readonly root: string;
+  readonly host: WorkerSessionHost;
+  readonly supervisor: WorkerSupervisor;
+  /** The session's worker ends on its own with this exit code. */
+  exit(session: string, code: number): Promise<void>;
+  /** The login refresher holds a rewrite: no worker may start. */
+  holdLogin(held: boolean): void;
+  /** Live worker processes, by session. */
+  workers(): string[];
+}
+
+export function openWorkerRig(): WorkerHostRig {
+  const root = mkdtempSync(join(tmpdir(), "qcr-hooks-conformance-worker-"));
+  for (const dir of ["prompts", "secrets", "state", "run"])
+    mkdirSync(join(root, dir), { recursive: true });
+
+  const workers = new Map<number, FakeWorker>();
+  const wedged = new Set<string>();
+  const lifecycle: string[] = [];
+  let onBirth: ((session: string) => void) | undefined;
+  let onKill: ((session: string) => void) | undefined;
+  let nextPid = 1000;
+  let disposed = false;
+  let loginHeld = false;
+
+  const store = new StateStore(join(root, "state", "state.db"), () => HOST_NOW);
+  const supervisor = new WorkerSupervisor({
+    store,
+    capabilities: new CapabilityStore(),
+    runDir: join(root, "run"),
+    socketPath: join(root, "run", "q.sock"),
+    workerMain: join(root, "botworker.js"),
+    logDir: join(root, "state", "workers"),
+    payloadDir: join(root, "state", "session-commands"),
+    buildSpec: (row, mode): WorkerSpec => ({
+      mode,
+      command_id: row.id,
+      pr: row.pr,
+      session: row.session,
+      round_no: row.round_no,
+      payload_path: row.payload_path,
+      payload_sha256: row.payload_sha256,
+      root,
+      cwd: root,
+      agent_dir: join(root, "agent"),
+      session_dir: join(root, "state", "pi-sessions", row.session),
+      system_prompt_file: join(root, "prompts", "system.md"),
+      model: "faux/faux-1",
+      env: {},
+      events_file: join(root, "state", "live", `${row.session}.jsonl`),
+      stderr_file: join(root, "state", "workers", `${row.id}.err`),
+      wall_clock_ms: 600_000,
+      planned_wave: false,
+    }),
+    parentEnv: {},
+    loginGate: { paused: () => loginHeld, whenResumed: async () => !loginHeld },
+    loginWaitMs: 1,
+    spawn: ((_node: string, args: readonly string[]) => {
+      const command = store.getSessionCommand(String(args[args.indexOf("--command") + 1]))!;
+      const worker = new FakeWorker(nextPid++, command.session);
+      workers.set(worker.pid, worker);
+      lifecycle.push(`birth ${worker.session}`);
+      onBirth?.(worker.session);
+      return worker;
+    }) as unknown as typeof nodeSpawn,
+    proc: {
+      identity: (pid) => {
+        const worker = workers.get(pid);
+        return worker && !worker.exited ? { start: String(pid), pgid: pid } : undefined;
+      },
+      members: () => [],
+      bootId: () => "conformance-boot",
+    },
+    signal: (target, sig) => {
+      const worker = workers.get(Math.abs(target));
+      if (!worker || worker.exited) return "gone";
+      if (disposed || wedged.has(worker.session)) return "sent";
+      lifecycle.push(`kill ${worker.session}`);
+      onKill?.(worker.session);
+      worker.end(null, sig);
+      return "sent";
+    },
+    limits: { killGraceMs: 5, wallGraceMs: 0, tickMs: 60_000, fenceWaitMs: 150 },
+  });
+  const host = new WorkerSessionHost({
+    cfg: config(root),
+    root,
+    worktrees: new WorktreeManager({
+      root,
+      repo: "o/n",
+      cloneDir: "example-app",
+      cloneUrl: "/dev/null",
+      run: async () => ({ code: 0, stdout: "", stderr: "" }),
+    }),
+    store,
+    supervisor,
+    ovSessions: { create: async () => true, remove: async () => true },
+    now: () => HOST_NOW,
+    log: () => {},
+  });
+
+  const prOf = (session: string): number => Number(session.replace(/^pr-/, ""));
+  const live = (session: string): FakeWorker | undefined =>
+    [...workers.values()].find((w) => w.session === session && !w.exited);
+
+  return {
+    root,
+    host,
+    supervisor,
+    hooks: host as unknown as FullSessionHooks,
+    store,
+    isRunning: (session) => supervisor.isLive(session),
+    async exit(session, code) {
+      live(session)?.end(code, null);
+      await untilGone(() => !supervisor.isLive(session));
+    },
+    holdLogin(held) {
+      loginHeld = held;
+    },
+    workers: () => [...workers.values()].filter((w) => !w.exited).map((w) => w.session),
+    loseDeliveredOrder(pr) {
+      // Exit 3: the handshake could not be trusted. The order never reached a session.
+      const session = prSessionName(pr);
+      live(session)?.end(3, null);
+      return untilGone(() => !supervisor.isLive(session));
+    },
+    compactionRequests: () => 0,
+    seedIdleSession() {
+      // An idle PR has no process: nothing to seed.
+    },
+    async seedRunningSession(session) {
+      const command = supervisor.submit({
+        pr: prOf(session),
+        kind: "wake",
+        round_no: null,
+        payload: "seeded wake",
+      });
+      await supervisor.launch(command.id);
+    },
+    mailbox(session) {
+      const active = store.activeSessionCommand(session);
+      if (!active) return [];
+      return [readFileSync(active.payload_path, "utf8")];
+    },
+    async settleDelivered(pr) {
+      const session = prSessionName(pr);
+      const worker = live(session);
+      if (!worker) return;
+      worker.end(0, null);
+      await untilGone(() => !supervisor.isLive(session));
+    },
+    recordAccepted(pr, text) {
+      // The worker's `accepted` event: it took the order it was handed.
+      const command = store.activeSessionCommand(prSessionName(pr));
+      if (!command) return;
+      const payload = readFileSync(command.payload_path, "utf8");
+      if (payload.trimEnd() !== text.trimEnd()) return;
+      supervisor.onEvent(
+        {
+          commandId: command.id,
+          role: "worker",
+          pr,
+          generation: command.attempt,
+          mayPost: false,
+          answer: false,
+          lease: "none",
+          requirePr: () => {},
+        },
+        "accepted",
+        {},
+      );
+    },
+    recordActivity(pr) {
+      const dir = join(host.sessionDir(prSessionName(pr)), "--home-sandbox--");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "2026-08-13T10-00-01-000Z_abc.jsonl"),
+        `${JSON.stringify({ message: { role: "assistant", content: [{ type: "text", text: "working" }] } })}
+`,
+      );
+    },
+    consumeMailbox() {
+      throw new Error("a worker has no mailbox to consume");
+    },
+    staleBridge() {
+      throw new Error("a worker has no bridge");
+    },
+    killOutOfBand(session) {
+      live(session)?.end(null, "SIGKILL");
+    },
+    wedgeSession: (session) => void wedged.add(session),
+    lifecycle: () => [...lifecycle],
+    onBirth(fn) {
+      onBirth = fn;
+    },
+    onKill(fn) {
+      onKill = fn;
+    },
+    restart() {
+      throw new Error("a worker dies with its daemon: nothing is adopted");
+    },
+    dispose() {
+      disposed = true;
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+export const workerHost: SessionHooksHost = {
+  name: "worker",
+  open: openWorkerRig,
+  bridge: false,
+  persistent: false,
+  dispatchedRow: { status: "running", attempt: 1 },
+  receiptBeforeAck: null,
+};
 
 /** Every host the contract runs against. */
-export const SESSION_HOSTS: SessionHooksHost[] = [tmuxHost];
+export const SESSION_HOSTS: SessionHooksHost[] = [tmuxHost, workerHost];
 
 /** A tracked (or closed) PR in the registry, the title the host wakes it by. */
 export function trackPr(

@@ -158,9 +158,11 @@ async function rig(o: RigOptions = {}) {
   servers.push(server);
   await server.start();
   const round = store.startRound(PR, "first", ["pass-baseline"], 75);
-  const roundNo = (store.db.prepare("SELECT round_no FROM rounds WHERE id=?").get(round) as {
-    round_no: number;
-  }).round_no;
+  const roundNo = (
+    store.db.prepare("SELECT round_no FROM rounds WHERE id=?").get(round) as {
+      round_no: number;
+    }
+  ).round_no;
   const submit = (): SessionCommandRow =>
     sup.submit({ pr: PR, kind: "round", round_no: roundNo, payload: "the round order" });
   const out = (id: string, name: string): string => {
@@ -177,10 +179,27 @@ async function rig(o: RigOptions = {}) {
     current.sup = next;
     supervisors.push(next);
   };
-  return { sup, store, caps, server, observed, specs, roundNo, submit, out, events, runDir, base, use };
+  return {
+    sup,
+    store,
+    caps,
+    server,
+    observed,
+    specs,
+    roundNo,
+    submit,
+    out,
+    events,
+    runDir,
+    base,
+    use,
+  };
 }
 
-const finished = (sup: WorkerSupervisor): (() => boolean) => () => !sup.isLive(SESSION);
+const finished =
+  (sup: WorkerSupervisor): (() => boolean) =>
+  () =>
+    !sup.isLive(SESSION);
 
 describe("[P8.5] the worker's life", () => {
   it("serves a round: spec over IPC, accepted starts the row, exit 0 acks it", async () => {
@@ -407,7 +426,11 @@ describe("[P8.5] the fences", () => {
     await expect(r.sup.launch(row.id)).rejects.toThrow(/has a live worker/);
     expect(r.store.getSessionCommand(row.id)!.status).toBe("pending");
     // The same lease with a start time that is not that process's: a stale file.
-    plantLease(r.sup.leases, { pid: keeper.pid!, command_id: "someone-else", start_time: "1" }, true);
+    plantLease(
+      r.sup.leases,
+      { pid: keeper.pid!, command_id: "someone-else", start_time: "1" },
+      true,
+    );
     await r.sup.launch(row.id);
     await until(finished(r.sup));
     expect(alive(keeper.pid!)).toBe(true);
@@ -480,9 +503,9 @@ describe("[P8.5] the fences", () => {
     });
     await ops["wakes.ack"]!.handle(ctx, { id: "w1" });
     expect(acked).toEqual(["w1"]);
-    await expect(Promise.resolve().then(() => ops["wakes.ack"]!.handle(ctx, {}))).rejects.toMatchObject(
-      { code: "bad_request" },
-    );
+    await expect(
+      Promise.resolve().then(() => ops["wakes.ack"]!.handle(ctx, {})),
+    ).rejects.toMatchObject({ code: "bad_request" });
   });
 
   it("holds a spawn while a login pauses the refresher, and refuses when it does not end", async () => {
@@ -594,7 +617,12 @@ describe("[P8.5] a restart", () => {
     const grandchild = Number(r.out(row.id, "grandchild.txt"));
     const leaseFile = join(r.runDir, "workers", `${SESSION}.lease.json`);
     const lease = JSON.parse(readFileSync(leaseFile, "utf8")) as WorkerLease;
-    expect(lease).toMatchObject({ pid: info.pid, pgid: info.pid, command_id: row.id, generation: 1 });
+    expect(lease).toMatchObject({
+      pid: info.pid,
+      pgid: info.pid,
+      command_id: row.id,
+      generation: 1,
+    });
     expect(lease.start_time).toMatch(/^\d+$/);
     expect(lease.boot_id).toBe(realProc.bootId());
 
@@ -634,7 +662,12 @@ describe("[P8.5] a restart", () => {
     const leader = stranger();
     const real = r.sup.leases;
     plantLease(real, { session: "pr-11", pr: 11, pid: wrongStart.pid!, start_time: "42" });
-    plantLease(real, { session: "pr-12", pr: 12, pid: wrongBoot.pid!, boot_id: "other-boot/other-box" });
+    plantLease(real, {
+      session: "pr-12",
+      pr: 12,
+      pid: wrongBoot.pid!,
+      boot_id: "other-boot/other-box",
+    });
     plantLease(real, { session: "pr-13", pr: 13, pid: leader.pid! });
     const result = await r.sup.recover();
     // Only the lease that is exactly its process killed it.
@@ -696,9 +729,80 @@ describe("[P8.5] what an exit means", () => {
     [{ code: 143, killedFor: "operator" as const }, "failed"],
     [{ code: 143, killedFor: "heartbeat_lost" as const }, "requeue"],
     [{ code: 143, killedFor: "shutdown" as const }, "requeue"],
+    [{ code: 143, killedFor: "fence" as const }, "leave"],
+    [{ code: 0, killedFor: "fence" as const }, "leave"],
     [{ code: null, spawnError: "spawn ENOENT" }, "failed"],
   ])("%j is %s", (over, kind) => {
     expect(decideOutcome({ ...base, ...over }).kind).toBe(kind);
+  });
+});
+
+describe("[P8.6] what the session host asks of it", () => {
+  it("fence ends a worker that ignores SIGTERM, answers once it is reaped, and leaves its row", async () => {
+    const r = await rig({ mode: "busy", wallMs: 60_000 });
+    const row = r.submit();
+    const info = await r.sup.launch(row.id);
+    await until(() => r.observed.some((o) => o.kind === "progress"));
+    expect(r.sup.runs(SESSION)).toBe(true);
+
+    expect(await r.sup.fence(SESSION)).toBe(true);
+
+    expect(alive(info.pid)).toBe(false);
+    expect(r.sup.runs(SESSION)).toBe(false);
+    // The fence is the caller's: the row is neither failed nor handed back.
+    expect(r.store.getSessionCommand(row.id)).toMatchObject({ status: "running" });
+    expect(r.events("worker_exited")[0]).toMatchObject({ outcome: "leave", signal: "SIGKILL" });
+    expect(readdirSync(join(r.runDir, "workers"))).toEqual([]);
+    // Nothing to fence the second time.
+    expect(await r.sup.fence(SESSION)).toBe(true);
+  });
+
+  it("fence says no when the worker is still there after fenceWaitMs", async () => {
+    const r = await rig({
+      mode: "busy",
+      wallMs: 60_000,
+      limits: { killGraceMs: 10_000, fenceWaitMs: 60 },
+    });
+    const row = r.submit();
+    await r.sup.launch(row.id);
+    await until(() => r.observed.some((o) => o.kind === "progress"));
+
+    expect(await r.sup.fence(SESSION)).toBe(false);
+
+    expect(r.sup.runs(SESSION)).toBe(true);
+  });
+
+  it("runs() counts a lease that names a live group, and not one that names a stranger", async () => {
+    const r = await rig();
+    expect(r.sup.runs(SESSION)).toBe(false);
+    const group = stranger();
+    plantLease(r.sup.leases, { pid: group.pid! });
+    expect(r.sup.runs(SESSION)).toBe(true);
+    plantLease(r.sup.leases, { pid: group.pid!, start_time: "1" }, true);
+    expect(r.sup.runs(SESSION)).toBe(false);
+  });
+
+  it("replay hands a fenced command back to pending under its own id, for the next generation", async () => {
+    const r = await rig({ mode: "busy", wallMs: 60_000 });
+    // An ordinary wake may be replayed after it started; a round only before (the merits lifecycle's).
+    const row = r.sup.submit({ pr: PR, kind: "wake", round_no: null, payload: "author replied" });
+    await r.sup.launch(row.id);
+    await until(() => r.observed.some((o) => o.kind === "progress"));
+    await r.sup.fence(SESSION);
+
+    // A row that moved since the caller read it is not replayed.
+    expect(r.sup.replay(row.id, 7)).toBe(false);
+    expect(r.sup.replay(row.id, 1)).toBe(true);
+    expect(r.store.getSessionCommand(row.id)).toMatchObject({
+      status: "pending",
+      started_at: null,
+    });
+
+    r.sup["deps"].extraEnv = { ...r.sup["deps"].extraEnv, FAKE_WORKER_MODE: "ok" };
+    const again = await r.sup.launch(row.id);
+    expect(again.generation).toBe(2);
+    await until(finished(r.sup));
+    expect(r.store.getSessionCommand(row.id)!.status).toBe("acked");
   });
 });
 

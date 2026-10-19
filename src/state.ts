@@ -3578,6 +3578,17 @@ export class StateStore {
       .get(pr, roundNo) as SessionCommandRow | undefined;
   }
 
+  /** The PR's commands created at or after `sinceIso`, oldest first: the worker
+   * host reads a wake's fate off its command row, since a worker leaves no
+   * transcript scan behind (`WorkerSessionHost.wakeReceiptPresent`). */
+  sessionCommandsSince(pr: number, sinceIso: string): SessionCommandRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM session_commands WHERE pr = ? AND created_at >= ? ORDER BY created_at, id",
+      )
+      .all(pr, sinceIso) as SessionCommandRow[];
+  }
+
   claimSessionCommand(
     id: string,
     ownerToken: string,

@@ -5,9 +5,9 @@
 // A worker never opens state.db. Everything it needs to know about its command
 // arrives through `worker.spec`, and the held wakes through `wakes.take` and
 // `wakes.ack`; everything it records goes back as events (protocol.ts). The
-// daemon side of the three ops is the WorkerSupervisor's (P8.5, with P8.6 for
-// the wakes); the worker treats a daemon that does not know `wakes.take` as one
-// holding no wakes.
+// daemon side of the three ops is the WorkerSupervisor's (P8.5), serving the
+// wakes through HeldWakeHandoff (src/wakes.ts, P8.6); the worker treats a daemon
+// that does not know `wakes.take` as one holding no wakes.
 import { IpcError } from "./protocol.js";
 
 export const WORKER_SPEC_OP = "worker.spec";

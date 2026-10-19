@@ -20,6 +20,7 @@
 // delivered in chunks of at most MAX_AUTHOR_REPLIES_PER_DELIVERY, so the
 // never-evicted backlog cannot grow one prompt without bound.
 import { randomUUID } from "node:crypto";
+import type { WakeBatch } from "./ipc/workerspec.js";
 import { AUTHOR_REPLY_WAKE_HEADING } from "./pingpong.js";
 import {
   AUTHOR_REPLY_WAKE_REASON,
@@ -288,6 +289,94 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
   return (await flushHeldWakeBatches(deps, pr)).delivered;
 }
 
+/** How long a claimed batch stays leased before another flusher may take it. */
+const HELD_WAKE_LEASE_MS = 5 * 60_000;
+
+/** The oldest delivery unit of a PR's held wakes, leased to `token`: the wakes, a
+ * burst of author replies as one, and the one message that carries them. Null when
+ * there is none, or when the unit is already leased (a flusher never overtakes). */
+function claimNextDelivery(
+  store: StateStore,
+  pr: number,
+): { wakes: PendingWakeRow[]; ids: number[]; token: string; payload: string } | null {
+  // A paused PR's recheck nudges wait for the resume; the rest go now.
+  const skip = store.getPr(pr)?.paused ? RECHECK_WAKE_PREFIX : undefined;
+  const queued = store.heldWakes(pr, skip);
+  const batchSize = leadingDeliveryCount(queued);
+  if (batchSize === 0) return null;
+  const token = randomUUID();
+  const wakes = store.claimHeldWakeBatch(
+    pr,
+    token,
+    new Date(Date.now() - HELD_WAKE_LEASE_MS).toISOString(),
+    batchSize,
+    skip,
+  );
+  if (!wakes) return null;
+  return { wakes, ids: wakes.map((wake) => wake.id), token, payload: deliveryPayload(pr, wakes) };
+}
+
+/**
+ * The worker host's flush (P8.6, D22): the held wakes of a PR go through the
+ * ROUND'S OWN worker, which takes them over IPC (`wakes.take`) once its turns are
+ * over and acks each delivery (`wakes.ack`) after the session took it. Nothing is
+ * injected into a session from outside: the daemon's `flushHeldWakes` still runs at
+ * round end, and finds the slot taken by the worker's command until it exits.
+ *
+ * Same units as the injecting flush (a burst of author replies is one delivery, the
+ * oldest unit first, never overtaken), the same lease, and a batch id that names its
+ * wakes, so a worker that died after delivering a batch but before acking it does not
+ * deliver it twice: its successor finds the id's marker in the session JSONL.
+ */
+export class HeldWakeHandoff {
+  private readonly out = new Map<string, { pr: number; ids: number[]; token: string }>();
+
+  constructor(private readonly store: StateStore) {}
+
+  /** The shape `WorkerSupervisorDeps.wakes` takes: a request names its PR in its context. */
+  forWorker(): {
+    take(ctx: { pr: number }): WakeBatch[];
+    ack(ctx: { pr: number }, id: string): void;
+  } {
+    return {
+      take: (ctx) => this.take(ctx.pr),
+      ack: (ctx, id) => this.ack(ctx.pr, id),
+    };
+  }
+
+  /** The PR's next delivery unit, or none. One at a time: the worker takes again after its ack. */
+  take(pr: number): WakeBatch[] {
+    const claimed = claimNextDelivery(this.store, pr);
+    if (!claimed) return [];
+    const id = `held.${claimed.ids.join(".")}`;
+    this.out.set(id, { pr, ids: claimed.ids, token: claimed.token });
+    if (claimed.wakes.length > 1)
+      this.store.logEvent("wakes_coalesced", pr, {
+        ids: claimed.ids,
+        count: claimed.wakes.length,
+        reasons: claimed.wakes.map((wake) => wake.reason),
+      });
+    return [{ id, message: claimed.payload }];
+  }
+
+  /** The session took the delivery: the held wakes are done. */
+  ack(pr: number, id: string): void {
+    const taken = this.out.get(id);
+    if (!taken || taken.pr !== pr) throw new Error(`no wake delivery ${id} is out for #${pr}`);
+    this.out.delete(id);
+    if (!this.store.ackHeldWakeBatch(taken.ids, taken.token)) {
+      this.store.logEvent("wake_ack_lost", pr, { ids: taken.ids, via: "worker" });
+      return;
+    }
+    this.store.logEvent("wakes_flushed", pr, {
+      delivered: taken.ids.length,
+      attempted: taken.ids.length,
+      remaining: this.store.heldWakes(pr).length,
+      via: "worker",
+    });
+  }
+}
+
 async function flushHeldWakeBatches(
   deps: WakeDeps,
   pr: number,
@@ -297,28 +386,15 @@ async function flushHeldWakeBatches(
   let delivered = 0;
   const deliveredIds: number[] = [];
   let attempted = 0;
-  const leaseMs = 5 * 60_000;
   while (true) {
     if (store.hasRunningRound(pr)) break;
     if (store.blockingSessionCommand(`pr-${pr}`)) break;
-    // A paused PR's recheck nudges wait for the resume; the rest go now.
-    const skip = store.getPr(pr)?.paused ? RECHECK_WAKE_PREFIX : undefined;
-    const queued = store.heldWakes(pr, skip);
-    const batchSize = leadingDeliveryCount(queued);
-    if (batchSize === 0) break;
-    const token = randomUUID();
-    const wakes = store.claimHeldWakeBatch(
-      pr,
-      token,
-      new Date(Date.now() - leaseMs).toISOString(),
-      batchSize,
-      skip,
-    );
-    if (!wakes) break;
-    const ids = wakes.map((wake) => wake.id);
+    const claimed = claimNextDelivery(store, pr);
+    if (!claimed) break;
+    const { wakes, ids, token } = claimed;
     attempted += wakes.length;
     try {
-      await deps.inject(pr, deliveryPayload(pr, wakes));
+      await deps.inject(pr, claimed.payload);
       if (!store.ackHeldWakeBatch(ids, token)) {
         const first = wakes[0]!;
         log(
