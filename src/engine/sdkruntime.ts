@@ -45,10 +45,11 @@ import {
 
 /** What only the route knows about a session, beyond the port's plain data: the
  * extension factories and tools it carries (P3's factories, the lens tool), the
- * model's bash environment, the thinking level. Called once per session. */
+ * model's bash environment, the thinking level, and text appended to pi's own
+ * system prompt (a leaf's body). Called once per session. */
 export type SessionExtras = Pick<
   HostSessionSpec,
-  "extensions" | "customTools" | "bashEnv" | "thinkingLevel"
+  "extensions" | "customTools" | "bashEnv" | "thinkingLevel" | "appendSystemPrompt"
 >;
 
 export interface SdkRuntimeOptions {
