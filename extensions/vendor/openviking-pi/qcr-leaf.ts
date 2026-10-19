@@ -11,12 +11,13 @@
 //     session id is inherited through the environment), reordering the one
 //     conversation the daemon owns.
 //
-// pi-subagents already builds child argv with `--no-extensions`
-// (assets/findings.md §4.3), so a leaf structurally never loads this
-// file. That is one layer. This is the second: the child inherits the parent
-// ENVIRONMENT, so anything keyed off env alone would read as "main" inside a
-// leaf. Detection therefore keys off ARGV, which pi-subagents builds from
-// scratch:
+// A pi-subagents child is spawned with `--no-extensions`
+// (assets/findings.md §4.3), so on the tmux bot a leaf structurally
+// never loads this extension. That is one layer. This is the second, for a
+// process that did load it (an operator's `pi -e`, a flag the child argv grows):
+// the child inherits the parent ENVIRONMENT, so anything keyed off env alone
+// would read as "main" inside a leaf. Detection therefore keys off ARGV, which
+// pi-subagents builds from scratch:
 //
 //   [...piBin.baseArgs, "--mode", "json", "-p", "--no-session", "--no-skills",
 //    "--no-extensions", ...allowlisted custom-tool extensions]
@@ -25,8 +26,15 @@
 // buildPiCommand emits (--approve/--model/--session-dir/--system-prompt/
 // --theme/--extension/--name), so the two are cleanly separable.
 //
-// VERIFY-ON-PIN: the flag set above is pi-subagents @1f54189 as read at the
-// pinned pi 0.84.1. A pi or pi-subagents bump re-verifies it.
+// QCR PATCH 12: only the shim (qcr-shim.ts) calls this, with the argv and env
+// of the pi process that loaded the file. `createOpenViking(cfg)` takes `leaf`
+// as a value and never looks at argv, because an SDK session has no argv of its
+// own (process.argv there is the host's): the SDK host that builds a lens
+// session says `leaf: true`, and nothing here second-guesses it.
+//
+// VERIFY-ON-PIN: the flag set above is pi-subagents @1f54189 as read at pi
+// 0.84.1. It has not been re-read at the pinned 1.3.0; a pi or pi-subagents
+// bump re-verifies it.
 
 /** Flags that only ever appear on a pi-subagents child command line. */
 export const LEAF_ARGV_FLAGS: readonly string[] = [
@@ -55,8 +63,8 @@ function truthy(value: string | undefined): boolean {
  * memory for the review session.
  */
 export function isLeafProcess(
-  argv: readonly string[] = process.argv,
-  env: Record<string, string | undefined> = process.env,
+  argv: readonly string[],
+  env: Record<string, string | undefined>,
 ): boolean {
   if (truthy(env[FORCE_LEAF_ENV])) return true;
   for (let i = 0; i < argv.length; i++) {

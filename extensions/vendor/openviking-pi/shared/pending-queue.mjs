@@ -10,27 +10,27 @@
  *
  * Each file contains: { type, sessionId, payload, createdAt, retries, dedupKey }
  *
- * Config (env vars):
- *   OPENVIKING_PENDING_DIR         pending queue directory
- *                                  (default: ~/.openviking/pending)
- *   OPENVIKING_PENDING_MAX_RETRIES max retry attempts per item (default: 3)
- *   OPENVIKING_PENDING_TTL_DAYS    max age in days before stale cleanup
- *                                  (default: 7)
- *   OPENVIKING_PENDING_REPLAY_LIMIT max items replayed per session-start
- *                                  (default: 50)
+ * [QCR PATCH 12] This module reads no environment and no home directory. The
+ * caller hands every function the queue's settings as its last argument:
+ *   { dir, maxRetries?, ttlDays?, replayLimit? }
+ * `dir` is the queue directory; without one the queue is off (enqueue fails,
+ * the rest find nothing). The shim in qcr-shim.ts turns
+ * pending-queue variables and the `~/.openviking/pending` default into that object, so the same code serves a
+ * tmux pi (env) and an SDK session (a value).
+ *   maxRetries   max retry attempts per item (default: 3)
+ *   ttlDays      max age in days before stale cleanup (default: 7)
+ *   replayLimit  max items replayed per session-start (default: 50)
  */
 
 import { mkdir, readdir, readFile, rename, writeFile, unlink, stat, chmod } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { isRetryableFailure } from "./retryable.mjs";
 
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_TTL_DAYS = 7;
 const DEFAULT_REPLAY_LIMIT = 50;
 const PROCESSING_STALE_MS = 10 * 60 * 1000;
-const DEFAULT_PENDING_DIR = () => join(homedir(), ".openviking", "pending");
 
 // Pending queue files may contain raw memory payload / transcript content.
 // Use restrictive permissions explicitly so we don't depend on umask.
@@ -53,23 +53,23 @@ async function ensurePendingDir(dir) {
   }
 }
 
-function getPendingDir() {
-  return process.env.OPENVIKING_PENDING_DIR || DEFAULT_PENDING_DIR();
+function getPendingDir(queue) {
+  return typeof queue?.dir === "string" ? queue.dir : "";
 }
 
-function getMaxRetries() {
-  const v = parseInt(process.env.OPENVIKING_PENDING_MAX_RETRIES || "", 10);
-  return Number.isFinite(v) && v >= 0 ? v : DEFAULT_MAX_RETRIES;
+function getMaxRetries(queue) {
+  const v = queue?.maxRetries;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : DEFAULT_MAX_RETRIES;
 }
 
-function getTTLDays() {
-  const v = parseInt(process.env.OPENVIKING_PENDING_TTL_DAYS || "", 10);
-  return Number.isFinite(v) && v >= 0 ? v : DEFAULT_TTL_DAYS;
+function getTTLDays(queue) {
+  const v = queue?.ttlDays;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : DEFAULT_TTL_DAYS;
 }
 
-function getReplayLimit() {
-  const v = parseInt(process.env.OPENVIKING_PENDING_REPLAY_LIMIT || "", 10);
-  return Number.isFinite(v) && v > 0 ? v : DEFAULT_REPLAY_LIMIT;
+function getReplayLimit(queue) {
+  const v = queue?.replayLimit;
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : DEFAULT_REPLAY_LIMIT;
 }
 
 function stableStringify(value) {
@@ -183,9 +183,11 @@ async function recoverStaleProcessing(dir) {
  * @param {object} payload - the data that failed to send
  * @param {object} options
  * @param {number} options.createdAt - optional queue timestamp override
+ * @param {object} options.queue - the queue settings ({ dir, ... })
  */
 export async function enqueue(type, sessionId, payload, options = {}) {
-  const dir = getPendingDir();
+  const dir = getPendingDir(options.queue);
+  if (!dir) return { ok: false, error: "no pending queue directory configured" };
   const now = Number.isFinite(options.createdAt) ? options.createdAt : Date.now();
   const dedupKey = makeDedupKey(type, sessionId, payload);
   const filename = pendingFilename(dedupKey, 0);
@@ -233,8 +235,9 @@ export async function enqueue(type, sessionId, payload, options = {}) {
  * List all pending queue entries.
  * Returns array of { filename, entry } sorted by createdAt ascending.
  */
-export async function listPending() {
-  const dir = getPendingDir();
+export async function listPending(queue) {
+  const dir = getPendingDir(queue);
+  if (!dir) return [];
   let files;
   try {
     await recoverStaleProcessing(dir);
@@ -262,9 +265,10 @@ export async function listPending() {
  * Atomically claim a pending file for replay. Only the process that successfully
  * renames the file may send the HTTP replay.
  */
-export async function claimForReplay(filename) {
+export async function claimForReplay(filename, queue) {
   if (!filename.endsWith(".json")) return null;
-  const dir = getPendingDir();
+  const dir = getPendingDir(queue);
+  if (!dir) return null;
   const claimed = processingFilename(filename);
   try {
     await rename(join(dir, filename), join(dir, claimed));
@@ -277,8 +281,9 @@ export async function claimForReplay(filename) {
 /**
  * Remove a pending entry after successful replay.
  */
-export async function dequeue(filename) {
-  const dir = getPendingDir();
+export async function dequeue(filename, queue) {
+  const dir = getPendingDir(queue);
+  if (!dir) return false;
   try {
     await unlink(join(dir, filename));
     return true;
@@ -290,9 +295,10 @@ export async function dequeue(filename) {
 /**
  * Increment retry count on a pending entry. Returns false if max retries exceeded.
  */
-export async function incrementRetry(filename, entry) {
-  const dir = getPendingDir();
-  const maxRetries = getMaxRetries();
+export async function incrementRetry(filename, entry, queue) {
+  const dir = getPendingDir(queue);
+  if (!dir) return false;
+  const maxRetries = getMaxRetries(queue);
   entry.retries = (entry.retries || 0) + 1;
 
   if (entry.retries > maxRetries) {
@@ -327,16 +333,16 @@ export async function incrementRetry(filename, entry) {
 /**
  * Clean up stale entries older than TTL.
  */
-export async function cleanStale() {
-  const ttlMs = getTTLDays() * 24 * 60 * 60 * 1000;
+export async function cleanStale(queue) {
+  const ttlMs = getTTLDays(queue) * 24 * 60 * 60 * 1000;
   const now = Date.now();
-  const pending = await listPending();
+  const pending = await listPending(queue);
   let cleaned = 0;
 
   for (const { filename, entry } of pending) {
     const age = now - (entry.createdAt || 0);
     if (age > ttlMs) {
-      await dequeue(filename);
+      await dequeue(filename, queue);
       cleaned++;
     }
   }
@@ -345,21 +351,22 @@ export async function cleanStale() {
 
 /**
  * Replay pending entries. Call this during session-start when the server is
- * healthy. Each run processes at most OPENVIKING_PENDING_REPLAY_LIMIT items so
+ * healthy. Each run processes at most the queue's replayLimit items so
  * a just-recovered server is not hit with an unbounded replay burst.
  *
  * @param {Function} fetchJSON - the configured fetchJSON from makeFetchJSON
  * @param {Function} log - logger function
+ * @param {object} queue - the queue settings ({ dir, ... })
  * @returns {{ replayed: number, failed: number, skipped: number, deferred: number }}
  */
-export async function replayPending(fetchJSON, log) {
-  const pending = await listPending();
+export async function replayPending(fetchJSON, log, queue) {
+  const pending = await listPending(queue);
 
   if (pending.length === 0) {
     return { replayed: 0, failed: 0, skipped: 0, deferred: 0 };
   }
 
-  const replayLimit = getReplayLimit();
+  const replayLimit = getReplayLimit(queue);
   log("pending-queue", { count: pending.length, replayLimit, action: "replay-start" });
 
   let replayed = 0;
@@ -374,13 +381,13 @@ export async function replayPending(fetchJSON, log) {
       continue;
     }
 
-    if ((entry.retries || 0) >= getMaxRetries()) {
-      await dequeue(filename);
+    if ((entry.retries || 0) >= getMaxRetries(queue)) {
+      await dequeue(filename, queue);
       skipped++;
       continue;
     }
 
-    const claimedFilename = await claimForReplay(filename);
+    const claimedFilename = await claimForReplay(filename, queue);
     if (!claimedFilename) {
       skipped++;
       continue;
@@ -401,7 +408,7 @@ export async function replayPending(fetchJSON, log) {
           body: JSON.stringify(entry.payload || {}),
         });
       } else {
-        await dequeue(claimedFilename);
+        await dequeue(claimedFilename, queue);
         skipped++;
         continue;
       }
@@ -421,13 +428,13 @@ export async function replayPending(fetchJSON, log) {
     }
 
     if (res?.ok) {
-      await dequeue(claimedFilename);
+      await dequeue(claimedFilename, queue);
       replayed++;
     } else if (!isRetryableReplayFailure(res)) {
-      await dequeue(claimedFilename);
+      await dequeue(claimedFilename, queue);
       skipped++;
     } else {
-      await incrementRetry(claimedFilename, entry);
+      await incrementRetry(claimedFilename, entry, queue);
       failed++;
       if (entry.type === "addMessage") {
         deferred += Math.max(0, pending.length - processed);
@@ -436,7 +443,7 @@ export async function replayPending(fetchJSON, log) {
     }
   }
 
-  const cleaned = await cleanStale();
+  const cleaned = await cleanStale(queue);
 
   log("pending-queue", {
     action: "replay-done",

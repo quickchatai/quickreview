@@ -1,10 +1,8 @@
 import type { OVClient } from "./client.js";
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import type { OVConfig } from "./config.js";
 // [QCR PATCH 3] `deriveHarnessSessionId` is no longer imported — minting an OV
 // session id from pi's is exactly what this fork must not do.
-import { enqueue, listPending, replayPending } from "./shared/pending-queue.mjs";
+import { enqueue, listPending, replayPending, type PendingQueueConfig } from "./shared/pending-queue.mjs";
 import { extractBranchCapturePayloads } from "./lib/capture-adapter.mjs";
 import { countUndeliveredForSession, estimatePayloadTokens } from "./lib/takeover-core.mjs";
 // [QCR PATCH 7]
@@ -23,15 +21,14 @@ export interface SyncBranchResult {
   allDelivered: boolean;
 }
 
-function debugLog(message: string): void {
-  const file = process.env.OV_DEBUG_LOG;
-  if (!file) return;
-  try {
-    mkdirSync(dirname(file), { recursive: true });
-    appendFileSync(file, `${new Date().toISOString()} ${message}\n`);
-  } catch {
-    // Best effort; logging must never affect pi.
-  }
+/** [QCR PATCH 12] What the sync manager needs beyond the client: the offline
+ * queue's settings and the debug log, both decided by the caller (the shim
+ * reads the pending-queue and debug-log variables; sync.ts reads no environment). */
+export interface SyncOptions {
+  /** The offline queue. Without a `dir` a failed message is not queued. */
+  queue?: PendingQueueConfig;
+  /** Best-effort debug line sink; none by default. */
+  log?: (message: string) => void;
 }
 
 export class SyncManager {
@@ -39,10 +36,14 @@ export class SyncManager {
   private config: OVConfig;
   private ovSessionId: string | null = null;
   private syncedEntryCount = 0;
+  private queue: PendingQueueConfig;
+  private debugLog: (message: string) => void;
 
-  constructor(client: OVClient, config: OVConfig) {
+  constructor(client: OVClient, config: OVConfig, opts: SyncOptions = {}) {
     this.client = client;
     this.config = config;
+    this.queue = opts.queue ?? {};
+    this.debugLog = opts.log ?? (() => {});
   }
 
   get sessionId(): string | null { return this.ovSessionId; }
@@ -69,12 +70,12 @@ export class SyncManager {
    * the named session does not exist server-side. False means "no ambient
    * sync"; the memory tools are unaffected.
    */
-  async ensureSession(env: Record<string, string | undefined> = process.env): Promise<boolean> {
+  async ensureSession(env: Record<string, string | undefined>): Promise<boolean> {
     if (this.ovSessionId) return true;
 
     const id = (env.OPENVIKING_SESSION_ID ?? env.QCR_OV_SESSION_ID ?? "").trim();
     if (!id) {
-      debugLog("ensureSession: no daemon-provided session id; ambient sync disabled");
+      this.debugLog("ensureSession: no daemon-provided session id; ambient sync disabled");
       return false;
     }
 
@@ -82,7 +83,7 @@ export class SyncManager {
     // auto_create route (client.ts, PATCH 3).
     const meta = await this.client.getSession(id);
     if (!meta) {
-      debugLog(`ensureSession: session=${id} does not exist; ambient sync disabled`);
+      this.debugLog(`ensureSession: session=${id} does not exist; ambient sync disabled`);
       return false;
     }
 
@@ -97,14 +98,15 @@ export class SyncManager {
       // a final refusal here — dropped from the queue, never sent.
       refuseCommits((path: string, init?: any) => this.client.fetchJSON(path, init, 10000)),
       (stage: string, data: unknown) =>
-        debugLog(`${stage}: ${JSON.stringify(data)}`),
+        this.debugLog(`${stage}: ${JSON.stringify(data)}`),
+      this.queue,
     );
   }
 
   async flushForTakeover(): Promise<boolean> {
     if (!this.ovSessionId) return false;
     await this.replayPending();
-    const pending = await listPending();
+    const pending = await listPending(this.queue);
     return countUndeliveredForSession(pending, this.ovSessionId) === 0;
   }
 
@@ -137,7 +139,7 @@ export class SyncManager {
     if (!this.ovSessionId) return { accepted: false, delivered: false };
     const ok = await this.client.addMessagePayload(this.ovSessionId, payload);
     if (ok) return { accepted: true, delivered: true };
-    await enqueue("addMessage", this.ovSessionId, payload);
+    await enqueue("addMessage", this.ovSessionId, payload, { queue: this.queue });
     return { accepted: true, delivered: false };
   }
 
@@ -151,7 +153,7 @@ export class SyncManager {
   async commit(
     _opts: { queueOnFailure?: boolean; keepRecentCount?: number } = {},
   ): Promise<any | null> {
-    if (this.ovSessionId) debugLog(`commit: session=${this.ovSessionId} refused (QCR PATCH 7)`);
+    if (this.ovSessionId) this.debugLog(`commit: session=${this.ovSessionId} refused (QCR PATCH 7)`);
     return null;
   }
 
