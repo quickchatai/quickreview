@@ -1,5 +1,5 @@
 // Saves and restores the process-global HTTP state a dispatcher test changes:
-// undici's global dispatcher, fetch, PiHost's own marker and PI_CODING_AGENT.
+// undici's global dispatcher, fetch, PiHost's own marker, PI_CODING_AGENT and the process title.
 // Test files get their own worker, but tests inside one file share it, so each
 // starts from "no dispatcher installed by PiHost, not inside a CLI pi", which
 // means Node's own default dispatcher. Node creates that lazily on the first
@@ -24,7 +24,7 @@ export interface DispatcherState {
 export function saveDispatcherState(): DispatcherState {
   const g = globalThis as Record<symbol, unknown>;
   let saved:
-    | { slot1: unknown; slot2: unknown; marker: unknown; fetch: typeof fetch; cli?: string }
+    | { slot1: unknown; slot2: unknown; marker: unknown; fetch: typeof fetch; cli?: string; title: string }
     | undefined;
   const need = (): NonNullable<typeof saved> => {
     if (!saved) throw new Error("call prime() in beforeAll first");
@@ -46,6 +46,7 @@ export function saveDispatcherState(): DispatcherState {
         marker: g[INSTALLED_BY_PIHOST],
         fetch: globalThis.fetch,
         cli: process.env["PI_CODING_AGENT"],
+        title: process.title,
       };
     },
     reset() {
@@ -55,6 +56,7 @@ export function saveDispatcherState(): DispatcherState {
       g[INSTALLED_BY_PIHOST] = undefined;
       globalThis.fetch = s.fetch;
       delete process.env["PI_CODING_AGENT"];
+      process.title = s.title;
     },
     restore() {
       const s = need();
@@ -64,6 +66,7 @@ export function saveDispatcherState(): DispatcherState {
       globalThis.fetch = s.fetch;
       if (s.cli === undefined) delete process.env["PI_CODING_AGENT"];
       else process.env["PI_CODING_AGENT"] = s.cli;
+      process.title = s.title;
     },
   };
 }

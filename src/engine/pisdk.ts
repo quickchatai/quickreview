@@ -28,7 +28,7 @@
 // match exactly, and installs it only when the route says it owns the process.
 // Inside a CLI pi (the debug round, the companion) the dispatcher is pi's, and
 // PiHost leaves it alone. Canary 6 pins the function and its settings.
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, isAbsolute } from "node:path";
@@ -70,10 +70,31 @@ export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 120_000;
  *  - none: the route does not own the process, so nothing was installed. */
 export type DispatcherOutcome = "installed" | "reused" | "none";
 
-/** True inside a pi CLI process (setupCli and rpc-entry set this): the
- * dispatcher there is pi's own and must never be replaced. */
-export function insideCliPi(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env["PI_CODING_AGENT"] === "true";
+/** The process title pi's CLI gives itself: its APP_NAME (`pi` unless the
+ * package's piConfig renames it), with `-rpc` appended by the rpc entry. */
+function piCliTitles(): readonly string[] {
+  let name = "pi";
+  try {
+    const pkg = JSON.parse(readFileSync(join(piPackageDir(), "package.json"), "utf8")) as {
+      piConfig?: { name?: string };
+    };
+    name = pkg.piConfig?.name || name;
+  } catch {
+    // pi not found: the default name is the best there is.
+  }
+  return [name, `${name}-rpc`];
+}
+
+/** True inside a pi CLI process (setupCli and rpc-entry set both signals): the
+ * dispatcher there is pi's own and must never be replaced. The environment flag
+ * alone is not proof: pi's bash tool hands it to every child, so a standalone
+ * `qcr review` started from a pi session inherits it. The process title is set
+ * per process and never inherited, so it must agree. */
+export function insideCliPi(
+  env: NodeJS.ProcessEnv = process.env,
+  title: string = process.title,
+): boolean {
+  return env["PI_CODING_AGENT"] === "true" && piCliTitles().includes(title);
 }
 
 /** The directory the installed pi package lives in. Found by walking the
@@ -118,8 +139,8 @@ export async function loadConfigureHttpDispatcher(): Promise<ConfigureHttpDispat
  * route claims. Nor is one that PiHost installed and something else has since
  * replaced. (undici wraps every dispatcher it is given, and Node creates its own
  * lazily on the first fetch, so a dispatcher cannot be recognised as pi's by
- * looking at it: the environment flag pi's CLI sets, and PiHost's own marker,
- * are the two facts there are.)
+ * looking at it: the flag and title pi's CLI sets, and PiHost's own marker,
+ * are the facts there are.)
  */
 export async function ensureHttpDispatcher(o: {
   ownsProcess: boolean;

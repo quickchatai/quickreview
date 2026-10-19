@@ -21,6 +21,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import {
   PiHost,
   UNDICI_GLOBAL_DISPATCHER,
+  insideCliPi,
   loadConfigureHttpDispatcher,
 } from "../../src/engine/pisdk.js";
 import { saveDispatcherState } from "../helpers/dispatcher-state.js";
@@ -77,8 +78,9 @@ async function fetchFailure(path: string): Promise<string | undefined> {
   }
 }
 
-/** What a CLI pi does at startup: set its flag and install its dispatcher. */
+/** What a CLI pi does at startup: set its title and flag, install its dispatcher. */
 async function startFakeCliPi(idleTimeoutMs: number): Promise<void> {
+  process.title = "pi";
   process.env["PI_CODING_AGENT"] = "true";
   (await loadConfigureHttpDispatcher())(idleTimeoutMs);
 }
@@ -121,6 +123,32 @@ describe("[canary 11] inside a CLI pi the host leaves pi's dispatcher alone", ()
     } finally {
       rig.close();
     }
+  });
+});
+
+describe("[canary 11] a flag inherited from a pi bash call is not a CLI pi", () => {
+  it("an owning route in a child of pi installs pi's dispatcher", async () => {
+    // pi's bash tool passes PI_CODING_AGENT to its children; the title is per process.
+    process.env["PI_CODING_AGENT"] = "true";
+    expect(insideCliPi()).toBe(false);
+    expect(await fetchFailure("/?ms=1800")).toBeUndefined();
+    const host = await newHost("a", { ownsProcess: true, httpIdleTimeoutMs: 300 });
+    expect(host.dispatcher).toBe("installed");
+    expect(await fetchFailure("/?ms=1800")).toBe("UND_ERR_HEADERS_TIMEOUT");
+  });
+
+  it("a route that does not claim the process still installs nothing", async () => {
+    process.env["PI_CODING_AGENT"] = "true";
+    const before = g[UNDICI_GLOBAL_DISPATCHER];
+    const host = await newHost("b", { ownsProcess: false });
+    expect(host.dispatcher).toBe("none");
+    expect(g[UNDICI_GLOBAL_DISPATCHER]).toBe(before);
+  });
+
+  it("the rpc entry's title counts as a CLI pi too", () => {
+    expect(insideCliPi({ PI_CODING_AGENT: "true" }, "pi-rpc")).toBe(true);
+    expect(insideCliPi({ PI_CODING_AGENT: "true" }, "node")).toBe(false);
+    expect(insideCliPi({}, "pi")).toBe(false);
   });
 });
 
