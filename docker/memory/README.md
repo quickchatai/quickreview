@@ -26,7 +26,19 @@ execs `src/openviking/sidecar-main.ts`:
 
 The GGUF is in the image, so the sidecar boots offline under the local embedder.
 
-## Wiring it to a daemon
+## On the VM
+
+`deploy/ansible/playbook.yml` runs it as a second container, `quickreview-memory`,
+beside `quickreview-sandbox` when `openviking_endpoint: "remote"` (group_vars,
+mirrored by `[openviking] endpoint`; `scripts/deploy.sh` refuses them apart and
+plans/verifies both containers). The playbook builds this image from the
+shipped tree with BuildKit, puts both containers on the `quickreview-memory`
+network, and gives the sidecar its own store directory
+(`/opt/quickreview/memory-state`): copied once from the daemon's, verified by
+checksum, never wiped, with the daemon's directory left as the rollback's store.
+`[openviking] endpoint = "local"` (both places) is the rollback.
+
+## Wiring it to a daemon (by hand)
 
 The daemon's config.toml and the sidecar's are the same file (mount the config
 home read-only into both). On the daemon side:
@@ -34,14 +46,15 @@ home read-only into both). On the daemon side:
 ```toml
 [openviking]
 endpoint = "remote"
-host = "qcr-memory"   # the sidecar's name on the container network
+host = "quickreview-memory"   # the sidecar's name on the container network
 ```
 
 Mount into the sidecar: the config home (read-only), the secrets dir
 (read-only, holding `openviking_root_key` and `openviking_reviewer_key`), and
-the OpenViking state at `/opt/quickreview/state/openviking` (the same volume the
-daemon wrote its store to, so the first flip reuses the store; the image's
-user is uid 1001 like the daemon's). Never publish port 1933 to a host.
+the OpenViking state at `/opt/quickreview/state/openviking` (a COPY of the
+daemon's store, never the daemon's own directory while a daemon may still
+write it; the image's user is uid 1001 like the daemon's). Never publish port
+1933 to a host.
 
 The re-embed journal, `provision.json` and `ov.conf` live in that state
 directory. The daemon no longer runs the re-embed driver under `remote`; the

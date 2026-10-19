@@ -10,16 +10,22 @@
 //     companion container ──▶ 198.51.100.1:1933      (docker bridge `qcr-memory`)
 //                              │  this process, on the host
 //                              ▼
-//     ssh <vm-host> ──▶ sudo docker exec -i quickreview-sandbox
+//     ssh <vm-host> ──▶ sudo docker exec -i quickreview-memory
 //                              ▼
 //                      node stdio↔TCP bridge ──▶ 127.0.0.1:1933  (OpenViking)
+//
+// The target is the memory SIDECAR (docker/memory/): once the VM runs
+// `[openviking] endpoint = "remote"` the server lives in that container, not
+// in the daemon's. Rolling the VM back to `endpoint = "local"` moves OpenViking
+// back into quickreview-sandbox, and the forward follows with
+// `--container quickreview-sandbox` (or QCR_VM_CONTAINER).
 //
 // Two properties make it worth the machinery:
 //
 //   * the container never sees an ssh key, an agent socket or a host known_hosts
 //     file — it sees one TCP endpoint on a bridge, and nothing else;
-//   * nothing on the VM is published. OpenViking stays bound to the quickreview
-//     container's own loopback ([openviking] host/port); the last hop is a
+//   * nothing on the VM is published. OpenViking's port is reachable only on
+//     the sidecar's container network and its own loopback; the last hop is a
 //     `docker exec` inside the container's netns, so no port is opened on the
 //     VM, on the VM's docker bridge, or anywhere reachable from the network.
 //
@@ -84,7 +90,13 @@ export const DEFAULTS = {
   gateway: "198.51.100.1",
   port: 1933,
   sshHost: "my-vm",
-  container: "quickreview-sandbox",
+  // The memory sidecar (deploy/ansible `memory_container_name`). Under
+  // `[openviking] endpoint = "local"` OpenViking is the daemon container's
+  // child instead: pass `--container quickreview-sandbox` / QCR_VM_CONTAINER.
+  container: "quickreview-memory",
+  // `--local` (a one-machine topology): the sidecar is opt-in there, so the
+  // default stays the daemon container until `--container` names another.
+  localContainer: "quickreview-sandbox",
   remoteHost: "127.0.0.1",
   remotePort: 1933,
   sudo: true,
@@ -1711,7 +1723,10 @@ export function parseArgs(argv, env = process.env) {
       .filter(Boolean),
     sshHost,
     local,
-    container: flags.get("container") ?? env.QCR_VM_CONTAINER ?? DEFAULTS.container,
+    container:
+      flags.get("container") ??
+      env.QCR_VM_CONTAINER ??
+      (local ? DEFAULTS.localContainer : DEFAULTS.container),
     remoteHost: flags.get("remote-host") ?? DEFAULTS.remoteHost,
     remotePort: num("remote-port", DEFAULTS.remotePort),
     sudo: !flags.has("no-sudo"),

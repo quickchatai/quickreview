@@ -332,6 +332,7 @@
           - "--include=/{{ config_file_name | mandatory }}"
           - "--include=/profiles/***"
           - "--exclude=*"
+      register: config_home_ship
 
     # rsync lands controller-side ownership. Leave the sealed operator
     # subtree untouched: each pending file's root owner carries its authority.
@@ -391,6 +392,217 @@
           labels:
             qcr.build-context: "{{ build_context_sha }}"
 
+    # ---- the memory sidecar (openviking_endpoint: remote) -----------------------
+    # A second container beside the daemon's: OpenViking, its local embedder and
+    # the boot provisioning / re-embed (docker/memory/). Everything here sits
+    # AFTER the start-at task, so `sync` and `rebuild` both carry it, and BEFORE
+    # the daemon's container, so the sidecar is up (and the store seeded) when
+    # the daemon boots with endpoint = remote. Under `local` none of it runs
+    # and the sidecar is stopped — the rollback.
+    - name: Check the memory endpoint knob
+      ansible.builtin.assert:
+        that: openviking_endpoint in ['local', 'remote']
+        fail_msg: "openviking_endpoint must be 'local' or 'remote' (got '{{ openviking_endpoint }}')"
+        quiet: true
+
+    # The sidecar image needs BuildKit: its build context is the file-level
+    # allowlist docker/memory/Dockerfile.dockerignore, which the legacy builder
+    # does not read (it would send the checkout's root .dockerignore instead).
+    - name: BuildKit available for the sidecar image?
+      ansible.builtin.command: docker buildx version
+      register: buildx_present
+      changed_when: false
+      failed_when: false
+      when: openviking_endpoint == 'remote'
+
+    - name: "Fail: no BuildKit — the memory sidecar image cannot be built"
+      ansible.builtin.fail:
+        msg: >-
+          openviking_endpoint is 'remote' but `docker buildx` is not available
+          on the VM. The sidecar image (docker/memory/Dockerfile) builds only
+          with BuildKit: install docker-buildx-plugin, or roll back with
+          `-e openviking_endpoint=local` (and config.toml [openviking]
+          endpoint = "local"). Nothing was changed on the VM.
+      when: openviking_endpoint == 'remote' and buildx_present.rc != 0
+
+    - name: Memory sidecar network
+      community.docker.docker_network:
+        name: "{{ memory_network }}"
+        state: present
+      when: openviking_endpoint == 'remote'
+
+    - name: Directories for the sidecar's store (container user = uid {{ container_uid }})
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+        owner: "{{ container_uid }}"
+        group: "{{ container_uid }}"
+      loop:
+        - "{{ openviking_home }}"
+        - "{{ memory_state_dir }}"
+      when: openviking_endpoint == 'remote'
+
+    - name: Has the sidecar's store been seeded from the daemon's?
+      ansible.builtin.stat:
+        path: "{{ memory_state_dir }}/.seeded-from-daemon"
+      register: memory_seed
+      when: openviking_endpoint == 'remote'
+
+    # THE STORE IS COPIED AND VERIFIED, NEVER WIPED OR MOVED. Once, on the first
+    # flip: the daemon container is stopped (a live store is not a consistent
+    # copy), its OpenViking home is rsynced to the sidecar's own directory
+    # (no --delete: an earlier partial copy is completed, never emptied), and
+    # the copy is compared by checksum. The marker is written only after the
+    # comparison is clean, so a failed run repeats the copy. The source
+    # directory is never modified: it is the rollback's store. A store built
+    # under another embedder is the SIDECAR's boot to handle (`prepare` moves
+    # the collection aside and the re-embed rebuilds it) — never a wipe here.
+    # If any step fails the daemon container is started again before the
+    # play stops.
+    - name: Seed the sidecar's store from the daemon's (first flip only)
+      when: openviking_endpoint == 'remote' and not memory_seed.stat.exists
+      block:
+        - name: Stop the daemon container — a live store is not a consistent copy
+          community.docker.docker_container:
+            name: "{{ image_name }}"
+            state: stopped
+
+        - name: Copy the store (rsync -a: additive, deletes nothing on either side)
+          ansible.builtin.command:
+            argv: [rsync, -a, "{{ openviking_home }}/", "{{ memory_state_dir }}/"]
+          changed_when: true
+
+        - name: Verify the copy, every file by checksum (nothing may differ)
+          ansible.builtin.command:
+            argv: [rsync, -a, --checksum, --dry-run, --itemize-changes, "{{ openviking_home }}/", "{{ memory_state_dir }}/"]
+          register: memory_seed_diff
+          changed_when: false
+          failed_when: (memory_seed_diff.stdout | trim | length) > 0
+
+        - name: Mark the store seeded
+          ansible.builtin.copy:
+            content: "seeded from {{ openviking_home }} on {{ ansible_date_time.iso8601 }}\n"
+            dest: "{{ memory_state_dir }}/.seeded-from-daemon"
+            mode: "0600"
+            owner: "{{ container_uid }}"
+            group: "{{ container_uid }}"
+      rescue:
+        - name: The copy failed — start the daemon container again
+          community.docker.docker_container:
+            name: "{{ image_name }}"
+            state: started
+
+        - name: "Fail: the sidecar's store could not be seeded"
+          ansible.builtin.fail:
+            msg: >-
+              Copying {{ openviking_home }} to {{ memory_state_dir }} did not
+              verify. The daemon container was started again on its own store
+              (untouched); the sidecar was not started. Fix the cause (disk
+              space, permissions) and re-run.
+
+    # Rebuilt from the shipped tree on every sync and rebuild: the docker layer
+    # cache makes an unchanged tree cheap, and an image that always matches the
+    # tree it was shipped with has no stale-image state to guard. The pins reach
+    # the build as ARGs from the SAME group_vars the daemon image interpolates.
+    - name: Build the memory sidecar image
+      ansible.builtin.command:
+        argv:
+          - docker
+          - build
+          - --file
+          - docker/memory/Dockerfile
+          - --tag
+          - "{{ memory_image_name }}:{{ memory_image_tag }}"
+          - --build-arg
+          - "TZ={{ timezone }}"
+          - --build-arg
+          - "NODE_MAJOR={{ node_major }}"
+          - --build-arg
+          - "OPENVIKING_VERSION={{ openviking_version }}"
+          - --build-arg
+          - "LLAMA_CPP_PYTHON_VERSION={{ llama_cpp_python_version }}"
+          - --build-arg
+          - "OPENVIKING_VENV={{ openviking_venv }}"
+          - --build-arg
+          - "OPENVIKING_PORT={{ openviking_port }}"
+          - --build-arg
+          - "LOCAL_EMBEDDER_MODEL={{ openviking_local_embedder_model }}"
+          - --build-arg
+          - "LOCAL_EMBEDDER_DIR={{ openviking_local_embedder_dir }}"
+          - --build-arg
+          - "LOCAL_EMBEDDER_URL={{ openviking_local_embedder_url }}"
+          - --build-arg
+          - "LOCAL_EMBEDDER_SHA256={{ openviking_local_embedder_sha256 }}"
+          - --build-arg
+          - "REVIEW_UID={{ container_uid }}"
+          - .
+        chdir: "{{ sandbox_root }}/sandbox"
+      environment:
+        DOCKER_BUILDKIT: "1"
+      changed_when: true
+      when: openviking_endpoint == 'remote'
+
+    - name: Run the memory sidecar
+      community.docker.docker_container:
+        name: "{{ memory_container_name }}"
+        image: "{{ memory_image_name }}:{{ memory_image_tag }}"
+        state: started
+        # A new image recreates the container by itself; the config home is
+        # read at boot, so a rebuild or a changed home restarts it too. A plain
+        # sync that changed neither leaves the sidecar (and its embedder
+        # warm-up) alone.
+        restart: "{{ (rebuild_image | default(false) | bool) or (config_home_ship.changed | default(false)) }}"
+        restart_policy: unless-stopped
+        init: true
+        cpus: "{{ memory_container_cpus | float }}"
+        memory: "{{ memory_container_memory }}"
+        memory_swap: "{{ memory_container_memory }}"
+        networks:
+          - name: "{{ memory_network }}"
+        # No published port, on purpose: OpenViking answers on the container
+        # network only (api_key mode confines every key), and the companion's
+        # memory forward reaches it by `docker exec` into this container.
+        volumes:
+          - "{{ memory_state_dir }}:{{ openviking_home }}"
+          - "{{ sandbox_root }}/secrets:/opt/quickreview/secrets:ro"
+          - "{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro"
+        env:
+          TZ: "{{ timezone }}"
+          QCR_CONFIG: "/opt/quickreview/config-home/{{ config_file_name | mandatory }}"
+          # The knobs docker/memory/entrypoint.sh renders ov.conf from: the same
+          # group_vars the daemon's entrypoint template renders, so the two
+          # layouts produce one document.
+          QCR_OPENVIKING_HOME: "{{ openviking_home }}"
+          QCR_OPENVIKING_PORT: "{{ openviking_port | string }}"
+          QCR_OPENVIKING_BIND_HOST: "0.0.0.0"
+          QCR_OPENVIKING_WORKERS: "{{ openviking_workers | string }}"
+          QCR_OPENVIKING_QUEUE_CONCURRENCY: "{{ openviking_queue_concurrency | string }}"
+          QCR_OPENVIKING_AUTH_MODE: "{{ openviking_auth_mode }}"
+          QCR_OPENVIKING_EMBEDDING_PROVIDER: "{{ openviking_embedding_provider }}"
+          QCR_OPENVIKING_EMBEDDING_MODEL: "{{ openviking_embedding_model }}"
+          QCR_OPENVIKING_EMBEDDING_DIMENSION: "{{ openviking_embedding_dimension | string }}"
+          QCR_OPENVIKING_EMBEDDING_KEY_FILE: "{{ openviking_embedding_key_file }}"
+          QCR_OPENVIKING_LOCAL_EMBEDDER_MODEL: "{{ openviking_local_embedder_model }}"
+          QCR_OPENVIKING_LOCAL_EMBEDDER_DIMENSION: "{{ openviking_local_embedder_dimension | string }}"
+          QCR_OPENVIKING_LOCAL_EMBEDDER_DIR: "{{ openviking_local_embedder_dir }}"
+          QCR_OPENVIKING_LOCAL_EMBEDDER_SHA256: "{{ openviking_local_embedder_sha256 }}"
+          QCR_OPENVIKING_LOCAL_EMBEDDER_PORT: "{{ openviking_local_embedder_port | string }}"
+          QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS: "{{ openviking_local_embedder_threads | string }}"
+          QCR_OPENVIKING_ROOT_KEY_FILE: "{{ openviking_root_key_file }}"
+          QCR_OPENVIKING_REVIEWER_KEY_FILE: "{{ openviking_reviewer_key_file }}"
+          QCR_OPENVIKING_PROVISION_USERS: "{{ openviking_provision_users }}"
+      when: openviking_endpoint == 'remote'
+
+    # The rollback: the daemon's own entrypoint runs the memory boot again over
+    # the store it last held, so the sidecar must not keep serving a second
+    # copy. Stopped, never removed (its store and image stay for the way back).
+    - name: Memory sidecar stopped (openviking_endpoint = local)
+      community.docker.docker_container:
+        name: "{{ memory_container_name }}"
+        state: stopped
+      when: openviking_endpoint != 'remote'
+
     - name: Run the sandbox container
       community.docker.docker_container:
         name: "{{ image_name }}"
@@ -420,6 +632,10 @@
         # sessions and by nothing else. Do not publish it.
         published_ports:
           - "127.0.0.1:{{ webhook_port }}:{{ webhook_port }}"
+        # Under the memory sidecar the daemon joins its network, which is how
+        # config.toml [openviking] host (the sidecar's name) resolves. The
+        # published webhook port is unaffected.
+        networks: "{{ [{'name': memory_network}] if openviking_endpoint == 'remote' else omit }}"
         volumes:
           - "{{ sandbox_root }}/sandbox:/opt/quickreview/sandbox"
           - "{{ sandbox_root }}/state:/opt/quickreview/state"
@@ -436,6 +652,10 @@
           # In-container bind must be 0.0.0.0 — the published port targets the
           # container's eth0; host exposure stays 127.0.0.1-only above.
           QC_BIND_HOST: "0.0.0.0"
+          # Read by the entrypoint only: under 'remote' it skips the memory boot
+          # steps the sidecar owns. The daemon itself reads config.toml
+          # [openviking] endpoint, which scripts/deploy.sh holds equal.
+          QCR_OPENVIKING_ENDPOINT: "{{ openviking_endpoint }}"
           # The live config is the shipped one. The in-container
           # install locator finds the install's profiles beside it, then the
           # rsynced checkout's generic examples; the daemon hands this path

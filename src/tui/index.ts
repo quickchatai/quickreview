@@ -631,7 +631,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // forward that is already listening (the unit, or another qcr tui) and stops
   // only one it started — see memforward.ts for why that split matters.
   // Constructed here, started in the bring-up: `ensure()` probes over HTTP.
-  const { MemoryForward, forwardUsable } = await import("./memforward.js");
+  const { MemoryForward, forwardUsable, tuiMemoryContainer } = await import("./memforward.js");
   const memForward = new MemoryForward({
     baseUrl: tuiMemoryBaseUrl(),
     repoRoot: sandboxRoot(),
@@ -640,7 +640,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     local: transportOf(cfg) === "local",
     sudoDocker: cfg.sudo_docker,
     sshHost: cfg.ssh_host,
-    container: cfg.container,
+    // OpenViking's own container: the memory sidecar once the VM flips
+    // `[openviking] endpoint = "remote"`, else the daemon container.
+    container: tuiMemoryContainer(cfg),
     log: (line) => app.notice(line),
   });
   const { buildIssueSink, ticketProjection } = await import("./issuesink.js");

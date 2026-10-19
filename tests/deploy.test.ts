@@ -3,7 +3,7 @@
 // real ansible asset, and no live deploy ever runs: every case stops at
 // --dry-run or at a refusal.
 import { afterEach, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -44,6 +44,13 @@ interface OvPins {
   localEmbedder?: LocalEmbedderPin;
   /** Raw `[openviking]` lines for config.toml only — a partial pin block. */
   configLines?: string[];
+  /** Who runs the server: config.toml `endpoint` / group_vars `openviking_endpoint`. */
+  endpoint?: string;
+  /** config.toml `[openviking] host` / `port` (the daemon's probe target). */
+  host?: string;
+  port?: string;
+  /** group_vars `memory_container_name` — the sidecar's name on its network. */
+  memoryContainer?: string;
 }
 
 interface LocalEmbedderPin {
@@ -66,6 +73,9 @@ const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
     `pi_version: "${piVersion}"`,
     ...(ov?.version === undefined ? [] : [`openviking_version: "${ov.version}"`]),
     ...(ov?.llama === undefined ? [] : [`llama_cpp_python_version: "${ov.llama}"`]),
+    ...(ov?.endpoint === undefined ? [] : [`openviking_endpoint: "${ov.endpoint}"`]),
+    ...(ov?.memoryContainer === undefined ? [] : [`memory_container_name: ${ov.memoryContainer}`]),
+    ...(ov?.port === undefined ? [] : [`openviking_port: ${ov.port}`]),
     ...(ov?.auth === undefined ? [] : [`openviking_auth_mode: "${ov.auth}"`]),
     ...(ov?.rootKeyFile === undefined ? [] : [`openviking_root_key_file: "${ov.rootKeyFile}"`]),
     ...(ov?.reviewerKeyFile === undefined
@@ -111,6 +121,9 @@ const CONFIG = (piVersion: string, ov?: OvPins) =>
           "[openviking]",
           ...(ov.version === undefined ? [] : [`version = "${ov.version}"`]),
           ...(ov.llama === undefined ? [] : [`llama_cpp_python_version = "${ov.llama}"`]),
+          ...(ov.endpoint === undefined ? [] : [`endpoint = "${ov.endpoint}"`]),
+          ...(ov.host === undefined ? [] : [`host = "${ov.host}"`]),
+          ...(ov.port === undefined ? [] : [`port = ${ov.port}`]),
           ...(ov.extension === undefined ? [] : [`extension_commit = "${ov.extension}"`]),
           ...(ov.auth === undefined ? [] : [`auth_mode = "${ov.auth}"`]),
           ...(ov.rootKeyFile === undefined ? [] : [`root_key_file = "${ov.rootKeyFile}"`]),
@@ -1802,4 +1815,621 @@ it("the deployment ownership walk preserves pending operator-file authority", ()
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The memory sidecar: a second container on the VM (docker/memory/), the
+// `[openviking] endpoint` flip, and the deploy plumbing around both. Nothing
+// here runs ansible or touches a VM: deploy.sh stops at --dry-run, a refusal or
+// a stub ssh, and the playbook/template are read as text.
+describe("deploy — the memory sidecar", () => {
+  const OV_LOCAL: OvPins = {
+    version: "0.4.15",
+    llama: "0.3.35",
+    extension: "d436baa23c83938b22bb0aab08b0ce48568b5ff4",
+    endpoint: "local",
+  };
+  const OV_REMOTE: OvPins = {
+    ...OV_LOCAL,
+    endpoint: "remote",
+    host: "quickreview-memory",
+    port: "1933",
+    memoryContainer: "quickreview-memory",
+  };
+
+  function scratch(config: OvPins, groupVars: OvPins = config): Env {
+    return makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      configOv: config,
+      groupVarsOv: groupVars,
+      upstreamCommit: OV_LOCAL.extension!,
+    });
+  }
+
+  describe("the plan", () => {
+    it("shows the second container, its network, the one-time verified copy and the way back", () => {
+      env = scratch(OV_REMOTE);
+      const r = run(env, ["--dry-run", "sync"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toMatch(
+        /containers\s+quickreview-sandbox \(daemon\) \+ quickreview-memory \(memory sidecar/,
+      );
+      expect(r.stdout).toContain("port 1933 unpublished");
+      expect(r.stdout).toContain("endpoint remote (config.toml == ansible)");
+      expect(r.stdout).toContain("checksum-verified ONCE");
+      expect(r.stdout).toContain("never wiped");
+      expect(r.stdout).toContain('to "local", then deploy.sh sync');
+    });
+
+    it("lists the sidecar's own post-deploy checks: running, /ready, and a search from the daemon's container", () => {
+      env = scratch(OV_REMOTE);
+      const r = run(env, ["--dry-run", "sync"]);
+      expect(r.stdout).toContain("sudo docker ps --filter name=quickreview-memory");
+      expect(r.stdout).toContain("sudo docker inspect -f '{{.State.Running}}' quickreview-memory");
+      expect(r.stdout).toContain(
+        "(polled) sudo docker exec quickreview-memory curl -fsS http://127.0.0.1:1933/ready",
+      );
+      expect(r.stdout).toContain(
+        "(polled) sudo docker exec quickreview-sandbox node /opt/quickreview/sandbox/scripts/memory-search-check.mjs --base http://quickreview-memory:1933 --key-file /opt/quickreview/secrets/openviking_reviewer_key",
+      );
+    });
+
+    it("endpoint local plans ONE container and no sidecar check", () => {
+      env = scratch(OV_LOCAL);
+      const r = run(env, ["--dry-run", "sync"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toMatch(/containers\s+quickreview-sandbox only \(endpoint local/);
+      expect(r.stdout).not.toContain("quickreview-memory");
+      expect(r.stdout).not.toContain("memory-search-check");
+    });
+
+    it("a config and a group_vars that predate the sidecar read as local, and agree", () => {
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        configOv: { version: "0.4.15", llama: "0.3.35" },
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toMatch(/containers\s+quickreview-sandbox only/);
+    });
+
+    it("honours a renamed sidecar (group_vars memory_container_name) in the checks", () => {
+      env = scratch(
+        { ...OV_REMOTE, host: "mem-box" },
+        { ...OV_REMOTE, memoryContainer: "mem-box" },
+      );
+      const r = run(env, ["--dry-run", "sync"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("sudo docker ps --filter name=mem-box");
+      expect(r.stdout).toContain("--base http://mem-box:1933");
+    });
+  });
+
+  describe("drift refusals", () => {
+    it("REFUSES config remote over ansible local: the daemon would probe a sidecar nobody starts", () => {
+      env = scratch(OV_REMOTE, { ...OV_REMOTE, endpoint: "local" });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking endpoint pin mismatch");
+      expect(r.stderr).toContain('[openviking] endpoint = "remote"');
+    });
+
+    it("REFUSES config local over ansible remote: two writers on one store", () => {
+      env = scratch(OV_LOCAL, { ...OV_REMOTE });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking endpoint pin mismatch");
+    });
+
+    it("REFUSES ansible remote over a config with no [openviking] block at all", () => {
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        groupVarsOv: OV_REMOTE,
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking endpoint pin mismatch");
+    });
+
+    it("an inventory host var outranks group_vars, and the drift names where it came from", () => {
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        configOv: OV_REMOTE,
+        upstreamCommit: OV_LOCAL.extension!,
+        inventory: "[quickreview]\nquickreview-vm openviking_endpoint=local\n",
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("inventory    openviking_endpoint");
+    });
+
+    it("REFUSES an endpoint that is neither local nor remote", () => {
+      env = scratch(OV_LOCAL, { ...OV_LOCAL, endpoint: "sidecar" });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('must be "local" or "remote"');
+    });
+
+    it("REFUSES a remote config whose host is not the sidecar's name", () => {
+      env = scratch({ ...OV_REMOTE, host: "127.0.0.1" }, OV_REMOTE);
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("memory sidecar host pin mismatch");
+    });
+
+    it("REFUSES a remote config whose port is not the server's", () => {
+      env = scratch({ ...OV_REMOTE, port: "1999" }, OV_REMOTE);
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("memory sidecar port pin mismatch");
+    });
+
+    it("REFUSES a sidecar named like the daemon, or like something a shell would read", () => {
+      env = scratch(
+        { ...OV_REMOTE, host: "quickreview-sandbox" },
+        { ...OV_REMOTE, memoryContainer: "quickreview-sandbox" },
+      );
+      const same = run(env, ["--dry-run"]);
+      expect(same.code).toBe(1);
+      expect(same.stderr).toContain("needs a name of its own");
+      rmSync(env.dir, { recursive: true, force: true });
+      env = scratch(
+        { ...OV_REMOTE, host: "mem;box" },
+        { ...OV_REMOTE, memoryContainer: "mem;box" },
+      );
+      const odd = run(env, ["--dry-run"]);
+      expect(odd.code).toBe(1);
+      expect(odd.stderr).toContain("not a plain container name");
+    });
+
+    it("the sidecar's pins are the same ones the daemon image carries: the existing pin drift still refuses under remote", () => {
+      env = scratch(OV_REMOTE, { ...OV_REMOTE, version: "0.4.16" });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking pin mismatch");
+    });
+  });
+
+  describe("verify", () => {
+    const STARTED = "2026-10-03T09:55:40.000000000Z";
+    const NOW = "2026-10-03T09:57:00Z";
+    const fresh = `printf '%s\\n%s\\n%s' '${STARTED}' '${NOW}' '{"written_at":"2026-10-03T09:56:50.000Z","prs":[]}'`;
+
+    function verifyRemote(extra: Record<string, string>): {
+      code: number;
+      stdout: string;
+      stderr: string;
+    } {
+      env = scratch(OV_REMOTE);
+      const bin = join(env.dir, "bin");
+      mkdirSync(bin);
+      writeFileSync(join(bin, "ssh"), "#!/bin/sh\necho stub-ok\n", { mode: 0o755 });
+      return run(env, ["verify"], {
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        QC_HEARTBEAT_PROBE_CMD: fresh,
+        QC_HEARTBEAT_WAIT_S: "0",
+        QC_MEMORY_WAIT_S: "0",
+        ...extra,
+      });
+    }
+
+    it("passes when the sidecar is ready and the reviewer-key search answers", () => {
+      const r = verifyRemote({
+        QC_MEMORY_PROBE_CMD: "echo ready",
+        QC_MEMORY_SEARCH_CMD: "echo 'memory search ok: 0 hit(s)'",
+      });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("--- memory sidecar ready");
+      expect(r.stdout).toContain("--- memory sidecar search");
+    });
+
+    it("FAILS when the sidecar never becomes ready, and says where to look", () => {
+      const r = verifyRemote({ QC_MEMORY_PROBE_CMD: "exit 22", QC_MEMORY_SEARCH_CMD: "echo ok" });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("CHECK FAILED: memory sidecar ready");
+      expect(r.stderr).toContain("docker logs quickreview-memory");
+      expect(r.stderr).toContain("Rollback");
+    });
+
+    it("FAILS when /ready passes but the search does not (key refused, embedder down)", () => {
+      const r = verifyRemote({
+        QC_MEMORY_PROBE_CMD: "echo ready",
+        QC_MEMORY_SEARCH_CMD: "echo 'the reviewer key was refused (HTTP 401)'; exit 1",
+      });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("CHECK FAILED: memory sidecar search");
+      expect(r.stdout).toContain("the reviewer key was refused");
+    });
+
+    it("runs no sidecar check under endpoint local", () => {
+      env = scratch(OV_LOCAL);
+      const bin = join(env.dir, "bin");
+      mkdirSync(bin);
+      writeFileSync(join(bin, "ssh"), "#!/bin/sh\necho stub-ok\n", { mode: 0o755 });
+      const r = run(env, ["verify"], {
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        QC_HEARTBEAT_PROBE_CMD: fresh,
+        QC_HEARTBEAT_WAIT_S: "0",
+        QC_MEMORY_PROBE_CMD: "exit 1",
+      });
+      expect(r.code).toBe(0);
+      expect(r.stdout).not.toContain("memory sidecar");
+    });
+  });
+
+  describe("the playbook", () => {
+    // Comment lines dropped: the prose around a task says what it must never do.
+    const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8")
+      .split("\n")
+      .filter((l) => !/^\s*#/.test(l))
+      .join("\n");
+    const at = (needle: string): number => {
+      const i = playbook.indexOf(needle);
+      expect(i, `${needle} is in the playbook`).toBeGreaterThan(-1);
+      return i;
+    };
+
+    it("carries every sidecar task in a sync: after the start-at task, before the daemon's container", () => {
+      const start = at("- name: Build context fingerprint");
+      const daemon = at("- name: Run the sandbox container");
+      for (const task of [
+        "- name: Memory sidecar network",
+        "- name: Seed the sidecar's store from the daemon's (first flip only)",
+        "- name: Build the memory sidecar image",
+        "- name: Run the memory sidecar",
+        "- name: Memory sidecar stopped (openviking_endpoint = local)",
+      ]) {
+        const i = at(task);
+        expect(i, task).toBeGreaterThan(start);
+        expect(i, task).toBeLessThan(daemon);
+      }
+    });
+
+    it("starts the sidecar before the daemon boots against it, and stops it on the way back to local", () => {
+      expect(at("- name: Run the memory sidecar")).toBeLessThan(
+        at("- name: Run the sandbox container"),
+      );
+      const stopped = playbook.slice(
+        at("- name: Memory sidecar stopped (openviking_endpoint = local)"),
+      );
+      expect(stopped).toMatch(/state: stopped/);
+      expect(stopped).toMatch(/when: openviking_endpoint != 'remote'/);
+    });
+
+    it("copies the store once, verifies it by checksum, marks it, and only then", () => {
+      const block = playbook.slice(
+        at("- name: Seed the sidecar's store from the daemon's (first flip only)"),
+        at("- name: Build the memory sidecar image"),
+      );
+      expect(block).toContain("not memory_seed.stat.exists");
+      const stop = block.indexOf("Stop the daemon container");
+      const copy = block.indexOf("Copy the store");
+      const verify = block.indexOf("Verify the copy");
+      const mark = block.indexOf("Mark the store seeded");
+      expect(stop).toBeGreaterThan(-1);
+      expect(copy).toBeGreaterThan(stop);
+      expect(verify).toBeGreaterThan(copy);
+      expect(mark).toBeGreaterThan(verify);
+      expect(block).toContain("--checksum");
+      expect(block).toContain("failed_when: (memory_seed_diff.stdout | trim | length) > 0");
+      // The failure path puts the daemon back on its own, untouched store.
+      const rescue = block.slice(block.indexOf("rescue:"));
+      expect(rescue).toContain("state: started");
+      expect(rescue).toMatch(/did not\s+verify/);
+    });
+
+    it("NEVER wipes or moves a store: no --delete, no state: absent, the source is only read", () => {
+      const block = playbook.slice(
+        at("- name: Seed the sidecar's store from the daemon's (first flip only)"),
+        at("- name: Build the memory sidecar image"),
+      );
+      expect(block).not.toMatch(/--delete/);
+      expect(block).not.toMatch(/state: absent/);
+      expect(block).not.toMatch(/\b(rm|mv)\b/);
+      // The only argv that writes names the sidecar's directory as destination.
+      expect(block).toContain(
+        'argv: [rsync, -a, "{{ openviking_home }}/", "{{ memory_state_dir }}/"]',
+      );
+      // Nothing anywhere in the sidecar tasks removes anything.
+      const all = playbook.slice(
+        at("- name: Check the memory endpoint knob"),
+        at("- name: Run the sandbox container"),
+      );
+      expect(all).not.toMatch(
+        /state: absent|force_source: true|--delete|remove_volumes|\brm -|\bmv /,
+      );
+    });
+
+    it("builds the sidecar image with BuildKit, from the pins the daemon image uses", () => {
+      const block = playbook.slice(
+        at("- name: Build the memory sidecar image"),
+        at("- name: Run the memory sidecar"),
+      );
+      expect(block).toContain('DOCKER_BUILDKIT: "1"');
+      expect(block).toContain("docker/memory/Dockerfile");
+      for (const [arg, key] of [
+        ["OPENVIKING_VERSION", "openviking_version"],
+        ["LLAMA_CPP_PYTHON_VERSION", "llama_cpp_python_version"],
+        ["LOCAL_EMBEDDER_URL", "openviking_local_embedder_url"],
+        ["LOCAL_EMBEDDER_SHA256", "openviking_local_embedder_sha256"],
+        ["LOCAL_EMBEDDER_MODEL", "openviking_local_embedder_model"],
+        ["NODE_MAJOR", "node_major"],
+        ["REVIEW_UID", "container_uid"],
+      ] as const) {
+        expect(block, arg).toContain(`"${arg}={{ ${key} }}"`);
+      }
+      // Every build ARG it passes exists in the Dockerfile.
+      const dockerfile = readFileSync(join(root, "docker", "memory", "Dockerfile"), "utf8");
+      for (const m of block.matchAll(/"([A-Z0-9_]+)=\{\{/g)) {
+        expect(dockerfile, `ARG ${m[1]}`).toMatch(new RegExp(`^ARG ${m[1]}\\b`, "m"));
+      }
+      expect(playbook).toContain("docker buildx version");
+    });
+
+    it("publishes NO port for the sidecar, mounts secrets and config read-only, and caps it", () => {
+      const block = playbook.slice(
+        at("- name: Run the memory sidecar"),
+        at("- name: Memory sidecar stopped (openviking_endpoint = local)"),
+      );
+      expect(block).not.toMatch(/published_ports\s*:/);
+      expect(block).toContain('"{{ sandbox_root }}/secrets:/opt/quickreview/secrets:ro"');
+      expect(block).toContain('"{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro"');
+      expect(block).toContain('"{{ memory_state_dir }}:{{ openviking_home }}"');
+      expect(block).toContain("cpus:");
+      expect(block).toContain("memory_swap:");
+      expect(block).toContain("restart_policy: unless-stopped");
+      // The daemon's secrets for OTHER services never reach it: it mounts the
+      // secrets dir read-only, like the daemon (the companion key is not on the VM).
+      expect(block).not.toMatch(/docker\.sock|\/\.ssh|state:\/opt\/quickreview\/state\b/);
+    });
+
+    it("passes the sidecar entrypoint exactly the knobs it reads, from the daemon's group_vars", () => {
+      const block = playbook.slice(
+        at("- name: Run the memory sidecar"),
+        at("- name: Memory sidecar stopped (openviking_endpoint = local)"),
+      );
+      const entrypoint = readFileSync(join(root, "docker", "memory", "entrypoint.sh"), "utf8");
+      const passed = [...block.matchAll(/^\s+(QCR_OPENVIKING_[A-Z0-9_]+):/gm)].map((m) => m[1]!);
+      expect(passed.length).toBeGreaterThan(15);
+      for (const name of passed) {
+        expect(entrypoint, `${name} is read by docker/memory/entrypoint.sh`).toContain(name);
+      }
+      // …and every user-tunable knob the entrypoint reads is passed.
+      for (const name of [
+        "QCR_OPENVIKING_HOME",
+        "QCR_OPENVIKING_PORT",
+        "QCR_OPENVIKING_AUTH_MODE",
+        "QCR_OPENVIKING_EMBEDDING_PROVIDER",
+        "QCR_OPENVIKING_EMBEDDING_MODEL",
+        "QCR_OPENVIKING_EMBEDDING_DIMENSION",
+        "QCR_OPENVIKING_ROOT_KEY_FILE",
+        "QCR_OPENVIKING_REVIEWER_KEY_FILE",
+        "QCR_OPENVIKING_PROVISION_USERS",
+        "QCR_OPENVIKING_LOCAL_EMBEDDER_SHA256",
+      ]) {
+        expect(passed, name).toContain(name);
+      }
+    });
+
+    it("joins the daemon to the sidecar's network only under remote, keeps its published webhook port, and tells its entrypoint", () => {
+      const daemon = playbook.slice(at("- name: Run the sandbox container"));
+      expect(daemon).toContain(
+        "networks: \"{{ [{'name': memory_network}] if openviking_endpoint == 'remote' else omit }}\"",
+      );
+      expect(daemon).toContain('"127.0.0.1:{{ webhook_port }}:{{ webhook_port }}"');
+      expect(daemon).toContain('QCR_OPENVIKING_ENDPOINT: "{{ openviking_endpoint }}"');
+    });
+
+    it("restarts the sidecar on a rebuild or a changed config home, not on every sync", () => {
+      expect(playbook).toContain("register: config_home_ship");
+      expect(playbook).toContain(
+        'restart: "{{ (rebuild_image | default(false) | bool) or (config_home_ship.changed | default(false)) }}"',
+      );
+    });
+
+    it("parses as YAML and the tracked group_vars carries every knob it uses", () => {
+      const groupVars = readFileSync(
+        join(root, "deploy", "ansible", "group_vars", "all.yml"),
+        "utf8",
+      );
+      for (const key of [
+        "openviking_endpoint",
+        "memory_container_name",
+        "memory_image_name",
+        "memory_image_tag",
+        "memory_network",
+        "memory_state_dir",
+        "memory_container_cpus",
+        "memory_container_memory",
+      ]) {
+        expect(groupVars, key).toMatch(new RegExp(`^${key}:`, "m"));
+        expect(playbook, key).toContain(key);
+      }
+      // The VM's tracked value is the flip; its rollback value is `local`.
+      expect(groupVars).toMatch(/^openviking_endpoint: "remote"/m);
+      // The seeded copy never lands on the daemon's own directory.
+      expect(groupVars).toMatch(/^memory_state_dir: \/opt\/quickreview\/memory-state$/m);
+      expect(groupVars).not.toMatch(/^memory_state_dir: .*\/openviking$/m);
+    });
+  });
+
+  describe("the daemon's entrypoint", () => {
+    const tpl = readFileSync(
+      join(root, "deploy", "ansible", "templates", "entrypoint.sh.j2"),
+      "utf8",
+    );
+
+    /** Run the real template's memory block (from the endpoint switch to the pi
+     * extension merge) under bash with `node` stubbed: what it would have started. */
+    function bootMemory(endpoint: string | undefined): {
+      status: number | null;
+      stdout: string;
+      stderr: string;
+      calls: string[];
+      home: string;
+      workspace: boolean;
+    } {
+      const dir = mkdtempSync(join(tmpdir(), "qcr-ep-boot-"));
+      try {
+        const home = join(dir, "home");
+        const ovHome = join(dir, "store");
+        const sandbox = join(dir, "sandbox");
+        mkdirSync(home);
+        mkdirSync(join(sandbox, "scripts"), { recursive: true });
+        for (const f of ["openviking-reembed.mjs", "openviking-provision.mjs"]) {
+          writeFileSync(join(sandbox, "scripts", f), "");
+        }
+        const start = tpl.indexOf("OV_SIDECAR=0");
+        const end = tpl.indexOf("# pi extensions", start);
+        const fragment = tpl
+          .slice(start, end)
+          .replace("{{ openviking_home }}", ovHome)
+          .replace(/\{\{[^}]*\}\}/g, "X");
+        const calls = join(dir, "calls");
+        const script =
+          `set -euo pipefail\nSANDBOX='${sandbox}'\nSECRETS='${dir}/secrets'\n` +
+          `node() { printf 'node %s\\n' "$*" >> '${calls}'; cat >/dev/null || true; }\n` +
+          fragment;
+        const r = spawnSync("bash", ["-c", script], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            ...(endpoint === undefined ? {} : { QCR_OPENVIKING_ENDPOINT: endpoint }),
+          },
+        });
+        return {
+          status: r.status,
+          stdout: r.stdout,
+          stderr: r.stderr,
+          calls: existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [],
+          home,
+          workspace: existsSync(join(ovHome, "workspace")),
+        };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    it("skips every memory boot step under remote — decided at run time, so the flip is a sync", () => {
+      const r = bootMemory("remote");
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stderr).toContain("endpoint = remote — the memory sidecar owns the store");
+      // No render, no migration check, no provisioning: not one node process.
+      expect(r.calls).toEqual([]);
+      // …and the old store directory is neither created into nor linked.
+      expect(r.workspace).toBe(false);
+    });
+
+    it("runs the whole memory boot under local, and when the endpoint is unset (a container from before the sidecar)", () => {
+      for (const endpoint of ["local", undefined]) {
+        const r = bootMemory(endpoint);
+        expect(r.status, r.stderr).toBe(0);
+        expect(r.stderr).not.toContain("memory sidecar owns the store");
+        expect(r.workspace).toBe(true);
+        // ov.conf render, the embedder migration check, then provisioning.
+        expect(r.calls.length).toBe(3);
+        expect(r.calls[1]).toContain("openviking-reembed.mjs prepare");
+        expect(r.calls[2]).toContain("openviking-provision.mjs");
+      }
+    });
+
+    it("never reuses the flag that tells the daemon to run memory-less", () => {
+      const start = tpl.indexOf("OV_SIDECAR=0");
+      const switchBlock = tpl.slice(start, tpl.indexOf("# OpenViking — the context store"));
+      expect(switchBlock).not.toMatch(/export\s+QCR_OPENVIKING_BOOT_DISABLED/);
+    });
+
+    it("renders to valid bash under both endpoints", () => {
+      const rendered = tpl.replace(/\{\{[^}]*\}\}/g, "X").replace(/\{%[^%]*%\}/g, "");
+      const dir = mkdtempSync(join(tmpdir(), "qcr-ep-"));
+      try {
+        const file = join(dir, "entrypoint.sh");
+        writeFileSync(file, rendered);
+        execFileSync("bash", ["-n", file]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("an unset endpoint is local: a container started before the sidecar keeps its old boot", () => {
+      expect(tpl).toContain("${QCR_OPENVIKING_ENDPOINT:-local}");
+    });
+  });
+});
+
+describe("scripts/memory-search-check.mjs", () => {
+  const checker = join(root, "scripts", "memory-search-check.mjs");
+
+  it("sends the reviewer key as a Bearer token to POST /api/v1/search/find over the reviewer's tree", async () => {
+    const mod = (await import(checker)) as typeof import("../scripts/memory-search-check.mjs");
+    const { url, init } = mod.searchRequest("http://quickreview-memory:1933/", "KEY");
+    expect(url).toBe("http://quickreview-memory:1933/api/v1/search/find");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer KEY");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      target_uri: "viking://user/reviewer/",
+      limit: 1,
+    });
+  });
+
+  it("an empty store is a pass; a refused key, a server error and a garbled body are not", async () => {
+    const mod = (await import(checker)) as typeof import("../scripts/memory-search-check.mjs");
+    expect(mod.verdict(200, JSON.stringify({ status: "ok", result: { memories: [] } })).ok).toBe(
+      true,
+    );
+    expect(
+      mod.verdict(200, JSON.stringify({ result: { memories: [{ uri: "viking://x" }] } })),
+    ).toMatchObject({
+      ok: true,
+      detail: "1 hit(s)",
+    });
+    expect(mod.verdict(401, "")).toMatchObject({ ok: false });
+    expect(mod.verdict(403, "").detail).toContain("refused");
+    expect(mod.verdict(500, "boom").detail).toContain("500");
+    expect(mod.verdict(200, "not json").ok).toBe(false);
+    expect(mod.verdict(200, "{}").ok).toBe(false);
+  });
+
+  it("run(): exit codes, and the key never reaches the output", async () => {
+    const mod = (await import(checker)) as typeof import("../scripts/memory-search-check.mjs");
+    const args = ["--base", "http://m:1933", "--key-file", "/k"];
+    const read = () => "SECRET-KEY\n";
+    const answer = (status: number, body: string) => async () =>
+      ({ status, text: async () => body }) as unknown as Response;
+    const out: string[] = [];
+    const log = console.log;
+    const err = console.error;
+    console.log = (...a: unknown[]) => void out.push(a.join(" "));
+    console.error = (...a: unknown[]) => void out.push(a.join(" "));
+    try {
+      expect(await mod.run(args, answer(200, '{"result":{"memories":[]}}'), read)).toBe(0);
+      expect(await mod.run(args, answer(401, ""), read)).toBe(1);
+      expect(
+        await mod.run(
+          args,
+          async () => {
+            throw new Error("getaddrinfo ENOTFOUND m");
+          },
+          read,
+        ),
+      ).toBe(1);
+      expect(await mod.run(args, answer(200, "{}"), () => "  \n")).toBe(1);
+      expect(
+        await mod.run(args, answer(200, "{}"), () => {
+          throw new Error("ENOENT");
+        }),
+      ).toBe(1);
+      expect(await mod.run(["--base", "x"], answer(200, "{}"), read)).toBe(2);
+    } finally {
+      console.log = log;
+      console.error = err;
+    }
+    expect(out.join("\n")).not.toContain("SECRET-KEY");
+    expect(out.join("\n")).toContain("memory search ok against http://m:1933");
+    expect(out.join("\n")).toContain("ENOTFOUND");
+  });
 });

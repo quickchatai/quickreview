@@ -36,6 +36,13 @@
 #         (the local embedder's model file, baked into the image
 #          by a layer that interpolates the group_vars — a changed pin needs
 #          `rebuild`)
+#   * refuses endpoint drift, the same way: [openviking] endpoint ==
+#     group_vars openviking_endpoint ("local" = OpenViking a child of the
+#     daemon container; "remote" = the memory sidecar, a second container —
+#     docker/memory/ — beside it). Under "remote" the config's [openviking] host
+#     and port must also name the sidecar (group_vars memory_container_name,
+#     openviking_port), or the daemon would probe a host nothing serves.
+#     Flipping the endpoint back to "local" in both places is the rollback.
 #   * refuses to ship without a config home: sync|rebuild deliver
 #     the install's config home — the located config.toml and the profiles/
 #     beside it, never its secrets/ — to the VM by the secrets' route (a
@@ -72,6 +79,9 @@
 #                   scripts/install-locator.sh). Its directory is the
 #                   config home sync|rebuild ship; `verify` alone
 #                   accepts a QCR_CONFIG inside the checkout
+#   QC_MEMORY_PROBE_CMD   replaces the ssh read of the sidecar's /ready (tests)
+#   QC_MEMORY_SEARCH_CMD  replaces the ssh run of the post-deploy search check (tests)
+#   QC_MEMORY_WAIT_S      how long the sidecar checks wait for a cold boot (default 240)
 #   (secrets)       the playbook's secrets_src is the install locator's answer
 #                   too — [github] secrets_dir, else <config home>/secrets
 
@@ -584,6 +594,41 @@ else
   note "config.toml carries no [openviking] block — memory-engine pins not verified"
 fi
 
+# 2c. who runs OpenViking. Mirrored like the pins: the entrypoint (which skips
+# the memory boot under "remote") follows group_vars, the daemon (which probes a
+# sidecar instead of supervising a child) follows config.toml, and the two
+# disagreeing is either two writers on one store or a daemon probing a server
+# nobody started. Both default to "local" (a config.toml or group_vars that
+# predates the sidecar names neither key).
+CFG_OV_ENDPOINT="$(config_table_key openviking endpoint || true)"
+CFG_OV_ENDPOINT="${CFG_OV_ENDPOINT:-local}"
+OV_ENDPOINT="$(effective_var openviking_endpoint || true)"
+OV_ENDPOINT="${OV_ENDPOINT:-local}"
+[[ "$OV_ENDPOINT" == local || "$OV_ENDPOINT" == remote ]] ||
+  die "openviking_endpoint is \"$OV_ENDPOINT\" ($(effective_var_source openviking_endpoint)) — it must be \"local\" or \"remote\""
+check_pin "openviking endpoint" \
+  'config.toml   [openviking] endpoint' "$CFG_OV_ENDPOINT" \
+  "$(effective_var_source openviking_endpoint)    openviking_endpoint" "$OV_ENDPOINT"
+MEMORY_CONTAINER="$(effective_var memory_container_name || true)"
+MEMORY_CONTAINER="${MEMORY_CONTAINER:-quickreview-memory}"
+OV_PORT="$(effective_var openviking_port || true)"
+OV_PORT="${OV_PORT:-1933}"
+OV_REVIEWER_KEY_FILE="$(effective_var openviking_reviewer_key_file || true)"
+OV_REVIEWER_KEY_FILE="${OV_REVIEWER_KEY_FILE:-openviking_reviewer_key}"
+if [[ "$OV_ENDPOINT" == remote ]]; then
+  # The name reaches docker's DNS and the verify commands' shell.
+  [[ "$MEMORY_CONTAINER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] ||
+    die "memory_container_name \"$MEMORY_CONTAINER\" is not a plain container name — letters, digits, '.', '_' and '-' only"
+  [[ "$MEMORY_CONTAINER" != "$CONTAINER" ]] ||
+    die "memory_container_name is the daemon's own container name ($CONTAINER) — the sidecar needs a name of its own"
+  check_pin "memory sidecar host" \
+    'config.toml   [openviking] host' "$(config_table_key openviking host || true)" \
+    "$(effective_var_source memory_container_name)    memory_container_name" "$MEMORY_CONTAINER"
+  check_pin "memory sidecar port" \
+    'config.toml   [openviking] port' "$(CFG_P="$(config_table_key openviking port || true)"; echo "${CFG_P:-1933}")" \
+    "$(effective_var_source openviking_port)    openviking_port" "$OV_PORT"
+fi
+
 # 3. sandbox_src must be wired, or the rsync task no-ops
 if ! grep -Eq '^[[:space:]]*sandbox_src[[:space:]]*:' "$GROUP_VARS"; then
   die "group_vars/all.yml has no active 'sandbox_src' — uncomment it (it must point at $SANDBOX_DIR) or the working copy is never synced"
@@ -659,9 +704,31 @@ fi
 VERIFY_CMDS+=(
   "systemctl is-active docker"
   "sudo docker ps --filter name=$CONTAINER --format '{{.Names}} {{.Status}}'"
+)
+# The memory sidecar is a second container: it must be listed AND running (a
+# `docker ps` that finds nothing still exits 0, so the check reads the state).
+if [[ "$OV_ENDPOINT" == remote ]]; then
+  VERIFY_CMDS+=(
+    "sudo docker ps --filter name=$MEMORY_CONTAINER --format '{{.Names}} {{.Status}}'"
+    "test \"\$(sudo docker inspect -f '{{.State.Running}}' $MEMORY_CONTAINER)\" = true"
+  )
+fi
+VERIFY_CMDS+=(
   "sudo docker exec $CONTAINER tmux ls || echo 'no tmux sessions yet'"
   "cat /opt/quickreview/state/status.json | head -20   # heartbeat for the status collector"
 )
+
+# The sidecar's post-deploy checks, run over ssh like the others. /ready is the
+# server's own readiness (the embedder it probes included); the search runs from
+# the DAEMON's container, as a round would make it: the sidecar's name resolves,
+# the reviewer key authenticates, a vector search answers
+# (scripts/memory-search-check.mjs, which ships with the checkout).
+memory_ready_cmd() {
+  echo "sudo docker exec $MEMORY_CONTAINER curl -fsS http://127.0.0.1:$OV_PORT/ready"
+}
+memory_search_cmd() {
+  echo "sudo docker exec $CONTAINER node /opt/quickreview/sandbox/scripts/memory-search-check.mjs --base http://$MEMORY_CONTAINER:$OV_PORT --key-file /opt/quickreview/secrets/$OV_REVIEWER_KEY_FILE"
+}
 
 # ---- drain advisory (warn only, never a refusal) ------------------------------
 # A deploy recreates the container; rounds in flight are orphaned mid-review,
@@ -720,6 +787,14 @@ print_plan() {
   else
     echo "  memory pins  <no [openviking] block in config.toml — unverified>"
   fi
+  if [[ "$OV_ENDPOINT" == remote ]]; then
+    echo "  containers   $CONTAINER (daemon) + $MEMORY_CONTAINER (memory sidecar: OpenViking + local embedder, image $(effective_var memory_image_name || echo quickreview-memory):$(effective_var memory_image_tag || echo v1), network $(effective_var memory_network || echo quickreview-memory), port $OV_PORT unpublished)"
+    echo "  memory       endpoint remote (config.toml == ansible): the daemon only probes $MEMORY_CONTAINER:$OV_PORT; the sidecar owns provisioning and the re-embed"
+    echo "  memory store the sidecar's own copy at $(effective_var memory_state_dir || echo /opt/quickreview/memory-state), copied from the daemon's and checksum-verified ONCE (the daemon container stopped for it), never wiped; the old directory is the rollback"
+    echo "  memory undo  flip openviking_endpoint (group_vars/inventory) AND config.toml [openviking] endpoint to \"local\", then $SELF sync"
+  else
+    echo "  containers   $CONTAINER only (endpoint local: OpenViking is the daemon's child; the sidecar, if one ran, is stopped)"
+  fi
   echo "  vm host      ${VM_HOST:-<unset — set QC_VM_HOST>}"
   echo "  base clone   /$CLONE_DIR (kept on the VM by the rsync exclude; locally ignored via info/exclude)"
   if [[ "$MODE" != "verify" ]]; then
@@ -741,6 +816,10 @@ print_plan() {
   echo "  then verify  ssh ${VM_HOST:-<vm>}:"
   local c
   for c in "${VERIFY_CMDS[@]}"; do echo "                 $c"; done
+  if [[ "$OV_ENDPOINT" == remote ]]; then
+    echo "                 (polled) $(memory_ready_cmd)"
+    echo "                 (polled) $(memory_search_cmd)"
+  fi
   ansible_bool "$CLOUDFLARED_ENABLED" ||
     echo "                 (cloudflared not checked — cloudflared_enabled=$CLOUDFLARED_ENABLED, so the playbook does not install it)"
   echo "  dry_run      ${CFG_DRY_RUN:-<unset>} in $CONFIG — config.toml dry_run is NOT touched by deploy — the cutover flip is a manual edit"
@@ -853,12 +932,51 @@ check_heartbeat_fresh() {
 }
 check_heartbeat_fresh || FAILED=1
 
+# The memory sidecar answers /ready and a reviewer-key search works from the
+# daemon's container. Polled like the heartbeat: a cold sidecar spends minutes
+# on the embedder before /ready passes. QC_MEMORY_PROBE_CMD / QC_MEMORY_SEARCH_CMD
+# stand in for the ssh reads (tests); QC_MEMORY_WAIT_S bounds the wait.
+memory_probe() {
+  local which="$1" cmd
+  if [[ "$which" == ready ]]; then
+    cmd="${QC_MEMORY_PROBE_CMD:-}"
+    [[ -n "$cmd" ]] && { bash -c "$cmd"; return; }
+    ssh -o BatchMode=yes "$VM_HOST" "$(memory_ready_cmd)"
+  else
+    cmd="${QC_MEMORY_SEARCH_CMD:-}"
+    [[ -n "$cmd" ]] && { bash -c "$cmd"; return; }
+    ssh -o BatchMode=yes "$VM_HOST" "$(memory_search_cmd)"
+  fi
+}
+check_memory_sidecar() {
+  local wait_s="${QC_MEMORY_WAIT_S:-240}" waited=0 which out=""
+  for which in ready search; do
+    echo "--- memory sidecar $which (waits up to ${wait_s}s)"
+    while :; do
+      out="$(memory_probe "$which" 2>&1)" && { echo "$out"; break; }
+      if (( waited >= wait_s )); then
+        echo "$out"
+        echo "$SELF: CHECK FAILED: memory sidecar $which — the daemon would run memory-less; read 'sudo docker logs --tail 100 $MEMORY_CONTAINER'" >&2
+        return 1
+      fi
+      sleep 10
+      waited=$((waited + 10))
+    done
+  done
+}
+if [[ "$OV_ENDPOINT" == remote ]]; then
+  check_memory_sidecar || FAILED=1
+fi
+
 if [[ $FAILED -ne 0 ]]; then
   cat >&2 <<'EOF'
 One or more post-deploy checks failed. Triage order (README §fallback):
   1. cloudflared inactive (when enabled) -> systemctl restart cloudflared; journalctl -u cloudflared -n 50
   2. container not running       -> docker logs quickreview-sandbox --tail 100
   3. stale/absent status.json    -> the daemon is not writing its heartbeat; docker logs, then restart the container
+  4. memory sidecar check failed -> docker logs quickreview-memory --tail 100 (endpoint remote only). Rollback: set
+                                    openviking_endpoint (group_vars) AND config.toml [openviking] endpoint to "local",
+                                    then deploy.sh sync — the daemon's own store is untouched (deploying skill, Phase 6)
 While the sandbox is down, run manual laptop ticks (`/auto-review <n>`) —
 NEVER concurrently with a live sandbox.
 EOF

@@ -253,6 +253,10 @@ target = "ssh"
 ssh_host = ""                                # ← FILL (7): ssh alias of the VM running the container
                                              #   (leave "" when target = "local" — it is unused)
 container = "quickreview-sandbox"       # bundled local Compose: "quickreview-daemon-1" (onboarding fills this)
+memory_container = ""             # the container the memory forward relays into. "" = `container`
+                                  # (OpenViking is the daemon container's child). On a VM running
+                                  # the memory sidecar (the openviking table's endpoint =
+                                  # "remote") set "quickreview-memory"; flip it back with the endpoint.
 remote_state_dir = "/opt/quickreview/state"  # host path on ssh; inside the daemon container on local
 remote_sandbox_root = "/opt/quickreview/sandbox"
 sudo_docker = true                # docker on the VM needs sudo (root-owned socket)
