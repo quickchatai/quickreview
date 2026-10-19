@@ -26,7 +26,7 @@
 //     /proc/<pid>/mem and environ of this process. Its file tools (read, grep,
 //     find, ls, edit, write) run in this process, so each path they are handed
 //     goes through a fence (toolfence.ts) that refuses /proc, /run/qcr-in and
-//     the agent dirs, after resolving symlinks.
+//     the agent dirs and the login's source, after resolving symlinks.
 //
 // The HTTP dispatcher follows D4. pi's CLI installs an undici dispatcher at
 // startup (configureHttpDispatcher, which the package does not export); an
@@ -70,6 +70,7 @@ import {
   createToolFence,
   fencedOperations,
   guardedTool,
+  loginSourceDirs,
   type ImageSniffer,
   type ToolFence,
 } from "./toolfence.js";
@@ -378,9 +379,17 @@ export interface PiHostOptions {
    * hold CAP_SETUID/CAP_SETGID (the image's cli mode does). Omitted: the
    * model's bash runs as this process. */
   toolUid?: ToolIds;
-  /** What the file tools may not reach. Omitted: /proc, /run/qcr-in and the
-   * host's agent dir (and this home's pi dir). `false` turns the fence off. */
+  /** The setpriv binary for `toolUid`: omitted, a system one by absolute path
+   * (tooluid.ts trustedSetpriv). Tests hand a stand-in. */
+  setprivBin?: string;
+  /** What the file tools may not reach. Omitted: /proc, /run/qcr-in, /qcr-login,
+   * the host's agent dir, this home's pi dir, the login sources this process's
+   * env names (PI_CODING_AGENT_DIR, QCR_SCAN_AUTH_SRC) and `fenceDirs`.
+   * `false` turns the fence off. */
   fence?: ToolFence | false;
+  /** More directories for the default fence: where a caller's login source is
+   * when it is not in the process env (reviewsdk's processEnv). */
+  fenceDirs?: readonly string[];
 }
 
 export interface HostSessionSpec {
@@ -541,7 +550,15 @@ export class PiHost {
     this.fence =
       options.fence === false
         ? null
-        : (options.fence ?? createToolFence({ dirs: [options.agentDir, join(homedir(), ".pi")] }));
+        : (options.fence ??
+          createToolFence({
+            dirs: [
+              options.agentDir,
+              join(homedir(), ".pi"),
+              ...loginSourceDirs(process.env),
+              ...(options.fenceDirs ?? []),
+            ],
+          }));
   }
 
   static async create(options: PiHostOptions): Promise<PiHost> {
@@ -621,7 +638,9 @@ export class PiHost {
         cwd: ctx.cwd,
         env: buildBashEnv(spec.env, ctx.env, spec.bashEnv),
       }),
-      ...(this.options.toolUid ? { operations: isolatedBashOperations(this.options.toolUid) } : {}),
+      ...(this.options.toolUid
+        ? { operations: isolatedBashOperations(this.options.toolUid, this.options.setprivBin) }
+        : {}),
     });
     const files = await this.fileTools(spec.cwd, tools);
     const { session } = await createAgentSession({

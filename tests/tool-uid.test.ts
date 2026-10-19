@@ -25,6 +25,7 @@ import {
   shareWithToolGroup,
   toolIdsOf,
   toolIsolation,
+  trustedSetpriv,
 } from "../src/engine/tooluid.js";
 import { type HostRig, createHostRig, useOfflineGuard } from "./pi-canary/harness.js";
 
@@ -98,6 +99,14 @@ describe("checkToolUid", () => {
   });
 });
 
+describe("where setpriv is looked for", () => {
+  it("is a system dir by absolute path, never the PATH", () => {
+    expect(trustedSetpriv((p) => p === "/usr/bin/setpriv")).toBe("/usr/bin/setpriv");
+    expect(trustedSetpriv((p) => p === "/sbin/setpriv")).toBe("/sbin/setpriv");
+    expect(trustedSetpriv(() => false)).toBeNull();
+  });
+});
+
 describe("toolIsolation and the switches", () => {
   it("is setpriv to the tool uid with no capability and no way to gain one", () => {
     expect(setprivSwitches({ uid: "65534", gid: "1000" })).toEqual(SWITCHES);
@@ -128,7 +137,7 @@ describe("the SDK bash tool as the tool uid", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  const ops = () => isolatedBashOperations({ uid: "65534", gid: "1000" });
+  const ops = () => isolatedBashOperations({ uid: "65534", gid: "1000" }, join(bin, "setpriv"));
   const run = async (
     command: string,
     o: { signal?: AbortSignal; timeout?: number } = {},
@@ -192,6 +201,29 @@ describe("the SDK bash tool as the tool uid", () => {
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
+  it("never resolves setpriv through the PATH it was handed (a planted one is not run)", async () => {
+    const planted = join(dir, "planted");
+    mkdirSync(planted);
+    const mark = join(dir, "planted.ran");
+    writeFileSync(join(planted, "setpriv"), `#!/bin/sh\ntouch ${JSON.stringify(mark)}\nexit 3\n`);
+    chmodSync(join(planted, "setpriv"), 0o755);
+    // the stand-in is given by its absolute path; the model's PATH has the plant first
+    const r = await isolatedBashOperations(
+      { uid: "65534", gid: "1000" },
+      join(bin, "setpriv"),
+    ).exec("echo ok", dir, { onData: () => {}, env: { PATH: `${planted}:${bin}:/usr/bin:/bin` } });
+    expect(r.exitCode).toBe(0);
+    // and ending a group does not look through it either
+    await expect(
+      isolatedBashOperations({ uid: "65534", gid: "1000" }, join(bin, "setpriv")).exec(
+        "sleep 30",
+        dir,
+        { onData: () => {}, env: { PATH: `${planted}:${bin}:/usr/bin:/bin` }, timeout: 0.3 },
+      ),
+    ).rejects.toThrow("timeout");
+    expect(() => statSync(mark)).toThrow();
+  });
+
   it("refuses a missing working directory and a bad timeout", async () => {
     await expect(ops().exec("true", join(dir, "nope"), { onData: () => {}, env })).rejects.toThrow(
       /Working directory does not exist/,
@@ -204,18 +236,25 @@ describe("a session's bash under the host's tool uid", () => {
   let rig: HostRig;
   let bin: string;
   let log: string;
+  let standIn: string;
   beforeEach(async () => {
-    rig = await createHostRig({ toolUid: { uid: "65534", gid: "1000" } });
-    bin = join(rig.dir, "bin");
+    standIn = mkdtempSync(join(tmpdir(), "tool-uid-bin-"));
+    rig = await createHostRig({
+      toolUid: { uid: "65534", gid: "1000" },
+      setprivBin: join(standIn, "setpriv"),
+    });
+    bin = standIn;
     log = join(rig.dir, "setpriv.log");
-    mkdirSync(bin);
     writeFileSync(
       join(bin, "setpriv"),
       `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n`,
     );
     chmodSync(join(bin, "setpriv"), 0o755);
   });
-  afterEach(() => rig.close());
+  afterEach(() => {
+    rig.close();
+    rmSync(standIn, { recursive: true, force: true });
+  });
 
   async function bash(command: string, toolUid = true): Promise<string> {
     const other = toolUid ? undefined : await createHostRig();

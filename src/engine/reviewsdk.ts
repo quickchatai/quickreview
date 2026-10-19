@@ -43,6 +43,7 @@ import { engineLensTools, type EngineLensTools } from "./lens/engine-tools.js";
 import type { LensRunConfig } from "./lens/runlens.js";
 import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave.js";
 import { PiHost, type PiHostOptions } from "./pisdk.js";
+import { loginSourceDirs } from "./toolfence.js";
 import { checkToolUid, toolIdsOf } from "./tooluid.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
 import { BASH_ENV_ALLOW, reviewerStub, roundSdkExtras, type RoundLensTools } from "./roundsdk.js";
@@ -194,6 +195,9 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
           ownsProcess: true,
           // The model's bash and every lens session's, as the tool uid (D32).
           ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
+          // The round's agent dir is a copy: the login it was copied from (the
+          // wrapper's /qcr-login, group-readable by this uid) is fenced too.
+          fenceDirs: loginSourceDirs(procEnv),
           credentials: auth.credentials,
           settings: agentDirSettings(agentDir),
           configureModels: async (runtime) => {

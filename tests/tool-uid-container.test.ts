@@ -30,6 +30,10 @@ const HARNESS = join(root, "tests", "helpers", "tool-uid-harness.mjs");
 const DEBUG_HARNESS = join(root, "tests", "helpers", "debug-uid-harness.mjs");
 const NODE_IMAGE = "node:22-bookworm";
 const TOKEN = "ghs_TOOLUID_SECRET_0123456789";
+const LOGIN_MARK = "LOGIN_SRC_REFRESH_SECRET_9876";
+const LOGIN_SECRET_JSON = JSON.stringify({
+  "openai-codex": { type: "oauth", access: "a", refresh: LOGIN_MARK, expires: 1 },
+});
 const keep = process.env["KEEP_TOOL_UID_TMP"];
 const tmp = mkdtempSync(join(keep ?? tmpdir(), "tool-uid-container-"));
 
@@ -194,6 +198,12 @@ function runHarness(
   const tokdir = join(dir, "tok");
   mkdirSync(tokdir, { mode: 0o700 });
   writeFileSync(join(tokdir, "gh-token"), TOKEN, { mode: 0o600 });
+  // the owner's login source, as the wrapper and the Action mount it: read-only
+  // at /qcr-login, named by PI_CODING_AGENT_DIR (the run copies it; the model's
+  // file tools run as the run uid, which can read it through the login group)
+  const login = join(dir, "login");
+  mkdirSync(login, { mode: 0o755 });
+  writeFileSync(join(login, "auth.json"), LOGIN_SECRET_JSON, { mode: 0o644 });
   // the user whose files the root start must read, as the wrapper's uid
   chmodSync(tokdir, 0o777);
   chmodSync(join(tokdir, "gh-token"), 0o666);
@@ -225,6 +235,10 @@ function runHarness(
     "--mount",
     `type=bind,src=${nodeModules()},dst=${nodeModules()},readonly`,
     ...(token ? ["--mount", `type=bind,src=${tokdir},dst=/run/qcr-in`] : []),
+    "--mount",
+    `type=bind,src=${login},dst=/qcr-login,readonly`,
+    "-e",
+    "PI_CODING_AGENT_DIR=/qcr-login",
     "--mount",
     `type=bind,src=${out},dst=/out`,
     "--entrypoint",
@@ -322,6 +336,12 @@ describe.skipIf(!hasDocker || !hasDist)(
         // nothing the links pointed at was written, and the login was not read out
         for (const l of labels) expect(by(l).text, l).not.toContain('"refresh"');
         expect(results.map((x) => x.text).join("\n")).not.toContain(TOKEN);
+        // the login source (/qcr-login, readable by the run uid) is fenced like the round's copy
+        for (const l of labels.filter((x) => /login/.test(x))) {
+          expect(by(l).isError, l).toBe(true);
+          expect(by(l).text, l).toContain("access refused");
+        }
+        expect(results.map((x) => x.text).join("\n")).not.toContain(LOGIN_MARK);
 
         // the ordinary work goes through, across the two uids, in both directions
         expect(by("bash-writes").text).toContain("wrote");

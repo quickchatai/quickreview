@@ -36,8 +36,22 @@ import type {
   WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 
-/** What no file tool may reach, besides the run's agent dirs. */
-export const FENCED_PATHS: readonly string[] = ["/proc", "/dev/fd", "/run/qcr-in"];
+/** What no file tool may reach, besides the run's agent dirs. `/qcr-login` is
+ * where the wrapper and the Action mount the owner's login volume: its
+ * auth.json holds the long-lived refresh token and is group-readable by the
+ * run uid, whose group the in-process file tools (unlike the tool uid's bash)
+ * keep. */
+export const FENCED_PATHS: readonly string[] = ["/proc", "/dev/fd", "/run/qcr-in", "/qcr-login"];
+
+/** The directories `env` names as the login's source: the process's own pi
+ * agent dir (`PI_CODING_AGENT_DIR`, which a review copies into its private
+ * agent dir) and the scan's `QCR_SCAN_AUTH_SRC`. The round's copy is the
+ * host's agent dir, fenced separately. */
+export function loginSourceDirs(env: NodeJS.ProcessEnv): string[] {
+  return ["PI_CODING_AGENT_DIR", "QCR_SCAN_AUTH_SRC"]
+    .map((k) => env[k]?.trim())
+    .filter((v): v is string => v !== undefined && v !== "" && isAbsolute(v));
+}
 
 /** The names of the file tools behind the fence. */
 export const FENCED_TOOLS = ["read", "grep", "find", "ls", "edit", "write"] as const;

@@ -9,7 +9,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { loadImageSniffer } from "../src/engine/pisdk.js";
-import { ToolFenceError, createToolFence, toolPath } from "../src/engine/toolfence.js";
+import {
+  ToolFenceError,
+  createToolFence,
+  loginSourceDirs,
+  toolPath,
+} from "../src/engine/toolfence.js";
 import { type HostRig, createHostRig, useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -134,6 +139,55 @@ describe("the fence on paths", () => {
     expect(toolPath("../x", "/w/y")).toBe("/w/x");
     expect(toolPath("file:///proc/self/environ", "/w")).toBe("/proc/self/environ");
     expect(toolPath(`a${String.fromCharCode(0xa0)}b`, "/w")).toBe("/w/a b");
+  });
+});
+
+describe("the login's source", () => {
+  let dir: string;
+  let login: string;
+  let work: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "fence-login-"));
+    login = join(dir, "qcr-login");
+    work = join(dir, "work");
+    mkdirSync(login);
+    mkdirSync(work);
+    writeFileSync(join(login, "auth.json"), '{"refresh":"long-lived"}');
+    symlinkSync(join(login, "auth.json"), join(work, "to-login-auth"));
+    symlinkSync(login, join(work, "to-login"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("names the process's pi agent dir and the scan's source, when absolute", () => {
+    expect(loginSourceDirs({ PI_CODING_AGENT_DIR: "/qcr-login" })).toEqual(["/qcr-login"]);
+    expect(
+      loginSourceDirs({ PI_CODING_AGENT_DIR: " /a ", QCR_SCAN_AUTH_SRC: "/b", HOME: "/h" }),
+    ).toEqual(["/a", "/b"]);
+    expect(loginSourceDirs({ PI_CODING_AGENT_DIR: "relative", QCR_SCAN_AUTH_SRC: "" })).toEqual([]);
+    expect(loginSourceDirs({})).toEqual([]);
+  });
+
+  const refuses = (fence: ReturnType<typeof createToolFence>, p: string): boolean => {
+    try {
+      fence.check(p);
+      return false;
+    } catch (e) {
+      return e instanceof ToolFenceError;
+    }
+  };
+
+  it("refuses /qcr-login without being told, and any dir the env names, with its links", () => {
+    expect(refuses(createToolFence(), "/qcr-login/auth.json")).toBe(true);
+    expect(refuses(createToolFence(), "/qcr-login")).toBe(true);
+    const fence = createToolFence({ dirs: loginSourceDirs({ PI_CODING_AGENT_DIR: login }) });
+    for (const p of [
+      login,
+      join(login, "auth.json"),
+      join(work, "to-login-auth"),
+      join(work, "to-login", "auth.json"),
+    ])
+      expect(refuses(fence, p), p).toBe(true);
+    expect(refuses(fence, join(work, "x.txt"))).toBe(false);
   });
 });
 
@@ -293,6 +347,101 @@ describe("the file tools of a real session", () => {
       tools: ["read"],
     });
     expect(session.getAllTools().map((t) => t.name)).toEqual(["read"]);
+  });
+});
+
+describe("the file tools and the login source, through a real session", () => {
+  let rig: HostRig;
+  let work: string;
+  let login: string;
+  const MARK = "long-lived-refresh-token";
+  beforeEach(async () => {
+    rig = await createHostRig({ fenceDirs: [] });
+    work = join(rig.dir, "work");
+    login = join(rig.dir, "login-src");
+    mkdirSync(work);
+    mkdirSync(login);
+    writeFileSync(join(login, "auth.json"), `{"refresh":"${MARK}"}`);
+    symlinkSync(login, join(work, "to-login"));
+    symlinkSync(join(login, "auth.json"), join(work, "to-login-auth"));
+  });
+  afterEach(() => rig.close());
+
+  /** A host whose fence is told the login source the way reviewsdk tells it. */
+  async function fenced(): Promise<HostRig> {
+    const r = await createHostRig({ fenceDirs: [login] });
+    return r;
+  }
+
+  async function call(
+    r: HostRig,
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ isError: boolean; text: string }> {
+    const session = await r.host.makeSession({
+      cwd: work,
+      env: { PATH: process.env["PATH"], HOME: join(r.dir, "home") },
+      model: r.faux.getModel(),
+      tools: ["read", "edit", "write", "grep", "find", "ls"],
+    });
+    r.faux.setResponses([
+      fauxAssistantMessage([fauxToolCall(name, args as Parameters<typeof fauxToolCall>[1])], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("done"),
+    ]);
+    await session.prompt("go");
+    const result = session.messages.find((m) => m.role === "toolResult") as unknown as {
+      isError: boolean;
+      content: { text: string }[];
+    };
+    return { isError: result.isError, text: result.content.map((c) => c.text).join("\n") };
+  }
+
+  it("a host not told of the source can read it (why the caller passes fenceDirs)", async () => {
+    const r = await call(rig, "read", { path: join(login, "auth.json") });
+    expect(r.text).toContain(MARK);
+  });
+
+  it("read, grep, find, ls, edit and write refuse the source and links to it", async () => {
+    const f = await fenced();
+    try {
+      for (const path of [login, join(login, "auth.json"), "to-login", "to-login-auth"]) {
+        for (const [tool, args] of [
+          ["read", { path }],
+          ["grep", { pattern: "refresh", path }],
+          ["find", { pattern: "*", path }],
+          ["ls", { path }],
+          ["edit", { path, edits: [{ oldText: "refresh", newText: "x" }] }],
+          ["write", { path, content: "x" }],
+          ["write", { path: `${path}/new.json`, content: "x" }],
+        ] as const) {
+          const r = await call(f, tool, args as Record<string, unknown>);
+          expect(r.isError, `${tool} ${path}`).toBe(true);
+          expect(r.text, `${tool} ${path}`).toContain("access refused");
+          expect(r.text, `${tool} ${path}`).not.toContain(MARK);
+        }
+      }
+      expect(readFileSync(join(login, "auth.json"), "utf8")).toBe(`{"refresh":"${MARK}"}`);
+    } finally {
+      f.close();
+    }
+  });
+
+  it("takes the source from the process env, as a host made without fenceDirs", async () => {
+    const before = process.env["PI_CODING_AGENT_DIR"];
+    process.env["PI_CODING_AGENT_DIR"] = login;
+    let f: HostRig | undefined;
+    try {
+      f = await createHostRig();
+      const r = await call(f, "read", { path: join(login, "auth.json") });
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain("access refused");
+    } finally {
+      f?.close();
+      if (before === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+      else process.env["PI_CODING_AGENT_DIR"] = before;
+    }
   });
 });
 

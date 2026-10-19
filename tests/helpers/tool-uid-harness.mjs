@@ -115,6 +115,9 @@ step("plant", "bash", {
     `ln -s ${agentDir} agent-link`,
     `ln -s ${agentDir}/auth.json auth-link`,
     "ln -s /run/qcr-in/new dangling",
+    // the owner's login source, mounted read-only at /qcr-login by the wrapper and the Action
+    "ln -s /qcr-login login-link",
+    "ln -s /qcr-login/auth.json login-auth-link",
     "echo planted",
   ].join(" && "),
 });
@@ -123,6 +126,9 @@ for (const [label, path] of [
   ["read-environ-pid", `/proc/${pid}/environ`],
   ["read-mount", "/run/qcr-in/gh-token"],
   ["read-agent", `${agentDir}/auth.json`],
+  ["read-login", "/qcr-login/auth.json"],
+  ["read-link-login", "login-link/auth.json"],
+  ["read-link-login-auth", "login-auth-link"],
   ["read-link-environ", "env-link"],
   ["read-link-self", "self-link"],
   ["read-link-mount", "mount-link/gh-token"],
@@ -130,7 +136,14 @@ for (const [label, path] of [
   ["read-link-auth", "auth-link"],
 ])
   step(label, "read", { path });
-for (const link of ["env-link", "mount-link", "agent-link", "auth-link"]) {
+for (const link of [
+  "env-link",
+  "mount-link",
+  "agent-link",
+  "auth-link",
+  "login-link",
+  "login-auth-link",
+]) {
   step(`grep-${link}`, "grep", { pattern: ".", path: link });
   step(`ls-${link}`, "ls", { path: link });
   step(`find-${link}`, "find", { pattern: "*", path: link });
@@ -138,6 +151,13 @@ for (const link of ["env-link", "mount-link", "agent-link", "auth-link"]) {
   step(`write-${link}`, "write", { path: link, content: "pwn" });
 }
 step("write-dangling", "write", { path: "dangling", content: "pwn" });
+step("ls-login", "ls", { path: "/qcr-login" });
+step("grep-login", "grep", { pattern: "refresh", path: "/qcr-login" });
+step("write-login", "write", { path: "/qcr-login/auth.json", content: "pwn" });
+step("edit-login", "edit", {
+  path: "/qcr-login/auth.json",
+  edits: [{ oldText: "a", newText: "b" }],
+});
 step("write-into-mount", "write", { path: "mount-link/new", content: "pwn" });
 // the ordinary work still works, across the two uids
 step("bash-writes", "bash", { command: "echo from-bash > a.txt && echo wrote" });

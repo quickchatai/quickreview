@@ -219,6 +219,22 @@ describe("reviewSdkRuntime", () => {
       expect(seen).toHaveLength(1);
     });
 
+    it("fences the login the round's agent dir was copied from (the wrapper's /qcr-login)", async () => {
+      login(Date.now() + 3 * 3_600_000);
+      const seen: PiHostOptions[] = [];
+      const rt = reviewSdkRuntime({
+        makeHost: fauxHost(seen),
+        lens: noLens,
+        processEnv: {
+          ...split,
+          PI_CODING_AGENT_DIR: "/qcr-login",
+          QCR_SCAN_AUTH_SRC: "/src/login",
+        },
+      });
+      await (await rt.create(spec())).dispose();
+      expect(seen[0]!.fenceDirs).toEqual(["/qcr-login", "/src/login"]);
+    });
+
     it("the engine lens route takes the split", async () => {
       login(Date.now() + 3 * 3_600_000);
       const seen: PiHostOptions[] = [];

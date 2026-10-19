@@ -139,6 +139,18 @@ export function shareWithToolGroup(dir: string): void {
   }
 }
 
+/** Where setpriv is looked for: root-owned system dirs, never the model's PATH. */
+const SETPRIV_DIRS = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+const SETPRIV_PATH = SETPRIV_DIRS.join(":");
+
+/** The setpriv the spawner runs, which holds the ambient SETUID/SETGID: an
+ * absolute path in a system dir. A PATH entry the tool uid can write must not
+ * be able to plant the binary the next command runs with those capabilities.
+ * Null where no system dir has one. */
+export function trustedSetpriv(exists: (p: string) => boolean = existsSync): string | null {
+  return SETPRIV_DIRS.map((d) => join(d, "setpriv")).find(exists) ?? null;
+}
+
 /** The shell the model's commands run in: pi's own choice on Unix. */
 function shellPath(): string {
   return existsSync("/bin/bash") ? "/bin/bash" : "sh";
@@ -159,10 +171,13 @@ const EXIT_STDIO_GRACE_MS = 100;
  * The saved uid cannot be left as the run uid to allow it: the tool could then
  * switch back.
  */
-export function isolatedBashOperations(ids: ToolIds): BashOperations {
+export function isolatedBashOperations(ids: ToolIds, setprivBin?: string): BashOperations {
   const switches = setprivSwitches(ids);
+  const setpriv = setprivBin ?? trustedSetpriv();
   return {
     exec: async (command, cwd, { onData, signal, timeout, env }) => {
+      if (setpriv === null)
+        throw new Error("setpriv is in none of " + SETPRIV_PATH + ": the tool uid cannot be used");
       if (signal?.aborted) throw new Error("aborted");
       if (timeout !== undefined && !(Number.isFinite(timeout) && timeout > 0))
         throw new Error("Invalid timeout: must be a finite number of seconds");
@@ -171,7 +186,7 @@ export function isolatedBashOperations(ids: ToolIds): BashOperations {
       } catch {
         throw new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`);
       }
-      const child = spawn("setpriv", [...switches, "--", shellPath(), "-c", command], {
+      const child = spawn(setpriv, [...switches, "--", shellPath(), "-c", command], {
         cwd,
         env: env ?? process.env,
         detached: true,
@@ -184,10 +199,10 @@ export function isolatedBashOperations(ids: ToolIds): BashOperations {
         if (pgid === undefined) return;
         try {
           spawn(
-            "setpriv",
+            setpriv,
             [...switches, "--", shellPath(), "-c", 'kill -KILL -- "-$0" 2>/dev/null', String(pgid)],
-            // found where the command's own setpriv was
-            { stdio: "ignore", env: { PATH: env?.["PATH"] ?? process.env["PATH"] } },
+            // the killing shell needs no PATH of the model's
+            { stdio: "ignore", env: { PATH: SETPRIV_PATH } },
           )
             .once("error", () => {})
             .unref();
