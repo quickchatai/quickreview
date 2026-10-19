@@ -129,7 +129,9 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
         checked++;
       }
     }
-    expect(checked).toBeGreaterThan(10);
+    // A floor, not a count: each landing marks its section LANDED and takes its
+    // `current` block out of the check (P7.13's rule 3 carve-out took one more).
+    expect(checked).toBeGreaterThan(5);
   });
 
   it("every drafted rule opens with the line CLAUDE.md's rule opens with, and rules 7 and 8 and 9 are whole", () => {

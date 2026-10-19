@@ -60,7 +60,7 @@ The `cwd` section the old session was shown: `/opt/quickreview/sandbox` 119.
 - markers in user turns: `qcr-command` 668, `qcr-recheck` 372, `qcr-round` 126, `qcr-post` 6, `qcr-inject` 4. The session-command ledger's `qcr-command` turns are in 118 file(s) and the inject bridge's `qcr-inject` turns in 1; P9.1 deletes their writers and the old turns stay in the history.
 
 **Legacy paths.** Header cwd against the release image's legacy mounts (`/opt/quickreview/sandbox/<clone>`, `/opt/quickreview/sandbox/wt`): `/opt/quickreview/sandbox -> mount-parent` 119.
-Paths under `/opt/quickreview/sandbox/` that the history mentions, by first component: still mounted `wt` 78187; not in the release image `state` 23748, `AGENTS.override.md` 1675, `example-app` 5, `depcache` 2, `verdict` 1.
+Paths under `/opt/quickreview/sandbox/` that the history mentions, by first component: still mounted `wt` 78187; not in the release image `state` 23748, `AGENTS.override.md` 1675, `<reviewed repo>` 5, `depcache` 2, `verdict` 1.
 
 ### mirror
 

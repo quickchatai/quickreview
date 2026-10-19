@@ -24,7 +24,7 @@ import { IpcClient } from "../src/ipc/client.js";
 import { IpcServer, type OpHandler } from "../src/ipc/server.js";
 import type { WorkerSpec } from "../src/ipc/workerspec.js";
 import { StateStore, type SessionCommandRow } from "../src/state.js";
-import { WorkerLeases, realProc, type WorkerLease } from "../src/workerlease.js";
+import { type WorkerLeases, realProc, type WorkerLease } from "../src/workerlease.js";
 import {
   WorkerLaunchError,
   WorkerSupervisor,

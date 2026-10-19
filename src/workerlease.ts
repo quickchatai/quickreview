@@ -312,9 +312,9 @@ function parseLease(text: string, session: string): WorkerLease | null {
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
-  const str = (k: string): string | null => (typeof o[k] === "string" && o[k] !== "" ? (o[k] as string) : null);
+  const str = (k: string): string | null => (typeof o[k] === "string" && o[k] !== "" ? o[k] : null);
   const int = (k: string): number | null =>
-    typeof o[k] === "number" && Number.isSafeInteger(o[k]) ? (o[k] as number) : null;
+    typeof o[k] === "number" && Number.isSafeInteger(o[k]) ? o[k] : null;
   const token = str("owner_token");
   const commandId = str("command_id");
   const boot = str("boot_id");
@@ -341,7 +341,7 @@ function parseLease(text: string, session: string): WorkerLease | null {
     generation,
     pid: int("pid"),
     pgid: int("pgid"),
-    start_time: (start as string | null) ?? null,
+    start_time: start ?? null,
     boot_id: boot,
     command: typeof o["command"] === "string" ? o["command"] : "",
     created_at: typeof o["created_at"] === "string" ? o["created_at"] : "",

@@ -275,8 +275,8 @@ describe("the CLAUDE.md anchors", () => {
 
   it("the PR-pane bullet is the viewer's rule, part 1: the line sends a message when no round runs", () => {
     const b = bullet("- **An embedded pi surface is a TERMINAL");
-    expect(b.at).toBeGreaterThanOrEqual(630);
-    expect(b.at).toBeLessThanOrEqual(640);
+    expect(b.at).toBeGreaterThanOrEqual(640);
+    expect(b.at).toBeLessThanOrEqual(650);
     expect(b.text).toContain("Never add a TUI-side input box");
     expect(b.text).toContain("LIVE VIEWER");
     expect(b.text).toContain("operator steer (rule 9's one exception)");
@@ -290,8 +290,8 @@ describe("the CLAUDE.md anchors", () => {
 
   it("the unwedge bullet names the viewer's writes and no longer the overseer's pi", () => {
     const b = bullet("- **The operator can always unwedge from the board");
-    expect(b.at).toBeGreaterThanOrEqual(735);
-    expect(b.at).toBeLessThanOrEqual(745);
+    expect(b.at).toBeGreaterThanOrEqual(745);
+    expect(b.at).toBeLessThanOrEqual(755);
     expect(b.text).toContain("the viewer's input line (steer, follow-up, abort-round, message)");
     expect(b.text).toContain("**`commands/operator/`, created and written AS ROOT");
     expect(b.text).toContain("through a model turn");

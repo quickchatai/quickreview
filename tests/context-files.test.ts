@@ -900,6 +900,7 @@ describe("the one install site", () => {
       "scripts/deploy.sh", // a name the base clone may not take
       "src/engine/roundsdk.ts", // the SDK round's stub as in-memory data for the session, never written to a checkout
       "src/hostroute.ts", // the clone route's per-run copy, into the run's own out dir
+      "src/resumecheck.ts", // the offline resume check compares a session's context file with the stub text; reads, never writes
       "src/reviewerstub.ts", // the neutral home of the stub's two names; constants only
       "src/usage.ts", // the cost split counts it as a context file
     ]);
