@@ -87,6 +87,20 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "first import.",
     },
     {
+      file: "src/piauthcopy.ts",
+      why:
+        "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +
+        "(`dist/src/piauthcopy.js`, src/scanbox.ts LOGIN_SUMMARY_SCRIPT), a driver this static scan cannot " +
+        "follow. Delete it, and point the script at engine/auth.js, with the companion rebuild.",
+    },
+    {
+      file: "src/scanauth.ts",
+      why:
+        "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +
+        "(`dist/src/scanauth.js`, src/scanbox.ts SCAN_AUTH_COPY_SCRIPT), a driver this static scan cannot " +
+        "follow. Delete it, and point the script at engine/auth.js, with the companion rebuild.",
+    },
+    {
       file: "src/reviewrendercli.ts",
       why:
         "the `[review] render_outputs` renderer's command line. Driven by scripts/render-review.sh, which a " +

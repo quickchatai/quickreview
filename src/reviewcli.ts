@@ -76,7 +76,7 @@ import {
 import { runOneShot, type OneShotResult } from "./oneshot.js";
 import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { prepareHostRun } from "./hostroute.js";
-import { AuthExpiring } from "./piauthcopy.js";
+import { AuthExpiring } from "./engine/auth.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";

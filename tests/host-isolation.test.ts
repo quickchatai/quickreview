@@ -31,7 +31,7 @@ const { HOST_HTTP_IDLE_TIMEOUT_MS, REVIEWER_STUB, hostSettings } =
   await import("../src/hostroute.js");
 const { benchConfig, buildBenchAgents, contextFor } = await import("../src/bench/runner.js");
 const { benchSettings } = await import("../src/bench/auth.js");
-const { DISABLED_REFRESH } = await import("../src/piauthcopy.js");
+const { DISABLED_REFRESH } = await import("../src/engine/auth.js");
 const { ecosystemFor } = await import("../src/ecosystem.js");
 
 const ROOT = realpathSync(resolve(import.meta.dirname, ".."));
