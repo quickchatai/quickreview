@@ -138,7 +138,7 @@ import {
   renderRoundPrompt,
   templateFileForOrder,
 } from "./templates.js";
-import { assertNativeHost, assertNativeOrder } from "./launchvocab.js";
+import { assertNativeOrder } from "./launchvocab.js";
 import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionCommandObservation, SessionHooks } from "./types.js";
 import { WebhookHealer } from "./webhookheal.js";
@@ -853,9 +853,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // The identity variable map every prompt render and agent build
   // resolves {{owner_name}}/{{repo}}/{{bot_login}} against.
   const identity = identityVars(cfg);
-  // The tmux host launches lenses through `subagent` / `launch_plan` only: it
-  // refuses an engine config and an engine-written order (src/launchvocab.ts).
-  assertNativeHost(cfg.pi.lens_runtime);
+  // The tmux host launches lenses through `subagent` / `launch_plan` only. It
+  // never reads `[engine] runtime`, `[pi] lens_runtime` or `engine_wave` (the
+  // SDK is the config default, the bot stays native until its workers land),
+  // and refuses an engine-written order (src/launchvocab.ts).
   const renderPrompt = (order: RoundOrder, memory: RoundMemory): string => {
     assertNativeOrder(order);
     return renderRoundPrompt(

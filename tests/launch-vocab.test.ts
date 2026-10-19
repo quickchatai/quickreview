@@ -10,7 +10,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import {
-  assertNativeHost,
   assertNativeOrder,
   ENGINE_VOCAB,
   launchVocab,
@@ -202,11 +201,6 @@ describe("the tmux host is bound to native", () => {
   it("refuses an order written for the engine, and renders a native one", () => {
     expect(() => assertNativeOrder(ENGINE)).toThrow(/tmux host renders native round prompts only/);
     expect(() => assertNativeOrder(ORDER)).not.toThrow();
-  });
-
-  it("refuses an engine config at assembly", () => {
-    expect(() => assertNativeHost("engine")).toThrow(/not available on the bot/);
-    expect(() => assertNativeHost("native")).not.toThrow();
   });
 });
 

@@ -72,8 +72,14 @@ export interface ReviewSdkOptions {
   /** `[pi] lens_runtime = engine`: the round's lens tools are ours (`lens`,
    * `lens_wave`), their passes SDK sessions on the session's host. `wave` is the
    * round's board (given, so a route can name it before the host exists);
-   * `plannedWave` is `[pi] engine_wave`. Takes the `lens` slot. */
-  engine?: { wave?: LensWave; plannedWave: boolean };
+   * `plannedWave` is `[pi] engine_wave`. Takes the `lens` slot. `config` builds
+   * the passes' runner config (default `engineLensConfig`): the bench keeps its
+   * agents elsewhere. */
+  engine?: {
+    wave?: LensWave;
+    plannedWave: boolean;
+    config?: (host: PiHost, spec: SessionSpec) => LensRunConfig;
+  };
 }
 
 /** The review SDK runtime: a runtime, carrying the engine route when it has one. */
@@ -181,7 +187,9 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
           },
         };
         const host = await (options.makeHost ?? PiHost.create)(hostOptions);
-        const tools = engine ? engineLensTools(engineLensConfig(host, spec), wave) : undefined;
+        const tools = engine
+          ? engineLensTools((engine.config ?? engineLensConfig)(host, spec), wave)
+          : undefined;
         if (tools) lens = tools;
         return sdkRuntime(host, {
           extras:

@@ -1,5 +1,5 @@
 // P5.1: the runtime selection keys. `[engine] runtime = proc|sdk` and
-// `[pi] lens_runtime = native|engine` parse with proc/native defaults, the
+// `[pi] lens_runtime = native|engine` parse with sdk/engine defaults (X2), the
 // shipped example config still validates, and a route that has no SDK host
 // refuses `sdk` instead of running on proc.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -26,12 +26,27 @@ const underPi = (text: string, line: string): string =>
   text.replace(/^\[pi\]\s*$/m, `[pi]\n${line}`);
 
 describe("[engine] runtime and [pi] lens_runtime", () => {
-  it("default to proc and native when the file says nothing", () => {
+  it("default to sdk, engine and the engine wave when the file says nothing", () => {
     for (const text of [FIXTURE, EXAMPLE]) {
       const cfg = parseConfig(text);
-      expect(cfg.engine.runtime).toBe("proc");
-      expect(cfg.pi.lens_runtime).toBe("native");
+      expect(cfg.engine.runtime).toBe("sdk");
+      expect(cfg.pi.lens_runtime).toBe("engine");
+      expect(cfg.pi.engine_wave).toBe(true);
     }
+  });
+
+  it("runtime = proc alone brings the lens defaults back to native and no wave", () => {
+    const cfg = parseConfig(`${FIXTURE}\n[engine]\nruntime = "proc"\n`);
+    expect(cfg.engine.runtime).toBe("proc");
+    expect(cfg.pi.lens_runtime).toBe("native");
+    expect(cfg.pi.engine_wave).toBe(false);
+  });
+
+  it("lens_runtime = native alone keeps the sdk runtime and turns the wave off", () => {
+    const cfg = parseConfig(underPi(FIXTURE, 'lens_runtime = "native"'));
+    expect(cfg.engine.runtime).toBe("sdk");
+    expect(cfg.pi.lens_runtime).toBe("native");
+    expect(cfg.pi.engine_wave).toBe(false);
   });
 
   it("read the file's values", () => {
@@ -51,13 +66,14 @@ describe("[engine] runtime and [pi] lens_runtime", () => {
     );
   });
 
-  it("[pi] engine_wave defaults off, reads true only with the engine lens runtime, and is a boolean", () => {
-    for (const text of [FIXTURE, EXAMPLE]) expect(parseConfig(text).pi.engine_wave).toBe(false);
+  it("[pi] engine_wave defaults on with the engine lens runtime, reads true only with it, and is a boolean", () => {
+    for (const text of [FIXTURE, EXAMPLE]) expect(parseConfig(text).pi.engine_wave).toBe(true);
+    expect(parseConfig(underPi(FIXTURE, "engine_wave = false")).pi.engine_wave).toBe(false);
     const on = underPi(FIXTURE, 'lens_runtime = "engine"\nengine_wave = true');
     expect(parseConfig(on).pi.engine_wave).toBe(true);
-    expect(() => parseConfig(underPi(FIXTURE, "engine_wave = true"))).toThrow(
-      /engine_wave = true needs lens_runtime = "engine"/,
-    );
+    expect(() =>
+      parseConfig(underPi(FIXTURE, 'lens_runtime = "native"\nengine_wave = true')),
+    ).toThrow(/engine_wave = true needs lens_runtime = "engine"/);
     expect(() => parseConfig(underPi(FIXTURE, 'engine_wave = "yes"'))).toThrow(
       /\[pi\] engine_wave must be true or false/,
     );
@@ -123,7 +139,10 @@ describe("the scan leaf runner under [engine] runtime", () => {
   };
 
   it("passes straight through on proc and on an unreadable config", async () => {
-    for (const env of [envWith(FIXTURE), { QCR_CONFIG: join(dir, "missing.toml") }]) {
+    for (const env of [
+      envWith(`${FIXTURE}\n[engine]\nruntime = "proc"\n`),
+      { QCR_CONFIG: join(dir, "missing.toml") },
+    ]) {
       const i = inner();
       const out = await scanLeafRunner(i.runner, ROOT, env).run(spec, new AbortController().signal);
       expect(out).toEqual({ ok: false, reason: "inner" });
@@ -160,7 +179,8 @@ describe("the scan leaf runner under [engine] runtime", () => {
 
   it("a proc scan never builds the SDK leaves", async () => {
     const i = inner();
-    const runner = scanLeafRunner(i.runner, ROOT, envWith(FIXTURE), () => {
+    const env = envWith(`${FIXTURE}\n[engine]\nruntime = "proc"\n`);
+    const runner = scanLeafRunner(i.runner, ROOT, env, () => {
       throw new Error("built");
     });
     expect(await runner.run(spec, new AbortController().signal)).toEqual({
@@ -188,17 +208,20 @@ describe("the scan leaf runner under [engine] runtime", () => {
     expect(i.calls()).toBe(0);
   });
 
-  it("lens_runtime = engine stays refused on scan, SDK leaves or not", async () => {
+  it("lens_runtime is not read on scan: a leaf never gets a lens tool", async () => {
     const i = inner();
-    const env = envWith(
-      underPi(`${FIXTURE}\n[engine]\nruntime = "sdk"\n`, 'lens_runtime = "engine"'),
-    );
-    const runner = scanLeafRunner(i.runner, ROOT, env, () => ({
-      run: async () => ({ ok: false, reason: "sdk" }),
-    }));
-    expect(await runner.run(spec, new AbortController().signal)).toMatchObject({
-      ok: false,
-      reason: expect.stringMatching(/lens_runtime = engine is not available on the scan route/),
-    });
+    for (const lens of ["engine", "native"]) {
+      const env = envWith(
+        underPi(`${FIXTURE}\n[engine]\nruntime = "sdk"\n`, `lens_runtime = "${lens}"`),
+      );
+      const runner = scanLeafRunner(i.runner, ROOT, env, () => ({
+        run: async () => ({ ok: true, output: "sdk", cost_usd: null }),
+      }));
+      expect(await runner.run(spec, new AbortController().signal)).toMatchObject({
+        ok: true,
+        output: "sdk",
+      });
+    }
+    expect(i.calls()).toBe(0);
   });
 });

@@ -1,12 +1,15 @@
 // Which runtime a route hosts its pi sessions on: `[engine] runtime` (or a
-// route's own override, `qcr-bench --runtime`).
+// route's own override, `qcr-bench --runtime`). `sdk` is the default (P7.12), and
+// `[pi] lens_runtime` / `engine_wave` follow it: engine lenses with the planned
+// wave on `sdk`, native lenses and no wave on `proc` (src/config.ts
+// lensDefaultsFor).
 //
 // `proc` selects nothing: every route already falls back to procRuntime over
-// its own pi binary, so leaving the runtime unset keeps a proc run byte-
-// identical to what it was before the key existed. `sdk` needs a host the
-// route builds itself (PiHost, auth, extension factories), so a route passes
-// `sdk` only once it has one; a route that does not refuses the key rather
-// than quietly running on proc.
+// its own pi binary, so a proc run stays byte-identical to what it was before
+// the key existed (procRuntime is the fallback until it is retired). `sdk` needs
+// a host the route builds itself (PiHost, auth, extension factories), so a
+// route passes `sdk` only once it has one; a route that does not refuses the
+// key rather than quietly running on proc.
 
 import type { EngineRuntimeKind, LensRuntimeKind } from "../config.js";
 import { ENGINE_RUNTIME_KINDS } from "../config.js";
@@ -21,13 +24,13 @@ export function parseRuntimeKind(v: string): EngineRuntimeKind {
   return v as EngineRuntimeKind;
 }
 
-/** `[pi] lens_runtime`: `native` is every route today; `engine` needs the
+/** `[pi] lens_runtime`: `engine` (the default on the SDK runtime) needs the
  * engine's lens tool and discovery wave, which a route passes in as `engine`
- * once it has them. Until then the key is refused, not ignored. */
+ * once it has them; a route without them refuses the key, not ignores it. */
 export function checkLensRuntime(kind: LensRuntimeKind, route: string, engine = false): void {
   if (kind === "engine" && !engine)
     throw new Error(
-      `[pi] lens_runtime = engine is not available on the ${route} route yet: set it to native (the default)`,
+      `[pi] lens_runtime = engine is not available on the ${route} route yet: set it to native`,
     );
 }
 
@@ -37,7 +40,7 @@ export function checkLensRuntime(kind: LensRuntimeKind, route: string, engine = 
 export function checkLensNeedsSdk(lens: LensRuntimeKind, runtime: EngineRuntimeKind): void {
   if (lens === "engine" && runtime !== "sdk")
     throw new Error(
-      "[pi] lens_runtime = engine needs [engine] runtime = sdk (the runtime is proc)",
+      "[pi] lens_runtime = engine needs [engine] runtime = sdk (the runtime is proc): a proc run also sets pi.lens_runtime = native",
     );
 }
 
@@ -56,7 +59,7 @@ export function selectRuntime(
   if (kind === "proc") return undefined;
   if (sdk === undefined)
     throw new Error(
-      `[engine] runtime = sdk is not available on the ${route} route yet: set it to proc (the default)`,
+      `[engine] runtime = sdk is not available on the ${route} route yet: set it to proc`,
     );
   return sdk();
 }

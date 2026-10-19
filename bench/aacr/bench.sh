@@ -11,8 +11,9 @@
 #              --phase: arm.sh's split of one run into one container per case (init/finish
 #              run --network none with no login; see src/bench/cli.ts)
 #              --config: config.toml levers for THIS run only, so two arms share one image
-#                (the SDK arm: --config engine.runtime=sdk,pi.lens_runtime=engine; each case then runs
-#                in a host process of its own, and the judge's pool likewise)
+#                (the SDK arm is the default: engine.runtime=sdk with pi.lens_runtime=engine and the
+#                planned wave; each case runs in a host process of its own, and the judge's pool
+#                likewise. The process arm: --config engine.runtime=proc,pi.lens_runtime=native)
 #              --runtime proc|sdk: the same switch as engine.runtime, for one command (review, judge)
 #   bench/aacr/bench.sh eval     --run ID [--set smoke10] [--judge mock|openai|codex] [--rounds 3] [--line-k N]
 #                                [--shards N] [--variants all,no-nits,blockers]

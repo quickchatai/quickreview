@@ -17,7 +17,7 @@
 // wrote, run in this process on the same host.
 import { createBashGuard, bashGuardConfigFromEnv } from "../../extensions/bash-guard.js";
 import type { LensRuntimeKind } from "../config.js";
-import { roundLensTools } from "./lens/round-lens.js";
+import { roundLensConfig, roundLensTools } from "./lens/round-lens.js";
 import type { PiHostOptions, PiHost } from "./pisdk.js";
 import type { Runtime } from "./port.js";
 import { reviewSdkRuntime } from "./reviewsdk.js";
@@ -25,6 +25,10 @@ import { reviewSdkRuntime } from "./reviewsdk.js";
 export interface BenchSdkOptions {
   /** Which lens tool the review round's main session gets. */
   lens: LensRuntimeKind;
+  /** `[pi] engine_wave`, with the engine lens tool: the round starts the planned
+   * discovery wave itself (rule 9) and the main session joins it. Off: the main
+   * session launches the wave. */
+  plannedWave?: boolean;
   /** Builds the host (tests hand a faux-provider host). */
   makeHost?: (o: PiHostOptions) => Promise<PiHost>;
   processEnv?: NodeJS.ProcessEnv;
@@ -44,7 +48,11 @@ export function benchSdkRuntime(o: BenchSdkOptions): Runtime {
     ...(o.makeHost ? { makeHost: o.makeHost } : {}),
     ...(o.processEnv ? { processEnv: o.processEnv } : {}),
     childEnv: isBenchChildEnv,
-    ...(o.lens === "engine" ? { lens: (spec, host) => roundLensTools(spec, host) } : {}),
+    ...(o.lens === "engine" && o.plannedWave
+      ? { engine: { plannedWave: true, config: (host, spec) => roundLensConfig(spec, host) } }
+      : o.lens === "engine"
+        ? { lens: (spec, host) => roundLensTools(spec, host) }
+        : {}),
   });
 }
 

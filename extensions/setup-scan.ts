@@ -40,7 +40,6 @@ import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.
 import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
 import { scanCasesForEnv } from "../src/engine/auth.js";
-import { checkLensRuntime } from "../src/engine/select.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { CaseRunner, Refusal, SetupEngine } from "../src/setup/engine.js";
 import type {
@@ -1096,11 +1095,8 @@ export function scanLeafRunner(
   return {
     async run(spec, signal, onCost) {
       const loaded = loadScanConfig(root, env);
-      try {
-        if (loaded.ok) checkLensRuntime(loaded.cfg.pi.lens_runtime, "scan");
-      } catch (err) {
-        return { ok: false, reason: err instanceof Error ? err.message : String(err) };
-      }
+      // `[pi] lens_runtime` is not read here: a scan leaf is a leaf and never
+      // gets a lens tool, so the key (engine by default) changes nothing.
       if (!loaded.ok || loaded.cfg.engine.runtime === "proc") return proc.run(spec, signal, onCost);
       if (sdkLeaves === undefined)
         return {

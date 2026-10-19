@@ -12,6 +12,7 @@ import type { SessionSpec } from "../port.js";
 import { BASH_ENV_ALLOW } from "../roundsdk.js";
 import { engineLensTools, type EngineLensTools } from "./engine-tools.js";
 import { loadBuiltAgents } from "./registry.js";
+import type { LensRunConfig } from "./runlens.js";
 
 const SCOPE_ENV = "QCR_SUBAGENT_SCOPE";
 
@@ -33,14 +34,19 @@ export function lensAgentsDir(
   }
 }
 
-/** `lens` and `lens_wave` for the round `spec` opens, running its passes on `host`.
- * A pass's bash draws from the same names as the main session's (the git
- * isolation pins, QCR_*): on proc a pass child inherits the whole env, and the
- * pins must reach it all the same. */
-export function roundLensTools(spec: SessionSpec, host: PiHost): EngineLensTools {
+/** The lens runner's config for the round `spec` opens, over the agents its
+ * scope names. A pass's bash draws from the same names as the main session's
+ * (the git isolation pins, QCR_*): on proc a pass child inherits the whole env,
+ * and the pins must reach it all the same. */
+export function roundLensConfig(spec: SessionSpec, host: PiHost): LensRunConfig {
   const registry = loadBuiltAgents(lensAgentsDir(spec.env, spec.cwd));
-  return engineLensTools({
+  return {
     ...lensRunConfigFromEnv(spec.env, host, spec.cwd, registry),
     bashEnv: { allow: BASH_ENV_ALLOW },
-  });
+  };
+}
+
+/** `lens` and `lens_wave` for the round `spec` opens, running its passes on `host`. */
+export function roundLensTools(spec: SessionSpec, host: PiHost): EngineLensTools {
+  return engineLensTools(roundLensConfig(spec, host));
 }

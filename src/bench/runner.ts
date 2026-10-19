@@ -267,10 +267,12 @@ export interface RunFingerprint {
   /** The profile's `[posting]` policy. Absent at the default posting, so a run
    * without one keeps its fingerprint. */
   posting?: PostingPolicy;
-  /** Present only on an SDK run (`[engine] runtime = "sdk"`), with the lens tool
-   * it ran: a proc run keeps its fingerprint, and `--resume` never mixes a
-   * case reviewed on one host with one reviewed on the other. */
-  engine?: { runtime: "sdk"; lens_runtime: LensRuntimeKind };
+  /** Present only on an SDK run (`[engine] runtime = "sdk"`, the config default
+   * since P7.12), with the lens tool it ran and `wave: true` when the engine
+   * started the planned discovery wave (`[pi] engine_wave`, also the default).
+   * A proc run keeps its fingerprint, and `--resume` never mixes a case reviewed
+   * on one host, lens tool or wave setting with one reviewed on another. */
+  engine?: { runtime: "sdk"; lens_runtime: LensRuntimeKind; wave?: true };
   /** Set only on a run whose profile replaced shipped agents or prompts and
    * was allowed to (`--allow-customised`); an uncustomised run keeps its
    * fingerprint. */
@@ -326,7 +328,7 @@ export function runFingerprint(
   overrides = "",
   custom?: Customisation,
   /** What hosts the sessions, when it is not the process runtime. */
-  host?: { runtime: EngineRuntimeKind; lens_runtime: LensRuntimeKind },
+  host?: { runtime: EngineRuntimeKind; lens_runtime: LensRuntimeKind; engine_wave?: boolean },
 ): RunFingerprint {
   // A lever at its shipped default is left out, so a run fingerprints the
   // same as one from before the lever existed.
@@ -395,7 +397,13 @@ export function runFingerprint(
         }
       : {}),
     ...(host?.runtime === "sdk"
-      ? { engine: { runtime: "sdk" as const, lens_runtime: host.lens_runtime } }
+      ? {
+          engine: {
+            runtime: "sdk" as const,
+            lens_runtime: host.lens_runtime,
+            ...(host.engine_wave ? { wave: true as const } : {}),
+          },
+        }
       : {}),
     settings_sha256: reviewSettingsDigest(cfg),
   };
