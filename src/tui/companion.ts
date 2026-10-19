@@ -179,13 +179,48 @@ export const CONTAINER = {
   evidence: "/evidence",
   feed: "/feed",
   alerts: "/alerts",
+  /** The shared tmux-socket volume (`tmux-socket` mode, D35): the companion's
+   * tmux server listens inside it, and the containerised TUI mounts the same
+   * volume to drive that server with `tmux -S`. The image creates the dir
+   * 1777, so a fresh named volume is writable by whatever uid runs. */
+  tmuxDir: "/run/qcr-tmux",
 } as const;
+
+/** How the companion's tmux server is reached.
+ *
+ *   docker        `docker exec <container> tmux …`, the server on tmux's
+ *                 default socket inside the container. The clone route, where
+ *                 this process can run docker.
+ *   tmux-socket   the server listens on a socket in a named volume that the
+ *                 containerised TUI shares (D35), so the TUI drives it with
+ *                 `tmux -S <socket>` and holds no docker.sock. The container
+ *                 itself is run by the host wrapper (scripts/qcr-host.sh),
+ *                 from the argv `qcr companion plan` prints. */
+export type CompanionMode = "docker" | "tmux-socket";
+
+/** The named volume holding the companion's tmux socket. */
+export function tmuxVolume(cfg: Pick<CompanionConfig, "container_name">): string {
+  return `${cfg.container_name}-tmux`;
+}
+
+/** The companion's tmux server socket, the same path in both containers. */
+export function tmuxSocketPath(cfg: Pick<CompanionConfig, "session">): string {
+  return `${CONTAINER.tmuxDir}/${cfg.session}.sock`;
+}
+
+/** Set on the companion container in `tmux-socket` mode: the socket its
+ * entrypoint starts the tmux server on (docker/entrypoint.sh). */
+export const TMUX_SOCKET_ENV = "QCR_TMUX_SOCKET";
 
 // No `~/.ssh` and no ssh-agent socket are mounted, on purpose: the companion's
 // only reach into the VM is OpenViking memory over a forward the host owns
 // (systemd --user, see scripts/companion-memory-forward.mjs), so the container
 // holds no VM ssh credential of any kind and cannot ssh anywhere. Never mount
 // either — the boundary is structural, not prompted (root CLAUDE.md rule 8).
+
+/** How long a containerised TUI waits for the wrapper-run companion's tmux
+ * server (the wrapper starts the container just before it starts the TUI). */
+const WRAPPER_START_WAIT_MS = 20_000;
 
 export type EnsureOutcome = "adopted" | "started" | "created" | "recreated";
 
@@ -455,7 +490,31 @@ export class CompanionLifecycle {
     /** The build stamp of the app under the build context (src/appstamp.ts).
      * Injectable so the build argv is assertable without hashing a tree. */
     private readonly stampOf: (root: string) => string = appStamp,
+    /** How the tmux server is reached — see `CompanionMode`. */
+    readonly mode: CompanionMode = "docker",
   ) {}
+
+  /** How long `ensureUp` waits, in `tmux-socket` mode, for the wrapper-run
+   * companion's tmux server. A field so tests need not wait it out. */
+  wrapperStartWaitMs = WRAPPER_START_WAIT_MS;
+
+  /** The shared socket in `tmux-socket` mode, else undefined. */
+  get socketPath(): string | undefined {
+    return this.mode === "tmux-socket" ? tmuxSocketPath(this.cfg) : undefined;
+  }
+
+  /** `tmux <argv…>`, on the shared socket when there is one. */
+  private tmuxArgv(...args: string[]): string[] {
+    const socket = this.socketPath;
+    return socket === undefined ? ["tmux", ...args] : ["tmux", "-S", socket, ...args];
+  }
+
+  /** Start without memory: no network, no endpoint env (the laptop route, where
+   * the memory sidecar is opt-in). Pure; for the argv a host wrapper runs. */
+  withoutMemory(): this {
+    this.wiring = { network: "", endpoint: "", notes: [] };
+    return this;
+  }
 
   /** The memory path this instance will wire (or has wired). */
   get memory(): MemoryWiring {
@@ -488,11 +547,16 @@ export class CompanionLifecycle {
     // image's WORKDIR is its app root, whose reviewer stub is not the
     // companion's to load.
     argv.push("--user", hostUser(), "--workdir", CONTAINER.workspace);
+    // The wrapper-run companion (D35) is hardened like every other container
+    // the wrapper starts; nothing it does needs a capability.
+    if (this.socketPath !== undefined)
+      argv.push("--init", "--cap-drop", "ALL", "--security-opt", "no-new-privileges");
     for (const m of this.mountSpec())
       argv.push("--volume", `${m.source}:${m.dest}${m.mode ? `:${m.mode}` : ""}`);
     argv.push(...this.memoryEnvArgv());
     // pi's default model, set by the entrypoint on every start.
     argv.push("--env", `QCR_PI_DEFAULT_MODEL=${this.cfg.model}`);
+    if (this.socketPath !== undefined) argv.push("--env", `${TMUX_SOCKET_ENV}=${this.socketPath}`);
     // The release image, in its companion mode (docker/entrypoint.sh).
     argv.push(this.cfg.image, COMPANION_MODE);
     return argv;
@@ -684,11 +748,7 @@ export class CompanionLifecycle {
     return [
       "exec",
       this.cfg.container_name,
-      "tmux",
-      "new-session",
-      "-d",
-      "-s",
-      this.cfg.session,
+      ...this.tmuxArgv("new-session", "-d", "-s", this.cfg.session),
       ...this.piEnvPrefix(),
       ...this.piArgv(),
     ];
@@ -697,7 +757,12 @@ export class CompanionLifecycle {
   /** Local attach — plain `docker exec -it`, no ssh (this box owns the
    * container). Returned argv is everything after the `docker` binary. */
   attachArgv(): string[] {
-    return ["exec", "-it", this.cfg.container_name, "tmux", "attach", "-t", this.cfg.session];
+    return [
+      "exec",
+      "-it",
+      this.cfg.container_name,
+      ...this.tmuxArgv("attach", "-t", this.cfg.session),
+    ];
   }
 
   /** Host side of `/workspace/inject/<session>` — where the rollover drops the
@@ -779,10 +844,18 @@ export class CompanionLifecycle {
     const res = await this.docker([
       "exec",
       this.cfg.container_name,
-      "tmux",
-      "has-session",
-      "-t",
-      this.cfg.session,
+      ...this.tmuxArgv("has-session", "-t", this.cfg.session),
+    ]);
+    return res.ok;
+  }
+
+  /** Is the companion's tmux server answering on its socket? `show-options`
+   * never starts a server, so asking cannot birth one in the wrong container. */
+  async serverUp(): Promise<boolean> {
+    const res = await this.docker([
+      "exec",
+      this.cfg.container_name,
+      ...this.tmuxArgv("show-options", "-s", "exit-empty"),
     ]);
     return res.ok;
   }
@@ -975,6 +1048,10 @@ export class CompanionLifecycle {
       { dest: CONTAINER.piHome, source: this.cfg.pihome_volume },
       { dest: CONTAINER.workspace, source: this.cfg.repo_dir, mode: "rw" },
     ];
+    // The tmux socket volume, shared with the containerised TUI (D35). The only
+    // thing in it is the socket; it is no ssh agent and no docker.sock.
+    if (this.socketPath !== undefined)
+      spec.push({ dest: CONTAINER.tmuxDir, source: tmuxVolume(this.cfg), mode: "rw" });
     // The tracker and its protocol docs are optional: mounted only when the
     // operator configured them ([companion] tracker_dir / tracker_docs_dir).
     if (this.cfg.tracker_dir !== "")
@@ -1024,6 +1101,7 @@ export class CompanionLifecycle {
 
   /** Idempotent: running → adopt; stopped → start; absent → run. */
   async ensureUp(onProgress?: (line: string) => void): Promise<EnsureOutcome> {
+    if (this.socketPath !== undefined) return this.adoptWrapperRun(onProgress);
     await this.resolveMemoryWiring(onProgress);
     // Say which of the two worlds this start is in, either way. A missing
     // checkout is a normal, non-fatal state — but a companion silently reading
@@ -1096,6 +1174,21 @@ export class CompanionLifecycle {
   }
 
   /**
+   * `tmux-socket` mode: the host wrapper started (or adopted) the companion
+   * container before this process existed, and this one has no docker, so the
+   * start is only a wait for the tmux server to answer on the shared socket.
+   * A server that never answers is the wrapper's failure to report, not ours
+   * to repair.
+   */
+  private async adoptWrapperRun(onProgress?: (line: string) => void): Promise<EnsureOutcome> {
+    onProgress?.(`companion container run by the qcr wrapper — tmux socket ${this.socketPath}`);
+    if (await this.waitRunning(this.wrapperStartWaitMs, 250)) return "adopted";
+    throw new Error(
+      `the companion's tmux server is not answering on ${this.socketPath} — the qcr wrapper starts the companion container before the TUI (is ${this.cfg.container_name} running?)`,
+    );
+  }
+
+  /**
    * Wait until the container is actually running.
    *
    * `docker run --detach` returns once the container is created, and a
@@ -1106,6 +1199,13 @@ export class CompanionLifecycle {
   async waitRunning(timeoutMs = 5_000, stepMs = 100): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
+      if (this.socketPath !== undefined) {
+        // No docker to ask: the server answering is "running".
+        if (await this.serverUp()) return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise((r) => setTimeout(r, stepMs));
+        continue;
+      }
       const st = await this.status();
       if (st.running) return true;
       // Gone rather than starting: waiting cannot help, and the caller's own
@@ -1126,7 +1226,7 @@ export class CompanionLifecycle {
     // running", which would report the companion unavailable for the whole
     // session. Wait for it once and try again;
     // anything else is a real failure and is raised as one.
-    if (!res.ok && /is not running/i.test(errText(res))) {
+    if (!res.ok && /is not running|tmux server is not up/i.test(errText(res))) {
       await this.waitRunning();
       res = await this.docker(this.spawnArgv());
     }
@@ -1141,6 +1241,9 @@ export class CompanionLifecycle {
    * A container docker could not be asked about is not a stopped one: that
    * throws rather than return as if the stop had happened. */
   async gracefulStop(): Promise<void> {
+    // The wrapper that ran the container stops it, after the TUI container
+    // has exited; this process cannot, and must not pretend to.
+    if (this.socketPath !== undefined) return;
     const st = await this.status();
     if (st.unknown !== undefined)
       throw new Error(

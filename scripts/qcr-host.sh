@@ -24,7 +24,8 @@
 #
 # What it never gets: the gh config, the install home that holds
 # <install>/secrets/ (only the profiles dir is mounted, D39 amending R12), the
-# ssh agent, docker.sock. There is no GitHub App on a laptop (D14) and so no
+# ssh agent, docker.sock. One call is the exception for the agent, never for
+# docker.sock (D35): the TUI container below. There is no GitHub App on a laptop (D14) and so no
 # container that mounts secrets: the token is GITHUB_TOKEN, GH_TOKEN or
 # `gh auth token`, resolved HERE on the host. It is handed over as a 0600 file
 # in a fresh 0700 directory, which the image reads once and unlinks (D39 amending
@@ -34,6 +35,19 @@
 # your uid inside, so the model's tools can run as another uid and the kernel
 # keeps them off the process that holds the token (D32, docker/entrypoint.sh).
 # Every call: --init, --cap-drop ALL, no-new-privileges.
+#
+# The TUI (D35) is two containers and no docker.sock anywhere:
+#   the companion   started, adopted or recreated HERE, on the host, from the
+#                   `docker run` the image prints (`qcr companion plan`, so the
+#                   mount list lives in one place, src/tui/companion.ts). It has
+#                   no ssh agent, no ~/.ssh and no docker.sock (rule 8). Its tmux
+#                   server listens on a socket in the qcr-companion tmux volume.
+#   the TUI         shares that volume and drives the companion with `tmux -S`
+#                   instead of `docker exec`. It alone gets the ssh agent socket
+#                   and ~/.ssh/config and known_hosts, read-only, for the ssh
+#                   runner that reaches the VM. When it quits, this wrapper stops
+#                   the companion unless another TUI is still using it.
+# The owner's dev TUI with hot reload (rule 11) stays on the clone route.
 #
 # POSIX sh: it runs under macOS's /bin/sh and under dash.
 set -eu
@@ -230,6 +244,126 @@ if [ "$verb" = scan ]; then
   [ "$fg" = 0 ] || set -- "$@" --foreground
 fi
 
+uid="$(id -u)"
+gid="$(id -g)"
+
+# ---- clean-up -------------------------------------------------------------------
+
+tokdir=''
+companion_name=''
+
+# Stop the companion this call ran, unless another TUI container still uses it.
+# Its conversation and login live on volumes, so the next start is a resume.
+stop_companion() {
+  [ -n "$companion_name" ] || return 0
+  name="$companion_name"
+  companion_name=''
+  others="$(docker ps -q --filter label=qcr.role=tui 2>/dev/null || true)"
+  [ -z "$others" ] || return 0
+  say "stopping the companion…"
+  docker stop "$name" >/dev/null 2>&1 || true
+}
+
+# shellcheck disable=SC2329 # run by the EXIT trap
+cleanup() {
+  [ -z "$tokdir" ] || rm -rf "$tokdir"
+  stop_companion
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# ---- the companion (D35) ----------------------------------------------------------
+
+# Start, adopt or recreate the companion container from `qcr companion plan`.
+# Sets companion_name, tui_mounts, tui_volumes and tui_env (newline lists) for
+# the TUI container. Returns non-zero when the companion cannot be run.
+ensure_companion() {
+  plan="$(docker run --rm --init --user "$uid:$gid" --cap-drop ALL \
+    --security-opt no-new-privileges -e "QCR_IMAGE=$IMAGE" -e "QCR_HOST_HOME=$HOME" \
+    -e "QCR_HOST_XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}" \
+    -e "QCR_HOST_XDG_STATE_HOME=${XDG_STATE_HOME:-$HOME/.local/state}" \
+    ${QCR_INSTALL:+-e "QCR_INSTALL=$QCR_INSTALL"} \
+    "$IMAGE" cli companion plan 2>/dev/null)" || return 1
+  [ -n "$plan" ] || return 1
+  name=''
+  hash=''
+  tui_mounts=''
+  tui_volumes=''
+  tui_env=''
+  mkdirs=''
+  set --
+  while IFS= read -r line; do
+    kind="${line%% *}"
+    value="${line#* }"
+    case "$kind" in
+      name) name="$value" ;;
+      plan) hash="$value" ;;
+      mkdir) mkdirs="$mkdirs$value
+" ;;
+      tui-mount) tui_mounts="$tui_mounts$value
+" ;;
+      tui-volume) tui_volumes="$tui_volumes$value
+" ;;
+      tui-env) tui_env="$tui_env$value
+" ;;
+      run) set -- "$@" "$value" ;;
+    esac
+  done <<EOF
+$plan
+EOF
+  [ -n "$name" ] && [ -n "$hash" ] && [ "$#" -gt 0 ] || return 1
+  # The host dirs the companion and the TUI share, made as you: docker would
+  # invent a missing bind source root-owned.
+  while IFS= read -r dir; do
+    [ -z "$dir" ] || mkdir -p "$dir" || return 1
+  done <<EOF
+$mkdirs
+EOF
+  while IFS= read -r dir; do
+    [ -z "$dir" ] || mountable "$dir"
+  done <<EOF
+$tui_mounts
+EOF
+  # What exists, and whether it is the container this plan describes.
+  have="$(docker inspect --format '{{.State.Running}} {{index .Config.Labels "qcr.plan"}}' "$name" 2>/dev/null || true)"
+  create=1
+  case "$have" in
+    "true $hash") create=0 ;;
+    "false $hash")
+      if docker start "$name" >/dev/null 2>&1; then create=0; else docker rm -f "$name" >/dev/null 2>&1 || true; fi
+      ;;
+    '') ;;
+    *)
+      say "the companion no longer matches this image or its mounts — recreating it"
+      docker rm -f "$name" >/dev/null 2>&1 || return 1
+      ;;
+  esac
+  if [ "$create" = 1 ]; then docker "$@" >/dev/null || return 1; fi
+  companion_name="$name"
+}
+
+# The TUI starts its companion first; --no-companion (or QCR_NO_COMPANION) skips
+# it, and so does a plan that cannot be had: the TUI then runs without one.
+companion=0
+if [ "$mode" = tui ]; then
+  companion=1
+  for a in "$@"; do
+    [ "$a" != --no-companion ] || companion=0
+  done
+  [ -z "${QCR_NO_COMPANION:-}" ] || companion=0
+fi
+tui_mounts=''
+tui_volumes=''
+tui_env=''
+if [ "$companion" = 1 ]; then
+  if ! ensure_companion; then
+    say "the companion could not be started — the TUI runs without it"
+    companion=0
+    set -- "$@" --no-companion
+  fi
+fi
+
 # Keep the user's arguments exactly as they are: the docker command is built
 # after them and rotated in front (no eval, no quoting).
 if [ "$drop" = 1 ]; then shift; fi
@@ -238,9 +372,6 @@ nuser=$#
 # -t only with a terminal on both ends, or docker refuses to start.
 flags='-i'
 if [ "$tty" = 1 ] && [ -t 0 ] && [ -t 1 ]; then flags='-it'; fi
-
-uid="$(id -u)"
-gid="$(id -g)"
 
 # ---- the repo -----------------------------------------------------------------
 
@@ -272,15 +403,6 @@ if common="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)" && [ -n "$c
 fi
 
 # ---- the GitHub token (D14: GITHUB_TOKEN, GH_TOKEN, gh; no App on a laptop) -----
-
-tokdir=''
-# shellcheck disable=SC2329 # run by the EXIT trap
-cleanup() {
-  [ -z "$tokdir" ] || rm -rf "$tokdir"
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 if [ "$split" = 1 ]; then
   token="${GITHUB_TOKEN:-}"
@@ -336,7 +458,9 @@ else
   # State and login. The state volume mounts over the image's world-writable
   # <root>/state, so a new volume starts writable by any uid.
   set -- "$@" --mount "type=volume,src=qcr-state,dst=/opt/qcr/state"
-  set -- "$@" -e QCR_STATE_HOME=/opt/qcr/state/home
+  # With a companion the state home is the host's own dir, which the companion
+  # mounts too (the plan names it), not the volume.
+  [ "$companion" = 1 ] || set -- "$@" -e QCR_STATE_HOME=/opt/qcr/state/home
   set -- "$@" --mount "type=volume,src=qcr-login,dst=/qcr-login,readonly"
 
   # The user profile dir, read-only, and ONLY it (D39). Not the install home.
@@ -348,8 +472,67 @@ else
     set -- "$@" -e QCR_CONFIG_HOME=/qcr-config
   fi
 
-  # The baked example is the config: a bare image has no config home.
-  set -- "$@" -e QCR_CONFIG=/opt/qcr/config.example.toml
+  # The baked example is the config: a bare image has no config home. The TUI
+  # alone reads the install's own config.toml when there is one (its [tui]
+  # target and ssh_host), the one file, read-only, never the config home.
+  cfgfile=''
+  if [ "$mode" = tui ]; then
+    cfgfile="${QCR_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/qcr/${QCR_INSTALL:-default}/config.toml}"
+    [ -f "$cfgfile" ] || cfgfile=''
+  fi
+  if [ -n "$cfgfile" ]; then
+    mountable "$cfgfile"
+    set -- "$@" --mount "type=bind,src=$cfgfile,dst=/qcr-config/config.toml,readonly"
+    set -- "$@" -e QCR_CONFIG=/qcr-config/config.toml
+  else
+    set -- "$@" -e QCR_CONFIG=/opt/qcr/config.example.toml
+  fi
+fi
+
+# ---- the TUI container (D35) --------------------------------------------------------
+
+if [ "$mode" = tui ]; then
+  set -- "$@" --label qcr.role=tui
+  # The ssh runner reaches the VM through the agent and the user's ssh config:
+  # this container alone gets them, read-only. The companion never does.
+  agent=''
+  if [ "$(uname -s)" = Darwin ]; then
+    # Docker Desktop relays the host agent at a fixed path inside its VM.
+    [ -z "${SSH_AUTH_SOCK:-}" ] || agent=/run/host-services/ssh-auth.sock
+  elif [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
+    agent="$SSH_AUTH_SOCK"
+    mountable "$agent"
+  fi
+  if [ -n "$agent" ]; then
+    set -- "$@" --mount "type=bind,src=$agent,dst=/run/qcr-ssh-agent"
+    set -- "$@" -e SSH_AUTH_SOCK=/run/qcr-ssh-agent
+  fi
+  for f in config known_hosts; do
+    if [ -f "$HOME/.ssh/$f" ]; then
+      mountable "$HOME/.ssh/$f"
+      set -- "$@" --mount "type=bind,src=$HOME/.ssh/$f,dst=/home/qcr/.ssh/$f,readonly"
+    fi
+  done
+fi
+if [ "$companion" = 1 ]; then
+  # The tmux socket volume and the host dirs the TUI shares with the companion,
+  # each at its own host path, so both sides resolve the same config.
+  set -- "$@" -e QCR_TUI_COMPANION=tmux-socket
+  while IFS= read -r v; do
+    [ -z "$v" ] || set -- "$@" --mount "type=volume,src=${v%%:*},dst=${v#*:}"
+  done <<EOF
+$tui_volumes
+EOF
+  while IFS= read -r p; do
+    [ -z "$p" ] || set -- "$@" --mount "type=bind,src=$p,dst=$p"
+  done <<EOF
+$tui_mounts
+EOF
+  while IFS= read -r e; do
+    [ -z "$e" ] || set -- "$@" -e "$e"
+  done <<EOF
+$tui_env
+EOF
 fi
 
 if [ "$mode" = cli ]; then

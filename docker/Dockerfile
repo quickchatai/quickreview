@@ -90,7 +90,7 @@ ENV DEBIAN_FRONTEND=noninteractive TZ=UTC LANG=C.UTF-8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq ripgrep openssh-client python3 tzdata \
-      'libevent-core-2.1-7*' libncurses6 \
+      'libevent-core-2.1-7*' libncurses6 libnss-wrapper \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=tmux-build /out/usr/local/bin/tmux /usr/local/bin/tmux
@@ -204,6 +204,11 @@ RUN install -d -m 1777 /opt/qcr/state /opt/qcr/state/ingress && chmod 0555 /opt/
 # the caller logs in as; the login mode then moves everything pi wrote into the
 # login group (docker/entrypoint.sh), and file modes keep it private.
 RUN install -d -m 1777 /home/qcr /home/qcr/.pi && install -d -m 0777 /home/qcr/.pi/agent
+
+# The shared tmux-socket volume (D35): the companion's tmux server listens in
+# it and the containerised TUI drives that server over it. Like the dirs above,
+# a new named volume takes this mode, so any uid can create the socket.
+RUN install -d -m 1777 /run/qcr-tmux
 ENV HOME=/home/qcr
 
 # A default for a bare `docker run`; the wrapper always passes --user. A per-call

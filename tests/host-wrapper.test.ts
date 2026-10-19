@@ -29,10 +29,12 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { IN_SANDBOX_ENV } from "../src/scanbox.js";
+import { companionPlan, renderPlan } from "../src/tui/companionplan.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const INSTALLER = join(root, "scripts", "install-wrapper.sh");
@@ -62,6 +64,20 @@ f="$dir/$(printf '%03d' "$n")"
 for a in "$@"; do printf '%s\\n' "$a"; done > "$f"
 case "$1" in
   pull) exit 0 ;;
+  inspect)
+    # the companion: absent, or "<running> <plan label>" as the test left it
+    [ -f "$FAKE_DIR/companion-state" ] || { echo "Error: No such object: $2" >&2; exit 1; }
+    case " $* " in *" --format "*) cat "$FAKE_DIR/companion-state"; echo ;; esac
+    exit 0
+    ;;
+  start)
+    [ -z "\${FAKE_START_FAIL-}" ] || exit 1
+    sed -i 's/^false/true/' "$FAKE_DIR/companion-state"
+    exit 0
+    ;;
+  stop) sed -i 's/^true/false/' "$FAKE_DIR/companion-state"; exit 0 ;;
+  rm) rm -f "$FAKE_DIR/companion-state"; exit 0 ;;
+  ps) printf '%s' "\${FAKE_TUI_PS-}"; exit 0 ;;
   manifest)
     case "$3" in
       *:latest) printf '%s' "\${FAKE_LATEST-same}" ;;
@@ -69,7 +85,23 @@ case "$1" in
     esac
     exit 0
     ;;
-  run) ;;
+  run)
+    case " $* " in
+      *" cli companion plan "*)
+        [ -z "\${FAKE_PLAN_FAIL-}" ] || exit 1
+        cat "$FAKE_DIR/plan.txt"
+        exit 0
+        ;;
+    esac
+    if [ "$2" = --detach ]; then
+      [ -z "\${FAKE_COMPANION_RUN_FAIL-}" ] || exit 1
+      for a in "$@"; do
+        case "$a" in qcr.plan=*) printf 'true %s' "\${a#qcr.plan=}" > "$FAKE_DIR/companion-state" ;; esac
+      done
+      echo fakecontainerid
+      exit 0
+    fi
+    ;;
   *) echo "fake docker: unexpected $*" >&2; exit 99 ;;
 esac
 for a in "$@"; do
@@ -109,7 +141,9 @@ interface Rig {
   repo: string;
   bin: string;
   wrapper: string;
-  calls: () => string[][];
+  /** The docker calls; the companion's own (the plan, inspect, start, rm, stop,
+   * ps and the detached run) only with `all`. */
+  calls: (all?: boolean) => string[][];
   token: (n: number) => { dirMode: string; fileMode: string; content: string; dir: string } | null;
   run: (
     args: string[],
@@ -154,6 +188,18 @@ function rig(): Rig {
   chmodSync(join(dir, "run"), 0o700);
   writeFileSync(join(bin, "docker"), FAKE_DOCKER, { mode: 0o755 });
   writeFileSync(join(bin, "gh"), FAKE_GH, { mode: 0o755 });
+  // what `qcr companion plan` prints for this HOME, from the real planner
+  writeFileSync(
+    join(dir, "plan.txt"),
+    renderPlan(
+      companionPlan({
+        QCR_HOST_HOME: home,
+        QCR_HOST_XDG_CONFIG_HOME: join(home, ".config"),
+        QCR_HOST_XDG_STATE_HOME: join(home, ".local", "state"),
+        QCR_IMAGE: IMAGE,
+      }),
+    ),
+  );
   git(repo, "init", "-q", "-b", "main");
   writeFileSync(join(repo, "a.txt"), "a\n");
   git(repo, "add", "-A");
@@ -173,12 +219,14 @@ function rig(): Rig {
     repo,
     bin,
     wrapper,
-    calls: () =>
-      callFiles().map((f) =>
-        readFileSync(join(dir, "calls", f), "utf8")
-          .trimEnd()
-          .split("\n"),
-      ),
+    calls: (all = false) =>
+      callFiles()
+        .map((f) =>
+          readFileSync(join(dir, "calls", f), "utf8")
+            .trimEnd()
+            .split("\n"),
+        )
+        .filter((c) => all || !companionCall(c)),
     token: (n) => {
       const f = join(dir, "calls", String(n).padStart(3, "0"));
       if (!existsSync(`${f}.token`)) return null;
@@ -201,6 +249,8 @@ function rig(): Rig {
           XDG_RUNTIME_DIR: join(dir, "run"),
           TMPDIR: dir,
           FAKE_DIR: dir,
+          // the companion has its own describe below
+          QCR_NO_COMPANION: "1",
           ...o.env,
         },
         stdio: ["ignore", "pipe", "pipe"],
@@ -209,6 +259,11 @@ function rig(): Rig {
     },
   };
 }
+
+/** A call the wrapper makes for the companion rather than for the verb. */
+const companionCall = (c: string[]): boolean =>
+  ["inspect", "start", "stop", "rm", "ps"].includes(c[0]!) ||
+  (c[0] === "run" && (c[1] === "--detach" || c.slice(-3).join(" ") === "cli companion plan"));
 
 const opt = (argv: string[], flag: string): string[] =>
   argv.flatMap((a, i) => (argv[i - 1] === flag ? [a] : []));
@@ -539,6 +594,7 @@ describe("the other verbs", () => {
           XDG_RUNTIME_DIR: join(r.dir, "run"),
           FAKE_DIR: r.dir,
           QCR_NO_UPDATE_NOTICE: "1",
+          QCR_NO_COMPANION: "1",
         },
       });
     };
@@ -572,6 +628,209 @@ describe("the other verbs", () => {
     expect(envs(status!)).toContain(`${IN_SANDBOX_ENV}=1`);
     r.run(["review"]);
     expect(envs(r.calls()[4]!).join(" ")).not.toContain(IN_SANDBOX_ENV);
+  });
+});
+
+// ---- the TUI: a companion on the host, a TUI container, no docker.sock (D35) ----------
+
+describe("the TUI and its companion (D35)", () => {
+  const NAME = "qcr-tui-companion";
+  const TMUX_VOLUME = `${NAME}-tmux`;
+  const withCompanion = { QCR_NO_COMPANION: "" };
+
+  /** A real unix socket where an ssh agent's would be; closed by the caller. */
+  async function agentSocket(dir: string): Promise<{ path: string; close: () => void }> {
+    const path = join(dir, "agent.sock");
+    const server = net.createServer();
+    await new Promise<void>((res) => server.listen(path, res));
+    return { path, close: () => server.close() };
+  }
+
+  const verbs = (r: Rig): string[] => r.calls(true).map((c) => c[0]!);
+  const tuiCall = (r: Rig): string[] => r.calls().find((c) => c.includes("qcr.role=tui"))!;
+  const companionRun = (r: Rig): string[] =>
+    r.calls(true).find((c) => c[0] === "run" && c[1] === "--detach")!;
+
+  function ssh(r: Rig): void {
+    mkdirSync(join(r.home, ".ssh"), { recursive: true });
+    writeFileSync(join(r.home, ".ssh", "config"), "Host vm\n  HostName 10.0.0.1\n");
+    writeFileSync(join(r.home, ".ssh", "known_hosts"), "10.0.0.1 ssh-ed25519 AAAA\n");
+  }
+
+  it("runs the companion first, on the host, from the image's plan, then the TUI, then stops it", async () => {
+    const r = rig();
+    ssh(r);
+    const agent = await agentSocket(r.dir);
+    try {
+      const out = r.run([], { env: { ...withCompanion, SSH_AUTH_SOCK: agent.path } });
+      expect(out.status, out.stderr).toBe(0);
+    } finally {
+      agent.close();
+    }
+    // plan, look, create, the TUI, stop
+    expect(verbs(r)).toEqual(["run", "inspect", "run", "run", "ps", "stop"]);
+    const [plan] = r.calls(true);
+    // the plan is the image's, run as the caller with no mounts at all
+    expect(plan!.slice(plan!.indexOf(IMAGE))).toEqual([IMAGE, "cli", "companion", "plan"]);
+    expect(mounts(plan!)).toEqual([]);
+    expect(opt(plan!, "--user")).toEqual([`${process.getuid!()}:${process.getgid!()}`]);
+    // the companion is the plan's run, labelled with its hash, detached
+    const companion = companionRun(r);
+    expect(companion.slice(0, 2)).toEqual(["run", "--detach"]);
+    expect(opt(companion, "--label")).toEqual([expect.stringMatching(/^qcr\.plan=[0-9a-f]{16}$/)]);
+    expect(companion).toContain(IMAGE);
+    expect(companion.at(-1)).toBe("companion");
+    // the tmux volume is how the TUI reaches it, and the stop comes last
+    expect(companion).toContain(`${TMUX_VOLUME}:/run/qcr-tmux:rw`);
+    expect(r.calls(true).at(-1)!.slice(0, 2)).toEqual(["stop", NAME]);
+  });
+
+  it("the TUI container gets the agent socket, ssh config, known_hosts and the tmux volume; the companion gets none of the ssh", async () => {
+    const r = rig();
+    ssh(r);
+    const agent = await agentSocket(r.dir);
+    try {
+      r.run(["tui", "--no-reload"], { env: { ...withCompanion, SSH_AUTH_SOCK: agent.path } });
+    } finally {
+      agent.close();
+    }
+    const tui = tuiCall(r);
+    expect(mounts(tui)).toEqual(
+      expect.arrayContaining([
+        `type=bind,src=${agent.path},dst=/run/qcr-ssh-agent`,
+        `type=bind,src=${r.home}/.ssh/config,dst=/home/qcr/.ssh/config,readonly`,
+        `type=bind,src=${r.home}/.ssh/known_hosts,dst=/home/qcr/.ssh/known_hosts,readonly`,
+        `type=volume,src=${TMUX_VOLUME},dst=/run/qcr-tmux`,
+      ]),
+    );
+    expect(envs(tui)).toEqual(
+      expect.arrayContaining(["SSH_AUTH_SOCK=/run/qcr-ssh-agent", "QCR_TUI_COMPANION=tmux-socket"]),
+    );
+    expect(tui.slice(tui.indexOf(IMAGE))).toEqual([IMAGE, "tui", "--no-reload"]);
+    // the host dirs the two share are mounted into the TUI at their own paths
+    const state = join(r.home, ".local", "state");
+    expect(mounts(tui)).toContain(`type=bind,src=${state}/qcr/home,dst=${state}/qcr/home`);
+    expect(mounts(tui)).toContain(
+      `type=bind,src=${state}/qcr-operator/default/companion/feed,dst=${state}/qcr-operator/default/companion/feed`,
+    );
+    expect(envs(tui)).toContain(`QCR_STATE_HOME=${state}/qcr/home`);
+    expect(envs(tui)).toContain(`QCR_HOST_HOME=${r.home}`);
+    // the companion: no agent, no ~/.ssh, nothing of ssh at all
+    const flat = companionRun(r).join("\n");
+    expect(flat).not.toMatch(/ssh|agent|known_hosts|SSH_AUTH_SOCK/i);
+    expect(flat).not.toContain(agent.path);
+  });
+
+  it("no container of any call mounts docker.sock, whatever the verb", async () => {
+    const r = rig();
+    ssh(r);
+    const agent = await agentSocket(r.dir);
+    try {
+      r.run([], { env: { ...withCompanion, SSH_AUTH_SOCK: agent.path } });
+      for (const v of [["review"], ["scan", "status"], ["login"], ["version"], ["open"]])
+        r.run(v, { env: { SSH_AUTH_SOCK: agent.path } });
+    } finally {
+      agent.close();
+    }
+    const all = r.calls(true);
+    expect(all.length).toBeGreaterThan(8);
+    for (const argv of all) {
+      expect(argv.join("\n")).not.toMatch(/docker\.sock|\/var\/run\/docker/);
+      expect(argv).not.toContain("--privileged");
+    }
+    // the agent reaches the TUI container and no other
+    const withAgent = all.filter((c) => c.join("\n").includes(agent.path));
+    expect(withAgent.map((c) => c.includes("qcr.role=tui"))).toEqual([true]);
+  });
+
+  it("adopts a running companion that matches the plan, and creates nothing", () => {
+    const r = rig();
+    const hash = /plan (\S+)/.exec(readFileSync(join(r.dir, "plan.txt"), "utf8"))![1]!;
+    writeFileSync(join(r.dir, "companion-state"), `true ${hash}`);
+    r.run([], { env: withCompanion });
+    expect(verbs(r)).toEqual(["run", "inspect", "run", "ps", "stop"]);
+  });
+
+  it("starts a stopped companion that matches", () => {
+    const r = rig();
+    const hash = /plan (\S+)/.exec(readFileSync(join(r.dir, "plan.txt"), "utf8"))![1]!;
+    writeFileSync(join(r.dir, "companion-state"), `false ${hash}`);
+    r.run([], { env: withCompanion });
+    expect(verbs(r)).toEqual(["run", "inspect", "start", "run", "ps", "stop"]);
+  });
+
+  it("recreates a companion whose plan drifted (a mount, a flag, a new image)", () => {
+    const r = rig();
+    writeFileSync(join(r.dir, "companion-state"), "true 0000000000000000");
+    const out = r.run([], { env: withCompanion });
+    expect(out.stderr).toContain("recreating");
+    expect(verbs(r)).toEqual(["run", "inspect", "rm", "run", "run", "ps", "stop"]);
+    expect(companionRun(r)).toContain(`${TMUX_VOLUME}:/run/qcr-tmux:rw`);
+  });
+
+  it("recreates a stopped companion that will not start", () => {
+    const r = rig();
+    const hash = /plan (\S+)/.exec(readFileSync(join(r.dir, "plan.txt"), "utf8"))![1]!;
+    writeFileSync(join(r.dir, "companion-state"), `false ${hash}`);
+    r.run([], { env: { ...withCompanion, FAKE_START_FAIL: "1" } });
+    expect(verbs(r)).toEqual(["run", "inspect", "start", "rm", "run", "run", "ps", "stop"]);
+  });
+
+  it("leaves the companion running while another TUI container still uses it", () => {
+    const r = rig();
+    r.run([], { env: { ...withCompanion, FAKE_TUI_PS: "abc123" } });
+    expect(verbs(r)).not.toContain("stop");
+  });
+
+  it("--no-companion and QCR_NO_COMPANION run the TUI alone: no plan, no volume", () => {
+    const r = rig();
+    r.run(["tui", "--no-companion"], { env: withCompanion });
+    r.run([]);
+    expect(verbs(r)).toEqual(["run", "run"]);
+    for (const argv of r.calls(true)) {
+      expect(mounts(argv).join("\n")).not.toContain(TMUX_VOLUME);
+      expect(envs(argv)).not.toContain("QCR_TUI_COMPANION=tmux-socket");
+    }
+    // the TUI keeps its own state volume as the state home
+    expect(envs(r.calls(true)[1]!)).toContain("QCR_STATE_HOME=/opt/qcr/state/home");
+  });
+
+  it.each([
+    ["the plan cannot be had", { FAKE_PLAN_FAIL: "1" }],
+    ["the companion will not run", { FAKE_COMPANION_RUN_FAIL: "1" }],
+  ])("when %s the TUI starts without a companion and says so", (_why, env) => {
+    const r = rig();
+    const out = r.run([], { env: { ...withCompanion, ...env } });
+    expect(out.stderr).toContain("the companion could not be started");
+    const tui = tuiCall(r);
+    expect(tui.slice(tui.indexOf(IMAGE))).toEqual([IMAGE, "tui", "--no-companion"]);
+    expect(envs(tui)).not.toContain("QCR_TUI_COMPANION=tmux-socket");
+    expect(verbs(r)).not.toContain("stop");
+  });
+
+  it("gives the TUI the install's own config, read-only, and no other verb the ssh files", () => {
+    const r = rig();
+    ssh(r);
+    const cfg = join(r.home, ".config", "qcr", "default", "config.toml");
+    mkdirSync(dirname(cfg), { recursive: true });
+    writeFileSync(cfg, "# the install's config\n");
+    r.run([]);
+    r.run(["review"]);
+    const [tui, review] = r.calls();
+    expect(mounts(tui!)).toContain(`type=bind,src=${cfg},dst=/qcr-config/config.toml,readonly`);
+    expect(envs(tui!)).toContain("QCR_CONFIG=/qcr-config/config.toml");
+    expect(envs(review!)).toContain("QCR_CONFIG=/opt/qcr/config.example.toml");
+    expect(mounts(review!).join("\n")).not.toContain(".ssh");
+    expect(mounts(review!).join("\n")).not.toContain("agent");
+  });
+
+  it("has no secrets, config home or ssh dir in what the companion is run with", () => {
+    const r = rig();
+    r.run([], { env: withCompanion });
+    const flat = companionRun(r).join("\n");
+    expect(flat).not.toMatch(/secrets|\.ssh|docker\.sock/);
+    // only the profiles and portrait dirs of the config home
+    expect(flat).toContain(`${r.home}/.config/qcr/profiles:/qcr-config/profiles`);
   });
 });
 

@@ -36,13 +36,64 @@ Every call is `docker run --rm -i --init` with `--cap-drop ALL` and
 | `/run/qcr-in`                                | a per-call dir holding the GitHub token file | read-write                                                            |
 
 Only the profiles directory of the config home is mounted, never the install
-home that holds `<install>/secrets/` (D39 amending R12). The gh config, the ssh
-agent and `docker.sock` are never mounted.
+home that holds `<install>/secrets/` (D39 amending R12). The gh config and
+`docker.sock` are never mounted, and the ssh agent only into the TUI container
+(below).
 
 A call that can reach a model or GitHub starts as root with only `CAP_SETUID`
 and `CAP_SETGID` and drops to your uid inside, so the model's tools run as
 another uid (D32, `docker/entrypoint.sh`). `version`, `help`, `install`, `tui`
 and `login` start as you.
+
+## The TUI and its companion (D35)
+
+`qcr` (and `qcr tui`) is two containers and no `docker.sock` anywhere. A TUI in
+a container cannot run `docker exec`, and handing it the socket would make it
+the host, so the wrapper does the companion's docker work itself, on the host,
+and the two containers meet in a named volume.
+
+1. **The companion, started by the wrapper.** The wrapper asks the image for the
+   run it should make (`qcr companion plan`, `src/tui/companionplan.ts`): the
+   mount list lives in one place, `CompanionLifecycle` in `src/tui/companion.ts`,
+   and the shell holds no copy of it. The plan carries a hash, which the
+   container carries as the label `qcr.plan`. The wrapper adopts a running
+   container whose label matches, starts a stopped one, and removes and
+   recreates one whose label differs (a new image after `qcr update`, a changed
+   mount, a new flag) or that will not start; the pi home and the login are on
+   volumes, so a recreate resumes. The companion is `qcr-tui-companion`, with its
+   own pi home volume `qcr-companion-pihome`, so it never adopts or recreates a
+   clone-route companion on the same machine. It has no ssh agent, no `~/.ssh`
+   and no `docker.sock` (rule 8), and no memory (the sidecar is opt-in on a
+   laptop). Its tmux server listens on `/run/qcr-tmux/companion.sock`, inside
+   the `qcr-tui-companion-tmux` volume.
+2. **The TUI container.** It mounts that volume and drives the companion with
+   `tmux -S <socket>` where the clone route runs `docker exec`
+   (`src/tui/tmuxsocket.ts`; a `sh -c` script goes through `tmux run-shell`, so
+   it runs inside the companion; anything else docker-shaped is refused by name,
+   and a command that could start a tmux server is held back until one answers,
+   so a server is never born in the TUI container). The channel dirs it shares
+   with the companion (feed, alerts, evidence, the inject dir, the config
+   mirror, the state home, the read-only token dir) are host dirs under the
+   operator state home, created by the wrapper as you and mounted into the TUI
+   at their own paths; the wrapper tells the TUI the host's `HOME` and XDG dirs
+   in `QCR_HOST_*`, so both sides derive the same paths.
+3. **The ssh runner's credentials go to the TUI container alone**, read-only:
+   `SSH_AUTH_SOCK` (the host agent socket, or Docker Desktop's relay of it on
+   macOS) at `/run/qcr-ssh-agent`, and `~/.ssh/config` and `~/.ssh/known_hosts`.
+   The image gives ssh a passwd entry for the caller's uid (nss_wrapper), which
+   it refuses to run without. An `Include`d file, an `IdentityFile` or a
+   `ControlPath` under `~/.ssh` is not mounted: use the agent and a
+   `ControlPath` outside `~/.ssh`, or `[tui] target = "local"`.
+4. **The TUI reads the install's own `config.toml`** (`$QCR_CONFIG`, else
+   `$XDG_CONFIG_HOME/qcr/<install>/config.toml`) when there is one, mounted
+   read-only as that single file; otherwise the baked example.
+5. **Quit stops the companion**, unless another TUI container is still running
+   (label `qcr.role=tui`). A crash leaves it running, and the next start adopts
+   it.
+
+`--no-companion` (or `QCR_NO_COMPANION`) runs the TUI alone. A plan that cannot
+be had, or a companion that will not run, does the same, with one line saying
+so. The owner's dev TUI with hot reload (rule 11) stays on the clone route.
 
 ## The login
 
@@ -87,7 +138,8 @@ environment.
 
 ## Verbs
 
-- `qcr` opens the TUI (`tui` mode); `qcr tui [pr|overseer]` the same with arguments.
+- `qcr` opens the TUI (`tui` mode) and runs its companion (see "The TUI and its
+  companion"); `qcr tui [pr|overseer]` the same with arguments.
 - `qcr login [provider]` runs pi's own `/login` over the `qcr-login` volume
   (see "The login" below).
 - `qcr scan …` runs in the call's own container, which is the scan sandbox

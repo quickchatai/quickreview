@@ -39,6 +39,7 @@ companion→TUI action channel is wired into `src/tui/index.ts`.
 | ssh diagnosis and the one interactive connect | `src/tui/sshtriage.ts`, `src/tui/connect.ts` |
 | hot reload | `src/tui/reload.ts`, `scripts/dev-tui.sh` |
 | companion container lifecycle and pi argv | `src/tui/companion.ts` |
+| the containerised TUI's companion: the plan the wrapper runs, the tmux-socket runner | `src/tui/companionplan.ts`, `src/tui/tmuxsocket.ts` |
 | the companion image | the release image: `docker/Dockerfile`, and its `companion` mode in `docker/entrypoint.sh` (the agent set and health watcher in `docker/companion/`) |
 | TUI → companion ambient files | `src/tui/feed.ts` |
 | companion → TUI alerts (and the status.json-sourced pi-auth / memory alerts) | `src/tui/alerts.ts` |
@@ -409,11 +410,27 @@ tokens and the pi home live on the `pihome` named volume, so the next start is
 a resume. A TUI crash leaves the container running and the next start adopts
 it. A second concurrent TUI attaches to the same container — `ensureUp()` and
 `spawnPi()` are both idempotent. `src/cli.ts` `cmdCompanion` exposes
-`up|down|status|rebuild`; `rebuild` exists because the image is otherwise
+`up|down|status|rebuild|plan`; `rebuild` exists because the image is otherwise
 built only when missing, so a Dockerfile, entrypoint, extension or prompt change
 would never reach a machine that already has one (D20: the companion runs the
 image's code, so there is no hot reload for it) (the pihome volume is untouched, so the
 login and the conversation survive).
+
+**Two ways to reach the container's tmux** (`CompanionMode`). `docker` is the
+clone route above: `docker exec <container> tmux …`. `tmux-socket` is the
+containerised TUI (D35): the companion's tmux server listens on a socket in a
+named volume (`QCR_TMUX_SOCKET`, `/run/qcr-tmux/<session>.sock`), and the TUI
+container, which has no `docker.sock`, mounts that volume and runs
+`tmux -S <socket>` (`src/tui/tmuxsocket.ts`, a `DockerRunner` that turns the
+same `exec` argv into local tmux calls). The host wrapper runs the container
+from the argv `qcr companion plan` prints (`src/tui/companionplan.ts`, the same
+`runArgv()` plus a plan hash as a label, so a drifted container is recreated),
+and `ensureUp()` in that mode only waits for the server; `gracefulStop()` does
+nothing, because the wrapper stops what it started. [`host-wrapper.md`](../host-wrapper.md)
+has the whole picture. `tests/tui-tmux-socket.test.ts` pins the lifecycle, the
+drift check over the volume, the runner (against a real tmux on a scratch
+socket) and the plan; `tests/tui-socket-mode.test.ts` drives a real `runTui`
+this way with a fake tmux and a fake remote.
 
 **Mounts.** `CONTAINER` in `companion.ts` fixes the in-container paths; the
 host side of each is configured under `[companion]`:

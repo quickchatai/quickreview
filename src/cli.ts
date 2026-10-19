@@ -1312,8 +1312,15 @@ export async function rebuildCompanion(
   );
 }
 
-/** `qcr companion up|down|status|rebuild` — thin over CompanionLifecycle. */
+/** `qcr companion up|down|status|rebuild|plan` — thin over CompanionLifecycle. */
 export async function cmdCompanion(sub: string | undefined): Promise<void> {
+  if (sub === "plan") {
+    // For the host wrapper: the docker run it makes for the containerised TUI's
+    // companion (D35). Needs no config and runs no docker.
+    const { companionPlan, renderPlan } = await import("./tui/companionplan.js");
+    process.stdout.write(renderPlan(companionPlan(process.env)));
+    return;
+  }
   const { CompanionLifecycle, companionStateWord, realDockerRunner } =
     await import("./tui/companion.js");
   const cfg = loadConfig().companion;
@@ -1372,7 +1379,7 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
       return;
     }
     default:
-      throw new Error("usage: qcr companion <up|down|status|rebuild>");
+      throw new Error("usage: qcr companion <up|down|status|rebuild|plan>");
   }
 }
 
@@ -1909,7 +1916,7 @@ export async function main(argv: string[]): Promise<void> {
       return runTui(rest);
     }
     case "companion":
-      if (rest.length !== 1) throw new Error("usage: qcr companion <up|down|status|rebuild>");
+      if (rest.length !== 1) throw new Error("usage: qcr companion <up|down|status|rebuild|plan>");
       return cmdCompanion(rest[0]);
     case "memory": {
       process.exitCode = await cmdMemory(rest);
