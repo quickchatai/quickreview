@@ -102,6 +102,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/host-wrapper.test.ts",
   "tests/improvements-e2e.test.ts",
   "tests/install-shell.test.ts",
+  "tests/ipc.test.ts",
   "tests/json-contract.test.ts",
   "tests/lens-prompt-parity.test.ts", // a real pi child per agent, against a loopback endpoint
   "tests/lens-yield.test.ts",

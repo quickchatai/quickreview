@@ -1300,6 +1300,9 @@ export interface SecretPathContext {
   env: Readonly<Record<string, string | undefined>>;
   /** Every secrets dir this install could be using, absolute, no trailing `/`. */
   dirs: readonly string[];
+  /** The daemon's IPC run dirs (`<state>/run`: the socket, the capability launch
+   * files), absolute, no trailing `/`. Nothing under one is readable. */
+  runDirs?: readonly string[];
 }
 
 /** The in-container secrets mount (deploy/ansible entrypoint `SECRETS`). */
@@ -1364,7 +1367,18 @@ export function defaultSecretPathContext(
     dirs: [...dirs]
       .filter((d) => d.startsWith("/"))
       .map((d) => posix.normalize(d).replace(/(.)\/+$/, "$1")),
+    runDirs: defaultRunDirs(env),
   };
+}
+
+/** The IPC run dirs this process can name: the directory of its own socket
+ * (a worker host's env) and the container's. Any other `<state>/run` is caught
+ * by the spelling rule `RUN_DIR_SPELLING`. */
+function defaultRunDirs(env: Readonly<Record<string, string | undefined>>): string[] {
+  const out = new Set<string>(["/opt/quickreview/state/run"]);
+  const sock = (env.QCR_IPC_SOCKET ?? "").trim();
+  if (sock.startsWith("/")) out.add(posix.dirname(sock));
+  return [...out].map((d) => posix.normalize(d).replace(/(.)\/+$/, "$1"));
 }
 
 function homeFor(env: Readonly<Record<string, string | undefined>>): string {
@@ -1697,6 +1711,31 @@ function judgeSecretWord(raw: string, ctx: SecretPathContext): BashCheck {
   return { allowed: true };
 }
 
+/** `<anything>/state/run`, the dir itself or its socket or launch files: the
+ * spelling that needs no context, for a path that is not in `runDirs`. */
+const RUN_DIR_SPELLING = /(?:^|\/)state\/+run(?:\/+(?:qcr\.sock|caps)(?:\/|$)|\/*$)/;
+
+function runBlock(w: string): BashCheck {
+  return block(
+    `exec policy: '${w}' is inside the daemon's IPC run dir — the worker socket and the capability launch files; a review session never reads them`,
+  );
+}
+
+/** The daemon's IPC run dir (`<state>/run`) is closed to reads, by spelling:
+ * the dir, everything under it, and a glob that can expand into it. */
+function judgeRunPath(w: string, abs: string, ctx: SecretPathContext): BashCheck {
+  const dirs = ctx.runDirs ?? [];
+  if (RUN_DIR_SPELLING.test(abs)) return runBlock(w);
+  for (const d of dirs) if (abs === d || abs.startsWith(`${d}/`)) return runBlock(w);
+  if (GLOB_CHARS.test(w)) {
+    const re = globToRegex(abs);
+    if (dirs.some((d) => re.test(d) || re.test(`${d}/qcr.sock`) || re.test(`${d}/caps`)))
+      return runBlock(w);
+    if (globPrefixHitsDir(abs, dirs)) return runBlock(w);
+  }
+  return { allowed: true };
+}
+
 /** One expanded, unquoted word judged as a path. */
 export function judgeSecretPath(w: string, ctx: SecretPathContext): BashCheck {
   if (w === "") return { allowed: true };
@@ -1725,7 +1764,7 @@ export function judgeSecretPath(w: string, ctx: SecretPathContext): BashCheck {
         return secretBlock(w, `is a glob that matches the App's secret file '${hit}'`);
     }
   }
-  return { allowed: true };
+  return judgeRunPath(w, abs, ctx);
 }
 
 /**
@@ -1747,8 +1786,13 @@ export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck 
 }
 
 /**
- * A process's environment, memory and command line — `/proc/<pid>/environ`,
- * `/mem` and `/cmdline`.
+ * A process's environment, memory, command line and open descriptors —
+ * `/proc/<pid>/environ`, `/mem`, `/cmdline`, `/fd/…` and `/fdinfo/…`.
+ *
+ * The descriptors are the IPC capability's door (D23): a worker host holds its
+ * command's capability as an inherited fd, and on the bot every process shares
+ * one uid, so `cat /proc/<pid>/fd/<n>` would hand another command's capability
+ * to the model. The same spelling rule closes it.
  *
  * Same family as the secret belt above, different payload: a review session's
  * parent process holds credentials in memory and argv (the engine's env, the
@@ -1771,12 +1815,14 @@ export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck 
  * (`p=/proc/self; cat $p/environ`) is not followed.
  */
 const PROC_PID = String.raw`(?:self|thread-self|\d+)`;
-const PROC_SECRET_RE = new RegExp(`^/proc/${PROC_PID}(?:/task/\\d+)?/(?:environ|mem|cmdline)$`);
+const PROC_SECRET_RE = new RegExp(
+  `^/proc/${PROC_PID}(?:/task/\\d+)?/(?:environ|mem|cmdline|fd(?:/.*)?|fdinfo(?:/.*)?)$`,
+);
 const PROC_ROOT_RE = new RegExp(`^/proc/${PROC_PID}(?:/task/\\d+)?/root(/.*)?$`);
 const PROC_GLOB_CANDIDATES: readonly string[] = (() => {
   const out: string[] = [];
   for (const pid of ["1", "4242", "self", "thread-self"]) {
-    for (const leaf of ["environ", "mem", "cmdline"]) {
+    for (const leaf of ["environ", "mem", "cmdline", "fd", "fd/3", "fdinfo", "fdinfo/3"]) {
       out.push(`/proc/${pid}/${leaf}`, `/proc/${pid}/task/1/${leaf}`);
     }
   }
@@ -1837,7 +1883,7 @@ function judgeProcWord(raw: string, cwd: string): BashCheck {
   return { allowed: true };
 }
 
-/** Refuse a command that names `/proc/<pid>/{environ,mem,cmdline}`. */
+/** Refuse a command that names `/proc/<pid>/{environ,mem,cmdline,fd,fdinfo}`. */
 export function checkProcSecrets(cmd: string, cwd: string = process.cwd()): BashCheck {
   for (const text of [procOpenSubstitutions(cmd), procDynamicToGlob(cmd)]) {
     let at = cwd;
@@ -2973,8 +3019,9 @@ export interface BashGuardConfig {
    * mount (`CONTAINER_SECRETS_DIR`) is always added. */
   secretDirs: readonly string[];
   /** HOME, XDG_CONFIG_HOME and QCR_INSTALL, the variables a secrets path is
-   * spelled with in a command. Unset falls back to the defaults the env
-   * shim's `defaultSecretPathContext` uses. */
+   * spelled with in a command, plus QCR_IPC_SOCKET, which locates the IPC
+   * run dir. Unset falls back to the
+   * defaults the env shim's `defaultSecretPathContext` uses. */
   pathEnv?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -2988,6 +3035,7 @@ function policyFromConfig(config: BashGuardConfig): GuardPolicy {
       dirs: [...dirs]
         .filter((d) => d.startsWith("/"))
         .map((d) => posix.normalize(d).replace(/(.)\/+$/, "$1")),
+      runDirs: defaultRunDirs(config.pathEnv ?? {}),
     },
   };
 }
@@ -3006,6 +3054,7 @@ export function bashGuardConfigFromEnv(
       HOME: env.HOME,
       XDG_CONFIG_HOME: env.XDG_CONFIG_HOME,
       QCR_INSTALL: env.QCR_INSTALL,
+      QCR_IPC_SOCKET: env.QCR_IPC_SOCKET,
     },
   };
 }

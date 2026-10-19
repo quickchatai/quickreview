@@ -102,6 +102,15 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       file: "src/memory/legacy-file.ts",
       why: "the READ-ONLY reader over the archived MEMORY.md that the import above consumes. Same driver, same reason.",
     },
+    // The worker-daemon IPC (P7.2a, D23): a neutral module that P7.2 (the daemon's post ops), P8.3 (the
+    // worker) and P8.5 (the supervisor) wire in. Delete each entry with the first production import.
+    ...["protocol.ts", "capability.ts", "server.ts", "client.ts", "launcher.ts"].map((f) => ({
+      file: `src/ipc/${f}`,
+      why:
+        "the worker-daemon IPC (P7.2a): line framing, the capability handoff, the socket server and client. " +
+        "Read only by tests/ipc.test.ts until P7.2 (post ops), P8.3 (botworker) and P8.5 (WorkerSupervisor) " +
+        "import it; launcher.ts is the pane-side entry point tmux runs for a takeover or debug pi.",
+    })),
   ];
 
   it(

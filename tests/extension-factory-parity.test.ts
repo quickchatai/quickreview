@@ -97,6 +97,7 @@ function bashGuardCase(): ParityCase<BashGuardConfig> {
     HOME: "/home/parity",
     XDG_CONFIG_HOME: undefined,
     QCR_INSTALL: "acme",
+    QCR_IPC_SOCKET: undefined,
     QCR_CONFIG: undefined,
     QCR_CONFIG_HOME: undefined,
     QCR_SECRETS_MOUNT: "/mnt/parity-secrets",
