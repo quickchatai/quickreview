@@ -273,6 +273,20 @@ function toolResults(file: string): ToolResult[] {
   return results;
 }
 
+// P7.12: the containers below run the shipped config, which names no [engine]
+// key: the SDK, engine lenses and the planned wave are what that config selects
+// on the review route, so the root start is checked on the default route.
+describe("the shipped config selects the SDK route the containers run", () => {
+  it("has no [engine] key and defaults to sdk, engine lenses and the planned wave", () => {
+    const text = readFileSync(join(root, "config.example.toml"), "utf8");
+    expect(text).not.toMatch(/^\[engine\]/m);
+    const cfg = parseConfig(text);
+    expect(cfg.engine.runtime).toBe("sdk");
+    expect(cfg.pi.lens_runtime).toBe("engine");
+    expect(cfg.pi.engine_wave).toBe(true);
+  });
+});
+
 describe.skipIf(!hasDocker || !hasDist)(
   "the SDK route under the separate tool uid (docker, no network, a faux model)",
   () => {

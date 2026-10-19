@@ -41,7 +41,8 @@ import {
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 vi.stubEnv("QCR_CONFIG", FIXTURE_CONFIG);
-const { benchConfig, judgeSessionSpec, runJudgeSession } = await import("../src/bench/runner.js");
+const { benchConfig, judgeSessionSpec, runFingerprint, runJudgeSession } =
+  await import("../src/bench/runner.js");
 const { readJudgeEvents } = await import("../src/bench/defectjudge.js");
 const { ecosystemFor } = await import("../src/ecosystem.js");
 
@@ -280,6 +281,108 @@ describe("a bench review round on the SDK with the engine's lens tool", () => {
     expect(r.error).toBeUndefined();
     // The pass's second request carries its bash call's result.
     expect(JSON.stringify(seen[2])).toContain("pin=[/dev/null][0]");
+  });
+});
+
+describe("a bench review round on the SDK with the engine's planned wave", () => {
+  it("starts the planned wave itself, from the case's tasks/ over the bench's agents, and the main session joins it", async () => {
+    const agentDir = agentDirWith(["pass-a", "pass-b"]);
+    const outDir = join(tmp, `out-${n++}`);
+    const seen: unknown[] = [];
+    const lensWave = (): ReturnType<typeof fauxAssistantMessage> =>
+      fauxAssistantMessage([fauxToolCall("lens_wave", {})], { stopReason: "toolUse" });
+    const runtime = benchSdkRuntime({
+      lens: "engine",
+      plannedWave: true,
+      makeHost: fauxHost(
+        [
+          () => {
+            mkdirSync(outDir, { recursive: true });
+            writeFileSync(join(outDir, "findings-record.json"), RECORD);
+            writeFileSync(join(outDir, "outcome.json"), OUTCOME);
+            return lensWave();
+          },
+          () => fauxAssistantMessage("pass found nothing"),
+          () => fauxAssistantMessage("pass found nothing"),
+          () => fauxAssistantMessage("done"),
+        ],
+        seen,
+      ),
+    });
+    expect((runtime as { engineLens?: { plannedWave: boolean } }).engineLens).toMatchObject({
+      plannedWave: true,
+    });
+    const cfg = benchConfig("");
+    cfg.models.conversation = "faux/m";
+    const r = await runRound(
+      {
+        root: mkRoot(tmp, `root-${n++}`),
+        agentDir,
+        agentScope: "user",
+        tree: mkTree(tmp, `tree-${n++}`),
+        files: FILES,
+        target: TARGET,
+        outDir,
+        cfg,
+        ecosystem: ecosystemFor("none"),
+        timeoutMs: 10 * 60_000,
+        prompts: {
+          system: "You are the reviewer.",
+          order: "ROUND ORDER: review the PR.",
+          plannedLenses: ["pass-a", "pass-b"],
+          passPlan: [],
+          taskFiles: ["01-pass-a.md", "02-pass-b.md"].map((f) => ({
+            path: join(outDir, "tasks", f),
+            text: `task ${f}\n`,
+          })),
+        },
+      },
+      runtime,
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.outcome).toBeDefined();
+    // Both rows ran as passes of the engine's wave; the session only joined.
+    const ledger = readFileSync(join(outDir, "lens-ledger.jsonl"), "utf8").trim().split("\n");
+    expect(ledger).toHaveLength(2);
+    expect(r.usage?.children).toBe(2);
+    expect(readFileSync(join(outDir, "round-order.md"), "utf8")).toContain("lens_wave");
+  });
+
+  it("the engine setting without the wave leaves the launch to the main session", () => {
+    expect(
+      (benchSdkRuntime({ lens: "engine", plannedWave: false }) as { engineLens?: unknown })
+        .engineLens,
+    ).toBeUndefined();
+    expect(
+      (benchSdkRuntime({ lens: "native", plannedWave: true }) as { engineLens?: unknown })
+        .engineLens,
+    ).toBeUndefined();
+  });
+});
+
+describe("the bench's default config (P7.12)", () => {
+  it("is the SDK runtime with the engine lens tool and the planned wave, and the fingerprint records it", () => {
+    const cfg = benchConfig("");
+    expect(cfg.engine.runtime).toBe("sdk");
+    expect(cfg.pi.lens_runtime).toBe("engine");
+    expect(cfg.pi.engine_wave).toBe(true);
+    const wave = cfg.pi.lens_runtime === "engine" && cfg.pi.engine_wave;
+    const sdk = runFingerprint(cfg, "", "", undefined, {
+      runtime: cfg.engine.runtime,
+      lens_runtime: cfg.pi.lens_runtime,
+      engine_wave: wave,
+    });
+    expect(sdk.engine).toEqual({ runtime: "sdk", lens_runtime: "engine", wave: true });
+    // a run without the wave, and a proc run, tell themselves apart from it
+    const noWave = runFingerprint(cfg, "", "", undefined, {
+      runtime: "sdk",
+      lens_runtime: "engine",
+      engine_wave: false,
+    });
+    expect(noWave.engine).toEqual({ runtime: "sdk", lens_runtime: "engine" });
+    expect(
+      runFingerprint(cfg, "", "", undefined, { runtime: "proc", lens_runtime: "native" }).engine,
+    ).toBeUndefined();
   });
 });
 

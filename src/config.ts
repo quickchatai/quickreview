@@ -1129,17 +1129,43 @@ export type EngineRuntimeKind = "proc" | "sdk";
 export const ENGINE_RUNTIME_KINDS: readonly EngineRuntimeKind[] = ["proc", "sdk"];
 
 /** Who launches the lenses (`[pi] lens_runtime`). `native` is pi's own
- * subagent glue, as today; `engine` is our lens tool and discovery wave. */
+ * subagent glue (the tmux bot's, and the proc runtime's); `engine` is our lens
+ * tool and discovery wave (the default, on the SDK runtime). */
 export type LensRuntimeKind = "native" | "engine";
 export const LENS_RUNTIME_KINDS: readonly LensRuntimeKind[] = ["native", "engine"];
 
 /** `[engine]`: which runtime hosts pi sessions on the review, bench and scan
- * routes. The daemon's tmux hosting does not read it. */
+ * routes. The daemon's tmux hosting does not read it (nor `[pi] lens_runtime`
+ * or `engine_wave`): the bot's sessions stay native tmux pi. */
 export interface EngineConfig {
   runtime: EngineRuntimeKind;
 }
 
-export const ENGINE_DEFAULTS: EngineConfig = { runtime: "proc" };
+export const ENGINE_DEFAULTS: EngineConfig = { runtime: "sdk" };
+
+/** The `[pi]` lens defaults that follow the runtime: the engine's lens tool and
+ * planned wave are the SDK runtime's, so a config that only sets
+ * `[engine] runtime = "proc"` gets pi's own lens glue, as before the SDK became
+ * the default, instead of a refusal. An explicit key always wins. */
+export function lensDefaultsFor(runtime: EngineRuntimeKind): {
+  lens_runtime: LensRuntimeKind;
+  engine_wave: boolean;
+} {
+  return runtime === "sdk"
+    ? { lens_runtime: "engine", engine_wave: true }
+    : { lens_runtime: "native", engine_wave: false };
+}
+
+/** `lensDefaultsFor`, with the wave following the lens runtime the config
+ * names: `lens_runtime = "native"` alone must not default the wave on (the wave
+ * needs the engine's lens tool). */
+function piLensDefaults(
+  runtime: EngineRuntimeKind,
+  pi: Record<string, unknown>,
+): { lens_runtime: LensRuntimeKind; engine_wave: boolean } {
+  const d = lensDefaultsFor(runtime);
+  return pi.lens_runtime === "native" ? { ...d, engine_wave: false } : d;
+}
 
 /** Refuse a value outside a closed set. A typo must not silently become the
  * default runtime. */
@@ -2050,14 +2076,15 @@ export interface Config {
      * fresh deadline, and a second timeout returns a failed result for that
      * pass alone. 0 ⇒ no deadline. */
     subagent_pass_deadline_min: number;
-    /** Who launches a round's lenses: `native` (pi's own subagent glue, the
-     * default) or `engine` (our lens tool and discovery wave, on an SDK
-     * session). Only the SDK routes read it. */
+    /** Who launches a round's lenses: `native` (pi's own subagent glue) or
+     * `engine` (our lens tool and discovery wave, on an SDK session; the
+     * default under `[engine] runtime = sdk`). Only the SDK routes read it; the
+     * tmux bot is always native. */
     lens_runtime: LensRuntimeKind;
     /** `lens_runtime = engine` only: the round's engine starts the planned
      * discovery wave itself at round start (rule 9) and the main session joins
-     * it through `lens_wave`. Off (the default): the main session launches the
-     * wave, with the same tools. */
+     * it through `lens_wave`. On by default with `lens_runtime = engine`; off:
+     * the main session launches the wave, with the same tools. */
     engine_wave: boolean;
   };
   openviking: OpenVikingConfig;
@@ -2768,6 +2795,7 @@ export function parseConfig(toml: string): Config {
   // The review preset shapes both [models] (reasoning level) and [review]
   // (the levers), so it is read before either is parsed.
   const preset = parsePreset((raw.review as Record<string, unknown> | undefined)?.preset);
+  const engine = parseEngine((raw.engine ?? {}) as Record<string, unknown>);
   const companion = resolveCompanionPaths({
     ...COMPANION_DEFAULTS,
     ...((raw.companion ?? {}) as Partial<CompanionConfig>),
@@ -2832,15 +2860,14 @@ export function parseConfig(toml: string): Config {
     ),
     caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
     models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
-    engine: parseEngine((raw.engine ?? {}) as Record<string, unknown>),
+    engine,
     pi: parsePiLensRuntime(
       parsePiPassDeadline({
         subagent_max_concurrency: 4,
         subagent_cache_group: 5,
         subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
         subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
-        lens_runtime: "native",
-        engine_wave: false,
+        ...piLensDefaults(engine.runtime, req(raw, "pi") as Record<string, unknown>),
         ...(req(raw, "pi") as Omit<
           Config["pi"],
           | "subagent_max_concurrency"

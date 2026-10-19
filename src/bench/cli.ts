@@ -8,9 +8,10 @@
 //             [--allow-customised]   run although the profile replaces shipped
 //                                    agents or prompts (refused otherwise)
 //             [--config a.b=v,c.d=w]   config levers for this run (runner.ts)
-//             [--runtime proc|sdk]     what hosts pi (default [engine] runtime). sdk runs each case's session
-//                                      in-process, in its own host process (src/bench/casehost.ts); the lens
-//                                      tool is [pi] lens_runtime (native | engine), set with --config
+//             [--runtime proc|sdk]     what hosts pi (default [engine] runtime, sdk). sdk runs each case's
+//                                      session in-process, in its own host process (src/bench/casehost.ts);
+//                                      the lens tool is [pi] lens_runtime (engine by default, with the planned
+//                                      wave of [pi] engine_wave; native on proc), set with --config
 //             [--phase all|init|case|finish]   arm.sh's one-container-per-case split;
 //             every case ends with a `result: <id> <status> retry= limited=` line
 //   results   --set <file> --out DIR     rebuild result files from case dirs
@@ -57,7 +58,7 @@
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):
 //   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
 //                 [--model openai-codex/gpt-6-sol:high] [--concurrency 3] [--resume] [--label L]
-//                 [--runtime proc|sdk]   what hosts the judge (default [engine] runtime); on sdk each
+//                 [--runtime proc|sdk]   what hosts the judge (default [engine] runtime, sdk); on sdk each
 //                                        judged case runs in its own host process
 //   defect-report --set <file> --defects <file> --out RUN_DIR [--label L]   rescore, no model calls
 //
@@ -221,9 +222,15 @@ function lazyRuntime(make: () => Promise<Runtime>): Runtime {
 
 /** The runtime a bench command hosts the review's main session on: undefined on
  * proc (each runner's own process runtime), the SDK runtime on sdk. */
-function benchRuntime(kind: EngineRuntimeKind, lens: LensRuntimeKind): Runtime | undefined {
+function benchRuntime(
+  kind: EngineRuntimeKind,
+  lens: LensRuntimeKind,
+  plannedWave: boolean,
+): Runtime | undefined {
   return selectRuntime(kind, "bench", () =>
-    lazyRuntime(() => import("../engine/benchsdk.js").then((m) => m.benchSdkRuntime({ lens }))),
+    lazyRuntime(() =>
+      import("../engine/benchsdk.js").then((m) => m.benchSdkRuntime({ lens, plannedWave })),
+    ),
   );
 }
 
@@ -424,11 +431,14 @@ async function main(): Promise<number> {
     const runtimeKind = benchRuntimeKind(f, base.cfg.engine.runtime);
     const lensKind = benchLensKind(base.cfg.pi.lens_runtime);
     checkLensNeedsSdk(lensKind, runtimeKind);
+    // The planned wave is the engine lens tool's: `[pi] engine_wave` is read only with it.
+    const wave = lensKind === "engine" && base.cfg.pi.engine_wave;
     const ctx = {
       ...base,
       fingerprint: runFingerprint(base.cfg, profile, overrides, bench.custom, {
         runtime: runtimeKind,
         lens_runtime: lensKind,
+        engine_wave: wave,
       }),
       ...(bench.readFile ? { readFile: bench.readFile } : {}),
     };
@@ -441,7 +451,7 @@ async function main(): Promise<number> {
     // own, so a crash or a frozen loop costs that case. arm.sh's `--phase case`
     // is already one container, hence one process, per case.
     const hosted = runtimeKind === "sdk" && phase === "all" && !caseHost;
-    const runtime = hosted ? undefined : benchRuntime(runtimeKind, lensKind);
+    const runtime = hosted ? undefined : benchRuntime(runtimeKind, lensKind, wave);
     // A case container always resumes: its run was set up (and, if fresh,
     // cleared) by the init phase, so a finished case it finds is this run's.
     const resume = f.has("--resume") || phase === "case";

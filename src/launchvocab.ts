@@ -52,16 +52,6 @@ export function assertNativeOrder(order: Pick<RoundOrder, "lens_runtime">): void
     );
 }
 
-/** The same binding at assembly: the bot refuses `[pi] lens_runtime = engine`
- * at boot rather than ignoring it. (The daemon may not import src/engine/, so
- * this is not engine/select.ts checkLensRuntime.) */
-export function assertNativeHost(lensRuntime: "native" | "engine"): void {
-  if (lensRuntime === "engine")
-    throw new Error(
-      "[pi] lens_runtime = engine is not available on the bot (tmux) route: set it to native (the default)",
-    );
-}
-
 /** The order field an engine route sets from its config: `lens_runtime` is
  * written only for `engine`, so a native order carries no key at all. */
 export function lensRuntimeOf(cfg: {

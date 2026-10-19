@@ -314,9 +314,12 @@ describe("selectReviewRuntime ([engine] runtime for qcr review)", () => {
     const base = readFileSync(join(REPO_ROOT, "tests", "fixtures", "config.toml"), "utf8");
     resetLiveSessions();
     try {
-      expect(selectReviewRuntime(parseConfig(base))).toBeUndefined();
+      expect(
+        selectReviewRuntime(parseConfig(`${base}\n[engine]\nruntime = "proc"\n`)),
+      ).toBeUndefined();
       expect(onSdkRoute()).toBe(false);
-      const rt = selectReviewRuntime(parseConfig(`${base}\n[engine]\nruntime = "sdk"\n`));
+      // sdk is the default: no [engine] keys selects the SDK runtime
+      const rt = selectReviewRuntime(parseConfig(base));
       expect(rt).toBeDefined();
       expect(onSdkRoute()).toBe(true);
     } finally {
@@ -329,16 +332,21 @@ describe("selectReviewRuntime ([engine] runtime for qcr review)", () => {
     const { resetLiveSessions } = await import("../src/engine/livesessions.js");
     const { parseConfig } = await import("../src/config.js");
     const base = readFileSync(join(REPO_ROOT, "tests", "fixtures", "config.toml"), "utf8");
-    const engine = (extra: string) =>
-      parseConfig(`${base}\n${extra}`.replace(/^\[pi\]\s*$/m, '[pi]\nlens_runtime = "engine"'));
-    expect(() => selectReviewRuntime(engine(""))).toThrow(/set \[engine\] runtime = sdk/);
+    const withPi = (lines: string, extra = ""): ReturnType<typeof parseConfig> =>
+      parseConfig(`${base}\n${extra}`.replace(/^\[pi\]\s*$/m, `[pi]\n${lines}`));
+    expect(() =>
+      selectReviewRuntime(withPi('lens_runtime = "engine"', '[engine]\nruntime = "proc"\n')),
+    ).toThrow(/set \[engine\] runtime = sdk/);
     try {
-      const rt = selectReviewRuntime(engine('[engine]\nruntime = "sdk"\n'));
-      expect(rt?.engineLens).toMatchObject({ plannedWave: false });
-      // the native default has no engine route
-      expect(
-        selectReviewRuntime(parseConfig(`${base}\n[engine]\nruntime = "sdk"\n`))?.engineLens,
-      ).toBeUndefined();
+      // the default: engine lenses and the planned wave on the SDK
+      expect(selectReviewRuntime(parseConfig(base))?.engineLens).toMatchObject({
+        plannedWave: true,
+      });
+      expect(selectReviewRuntime(withPi("engine_wave = false"))?.engineLens).toMatchObject({
+        plannedWave: false,
+      });
+      // lens_runtime = native on the SDK has no engine route
+      expect(selectReviewRuntime(withPi('lens_runtime = "native"'))?.engineLens).toBeUndefined();
     } finally {
       resetLiveSessions();
     }

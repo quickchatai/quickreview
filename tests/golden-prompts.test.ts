@@ -41,6 +41,13 @@ type PrefetchMeta = import("../src/bench/aacr.js").PrefetchMeta;
 type CasePrompts = import("../src/bench/runner.js").CasePrompts;
 const { prefetchCase, storeDir } = await import("../src/bench/prefetch.js");
 const { benchConfig, prepareTree, renderCasePrompts } = await import("../src/bench/runner.js");
+
+/** The fixtures pin the NATIVE route's bytes (`subagent` / `launch_plan`). The
+ * SDK engine is the config default, so the golden configs say native outright. */
+const pinNativeLens = (cfg: { pi: { lens_runtime: string; engine_wave: boolean } }): void => {
+  cfg.pi.lens_runtime = "native";
+  cfg.pi.engine_wave = false;
+};
 const { benchDelta } = await import("../src/bench/followup.js");
 const { ecosystemFor } = await import("../src/ecosystem.js");
 
@@ -149,6 +156,7 @@ describe("the first round a bench case runs (renderCasePrompts)", () => {
   ): Map<string, string> => {
     const c = SMOKE.cases[index]!;
     const cfg = benchConfig(over.profile ?? "");
+    pinNativeLens(cfg);
     Object.assign(cfg.review, over.review ?? {});
     return recordingOf(
       renderCasePrompts({
@@ -321,6 +329,7 @@ describe("the follow-up round a bench case runs (renderFollowUpPrompts)", () => 
   });
 
   const cfg = benchConfig("");
+  pinNativeLens(cfg);
   const files = [file("b.py", 10, 0, "added")];
   let meta: PrefetchMeta;
   let tree: string;
