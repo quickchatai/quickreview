@@ -343,6 +343,9 @@ describe("the scan container's argv", () => {
     expect(scanMounts(PLAN)).toEqual([
       { dest: "/reviewed-repo", source: "/host/app", mode: "ro" },
       { dest: "/qcr-state", source: "/host/state", mode: "rw" },
+      // The companion's commands/ (forwarded at its tier, rule 8) is covered:
+      // a scan's models can never drop a command there.
+      { dest: "/qcr-state/commands", source: "", tmpfs: true },
       { dest: "/pi-agent-src", source: "companion-pihome", subpath: "agent", mode: "ro" },
       { dest: "/pi-agent-src/sessions", source: "", tmpfs: true },
       { dest: "/home/companion/.pi", source: "", tmpfs: true, tmpfsMode: "1777" },
@@ -361,7 +364,7 @@ describe("the scan container's argv", () => {
   it("a worktree's git dir is mounted read-only where it sits, so git resolves it", () => {
     const m = scanMounts({ ...PLAN, gitDirs: ["/host/main/.git"] });
     expect(m[1]).toEqual({ dest: "/host/main/.git", source: "/host/main/.git", mode: "ro" });
-    expect(m).toHaveLength(8);
+    expect(m).toHaveLength(9);
   });
 
   it("runs the foreground driver in a removed-at-exit container, on the memory network", () => {
@@ -382,6 +385,8 @@ describe("the scan container's argv", () => {
       "type=bind,src=/host/app,dst=/reviewed-repo,readonly",
       "--mount",
       "type=bind,src=/host/state,dst=/qcr-state",
+      "--mount",
+      "type=tmpfs,dst=/qcr-state/commands",
       "--mount",
       "type=volume,src=companion-pihome,dst=/pi-agent-src,volume-subpath=agent,readonly",
       "--mount",

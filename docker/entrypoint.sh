@@ -638,14 +638,19 @@ share_login() {
 # (src/tui/remote.ts) and by the companion's ssh to the VM (rule 8); a missing
 # library is said, never fatal.
 tui_identity() {
-  getent passwd "$(id -u)" >/dev/null 2>&1 && return 0
-  local lib dir="$HOME/.qcr-nss"
+  local entry lib dir="$HOME/.qcr-nss"
+  # ssh reads ~/.ssh from the passwd entry's home, never from $HOME. An entry
+  # whose home IS this HOME needs nothing; a missing one, or the base image's
+  # own user at this uid (uid 1000 is node, home /home/node), is answered with
+  # one whose home is this HOME.
+  entry="$(getent passwd "$(id -u)" 2>/dev/null || true)"
+  [ -n "$entry" ] && [ "$(printf '%s' "$entry" | cut -d: -f6)" = "$HOME" ] && return 0
   lib="${QCR_NSS_WRAPPER_LIB:-$(find /usr/lib /lib -name 'libnss_wrapper.so*' 2>/dev/null | head -n 1)}"
   if [ ! -f "$lib" ] || ! mkdir -p "$dir" 2>/dev/null; then
-    say "WARNING: uid $(id -u) has no passwd entry and nss_wrapper is not usable - ssh to the VM will refuse to run"
+    say "WARNING: uid $(id -u) has no passwd entry at $HOME and nss_wrapper is not usable - ssh will not read the mounted ssh config"
     return 0
   fi
-  { cat /etc/passwd; printf 'qcr:x:%s:%s:qcr:%s:/bin/sh\n' "$(id -u)" "$(id -g)" "$HOME"; } >"$dir/passwd"
+  { awk -F: -v u="$(id -u)" '$3 != u' /etc/passwd; printf 'qcr:x:%s:%s:qcr:%s:/bin/sh\n' "$(id -u)" "$(id -g)" "$HOME"; } >"$dir/passwd"
   { cat /etc/group; printf 'qcr:x:%s:\n' "$(id -g)"; } >"$dir/group"
   export LD_PRELOAD="$lib" NSS_WRAPPER_PASSWD="$dir/passwd" NSS_WRAPPER_GROUP="$dir/group"
 }

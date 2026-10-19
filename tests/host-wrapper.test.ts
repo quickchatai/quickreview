@@ -789,6 +789,12 @@ describe("the TUI and its companion (D35)", () => {
     expect(bare.hash).not.toBe(
       companionPlan({ ...base, QCR_HOST_SSH_CONFIG: `${home}/.ssh/config` }).hash,
     );
+    // the agent's path moves with every login: the hash names that there is
+    // one, not where, so another shell's TUI adopts the running companion
+    const agentAt = (p: string): string =>
+      companionPlan({ ...base, QCR_HOST_SSH_AUTH_SOCK: p }).hash;
+    expect(agentAt("/run/user/1/a.sock")).toBe(agentAt("/tmp/ssh-x/agent.9"));
+    expect(agentAt("/run/user/1/a.sock")).not.toBe(bare.hash);
     // a relative or multi-line path is no path
     expect(
       companionPlan({ ...base, QCR_HOST_SSH_AUTH_SOCK: "agent.sock" }).run.join("\n"),

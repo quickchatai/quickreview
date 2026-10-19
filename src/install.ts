@@ -1001,6 +1001,12 @@ export function operatorStateHome(env: InstallEnv = process.env): string {
   );
 }
 
+/** The companion's `commands/` directory under the state home it mounts rw
+ * (root CLAUDE.md rule 8): the TUI forwards every file in it as a command of
+ * the companion's tier, so it is the companion's alone — every other container
+ * that mounts the state home (the scan sandbox) gets it covered. */
+export const COMPANION_COMMANDS_DIR = "commands";
+
 /** Where the host writes the companion's down-scoped, read-only GitHub token
  * as an env file (`src/tui/ghread.ts`). Mounted read-only into the
  * companion, and only this directory — never the secrets it was minted from. */

@@ -187,7 +187,15 @@ export function companionPlan(env: NodeJS.ProcessEnv): CompanionPlan {
     homes.github,
   ];
   const run = lc.runArgv();
-  const hash = createHash("sha256").update(run.join("\n")).digest("hex").slice(0, 16);
+  // The agent socket's path moves with every login, so the hash names that the
+  // companion has one, not where: a TUI started from another shell adopts the
+  // running companion. A dead socket fails `docker start`, and the wrapper
+  // recreates the container then.
+  const agent = lc.sshSources().agent;
+  const hashed = run.map((a) =>
+    agent !== undefined && a.startsWith(`${agent}:`) ? `<ssh-agent>${a.slice(agent.length)}` : a,
+  );
+  const hash = createHash("sha256").update(hashed.join("\n")).digest("hex").slice(0, 16);
   // After `run --detach`: the label is read back by the wrapper to tell a
   // current container from a drifted one.
   run.splice(2, 0, "--label", `qcr.plan=${hash}`);

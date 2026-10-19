@@ -462,7 +462,10 @@ describe("git argument boundaries in the shared checkout", () => {
     "scripts/deploy.sh rebuild",
     "scripts/deploy.sh releasex 1",
     "scripts/deploy.sh verify; scripts/deploy.sh sync",
-  ])("refuses every other deploy mode: %s", (cmd) =>
+    "scripts/deploy.sh\nrelease 1.4.0",
+    "scripts/deploy.sh \n verify",
+    "scripts/deploy.sh\r\nprovision",
+  ])("refuses every other deploy mode: %j", (cmd) =>
     expect(bashBlockReason(cmd), cmd).toMatch(/rule 8/),
   );
 });

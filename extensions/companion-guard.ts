@@ -68,8 +68,10 @@ export const BASH_RULES: BashRule[] = [
   {
     // Refused when RUN in a mode rule 8 does not grant; the granted modes
     // (`release`, `provision`, `verify`, optionally behind `--dry-run`) pass.
+    // Spaces and tabs only between the words: a newline ends the command, so
+    // `deploy.sh` on its own line is a bare call (deploy.sh's default mode).
     pattern:
-      /(^|[;&|\n(`{]|\$\(|-exec(dir)?\s)\s*(([A-Za-z_]\w*=\S*|sudo|env|exec|nohup|command|time|eval|xargs|bash|sh|zsh|dash|source|\.|timeout(\s+-\S+)*\s+\S+)(\s+-\S+)*\s+)*['"]?(\S*\/)?deploy\.sh\b(?!['"]?\s+(--dry-run\s+)?(release|provision|verify)(?![\w-]))/,
+      /(^|[;&|\n(`{]|\$\(|-exec(dir)?\s)\s*(([A-Za-z_]\w*=\S*|sudo|env|exec|nohup|command|time|eval|xargs|bash|sh|zsh|dash|source|\.|timeout(\s+-\S+)*\s+\S+)(\s+-\S+)*\s+)*['"]?(\S*\/)?deploy\.sh\b(?!['"]?[ \t]+(--dry-run[ \t]+)?(release|provision|verify)(?![\w-]))/,
     reason:
       "rule 8: the companion runs scripts/deploy.sh only as `release <version>`, `provision` or `verify` (each may take --dry-run first), following the deploying skill: drain first, a version CI already built. Any other mode (sync, rebuild, a bare call) is the owner's.",
   },

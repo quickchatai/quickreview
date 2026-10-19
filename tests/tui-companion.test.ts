@@ -282,6 +282,38 @@ describe("CompanionLifecycle argv", () => {
     expect(withSsh.expectedMounts().get(SSH.agent)).toBe("/tmp/agent.sock");
   });
 
+  it("a container on another LIVE agent socket is not drift; a dead one is", () => {
+    const live = new Set(["/tmp/agent.sock", "/tmp/other-shell.sock"]);
+    const fs: CompanionFs = {
+      exists: (p) => live.has(p),
+      read: () => undefined,
+      mode: () => undefined,
+    };
+    const { runner } = fakeDocker([]);
+    const lc2 = new CompanionLifecycle(
+      CFG,
+      runner,
+      { ...HOST_ENV, SSH_AUTH_SOCK: "/tmp/agent.sock" },
+      noDirs,
+      fs,
+    );
+    const have = (agent: string | undefined): Map<string, string> => {
+      const m = new Map(lc2.expectedMounts());
+      if (agent === undefined) m.delete(SSH.agent);
+      else m.set(SSH.agent, agent);
+      return m;
+    };
+    expect(lc2.mountDrift(have("/tmp/agent.sock"))).toEqual([]);
+    // started from another shell: its agent is live, the companion keeps it
+    expect(lc2.mountDrift(have("/tmp/other-shell.sock"))).toEqual([]);
+    // the old agent is gone: recreate onto the live one
+    expect(lc2.mountDrift(have("/tmp/dead.sock"))).toEqual([
+      `${SSH.agent} points at /tmp/dead.sock, expected /tmp/agent.sock`,
+    ]);
+    // no agent yet: the container gains one
+    expect(lc2.mountDrift(have(undefined))).toEqual([`missing ${SSH.agent}`]);
+  });
+
   it("mounts only the ssh sources the host has: a dead agent path is no mount", () => {
     const fs: CompanionFs = {
       exists: (p) => p === "/host/.ssh/known_hosts",

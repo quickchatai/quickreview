@@ -805,9 +805,36 @@ describe("D35: the tmux socket and the TUI's identity", () => {
     expect(readFileSync(String(seen["group"]), "utf8")).toContain(`qcr:x:${process.getgid!()}:`);
   });
 
-  it("does nothing when the uid is already known, and says so when the library is missing", () => {
+  /** A getent that answers the caller's uid with an entry whose home is `home`. */
+  const knownUid = (r: Rig, name: string, home: string): void =>
+    put(
+      join(r.bin, "getent"),
+      `#!/bin/sh\nprintf '%s\\n' '${name}:x:${process.getuid!()}:${process.getgid!()}::${home}:/bin/bash'\n`,
+      0o755,
+    );
+
+  it("replaces the base image's own user at the uid, whose home is not this HOME", () => {
+    // uid 1000 is node in the release image, home /home/node: ssh would read
+    // ~/.ssh there and never see the config mounted under HOME
     const r = rig();
     seeIdentity(r);
+    knownUid(r, "node", "/home/node");
+    const lib = join(r.dir, "libnss_wrapper.so");
+    put(lib, "");
+    const seen = JSON.parse(run(r, ["tui"], { QCR_NSS_WRAPPER_LIB: lib }).stdout) as Record<
+      string,
+      unknown
+    >;
+    expect(seen["preload"]).toBe(lib);
+    const passwd = readFileSync(String(seen["passwd"]), "utf8").split("\n");
+    const mine = passwd.filter((l) => l.split(":")[2] === String(process.getuid!()));
+    expect(mine).toEqual([`qcr:x:${process.getuid!()}:${process.getgid!()}:qcr:${r.home}:/bin/sh`]);
+  });
+
+  it("does nothing when the uid is already known at this HOME, and says so when the library is missing", () => {
+    const r = rig();
+    seeIdentity(r);
+    knownUid(r, "qcr", r.home);
     const known = JSON.parse(run(r, ["tui"]).stdout) as Record<string, unknown>;
     expect(known["preload"]).toBeNull();
     unknownUid(r);

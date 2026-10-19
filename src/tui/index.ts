@@ -1280,7 +1280,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // The companion's commands/ (rule 8): under the state home it mounts rw,
     // where the seeded EOD sweep writes its receipt. Each file is one command
     // of the companion's tier, forwarded once down the operator route.
-    const companionCommandsDir = join(companion.hostHomes().state, "commands");
+    const { COMPANION_COMMANDS_DIR } = await import("../install.js");
+    const companionCommandsDir = join(companion.hostHomes().state, COMPANION_COMMANDS_DIR);
     const driver = buildTuiDriver(app, learning, metricsView, deployState);
     let tuiActBusy = false;
     chainOnPoll(app, (a) => {

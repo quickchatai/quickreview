@@ -1087,13 +1087,20 @@ export class CompanionLifecycle {
   mountDrift(actual: Map<string, string>): string[] {
     if (actual.size === 0) return [];
     const drift: string[] = [];
+    // An agent socket moves with every login and differs between shells: a
+    // container on another agent socket that is still live keeps its ssh, so
+    // a TUI started from another shell never recreates a running companion.
+    // A dead one is drift like any other.
+    const liveAgent = (dest: string, have: string | undefined): boolean =>
+      dest === SSH.agent && have !== undefined && this.fs.exists(have);
     for (const [dest, source] of this.expectedMounts()) {
       const have = actual.get(dest);
       if (have === undefined) drift.push(`missing ${dest}`);
-      else if (have !== source) drift.push(`${dest} points at ${have}, expected ${source}`);
+      else if (have !== source && !liveAgent(dest, have))
+        drift.push(`${dest} points at ${have}, expected ${source}`);
     }
-    for (const dest of actual.keys()) {
-      if (!this.expectedMounts().has(dest)) drift.push(`stale ${dest}`);
+    for (const [dest, have] of actual) {
+      if (!this.expectedMounts().has(dest) && !liveAgent(dest, have)) drift.push(`stale ${dest}`);
     }
     return drift;
   }
