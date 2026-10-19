@@ -1,0 +1,2 @@
+# Byte fixtures: the CRLF case must reach the harness as written, whatever core.autocrlf says.
+*.md -text

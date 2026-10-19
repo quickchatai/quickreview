@@ -1,0 +1,9 @@
+{
+  "about": "A keyed round's REQUEST_CHANGES with inline comments: extra keys dropped, a multi-line anchor, LEFT and RIGHT sides, and a body with non-ASCII text, quotes, backslashes and a code fence.",
+  "kind": "review",
+  "event": "REQUEST_CHANGES",
+  "round": 1,
+  "body": "body.md",
+  "comments": "comments.json",
+  "records": ["create_review"]
+}

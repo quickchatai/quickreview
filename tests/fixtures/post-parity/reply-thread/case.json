@@ -1,0 +1,9 @@
+{
+  "about": "A thread reply to a review comment, with non-ASCII text and a blank line.",
+  "kind": "reply",
+  "comment_id": 9001,
+  "round": null,
+  "body": "body.md",
+  "comments": null,
+  "records": ["create_review_comment_reply"]
+}

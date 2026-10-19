@@ -1,0 +1,8 @@
+{
+  "about": "A keyed approval whose body file has no trailing newline: the approve review is byte-equal on both routes (the trailing-newline difference needs a body that ends in one).",
+  "kind": "approval",
+  "round": 1,
+  "body": "body.md",
+  "comments": null,
+  "records": ["create_review", "remove_label", "delete_team_review_request"]
+}

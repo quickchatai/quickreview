@@ -1,0 +1,9 @@
+{
+  "about": "An unkeyed COMMENT review (no round) with no inline comments and a body with no trailing newline.",
+  "kind": "review",
+  "event": "COMMENT",
+  "round": null,
+  "body": "body.md",
+  "comments": null,
+  "records": ["create_review"]
+}
