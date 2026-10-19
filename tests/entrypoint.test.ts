@@ -605,7 +605,8 @@ console.log(JSON.stringify({
         toolGid: "1000",
         required: null,
       });
-      expect(seen["groups"]).toEqual([1000]);
+      // its gid, and the login group (P6.7) - nothing else
+      expect(seen["groups"]).toEqual([4747, 1000]);
       expect(seen["capAmb"]).toBe("00000000000000c0"); // CAP_SETGID (6) and CAP_SETUID (7)
       // the files it provisioned are reachable by the tool uid through the shared gid
       expect(statSync(join(r.home, ".pi/agent/settings.json")).mode & 0o060).toBe(0o060);
@@ -797,5 +798,124 @@ describe.skipIf(!hasDist)("the real cli, through the entrypoint (no model)", () 
     expect(payload.schema_version).toBe(1);
     expect(payload.ok).toBe(true);
     expect(payload.preview.branch).toBe("feat");
+  });
+});
+
+// The login volume outlives the uid that wrote it (P6.7): `qcr login` runs as
+// the caller, a review later runs as whichever uid the wrapper hands it. The
+// login mode leaves every entry in the fixed login group (4747) at 0660/2770,
+// and the cli mode keeps that group, so no uid change loses the OAuth login.
+describe("the login volume is shared through a fixed group", () => {
+  const GROUP = 4747;
+  const ls = (path: string): string[] => ["sh", "-c", `stat -c '%u:%g:%a' ${path}`];
+
+  /** A rig whose pi home is the login volume: a new volume copies the image's
+   * agent dir, which the Dockerfile makes 0777 so any uid can log in. */
+  function loginRig(): { r: Rig; script: string; agent: string } {
+    const r = nsRig();
+    for (const d of [r.app, r.home, join(r.app, "state")]) chmodSync(d, 0o1777);
+    const agent = join(r.home, ".pi/agent");
+    mkdirSync(agent, { recursive: true });
+    for (const d of [join(r.home, ".pi"), agent]) chmodSync(d, 0o777);
+    // what pi does on a login: a 0600 credential file, and a subdirectory
+    put(
+      join(r.app, "dist/src/scanbox.js"),
+      `export const loginInPi = () => ["sh", "-c",
+  "umask 077; echo '{\\"openai-codex\\":{\\"type\\":\\"oauth\\",\\"by\\":'$(id -u)'}}' > $HOME/.pi/agent/auth.json; mkdir -p $HOME/.pi/agent/sessions; echo s > $HOME/.pi/agent/sessions/one"];\n`,
+    );
+    return { r, script: nsEntrypoint(r), agent };
+  }
+
+  /** Run `argv` inside the namespace as uid:gid with the login group (or none). */
+  const as = (
+    uid: number,
+    argv: string[],
+    groups: string = String(GROUP),
+    cwd?: string,
+  ): { status: number | null; stdout: string; stderr: string } => {
+    const o = spawnSync(
+      NS[0]!,
+      [
+        ...NS.slice(1),
+        "setpriv",
+        `--reuid=${uid}`,
+        `--regid=${uid}`,
+        groups ? `--groups=${groups}` : "--clear-groups",
+        ...argv,
+      ],
+      { encoding: "utf8", timeout: 30_000, cwd },
+    );
+    return { status: o.status, stdout: o.stdout, stderr: o.stderr };
+  };
+
+  /** `qcr login` under `uid`, in the login group, as the wrapper starts it. */
+  const loginAs = (uid: number, rig: { r: Rig; script: string }): void => {
+    const { r, script } = rig;
+    const env = ["env", `HOME=${r.home}`, `PATH=${r.env["PATH"]}`, `QCR_APP_ROOT=${r.app}`];
+    const o = as(
+      uid,
+      [...env, `QCR_PI_GLOBAL_ROOT=${r.globalRoot}`, script, "login"],
+      String(GROUP),
+      r.dir,
+    );
+    expect(o.status, o.stderr).toBe(0);
+  };
+
+  it.skipIf(!hasNs)(
+    "a login under uid A is readable by a run under uid B, and re-loginable by uid C",
+    () => {
+      const rg = loginRig();
+      const auth = join(rg.agent, "auth.json");
+      // uid A logs in: pi writes 0600, owned by A, in A's own group
+      loginAs(1000, rg);
+      expect(as(1000, ls(auth)).stdout.trim()).toBe(`1000:${GROUP}:660`);
+      expect(as(1000, ls(join(rg.agent, "sessions"))).stdout.trim()).toBe(`1000:${GROUP}:2770`);
+      expect(as(1000, ls(join(rg.agent, "sessions/one"))).stdout.trim()).toBe(`1000:${GROUP}:660`);
+      // a run under uid B, which holds the login group, reads it
+      const read = as(1001, ["cat", auth]);
+      expect(read.status, read.stderr).toBe(0);
+      expect(read.stdout).toContain("openai-codex");
+      // without the group nothing reads it: the tools' uid, any other uid
+      expect(as(1001, ["cat", auth], "").status).not.toBe(0);
+      expect(as(1002, ["cat", auth], "").status).not.toBe(0);
+      // uid C logs in again over A's files: the volume survives a uid change
+      loginAs(1002, rg);
+      expect(as(1002, ls(auth)).stdout.trim()).toBe(`1000:${GROUP}:660`);
+      expect(as(1001, ["cat", auth]).stdout).toContain('"by":1002');
+    },
+  );
+
+  it.skipIf(!hasNs)(
+    "the cli mode, started as root and dropped to uid B, keeps the login group",
+    () => {
+      const rg = loginRig();
+      loginAs(1000, rg);
+      put(
+        join(rg.r.app, "dist/src/cli.js"),
+        `import { readFileSync } from "node:fs";
+console.log(JSON.stringify({ uid: process.getuid(), groups: process.getgroups(),
+  auth: readFileSync(process.env.HOME + "/.pi/agent/auth.json", "utf8").length > 0 }));\n`,
+      );
+      const out = spawnSync(NS[0]!, [...NS.slice(1), rg.script, "review"], {
+        cwd: rg.r.dir,
+        env: { ...rg.r.env, QCR_RUN_UID: "1001", QCR_RUN_GID: "1001" },
+        encoding: "utf8",
+        timeout: 30_000,
+      });
+      expect(out.status, out.stderr).toBe(0);
+      const seen = JSON.parse(out.stdout) as { uid: number; groups: number[]; auth: boolean };
+      expect(seen.uid).toBe(1001);
+      expect(seen.groups).toContain(GROUP);
+      expect(seen.auth).toBe(true);
+    },
+  );
+
+  it("a login group that is not a non-zero number is refused at boot", () => {
+    const text = read("docker/entrypoint.sh");
+    expect(text).toContain('LOGIN_GID="${QCR_LOGIN_GID:-4747}"');
+    const r = rig();
+    const out = run(r, ["login"], { QCR_LOGIN_GID: "login" });
+    expect(out.status).not.toBe(0);
+    expect(out.stderr).toContain("QCR_LOGIN_GID");
   });
 });

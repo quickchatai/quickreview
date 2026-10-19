@@ -50,6 +50,14 @@
 # not separated. pi holds its own OAuth token as the tools' uid, which no
 # split hides from the tools it runs; the split protects the GitHub token.
 #
+# The login volume outlives every uid (P6.7). `login` runs as the caller and
+# leaves every entry of pi's agent dir in the fixed login group (QCR_LOGIN_GID,
+# default 4747) at 0660/2770 when pi exits; the wrapper gives every call that
+# mounts the volume that group (--group-add), and the cli mode keeps it across
+# its uid drop (setpriv --groups). A review under another uid reads the login
+# through the group; the model's tools, which clear their groups, do not; and
+# a later login under yet another uid can still rewrite it.
+#
 # The daemon is the live bot and keeps the guard, the `examples/subagent`
 # check and the reviewer context stub it has always had
 # (docker/daemon/entrypoint.sh, deploy/ansible/templates/entrypoint.sh.j2),
@@ -73,6 +81,10 @@ die() {
 }
 
 # ---- mode ---------------------------------------------------------------------
+
+# The group that owns the login volume's files (see the header).
+LOGIN_GID="${QCR_LOGIN_GID:-4747}"
+[[ "$LOGIN_GID" =~ ^[1-9][0-9]*$ ]] || die "QCR_LOGIN_GID must be a non-zero numeric group id ($LOGIN_GID)"
 
 mode=cli
 if [ "$#" -gt 0 ]; then
@@ -116,7 +128,7 @@ isolate_tools() {
   [ "$run_uid" != "$tool_uid" ] || die "the tool uid must differ from the run uid ($run_uid)"
   command -v setpriv >/dev/null || die "setpriv (util-linux) is needed for the tool uid split"
   export QCR_TOOLS_ISOLATED=1 QCR_TOOL_UID="$tool_uid" QCR_TOOL_GID="$run_gid"
-  exec setpriv --reuid="$run_uid" --regid="$run_gid" --clear-groups \
+  exec setpriv --reuid="$run_uid" --regid="$run_gid" --groups="$LOGIN_GID" \
     --inh-caps=+setuid,+setgid --ambient-caps=+setuid,+setgid \
     -- "${BASH_SOURCE[0]}" cli "$@"
 }
@@ -521,7 +533,24 @@ mode_login() {
     const { loginInPi } = await import(process.argv[1] + "/dist/src/scanbox.js");
     process.stdout.write(loginInPi(process.argv[2] || undefined)[2]);
   ' "$APP" "${1:-}")" || die "login: could not build the pi login command"
-  exec sh -c "$script"
+  # Not exec: the login is shared with the login group once pi has written it,
+  # however the session ended.
+  local rc=0
+  sh -c "$script" || rc=$?
+  share_login
+  exit "$rc"
+}
+
+# Leave pi's agent dir (the login volume) readable by a later run under any
+# uid, and writable by a later login under any uid: the login group, files
+# 0660, directories 2770. Best effort per entry - what another uid wrote in an
+# earlier login was shared by that login already, and this uid may not own it.
+share_login() {
+  local dir="$HOME/.pi/agent"
+  [ -d "$dir" ] || return 0
+  find "$dir" -mindepth 1 ! -group "$LOGIN_GID" -exec chgrp -h "$LOGIN_GID" {} + 2>/dev/null || true
+  find "$dir" -mindepth 1 -type d -exec chmod 2770 {} + 2>/dev/null || true
+  find "$dir" -mindepth 1 -type f -exec chmod 0660 {} + 2>/dev/null || true
 }
 
 # ---- dispatch -----------------------------------------------------------------

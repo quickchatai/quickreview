@@ -182,6 +182,12 @@ RUN install -d -m 1777 /opt/qcr/state && chmod 0555 /opt/qcr/docker/entrypoint.s
 RUN install -d -m 1777 /home/qcr
 ENV HOME=/home/qcr
 
+# pi's agent dir, which `qcr login` mounts the login volume over (P6.7). A new
+# volume starts as this directory is, so it must be writable by whatever uid
+# the caller logs in as; the login mode then moves everything pi wrote into the
+# login group (docker/entrypoint.sh), and file modes keep it private.
+RUN install -d -m 1777 /home/qcr/.pi && install -d -m 0777 /home/qcr/.pi/agent
+
 # A default for a bare `docker run`; the wrapper always passes --user. A per-call
 # run that reaches a model starts as root instead (--user 0:0 --cap-drop ALL
 # --cap-add SETUID --cap-add SETGID): the entrypoint drops to QCR_RUN_UID and
