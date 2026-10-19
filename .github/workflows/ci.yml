@@ -1,10 +1,12 @@
-# Public CI for the quickreviewd snapshot. Rides the assembled tree;
-# harmless in the private repo, which has no GitHub remote (local git only).
+# CI for qcr. Runs wherever this tree is pushed to GitHub: the private repo
+# and the public snapshot alike.
 #
-# Deliberately minimal and offline-true: no secrets, no external services —
-# the suite mocks all I/O, and the publishability lint
+# Deliberately minimal and offline-true: no secrets, no external services, no
+# model. The suite mocks all I/O, and the publishability lint
 # (tests/publishability.test.ts, part of `npm test`) re-verifies on every
-# push that no private token entered the tree.
+# push that no private token entered the tree. The `image` job builds the
+# release image (docker/Dockerfile) and smokes it with no model either
+# (.github/ci/image-smoke.sh); it pushes nothing, and release.yml owns that.
 name: CI
 
 on:
@@ -71,3 +73,20 @@ jobs:
       - name: pi canaries (required when the pi dependencies change)
         if: steps.pi.outputs.changed == 'true'
         run: timeout 300 npm run canary:pi
+
+  # The release image, built and run once with no model: version, the schema
+  # versions, review --preview on a fixture repo, the host wrapper installed
+  # into a temp dir, and the runner's kernel.yama.ptrace_scope in the summary.
+  # amd64 only (the runner's own arch); the per-arch smoke is the release
+  # workflow's. BuildKit is named because docker/Dockerfile.dockerignore (the
+  # release context's allowlist) is only read by it.
+  image:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILDKIT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the release image
+        run: docker build -f docker/Dockerfile --build-arg "BUILD_SHA=${GITHUB_SHA}" -t qcr-ci:smoke .
+      - name: offline smoke
+        run: .github/ci/image-smoke.sh qcr-ci:smoke
