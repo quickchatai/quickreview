@@ -109,6 +109,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/levers.test.ts",
   "tests/live-control.test.ts", // the TUI's real write and probe scripts under sh
   "tests/localreview-readonly.test.ts",
+  "tests/loginrefresh.test.ts", // flock helper processes and a racing writer process
   "tests/memory-image.test.ts",
   "tests/onboard-llmauth.test.ts",
   "tests/onboard-streamrunner.test.ts",

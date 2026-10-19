@@ -5,6 +5,7 @@ import { asyncCommandEffect, commandEffectKey } from "./commandeffects.js";
 // daemon` runs this; createDaemon() alone (src/daemon.ts) stays the
 // stub-wired, test-friendly core.
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   fsSecretReader,
@@ -28,6 +29,7 @@ import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js
 import { CaseWriter } from "./cases.js";
 import { Archiver } from "./archive/archiver.js";
 import { piGlobalSessionsDir } from "./archive/piglobal.js";
+import { LoginRefreshSupervisor } from "./loginrefresh/supervisor.js";
 import { pendingArchiveStatus } from "./archive/status.js";
 import { Learner, learnerKnobsOf } from "./learner/learner.js";
 import { renderNoPacketSection } from "./learner/packet.js";
@@ -959,6 +961,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // Timer-armed, never awaited; its block rides inside the heartbeat's
   // `openviking` entry.
   let reembed: ReembedDriver | null = null;
+  // The bot login's single refresher (src/loginrefresh/, P8.22), spawned by
+  // path so this process imports neither pi nor src/engine/. Only built when
+  // `[login_refresh] enabled`.
+  let loginRefresh: LoginRefreshSupervisor | null = null;
   // The webhook-URL self-heal. Only ever constructed when [ingress]
   // shape = "tunnel-file".
   let webhookHeal: WebhookHealer | null = null;
@@ -1150,6 +1156,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // onStart builds it the mode is known and nothing else: `unknown`, a
     // null backlog, never 0.
     archiveStatus: () => (archiver ? archiver.status() : pendingArchiveStatus(cfg.archive.mode)),
+    // The login refresher's block — a cached synchronous read; absent when the
+    // refresher is not configured.
+    loginRefreshStatus: () => loginRefresh?.status(),
     // Whether memory works, beside whether the server is up — and what memory
     // still owes the [feedback] ledger.
     memoryStatus: (): MemoryStatus => {
@@ -1680,6 +1689,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         log,
       });
       archiver.start();
+      if (cfg.login_refresh.enabled) {
+        loginRefresh = new LoginRefreshSupervisor({
+          repoRoot: root,
+          agentDir: process.env["PI_CODING_AGENT_DIR"]?.trim() || join(homedir(), ".pi", "agent"),
+          marginMin: cfg.login_refresh.margin_min,
+          log,
+          // One anomaly per failure episode, through the one durable funnel.
+          raiseAnomaly: (detail) => d.store.logAnomaly("login_refresh_failed", null, null, detail),
+        });
+        loginRefresh.start();
+      }
       // A reopened PR's archive comes back before its session is born:
       // both birth paths await this, bounded, and never refuse the birth.
       const archiveRef = archiver;
@@ -2089,6 +2109,14 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       caseWriter?.stop();
       learner?.stop();
       archiver?.stop();
+      if (loginRefresh) {
+        try {
+          await loginRefresh.stop();
+        } catch (err) {
+          log("login refresh: shutdown failed", err);
+        }
+        loginRefresh = null;
+      }
       // The lesson selections in flight. A shadow one is cut now and records
       // nothing (`stop`): its budget — `shadow_budget_ms`, up to 20 s — does
       // not fit docker's 10 s stop grace beside the server's own 5 s, and a

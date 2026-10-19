@@ -181,6 +181,9 @@ RUN ! command -v claude
 # setpriv (util-linux): the engine starts pi through it, as another uid with no
 # capabilities, so the model's tools cannot read the token-holding process (D32).
 RUN setpriv --version >/dev/null
+# flock (util-linux): the login refresher's single-instance lock and the login
+# mode's test for whether one is running (src/loginrefresh/lock.ts, P8.22).
+RUN flock --version >/dev/null
 
 # Root-owned, world-readable, writable by no runtime uid. The stub is 0444 on
 # its own account: it is a policy surface, not data.

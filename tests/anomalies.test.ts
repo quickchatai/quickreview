@@ -64,6 +64,7 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
         "overdue",
         "pass_plan_mismatch",
         "pi_auth_expired",
+        "login_refresh_failed",
         "policy_surface_modified",
         "review_failed_loud",
         "round_stranded",

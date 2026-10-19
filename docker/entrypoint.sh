@@ -552,12 +552,65 @@ mode_login() {
     const { loginInPi } = await import(process.argv[1] + "/dist/src/scanbox.js");
     process.stdout.write(loginInPi(process.argv[2] || undefined)[2]);
   ' "$APP" "${1:-}")" || die "login: could not build the pi login command"
+  # The bot's login has ONE refresher (src/loginrefresh/, P8.22); when this
+  # container runs it, it stands down for the login and takes over again after.
+  login_handover_begin
   # Not exec: the login is shared with the login group once pi has written it,
-  # however the session ended.
+  # however the session ended, and the refresher is released after that.
   local rc=0
   sh -c "$script" || rc=$?
   share_login
+  login_handover_end
   exit "$rc"
+}
+
+# The handover between pi's /login and the bot container's login refresher
+# (P8.22). The refresher holds an exclusive flock on <agent>/auth.json.lock for
+# its whole life: when that lock is held, a refresher is running, and a login
+# rewriting auth.json beside it would race its refresh. So the login asks it to
+# pause - writes <agent>/auth.json.pause - and waits for `"paused": true` in
+# its status file. A paused refresher neither refreshes nor writes, but KEEPS
+# the lock, so no second refresher can start during the login. login_handover_end
+# removes the pause file and the refresher re-reads the new login and resumes (a
+# pause file left behind is lifted by the refresher after 15 minutes). Where
+# nobody holds the lock (a laptop, the companion) nothing is done.
+LOGIN_PAUSE_FILE=""
+login_agent_dir() { printf '%s\n' "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"; }
+
+login_handover_begin() {
+  local dir lock status rc=0 waited=0 max
+  dir="$(login_agent_dir)"
+  lock="$dir/auth.json.lock"
+  status="$dir/loginrefresh.status.json"
+  [ -e "$lock" ] || return 0
+  if ! command -v flock >/dev/null 2>&1; then
+    say "WARNING: flock is not installed - cannot tell whether a login refresher holds $lock"
+    return 0
+  fi
+  flock -n -E 75 "$lock" true 2>/dev/null || rc=$?
+  [ "$rc" -eq 75 ] || return 0
+  LOGIN_PAUSE_FILE="$dir/auth.json.pause"
+  trap 'rm -f "$LOGIN_PAUSE_FILE"' EXIT
+  say "login: the bot's login refresher holds $lock - asking it to pause while you log in"
+  (umask 007 && : >"$LOGIN_PAUSE_FILE") || die "login: cannot write $LOGIN_PAUSE_FILE"
+  chgrp "$LOGIN_GID" "$LOGIN_PAUSE_FILE" 2>/dev/null || true
+  max="${QCR_LOGIN_PAUSE_WAIT_S:-60}"
+  # Half-second polls: the refresher looks at the pause file every 2 s.
+  while ! grep -q '"paused": true' "$status" 2>/dev/null; do
+    if [ "$waited" -ge $((max * 2)) ]; then
+      die "login: the refresher did not pause within ${max}s ($status) - is the daemon running?"
+    fi
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  say "login: the refresher is paused (it keeps the lock) - /login is yours"
+}
+
+login_handover_end() {
+  [ -n "$LOGIN_PAUSE_FILE" ] || return 0
+  rm -f "$LOGIN_PAUSE_FILE"
+  LOGIN_PAUSE_FILE=""
+  say "login: released - the refresher re-reads the login and resumes"
 }
 
 # Leave pi's agent dir (the login volume) readable by a later run under any

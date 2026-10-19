@@ -166,13 +166,15 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       // `bench/cli.ts` because the qcr-bench sandbox image's entrypoint
       // (bench/aacr/in-container.sh) launches it; `openviking/sidecar-main.ts`
       // because the memory image's entrypoint (docker/memory/entrypoint.sh)
-      // execs it out of dist/.
+      // execs it out of dist/; `loginrefresh/main.ts` because the daemon
+      // spawns it by path (src/loginrefresh/supervisor.ts, P8.22).
       const roots = [
         "src/wire.ts",
         "src/cli.ts",
         "src/smoke-session.ts",
         "src/bench/cli.ts",
         "src/openviking/sidecar-main.ts",
+        "src/loginrefresh/main.ts",
       ].map((p) => join(ROOT, p));
       for (const f of tsFiles(join(ROOT, "extensions"))) {
         for (const m of stripComments(readFileSync(f, "utf8")).matchAll(

@@ -943,6 +943,17 @@ disk_headroom_gb = 2     # free space kept on both mounts (clamped 0.5..1024)
 db_batch_rows = 500      # the DB mover's starting batch; adapts 100..2000 to stay <= 25 ms
 gzip_level = 6           # (clamped 1..9)
 
+# The bot login's single refresher (src/loginrefresh/, P8.22): the VM-only
+# exception to "only the owner's pi /login refreshes" (src/engine/auth.ts).
+# After the cutover ONE process the daemon spawns and supervises owns
+# pihome/agent/auth.json and every worker borrows a refresh-blanked copy.
+# Off until the cutover's config turns it on: while tmux pi sessions exist they
+# refresh the file themselves, and a second refresher would rotate the refresh
+# token under them. margin_min must exceed [daemon] round_deadline_min.
+[login_refresh]
+enabled = false
+margin_min = 90          # refresh once the token has less than pi's 5 min + this left
+
 # The companion's whole-repo scan — read only inside the companion,
 # never on the VM. Stage 1 runs `pass-scan` over every unit of the saved unit
 # cut (tests, migrations, lockfiles and prose never). The FIRST scan at these

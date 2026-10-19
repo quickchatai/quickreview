@@ -67,6 +67,11 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // is human-attention grade. Detected passively (src/authwatch.ts), never by
   // a smoke call.
   "pi_auth_expired",
+  // The bot login's refresher could not refresh (src/loginrefresh/): the same
+  // consequence one step earlier — the token runs out within hours and every
+  // worker's copy dies with it — so the same grade. One per failure episode by
+  // construction (the supervisor raises on the episode's start only).
+  "login_refresh_failed",
   // The EOD curator may have edited the owner's pinned standing
   // instructions — the one thing curation must never touch. Human-attention
   // grade by the same logic as pi_auth_expired. The watchdog's own degraded

@@ -8,6 +8,7 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
 import type { ArchiveStatus } from "./archive/status.js";
+import type { LoginRefreshStatus } from "./loginrefresh/types.js";
 import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
 import type { RoundStageSupervisorHealth } from "./session-command-supervisor.js";
@@ -7546,6 +7547,11 @@ export interface StatusSnapshot {
    * plan completes, never 0) and what it moved. Absent in snapshots from an
    * older daemon — readers (`readArchiveStatus`) say "not reported". */
   archive?: ArchiveStatus;
+  /** The bot login's refresher (src/loginrefresh/): the supervised process
+   * and the file it publishes — `expires_at`, `last_refresh`, `last_error`,
+   * `paused`. Absent unless `[login_refresh] enabled`; readers say "not
+   * reported". */
+  login_refresh?: LoginRefreshStatus;
   /** Deploy-window drain: present (and true) only while
    * draining, beside the count of webhook deliveries dropped so far and when
    * the drain was engaged. Absent in older snapshots — readers default to
@@ -7724,6 +7730,7 @@ export function buildStatusSnapshot(
   memory?: MemoryStatus,
   daemonLoad?: DaemonLoadStatus,
   archive?: ArchiveStatus,
+  loginRefresh?: LoginRefreshStatus,
 ): StatusSnapshot {
   const at = now();
   const today = at.toISOString().slice(0, 10);
@@ -7846,6 +7853,7 @@ export function buildStatusSnapshot(
     ...(memory ? { memory } : {}),
     ...(daemonLoad ? { daemon: daemonLoad } : {}),
     ...(archive ? { archive } : {}),
+    ...(loginRefresh ? { login_refresh: loginRefresh } : {}),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
     ...(pipeline ? { pipeline } : {}),
