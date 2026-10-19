@@ -449,6 +449,7 @@ can be shown false. Please try.
 - [deploy/ansible/README.md](deploy/ansible/README.md) — the VM/server route: provisioning, deploy, verification
 - [docs/profiles.md](docs/profiles.md) — repo profiles: addenda packs, heuristics, per-lens tuning
 - [docs/host-wrapper.md](docs/host-wrapper.md) — the `qcr` host wrapper the release image installs: mounts, token handoff, update
+- [docs/plugin.md](docs/plugin.md) — the Claude Code plugin: review, scan and setup skills that call `qcr --json` and refuse an unknown schema version
 - [docs/duplicate-merge.md](docs/duplicate-merge.md) — one comment per root cause
 - [docs/ownership.md](docs/ownership.md) — the owner-only surfaces (dry-run flag, frozen seeds, ratification)
 - [docs/exec-boundary.md](docs/exec-boundary.md) — what stops a review session running your code: the layers, the guarantees, the residual gaps

@@ -113,6 +113,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/pi-canary/canary-3-abort-cpu-load.test.ts", // bash children spawned by pi's own bash tool
   "tests/pi-resolution.test.ts",
   "tests/pibuiltins.test.ts",
+  "tests/plugin-qcr.test.ts", // the plugin's shell scripts against a fake docker, gh and qcr
   "tests/pr-checks-why.test.ts",
   "tests/pr-context-shell.test.ts",
   "tests/pr-self-shell.test.ts",

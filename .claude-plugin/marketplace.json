@@ -1,0 +1,11 @@
+{
+  "name": "quickreview",
+  "owner": { "name": "quickchatai" },
+  "plugins": [
+    {
+      "name": "qcr",
+      "source": "./plugins/qcr",
+      "description": "Skills that call the qcr host wrapper: review, scan and first-time setup."
+    }
+  ]
+}
