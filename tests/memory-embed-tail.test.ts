@@ -437,7 +437,6 @@ describe("dispatch: the round seed waits out the embedding tail, within its budg
         prompts.push(prompt);
       },
       async inject() {},
-      async injectOverseer() {},
       async archiveAndClose() {},
     };
     const logs: string[] = [];

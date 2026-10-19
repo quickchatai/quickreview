@@ -33,7 +33,6 @@ import {
   type SessionHooksRig,
 } from "./helpers/session-hooks-host.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
-import { OVERSEER_SESSION } from "../src/sessions.js";
 
 const PR = 42;
 const SESSION = `pr-${PR}`;
@@ -172,14 +171,6 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
       expect(rig.mailbox(SESSION)).toEqual([]);
       expect(rig.store.activeSessionCommand(SESSION)).toBeUndefined();
-    });
-
-    it("injectOverseer births the overseer on demand, and concurrent wakes share that one birth", async () => {
-      await Promise.all([rig.hooks.injectOverseer("anomaly"), rig.hooks.injectOverseer("EOD")]);
-
-      expect(rig.isRunning(OVERSEER_SESSION)).toBe(true);
-      expect(rig.lifecycle()).toEqual([`birth ${OVERSEER_SESSION}`]);
-      expect(rig.mailbox(OVERSEER_SESSION).sort()).toEqual(["EOD\n", "anomaly\n"]);
     });
 
     describe("the receipt: present is delivered, absent is lost, unreadable is unknown", () => {

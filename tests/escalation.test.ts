@@ -248,11 +248,10 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
         const hooks: SessionHooks = {
           async dispatchRound() {},
           async inject() {},
-          async injectOverseer() {},
           async archiveAndClose() {},
         };
         s.setAnomalySink((sig) =>
-          new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m) }).onAnomaly(sig),
+          new AnomalyWakePolicy({ writeInbox: async () => {} }).onAnomaly(sig),
         );
         s.upsertPr({
           number: 42,
@@ -330,7 +329,6 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     const hooks: SessionHooks = {
       async dispatchRound() {},
       async inject() {},
-      async injectOverseer() {},
       async archiveAndClose() {},
     };
     s.setAnomalySink(() => {});
@@ -2009,7 +2007,6 @@ describe("the verdict path delivers what the rules found", () => {
     const hooks: SessionHooks = {
       async dispatchRound() {},
       async inject() {},
-      async injectOverseer() {},
       async archiveAndClose() {},
     };
     s.setAnomalySink(() => {});
@@ -2104,7 +2101,6 @@ describe("the verdict path delivers what the rules found", () => {
         const hooks: SessionHooks = {
           async dispatchRound() {},
           async inject() {},
-          async injectOverseer() {},
           async archiveAndClose() {},
         };
         s.setAnomalySink(() => {});
@@ -2545,7 +2541,6 @@ describe("escalation recovery through the verdict sweep", () => {
   const hooks: SessionHooks = {
     async dispatchRound() {},
     async inject() {},
-    async injectOverseer() {},
     async archiveAndClose() {},
   };
   const watcher = (dir: string, adapter: VerdictAdapter, escalation = on()) =>

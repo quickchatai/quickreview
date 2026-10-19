@@ -340,7 +340,6 @@ function hooks(orders: RoundOrder[], prompts?: string[]): SessionHooks {
       prompts?.push(prompt);
     },
     async inject() {},
-    async injectOverseer() {},
     async archiveAndClose() {},
   };
 }
@@ -387,7 +386,7 @@ describe("dispatch with ecosystem none — clean configured-off", () => {
       ];
       const overseer: string[] = [];
       const policy = new AnomalyWakePolicy({
-        injectOverseer: async (m) => {
+        writeInbox: async (m) => {
           overseer.push(m);
         },
       });
@@ -447,7 +446,7 @@ describe("dispatch with ecosystem none — clean configured-off", () => {
       ];
       const overseer: string[] = [];
       const policy = new AnomalyWakePolicy({
-        injectOverseer: async (m) => {
+        writeInbox: async (m) => {
           overseer.push(m);
         },
       });

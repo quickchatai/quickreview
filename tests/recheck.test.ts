@@ -817,7 +817,6 @@ describe("runRecheck", () => {
           inject: async (_pr: number, message: string) => {
             injected.push(message);
           },
-          injectOverseer: async () => {},
           archiveAndClose: async () => {},
           wakeReceiptPresent: async () => false,
           injectPending: async () => false,

@@ -33,13 +33,12 @@ import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
 import { writeSessionBridgeState } from "../src/session-bridge.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
-import { OriginStore } from "../src/slack/origin.js";
 import { StateStore } from "../src/state.js";
 import { roundPromptMarker } from "../src/types.js";
 import type { RoundOrder } from "../src/types.js";
 import { flushHeldWakes } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
-import { daemonOriginWakes, piAuthWatchDirs } from "../src/wire.js";
+import { piAuthWatchDirs } from "../src/wire.js";
 import { whyJson } from "../src/cli.js";
 import { PiAuthWatch } from "../src/authwatch.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -1190,7 +1189,7 @@ describe("injection", () => {
   it("never uses tmux send-keys to wake a session", async () => {
     const m = manager();
     await m.dispatchRound(order, "body");
-    await m.injectOverseer("anomaly");
+    await m.ensureOverseerSession();
     expect(tmuxArgs().some((a) => a[0] === "send-keys")).toBe(false);
   });
 
@@ -1268,24 +1267,23 @@ describe("injection", () => {
     }
   });
 
-  it("concurrent overseer wakes share one birth — each writes its wake", async () => {
+  it("concurrent overseer births share one session", async () => {
     const m = manager();
-    const files = await Promise.all([m.injectOverseerFile("a"), m.injectOverseerFile("b")]);
+    await Promise.all([m.ensureOverseerSession(), m.ensureOverseerSession()]);
     expect(
       tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === OVERSEER_SESSION),
     ).toHaveLength(1);
-    expect(new Set(files).size).toBe(2);
   });
 
-  it("injectOverseer births the overseer session on demand", async () => {
+  it("ensureOverseerSession births the overseer session", async () => {
     const m = manager();
-    await m.injectOverseer("EOD sweep");
+    await m.ensureOverseerSession();
     const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
     expect(newSession[3]).toBe(OVERSEER_SESSION);
     expect(newSession).toContain("openai/over");
     expect(
       readdirSync(m.injectDir(OVERSEER_SESSION)).filter((f) => f.endsWith(".md")),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 
   it("gives concurrent injections distinct filenames", async () => {
@@ -1567,11 +1565,7 @@ describe("durable command ownership", () => {
         };
 
         const retry = vi.spyOn(m, "retrySessionCommand");
-        const { hooks } = daemonOriginWakes({
-          hooks: m,
-          origins: new OriginStore(join(root, "state", "slack", "origin")),
-          enabled: false,
-        });
+        const hooks = m;
         const supervisor = new SessionCommandSupervisor({
           cfg: config,
           store,
@@ -2520,12 +2514,7 @@ it("production forwarding preserves a command ownership fence across an async ki
       ).toBe(true);
       return ["pr-42"];
     });
-    const { hooks } = daemonOriginWakes({
-      hooks: m,
-      origins: new OriginStore(join(root, "state", "origin")),
-      enabled: false,
-    });
-    expect(await hooks.killSession!(42, expected)).toBe(false);
+    expect(await m.killSession!(42, expected)).toBe(false);
     expect(store.activeSessionCommand("pr-42")?.id).toBe("successor");
     expect(liveSessions.has("pr-42")).toBe(true);
     expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(0);
@@ -2557,7 +2546,7 @@ it("replaces a live overseer whose bridge failed before accepting another wake",
     updated_at: "2026-08-13T10:00:00Z",
     detail: "watcher failed",
   });
-  await m.injectOverseer("fresh wake");
+  await m.ensureOverseerSession();
   expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(1);
   expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(2);
 });
@@ -2565,7 +2554,8 @@ it("replaces a live overseer whose bridge failed before accepting another wake",
 it("defers automatic overseer rotation while an accepted wake remains unfinished", async () => {
   let now = new Date("2026-08-13T10:00:00Z");
   const m = manager(() => now);
-  await m.injectOverseer("accepted but still running");
+  await m.ensureOverseerSession();
+  m.injectFile("overseer", "accepted but still running");
   now = new Date("2026-08-21T10:00:00Z");
   expect(await m.rotateOverseerIfDue()).toBe(false);
   expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(0);

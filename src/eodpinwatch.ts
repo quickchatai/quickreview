@@ -18,7 +18,7 @@
 //     has on the round path, src/memory/context.ts.)
 //   * IT ONLY EVER OBSERVES. Its whole output is `logAnomaly` — no memory
 //     write, no GitHub mutation, no session scheduling. The wake, if the kind
-//     earns one, is the ordinary `AnomalyWakePolicy` → `injectOverseer` path,
+//     earns one, is the ordinary `AnomalyWakePolicy` → companion-inbox path,
 //     so the single-shepherd invariant (rule 9) reads unchanged.
 //   * A MISSING SNAPSHOT IS "COULD NOT CHECK", NEVER "CHANGED". Every read
 //     failure lands on the quiet degraded kind. The loud kind is reserved for
@@ -57,7 +57,7 @@ export const PINNED_DEGRADED_KIND = "eod_pinned_watchdog_degraded";
 
 export const EOD_PIN_WATCH_DEFAULTS = {
   /** How long the window stays open when the digest never appears. The sweep
-   * is a single overseer conversation; 90 minutes is generous for it and short
+   * is a single companion conversation; 90 minutes is generous for it and short
    * enough that the "after" read still lands the same evening. */
   windowMin: EOD_PINNED_WATCHDOG_WINDOW_MIN,
   /** How often the digest-arrival signal is checked. Cheap `existsSync`. */
@@ -168,7 +168,7 @@ function bullets(label: string, keys: string[]): string[] {
 }
 
 /**
- * The overseer's wake text.
+ * The companion's inbox text.
  *
  * It leads with the two explanations rather than an accusation, because the
  * watchdog genuinely cannot tell them apart (see the module header). An alert
@@ -317,7 +317,7 @@ export interface EodPinWatchDeps {
 
 export interface EodPinWatch {
   /**
-   * Wrap the EOD timer's `injectOverseer`. The returned function opens the
+   * Wrap the EOD timer's `writeInbox`. The returned function opens the
    * watch window and then delegates — it adds no await ahead of the inject and
    * cannot reject on the watchdog's behalf. `date` is the day the sweep is
    * for (a drain-deferred day fires later than its own evening); the window

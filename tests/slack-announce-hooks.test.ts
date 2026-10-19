@@ -87,7 +87,6 @@ class FakeVerdictAdapter implements VerdictAdapter {
 const hooks: SessionHooks = {
   async dispatchRound() {},
   async inject() {},
-  async injectOverseer() {},
   async archiveAndClose() {},
 };
 

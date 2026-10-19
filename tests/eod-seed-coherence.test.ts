@@ -518,7 +518,7 @@ describe("startEodTimer renders the fallback only where the curation is missing"
       now: () => clock,
       readPrompt: () => "sweep {{date}}",
       memoryLayout: "the layout",
-      injectOverseer: async (m) => {
+      writeInbox: async (m) => {
         injected.push(m);
       },
       setTimer: (cb, ms) => {

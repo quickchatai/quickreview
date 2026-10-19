@@ -45,6 +45,7 @@ import { reviewsInFlight } from "./dispatch.js";
 import { eventLoopPolicy } from "./eventloop.js";
 import { digestWritten, eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
+import { CompanionInbox, type InboxWriter } from "./companioninbox.js";
 import { opsDay, promptReader, startEodTimer, type EodTimer } from "./eod.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
@@ -124,8 +125,7 @@ import { reconcileOrphanedRounds } from "./reconcile.js";
 import { OVERSEER_SESSION, PiSessionManager, prSessionName } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
 import { makeAnnouncer, type SlackAnnouncer } from "./slack/announce.js";
-import { OriginStore } from "./slack/origin.js";
-import { announcedCap } from "./slack/policy.js";
+import { clearOriginRecords, OriginStore } from "./slack/origin.js";
 import { makeSlackReply } from "./slack/reply.js";
 import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
@@ -142,7 +142,7 @@ import {
 } from "./templates.js";
 import { assertNativeOrder } from "./launchvocab.js";
 import { nodeExec } from "./tmux.js";
-import type { RoundOrder, SessionCommandObservation, SessionHooks } from "./types.js";
+import type { RoundOrder } from "./types.js";
 import { WebhookHealer } from "./webhookheal.js";
 
 export interface ProductionParts {
@@ -291,11 +291,9 @@ export interface SlackWiringOptions {
   store: StateStore;
   /** The daemon's command handlers; the Slack dir gets these plus slackReply. */
   commandDeps: CommandDeps;
-  /** Wake the overseer and return the wake file's PATH (origin binding). */
-  injectOverseerFile: (message: string) => Promise<string>;
-  /** The existing overseer-inject anomaly path — where ops signals go. Never
-   * the channel: v1 ships ops causes off. */
-  injectOverseer: (message: string) => Promise<void>;
+  /** The companion inbox — where ops signals go (the connection-count
+   * anomaly). Never the channel: v1 ships ops causes off. */
+  writeInbox: InboxWriter;
   log: (msg: string, extra?: unknown) => void;
   version?: string;
   now?: () => Date;
@@ -315,9 +313,8 @@ export interface SlackWiringOptions {
   previousStatus?: string;
   /**
    * The origin store, when the caller already owns one. `createProductionDaemon`
-   * builds it before the daemon so daemon-originated overseer wakes can stamp a
-   * `local` origin through the very same store the belt reads. Omitted ⇒ built
-   * here (tests, and any caller with no wake path of its own).
+   * builds it before the daemon so the belt reads the overseer's accepted
+   * wakes. Omitted ⇒ built here (tests).
    */
   origins?: OriginStore;
 }
@@ -413,9 +410,9 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
     statusPath: join(root, "state", "status.json"),
     ...(opts.previousStatus !== undefined ? { readStatus: () => opts.previousStatus } : {}),
     onAnomalySignal: (message) => {
-      // Durable anomaly record beside the overseer wake.
+      // Durable anomaly record beside the inbox item.
       store.logAnomaly("slack_connections", null, null, message);
-      return opts.injectOverseer(message);
+      return opts.writeInbox(message, "anomaly");
     },
   });
   if (!announcer) throw new Error("slack: announcer not built despite enabled = true");
@@ -423,16 +420,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   const router = new SlackRouter({
     cfg,
     store,
-    origins,
-    inject: opts.injectOverseerFile,
-    users: transport,
     identity,
-    onCapReached: async (decision) => {
-      const cap = announcedCap(cfg, decision);
-      if (cap !== null) await announcer.capReached(cap);
-    },
-    now,
-    log: (line) => log(line),
   });
 
   const slackReply = makeSlackReply({ cfg, store, api: transport, now, log: (line) => log(line) });
@@ -578,137 +566,6 @@ export function buildOperatorCommandWatcher(opts: {
 }
 
 /**
- * The other half of "who caused this turn": every daemon-originated overseer
- * wake stamps a `local` origin before it injects.
- *
- * One wrapper, one seam. The daemon is handed the returned `hooks`, so the EOD
- * sweep, the verdict anomalies, the ping-pong follow-ups and the connections
- * signal all stamp — without any of those modules knowing Slack exists. The
- * Slack router deliberately keeps the unwrapped inject path: its turns must
- * stamp a Slack origin.
- *
- * Stamping is best-effort and never blocks a wake; with Slack off nothing is
- * written at all.
- *
- * The wrap must forward every optional hook the daemon reads; a hook dropped
- * here silently disables its consumer in production while unit tests, which
- * hand the daemon unwrapped hooks, stay green.
- */
-export function daemonOriginWakes(opts: {
-  hooks: SessionHooks;
-  origins: OriginStore;
-  enabled: boolean;
-  log?: (msg: string, extra?: unknown) => void;
-  /** The wake path that names the file it wrote, so the stamped record is
-   * bound to its wake (an accepted wake is what supersedes a Slack origin). */
-  injectOverseerFile?: (message: string) => Promise<string>;
-}): { hooks: SessionHooks; wake: (reason: string, message: string) => Promise<void> } {
-  const { hooks, origins, enabled } = opts;
-  const log = opts.log ?? (() => {});
-  const wake = async (reason: string, message: string): Promise<void> => {
-    let stamped: ReturnType<OriginStore["writeLocal"]> | null = null;
-    if (enabled) {
-      try {
-        stamped = origins.writeLocal(reason);
-      } catch (err) {
-        log("slack: could not stamp a local origin for a daemon wake", err);
-      }
-    }
-    if (!opts.injectOverseerFile) {
-      await hooks.injectOverseer(message);
-      return;
-    }
-    let path: string;
-    try {
-      path = await opts.injectOverseerFile(message);
-    } catch (err) {
-      // No wake landed, so no turn will be the stamped record's: drop it, as
-      // the router drops a Slack record whose inject failed.
-      if (stamped) {
-        try {
-          origins.forget(stamped);
-        } catch (e) {
-          log("slack: could not drop the local origin of a failed wake", e);
-        }
-      }
-      throw err;
-    }
-    if (stamped) {
-      try {
-        origins.bind(stamped, path);
-      } catch (err) {
-        log("slack: could not bind a local origin to its wake", err);
-      }
-    }
-  };
-  return {
-    wake,
-    hooks: {
-      dispatchRound: (order, prompt) => hooks.dispatchRound(order, prompt),
-      inject: (pr, message) => hooks.inject(pr, message),
-      archiveAndClose: (pr) => hooks.archiveAndClose(pr),
-      ...(hooks.compactSession
-        ? { compactSession: (pr: number) => hooks.compactSession!(pr) }
-        : {}),
-      // Liveness + kill feed the stuck-round detector; without sessionAlive
-      // liveness is always unknown and every stuck round parks.
-      ...(hooks.sessionAlive ? { sessionAlive: (pr: number) => hooks.sessionAlive!(pr) } : {}),
-      ...(hooks.killSession
-        ? {
-            killSession: (...args: Parameters<NonNullable<SessionHooks["killSession"]>>) =>
-              hooks.killSession!(...args),
-          }
-        : {}),
-      ...(hooks.sessionActivityAt
-        ? { sessionActivityAt: (pr: number) => hooks.sessionActivityAt!(pr) }
-        : {}),
-      ...(hooks.injectPending ? { injectPending: (pr: number) => hooks.injectPending!(pr) } : {}),
-      // Receipt/replay hooks are the command supervisor's positive evidence
-      // and safe recovery path; without them a failed ordinary wake exhausts
-      // without attempting same-command replay.
-      ...(hooks.roundPromptAccepted
-        ? {
-            roundPromptAccepted: (pr: number, roundNo: number, startedAtMs: number) =>
-              hooks.roundPromptAccepted!(pr, roundNo, startedAtMs),
-          }
-        : {}),
-      ...(hooks.wakeReceiptPresent
-        ? {
-            wakeReceiptPresent: (pr: number, marker: string, sinceMs: number) =>
-              hooks.wakeReceiptPresent!(pr, marker, sinceMs),
-          }
-        : {}),
-      ...(hooks.redeliverRound
-        ? { redeliverRound: (pr: number, roundNo: number) => hooks.redeliverRound!(pr, roundNo) }
-        : {}),
-      ...(hooks.retrySessionCommand
-        ? {
-            retrySessionCommand: (commandId: string, reason: string) =>
-              hooks.retrySessionCommand!(commandId, reason),
-          }
-        : {}),
-      // Same-session redelivery and the bridge's compaction report; without
-      // them a live session whose wake waited behind a compaction is killed
-      // instead of redelivered to.
-      ...(hooks.redeliverSessionCommand
-        ? {
-            redeliverSessionCommand: (commandId: string, observed: SessionCommandObservation) =>
-              hooks.redeliverSessionCommand!(commandId, observed),
-          }
-        : {}),
-      ...(hooks.sessionCompaction
-        ? { sessionCompaction: (pr: number) => hooks.sessionCompaction!(pr) }
-        : {}),
-      // The reconcile pass's sweep of closed PRs' raw-tier sessions.
-      ...(hooks.sweepStaleOvSessions
-        ? { sweepStaleOvSessions: () => hooks.sweepStaleOvSessions!() }
-        : {}),
-      injectOverseer: (message) => wake("overseer-wake", message),
-    },
-  };
-}
-
-/**
  * Where the passive auth watch looks. PR and overseer sessions are spawned
  * with `--session-dir <root>/<pi.session_dir>/<session>`, so THAT is where
  * their expired-token errors land; pi's default store alone would miss every
@@ -806,12 +663,18 @@ export function orphanPostingOwed(
  * inject bridge's `.done/` beside the overseer's pending queue), so a
  * command's rights are those of the turn being served. A store built without
  * that view puts the newest record in force at once.
+ *
+ * Slack inbound turns are retired, so no record can describe a live turn any
+ * more, and no daemon wake stamps a superseding `local` one. A guest's record
+ * left by the previous run would therefore hold the legacy-dir belt on for
+ * good: the records are dropped at boot, before the store reads them.
  */
 export function overseerOriginStore(
   root: string,
   sessions: Pick<PiSessionManager, "injectDir">,
   now?: () => Date,
 ): OriginStore {
+  clearOriginRecords(join(root, "state", "slack", "origin"));
   return new OriginStore(join(root, "state", "slack", "origin"), now, {
     deliveredDir: join(sessions.injectDir(OVERSEER_SESSION), ".done"),
   });
@@ -978,21 +841,16 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   let memoryUnmonitored: string | null = null;
   if (parts.memoryRequests) parts.memoryRequests.sink = (r) => memoryHealth?.recordRequest(r);
 
-  // The origin store is built here, before the daemon, because both halves of
-  // "who caused this turn" write to it: the router (Slack turns) and every
-  // daemon-originated overseer wake below (local turns).
+  // The origin store the Slack belt reads. Slack inbound turns are retired, so
+  // nothing writes an origin any more; the belt reads it for the overseer's
+  // pre-retirement wakes only.
   const origins = overseerOriginStore(root, sessions);
 
-  // The daemon sees a wrapped SessionHooks (see `daemonOriginWakes`): every
-  // autonomous overseer wake stamps a `local` origin, bound to its wake file,
-  // so the legacy-dir belt knows the turn is the daemon's own once pi takes it.
-  const { hooks, wake: wakeOverseerAsDaemon } = daemonOriginWakes({
-    hooks: sessions,
-    origins,
-    enabled: cfg.slack.enabled,
-    log,
-    injectOverseerFile: (m) => sessions.injectOverseerFile(m),
-  });
+  // The companion inbox: everything that used to wake the overseer (anomalies,
+  // the heartbeat, authwatch's and the login refresher's alerts, the EOD sweep,
+  // the self-requeue notice, the Slack connection signal) is an item here.
+  const inbox = new CompanionInbox({ root, log });
+  const writeInbox = inbox.writer();
 
   // The profile's lens-heuristics extension, loaded once here so a
   // malformed heuristics.toml fails the assembly loudly (same contract as the
@@ -1033,7 +891,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       createDeferredReview: (pr, payload, postingKey) =>
         adapter.createReview(pr, payload, { postingRetry: postingKey }),
     },
-    hooks,
+    hooks: sessions,
+    writeInbox,
     renderPrompt,
     ecosystem,
     heuristics: profileHeuristics,
@@ -1901,8 +1760,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           root,
           store: d.store,
           commandDeps,
-          injectOverseerFile: (m) => sessions.injectOverseerFile(m),
-          injectOverseer: (m) => wakeOverseerAsDaemon("slack-anomaly", m),
+          writeInbox,
           origins,
           log,
           version: packageVersion(root),
@@ -1963,9 +1821,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               log,
             })
           : null;
-      const injectEod = async (m: string): Promise<void> => {
-        await wakeOverseerAsDaemon("eod-sweep", m);
-      };
+      // The sweep is one inbox item per day: the companion's TUI pulls it and
+      // runs it, so with the companion off it runs late, never not at all.
+      const injectEod = inbox.eodWriter();
       eod = startEodTimer({
         timeHHMM: cfg.eod.time,
         timeZone: cfg.eod.timezone,
@@ -2037,13 +1895,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             `EOD sweep for ${date} firing — owed from a deferral or an interrupted fire; no drain or sweep holds it now`,
           );
         },
-        injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
+        writeInbox: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
         onFire: (date) => {
-          log(`EOD sweep injected for ${date}`);
+          log(`EOD sweep written to the companion inbox for ${date}`);
           // The receipt for the day's packet is owed from now.
           learner?.eodFired(date);
         },
-        onError: (err) => log("EOD injection failed (retried with backoff)", err),
+        onError: (err) => log("EOD inbox write failed (retried with backoff)", err),
         // Three retries failed too: the day's curation did not happen.
         onInjectFailed: (date, err, attempts) => {
           const why = err instanceof Error ? err.message : String(err);
@@ -2051,18 +1909,18 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             "eod_inject_failed",
             null,
             null,
-            `EOD sweep for ${date} not injected after ${attempts} attempts: ${why.slice(0, 200)}`,
+            `EOD sweep for ${date} not written to the inbox after ${attempts} attempts: ${why.slice(0, 200)}`,
             [
-              `EOD INJECT FAILED — the EOD sweep for ${date} could not be delivered to the overseer (${attempts} attempts, backed off).`,
+              `EOD INBOX WRITE FAILED — the EOD sweep for ${date} could not be written to the companion inbox (${attempts} attempts, backed off).`,
               `Last error: ${why.slice(0, 300)}`,
-              "That day's curation did not run: no digest, no lessons. Check the overseer session (`qcr status`), then re-run the sweep by hand if the day matters.",
+              "That day's curation did not run: no digest, no lessons. Check the companion inbox directory and the state volume's free space, then re-run the sweep by hand if the day matters.",
             ].join("\n"),
           );
         },
       });
       log(`EOD timer armed for ${eod.nextFire().toISOString()}`);
 
-      // Daily overseer heartbeat — same wall-clock machinery,
+      // Daily heartbeat inbox item — same wall-clock machinery,
       // morning slot. At most one boot catch-up if the daemon was down at the
       // hour; the fired-date lives in the store, so restarts never double-fire.
       heartbeat = startHeartbeat({
@@ -2070,7 +1928,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         timeZone: cfg.eod.timezone,
         lastFired: () => d.store.lastHeartbeatDate(),
         recordFired: (date) => d.store.recordHeartbeat(date),
-        injectOverseer: (m) => wakeOverseerAsDaemon("overseer-heartbeat", m),
+        writeInbox: inbox.heartbeatWriter(),
         log,
         onError: (err) => log("heartbeat injection failed", err),
       });

@@ -253,7 +253,6 @@ function recordingHooks(): { hooks: SessionHooks; injects: string[]; compacted: 
       async inject(pr, msg) {
         injects.push(`${pr}:${msg}`);
       },
-      async injectOverseer() {},
       async archiveAndClose() {},
       async compactSession(pr) {
         compacted.push(pr);

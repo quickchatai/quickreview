@@ -597,13 +597,16 @@ export function foldSlackTier(raw: unknown): SlackTier | null {
 }
 
 /** What the router did with a Slack message. Everything that is not
- * `injected` names the reason it never reached a session. */
+ * `injected` names the reason it never reached a session. `injected` and the
+ * cap and delivery drops are history: the overseer is retired, so the router
+ * now ends every admitted message in `dropped_no_overseer`. */
 export type SlackDisposition =
   | "injected"
   | "dropped_echo"
   | "dropped_stale"
   | "dropped_delivery_failed"
   | "dropped_cap"
+  | "dropped_no_overseer"
   | "dropped_subtype"
   | "dropped_dupe"
   | "dropped_channel";

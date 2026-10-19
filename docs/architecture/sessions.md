@@ -210,8 +210,11 @@ process — picks it up and calls `pi.sendUserMessage`.
 - `inject(pr, message)` is the out-of-round wake. It respawns a dead session
   first (`ensureSessionForWake`, using the late-bound `setTitleResolver`), so a
   recheck or author-reply nudge after a restart is not lost.
-- `injectOverseer` / `injectOverseerFile` wake the overseer; the latter returns
-  the file path for callers that bind an origin record to it.
+- There is no overseer inject. What woke the overseer (anomalies, the daily
+  heartbeat, authwatch's and the login refresher's alerts, the 18:00 EOD sweep,
+  the self-requeue notice) is one item each in the companion inbox,
+  `<root>/inject/companion-inbox/` (`src/companioninbox.ts`: durable, bounded,
+  deduped). The companion's TUI pulls and acks the items.
 
 ### Bridge side
 

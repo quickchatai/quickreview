@@ -643,7 +643,6 @@ function hooks(): { hooks: SessionHooks; orders: RoundOrder[] } {
         orders.push(order);
       },
       async inject() {},
-      async injectOverseer() {},
       async archiveAndClose() {},
     },
   };

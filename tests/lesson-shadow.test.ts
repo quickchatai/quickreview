@@ -663,7 +663,6 @@ describe("the budget and its timeout never delay a round (fake clock)", () => {
           prompts.push(prompt);
         },
         async inject() {},
-        async injectOverseer() {},
         async archiveAndClose() {},
       };
       // No timer is advanced: if dispatch waited on the prefetch, this await
@@ -758,7 +757,6 @@ describe("the budget and its timeout never delay a round (fake clock)", () => {
           calls.push("handoff");
         },
         async inject() {},
-        async injectOverseer() {},
         async archiveAndClose() {},
       };
       const orders = await dispatchOnce({

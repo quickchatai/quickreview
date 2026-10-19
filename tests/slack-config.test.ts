@@ -223,3 +223,21 @@ describe("boot validation", () => {
     );
   });
 });
+
+describe("[slack] inbound routing is retired with the overseer", () => {
+  it("refuses `inbound = true` with a message that names the retirement", () => {
+    expect(() => withSlack("[slack]\nenabled = false\ninbound = true")).toThrow(
+      /`inbound` is retired.*dropped_no_overseer/s,
+    );
+    // refused whatever else is in the block, enabled or not
+    expect(() =>
+      withSlack('[slack]\nenabled = true\nchannel = "C1"\ninbound = "overseer"'),
+    ).toThrow(/`inbound` is retired/);
+  });
+
+  it("accepts `inbound = false` and carries no such key on the parsed shape", () => {
+    const cfg = withSlack("[slack]\nenabled = false\ninbound = false");
+    expect(cfg.slack.enabled).toBe(false);
+    expect("inbound" in cfg.slack).toBe(false);
+  });
+});

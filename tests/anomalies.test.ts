@@ -26,7 +26,7 @@ function storeWithPolicy(opts: { nowMs?: () => number; failInject?: boolean } = 
   const injected: string[] = [];
   const store = new StateStore(":memory:");
   const policy = new AnomalyWakePolicy({
-    injectOverseer: (m) => {
+    writeInbox: (m) => {
       if (opts.failInject) return Promise.reject(new Error("tmux gone"));
       injected.push(m);
       return Promise.resolve();
@@ -236,7 +236,7 @@ describe("logAnomaly → wake funnel", () => {
     const injected: string[] = [];
     let fail = true;
     const policy = new AnomalyWakePolicy({
-      injectOverseer: (m) => {
+      writeInbox: (m) => {
         if (fail) return Promise.reject(new Error("tmux gone"));
         injected.push(m);
         return Promise.resolve();
@@ -267,7 +267,7 @@ describe("logAnomaly → wake funnel", () => {
     const timers: Array<() => void> = [];
     let failures = 2;
     const policy = new AnomalyWakePolicy({
-      injectOverseer: (m) => {
+      writeInbox: (m) => {
         if (failures-- > 0) return Promise.reject(new Error("tmux gone"));
         injected.push(m);
         return Promise.resolve();
@@ -300,7 +300,7 @@ describe("logAnomaly → wake funnel", () => {
     let calls = 0;
     let fail = true;
     const policy = new AnomalyWakePolicy({
-      injectOverseer: () => {
+      writeInbox: () => {
         calls += 1;
         return fail ? Promise.reject(new Error("tmux gone")) : Promise.resolve();
       },
@@ -340,7 +340,7 @@ describe("logAnomaly → wake funnel", () => {
     const pending: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
     let calls = 0;
     const policy = new AnomalyWakePolicy({
-      injectOverseer: () => {
+      writeInbox: () => {
         calls++;
         return new Promise<void>((resolve, reject) => pending.push({ resolve, reject }));
       },
@@ -380,7 +380,7 @@ describe("logAnomaly → wake funnel", () => {
     const timers: Array<() => void> = [];
     const store = new StateStore(":memory:");
     const policy = new AnomalyWakePolicy({
-      injectOverseer: () => {
+      writeInbox: () => {
         throw new Error("sync failure");
       },
       now: () => new Date(0),
@@ -400,7 +400,7 @@ describe("logAnomaly → wake funnel", () => {
     const cleared: unknown[] = [];
     let calls = 0;
     const policy = new AnomalyWakePolicy({
-      injectOverseer: () => {
+      writeInbox: () => {
         calls += 1;
         return Promise.reject(new Error("tmux gone"));
       },
@@ -484,7 +484,7 @@ function heartbeatHarness(
         timeZone: TZ,
         lastFired: () => store.lastHeartbeatDate(),
         recordFired: (date) => store.recordHeartbeat(date),
-        injectOverseer: (m) => {
+        writeInbox: (m) => {
           injected.push(m);
           return Promise.resolve();
         },
@@ -508,7 +508,7 @@ describe("heartbeat persistence (StateStore)", () => {
 describe("renderHeartbeatMessage", () => {
   it("names the date, the since-hint, and the read-and-report boundary", () => {
     const m = renderHeartbeatMessage("2026-08-20", "2026-08-19");
-    expect(m).toContain("OVERSEER HEARTBEAT — 2026-08-20");
+    expect(m).toContain("HEARTBEAT — 2026-08-20");
     expect(m).toContain("since the last heartbeat (2026-08-19)");
     expect(m).toContain("Flag-owner");
     expect(renderHeartbeatMessage("2026-08-20", null)).toContain("first heartbeat on record");
@@ -529,7 +529,7 @@ describe("startHeartbeat — daily fire", () => {
 
       await h.clock.advanceTo("2026-08-19T07:00:01Z");
       expect(h.injected).toHaveLength(1);
-      expect(h.injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+      expect(h.injected[0]).toContain("HEARTBEAT — 2026-08-19");
       expect(h.store.lastHeartbeatDate()).toBe("2026-08-19");
 
       await h.clock.advanceTo("2026-08-20T12:00:00Z");
@@ -558,7 +558,7 @@ describe("startHeartbeat — daily fire", () => {
     const hb = h.start();
     await hb.booted;
     expect(h.injected).toHaveLength(1); // today only, not 15th–18th
-    expect(h.injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+    expect(h.injected[0]).toContain("HEARTBEAT — 2026-08-19");
     expect(h.injected[0]).toContain("(2026-08-14)"); // the reading window is named
     hb.stop();
   });
@@ -584,9 +584,9 @@ describe("startHeartbeat — daily fire", () => {
       await h.clock.advanceTo("2026-03-30T23:00:00Z");
       expect(h.injected).toHaveLength(3);
       expect(h.injected.map((m) => m.split("\n")[0])).toEqual([
-        "OVERSEER HEARTBEAT — 2026-03-28",
-        "OVERSEER HEARTBEAT — 2026-03-29",
-        "OVERSEER HEARTBEAT — 2026-03-30",
+        "HEARTBEAT — 2026-03-28",
+        "HEARTBEAT — 2026-03-29",
+        "HEARTBEAT — 2026-03-30",
       ]);
       hb.stop();
     },
@@ -602,7 +602,7 @@ describe("startHeartbeat — daily fire", () => {
       timeZone: TZ,
       lastFired: () => store.lastHeartbeatDate(),
       recordFired: (date) => store.recordHeartbeat(date),
-      injectOverseer: async (message) => {
+      writeInbox: async (message) => {
         if (fail) {
           fail = false;
           throw new Error("temporarily unavailable");
@@ -617,9 +617,10 @@ describe("startHeartbeat — daily fire", () => {
     try {
       await hb.booted;
       await clock.advanceTo("2026-08-20T07:02:00Z");
-      expect(
-        delivered.map((text) => /OVERSEER HEARTBEAT — (\d{4}-\d{2}-\d{2})/.exec(text)?.[1]),
-      ).toEqual(["2026-08-19", "2026-08-20"]);
+      expect(delivered.map((text) => /HEARTBEAT — (\d{4}-\d{2}-\d{2})/.exec(text)?.[1])).toEqual([
+        "2026-08-19",
+        "2026-08-20",
+      ]);
       expect(store.lastHeartbeatDate()).toBe("2026-08-20");
     } finally {
       hb.stop();
@@ -637,7 +638,7 @@ describe("startHeartbeat — daily fire", () => {
       timeZone: TZ,
       lastFired: () => store.lastHeartbeatDate(),
       recordFired: (date) => store.recordHeartbeat(date),
-      injectOverseer: (m) => {
+      writeInbox: (m) => {
         if (failures > 0) {
           failures -= 1;
           return Promise.reject(new Error("tmux gone"));
@@ -656,7 +657,7 @@ describe("startHeartbeat — daily fire", () => {
     expect(hb.nextFire().toISOString()).toBe("2026-08-19T07:01:00.000Z");
     await clock.advanceTo("2026-08-19T07:10:00Z"); // retry 1 fails, retry 2 delivers
     expect(injected).toHaveLength(1);
-    expect(injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+    expect(injected[0]).toContain("HEARTBEAT — 2026-08-19");
     expect(store.lastHeartbeatDate()).toBe("2026-08-19");
     expect(hb.nextFire().toISOString()).toBe("2026-08-20T07:00:00.000Z");
     hb.stop();
@@ -670,7 +671,7 @@ describe("startHeartbeat — daily fire", () => {
       timeZone: TZ,
       lastFired: () => null,
       recordFired: () => {},
-      injectOverseer: () => {
+      writeInbox: () => {
         calls += 1;
         return Promise.reject(new Error("tmux gone"));
       },
@@ -696,7 +697,7 @@ describe("startHeartbeat — daily fire", () => {
       timeZone: TZ,
       lastFired: () => store.lastHeartbeatDate(),
       recordFired: (date) => store.recordHeartbeat(date),
-      injectOverseer: (m) => {
+      writeInbox: (m) => {
         if (failures-- > 0) return Promise.reject(new Error("tmux gone"));
         injected.push(m);
         return Promise.resolve();
@@ -710,7 +711,7 @@ describe("startHeartbeat — daily fire", () => {
     expect(injected).toEqual([]);
     await clock.advanceTo("2026-08-19T12:02:00Z");
     expect(injected).toHaveLength(1);
-    expect(injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+    expect(injected[0]).toContain("HEARTBEAT — 2026-08-19");
     expect(hb.nextFire().toISOString()).toBe("2026-08-20T07:00:00.000Z");
     hb.stop();
   });
@@ -725,7 +726,7 @@ describe("startHeartbeat — daily fire", () => {
       recordFired: () => {
         throw new Error("SQLITE_BUSY");
       },
-      injectOverseer: () => {
+      writeInbox: () => {
         calls += 1;
         return Promise.resolve();
       },

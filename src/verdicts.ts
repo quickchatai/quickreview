@@ -12,7 +12,7 @@ import {
 //
 // Two anomaly paths, both explicitly no-approve: a malformed/unparseable
 // verdict file, and a round that blows its deadline. Both mark the round and
-// inject the overseer. There is no path here that touches an existing review:
+// write the companion inbox. There is no path here that touches an existing review:
 // the invariant against retracting an approval is structural, not prompted
 // (CLAUDE.md rule 2).
 import {
@@ -36,6 +36,7 @@ import {
   type FSWatcher,
 } from "node:fs";
 import { join } from "node:path";
+import type { InboxWriter } from "./companioninbox.js";
 import { checkOutcome, classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
 import {
   deliverEscalations,
@@ -173,7 +174,7 @@ const STAGED_FILE_RE = /^pr-(\d+)-(?:round-\d+|recheck-[0-9a-f]{7,40})\.json\.tm
 /**
  * Where a round end's measurement runs.
  * `inline`: awaited before the round end returns — the verdict sweep's
- * paths, and the anomaly path, whose overseer inject carries the violations
+ * paths, and the anomaly path, whose inbox item carries the violations
  * the measurement finds. `background`: handed off once the
  * round end's durable rows have landed — the round-stage supervisor's paths
  * (its scan is serialized and health-leased, so one PR's accounting must not
@@ -269,6 +270,9 @@ export interface VerdictDeps {
   store: StateStore;
   adapter: VerdictAdapter;
   hooks: SessionHooks;
+  /** Writes one companion-inbox item — the self-requeue's recovery notice.
+   * Absent (tests that do not watch it) ⇒ no notice. */
+  writeInbox?: InboxWriter;
   /** Directory the sessions write into (sandbox `verdict/`). */
   verdictDir: string;
   /** Settle time between requesting the round-end compaction and the
@@ -745,7 +749,7 @@ export class VerdictWatcher {
   private readonly inFlight = new Set<string>();
   private readonly processedDir: string;
   /** Exec-policy violations found while measuring usage, kept only so an
-   * overseer inject that happens anyway can carry a line about them —
+   * inbox item that happens anyway can carry a line about them —
    * violations alone never create inject spam. */
   private readonly execViolations = new Map<number, string[]>();
   /** Waits logged once per round per process, not once per supervisor scan
@@ -2941,7 +2945,7 @@ export class VerdictWatcher {
   /**
    * Persist the verdict's executed-pass report and compare it with the plan
    * (`rounds.lenses`). Missing telemetry ⇒ logged as unknown; plan≠executed ⇒
-   * logged anomaly + overseer inject. Never blocks the verdict — everything
+   * logged anomaly + companion-inbox item. Never blocks the verdict — everything
    * here is wrapped, and the verdict was already applied by the caller.
    */
   private async recordPassTelemetry(
@@ -3428,7 +3432,7 @@ export class VerdictWatcher {
     return Math.max(0, this.deps.usage?.budgetMs ?? USAGE_BUDGET_MS);
   }
 
-  /** Malformed verdict or blown deadline: overseer anomaly, round marked, the
+  /** Malformed verdict or blown deadline: inbox anomaly, round marked, the
    * PR's lifecycle returned to its standing-verdict state (never an approve,
    * never a park), and the review still OWED as a FAILED_LOUD incident
    * (`openReviewFailure`) that holds the PR out of the pump — and its held
@@ -3473,7 +3477,7 @@ export class VerdictWatcher {
       // the usage budget), so they run below, after the transition and the
       // FAILED_LOUD incident — a restart while they run must never leave an
       // overdue round under a PR still `reviewing` with nothing owed — and
-      // before the anomaly, whose overseer inject carries the violations they
+      // before the anomaly, whose inbox item carries the violations they
       // find. Owed durably from here; awaited on every path, the deadline
       // tick's included, because that inject reads what it finds.
       owed = this.oweMeasurement(round);
@@ -3518,7 +3522,7 @@ export class VerdictWatcher {
     this.execViolations.delete(pr);
     // The durable anomaly record — and the one wake funnel: both kinds here
     // are WAKE classes, so the store's sink writes the
-    // overseer inject (dedup'd per kind+pr) from the message passed along.
+    // inbox item (dedup'd per kind+pr) from the message passed along.
     store.logAnomaly(
       kind,
       pr,
@@ -4383,16 +4387,17 @@ export class VerdictWatcher {
       `verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — ${reason}`,
     );
     await this.safe(
-      () =>
-        this.deps.hooks.injectOverseer(
+      async () =>
+        void (await this.deps.writeInbox?.(
           [
             `SELF-REQUEUE (recovery) — PR #${round.pr} round ${round.round_no}, attempt ${attempt}/${cap}`,
             reason,
             "The daemon cancelled the round and re-queued the PR for a fresh dispatch through the normal path. No GitHub state was touched.",
             "This is a recovery path, not a normal one — if it recurs on the same PR, investigate the cause the line above names.",
           ].join("\n"),
-        ),
-      "inject overseer self-requeue",
+          "anomaly",
+        )),
+      "inbox self-requeue",
     );
     return true;
   }

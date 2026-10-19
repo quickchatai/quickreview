@@ -103,6 +103,10 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
   const PARSED_BUT_UNREAD: readonly string[] = [
     "awaiting_author_stale_h",
     "broadcast_verdicts",
+    // The Slack router read it to drop a stale backlog message; inbound turns are
+    // retired (every admitted message is `dropped_no_overseer`), so it is
+    // accepted for an older config and read by nothing.
+    "catchup_max_age_s",
     "queue_concurrency",
     "soft_exchange_limit",
     "ssh_dir",

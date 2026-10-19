@@ -60,7 +60,6 @@ describe("the persisted round plan includes the repo style guide's pass-style", 
           orders.push(order);
         },
         async inject() {},
-        async injectOverseer() {},
         async archiveAndClose() {},
       };
 

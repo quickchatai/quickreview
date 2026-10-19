@@ -57,10 +57,6 @@ export function stubSessionHooks(
       const path = writeJson(paths.injections, `pr-${pr}-${stamp()}.json`, { pr, message });
       log(`[stub] inject #${pr} → ${path}`);
     },
-    async injectOverseer(message: string): Promise<void> {
-      const path = writeJson(paths.injections, `overseer-${stamp()}.json`, { message });
-      log(`[stub] injectOverseer → ${path}`);
-    },
     async archiveAndClose(pr: number): Promise<void> {
       const path = writeJson(paths.archives, `pr-${pr}-${stamp()}.json`, {
         pr,

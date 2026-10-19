@@ -114,7 +114,6 @@ function hooks(orders: RoundOrder[]): SessionHooks {
       orders.push(order);
     },
     async inject() {},
-    async injectOverseer() {},
     async archiveAndClose() {},
   };
 }
@@ -267,7 +266,6 @@ describe("migration collision pre-check", () => {
             prompts.push(prompt);
           },
           async inject() {},
-          async injectOverseer() {},
           async archiveAndClose() {},
         },
         renderPrompt: (o) => renderRoundPrompt(template, o),
@@ -303,7 +301,6 @@ describe("migration collision pre-check", () => {
             prompts.push(prompt);
           },
           async inject() {},
-          async injectOverseer() {},
           async archiveAndClose() {},
         },
         renderPrompt: (o) => renderRoundPrompt(template, o),
@@ -394,7 +391,7 @@ describe("migration collision pre-check", () => {
         .run("2026-08-18T10:00:00Z", "{torn");
       const overseer: string[] = [];
       const policy = new AnomalyWakePolicy({
-        injectOverseer: async (m) => {
+        writeInbox: async (m) => {
           overseer.push(m);
         },
       });
@@ -641,7 +638,6 @@ describe("migration collision pre-check", () => {
             prompts.push(prompt);
           },
           async inject() {},
-          async injectOverseer() {},
           async archiveAndClose() {},
         },
         renderPrompt: (o) => renderRoundPrompt(template, o),
@@ -676,7 +672,7 @@ describe("migration collision pre-check", () => {
       // Mirror daemon.ts's wiring: the degraded pre-check wake flows through
       // the store's anomaly sink rather than a call-site inject.
       const policy = new AnomalyWakePolicy({
-        injectOverseer: async (m) => {
+        writeInbox: async (m) => {
           overseer.push(m);
         },
       });
@@ -693,9 +689,6 @@ describe("migration collision pre-check", () => {
             prompts.push(prompt);
           },
           async inject() {},
-          async injectOverseer(message) {
-            overseer.push(message);
-          },
           async archiveAndClose() {},
         },
         renderPrompt: (o) => renderRoundPrompt(template, o),
@@ -739,7 +732,6 @@ describe("migration collision pre-check", () => {
           prompts.push(prompt);
         },
         async inject() {},
-        async injectOverseer() {},
         async archiveAndClose() {},
       },
       renderPrompt: (o) => renderRoundPrompt(template, o),
@@ -765,7 +757,7 @@ describe("migration collision pre-check", () => {
       // Mirror daemon.ts's wiring: the degraded pre-check wake flows through
       // the store's anomaly sink rather than a call-site inject.
       const policy = new AnomalyWakePolicy({
-        injectOverseer: async (m) => {
+        writeInbox: async (m) => {
           overseer.push(m);
         },
       });
@@ -782,9 +774,6 @@ describe("migration collision pre-check", () => {
             prompts.push(prompt);
           },
           async inject() {},
-          async injectOverseer(message) {
-            overseer.push(message);
-          },
           async archiveAndClose() {},
         },
         renderPrompt: (o) => renderRoundPrompt(template, o),

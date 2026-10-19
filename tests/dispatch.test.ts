@@ -97,7 +97,6 @@ function recordingHooks(): {
         orders.push({ order, prompt });
       },
       async inject() {},
-      async injectOverseer() {},
       async archiveAndClose() {},
     },
   };

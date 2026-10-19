@@ -237,6 +237,8 @@ export interface SlackConfig {
   post_min_interval_ms: number;
   reconnect_backoff_ms: number[];
   server_ping_timeout_ms: number;
+  /** Accepted so an older config still loads, and read by nothing: Slack
+   * inbound turns are retired, so no backlog message is ever replayed or aged. */
   catchup_max_age_s: number;
   max_reply_chars: number;
   name_cache_ttl_s: number;
@@ -3173,6 +3175,15 @@ export function parseConfig(toml: string): Config {
 }
 
 function parseSlack(raw: Record<string, any>, defaultTimezone: string): SlackConfig {
+  // Inbound turns went with the overseer: nothing routes a Slack message to a
+  // model any more. A config that still asks for it is refused, not ignored,
+  // so nobody believes the bot is listening.
+  if (raw.inbound !== undefined && raw.inbound !== false) {
+    throw new Error(
+      "config.toml [slack]: `inbound` is retired — Slack inbound turns went with the overseer " +
+        "(the router refuses them: dropped_no_overseer); outbound announcements are unchanged. Remove the key.",
+    );
+  }
   const rawPolicy = (raw.policy ?? {}) as Record<string, any>;
   // A cause with no cooldown of its own takes the configured default — the
   // same one an unlisted cause gets (`causePolicy`).
@@ -3190,7 +3201,7 @@ function parseSlack(raw: Record<string, any>, defaultTimezone: string): SlackCon
   const { causes: _drop, ...policyScalars } = rawPolicy;
   // `legacy_owner_slack_id` is the legacy alias for [owner] slack_id —
   // consumed by parseConfig's fold, never carried on the parsed shape.
-  const { legacy_owner_slack_id: _legacyOwnerId, ...rawScalars } = raw;
+  const { legacy_owner_slack_id: _legacyOwnerId, inbound: _retiredInbound, ...rawScalars } = raw;
   const slack: SlackConfig = {
     ...SLACK_DEFAULTS,
     ...(rawScalars as Partial<SlackConfig>),

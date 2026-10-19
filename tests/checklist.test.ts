@@ -304,7 +304,6 @@ describe("② derived queue (selfscan)", () => {
       const hooks: SessionHooks = {
         async dispatchRound() {},
         async inject() {},
-        async injectOverseer() {},
         async archiveAndClose() {},
       };
       // The checklist reads the store BEFORE the pass that acts on 14's edge,

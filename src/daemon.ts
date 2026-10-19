@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AnomalyWakePolicy } from "./anomalies.js";
+import { CompanionInbox, type InboxWriter } from "./companioninbox.js";
 import { retryWithheldApproval, type CiAdapter, type WithheldRetryDeps } from "./cigate.js";
 import {
   DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
@@ -102,6 +103,10 @@ export interface DaemonDeps {
   store?: StateStore;
   adapter?: DaemonAdapter;
   hooks?: SessionHooks;
+  /** Writes the companion-inbox items every wake lands in (anomalies,
+   * self-requeue). Absent ⇒ the inbox under `root`, so stub-wired daemons
+   * behave identically. */
+  writeInbox?: InboxWriter;
   webhookSecret?: string;
   /** The round prompt renderer; default is the round order as JSON. The second
    * argument is the round's assembled memory seed — MEMORY_LESS
@@ -238,7 +243,7 @@ export interface DaemonDeps {
    * FeedbackEngine's ingest here. Absent (tests, stub daemons) ⇒ signals are
    * interpreted but go nowhere. */
   onFeedback?: (e: FeedbackEvent) => Promise<void> | void;
-  /** Extra periodic work (EOD timer arm, command watcher, overseer rotation)
+  /** Extra periodic work (EOD timer arm, command watcher)
    * started after the core loops; wired by src/wire.ts. */
   onStart?: (daemon: Daemon) => Promise<void> | void;
   /** Runs first in `stop`, with the reason `stop` was given (the signal, a
@@ -418,10 +423,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       cfg.daemon.follow_up_sweep_extra_min ?? DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
   };
 
-  // Overseer wake policy: every logAnomaly flows through the one
-  // severity map + dedup; WAKE classes write an overseer inject, QUIET classes
+  // Companion-inbox policy: every logAnomaly flows through the one
+  // severity map + dedup; WAKE classes write an inbox item, QUIET classes
   // stay DB-only. Wired here so stub-wired daemons behave identically.
-  const wakePolicy = new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m), log });
+  const writeInbox = deps.writeInbox ?? new CompanionInbox({ root, log }).writer();
+  const wakePolicy = new AnomalyWakePolicy({ writeInbox, log });
   store.setAnomalySink((signal) => wakePolicy.onAnomaly(signal));
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
@@ -455,6 +461,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     store,
     adapter: gh,
     hooks,
+    writeInbox,
     announce,
     verdictDir,
     root, // anchors the default pi-session dir for round usage measurement

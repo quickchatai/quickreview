@@ -411,7 +411,7 @@ Three endings are not ordinary verdicts:
   no-new-evidence round rather than failing loud.
 
 Malformed files and rounds that blow `[daemon] round_deadline_min` route to
-`handleAnomaly()`: the round is marked, the overseer is injected, and the PR
+`handleAnomaly()`: the round is marked, a companion-inbox item is written, and the PR
 returns to its standing state. **There is no anomaly path that approves.**
 
 **Except when the review is already on GitHub.** A malformed

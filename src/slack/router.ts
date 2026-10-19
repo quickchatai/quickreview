@@ -1,29 +1,27 @@
-// The inbound router: one Slack message -> at most one overseer
-// turn. Every drop is a ROW, not a log line — `slack_events` is the forensic
-// record, so "why did the bot ignore me?" is answerable from sqlite alone.
+// The inbound router: one Slack message -> one row, never a turn. The overseer
+// is retired (its duties moved to the companion, whose inbox is fed by the
+// daemon, not by Slack), so an inbound message reaches NO model: the router
+// refuses every message that clears the gates below with `dropped_no_overseer`.
+// Every drop is a ROW, not a log line — `slack_events` is the forensic record,
+// so "why did the bot ignore me?" is answerable from sqlite alone. Outbound
+// announcements and replies are unchanged.
 //
 // The checks run in a fixed order and each has exactly one disposition:
 //   1. channel   -> dropped_channel   (only cfg.slack.channel is ever handled)
 //   2. echo      -> dropped_echo      (three independent layers, see below;
 //                                      a user-less event lands here too — it is
 //                                      machine text, not a person)
-//   3. subtype   -> dropped_subtype   (only the plain message is a turn)
+//   3. subtype   -> dropped_subtype   (only the plain message is a message)
 //   4. dedupe    -> dropped_dupe      (Slack redelivers on every missed ack)
-//   5. stale     -> dropped_stale     (backlog older than catchup_max_age_s)
-//   6. turn cap  -> dropped_cap       (asked BEFORE the model, never after)
-//   7. delivery  -> dropped_delivery_failed (the overseer wake never landed;
-//                                      fail closed — at most once, never
-//                                      retried, and handle() rejects)
+//   5. retired   -> dropped_no_overseer (a person's plain message: there is no
+//                                      session to hand it to)
 //
-// Two things the router will never do: take a channel id from a message, and
-// take a tier from message text. Both come from config + the recorded Slack
-// user id, which is why a pasted "| tier | owner |" table is inert.
+// The router will never take a channel id from a message, nor a tier from
+// message text. Both come from config + the recorded Slack user id.
 import type { Config } from "../config.js";
 import type { SlackDisposition, SlackTier, StateStore } from "../state.js";
 import { isoSeconds } from "./messages.js";
-import { decideTurn, type TurnDecision } from "./policy.js";
-import type { OriginStore } from "./origin.js";
-import type { SlackIdentity, SlackInboundEvent, SlackWebApi } from "./types.js";
+import type { SlackIdentity, SlackInboundEvent } from "./types.js";
 
 /** The header marker the overseer's appendix keys the Slack envelope off. */
 export const SLACK_INJECT_MARKER = "<!-- qcr:slack v1 -->";
@@ -163,51 +161,23 @@ export function buildInjectBody(input: InjectBodyInput): string {
   ].join("\n");
 }
 
-/**
- * Drops a wake file on the overseer and returns its BASENAME when it can.
- * `SessionHooks.injectOverseer` returns void, so wiring passes a thin wrapper
- * over PiSessionManager.injectFile (which does return the path) — the router
- * binds the origin record to whatever name comes back, and falls back to the
- * event id when the injector is the plain void-returning hook.
- */
-export type OverseerInjector = (message: string) => Promise<string | void> | string | void;
-
 export interface SlackRouterDeps {
   cfg: Config;
   store: StateStore;
-  origins: OriginStore;
-  inject: OverseerInjector;
-  /** Name resolution only. The router never calls auth.test itself. */
-  users: Pick<SlackWebApi, "usersInfo">;
   /** Our own identity, resolved ONCE at boot (echo layer a). */
   identity?: SlackIdentity | null;
-  /** Fired when a turn was refused by a cap. The announcer owns the
-   * user-visible message — the router only reports. */
-  onCapReached?: (decision: TurnDecision, event: SlackInboundEvent) => void | Promise<void>;
-  now?: () => Date;
-  log?: (line: string) => void;
 }
 
 export interface RouteResult {
   disposition: SlackDisposition;
   tier: SlackTier;
-  /** Set only when disposition is `injected`. */
-  injectBasename?: string;
   reason?: string;
 }
 
 export class SlackRouter {
-  private readonly now: () => Date;
-  private readonly log: (line: string) => void;
+  constructor(private readonly deps: SlackRouterDeps) {}
 
-  constructor(private readonly deps: SlackRouterDeps) {
-    this.now = deps.now ?? (() => new Date());
-    this.log = deps.log ?? (() => {});
-  }
-
-  /** Route one inbound event. Rejects only when an admitted event's wake
-   * could not be delivered (its row says `dropped_delivery_failed`); the
-   * socket's dispatcher and wire.ts both catch that. */
+  /** Route one inbound event: one row, and never a turn. */
   async handle(event: SlackInboundEvent): Promise<RouteResult> {
     const cfg = this.deps.cfg;
     const store = this.deps.store;
@@ -241,10 +211,8 @@ export class SlackRouter {
     }
 
     // (2b) no Slack user id ⇒ nobody asked anything. Such an event has no tier
-    //      (`computeTier` says `ignored`), so injecting it would hand the model
-    //      a turn whose rights are undocumented and whose per-user cap cannot
-    //      be counted (policy.decideTurn only counts a user it can name). It is
-    //      machine-emitted text, which is exactly what `dropped_echo` means.
+    //      (`computeTier` says `ignored`). It is machine-emitted text, which is
+    //      exactly what `dropped_echo` means.
     if (tier === "ignored") {
       return this.record(
         event,
@@ -265,110 +233,17 @@ export class SlackRouter {
       );
     }
 
-    // (4) dedupe. The row is inserted BEFORE any work; a redelivery loses the
-    //     race and is dropped, so at-least-once delivery becomes exactly-once
-    //     injection. The provisional disposition is a DROP: if the daemon dies
-    //     before admission the event stays un-injected (fail closed), and it
-    //     costs no turn budget (only `injected` rows count). Past admission the
-    //     row is a reservation (`injected`, injected_at NULL — see below): a
-    //     death mid-delivery strands it, which spends one slot of that day's
-    //     cap on no turn — the cost side, the closed direction.
-    if (!this.insertRow(event, tier, "dropped_stale")) return this.dupe(event, tier);
-
-    // (5) staleness — a reconnect backlog is history, not a conversation. The
-    //     boot announcement owns the honesty about the gap.
-    const ageS = (this.now().getTime() - Number.parseFloat(event.event_ts) * 1000) / 1000;
-    if (Number.isFinite(ageS) && ageS > cfg.slack.catchup_max_age_s) {
-      store.setSlackEventDisposition(event.event_id, "dropped_stale");
-      return { disposition: "dropped_stale", tier, reason: `event is ${Math.round(ageS)}s old` };
-    }
-
-    // (6) caps, BEFORE the model is asked anything at all.
-    const decision = decideTurn(store, cfg, { slackUser: event.user ?? null }, this.now());
-    if (!decision.allow) {
-      store.setSlackEventDisposition(event.event_id, "dropped_cap");
-      if (decision.cap && this.deps.onCapReached) {
-        try {
-          await this.deps.onCapReached(decision, event);
-        } catch (err) {
-          this.log(`[slack] cap announcement failed: ${String(err)}`);
-        }
-      }
-      return { disposition: "dropped_cap", tier, reason: decision.reason };
-    }
-
-    // ---- admitted: reserve the turn, resolve identity, write the rights down,
-    //      then inject ----
-    // The budget counts `injected` rows, and everything below awaits (a
-    // users.info round-trip, the inject). Handlers run unserialized, so the
-    // slot is reserved HERE, before the first await — otherwise a burst at the
-    // cap edge all passes admission while the first one is still in flight.
-    // injected_at stays null until the wake file actually lands; any throw
-    // before it does releases the slot again (no turn, no budget spent).
-    store.setSlackEventDisposition(event.event_id, "injected", false);
-    try {
-      return await this.deliver(event, tier);
-    } catch (err) {
-      // Fail closed, and say why: this event was fresh and admitted.
-      store.setSlackEventDisposition(event.event_id, "dropped_delivery_failed");
-      throw err;
-    }
-  }
-
-  /** The admitted half of `handle`, run with the turn already reserved. */
-  private async deliver(event: SlackInboundEvent, tier: SlackTier): Promise<RouteResult> {
-    const cfg = this.deps.cfg;
-    const store = this.deps.store;
-    const threadTs = event.thread_ts ?? event.ts;
-    const threadPr = store.slackThreadByRoot(cfg.slack.channel, threadTs)?.pr ?? null;
-    const login = githubLoginFor(cfg, event.user);
-    const prs = authorizedPrs(store, login);
-    let displayName = event.user ?? "someone";
-    try {
-      const info = await this.deps.users.usersInfo(event.user ?? "");
-      if (info?.display_name) displayName = info.display_name;
-    } catch {
-      /* name resolution is cosmetic — never block a turn on it */
-    }
-
-    const body = buildInjectBody({
+    // (4) dedupe, then (5) refuse. The row is written with its final
+    //     disposition in one insert, so a redelivery loses the race and reports
+    //     `dropped_dupe` while the original row stands. Nothing past this point
+    //     exists: the overseer a turn would have gone to is retired, so a plain
+    //     message from a person is recorded and goes no further.
+    return this.record(
       event,
-      threadTs,
-      threadPr,
-      displayName,
-      githubLogin: login,
       tier,
-      authorizedPrs: prs,
-      receivedAt: this.now(),
-    });
-
-    // ORDER MATTERS, and it is origin-then-inject. The other order leaves a
-    // window — however short — in which a wake file exists with no rights
-    // record, and a model that acts inside it would be read as `origin === null`
-    // = a daemon turn = full system-grade autonomy. The failure direction must be closed, so
-    // the record goes down FIRST, under a provisional name, and is renamed onto
-    // the inject file once that file exists (the name is the audit join). If the
-    // inject never lands, the record is removed again — an origin with no turn
-    // would authorise a command nobody asked for.
-    const provisional = `event-${event.event_id}`;
-    this.deps.origins.write(provisional, {
-      event_id: event.event_id,
-      slack_user: event.user ?? "",
-      tier,
-      authorized_prs: prs,
-    });
-    let returned: string | void;
-    try {
-      returned = await this.deps.inject(body);
-    } catch (err) {
-      this.deps.origins.remove(provisional);
-      throw err;
-    }
-    const injectBasename =
-      typeof returned === "string" && returned.length > 0 ? baseName(returned) : provisional;
-    this.deps.origins.rename(provisional, injectBasename);
-    store.setSlackEventDisposition(event.event_id, "injected");
-    return { disposition: "injected", tier, injectBasename };
+      "dropped_no_overseer",
+      "Slack inbound turns are retired: there is no overseer to hand a message to",
+    );
   }
 
   /** Record a pre-dedupe drop. A redelivered drop reports `dropped_dupe` and
@@ -407,9 +282,4 @@ export class SlackRouter {
       reason: `event ${event.event_id} was already handled`,
     };
   }
-}
-
-function baseName(path: string): string {
-  const parts = path.split("/");
-  return parts[parts.length - 1] ?? path;
 }

@@ -29,11 +29,9 @@ import { CommandWatcher, type CommandDeps } from "../src/commands.js";
 import { StateStore } from "../src/state.js";
 import { OriginStore } from "../src/slack/origin.js";
 import type { SlackInboundHandler, SlackTransport } from "../src/slack/types.js";
-import type { SessionHooks } from "../src/types.js";
 import {
   buildLocalCommandWatcher,
   buildOperatorCommandWatcher,
-  daemonOriginWakes,
   defaultTransport,
   overseerOriginStore,
   startSlack,
@@ -117,8 +115,7 @@ function wiring(
     root: dir,
     store,
     commandDeps: noopCommandDeps,
-    injectOverseerFile: async () => join(dir, "inject", "overseer", "wake.md"),
-    injectOverseer: async () => {},
+    writeInbox: async () => {},
     log: () => {},
     now,
     readSecret: (() => "xoxb-fake") as SecretReader,
@@ -419,13 +416,6 @@ describe("state layout", () => {
 // wakes).
 
 describe("origin cause, not recency (the belt)", () => {
-  const noHooks: SessionHooks = {
-    dispatchRound: async () => {},
-    inject: async () => {},
-    archiveAndClose: async () => {},
-    injectOverseer: async () => {},
-  };
-
   /** The legacy watcher as production builds it, over a given runtime. */
   function legacy(runtime: SlackRuntime, deps: CommandDeps): CommandWatcher {
     return buildLocalCommandWatcher({ root: dir, deps, store, slack: runtime, log: () => {} });
@@ -513,150 +503,6 @@ describe("origin cause, not recency (the belt)", () => {
     await runtime.stop("test");
   });
 
-  it("a daemon wake clears the belt, and the very same command then runs", async () => {
-    const runtime = (await startSlack(wiring()))!;
-    runtime.origins.write("wake.md", {
-      event_id: "Ev1",
-      slack_user: "U0GUEST",
-      tier: "anyone",
-      authorized_prs: [],
-    });
-    clock = new Date("2026-08-17T09:20:00.000Z");
-
-    const fileIssue = vi.fn(() => ({ ok: true }));
-    writeLegacyCommand("blocked", { command: "file-issue", title: "t", body: "b" });
-    await legacy(runtime, { ...noopCommandDeps, fileIssue }).sweep();
-    expect(legacyResult("blocked").ok).toBe(false);
-
-    // The daemon wakes the overseer itself — through the wrapped hooks, exactly
-    // as createProductionDaemon hands them to the daemon.
-    const wakes: string[] = [];
-    const { hooks } = daemonOriginWakes({
-      hooks: { ...noHooks, injectOverseer: async (m) => void wakes.push(m) },
-      origins: runtime.origins,
-      enabled: true,
-    });
-    await hooks.injectOverseer("anomaly: verdict file is malformed");
-    expect(wakes).toHaveLength(1);
-    expect(runtime.origins.latestAny()).toMatchObject({
-      source: "local",
-      tier: "system",
-      slack_user: "",
-    });
-
-    // The wrap must forward the optional liveness/kill hooks: dropping
-    // sessionAlive here leaves the stuck-round detector blind, so every stuck
-    // round stays stuck.
-    const probed: number[] = [];
-    const killedPrs: number[] = [];
-    const optionalCalls: string[] = [];
-    const forwardedObservation: unknown[] = [];
-    const { hooks: fullHooks } = daemonOriginWakes({
-      hooks: {
-        ...noHooks,
-        sessionAlive: async (pr: number) => (probed.push(pr), true),
-        killSession: async (pr: number) => void killedPrs.push(pr),
-        roundPromptAccepted: async () => (optionalCalls.push("roundPromptAccepted"), true),
-        wakeReceiptPresent: async () => (optionalCalls.push("wakeReceiptPresent"), false),
-        redeliverRound: async () => (optionalCalls.push("redeliverRound"), true),
-        retrySessionCommand: async () => (
-          optionalCalls.push("retrySessionCommand"),
-          "retried" as const
-        ),
-        // Dropped by the wrap, the stale raw tier is never swept.
-        sweepStaleOvSessions: async () => (optionalCalls.push("sweepStaleOvSessions"), null),
-        // Dropped by the wrap, a wake waiting behind a compaction is read as
-        // lost and its live session killed.
-        redeliverSessionCommand: async (_id, observed) => (
-          optionalCalls.push("redeliverSessionCommand"),
-          forwardedObservation.push(observed),
-          "redelivered" as const
-        ),
-        sessionCompaction: async () => (optionalCalls.push("sessionCompaction"), null),
-      },
-      origins: runtime.origins,
-      enabled: true,
-    });
-    expect(fullHooks.sessionAlive).toBeDefined();
-    expect(fullHooks.killSession).toBeDefined();
-    expect(fullHooks.roundPromptAccepted).toBeDefined();
-    expect(fullHooks.wakeReceiptPresent).toBeDefined();
-    expect(fullHooks.redeliverRound).toBeDefined();
-    expect(fullHooks.retrySessionCommand).toBeDefined();
-    expect(fullHooks.sweepStaleOvSessions).toBeDefined();
-    expect(fullHooks.redeliverSessionCommand).toBeDefined();
-    expect(fullHooks.sessionCompaction).toBeDefined();
-    await fullHooks.sessionAlive!(42);
-    await fullHooks.killSession!(43);
-    await fullHooks.roundPromptAccepted!(42, 1, 0);
-    await fullHooks.wakeReceiptPresent!(42, "marker", 0);
-    await fullHooks.redeliverRound!(42, 1);
-    await fullHooks.retrySessionCommand!("cmd", "reason");
-    await fullHooks.sweepStaleOvSessions!();
-    // The supervisor's due observation must reach the hook: its CAS is on it.
-    const observed = { attempt: 1, redeliveries: 0, next_check_at: "2026-10-08T08:54:10.000Z" };
-    await fullHooks.redeliverSessionCommand!("cmd", observed);
-    expect(forwardedObservation).toEqual([observed]);
-    await fullHooks.sessionCompaction!(42);
-    expect(probed).toEqual([42]);
-    expect(killedPrs).toEqual([43]);
-    expect(optionalCalls).toEqual([
-      "roundPromptAccepted",
-      "wakeReceiptPresent",
-      "redeliverRound",
-      "retrySessionCommand",
-      "sweepStaleOvSessions",
-      "redeliverSessionCommand",
-      "sessionCompaction",
-    ]);
-
-    writeLegacyCommand("blocked", { command: "file-issue", title: "t", body: "b" });
-    await legacy(runtime, { ...noopCommandDeps, fileIssue }).sweep();
-    expect(legacyResult("blocked")).toMatchObject({ ok: true });
-    expect(fileIssue).toHaveBeenCalledTimes(1);
-    await runtime.stop("test");
-  });
-
-  it("the EOD sweep cannot be DoSed by one cheap message every 15 minutes", async () => {
-    const runtime = (await startSlack(wiring()))!;
-    const fileIssue = vi.fn(() => ({ ok: true }));
-    const fileImprovementPr = vi.fn(() => ({ ok: true }));
-    const deps = { ...noopCommandDeps, fileIssue, fileImprovementPr };
-
-    // A guest keeps the channel warm all afternoon.
-    for (let i = 0; i < 8; i++) {
-      clock = new Date(Date.parse("2026-08-17T14:00:00.000Z") + i * 14 * 60_000);
-      runtime.origins.write(`chat-${i}.md`, {
-        event_id: `Ev${i}`,
-        slack_user: "U0GUEST",
-        tier: "anyone",
-        authorized_prs: [],
-      });
-    }
-
-    // 18:00 Warsaw: the EOD timer wakes the overseer through the wrapped hooks…
-    clock = new Date("2026-08-17T16:00:00.000Z");
-    const { wake } = daemonOriginWakes({ hooks: noHooks, origins: runtime.origins, enabled: true });
-    await wake("eod-sweep", "run the EOD sweep");
-
-    // …and its improvement/issue commands land in the legacy dir and RUN.
-    writeLegacyCommand("eod-issue", { command: "file-issue", title: "flaky test", body: "…" });
-    writeLegacyCommand("eod-pr", {
-      command: "file-improvement-pr",
-      branch: "bot/improve-x",
-      title: "t",
-      body: "b",
-      slug: "x",
-    });
-    await legacy(runtime, deps).sweep();
-
-    expect(legacyResult("eod-issue")).toMatchObject({ ok: true });
-    expect(legacyResult("eod-pr")).toMatchObject({ ok: true });
-    expect(fileIssue).toHaveBeenCalledTimes(1);
-    expect(fileImprovementPr).toHaveBeenCalledTimes(1);
-    await runtime.stop("test");
-  });
-
   it("the real transport's diagnostics reach the daemon log", async () => {
     vi.stubGlobal(
       "fetch",
@@ -678,68 +524,6 @@ describe("origin cause, not recency (the belt)", () => {
       vi.unstubAllGlobals();
     }
     expect(lines).toContain("slack: slack.socket.open_threw");
-  });
-
-  it("a daemon wake's origin is bound to its wake file and lifts the belt only once pi takes it", async () => {
-    const inject = join(dir, "inject", "overseer");
-    const done = join(inject, ".done");
-    mkdirSync(done, { recursive: true });
-    const origins = new OriginStore(join(dir, "state", "slack", "origin"), now, {
-      deliveredDir: done,
-    });
-    // A guest's turn is running: its wake was accepted.
-    origins.write("event-EvG", {
-      event_id: "EvG",
-      slack_user: "U0GUEST",
-      tier: "anyone",
-      authorized_prs: [],
-    });
-    writeFileSync(join(done, "0001-guest.md"), "turn\n");
-    origins.rename("event-EvG", "0001-guest.md");
-    const { wake } = daemonOriginWakes({
-      hooks: noHooks,
-      origins,
-      enabled: true,
-      injectOverseerFile: async (m) => {
-        const path = join(inject, "0002-daemon-wake.md");
-        writeFileSync(path, m);
-        return path;
-      },
-    });
-    await wake("anomaly", "a verdict file is malformed");
-    expect(
-      readFileSync(join(dir, "state", "slack", "origin", "0002-daemon-wake.json"), "utf8"),
-    ).toContain('"source": "local"');
-    // Queued behind the guest's turn: the belt stays on.
-    expect(origins.latestAny()).toMatchObject({ source: "slack", tier: "anyone" });
-    // A copy in `.done/` while the wake is still pending is no acceptance.
-    writeFileSync(join(done, "0002-daemon-wake.md"), "forged\n");
-    expect(origins.latestAny()).toMatchObject({ source: "slack", tier: "anyone" });
-    rmSync(join(done, "0002-daemon-wake.md"));
-    // The bridge's move is.
-    renameSync(join(inject, "0002-daemon-wake.md"), join(done, "0002-daemon-wake.md"));
-    expect(origins.latestAny()).toMatchObject({ source: "local", tier: "system" });
-  });
-
-  // MUTATION: drop the `forget` call from `daemonOriginWakes` — the stamped
-  // record outlives the wake that never landed.
-  it("a daemon wake whose inject throws leaves no origin behind", async () => {
-    const done = join(dir, "inject", "overseer", ".done");
-    mkdirSync(done, { recursive: true });
-    const origins = new OriginStore(join(dir, "state", "slack", "origin"), now, {
-      deliveredDir: done,
-    });
-    const { wake } = daemonOriginWakes({
-      hooks: noHooks,
-      origins,
-      enabled: true,
-      injectOverseerFile: async () => {
-        throw new Error("tmux: no server running");
-      },
-    });
-    await expect(wake("anomaly", "x")).rejects.toThrow(/no server running/);
-    expect(origins.all()).toEqual([]);
-    expect(origins.onDisk()).toEqual([]);
   });
 
   // MUTATION: build the production store without `deliveredDir` — the
@@ -772,11 +556,11 @@ describe("origin cause, not recency (the belt)", () => {
     expect(body).not.toContain("new OriginStore(");
   });
 
-  it("a Slack turn stamps a SLACK origin — the router keeps the un-wrapped inject path", async () => {
+  it("an inbound Slack message stamps NO origin: the router has no turn to describe", async () => {
     const origins = new OriginStore(join(dir, "state", "slack", "origin"), now);
     const runtime = (await startSlack(wiring({ origins })))!;
     const ts = "1755431234.000100";
-    await runtime.router.handle({
+    const routed = await runtime.router.handle({
       event_id: "EvRouted",
       type: "message",
       channel: CHANNEL,
@@ -785,17 +569,29 @@ describe("origin cause, not recency (the belt)", () => {
       text: "any news?",
       event_ts: `${Math.floor(clock.getTime() / 1000)}.000100`,
     });
-    expect(origins.latestAny()).toMatchObject({
-      source: "slack",
-      slack_user: "U0GUEST",
-      tier: "anyone",
-    });
-    // …and the belt is on for the legacy dir while that turn is the cause.
+    expect(routed.disposition).toBe("dropped_no_overseer");
+    expect(origins.latestAny()).toBeNull();
+    expect(origins.onDisk()).toEqual([]);
+    // …so the legacy dir's belt is off: nothing restricts a session's command.
     const watcher = legacy(runtime, noopCommandDeps);
     const gate = (watcher as unknown as { opts: { tier: { currentOrigin: () => unknown } } }).opts
       .tier;
-    expect(gate.currentOrigin()).toMatchObject({ source: "slack" });
+    expect(gate.currentOrigin()).toBeNull();
     await runtime.stop("test");
+  });
+
+  it("the production origin store drops a guest record the previous run left, so the belt cannot stay on", () => {
+    const stale = new OriginStore(join(dir, "state", "slack", "origin"), now);
+    stale.write("old-guest.md", {
+      event_id: "EvOld",
+      slack_user: "U0GUEST",
+      tier: "anyone",
+      authorized_prs: [],
+    });
+    const sessions = { injectDir: (s: string) => join(dir, "inject", s) };
+    const fresh = overseerOriginStore(dir, sessions, now);
+    expect(fresh.latestAny()).toBeNull();
+    expect(existsSync(join(dir, "state", "slack", "origin", "old-guest.json"))).toBe(false);
   });
 
   it("the Slack dir still fails closed with no origin, and with an expired one", async () => {
