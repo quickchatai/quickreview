@@ -7,7 +7,7 @@
 // say what the backend was sent. The contract never reaches past the port:
 // what only one runtime has (a pi child's argv, its process group) is that
 // runtime's own describe in the test file.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,12 +20,14 @@ import {
 
 /** What the backend does with each turn it is given.
  *  - stream:    plays the recorded stream (fixtures/engine-proc/pi-stdout.jsonl,
- *               priced at 0.75) and ends on its own.
+ *               priced at 0.75 a turn) and ends on its own. A backend with no
+ *               recording answers with one message priced the same.
  *  - echo:      ends at once with a bare agent_end.
  *  - slow:      ends on its own after about half a second.
  *  - hang:      never ends; only an abort, a dispose or a limit stops it.
- *  - spendy:    prices 0.4 a message and never ends.
- *  - separators: one event whose string holds raw U+2028 and U+2029. */
+ *  - spendy:    prices a fixed amount a message (at least 0.25, under 0.5) and
+ *               never ends.
+ *  - separators: an event whose string holds raw U+2028 and U+2029. */
 export type Behaviour = "stream" | "echo" | "slow" | "hang" | "spendy" | "separators";
 
 export interface PortHarness {
@@ -37,6 +39,14 @@ export interface PortHarness {
   resume: "unsupported" | "supported";
   /** Whether `agentsFiles` are delivered or refused. */
   agentsFiles: "unsupported" | "supported";
+  /** True when the backend replays the recorded stream (fixtures/engine-proc),
+   * so the events file can be held to its golden byte for byte; false when the
+   * backend produces its own events (the SDK on faux). */
+  recordedStream: boolean;
+  /** The model name the specs carry. Default "m". */
+  model?: string;
+  /** Called after each test, to release what `runtime` built. */
+  cleanup?(dir: string): void | Promise<void>;
   /** A runtime whose every turn plays `behaviour`. `dir` is the test's scratch
    * directory; the harness may keep its scripts and logs there. */
   runtime(dir: string, behaviour: Behaviour): Runtime;
@@ -73,13 +83,16 @@ export function portContract(h: PortHarness): void {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "port-contract-"));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(async () => {
+    await h.cleanup?.(dir);
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   const events = (): string => join(dir, "events.jsonl");
   const spec = (over: Partial<SessionSpec> = {}): SessionSpec => ({
     cwd: dir,
     env: { PATH: process.env["PATH"] },
-    model: "m",
+    model: h.model ?? "m",
     eventsFile: events(),
     stderrFile: join(dir, "stderr.log"),
     limits: { timeoutMs: 20_000 },
@@ -241,13 +254,30 @@ export function portContract(h: PortHarness): void {
   });
 
   describe(`[${h.name}] event stream`, () => {
-    it("writes the events file byte for byte as the pre-port runner did", async () => {
-      const s = await open("stream");
-      await s.prompt("p");
-      await s.dispose();
-      expect(readFileSync(events())).toEqual(readFileSync(STREAM_GOLDEN));
-      expect(readFileSync(join(dir, "stderr.log"), "utf8")).toBe(STREAM_STDERR);
-    });
+    /** The events file as events: every line must be one whole JSON event. */
+    const written = (): SessionEvent[] =>
+      readFileSync(events(), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as SessionEvent);
+
+    it(
+      h.recordedStream
+        ? "writes the events file byte for byte as the pre-port runner did"
+        : "writes the events file as one JSON event per line",
+      async () => {
+        const s = await open("stream");
+        await s.prompt("p");
+        await s.dispose();
+        expect(written().length).toBeGreaterThan(0);
+        if (h.recordedStream) {
+          expect(readFileSync(events())).toEqual(readFileSync(STREAM_GOLDEN));
+          expect(readFileSync(join(dir, "stderr.log"), "utf8")).toBe(STREAM_STDERR);
+        } else {
+          expect(existsSync(join(dir, "stderr.log"))).toBe(true);
+        }
+      },
+    );
 
     it("lets a subscriber hear each event that was written, in order, until it unsubscribes", async () => {
       const s = await open("stream");
@@ -257,16 +287,19 @@ export function portContract(h: PortHarness): void {
       s.subscribe((e) => quiet.push(e))();
       await s.prompt("p");
       off();
-      const first = heard.length;
+      const first = written();
       await s.followUp("again");
       await s.dispose();
-      const written = readFileSync(STREAM_GOLDEN, "utf8")
-        .trim()
-        .split("\n")
-        .map((l) => JSON.parse(l) as SessionEvent);
-      expect(first).toBe(written.length);
-      expect(heard).toEqual(written);
+      expect(first.length).toBeGreaterThan(0);
+      expect(heard).toEqual(first);
       expect(quiet).toEqual([]);
+      if (h.recordedStream)
+        expect(first).toEqual(
+          readFileSync(STREAM_GOLDEN, "utf8")
+            .trim()
+            .split("\n")
+            .map((l) => JSON.parse(l) as SessionEvent),
+        );
     });
 
     it("does not let a listener's failure stop the others or the turn", async () => {
@@ -282,16 +315,16 @@ export function portContract(h: PortHarness): void {
       expect(heard.length).toBeGreaterThan(0);
     });
 
-    it("frames events by LF alone: U+2028 and U+2029 inside a string stay one event", async () => {
+    it("frames events by LF alone: U+2028 and U+2029 inside a string stay in one event", async () => {
       const s = await open("separators");
       const heard: SessionEvent[] = [];
       s.subscribe((e) => heard.push(e));
       await s.prompt("p");
       await s.dispose();
-      expect(heard).toEqual([{ type: "sep", t: `a${LS}b${PS}c` }]);
-      const lines = readFileSync(events(), "utf8").split("\n").filter(Boolean);
-      expect(lines).toHaveLength(1);
-      expect(JSON.parse(lines[0]!)).toEqual(heard[0]);
+      // Every line of the file is a whole event (no fragment cut at a separator),
+      // the subscriber heard those same events, and the raw separators survived.
+      expect(written()).toEqual(heard);
+      expect(JSON.stringify(heard)).toContain(`a${LS}b${PS}c`);
     });
   });
 

@@ -1,9 +1,9 @@
 // P2.5: the runtime port's contract suite, run on procRuntime over a fake pi
 // script (no model, no real pi). The cases live in tests/helpers/port-contract.ts
-// and are written against a PortHarness, so the in-process SDK runtime joins by
-// adding a harness here and one portContract() call. What only a pi child has
-// (respawn on follow-up, the process group, the argv) is tested after the
-// shared cases, under the process runtime's own name.
+// and are written against a PortHarness; the in-process SDK runtime joins in
+// tests/engine-sdkruntime.test.ts with one more portContract() call. What only a
+// pi child has (respawn on follow-up, the process group, the argv) is tested
+// after the shared cases, under the process runtime's own name.
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -63,6 +63,7 @@ const proc: PortHarness = {
   steer: "unsupported",
   resume: "unsupported",
   agentsFiles: "unsupported",
+  recordedStream: true,
   runtime: (dir, behaviour) => procRuntime({ bin: writeFakePi(dir, behaviour) }),
   delivered: (dir) =>
     existsSync(DELIVERED(dir)) ? readFileSync(DELIVERED(dir), "utf8").split("\n").slice(0, -1) : [],
