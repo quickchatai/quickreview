@@ -298,6 +298,67 @@ describe("operator PR recovery", () => {
     expect(store.heldWakes(pr)).toEqual([]);
   });
 
+  it("restart-session rotates the session after the kill and before the command is released (P8.12)", async () => {
+    const { store, dir, pr } = setup();
+    const c = command(store, dir, pr);
+    const order: string[] = [];
+    const killSession = vi.fn(async () => void order.push("kill"));
+    const rotateSession = vi.fn(async () => {
+      order.push(`rotate (command ${store.getSessionCommand(c.row.id)?.status})`);
+      return () => void order.push("undo");
+    });
+    const pump = vi.fn(async () => {
+      order.push("pump");
+      store.setPrState(pr, "reviewing");
+      store.startRound(pr, "re-review", ["pass-baseline"], 75);
+    });
+
+    const result = await recoverPrForOperator(
+      { store, pump, killSession, rotateSession },
+      pr,
+      "restart-session",
+    );
+
+    // The old worker is gone and the command still owns the slot while the JSONL
+    // moves: no worker can start and resume it between the two.
+    expect(order).toEqual(["kill", "rotate (command pending)", "pump"]);
+    expect(rotateSession).toHaveBeenCalledWith(pr);
+    expect(result).toMatchObject({ ok: true, redispatched: true });
+  });
+
+  it("restart-session puts the rotated session back when the release is refused (P8.12)", async () => {
+    const { store, dir, pr } = setup();
+    const c = command(store, dir, pr);
+    const undo = vi.fn();
+    const killSession = vi.fn(async () => {
+      // The blocker set changes while the kill is in flight: the release must refuse.
+      store.db.prepare("UPDATE session_commands SET status='cancelled' WHERE id=?").run(c.row.id);
+    });
+    const pump = vi.fn(async () => {});
+
+    await expect(
+      recoverPrForOperator(
+        { store, pump, killSession, rotateSession: async () => undo },
+        pr,
+        "restart-session",
+      ),
+    ).rejects.toThrow();
+
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(pump).not.toHaveBeenCalled();
+  });
+
+  it("restart-session without a rotate hook (the tmux host births afresh) is unchanged", async () => {
+    const { store, dir, pr } = setup();
+    command(store, dir, pr);
+    const result = await recoverPrForOperator(
+      { store, pump: vi.fn(async () => {}), killSession: vi.fn(async () => {}) },
+      pr,
+      "restart-session",
+    );
+    expect(result).toMatchObject({ cancelled_session_commands: ["cmd-round"] });
+  });
+
   it("the daemon's restart-session hook is the sessions' proven-absence kill, never a bare has-session probe", () => {
     // `Tmux.hasSession` reads every failed probe (a socket it may not open,
     // EAGAIN) as absence; `PiSessionManager.killSession` returns only once

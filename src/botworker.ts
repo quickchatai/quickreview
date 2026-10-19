@@ -29,6 +29,12 @@
 //   6. compact (ledger-pin pins the review ledger through pi's own compact());
 //   7. report usage and done, and exit.
 //
+// Throughout, the daemon may push the operator's controls (P8.12, src/botcontrol.ts):
+// a steer lands in the turn in flight, a follow-up behind the run, an abort stops the
+// session and the passes it started and ends the round with the aborted exit code.
+// Each is acked once over `control.ack`. The turns a control starts are waited for
+// before the wakes and again before the compaction.
+//
 // Exit codes: 0 the round was served (a verdict may or may not have been
 // written: `done` says), 1 a turn failed (timeout, cap, stream, refused
 // login), 2 bad usage or an answer-mode run before P8.17, 3 the handshake or the
@@ -56,7 +62,7 @@ import type { LensRun } from "./engine/lens/runlens.js";
 import { stopLiveSessions } from "./engine/livesessions.js";
 import { LENS_SESSIONS_DIR } from "./engine/openable.js";
 import { PiHost, headerId, type PiHostOptions } from "./engine/pisdk.js";
-import type { RuntimeSession, SessionSpec, TurnResult } from "./engine/port.js";
+import type { RuntimeSession, SessionSpec, TurnOptions, TurnResult } from "./engine/port.js";
 import { engineLensConfig } from "./engine/reviewsdk.js";
 import { loginSourceDirs } from "./engine/toolfence.js";
 import { checkToolUid, toolIdsOf } from "./engine/tooluid.js";
@@ -73,6 +79,7 @@ import {
   type WorkerMode,
   type WorkerSpec,
 } from "./ipc/workerspec.js";
+import { WorkerControls, ackSender } from "./botcontrol.js";
 import { sessionCommandMarker } from "./session-command.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
@@ -84,6 +91,7 @@ export const EXIT = {
   handshake: 3,
   auth: 4,
   session: 5,
+  aborted: 6,
   lost: 75,
   fenced: 76,
   terminated: 143,
@@ -289,24 +297,39 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
   // to post for this worker, so it stops spending. The same for a daemon that
   // fences it (a newer generation, a command that is no longer active).
   let stopCode: number | undefined;
+  let stopReason = "stopped";
+  let stopped: Promise<void> = Promise.resolve();
   let session: RuntimeSession | undefined;
-  const stopNow = (code: number, why: string): void => {
-    if (stopCode !== undefined) return;
+  const stopNow = (code: number, why: string): Promise<void> => {
+    if (stopCode !== undefined) return stopped;
     stopCode = code;
+    stopReason = why;
     log(`botworker: stopping (${why})`);
-    void (session?.abort() ?? Promise.resolve())
+    stopped = (session?.abort() ?? Promise.resolve())
       .catch(() => {})
       .then(() => stopLiveSessions(5_000))
       .catch(() => {});
+    return stopped;
   };
   const checkpoint = (): void => {
-    if (stopCode !== undefined) throw new Stop(stopCode, "stopped");
+    if (stopCode !== undefined) throw new Stop(stopCode, stopReason);
   };
-  client.onClose((e) => stopNow(EXIT.lost, `the daemon connection ended: ${e.message}`));
+  client.onClose((e) => void stopNow(EXIT.lost, `the daemon connection ended: ${e.message}`));
   client.onError((e) => {
     if (e.code === "stale_generation" || e.code === "command_inactive" || e.code === "unauthorized")
-      stopNow(EXIT.fenced, `the daemon fenced this worker: ${e.code}`);
+      void stopNow(EXIT.fenced, `the daemon fenced this worker: ${e.code}`);
   });
+  // The operator's controls (P8.12). They are taken from the moment the daemon
+  // connects: one that arrives before the session is open is refused, not lost.
+  let turnLimits: () => TurnOptions = () => ({});
+  const controls = new WorkerControls({
+    session: () => session,
+    limits: () => turnLimits(),
+    abort: () => stopNow(EXIT.aborted, "the round was aborted by the operator"),
+    ack: ackSender((op, body) => client.request(op, body)),
+    log,
+  });
+  client.onControl((kind, body) => controls.receive(kind, body));
 
   let host: PiHost | undefined;
   let beat: ReturnType<typeof setInterval> | undefined;
@@ -392,7 +415,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     );
     beat.unref();
 
-    const turnLimits = () => ({
+    turnLimits = () => ({
       timeoutMs: remaining(),
       ...(spec.cap_usd !== undefined
         ? { capUsd: Math.max(0, spec.cap_usd - live.stats().spentUsd) }
@@ -443,9 +466,28 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     };
     const deliver = async (text: string, what: string): Promise<void> => {
       const d = await live.followUp(text, turnLimits());
+      if (d.status === "queued") {
+        // An operator's turn is in flight, and this message runs behind it: its
+        // result is the session's last once nothing is queued.
+        await controls.drain();
+        const last = live.stats().last;
+        if (last === null) throw new Stop(EXIT.failed, `${what}: the message was not run (queued)`);
+        settle(last, what);
+        return;
+      }
       if (d.status !== "handled")
         throw new Stop(EXIT.failed, `${what}: the message was not run (${d.status})`);
       settle(d.result, what);
+    };
+    // The turns an operator's control started: settled before the round goes on.
+    let controlsChecked = 0;
+    const settleControls = async (close: boolean): Promise<void> => {
+      await (close ? controls.drainAndClose() : controls.drain());
+      checkpoint();
+      const taken = controls.counts.steer + controls.counts.follow_up;
+      const last = live.stats().last;
+      if (last !== null && taken > controlsChecked) settle(last, "the operator's message");
+      controlsChecked = taken;
     };
 
     // The round's turn. The engine starts the planned wave first, so the lenses
@@ -485,6 +527,8 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         "the round",
       );
     }
+    // Whatever the operator steered or followed up with runs to its end first.
+    await settleControls(false);
     // The turns are over: a wave row nobody joined is not wanted any more.
     await endWave();
 
@@ -511,6 +555,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       report("progress", { stage: "wakes_delivered", delivered: wakesDelivered });
     }
 
+    // Nothing is steered into a round that is closing; an abort still is.
+    await settleControls(true);
+
     // Compaction through ledger-pin: pi's own compact() fires the session's
     // session_before_compact. An optimisation, so a failure is reported and not fatal.
     let compacted = "skipped";
@@ -521,6 +568,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       report("compacted", outcome);
     }
 
+    checkpoint();
     foldLensLedger(meter, lensLedgerOf(spec));
     usage();
     report("done", {
@@ -530,6 +578,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       verdict_written: watch.verdictWritten,
       posted: watch.posted,
       wakes_delivered: wakesDelivered,
+      controls: { ...controls.counts },
       compacted,
       turns: live.stats().turns,
       total_usd: meter.totalUsd,
@@ -544,7 +593,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       e instanceof Stop
         ? e
         : stopCode !== undefined
-          ? new Stop(stopCode, "stopped")
+          ? new Stop(stopCode, stopReason)
           : new Stop(EXIT.failed, errText(e));
     log(`botworker: ${stop.reason}`);
     report("failed", { code: stop.exit, reason: stop.reason });
@@ -554,6 +603,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     await endWave().catch(() => {});
     await session?.dispose().catch(() => {});
     host?.dispose();
+    await controls.flush().catch(() => {});
     await client.drain().catch(() => {});
     client.close();
   }

@@ -12,9 +12,12 @@
 //   launch refused   a refusal is not a dispatch failure; the row stays the one
 //                    obligation and the daemon's timer starts it
 //   held wakes       the round's own worker takes them (src/wakes.ts)
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readLedgerCarry } from "../src/ledgercarry.js";
+import { recoverPrForOperator } from "../src/operator-recovery.js";
+import { newestSessionFile } from "../src/sessionjsonl.js";
 import { AUTHOR_REPLY_WAKE_REASON, StateStore } from "../src/state.js";
 import {
   recheckPromptMarker,
@@ -573,5 +576,63 @@ describe("[P8.6] closing a PR ends its worker", () => {
 
     expect(rig.isRunning(SESSION)).toBe(false);
     expect(rig.store.getSessionCommand(row.id)?.status).toBe("running");
+  });
+});
+
+describe("[P8.12] operator-recovery's restart-session on the worker host", () => {
+  const sessionDir = (): string => join(rig.root, "state", "pi-sessions", SESSION);
+  const ledger = (): string => join(rig.root, "state", "ledgers", `pr-${PR}.md`);
+
+  function seedSession(): string {
+    mkdirSync(sessionDir(), { recursive: true });
+    const file = join(sessionDir(), "2026-10-19T10-00-00Z_abc.jsonl");
+    writeFileSync(file, '{"type":"session","id":"abc"}\n');
+    mkdirSync(join(rig.root, "state", "ledgers"), { recursive: true });
+    writeFileSync(ledger(), `LEDGER PR #${PR} @ abc123\nSETTLED: lock order ok\n`);
+    return file;
+  }
+
+  it("fences the worker, rotates the JSONL, keeps the ledger, and cancels the command", async () => {
+    const row = await dispatched();
+    const file = seedSession();
+    expect(rig.isRunning(SESSION)).toBe(true);
+
+    const result = await recoverPrForOperator(
+      {
+        store: rig.store,
+        pump: async () => {},
+        killSession: (pr) => rig.host.killSession(pr),
+        rotateSession: (pr) => rig.host.rotateSession(pr),
+      },
+      PR,
+      "restart-session",
+    );
+
+    // The worker was ended through the supervisor's fence, and proven gone.
+    expect(rig.isRunning(SESSION)).toBe(false);
+    expect(rig.lifecycle()).toContain(`kill ${SESSION}`);
+    expect(result).toMatchObject({ cancelled_session_commands: [row.id] });
+    // The next worker finds no JSONL to resume: it births a session.
+    expect(existsSync(file)).toBe(false);
+    expect(newestSessionFile(sessionDir())).toBeUndefined();
+    expect(readdirSync(sessionDir()).some((f) => f.includes(".jsonl.rotated-"))).toBe(true);
+    // ...and the round order re-hands it the ledger, which the rotation did not touch.
+    expect(readLedgerCarry(ledger(), PR).carry?.text).toContain("SETTLED: lock order ok");
+    expect(events("session_rotated")).toHaveLength(1);
+  });
+
+  it("will not rotate beside a worker that is still there", async () => {
+    await dispatched();
+    const file = seedSession();
+    expect(() => rig.host.rotateSession(PR)).toThrow(/has a worker/);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it("an undone rotation brings the session back", async () => {
+    const file = seedSession();
+    const undo = rig.host.rotateSession(PR);
+    expect(existsSync(file)).toBe(false);
+    undo();
+    expect(existsSync(file)).toBe(true);
   });
 });
