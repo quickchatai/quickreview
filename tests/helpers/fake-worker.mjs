@@ -24,10 +24,14 @@
 //   refuse    as controls, but acks every steer and follow_up `refused`
 //   deaf      ready, accepted, heartbeats, and ignores controls and SIGTERM: only
 //             the SIGKILL of the group ends it
+//   answer    an idle-PR answer worker (P8.17): ready, accepted, a `usage` event, then
+//             heartbeats until `<out>/<id>.release` exists (at once without FAKE_WORKER_HOLD),
+//             then `done` with FAKE_WORKER_REPLY as the reply and exit 0. SIGTERM exits 143.
+//   answer-fail  as answer, but a `failed` event and exit 1 instead of the reply
 //
 // FAKE_WORKER_OUT is a directory it may write to; FAKE_WORKER_BEAT_MS the beat.
 import { spawn } from "node:child_process";
-import { readSync, writeFileSync } from "node:fs";
+import { existsSync, readSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -46,7 +50,8 @@ const n = readSync(Number(env.QCR_IPC_CAP_FD), buf, 0, 64, 0);
 const capability = buf.subarray(0, n).toString("utf8").trim();
 let generation = Number(env.QCR_IPC_GENERATION);
 
-if (mode === "term-ok") process.on("SIGTERM", () => process.exit(143));
+if (mode === "term-ok" || mode === "answer" || mode === "answer-fail")
+  process.on("SIGTERM", () => process.exit(143));
 if (mode === "busy" || mode === "group" || mode === "deaf") process.on("SIGTERM", () => {});
 if (mode === "env") {
   record("env.json", { env, argv, cwd: process.cwd() });
@@ -153,6 +158,27 @@ async function onHello(m) {
     event("progress", { stage: "heartbeat" });
     await sleep(100);
     for (;;);
+  }
+  if (mode === "answer" || mode === "answer-fail") {
+    event("usage", { total_usd: Number(env.FAKE_WORKER_USD ?? "0.05"), lens_usd: 0 });
+    while (env.FAKE_WORKER_HOLD && !existsSync(join(out, `${commandId}.release`))) {
+      event("progress", { stage: "heartbeat" });
+      await sleep(beatMs);
+    }
+    if (mode === "answer-fail") {
+      event("failed", { code: 1, reason: "the fake answer failed" });
+      await new Promise((r) => sock.write("", r));
+      process.exit(1);
+    }
+    event("done", {
+      mode: "answer",
+      reply: env.FAKE_WORKER_REPLY ?? "the fake reply",
+      total_usd: Number(env.FAKE_WORKER_USD ?? "0.05"),
+      lens_usd: 0,
+      session_id: "fake-session",
+    });
+    await new Promise((r) => sock.write("", r));
+    process.exit(0);
   }
   if (mode === "term-ok" || mode === "controls" || mode === "refuse" || mode === "deaf") {
     setInterval(() => event("progress", { stage: "heartbeat" }), beatMs);

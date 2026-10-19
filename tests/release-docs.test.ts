@@ -165,6 +165,37 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
     expect(read("CLAUDE.md")).not.toContain("No `~/.ssh` and no ssh-agent socket are ever mounted");
   });
 
+  it("rule 9 stage (i), the single-shepherd doc's S4 and amendment, and the PR-pane rule's part 2 sit in place word for word (P8.17)", () => {
+    const claude = read("CLAUDE.md");
+    const doc = read("docs/single-shepherd-invariant.md");
+    const proposed = blocks.filter((b) => b.kind === "proposed");
+    const rule9 = proposed.filter((b) => b.body.startsWith("9. "));
+    // Stage (i) is in; stage (ii) and (iii) are drafts that follow it.
+    expect(claude).toContain(rule9[0]!.body);
+    expect(claude).not.toContain(rule9[1]!.body);
+    expect(claude).not.toContain(rule9[2]!.body);
+    const s4 = proposed.find((b) => b.body.startsWith("**S4 "))!;
+    expect(doc).toContain(s4.body);
+    const amendment = proposed.find((b) => b.body.startsWith("## Amendment: workers"))!;
+    expect(doc).toContain(amendment.body);
+    const pane = proposed.filter((b) =>
+      b.body.startsWith("- **An embedded pi surface is a TERMINAL"),
+    );
+    expect(pane).toHaveLength(2);
+    expect(claude).toContain(pane[1]!.body);
+    expect(claude).not.toContain(pane[0]!.body);
+    // The sentences the landing made false are gone, and the new ones are there.
+    const folded = claude.replace(/\s+/g, " ");
+    expect(folded).not.toContain("One exception: an operator's steer");
+    expect(folded).not.toContain("flushed at round end (`src/wakes.ts`). One");
+    expect(folded).toContain("Two exceptions, both the operator's");
+    expect(folded).toContain("answered at once by a short worker that resumes the session");
+    expect(folded).toContain("posts only when the operator marked the message may-post");
+    expect(folded).toContain("(rule 9's first exception)");
+    // Each replaced `current` block is kept as `replaced`, so no test mistakes it for live text.
+    expect(text).toContain("```text replaced CLAUDE.md");
+  });
+
   it("states plainly that the companion's model can run any command on the VM", () => {
     const r8 = blocks.find((b) => b.kind === "proposed" && b.body.startsWith("8."))!.body;
     expect(r8).toContain("ANY command on the live VM");

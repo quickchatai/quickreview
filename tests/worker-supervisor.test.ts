@@ -1058,21 +1058,21 @@ describe("[P8.5b] the global drain", () => {
     expect(r.store.drainState().draining).toBe(true);
   });
 
-  it("an operator's own drain starts no round or answer worker either, and a lift releases the commands", async () => {
+  it("an operator's own drain starts no round or answer worker either, and a lift releases a round's command (an answer's is cancelled: it is asked again)", async () => {
     const r = await rig();
     r.store.engageDrain({ issuer: "operator", expires_at: null });
     const round = r.sup.submit({ pr: 61, kind: "round", round_no: null, payload: "x" });
-    const answer = r.sup.submit({ pr: 62, kind: "wake", round_no: null, payload: "hello" });
+    const answer = r.sup.submit({ pr: 62, kind: "answer", round_no: null, payload: "hello" });
     await expect(r.sup.launch(round.id)).rejects.toThrow(/draining/);
     await expect(r.sup.launch(answer.id)).rejects.toThrow(/draining/);
     expect(await r.sup.launchPending()).toEqual([]);
     expect(spawned(r)).toBe(0);
     expect(r.store.getSessionCommand(round.id)!.status).toBe("pending");
+    // A message not answered when it was sent is not answered hours later.
+    expect(r.store.getSessionCommand(answer.id)).toMatchObject({ status: "cancelled" });
     r.store.liftDrain("operator");
-    expect((await r.sup.launchPending()).map((s) => s.command_id).sort()).toEqual(
-      [round.id, answer.id].sort(),
-    );
-    await until(() => !r.sup.isLive("pr-61") && !r.sup.isLive("pr-62"));
+    expect((await r.sup.launchPending()).map((s) => s.command_id)).toEqual([round.id]);
+    await until(() => !r.sup.isLive("pr-61"));
   });
 
   it("a debug round or any other host asks the same gate", async () => {

@@ -207,22 +207,6 @@ describe("[P8.3] the command line", () => {
       expect(parseWorkerArgs(bad), JSON.stringify(bad)).toHaveProperty("error");
   });
 
-  it("answer mode is P8.17's: refused before it connects, with the usage code", async () => {
-    let connected = false;
-    const code = await runBotWorker(
-      { command: "c1", mode: "answer" },
-      {
-        env: { QCR_IPC_COMMAND_ID: "c1" },
-        connect: async () => {
-          connected = true;
-          throw new Error("never");
-        },
-      },
-    );
-    expect(code).toBe(EXIT.usage);
-    expect(connected).toBe(false);
-  });
-
   it("refuses a command id that is not the one the daemon put in env", async () => {
     const code = await runBotWorker(
       { command: "c1", mode: "round" },

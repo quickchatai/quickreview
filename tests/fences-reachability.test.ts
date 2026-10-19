@@ -157,6 +157,19 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "(the borrowed login, pi's argv and env). Read only by tests/takeover.test.ts and " +
         "tests/takeover-pane.test.ts until the daemon's wiring constructs the manager. Delete this entry with that import.",
     })),
+    // The idle-PR answer worker's daemon side (P8.17): the `message` handler (a steer during a round, an
+    // answer worker for an idle PR, the refusals with their reasons) and the result file it writes when
+    // the worker settles. The daemon's wiring hands `host.message` to `workerOperatorControl` and
+    // `host.onSettled` to the supervisor's `settled` dep when it constructs the worker host. Delete this
+    // entry with that import.
+    {
+      file: "src/answerworker.ts",
+      why:
+        "the idle-PR answer worker's host (P8.17): the operator's `message` handler and the result file " +
+        "of an answer command. Read only by tests/answer-host.test.ts until the daemon's wiring constructs " +
+        "the worker host and hands it to workerOperatorControl and the supervisor. Delete this entry " +
+        "with that import.",
+    },
     // The daemon's post ops (P7.2). The WorkerSupervisor (P8.5) serves them on the worker socket (P8.7);
     // the daemon does not start the supervisor until P8.6. Delete each entry with that import.
     {

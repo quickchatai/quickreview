@@ -783,7 +783,7 @@ const PENDING_WAKE_ORDER_SQL = `held_at,
 const BLOCKING_SESSION_COMMAND_SQL = `(
   c.status IN ('pending', 'running')
   OR (
-    c.status='failed' AND (
+    c.status='failed' AND c.kind!='answer' AND (
       c.kind!='round'
       OR NOT EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no)
       OR EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no AND r.status='running')
@@ -1678,7 +1678,7 @@ function readBooleanField(payload: string | null, field: string): boolean | unde
 
 /** Durable command lifecycle at the daemon→Pi boundary. */
 export type SessionCommandStatus = "pending" | "running" | "acked" | "failed" | "cancelled";
-export type SessionCommandKind = "round" | "wake" | "legacy";
+export type SessionCommandKind = "round" | "wake" | "answer" | "legacy";
 
 /** One durable daemon→Pi command. `next_check_at` is non-null in every state so
  * no active command can exist without a finite supervisor obligation. */
@@ -3343,7 +3343,7 @@ export class StateStore {
         throw new Error(`operator recovery blocker set changed while fencing #${pr}`);
       }
       const expected = rows
-        .filter((row) => row.kind !== "round")
+        .filter((row) => row.kind !== "round" && row.kind !== "answer")
         .map((row) => row.id)
         .sort();
       const supplied = recovered.map((row) => row.id).sort();
@@ -3356,7 +3356,9 @@ export class StateStore {
       const wakeIds: number[] = [];
       const ts = this.ts();
       for (const row of rows) {
-        if (row.kind !== "round") {
+        // An operator's message to an idle PR was answered or it was not: it is
+        // never held as a wake for later (rule 9), so recovery cancels it as it is.
+        if (row.kind !== "round" && row.kind !== "answer") {
           const payload = byId.get(row.id);
           if (payload === undefined)
             throw new Error(`operator recovery payload missing for ${row.id}`);
@@ -3580,6 +3582,26 @@ export class StateStore {
         WHERE id=@id AND status IN ('pending', 'running')`,
         )
         .run({ id, failure, ts }).changes === 1
+    );
+  }
+
+  /**
+   * End an idle-PR answer command that did not serve its message (P8.17). It is
+   * `cancelled`, never `failed`: a failed non-round command is owed work that
+   * blocks its PR's next round until a replay settles it, and an operator's
+   * message is answered now or not at all. The reason stays in `failure`.
+   */
+  cancelAnswerCommand(id: string, reason: string): boolean {
+    const ts = this.ts();
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
+          SET status='cancelled', owner_token=NULL, failure=@reason,
+              updated_at=@ts, next_check_at=@ts
+        WHERE id=@id AND kind='answer' AND status IN ('pending', 'running', 'failed')`,
+        )
+        .run({ id, reason, ts }).changes === 1
     );
   }
 

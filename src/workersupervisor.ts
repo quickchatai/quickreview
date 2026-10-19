@@ -84,6 +84,8 @@ import {
   type WorkerMode,
   type WorkerSpec,
 } from "./ipc/workerspec.js";
+import { DEFAULT_ANSWER_CAP_USD, DEFAULT_ANSWER_TIMEOUT_S } from "./config.js";
+import { operatorMayPost } from "./operatormessage.js";
 import { postOps, type PostOpsDeps } from "./postops.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import {
@@ -306,9 +308,21 @@ export interface WorkerSupervisorDeps {
   extraEnv?: Readonly<Record<string, string>>;
   nodeBin?: string;
   limits?: Partial<WorkerLimits>;
-  /** What a command's IPC calls are told beyond its row: `may_post` and a
-   * takeover/debug lease (P8.13, P8.17). Omitted: no post rights, no lease. */
+  /** What a command's IPC calls are told beyond its row: a takeover/debug lease
+   * (P8.13), and `may_post` for the kinds that carry it by another route (a debug
+   * round). An answer command's `may_post` is the operator's mark on its message,
+   * read from the payload the worker verified (P8.17), never from here. Omitted:
+   * no post rights, no lease. */
   facts?: (row: SessionCommandRow) => Partial<Pick<CommandState, "may_post" | "lease">>;
+  /** The idle-PR answer worker's caps (P8.17): `[daemon] answer_timeout_s` and
+   * `answer_cap_usd`. They replace whatever the spec builder put for an answer
+   * command, so no builder can lend an answer a round's budget. Omitted: the
+   * config defaults. */
+  answer?: { timeoutMs?: number; capUsd?: number };
+  /** Told once when a worker has been dealt with (its row decided, its capability
+   * revoked): what the host that submitted the command needs to close it out, such
+   * as the answer worker's reply file. Never throws into the supervisor. */
+  settled?: (s: WorkerSettled) => void;
   /** The daemon's post ops (P8.7): `post.review`, `post.approval` and `post.reply`,
    * run through the one gate for a host's post shims. Omitted: the daemon does not
    * know the ops, and a shim's post is refused. */
@@ -361,6 +375,11 @@ interface LiveWorker {
   posted: number;
   failedReason: string | undefined;
   spawnError: string | undefined;
+  /** The worker's closing `done` body (P8.17: an answer's reply rides it). */
+  report: Record<string, unknown> | undefined;
+  /** An answer worker only: the operator marked the message may-post. Read from
+   * the payload that was verified at launch; false for every other command. */
+  mayPost: boolean;
   killedFor: KillReason | undefined;
   killTimer: NodeJS.Timeout | undefined;
   /** Controls pushed and not yet acked, by id. */
@@ -371,6 +390,26 @@ interface LiveWorker {
   /** Resolves when the worker's row has been dealt with. */
   done: Promise<void>;
   finish: () => void;
+}
+
+/** What the supervisor knows of a worker once it is gone (`settled` dep). */
+export interface WorkerSettled {
+  command_id: string;
+  pr: number;
+  session: string;
+  mode: WorkerMode;
+  kind: SessionCommandKind;
+  /** How the row was decided. */
+  outcome: Outcome["kind"];
+  reason: string | undefined;
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** The body of the worker's `done` event, when it sent one. */
+  report: Record<string, unknown> | undefined;
+  posted: number;
+  verdict_written: boolean;
+  /** An answer worker's mark from the operator's message; false for any other. */
+  may_post: boolean;
 }
 
 export interface LaunchInfo {
@@ -457,14 +496,17 @@ export class WorkerSupervisor {
       row.status === "running" &&
       row.owner_token === rec.token;
     const facts = this.deps.facts?.(row) ?? {};
+    const answer = row.kind === "answer";
     const state: CommandState = {
       pr: row.pr,
       generation: rec?.generation ?? row.attempt,
       active: live,
-      may_post: facts.may_post === true,
+      // An answer worker posts only when the operator marked its message, and
+      // the daemon's word for that is the payload it dispatched (P8.17).
+      may_post: answer ? rec?.mayPost === true : facts.may_post === true,
       lease: facts.lease ?? "none",
     };
-    if (row.kind === "wake") state.answer = true;
+    if (answer) state.answer = true;
     return state;
   };
 
@@ -545,6 +587,9 @@ export class WorkerSupervisor {
         break;
       case "failed":
         if (typeof b["reason"] === "string") rec.failedReason = b["reason"].slice(0, 500);
+        break;
+      case "done":
+        rec.report = b;
         break;
       default:
         break;
@@ -631,6 +676,15 @@ export class WorkerSupervisor {
     for (const row of this.deps.store.activeSessionCommands()) {
       if (row.status !== "pending" || row.kind === "legacy") continue;
       if (this.bySession.has(row.session) || this.launching.has(row.session)) continue;
+      // An answer is started the moment it is submitted or not at all: one still
+      // pending here was left by a daemon that went away. The operator asks again.
+      if (row.kind === "answer") {
+        this.deps.store.cancelAnswerCommand(
+          row.id,
+          "not started before the daemon stopped; ask again",
+        );
+        continue;
+      }
       // A drained bot or a parked PR starts nothing; the command waits, and the
       // refusal is not logged every pass.
       if (!this.breaker.gate(row.pr).ok) continue;
@@ -680,13 +734,17 @@ export class WorkerSupervisor {
       this.leases.forget(session);
     }
 
-    const mode: WorkerMode = row.kind === "wake" ? "answer" : "round";
-    const spec = this.checkedSpec(row, mode);
+    // A wake outside a round is the PR's main session carrying on, so it runs as a
+    // round worker does; only an operator's message to an idle PR is an answer.
+    const mode: WorkerMode = row.kind === "answer" ? "answer" : "round";
     const payload = verifiedPayload(row, "the command's payload");
     if (!payload.ok) {
-      store.failPendingSessionCommand(row.id, payload.why);
+      if (row.kind === "answer") store.cancelAnswerCommand(row.id, payload.why);
+      else store.failPendingSessionCommand(row.id, payload.why);
       throw new WorkerLaunchError(payload.why);
     }
+    const mayPost = mode === "answer" && operatorMayPost(payload.payload.toString("utf8"));
+    const spec = this.checkedSpec(row, mode, mayPost);
 
     const token = WorkerLeases.newToken();
     const t0 = this.now();
@@ -774,6 +832,8 @@ export class WorkerSupervisor {
       posted: 0,
       failedReason: undefined,
       spawnError: undefined,
+      report: undefined,
+      mayPost,
       killedFor: undefined,
       killTimer: undefined,
       controls: new Map(),
@@ -803,7 +863,7 @@ export class WorkerSupervisor {
   /** The spec as the worker will read it: from the builder, checked against the
    * row (a spec for another command, PR or payload is a bug, not a request), with
    * no GitHub credential, no IPC name, and the beat interval filled in. */
-  private checkedSpec(row: SessionCommandRow, mode: WorkerMode): WorkerSpec {
+  private checkedSpec(row: SessionCommandRow, mode: WorkerMode, mayPost: boolean): WorkerSpec {
     const built = this.deps.buildSpec(row, mode);
     const env: Record<string, string> = {};
     for (const [name, value] of Object.entries(built.env)) {
@@ -813,10 +873,28 @@ export class WorkerSupervisor {
         );
       if (!(GITHUB_TOKEN_ENVS as readonly string[]).includes(name)) env[name] = value;
     }
+    // An answer is a short worker with caps of its own: the builder's round budget,
+    // its planned wave and its lens dir do not apply, and the may-post mark is the
+    // daemon's own reading of the payload, whatever the builder put.
+    const answer =
+      mode === "answer"
+        ? {
+            wall_clock_ms:
+              this.deps.answer?.timeoutMs ?? Math.round(DEFAULT_ANSWER_TIMEOUT_S * 1000),
+            cap_usd: this.deps.answer?.capUsd ?? DEFAULT_ANSWER_CAP_USD,
+            planned_wave: false,
+            may_post: mayPost,
+            // The newest round's live log is where a viewer following the PR looks.
+            ...(this.newestRound(row.pr) !== undefined
+              ? { live_round: this.newestRound(row.pr) }
+              : {}),
+          }
+        : {};
     const spec = parseWorkerSpec(
       JSON.parse(
         JSON.stringify({
           ...built,
+          ...answer,
           env,
           heartbeat_ms: built.heartbeat_ms ?? this.limits.heartbeatMs,
         }),
@@ -834,11 +912,15 @@ export class WorkerSupervisor {
     return spec;
   }
 
+  private newestRound(pr: number): number | undefined {
+    return this.deps.store.roundsFor(pr).at(-1)?.round_no;
+  }
+
   /** Undo a launch that never produced a process. */
   private abandon(id: string, token: string, session: string, leased: boolean, why: string): void {
     this.deps.capabilities.revoke(id);
     if (leased) this.leases.remove(session, token);
-    this.deps.store.finishSessionCommand(id, token, "failed", why);
+    this.finishFailed(id, token, why);
   }
 
   // ---- watching ------------------------------------------------------------
@@ -937,6 +1019,7 @@ export class WorkerSupervisor {
         posted: rec.posted,
       });
       this.count(rec, outcome, code);
+      this.tell(rec, outcome, code, signal);
     } catch (e) {
       this.log(`settling worker ${rec.row.id} failed: ${String(e)}`);
     } finally {
@@ -953,6 +1036,9 @@ export class WorkerSupervisor {
    * no round to retry, so a requeue it just got is failed instead. */
   private count(rec: LiveWorker, outcome: Outcome, code: number | null): void {
     const { pr } = rec.row;
+    // An answer is the operator's chat, not the PR's round: its failures do not park
+    // the PR or feed the drain, and its success must not hide a round's crash loop.
+    if (rec.mode === "answer") return;
     // A fenced worker was ended by the caller, who owns the row's fate: not a worker failure.
     if (rec.killedFor === "shutdown" || rec.killedFor === "operator" || outcome.kind === "leave") return;
     if (outcome.kind === "acked" && rec.failedReason === undefined) {
@@ -972,6 +1058,38 @@ export class WorkerSupervisor {
       );
   }
 
+  /** Hand the host that submitted the command what the worker came to. */
+  private tell(
+    rec: LiveWorker,
+    outcome: Outcome,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): void {
+    if (!this.deps.settled) return;
+    try {
+      this.deps.settled({
+        command_id: rec.row.id,
+        pr: rec.row.pr,
+        session: rec.row.session,
+        mode: rec.mode,
+        kind: rec.row.kind,
+        outcome: outcome.kind,
+        reason:
+          outcome.kind === "failed" || outcome.kind === "requeue"
+            ? (rec.failedReason ?? outcome.reason)
+            : undefined,
+        code,
+        signal,
+        report: rec.report,
+        posted: rec.posted,
+        verdict_written: rec.verdictWritten,
+        may_post: rec.mayPost,
+      });
+    } catch (e) {
+      this.log(`worker settled hook failed: ${String(e)}`);
+    }
+  }
+
   private apply(rec: LiveWorker, outcome: Outcome): void {
     const { store } = this.deps;
     const id = rec.row.id;
@@ -981,7 +1099,7 @@ export class WorkerSupervisor {
       store.markSessionCommandStarted(id, rec.token, this.iso(this.now()));
       store.finishSessionCommand(id, rec.token, "acked");
     } else if (outcome.kind === "failed") {
-      store.finishSessionCommand(id, rec.token, "failed", outcome.reason);
+      this.finishFailed(id, rec.token, outcome.reason);
     } else {
       this.requeueOrFail(id, rec.token, outcome.reason);
     }
@@ -993,6 +1111,12 @@ export class WorkerSupervisor {
     const { store } = this.deps;
     const row = store.getSessionCommand(id);
     if (!row || row.status !== "running") return false;
+    // A lost answer worker is not replayed: the operator is told (the reply file
+    // says the worker was lost) and asks again if they still want the answer.
+    if (row.kind === "answer") {
+      store.cancelAnswerCommand(id, reason);
+      return false;
+    }
     if (row.recovery_attempts >= this.limits.maxRequeues) {
       this.failRow(row, token, `${reason}; requeued ${row.recovery_attempts} times already`);
       return false;
@@ -1004,8 +1128,25 @@ export class WorkerSupervisor {
 
   private failRow(row: SessionCommandRow, token: string | null, why: string): void {
     const { store } = this.deps;
-    if (token !== null) store.finishSessionCommand(row.id, token, "failed", why);
-    else store.failActiveSessionCommand(row.id, why);
+    if (token !== null) this.finishFailed(row.id, token, why);
+    else {
+      store.failActiveSessionCommand(row.id, why);
+      this.endAnswer(row.id, why);
+    }
+  }
+
+  /** The row's `failed`, except that an answer command never ends failed: a failed
+   * non-round command is owed work that blocks the PR's next round, and an
+   * operator's message owes nothing (`cancelAnswerCommand`). */
+  private finishFailed(id: string, token: string, why: string): boolean {
+    const done = this.deps.store.finishSessionCommand(id, token, "failed", why);
+    if (done) this.endAnswer(id, why);
+    return done;
+  }
+
+  private endAnswer(id: string, why: string): void {
+    if (this.deps.store.getSessionCommand(id)?.kind === "answer")
+      this.deps.store.cancelAnswerCommand(id, why);
   }
 
   // ---- restart -------------------------------------------------------------
@@ -1051,10 +1192,7 @@ export class WorkerSupervisor {
     for (const row of this.deps.store.activeSessionCommands()) {
       if (row.status !== "running" || this.byCommand.has(row.id)) continue;
       if (unkillable.has(row.id)) {
-        this.deps.store.failActiveSessionCommand(
-          row.id,
-          "the previous worker's group could not be ended",
-        );
+        this.failRow(row, null, "the previous worker's group could not be ended");
         result.failed.push(row.id);
       } else if (this.requeueOrFail(row.id, null, "the daemon restarted"))
         result.requeued.push(row.id);

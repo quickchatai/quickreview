@@ -1215,6 +1215,56 @@ async function cmdTakeover(kind: "takeover" | "release", rest: string[]): Promis
   return ok ? 0 : 1;
 }
 
+// ---- the operator's message to a PR (P8.17) ------------------------------------
+
+const MESSAGE_USAGE = "usage: qcr message <pr> [--may-post] <text...>";
+
+/** `qcr message`'s arguments: the PR number, then the words of the message, with
+ * `--may-post` anywhere before them. `may_post` is set ONLY by that flag: a message
+ * posts nothing unless the operator says so here (or presses Alt-p in the viewer). */
+export function parseMessageArgs(rest: readonly string[]): {
+  pr: number;
+  text: string;
+  mayPost: boolean;
+} {
+  let mayPost = false;
+  const words: string[] = [];
+  for (const a of rest) {
+    if (a === "--may-post" && !mayPost && words.length <= 1) mayPost = true;
+    else words.push(a);
+  }
+  const [prArg, ...text] = words;
+  const pr = /^#?\d+$/.test(prArg ?? "") ? Number((prArg as string).replace("#", "")) : NaN;
+  const body = text.join(" ").trim();
+  if (!Number.isSafeInteger(pr) || pr <= 0 || body === "") throw new Error(MESSAGE_USAGE);
+  return { pr, text: body, mayPost };
+}
+
+/** `qcr message`: send the operator's message to a PR's session through the same
+ * operator channel the viewer's input line uses, and say how the daemon took it. */
+export async function cmdMessage(
+  rest: string[],
+  deps: {
+    sender?: Pick<import("./tui/livecontrol.js").ControlSender, "send">;
+    log?: (line: string) => void;
+  } = {},
+): Promise<number> {
+  const { pr, text, mayPost } = parseMessageArgs(rest);
+  const log = deps.log ?? ((l: string) => console.log(l));
+  let sender = deps.sender;
+  if (!sender) {
+    const { runnerFor } = await import("./tui/remote.js");
+    const { LiveControlSender } = await import("./tui/livecontrol.js");
+    const cfg = loadConfig();
+    sender = new LiveControlSender(cfg.tui, runnerFor(cfg.tui));
+  }
+  const out = await sender.send(
+    { kind: "message", pr, text, ...(mayPost ? { may_post: true } : {}) },
+    (_state, label) => log(label),
+  );
+  return out.state === "queued" || out.state === "handled" ? 0 : 1;
+}
+
 /**
  * `qcr install <where|migrate>`. `where` prints what the install
  * locator resolves; `migrate` moves the checkout's old config.toml into the
@@ -1978,6 +2028,10 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdDrain(rest);
       return;
     }
+    case "message": {
+      process.exitCode = await cmdMessage(rest);
+      return;
+    }
     case "archive": {
       process.exitCode = await cmdArchive(rest, json);
       return;
@@ -2055,7 +2109,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|release <n>|tui [pr|overseer]|drain <on|off>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|release <n>|tui [pr|overseer]|drain <on|off>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

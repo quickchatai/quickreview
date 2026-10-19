@@ -11,9 +11,10 @@
 //
 // takeover and release (P8.13) are served by the TakeoverManager (src/takeover.ts):
 // the daemon grants the lease and starts the operator's pi, or stops it and frees the
-// lease once it is gone. message and debug-round are other tickets' verbs (P8.13b,
-// P8.17): they go to `other` when the daemon has one, and are otherwise refused with
-// a reason.
+// lease once it is gone. message is the idle-PR answer worker's (P8.17,
+// src/answerworker.ts): a round running makes it a steer, an idle PR gets a short
+// worker. debug-round is another ticket's verb (P8.13b): it goes to `other` when the
+// daemon has one, and is otherwise refused with a reason.
 import type { ControlCommand } from "./commands.js";
 import type { FileOutcome } from "./improvements.js";
 import type { TakeoverManager, TakeoverResult } from "./takeover.js";
@@ -23,6 +24,10 @@ export interface WorkerControlDeps {
   supervisor: Pick<WorkerSupervisor, "control" | "abortRound">;
   /** The takeover lease (P8.13). Omitted: takeover and release go to `other`. */
   takeover?: Pick<TakeoverManager, "grant" | "release">;
+  /** The answer host's `message` (P8.17). Omitted: a message goes to `other`. */
+  message?: (
+    command: Extract<ControlCommand, { command: "message" }>,
+  ) => Promise<FileOutcome> | FileOutcome;
   other?: (command: ControlCommand, file: string) => Promise<FileOutcome> | FileOutcome;
 }
 
@@ -66,6 +71,8 @@ export function workerOperatorControl(
       case "release":
         if (deps.takeover) return takeoverOutcome(await deps.takeover.release(command.pr));
         return notServed(deps, command, file);
+      case "message":
+        return deps.message ? deps.message(command) : notServed(deps, command, file);
       default:
         return notServed(deps, command, file);
     }

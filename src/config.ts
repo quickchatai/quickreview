@@ -2018,6 +2018,13 @@ export interface Config {
      * its sessions in one burst (the gate measured a 0.7 to 2.5 s loop stall for
      * 8 to 20 at once). 0 turns it off. Default DEFAULT_LENS_GRANT_STAGGER_MS (250). */
     lens_grant_stagger_ms?: number;
+    /** The idle-PR answer worker's wall-clock cap, in seconds (P8.17): the
+     * operator's message to a PR with no running worker is answered by a short
+     * worker that is ended at this age. Readers default to DEFAULT_ANSWER_TIMEOUT_S. */
+    answer_timeout_s?: number;
+    /** The answer worker's dollar cap per message (the session's own spend, in
+     * USD). Readers default to DEFAULT_ANSWER_CAP_USD. */
+    answer_cap_usd?: number;
     round_stage_supervisor_stale_s?: number;
     /** The daemon's event-loop watch (src/eventloop.ts). All
      * optional — `eventLoopPolicy` defaults each (300 s window, a 10 s single
@@ -2766,6 +2773,9 @@ export const DEFAULT_SESSION_COMMAND_MAX_START_RETRIES = 2;
  * CPU-starved; ten minutes is several times the worst seen and still well
  * inside the 75-minute round deadline. */
 export const DEFAULT_SESSION_COMPACTION_MAX_S = 600;
+/** The idle-PR answer worker (P8.17): ten minutes of wall clock, two dollars. */
+export const DEFAULT_ANSWER_TIMEOUT_S = 600;
+export const DEFAULT_ANSWER_CAP_USD = 2;
 export const DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S = 180;
 
 export function sandboxRoot(): string {
@@ -2916,6 +2926,8 @@ export function parseConfig(toml: string): Config {
       session_compaction_max_s: DEFAULT_SESSION_COMPACTION_MAX_S,
       lens_permits: DEFAULT_LENS_PERMITS,
       lens_grant_stagger_ms: DEFAULT_LENS_GRANT_STAGGER_MS,
+      answer_timeout_s: DEFAULT_ANSWER_TIMEOUT_S,
+      answer_cap_usd: DEFAULT_ANSWER_CAP_USD,
       round_stage_supervisor_stale_s: DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S,
       ...(req(raw, "daemon") as Partial<Config["daemon"]>),
     } as Config["daemon"],
@@ -3196,6 +3208,14 @@ export function parseConfig(toml: string): Config {
   const lensStagger = cfg.daemon.lens_grant_stagger_ms ?? DEFAULT_LENS_GRANT_STAGGER_MS;
   if (!(typeof lensStagger === "number" && Number.isFinite(lensStagger) && lensStagger >= 0)) {
     throw new Error("config.toml: require a finite number [daemon] lens_grant_stagger_ms >= 0");
+  }
+  const answerTimeout = cfg.daemon.answer_timeout_s ?? DEFAULT_ANSWER_TIMEOUT_S;
+  if (!(typeof answerTimeout === "number" && Number.isFinite(answerTimeout) && answerTimeout > 0)) {
+    throw new Error("config.toml: require a finite number [daemon] answer_timeout_s > 0");
+  }
+  const answerCap = cfg.daemon.answer_cap_usd ?? DEFAULT_ANSWER_CAP_USD;
+  if (!(typeof answerCap === "number" && Number.isFinite(answerCap) && answerCap > 0)) {
+    throw new Error("config.toml: require a finite number [daemon] answer_cap_usd > 0");
   }
   const compactionMax = cfg.daemon.session_compaction_max_s ?? DEFAULT_SESSION_COMPACTION_MAX_S;
   if (!(typeof compactionMax === "number" && Number.isFinite(compactionMax) && compactionMax > 0)) {

@@ -169,7 +169,7 @@ describe("daemon topology", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("CLAUDE.md rule 9 is the ratified text (D9)", () => {
+  it("CLAUDE.md rule 9 is the ratified text (D9, with the answer worker's stage (i), P8.17)", () => {
     // Rule text changes only by the owner's ratification, so the test pins it
     // verbatim (whitespace folded: CLAUDE.md wraps it). The same words open
     // docs/single-shepherd-invariant.md's amendment.
@@ -188,8 +188,10 @@ describe("daemon topology", () => {
       join(import.meta.dirname, "..", "docs", "single-shepherd-invariant.md"),
       "utf8",
     );
-    expect(doc).toContain("Exactly two launchers");
-    expect(doc).toContain("`lens` / `lens_wave`");
+    // (whitespace folded: the doc wraps it, and the amendment breaks a line inside the names)
+    const folded = doc.replace(/\s+/g, " ");
+    expect(folded).toContain("Exactly two launchers");
+    expect(folded).toContain("`lens` / `lens_wave`");
   });
 
   it("S2: no daemon module invokes pi outside the session manager", () => {

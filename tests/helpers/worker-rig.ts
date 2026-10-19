@@ -408,7 +408,10 @@ export function registerDryRunPosting(
     journal: new PostingJournal({ dir: join(state, "posting-receipts"), repo: GH_REPO }),
     cfg,
     botLogins: [BOT],
-    roundOf: () => ({ round_no: 1, head_sha: HEAD }),
+    // An answer worker's command (its id starts `answer-`) has no round: its posts are
+    // unkeyed, as the daemon's `commandRoundOf` answers for it.
+    roundOf: (commandId) =>
+      commandId.startsWith("answer-") ? null : { round_no: 1, head_sha: HEAD },
   });
   return {
     gh,

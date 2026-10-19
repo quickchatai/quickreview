@@ -282,14 +282,16 @@ describe("the CLAUDE.md anchors", () => {
   };
   const ratified = section("Ratified design decisions");
 
-  it("the PR-pane bullet is the viewer's rule, part 1: the line sends a message when no round runs", () => {
+  it("the PR-pane bullet is the viewer's rule, part 2: the line sends a message when no round runs, answered at once", () => {
     const b = bullet("- **An embedded pi surface is a TERMINAL");
     expect(b.at).toBeGreaterThan(ratified.from);
     expect(b.at).toBeLessThan(ratified.to);
     expect(b.text).toContain("Never add a TUI-side input box");
     expect(b.text).toContain("LIVE VIEWER");
-    expect(b.text).toContain("operator steer (rule 9's one exception)");
+    expect(b.text).toContain("operator steer (rule 9's first exception)");
     expect(b.text).toContain("[private rule text removed]");
+    expect(b.text).toContain("answered at once by a short worker that resumes the session");
+    expect(b.text).toContain("posts only when the operator marked the message may-post");
     expect(b.text).toContain("debug round or a takeover inside interactive pi");
     expect(b.text).toContain("`Ctrl-q` is the only reserved byte");
     expect(b.text).not.toMatch(/held as a wake/);
