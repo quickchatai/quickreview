@@ -253,7 +253,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   // ---- QCR_OV_*: OpenViking fork additions
   QCR_OV_LEAF: {
     kind: "extension-config",
-    readers: [`${OV}/qcr-leaf.ts`],
+    readers: [`${OV}/qcr-leaf.ts`, `${OV}/qcr-shim.ts`],
     note: "forces leaf mode (no ambient memory work)",
   },
   QCR_OV_RECALL_HINT_FILE: {
@@ -268,29 +268,29 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   QCR_OV_SESSION_ID: {
     kind: "extension-config",
-    readers: [`${OV}/sync.ts`],
+    readers: [`${OV}/qcr-shim.ts`, `${OV}/sync.ts`],
     note: "session id that survives the tmux server env",
   },
 
   // ---- OPENVIKING_*: upstream plugin config, read in-process by the vendored extension
   OPENVIKING_ACCOUNT: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`, `${OV}/shared/credentials.mjs`],
+    readers: [`${OV}/shared/credentials.mjs`],
     note: "account",
   },
   OPENVIKING_API_KEY: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`, `${OV}/shared/credentials.mjs`],
+    readers: [`${OV}/shared/credentials.mjs`],
     note: "credential; the daemon sets it only in env a model's bash cannot read",
   },
   OPENVIKING_BASE_URL: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`, `${OV}/shared/credentials.mjs`],
+    readers: [`${OV}/shared/credentials.mjs`],
     note: "server URL alias",
   },
   OPENVIKING_BEARER_TOKEN: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`, `${OV}/shared/credentials.mjs`],
+    readers: [`${OV}/shared/credentials.mjs`],
     note: "credential alias of OPENVIKING_API_KEY",
   },
   OPENVIKING_CLI_CONFIG_FILE: {
@@ -320,47 +320,47 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   OPENVIKING_PEER_ID: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`, `${OV}/shared/credentials.mjs`],
+    readers: [`${OV}/shared/credentials.mjs`],
     note: "actor peer",
   },
   OPENVIKING_PENDING_DIR: {
     kind: "extension-config",
-    readers: [`${OV}/shared/pending-queue.mjs`],
+    readers: [`${OV}/qcr-shim.ts`],
     note: "pending-queue directory",
   },
   OPENVIKING_PENDING_MAX_RETRIES: {
     kind: "extension-config",
-    readers: [`${OV}/shared/pending-queue.mjs`],
+    readers: [`${OV}/qcr-shim.ts`],
     note: "queue retry cap",
   },
   OPENVIKING_PENDING_REPLAY_LIMIT: {
     kind: "extension-config",
-    readers: [`${OV}/shared/pending-queue.mjs`],
+    readers: [`${OV}/qcr-shim.ts`],
     note: "items replayed per session start",
   },
   OPENVIKING_PENDING_TTL_DAYS: {
     kind: "extension-config",
-    readers: [`${OV}/shared/pending-queue.mjs`],
+    readers: [`${OV}/qcr-shim.ts`],
     note: "queue item age cap",
   },
   OPENVIKING_RECALL_LIMIT: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`],
+    readers: [`${OV}/qcr-shim.ts`],
     note: "recall result limit",
   },
   OPENVIKING_RECALL_PEER_SCOPE: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`],
+    readers: [`${OV}/qcr-shim.ts`],
     note: "actor or all",
   },
   OPENVIKING_RECALL_QUERY_EXPANSION: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`],
+    readers: [`${OV}/config.ts`, `${OV}/qcr-shim.ts`],
     note: "auto or off",
   },
   OPENVIKING_SESSION_ID: {
     kind: "extension-config",
-    readers: [`${OV}/sync.ts`],
+    readers: [`${OV}/index.ts`, `${OV}/qcr-shim.ts`, `${OV}/sync.ts`],
     note: "upstream-shaped name of QCR_OV_SESSION_ID",
   },
   OPENVIKING_STATE_DIR: {
@@ -370,17 +370,17 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   OPENVIKING_URL: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`, `${OV}/shared/credentials.mjs`],
+    readers: [`${OV}/shared/credentials.mjs`],
     note: "server URL",
   },
   OPENVIKING_USER: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`, `${OV}/qcr-namespaces.ts`, `${OV}/shared/credentials.mjs`],
+    readers: [`${OV}/qcr-namespaces.ts`, `${OV}/shared/credentials.mjs`],
     note: "user namespace",
   },
   OPENVIKING_WORKSPACE_PEER: {
     kind: "extension-config",
-    readers: [`${OV}/config.ts`],
+    readers: [`${OV}/qcr-shim.ts`],
     note: "workspace peer switch",
   },
   OPENVIKING_REVIEWER_KEY: {

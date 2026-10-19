@@ -11,7 +11,7 @@
  *
  * ── QCR FORK ────────────────────────────────────────────────────────────────
  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
- * extension. Nine numbered patches; every hunk carries a `[QCR PATCH n]`
+ * extension. Twelve numbered patches; every hunk carries a `[QCR PATCH n]`
  * marker so a rebase is a search, not an audit. See README.md here.
  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
  *             the sole owner of compaction) and takeover forced off.
@@ -36,12 +36,19 @@
  *             viking_search keeps only in-area hits, viking_read and
  *             viking_browse refuse a memory URI outside them (finding cases
  *             and feedback events are not a round's to read, S7).
+ *   PATCH 12 — createOpenViking(cfg): the extension is a factory over a value.
+ *             The default export is the shim — it reads the process once
+ *             (qcr-shim.ts) and calls the factory; the factory reads no env,
+ *             argv, cwd or home. Every hook runs under a deadline and a catch
+ *             (qcr-hooks.ts): a memory call that hangs or throws costs the
+ *             turn its memory, never the turn.
  * ────────────────────────────────────────────────────────────────────────────
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { loadConfigFromModuleUrl, rereadApiKey, type OVConfig } from "./config.js";
+import { fileURLToPath } from "node:url";
+import { rereadApiKey, type OVConfig } from "./config.js";
 import { OVClient } from "./client.js";
 import { RecallManager } from "./recall.js";
 import { SyncManager } from "./sync.js";
@@ -49,37 +56,52 @@ import { buildProfileBlock } from "./shared/profile-inject.mjs";
 import { guardVikingUriToolCall } from "./lib/uri-guard-adapter.mjs";
 import { registerTools } from "./tools.js";
 import { createTakeoverManager } from "./takeover.js";
-// [QCR PATCH 2]
-import { isLeafProcess } from "./qcr-leaf.js";
 // [QCR PATCH 5]
-import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
+import { ownNamespaceName } from "./qcr-namespaces.js";
 // [QCR PATCH 7]
-import { readRetiredUris, RECALL_WAIT_MS, RETIRED_FILE_ENV } from "./qcr-recall.js";
-// [QCR PATCH 8]
-import { RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
+import { readRetiredUris, RECALL_WAIT_MS } from "./qcr-recall.js";
 // [QCR PATCH 11]
 import { recallScope } from "./qcr-hint.js";
 // [QCR PATCH 9]
 import { toolScopeAreas, toolScopeNote } from "./qcr-hint.js";
+// [QCR PATCH 12]
+import { boundedHook, HOOK_TIMEOUT_MS, type HookName } from "./qcr-hooks.js";
+import { openVikingConfigFromProcess, type OpenVikingConfig } from "./qcr-shim.js";
 
+export type { OpenVikingConfig } from "./qcr-shim.js";
+
+/**
+ * [QCR PATCH 12] The extension as a factory over a value. An SDK session
+ * attaches `createOpenViking(cfg)` as an extension factory; the default export
+ * below is the shim for a pi that loads this file by path.
+ */
+export function createOpenViking(cfg: OpenVikingConfig): ExtensionFactory {
+  return (pi) => register(pi, cfg);
+}
+
+/** The shim: the live process, read once (qcr-shim.ts), handed to the factory. */
 export default async function (pi: ExtensionAPI) {
-  // [QCR PATCH 2] Decided once, from argv, before anything else: a
-  // pi-subagents leaf gets the tools and nothing ambient. See qcr-leaf.ts.
-  const leaf = isLeafProcess();
+  await createOpenViking(openVikingConfigFromProcess(dirname(fileURLToPath(import.meta.url))))(pi);
+}
 
-  // --- Load config ---
-  const config = loadConfigFromModuleUrl(import.meta.url);
+async function register(pi: ExtensionAPI, cfg: OpenVikingConfig): Promise<void> {
+  // [QCR PATCH 2] Decided once, by the shim (from argv; qcr-leaf.ts): a
+  // pi-subagents leaf gets the tools and nothing ambient.
+  const leaf = cfg.leaf;
+
+  // --- Config ---
+  const config = cfg.config;
   if (!config.enabled) return;
 
-  // Env overrides
-
   // --- Initialize modules ---
-  const client = new OVClient(config);
+  const makeClient = cfg.makeClient ?? ((c: OVConfig) => new OVClient(c));
+  const client = makeClient(config);
   // [QCR PATCH 6] The primary key is re-read from its source after an auth
   // failure (the daemon rewrites ovcli.conf on a key rotation). The extra
   // namespaces' keys come from the environment, which cannot change
-  // in-process, so they get no re-reader.
-  client.rekey = () => rereadApiKey();
+  // in-process, so they get no re-reader. [QCR PATCH 12] The re-reader
+  // resolves from the config's own credential env, not the live process.
+  client.rekey = () => rereadApiKey(cfg.credentialEnv);
   // [QCR PATCH 5] A SECOND client, and only when a second USER key is in the
   // environment: the companion's `OPENVIKING_REVIEWER_KEY`, which lets the
   // local pi read AND write reviewer memory as well as its own. Same base URL,
@@ -93,20 +115,14 @@ export default async function (pi: ExtensionAPI) {
   // clients are not even constructed there. No key is a NORMAL state — this pi
   // then reaches its own namespace only, exactly as before this patch, which is
   // every review session's shape.
-  const extraNamespaces = (leaf ? [] : resolveExtraNamespaces(config)).map((ns) => ({
+  const extraNamespaces = (leaf ? [] : cfg.extraNamespaces).map((ns) => ({
     name: ns.name,
-    client: new OVClient({ ...config, apiKey: ns.apiKey, user: ns.user }),
+    client: makeClient({ ...config, apiKey: ns.apiKey, user: ns.user }),
   }));
   const namespaces = [{ name: ownNamespaceName(config.user), client }, ...extraNamespaces];
-  const sync = new SyncManager(client, config);
-  // [QCR PATCH 7] The retired URIs the daemon publishes beside ovcli.conf,
-  // re-read for every recall (a small local file), so a retirement reaches a
-  // running session without a restart.
-  const recall = new RecallManager(client, config, () => sync.sessionId, {
-    retiredUris: () => readRetiredUris(process.env[RETIRED_FILE_ENV]),
-  });
+  // [QCR PATCH 12] The debug log and the offline queue are the shim's values.
   const debugLog = (message: string) => {
-    const file = process.env.OV_DEBUG_LOG;
+    const file = cfg.debugLogFile;
     if (!file) return;
     try {
       mkdirSync(dirname(file), { recursive: true });
@@ -115,11 +131,31 @@ export default async function (pi: ExtensionAPI) {
       // Best effort; logging must never affect pi.
     }
   };
+  const sync = new SyncManager(client, config, { queue: cfg.pendingQueue, log: debugLog });
+  // [QCR PATCH 7] The retired URIs the daemon publishes beside ovcli.conf,
+  // re-read for every recall (a small local file), so a retirement reaches a
+  // running session without a restart.
+  const recall = new RecallManager(client, config, () => sync.sessionId, {
+    retiredUris: () => readRetiredUris(cfg.retiredFile),
+  });
   const takeover = createTakeoverManager({ pi, client, sync, config, log: debugLog });
   // [QCR PATCH 9] The memory TOOLS of a PR session stay inside the round's
   // areas — re-read per call, like the recall hint. Unscoped (null) where the
   // daemon publishes no hint: the overseer, the companion.
-  const toolAreas = () => toolScopeAreas(process.env[RECALL_HINT_FILE_ENV]);
+  const toolAreas = () => toolScopeAreas(cfg.recallHintFile);
+
+  // [QCR PATCH 12] Every hook runs under a deadline and a catch: one that
+  // throws or does not answer costs the turn its memory, never the turn. A
+  // hook that fails carries on as though it had done nothing.
+  const deadline = (name: HookName) => cfg.hookTimeoutMs?.[name] ?? HOOK_TIMEOUT_MS[name];
+  const guard =
+    <E, C, R>(
+      name: HookName,
+      handler: (event: E, ctx: C) => Promise<R> | R,
+      onFail?: (reason: string) => R,
+    ) =>
+    (event: E, ctx: C): Promise<R | undefined> =>
+      boundedHook(name, deadline(name), () => handler(event, ctx), debugLog, onFail);
 
   // Session state
   let connected = false;
@@ -142,7 +178,7 @@ export default async function (pi: ExtensionAPI) {
 
     startPromise = (async () => {
       // Bypass check
-      const cwd = process.cwd();
+      const cwd = cfg.cwd;
       for (const pattern of config.bypassPatterns) {
         if (matchBypass(cwd, pattern)) {
           bypassed = true;
@@ -176,7 +212,7 @@ export default async function (pi: ExtensionAPI) {
       // one. No session is a normal, non-fatal state: the tools still work,
       // only ambient turn-sync is off.
       const piSessionId = ctx.sessionManager.getSessionId();
-      const attached = await sync.ensureSession();
+      const attached = await sync.ensureSession({ OPENVIKING_SESSION_ID: cfg.sessionId });
       if (attached) {
         await sync.replayPending();
       } else if (config.logLevel === "info") {
@@ -228,12 +264,12 @@ export default async function (pi: ExtensionAPI) {
   };
 
   // --- session_start ---
-  pi.on("session_start", async (event, ctx) => {
+  pi.on("session_start", guard("session_start", async (_event, ctx) => {
     await start(ctx);
-  });
+  }));
 
   // --- before_agent_start ---
-  pi.on("before_agent_start", async (event, ctx) => {
+  pi.on("before_agent_start", guard("before_agent_start", async (event, ctx) => {
     // session_start doesn't fire for pi -c continuations.
     await start(ctx);
 
@@ -252,7 +288,7 @@ export default async function (pi: ExtensionAPI) {
     // [QCR build conformance] pi 1.3.0 types the event as a union whose custom
     // variant has no `prompt`; the cast keeps the read exactly as it was.
     const plan = recallScope(
-      process.env[RECALL_HINT_FILE_ENV],
+      cfg.recallHintFile,
       (event as { prompt: string }).prompt,
     );
     recall.queueSearch(plan.query, plan.areas);
@@ -288,10 +324,10 @@ export default async function (pi: ExtensionAPI) {
     return {
       systemPrompt: event.systemPrompt + "\n\n" + additions,
     };
-  });
+  }));
 
   // --- context ---
-  pi.on("context", async (event, _ctx) => {
+  pi.on("context", guard("context", async (event, _ctx) => {
     if (!connected || bypassed) return;
     // [QCR PATCH 2] A leaf's context is exactly the pass prompt it was given.
     if (leaf) return;
@@ -308,17 +344,20 @@ export default async function (pi: ExtensionAPI) {
       : event.messages;
     const messages = recall.injectRecall(afterTakeover);
     return { messages };
-  });
+  }));
 
   // --- tool_call ---
-  pi.on("tool_call", async (event, _ctx) => {
+  // [QCR PATCH 12] This one is a guard, so it fails CLOSED: a throw or a missed
+  // deadline refuses the call, which is also what pi does with a throwing
+  // tool_call handler (canary 9).
+  pi.on("tool_call", guard("tool_call", async (event, _ctx) => {
     const decision = guardVikingUriToolCall(event);
     if (!decision) return;
     return decision;
-  });
+  }, (reason) => ({ block: true, reason: `OpenViking URI guard failed (${reason}); the call was refused` })));
 
   // --- turn_end ---
-  pi.on("turn_end", async (event, ctx) => {
+  pi.on("turn_end", guard("turn_end", async (_event, ctx) => {
     if (!connected || bypassed || !config.syncTurns) return;
     // [QCR PATCH 2] No turn sync from a leaf. ([QCR PATCH 7]: the threshold
     // auto-commit that rode the sync is gone everywhere — sync.ts.)
@@ -329,7 +368,7 @@ export default async function (pi: ExtensionAPI) {
     debugLog(`turn_end: synced ${result.added} entries, ~${result.tokens} tokens`);
     await takeover.onTurnSynced(result.tokens);
     updateStatus(ctx, connected, result.added, sync.sessionId, config, takeover.state);
-  });
+  }));
 
   // --- session_before_compact ---
   //
@@ -351,7 +390,7 @@ export default async function (pi: ExtensionAPI) {
   // only to REPLACE compaction — can never rewrite the context either.
 
   // --- session_shutdown ---
-  pi.on("session_shutdown", async (_event, ctx) => {
+  pi.on("session_shutdown", guard("session_shutdown", async (_event, _ctx) => {
     if (!connected || bypassed) return;
     // [QCR PATCH 2] A leaf exits after every pass; it commits nothing.
     if (leaf) return;
@@ -361,12 +400,12 @@ export default async function (pi: ExtensionAPI) {
     // through an extraction model this deployment does not run); the PR's raw
     // tier ages out by the daemon's DELETE when the PR closes.
     await sync.shutdown();
-  });
+  }));
 
   // --- agent_end ---
-  pi.on("agent_end", async (_event, _ctx) => {
+  pi.on("agent_end", guard("agent_end", async (_event, _ctx) => {
     recall.invalidate();
-  });
+  }));
 
   // ================================================================
   // Commands
@@ -374,7 +413,7 @@ export default async function (pi: ExtensionAPI) {
 
   pi.registerCommand("viking", {
     description: "OpenViking status and manual operations. Use 'commit' to force a sync.",
-    handler: async (args, ctx) => {
+    handler: guard("command", async (args: string | undefined, ctx: any) => {
       if (!connected) {
         ctx.ui.notify("OpenViking: not connected", "warning");
         return;
@@ -400,7 +439,7 @@ export default async function (pi: ExtensionAPI) {
         `OpenViking: ${connected ? "connected" : "disconnected"} | session: ${sid.slice(0, 12)}...${takeoverInfo}`,
         "info",
       );
-    },
+    }),
   });
 }
 
@@ -425,7 +464,7 @@ async function buildSessionProfileBlock(
 ): Promise<string> {
   try {
     const profile = await buildProfileBlock(
-      (path: string, init?: any, options?: any) => client.fetchJSON(path, init, 10000),
+      (path: string, init?: any, _options?: any) => client.fetchJSON(path, init, 10000),
       config.profileTokenBudget,
       config.peerId,
     );

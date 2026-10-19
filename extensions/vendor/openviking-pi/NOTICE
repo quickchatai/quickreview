@@ -57,6 +57,9 @@ Changed by the quickreviewd maintainers, 2026-08-20:
      hint is missing, its search ranks inside those areas, and it may not
      write lessons, pinned entries or cases; a hand-typed lesson header is
      refused (2026-10-07).
+ 12. The extension is a factory over a configuration value; the process's
+     environment, argv, working directory and home directory are read once, by
+     a shim, and every hook runs under a deadline and a catch (2026-10-19).
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
 tsconfig (ambient type declarations while pi was not installed, retired once

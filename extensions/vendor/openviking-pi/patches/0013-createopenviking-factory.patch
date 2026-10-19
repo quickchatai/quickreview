@@ -1,0 +1,1168 @@
+diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
+index ebbb0083..b44046db 100644
+--- a/extensions/vendor/openviking-pi/NOTICE
++++ b/extensions/vendor/openviking-pi/NOTICE
+@@ -57,6 +57,9 @@ Changed by the quickreviewd maintainers, 2026-08-20:
+      hint is missing, its search ranks inside those areas, and it may not
+      write lessons, pinned entries or cases; a hand-typed lesson header is
+      refused (2026-10-07).
++ 12. The extension is a factory over a configuration value; the process's
++     environment, argv, working directory and home directory are read once, by
++     a shim, and every hook runs under a deadline and a catch (2026-10-19).
+ 
+ Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
+ tsconfig (ambient type declarations while pi was not installed, retired once
+diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
+index 1de7b943..bdd968a4 100644
+--- a/extensions/vendor/openviking-pi/README.md
++++ b/extensions/vendor/openviking-pi/README.md
+@@ -1,7 +1,7 @@
+ # openviking-pi — vendored, patched fork
+ 
+ The OpenViking pi extension our sessions load. Vendored, not depended on:
+-upstream ships it as an `examples/` directory, not a package, and we need eleven
++upstream ships it as an `examples/` directory, not a package, and we need twelve
+ behaviour changes that upstream has no reason to make.
+ 
+ | | |
+@@ -20,7 +20,7 @@ fails on drift between the two.
+ 
+ ## Why a fork rather than configuration
+ 
+-Every one of the eleven patches was tried as configuration first and does not
++Every one of the twelve patches was tried as configuration first and does not
+ exist there. The evidence is a spike against a **running v0.4.15 server plus
+ the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
+ with transcripts. Read it before changing anything here; several of its
+@@ -28,11 +28,12 @@ findings contradict the OpenViking docs, which lead the tag.
+ 
+ ## The patch series
+ 
+-Eleven numbered behaviour patches, applied in order over the vendored upstream
++Twelve numbered behaviour patches, applied in order over the vendored upstream
+ files, plus two unnumbered build patches (0000 scaffolding, 0012 typing). They live in `patches/` as
+-`git apply`-able diffs — verified by applying all thirteen, in order, to a
++`git apply`-able diffs — verified by applying the first thirteen, in order, to a
+ pristine `v0.4.15` extraction and diffing the result against this directory:
+-byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
++byte-identical. (0013 is checked to apply on the tree the first thirteen
++produce; the full pristine-extraction replay has not been re-run with it.) (`patches/` and `upstream.json` are meta and are not themselves
+ part of the reproduced tree.) Every hunk they add carries a greppable marker:
+ 
+ ```sh
+@@ -446,6 +447,46 @@ passes `undefined` exactly as before. Marked `[QCR build conformance]`.
+ 
+ Touches: `index.ts`, `vendor-pi-types.d.ts` (deleted), this README.
+ 
++### 0013 — `createOpenViking(cfg)`: a factory over a value (`[QCR PATCH 12]`, P3.4)
++
++The extension no longer reads the process. `index.ts` exports
++`createOpenViking(cfg): ExtensionFactory`, and its default export is the shim:
++it reads the process once (`qcr-shim.ts`) and calls the factory, so a tmux pi
++that loads this file by path and an SDK session that attaches the factory run
++the same code. `cfg` (`OpenVikingConfig`) carries the resolved `OVConfig`, the
++leaf flag, the extra namespaces' credentials, the credential env the key
++re-reader resolves from, the daemon's OV session id, the cwd, the retired-URI
++and recall-hint files, the debug log and the offline queue's settings.
++
++* **The overlay moves.** The env overlay in `config.ts` `loadConfig` (the
++  workspace-peer and recall overrides) is now `envOverlay` in `qcr-shim.ts`,
++  passed to `loadConfig` as an option and applied at the same point. Its first
++  five lines re-assigned what the credential resolver had already read from the
++  same env, and are dropped. Old and new `loadConfig` were compared on ten
++  environments and agree field for field.
++* **The pending queue's home moves.** `shared/pending-queue.mjs` no longer
++  reads `OPENVIKING_PENDING_*` or the home directory; each function takes the
++  queue's `{ dir, maxRetries?, ttlDays?, replayLimit? }`. Without a `dir` the
++  queue is off. `SyncManager` takes it, and the debug log, as constructor
++  options.
++* **Leaf detection is shim-only.** `isLeafProcess(argv, env)` has no process
++  defaults and only `qcr-shim.ts` calls it; the factory takes `leaf` as a
++  value. The stale comment in `qcr-leaf.ts` (it said a leaf "structurally
++  never loads this file" and cited pi 0.84.1 as the pin) is rewritten.
++* **Every hook gets a deadline and a catch** (`qcr-hooks.ts`
++  `boundedHook`, defaults in `HOOK_TIMEOUT_MS`). A hook that throws or misses
++  its deadline carries on as though it had done nothing, and says so in the
++  debug log. `tool_call` is a guard and fails closed instead: a failure
++  refuses the call, which is also what pi does with a throwing handler.
++
++Not moved: `shared/credentials.mjs` still resolves `~/.openviking` through the
++home directory and `shared/recall-core.mjs` still reads `OPENVIKING_STATE_DIR`
++for its legacy cache; both are upstream files outside this patch's scope.
++
++Touches: `index.ts`, `config.ts`, `sync.ts`, `qcr-leaf.ts`, `qcr-shim.ts`
++(new), `qcr-hooks.ts` (new), `shared/pending-queue.mjs` and `.d.mts`, `NOTICE`,
++this README.
++
+ ## Rebasing onto a newer upstream
+ 
+ ```sh
+diff --git a/extensions/vendor/openviking-pi/config.ts b/extensions/vendor/openviking-pi/config.ts
+index 85f0ed49..db7561d4 100644
+--- a/extensions/vendor/openviking-pi/config.ts
++++ b/extensions/vendor/openviking-pi/config.ts
+@@ -149,11 +149,25 @@ const DEFAULT_CONFIG: OVConfig = {
+   logLevel: "error",
+ };
+ 
+-export function loadConfigFromModuleUrl(moduleUrl: string): OVConfig {
+-  return loadConfig(dirname(fileURLToPath(moduleUrl)));
++/**
++ * [QCR PATCH 12] What `loadConfig` needs from the process, handed in rather
++ * than read: the environment the credentials resolve from, the working
++ * directory the peer id derives from, and the env overlay (qcr-shim.ts
++ * `envOverlay`) that runs between the file merge and the clamps. A caller that
++ * passes nothing gets the live process, as before.
++ */
++export interface LoadConfigOptions {
++  env?: Record<string, string | undefined>;
++  cwd?: string;
++  overlay?: (config: OVConfig) => void;
++}
++
++export function loadConfigFromModuleUrl(moduleUrl: string, opts: LoadConfigOptions = {}): OVConfig {
++  return loadConfig(dirname(fileURLToPath(moduleUrl)), opts);
+ }
+ 
+-export function loadConfig(extensionDir: string): OVConfig {
++export function loadConfig(extensionDir: string, opts: LoadConfigOptions = {}): OVConfig {
++  const env = opts.env ?? process.env;
+   const configPath = join(extensionDir, "config.json");
+   let file: any = {};
+   try {
+@@ -163,7 +177,7 @@ export function loadConfig(extensionDir: string): OVConfig {
+   }
+ 
+   const takeover = file.takeover && typeof file.takeover === "object" ? file.takeover : {};
+-  const creds = withoutRootKey(resolveOpenVikingCredentials());
++  const creds = withoutRootKey(resolveOpenVikingCredentials(env), env);
+   const config: OVConfig = {
+     ...DEFAULT_CONFIG,
+     ...file,
+@@ -187,25 +201,11 @@ export function loadConfig(extensionDir: string): OVConfig {
+     takeoverOverviewPollMax: takeover.overviewPollMax ?? file.takeoverOverviewPollMax ?? DEFAULT_CONFIG.takeoverOverviewPollMax,
+   };
+ 
+-  if (process.env.OPENVIKING_URL || process.env.OPENVIKING_BASE_URL) config.endpoint = creds.baseUrl;
+-  if (process.env.OPENVIKING_API_KEY || process.env.OPENVIKING_BEARER_TOKEN) config.apiKey = creds.apiKey;
+-  if (process.env.OPENVIKING_ACCOUNT) config.account = creds.account;
+-  if (process.env.OPENVIKING_USER) config.user = creds.user;
+-  if (process.env.OPENVIKING_PEER_ID) config.peerId = creds.peerId;
+-  if (process.env.OPENVIKING_WORKSPACE_PEER !== undefined) {
+-    config.workspacePeer = envBool(process.env.OPENVIKING_WORKSPACE_PEER, config.workspacePeer);
+-  }
+-  if (process.env.OPENVIKING_RECALL_PEER_SCOPE) {
+-    config.recallPeerScope = process.env.OPENVIKING_RECALL_PEER_SCOPE === "actor" ? "actor" : "all";
+-  }
+-  if (process.env.OPENVIKING_RECALL_LIMIT) {
+-    config.recallLimit = Number(process.env.OPENVIKING_RECALL_LIMIT);
+-    config.recallLimitConfigured = true;
+-  }
+-  if (process.env.OPENVIKING_RECALL_QUERY_EXPANSION) {
+-    config.recallQueryExpansion = process.env.OPENVIKING_RECALL_QUERY_EXPANSION === "off" ? "off" : "auto";
+-    config.recallQueryExpansionConfigured = true;
+-  }
++  // [QCR PATCH 12] The env overlay that sat here moved to qcr-shim.ts: five
++  // re-assignments of what `creds` had already resolved from the same env
++  // (endpoint, key, account, user, peer id: no-ops, dropped) and the
++  // workspace-peer and recall overrides. The overlay still runs at this point.
++  opts.overlay?.(config);
+ 
+   config.recallLimit = clampInt(config.recallLimit, 1, 50, DEFAULT_CONFIG.recallLimit);
+   config.recallMaxContentChars = clampInt(config.recallMaxContentChars, 100, 5000, DEFAULT_CONFIG.recallMaxContentChars);
+@@ -247,11 +247,11 @@ export function loadConfig(extensionDir: string): OVConfig {
+   config.recallQueryExpansion = "off";
+   config.recallQueryExpansionConfigured = true;
+   if (!Array.isArray(config.bypassPatterns)) config.bypassPatterns = [];
+-  config.peerId = resolveEffectivePeerId({ cfg: config as any, cwd: process.cwd() }).peerId;
++  config.peerId = resolveEffectivePeerId({ cfg: config as any, cwd: opts.cwd ?? process.cwd() }).peerId;
+   return config;
+ }
+ 
+-function envBool(value: string, fallback: boolean): boolean {
++export function envBool(value: string, fallback: boolean): boolean {
+   const lower = String(value || "").trim().toLowerCase();
+   if (lower === "0" || lower === "false" || lower === "no" || lower === "off") return false;
+   if (lower === "1" || lower === "true" || lower === "yes" || lower === "on") return true;
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+index c2a1ad97..89663f44 100644
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -11,7 +11,7 @@
+  *
+  * ── QCR FORK ────────────────────────────────────────────────────────────────
+  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
+- * extension. Nine numbered patches; every hunk carries a `[QCR PATCH n]`
++ * extension. Twelve numbered patches; every hunk carries a `[QCR PATCH n]`
+  * marker so a rebase is a search, not an audit. See README.md here.
+  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
+  *             the sole owner of compaction) and takeover forced off.
+@@ -36,12 +36,19 @@
+  *             viking_search keeps only in-area hits, viking_read and
+  *             viking_browse refuse a memory URI outside them (finding cases
+  *             and feedback events are not a round's to read, S7).
++ *   PATCH 12 — createOpenViking(cfg): the extension is a factory over a value.
++ *             The default export is the shim — it reads the process once
++ *             (qcr-shim.ts) and calls the factory; the factory reads no env,
++ *             argv, cwd or home. Every hook runs under a deadline and a catch
++ *             (qcr-hooks.ts): a memory call that hangs or throws costs the
++ *             turn its memory, never the turn.
+  * ────────────────────────────────────────────────────────────────────────────
+  */
+-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
++import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
+ import { appendFileSync, mkdirSync } from "node:fs";
+ import { dirname } from "node:path";
+-import { loadConfigFromModuleUrl, rereadApiKey, type OVConfig } from "./config.js";
++import { fileURLToPath } from "node:url";
++import { rereadApiKey, type OVConfig } from "./config.js";
+ import { OVClient } from "./client.js";
+ import { RecallManager } from "./recall.js";
+ import { SyncManager } from "./sync.js";
+@@ -49,37 +56,52 @@ import { buildProfileBlock } from "./shared/profile-inject.mjs";
+ import { guardVikingUriToolCall } from "./lib/uri-guard-adapter.mjs";
+ import { registerTools } from "./tools.js";
+ import { createTakeoverManager } from "./takeover.js";
+-// [QCR PATCH 2]
+-import { isLeafProcess } from "./qcr-leaf.js";
+ // [QCR PATCH 5]
+-import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
++import { ownNamespaceName } from "./qcr-namespaces.js";
+ // [QCR PATCH 7]
+-import { readRetiredUris, RECALL_WAIT_MS, RETIRED_FILE_ENV } from "./qcr-recall.js";
+-// [QCR PATCH 8]
+-import { RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
++import { readRetiredUris, RECALL_WAIT_MS } from "./qcr-recall.js";
+ // [QCR PATCH 11]
+ import { recallScope } from "./qcr-hint.js";
+ // [QCR PATCH 9]
+ import { toolScopeAreas, toolScopeNote } from "./qcr-hint.js";
++// [QCR PATCH 12]
++import { boundedHook, HOOK_TIMEOUT_MS, type HookName } from "./qcr-hooks.js";
++import { openVikingConfigFromProcess, type OpenVikingConfig } from "./qcr-shim.js";
+ 
++export type { OpenVikingConfig } from "./qcr-shim.js";
++
++/**
++ * [QCR PATCH 12] The extension as a factory over a value. An SDK session
++ * attaches `createOpenViking(cfg)` as an extension factory; the default export
++ * below is the shim for a pi that loads this file by path.
++ */
++export function createOpenViking(cfg: OpenVikingConfig): ExtensionFactory {
++  return (pi) => register(pi, cfg);
++}
++
++/** The shim: the live process, read once (qcr-shim.ts), handed to the factory. */
+ export default async function (pi: ExtensionAPI) {
+-  // [QCR PATCH 2] Decided once, from argv, before anything else: a
+-  // pi-subagents leaf gets the tools and nothing ambient. See qcr-leaf.ts.
+-  const leaf = isLeafProcess();
++  await createOpenViking(openVikingConfigFromProcess(dirname(fileURLToPath(import.meta.url))))(pi);
++}
+ 
+-  // --- Load config ---
+-  const config = loadConfigFromModuleUrl(import.meta.url);
+-  if (!config.enabled) return;
++async function register(pi: ExtensionAPI, cfg: OpenVikingConfig): Promise<void> {
++  // [QCR PATCH 2] Decided once, by the shim (from argv; qcr-leaf.ts): a
++  // pi-subagents leaf gets the tools and nothing ambient.
++  const leaf = cfg.leaf;
+ 
+-  // Env overrides
++  // --- Config ---
++  const config = cfg.config;
++  if (!config.enabled) return;
+ 
+   // --- Initialize modules ---
+-  const client = new OVClient(config);
++  const makeClient = cfg.makeClient ?? ((c: OVConfig) => new OVClient(c));
++  const client = makeClient(config);
+   // [QCR PATCH 6] The primary key is re-read from its source after an auth
+   // failure (the daemon rewrites ovcli.conf on a key rotation). The extra
+   // namespaces' keys come from the environment, which cannot change
+-  // in-process, so they get no re-reader.
+-  client.rekey = () => rereadApiKey();
++  // in-process, so they get no re-reader. [QCR PATCH 12] The re-reader
++  // resolves from the config's own credential env, not the live process.
++  client.rekey = () => rereadApiKey(cfg.credentialEnv);
+   // [QCR PATCH 5] A SECOND client, and only when a second USER key is in the
+   // environment: the companion's `OPENVIKING_REVIEWER_KEY`, which lets the
+   // local pi read AND write reviewer memory as well as its own. Same base URL,
+@@ -93,20 +115,14 @@ export default async function (pi: ExtensionAPI) {
+   // clients are not even constructed there. No key is a NORMAL state — this pi
+   // then reaches its own namespace only, exactly as before this patch, which is
+   // every review session's shape.
+-  const extraNamespaces = (leaf ? [] : resolveExtraNamespaces(config)).map((ns) => ({
++  const extraNamespaces = (leaf ? [] : cfg.extraNamespaces).map((ns) => ({
+     name: ns.name,
+-    client: new OVClient({ ...config, apiKey: ns.apiKey, user: ns.user }),
++    client: makeClient({ ...config, apiKey: ns.apiKey, user: ns.user }),
+   }));
+   const namespaces = [{ name: ownNamespaceName(config.user), client }, ...extraNamespaces];
+-  const sync = new SyncManager(client, config);
+-  // [QCR PATCH 7] The retired URIs the daemon publishes beside ovcli.conf,
+-  // re-read for every recall (a small local file), so a retirement reaches a
+-  // running session without a restart.
+-  const recall = new RecallManager(client, config, () => sync.sessionId, {
+-    retiredUris: () => readRetiredUris(process.env[RETIRED_FILE_ENV]),
+-  });
++  // [QCR PATCH 12] The debug log and the offline queue are the shim's values.
+   const debugLog = (message: string) => {
+-    const file = process.env.OV_DEBUG_LOG;
++    const file = cfg.debugLogFile;
+     if (!file) return;
+     try {
+       mkdirSync(dirname(file), { recursive: true });
+@@ -115,11 +131,31 @@ export default async function (pi: ExtensionAPI) {
+       // Best effort; logging must never affect pi.
+     }
+   };
++  const sync = new SyncManager(client, config, { queue: cfg.pendingQueue, log: debugLog });
++  // [QCR PATCH 7] The retired URIs the daemon publishes beside ovcli.conf,
++  // re-read for every recall (a small local file), so a retirement reaches a
++  // running session without a restart.
++  const recall = new RecallManager(client, config, () => sync.sessionId, {
++    retiredUris: () => readRetiredUris(cfg.retiredFile),
++  });
+   const takeover = createTakeoverManager({ pi, client, sync, config, log: debugLog });
+   // [QCR PATCH 9] The memory TOOLS of a PR session stay inside the round's
+   // areas — re-read per call, like the recall hint. Unscoped (null) where the
+   // daemon publishes no hint: the overseer, the companion.
+-  const toolAreas = () => toolScopeAreas(process.env[RECALL_HINT_FILE_ENV]);
++  const toolAreas = () => toolScopeAreas(cfg.recallHintFile);
++
++  // [QCR PATCH 12] Every hook runs under a deadline and a catch: one that
++  // throws or does not answer costs the turn its memory, never the turn. A
++  // hook that fails carries on as though it had done nothing.
++  const deadline = (name: HookName) => cfg.hookTimeoutMs?.[name] ?? HOOK_TIMEOUT_MS[name];
++  const guard =
++    <E, C, R>(
++      name: HookName,
++      handler: (event: E, ctx: C) => Promise<R> | R,
++      onFail?: (reason: string) => R,
++    ) =>
++    (event: E, ctx: C): Promise<R | undefined> =>
++      boundedHook(name, deadline(name), () => handler(event, ctx), debugLog, onFail);
+ 
+   // Session state
+   let connected = false;
+@@ -142,7 +178,7 @@ export default async function (pi: ExtensionAPI) {
+ 
+     startPromise = (async () => {
+       // Bypass check
+-      const cwd = process.cwd();
++      const cwd = cfg.cwd;
+       for (const pattern of config.bypassPatterns) {
+         if (matchBypass(cwd, pattern)) {
+           bypassed = true;
+@@ -176,7 +212,7 @@ export default async function (pi: ExtensionAPI) {
+       // one. No session is a normal, non-fatal state: the tools still work,
+       // only ambient turn-sync is off.
+       const piSessionId = ctx.sessionManager.getSessionId();
+-      const attached = await sync.ensureSession();
++      const attached = await sync.ensureSession({ OPENVIKING_SESSION_ID: cfg.sessionId });
+       if (attached) {
+         await sync.replayPending();
+       } else if (config.logLevel === "info") {
+@@ -228,12 +264,12 @@ export default async function (pi: ExtensionAPI) {
+   };
+ 
+   // --- session_start ---
+-  pi.on("session_start", async (event, ctx) => {
++  pi.on("session_start", guard("session_start", async (_event, ctx) => {
+     await start(ctx);
+-  });
++  }));
+ 
+   // --- before_agent_start ---
+-  pi.on("before_agent_start", async (event, ctx) => {
++  pi.on("before_agent_start", guard("before_agent_start", async (event, ctx) => {
+     // session_start doesn't fire for pi -c continuations.
+     await start(ctx);
+ 
+@@ -252,7 +288,7 @@ export default async function (pi: ExtensionAPI) {
+     // [QCR build conformance] pi 1.3.0 types the event as a union whose custom
+     // variant has no `prompt`; the cast keeps the read exactly as it was.
+     const plan = recallScope(
+-      process.env[RECALL_HINT_FILE_ENV],
++      cfg.recallHintFile,
+       (event as { prompt: string }).prompt,
+     );
+     recall.queueSearch(plan.query, plan.areas);
+@@ -288,10 +324,10 @@ export default async function (pi: ExtensionAPI) {
+     return {
+       systemPrompt: event.systemPrompt + "\n\n" + additions,
+     };
+-  });
++  }));
+ 
+   // --- context ---
+-  pi.on("context", async (event, _ctx) => {
++  pi.on("context", guard("context", async (event, _ctx) => {
+     if (!connected || bypassed) return;
+     // [QCR PATCH 2] A leaf's context is exactly the pass prompt it was given.
+     if (leaf) return;
+@@ -308,17 +344,20 @@ export default async function (pi: ExtensionAPI) {
+       : event.messages;
+     const messages = recall.injectRecall(afterTakeover);
+     return { messages };
+-  });
++  }));
+ 
+   // --- tool_call ---
+-  pi.on("tool_call", async (event, _ctx) => {
++  // [QCR PATCH 12] This one is a guard, so it fails CLOSED: a throw or a missed
++  // deadline refuses the call, which is also what pi does with a throwing
++  // tool_call handler (canary 9).
++  pi.on("tool_call", guard("tool_call", async (event, _ctx) => {
+     const decision = guardVikingUriToolCall(event);
+     if (!decision) return;
+     return decision;
+-  });
++  }, (reason) => ({ block: true, reason: `OpenViking URI guard failed (${reason}); the call was refused` })));
+ 
+   // --- turn_end ---
+-  pi.on("turn_end", async (event, ctx) => {
++  pi.on("turn_end", guard("turn_end", async (_event, ctx) => {
+     if (!connected || bypassed || !config.syncTurns) return;
+     // [QCR PATCH 2] No turn sync from a leaf. ([QCR PATCH 7]: the threshold
+     // auto-commit that rode the sync is gone everywhere — sync.ts.)
+@@ -329,7 +368,7 @@ export default async function (pi: ExtensionAPI) {
+     debugLog(`turn_end: synced ${result.added} entries, ~${result.tokens} tokens`);
+     await takeover.onTurnSynced(result.tokens);
+     updateStatus(ctx, connected, result.added, sync.sessionId, config, takeover.state);
+-  });
++  }));
+ 
+   // --- session_before_compact ---
+   //
+@@ -351,7 +390,7 @@ export default async function (pi: ExtensionAPI) {
+   // only to REPLACE compaction — can never rewrite the context either.
+ 
+   // --- session_shutdown ---
+-  pi.on("session_shutdown", async (_event, ctx) => {
++  pi.on("session_shutdown", guard("session_shutdown", async (_event, _ctx) => {
+     if (!connected || bypassed) return;
+     // [QCR PATCH 2] A leaf exits after every pass; it commits nothing.
+     if (leaf) return;
+@@ -361,12 +400,12 @@ export default async function (pi: ExtensionAPI) {
+     // through an extraction model this deployment does not run); the PR's raw
+     // tier ages out by the daemon's DELETE when the PR closes.
+     await sync.shutdown();
+-  });
++  }));
+ 
+   // --- agent_end ---
+-  pi.on("agent_end", async (_event, _ctx) => {
++  pi.on("agent_end", guard("agent_end", async (_event, _ctx) => {
+     recall.invalidate();
+-  });
++  }));
+ 
+   // ================================================================
+   // Commands
+@@ -374,7 +413,7 @@ export default async function (pi: ExtensionAPI) {
+ 
+   pi.registerCommand("viking", {
+     description: "OpenViking status and manual operations. Use 'commit' to force a sync.",
+-    handler: async (args, ctx) => {
++    handler: guard("command", async (args: string | undefined, ctx: any) => {
+       if (!connected) {
+         ctx.ui.notify("OpenViking: not connected", "warning");
+         return;
+@@ -400,7 +439,7 @@ export default async function (pi: ExtensionAPI) {
+         `OpenViking: ${connected ? "connected" : "disconnected"} | session: ${sid.slice(0, 12)}...${takeoverInfo}`,
+         "info",
+       );
+-    },
++    }),
+   });
+ }
+ 
+@@ -425,7 +464,7 @@ async function buildSessionProfileBlock(
+ ): Promise<string> {
+   try {
+     const profile = await buildProfileBlock(
+-      (path: string, init?: any, options?: any) => client.fetchJSON(path, init, 10000),
++      (path: string, init?: any, _options?: any) => client.fetchJSON(path, init, 10000),
+       config.profileTokenBudget,
+       config.peerId,
+     );
+diff --git a/extensions/vendor/openviking-pi/qcr-hooks.ts b/extensions/vendor/openviking-pi/qcr-hooks.ts
+new file mode 100644
+index 00000000..8979e729
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/qcr-hooks.ts
+@@ -0,0 +1,87 @@
++// QCR FORK — file added by PATCH 12 (createOpenViking). Not upstream.
++//
++// Every hook the extension registers runs inside the review session's process,
++// and upstream registered them bare: an OpenViking call that never answers
++// holds the turn, and one that throws is left to pi's error channel. A review
++// must go on without memory, so each hook gets a deadline and a catch. On
++// either, the hook is treated as having done nothing (no system-prompt
++// addition, no injected recall, no sync) and says so in the debug log.
++//
++// The pure half, free of pi and of the OV client, so tests/openviking-fork.test.ts
++// can call it (`index.ts` wires it in).
++import { RECALL_WAIT_MS } from "./qcr-recall.js";
++
++export type HookName =
++  | "session_start"
++  | "before_agent_start"
++  | "context"
++  | "tool_call"
++  | "turn_end"
++  | "session_shutdown"
++  | "agent_end"
++  | "command";
++
++/** How long a hook may hold pi. `session_start` and `before_agent_start` share
++ * `start()` (a health probe, the session attach, a bounded replay of the
++ * offline queue, the profile read), so they get the longest. `context` is the
++ * recall wait (R3) plus a second for the rest of the hook. */
++export const HOOK_TIMEOUT_MS: Readonly<Record<HookName, number>> = {
++  session_start: 60_000,
++  before_agent_start: 60_000,
++  context: RECALL_WAIT_MS + 1_000,
++  tool_call: 2_000,
++  turn_end: 30_000,
++  session_shutdown: 5_000,
++  agent_end: 1_000,
++  command: 15_000,
++};
++
++const TIMED_OUT = Symbol("hook timed out");
++
++/**
++ * Runs `run` under a deadline and a catch. Resolves to its value, or, when it
++ * throws or misses the deadline, to `onFail(reason)` (undefined without one).
++ * The work itself cannot be cancelled: a late result is dropped and a late
++ * rejection is logged, never left unhandled.
++ */
++export async function boundedHook<T>(
++  name: string,
++  ms: number,
++  run: () => Promise<T> | T,
++  log: (message: string) => void,
++  onFail?: (reason: string) => T,
++): Promise<T | undefined> {
++  const work = Promise.resolve().then(run);
++  let timer: ReturnType<typeof setTimeout> | undefined;
++  let timedOut = false;
++  const deadline = new Promise<typeof TIMED_OUT>((resolve) => {
++    timer = setTimeout(() => {
++      timedOut = true;
++      resolve(TIMED_OUT);
++    }, ms);
++    timer.unref?.();
++  });
++  work.then(
++    () => {},
++    (err) => {
++      if (timedOut) log(`hook ${name}: failed after its deadline: ${describe(err)}`);
++    },
++  );
++  try {
++    const result = await Promise.race([work, deadline]);
++    if (result === TIMED_OUT) {
++      log(`hook ${name}: no answer in ${ms} ms; carried on without it`);
++      return onFail?.(`timed out after ${ms} ms`);
++    }
++    return result;
++  } catch (err) {
++    log(`hook ${name}: failed: ${describe(err)}`);
++    return onFail?.(describe(err));
++  } finally {
++    clearTimeout(timer);
++  }
++}
++
++function describe(err: unknown): string {
++  return err instanceof Error ? err.message : String(err);
++}
+diff --git a/extensions/vendor/openviking-pi/qcr-leaf.ts b/extensions/vendor/openviking-pi/qcr-leaf.ts
+index 2afe9be1..97045c90 100644
+--- a/extensions/vendor/openviking-pi/qcr-leaf.ts
++++ b/extensions/vendor/openviking-pi/qcr-leaf.ts
+@@ -11,12 +11,13 @@
+ //     session id is inherited through the environment), reordering the one
+ //     conversation the daemon owns.
+ //
+-// pi-subagents already builds child argv with `--no-extensions`
+-// (assets/findings.md §4.3), so a leaf structurally never loads this
+-// file. That is one layer. This is the second: the child inherits the parent
+-// ENVIRONMENT, so anything keyed off env alone would read as "main" inside a
+-// leaf. Detection therefore keys off ARGV, which pi-subagents builds from
+-// scratch:
++// A pi-subagents child is spawned with `--no-extensions`
++// (assets/findings.md §4.3), so on the tmux bot a leaf structurally
++// never loads this extension. That is one layer. This is the second, for a
++// process that did load it (an operator's `pi -e`, a flag the child argv grows):
++// the child inherits the parent ENVIRONMENT, so anything keyed off env alone
++// would read as "main" inside a leaf. Detection therefore keys off ARGV, which
++// pi-subagents builds from scratch:
+ //
+ //   [...piBin.baseArgs, "--mode", "json", "-p", "--no-session", "--no-skills",
+ //    "--no-extensions", ...allowlisted custom-tool extensions]
+@@ -25,8 +26,15 @@
+ // buildPiCommand emits (--approve/--model/--session-dir/--system-prompt/
+ // --theme/--extension/--name), so the two are cleanly separable.
+ //
+-// VERIFY-ON-PIN: the flag set above is pi-subagents @1f54189 as read at the
+-// pinned pi 0.84.1. A pi or pi-subagents bump re-verifies it.
++// QCR PATCH 12: only the shim (qcr-shim.ts) calls this, with the argv and env
++// of the pi process that loaded the file. `createOpenViking(cfg)` takes `leaf`
++// as a value and never looks at argv, because an SDK session has no argv of its
++// own (process.argv there is the host's): the SDK host that builds a lens
++// session says `leaf: true`, and nothing here second-guesses it.
++//
++// VERIFY-ON-PIN: the flag set above is pi-subagents @1f54189 as read at pi
++// 0.84.1. It has not been re-read at the pinned 1.3.0; a pi or pi-subagents
++// bump re-verifies it.
+ 
+ /** Flags that only ever appear on a pi-subagents child command line. */
+ export const LEAF_ARGV_FLAGS: readonly string[] = [
+@@ -55,8 +63,8 @@ function truthy(value: string | undefined): boolean {
+  * memory for the review session.
+  */
+ export function isLeafProcess(
+-  argv: readonly string[] = process.argv,
+-  env: Record<string, string | undefined> = process.env,
++  argv: readonly string[],
++  env: Record<string, string | undefined>,
+ ): boolean {
+   if (truthy(env[FORCE_LEAF_ENV])) return true;
+   for (let i = 0; i < argv.length; i++) {
+diff --git a/extensions/vendor/openviking-pi/qcr-shim.ts b/extensions/vendor/openviking-pi/qcr-shim.ts
+new file mode 100644
+index 00000000..811c163c
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/qcr-shim.ts
+@@ -0,0 +1,142 @@
++// QCR FORK — file added by PATCH 12 (createOpenViking). Not upstream.
++//
++// The shim: everything the extension used to take from the process, in one
++// place, so that `createOpenViking(cfg)` (index.ts) reads no environment, no
++// argv, no working directory and no home directory. A tmux pi reaches the
++// factory through the default export, which calls `openVikingConfigFromProcess`
++// below; an SDK session builds the same `OpenVikingConfig` from its own values
++// and attaches `createOpenViking(cfg)` as an extension factory.
++//
++// Moved here, unchanged in effect:
++//   * the env overlay that sat in config.ts's `loadConfig` (`envOverlay`);
++//   * the pending queue's directory, home-directory default and limits, which
++//     shared/pending-queue.mjs used to read itself (`pendingQueueFromEnv`);
++//   * the leaf decision, from argv (qcr-leaf.ts keeps the function, only this
++//     file calls it) and from QCR_OV_LEAF;
++//   * the daemon's per-session hand-offs: the OV session id, the retired-URI
++//     file, the recall-hint file, the debug log, and the reviewer key.
++//
++// Pure functions of their arguments, so tests/openviking-fork.test.ts calls
++// them (`index.ts` cannot be imported from a test).
++import { homedir } from "node:os";
++import { join } from "node:path";
++import { envBool, loadConfig, type OVConfig } from "./config.js";
++import type { OVClient } from "./client.js";
++import { isLeafProcess } from "./qcr-leaf.js";
++import { resolveExtraNamespaces, type NamespaceCredentials } from "./qcr-namespaces.js";
++import { RETIRED_FILE_ENV } from "./qcr-recall.js";
++import { RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
++import type { HookName } from "./qcr-hooks.js";
++import type { PendingQueueConfig } from "./shared/pending-queue.mjs";
++
++type Env = Record<string, string | undefined>;
++
++/** Everything `createOpenViking` needs. A value, not a process. */
++export interface OpenVikingConfig {
++  /** The resolved extension config (config.json merged with credentials and the overlay). */
++  config: OVConfig;
++  /** A pi-subagents leaf: tools only, nothing ambient, no second namespace. */
++  leaf: boolean;
++  /** Namespaces reachable besides the own one (the companion's reviewer key). */
++  extraNamespaces: NamespaceCredentials[];
++  /** The OPENVIKING_* names the credential re-reader resolves from after an auth failure. */
++  credentialEnv: Env;
++  /** The OV session id the daemon created; "" when there is none. */
++  sessionId: string;
++  /** The working directory, for the bypass patterns. */
++  cwd: string;
++  /** The daemon's retired-URI file; re-read for every recall. */
++  retiredFile?: string;
++  /** The daemon's recall-hint file; re-read for every prompt and tool call. */
++  recallHintFile?: string;
++  /** Debug log file; none by default. */
++  debugLogFile?: string;
++  /** The offline queue's settings. */
++  pendingQueue: PendingQueueConfig;
++  /** Per-hook deadline overrides (qcr-hooks.ts HOOK_TIMEOUT_MS has the defaults). */
++  hookTimeoutMs?: Partial<Record<HookName, number>>;
++  /** Test seam: builds the client. Production passes nothing. */
++  makeClient?: (config: OVConfig) => OVClient;
++}
++
++/** The names the credential resolver and the root-key guard read. */
++function credentialEnvOf(env: Env): Env {
++  return Object.fromEntries(
++    Object.entries(env).filter(([k]) => k.startsWith("OPENVIKING_")),
++  );
++}
++
++/** The env overlay that `loadConfig` applied between the file merge and the
++ * clamps. (Its first five lines repeated what the credential resolver had
++ * already taken from the same env, and are not carried over.) */
++export function envOverlay(env: Env): (config: OVConfig) => void {
++  return (config) => {
++    if (env.OPENVIKING_WORKSPACE_PEER !== undefined) {
++      config.workspacePeer = envBool(env.OPENVIKING_WORKSPACE_PEER, config.workspacePeer);
++    }
++    if (env.OPENVIKING_RECALL_PEER_SCOPE) {
++      config.recallPeerScope = env.OPENVIKING_RECALL_PEER_SCOPE === "actor" ? "actor" : "all";
++    }
++    if (env.OPENVIKING_RECALL_LIMIT) {
++      config.recallLimit = Number(env.OPENVIKING_RECALL_LIMIT);
++      config.recallLimitConfigured = true;
++    }
++    if (env.OPENVIKING_RECALL_QUERY_EXPANSION) {
++      config.recallQueryExpansion = env.OPENVIKING_RECALL_QUERY_EXPANSION === "off" ? "off" : "auto";
++      config.recallQueryExpansionConfigured = true;
++    }
++  };
++}
++
++/** The offline queue's settings, as pending-queue.mjs used to read them. */
++export function pendingQueueFromEnv(env: Env, home: string): PendingQueueConfig {
++  const int = (name: string): number => parseInt(env[name] || "", 10);
++  const retries = int("OPENVIKING_PENDING_MAX_RETRIES");
++  const ttl = int("OPENVIKING_PENDING_TTL_DAYS");
++  const limit = int("OPENVIKING_PENDING_REPLAY_LIMIT");
++  return {
++    dir: env.OPENVIKING_PENDING_DIR || join(home, ".openviking", "pending"),
++    maxRetries: Number.isFinite(retries) && retries >= 0 ? retries : undefined,
++    ttlDays: Number.isFinite(ttl) && ttl >= 0 ? ttl : undefined,
++    replayLimit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
++  };
++}
++
++export interface ShimInput {
++  env: Env;
++  argv: readonly string[];
++  cwd: string;
++  home: string;
++  /** The directory holding config.json (the extension's own). */
++  extensionDir: string;
++}
++
++/** Turns a pi process's surroundings into the factory's config. */
++export function openVikingConfigFromEnv(input: ShimInput): OpenVikingConfig {
++  const { env, argv, cwd, home } = input;
++  const leaf = isLeafProcess(argv, env);
++  const config = loadConfig(input.extensionDir, { env, cwd, overlay: envOverlay(env) });
++  return {
++    config,
++    leaf,
++    extraNamespaces: leaf ? [] : resolveExtraNamespaces(config, env),
++    credentialEnv: credentialEnvOf(env),
++    sessionId: (env.OPENVIKING_SESSION_ID ?? env.QCR_OV_SESSION_ID ?? "").trim(),
++    cwd,
++    retiredFile: env[RETIRED_FILE_ENV],
++    recallHintFile: env[RECALL_HINT_FILE_ENV],
++    debugLogFile: env.OV_DEBUG_LOG,
++    pendingQueue: pendingQueueFromEnv(env, home),
++  };
++}
++
++/** The default export's one call: the live process, read once. */
++export function openVikingConfigFromProcess(extensionDir: string): OpenVikingConfig {
++  return openVikingConfigFromEnv({
++    env: process.env,
++    argv: process.argv,
++    cwd: process.cwd(),
++    home: homedir(),
++    extensionDir,
++  });
++}
+diff --git a/extensions/vendor/openviking-pi/shared/pending-queue.d.mts b/extensions/vendor/openviking-pi/shared/pending-queue.d.mts
+index 3d898ce4..4bd3f9e6 100644
+--- a/extensions/vendor/openviking-pi/shared/pending-queue.d.mts
++++ b/extensions/vendor/openviking-pi/shared/pending-queue.d.mts
+@@ -1,7 +1,19 @@
+-export function enqueue(type: string, sessionId: string, payload: Record<string, any>): Promise<{ ok: boolean; path?: string; error?: string }>;
+-export function listPending(): Promise<Array<{ filename: string; entry: Record<string, any> }>>;
++/** [QCR PATCH 12] The queue's settings, handed in by the caller (qcr-shim.ts). */
++export interface PendingQueueConfig {
++  /** The queue directory. Without one the queue is off. */
++  dir?: string;
++  /** Max retry attempts per item (default 3). */
++  maxRetries?: number;
++  /** Max age in days before stale cleanup (default 7). */
++  ttlDays?: number;
++  /** Max items replayed per session-start (default 50). */
++  replayLimit?: number;
++}
++export function enqueue(type: string, sessionId: string, payload: Record<string, any>, options?: { createdAt?: number; queue?: PendingQueueConfig }): Promise<{ ok: boolean; path?: string; error?: string }>;
++export function listPending(queue?: PendingQueueConfig): Promise<Array<{ filename: string; entry: Record<string, any> }>>;
+ export function replayPending(
+   fetchJSON: (path: string, init?: any) => Promise<{ ok: boolean; status?: number; result?: any; error?: any }>,
+   log: (stage: string, data?: any) => void,
++  queue?: PendingQueueConfig,
+ ): Promise<{ replayed: number; failed: number; skipped: number; deferred: number }>;
+-export function cleanStale(): Promise<number>;
++export function cleanStale(queue?: PendingQueueConfig): Promise<number>;
+diff --git a/extensions/vendor/openviking-pi/shared/pending-queue.mjs b/extensions/vendor/openviking-pi/shared/pending-queue.mjs
+index 4b3836a4..10bf44c0 100644
+--- a/extensions/vendor/openviking-pi/shared/pending-queue.mjs
++++ b/extensions/vendor/openviking-pi/shared/pending-queue.mjs
+@@ -10,27 +10,27 @@
+  *
+  * Each file contains: { type, sessionId, payload, createdAt, retries, dedupKey }
+  *
+- * Config (env vars):
+- *   OPENVIKING_PENDING_DIR         pending queue directory
+- *                                  (default: ~/.openviking/pending)
+- *   OPENVIKING_PENDING_MAX_RETRIES max retry attempts per item (default: 3)
+- *   OPENVIKING_PENDING_TTL_DAYS    max age in days before stale cleanup
+- *                                  (default: 7)
+- *   OPENVIKING_PENDING_REPLAY_LIMIT max items replayed per session-start
+- *                                  (default: 50)
++ * [QCR PATCH 12] This module reads no environment and no home directory. The
++ * caller hands every function the queue's settings as its last argument:
++ *   { dir, maxRetries?, ttlDays?, replayLimit? }
++ * `dir` is the queue directory; without one the queue is off (enqueue fails,
++ * the rest find nothing). The shim in qcr-shim.ts turns
++ * pending-queue variables and the `~/.openviking/pending` default into that object, so the same code serves a
++ * tmux pi (env) and an SDK session (a value).
++ *   maxRetries   max retry attempts per item (default: 3)
++ *   ttlDays      max age in days before stale cleanup (default: 7)
++ *   replayLimit  max items replayed per session-start (default: 50)
+  */
+ 
+ import { mkdir, readdir, readFile, rename, writeFile, unlink, stat, chmod } from "node:fs/promises";
+ import { createHash } from "node:crypto";
+ import { join } from "node:path";
+-import { homedir } from "node:os";
+ import { isRetryableFailure } from "./retryable.mjs";
+ 
+ const DEFAULT_MAX_RETRIES = 3;
+ const DEFAULT_TTL_DAYS = 7;
+ const DEFAULT_REPLAY_LIMIT = 50;
+ const PROCESSING_STALE_MS = 10 * 60 * 1000;
+-const DEFAULT_PENDING_DIR = () => join(homedir(), ".openviking", "pending");
+ 
+ // Pending queue files may contain raw memory payload / transcript content.
+ // Use restrictive permissions explicitly so we don't depend on umask.
+@@ -53,23 +53,23 @@ async function ensurePendingDir(dir) {
+   }
+ }
+ 
+-function getPendingDir() {
+-  return process.env.OPENVIKING_PENDING_DIR || DEFAULT_PENDING_DIR();
++function getPendingDir(queue) {
++  return typeof queue?.dir === "string" ? queue.dir : "";
+ }
+ 
+-function getMaxRetries() {
+-  const v = parseInt(process.env.OPENVIKING_PENDING_MAX_RETRIES || "", 10);
+-  return Number.isFinite(v) && v >= 0 ? v : DEFAULT_MAX_RETRIES;
++function getMaxRetries(queue) {
++  const v = queue?.maxRetries;
++  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : DEFAULT_MAX_RETRIES;
+ }
+ 
+-function getTTLDays() {
+-  const v = parseInt(process.env.OPENVIKING_PENDING_TTL_DAYS || "", 10);
+-  return Number.isFinite(v) && v >= 0 ? v : DEFAULT_TTL_DAYS;
++function getTTLDays(queue) {
++  const v = queue?.ttlDays;
++  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : DEFAULT_TTL_DAYS;
+ }
+ 
+-function getReplayLimit() {
+-  const v = parseInt(process.env.OPENVIKING_PENDING_REPLAY_LIMIT || "", 10);
+-  return Number.isFinite(v) && v > 0 ? v : DEFAULT_REPLAY_LIMIT;
++function getReplayLimit(queue) {
++  const v = queue?.replayLimit;
++  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : DEFAULT_REPLAY_LIMIT;
+ }
+ 
+ function stableStringify(value) {
+@@ -183,9 +183,11 @@ async function recoverStaleProcessing(dir) {
+  * @param {object} payload - the data that failed to send
+  * @param {object} options
+  * @param {number} options.createdAt - optional queue timestamp override
++ * @param {object} options.queue - the queue settings ({ dir, ... })
+  */
+ export async function enqueue(type, sessionId, payload, options = {}) {
+-  const dir = getPendingDir();
++  const dir = getPendingDir(options.queue);
++  if (!dir) return { ok: false, error: "no pending queue directory configured" };
+   const now = Number.isFinite(options.createdAt) ? options.createdAt : Date.now();
+   const dedupKey = makeDedupKey(type, sessionId, payload);
+   const filename = pendingFilename(dedupKey, 0);
+@@ -233,8 +235,9 @@ export async function enqueue(type, sessionId, payload, options = {}) {
+  * List all pending queue entries.
+  * Returns array of { filename, entry } sorted by createdAt ascending.
+  */
+-export async function listPending() {
+-  const dir = getPendingDir();
++export async function listPending(queue) {
++  const dir = getPendingDir(queue);
++  if (!dir) return [];
+   let files;
+   try {
+     await recoverStaleProcessing(dir);
+@@ -262,9 +265,10 @@ export async function listPending() {
+  * Atomically claim a pending file for replay. Only the process that successfully
+  * renames the file may send the HTTP replay.
+  */
+-export async function claimForReplay(filename) {
++export async function claimForReplay(filename, queue) {
+   if (!filename.endsWith(".json")) return null;
+-  const dir = getPendingDir();
++  const dir = getPendingDir(queue);
++  if (!dir) return null;
+   const claimed = processingFilename(filename);
+   try {
+     await rename(join(dir, filename), join(dir, claimed));
+@@ -277,8 +281,9 @@ export async function claimForReplay(filename) {
+ /**
+  * Remove a pending entry after successful replay.
+  */
+-export async function dequeue(filename) {
+-  const dir = getPendingDir();
++export async function dequeue(filename, queue) {
++  const dir = getPendingDir(queue);
++  if (!dir) return false;
+   try {
+     await unlink(join(dir, filename));
+     return true;
+@@ -290,9 +295,10 @@ export async function dequeue(filename) {
+ /**
+  * Increment retry count on a pending entry. Returns false if max retries exceeded.
+  */
+-export async function incrementRetry(filename, entry) {
+-  const dir = getPendingDir();
+-  const maxRetries = getMaxRetries();
++export async function incrementRetry(filename, entry, queue) {
++  const dir = getPendingDir(queue);
++  if (!dir) return false;
++  const maxRetries = getMaxRetries(queue);
+   entry.retries = (entry.retries || 0) + 1;
+ 
+   if (entry.retries > maxRetries) {
+@@ -327,16 +333,16 @@ export async function incrementRetry(filename, entry) {
+ /**
+  * Clean up stale entries older than TTL.
+  */
+-export async function cleanStale() {
+-  const ttlMs = getTTLDays() * 24 * 60 * 60 * 1000;
++export async function cleanStale(queue) {
++  const ttlMs = getTTLDays(queue) * 24 * 60 * 60 * 1000;
+   const now = Date.now();
+-  const pending = await listPending();
++  const pending = await listPending(queue);
+   let cleaned = 0;
+ 
+   for (const { filename, entry } of pending) {
+     const age = now - (entry.createdAt || 0);
+     if (age > ttlMs) {
+-      await dequeue(filename);
++      await dequeue(filename, queue);
+       cleaned++;
+     }
+   }
+@@ -345,21 +351,22 @@ export async function cleanStale() {
+ 
+ /**
+  * Replay pending entries. Call this during session-start when the server is
+- * healthy. Each run processes at most OPENVIKING_PENDING_REPLAY_LIMIT items so
++ * healthy. Each run processes at most the queue's replayLimit items so
+  * a just-recovered server is not hit with an unbounded replay burst.
+  *
+  * @param {Function} fetchJSON - the configured fetchJSON from makeFetchJSON
+  * @param {Function} log - logger function
++ * @param {object} queue - the queue settings ({ dir, ... })
+  * @returns {{ replayed: number, failed: number, skipped: number, deferred: number }}
+  */
+-export async function replayPending(fetchJSON, log) {
+-  const pending = await listPending();
++export async function replayPending(fetchJSON, log, queue) {
++  const pending = await listPending(queue);
+ 
+   if (pending.length === 0) {
+     return { replayed: 0, failed: 0, skipped: 0, deferred: 0 };
+   }
+ 
+-  const replayLimit = getReplayLimit();
++  const replayLimit = getReplayLimit(queue);
+   log("pending-queue", { count: pending.length, replayLimit, action: "replay-start" });
+ 
+   let replayed = 0;
+@@ -374,13 +381,13 @@ export async function replayPending(fetchJSON, log) {
+       continue;
+     }
+ 
+-    if ((entry.retries || 0) >= getMaxRetries()) {
+-      await dequeue(filename);
++    if ((entry.retries || 0) >= getMaxRetries(queue)) {
++      await dequeue(filename, queue);
+       skipped++;
+       continue;
+     }
+ 
+-    const claimedFilename = await claimForReplay(filename);
++    const claimedFilename = await claimForReplay(filename, queue);
+     if (!claimedFilename) {
+       skipped++;
+       continue;
+@@ -401,7 +408,7 @@ export async function replayPending(fetchJSON, log) {
+           body: JSON.stringify(entry.payload || {}),
+         });
+       } else {
+-        await dequeue(claimedFilename);
++        await dequeue(claimedFilename, queue);
+         skipped++;
+         continue;
+       }
+@@ -421,13 +428,13 @@ export async function replayPending(fetchJSON, log) {
+     }
+ 
+     if (res?.ok) {
+-      await dequeue(claimedFilename);
++      await dequeue(claimedFilename, queue);
+       replayed++;
+     } else if (!isRetryableReplayFailure(res)) {
+-      await dequeue(claimedFilename);
++      await dequeue(claimedFilename, queue);
+       skipped++;
+     } else {
+-      await incrementRetry(claimedFilename, entry);
++      await incrementRetry(claimedFilename, entry, queue);
+       failed++;
+       if (entry.type === "addMessage") {
+         deferred += Math.max(0, pending.length - processed);
+@@ -436,7 +443,7 @@ export async function replayPending(fetchJSON, log) {
+     }
+   }
+ 
+-  const cleaned = await cleanStale();
++  const cleaned = await cleanStale(queue);
+ 
+   log("pending-queue", {
+     action: "replay-done",
+diff --git a/extensions/vendor/openviking-pi/sync.ts b/extensions/vendor/openviking-pi/sync.ts
+index ed90f06f..bbfc4854 100644
+--- a/extensions/vendor/openviking-pi/sync.ts
++++ b/extensions/vendor/openviking-pi/sync.ts
+@@ -1,10 +1,8 @@
+ import type { OVClient } from "./client.js";
+-import { appendFileSync, mkdirSync } from "node:fs";
+-import { dirname } from "node:path";
+ import type { OVConfig } from "./config.js";
+ // [QCR PATCH 3] `deriveHarnessSessionId` is no longer imported — minting an OV
+ // session id from pi's is exactly what this fork must not do.
+-import { enqueue, listPending, replayPending } from "./shared/pending-queue.mjs";
++import { enqueue, listPending, replayPending, type PendingQueueConfig } from "./shared/pending-queue.mjs";
+ import { extractBranchCapturePayloads } from "./lib/capture-adapter.mjs";
+ import { countUndeliveredForSession, estimatePayloadTokens } from "./lib/takeover-core.mjs";
+ // [QCR PATCH 7]
+@@ -23,15 +21,14 @@ export interface SyncBranchResult {
+   allDelivered: boolean;
+ }
+ 
+-function debugLog(message: string): void {
+-  const file = process.env.OV_DEBUG_LOG;
+-  if (!file) return;
+-  try {
+-    mkdirSync(dirname(file), { recursive: true });
+-    appendFileSync(file, `${new Date().toISOString()} ${message}\n`);
+-  } catch {
+-    // Best effort; logging must never affect pi.
+-  }
++/** [QCR PATCH 12] What the sync manager needs beyond the client: the offline
++ * queue's settings and the debug log, both decided by the caller (the shim
++ * reads the pending-queue and debug-log variables; sync.ts reads no environment). */
++export interface SyncOptions {
++  /** The offline queue. Without a `dir` a failed message is not queued. */
++  queue?: PendingQueueConfig;
++  /** Best-effort debug line sink; none by default. */
++  log?: (message: string) => void;
+ }
+ 
+ export class SyncManager {
+@@ -39,10 +36,14 @@ export class SyncManager {
+   private config: OVConfig;
+   private ovSessionId: string | null = null;
+   private syncedEntryCount = 0;
++  private queue: PendingQueueConfig;
++  private debugLog: (message: string) => void;
+ 
+-  constructor(client: OVClient, config: OVConfig) {
++  constructor(client: OVClient, config: OVConfig, opts: SyncOptions = {}) {
+     this.client = client;
+     this.config = config;
++    this.queue = opts.queue ?? {};
++    this.debugLog = opts.log ?? (() => {});
+   }
+ 
+   get sessionId(): string | null { return this.ovSessionId; }
+@@ -69,12 +70,12 @@ export class SyncManager {
+    * the named session does not exist server-side. False means "no ambient
+    * sync"; the memory tools are unaffected.
+    */
+-  async ensureSession(env: Record<string, string | undefined> = process.env): Promise<boolean> {
++  async ensureSession(env: Record<string, string | undefined>): Promise<boolean> {
+     if (this.ovSessionId) return true;
+ 
+     const id = (env.OPENVIKING_SESSION_ID ?? env.QCR_OV_SESSION_ID ?? "").trim();
+     if (!id) {
+-      debugLog("ensureSession: no daemon-provided session id; ambient sync disabled");
++      this.debugLog("ensureSession: no daemon-provided session id; ambient sync disabled");
+       return false;
+     }
+ 
+@@ -82,7 +83,7 @@ export class SyncManager {
+     // auto_create route (client.ts, PATCH 3).
+     const meta = await this.client.getSession(id);
+     if (!meta) {
+-      debugLog(`ensureSession: session=${id} does not exist; ambient sync disabled`);
++      this.debugLog(`ensureSession: session=${id} does not exist; ambient sync disabled`);
+       return false;
+     }
+ 
+@@ -97,14 +98,15 @@ export class SyncManager {
+       // a final refusal here — dropped from the queue, never sent.
+       refuseCommits((path: string, init?: any) => this.client.fetchJSON(path, init, 10000)),
+       (stage: string, data: unknown) =>
+-        debugLog(`${stage}: ${JSON.stringify(data)}`),
++        this.debugLog(`${stage}: ${JSON.stringify(data)}`),
++      this.queue,
+     );
+   }
+ 
+   async flushForTakeover(): Promise<boolean> {
+     if (!this.ovSessionId) return false;
+     await this.replayPending();
+-    const pending = await listPending();
++    const pending = await listPending(this.queue);
+     return countUndeliveredForSession(pending, this.ovSessionId) === 0;
+   }
+ 
+@@ -137,7 +139,7 @@ export class SyncManager {
+     if (!this.ovSessionId) return { accepted: false, delivered: false };
+     const ok = await this.client.addMessagePayload(this.ovSessionId, payload);
+     if (ok) return { accepted: true, delivered: true };
+-    await enqueue("addMessage", this.ovSessionId, payload);
++    await enqueue("addMessage", this.ovSessionId, payload, { queue: this.queue });
+     return { accepted: true, delivered: false };
+   }
+ 
+@@ -151,7 +153,7 @@ export class SyncManager {
+   async commit(
+     _opts: { queueOnFailure?: boolean; keepRecentCount?: number } = {},
+   ): Promise<any | null> {
+-    if (this.ovSessionId) debugLog(`commit: session=${this.ovSessionId} refused (QCR PATCH 7)`);
++    if (this.ovSessionId) this.debugLog(`commit: session=${this.ovSessionId} refused (QCR PATCH 7)`);
+     return null;
+   }
+ 
