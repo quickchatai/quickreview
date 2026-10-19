@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -26,7 +26,7 @@ beforeEach(async () => {
   badCursor = false;
   incompleteChecks = false;
   redirectChecks = null;
-  server = createServer(async (req, res) => {
+  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     res.setHeader("content-type", "application/json");
     if (req.url === "/graphql" && req.method === "POST") {
       let text = "";
@@ -48,6 +48,9 @@ beforeEach(async () => {
     } else if (req.method === "GET" && req.url?.includes("/status")) {
       res.end(JSON.stringify({ statuses: [{ context: "legacy-ci", state: "failure", description: "required status failed" }] }));
     } else { res.statusCode = 404; res.end("{}"); }
+  };
+  server = createServer((req, res) => {
+    void handle(req, res);
   });
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
   const address = server.address();
@@ -140,7 +143,9 @@ it("stops the actual compiler watcher after the development TUI exits", async ()
     }
     expect(alive).toBe(false);
   } finally {
-    if (watcher !== undefined) { try { process.kill(watcher, "SIGKILL"); } catch {} }
+    if (watcher !== undefined) {
+      try { process.kill(watcher, "SIGKILL"); } catch { /* already gone */ }
+    }
   }
 });
 

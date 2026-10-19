@@ -49,7 +49,7 @@ function ctx(): StepContext {
 }
 
 describe("onboarding regression seams", () => {
-  it.each(['name = """Da\\\nna""" # keep\n', '\"name\" = "Dana"\n', "'name' = 'Dana'\n"])(
+  it.each(['name = """Da\\\nna""" # keep\n', '"name" = "Dana"\n', "'name' = 'Dana'\n"])(
     "patches existing semantic assignment %s",
     (assignment) => {
       const patched = patchToml("[owner]\n" + assignment, [

@@ -871,7 +871,7 @@ export async function applyInterpretation(
     case "author_pr_comment":
       await deps.onAuthorPrComment?.(i);
       return;
-    case "author_reply":
+    case "author_reply": {
       const replyOwed = local(() => {
         if (store.getPr(i.pr)?.state === "closed") {
           store.logEvent("author_reply_ignored_closed", i.pr, { comment_id: i.comment_id });
@@ -884,6 +884,7 @@ export async function applyInterpretation(
       if (!replyOwed) return;
       await deps.onAuthorReply?.(i);
       return;
+    }
     case "bot_comment":
       local(() => store.registerBotComment(i.comment_id, i.pr, i.scope));
       return;

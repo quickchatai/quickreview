@@ -1621,7 +1621,7 @@ export class App {
       this.repaint();
       return;
     }
-    this.copyText(text);
+    void this.copyText(text);
     // The highlight stays until the next click, so it is visible at the moment
     // the confirmation appears — proof of WHAT was copied, not just that
     // something was.

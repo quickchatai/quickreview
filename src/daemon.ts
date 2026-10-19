@@ -121,7 +121,11 @@ export interface DaemonDeps {
   lessons?: import("./lessonselect.js").RoundLessonHook;
   /** Told when a round's findings record lands (the lesson shadow ledger's
    * matcher). */
-  onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => void;
+  onFindingsRecorded?: (target: {
+    pr: number;
+    roundNo: number;
+    roundId: number | null;
+  }) => unknown;
   /** Renderer for the recheck nudge (prompts/round-recheck.md); default JSON. */
   renderRecheckPrompt?: (order: RecheckOrder) => string;
   /** Profile lens-heuristics extension: the selected repo profile's

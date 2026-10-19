@@ -45,10 +45,18 @@ function hasAssistantMarker(jsonl: string): boolean {
       const entry = JSON.parse(line) as { message?: unknown; role?: unknown; content?: unknown };
       const message = (entry.message ?? entry) as { role?: unknown; content?: unknown };
       if (message.role !== "assistant") return false;
-      const text = typeof message.content === "string" ? message.content
-        : Array.isArray(message.content) ? message.content
-          .filter((part): part is { type: "text"; text: string } => part?.type === "text" && typeof part.text === "string")
-          .map((part) => part.text).join("") : "";
+      const text =
+        typeof message.content === "string"
+          ? message.content
+          : Array.isArray(message.content)
+            ? message.content
+                .filter(
+                  (part): part is { type: "text"; text: string } =>
+                    part?.type === "text" && typeof part.text === "string",
+                )
+                .map((part) => part.text)
+                .join("")
+            : "";
       return text.trim() === MARKER;
     } catch {
       return false;
@@ -83,6 +91,8 @@ export async function main(): Promise<number> {
   const mgr = new PiSessionManager({ cfg, root });
   console.log(`[smoke] spawning tmux session ${session} (model ${cfg.models.conversation})`);
   let found = false;
+  let failure: { error: unknown } | undefined;
+  let absence: Error | undefined;
   try {
     await mgr.spawnSession(session, SYSTEM_PROMPT, cfg.models.conversation);
     const injected = mgr.injectFile(session, `Hello from the smoke test. Reply with the marker.\n`);
@@ -96,18 +106,27 @@ export async function main(): Promise<number> {
       if (jsonl && existsSync(jsonl)) found = hasAssistantMarker(readFileSync(jsonl, "utf8"));
     }
     console.log(`[smoke] session file: ${jsonl ?? "(none found)"}`);
+  } catch (error) {
+    failure = { error };
   } finally {
     // Always: a throw between spawn and here must not leave a smoke-* pi alive.
     await mgr.tmux.killSession(session);
     const remaining = await mgr.tmux.listSessionsKnown();
     if (remaining === null || remaining.includes(session)) {
-      throw new Error(`[smoke] cannot confirm session absence; ${session} may still be running`);
+      absence = new Error(
+        `[smoke] cannot confirm session absence; ${session} may still be running`,
+      );
+    } else {
+      mgr.removeSessionBirthMetadata(session);
+      rmSync(mgr.sessionDir(session), { recursive: true, force: true });
+      rmSync(mgr.injectDir(session), { recursive: true, force: true });
+      rmSync(mgr.promptPath(session), { force: true });
     }
-    mgr.removeSessionBirthMetadata(session);
-    rmSync(mgr.sessionDir(session), { recursive: true, force: true });
-    rmSync(mgr.injectDir(session), { recursive: true, force: true });
-    rmSync(mgr.promptPath(session), { force: true });
   }
+  // Raised after the finally so it still wins over the try's own failure, as
+  // a throw inside the finally did.
+  if (absence) throw absence;
+  if (failure) throw failure.error;
 
   if (!found) {
     console.error(
