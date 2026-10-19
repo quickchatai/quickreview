@@ -7,7 +7,7 @@
 // say what the backend was sent. The contract never reaches past the port:
 // what only one runtime has (a pi child's argv, its process group) is that
 // runtime's own describe in the test file.
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -370,18 +370,80 @@ export function portContract(h: PortHarness): void {
     });
   });
 
+  if (h.resume === "supported")
+    describe(`[${h.name}] resume`, () => {
+      // One runtime for the whole test: a harness may keep its record of what
+      // was delivered per runtime, and a resume continues the same backend.
+      let rt: Runtime;
+      beforeEach(() => {
+        rt = h.runtime(dir, "echo");
+      });
+      const persisted = async (file: string) => {
+        const s = await rt.create(spec({ sessionFile: file }));
+        await s.prompt("round one");
+        const id = s.id;
+        await s.dispose();
+        return id;
+      };
+      const lines = (file: string): string[] =>
+        readFileSync(file, "utf8").split("\n").filter(Boolean);
+
+      it("reopens a persisted session under its own id and appends its turns to the same file", async () => {
+        const file = join(dir, "run", "main.jsonl");
+        const id = await persisted(file);
+        const before = lines(file);
+        const s = await rt.resume(file, spec({ eventsFile: join(dir, "e2.jsonl") }));
+        expect(s.id).toBe(id);
+        expect(s.sessionFile).toBe(file);
+        expect(s.stats()).toEqual({ turns: 0, busy: false, spentUsd: 0, last: null });
+        expect(await s.prompt("round two")).toMatchObject({ code: 0 });
+        expect(await s.followUp("round three")).toMatchObject({ status: "handled" });
+        await s.dispose();
+        const after = lines(file);
+        expect(after.slice(0, before.length)).toEqual(before);
+        expect(after.length).toBeGreaterThan(before.length);
+        expect(after.filter((l) => JSON.parse(l).type === "session")).toHaveLength(1);
+        expect(h.delivered(dir)).toEqual(["round one", "round two", "round three"]);
+      });
+
+      it("takes a follow-up as the first message after a resume", async () => {
+        const file = join(dir, "main.jsonl");
+        await persisted(file);
+        const s = await rt.resume(file, spec({ eventsFile: join(dir, "e2.jsonl") }));
+        expect(await s.followUp("carry on")).toMatchObject({ status: "handled" });
+        await s.dispose();
+        expect(h.delivered(dir)).toEqual(["round one", "carry on"]);
+      });
+
+      it("refuses a file that is missing or is not a session, without creating a new session", async () => {
+        const missing = join(dir, "nope.jsonl");
+        await expect(rt.resume(missing, spec())).rejects.toThrow(/not a session/);
+        expect(existsSync(missing)).toBe(false);
+        const junk = join(dir, "junk.jsonl");
+        writeFileSync(junk, "{}\n");
+        await expect(rt.resume(junk, spec())).rejects.toThrow(/not a session/);
+        expect(readFileSync(junk, "utf8")).toBe("{}\n");
+        await expect(rt.resume("relative.jsonl", spec())).rejects.toThrow(/absolute/);
+      });
+
+      it("refuses a spec that names another file or a directory", async () => {
+        const file = join(dir, "main.jsonl");
+        await persisted(file);
+        await expect(
+          rt.resume(file, spec({ sessionFile: join(dir, "other.jsonl") })),
+        ).rejects.toThrow(/another sessionFile/);
+        await expect(rt.resume(file, spec({ sessionDir: dir }))).rejects.toThrow(/sessionDir/);
+      });
+    });
+
   describe(`[${h.name}] what the runtime cannot do`, () => {
-    it(
-      h.resume === "unsupported" ? "types resume as unsupported" : "reopens a persisted session",
-      async () => {
+    if (h.resume === "unsupported")
+      it("types resume as unsupported", async () => {
         const rt = h.runtime(dir, "echo");
-        if (h.resume === "unsupported")
-          await expect(rt.resume(join(dir, "s.jsonl"), spec())).rejects.toBeInstanceOf(
-            RuntimeUnsupportedError,
-          );
-        else expect(rt.resume).toBeTypeOf("function");
-      },
-    );
+        await expect(rt.resume(join(dir, "s.jsonl"), spec())).rejects.toBeInstanceOf(
+          RuntimeUnsupportedError,
+        );
+      });
 
     it(
       h.agentsFiles === "unsupported"

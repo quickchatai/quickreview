@@ -88,6 +88,9 @@ class SdkSession implements RuntimeSession {
   constructor(
     private readonly spec: SessionSpec,
     private readonly session: AgentSession,
+    /** A reopened session: its history is the first turn, so a message may
+     * follow it with no prompt. */
+    private readonly resumed = false,
   ) {
     this.events = createWriteStream(spec.eventsFile, { flags: "a" });
     // A full disk must end THIS turn as a recorded failure, not throw out of the
@@ -117,7 +120,8 @@ class SdkSession implements RuntimeSession {
   }
 
   async followUp(text: string, options?: TurnOptions): Promise<Delivery> {
-    if (!this.prompted) throw new Error("followUp before the first prompt");
+    if (!this.prompted && !this.resumed) throw new Error("followUp before the first prompt");
+    this.prompted = true;
     const run = this.turn(text, options);
     if (this.pending > 1) {
       // A turn is in flight: this one runs behind it. Its result lands in stats().
@@ -268,39 +272,61 @@ class SdkSession implements RuntimeSession {
 
 /** The runtime that hosts a session in this process, on `host`'s pi SDK. */
 export function sdkRuntime(host: PiHost, options: SdkRuntimeOptions = {}): Runtime {
+  /** One session from a spec, new or reopened. `persist` is the one place the
+   * two differ. */
+  async function open(
+    spec: SessionSpec,
+    persist: HostSessionSpec["persist"],
+    resumed: boolean,
+  ): Promise<RuntimeSession> {
+    if (!options.extras && spec.extensions && spec.extensions.length > 0)
+      // An SDK session loads extension factories, which a route hands it; a
+      // path would mean an unrelated loader. Refused, never dropped.
+      throw new RuntimeUnsupportedError("extension paths on an SDK session (pass factories)");
+    // The two files exist from the start, as they do for a spawned pi.
+    for (const f of [spec.eventsFile, spec.stderrFile]) closeSync(openSync(f, "a"));
+    const hostSpec: HostSessionSpec = {
+      cwd: spec.cwd,
+      env: spec.env,
+      model: spec.model,
+      ...(spec.systemPromptFile !== undefined
+        ? { systemPrompt: stripBom(readFileSync(spec.systemPromptFile, "utf8")) }
+        : {}),
+      ...(spec.agentsFiles ? { agentsFiles: spec.agentsFiles } : {}),
+      ...(spec.tools ? { tools: spec.tools } : {}),
+      ...(persist ? { persist } : {}),
+      onExtensionError: (e) =>
+        appendFileSync(spec.stderrFile, `Extension error (${e.extensionPath}): ${e.error}\n`),
+      ...options.extras?.(spec),
+    };
+    return new SdkSession(spec, await host.makeSession(hostSpec), resumed);
+  }
+
   return {
-    async create(spec) {
-      if (!options.extras && spec.extensions && spec.extensions.length > 0)
-        // An SDK session loads extension factories, which a route hands it; a
-        // path would mean an unrelated loader. Refused, never dropped.
-        throw new RuntimeUnsupportedError("extension paths on an SDK session (pass factories)");
+    create(spec) {
       if (spec.sessionFile !== undefined && spec.sessionDir !== undefined)
-        throw new Error("a spec names a sessionFile or a sessionDir, not both");
-      // The two files exist from the start, as they do for a spawned pi.
-      for (const f of [spec.eventsFile, spec.stderrFile]) closeSync(openSync(f, "a"));
-      const hostSpec: HostSessionSpec = {
-        cwd: spec.cwd,
-        env: spec.env,
-        model: spec.model,
-        ...(spec.systemPromptFile !== undefined
-          ? { systemPrompt: stripBom(readFileSync(spec.systemPromptFile, "utf8")) }
-          : {}),
-        ...(spec.agentsFiles ? { agentsFiles: spec.agentsFiles } : {}),
-        ...(spec.tools ? { tools: spec.tools } : {}),
-        ...(spec.sessionFile !== undefined
-          ? { persist: { sessionFile: spec.sessionFile } }
+        return Promise.reject(new Error("a spec names a sessionFile or a sessionDir, not both"));
+      return open(
+        spec,
+        spec.sessionFile !== undefined
+          ? { sessionFile: spec.sessionFile }
           : spec.sessionDir !== undefined
-            ? { persist: { sessionDir: spec.sessionDir } }
-            : {}),
-        onExtensionError: (e) =>
-          appendFileSync(spec.stderrFile, `Extension error (${e.extensionPath}): ${e.error}\n`),
-        ...options.extras?.(spec),
-      };
-      return new SdkSession(spec, await host.makeSession(hostSpec));
+            ? { sessionDir: spec.sessionDir }
+            : undefined,
+        false,
+      );
     },
-    resume() {
-      // P2.9b: SessionManager.open on an existing JSONL, under its own id.
-      return Promise.reject(new RuntimeUnsupportedError("resume on an SDK session (not yet)"));
+    resume(sessionFile, spec) {
+      // SessionManager.open on the existing JSONL: the same id (the provider's
+      // cache key), later turns appended to the same file. The file is named by
+      // the argument; a spec that names another one, or a directory, is a bug.
+      if (spec.sessionDir !== undefined)
+        return Promise.reject(new Error("a resume names its file, not a sessionDir"));
+      if (spec.sessionFile !== undefined && spec.sessionFile !== sessionFile)
+        return Promise.reject(
+          new Error(`a resume of ${sessionFile} cannot name another sessionFile`),
+        );
+      return open(spec, { resumeFile: sessionFile }, true);
     },
   };
 }
