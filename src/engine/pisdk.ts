@@ -266,6 +266,7 @@ class IsolatedResourceLoader extends DefaultResourceLoader {
     settingsManager: SettingsManager;
     extensionFactories: readonly ExtensionFactory[];
     systemPrompt: string | undefined;
+    appendSystemPrompt: readonly string[];
     agentsFiles: readonly AgentsFile[];
   }) {
     super({
@@ -287,7 +288,7 @@ class IsolatedResourceLoader extends DefaultResourceLoader {
       themesOverride: () => ({ themes: [], diagnostics: [] }),
       agentsFilesOverride: () => ({ agentsFiles: o.agentsFiles.map((f) => ({ ...f })) }),
       systemPromptOverride: () => o.systemPrompt,
-      appendSystemPromptOverride: () => [],
+      appendSystemPromptOverride: () => [...o.appendSystemPrompt],
     });
     // reload() asks the package manager to scan HOME (~/.agents/skills), the
     // agentDir and every cwd ancestor before any switch applies, so the switches
@@ -339,6 +340,10 @@ export interface HostSessionSpec {
   thinkingLevel?: CreateAgentSessionOptions["thinkingLevel"];
   /** The system prompt text. Omitted: pi's own default prompt. */
   systemPrompt?: string;
+  /** Text appended to the system prompt, the way `--append-system-prompt` does
+   * (a lens's body rides here, over pi's own base prompt). Literal text: never
+   * read as a path, unlike the flag. Pieces join with a blank line. */
+  appendSystemPrompt?: readonly string[];
   /** Context files (D34), as data. Omitted: the host's. */
   agentsFiles?: readonly AgentsFile[];
   /** Extension factories: the only extensions the session loads. */
@@ -505,6 +510,7 @@ export class PiHost {
       settingsManager,
       extensionFactories: spec.extensions ?? [],
       systemPrompt: spec.systemPrompt,
+      appendSystemPrompt: spec.appendSystemPrompt ?? [],
       agentsFiles: spec.agentsFiles ?? this.options.agentsFiles ?? [],
     });
     await resourceLoader.reload();
