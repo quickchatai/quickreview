@@ -37,7 +37,7 @@ import type {
 import { agentDirSettings } from "../src/engine/agentdir.js";
 import { applyEnvApiKeys, engineCredentials } from "../src/engine/auth.js";
 import { resolvePassDeadlineMs } from "../src/engine/lens/deadline.js";
-import { loadBuiltAgents } from "../src/engine/lens/registry.js";
+import { loadBuiltAgents, type AgentRegistry } from "../src/engine/lens/registry.js";
 import {
   createLensRunner,
   type LensRunConfig,
@@ -74,11 +74,14 @@ export function createLens(deps: LensToolDeps): ExtensionFactory {
 const LOGIN_WINDOW_MS = 90 * 60_000;
 
 /** The runner of an interactive pi, from its environment. Exported so the shim's
- * wiring can be tested with a host of its own. */
+ * wiring can be tested with a host of its own, and so an engine route (the bench)
+ * can build its round's runner the same way over agents it keeps elsewhere
+ * (`registry`; omitted: the agent dir's own `agents`). */
 export function lensRunConfigFromEnv(
   env: Readonly<Record<string, string | undefined>>,
   host: PiHost,
   cwd: string,
+  registry?: AgentRegistry,
 ): LensRunConfig {
   const agentDir = env["PI_CODING_AGENT_DIR"];
   if (agentDir === undefined || !isAbsolute(agentDir))
@@ -89,7 +92,7 @@ export function lensRunConfigFromEnv(
   return {
     host,
     permits: resolveMaxConcurrency({ ...env }),
-    registry: loadBuiltAgents(join(agentDir, "agents")),
+    registry: registry ?? loadBuiltAgents(join(agentDir, "agents")),
     cwd,
     env,
     bashGuard: createBashGuard(bashGuardConfigFromEnv(env, cwd)),

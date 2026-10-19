@@ -200,6 +200,21 @@ machine-wide queue — every case in its own container, `--parallel` at once
 (see "Running the whole benchmark" for the scheduler); `compare.py` scores
 arms on the same PRs from the archived judge files, never calling a model.
 
+**The SDK arm.** `--config engine.runtime=sdk` hosts each case's pi session
+in-process on the pi SDK instead of as a `pi` child process, and
+`pi.lens_runtime=engine` gives the main session our `lens` / `lens_wave` tool
+(`native` keeps pi's `subagent` / `launch_plan`). The arm is a config lever like
+any other, so it shares the image with the process arm and is recorded in the
+run's fingerprint. Every case runs in a host process of its own (one container
+per case under `arm.sh`, a child `node` per case under a plain
+`bench.sh review --concurrency N`), and the defect judge's pool likewise: a
+crash or a frozen loop costs that case, recorded as a failed (or not judged)
+case, and the others finish.
+
+```sh
+QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/arm.sh --prefix sdk --config engine.runtime=sdk,pi.lens_runtime=engine --cases fresh10
+```
+
 **Comparing against open-code-review, on both metrics.** One command per arm,
 the same flags, the same judges:
 
