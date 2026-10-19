@@ -6,7 +6,10 @@
 # (tests/publishability.test.ts, part of `npm test`) re-verifies on every
 # push that no private token entered the tree. The `image` job builds the
 # release image (docker/Dockerfile) and smokes it with no model either
-# (.github/ci/image-smoke.sh); it pushes nothing, and release.yml owns that.
+# (.github/ci/image-smoke.sh); it pushes nothing, and release.yml owns that. The
+# `clone` job keeps the native developer install honest (a fresh checkout,
+# npm ci, npm run build, then the wrapper's version and review --preview on a
+# fixture repo): no docker, no model, and the user docs leave that route out.
 name: CI
 
 on:
@@ -90,3 +93,20 @@ jobs:
         run: docker build -f docker/Dockerfile --build-arg "BUILD_SHA=${GITHUB_SHA}" -t qcr-ci:smoke .
       - name: offline smoke
         run: .github/ci/image-smoke.sh qcr-ci:smoke
+
+  # The clone route, with no Docker: a fresh checkout built the way a developer
+  # builds it, then scripts/qcr answers `version --json` and `review --preview
+  # --json` on a fixture repo (.github/ci/clone-smoke.sh). Offline and with no
+  # model, like the image job, and nothing is pushed.
+  clone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: offline smoke
+        run: .github/ci/clone-smoke.sh
