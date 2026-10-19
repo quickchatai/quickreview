@@ -43,6 +43,7 @@ import { engineLensTools, type EngineLensTools } from "./lens/engine-tools.js";
 import type { LensRunConfig } from "./lens/runlens.js";
 import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave.js";
 import { PiHost, type PiHostOptions } from "./pisdk.js";
+import { checkToolUid } from "./tooluid.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
 import { BASH_ENV_ALLOW, reviewerStub, roundSdkExtras, type RoundLensTools } from "./roundsdk.js";
 import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
@@ -98,23 +99,6 @@ export function engineLensConfig(host: PiHost, spec: SessionSpec): LensRunConfig
 
 /** `SessionSpec.env` names this dir: the run's private pi agent dir. */
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
-
-/** The names the image's entrypoint sets when the model's tools must run as
- * another uid than this process (procruntime.ts `toolIsolation`, D32). */
-const TOOL_UID_ENVS = ["QCR_TOOL_UID", "QCR_TOOL_GID", "QCR_TOOL_UID_REQUIRED"] as const;
-
-/** The SDK host runs the model's bash in this process, as this process's uid, so
- * it cannot give the tools the separate uid the image asks for. It refuses
- * rather than run without it, unless the shared uid is accepted. */
-function checkToolUid(env: NodeJS.ProcessEnv): void {
-  if (env["QCR_ALLOW_SHARED_TOOL_UID"] === "1") return;
-  if (TOOL_UID_ENVS.some((n) => env[n]))
-    throw new Error(
-      "the SDK runtime runs the model's tools in this process, so it cannot run them as another uid, " +
-        "which this container asks for: use [engine] runtime = proc here, or set " +
-        "QCR_ALLOW_SHARED_TOOL_UID=1 to accept the shared uid",
-    );
-}
 
 /** The native lens tool as a factory. */
 function nativeLens(): RoundLensTools {

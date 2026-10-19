@@ -363,7 +363,9 @@ export interface HostSessionSpec {
    * the routing headers from it) and the provider-side resources held for it:
    * disposing any one of them closes the transports of all (pi's
    * cleanupSessionResources(id)). Only a caller that disposes the whole set
-   * together (a lens cache group, D7) may share one. Refused with `persist` or
+   * together (a lens cache group, D7) may share one. With `persist.sessionDir`
+   * the file is named `<time>_<id>.jsonl`, so sessions sharing an id still write
+   * files of their own. Refused with the other `persist` shapes and with
    * `sessionManager`, which carry their own id. */
   sessionId?: string;
   /** An already-built manager, for a caller that needs one pi's own way
@@ -422,8 +424,10 @@ function headerId(file: string): string | null {
  * cold prompt cache) at a missing or empty path. */
 function sessionManagerFor(spec: HostSessionSpec): SessionManager {
   const { persist, sessionManager } = spec;
-  if (spec.sessionId !== undefined && (persist || sessionManager))
-    throw new Error("sessionId names an in-memory session: not with persist or a sessionManager");
+  if (spec.sessionId !== undefined && (sessionManager || (persist && !("sessionDir" in persist))))
+    throw new Error(
+      "sessionId names a new session: not with a sessionManager, a sessionFile or a resumeFile",
+    );
   if (spec.sessionId === "") throw new Error("sessionId must not be empty");
   if (sessionManager) {
     if (persist) throw new Error("give a sessionManager or persist, not both");
@@ -451,7 +455,12 @@ function sessionManagerFor(spec: HostSessionSpec): SessionManager {
     // chosen file; the cwd override keeps the header's cwd the spec's.
     return SessionManager.open(file, dirname(file), spec.cwd);
   }
-  if (persist) return SessionManager.create(spec.cwd, persist.sessionDir);
+  if (persist)
+    return SessionManager.create(
+      spec.cwd,
+      persist.sessionDir,
+      spec.sessionId !== undefined ? { id: spec.sessionId } : undefined,
+    );
   // VERIFY-ON-PIN (pi 1.3.0): inMemory({id}) sets the session id the provider
   // keys its cache on (prompt_cache_key, session-id, x-client-request-id).
   return SessionManager.inMemory(spec.cwd, { id: spec.sessionId ?? randomUUID() });

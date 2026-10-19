@@ -1049,3 +1049,53 @@ describe("qcr review: memory when set up", () => {
     expect(h.text()).toMatch(/c breaks the build/);
   });
 });
+
+describe("qcr review --debug-pi", () => {
+  it("parses, and refuses what it cannot go with: a preview, a post", () => {
+    expect(parseReviewArgs(["--debug-pi"])).toMatchObject({ debugPi: true });
+    expect(parseReviewArgs([])).toMatchObject({ debugPi: false });
+    expect(() => parseReviewArgs(["--debug-pi", "--preview"])).toThrow(/starts nothing/);
+    expect(() => parseReviewArgs(["--debug-pi", "--to", "pr", "7"])).toThrow(/posts nothing/);
+    expect(reviewHelp()).toMatch(/--debug-pi/);
+  });
+
+  it("needs a terminal: without one, and with --json, it is refused with exit 2 before anything runs", async () => {
+    const repo = mkRepo("debug-noterm");
+    const pi = happyPi("debug-noterm");
+    const h = harness({ repo, piBin: pi.bin });
+    expect(await runReviewCli(["--debug-pi"], false, h.deps)).toBe(2);
+    expect(h.text()).toMatch(/needs a terminal/);
+    const j = harness({ repo, piBin: pi.bin });
+    expect(
+      await runReviewCli(["--debug-pi"], true, { ...j.deps, debugPi: async () => ({}) as never }),
+    ).toBe(2);
+    expect(existsSync(pi.calls)).toBe(false);
+  });
+
+  it("runs the round through the debug host, not the runtime: no cap and no live log, the outputs are read as any round's", async () => {
+    const repo = mkRepo("debug-run");
+    setLimit(repo, 1000);
+    const pi = happyPi("debug-run");
+    const { runOneShot } = await import("../src/oneshot.js");
+    const h = harness({ repo, piBin: "false" });
+    const specs: Array<Record<string, unknown>> = [];
+    const code = await runReviewCli(["--debug-pi"], false, {
+      ...h.deps,
+      // stands for interactive pi: the specs it is handed, and a round that ends as a person would end it
+      debugPi: async (spec) => {
+        specs.push(spec as unknown as Record<string, unknown>);
+        return runOneShot({ ...spec, piBin: pi.bin });
+      },
+    });
+    expect(code).toBe(0);
+    expect(specs).toHaveLength(1);
+    const spec = specs[0]!;
+    expect(spec["live"]).toBeUndefined();
+    expect(spec["agentScope"]).toBe("user");
+    // pi's cwd is the run's out dir, outside every checkout
+    expect(String(spec["cwd"])).toBe(String(spec["outDir"]));
+    expect(h.text()).toMatch(/c breaks the build/);
+    // the real runtime path was never taken (piBin "false" would have failed it)
+    expect(h.text()).not.toMatch(/could not run/);
+  });
+});

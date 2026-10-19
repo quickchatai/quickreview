@@ -36,6 +36,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { agentDirSettings } from "../src/engine/agentdir.js";
 import { applyEnvApiKeys, engineCredentials } from "../src/engine/auth.js";
+import { LENS_SESSIONS_DIR } from "../src/engine/openable.js";
 import { resolvePassDeadlineMs } from "../src/engine/lens/deadline.js";
 import { loadBuiltAgents, type AgentRegistry } from "../src/engine/lens/registry.js";
 import {
@@ -97,6 +98,9 @@ export function lensRunConfigFromEnv(
     env,
     bashGuard: createBashGuard(bashGuardConfigFromEnv(env, cwd)),
     ledgerPath: join(ledger ? dirname(ledger) : agentDir, "lens-ledger.jsonl"),
+    // A round's lens sessions are kept beside its ledger (D10); an interactive pi
+    // with no round keeps none, and never writes into its own agent dir.
+    ...(ledger ? { sessionsDir: join(dirname(ledger), LENS_SESSIONS_DIR) } : {}),
     ...(deadlineMs !== undefined ? { deadlineMs } : {}),
     // The round's context pack belongs to a wave the engine launches; an
     // interactive pi's groups are warmed by the stagger.
@@ -109,6 +113,7 @@ function lazyRunner(
   env: Readonly<Record<string, string | undefined>>,
   cwd: () => string,
   makeHost: (agentDir: string) => Promise<PiHost>,
+  adjust: (config: LensRunConfig) => LensRunConfig,
 ): LensToolDeps["runner"] {
   let built: Promise<LensRunner> | undefined;
   const ensure = (): Promise<LensRunner> => {
@@ -117,7 +122,7 @@ function lazyRunner(
       if (agentDir === undefined || !isAbsolute(agentDir))
         throw new Error(`lens: PI_CODING_AGENT_DIR is not an absolute path (${String(agentDir)})`);
       const host = await makeHost(agentDir);
-      return createLensRunner(lensRunConfigFromEnv(env, host, cwd()));
+      return createLensRunner(adjust(lensRunConfigFromEnv(env, host, cwd())));
     })();
     // A host that failed to build is not kept: the next ask tries again.
     built.catch(() => {
@@ -146,14 +151,46 @@ async function interactiveHost(
   });
 }
 
+/** The interactive pi's lens tools and the board and runner behind them. */
+export interface InteractiveLens {
+  /** Registers `lens` and `lens_wave` on a pi. */
+  factory: ExtensionFactory;
+  /** The runner a pass starts on (builds the host on its first pass). */
+  runner: LensToolDeps["runner"];
+  /** The rows in flight: what `lens_wave` joins. A round's wave starts on it. */
+  wave: LensWave;
+}
+
 /** The interactive pi's lens tools over `makeHost`, which builds the PiHost on
- * the first pass. Exported so a test can hand it a host of its own. */
+ * the first pass. Exported so a test can hand it a host of its own, and so the
+ * debug round (extensions/debug-round.ts) can start its planned wave on the very
+ * board and runner the session's `lens_wave` reads. */
+export function interactiveLensBoard(
+  env: Readonly<Record<string, string | undefined>>,
+  cwd: () => string,
+  makeHost: (agentDir: string) => Promise<PiHost>,
+  /** Final say on the runner's config (the debug round adds the reviewer stub,
+   * the bash env allowlist and the context pack). */
+  adjust: (config: LensRunConfig) => LensRunConfig = (c) => c,
+): InteractiveLens {
+  const runner = lazyRunner(env, cwd, makeHost, adjust);
+  const wave = new LensWave();
+  return { factory: createLens({ runner, wave, env }), runner, wave };
+}
+
 export function interactiveLens(
   env: Readonly<Record<string, string | undefined>>,
   cwd: () => string,
   makeHost: (agentDir: string) => Promise<PiHost>,
 ): ExtensionFactory {
-  return createLens({ runner: lazyRunner(env, cwd, makeHost), wave: new LensWave(), env });
+  return interactiveLensBoard(env, cwd, makeHost).factory;
+}
+
+/** The host an interactive pi's lens passes run on, from its env. */
+export function interactiveHostFor(
+  env: Readonly<Record<string, string | undefined>>,
+): (agentDir: string) => Promise<PiHost> {
+  return (dir) => interactiveHost(dir, env);
 }
 
 const activate = (pi: ExtensionAPI): void => {
@@ -162,11 +199,7 @@ const activate = (pi: ExtensionAPI): void => {
     return;
   }
   const env = process.env;
-  void interactiveLens(
-    env,
-    () => process.cwd(),
-    (dir) => interactiveHost(dir, env),
-  )(pi);
+  void interactiveLens(env, () => process.cwd(), interactiveHostFor(env))(pi);
 };
 
 export default activate;

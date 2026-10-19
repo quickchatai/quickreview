@@ -131,6 +131,8 @@ describe("start", () => {
     const h = harness();
     expect(await runDetachedVerb("start", ["--nonsense"], true, h.deps)).toBe(2);
     expect(await runDetachedVerb("start", ["--preview"], true, h.deps)).toBe(2);
+    // a debug round needs the terminal pi takes over: never a detached run
+    expect(await runDetachedVerb("start", ["--debug-pi"], true, h.deps)).toBe(2);
     expect(await runDetachedVerb("start", ["--base", "bad"], true, h.deps)).toBe(1);
     expect(h.launched).toHaveLength(0);
   });

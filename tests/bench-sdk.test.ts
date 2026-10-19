@@ -19,7 +19,15 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
 import { benchSdkRuntime, judgeSdkRuntime } from "../src/engine/benchsdk.js";
 import { lensAgentsDir } from "../src/engine/lens/round-lens.js";
+import {
+  lensAgentsOf,
+  lensSessionsOf,
+  mainSessionOf,
+  readOpenMeta,
+} from "../src/engine/openable.js";
 import { runRound } from "../src/engine/round.js";
+import { sdkRuntime } from "../src/engine/sdkruntime.js";
+import { findSession } from "../src/opencli.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import {
   FILES,
@@ -190,6 +198,64 @@ describe("a bench review round on the SDK with the engine's lens tool", () => {
     expect(ledger).toHaveLength(1);
     expect(r.usage?.children).toBe(1);
     expect(r.costUsd).toBeGreaterThan(0.1);
+  });
+
+  it("leaves the case dir openable in pi: the main JSONL, the pass's JSONL and the record `qcr open` reads (D10)", async () => {
+    const { r, outDir } = await engineLensRound(
+      [
+        callLens,
+        () => fauxAssistantMessage("pass-a found nothing"),
+        () => fauxAssistantMessage("done"),
+      ],
+      [],
+    );
+    expect(r.error).toBeUndefined();
+    const main = mainSessionOf(outDir);
+    expect(main).not.toBeNull();
+    const kept = lensSessionsOf(outDir);
+    expect(kept).toHaveLength(1);
+    // the pass is named by the id and the agent its ledger line records
+    expect(lensAgentsOf(outDir).get(kept[0]!.id)).toBe("pass-a");
+    expect(readFileSync(kept[0]!.file, "utf8")).toContain("look at src/a.ts");
+    const meta = readOpenMeta(outDir);
+    expect(meta).toMatchObject({ version: 1, sessionName: "oneshot-7", env: { QCR_PR: "7" } });
+    // no credential rides in it
+    expect(JSON.stringify(meta)).not.toMatch(/ghp_|GITHUB_TOKEN|GH_TOKEN|API_KEY/);
+    // and `qcr open` finds both from the case dir alone
+    const deps = {
+      detachedHome: join(tmp, "none-d"),
+      runsDir: join(tmp, "none-r"),
+      scanDir: join(tmp, "none-s"),
+      root: tmp,
+      cwd: tmp,
+      env: {},
+      out: () => {},
+      prepare: () => {
+        throw new Error("not started here");
+      },
+      spawn: () => 0,
+    };
+    expect(findSession(outDir, undefined, deps)).toMatchObject({ ok: true, file: main });
+    expect(findSession(outDir, "pass-a", deps)).toMatchObject({ ok: true, id: kept[0]!.id });
+
+    // canary 8 on the real route's file: the kept main session resumes under its own id
+    const id = (JSON.parse(readFileSync(main!, "utf8").split("\n", 1)[0]!) as { id: string }).id;
+    const host = await fauxHost([() => fauxAssistantMessage("resumed")])({
+      agentDir: agentDirWith(),
+    });
+    const session = await sdkRuntime(host).resume(main!, {
+      cwd: tmp,
+      env: {},
+      model: "faux/m",
+      eventsFile: join(outDir, "resume-events.jsonl"),
+      stderrFile: join(outDir, "resume-stderr.log"),
+      limits: { timeoutMs: 30_000 },
+    });
+    expect(session.id).toBe(id);
+    await session.followUp("and again");
+    expect(session.sessionFile).toBe(main);
+    await session.dispose();
+    expect(readFileSync(main!, "utf8")).toContain("and again");
   });
 
   it("gives a pass's bash the git isolation pins the main session's bash has", async () => {

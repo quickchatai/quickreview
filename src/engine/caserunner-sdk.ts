@@ -31,7 +31,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { bashGuardConfigFromEnv, createBashGuard } from "../../extensions/bash-guard.js";
 import { CASE_STOP_GRACE_MS } from "../casebudget.js";
@@ -55,6 +55,7 @@ import {
   type AgentFile,
 } from "../setup/caserunner.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "../setup/engine.js";
+import { LENS_SESSIONS_DIR } from "./openable.js";
 import { PiHost } from "./pisdk.js";
 import type { Runtime, SessionSpec, TurnResult } from "./port.js";
 import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
@@ -132,6 +133,12 @@ function openTranscript(dir: string, id: string): { rel: string; at: string } | 
   }
 }
 
+/** Where a case's session JSONL goes: `<run>/lens-sessions/<case>/` beside the
+ * transcript `rel` names (`<run>/<case>.jsonl`). */
+export function caseSessionDir(transcriptDir: string, rel: string): string {
+  return join(transcriptDir, dirname(rel), LENS_SESSIONS_DIR, basename(rel, ".jsonl"));
+}
+
 /**
  * Runs a case as one SDK session, the way `piCaseRunner` runs it as one child:
  * the agent's model (its `:thinking` suffix as the session's thinking level),
@@ -140,7 +147,8 @@ function openTranscript(dir: string, id: string): { rel: string; at: string } | 
  * own per-message accounting summed (null when it reported none); `reads` is the
  * `read`/`grep` calls that finished without an error, resolved against `cwd`.
  * With `transcriptDir` the session's whole event stream is kept at
- * `transcriptFile(spec.id)` under it, the format `pi --mode json` prints. An
+ * `transcriptFile(spec.id)` under it, the format `pi --mode json` prints, and
+ * its session JSONL beside it (`caseSessionDir`). An
  * abort stops the session (abort, then dispose after the stop grace). Every
  * outcome resolves — a runtime that cannot be built or a session that cannot
  * start is a failed case, never a rejection.
@@ -190,22 +198,27 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
             ? { thinkingLevel: thinking as NonNullable<SessionExtras["thinkingLevel"]> }
             : {}),
         });
+        // The transcript: opened before the session, appended event by event,
+        // abandoned (and its name dropped from the outcome) at the first write
+        // that fails.
+        const opened =
+          opts.transcriptDir !== undefined ? openTranscript(opts.transcriptDir, spec.id) : null;
         const sessionSpec: SessionSpec = {
           cwd: opts.cwd,
           env,
           model,
           ...(agent.tools.length > 0 ? { tools: agent.tools } : {}),
           name: spec.id,
+          // The case's session JSONL beside its transcript (D10), so the case
+          // opens in pi: `qcr open <run dir> --lens <case>`.
+          ...(opts.transcriptDir !== undefined && opened !== null
+            ? { sessionDir: caseSessionDir(opts.transcriptDir, opened.rel) }
+            : {}),
           eventsFile: join(tmp, "events.jsonl"),
           stderrFile: join(tmp, "stderr.txt"),
           limits: { timeoutMs: opts.timeoutMs ?? LEAF_TURN_TIMEOUT_MS },
         };
 
-        // The transcript: opened before the session, appended event by event,
-        // abandoned (and its name dropped from the outcome) at the first write
-        // that fails.
-        const opened =
-          opts.transcriptDir !== undefined ? openTranscript(opts.transcriptDir, spec.id) : null;
         let transcript: string | undefined = opened?.rel;
         let transcriptAt: string | null = opened?.at ?? null;
         const keep = (event: unknown): void => {

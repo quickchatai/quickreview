@@ -25,6 +25,8 @@ import {
   scanSdkCases,
   sdkCaseRunner,
 } from "../src/engine/caserunner-sdk.js";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { LENS_SESSIONS_DIR, lensSessionsOf } from "../src/engine/openable.js";
 import { PiHost } from "../src/engine/pisdk.js";
 import { sdkRuntime } from "../src/engine/sdkruntime.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
@@ -236,6 +238,25 @@ describe("[P5.7] sdkCaseRunner on the faux provider", () => {
     });
     expect(out).toMatchObject({ ok: false, reason: "stopped" });
     expect((out as { cost_usd: number }).cost_usd).toBeCloseTo(0.02, 9);
+  });
+
+  it("keeps the case's session JSONL beside its transcript, where `qcr open --lens CASE` finds it (D10)", async () => {
+    const transcriptDir = join(dir, "transcripts-kept");
+    await runner([fauxAssistantMessage("NONE")], { transcriptDir }).run(
+      spec,
+      new AbortController().signal,
+    );
+    const run = join(transcriptDir, "run7");
+    const kept = lensSessionsOf(run);
+    expect(kept.map((k) => k.id)).toEqual(["api_1"]);
+    expect(kept[0]!.file.startsWith(join(run, LENS_SESSIONS_DIR, "api_1"))).toBe(true);
+    // a session pi opens (not the event stream of the transcript beside it)
+    const head = JSON.parse(readFileSync(kept[0]!.file, "utf8").split("\n", 1)[0]!);
+    expect(head).toMatchObject({ type: "session", version: 3 });
+    expect(SessionManager.open(kept[0]!.file).getSessionId()).toBe(head.id);
+    expect(readFileSync(kept[0]!.file, "utf8")).toContain("NONE");
+    // the transcript stays the transcript
+    expect(lines(join(run, "api_1.jsonl"))[0]).toMatchObject({ type: "session" });
   });
 
   it("a transcript that cannot be written is left out, never a failed case", async () => {
