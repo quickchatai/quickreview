@@ -517,14 +517,16 @@ async function runReview(
     return refuse(2, [
       "--to pr posts to a pull request, and this target has no PR: pass a PR number or URL",
     ]);
-  // A saved default that posts does not apply to a target with no PR.
-  const savedAll = explicit.length > 0 ? null : loadDefaultDestinations(deps.cwd);
+  // A saved default that posts does not apply to a target with no PR. A debug
+  // round posts nothing, so it neither reads the saved default nor asks.
+  const savedAll =
+    explicit.length > 0 || cmd.debugPi ? null : loadDefaultDestinations(deps.cwd);
   const savedUse =
     savedAll === null || cmd.pr !== undefined ? savedAll : savedAll.filter((d) => d !== "pr");
   const saved = savedUse !== null && savedUse.length > 0 ? savedUse : null;
   if (explicit.length > 0) dests = explicit;
   else if (saved !== null) dests = saved;
-  else if (deps.choose) dests = ["terminal"];
+  else if (deps.choose || cmd.debugPi) dests = ["terminal"];
   const stamp = new Date().toISOString().replace(/[^0-9]/g, "");
   // Where git commands run: the checkout the person stands in, or for a PR
   // the scratch repository its head and base were fetched into.
@@ -588,7 +590,7 @@ async function runReview(
   // answer for it; a run with no terminal and no default never waits. The
   // answer comes before anything reads `dests` (posting to a PR changes what
   // is reviewed), and a preview, which starts nothing, never asks.
-  if (explicit.length === 0 && saved === null && deps.choose && !cmd.preview) {
+  if (explicit.length === 0 && saved === null && deps.choose && !cmd.preview && !cmd.debugPi) {
     const picked = await deps.choose(
       "Where should review results go?",
       destinationChoices({ pr: prInfo !== null }),
