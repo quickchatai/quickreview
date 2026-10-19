@@ -77,6 +77,8 @@ import { runOneShot, type OneShotResult } from "./oneshot.js";
 import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { prepareHostRun } from "./hostroute.js";
 import { AuthExpiring } from "./engine/auth.js";
+import type { Runtime } from "./engine/port.js";
+import { checkLensRuntime, selectRuntime } from "./engine/select.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
@@ -298,6 +300,9 @@ export interface ReviewCliDeps {
   cfg: Config;
   ecosystem: Ecosystem;
   piBin?: string;
+  /** Hosts the review session (`[engine] runtime`). Omitted: a process
+   * runtime over `piBin`. */
+  runtime?: Runtime;
   /** Where each run keeps its throwaway tree and its files. */
   runsDir: string;
   timeoutMs: number;
@@ -937,6 +942,7 @@ async function runReview(
       ecosystem,
       timeoutMs: deps.timeoutMs,
       ...(deps.piBin !== undefined ? { piBin: deps.piBin } : {}),
+      ...(deps.runtime !== undefined ? { runtime: deps.runtime } : {}),
       // Rendered over the review tree, as production renders over its worktree.
       prompts: planRound(treeDir, seeded.memory).prompts,
       ...(cap !== null ? { capUsd: cap } : {}),
@@ -1301,6 +1307,14 @@ export async function cmdReview(
     console.error(
       `note: no pi login at ${agentDir} — run \`qcr scan login\` first if the review fails`,
     );
+  let runtime: Runtime | undefined;
+  try {
+    checkLensRuntime(cfg.pi.lens_runtime, "review");
+    runtime = selectRuntime(cfg.engine.runtime, "review");
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
   return runReviewCli(rest, json, {
     cwd: process.cwd(),
     readStdin,
@@ -1341,6 +1355,7 @@ export async function cmdReview(
     agentDir,
     cfg,
     ecosystem,
+    ...(runtime !== undefined ? { runtime } : {}),
     runsDir: io.runsDir ?? join(stateHome(), "review", "runs"),
     memory: openReviewMemory(cfg0),
     timeoutMs: 60 * 60_000,

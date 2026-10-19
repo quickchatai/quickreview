@@ -249,6 +249,26 @@ describe("qcr review: under and over the limit", () => {
     expect(t).not.toMatch(/partial/i);
   });
 
+  it("hosts the session on the injected runtime, not on piBin", async () => {
+    const repo = mkRepo("injected");
+    setLimit(repo, 1000);
+    const pi = happyPi("injected");
+    const { procRuntime } = await import("../src/engine/procruntime.js");
+    const inner = procRuntime({ bin: pi.bin });
+    let created = 0;
+    const h = harness({ repo, piBin: "false" });
+    const code = await runReviewCli([], false, {
+      ...h.deps,
+      runtime: {
+        create: (spec) => (created++, inner.create(spec)),
+        resume: (file, spec) => inner.resume(file, spec),
+      },
+    });
+    expect(code).toBe(0);
+    expect(created).toBe(1);
+    expect(readFileSync(pi.calls, "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
   it("--json prints findings grouped by severity in one object", async () => {
     const repo = mkRepo("underjson");
     setLimit(repo, 1000);

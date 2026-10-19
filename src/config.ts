@@ -506,7 +506,9 @@ export interface ReviewConfig {
    *
    * `wide_lens_fanout`: a batched `tasks:[…]` lens launch runs as wide as
    * `[pi] subagent_max_concurrency`, not native pi's in-call four
-   * (extensions/subagents.ts, `QCR_SUBAGENT_WIDE_FANOUT`). */
+   * (extensions/subagents.ts, `QCR_SUBAGENT_WIDE_FANOUT`).
+   * Deprecated: it steers only the native glue, and is a no-op on an SDK
+   * session (`[engine] runtime = sdk`), where our lens tool sets its own width. */
   wide_lens_fanout: boolean;
   /** `task_files`: the daemon (or the bench) writes each plan row's complete
    * lens task to a file (src/passtasks.ts), so the session launches a lens
@@ -1118,6 +1120,46 @@ export const DEFAULT_SUBAGENT_PASS_DEADLINE_MIN = 8;
  * The glue extension keeps its own copy (`DEFAULT_CACHE_STAGGER_MS`, it
  * imports nothing from the daemon), pinned equal by a test. */
 export const DEFAULT_SUBAGENT_CACHE_STAGGER_MS = 2500;
+
+/** What hosts a pi session (`[engine] runtime`). `proc` runs pi as a child
+ * process, as every route does today; `sdk` runs it in-process on the pi SDK
+ * (src/engine/sdkruntime.ts). A route that has no SDK host yet refuses `sdk`
+ * (src/engine/select.ts). */
+export type EngineRuntimeKind = "proc" | "sdk";
+export const ENGINE_RUNTIME_KINDS: readonly EngineRuntimeKind[] = ["proc", "sdk"];
+
+/** Who launches the lenses (`[pi] lens_runtime`). `native` is pi's own
+ * subagent glue, as today; `engine` is our lens tool and discovery wave. */
+export type LensRuntimeKind = "native" | "engine";
+export const LENS_RUNTIME_KINDS: readonly LensRuntimeKind[] = ["native", "engine"];
+
+/** `[engine]`: which runtime hosts pi sessions on the review, bench and scan
+ * routes. The daemon's tmux hosting does not read it. */
+export interface EngineConfig {
+  runtime: EngineRuntimeKind;
+}
+
+export const ENGINE_DEFAULTS: EngineConfig = { runtime: "proc" };
+
+/** Refuse a value outside a closed set. A typo must not silently become the
+ * default runtime. */
+function oneOf<T extends string>(where: string, v: unknown, allowed: readonly T[]): T {
+  if (typeof v !== "string" || !(allowed as readonly string[]).includes(v))
+    throw new Error(
+      `config.toml ${where} must be one of ${allowed.join(" | ")} (got ${JSON.stringify(v)})`,
+    );
+  return v as T;
+}
+
+function parseEngine(raw: Record<string, unknown>): EngineConfig {
+  const e = { ...ENGINE_DEFAULTS, ...raw };
+  return { runtime: oneOf("[engine] runtime", e.runtime, ENGINE_RUNTIME_KINDS) };
+}
+
+function parsePiLensRuntime<T extends { lens_runtime: unknown }>(pi: T): T {
+  oneOf("[pi] lens_runtime", pi.lens_runtime, LENS_RUNTIME_KINDS);
+  return pi;
+}
 
 /** Refuse a per-pass deadline that is not a number of minutes in 0..240
  * (0 = off). A typo must not silently become "no deadline". */
@@ -1973,6 +2015,7 @@ export interface Config {
     improvement_pr_deny_prefixes: string[];
   };
   models: ModelsConfig;
+  engine: EngineConfig;
   pi: {
     package: string;
     version: string;
@@ -1999,6 +2042,10 @@ export interface Config {
      * fresh deadline, and a second timeout returns a failed result for that
      * pass alone. 0 ⇒ no deadline. */
     subagent_pass_deadline_min: number;
+    /** Who launches a round's lenses: `native` (pi's own subagent glue, the
+     * default) or `engine` (our lens tool and discovery wave, on an SDK
+     * session). Only the SDK routes read it. */
+    lens_runtime: LensRuntimeKind;
   };
   openviking: OpenVikingConfig;
   memory: MemoryConfig;
@@ -2758,28 +2805,34 @@ export function parseConfig(toml: string): Config {
     ),
     caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
     models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
-    pi: parsePiPassDeadline({
-      subagent_max_concurrency: 4,
-      subagent_cache_group: 5,
-      subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
-      subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
-      ...(req(raw, "pi") as Omit<
-        Config["pi"],
-        | "subagent_max_concurrency"
-        | "subagent_cache_group"
-        | "subagent_cache_stagger_ms"
-        | "subagent_pass_deadline_min"
-      > &
-        Partial<
-          Pick<
-            Config["pi"],
-            | "subagent_max_concurrency"
-            | "subagent_cache_group"
-            | "subagent_cache_stagger_ms"
-            | "subagent_pass_deadline_min"
-          >
-        >),
-    }),
+    engine: parseEngine((raw.engine ?? {}) as Record<string, unknown>),
+    pi: parsePiLensRuntime(
+      parsePiPassDeadline({
+        subagent_max_concurrency: 4,
+        subagent_cache_group: 5,
+        subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
+        subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
+        lens_runtime: "native",
+        ...(req(raw, "pi") as Omit<
+          Config["pi"],
+          | "subagent_max_concurrency"
+          | "subagent_cache_group"
+          | "subagent_cache_stagger_ms"
+          | "subagent_pass_deadline_min"
+          | "lens_runtime"
+        > &
+          Partial<
+            Pick<
+              Config["pi"],
+              | "subagent_max_concurrency"
+              | "subagent_cache_group"
+              | "subagent_cache_stagger_ms"
+              | "subagent_pass_deadline_min"
+              | "lens_runtime"
+            >
+          >),
+      }),
+    ),
     openviking: parseOpenViking((raw.openviking ?? {}) as Record<string, unknown>),
     memory: parseMemory((raw.memory ?? {}) as Record<string, unknown>),
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },

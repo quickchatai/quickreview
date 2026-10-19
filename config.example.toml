@@ -299,6 +299,19 @@ subagent_max_concurrency = 12
 # the round's posting and the round is requeued (within max_self_requeues).
 # 0 = no deadline.
 # subagent_pass_deadline_min = 8
+# Who launches a round's lenses: "native" (pi's own subagent glue, as today)
+# or "engine" (our lens tool and discovery wave, on an SDK session). Read only
+# by the routes that have an SDK host; with [engine] runtime = "proc" it has no
+# effect.
+# lens_runtime = "native"
+
+# What hosts a pi session on the review, bench and scan routes: "proc" runs pi
+# as a child process (every route today), "sdk" runs it in-process on the pi
+# SDK. A route that has no SDK host yet refuses "sdk" instead of running on
+# proc. `qcr-bench review --runtime` and `defect-judge --runtime` override it.
+# The daemon's own tmux hosting does not read it.
+# [engine]
+# runtime = "proc"
 
 [memory]
 # Round seeding — how much memory rides each round prompt and how
@@ -722,7 +735,7 @@ preset = "default"
 #     19-lens PR (PERF.md §7): the validator got SLOWER (101 -> 225 s) and the
 #     merged record dropped every doubted and downgraded mark, so it never
 #     earned the default; kept as a knob, not a recommended setting.
-# wide_lens_fanout = false
+# wide_lens_fanout = false   # deprecated: a no-op when [engine] runtime = "sdk"
 # task_files = false
 # render_outputs = false
 # validator_shards = 2
