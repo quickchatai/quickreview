@@ -79,6 +79,11 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
     readers: ["bash-guard.ts", "setup.ts"],
     note: "install locator; expands $QCR_INSTALL in guarded paths",
   },
+  QCR_IPC_SOCKET: {
+    kind: "extension-config",
+    readers: ["bash-guard.ts"],
+    note: "the worker-daemon socket (P7.2a); its directory is the IPC run dir bash-guard closes to reads",
+  },
   QCR_SECRETS_MOUNT: {
     kind: "extension-config",
     readers: ["bash-guard.ts"],

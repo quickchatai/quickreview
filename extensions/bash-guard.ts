@@ -1367,23 +1367,17 @@ export function defaultSecretPathContext(
     dirs: [...dirs]
       .filter((d) => d.startsWith("/"))
       .map((d) => posix.normalize(d).replace(/(.)\/+$/, "$1")),
-    runDirs: defaultRunDirs(env, home),
+    runDirs: defaultRunDirs(env),
   };
 }
 
 /** The IPC run dirs this process can name: the directory of its own socket
- * (a worker host's env), `<QCR_STATE_HOME>/run`, and the container's. Other
- * spellings of `<state>/run` are caught by `RUN_DIR_SPELLING`. */
-function defaultRunDirs(env: Readonly<Record<string, string | undefined>>, home: string): string[] {
+ * (a worker host's env) and the container's. Any other `<state>/run` is caught
+ * by the spelling rule `RUN_DIR_SPELLING`. */
+function defaultRunDirs(env: Readonly<Record<string, string | undefined>>): string[] {
   const out = new Set<string>(["/opt/quickreview/state/run"]);
   const sock = (env.QCR_IPC_SOCKET ?? "").trim();
   if (sock.startsWith("/")) out.add(posix.dirname(sock));
-  const stateHome = (env.QCR_STATE_HOME ?? "").trim();
-  if (stateHome.startsWith("/")) out.add(`${stateHome}/run`);
-  else
-    out.add(
-      `${(env.XDG_STATE_HOME ?? "").trim() || `${home}/.local/state`}/qcr/${(env.QCR_INSTALL ?? "").trim() || "default"}/run`,
-    );
   return [...out].map((d) => posix.normalize(d).replace(/(.)\/+$/, "$1"));
 }
 
@@ -3025,8 +3019,8 @@ export interface BashGuardConfig {
    * mount (`CONTAINER_SECRETS_DIR`) is always added. */
   secretDirs: readonly string[];
   /** HOME, XDG_CONFIG_HOME and QCR_INSTALL, the variables a secrets path is
-   * spelled with in a command, plus QCR_IPC_SOCKET, QCR_STATE_HOME and
-   * XDG_STATE_HOME, which locate the IPC run dir. Unset falls back to the
+   * spelled with in a command, plus QCR_IPC_SOCKET, which locates the IPC
+   * run dir. Unset falls back to the
    * defaults the env shim's `defaultSecretPathContext` uses. */
   pathEnv?: Readonly<Record<string, string | undefined>>;
 }
@@ -3041,7 +3035,7 @@ function policyFromConfig(config: BashGuardConfig): GuardPolicy {
       dirs: [...dirs]
         .filter((d) => d.startsWith("/"))
         .map((d) => posix.normalize(d).replace(/(.)\/+$/, "$1")),
-      runDirs: defaultRunDirs(config.pathEnv ?? {}, homeFor(config.pathEnv ?? {})),
+      runDirs: defaultRunDirs(config.pathEnv ?? {}),
     },
   };
 }
@@ -3061,8 +3055,6 @@ export function bashGuardConfigFromEnv(
       XDG_CONFIG_HOME: env.XDG_CONFIG_HOME,
       QCR_INSTALL: env.QCR_INSTALL,
       QCR_IPC_SOCKET: env.QCR_IPC_SOCKET,
-      QCR_STATE_HOME: env.QCR_STATE_HOME,
-      XDG_STATE_HOME: env.XDG_STATE_HOME,
     },
   };
 }

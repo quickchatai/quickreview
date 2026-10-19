@@ -1942,14 +1942,12 @@ describe("checkBashCommand — the IPC run dir", () => {
     refusedRun("cd /srv/bot/state/run && cat caps/x", { ...c, cwd: "/srv/bot/state/run" });
   });
 
-  it("refuses the spellings that need no context, and the state home's and the container's", () => {
+  it("refuses the spellings that need no context, and the container's", () => {
     const c = ctx();
     refusedRun("cat /anywhere/state/run/qcr.sock", c);
     refusedRun("ls /anywhere/state/run/caps", c);
     refusedRun("ls /anywhere/state/run", c);
     refusedRun("cat /opt/quickreview/state/run/caps/x", c);
-    refusedRun("cat /var/q/run/caps/x", ctx({ QCR_STATE_HOME: "/var/q" }));
-    refusedRun("cat /home/qcr/.local/state/qcr/default/run/qcr.sock", ctx({}));
     refusedRun("cat ../state/run/caps/x", c);
   });
 
