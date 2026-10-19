@@ -292,7 +292,10 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     if (stopCode !== undefined) return;
     stopCode = code;
     log(`botworker: stopping (${why})`);
-    void (session?.abort() ?? Promise.resolve()).then(() => stopLiveSessions(5_000));
+    void (session?.abort() ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => stopLiveSessions(5_000))
+      .catch(() => {});
   };
   const checkpoint = (): void => {
     if (stopCode !== undefined) throw new Stop(stopCode, "stopped");
@@ -531,7 +534,14 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     });
     return EXIT.ok;
   } catch (e) {
-    const stop = e instanceof Stop ? e : new Stop(EXIT.failed, errText(e));
+    // A dropped connection fails whatever request was in flight; the cause is the
+    // stop code, not the request's error (the supervisor reads lost/fenced from it).
+    const stop =
+      e instanceof Stop
+        ? e
+        : stopCode !== undefined
+          ? new Stop(stopCode, "stopped")
+          : new Stop(EXIT.failed, errText(e));
     log(`botworker: ${stop.reason}`);
     report("failed", { code: stop.exit, reason: stop.reason });
     return stop.exit;

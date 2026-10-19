@@ -242,6 +242,8 @@ export class FakeDaemon {
   readonly requests: Array<{ op: string; body: unknown }> = [];
   /** What `wakes.take` answers, one entry per call; an empty queue answers none. */
   readonly wakes: WakeBatch[][] = [];
+  /** Runs inside `wakes.take`, before it answers; a test drops the connection here. */
+  onTake: (() => Promise<void>) | undefined;
   readonly acked: string[] = [];
   readonly server: IpcServer;
   readonly sock: string;
@@ -271,8 +273,9 @@ export class FakeDaemon {
         },
         [WAKES_TAKE_OP]: {
           roles: ["worker"],
-          handle: () => {
+          handle: async () => {
             this.requests.push({ op: WAKES_TAKE_OP, body: undefined });
+            await this.onTake?.();
             return { batches: this.wakes.shift() ?? [] };
           },
         },

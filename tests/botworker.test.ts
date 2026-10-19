@@ -500,6 +500,15 @@ describe("[P8.3] held wakes", () => {
     expect(after).toBe(taken);
   });
 
+  it("a daemon that drops while wakes.take is in flight is a lost daemon, not a failed turn", async () => {
+    daemon.onTake = async () => {
+      void daemon.stop();
+      await new Promise((r) => setTimeout(r, 2_000));
+    };
+    const { code } = await round("ORDER\n", script([say("round done")]));
+    expect(code).toBe(EXIT.lost);
+  });
+
   it("a daemon that does not know wakes.take holds none", async () => {
     // The ops are the daemon's (P8.6); an older one answers unknown_op.
     daemon.forget("wakes.take");
