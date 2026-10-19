@@ -23,6 +23,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -252,6 +253,12 @@ describe.skipIf(!hasDist || !hasScript || process.platform !== "linux")(
         expect(store.getSessionCommand(row.id)!.started_at).not.toBeNull();
         host.clock += 60_000;
         expect(await manager.sweep()).toMatchObject({ released: [] }); // verdict seen
+        // the daemon's watcher applies the verdict and archives the file at once
+        mkdirSync(join(world.root, "verdict", "processed"), { recursive: true });
+        renameSync(
+          join(world.root, "verdict", "pr-7-round-1.json"),
+          join(world.root, "verdict", "processed", "2026-10-19T09-00-00-000Z-pr-7-round-1.json"),
+        );
         host.clock += 60_000;
         // the person leaves pi (^D on an empty editor), the pane ends
         child.stdin!.write("\x04");
@@ -268,7 +275,9 @@ describe.skipIf(!hasDist || !hasScript || process.platform !== "linux")(
         expect(records).toHaveLength(1);
         expect(JSON.stringify(records[0])).toContain("Looks fine.");
         expect(posting.gh.posts()).toEqual([]);
-        expect(existsSync(join(world.root, "verdict", "pr-7-round-1.json"))).toBe(true);
+        expect(readdirSync(join(world.root, "verdict", "processed"))).toEqual([
+          "2026-10-19T09-00-00-000Z-pr-7-round-1.json",
+        ]);
 
         // The order, behind the command's marker, was the pi's first user message, and
         // no GitHub token reached the endpoint.

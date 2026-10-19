@@ -41,7 +41,15 @@
 // src/workerlease.ts): the daemon imports it without reaching src/engine/. The
 // pane's side (src/debugroundpi.ts) is the part that touches the login and pi.
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { GITHUB_TOKEN_ENVS } from "./envstrip.js";
 import {
@@ -696,12 +704,30 @@ export class DebugRoundManager {
     return true;
   }
 
-  /** The round's verdict is committed (the file the daemon's watcher consumes). */
+  /** The round's verdict is committed: seen by a sweep (latched), or still there to see. */
   private verdictOf(command: SessionCommandRow): boolean {
     if (command.round_no === null) return false;
-    const root = this.running.get(command.pr)?.root;
-    if (root === undefined) return false;
-    return existsSync(join(root, "verdict", `pr-${command.pr}-round-${command.round_no}.json`));
+    const run = this.running.get(command.pr);
+    if (run === undefined) return false;
+    return (
+      run.verdictAt !== undefined || this.verdictCommitted(command.pr, run.root, command.round_no)
+    );
+  }
+
+  /** A committed verdict does not stay where the session wrote it: the daemon's watcher
+   * applies it and moves it to verdict/processed/ at once. So the commit is the file, or
+   * its archived copy, or the round's row no longer running (the watcher finished it). */
+  private verdictCommitted(pr: number, root: string, roundNo: number): boolean {
+    const name = `pr-${pr}-round-${roundNo}.json`;
+    if (existsSync(join(root, "verdict", name))) return true;
+    try {
+      if (readdirSync(join(root, "verdict", "processed")).some((f) => f.endsWith(`-${name}`)))
+        return true;
+    } catch {
+      /* no archive yet */
+    }
+    const round = this.deps.store.roundsFor(pr).find((r) => r.round_no === roundNo);
+    return round !== undefined && round.status !== "running";
   }
 
   /** Settle the round's command after its pi is gone: served when the verdict was
@@ -783,12 +809,14 @@ export class DebugRoundManager {
       run.startedMarked = true;
   }
 
-  /** The verdict file is there, and the pane has been quiet for the settle window. */
+  /** The verdict is committed (latched once seen, as the watcher archives the file), and
+   * the pane has been quiet for the settle window. */
   private verdictSeen(row: HostLeaseRow, run: Running, last: number): boolean {
     if (run.roundNo === null) return false;
-    const file = join(run.root, "verdict", `pr-${row.pr}-round-${run.roundNo}.json`);
-    if (!existsSync(file)) return false;
-    run.verdictAt ??= this.now();
+    if (run.verdictAt === undefined) {
+      if (!this.verdictCommitted(row.pr, run.root, run.roundNo)) return false;
+      run.verdictAt = this.now();
+    }
     return this.now() - Math.max(run.verdictAt, last) >= this.settleMs;
   }
 

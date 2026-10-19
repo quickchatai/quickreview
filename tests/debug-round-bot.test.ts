@@ -7,7 +7,15 @@
 // dispatch pump, the IPC server and the post ops (through the one MutationGate, in
 // dry-run) are the real ones. No pi, no model, no network.
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -595,6 +603,50 @@ describe("[P8.13b] the round ends with the verdict commit", () => {
     expect(delivered).toEqual(["after:7"]);
     expect(r.mgr.hostGate(7)).toBeNull();
     expect(runtimeOfPr(7, { workers: () => [], lease: (pr) => r.mgr.leaseOf(pr) })).toBe("idle");
+  });
+
+  it("the daemon's watcher moves the verdict to processed/ before the sweep: the round still ends and is acked", async () => {
+    const r = rig();
+    upsert(r.store, 7);
+    expect((await r.mgr.arm(7)).ok).toBe(true);
+    const row = await dispatch(r);
+    writeFileSync(verdictFile(r), "{}");
+    mkdirSync(join(r.root, "verdict", "processed"), { recursive: true });
+    renameSync(
+      verdictFile(r),
+      join(r.root, "verdict", "processed", "2026-10-19T09-00-00-000Z-pr-7-round-1.json"),
+    );
+    expect((await r.mgr.sweep()).released).toEqual([]); // seen, and latched
+    r.host.clock += 2 * MIN;
+    expect((await r.mgr.sweep()).released).toEqual([7]);
+    expect(r.store.getSessionCommand(row.id)).toMatchObject({ status: "acked" });
+    expect(r.store.hostLease(7)).toBeUndefined();
+  });
+
+  it("the round row is finished and the file is gone: the round ends on that, and is acked", async () => {
+    const r = rig();
+    upsert(r.store, 7);
+    expect((await r.mgr.arm(7)).ok).toBe(true);
+    const row = await dispatch(r);
+    r.store.finishRound(r.store.roundsFor(7)[0]!.id, "approve", null);
+    expect((await r.mgr.sweep()).released).toEqual([]);
+    r.host.clock += 2 * MIN;
+    expect((await r.mgr.sweep()).released).toEqual([7]);
+    expect(r.store.getSessionCommand(row.id)).toMatchObject({ status: "acked" });
+    expect(r.store.hostLease(7)).toBeUndefined();
+  });
+
+  it("a verdict seen by a sweep stays committed after the file is archived, when the pi exits", async () => {
+    const r = rig();
+    upsert(r.store, 7);
+    expect((await r.mgr.arm(7)).ok).toBe(true);
+    const row = await dispatch(r);
+    writeFileSync(verdictFile(r), "{}");
+    expect((await r.mgr.sweep()).released).toEqual([]);
+    rmSync(verdictFile(r)); // archived somewhere the manager cannot see
+    r.host.clock += 2 * MIN;
+    expect((await r.mgr.sweep()).released).toEqual([7]);
+    expect(r.store.getSessionCommand(row.id)).toMatchObject({ status: "acked" });
   });
 
   it("the next round goes back to a worker, after the debug pi is gone", async () => {
