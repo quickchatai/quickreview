@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { COMMAND_WHITELIST, OPERATOR_COMMANDS, validateCommand } from "../src/commands.js";
 import { DEFAULT_MAX_SELF_REQUEUES, parseConfig, type Config } from "../src/config.js";
 import { dispatchOnce, roundTypeFor, type DispatchAdapter } from "../src/dispatch.js";
 import type { GateResult } from "../src/gate.js";
@@ -1553,5 +1554,19 @@ describe("a self-requeue row whose head cannot be read still counts", () => {
       attempts: cap,
       cap,
     });
+  });
+});
+
+describe("the operator's abort-round is not a session's way to requeue", () => {
+  it("rerun-round and restart-session stay session-writable (the recovery verbs); abort-round is sealed to the operator", () => {
+    expect(COMMAND_WHITELIST).toEqual(expect.arrayContaining(["rerun-round", "restart-session"]));
+    expect(COMMAND_WHITELIST).not.toContain("abort-round");
+    expect(OPERATOR_COMMANDS).toContain("abort-round");
+    // A stuck session cannot stop its own round by writing the operator's verb.
+    const v = validateCommand({ command: "abort-round", pr: 7 }, { issuer: "session" });
+    expect(v.ok).toBe(false);
+    expect(validateCommand({ command: "abort-round", pr: 7 }, { issuer: "operator" }).ok).toBe(
+      true,
+    );
   });
 });

@@ -1405,7 +1405,7 @@ describe("the transcript viewer in the board's pane", () => {
     expect(past).toContain("End follows");
 
     const focused = stripAnsi(piHeader(5012, viewerPane, true));
-    expect(focused).toContain("read-only");
+    expect(focused).not.toContain("read-only"); // the viewer has an input line now
     expect(focused).toContain("Ctrl-q");
 
     const none = stripAnsi(

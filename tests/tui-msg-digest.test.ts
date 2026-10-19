@@ -10,6 +10,7 @@ import {
   injectWriteArgv,
   installMessageHooks,
   isValidSessionName,
+  messageRoute,
   type DeliveryState,
 } from "../src/tui/msg.js";
 import {
@@ -25,6 +26,8 @@ import {
   type DigestState,
 } from "../src/tui/digesttab.js";
 import { stripAnsi } from "../src/tui/paint.js";
+import type { ControlRequest, ControlSender } from "../src/tui/livecontrol.js";
+import type { PrRuntime } from "../src/state.js";
 import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
 import { learningRig, settle } from "./helpers/tui-rig.js";
 
@@ -757,4 +760,124 @@ it("probes consumption after a lost write acknowledgement", async () => {
   const states: DeliveryState[] = [];
   await sender.send("main", "hello", (state) => states.push(state));
   expect(states.at(-1)).toBe("delivered");
+});
+
+// ---- which route a message to a PR takes, by its runtime -------------------
+
+describe("msg.ts routes a PR message by status.json runtime", () => {
+  /** An App whose snapshot gives each PR a runtime; both senders record. */
+  function routed(
+    runtimes: Record<number, PrRuntime | undefined>,
+    controlState = "handled" as const,
+  ) {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const tmux: Array<[string, string]> = [];
+    const control: ControlRequest[] = [];
+    const controlSender: ControlSender = {
+      async send(req, onState) {
+        control.push(req);
+        onState("pending", `→ ${req.kind} #${req.pr} pending…`);
+        const label =
+          controlState === "handled"
+            ? `✓ ${req.kind} #${req.pr} delivered`
+            : `✖ ${req.kind} #${req.pr} refused (x)`;
+        onState(controlState, label);
+        return { state: controlState, label };
+      },
+    };
+    installMessageHooks(
+      app,
+      {
+        send: async (session, text, onState) => {
+          tmux.push([session, text]);
+          onState("delivered", `✓ msg ${session} delivered`);
+        },
+      },
+      controlSender,
+    );
+    app.view.snapshot = {
+      written_at: "",
+      dry_run: true,
+      prs: Object.entries(runtimes).map(([n, runtime]) => ({
+        number: Number(n),
+        state: "reviewing" as const,
+        title: "t",
+        head_sha: "x",
+        stale_recheck: 0,
+        ...(runtime !== undefined ? { runtime } : {}),
+      })),
+      running_rounds: 0,
+      total_spend_usd: 0,
+      heartbeat: "",
+    };
+    return { app, tmux, control };
+  }
+
+  it("the route is a function of the runtime alone", () => {
+    expect(messageRoute(undefined)).toBe("tmux");
+    expect(messageRoute("tmux")).toBe("tmux");
+    expect(messageRoute("a runtime a later daemon invents")).toBe("tmux");
+    for (const r of ["worker", "answer", "idle"]) expect(messageRoute(r), r).toBe("control");
+    for (const r of ["debug", "takeover"]) expect(messageRoute(r), r).toBe("terminal");
+  });
+
+  it("a runtime=tmux PR, and one with no runtime at all, still go through the tmux msg path", async () => {
+    const { app, tmux, control } = routed({ 1: "tmux", 2: undefined });
+    expect((await app.hooks.sendMessage!("pr-1", "hello", app))?.state).toBe("delivered");
+    expect((await app.hooks.sendMessage!("pr-2", "hello", app))?.state).toBe("delivered");
+    expect(tmux).toEqual([
+      ["pr-1", "hello"],
+      ["pr-2", "hello"],
+    ]);
+    expect(control).toEqual([]);
+  });
+
+  it("a runtime=worker, answer or idle PR gets `message` on the control route, not a tmux write", async () => {
+    const { app, tmux, control } = routed({ 3: "worker", 4: "answer", 5: "idle" });
+    for (const n of [3, 4, 5]) {
+      const out = await app.hooks.sendMessage!(`pr-${n}`, `to ${n}`, app);
+      expect(out).toEqual({ state: "delivered", label: `✓ message #${n} delivered` });
+    }
+    expect(control).toEqual([
+      { kind: "message", pr: 3, text: "to 3" },
+      { kind: "message", pr: 4, text: "to 4" },
+      { kind: "message", pr: 5, text: "to 5" },
+    ]);
+    expect(control.every((c) => c.may_post === undefined)).toBe(true); // posting is the operator's explicit mark only
+    expect(tmux).toEqual([]);
+  });
+
+  it("a refusal on the control route is an undelivered message", async () => {
+    const { app } = routed({ 5: "idle" }, "refused" as never);
+    const out = await app.hooks.sendMessage!("pr-5", "x", app);
+    expect(out?.state).toBe("undelivered");
+    expect(app.view.noticeLine).toContain("refused");
+  });
+
+  it("a runtime=debug or takeover PR gets no `message` and the pointer to its pi pane", async () => {
+    const { app, tmux, control } = routed({ 6: "debug", 7: "takeover" });
+    for (const [n, rt] of [
+      [6, "debug"],
+      [7, "takeover"],
+    ] as const) {
+      const out = await app.hooks.sendMessage!(`pr-${n}`, "hi", app);
+      expect(out?.state).toBe("undelivered");
+      expect(out?.label).toBe(
+        `✖ msg pr-${n} not sent: #${n} runs inside pi (${rt}) — focus its pane (⏎) and type in pi`,
+      );
+      expect(app.view.noticeLine).toBe(out?.label);
+    }
+    expect(control).toEqual([]);
+    expect(tmux).toEqual([]);
+    await expect(deliverMessage(app, "pr-6", "hi")).rejects.toThrow(/focus its pane/);
+  });
+
+  it("the overseer and main sessions are untouched: always the tmux path", async () => {
+    const { app, tmux, control } = routed({ 3: "worker" });
+    await app.hooks.sendMessage!("overseer", "hi", app);
+    await app.hooks.sendMessage!("main", "hi", app);
+    expect(tmux.map(([s]) => s)).toEqual(["overseer", "main"]);
+    expect(control).toEqual([]);
+  });
 });

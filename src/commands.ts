@@ -63,6 +63,32 @@ export const COMMAND_WHITELIST = [
 export type CommandName = (typeof COMMAND_WHITELIST)[number];
 
 /**
+ * The operator's round controls: what the viewer's input line, `msg.ts` and
+ * the companion send to a PR's running (or idle) session. `steer` goes straight
+ * to the running session (rule 9's one exception), `follow-up` queues behind
+ * the turn, `abort-round` stops the round, and `message` is the idle PR's line
+ * (`may_post` marks one the operator allows to post). `takeover`, `release` and
+ * `debug-round` take, free and replace the PR's host. They are operator
+ * commands, so they are valid only from the root-sealed channel, and no session
+ * or Slack turn can spell them. The daemon acts on them through the optional
+ * `operatorControl` dep; a daemon without it refuses with a reason.
+ */
+export const CONTROL_COMMANDS = [
+  "steer",
+  "follow-up",
+  "abort-round",
+  "message",
+  "takeover",
+  "release",
+  "debug-round",
+] as const;
+
+export type ControlCommandName = (typeof CONTROL_COMMANDS)[number];
+
+/** The longest `text` a steer, follow-up or message carries, in characters. */
+export const CONTROL_TEXT_MAX = 8000;
+
+/**
  * The operator's commands: the lesson kill switch and the archiver's two
  * verbs (`archive-run`, one immediate bounded archiver tick, and
  * `archive-restore`, one PR's archive back to its live paths, both run under
@@ -84,6 +110,7 @@ export const OPERATOR_COMMANDS = [
   "unsuppress-lesson",
   "archive-run",
   "archive-restore",
+  ...CONTROL_COMMANDS,
 ] as const;
 
 export type OperatorCommandName = (typeof OPERATOR_COMMANDS)[number];
@@ -149,7 +176,19 @@ export type Command =
   /** The operator's archive verbs (`OPERATOR_COMMANDS`): never
    * valid in a session's file. */
   | { command: "archive-run" }
-  | { command: "archive-restore"; pr: number };
+  | { command: "archive-restore"; pr: number }
+  /** The operator's round controls (`CONTROL_COMMANDS`): never valid in a
+   * session's file. */
+  | { command: "steer"; pr: number; text: string }
+  | { command: "follow-up"; pr: number; text: string }
+  | { command: "abort-round"; pr: number }
+  | { command: "message"; pr: number; text: string; may_post?: boolean }
+  | { command: "takeover"; pr: number }
+  | { command: "release"; pr: number }
+  | { command: "debug-round"; pr: number };
+
+/** A round control as the daemon's `operatorControl` handler receives it. */
+export type ControlCommand = Extract<Command, { command: ControlCommandName }>;
 
 /** Who a command directory's writer is. Decided by which directory a file
  * arrived in and whether the operator seal held — never by a field in the
@@ -220,6 +259,13 @@ export interface CommandDeps {
    * only for an operator-issued command; optional like `drain`. */
   archiveRun?(file: string): Promise<FileOutcome | void> | FileOutcome | void;
   archiveRestore?(pr: number, file: string): Promise<FileOutcome | void> | FileOutcome | void;
+  /** The operator's round controls (`CONTROL_COMMANDS`), forwarded to the PR's
+   * host. Reached only for an operator-issued command; optional like `drain`,
+   * so a daemon with no worker host refuses them with a reason. */
+  operatorControl?(
+    command: ControlCommand,
+    file: string,
+  ): Promise<FileOutcome | void> | FileOutcome | void;
   /** Optional: absent when Slack is disabled, in which case `slack_reply` is
    * rejected with a reason instead of silently succeeding. */
   slackReply?(payload: {
@@ -548,6 +594,41 @@ function validateOperatorCommand(
       if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
       return { ok: true, command: { command: "archive-restore", pr: obj["pr"] } };
     }
+    case "steer":
+    case "follow-up":
+    case "message": {
+      const err = fieldError(obj, name === "message" ? ["pr", "text", "may_post"] : ["pr", "text"]);
+      if (err) return { ok: false, reason: err };
+      if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
+      const text = obj["text"];
+      if (!isNonEmptyString(text) || text.length > CONTROL_TEXT_MAX)
+        return {
+          ok: false,
+          reason: `'text' must be a non-empty string of at most ${CONTROL_TEXT_MAX} characters`,
+        };
+      if (name !== "message") return { ok: true, command: { command: name, pr: obj["pr"], text } };
+      const mayPost = obj["may_post"];
+      if (mayPost !== undefined && typeof mayPost !== "boolean")
+        return { ok: false, reason: "'may_post' must be a boolean when present" };
+      return {
+        ok: true,
+        command: {
+          command: "message",
+          pr: obj["pr"],
+          text,
+          ...(mayPost === undefined ? {} : { may_post: mayPost }),
+        },
+      };
+    }
+    case "abort-round":
+    case "takeover":
+    case "release":
+    case "debug-round": {
+      const err = fieldError(obj, ["pr"]);
+      if (err) return { ok: false, reason: err };
+      if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
+      return { ok: true, command: { command: name, pr: obj["pr"] } };
+    }
   }
 }
 
@@ -562,8 +643,13 @@ function validateOperatorCommand(
  * out of the inject body).
  *
  * `owner` is the owner's tier (legacy persisted records with the retired tier
- * spelling fold to it on read). `system` is the daemon's own unattended
- * turns (`OriginStore.writeLocal`): it is `true` on every row because a
+ * spelling fold to it on read). The `companion` tier is not a column: it is the
+ * owner's column read again (`tierAllows`), so the two are one shared set and a
+ * verb added for the owner is the companion's in the same edit (ruled
+ * 2026-10-19: the companion can do everything the owner can). `system` is the
+ * daemon's own unattended turns (`OriginStore.writeLocal`): it is `true` on
+ * every row but the operator's round controls (`CONTROL_COMMANDS`, which a
+ * daemon turn has no standing to send) because a
  * daemon turn with NO origin record already runs unrestricted —
  * `authorizeCommand(_, null)` ⇒ ok, and that null-origin rule is unchanged.
  * The column is the stamped, auditable form of that same
@@ -575,7 +661,7 @@ function validateOperatorCommand(
  * GitHub mutation — every write still goes through the MutationGate.
  */
 const TIER_TABLE: Record<
-  CommandName,
+  CommandName | ControlCommandName,
   { anyone: boolean; author: "own" | boolean; owner: boolean; system: boolean }
 > = {
   "rerun-round": { anyone: false, author: "own", owner: true, system: true },
@@ -605,7 +691,34 @@ const TIER_TABLE: Record<
   // The EOD curator's receipt — a daemon (system) turn's, or the
   // owner's; never a Slack author's or anyone's.
   "eod-curation-receipt": { anyone: false, author: false, owner: true, system: true },
+  // The operator's round controls reach the daemon only from the sealed
+  // operator channel (`validateCommand`), so this row never admits a Slack
+  // turn; it is the verb set the owner and the companion share. A daemon turn
+  // (`system`) never steers, takes over or releases a PR.
+  steer: { anyone: false, author: false, owner: true, system: false },
+  "follow-up": { anyone: false, author: false, owner: true, system: false },
+  "abort-round": { anyone: false, author: false, owner: true, system: false },
+  message: { anyone: false, author: false, owner: true, system: false },
+  takeover: { anyone: false, author: false, owner: true, system: false },
+  release: { anyone: false, author: false, owner: true, system: false },
+  "debug-round": { anyone: false, author: false, owner: true, system: false },
 };
+
+/** A tier the table is read for besides a Slack turn's: the companion, whose
+ * every verb is the owner's. */
+export type CommandTier = "owner" | "companion" | "system";
+
+/** May `tier` send `name`? `companion` reads the owner's column: one set. */
+export function tierAllows(tier: CommandTier, name: string): boolean {
+  const row = (TIER_TABLE as Record<string, (typeof TIER_TABLE)[CommandName] | undefined>)[name];
+  if (!row) return false;
+  return tier === "system" ? row.system : row.owner;
+}
+
+/** Every verb `tier` may send, in table order. */
+export function tierVerbs(tier: CommandTier): string[] {
+  return Object.keys(TIER_TABLE).filter((name) => tierAllows(tier, name));
+}
 
 /** Target PR of a command, when it has one. */
 function targetPr(command: Command): number | null {
@@ -679,6 +792,17 @@ export function authorizeCommand(
             reason: `tier: '${command.command}' is not available at tier ${origin.tier}`,
           };
   }
+}
+
+/**
+ * May the companion send this command? Not a Slack origin: the TUI forwards a
+ * companion's action as an operator command (P8.19), and checks it here first.
+ * The verbs are the owner's, no more and no fewer (`tierAllows`).
+ */
+export function authorizeCompanionCommand(command: Command): AuthorizationResult {
+  return tierAllows("companion", command.command)
+    ? { ok: true }
+    : { ok: false, reason: `tier: '${command.command}' is not available to the companion` };
 }
 
 function normalize(outcome: FileOutcome | void): FileOutcome {
@@ -827,6 +951,23 @@ export async function executeCommand(
       if (!deps.archiveRestore)
         return { ok: false, reason: "archive-restore is not wired on this daemon" };
       return normalize(await deps.archiveRestore(command.pr, ctx.delivery_key ?? ctx.file));
+    }
+    case "steer":
+    case "follow-up":
+    case "abort-round":
+    case "message":
+    case "takeover":
+    case "release":
+    case "debug-round": {
+      // The belt behind validation's brace, as for the kill switch.
+      if (ctx.issuer !== "operator")
+        return {
+          ok: false,
+          reason: `'${command.command}' is the operator's alone — refused for issuer '${ctx.issuer}'`,
+        };
+      if (!deps.operatorControl)
+        return { ok: false, reason: `${command.command} is not wired on this daemon` };
+      return normalize(await deps.operatorControl(command, ctx.delivery_key ?? ctx.file));
     }
   }
 }

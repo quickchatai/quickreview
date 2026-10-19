@@ -15,6 +15,7 @@ import { App } from "../src/tui/app.js";
 import { piHeader, renderBoard, type BoardAction } from "../src/tui/board.js";
 import type { Zone } from "../src/tui/mouse.js";
 import { stripAnsi } from "../src/tui/paint.js";
+import type { ControlRequest } from "../src/tui/livecontrol.js";
 import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
 import { stateDirRunner } from "./helpers/live-state-runner.js";
 
@@ -342,13 +343,17 @@ describe("the viewer is not a terminal", () => {
       expect(h.app.piFocused()).toBe(true);
       h.sent.length = 0;
 
-      h.streams.type("hello world q 1 /");
-      h.streams.type("\x1b");
-      h.streams.type("\x03"); // a single ^C is not the kill chord
+      h.streams.type("hello world q 1 /"); // text for the input line, not for the board or tmux
+      expect(frame(h).join("\n")).toContain("hello world q 1 /");
+      h.streams.type("\x1b"); // Esc clears the draft
+      h.streams.type("\x03"); // a single ^C is not the kill chord: it asks to abort the round
       await vi.advanceTimersByTimeAsync(5);
       expect(h.sent).toEqual([]);
       expect(h.app.piFocused()).toBe(true);
-      expect(frame(h).join("\n")).toContain("read-only");
+      expect(frame(h).join("\n")).toContain("abort the running round of #5049?");
+      h.streams.type("n"); // anything but y cancels
+      expect(frame(h).join("\n")).not.toContain("abort the running round");
+      expect(frame(h).join("\n")).toContain("steer ›");
 
       h.streams.type("\x1b[5~");
       const parked = h.app.view.pi!.offset;
@@ -458,6 +463,208 @@ describe("the viewer is not a terminal", () => {
       expect(h.app.view.pi?.lines).toEqual([]); // nothing of pr-5012's text
       await vi.advanceTimersByTimeAsync(400);
       expect(h.app.view.pi?.lines).toEqual(["pane of debug-pr-5012"]);
+    });
+  });
+});
+
+describe("the viewer's input line (worker, answer and idle panes only)", () => {
+  /** Focus the selected PR's pane and record every control the line sends. */
+  async function focused(h: ReturnType<typeof rig>, pr: number) {
+    const sent: ControlRequest[] = [];
+    h.app.hooks.liveControl = vi.fn(async (req: ControlRequest) => {
+      sent.push(req);
+      return { state: "handled" as const, label: `✓ ${req.kind} #${req.pr} delivered` };
+    });
+    await show(h, pr);
+    h.app.repaint();
+    h.streams.type("\r");
+    expect(h.app.piFocused()).toBe(true);
+    return sent;
+  }
+  const type = async (h: ReturnType<typeof rig>, ...keys: string[]): Promise<void> => {
+    for (const k of keys) h.streams.type(k);
+    await vi.advanceTimersByTimeAsync(5);
+  };
+  const screen = (h: ReturnType<typeof rig>): string => frame(h).join("\n");
+
+  it("exists on the viewer only: a mirror and a pi terminal have none", async () => {
+    await withApp(async (h) => {
+      for (const [pr, has] of [
+        [5012, false],
+        [5013, false],
+        [5049, true],
+        [5050, true],
+        [5051, false],
+        [5052, false],
+      ] as const) {
+        await show(h, pr);
+        expect(h.app.view.viewerInput !== undefined, `#${pr}`).toBe(has);
+        expect(screen(h).includes("⏎ focus this pane, then type"), `#${pr}`).toBe(has);
+      }
+    });
+  });
+
+  it("unfocused it says how to reach it; focused it shows the prompt and the visible toggle", async () => {
+    await withApp(async (h) => {
+      await show(h, 5049);
+      expect(screen(h)).toContain("⏎ focus this pane, then type to steer #5049");
+      await show(h, 5050);
+      expect(screen(h)).toContain("⏎ focus this pane, then type to message #5050");
+      h.streams.type("\r");
+      expect(screen(h)).toContain("msg ›");
+      expect(screen(h)).toContain("[Alt-p post: off]");
+    });
+  });
+
+  it("⏎ steers while a round runs, and the draft is cleared", async () => {
+    await withApp(async (h) => {
+      const sent = await focused(h, 5049);
+      await type(h, "look at the ", "lock order [1]");
+      expect(screen(h)).toContain("steer › look at the lock order [1]");
+      await type(h, "\r");
+      expect(sent).toEqual([{ kind: "steer", pr: 5049, text: "look at the lock order [1]" }]);
+      expect(h.app.view.viewerInput?.text).toBe("");
+      await type(h, "\r"); // an empty line sends nothing
+      expect(sent).toHaveLength(1);
+      expect(h.sent).toEqual([]); // nothing went to tmux
+    });
+  });
+
+  it("Alt-⏎ queues a follow-up behind the running turn", async () => {
+    await withApp(async (h) => {
+      const sent = await focused(h, 5049);
+      await type(h, "and then the migration", "\x1b\r");
+      expect(sent).toEqual([{ kind: "follow-up", pr: 5049, text: "and then the migration" }]);
+    });
+  });
+
+  it("on an idle PR ⏎ sends a message; Alt-⏎ has nothing to queue behind", async () => {
+    await withApp(async (h) => {
+      const sent = await focused(h, 5050);
+      await type(h, "why did you block this?", "\x1b\r");
+      expect(sent).toEqual([]);
+      expect(h.app.view.noticeLine).toContain("⏎ sends a message to the PR instead");
+      expect(h.app.view.viewerInput?.text).toBe("why did you block this?"); // the draft is kept
+      await type(h, "\r");
+      expect(sent).toEqual([
+        { kind: "message", pr: 5050, text: "why did you block this?", may_post: false },
+      ]);
+    });
+  });
+
+  it("Alt-p marks the next message may_post: shown, carried, and reset after the send", async () => {
+    await withApp(async (h) => {
+      const sent = await focused(h, 5050);
+      expect(screen(h)).toContain("[Alt-p post: off]");
+      await type(h, "\x1bp");
+      expect(screen(h)).toContain("[Alt-p post: ON]");
+      expect(h.app.view.viewerInput?.mayPost).toBe(true);
+      await type(h, "approve it if the lock is fixed", "\r");
+      expect(sent).toEqual([
+        { kind: "message", pr: 5050, text: "approve it if the lock is fixed", may_post: true },
+      ]);
+      expect(h.app.view.viewerInput?.mayPost).toBe(false);
+      expect(screen(h)).toContain("[Alt-p post: off]");
+      await type(h, "and the next one", "\r");
+      expect(sent[1]).toMatchObject({ may_post: false });
+      // toggling twice is off again
+      await type(h, "\x1bp", "\x1bp");
+      expect(h.app.view.viewerInput?.mayPost).toBe(false);
+    });
+  });
+
+  it("a steer never carries may_post, and the toggle still resets", async () => {
+    await withApp(async (h) => {
+      const sent = await focused(h, 5049);
+      await type(h, "\x1bp", "go left", "\r");
+      expect(sent).toEqual([{ kind: "steer", pr: 5049, text: "go left" }]);
+      expect(h.app.view.viewerInput?.mayPost).toBe(false);
+    });
+  });
+
+  it("abort-round asks for confirmation: only y sends it", async () => {
+    await withApp(async (h) => {
+      const sent = await focused(h, 5049);
+      await type(h, "\x03");
+      expect(screen(h)).toContain("abort the running round of #5049? y = abort");
+      await type(h, "n");
+      expect(sent).toEqual([]);
+      expect(screen(h)).not.toContain("abort the running round");
+      await type(h, "\x03", "\r"); // ⏎ is not a yes
+      expect(sent).toEqual([]);
+      await type(h, "\x03", "y");
+      expect(sent).toEqual([{ kind: "abort-round", pr: 5049 }]);
+      expect(screen(h)).not.toContain("abort the running round");
+    });
+  });
+
+  it("Ctrl-c on an idle PR has nothing to abort", async () => {
+    await withApp(async (h) => {
+      const sent = await focused(h, 5050);
+      await type(h, "\x03");
+      expect(h.app.view.noticeLine).toContain("nothing to abort");
+      expect(sent).toEqual([]);
+    });
+  });
+
+  it("[ ] < > navigate while the line is empty and are text once it has a draft", async () => {
+    await withApp(async (h) => {
+      await focused(h, 5049);
+      await type(h, "]");
+      expect(h.app.view.pi?.viewer?.stream).toBe("pass-security--sol-high");
+      await type(h, "[");
+      expect(h.app.view.pi?.viewer?.stream).toBe("main");
+      await type(h, "a", "]");
+      expect(h.app.view.pi?.viewer?.stream).toBe("main");
+      expect(h.app.view.viewerInput?.text).toBe("a]");
+    });
+  });
+
+  it("Backspace, Ctrl-u and Esc edit the draft; a paste's newlines become spaces", async () => {
+    await withApp(async (h) => {
+      await focused(h, 5049);
+      await type(h, "abc", "\x7f");
+      expect(h.app.view.viewerInput?.text).toBe("ab");
+      await type(h, "\x15");
+      expect(h.app.view.viewerInput?.text).toBe("");
+      await type(h, "one\ntwo\r\nthree");
+      expect(h.app.view.viewerInput?.text).toBe("one two three");
+      await type(h, "\x1b");
+      expect(h.app.view.viewerInput?.text).toBe("");
+      expect(h.app.piFocused()).toBe(true); // Esc on a draft only clears it
+    });
+  });
+
+  it("the draft survives moving to another PR; Ctrl-q is still the only way out", async () => {
+    await withApp(async (h) => {
+      await focused(h, 5049);
+      await type(h, "half a thought");
+      await type(h, "\x11");
+      expect(h.app.piFocused()).toBe(false);
+      await show(h, 5050);
+      expect(h.app.view.viewerInput?.text).toBe("");
+      await show(h, 5049);
+      expect(h.app.view.viewerInput?.text).toBe("half a thought");
+    });
+  });
+
+  it("with no control route wired the line says so instead of dropping the text silently", async () => {
+    await withApp(async (h) => {
+      await show(h, 5049);
+      h.streams.type("\r");
+      await type(h, "hello", "\r");
+      expect(h.app.view.noticeLine).toContain("not sent (no control route wired)");
+    });
+  });
+
+  it("a PR whose runtime flips to debug hands the keyboard back, the line gone", async () => {
+    await withApp(async (h) => {
+      await focused(h, 5049);
+      h.runtimes.set(5049, "debug");
+      await h.app.poller.tick();
+      await vi.advanceTimersByTimeAsync(5);
+      expect(h.app.piFocused()).toBe(false);
+      expect(h.app.view.viewerInput).toBeUndefined();
     });
   });
 });

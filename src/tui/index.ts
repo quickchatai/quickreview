@@ -586,7 +586,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
 
   // No attach hooks: the TUI never attaches to a VM session — see AppHooks.
   const { installMessageHooks } = await import("./msg.js");
-  installMessageHooks(app);
+  const { LiveControlSender, installLiveControlHooks } = await import("./livecontrol.js");
+  // One control sender for the viewer's input line and for `m` on a worker PR.
+  const control = new LiveControlSender(app.cfg, app.ssh);
+  installLiveControlHooks(app, control);
+  installMessageHooks(app, undefined, control);
   const { installUnwedgeHooks } = await import("./unwedge.js");
   installUnwedgeHooks(app);
   // `I` asks the companion to run its setup skill — one inject into

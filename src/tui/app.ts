@@ -45,6 +45,8 @@ import { ACCENT, RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
 import { PiMirror } from "./pipane.js";
 import { TranscriptViewer, paneSurface, surfaceSession, type PaneSurface } from "./viewer.js";
+import type { ControlOutcome, ControlRequest } from "./livecontrol.js";
+import { newViewerInput, viewerInputKey, type ViewerInput } from "./viewerinput.js";
 import { PANE_ESCAPE, isEndKey, keysToTmux } from "./termmirror.js";
 import { Poller } from "./poll.js";
 import { parseRoundProgress } from "../round-progress.js";
@@ -102,6 +104,11 @@ export interface AppHooks {
    * `commands/` dir. The board's one write action beyond wakes — see
    * src/tui/unwedge.ts for why it exists and what bounds it. */
   unwedge?: (pr: number, app: App) => void;
+  /** Send an operator control (steer, follow-up, abort-round, message) to a
+   * PR's host through the operator command channel and resolve with how the
+   * daemon answered. The viewer's input line and `msg.ts` ride it
+   * (src/tui/livecontrol.ts). */
+  liveControl?: (req: ControlRequest, app: App) => Promise<ControlOutcome>;
   /** The board's `I` — ask the companion to run its setup skill
    * (an inject into its own column, src/tui/setupentry.ts) and focus it. */
   setup?: (app: App) => void;
@@ -261,6 +268,24 @@ export class App {
     return surfaceSession(this.surfaceOf(pr)) ?? `pr-${pr}`;
   }
 
+  /** The PR's `runtime` in status.json, as the daemon last reported it. */
+  runtimeOf(pr: number): string | undefined {
+    return this.view.snapshot?.prs.find((p) => p.number === pr)?.runtime;
+  }
+
+  /** A round (or an answer) is running for the PR: the viewer's ⏎ steers it. */
+  private roundRunning(pr: number): boolean {
+    const runtime = this.runtimeOf(pr);
+    return runtime === "worker" || runtime === "answer";
+  }
+
+  /** The viewer's input line per PR: a draft survives moving to another PR. */
+  private readonly viewerInputs = new Map<number, ViewerInput>();
+
+  private viewerInputOf(pr: number): ViewerInput {
+    return this.viewerInputs.get(pr) ?? newViewerInput();
+  }
+
   private viewerOn(pr: number | undefined): pr is number {
     return pr !== undefined && this.surfaceOf(pr).kind === "viewer";
   }
@@ -418,6 +443,16 @@ export class App {
     const pr = this.panePr();
     this.view.piPr = pr;
     this.view.pi = this.viewerOn(pr) ? this.viewer.view(pr) : this.pi.view(pr);
+    // The input line exists on the viewer's pane only: a mirror or a pi
+    // terminal gets none (the PR-pane rule).
+    this.view.viewerInput = this.viewerOn(pr)
+      ? {
+          ...this.viewerInputOf(pr),
+          pr,
+          running: this.roundRunning(pr),
+          focused: this.view.piFocus === true && this.piFocusPr === pr,
+        }
+      : undefined;
   }
 
   /** Selection moved: paint the cached mirror at once, capture behind it.
@@ -1431,6 +1466,27 @@ export class App {
     this.repaint();
   }
 
+  /** Do what the input line asked: send a control, or say why not. */
+  private applyViewerEffect(pr: number, effect: ReturnType<typeof viewerInputKey>["effect"]): void {
+    if (effect.t === "notice") {
+      this.view.noticeLine = effect.text;
+      return;
+    }
+    if (effect.t === "none") return;
+    const req: ControlRequest =
+      effect.t === "abort"
+        ? { kind: "abort-round", pr }
+        : effect.kind === "message"
+          ? { kind: "message", pr, text: effect.text, may_post: effect.may_post }
+          : { kind: effect.kind, pr, text: effect.text };
+    const send = this.hooks.liveControl;
+    if (!send) {
+      this.view.noticeLine = `✖ ${req.kind} #${pr} not sent (no control route wired)`;
+      return;
+    }
+    void send(req, this).then(() => this.repaint());
+  }
+
   /** Step the viewer's stream (`[ ]`) or round (`< >`) and read what it now shows. */
   private stepViewer(pr: number, what: "stream" | "round", dir: 1 | -1): void {
     if (what === "stream") this.viewer.stepStream(pr, dir);
@@ -1447,6 +1503,16 @@ export class App {
    */
   private handleViewerKey(buf: Buffer, pr: number): void {
     const raw = buf.toString("utf8");
+    // The input line first: it takes text, ⏎, Alt-⏎, Alt-p and the abort
+    // prompt. The navigation keys below are the line's only when it is empty.
+    const typed = viewerInputKey(this.viewerInputOf(pr), raw, this.roundRunning(pr));
+    if (typed.handled) {
+      this.viewerInputs.set(pr, typed.state);
+      this.applyViewerEffect(pr, typed.effect);
+      this.syncPiPane();
+      this.repaint();
+      return;
+    }
     if (raw === "[" || raw === "]") return this.stepViewer(pr, "stream", raw === "[" ? -1 : 1);
     if (raw === "<" || raw === ">") return this.stepViewer(pr, "round", raw === "<" ? -1 : 1);
     if (raw === "\x1b[5~") this.viewer.page(pr, 1);
@@ -1877,7 +1943,8 @@ export class App {
     // sized against the bar rows THIS frame's board actually paints.
     const paneSize = piPaneSize(inner, rows, boardBarHeight(this.view, inner));
     this.pi.setViewport(paneSize);
-    this.viewer.setViewport(paneSize);
+    // The viewer keeps its last pane row for the input line.
+    this.viewer.setViewport(paneSize && { ...paneSize, rows: Math.max(1, paneSize.rows - 1) });
     paint(renderBoard(this.view, inner, rows), "");
   }
 }

@@ -19,6 +19,8 @@ import {
 } from "../src/tui/unwedge.js";
 import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
 import { CommandDrainSender } from "../src/tui/deploy-drain.js";
+import { controlPayload, liveControlArgv } from "../src/tui/livecontrol.js";
+import { COMMAND_WHITELIST, OPERATOR_COMMANDS, validateCommand } from "../src/commands.js";
 
 const cfg = {
   ssh_host: "my-vm",
@@ -248,5 +250,40 @@ describe("the unwedge command channel", () => {
     expect(probe[probe.length - 1]).toContain(
       "results/2026-08-21T15-00-00-000Z-tui-0000.result.json",
     );
+  });
+});
+
+describe("the operator's round controls ride the same root operator directory", () => {
+  const name = "2026-08-21T15-00-00-000Z-tui-0000.json";
+
+  it("the control write is the unwedge write: root, into commands/operator/, nothing else accepted", () => {
+    expect(liveControlArgv(cfg, name)).toEqual(commandWriteArgv(cfg, name));
+    const script = liveControlArgv(cfg, name).at(-1)!;
+    // the one directory, proven physical before anything is written into it
+    expect(script).toContain("/opt/quickreview/sandbox/commands/operator");
+    expect(script).toContain('[ "$(pwd -P)" = "$R/operator" ]');
+    expect(script).not.toContain("commands/slack");
+  });
+
+  it("unwedge still produces only the two session-whitelisted verbs; the controls are operator-only", () => {
+    for (const verb of ["rerun-round", "restart-session"] as const) {
+      const raw = JSON.parse(commandPayload(verb, 7)) as unknown;
+      expect(validateCommand(raw, { issuer: "session" }).ok).toBe(true);
+      expect(COMMAND_WHITELIST).toContain(verb);
+    }
+    for (const kind of [
+      "steer",
+      "follow-up",
+      "abort-round",
+      "message",
+      "takeover",
+      "release",
+      "debug-round",
+    ] as const) {
+      const raw = JSON.parse(controlPayload({ kind, pr: 7, text: "x" })) as unknown;
+      expect(OPERATOR_COMMANDS).toContain(kind);
+      expect(validateCommand(raw, { issuer: "session" }).ok, kind).toBe(false);
+      expect(validateCommand(raw, { issuer: "operator" }).ok, kind).toBe(true);
+    }
   });
 });
