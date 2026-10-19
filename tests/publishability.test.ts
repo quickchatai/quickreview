@@ -334,7 +334,7 @@ const ALLOWLIST: AllowlistEntry[] = [
     path: "docker/entrypoint.sh",
     tokens: ["quickchat"],
     reason:
-      "the release image's companion mode provisions the same [companion] git identity (its commit email) — a port of docker/companion/entrypoint.sh until P7.8 replaces that image",
+      "the release image's companion mode provisions the [companion] git identity (its commit email) — the companion's entrypoint since P7.8 (docker/companion/entrypoint.sh stays only for the scan sandbox's one-shot mode)",
   },
   {
     path: ".github/workflows/release.yml",

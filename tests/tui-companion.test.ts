@@ -5,6 +5,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,16 +29,21 @@ import {
   stateHome,
 } from "../src/install.js";
 import {
+  appImageBuildArgv,
   CompanionLifecycle,
   CONTAINER,
   MEMORY,
   mirrorConfigFile,
   PUBLIC_DNS,
-  SUBAGENTS,
+  COMPANION_MODE,
+  LENS,
+  hostUser,
   type CompanionFs,
   type DockerResult,
   type DockerRunner,
 } from "../src/tui/companion.js";
+import { lensRunConfigFromEnv } from "../extensions/lens.js";
+import type { PiHost } from "../src/engine/pisdk.js";
 import { RETIRED_FILE_ENV } from "../extensions/vendor/openviking-pi/qcr-recall.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -124,15 +130,16 @@ function withRepo(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.Process
   return { lc: new CompanionLifecycle(CFG, runner, env, noDirs, fs), calls };
 }
 
-/** Same, with the app built under the build context (the image copies its
- * dist/) and the build stamp fixed, so a cold start may build the image. */
+/** Same, with the release Dockerfile under the build context (the image
+ * compiles the app itself) and the build stamp fixed, so a cold start may
+ * build the image. */
 function withBuiltApp(
   answers: Parameters<typeof fakeDocker>[0],
   env: NodeJS.ProcessEnv = HOST_ENV,
 ) {
   const { runner, calls } = fakeDocker(answers);
   const fs: CompanionFs = {
-    exists: (p) => p === resolve(CFG.build_context, "dist/src/cli.js"),
+    exists: (p) => p === resolve(CFG.build_context, "docker/Dockerfile"),
     read: () => undefined,
     mode: () => undefined,
   };
@@ -152,7 +159,7 @@ describe("companion config", () => {
     ).companion;
     expect(cfg.enabled).toBe(true);
     expect(cfg.container_name).toBe("qcr-companion");
-    expect(cfg.image).toBe("qcr-companion");
+    expect(cfg.image).toBe("qcr-companion:release");
     expect(cfg.pihome_volume).toBe("companion-pihome");
     expect(cfg.session).toBe("companion");
     expect(cfg.cooldown_min).toBe(20);
@@ -224,7 +231,19 @@ describe("CompanionLifecycle argv", () => {
       `${HOMES.state}:${CONTAINER.stateHome}:rw`,
       `${HOMES.github}:${CONTAINER.githubRead}:ro`,
     ]);
-    expect(argv[argv.length - 1]).toBe("qcr-companion"); // image last
+    // The image, then the release image's mode word, last.
+    expect(argv.slice(-2)).toEqual([COMPANION_DEFAULTS.image, COMPANION_MODE]);
+  });
+
+  it("runs as the host user, in the checkout — the release image bakes neither", () => {
+    const argv = lc.runArgv();
+    expect(argv[argv.indexOf("--user") + 1]).toBe(hostUser());
+    expect(hostUser()).toMatch(/^\d+:\d+$/);
+    // The image's WORKDIR is its app root, whose reviewer stub is not the
+    // companion's to load; pi starts in the repo it works on.
+    expect(argv[argv.indexOf("--workdir") + 1]).toBe(CONTAINER.workspace);
+    expect(argv.indexOf("--user")).toBeLessThan(argv.lastIndexOf(COMPANION_DEFAULTS.image));
+    expect(argv.indexOf("--workdir")).toBeLessThan(argv.lastIndexOf(COMPANION_DEFAULTS.image));
   });
 
   it("never forwards the ssh agent socket, even when the host has one", () => {
@@ -256,50 +275,55 @@ describe("CompanionLifecycle argv", () => {
     expect(argv).toContain("QCR_SESSION_NAME=companion");
     expect(argv).toContain(`QCR_INJECT_DIR=${CONTAINER.workspace}/inject/companion`);
     const pi = argv.slice(argv.indexOf("pi"));
+    // Every extension, the theme and the prompt are the IMAGE's (D20), under
+    // /opt/qcr — none comes off the /workspace mount.
+    const app = CONTAINER.app;
     expect(pi).toEqual([
       "pi",
       // The companion never blocks on pi's "Trust project folder?" modal
       // either. This is the same flag sessions.ts passes; without it the
       // companion prompts on every start.
       "--approve",
+      // The vendored patched OpenViking extension: always in the image.
+      "--extension",
+      `${app}/extensions/vendor/openviking-pi/index.ts`,
       // Ambient feed changes stay in /feed and never become synthetic turns.
       "--extension",
-      `${CONTAINER.workspace}/extensions/muted-theme.ts`,
+      `${app}/extensions/muted-theme.ts`,
       "--theme",
-      `${CONTAINER.workspace}/extensions/muted-theme.json`,
+      `${app}/extensions/muted-theme.json`,
       // The inject bridge delivers the day-open message.
       "--extension",
-      `${CONTAINER.workspace}/extensions/inject-bridge.ts`,
+      `${app}/extensions/inject-bridge.ts`,
       // The read-only tui_* tools over what the TUI published to
       // /feed. Reads only — it cannot fetch (see extensions/tui-view.ts).
       "--extension",
-      `${CONTAINER.workspace}/extensions/tui-view.ts`,
-      // The first-party subagents glue over pi's OWN subagent
-      // extension. Unconditional like every other repo extension — a failed
-      // native import inside it degrades to "no subagent tool", never a pi
-      // that won't start.
+      `${app}/extensions/tui-view.ts`,
+      // Our lens tools (`lens`, `lens_wave`), in place of pi's example
+      // subagent extension. Unconditional like every other extension.
       "--extension",
-      `${CONTAINER.workspace}/extensions/subagents.ts`,
+      `${app}/extensions/lens.ts`,
       // The bright-line vetoes — frozen seeds, no-GitHub,
-      // no-discard (extensions/companion-guard.ts). Unconditional: it rides
-      // the same mount as every other repo extension.
+      // no-discard (extensions/companion-guard.ts). Unconditional.
       "--extension",
-      `${CONTAINER.workspace}/extensions/companion-guard.ts`,
+      `${app}/extensions/companion-guard.ts`,
       // The setup & scan tool belt over the SetupEngine.
       "--extension",
-      `${CONTAINER.workspace}/extensions/setup.ts`,
+      `${app}/extensions/setup.ts`,
       // `!{cmd}` inline expansion, vendored from pi's examples.
       "--extension",
-      `${CONTAINER.workspace}/extensions/inline-bash.ts`,
+      `${app}/extensions/inline-bash.ts`,
       "--model",
       COMPANION_DEFAULTS.model,
       "--session-dir",
       `${CONTAINER.piHome}/agent/sessions/companion`,
       "--system-prompt",
-      `${CONTAINER.workspace}/prompts/companion.md`,
+      `${app}/prompts/companion.md`,
       "--name",
       "companion",
     ]);
+    // …and none of it comes off the checkout.
+    expect(pi.filter((a) => a.startsWith(`${CONTAINER.workspace}/`))).toEqual([]);
   });
 
   it("attaches locally through docker exec — no ssh in the argv", () => {
@@ -364,7 +388,7 @@ describe("the reviewed repo, read-only", () => {
     expect(mounts.some((m) => m.startsWith("/host/example-app:") && m.endsWith(":rw"))).toBe(
       false,
     );
-    expect(argv[argv.length - 1]).toBe("qcr-companion"); // image still last
+    expect(argv.slice(-2)).toEqual([COMPANION_DEFAULTS.image, COMPANION_MODE]); // image + mode still last
   });
 
   it("drops the mount when the checkout is missing — under-equipped, never broken", async () => {
@@ -631,6 +655,39 @@ describe("mount drift", () => {
     expect(lc.mountDrift(new Map())).toEqual([]);
   });
 
+  it("recreates a container made by the retired companion image (pi home at /home/companion/.pi) and builds the release image", async () => {
+    // P7.8 moved the pi home to the release image's /home/qcr. An existing PC
+    // has a container with the old layout and an image under the old name: the
+    // drift check recreates it, and the new image tag has to be built (the
+    // volume, and the login on it, are kept).
+    const { [CONTAINER.piHome]: pihome, ...rest } = CURRENT;
+    const { lc, calls } = withBuiltApp([
+      inspectWith(true, { ...rest, "/home/companion/.pi": pihome! }),
+      okFor("rm"),
+      (argv) =>
+        argv[0] === "image"
+          ? { ok: false, stdout: "", stderr: "No such image", code: 1 }
+          : undefined,
+      okFor("build"),
+      okFor("run"),
+    ]);
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
+    expect(progress.some((l) => l.includes(`missing ${CONTAINER.piHome}`))).toBe(true);
+    expect(progress.some((l) => l.includes("stale /home/companion/.pi"))).toBe(true);
+    expect(containerCalls(calls).map((c) => c[0])).toEqual([
+      "inspect",
+      "rm",
+      "image",
+      "build",
+      "run",
+    ]);
+    // The pi home volume is mounted again, at the new place.
+    expect(calls.find((c) => c[0] === "run")!).toContain(
+      `${CFG.pihome_volume}:${CONTAINER.piHome}`,
+    );
+  });
+
   describe("pinned DNS (network roaming)", () => {
     // Docker's embedded DNS forwards to the upstream the HOST had at
     // container creation. That upstream is network-specific, so the first
@@ -643,7 +700,7 @@ describe("mount drift", () => {
         const at = argv.indexOf(ip);
         expect(argv[at - 1]).toBe("--dns");
       }
-      expect(argv[argv.length - 1]).toBe("qcr-companion"); // image still last
+      expect(argv.slice(-2)).toEqual([COMPANION_DEFAULTS.image, COMPANION_MODE]); // image + mode still last
     });
 
     it("asks a SEPARATE inspect for the created DNS — never folded into status()", async () => {
@@ -768,8 +825,11 @@ describe("CompanionLifecycle state machine", () => {
     expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "image", "build", "run"]);
     const build = calls.find((c) => c[0] === "build")!;
     expect(build).toContain("-t");
-    expect(build).toContain("qcr-companion");
-    expect(build.some((a) => a.startsWith("COMPANION_UID="))).toBe(true);
+    expect(build).toContain(COMPANION_DEFAULTS.image);
+    expect(build).toContain("BUILD_SHA=stamp");
+    expect(build[build.indexOf("-f") + 1]).toBe(resolve(CFG.build_context, "docker/Dockerfile"));
+    // No uid is baked: the container is started as the host user instead.
+    expect(build.some((a) => a.startsWith("COMPANION_UID="))).toBe(false);
     expect(progress.some((l) => l.includes("building"))).toBe(true);
   });
 
@@ -950,12 +1010,36 @@ describe("qcr tui args", () => {
   });
 });
 
+// The companion is the release image (docker/Dockerfile) in `companion` mode
+// (docker/entrypoint.sh): there is no companion Dockerfile any more. Its mode is
+// the bash function from `mode_companion() {` to the next top-level function.
 describe("companion image", () => {
-  const dockerfile = readFileSync(resolve(root, "docker/companion/Dockerfile"), "utf8");
-  const entrypoint = readFileSync(resolve(root, "docker/companion/entrypoint.sh"), "utf8");
+  const dockerfile = readFileSync(resolve(root, "docker/Dockerfile"), "utf8");
+  const image = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
+  /** The companion's own provisioning and mode, without the daemon's or the common merge. */
+  const entrypoint = image.slice(
+    image.indexOf("provision_companion_settings() {"),
+    image.indexOf("mode_login() {"),
+  );
+  const noFs: CompanionFs = { exists: () => false, read: () => undefined, mode: () => undefined };
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
     pi: { package: string; version: string; extensions?: Record<string, string> };
   };
+
+  it("is the release image: built from docker/Dockerfile, no companion Dockerfile in the build", () => {
+    expect(dockerfile).toMatch(/^ENTRYPOINT \["\/opt\/qcr\/docker\/entrypoint\.sh"\]$/m);
+    expect(image).toMatch(/\n {2}companion\)\n {4}mode_companion\n/);
+    expect(appImageBuildArgv("qcr-companion", "/ctx", "s")).toEqual([
+      "build",
+      "-t",
+      "qcr-companion",
+      "-f",
+      "/ctx/docker/Dockerfile",
+      "--build-arg",
+      "BUILD_SHA=s",
+      "/ctx",
+    ]);
+  });
 
   it("pins pi to the same version as package.json", () => {
     expect(dockerfile).toContain(`PI_VERSION=${pkg.pi.version}`);
@@ -974,50 +1058,45 @@ describe("companion image", () => {
     expect(installs.join("\n")).not.toMatch(/pi-memory|qmd/i);
     expect(dockerfile).not.toMatch(/^ARG (PI_MEMORY_SPEC|QMD_SPEC)=/m);
     // The one memory extension a companion pi loads is the vendored, patched
-    // fork — passed per spawn from /workspace, never baked in.
-    expect(dockerfile).toContain("openviking-pi");
+    // fork — passed per spawn from the image's own extensions/ tree.
+    expect(dockerfile).toContain("COPY extensions ./extensions");
+    expect(existsSync(join(root, MEMORY.extension.slice(CONTAINER.app.length)))).toBe(true);
   });
 
   // Rule 7: the reviewer never blocks on interactive pi input — and neither
   // does the companion. All three layers, or the "Trust project folder?" modal
   // comes back the moment one regresses.
   it("carries all three trust layers, and pre-trusts /workspace not /opt/quickreview", () => {
-    // ② the settings belt
-    expect(entrypoint).toContain('cfg.defaultProjectTrust = "always"');
+    // ② the settings belt (the common merge every mode runs)
+    expect(image).toContain('settings.defaultProjectTrust = "always"');
     // ③ the trust-store braces, at the path the repo is ACTUALLY mounted on
     // here — seeding the VM's path would look right and fix nothing.
     expect(entrypoint).toContain('trust["/workspace"] = true');
     expect(entrypoint).not.toContain('trust["/opt/quickreview"]');
     // ① the spawn flag
-    expect(
-      new CompanionLifecycle(CFG, async () => OK, {}, noDirs, {
-        exists: () => false,
-        read: () => undefined,
-        mode: () => undefined,
-      }).piArgv(),
-    ).toContain("--approve");
+    expect(new CompanionLifecycle(CFG, async () => OK, {}, noDirs, noFs).piArgv()).toContain(
+      "--approve",
+    );
   });
 
   // The image's HOME and the code's mount destination are ONE fact split
-  // across two files. If they drift — `USER companion` resolving through uid
-  // 1000 back to node:22's own user puts $HOME at /home/node while the volume
-  // sits at /home/companion/.pi — pi's OAuth token lands on the writable
+  // across two files. If they drift, pi's OAuth token lands on the writable
   // layer, where a recreate destroys it.
   it("mounts the pihome volume at the HOME pi actually uses", () => {
-    // The explicit ENV is what holds it — without it docker picks the wrong
-    // passwd entry for the duplicated uid.
-    expect(dockerfile).toMatch(/^ENV HOME=\/home\/companion$/m);
-    expect(CONTAINER.home).toBe("/home/companion");
+    expect(dockerfile).toMatch(/^ENV HOME=\/home\/qcr$/m);
+    expect(CONTAINER.home).toBe("/home/qcr");
     // …and the volume must sit INSIDE that home, or auth.json misses it again.
     expect(CONTAINER.piHome.startsWith(`${CONTAINER.home}/`)).toBe(true);
-    expect(dockerfile).toContain(`VOLUME ["${CONTAINER.piHome}"]`);
+    // The image has the mount point, writable by whatever uid runs (a volume
+    // takes its mode from it).
+    expect(dockerfile).toContain(`install -d -m 1777 ${CONTAINER.home} ${CONTAINER.piHome}`);
+    const mounts = new CompanionLifecycle(CFG, async () => OK, HOST_ENV, noDirs, noFs)
+      .runArgv()
+      .filter((_, i, a) => a[i - 1] === "--volume");
+    expect(mounts).toContain(`companion-pihome:${CONTAINER.piHome}`);
     // The session dir the spawn names must be on the volume too, so the
     // conversation survives a recreate.
-    const pi = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, {
-      exists: () => false,
-      read: () => undefined,
-      mode: () => undefined,
-    }).piArgv();
+    const pi = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, noFs).piArgv();
     const sessionDir = pi[pi.indexOf("--session-dir") + 1]!;
     expect(sessionDir.startsWith(`${CONTAINER.piHome}/`)).toBe(true);
     // And the entrypoint says so out loud when it is not a mount point.
@@ -1029,15 +1108,18 @@ describe("companion image", () => {
   // is not one of pi's own lookup paths, so without the settings `skills`
   // array the skills are plain files the system prompt has to name one at a
   // time — no descriptions in context, no invocation, no progressive
-  // disclosure.
+  // disclosure. The skills are DATA of the checkout, so they stay on /workspace.
   it("registers the vendored skill set with pi, guarded on the dir existing", () => {
-    expect(entrypoint).toContain('const skillsDir = "/workspace/.claude/skills"');
+    expect(entrypoint).toContain(
+      'const skillDirs = ["/workspace/.claude/skills", "/workspace/skills/companion"]',
+    );
     expect(entrypoint).toMatch(/if \(!Array\.isArray\(cfg\.skills\)\) cfg\.skills = \[\]/);
     // Degrade, never wedge: an unmounted /workspace leaves the companion
     // under-equipped, not unable to start.
-    expect(entrypoint).toMatch(/fs\.existsSync\(skillsDir\)/);
+    expect(entrypoint).toMatch(/fs\.existsSync\(d\)/);
     // Dedupe — the volume carries settings.json across every restart.
-    expect(entrypoint).toMatch(/cfg\.skills\.includes\(skillsDir\)/);
+    expect(entrypoint).toMatch(/cfg\.skills\.includes\(d\)/);
+    expect(entrypoint).toMatch(/cfg\.skills\.push\(d\)/);
     // `/skill:<name>` from pi's own input line: the companion column is a
     // terminal, so the operator's `/` commands land in pi. Unconditional,
     // because seed-only-if-absent stops landing keys once pi writes settings.
@@ -1047,9 +1129,10 @@ describe("companion image", () => {
     expect(entrypoint).toMatch(/process\.env\.QCR_PI_DEFAULT_MODEL/);
     for (const k of ["defaultProvider", "defaultModel", "defaultThinkingLevel"])
       expect(entrypoint).toContain(`cfg.${k} =`);
-    const guard = entrypoint.indexOf("const skillsDir");
-    expect(guard).toBeGreaterThan(0);
-    expect(entrypoint.indexOf("fs.writeFileSync(path,")).toBeGreaterThan(guard);
+    // Registered before the file is written.
+    expect(entrypoint.indexOf("fs.writeFileSync(file,")).toBeGreaterThan(
+      entrypoint.indexOf("cfg.skills.push(d)"),
+    );
   });
 
   // A registration pointing at nothing is worse than none: it reads as done.
@@ -1071,21 +1154,9 @@ describe("companion image", () => {
   // is a pinned vendored copy re-copied wholesale on an upstream bump, so a
   // companion skill we author cannot live there.
   it("registers our own skills tree as a second entry, guarded independently", () => {
-    expect(entrypoint).toContain('const ourSkillsDir = "/workspace/skills/companion"');
-    expect(entrypoint).toMatch(/fs\.existsSync\(ourSkillsDir\)/);
-    expect(entrypoint).toMatch(/cfg\.skills\.includes\(ourSkillsDir\)/);
-    expect(entrypoint).toMatch(/cfg\.skills\.push\(ourSkillsDir\)/);
-    // The vendored entry keeps its own guard and its own push — one missing
-    // dir must never take the other registration down with it.
-    expect(entrypoint).toMatch(/cfg\.skills\.push\(skillsDir\)/);
-    const vendored = entrypoint.indexOf("const skillsDir");
-    const ours = entrypoint.indexOf("const ourSkillsDir");
-    expect(vendored).toBeGreaterThan(0);
-    expect(ours).toBeGreaterThan(vendored);
-    expect(entrypoint.indexOf("fs.writeFileSync(path,")).toBeGreaterThan(ours);
-    // Degrade loudly and separately: "the vendored set is there" must never
-    // read as "adjudicate is there".
-    expect(entrypoint).toMatch(/if \(!ourSkillsPresent\) console\.log/);
+    expect(entrypoint).toContain('"/workspace/skills/companion"');
+    // Each missing dir says so on its own line: the two degrade independently.
+    expect(entrypoint).toMatch(/is missing - its skills are not registered/);
   });
 
   // A registration pointing at nothing is worse than none (same rule as the
@@ -1118,7 +1189,6 @@ describe("companion image", () => {
     // The release image's entrypoint serves the VM (daemon mode) and the
     // companion; the companion's registration is its own function, which the
     // daemon mode never calls.
-    const image = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
     const vmEntrypoint = image.slice(0, image.indexOf("provision_companion_settings() {"));
     expect(vmEntrypoint).not.toMatch(/settings\.skills/);
     expect(vmEntrypoint).not.toMatch(/enableSkillCommands/);
@@ -1134,11 +1204,9 @@ describe("companion image", () => {
     expect(entrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
     expect(entrypoint).not.toMatch(/extensions\.push/);
     // The VM image carries no such registration either.
-    const vmEntrypoint = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
-    expect(vmEntrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
-    const vmDockerfile = readFileSync(resolve(root, "docker/Dockerfile"), "utf8");
-    expect(vmDockerfile).not.toMatch(/npm install -g \S*pi-memory/);
-    expect(vmDockerfile).not.toMatch(/npm install -g \S*qmd/);
+    expect(image).not.toMatch(/require\.resolve\("pi-memory"/);
+    expect(dockerfile).not.toMatch(/npm install -g \S*pi-memory/);
+    expect(dockerfile).not.toMatch(/npm install -g \S*qmd/);
     const gv = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
     expect(gv).not.toMatch(/^pi_memory_version:/m);
     expect(gv).not.toMatch(/^qmd_version:/m);
@@ -1146,23 +1214,27 @@ describe("companion image", () => {
 
   it("takes its uid from the host user — bind mounts are written, not just read", () => {
     // An image that bakes a fixed uid (e.g. 1001) fails "Permission denied"
-    // writing /alerts.
-    expect(dockerfile).toContain("ARG COMPANION_UID=");
-    expect(dockerfile).toMatch(/useradd .*--non-unique --uid \$\{COMPANION_UID\} companion/);
+    // writing /alerts. The release image bakes none; the run asks for the host's.
+    const instructions = dockerfile.split("\n").filter((l) => !/^\s*#/.test(l));
+    expect(instructions.join("\n")).not.toMatch(/COMPANION_UID|useradd/);
+    const argv = new CompanionLifecycle(CFG, async () => OK, HOST_ENV, noDirs, noFs).runArgv();
+    expect(argv[argv.indexOf("--user") + 1]).toBe(hostUser());
   });
 
   it("writes the csi-u tmux config before starting the server", () => {
-    const conf = entrypoint.indexOf("extended-keys-format csi-u");
+    const conf = readFileSync(resolve(root, "docker/vm/tmux.conf"), "utf8");
+    expect(conf).toContain("extended-keys-format csi-u");
+    expect(conf).toContain("set -g extended-keys on");
+    expect(conf).toContain("terminal-features 'xterm*:extkeys'");
+    const copy = entrypoint.indexOf('cp "$APP/docker/vm/tmux.conf" "$HOME/.tmux.conf"');
     const start = entrypoint.indexOf("tmux start-server");
-    expect(conf).toBeGreaterThan(0);
-    expect(start).toBeGreaterThan(conf);
-    expect(entrypoint).toContain("set -g extended-keys on");
-    expect(entrypoint).toContain("terminal-features 'xterm*:extkeys'");
+    expect(copy).toBeGreaterThan(0);
+    expect(start).toBeGreaterThan(copy);
   });
 
   it("keeps the container alive rather than owning pi as PID 1", () => {
     expect(entrypoint).toMatch(/wait "\$child" \|\| true/);
-    expect(entrypoint.trimEnd().endsWith("exit 0")).toBe(true);
+    expect(entrypoint.trimEnd().endsWith("exit 0\n}")).toBe(true);
     expect(entrypoint).not.toContain("exec pi");
   });
 
@@ -1180,29 +1252,40 @@ describe("companion image", () => {
     const commands = entrypoint.split("\n").filter((l) => !/^\s*#/.test(l));
     expect(commands.join("\n")).not.toContain("exec sleep");
   });
+
+  it("runs the image's code, not the checkout's: the mode needs no pi subagent example", () => {
+    // The companion loads our lens tool (below), so the boot no longer asserts
+    // the example the daemon still loads.
+    const mode = entrypoint.slice(entrypoint.indexOf("mode_companion() {"));
+    expect(mode).not.toContain("assert_subagent_example");
+    expect(image.slice(image.indexOf("mode_daemon() {"))).toContain("assert_subagent_example");
+  });
 });
 
-// Subagents in the companion — pi's OWN first-party subagent extension,
-// loaded from the INSTALLED pinned package by the first-party glue
-// extensions/subagents.ts. Nothing is vendored (a third-party pi-subagents
-// copy is unlicensed and must not be re-vendored), so there is no commit
-// mirror to drift: the pi version pin covers the extension. The companion agent set rides
-// docker/companion/agents/, discovered through the native "user" scope via
-// the entrypoint's ~/.pi/agent/agents symlink.
-describe("native subagents (companion)", () => {
+// Lens passes in the companion — our lens tools (`lens`, `lens_wave`), loaded
+// from the image (extensions/lens.ts), stand where pi's example subagent
+// extension stood. A pass is an SDK session of the companion's own pi; the
+// agents are the companion agent set, linked by the entrypoint into pi's agent
+// dir, which the tool reads. Nothing is vendored (a third-party pi-subagents
+// copy is unlicensed and must not be re-vendored).
+describe("lens tools (companion)", () => {
   const agentsDir = resolve(root, "docker/companion/agents");
+  const tmpDirs: string[] = [];
+  afterAll(() => {
+    for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
+  });
+  const noFs: CompanionFs = { exists: () => false, read: () => undefined, mode: () => undefined };
 
-  it("the glue rides piArgv from /workspace — first-party, unconditional", () => {
-    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, {
-      exists: () => false,
-      read: () => undefined,
-      mode: () => undefined,
-    }).piArgv();
-    const at = argv.indexOf(SUBAGENTS.extension);
+  it("lens.ts rides piArgv from the image — first-party, unconditional", () => {
+    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, noFs).piArgv();
+    const at = argv.indexOf(LENS.extension);
     expect(at).toBeGreaterThan(0);
     expect(argv[at - 1]).toBe("--extension");
-    // In-container path, off the /workspace mount — never an image path.
-    expect(SUBAGENTS.extension).toBe(`${CONTAINER.workspace}/extensions/subagents.ts`);
+    // In-container path, off the image's app root — never the /workspace mount.
+    expect(LENS.extension).toBe(`${CONTAINER.app}/extensions/lens.ts`);
+    expect(existsSync(resolve(root, "extensions/lens.ts"))).toBe(true);
+    // …and the example subagent glue is gone from the companion.
+    expect(argv.join(" ")).not.toContain("subagents.ts");
   });
 
   it("the vendored third-party copy stays deleted", () => {
@@ -1223,47 +1306,72 @@ describe("native subagents (companion)", () => {
     expect(agents).toEqual(["evidence.md", "explore.md", "pass-survey.md", "study.md"]);
     for (const file of agents) {
       const body = readFileSync(resolve(agentsDir, file), "utf8");
-      // The native loader requires string name + description or it silently
+      // The registry requires string name + description or it silently
       // skips the file — pin both.
       expect(body).toMatch(new RegExp(`^name: ${file.replace(/\.md$/, "")}$`, "m"));
       expect(body).toMatch(/^description: .+$/m);
       // ChatGPT OAuth is the only credential in the container: an anthropic/
       // model or a web tool would be dead weight that can never run.
-      // The :thinking suffix rides the model field — the native extension
-      // reads no `thinking:` frontmatter (pi --model accepts the suffix).
+      // The :thinking suffix rides the model field.
       expect(body).toMatch(/^model: openai-codex\/[^\s:]+:(off|minimal|low|medium|high)$/m);
       expect(body).not.toMatch(/^thinking:/m);
       expect(body).not.toMatch(/anthropic\//);
       expect(body).not.toMatch(/web_search|web_fetch/);
       // Read-only leaves: no write/edit, no bash, and no nested fan-out.
       expect(/^tools: .*(write|edit|bash)/m.test(body)).toBe(false);
-      expect(body).not.toMatch(/^tools: .*subagent/m);
+      expect(body).not.toMatch(/^tools: .*(subagent|launch_plan|\blens\b|lens_wave)/m);
       expect(body).not.toMatch(/^subagent_agents:/m);
     }
   });
 
-  it("the entrypoint links user-scope discovery at the agent set (symlink-or-absent only)", () => {
-    const entry = readFileSync(resolve(root, "docker/companion/entrypoint.sh"), "utf8");
-    expect(entry).toContain('"/workspace/docker/companion/agents"');
+  it("the entrypoint links the agents dir at the IMAGE's agent set (symlink-or-absent only)", () => {
+    const entry = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
+    expect(entry).toContain(
+      'QCR_COMPANION_AGENTS="${QCR_COMPANION_AGENTS:-$APP/docker/companion/agents}"',
+    );
     expect(entry).toContain("fs.symlinkSync(companionAgents, agentsLink)");
-    expect(entry).toContain("is not a symlink — NOT touching it");
+    expect(entry).toContain("is not a symlink - NOT touching it");
+    // The image carries the set, so the link target exists in a container.
+    const dockerfile = readFileSync(resolve(root, "docker/Dockerfile"), "utf8");
+    expect(dockerfile).toContain("COPY docker/companion/agents ./docker/companion/agents");
   });
 
   it("raises the companion's cap to 8 and pins it on the pi command line", () => {
     // Survey and scan fan out one case per unit, so the desktop default of 4
     // is raised. Like every QCR_* var it rides the env prefix of the tmux
     // command — never the client env, which tmux panes do not inherit.
-    expect(SUBAGENTS.maxConcurrency).toBe(8);
-    const lc = new CompanionLifecycle(CFG, async () => OK, HOST_ENV, noDirs, {
-      exists: () => false,
-      read: () => undefined,
-      mode: () => undefined,
-    });
+    expect(LENS.maxConcurrency).toBe(8);
+    const lc = new CompanionLifecycle(CFG, async () => OK, HOST_ENV, noDirs, noFs);
     const argv = lc.spawnArgv();
     expect(argv).toContain("QCR_SUBAGENT_MAX_CONCURRENCY=8");
     expect(argv.indexOf("QCR_SUBAGENT_MAX_CONCURRENCY=8")).toBeLessThan(argv.indexOf("pi"));
-    // The glue parses it as a valid cap (strict digits, 1..64).
+    // The tool parses it as a valid cap (strict digits, 1..64).
     expect(lc.piArgv().join(" ")).not.toContain("QCR_SUBAGENT_MAX_CONCURRENCY");
+  });
+
+  it("the companion's env drives the lens shim: absolute agent dir, cap 8, the real agent set loads", () => {
+    const lc = new CompanionLifecycle(CFG, async () => OK, HOST_ENV, noDirs, noFs);
+    const prefix = lc.piEnvPrefix().slice(1);
+    const env = Object.fromEntries(
+      prefix.map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]),
+    );
+    // pi's own agent dir, named explicitly: the shim refuses a relative or absent one.
+    expect(env["PI_CODING_AGENT_DIR"]).toBe(`${CONTAINER.piHome}/agent`);
+    // What the entrypoint does at boot: link <agent dir>/agents at the set.
+    const agentDir = mkdtempSync(join(tmpdir(), "qcr-companion-agentdir-"));
+    tmpDirs.push(agentDir);
+    symlinkSync(agentsDir, join(agentDir, "agents"));
+    const cfg = lensRunConfigFromEnv(
+      { ...env, PI_CODING_AGENT_DIR: agentDir },
+      {} as PiHost,
+      CONTAINER.workspace,
+    );
+    expect(cfg.permits).toBe(8);
+    expect(cfg.registry.names()).toEqual(["evidence", "explore", "pass-survey", "study"]);
+    expect(cfg.registry.skipped).toEqual([]);
+    // The companion's agents list no lens tool: they are leaves.
+    for (const name of cfg.registry.names())
+      expect(cfg.registry.get(name)!.tools).not.toContain("lens");
   });
 });
 
@@ -1354,7 +1462,7 @@ describe("the install's homes and the read-only GitHub token", () => {
     // The seam: code run in the container resolves the MOUNTED homes, with
     // the container user's own HOME beside them.
     const inContainer = {
-      HOME: "/home/companion",
+      HOME: "/home/qcr",
       QCR_CONFIG_HOME: CONTAINER.configHome,
       QCR_STATE_HOME: CONTAINER.stateHome,
       QCR_CONFIG: CONTAINER.configFile,

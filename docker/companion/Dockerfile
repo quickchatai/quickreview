@@ -1,15 +1,17 @@
-# Local companion container.
+# The clone route's scan sandbox image (src/scanbox.ts). Since P7.8 this is NOT
+# the companion: the local companion is the release image (docker/Dockerfile)
+# in `companion` mode, built by `qcr companion rebuild`. What is left here is
+# the throwaway container `qcr scan start` drives a scan in
+# ([scan] sandbox = "docker", default image `qcr-scan`), through the one-shot
+# mode of docker/companion/entrypoint.sh. It goes when scanbox moves onto the
+# release image. A plain `docker build` from the app root (`qcr scan rebuild`
+# runs it, after `npm run build`):
 #
-# Unlike the VM runtime image (the release image, docker/Dockerfile, pulled or
-# built by ansible) this one is a plain `docker build` on the owner's PC, from the app
-# root (`qcr companion rebuild` runs it, after `npm run build`):
-#
-#   docker build -t qcr-companion -f docker/companion/Dockerfile \
+#   docker build -t qcr-scan -f docker/companion/Dockerfile \
 #     --build-arg COMPANION_UID="$(id -u)" --build-arg BUILD_SHA=<stamp> .
 #
 # The context is the whole checkout, narrowed by the root .dockerignore to what
-# the image copies: the built app (below), for the scan sandbox. The companion
-# itself still runs its code off the /workspace mount.
+# the image copies: the built app (below).
 #
 # Deltas from the VM image:
 #   - node:22 base instead of ubuntu + NodeSource (same major, less plumbing).

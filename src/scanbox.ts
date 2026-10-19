@@ -1,8 +1,10 @@
 // The scan sandbox: where `qcr scan start` (and `stage2 start`) drives a run
 // when `[scan] sandbox = "docker"` — the default. Instead of a detached host
 // process, the launch runs the same `qcr scan … --foreground` driver in a
-// throwaway container (`docker run --rm`) from the companion image, which
-// carries the built app at /opt/qcr (docker/companion/Dockerfile). The
+// throwaway container (`docker run --rm`) from the scan sandbox image, which
+// carries the built app at /opt/qcr (docker/companion/Dockerfile; the local
+// companion is the release image since P7.8, so this image is the scan's
+// alone, `qcr-scan` by default). The
 // container sees only what a scan needs:
 //
 //   the reviewed repo         /reviewed-repo         read-only
@@ -77,8 +79,6 @@ import {
 } from "./install.js";
 import { DETACH_TIMEOUT_MS, DRIVER_LOG, prepareDriverLog } from "./scandriverlog.js";
 import {
-  appBuildProblem,
-  appImageBuildArgv,
   CONTAINER,
   dockerFailureLine,
   IN_COMPANION_ENV,
@@ -110,11 +110,13 @@ export const SCANBOX = {
   configLive: CONTAINER.configLive,
   configFile: CONTAINER.configFile,
   profiles: CONTAINER.profiles,
-  piHome: CONTAINER.piHome,
+  /** The scan image's own fixed HOME (docker/companion/Dockerfile): not the
+   * companion's, which is the release image's. */
+  piHome: "/home/companion/.pi",
   /** The companion's agent dir, read-only: the login the scan copies. */
   authSrc: "/pi-agent-src",
   /** The scan's own pi agent dir, on the tmpfs pi home. */
-  agentDir: `${CONTAINER.piHome}/agent`,
+  agentDir: "/home/companion/.pi/agent",
 } as const;
 
 /** The companion's pi home is its login: only its `agent/` dir is mounted. */
@@ -785,10 +787,35 @@ export async function effectiveSandbox(
   return v.ok ? { sandbox: s } : host;
 }
 
+/** Why the scan image cannot be built from `ctx`, or null: it copies the
+ * built app, so `dist/` must be there. */
+export function scanBuildProblem(ctx: string, exists: (p: string) => boolean): string | null {
+  return exists(join(ctx, "dist", "src", "cli.js"))
+    ? null
+    : `the image copies the built app, and ${join(ctx, "dist")} has none — run \`npm run build\` in ${ctx} first`;
+}
+
+/** `docker build` of the scan sandbox image (docker/companion/Dockerfile) from
+ * the app root `ctx`, as `image`, stamped. Builds an image and nothing else. */
+export function scanImageBuildArgv(image: string, ctx: string, stamp: string): string[] {
+  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+  return [
+    "build",
+    "-t",
+    image,
+    "-f",
+    join(ctx, "docker", "companion", "Dockerfile"),
+    "--build-arg",
+    `COMPANION_UID=${uid}`,
+    "--build-arg",
+    `BUILD_SHA=${stamp}`,
+    ctx,
+  ];
+}
+
 /** `qcr scan rebuild`: build `[scan] image` from the app root, stamped, and
  * nothing else — no container is removed, stopped or started, so a running
- * companion on the same image keeps running (it moves to the new image at
- * its own next recreate, `qcr companion rebuild`). */
+ * companion keeps running (the scan image is not the companion's). */
 export async function buildScanImage(o: {
   docker: DockerRunner;
   image: string;
@@ -797,11 +824,11 @@ export async function buildScanImage(o: {
   stamp: (root: string) => string;
   onProgress?: (line: string) => void;
 }): Promise<{ ok: true; image: string; stamp: string } | { ok: false; errors: string[] }> {
-  const problem = appBuildProblem(o.buildContext, o.exists);
+  const problem = scanBuildProblem(o.buildContext, o.exists);
   if (problem !== null) return { ok: false, errors: [problem] };
   const stamp = o.stamp(o.buildContext);
   o.onProgress?.(`building ${o.image} (stamp ${stamp}) — takes a few minutes…`);
-  const r = await o.docker(appImageBuildArgv(o.image, o.buildContext, stamp), {
+  const r = await o.docker(scanImageBuildArgv(o.image, o.buildContext, stamp), {
     timeoutMs: 1_800_000,
   });
   if (!r.ok)

@@ -65,8 +65,7 @@ DOCKER_ON_VM="docker"
 
 QCR="$ROOT/scripts/qcr"
 
-# The app's build stamp (src/appstamp.ts) for the image's qcr.build-sha label —
-# what the scan sandbox compares with the checkout before it runs a driver.
+# The app's build stamp (src/appstamp.ts) for the image's qcr.build-sha label.
 app_stamp() {
   node --input-type=module -e 'const m = await import(process.argv[1]); console.log(m.appStamp(process.argv[2]));' \
     "$1/dist/src/appstamp.js" "$1"
@@ -74,12 +73,11 @@ app_stamp() {
 
 # --- 1. image ----------------------------------------------------------------
 step "image"
-# The image copies the built app (docker/companion/Dockerfile): build it first.
-[[ -f "$ROOT/dist/src/cli.js" ]] || (cd "$ROOT" && npm run --silent build >&2)
+# The release image (docker/Dockerfile) compiles the app itself.
 if docker image inspect "$IMAGE" >/dev/null 2>&1; then
   pass "image $IMAGE present"
-elif docker build -t "$IMAGE" -f "$ROOT/docker/companion/Dockerfile" \
-  --build-arg COMPANION_UID="$(id -u)" --build-arg BUILD_SHA="$(app_stamp "$ROOT")" \
+elif docker build -t "$IMAGE" -f "$ROOT/docker/Dockerfile" \
+  --build-arg BUILD_SHA="$(app_stamp "$ROOT")" \
   "$ROOT" >"$WORK/build.log" 2>&1; then
   pass "image $IMAGE built"
 else

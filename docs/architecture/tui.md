@@ -6,7 +6,7 @@ because they share one frame, one poll cadence and one set of files:
 - **the TUI** (`src/tui/`, started by `qcr tui`) — a full-screen terminal
   board over the daemon. It reads the daemon's state, mirrors its pi sessions,
   and has exactly two paths that write anything back.
-- **the companion** (`src/tui/companion.ts` + `docker/companion/`) — a local
+- **the companion** (`src/tui/companion.ts`, the release image in `companion` mode) — a local
   pi session in a docker container on the same machine, permanently visible as
   the right-hand column of the TUI. It holds no credential for the deployment
   host and no path to GitHub.
@@ -39,7 +39,7 @@ companion→TUI action channel is wired into `src/tui/index.ts`.
 | ssh diagnosis and the one interactive connect | `src/tui/sshtriage.ts`, `src/tui/connect.ts` |
 | hot reload | `src/tui/reload.ts`, `scripts/dev-tui.sh` |
 | companion container lifecycle and pi argv | `src/tui/companion.ts` |
-| the companion image | `docker/companion/Dockerfile`, `docker/companion/entrypoint.sh` |
+| the companion image | the release image: `docker/Dockerfile`, and its `companion` mode in `docker/entrypoint.sh` (the agent set and health watcher in `docker/companion/`) |
 | TUI → companion ambient files | `src/tui/feed.ts` |
 | companion → TUI alerts (and the status.json-sourced pi-auth / memory alerts) | `src/tui/alerts.ts` |
 | the memory-incident tracker ticket | `src/tui/memincident.ts` |
@@ -410,8 +410,9 @@ a resume. A TUI crash leaves the container running and the next start adopts
 it. A second concurrent TUI attaches to the same container — `ensureUp()` and
 `spawnPi()` are both idempotent. `src/cli.ts` `cmdCompanion` exposes
 `up|down|status|rebuild`; `rebuild` exists because the image is otherwise
-built only when missing, so a Dockerfile or entrypoint change would never
-reach a machine that already has one (the pihome volume is untouched, so the
+built only when missing, so a Dockerfile, entrypoint, extension or prompt change
+would never reach a machine that already has one (D20: the companion runs the
+image's code, so there is no hot reload for it) (the pihome volume is untouched, so the
 login and the conversation survive).
 
 **Mounts.** `CONTAINER` in `companion.ts` fixes the in-container paths; the
@@ -419,8 +420,8 @@ host side of each is configured under `[companion]`:
 
 | in container | what | mode |
 | --- | --- | --- |
-| `/home/companion/.pi` | its own pi home (OAuth, sessions) — a named volume, never the daemon's | rw |
-| `/workspace` | this repository | rw |
+| `/home/qcr/.pi` | its own pi home (OAuth, sessions) — a named volume, never the daemon's | rw |
+| `/workspace` | this repository: the repo it works on and commits to, and its working directory (its code is the image's, `/opt/qcr`) | rw |
 | `/tracker` | the issue tracker it files to | rw |
 | `/tracker-docs` | the tracker's protocol docs | ro |
 | *(the reviewed repo)* | the source a review is about | ro |
@@ -454,31 +455,34 @@ are never read into a log line.
 **pi argv** (`piArgv()`). `--approve` pre-trusts project-local `.pi` resources
 so no interactive trust modal can ever stall the session; the entrypoint also
 sets `defaultProjectTrust` and pre-seeds `trust.json` for `/workspace`.
-Extensions are passed **per spawn**, never registered globally: the vendored
-patched memory extension (loaded only if the vendor directory is present),
+Extensions are passed **per spawn**, never registered globally, and all of them
+are the image's (`/opt/qcr/extensions`): the vendored patched memory extension,
 `extensions/muted-theme.ts`, `extensions/inject-bridge.ts` (the same bridge
 the daemon uses, pointed at the companion's own inject directory),
-`extensions/tui-view.ts`, `extensions/subagents.ts`,
+`extensions/tui-view.ts`, `extensions/lens.ts` (our `lens` / `lens_wave`
+tools at cap 8, in place of pi's example subagent),
 `extensions/companion-guard.ts` and `extensions/inline-bash.ts`. Routing vars
 ride the command line as an `env K=V …` prefix (`piEnvPrefix()`) rather than
 the client environment, because tmux panes inherit the tmux *server*'s
 environment.
 
-**The image** (`docker/companion/Dockerfile`) is a plain `docker build` on the
-operator's machine, from the app root (`qcr companion rebuild`; the
-the root `.dockerignore` admits only what the image copies): node
-base, tmux built from source for the key protocol, the pinned pi package, the
-built app at `/opt/qcr` for the scan sandbox (stamped with its build hash,
-`src/appstamp.ts`), and a non-root `companion` user whose uid must match
-the invoking host user because every interesting mount is a host bind mount it
-writes. `ENV HOME` is set explicitly — the non-unique uid leaves two passwd
-entries, and docker resolving `USER companion` back through the uid to the
-other one silently moved `$HOME` off the mounted volume. The entrypoint
-provisions the git identity (commits are prefixed `[companion]`), registers
-the skill directories in pi's settings, and reports at boot whether the pi home
-really is a mount point. Given a command it runs one-shot instead: pi's
-settings provisioned, then the command exec'd — the scan sandbox's driver and
-`qcr scan login` / `doctor` run that way.
+**The image** is the release image (`docker/Dockerfile`), built on the
+operator's machine from the app root (`qcr companion rebuild`, stamped with
+`src/appstamp.ts`'s hash; the image compiles the app itself, so nothing needs
+building on the host first) and run in its `companion` mode
+(`docker/entrypoint.sh`): tmux built from source for the key protocol, the
+pinned pi package, the app at `/opt/qcr`, and no baked user. The container runs
+as the invoking host user (`--user <uid>:<gid>`, `hostUser()`) because every
+interesting mount is a host bind mount it writes; `HOME` is the image's fixed
+`/home/qcr`, writable by any uid, and the pi home volume mounts inside it. The
+run sets the working directory to `/workspace`, so pi reads the repo's own
+context files and not the image's reviewer stub. The mode provisions the git
+identity (commits are prefixed `[companion]`), registers the skill directories
+in pi's settings, links pi's agents dir at the image's companion agent set
+(what the lens tool reads), and reports at boot whether the pi home really is a
+mount point. The clone route's scan sandbox is a separate image
+(`docker/companion/Dockerfile`, `[scan] image`, `qcr scan rebuild`): its
+one-shot entrypoint runs the scan driver and `qcr scan login` / `doctor`.
 
 ## The file channels
 

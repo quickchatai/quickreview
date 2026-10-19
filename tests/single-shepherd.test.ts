@@ -17,12 +17,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkBashCommand } from "../extensions/bash-guard.js";
-import type { Config } from "../src/config.js";
+import { COMPANION_DEFAULTS, resolveCompanionPaths, type Config } from "../src/config.js";
 import { LEAF_MEMORY_TOOLS, buildAgents, stripAgentSpawnTools } from "../src/include.js";
 import { writeSessionBridgeState } from "../src/session-bridge.js";
 import { OVERSEER_SESSION, PiSessionManager, isSandboxSession } from "../src/sessions.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
 import { Tmux } from "../src/tmux.js";
+import { CompanionLifecycle } from "../src/tui/companion.js";
 import type { ExecFn } from "../src/tmux.js";
 import { flushHeldWakes, pauseDefersAllHeldWakes, wakeOrHold } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
@@ -606,15 +607,27 @@ describe("subagents glue is never registered globally", () => {
   }
 
   // extensions/lens.ts hosts SDK lens sessions in an interactive pi (a debug
-  // round, the companion once it moves, P7.8). The tmux bot runs the native
-  // pair through extensions/subagents.ts and never loads it: the argv lists
-  // that start its sessions and the bench's must not name it.
-  for (const file of ["src/sessions.ts", "src/tui/companion.ts", "src/bench/runner.ts"]) {
+  // round, the companion since P7.8). The tmux bot runs the native pair
+  // through extensions/subagents.ts and never loads it: the argv lists that
+  // start its sessions and the bench's must not name it.
+  for (const file of ["src/sessions.ts", "src/bench/runner.ts"]) {
     it(`${file}: the tmux bot's and the bench's pi never load extensions/lens.ts`, () => {
       const text = readFileSync(join(root, file), "utf8");
       expect(text).not.toMatch(/extensions\/lens\b|["']lens\.ts["']/);
     });
   }
+
+  it("src/tui/companion.ts: the companion loads our lens tool, not the example-subagent glue", () => {
+    const argv = new CompanionLifecycle(
+      resolveCompanionPaths({ ...COMPANION_DEFAULTS, repo_dir: "/r" }, "/r"),
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      { HOME: "/h" },
+      () => {},
+      { exists: () => false, read: () => undefined, mode: () => undefined },
+    ).piArgv();
+    expect(argv).toContain("/opt/qcr/extensions/lens.ts");
+    expect(argv.filter((a) => /subagents?\.ts$|register-lens/.test(a))).toEqual([]);
+  });
 });
 
 // ---- S3: bash is never an agent launcher ----------------------------------

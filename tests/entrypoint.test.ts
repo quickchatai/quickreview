@@ -712,6 +712,29 @@ describe("companion mode", () => {
     child.kill("SIGTERM");
     expect(await exited).toBe(0);
   });
+
+  it("runs the image's code: agents linked at the image's agent set, no pi subagent example needed", async () => {
+    const r = rig();
+    // The global CLI of this rig has no examples/extensions/subagent: the
+    // companion loads our lens tool, so the boot must not ask for it.
+    rmSync(join(r.globalRoot, PKG, "examples"), { recursive: true, force: true });
+    const child = spawn(ENTRYPOINT, ["companion"], {
+      env: r.env,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    const exited = new Promise<number | null>((res) => child.on("exit", (code) => res(code)));
+    const log = join(r.dir, "tmux.log");
+    for (let i = 0; i < 200 && !existsSync(log); i++) await new Promise((r2) => setTimeout(r2, 50));
+    expect(existsSync(log), stderr).toBe(true);
+    // The lens tool reads <agent dir>/agents; it is the image's set, not /workspace's.
+    expect(readlinkSync(join(r.home, ".pi/agent/agents"))).toBe(
+      join(r.app, "docker/companion/agents"),
+    );
+    child.kill("SIGTERM");
+    expect(await exited).toBe(0);
+  });
 });
 
 describe("the image wires it", () => {

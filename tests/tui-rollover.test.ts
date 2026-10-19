@@ -533,7 +533,7 @@ describe("the rollover sequence", () => {
       JSON.stringify({ role: "assistant", content: "PR 5012 stalled overnight" }),
     ].join("\n");
     const { runner, calls } = fakeDocker({
-      "ls -1t": "/home/companion/.pi/agent/sessions/companion/abc.jsonl\n",
+      "ls -1t": "/home/qcr/.pi/agent/sessions/companion/abc.jsonl\n",
       "tail -c": convo,
     });
 
@@ -548,12 +548,10 @@ describe("the rollover sequence", () => {
     const scripts = calls.map((c) => c.join(" "));
     expect(scripts[0]).toContain("ls -1t");
     expect(scripts[1]).toContain("archive/companion/2026-08-13");
-    expect(scripts[1]).toContain("cp '/home/companion/.pi/agent/sessions/companion/abc.jsonl'");
+    expect(scripts[1]).toContain("cp '/home/qcr/.pi/agent/sessions/companion/abc.jsonl'");
     expect(scripts[2]).toContain("tail -c");
     expect(scripts[3]).toContain("tmux kill-session -t companion");
-    expect(report.archivedTo).toBe(
-      "/home/companion/.pi/archive/companion/2026-08-13/session.jsonl",
-    );
+    expect(report.archivedTo).toBe("/home/qcr/.pi/archive/companion/2026-08-13/session.jsonl");
 
     // All five carry items landed in the queued message.
     const queued = readFileSync(report.dayOpenFile!, "utf8");
@@ -636,7 +634,7 @@ describe("the rollover sequence", () => {
     it("a failed conversation read defers too — an unread conversation is not an empty one", async () => {
       writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
       const { runner, calls } = flakyDocker("tail -c", {
-        "ls -1t": "/home/companion/.pi/agent/sessions/companion/abc.jsonl\n",
+        "ls -1t": "/home/qcr/.pi/agent/sessions/companion/abc.jsonl\n",
       });
       const report = await rollover(runner).run();
 
@@ -656,7 +654,7 @@ describe("the rollover sequence", () => {
         if (argv.includes("kill-session")) return { ok: false, stdout: "", stderr, code: 1 };
         const script = argv[argv.length - 1] ?? "";
         if (script.includes("ls -1t"))
-          return OK("/home/companion/.pi/agent/sessions/companion/abc.jsonl\n");
+          return OK("/home/qcr/.pi/agent/sessions/companion/abc.jsonl\n");
         return OK();
       };
       return { runner, calls };

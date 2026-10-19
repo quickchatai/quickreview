@@ -11,7 +11,7 @@
 // Where a run is driven: `start` (and `stage2 start`) launches a detached
 // `qcr scan … --foreground` driver, waits until it has recorded the run (or
 // refused), and returns. With `[scan] sandbox = "docker"` (the default) the
-// driver runs in a throwaway container from the companion image
+// driver runs in a throwaway container from the scan sandbox image
 // (src/scanbox.ts); with `"host"` it is a detached process on this machine.
 // Either way its records are the state home's, so every other subcommand
 // reads them here, on the host. The driver runs the
@@ -1157,7 +1157,7 @@ async function sandboxPorts(
   const configured = cfg?.scan_sandbox ?? {
     ...cfgMod.SCAN_SANDBOX_DEFAULTS,
     pihome_volume: cfgMod.COMPANION_DEFAULTS.pihome_volume,
-    image: cfgMod.COMPANION_DEFAULTS.image,
+    image: cfgMod.SCAN_IMAGE_DEFAULT,
   };
   const docker = companion.realDockerRunner;
   // Inside the companion container an unset sandbox is the host: there is

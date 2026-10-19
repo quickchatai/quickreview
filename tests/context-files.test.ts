@@ -692,17 +692,21 @@ beforeAll(async () => {
     { exists: () => false, read: () => undefined, mode: () => undefined },
   );
   const spawn = lifecycle.spawnArgv();
-  // `docker exec` without -w: pi starts in the container's WORKDIR.
+  // `docker exec` without -w: pi starts in the container's working directory,
+  // which the run sets to the checkout (the image's own WORKDIR is its app
+  // root, where the reviewer stub sits).
   expect(spawn.filter((a) => a === "-w" || a === "--workdir")).toEqual([]);
   expect(lifecycle.expectedMounts().get(CONTAINER.workspace)).toBe("/host/qcr");
-  const companionWorkdir = [...companionDockerfile.matchAll(/^WORKDIR\s+(\S+)/gm)].pop()![1]!;
+  const run = lifecycle.runArgv();
+  const companionWorkdir = run[run.indexOf("--workdir") + 1]!;
   expect(companionWorkdir).toBe(CONTAINER.workspace);
-  expect(mustMatch(companionDockerfile, /^ENV HOME=(\S+)/m, "companion HOME")).toBe(CONTAINER.home);
+  expect(vmRoot).toBe(CONTAINER.app);
+  expect(mustMatch(releaseDockerfile, /^ENV HOME=(\S+)/m, "companion HOME")).toBe(CONTAINER.home);
   observed.routes["companion"] = row(checkoutFs(CONTAINER.workspace), {
     cwd: companionWorkdir,
     agentDir: join(CONTAINER.piHome, "agent"),
     argv: spawn.slice(spawn.indexOf("pi")),
-    note: "/workspace is the qcr checkout, bind-mounted; no stub.",
+    note: "/workspace is the qcr checkout, bind-mounted; no stub. The release image in companion mode: its WORKDIR (/opt/qcr, where the stub sits) is overridden by the run.",
   });
 }, 120_000);
 
@@ -919,7 +923,9 @@ describe("the one install site", () => {
       .sort();
     // roundsdk.ts only hands the stub to the SDK session as data; it writes nothing.
     expect(users).toEqual(["src/engine/roundsdk.ts", "src/hostroute.ts"]);
-    expect(read("src/engine/roundsdk.ts")).not.toMatch(/(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/);
+    expect(read("src/engine/roundsdk.ts")).not.toMatch(
+      /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
+    );
     const text = read("src/hostroute.ts");
     expect(text.match(/copyFileSync\([^\n]*HOST_CONTEXT_STUB\)/g)).toHaveLength(1);
     // …into the run's cwd only, after the guard that keeps it out of a checkout.

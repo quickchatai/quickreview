@@ -174,7 +174,7 @@
     },
     "companion": {
       "cwd": "/workspace",
-      "agentDir": "/home/companion/.pi/agent",
+      "agentDir": "/home/qcr/.pi/agent",
       "contextFiles": "default",
       "effective": [
         {
@@ -182,7 +182,7 @@
           "source": "AGENTS.md"
         }
       ],
-      "note": "/workspace is the qcr checkout, bind-mounted; no stub."
+      "note": "/workspace is the qcr checkout, bind-mounted; no stub. The release image in companion mode: its WORKDIR (/opt/qcr, where the stub sits) is overridden by the run."
     }
   }
 }

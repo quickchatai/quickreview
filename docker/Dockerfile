@@ -29,9 +29,15 @@
 # is ever written at run time. This replaces the companion image's 1001/1000 split
 # and its COMPANION_UID build arg.
 #
+# The local companion on the owner's PC is this image too, in `companion` mode:
+# `qcr companion rebuild` builds it from the checkout (src/tui/companion.ts
+# appImageBuildArgv) and `docker run --user <host uid>` starts it, so its
+# extensions, prompt and agent set are the image's, never the /workspace mount
+# (D20: no hot reload for the companion - a change lands with a rebuild).
+#
 # The build context is the repo root, narrowed by docker/Dockerfile.dockerignore
 # (BuildKit reads it in preference to the root .dockerignore, which belongs to
-# the companion image).
+# the clone route's scan sandbox image, docker/companion/Dockerfile).
 
 # ---- pinned versions ---------------------------------------------------------
 # A MIRROR of config.toml [pi] / package.json / group_vars: the global pi CLI
@@ -134,6 +140,11 @@ COPY config.example.toml ./config.example.toml
 # The entrypoint and the tmux config the daemon and companion modes start from.
 COPY docker/entrypoint.sh ./docker/entrypoint.sh
 COPY docker/vm/tmux.conf ./docker/vm/tmux.conf
+# The companion mode's own files: its agent set (the lens tool's agents dir,
+# linked into pi's user scope) and the memory health watcher. They ride the
+# image, not the /workspace mount (D20: the companion runs the image's code).
+COPY docker/companion/agents ./docker/companion/agents
+COPY docker/companion/memory-health.mjs ./docker/companion/memory-health.mjs
 # The compose stack and the tunnel sidecars' build context, so a Docker-only
 # install extracts them from the image (the wizard's bring-up prints the one
 # `docker run --entrypoint tar` that does it): nothing is cloned.

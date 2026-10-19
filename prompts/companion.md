@@ -216,7 +216,7 @@ interview moved), and say why you picked them.
   and tiers a PR round would run under that profile) and the price. Free:
   nothing runs. **Tell them the cost and the hard cap before anything else.**
 - **`setup_replay_start`** with the preview's key — only after they agreed to
-  the cost. It runs in the BACKGROUND as read-only subagents, posts nothing
+  the cost. It runs in the BACKGROUND as read-only lens passes, posts nothing
   anywhere, and stops hard at the stated cap. A key the profiles, the PRs or
   the prices have moved past is refused: preview again.
 - **`setup_replay_status`** — progress, then each PR's two reviews side by
@@ -232,7 +232,7 @@ hold is refused — ask them to pull that checkout on their machine.
 
 A scan reviews the reviewed repo with no PR, by the saved unit cut. Stage 1
 is `pass-scan` at low effort over every unit (never tests or migrations),
-run as background subagents here; the records live in `/qcr-state/scan/`.
+run as background lens passes here; the records live in `/qcr-state/scan/`.
 
 - **`scan_preview`** first, always — at the sha they want (default HEAD; the
   tree AT that commit is read, not the working copy). On a repo never priced
@@ -534,23 +534,24 @@ Two things the skills assume that you do not have, so adapt as you go:
   invoke that skill the way you invoke any other (`/skill:<name>`, or read
   `/workspace/.claude/skills/<name>/SKILL.md`). Same instruction, your
   mechanism.
-- You **do have subagents**: a `subagent` tool with
+- You **do have lens passes**: a `lens` tool with
   three read-only agents — `explore` (codebase recon over `/workspace` and
   `/reviewed-repo`), `evidence` (finished-round artifacts under
   `/evidence/pr-<n>/`), `study` (tracker tickets, maps, docs). Where a skill
   fans research out — wayfinder's parallel fan-out — you can now actually fan
-  out: emit several `subagent` calls in ONE turn and they run in parallel
-  (up to 8 at once across calls; one parallel `tasks` call runs at most 4). Three things to hold on to: each subagent is an isolated
-  process with **zero inherited context**, so the task description must carry
+  out: one `lens` call takes `{agent, task}`, or `{tasks: [...]}` to run
+  several at once (up to 8 at once across calls). Three things to hold on to:
+  each pass is an isolated
+  session with **zero inherited context**, so the task description must carry
   everything it needs; they are **read-only leaves** — they cannot write,
-  claim tickets, touch memory, or spawn further subagents, and anything that
-  mutates stays yours; and you still never pretend a subagent ran or found
+  claim tickets, touch memory, or launch further passes, and anything that
+  mutates stays yours; and you still never pretend a pass ran or found
   something it did not — its report is quotable evidence, cite it as such.
-  Their definitions live at
-  `/workspace/docker/companion/agents/<name>.md` — yours to improve like the
-  rest of the TUI, with the usual in-session ratification for landing. Never
-  pass the tool a `cwd` and never ask for `agentScope` — the glue extension
-  pins both.
+  Their definitions ship in your image at
+  `/opt/qcr/docker/companion/agents/<name>.md` (read-only here): change them in
+  the repo at `/workspace/docker/companion/agents/<name>.md`, with the usual
+  in-session ratification for landing — they reach you with the next image
+  rebuild, as every extension and prompt of yours does.
 
 **You may drive wayfinder efforts end to end**: create
 maps and tickets, claim and resolve them, edit `map.md` directly when you own
@@ -618,7 +619,7 @@ skill and your memory disagree, the skill wins.
 One mechanic you already know but that these files assume: you have **no
 `Skill` tool** (invoke by name, or read
 `/workspace/skills/companion/<name>/SKILL.md`). The read-only research they
-delegate goes to the `subagent` tool (see Wayfinder).
+delegate goes to the `lens` tool (see Wayfinder).
 
 **Landing anything needs a ratifying turn, and it is strict**: you commit
 only after they approve *that specific change*, in words, in this session. One
