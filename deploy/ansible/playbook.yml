@@ -472,7 +472,7 @@
             state: stopped
             stop_timeout: 90
 
-        - name: Copy the store (rsync -a: additive, deletes nothing on either side)
+        - name: "Copy the store (rsync -a, additive, deletes nothing on either side)"
           ansible.builtin.command:
             argv: [rsync, -a, "{{ openviking_home }}/", "{{ memory_state_dir }}/"]
           changed_when: true

@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 import { githubCloneDir, LOCAL_EMBEDDING, RETIRED_LOCAL_EMBEDDING } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -2235,6 +2236,9 @@ describe("deploy — the memory sidecar", () => {
         join(root, "deploy", "ansible", "group_vars", "all.yml"),
         "utf8",
       );
+      // A task name with an unquoted `word: ` once made the whole playbook unparseable.
+      expect(() => parseYaml(playbook), "playbook.yml").not.toThrow();
+      expect(() => parseYaml(groupVars), "group_vars/all.yml").not.toThrow();
       for (const key of [
         "openviking_endpoint",
         "memory_container_name",
