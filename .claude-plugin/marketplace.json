@@ -1,6 +1,6 @@
 {
   "name": "quickreview",
-  "owner": { "name": "quickchatai" },
+  "owner": { "name": "qcr" },
   "plugins": [
     {
       "name": "qcr",

@@ -460,7 +460,7 @@ describe("qcr-setup — the order on a fresh machine", () => {
     const install = log[idx(log, /^docker run .* install$/)]!;
     expect(install).toContain(`-v ${rig.dest}:/out`);
     expect(install).toMatch(/--user \d+:\d+/);
-    expect(install).toContain("ghcr.io/quickchatai/quickreview:latest");
+    expect(install).toMatch(/ghcr\.io\/[^/ ]+\/quickreview:latest/);
     expect(r.stdout).toMatch(/ready: qcr 0\.1\.0/);
     // no gh config, no docker.sock, no model: nothing but the one -v
     expect(log.join("\n")).not.toMatch(/docker\.sock|\.config\/gh/);

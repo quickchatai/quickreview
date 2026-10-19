@@ -141,7 +141,10 @@ const DENYLIST: { token: string; why: string }[] = [
   { token: t("oper", "ator-box"), why: "the private shared operator terminal's host name" },
   { token: t("your-dev-", "project"), why: "the private GCP project id" },
   { token: t("issue-", "tracker"), why: "the private issue tracker's repository and paths" },
-  { token: t("/home/", "user"), why: "the original operator's home directory (absolute private paths)" },
+  {
+    token: t("/home/", "user"),
+    why: "the original operator's home directory (absolute private paths)",
+  },
   {
     token: t("-home-", "user"),
     why: "the operator's home directory in dashed form (Claude Code project dirs)",
@@ -340,6 +343,12 @@ const ALLOWLIST: AllowlistEntry[] = [
       "names the release and memory-sidecar images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
   },
   {
+    path: "plugins/qcr/scripts/qcr-setup.sh",
+    tokens: ["quickchat"],
+    reason:
+      "names the default release image under the publishing org's registry namespace (ghcr.io/quickchatai/quickreview), the one place the plugin can learn it before a wrapper pins it",
+  },
+  {
     path: "tests/tui-companion.test.ts",
     tokens: ["quickchat"],
     reason:
@@ -425,7 +434,16 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "tests/publishability.test.ts",
-    tokens: ["owner_legacy", "quickchat", "gfrost", "jbennett", "dwinchester", "avasquez-", "pmercier", "review.example.com"],
+    tokens: [
+      "owner_legacy",
+      "quickchat",
+      "gfrost",
+      "jbennett",
+      "dwinchester",
+      "avasquez-",
+      "pmercier",
+      "review.example.com",
+    ],
     reason:
       "this lint — the denylist itself plus the negative-control plants (the operator-specific tokens are built from parts, so the file never spells them)",
   },
