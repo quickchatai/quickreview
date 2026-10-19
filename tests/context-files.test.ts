@@ -893,6 +893,7 @@ describe("the one install site", () => {
       "docker/entrypoint.sh", // the release image's daemon mode: keeps the baked 0444 stub, in its own /opt/qcr
       "extensions/bash-guard.ts", // a policy surface no session may write
       "scripts/deploy.sh", // a name the base clone may not take
+      "src/engine/roundsdk.ts", // the SDK round's stub as in-memory data for the session, never written to a checkout
       "src/hostroute.ts", // the clone route's per-run copy, into the run's own out dir
       "src/usage.ts", // the cost split counts it as a context file
     ]);
@@ -916,7 +917,9 @@ describe("the one install site", () => {
       .filter((f) => /\.(ts|sh|mjs|js)$/.test(f))
       .filter((f) => read(f).includes("HOST_CONTEXT_STUB"))
       .sort();
-    expect(users).toEqual(["src/hostroute.ts"]);
+    // roundsdk.ts only hands the stub to the SDK session as data; it writes nothing.
+    expect(users).toEqual(["src/engine/roundsdk.ts", "src/hostroute.ts"]);
+    expect(read("src/engine/roundsdk.ts")).not.toMatch(/(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/);
     const text = read("src/hostroute.ts");
     expect(text.match(/copyFileSync\([^\n]*HOST_CONTEXT_STUB\)/g)).toHaveLength(1);
     // …into the run's cwd only, after the guard that keeps it out of a checkout.
