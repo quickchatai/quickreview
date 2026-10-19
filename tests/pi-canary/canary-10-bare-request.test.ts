@@ -9,7 +9,8 @@
 // wire, not of objects: a real `pi` child through procRuntime, and the SDK
 // in this process through sdkRuntime. Nothing leaves loopback and no model runs.
 //
-// Full parity with our factories and lens tools is P5.2 (one-shot) and P8.2 (bot).
+// Full parity with our factories and lens tools: canary-10-oneshot-request (P5.2)
+// and canary-10-bot-request (P8.2).
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
