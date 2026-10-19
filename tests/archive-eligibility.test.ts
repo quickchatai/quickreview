@@ -39,7 +39,7 @@ function closedPr(h: ReturnType<typeof rig>, n = PR, daysAgo = 20): void {
   h.at(T0);
 }
 
-const clear: OutsideFacts = { tmuxAlive: false, birthInFlight: false, injectFiles: [] };
+const clear: OutsideFacts = { workerAlive: false, birthInFlight: false, injectFiles: [] };
 
 function check(h: ReturnType<typeof rig>, outside: Partial<OutsideFacts> = {}, pr = PR) {
   return prEligibility(h.store, pr, {
@@ -131,16 +131,16 @@ describe("archive eligibility — every clause of §7.1, each alone", () => {
       },
     },
     {
-      clause: "tmux pr-<n> is alive",
-      reason: "tmux_alive",
+      clause: "a worker of pr-<n> runs",
+      reason: "worker_alive",
       setup: () => {},
-      outside: { tmuxAlive: true },
+      outside: { workerAlive: true },
     },
     {
-      clause: "tmux could not be asked",
-      reason: "tmux_unknown",
+      clause: "worker liveness could not be asked",
+      reason: "worker_unknown",
       setup: () => {},
-      outside: { tmuxAlive: null },
+      outside: { workerAlive: null },
     },
     {
       clause: "a session birth is in flight",
@@ -312,9 +312,9 @@ describe("archive eligibility — every clause of §7.1, each alone", () => {
     closedPr(h);
     h.store.holdWake(PR, "w", "round_in_flight");
     failure(h, 1);
-    const e = check(h, { tmuxAlive: true });
-    expect(e.reasons).toEqual(["tmux_alive", "failure_open", "wake_held"]);
-    expect(e.reason).toBe("tmux_alive");
+    const e = check(h, { workerAlive: true });
+    expect(e.reasons).toEqual(["worker_alive", "failure_open", "wake_held"]);
+    expect(e.reason).toBe("worker_alive");
   });
 
   it("reads only: the store's change counter does not move", () => {

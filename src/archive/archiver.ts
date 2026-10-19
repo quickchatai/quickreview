@@ -284,8 +284,8 @@ export interface ArchiverDeps {
    * measured. */
   load?: () => DaemonLoadStatus | undefined;
   starvedRatio?: number;
-  /** Live tmux session names; null = tmux could not be asked. Default: none
-   * answer — every candidate holds `tmux_unknown`. */
+  /** Session names (`pr-<n>`) a worker runs for; null = could not be asked.
+   * Default: none answer — every candidate holds `worker_unknown`. */
   liveSessions?: () => Promise<readonly string[] | null>;
   /** The daemon's in-flight session births. Absent = not observable: the
    * file phase then moves nothing (`births_unknown`), never a guess. */
@@ -1061,7 +1061,7 @@ export class Archiver {
     );
     const injectFiles = await knownInjectFiles(injectDirOf(this.deps.root, pr));
     return {
-      tmuxAlive: names === null ? null : names.includes(`pr-${pr}`),
+      workerAlive: names === null ? null : names.includes(`pr-${pr}`),
       birthInFlight: false,
       injectFiles,
     };

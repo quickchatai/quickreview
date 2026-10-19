@@ -9,7 +9,7 @@
 //       keeps the source and counts a verify failure; a source appended to
 //       mid-copy — or changed after its copy was recorded, right before its
 //       unlink — is kept and archived as a new entry by the next pass; a
-//       registry flip to tracked, a tmux session come alive or a wake dropped
+//       registry flip to tracked, a worker come alive or a wake dropped
 //       before the unlink phase means zero unlinks.
 //
 // Plus the orphans (§7.6): a gzip renamed into place with no entry is adopted
@@ -550,7 +550,7 @@ describe("interference (acceptance 4)", () => {
   );
 
   for (const [what, reason] of [
-    ["the PR's tmux session came alive", "tmux_alive"],
+    ["a worker of the PR came alive", "worker_alive"],
     ["a wake was dropped into its inject dir", "pending_inject"],
   ] as const)
     it(
@@ -566,7 +566,7 @@ describe("interference (acceptance 4)", () => {
             liveSessions: async () => (alive ? [`pr-${f.pr}`] : []),
             step: (name) => {
               if (name !== "before_unlink") return;
-              if (reason === "tmux_alive") alive = true;
+              if (reason === "worker_alive") alive = true;
               else put(f.root, `inject/pr-${f.pr}/late.md`, "a wake");
             },
           },

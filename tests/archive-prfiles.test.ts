@@ -227,7 +227,7 @@ describe("nothing is touched while a clause holds the PR (acceptance 2)", () => 
           .run(new Date(T0 - 13 * DAY).toISOString()),
     },
     {
-      reason: "tmux_alive",
+      reason: "worker_alive",
       setup: () => {},
       extra: (f) => ({ liveSessions: async () => [`pr-${f.pr}`] }),
     },

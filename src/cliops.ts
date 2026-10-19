@@ -11,6 +11,7 @@ import { zoneDateString } from "./eod.js";
 import type { GateResult } from "./gate.js";
 import type { GitHubAdapter, PrRef } from "./github.js";
 import { readDryrunDir, runCompare, type CompareDeps, type ReviewSnapshot } from "./compare.js";
+import { runDirOf } from "./ipc/capability.js";
 import { recheckFingerprint } from "./recheck.js";
 import { reconcileOnce } from "./reconcile.js";
 import { standingVerdict } from "./standing-review.js";
@@ -18,6 +19,7 @@ import { isBotAuthor } from "./statemachine.js";
 import { StateStore } from "./state.js";
 import { stubSessionHooks } from "./stubs.js";
 import type { RoundOrder } from "./types.js";
+import { createWorkerLiveness } from "./workerliveness.js";
 import { applyInterpretation, interpretEvent } from "./webhook.js";
 import { buildParts, type ProductionParts } from "./wire.js";
 
@@ -273,7 +275,9 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
     },
     restart: {
       statusPath: join(root, "state", "status.json"),
-      adoptExistingSessions: async () => (await p.sessions.adopt()).adopted,
+      // Dry pass: the workers a restarted daemon would find (their leases).
+      adoptExistingSessions: () =>
+        createWorkerLiveness({ runDir: runDirOf(join(root, "state")) }).liveSessions() ?? [],
     },
     bot_login: cfg.github.bot_login,
     labels: {

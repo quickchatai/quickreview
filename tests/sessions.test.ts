@@ -2279,27 +2279,26 @@ describe("pi auth watch coverage", () => {
   });
 });
 
-describe("adoption", () => {
-  it("adopts live sandbox sessions at daemon restart and kills nothing", async () => {
+describe("daemon start", () => {
+  it("adopts no tmux session: a live pr-* is neither listed, killed nor restarted at boot", async () => {
     liveSessions = new Set(["pr-7", "pr-42", "overseer", "some-other-session"]);
     const m = manager();
-    const report = await m.adopt();
-    expect(report.adopted.sort()).toEqual(["overseer", "pr-42", "pr-7"]);
-    expect(report.prs.sort((a, b) => a - b)).toEqual([7, 42]);
-    expect(report.overseer).toBe(true);
+    expect("adopt" in m).toBe(false);
+    await m.preflight([]);
     expect(tmuxArgs().some((a) => a[0] === "kill-session")).toBe(false);
     expect(tmuxArgs().some((a) => a[0] === "new-session")).toBe(false);
+    expect(tmuxArgs().some((a) => a[0] === "list-sessions")).toBe(false);
   });
 
-  it("preflight adopts and sweeps only worktrees of inactive PRs", async () => {
-    liveSessions = new Set(["pr-7"]);
+  it("preflight sweeps only the worktrees of PRs it was not told to keep", async () => {
+    liveSessions = new Set(["pr-9"]); // a tmux pr-* is not a reason to keep a tree
     const m = manager();
     for (const pr of [7, 8, 9]) mkdirSync(m.worktrees.worktreePath(pr), { recursive: true });
 
-    const { adoption, sweptWorktrees } = await m.preflight([8]);
+    // 7 has a worker, 8 is active, 9 is stale.
+    const { sweptWorktrees } = await m.preflight([8, 7]);
 
-    expect(adoption.prs).toEqual([7]);
-    expect(sweptWorktrees).toEqual([9]); // 7 live, 8 active, 9 stale
+    expect(sweptWorktrees).toEqual([9]);
     expect(existsSync(m.worktrees.worktreePath(9))).toBe(false);
     expect(existsSync(m.worktrees.worktreePath(7))).toBe(true);
   });

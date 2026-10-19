@@ -161,11 +161,14 @@ function correction(
   (deps.log ?? (() => {}))(`reconcile: correction ${what}${pr ? ` #${pr}` : ""}`, detail);
 }
 
-/** Startup repair: a DB round marked running whose tmux session did not
- * survive the restart will never produce a verdict — it would sit as a
- * phantom until its deadline, holding a capacity slot and then corrupting the
- * PR via the overdue path. Cancel it; if it was the PR's newest round and the
- * PR still says reviewing, requeue so the lost work is redone.
+/** Startup repair: a DB round marked running whose worker did not survive the
+ * restart will never produce a verdict — it would sit as a phantom until its
+ * deadline, holding a capacity slot and then corrupting the PR via the
+ * overdue path. Cancel it; if it was the PR's newest round and the PR still
+ * says reviewing, requeue so the lost work is redone. `inFlightPrs` are the
+ * PRs a worker still runs for, or whose round command waits for the next one
+ * (`inFlightPrs` in src/workerliveness.ts); a boot that finds no worker at all
+ * finds every PR idle with its JSONL.
  *
  * A round that still owes a POSTING is no phantom: its review is finished and
  * the outbox delivers it without any session (docs/architecture/
@@ -176,7 +179,7 @@ function correction(
  * round. */
 export function reconcileOrphanedRounds(
   store: StateStore,
-  adoptedPrs: Iterable<number>,
+  inFlightPrs: Iterable<number>,
   opts: {
     now?: () => Date;
     log?: (msg: string, extra?: unknown) => void;
@@ -185,7 +188,7 @@ export function reconcileOrphanedRounds(
     postingOwed?: (round: RoundRow) => boolean;
   },
 ): { cancelled: number[]; requeued: number[]; kept_for_posting: number[] } {
-  const live = new Set(adoptedPrs);
+  const live = new Set(inFlightPrs);
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? (() => {});
   const cancelled: number[] = [];
@@ -211,15 +214,12 @@ export function reconcileOrphanedRounds(
       );
       continue;
     }
-    // `orphan_sweep` is the quiet cause: tmux lives in the container,
-    // so a clean redeploy orphans every round in flight by construction. It is
-    // counted and grouped like every other cause, and it raises nothing.
+    // `orphan_sweep` is the quiet cause: a worker lives and dies with its
+    // container, so a clean redeploy orphans every round in flight by
+    // construction. It is counted and grouped like every other cause, and it
+    // raises nothing.
     const replaced = store.db.transaction(() => {
-      store.markRoundCancelled(
-        round.id,
-        "orphaned — tmux session lost across a restart",
-        "orphan_sweep",
-      );
+      store.markRoundCancelled(round.id, "orphaned — worker lost across a restart", "orphan_sweep");
       store.logEvent("round_orphaned", round.pr, { round_id: round.id, round_no: round.round_no });
       const row = store.getPr(round.pr);
       if (row?.state !== "reviewing" || store.hasLaterRound(round.pr, round.round_no)) return false;

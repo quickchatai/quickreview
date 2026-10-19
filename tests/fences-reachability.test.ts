@@ -124,12 +124,12 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     // (P8.6): built and tested. The daemon constructs the host (supervisor, capability store, IPC server,
     // spec builder) when the worker world is wired into wire.ts; until then the tmux host is the one it
     // builds. Delete each entry with that import.
-    ...["workersupervisor.ts", "workerlease.ts", "workerbreaker.ts", "workerlog.ts", "worker-session-host.ts"].map((f) => ({
+    ...["workersupervisor.ts", "workerbreaker.ts", "workerlog.ts", "worker-session-host.ts"].map((f) => ({
       file: `src/${f}`,
       why:
         "the worker world's session host (P8.5/P8.6): the supervisor (spawn, heartbeat, deadlines, lease, " +
-        "restart, crash-loop breaker, worker log), its lease, and WorkerSessionHost, the SessionHooks over " +
-        "them. Read only by tests/worker-supervisor.test.ts, tests/worker-lease.test.ts, " +
+        "restart, crash-loop breaker, worker log) and WorkerSessionHost, the SessionHooks over " +
+        "them. Read only by tests/worker-supervisor.test.ts, " +
         "tests/worker-session-host.test.ts and the conformance suite until the daemon's wiring constructs " +
         "the host. Delete this entry with that import.",
     })),

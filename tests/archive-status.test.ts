@@ -63,7 +63,7 @@ function planned(over: Partial<ArchiveStatus> = {}): ArchiveStatus {
       count: 2,
       first: [
         { pr: 5546, reason: "failure_open" },
-        { pr: 5682, reason: "tmux_alive" },
+        { pr: 5682, reason: "worker_alive" },
       ],
     },
     orphans: { count: 1, first: ["pr-7"] },
@@ -667,7 +667,7 @@ describe("qcr archive status", () => {
         },
         backlog: { prs: 486, bytes: 3_945_003_000, event_rows: 1_100_000, delivery_rows: 113_566 },
         births_observed: false,
-        tmux: "answered",
+        workers: "answered",
         same_device: false,
         max_sync_span_ms: 6.4,
       } as ArchivePlan;

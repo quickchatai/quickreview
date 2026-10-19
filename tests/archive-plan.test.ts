@@ -27,7 +27,7 @@ import {
 } from "../src/archive/plan.js";
 import { ARCHIVE_DEFAULTS } from "../src/config.js";
 import { StateStore } from "../src/state.js";
-import { Tmux, type ExecFn } from "../src/tmux.js";
+import { createWorkerLiveness } from "../src/workerliveness.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const T0 = Date.parse("2026-10-21T12:00:00.000Z");
@@ -268,7 +268,7 @@ describe("the plan — what a pass would move (§7.2)", () => {
         expect(p.legacy_copies).toEqual({ files: 1, bytes: 900 });
         expect(p.backlog).toEqual({ prs: 2, bytes, event_rows: 2, delivery_rows: 2 });
         expect(p.events.by_kind).toEqual({ webhook_event: 1, pingpong_decision_failed: 1 });
-        expect(p.tmux).toBe("answered");
+        expect(p.workers).toBe("answered");
         expect(p.births_observed).toBe(true);
         expect(p.same_device).toBe(true);
       } finally {
@@ -350,16 +350,16 @@ describe("the plan — what a pass would move (§7.2)", () => {
     },
   );
 
-  it("tmux that cannot be asked holds every candidate (`tmux_unknown`) — never read as none alive", async () => {
+  it("worker liveness that cannot be asked holds every candidate (`worker_unknown`) — never read as none alive", async () => {
     const f = fixture();
     try {
       const p = await plan(f, { liveSessions: async () => null });
-      expect(p.tmux).toBe("unknown");
+      expect(p.workers).toBe("unknown");
       expect(p.candidates).toEqual([]);
       expect(p.held.map((h) => [h.pr, h.reasons])).toEqual([
-        [100, ["tmux_unknown"]],
-        [300, ["tmux_unknown", "failure_open"]],
-        [1000, ["tmux_unknown"]],
+        [100, ["worker_unknown"]],
+        [300, ["worker_unknown", "failure_open"]],
+        [1000, ["worker_unknown"]],
       ]);
       expect(p.backlog.prs).toBe(0);
     } finally {
@@ -367,26 +367,28 @@ describe("the plan — what a pass would move (§7.2)", () => {
     }
   });
 
-  it("a tmux Permission-denied answer (`error connecting to … (Permission denied)`) holds every candidate — through the real Tmux", async () => {
+  it("an unreadable lease directory holds every candidate; an absent one is an answer — through the real liveness reader", async () => {
     const f = fixture();
     try {
-      const exec: ExecFn = async () => ({
-        code: 1,
-        stdout: "",
-        stderr: "error connecting to /tmp/tmux-0/default (Permission denied)\n",
-      });
-      const tmux = new Tmux({ exec });
-      const p = await plan(f, { liveSessions: () => tmux.listSessionsKnown() });
-      expect(p.tmux).toBe("unknown");
+      const runDir = join(f.root, "run-probe");
+      mkdirSync(runDir, { recursive: true });
+      // No lease dir: no worker ever ran here.
+      const none = createWorkerLiveness({ runDir });
+      expect(none.liveSessions()).toEqual([]);
+      // `workers` is a file, not a dir: the leases cannot be listed.
+      writeFileSync(join(runDir, "workers"), "");
+      const broken = createWorkerLiveness({ runDir });
+      const p = await plan(f, { liveSessions: async () => broken.liveSessions() });
+      expect(p.workers).toBe("unknown");
       expect(p.candidates).toEqual([]);
       expect(p.held.map((h) => h.pr)).toEqual([100, 300, 1000]);
-      expect(p.held.every((h) => h.reasons.includes("tmux_unknown"))).toBe(true);
+      expect(p.held.every((h) => h.reasons.includes("worker_unknown"))).toBe(true);
     } finally {
       f.store.close();
     }
   });
 
-  it("a tmux that never answers is UNKNOWN past the deadline — the plan settles, every candidate held", async () => {
+  it("a liveness ask that never answers is UNKNOWN past the deadline — the plan settles, every candidate held", async () => {
     const f = fixture();
     try {
       const t0 = Date.now();
@@ -395,20 +397,20 @@ describe("the plan — what a pass would move (§7.2)", () => {
         liveSessionsDeadlineMs: 20,
       });
       expect(Date.now() - t0).toBeLessThan(4000);
-      expect(p.tmux).toBe("unknown");
+      expect(p.workers).toBe("unknown");
       expect(p.candidates).toEqual([]);
-      expect(p.held.find((h) => h.pr === 100)?.reasons).toEqual(["tmux_unknown"]);
+      expect(p.held.find((h) => h.pr === 100)?.reasons).toEqual(["worker_unknown"]);
     } finally {
       f.store.close();
     }
   });
 
-  it("the bounded tmux ask: an answer passes through, a throw is UNKNOWN, an abort rejects at once", async () => {
+  it("the bounded liveness ask: an answer passes through, a throw is UNKNOWN, an abort rejects at once", async () => {
     expect(await askLiveSessions(async () => ["pr-1"], 1000)).toEqual(["pr-1"]);
     expect(await askLiveSessions(async () => null, 1000)).toBeNull();
     expect(
       await askLiveSessions(async () => {
-        throw new Error("spawn tmux ENOENT");
+        throw new Error("leases unreadable");
       }, 1000),
     ).toBeNull();
     expect(
@@ -435,7 +437,7 @@ describe("the plan — what a pass would move (§7.2)", () => {
     expect(asked).toBe(false);
   });
 
-  it("the archiver's stop() settles a tick hung on tmux — the mutex is released, nothing failed", async () => {
+  it("the archiver's stop() settles a tick hung on the liveness ask — the mutex is released, nothing failed", async () => {
     const f = fixture();
     try {
       const archiver = new Archiver({
@@ -464,7 +466,7 @@ describe("the plan — what a pass would move (§7.2)", () => {
     }
   });
 
-  it("a live tmux session and an in-flight birth hold their PR; a CLI plan says births are not observed", async () => {
+  it("a running worker and an in-flight birth hold their PR; a CLI plan says births are not observed", async () => {
     const f = fixture();
     try {
       const p = await plan(f, {
@@ -472,7 +474,7 @@ describe("the plan — what a pass would move (§7.2)", () => {
         birthInFlight: (pr) => pr === 1000,
       });
       expect(p.held.map((h) => [h.pr, h.reason])).toEqual([
-        [100, "tmux_alive"],
+        [100, "worker_alive"],
         [300, "failure_open"],
         [1000, "birth_in_flight"],
       ]);
