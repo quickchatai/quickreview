@@ -61,7 +61,9 @@ describe("[P2.7] the canary suite is offline", () => {
     const files = readdirSync(import.meta.dirname).filter((f) => f.endsWith(".test.ts"));
     expect(files.length).toBeGreaterThanOrEqual(7);
     for (const f of files) {
-      expect(readFileSync(join(import.meta.dirname, f), "utf8"), f).toContain("useOfflineGuard();");
+      expect(readFileSync(join(import.meta.dirname, f), "utf8"), f).toMatch(
+        /useOfflineGuard\((\{[^}]*\})?\);/,
+      );
     }
   });
 });

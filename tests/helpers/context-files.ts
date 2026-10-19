@@ -34,7 +34,10 @@ export interface LoadedContext {
   source: string;
 }
 
-export type ContextFlag = "default" | "disabled";
+/** How a route's context files are chosen: pi's own discovery ("default"), none
+ * at all ("disabled"), or handed to an in-process session as data with
+ * discovery off ("injected": the SDK host's agentsFilesOverride, D34). */
+export type ContextFlag = "default" | "disabled" | "injected";
 
 /** Whether an argv switches context files off (`--no-context-files`, `-nc`). */
 export function contextFlagOf(argv: readonly string[]): ContextFlag {
