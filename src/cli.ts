@@ -1942,9 +1942,11 @@ export async function main(argv: string[]): Promise<void> {
       // A review's LiveEvent log as a transcript (src/livecli.ts). Usage
       // errors are its own exit code 2.
       const { runLive } = await import("./livecli.js");
+      const { liveContainersFromEnv } = await import("./reviewdetach.js");
       const { stateHome } = await import("./install.js");
       process.exitCode = await runLive(rest, json, {
         home: join(stateHome(), "review", "detached"),
+        liveContainers: () => liveContainersFromEnv(process.env),
         out: (l) => console.log(l),
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
         alive: (pid) => {

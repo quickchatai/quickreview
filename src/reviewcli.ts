@@ -22,7 +22,16 @@
 //
 // Exit codes follow `qcr scan`: 0 done; 1 refused, declined, failed or
 // stopped short (partial); 2 usage.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1180,6 +1189,19 @@ async function runReview(
   return postFailed ? 1 : 0;
 }
 
+/** The run id and container name the host wrapper hands a review container
+ * (QCR_RUN_ID, QCR_REVIEW_CONTAINER), when both are well-formed. */
+export function containerRunEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): { id: string; name: string } | undefined {
+  const id = env["QCR_RUN_ID"];
+  const name = env["QCR_REVIEW_CONTAINER"];
+  if (!id || !name) return undefined;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) return undefined;
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) return undefined;
+  return { id, name };
+}
+
 /** The CLI entry the detached driver re-runs: `cli` beside this module. Read
  * from where this module is, not from `process.argv[1]`, which is whatever the
  * person launched (a bin symlink, a wrapper, a test runner). */
@@ -1280,16 +1302,21 @@ export async function cmdReview(
     const { randomBytes } = await import("node:crypto");
     const det = await import("./reviewdetach.js");
     const { stateHome } = await import("./install.js");
+    // In the release image the host wrapper makes the run a container of its own
+    // (P6.8): it names the container and the id, and starts the driver itself.
+    const container = containerRunEnv(process.env);
     return det.runDetachedVerb(verb, rest.slice(1), json, {
       home: join(stateHome(), "review", "detached"),
       out: (l) => console.log(l),
       now: Date.now,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       newId: () =>
+        container?.id ??
         `${new Date()
           .toISOString()
           .replace(/[^0-9]/g, "")
           .slice(0, 14)}-${randomBytes(3).toString("hex")}`,
+      liveContainers: () => det.liveContainersFromEnv(process.env),
       alive: (pid) => {
         try {
           process.kill(pid, 0);
@@ -1301,11 +1328,13 @@ export async function cmdReview(
       kill: (pid, sig) => process.kill(-pid, sig),
       identify: (args) => det.identifyTarget(args, process.cwd()),
       launch: (l) =>
-        det.launchDetached({
-          ...detachedCommand(l),
-          dir: l.dir,
-          env: process.env,
-        }),
+        container !== undefined
+          ? { ok: true, pid: null, container: container.name }
+          : det.launchDetached({
+              ...detachedCommand(l),
+              dir: l.dir,
+              env: process.env,
+            }),
       watch: (w) => {
         det.launchDetached({
           ...watchdogCommand(w),
@@ -1337,6 +1366,42 @@ export async function cmdReview(
       },
     );
     return 0;
+  }
+  if (rest[0] === "--container-run") {
+    // The driver of a run the wrapper claimed: this container is the run.
+    const container = containerRunEnv(process.env);
+    if (!container || rest[1] !== container.id || rest.length !== 2) return 2;
+    const { stateHome } = await import("./install.js");
+    const det = await import("./reviewdetach.js");
+    const claimed = det.readContainerRun(
+      join(stateHome(), "review", "detached"),
+      container.id,
+      container.name,
+    );
+    if (claimed === null) {
+      console.error(`no claimed review run ${container.id} for this container`);
+      return 1;
+    }
+    // Nobody reads this container's own output once it is gone: keep it with the run.
+    const log = openSync(join(claimed.dir, "driver.log"), "a");
+    for (const stream of [process.stdout, process.stderr])
+      stream.write = (chunk: string | Uint8Array): boolean => {
+        writeSync(log, typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+        return true;
+      };
+    let code = 1;
+    await det.runDetachedChild({
+      dir: claimed.dir,
+      key: claimed.key,
+      run: async (out) => {
+        code = await cmdReview([...claimed.argv, "--json"], true, {
+          out,
+          runsDir: join(claimed.dir, "work"),
+        });
+        return code;
+      },
+    });
+    return code;
   }
   if (rest[0] === "--detached-run") {
     const dir = rest[1];

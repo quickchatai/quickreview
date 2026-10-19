@@ -6,6 +6,12 @@
 #   qcr review …         one throwaway container per call (`docker run --rm`):
 #                        the container is the sandbox, there is no docker.sock
 #                        in it and no Docker-in-Docker.
+#   qcr review start …   a detached container of its own (P6.8): the target is
+#                        claimed in a short call, then the review runs in
+#                        `qcr-review-<run id>` until it ends; `status` and
+#                        `stop` find it by label. `stop` sends `docker stop -t
+#                        <grace>`, then `docker kill`: the container is the
+#                        hard-kill backstop for a driver whose loop is frozen.
 #   qcr                  a bare qcr opens the operator TUI (tui mode)
 #   qcr login [provider] pi's own /login, stored in the qcr-login volume
 #   qcr update [version] pull a newer image and repin this file
@@ -204,10 +210,13 @@ fi
 
 # mode: the image's entrypoint mode. tty: the verbs that need a terminal.
 # split: a call that can reach a model or GitHub (the D32 root start, a token).
+# gh: whether the call is handed the GitHub token (not `open`).
 mode=cli
 tty=0
 split=1
 drop=0
+gh=1
+shared_uid=0
 case "$verb" in
   '')
     mode=tui
@@ -226,7 +235,29 @@ case "$verb" in
     split=0
     drop=1
     ;;
-  open | debug) tty=1 ;;
+  # The model's tools read no GitHub token in an open: pi on a kept session
+  # needs none (src/opencli.ts strips it), so the wrapper stages none.
+  open)
+    tty=1
+    gh=0
+    ;;
+  debug) tty=1 ;;
+  review)
+    # --debug-pi runs the round in pi's own interactive UI, in this terminal.
+    # The model's bash there runs in the Node process's own uid, which the
+    # image's tool-uid check (src/engine/tooluid.ts) refuses unless it is told
+    # the shared uid is accepted; the person asking to watch has accepted it.
+    # That bash would then share a uid with the process that holds the GitHub
+    # token, so a debug round is given none: branch and uncommitted targets
+    # only, until the owner accepts a token beside the shared uid.
+    for a in "$@"; do
+      if [ "$a" = --debug-pi ]; then
+        tty=1
+        shared_uid=1
+        gh=0
+      fi
+    done
+    ;;
   version | --version | -V | help | --help | -h | install) split=0 ;;
 esac
 
@@ -242,6 +273,99 @@ if [ "$verb" = scan ]; then
     [ "$a" != --foreground ] || fg=0
   done
   [ "$fg" = 0 ] || set -- "$@" --foreground
+fi
+
+# ---- qcr review start|status|stop: a run is a container (P6.8) --------------------
+
+# phase is set on the two inner calls of a `review start` below: claim (a short
+# call that identifies the target, takes the lock and writes the run, with no
+# token) and driver (the detached container that is the run).
+phase="${QCR_WRAPPER_PHASE:-}"
+run_id="${QCR_RUN_ID:-}"
+review_container=''
+rverb=''
+[ "$verb" != review ] || rverb="${2:-}"
+
+# The wrapper's own path, to call itself for the two inner calls.
+self_path() {
+  case "$0" in
+    */*) printf '%s\n' "$0" ;;
+    *) command -v "$0" 2>/dev/null || true ;;
+  esac
+}
+
+if [ "$rverb" = start ] && [ -z "$phase" ]; then
+  help=0
+  for a in "$@"; do
+    case "$a" in --help | -h) help=1 ;; esac
+  done
+  if [ "$help" = 0 ]; then
+    self="$(self_path)"
+    [ -n "$self" ] && [ -f "$self" ] || die "review start: cannot tell where this wrapper lives ($0)"
+    # The id is the wrapper's, so the container can carry it from the first call
+    # (the image's own ids look the same: <UTC time>-<6 hex>).
+    rand="$(od -An -N3 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+    [ -n "$rand" ] || rand="$$"
+    id="$(date -u +%Y%m%d%H%M%S)-$rand"
+    rc=0
+    QCR_WRAPPER_PHASE=claim QCR_RUN_ID="$id" sh "$self" "$@" || rc=$?
+    [ "$rc" = 0 ] || exit "$rc"
+    QCR_WRAPPER_PHASE=driver QCR_RUN_ID="$id" sh "$self" "$@" >/dev/null || rc=$?
+    if [ "$rc" != 0 ]; then
+      # The run is claimed and nothing runs it: free the target.
+      sh "$self" review stop "$id" >/dev/null 2>&1 || true
+      die "review start: the review container could not be started"
+    fi
+    maybe_notice
+    exit 0
+  fi
+fi
+if [ -n "$phase" ]; then
+  case "$phase" in claim | driver) ;; *) die "unknown QCR_WRAPPER_PHASE $phase" ;; esac
+  case "$run_id" in
+    '' | -* | *[!A-Za-z0-9._-]*) die "a review phase needs QCR_RUN_ID" ;;
+  esac
+  review_container="qcr-review-$run_id"
+  # the driver runs what the claim wrote, not the user's arguments again
+  if [ "$phase" = driver ]; then set -- review --container-run "$run_id"; fi
+fi
+
+# The review containers that are up, by name: the image has no docker to ask, and
+# a run that is a container is alive while its container is.
+live_reviews=''
+have_live=0
+if [ "$phase" != driver ]; then
+  case "$rverb:$verb" in
+    start:* | status:* | stop:* | *:live)
+      if names="$(docker ps --filter label=qcr.role=review --format '{{.Names}}' 2>/dev/null)"; then
+        live_reviews="$(printf '%s\n' "$names" | tr '\n' ' ')"
+        have_live=1
+      fi
+      ;;
+  esac
+fi
+
+# `stop` names the container to stop after the image has marked the run stopped:
+# the run id it was given, else the newest review container that is up.
+stop_target=''
+if [ "$rverb" = stop ] && [ -z "$phase" ]; then
+  want=''
+  skip=2
+  for a in "$@"; do
+    if [ "$skip" -gt 0 ]; then
+      skip=$((skip - 1))
+      continue
+    fi
+    case "$a" in -*) ;; *) [ -n "$want" ] || want="$a" ;; esac
+  done
+  if [ -z "$want" ]; then
+    want="$(docker ps --filter label=qcr.role=review --format '{{.Label "qcr.review.run"}}' 2>/dev/null | sed -n 1p)"
+    [ -z "$want" ] || set -- "$@" "$want"
+  fi
+  case "$want" in
+    '' | -* | *[!A-Za-z0-9._-]*) ;;
+    *) stop_target="qcr-review-$want" ;;
+  esac
 fi
 
 uid="$(id -u)"
@@ -369,9 +493,11 @@ fi
 if [ "$drop" = 1 ]; then shift; fi
 nuser=$#
 
-# -t only with a terminal on both ends, or docker refuses to start.
+# -t only with a terminal on both ends, or docker refuses to start. The driver
+# of a review run is detached.
 flags='-i'
 if [ "$tty" = 1 ] && [ -t 0 ] && [ -t 1 ]; then flags='-it'; fi
+if [ "$phase" = driver ]; then flags='-d'; fi
 
 # ---- the repo -----------------------------------------------------------------
 
@@ -404,7 +530,8 @@ fi
 
 # ---- the GitHub token (D14: GITHUB_TOKEN, GH_TOKEN, gh; no App on a laptop) -----
 
-if [ "$split" = 1 ]; then
+# The claim call only reads git: it needs no token, and a token file is read once.
+if [ "$split" = 1 ] && [ "$gh" = 1 ] && [ "$phase" != claim ]; then
   token="${GITHUB_TOKEN:-}"
   [ -n "$token" ] || token="${GH_TOKEN:-}"
   if [ -z "$token" ] && command -v gh >/dev/null 2>&1; then
@@ -429,6 +556,10 @@ fi
 # ---- the docker command ---------------------------------------------------------
 
 set -- "$@" docker run --rm "$flags" --init
+if [ "$phase" = driver ]; then
+  # Found by label (status, stop) and by name (docker stop).
+  set -- "$@" --name "$review_container" --label qcr.role=review --label "qcr.review.run=$run_id"
+fi
 if [ "$split" = 1 ]; then
   run_uid="$uid"
   run_gid="$gid"
@@ -546,6 +677,11 @@ if [ "$mode" = cli ]; then
     # The login volume is only a source: the review copies it, refresh disabled.
     set -- "$@" -e PI_CODING_AGENT_DIR=/qcr-login
   fi
+  if [ "$shared_uid" = 1 ]; then set -- "$@" -e QCR_ALLOW_SHARED_TOOL_UID=1; fi
+  if [ -n "$phase" ]; then
+    set -- "$@" -e "QCR_RUN_ID=$run_id" -e "QCR_REVIEW_CONTAINER=$review_container"
+  fi
+  if [ "$have_live" = 1 ]; then set -- "$@" -e "QCR_LIVE_REVIEWS=$live_reviews"; fi
 fi
 
 if [ -n "$tokdir" ]; then
@@ -576,5 +712,36 @@ done
 rc=0
 "$@" || rc=$?
 if [ "$rc" = 125 ]; then say "docker could not start the container — $PULL_HINT"; fi
-maybe_notice
+
+# The detached driver returns as soon as its container has started, and the
+# exit trap removes the token dir at once. The image reads the token file once
+# and unlinks it (takeHandoffToken), but only after its entrypoint and Node have
+# booted, so the dir must outlive that: wait for the file to be taken. A driver
+# that never takes it fails the start (the caller then stops the container).
+if [ "$rc" = 0 ] && [ "$phase" = driver ] && [ -n "$tokdir" ]; then
+  wait_s="${QCR_TOKEN_WAIT:-30}"
+  case "$wait_s" in '' | *[!0-9]*) wait_s=30 ;; esac
+  ticks=$((wait_s * 10))
+  while [ -e "$tokdir/gh-token" ] && [ "$ticks" -gt 0 ]; do
+    sleep 0.1
+    ticks=$((ticks - 1))
+  done
+  if [ -e "$tokdir/gh-token" ]; then
+    say "the review container did not take its GitHub token within ${wait_s}s"
+    rc=1
+  fi
+fi
+
+# `review stop`: the image has marked the run stopped (and freed its target);
+# now end its container. docker stop gives the driver QCR_STOP_GRACE seconds
+# (default 10) to abort its sessions and unwind, then kills the container
+# itself; docker kill follows for a container that stop could not end. The
+# container is the hard-kill backstop for a driver whose loop is frozen.
+if [ "$rc" = 0 ] && [ -n "$stop_target" ]; then
+  grace="${QCR_STOP_GRACE:-10}"
+  case "$grace" in '' | *[!0-9]*) grace=10 ;; esac
+  docker stop -t "$grace" "$stop_target" >/dev/null 2>&1 || true
+  docker kill "$stop_target" >/dev/null 2>&1 || true
+fi
+[ -n "$phase" ] || maybe_notice
 exit "$rc"

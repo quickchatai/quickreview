@@ -22,6 +22,8 @@ export interface LiveCliDeps {
   sleep: (ms: number) => Promise<void>;
   /** Whether a pid is alive (to stop following a run that died). */
   alive: (pid: number) => boolean;
+  /** The review containers that are up, for runs that are one (null: not told). */
+  liveContainers?: () => ReadonlySet<string> | null;
 }
 
 const POLL_MS = 500;
@@ -136,6 +138,8 @@ interface Target {
   /** Set when the target is a registry run: where its exit lives. */
   runDir?: string;
   pid: number | null;
+  /** The container the run is, when it is one (P6.8). */
+  container?: string;
 }
 
 function readJson<T>(path: string): T | null {
@@ -178,14 +182,18 @@ function resolveTarget(
   let roots: string[];
   let runDir: string | undefined;
   let pid: number | null = null;
+  let container: string | undefined;
   const id = arg ?? newestRun(deps.home);
   const run =
     id !== undefined && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)
-      ? readJson<{ pid: number | null }>(join(deps.home, "runs", id, "run.json"))
+      ? readJson<{ pid: number | null; container?: string }>(
+          join(deps.home, "runs", id, "run.json"),
+        )
       : null;
   if (run !== null && id !== undefined) {
     runDir = join(deps.home, "runs", id);
     pid = run.pid;
+    container = run.container;
     roots = runRoots(runDir);
   } else if (arg !== undefined && existsSync(join(arg, LIVE_MAIN_FILE))) {
     // a round directory: .../state/live/<key>/r<n>
@@ -211,7 +219,12 @@ function resolveTarget(
     return round !== undefined
       ? `no round ${round} log yet`
       : "no live log yet: the review has not started its session";
-  return { ref: pick, ...(runDir !== undefined ? { runDir } : {}), pid };
+  return {
+    ref: pick,
+    ...(runDir !== undefined ? { runDir } : {}),
+    pid,
+    ...(container !== undefined ? { container } : {}),
+  };
 }
 
 // ---- the verb -----------------------------------------------------------------------
@@ -277,7 +290,7 @@ export async function runLive(
     if (!follow || (settled && lens === undefined)) return 0;
     if (lens !== undefined && settled) return 0;
     // A run that ended, or whose driver died, writes nothing more.
-    if (target.runDir !== undefined && ended(target.runDir, target.pid, deps)) {
+    if (target.runDir !== undefined && ended(target.runDir, target, deps)) {
       const last = readLiveEvents(file, offset);
       if (last.events.length === 0) return 0;
       continue;
@@ -286,10 +299,15 @@ export async function runLive(
   }
 }
 
-function ended(runDir: string, pid: number | null, deps: LiveCliDeps): boolean {
+function ended(runDir: string, run: Pick<Target, "pid" | "container">, deps: LiveCliDeps): boolean {
   if (existsSync(join(runDir, "exit.json")) || existsSync(join(runDir, "stopped.json")))
     return true;
-  return pid !== null && !deps.alive(pid);
+  // a container run's liveness is the wrapper's list of the containers that are up
+  if (run.container !== undefined) {
+    const live = deps.liveContainers?.() ?? null;
+    return live !== null && !live.has(run.container);
+  }
+  return run.pid !== null && !deps.alive(run.pid);
 }
 
 function usage(deps: LiveCliDeps, why: string): number {
