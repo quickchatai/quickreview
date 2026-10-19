@@ -74,6 +74,7 @@ import {
   type DestinationChoice,
 } from "./reviewdest.js";
 import { runOneShot, type OneShotResult } from "./oneshot.js";
+import type { RoundSpec } from "./engine/round.js";
 import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { prepareHostRun } from "./hostroute.js";
 import { AuthExpiring } from "./engine/auth.js";
@@ -108,7 +109,7 @@ import {
 import { openReviewStore } from "./reviewstore.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--json] | --help";
+  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--debug-pi] [--json] | --help";
 
 export function reviewHelp(): string {
   return [
@@ -137,6 +138,8 @@ export function reviewHelp(): string {
     "  --json            one JSON object instead of text (the agent destination)",
     "  --to DEST         where the result goes, for this run: terminal, file, json, pr (comma-separated;\n                    pr posts a comment-only review to the PR and needs a PR target)",
     "  --out FILE        write the markdown report to FILE (implies file)",
+    "  --debug-pi        run the round inside pi's own interactive UI, to watch it live: the lenses run as",
+    "                    this pi's in-process sessions, and the round starts from the /qcr-round command.\n                    Needs a terminal, posts nothing, and finished sessions stay openable (qcr open)",
     "",
     "Destinations: with none given, the repo's saved default is used; with none saved, an",
     "interactive run asks and saves the answer for this repo (in the install's state home), and a run",
@@ -185,6 +188,8 @@ export type ReviewCommand =
       full: boolean;
       to?: Destination[];
       out?: string;
+      /** `--debug-pi`: the round runs inside interactive pi. */
+      debugPi: boolean;
     };
 
 const usage = (why?: string): Error => new Error(why ? `${REVIEW_USAGE}\n(${why})` : REVIEW_USAGE);
@@ -204,6 +209,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   let limit: number | undefined;
   let to: Destination[] | undefined;
   let out: string | undefined;
+  let debugPi = false;
   const value = (i: number, flag: string): string => {
     const v = rest[i + 1];
     if (v === undefined || v.startsWith("--")) throw usage(`${flag} needs a value`);
@@ -214,6 +220,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     if (a === "--help" || a === "-h") help = true;
     else if (a === "--preview") preview = true;
     else if (a === "--full") full = true;
+    else if (a === "--debug-pi") debugPi = true;
     else if (a === "--base") base = value(i++, a);
     else if (a === "--diff") {
       // "-" is stdin; a file whose name begins with "-" is written ./-name
@@ -255,6 +262,8 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     if (base !== undefined) throw usage("--diff carries its own changes; --base does not apply");
     if (repo !== undefined) throw usage("--repo goes with a PR number or URL");
   }
+  if (debugPi && preview) throw usage("--debug-pi runs a round; a preview starts nothing");
+  if (debugPi && to?.includes("pr")) throw usage("a debug round posts nothing: drop --to pr");
   if (pr !== undefined && base !== undefined) throw usage("--base applies to a branch, not a PR");
   if (pr === undefined && repo !== undefined) throw usage("--repo goes with a PR number or URL");
   return {
@@ -265,6 +274,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     ...(repo !== undefined ? { repo } : {}),
     preview,
     full,
+    debugPi,
     ...(base !== undefined ? { base } : {}),
     ...(key !== undefined ? { key } : {}),
     ...(limit !== undefined ? { limit } : {}),
@@ -305,6 +315,9 @@ export interface ReviewCliDeps {
   /** Hosts the review session (`[engine] runtime`). Omitted: a process
    * runtime over `piBin`. */
   runtime?: Runtime;
+  /** Runs the round inside interactive pi (`--debug-pi`, src/engine/debugpi.ts).
+   * Absent: there is no terminal for it, and the flag is refused. */
+  debugPi?: (spec: RoundSpec) => Promise<OneShotResult>;
   /** Where each run keeps its throwaway tree and its files. */
   runsDir: string;
   timeoutMs: number;
@@ -485,6 +498,10 @@ async function runReview(
     deps.out(reviewHelp());
     return 0;
   }
+  if (cmd.debugPi && (json || deps.debugPi === undefined))
+    return refuse(2, [
+      "--debug-pi runs the round inside pi's interactive UI and needs a terminal (not --json, not a detached run)",
+    ]);
   const explicit: Destination[] = [
     ...(json ? (["json"] as const) : []),
     ...(cmd.to ?? []),
@@ -933,7 +950,7 @@ async function runReview(
       }
     } else if (cmd.uncommitted) addUncommittedTree(gitDir, treeDir, t);
     else addReviewTree(gitDir, treeDir, t.headSha);
-    shot = await runOneShot({
+    const round: RoundSpec = {
       root: deps.root,
       cwd: host.cwd,
       agentScope: "user",
@@ -945,8 +962,6 @@ async function runReview(
       cfg,
       ecosystem,
       timeoutMs: deps.timeoutMs,
-      ...(deps.piBin !== undefined ? { piBin: deps.piBin } : {}),
-      ...(deps.runtime !== undefined ? { runtime: deps.runtime } : {}),
       // Rendered over the review tree, as production renders over its worktree.
       prompts: planRound(treeDir, seeded.memory).prompts,
       ...(cap !== null ? { capUsd: cap } : {}),
@@ -957,7 +972,16 @@ async function runReview(
       live: { root: runDir, key: sessionName, round: roundNo },
       label: `${t.repo}@${kind === "diff" ? "diff" : cmd.uncommitted ? "uncommitted" : t.branch}`,
       ...(deps.log ? { log: deps.log } : {}),
-    });
+    };
+    shot =
+      cmd.debugPi && deps.debugPi !== undefined
+        ? // inside interactive pi: no live log and no cap, the person is watching
+          await deps.debugPi({ ...round, live: undefined })
+        : await runOneShot({
+            ...round,
+            ...(deps.piBin !== undefined ? { piBin: deps.piBin } : {}),
+            ...(deps.runtime !== undefined ? { runtime: deps.runtime } : {}),
+          });
   } catch (err) {
     return refuse(1, [`the review could not run: ${String(err).slice(0, 300)}`]);
   } finally {
@@ -1401,6 +1425,13 @@ export async function cmdReview(
     cfg,
     ecosystem,
     ...(runtime !== undefined ? { runtime } : {}),
+    // A round inside interactive pi needs the whole terminal.
+    ...(interactive && process.stdout.isTTY
+      ? {
+          debugPi: async (spec: RoundSpec): Promise<OneShotResult> =>
+            (await import("./engine/debugpi.js")).runDebugRound(spec),
+        }
+      : {}),
     runsDir: io.runsDir ?? join(stateHome(), "review", "runs"),
     memory: openReviewMemory(cfg0),
     timeoutMs: 60 * 60_000,

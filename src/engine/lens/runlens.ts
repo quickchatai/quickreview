@@ -10,7 +10,8 @@
 //     pass holds its permit from before its session exists until the session is
 //     read and disposed, retry included.
 //   - Isolated. The session comes from PiHost.makeSession (the P2.1 fence: no
-//     other module builds an SDK session), in memory, under an id of its own, so
+//     other module builds an SDK session), in memory unless `sessionsDir` keeps
+//     its JSONL (D10), under an id of its own, so
 //     disposing one pass never cuts a sibling's provider socket (canary 1).
 //     Its system prompt is pi's base plus the agent's body appended, and the D34
 //     context files ride as data; the pass reads the same bytes a native child
@@ -34,7 +35,7 @@
 //
 // The task is sent the way the native child sends it: `Task: <task>`.
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
   AgentSession,
@@ -128,6 +129,10 @@ export interface LensRunConfig {
    * stagger off. Default DEFAULT_SESSION_GAP_MS. */
   sessionGapMs?: number;
   progress?: LensProgressSink;
+  /** Keep each pass's session JSONL under `<sessionsDir>/<run id>/` (D10), so a
+   * finished lens opens in pi (`qcr open --lens`). A retried pass writes a second
+   * file beside the first. Omitted: the passes stay in memory. */
+  sessionsDir?: string;
   /** The lens session's LiveEvent log (`lens-<id>.jsonl`): given the run's id
    * and agent, returns the sink the session's events are fed to. Closed when
    * the attempt ends. A sink that cannot be made is a warning, never a failure. */
@@ -563,6 +568,9 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
               : []),
           ]),
           appendSystemPrompt: [agent.body],
+          ...(config.sessionsDir !== undefined
+            ? { persist: { sessionDir: join(config.sessionsDir, id) } }
+            : {}),
           ...(lease !== undefined ? { sessionId: lease.key } : {}),
           onExtensionError: (e) => config.onExtensionError?.(agent.name, id, e),
         };

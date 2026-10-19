@@ -136,8 +136,9 @@ export const SDK_HOST_MODULES = [
 ];
 
 /**
- * The one extension that hosts SDK sessions in a pi process, and the one host
- * module it may reach (P4.5). extensions/lens.ts runs the lens passes of an
+ * The extensions that host SDK sessions in a pi process, and the one host
+ * module they may reach (P4.5; extensions/debug-round.ts is lens.ts's tools
+ * with the command that starts a debug round, P5.9). extensions/lens.ts runs the lens passes of an
  * interactive pi (a debug round, the companion) in-process, on a PiHost built
  * over that pi's own agent dir, with the CLI pi's HTTP dispatcher left alone
  * (PiHostOptions.ownsProcess false). It reaches the builder only: never the
@@ -147,6 +148,9 @@ export const SDK_HOST_MODULES = [
  */
 export const EXTENSION_SDK_HOST_ALLOWED: Readonly<Record<string, readonly string[]>> = {
   "extensions/lens.ts": ["src/engine/pisdk.ts"],
+  // The debug round (P5.9) is lens.ts's tools plus the command that starts the
+  // round, so it reaches the builder through lens.ts and nothing else.
+  "extensions/debug-round.ts": ["src/engine/pisdk.ts"],
 };
 
 /**

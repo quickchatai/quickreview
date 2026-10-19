@@ -406,7 +406,11 @@ function start(
     return usage("a preview runs at once: use `qcr review --preview`, not start");
   // Same grammar as a foreground review; its own parser decides.
   try {
-    parseReviewArgs(rest);
+    const parsed = parseReviewArgs(rest);
+    if (!parsed.help && parsed.debugPi)
+      return usage(
+        "--debug-pi runs the round in your terminal: use `qcr review --debug-pi`, not start",
+      );
   } catch (err) {
     return usage(err instanceof Error ? err.message : String(err));
   }

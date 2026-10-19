@@ -217,9 +217,14 @@ describe("daemon topology", () => {
     // reviewcli.ts is `qcr review`: the operator's own terminal, the shared
     // one-shot runner (oneshot.ts) with a pi binary override. Only cli.ts
     // imports it (dynamically); no daemon module does.
+    // opencli.ts is `qcr open` and engine/debugpi.ts is `qcr review --debug-pi`:
+    // the operator's own terminal, pi on its interactive UI over a finished or a
+    // starting round (P5.9). Only cli.ts and reviewcli.ts import them (dynamically).
     const allowedPaths = [
       "/src/oneshot.ts",
       "/src/reviewcli.ts",
+      "/src/opencli.ts",
+      "/src/engine/debugpi.ts",
       "/src/bench/runner.ts",
       "/src/setup/caserunner.ts",
       "/src/scanbox.ts",

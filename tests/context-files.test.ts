@@ -896,6 +896,7 @@ describe("the one install site", () => {
       "docker/daemon/entrypoint.sh", // a comment: it refuses to install
       "docker/entrypoint.sh", // the release image's daemon mode: keeps the baked 0444 stub, in its own /opt/qcr
       "extensions/bash-guard.ts", // a policy surface no session may write
+      "extensions/debug-round.ts", // a debug round's lens passes carry the stub the cwd holds, as data; it writes none
       "scripts/deploy.sh", // a name the base clone may not take
       "src/engine/roundsdk.ts", // the SDK round's stub as in-memory data for the session, never written to a checkout
       "src/hostroute.ts", // the clone route's per-run copy, into the run's own out dir

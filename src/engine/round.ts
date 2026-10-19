@@ -43,7 +43,13 @@ import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import { openRoundSink, type RoundLive } from "./livewire.js";
 import type { LiveSink } from "../live/writer.js";
 import { planLaunch, type LaunchUnit } from "./lens/launch-plan.js";
-import { launchWave, type EngineRouteRuntime, type WaveRow } from "./lens/wave.js";
+import {
+  launchWave,
+  type EngineRoute,
+  type EngineRouteRuntime,
+  type WaveRow,
+} from "./lens/wave.js";
+import { LENS_SESSIONS_DIR, openEnvOf, writeOpenMeta } from "./openable.js";
 import {
   engineLensSection,
   renderOneShotPrompts,
@@ -222,20 +228,37 @@ function authRefusal(
  * ended them (each ends its session and writes its ledger line). */
 const WAVE_SETTLE_MS = 15_000;
 
-/** Run one review round on `runtime`. A round that fails is a returned outcome
- * (`error`, absent `outcome`), never a throw; only an unwritable output dir, or
- * a login that cannot cover the run (`auth`), throws.
- *
- * A runtime that hosts the engine's lens tools (`runtime.engineLens`, wave.ts)
- * makes this an engine lens route: the order gains the engine-only section
- * (prompts.ts engineLensSection), and with `plannedWave` the round starts the
- * planned discovery wave itself, from the round's `tasks/` (never pass-validate),
- * after the main session exists and before its first prompt; the session joins it
- * through `lens_wave` (rule 9). Everything else stays the session's. */
-export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundResult> {
-  const log = i.log ?? (() => {});
-  const label = i.label ?? `${i.target.repo}#${i.target.number}`;
-  const started = i.startedAt ?? Date.now();
+/** What a round writes before its session starts, and what the session is
+ * started with. `runRound` hosts the session on a runtime; the debug round
+ * (src/engine/debugpi.ts) hands the same things to an interactive pi. */
+export interface PreparedRound {
+  /** The order, the engine-only section included on an engine route. */
+  prompts: OneShotPrompts;
+  /** The system prompt file the round wrote. */
+  sysPath: string;
+  /** The environment the session's tools see (no GitHub token). */
+  env: NodeJS.ProcessEnv;
+  sessionName: string;
+  /** Where the main session's JSONL goes (D10: kept per round). */
+  sessionDir: string;
+  /** The session's event stream and stderr files. */
+  events: string;
+  stderr: string;
+  /** The planned discovery wave (engine route with `plannedWave` only). */
+  waveUnits: LaunchUnit[];
+  startWarnings: string[];
+  tmpDir: string;
+  /** `tmpDir` is the round's own: removed when it ends. */
+  ownTmp: boolean;
+}
+
+/** Write the round's files into `i.outDir` and work out the session's env, order
+ * and wave. `route` is the engine route the round runs on, if any. Throws only
+ * for an unwritable output dir or a login that cannot cover the run (`auth`). */
+export function prepareRound(
+  i: RoundSpec,
+  route: Pick<EngineRoute, "plannedWave"> | undefined,
+): PreparedRound {
   const { cfg, outDir, tree, root } = i;
   // Before a file is written or a session started: a login that cannot cover
   // the run is refused here, typed (AuthExpiring), not found out by pi.
@@ -248,10 +271,6 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     rmSync(join(outDir, f), { force: true });
   rmSync(tmpDir, { recursive: true, force: true });
   mkdirSync(tmpDir, { recursive: true });
-  let session: RuntimeSession | undefined;
-  let sink: LiveSink | undefined;
-  let unhear: (() => void) | undefined;
-  let endWave: () => Promise<void> = async () => {};
   try {
     const rendered =
       i.prompts ??
@@ -332,7 +351,6 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     // The engine lens route (wave.ts EngineRoute): the planned wave is what
     // `planLaunch` reads from this run's `tasks/` (pass-validate excluded), the
     // same plan `lens_wave` resolves its dirs to. Nothing is started yet.
-    const route = (runtime as EngineRouteRuntime).engineLens;
     const startWarnings: string[] = [];
     let waveUnits: LaunchUnit[] = [];
     if (route?.plannedWave && rendered.taskFiles.length) {
@@ -352,18 +370,68 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
         }
       : rendered;
     writeFileSync(join(outDir, "round-order.md"), prompts.order);
+    // What `qcr open` needs to start pi on this run's sessions again (D10).
+    writeOpenMeta(outDir, {
+      version: 1,
+      sessionName,
+      cwd: i.cwd ?? root,
+      model: cfg.models.conversation,
+      env: openEnvOf(env),
+    });
     const sessionDir = join(outDir, "session");
     // This attempt's session only: an earlier attempt's JSONL left here would
     // make `resumable` true and `--continue` would resume THAT conversation.
     rmSync(sessionDir, { recursive: true, force: true });
+    // …and its lens sessions: `qcr open --lens` lists what THIS attempt ran.
+    rmSync(join(outDir, LENS_SESSIONS_DIR), { recursive: true, force: true });
+    return {
+      prompts,
+      sysPath,
+      env,
+      sessionName,
+      sessionDir,
+      events: join(outDir, PI_RUN_FILES[0]),
+      stderr: join(outDir, PI_RUN_FILES[1]),
+      waveUnits,
+      startWarnings,
+      tmpDir,
+      ownTmp,
+    };
+  } catch (err) {
+    if (ownTmp) rmSync(tmpDir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+/** Run one review round on `runtime`. A round that fails is a returned outcome
+ * (`error`, absent `outcome`), never a throw; only an unwritable output dir, or
+ * a login that cannot cover the run (`auth`), throws.
+ *
+ * A runtime that hosts the engine's lens tools (`runtime.engineLens`, wave.ts)
+ * makes this an engine lens route: the order gains the engine-only section
+ * (prompts.ts engineLensSection), and with `plannedWave` the round starts the
+ * planned discovery wave itself, from the round's `tasks/` (never pass-validate),
+ * after the main session exists and before its first prompt; the session joins it
+ * through `lens_wave` (rule 9). Everything else stays the session's. */
+export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundResult> {
+  const log = i.log ?? (() => {});
+  const label = i.label ?? `${i.target.repo}#${i.target.number}`;
+  const started = i.startedAt ?? Date.now();
+  const { cfg, outDir, root } = i;
+  const route = (runtime as EngineRouteRuntime).engineLens;
+  const prep = prepareRound(i, route);
+  const { env, prompts, sysPath, sessionName, sessionDir, events, stderr, waveUnits } = prep;
+  let session: RuntimeSession | undefined;
+  let sink: LiveSink | undefined;
+  let unhear: (() => void) | undefined;
+  let endWave: () => Promise<void> = async () => {};
+  try {
     // Host isolation: pi discovers nothing of its own. `-ne` leaves only the
     // extensions named below (so neither ~/.pi/agent, nor a project's `.pi/`,
     // nor a package can add one to the session) and `-ns` no skill; lens
     // children, which load only the agent dir's GLOBAL settings, get bash-guard
     // from there (the bench's and the host route's settings both register it).
     // `-nc` is deliberately absent: the cwd's context file is the reviewer stub.
-    const events = join(outDir, PI_RUN_FILES[0]);
-    const stderr = join(outDir, PI_RUN_FILES[1]);
     log(`review: ${label} — ${i.files.length} files, lenses ${prompts.plannedLenses.join(" ")}`);
     const cwd = i.cwd ?? root;
     session = await runtime.create({
@@ -498,118 +566,134 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     }
     // The turns are over: a wave row nobody joined is not wanted any more.
     await endWave();
-    const stderrLines = readFileSync(stderr, "utf8").split("\n");
-    result.warnings = [
-      ...startWarnings,
-      ...new Set(
-        stderrLines
-          .filter((l) => /warn|error|fatal|failed/i.test(l))
-          .map((l) => l.trim().slice(0, 300)),
-      ),
-    ].slice(0, 20);
-    if (r.streamError) result.error = `output stream failed: ${r.streamError}`;
-    // A provider that refused the login says so in pi's own output: a line of
-    // stderr, or a failed assistant message in the event stream (a record
-    // field, never text a tool printed: authwatch's rule). The typed error is
-    // what authwatch and a route's exit status branch on.
-    const refused = authRefusal(stderrLines, events, r.streamError);
-    if (refused) result.authError = refused;
-    // Usage is telemetry: a failure to read it must never cost the review.
-    try {
-      const lines = readFileSync(events, "utf8").split("\n");
-      result.usage = usageFromEvents(lines);
-      result.modelErrors = modelErrorsFromEvents(lines);
-      // Per-stage cost and time (stages.json; the per-phase totals ride along).
-      const stages = stagesFromEvents(lines);
-      writeFileSync(join(outDir, "stages.json"), JSON.stringify(stages, null, 2) + "\n");
-      result.stages = stages.phases;
-      // pi's own stderr reports what never reached a message (a refused
-      // connection, a 429 before the first token).
-      for (const w of result.warnings) {
-        const kind = modelErrorKind(w);
-        if (kind === "usage_limit")
-          result.modelErrors.usage_limit = (result.modelErrors.usage_limit ?? 0) + 1;
-        else if (kind === "rate_limited") result.modelErrors.rate_limited++;
-        else if (kind === "overloaded") result.modelErrors.overloaded++;
-      }
-    } catch (err) {
-      result.warnings.push(`usage unreadable: ${String(err).slice(0, 200)}`);
-    }
-    // The price of the whole round, lens children included: the case dir's
-    // event stream and lens ledger priced as the bench prices them. A stream
-    // that cannot be priced falls back to what the session's budget metered
-    // (zero when no cap was set, so unpriced).
-    const metered = session.stats().spentUsd;
-    try {
-      result.costUsd = caseCostUsd(outDir)?.usd ?? (metered > 0 ? metered : null);
-    } catch {
-      result.costUsd = metered > 0 ? metered : null;
-    }
-    const outcome = readJson(outcomePath) as Record<string, unknown> | undefined;
-    if (outcome !== undefined) result.outcome = outcome;
-    else if (result.authError && result.error === undefined)
-      result.error = `the provider refused the login: ${result.authError.message.slice(0, 200)}`;
-    // `[review] render_outputs`: comments.json and review.md rendered from the
-    // findings record, as production's render-review.sh renders them. A
-    // session that wrote its own files anyway is overruled: the record is the
-    // source.
-    if (cfg.review.render_outputs) {
-      const record = readJson(join(outDir, CASE_FILES.findings));
-      if (record !== undefined) {
-        const out = renderBenchOutputs(record, outcome, cfg);
-        writeFileSync(
-          join(outDir, CASE_FILES.comments),
-          JSON.stringify(out.rendered.comments, null, 2) + "\n",
-        );
-        writeFileSync(join(outDir, CASE_FILES.review), out.rendered.body);
-        // The duplicate-merge post-check's and the posting policy's
-        // dispositions, kept in the record (the session's own beside it).
-        if (out.record !== record) {
-          writeFileSync(join(outDir, POLICED_ORIGINALS[2]), JSON.stringify(record, null, 2) + "\n");
-          writeFileSync(
-            join(outDir, CASE_FILES.findings),
-            JSON.stringify(out.record, null, 2) + "\n",
-          );
-        }
-        // The `[posting]` cut ran inside the render step, as on the live
-        // route — so a caller must not cut a second time.
-        if (!isDefaultPosting(cfg.posting)) {
-          result.renderedPosting = {
-            kept: out.rendered.comments.length + out.rendered.in_body,
-            withheld: out.withheld.map((w) => ({
-              path: w.path ?? "",
-              line: w.line ?? 0,
-              source: w.inline ? ("inline" as const) : ("body" as const),
-              cls: w.cls,
-              severity: w.severity,
-              word: w.word,
-              title: w.title,
-            })),
-            body: cfg.posting!.body,
-          };
-          writeFileSync(
-            join(outDir, POLICED_ORIGINALS[3]),
-            JSON.stringify(result.renderedPosting, null, 2) + "\n",
-          );
-        }
-        if (out.rendered.problems.length)
-          result.warnings.push(
-            ...out.rendered.problems.slice(0, 10).map((p) => `render: ${p}`.slice(0, 300)),
-          );
-      }
-    }
-    const findings = readJson(join(outDir, CASE_FILES.findings));
-    if (findings !== undefined) result.findings = findings;
-    const comments = readJson(join(outDir, CASE_FILES.comments));
-    if (Array.isArray(comments)) result.comments = comments;
-    const reviewPath = join(outDir, CASE_FILES.review);
-    if (existsSync(reviewPath)) result.review = readFileSync(reviewPath, "utf8");
-    return result;
+    return settleRound(i, prep, result, r, session.stats().spentUsd);
   } finally {
     unhear?.();
     sink?.close();
     await endWave();
     await session?.dispose();
-    if (ownTmp) rmSync(tmpDir, { recursive: true, force: true });
+    if (prep.ownTmp) rmSync(prep.tmpDir, { recursive: true, force: true });
   }
+}
+
+/** Read what a finished round left in `outDir`: warnings from pi's stderr, the
+ * refused login, usage and stages, the price, and the outcome, findings and
+ * rendered review. `r` is the last turn; `metered` is what the session's budget
+ * counted, the price when the stream cannot be priced. */
+export function settleRound(
+  i: RoundSpec,
+  prep: Pick<PreparedRound, "events" | "stderr" | "startWarnings">,
+  result: RoundResult,
+  r: PiRun,
+  metered: number,
+): RoundResult {
+  const { cfg, outDir } = i;
+  const { events, stderr, startWarnings } = prep;
+  const outcomePath = join(outDir, CASE_FILES.outcome);
+  const stderrLines = readFileSync(stderr, "utf8").split("\n");
+  result.warnings = [
+    ...startWarnings,
+    ...new Set(
+      stderrLines
+        .filter((l) => /warn|error|fatal|failed/i.test(l))
+        .map((l) => l.trim().slice(0, 300)),
+    ),
+  ].slice(0, 20);
+  if (r.streamError) result.error = `output stream failed: ${r.streamError}`;
+  // A provider that refused the login says so in pi's own output: a line of
+  // stderr, or a failed assistant message in the event stream (a record
+  // field, never text a tool printed: authwatch's rule). The typed error is
+  // what authwatch and a route's exit status branch on.
+  const refused = authRefusal(stderrLines, events, r.streamError);
+  if (refused) result.authError = refused;
+  // Usage is telemetry: a failure to read it must never cost the review.
+  try {
+    const lines = readFileSync(events, "utf8").split("\n");
+    result.usage = usageFromEvents(lines);
+    result.modelErrors = modelErrorsFromEvents(lines);
+    // Per-stage cost and time (stages.json; the per-phase totals ride along).
+    const stages = stagesFromEvents(lines);
+    writeFileSync(join(outDir, "stages.json"), JSON.stringify(stages, null, 2) + "\n");
+    result.stages = stages.phases;
+    // pi's own stderr reports what never reached a message (a refused
+    // connection, a 429 before the first token).
+    for (const w of result.warnings) {
+      const kind = modelErrorKind(w);
+      if (kind === "usage_limit")
+        result.modelErrors.usage_limit = (result.modelErrors.usage_limit ?? 0) + 1;
+      else if (kind === "rate_limited") result.modelErrors.rate_limited++;
+      else if (kind === "overloaded") result.modelErrors.overloaded++;
+    }
+  } catch (err) {
+    result.warnings.push(`usage unreadable: ${String(err).slice(0, 200)}`);
+  }
+  // The price of the whole round, lens children included: the case dir's
+  // event stream and lens ledger priced as the bench prices them. A stream
+  // that cannot be priced falls back to what the session's budget metered
+  // (zero when no cap was set, so unpriced).
+  try {
+    result.costUsd = caseCostUsd(outDir)?.usd ?? (metered > 0 ? metered : null);
+  } catch {
+    result.costUsd = metered > 0 ? metered : null;
+  }
+  const outcome = readJson(outcomePath) as Record<string, unknown> | undefined;
+  if (outcome !== undefined) result.outcome = outcome;
+  else if (result.authError && result.error === undefined)
+    result.error = `the provider refused the login: ${result.authError.message.slice(0, 200)}`;
+  // `[review] render_outputs`: comments.json and review.md rendered from the
+  // findings record, as production's render-review.sh renders them. A
+  // session that wrote its own files anyway is overruled: the record is the
+  // source.
+  if (cfg.review.render_outputs) {
+    const record = readJson(join(outDir, CASE_FILES.findings));
+    if (record !== undefined) {
+      const out = renderBenchOutputs(record, outcome, cfg);
+      writeFileSync(
+        join(outDir, CASE_FILES.comments),
+        JSON.stringify(out.rendered.comments, null, 2) + "\n",
+      );
+      writeFileSync(join(outDir, CASE_FILES.review), out.rendered.body);
+      // The duplicate-merge post-check's and the posting policy's
+      // dispositions, kept in the record (the session's own beside it).
+      if (out.record !== record) {
+        writeFileSync(join(outDir, POLICED_ORIGINALS[2]), JSON.stringify(record, null, 2) + "\n");
+        writeFileSync(
+          join(outDir, CASE_FILES.findings),
+          JSON.stringify(out.record, null, 2) + "\n",
+        );
+      }
+      // The `[posting]` cut ran inside the render step, as on the live
+      // route — so a caller must not cut a second time.
+      if (!isDefaultPosting(cfg.posting)) {
+        result.renderedPosting = {
+          kept: out.rendered.comments.length + out.rendered.in_body,
+          withheld: out.withheld.map((w) => ({
+            path: w.path ?? "",
+            line: w.line ?? 0,
+            source: w.inline ? ("inline" as const) : ("body" as const),
+            cls: w.cls,
+            severity: w.severity,
+            word: w.word,
+            title: w.title,
+          })),
+          body: cfg.posting!.body,
+        };
+        writeFileSync(
+          join(outDir, POLICED_ORIGINALS[3]),
+          JSON.stringify(result.renderedPosting, null, 2) + "\n",
+        );
+      }
+      if (out.rendered.problems.length)
+        result.warnings.push(
+          ...out.rendered.problems.slice(0, 10).map((p) => `render: ${p}`.slice(0, 300)),
+        );
+    }
+  }
+  const findings = readJson(join(outDir, CASE_FILES.findings));
+  if (findings !== undefined) result.findings = findings;
+  const comments = readJson(join(outDir, CASE_FILES.comments));
+  if (Array.isArray(comments)) result.comments = comments;
+  const reviewPath = join(outDir, CASE_FILES.review);
+  if (existsSync(reviewPath)) result.review = readFileSync(reviewPath, "utf8");
+  return result;
 }

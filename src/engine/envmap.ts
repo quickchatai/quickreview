@@ -98,8 +98,18 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   QCR_LEDGER_FILE: {
     kind: "extension-config",
-    readers: ["ledger-pin.ts", "lens.ts"],
-    note: "ledger mirror file override; lens.ts keeps its lens-ledger.jsonl beside it",
+    readers: ["debug-round.ts", "ledger-pin.ts", "lens.ts"],
+    note: "ledger mirror file override; lens.ts keeps its lens-ledger.jsonl and lens-sessions/ beside it",
+  },
+  QCR_DEBUG_ORDER_FILE: {
+    kind: "extension-config",
+    readers: ["debug-round.ts"],
+    note: "the round order a debug round (qcr review --debug-pi) sends as its first message",
+  },
+  QCR_DEBUG_TASKS_DIR: {
+    kind: "extension-config",
+    readers: ["debug-round.ts"],
+    note: "the task dir whose rows a debug round launches as its planned wave",
   },
   QCR_SESSION_BRIDGE_GENERATION: {
     kind: "extension-config",
