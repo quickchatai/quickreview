@@ -168,7 +168,7 @@ describe("leafCache (the extension)", () => {
   it("rewrites pack-first and sets the cache key to the group's; fail-open on anything else", () => {
     const handlers: Array<(e: { payload?: unknown }) => unknown> = [];
     const pi = { on: (_: string, h: (e: { payload?: unknown }) => unknown) => handlers.push(h) };
-    leafCache({ pack: PACK, cacheKey: "group-key", body: "LENS BODY" })(pi as never);
+    void leafCache({ pack: PACK, cacheKey: "group-key", body: "LENS BODY" })(pi as never);
     const out = handlers[0]!({
       payload: {
         instructions: "base prompt\n\n<addendum>\nLENS BODY\n</addendum>",
@@ -190,7 +190,7 @@ describe("leafCache (the extension)", () => {
     expect(handlers[0]!({ payload: { prompt_cache_key: "group-key" } })).toBeUndefined();
     // A blank pack installs nothing.
     const none: unknown[] = [];
-    leafCache({ pack: "  ", cacheKey: "k" })({ on: () => none.push(1) } as never);
+    void leafCache({ pack: "  ", cacheKey: "k" })({ on: () => none.push(1) } as never);
     expect(none).toEqual([]);
   });
 
