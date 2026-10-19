@@ -7,7 +7,9 @@
 //
 //   transcripts/<name>.jsonl     each archived transcript gzip, decompressed
 //                                (a `.v<k>` or `session-at-close-…` name kept)
-//   files/<live path>            each state file too large for a bundle
+//   files/<live path>            each state file too large for a bundle, and every
+//                                worker round log and lens JSONL (state/live/,
+//                                state/lens/; `qcr open <to>` reads them)
 //   state-<pass>/<live path>     each bundle's records, at the live path they
 //                                were archived from (`same_as` resolved)
 //   manifest.json, ledger.md,    copied as they are — plain, and carrying no

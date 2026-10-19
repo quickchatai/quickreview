@@ -45,6 +45,7 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
 export const PROCESS_SUITES: readonly string[] = [
   "tests/action.test.ts",
   "tests/archive-evidence-shell.test.ts",
+  "tests/archive-worker-rounds.test.ts", // a fake pi on a pty (script) for qcr open
   "tests/bash-guard-sed-differential.test.ts",
   "tests/bash-inherit-fds.test.ts", // the model's bash commands under the host's spawn, with descriptors handed over
   "tests/bench-apikey.test.ts",

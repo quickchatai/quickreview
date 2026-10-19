@@ -942,6 +942,9 @@ max_mb_per_s = 8         # input rate cap for compress + verify (clamped 1..200)
 disk_headroom_gb = 2     # free space kept on both mounts (clamped 0.5..1024)
 db_batch_rows = 500      # the DB mover's starting batch; adapts 100..2000 to stay <= 25 ms
 gzip_level = 6           # (clamped 1..9)
+live_retention_days = 30 # a worker round's logs (state/live, state/lens) leave the live tree this long after
+                         # their last write, once the PR's archive holds a verified copy (clamped 7..3650)
+live_cap_gb = 20         # disk cap on state/live + state/lens; past it the archive_live_cap wake fires (0 = off, max 4096)
 
 # The bot login's single refresher (src/loginrefresh/, P8.22): the VM-only
 # exception to "only the owner's pi /login refreshes" (src/engine/auth.ts).

@@ -51,6 +51,8 @@ function fakePlan(at: number, prs = 3): ArchivePlan {
       inject_done: tally,
       stale_injects: tally,
       verdicts: tally,
+      live_logs: tally,
+      lens_sessions: tally,
     },
     ledger_snapshots: tally,
     legacy_copies: tally,
@@ -503,6 +505,8 @@ describe("the policy reads every [archive] knob", () => {
       diskHeadroomBytes: 0.5 * GB,
       dbBatchRows: 500,
       gzipLevel: 6,
+      liveRetentionMs: 30 * 24 * 60 * MIN,
+      liveCapBytes: 20 * GB,
     });
   });
 });

@@ -96,7 +96,7 @@ import {
   type Manifest,
   type SettledRecord,
 } from "./manifest.js";
-import { prInventory, type LiveListing, type SpanMeter } from "./prfiles.js";
+import { OWN_GZIP_CLASSES, prInventory, type LiveListing, type SpanMeter } from "./prfiles.js";
 import { armArchiveRow, finishArchiveRow } from "./rows.js";
 
 export interface PrPassDeps {
@@ -564,8 +564,9 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
         unlinks.push({ path: f.path, rel, identity: identityFields(id) });
         continue;
       }
-      if (id.size > BUNDLE_RECORD_MAX_BYTES) {
-        // Too big for a record: its own gzip, the transcript protocol.
+      if (id.size > BUNDLE_RECORD_MAX_BYTES || OWN_GZIP_CLASSES.has(f.cls)) {
+        // Too big for a record, or a worker round's log (OWN_GZIP_CLASSES): its
+        // own gzip, the transcript protocol.
         stop = deps.stopReason() ?? (await deps.diskFor(id.size));
         if (stop) break;
         const entryOf = (archive: string, p: Packed): FileEntry => ({

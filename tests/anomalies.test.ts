@@ -44,6 +44,7 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
     expect(wakeKinds()).toEqual(
       [
         "archive_disk_low",
+        "archive_live_cap",
         "archive_restore_failed",
         "author_reply_wake_dropped",
         "daemon_event_loop_stalled",

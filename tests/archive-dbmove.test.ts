@@ -1010,6 +1010,8 @@ function fakePlan(backlog: { event_rows?: number; delivery_rows?: number } = {})
       inject_done: tally,
       stale_injects: tally,
       verdicts: tally,
+      live_logs: tally,
+      lens_sessions: tally,
     },
     ledger_snapshots: tally,
     legacy_copies: tally,

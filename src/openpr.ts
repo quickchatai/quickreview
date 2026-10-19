@@ -13,7 +13,7 @@
 //   lenses    `<pr dir>/lens-sessions/<lens run id>/*.jsonl`, the layout of
 //             src/engine/openable.ts. A tmux-hosted lens pass is a child of the PR's
 //             session and keeps no file of its own, so there is none to open until
-//             workers persist them (P8.3, D10); their archive inclusion is P8.16.
+//             workers persist them (P8.3, D10), and the archive keeps them (P8.16; `qcr archive extract`, then `qcr open <dir>`).
 //
 // Nothing is written on the box and nothing runs there but reads: the commands
 // are `ls`/`stat`/`cat`/`head`/`base64` and `qcr why --json`, through the TUI's

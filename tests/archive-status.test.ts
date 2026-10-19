@@ -645,6 +645,8 @@ describe("qcr archive status", () => {
           inject_done: tally(3000, 50_000_000),
           stale_injects: tally(3, 3000),
           verdicts: tally(2500, 9_000_000),
+          live_logs: tally(0, 0),
+          lens_sessions: tally(0, 0),
         },
         ledger_snapshots: tally(480, 2_000_000),
         legacy_copies: tally(470, 1_700_000_000),

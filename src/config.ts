@@ -2505,6 +2505,16 @@ export interface ArchiveConfig {
   db_batch_rows: number;
   /** gzip level (clamped 1..9). */
   gzip_level: number;
+  /** A worker round's logs under `state/live/` and `state/lens/` (P8.16, D10)
+   * are removed from the live tree this many days after the round's last write,
+   * and only once the PR's archive holds a verified copy (clamped 7..3650). A
+   * log nothing archived is never removed. */
+  live_retention_days: number;
+  /** The disk cap on `state/live/` plus `state/lens/` together, in GB (clamped
+   * 0..4096; 0 turns the check off). Past it the archiver raises the
+   * `archive_live_cap` wake once per incident and every 6 h; it never deletes
+   * to get under the cap. */
+  live_cap_gb: number;
 }
 
 export const ARCHIVE_DEFAULTS: Readonly<ArchiveConfig> = Object.freeze({
@@ -2519,6 +2529,8 @@ export const ARCHIVE_DEFAULTS: Readonly<ArchiveConfig> = Object.freeze({
   disk_headroom_gb: 2,
   db_batch_rows: 500,
   gzip_level: 6,
+  live_retention_days: 30,
+  live_cap_gb: 20,
 });
 
 /** Each numeric `[archive]` key's range, and whether it is a whole number. */
@@ -2535,6 +2547,8 @@ export const ARCHIVE_LIMITS: Readonly<
   disk_headroom_gb: [0.5, 1024, false],
   db_batch_rows: [100, 2000, true],
   gzip_level: [1, 9, true],
+  live_retention_days: [7, 3650, true],
+  live_cap_gb: [0, 4096, false],
 });
 
 /**

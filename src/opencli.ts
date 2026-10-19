@@ -5,7 +5,9 @@
 //
 // RUN is a detached run id (`qcr review start`), a `qcr review` run directory
 // name, a bench case dir, a scan run (`scan` or `scan:<run>`, then `--lens`
-// names a case), or a path; with none, the newest run. The main session opens
+// names a case), or a path, or a closed PR's extracted archive
+// (`qcr archive extract`: its worker rounds under `files/state/lens/`, the main
+// session its newest transcript); with none, the newest run. The main session opens
 // by default, `--lens ID` opens one lens pass (its run id, its agent name, or an
 // unambiguous prefix of the id).
 //
@@ -189,9 +191,54 @@ const subdirs = (dir: string): string[] => {
   }
 };
 
+/** Where `qcr archive extract` puts a closed PR's worker rounds (P8.16, D10): the
+ * lens passes' trees, `state/lens/<pr-n>/r<k>/`, laid out as the round dir
+ * `qcr open` reads. The main session is a transcript, `transcripts/*.jsonl`. */
+const EXTRACTED_LENS = join("files", "state", "lens");
+
+/** The worker rounds of an extracted archive at `path`, highest round first;
+ * [] when `path` is not one. */
+function extractedRoundsOf(path: string): string[] {
+  const rounds: Array<{ dir: string; k: number }> = [];
+  for (const prDir of subdirs(join(path, EXTRACTED_LENS)))
+    for (const dir of subdirs(prDir)) {
+      const k = /^r(\d+)$/.exec(basename(dir));
+      if (k && hasSessions(dir)) rounds.push({ dir, k: Number(k[1]) });
+    }
+  return rounds.sort((a, b) => b.k - a.k || a.dir.localeCompare(b.dir)).map((r) => r.dir);
+}
+
+/** The newest transcript of an extracted archive (a spawn's file can sit in a
+ * subdirectory): the PR's main session. */
+function extractedMainOf(path: string): string | null {
+  const base = join(path, "transcripts");
+  let best: { file: string; m: number } | null = null;
+  const walk = (dir: string): void => {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const n of names) {
+      const p = join(dir, n);
+      if (isDir(p)) walk(p);
+      else if (n.endsWith(".jsonl")) {
+        const m = mtime(p);
+        if (!best || m > best.m || (m === best.m && p > best.file)) best = { file: p, m };
+      }
+    }
+  };
+  walk(base);
+  return (best as { file: string } | null)?.file ?? null;
+}
+
 /** The round dirs a run holds, newest first: the dir itself, its `out`, or the
- * `out` of each run root under `work/` (a detached run). */
+ * `out` of each run root under `work/` (a detached run), or the worker rounds of
+ * an extracted archive. */
 function roundDirsOf(path: string): string[] {
+  const extracted = extractedRoundsOf(path);
+  if (extracted.length > 0) return extracted;
   const candidates = [
     path,
     join(path, "out"),
@@ -261,8 +308,9 @@ export function findSession(
     const bare = knownRuns(deps, arg);
     runs = bare.length > 0 ? bare : isDir(resolve(deps.cwd, arg)) ? [resolve(deps.cwd, arg)] : [];
   } else runs = [];
-  const roundDir = runs.flatMap(roundDirsOf)[0];
-  if (roundDir === undefined)
+  const run = runs.find((r) => roundDirsOf(r).length > 0);
+  const roundDir = run === undefined ? undefined : roundDirsOf(run)[0];
+  if (roundDir === undefined || run === undefined)
     return fail(
       arg === undefined
         ? "no run kept a session to open"
@@ -273,7 +321,10 @@ export function findSession(
     if (typeof picked === "string") return fail(picked);
     return { ok: true, file: picked.file, kind: "lens", id: picked.id, roundDir };
   }
-  const main = mainSessionOf(roundDir);
+  // An extracted archive keeps the PR's main session as a transcript, not in the round.
+  const main =
+    mainSessionOf(roundDir) ??
+    (roundDir.startsWith(join(run, EXTRACTED_LENS)) ? extractedMainOf(run) : null);
   if (main === null) {
     const kept = lensSessionsOf(roundDir);
     return fail(
