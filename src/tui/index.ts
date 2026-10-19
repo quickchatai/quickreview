@@ -1189,7 +1189,12 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // Daemon-detected pi auth failures (status.json `pi_auth_expired`) ride
     // the same pipeline: on each poll, bridge a fresh flag into one alert
     // file; the consumer above does badge + notify + inject + cooldown.
-    const { maybeWritePiAuthAlert, maybeWriteMemoryAlert, maybeWriteCurationAlert } =
+    const {
+      maybeWritePiAuthAlert,
+      maybeWriteMemoryAlert,
+      maybeWriteCurationAlert,
+      maybeWriteWorkerCrashAlerts,
+    } =
       await import("./alerts.js");
     const piAuthMem = { lastWritten: "" };
     chainOnPoll(app, (a) => {
@@ -1231,6 +1236,22 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
           a.view.snapshot?.memory,
           isFreshHealth(a.view.health),
           curationAlertMem,
+        );
+      } catch {
+        // alerting is best-effort; never break the poll loop
+      }
+    });
+
+    // A PR parked by the worker crash-loop breaker, or the bot drained by it
+    // (P8.5b) — one notification per park / per drain, from a fresh snapshot.
+    const workerCrashMem = { written: new Set<string>() };
+    chainOnPoll(app, (a) => {
+      try {
+        maybeWriteWorkerCrashAlerts(
+          full.companion.alerts_dir,
+          a.view.snapshot,
+          isFreshHealth(a.view.health),
+          workerCrashMem,
         );
       } catch {
         // alerting is best-effort; never break the poll loop

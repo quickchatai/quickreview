@@ -163,6 +163,33 @@ describe("operator PR recovery", () => {
     });
   });
 
+  it("rerun-round and restart-session unpark a PR the worker breaker parked (P8.5b)", async () => {
+    const park = (store: StateStore, pr: number): void => {
+      for (let i = 0; i < 2; i++)
+        store.recordWorkerFailure(pr, { commandId: `w${i}`, error: "boom", at: T0, parkAfter: 2 });
+      expect(store.isWorkerParked(pr)).toBe(true);
+    };
+    const rerun = setup(5410);
+    park(rerun.store, rerun.pr);
+    await recoverPrForOperator({ store: rerun.store, pump: async () => {} }, rerun.pr, "rerun-round");
+    expect(rerun.store.workerBreaker(rerun.pr)).toBeUndefined();
+    expect(
+      (rerun.store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind='worker_unparked'").get() as {
+        c: number;
+      }).c,
+    ).toBe(1);
+
+    const restart = setup(5411);
+    park(restart.store, restart.pr);
+    command(restart.store, restart.dir, restart.pr);
+    await recoverPrForOperator(
+      { store: restart.store, pump: async () => {}, killSession: async () => {} },
+      restart.pr,
+      "restart-session",
+    );
+    expect(restart.store.workerBreaker(restart.pr)).toBeUndefined();
+  });
+
   it("restores a cancelled wake ahead of dispatch and reports that no round started", async () => {
     const { store, dir, pr } = setup(5454);
     const c = command(store, dir, pr, "wake", "zażółć 🧭\0\n");

@@ -122,11 +122,12 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     })),
     // The WorkerSupervisor (P8.5) and its lease: built and tested, wired into the daemon by P8.6 (the worker
     // host under SessionHooks). Delete each entry with that import.
-    ...["workersupervisor.ts", "workerlease.ts"].map((f) => ({
+    ...["workersupervisor.ts", "workerlease.ts", "workerbreaker.ts", "workerlog.ts"].map((f) => ({
       file: `src/${f}`,
       why:
         "the daemon's end of the per-round worker (P8.5): spawn, heartbeat, deadlines, lease, restart. Read " +
-        "only by tests/worker-supervisor.test.ts and tests/worker-lease.test.ts until P8.6 (WorkerSessionHost) " +
+        "only by tests/worker-supervisor.test.ts and tests/worker-lease.test.ts (the crash-loop breaker and " +
+        "the worker log, P8.5b, by the supervisor) until P8.6 (WorkerSessionHost) " +
         "constructs it in the daemon. Delete this entry with that import.",
     })),
     // The daemon's post ops (P7.2). The daemon does not start the worker socket yet: P8.6 wires the

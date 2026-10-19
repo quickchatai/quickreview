@@ -435,6 +435,29 @@ describe("drain auto-lift", () => {
     }
   });
 
+  it("does NOT lift a drain the worker breaker set (worker_failures) on a healthy boot; drain off does (P8.5b)", async () => {
+    store.engageDrain({ issuer: "operator", expires_at: null }, "worker_failures");
+    const daemon = createDaemon({
+      cfg: { ...loadConfig(resolve(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
+      root,
+      store,
+      adapter: bootAdapter(),
+      listen: false,
+      log: () => {},
+    });
+    await daemon.start();
+    try {
+      expect(store.drainState()).toMatchObject({ draining: true, reason: "worker_failures" });
+      expect(eventKinds(store)).not.toContain("drain_lifted");
+      // The webhook stays stopped under it.
+      expect(delivery(store, labeledPayload(), "pull_request", "wf-g1").reason).toBe("draining");
+      expect(store.liftDrain("operator").changed).toBe(true);
+      expect(store.drainState().draining).toBe(false);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
   it("does NOT lift when the first reconcile pass fails — and never auto-lifts later that boot", async () => {
     store.engageDrain({ issuer: "operator", expires_at: null });
     const adapter = bootAdapter({

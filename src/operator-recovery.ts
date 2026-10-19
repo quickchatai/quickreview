@@ -75,6 +75,11 @@ async function recoverPrForOperatorNow(
     };
   }
 
+  // The worker crash-loop breaker (P8.5b) parked this PR after repeated worker
+  // failures; either lever is the operator's word that it may run again.
+  if (deps.store.clearWorkerBreaker(pr))
+    deps.store.logEvent("worker_unparked", pr, { by: mode });
+
   const failure = deps.store.openReviewFailure(pr);
   if (
     mode === "rerun-round" &&

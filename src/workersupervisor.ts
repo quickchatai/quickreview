@@ -27,6 +27,13 @@
 //     worker's `accepted`, finishes them from the exit, and requeues a round whose
 //     worker died. The one-active index (`session_commands_one_active`) gives one
 //     worker per session; a second spawn is refused before the row is claimed.
+//   - BREAKER (P8.5b, src/workerbreaker.ts). Every exit is counted: a worker that
+//     served its round resets its PR's count; a non-zero exit, a `failed` event or
+//     a deadline kill adds one. Two in a row park the PR (no further spawn, a
+//     `worker_crash_loop` anomaly, the last error in status.json); failures on three
+//     PRs within 15 minutes drain the bot. A drained bot or a parked PR starts no
+//     worker, of any mode: `launch` refuses and `launchPending` skips. An end by the
+//     daemon's own stop or by the operator is not a failure.
 //   - RESTART. On a daemon restart every leased group is killed and its round is
 //     requeued under the same command id (`recover`), so the fresh worker resumes
 //     the JSONL and continues instead of sending the order again (D22).
@@ -56,6 +63,13 @@ import {
   type WorkerSpec,
 } from "./ipc/workerspec.js";
 import { verifiedPayload } from "./session-command-payload.js";
+import {
+  DEFAULT_WORKER_LOG_LIMITS,
+  rotateWorkerLogs,
+  workerLogPath,
+  type WorkerLogLimits,
+} from "./workerlog.js";
+import { WorkerBreaker, type BreakerLimits } from "./workerbreaker.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import {
   WorkerLeases,
@@ -231,8 +245,12 @@ export interface WorkerSupervisorDeps {
   socketPath: string;
   /** `dist/src/botworker.js`. */
   workerMain: string;
-  /** Where a worker's own stdout and stderr go: `<id>.worker.log`. */
+  /** Where a worker's own stdout and stderr go: `<id>.log` (`state/workers/`),
+   * rotated by size at each spawn and pruned by age and count (src/workerlog.ts). */
   logDir: string;
+  logLimits?: Partial<WorkerLogLimits>;
+  /** The crash-loop breaker's thresholds (src/workerbreaker.ts). */
+  breaker?: Partial<BreakerLimits>;
   /** Where a submitted command's payload is saved. */
   payloadDir: string;
   /** The command's spec: the daemon's layout, the model, the session's env. */
@@ -323,6 +341,8 @@ export interface WorkerStatus {
 export class WorkerSupervisor {
   readonly limits: WorkerLimits;
   readonly leases: WorkerLeases;
+  /** The crash-loop breaker: also the question every host asks before a spawn. */
+  readonly breaker: WorkerBreaker;
   private readonly byCommand = new Map<string, LiveWorker>();
   private readonly bySession = new Map<string, LiveWorker>();
   /** Sessions with a launch under way: the second spawn is refused before any await. */
@@ -343,6 +363,11 @@ export class WorkerSupervisor {
     this.signal = deps.signal ?? sendSignal;
     this.now = deps.now ?? Date.now;
     this.log = deps.log ?? ((): void => {});
+    this.breaker = new WorkerBreaker(deps.store, {
+      ...(deps.breaker ? { limits: deps.breaker } : {}),
+      now: this.now,
+      log: this.log,
+    });
   }
 
   // ---- what the IPC server asks the daemon ---------------------------------
@@ -496,6 +521,7 @@ export class WorkerSupervisor {
     const first = this.deps.store.getSessionCommand(commandId);
     if (!first) throw new WorkerLaunchError(`no such command: ${commandId}`);
     const session = first.session;
+    this.mayStart(first);
     if (this.bySession.has(session) || this.launching.has(session))
       throw new WorkerLaunchError(`${session} already has a worker`);
     this.launching.add(session);
@@ -512,6 +538,9 @@ export class WorkerSupervisor {
     for (const row of this.deps.store.activeSessionCommands()) {
       if (row.status !== "pending" || row.kind === "legacy") continue;
       if (this.bySession.has(row.session) || this.launching.has(row.session)) continue;
+      // A drained bot or a parked PR starts nothing; the command waits, and the
+      // refusal is not logged every pass.
+      if (!this.breaker.gate(row.pr).ok) continue;
       try {
         out.push(await this.launch(row.id));
       } catch (e) {
@@ -525,6 +554,13 @@ export class WorkerSupervisor {
     return out;
   }
 
+  /** The breaker's no: a drained bot or a parked PR starts no worker (round or
+   * answer; the debug round asks `breaker.gate` itself). The row is left as it was. */
+  private mayStart(row: SessionCommandRow): void {
+    const verdict = this.breaker.gate(row.pr);
+    if (!verdict.ok) throw new WorkerLaunchError(verdict.reason);
+  }
+
   private async launchHeld(commandId: string, session: string): Promise<LaunchInfo> {
     const { store, capabilities } = this.deps;
     const gate = this.deps.loginGate;
@@ -534,6 +570,7 @@ export class WorkerSupervisor {
     const row = store.getSessionCommand(commandId);
     if (!row || row.status !== "pending" || row.kind === "legacy")
       throw new WorkerLaunchError(`command ${commandId} is not a pending worker command`);
+    this.mayStart(row); // a login wait or a failing neighbour may have drained the bot meanwhile
 
     // A lease still held by a live worker of ours (another daemon, a worker the
     // boot could not kill) refuses the spawn; one that names nothing is cleared.
@@ -584,7 +621,8 @@ export class WorkerSupervisor {
       const capability = capabilities.mint(row.id);
       capFd = createCapabilityFd(this.deps.runDir, capability);
       mkdirSync(this.deps.logDir, { recursive: true });
-      logFd = openSync(join(this.deps.logDir, `${row.id}.worker.log`), "a", 0o600);
+      rotateWorkerLogs(this.deps.logDir, row.id, t0, { ...DEFAULT_WORKER_LOG_LIMITS, ...this.deps.logLimits });
+      logFd = openSync(workerLogPath(this.deps.logDir, row.id), "a", 0o600);
       const env = workerProcessEnv(
         this.deps.parentEnv ?? process.env,
         this.deps.extraEnv ?? {},
@@ -787,6 +825,7 @@ export class WorkerSupervisor {
         verdict_written: rec.verdictWritten,
         posted: rec.posted,
       });
+      this.count(rec, outcome, code);
     } catch (e) {
       this.log(`settling worker ${rec.row.id} failed: ${String(e)}`);
     } finally {
@@ -795,6 +834,30 @@ export class WorkerSupervisor {
       if (this.bySession.get(rec.row.session) === rec) this.bySession.delete(rec.row.session);
       rec.finish();
     }
+  }
+
+  /** Tell the breaker how the worker ended. A served round is a success; a
+   * non-zero exit, a `failed` event or a deadline kill is a failure; the daemon's
+   * own stop and the operator's end are neither. A PR parked by this failure has
+   * no round to retry, so a requeue it just got is failed instead. */
+  private count(rec: LiveWorker, outcome: Outcome, code: number | null): void {
+    const { pr } = rec.row;
+    if (rec.killedFor === "shutdown" || rec.killedFor === "operator") return;
+    if (outcome.kind === "acked" && rec.failedReason === undefined) {
+      this.breaker.success(pr);
+      return;
+    }
+    const error =
+      rec.failedReason ??
+      (outcome.kind === "acked"
+        ? `the worker reported a failure and exited ${code}`
+        : outcome.reason);
+    const res = this.breaker.failure(pr, rec.row.id, error);
+    if (res.parked && outcome.kind === "requeue")
+      this.deps.store.failPendingSessionCommand(
+        rec.row.id,
+        `PR #${pr} is parked after ${res.failures} consecutive worker failures: ${error}`.slice(0, 500),
+      );
   }
 
   private apply(rec: LiveWorker, outcome: Outcome): void {

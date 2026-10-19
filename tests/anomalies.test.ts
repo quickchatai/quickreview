@@ -70,6 +70,7 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
         "review_failed_loud",
         "round_stranded",
         "ungated_approval",
+        "worker_crash_loop",
       ].sort(),
     );
   });

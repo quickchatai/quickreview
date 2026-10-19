@@ -23,7 +23,8 @@ import { CapabilityStore } from "../src/ipc/capability.js";
 import { IpcClient } from "../src/ipc/client.js";
 import { IpcServer, type OpHandler } from "../src/ipc/server.js";
 import type { WorkerSpec } from "../src/ipc/workerspec.js";
-import { StateStore, type SessionCommandRow } from "../src/state.js";
+import { PostingJournal } from "../src/posting-journal.js";
+import { StateStore, buildStatusSnapshot, type SessionCommandRow } from "../src/state.js";
 import { type WorkerLeases, realProc, type WorkerLease } from "../src/workerlease.js";
 import {
   WorkerLaunchError,
@@ -733,3 +734,294 @@ function plantLease(
     ...over,
   });
 }
+
+// ---- [P8.5b] the crash-loop breaker and the drain -------------------------------
+
+type Rig = Awaited<ReturnType<typeof rig>>;
+
+/** One worker for `pr`, behaving as `mode`, run to its end. Returns the command. */
+async function runWorker(
+  r: Rig,
+  pr: number,
+  mode: string,
+  roundNo: number | null = null,
+): Promise<SessionCommandRow> {
+  r.sup["deps"].extraEnv = { ...r.sup["deps"].extraEnv, FAKE_WORKER_MODE: mode };
+  // A failed command blocks its session until the operator's recovery settles it.
+  r.store.db
+    .prepare("UPDATE session_commands SET status='cancelled' WHERE session=? AND status='failed'")
+    .run(`pr-${pr}`);
+  const row = r.sup.submit({ pr, kind: "round", round_no: roundNo, payload: `order for ${pr}` });
+  await r.sup.launch(row.id);
+  await until(() => !r.sup.isLive(`pr-${pr}`));
+  return row;
+}
+
+const spawned = (r: Rig): number => r.events("worker_spawned").length;
+const crashAnomalies = (r: Rig) => r.store.anomalies().filter((a) => a.kind === "worker_crash_loop");
+
+describe("[P8.5b] the per-PR breaker", () => {
+  it("parks a PR after 2 consecutive failures: the anomaly, the last error, and no third spawn", async () => {
+    const r = await rig();
+    await runWorker(r, PR, "fail");
+    expect(r.store.workerBreaker(PR)).toMatchObject({ failures: 1, parked_at: null });
+    expect(crashAnomalies(r)).toHaveLength(0);
+    await runWorker(r, PR, "fail");
+    const row = r.store.workerBreaker(PR)!;
+    expect(row.failures).toBe(2);
+    expect(row.parked_at).not.toBeNull();
+    expect(row.last_error).toBe("the fake turn failed");
+    expect(crashAnomalies(r)).toHaveLength(1);
+    expect(crashAnomalies(r)[0]).toMatchObject({ pr: PR });
+
+    // A third round is ordered; no worker starts for it, by launch or by launchPending.
+    r.store.db.prepare("UPDATE session_commands SET status='cancelled' WHERE status='failed'").run();
+    const third = r.sup.submit({ pr: PR, kind: "round", round_no: null, payload: "again" });
+    await expect(r.sup.launch(third.id)).rejects.toThrow(/parked after 2 consecutive/);
+    expect(await r.sup.launchPending()).toEqual([]);
+    expect(spawned(r)).toBe(2);
+    expect(r.store.getSessionCommand(third.id)!.status).toBe("pending");
+
+    // status.json carries the park and the last error.
+    const snap = buildStatusSnapshot(r.store, true);
+    r.store.upsertPr({
+      number: PR,
+      state: "queued",
+      head_sha: "h",
+      title: "t",
+      author: "a",
+      trigger_ts: null,
+      trigger_provenance: "system",
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const withPr = buildStatusSnapshot(r.store, true);
+    expect(snap.prs).toEqual([]);
+    expect(withPr.prs.find((p) => p.number === PR)?.worker_crash).toMatchObject({
+      failures: 2,
+      last_error: "the fake turn failed",
+    });
+    expect(withPr.prs.find((p) => p.number === PR)?.worker_crash?.parked_at).not.toBeNull();
+  });
+
+  it("counts a non-zero exit, a deadline kill and a crash; a requeue that parks becomes a failure", async () => {
+    const r = await rig();
+    await runWorker(r, PR, "exit2", r.roundNo);
+    expect(r.store.workerBreaker(PR)?.failures).toBe(1);
+    // A signal death is requeued by the supervisor, and the second failure parks the PR:
+    // the round is failed, not left pending for a worker that will never be started.
+    const crashed = await runWorker(r, PR, "crash", r.roundNo);
+    expect(r.store.workerBreaker(PR)?.parked_at).not.toBeNull();
+    const done = r.store.getSessionCommand(crashed.id)!;
+    expect(done.status).toBe("failed");
+    expect(done.failure).toContain("parked after 2 consecutive worker failures");
+  });
+
+  it("counts a deadline kill (a worker that never says ready)", async () => {
+    let t = 5_000_000;
+    const r = await rig({ mode: "mute", wallMs: 100_000_000, now: () => t });
+    const row = r.sup.submit({ pr: 11, kind: "round", round_no: null, payload: "x" });
+    await r.sup.launch(row.id);
+    t += DEFAULT_WORKER_LIMITS.readyMs + 1;
+    r.sup.tick();
+    await until(() => !r.sup.isLive("pr-11"));
+    expect(r.store.workerBreaker(11)).toMatchObject({ failures: 1 });
+    expect(r.store.workerBreaker(11)?.last_error).toContain("stage_ready");
+  });
+
+  it("does not count the daemon's own stop or the operator's kill", async () => {
+    const r = await rig({ mode: "term-ok" });
+    const row = r.sup.submit({ pr: 12, kind: "round", round_no: null, payload: "x" });
+    await r.sup.launch(row.id);
+    await until(() => r.out(row.id, "spec.json") !== "");
+    r.sup.kill(row.id, "operator");
+    await until(() => !r.sup.isLive("pr-12"));
+    expect(r.store.workerBreaker(12)).toBeUndefined();
+    const other = r.sup.submit({ pr: 13, kind: "round", round_no: null, payload: "x" });
+    await r.sup.launch(other.id);
+    await until(() => r.out(other.id, "spec.json") !== "");
+    await r.sup.stop();
+    expect(r.store.workerBreaker(13)).toBeUndefined();
+  });
+
+  it("a success resets the count, so a failure after it is the first again", async () => {
+    const r = await rig();
+    await runWorker(r, PR, "fail");
+    expect(r.store.workerBreaker(PR)?.failures).toBe(1);
+    await runWorker(r, PR, "ok");
+    expect(r.store.workerBreaker(PR)?.failures).toBe(0);
+    await runWorker(r, PR, "fail");
+    expect(r.store.workerBreaker(PR)).toMatchObject({ failures: 1, parked_at: null });
+    expect(crashAnomalies(r)).toHaveLength(0);
+  });
+
+  it("rerun-round and restart-session unpark: the row goes and a worker may start", async () => {
+    const r = await rig();
+    await runWorker(r, PR, "fail");
+    await runWorker(r, PR, "fail");
+    expect(r.store.isWorkerParked(PR)).toBe(true);
+    expect(r.store.clearWorkerBreaker(PR)).toBe(true);
+    expect(r.store.workerBreaker(PR)).toBeUndefined();
+    const row = await runWorker(r, PR, "ok");
+    expect(r.store.getSessionCommand(row.id)!.status).toBe("acked");
+  });
+});
+
+describe("[P8.5b] the global drain", () => {
+  it("three PRs failing within 15 min with no success set the drain; only drain off lifts it", async () => {
+    const r = await rig();
+    await runWorker(r, 21, "fail");
+    await runWorker(r, 22, "fail");
+    expect(r.store.drainState().draining).toBe(false);
+    await runWorker(r, 23, "fail");
+    const drain = r.store.drainState();
+    expect(drain).toMatchObject({
+      draining: true,
+      issued_by: "operator",
+      expires_at: null,
+      reason: "worker_failures",
+    });
+    expect(crashAnomalies(r).filter((a) => a.pr === null)).toHaveLength(1);
+    expect(buildStatusSnapshot(r.store, true)).toMatchObject({
+      draining: true,
+      draining_reason: "worker_failures",
+    });
+
+    // Nothing starts under the drain: not for a fresh PR, not by launchPending.
+    const fresh = r.sup.submit({ pr: 24, kind: "round", round_no: null, payload: "x" });
+    await expect(r.sup.launch(fresh.id)).rejects.toBeInstanceOf(WorkerLaunchError);
+    await expect(r.sup.launch(fresh.id)).rejects.toThrow(/draining \(worker_failures\)/);
+    expect(await r.sup.launchPending()).toEqual([]);
+    expect(spawned(r)).toBe(3);
+
+    // A session cannot lift the operator's hold; the operator's `drain off` does,
+    // and the failures that caused it stop counting.
+    expect(r.store.liftDrain("session").refused).toBe("held-by-operator");
+    expect(r.store.liftDrain("operator").changed).toBe(true);
+    expect(r.store.failedWorkerPrsSince("1970-01-01T00:00:00Z")).toEqual([]);
+    const started = await r.sup.launchPending();
+    expect(started.map((s) => s.command_id)).toEqual([fresh.id]);
+    await until(() => !r.sup.isLive("pr-24"));
+  });
+
+  it("stops the webhook: a delivery under the breaker's drain is dropped", async () => {
+    const r = await rig();
+    for (const pr of [31, 32, 33]) await runWorker(r, pr, "fail");
+    expect(r.store.drainState().draining).toBe(true);
+    // The webhook's own check (src/webhook.ts) reads this and nothing else.
+    expect(r.store.countDrainedDelivery()).toBe(1);
+  });
+
+  it("a success between the failures keeps the window from filling", async () => {
+    const r = await rig();
+    await runWorker(r, 41, "fail");
+    await runWorker(r, 42, "fail");
+    await runWorker(r, 43, "ok");
+    await runWorker(r, 44, "fail");
+    expect(r.store.drainState().draining).toBe(false);
+    // Two more after the success make three since it.
+    await runWorker(r, 45, "fail");
+    await runWorker(r, 46, "fail");
+    expect(r.store.drainState().draining).toBe(true);
+  });
+
+  it("failures more than 15 min apart do not add up", async () => {
+    let t = Date.now();
+    const r = await rig({ now: () => t });
+    await runWorker(r, 51, "fail");
+    await runWorker(r, 52, "fail");
+    t += 16 * 60_000;
+    await runWorker(r, 53, "fail");
+    expect(r.store.drainState().draining).toBe(false);
+    await runWorker(r, 54, "fail");
+    await runWorker(r, 55, "fail");
+    expect(r.store.drainState().draining).toBe(true);
+  });
+
+  it("an operator's own drain starts no round or answer worker either, and a lift releases the commands", async () => {
+    const r = await rig();
+    r.store.engageDrain({ issuer: "operator", expires_at: null });
+    const round = r.sup.submit({ pr: 61, kind: "round", round_no: null, payload: "x" });
+    const answer = r.sup.submit({ pr: 62, kind: "wake", round_no: null, payload: "hello" });
+    await expect(r.sup.launch(round.id)).rejects.toThrow(/draining/);
+    await expect(r.sup.launch(answer.id)).rejects.toThrow(/draining/);
+    expect(await r.sup.launchPending()).toEqual([]);
+    expect(spawned(r)).toBe(0);
+    expect(r.store.getSessionCommand(round.id)!.status).toBe("pending");
+    r.store.liftDrain("operator");
+    expect((await r.sup.launchPending()).map((s) => s.command_id).sort()).toEqual(
+      [round.id, answer.id].sort(),
+    );
+    await until(() => !r.sup.isLive("pr-61") && !r.sup.isLive("pr-62"));
+  });
+
+  it("a debug round or any other host asks the same gate", async () => {
+    const r = await rig();
+    expect(r.sup.breaker.gate(PR)).toEqual({ ok: true });
+    await runWorker(r, PR, "fail");
+    await runWorker(r, PR, "fail");
+    expect(r.sup.breaker.gate(PR)).toMatchObject({ ok: false, why: "parked" });
+    expect(r.sup.breaker.gate(99)).toEqual({ ok: true });
+    r.store.engageDrain({ issuer: "session", expires_at: new Date(Date.now() + 60_000).toISOString() });
+    expect(r.sup.breaker.gate(99)).toMatchObject({ ok: false, why: "draining" });
+  });
+});
+
+describe("[P8.5b] a requeued round never re-posts", () => {
+  it("a crash after `posted` requeues the round, and the replay finds the post already confirmed", async () => {
+    const r = await rig({ mode: "posted-crash" });
+    const journal = new PostingJournal({ dir: join(r.base, "receipts"), repo: "o/r" });
+    const key = "pk-1";
+    const head = "a".repeat(40);
+    const payload = { event: "COMMENT", body: "review", comments: [] } as never;
+    let githubPosts = 0;
+    // What the post script does in either worker: skip when the receipt says it
+    // was posted; otherwise record the attempt, post once, confirm.
+    const post = (): void => {
+      if (journal.check(PR, r.roundNo, key) === "confirmed") return;
+      journal.prepare({ key, pr: PR, round: r.roundNo, head, intended: "COMMENT", payload });
+      githubPosts++;
+      journal.confirm({
+        key,
+        pr: PR,
+        round: r.roundNo,
+        head,
+        intended: "COMMENT",
+        payload,
+        response: { id: 1, commit_id: head, state: "COMMENTED" },
+      });
+    };
+    const row = r.submit();
+    r.sup["deps"].observe = (o) => {
+      r.observed.push(o);
+      if (o.kind === "posted") post(); // the first worker's post reached GitHub
+    };
+    await r.sup.launch(row.id);
+    await until(finished(r.sup));
+    expect(githubPosts).toBe(1);
+    const back = r.store.getSessionCommand(row.id)!;
+    expect(back.status).toBe("pending"); // requeued under the same id
+    expect(r.store.workerBreaker(PR)?.failures).toBe(1);
+
+    // The fresh worker resumes the round and reaches the same post: it posts nothing new.
+    r.sup["deps"].extraEnv = { ...r.sup["deps"].extraEnv, FAKE_WORKER_MODE: "ok" };
+    await r.sup.launch(row.id);
+    post();
+    await until(finished(r.sup));
+    expect(githubPosts).toBe(1);
+    expect(r.store.getSessionCommand(row.id)!.status).toBe("acked");
+    expect(journal.check(PR, r.roundNo, key)).toBe("confirmed");
+  });
+});
+
+describe("[P8.5b] a worker's log", () => {
+  it("is state/workers/<command>.log, rotated by size and pruned by age and count", async () => {
+    const r = await rig({ mode: "ok" });
+    const row = r.submit();
+    await r.sup.launch(row.id);
+    await until(finished(r.sup));
+    const logs = join(r.base, "logs");
+    expect(readdirSync(logs)).toContain(`${row.id}.log`);
+    expect(readdirSync(logs).filter((f) => f.endsWith(".worker.log"))).toEqual([]);
+  });
+});
