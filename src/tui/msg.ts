@@ -233,7 +233,7 @@ export function installMessageHooks(
 
 /**
  * A quick-message sent on the companion's behalf (the action channel's
- * `msg_session` / `overseer_inject`): REJECTS only on a definite
+ * `msg_session`): REJECTS only on a definite
  * non-delivery (a bad session name, a refused write, no sender wired)
  * and otherwise resolves with the sender's label —
  * delivered, queued behind a busy session, or unconfirmed — so the action's

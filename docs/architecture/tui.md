@@ -527,7 +527,7 @@ companion writes `<iso-ts>-<slug>.json`; `parseAlert` is a strict schema check
 with digit-string coercion for `pr`, and a malformed file is **surfaced** by
 name on the notice line, never silently dropped. `AlertPolicy` then decides:
 tier `notice` → the status line only; tier `alert` → status line plus a
-desktop notification plus an overseer inject. One notification per distinct
+desktop notification (no overseer inject: the overseer is retired). One notification per distinct
 cause per `cooldown_min`; repeats inside the window fold into a counter; a
 genuine escalation (notice → alert) of a folded cause may break the cooldown
 once per day. Cooldown memory is persisted so it survives a TUI restart.
@@ -536,7 +536,7 @@ once per day. Cooldown memory is persisted so it survives a TUI restart.
 files validated against a strict schema and executed against a `TuiDriver`
 supplied at wiring time. The verb set is closed and is exactly what the
 operator's own keyboard can do — tab switches, PR selection, filters, digest
-and memory paging, metrics window/PR, quick-messages, overseer injects, the
+and memory paging, metrics window/PR, quick-messages, the
 deploy-tab buttons, and (`memory_pin`, root CLAUDE.md rule 8) the memory
 tab's `p`: pin or unpin one
 existing entry through the TUI's `MemoryStore`, awaited so the result file

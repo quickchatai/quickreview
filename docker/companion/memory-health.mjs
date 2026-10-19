@@ -10,8 +10,8 @@
 //   * it probes `<endpoint>/health` then `/ready` on a timer,
 //   * on a sustained transition it writes ONE alert file into /alerts, in the
 //     schema prompts/companion.md fixes and src/tui/alerts.ts parses — so the
-//     existing alert policy (per-cause cooldown, status line, notify-send,
-//     overseer inject) carries it with no new pipeline,
+//     existing alert policy (per-cause cooldown, status line, notify-send)
+//     carries it with no new pipeline,
 //   * it never touches pi. A wedged memory engine must never wedge the
 //     conversation: the extension degrades, this process narrates.
 //
@@ -99,8 +99,7 @@ export function decide(state, sample, inGrace = false) {
 }
 
 /**
- * The alert file body. `alert` tier for an outage (status line + notify-send +
- * overseer inject), `notice` for the recovery — a restored engine is news, not
+ * The alert file body. `alert` tier for an outage (status line + notify-send), `notice` for the recovery — a restored engine is news, not
  * an emergency.
  *
  * @param {"down" | "up"} kind
