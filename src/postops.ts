@@ -140,6 +140,12 @@ export function defaultResultDirs(root: string, pr: number, commandId: string): 
   return dirs;
 }
 
+/** A review body as post-review.sh reads it: Python text mode turns CRLF and a lone CR into LF. */
+export const reviewBodyText = (text: string): string => text.replace(/\r\n?/g, "\n");
+
+/** An approval body as approve-pr.sh reads it: `$(cat file)` strips every trailing newline. */
+export const approvalBodyText = (text: string): string => text.replace(/\n+$/, "");
+
 const isRecord = (x: unknown): x is Record<string, unknown> =>
   typeof x === "object" && x !== null && !Array.isArray(x);
 
@@ -368,7 +374,7 @@ class PostOps {
       throw new IpcError("bad_request", "APPROVE is not allowed here — use post.approval");
     if (event !== "REQUEST_CHANGES" && event !== "COMMENT")
       throw new IpcError("bad_request", "event must be REQUEST_CHANGES or COMMENT");
-    const text = readResultFile(this.d, ctx, b.body_file);
+    const text = reviewBodyText(readResultFile(this.d, ctx, b.body_file));
     const comments =
       b.comments_file === undefined
         ? undefined
@@ -386,7 +392,7 @@ class PostOps {
     const text =
       b.body_file === undefined
         ? "Automated review: approved."
-        : readResultFile(this.d, ctx, b.body_file);
+        : approvalBodyText(readResultFile(this.d, ctx, b.body_file));
     const comments =
       b.comments_file === undefined
         ? undefined

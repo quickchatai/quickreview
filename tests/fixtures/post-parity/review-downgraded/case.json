@@ -25,6 +25,6 @@
     "field": "body.body",
     "shell": "One blocker remains in the retry path.\n\n\n_Not blocking: **@mhale** has already approved this head (`68b8040`). The findings above are reported for information only — this review does not request changes._\n\n<!-- qcr-post:v1:7:1:$HEAD -->",
     "node": "One blocker remains in the retry path.\n\n\n<!-- qcr-post:v1:7:1:$HEAD -->\n\n_Not blocking: **@mhale** has already approved this head (`68b8040`). The findings above are reported for information only — this review does not request changes._",
-    "why": "post-review.sh appends the downgrade note, then the marker; the gate (src/guards.ts downgrade) appends the note to a body that already carries the marker. The marker is found by substring either way."
+    "why": "post-review.sh appends the downgrade note, then the marker; the gate (src/guards.ts downgrade) appends the note to a body that already carries the marker. The marker is found by substring either way. The owner accepted this order on 2026-10-19; the gate stays as it is and the pin stays."
   }
 }

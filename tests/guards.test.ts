@@ -1357,8 +1357,9 @@ const guard5: ParityCase[] = [
     node: { sent: "COMMENT", blocked: undefined },
     why:
       "the script still reads the PR with guard 3 switched off and keeps checking the head; " +
-      "the gate makes no read then, so guard 5 has no live head to compare with. Pinned, not " +
-      "endorsed: the Node route fails open here",
+      "the gate makes no read then, so guard 5 has no live head to compare with. The Node " +
+      "answer is the owner-ruled behaviour (2026-10-19): the route keeps posting, and the " +
+      "shell refusal is not carried over",
   },
 ];
 

@@ -150,6 +150,13 @@ describe("[P7.2] post.review in dry-run", () => {
     expect(dryrunRecords()).toHaveLength(1);
   });
 
+  it("reads the body as post-review.sh does: CRLF and a lone CR become LF", async () => {
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "one\r\ntwo\rthree\r\n\r\n");
+    const c = await rig.connect("c-round");
+    await c.request("post.review", { pr: PR, event: "COMMENT", body_file: body }, { pr: PR });
+    expect(dryrunRecords()[0]!.body.body).toBe(`one\ntwo\nthree\n\n\n\n${postingMarker(KEY)}`);
+  });
+
   it("refuses APPROVE on post.review and an unknown event", async () => {
     const body = rig.write(`pr-${PR}-round-1-review.md`, "x");
     const c = await rig.connect("c-round");
@@ -453,6 +460,13 @@ describe("[P7.2] post.approval", () => {
       { pr: PR },
     );
     expect(out.status).toBe("dryrun");
+  });
+
+  it("reads the body as approve-pr.sh does: every trailing newline is stripped, CR is kept", async () => {
+    const body = rig.write(`pr-${PR}-round-1-approve.md`, "LGTM\r\nnits\n\n\n");
+    const c = await rig.connect("c-round");
+    await c.request("post.approval", { pr: PR, body_file: body }, { pr: PR });
+    expect(dryrunRecords()[0]!.body.body).toBe(`LGTM\r\nnits\n\n${postingMarker(KEY)}`);
   });
 
   it("uses the default body when no file is named", async () => {
