@@ -7,6 +7,7 @@ import { mkdirSync } from "node:fs";
 import {
   resolveGithubCredential,
   ghAuthTokenFromCli,
+  handedToken,
   type CredentialResolution,
   type CredentialSource,
 } from "./ghcred.js";
@@ -178,6 +179,8 @@ export interface PrCredentialDeps {
   env?: Record<string, string | undefined>;
   mintApp?: (secretsDir: string) => Promise<string>;
   ghAuthToken?: () => string | null;
+  /** Default: the token handed to this container as a file, if any. */
+  handoff?: string | null;
 }
 
 /** The local route's credential for `secretsDir`, with the real App, env and
@@ -191,6 +194,7 @@ export function resolvePrCredential(
     env: o.env ?? process.env,
     mintApp: o.mintApp ?? ((dir) => new TokenMinter(dir).installationToken()),
     ghAuthToken: o.ghAuthToken ?? ghAuthTokenFromCli,
+    handoff: o.handoff === undefined ? handedToken() : o.handoff,
   });
 }
 
@@ -205,7 +209,7 @@ export async function resolvePostCredential(
   o: PrCredentialDeps = {},
 ): Promise<CredentialResolution> {
   if (postAs === null) return { ok: true, ...resolved };
-  const known = ["app", "gh", "env:GITHUB_TOKEN", "env:GH_TOKEN"];
+  const known = ["app", "handoff", "gh", "env:GITHUB_TOKEN", "env:GH_TOKEN"];
   if (!known.includes(postAs)) {
     return {
       ok: false,
@@ -218,6 +222,7 @@ export async function resolvePostCredential(
     env: postAs.startsWith("env:") ? { [postAs.slice(4)]: env[postAs.slice(4)] } : {},
     mintApp: o.mintApp ?? ((dir) => new TokenMinter(dir).installationToken()),
     ghAuthToken: postAs === "gh" ? (o.ghAuthToken ?? ghAuthTokenFromCli) : () => null,
+    handoff: postAs === "handoff" ? (o.handoff === undefined ? handedToken() : o.handoff) : null,
   });
   return r.ok
     ? r

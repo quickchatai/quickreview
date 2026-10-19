@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { takeHandoffToken } from "./ghcred.js";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import { daemonLoadLine } from "./eventloop.js";
 import {
@@ -1801,6 +1802,9 @@ async function cmdArchive(rest: readonly string[], json: boolean): Promise<numbe
 }
 
 export async function main(argv: string[]): Promise<void> {
+  // A GitHub token handed over as a file (src/ghcred.ts, D39) is read and
+  // unlinked here, before any verb can start a pi or bash child.
+  takeHandoffToken();
   const json = argv.includes("--json");
   argv = argv.filter((a) => a !== "--json");
   const [cmd, ...rest] = argv;

@@ -6,13 +6,110 @@
 // This module is that route's alone: the daemon's code never imports it
 // (tests/review-pr-target.test.ts fences who may).
 //
-// Order: the App if configured, then GITHUB_TOKEN / GH_TOKEN, then
-// `gh auth token`.
+// Order: the App if configured, then the token handed to a container as a
+// file (below), then GITHUB_TOKEN / GH_TOKEN, then `gh auth token`.
+//
+// The handoff (D39, amending R7): a token a container runs with is never env
+// and never argv. The caller (the host wrapper, or the Action) writes it to a
+// 0600 file in a fresh 0700 dir, bind-mounted at /run/qcr-in, and names the
+// file in QCR_GH_TOKEN_FILE. `takeHandoffToken` reads it ONCE at startup,
+// unlinks it, deletes the variable and keeps the token in this module's
+// memory only, all before any pi or bash child exists.
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export type CredentialSource = "app" | "env:GITHUB_TOKEN" | "env:GH_TOKEN" | "gh";
+export type CredentialSource = "app" | "handoff" | "env:GITHUB_TOKEN" | "env:GH_TOKEN" | "gh";
+
+/** The variable that names the handed-over token file. */
+export const HANDOFF_FILE_ENV = "QCR_GH_TOKEN_FILE";
+/** Where the container sees the handoff dir. */
+export const HANDOFF_MOUNT = "/run/qcr-in";
+
+let handed: string | null = null;
+
+/**
+ * Read the handed-over token file once and unlink it. Returns the token (also
+ * kept for `handedToken()`), or null when no file was named. Throws, leaving
+ * nothing in memory, when the file is named but unreadable, empty, or cannot
+ * be removed: a token that stays on disk beside a model's tools is refused,
+ * never used. The variable is deleted from `env` either way, so no child
+ * inherits the path.
+ */
+export function takeHandoffToken(
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  const file = env[HANDOFF_FILE_ENV];
+  delete env[HANDOFF_FILE_ENV];
+  if (file === undefined || file === "") return handed;
+  const fd = openSync(file, "r");
+  try {
+    // Unlink first, read from the open descriptor: the file is gone before
+    // its content is in memory, and a failed unlink reads nothing.
+    unlinkSync(file);
+    const token = readFileSync(fd, "utf8").trim();
+    if (!token) throw new Error("the GitHub token file is empty");
+    handed = token;
+  } finally {
+    closeSync(fd);
+  }
+  return handed;
+}
+
+/** The token `takeHandoffToken` read, or null. */
+export const handedToken = (): string | null => handed;
+
+/** Forget the handed-over token (tests; a long-lived host after its last use). */
+export function dropHandedToken(): void {
+  handed = null;
+}
+
+export interface StagedHandoff {
+  /** The host dir to bind-mount at HANDOFF_MOUNT (mode 0700). */
+  dir: string;
+  /** The value for QCR_GH_TOKEN_FILE inside the container. */
+  containerFile: string;
+  /** Remove the host dir; call on exit, whatever happened. */
+  remove: () => void;
+}
+
+/**
+ * The caller's half: write `token` to a 0600 file in a fresh 0700 dir. On
+ * Linux the dir is under $XDG_RUNTIME_DIR (a tmpfs); elsewhere (macOS) it
+ * comes from mkdtemp under $TMPDIR. The token is never put in env or argv.
+ */
+export function stageHandoffToken(
+  token: string,
+  env: Record<string, string | undefined> = process.env,
+  platform: NodeJS.Platform = process.platform,
+): StagedHandoff {
+  const runtime = env["XDG_RUNTIME_DIR"];
+  const base = platform === "linux" && runtime && runtime.startsWith("/") ? runtime : tmpdir();
+  mkdirSync(base, { recursive: true });
+  const dir = mkdtempSync(join(base, "qcr-in-")); // 0700
+  try {
+    writeFileSync(join(dir, "gh-token"), token, { mode: 0o600, flag: "wx" });
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  return {
+    dir,
+    containerFile: `${HANDOFF_MOUNT}/gh-token`,
+    remove: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
 
 export type CredentialResolution =
   { ok: true; source: CredentialSource; token: string } | { ok: false; error: string };
@@ -29,6 +126,8 @@ export interface CredentialDeps {
   mintApp: (secretsDir: string) => Promise<string>;
   /** The token `gh auth token` prints, or null when gh is absent or logged out. */
   ghAuthToken: () => string | null;
+  /** The token handed to this container as a file, if one was (`handedToken()`). */
+  handoff?: string | null;
 }
 
 /** The real `gh auth token`. */
@@ -61,6 +160,8 @@ export async function resolveGithubCredential(d: CredentialDeps): Promise<Creden
       ).slice(0, 200)}). `;
     }
   }
+  const given = d.handoff?.trim();
+  if (given) return { ok: true, source: "handoff", token: given };
   for (const name of ["GITHUB_TOKEN", "GH_TOKEN"] as const) {
     const v = d.env[name]?.trim();
     if (v) return { ok: true, source: `env:${name}`, token: v };

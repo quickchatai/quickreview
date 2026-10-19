@@ -142,12 +142,13 @@ export function reviewHelp(): string {
     "COMMENT, never an approval or a change request. Every comment says it came from qcr",
     "and carries the hidden finding markers, and findings already on the PR are skipped.",
     "It posts as the credential the PR was read with, or the source named by `post_as`",
-    "(app, gh, env:GITHUB_TOKEN, env:GH_TOKEN) in `.git/qcr-review.json`. The post goes",
+    "(app, handoff, gh, env:GITHUB_TOKEN, env:GH_TOKEN) in `.git/qcr-review.json`. The post goes",
     "through the mutation gate: with `dry_run = true` in the install's config the review is",
     "recorded under state/dryrun/ and nothing is sent.",
     "",
-    "A PR is read with the first GitHub credential found: the App if configured, then",
-    "GITHUB_TOKEN/GH_TOKEN, then `gh auth token` (run `gh auth login` to set that up).",
+    "A PR is read with the first GitHub credential found: the App if configured, then a",
+    "token handed to the container as a file, then GITHUB_TOKEN/GH_TOKEN, then `gh auth token`",
+    "(run `gh auth login` to set that up).",
     "",
     "A second run on an unchanged head spends nothing. After a push it reviews only",
     "the change since the last reviewed head and does not repeat findings that are",
@@ -313,7 +314,13 @@ export interface ReviewCliDeps {
 }
 
 const credentialLabel = (s: CredentialSource): string =>
-  s === "app" ? "the GitHub App" : s === "gh" ? "gh auth login" : s.slice("env:".length);
+  s === "app"
+    ? "the GitHub App"
+    : s === "handoff"
+      ? "the token handed to the container"
+      : s === "gh"
+        ? "gh auth login"
+        : s.slice("env:".length);
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 

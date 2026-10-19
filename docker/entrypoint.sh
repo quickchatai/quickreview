@@ -122,6 +122,27 @@ isolate_tools() {
 
 isolate_tools "$@"
 
+# ---- the token handoff (D39) ------------------------------------------------------
+
+# A GitHub token is never env or argv in this image. The caller bind-mounts a
+# 0700 dir at /run/qcr-in holding a 0600 file and names it in QCR_GH_TOKEN_FILE;
+# src/ghcred.ts reads and unlinks it as the first thing cli.js does, before any
+# pi or bash child exists, and drops the variable. This script never reads it.
+# What keeps the model's bash off the Node process that then holds the token:
+#   - the tools' uid (above) where the split is possible;
+#   - Yama kernel.yama.ptrace_scope >= 1, under which a child cannot ptrace-attach
+#     to its ancestor (host-wide: 1 on the owner's PC, unknown on Docker Desktop
+#     VMs and GitHub runners);
+#   - bash-guard's /proc environ/mem/cmdline deny and its program allowlist,
+#     where the guard runs.
+# --cap-drop ALL and no-new-privileges are hardening, not that block: same-uid
+# access to /proc/<ppid>/mem needs no CAP_SYS_PTRACE. So the value is recorded
+# at start (QCR_DEBUG=1), for the CI smoke and the macOS checklist to compare.
+debug_ptrace_scope() {
+  [ "${QCR_DEBUG:-}" = 1 ] || return 0
+  say "debug: kernel.yama.ptrace_scope=$(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo absent)"
+}
+
 # ---- the pi pin ----------------------------------------------------------------
 
 # shellcheck source=../scripts/install-locator.sh
@@ -527,6 +548,7 @@ case "$mode" in
 esac
 
 assert_state_writable
+debug_ptrace_scope
 
 case "$mode" in
   cli)
