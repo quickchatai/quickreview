@@ -3636,6 +3636,35 @@ export class StateStore {
     );
   }
 
+  /**
+   * A worker-hosted command whose worker is gone, handed back to `pending` so a
+   * fresh worker resumes it under the SAME id (the JSONL's marker is what makes
+   * the worker continue instead of sending the order again; D22/D23). Only the
+   * WorkerSupervisor calls it. `ownerToken` fences the CAS to the spawn that held
+   * the row; the daemon's boot passes null, since no owner survives a restart.
+   * Spends one `recovery_attempts`, the bound the supervisor reads. A round's
+   * command is only handed back while its round still runs.
+   */
+  requeueWorkerCommand(id: string, ownerToken: string | null, nextCheckAt: string): boolean {
+    const ts = this.ts();
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
+            SET status='pending', owner_token=NULL, updated_at=@ts, next_check_at=@next,
+                unknown_checks=0, started_at=NULL, failure=NULL,
+                recovery_attempts=recovery_attempts+1
+          WHERE id=@id AND status='running'
+            AND (@owner IS NULL OR owner_token=@owner)
+            AND (kind != 'round' OR EXISTS (
+              SELECT 1 FROM rounds r
+               WHERE r.pr = session_commands.pr AND r.round_no = session_commands.round_no
+                 AND r.status = 'running'))`,
+        )
+        .run({ id, owner: ownerToken, ts, next: nextCheckAt }).changes === 1
+    );
+  }
+
   // ---- supervisor liveness ----------------------------------------------
 
   supervisorLease(name: string): SupervisorLeaseRow | undefined {

@@ -103,31 +103,40 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       why: "the READ-ONLY reader over the archived MEMORY.md that the import above consumes. Same driver, same reason.",
     },
     // The worker-daemon IPC (P7.2a, D23): a neutral module. The worker (P8.3) reads protocol, capability,
-    // client and workerspec; the daemon's end (server.ts) is the WorkerSupervisor's (P8.5), and launcher.ts
-    // is the pane-side entry point tmux runs for a takeover or debug pi (P8.13). Delete each entry with the
-    // first production import.
+    // client and workerspec; the daemon's end (server.ts) is started by the WorkerSupervisor's host (P8.6),
+    // and launcher.ts is the pane-side entry point tmux runs for a takeover or debug pi (P8.13). Delete each
+    // entry with the first production import.
     ...["server.ts", "launcher.ts"].map((f) => ({
       file: `src/ipc/${f}`,
       why:
         "the worker-daemon IPC (P7.2a): the socket server and the pane-side launcher. Read only by " +
-        "tests/ipc.test.ts until P8.5 (WorkerSupervisor) starts the socket; launcher.ts is the pane-side " +
-        "entry point tmux runs for a takeover or debug pi.",
+        "tests/ipc.test.ts until P8.6 wires the WorkerSupervisor (P8.5) and starts the socket; launcher.ts " +
+        "is the pane-side entry point tmux runs for a takeover or debug pi.",
     })),
-    // The daemon's post ops (P7.2). The daemon does not start the worker socket yet: that is the
-    // WorkerSupervisor's (P8.5), which mints the commands the socket authenticates, and P8.7 wires these
-    // ops onto it. Delete each entry with the first production import.
+    // The WorkerSupervisor (P8.5) and its lease: built and tested, wired into the daemon by P8.6 (the worker
+    // host under SessionHooks). Delete each entry with that import.
+    ...["workersupervisor.ts", "workerlease.ts"].map((f) => ({
+      file: `src/${f}`,
+      why:
+        "the daemon's end of the per-round worker (P8.5): spawn, heartbeat, deadlines, lease, restart. Read " +
+        "only by tests/worker-supervisor.test.ts and tests/worker-lease.test.ts until P8.6 (WorkerSessionHost) " +
+        "constructs it in the daemon. Delete this entry with that import.",
+    })),
+    // The daemon's post ops (P7.2). The daemon does not start the worker socket yet: P8.6 wires the
+    // WorkerSupervisor (P8.5) that mints the commands the socket authenticates, and P8.7 registers these
+    // ops on it. Delete each entry with the first production import.
     {
       file: "src/postops.ts",
       why:
         "the daemon's post.review / post.approval / post.reply ops on the worker socket (P7.2). Read only " +
-        "by tests/post-ops.test.ts until the WorkerSupervisor (P8.5) starts the socket and P8.7 registers " +
-        "these ops on it. Delete this entry with that import.",
+        "by tests/post-ops.test.ts until P8.6 wires the WorkerSupervisor (P8.5) and starts the socket and " +
+        "P8.7 registers these ops on it. Delete this entry with that import.",
     },
     {
       file: "src/posting-journal.ts",
       why:
         "the TypeScript writer of a round's receipt and outbox job (P7.2), the twin of " +
-        "scripts/posting-receipt.py. Read only by src/postops.ts, which is itself unreached until P8.5/P8.7. " +
+        "scripts/posting-receipt.py. Read only by src/postops.ts, which is itself unreached until P8.6/P8.7. " +
         "Delete this entry with that import.",
     },
     {
@@ -157,7 +166,7 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       // because the memory image's entrypoint (docker/memory/entrypoint.sh)
       // execs it out of dist/; `loginrefresh/main.ts` because the daemon
       // spawns it by path (src/loginrefresh/supervisor.ts, P8.22); `botworker.ts`
-      // because the WorkerSupervisor spawns it by path for each round (P8.5).
+      // because the WorkerSupervisor (src/workersupervisor.ts, P8.5) spawns it by path for each round.
       const roots = [
         "src/wire.ts",
         "src/cli.ts",
