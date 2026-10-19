@@ -72,8 +72,8 @@ export function resolveTaskDir(
   | { error: string } {
   const real = realDir(resolve(realRoot, input));
   if (!real) return { error: `${input}: no such directory` };
-  // Resolved too: on the VM `<sandbox>/state` is a SYMLINK to the state volume
-  // (entrypoint.sh.j2), so a resolved task dir lives under its target.
+  // Resolved too: on the legacy VM `<sandbox>/state` was a SYMLINK to the state volume
+  // (its entrypoint), and the plain Docker path still links it, so a resolved task dir lives under its target.
   const state = realDir(join(realRoot, "state")) ?? join(realRoot, "state");
   // A PR session (QCR_PR, set by the daemon — the session cannot set its own
   // environment) launches only its own PR's rounds.

@@ -406,6 +406,36 @@ const ALLOWLIST: AllowlistEntry[] = [
       "pins that the user docs name the release image under the registry namespace (ghcr.io/quickchatai/...)",
   },
   {
+    path: "deploy/ansible/group_vars/all.yml",
+    tokens: ["quickchat"],
+    reason:
+      "release_image / release_memory_image: the images the VM route pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...), the ones release.yml pushes",
+  },
+  {
+    path: "deploy/ansible/playbook.yml",
+    tokens: ["quickchat"],
+    reason:
+      "its header comment names the release image the VM route pulls (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "deploy/ansible/README.md",
+    tokens: ["quickchat"],
+    reason:
+      "the VM route's docs name the release and memory images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "scripts/deploy.sh",
+    tokens: ["quickchat"],
+    reason:
+      "release <version> names the daemon and memory images it has the VM pull, under the publishing org's registry namespace (ghcr.io/quickchatai/...), as a fallback for an inventory that sets none",
+  },
+  {
+    path: "tests/deploy.test.ts",
+    tokens: ["quickchat"],
+    reason:
+      "pins the image names deploy.sh release plans and the VM-layout probe reads (ghcr.io/quickchatai/...)",
+  },
+  {
     path: "tests/tui-companion.test.ts",
     tokens: ["quickchat"],
     reason:

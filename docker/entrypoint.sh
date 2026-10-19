@@ -59,9 +59,10 @@
 # a later login under yet another uid can still rewrite it.
 #
 # The daemon is the live bot and keeps the guard, the `examples/subagent`
-# check and the reviewer context stub it has always had
-# (docker/daemon/entrypoint.sh, deploy/ansible/templates/entrypoint.sh.j2),
-# unchanged until the lens tool replaces the subagent example (P9.4).
+# check and the reviewer context stub it has always had (the VM's retired
+# deploy/ansible/templates/entrypoint.sh.j2 and docker/daemon/entrypoint.sh),
+# unchanged until the lens tool replaces the subagent example (P9.4). The VM
+# runs this image since the P7.10 cutover: deploy/ansible/playbook.yml.
 #
 # Every mode that reaches pi needs a writable <root>/state and a writable HOME
 # (pi settings are merged under ~/.pi on every cli start, `version` included):

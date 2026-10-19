@@ -407,7 +407,7 @@ describe("the boot build (executed)", () => {
     });
   }
 
-  it.each(["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"])(
+  it.each(["docker/daemon/entrypoint.sh"])(
     "reinstalls native dependencies when Node ABI changes in %s",
     (path) => {
       setup();
@@ -745,7 +745,7 @@ describe("entrypoint secrets link", () => {
   // A configured [github] secrets_dir names a HOST path; the container sees
   // the secrets only at the mount. The entrypoint names the mount to the
   // locator, which the daemon, its sessions and mint-token.sh all inherit.
-  for (const rel of ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"]) {
+  for (const rel of ["docker/daemon/entrypoint.sh"]) {
     it(`${rel} names the secrets mount to the install locator`, () => {
       const text = readFileSync(resolve(root, rel), "utf8");
       expect(text).toMatch(/^export QCR_SECRETS_MOUNT="\$SECRETS"$/m);
@@ -756,7 +756,7 @@ describe("entrypoint secrets link", () => {
     expect(compose).toMatch(/^\s+QCR_SECRETS_MOUNT: \/opt\/quickreview\/secrets$/m);
     expect(compose).toContain(":/opt/quickreview/secrets:ro");
   });
-  for (const rel of ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"]) {
+  for (const rel of ["docker/daemon/entrypoint.sh"]) {
     it(`${rel} links <config home>/secrets to the mount, where the locator looks`, async () => {
       const { locateSecrets } = await import("../src/install.js");
       const text = readFileSync(resolve(root, rel), "utf8");
@@ -796,7 +796,7 @@ describe("entrypoint secrets link", () => {
 });
 
 it.each(
-  ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"].flatMap((file) =>
+  ["docker/daemon/entrypoint.sh"].flatMap((file) =>
     ["state", "memory"].map((migration) => [file, migration] as const),
   ),
 )("preserves migrated %s / %s after a failed copy", (file, migration) => {
@@ -834,7 +834,7 @@ it.each(
   }
 });
 
-it.each(["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"])(
+it.each(["docker/daemon/entrypoint.sh"])(
   "continues reviewer boot without opening partial memory after optional migration fails: %s",
   (file) => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-optional-memory-failure-"));

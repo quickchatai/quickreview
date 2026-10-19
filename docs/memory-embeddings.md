@@ -188,7 +188,7 @@ each checked:
 |---|---|
 | `config.toml [openviking]` | `local_embedder_file` / `_url` / `_sha256` (and `_port` / `_threads`) |
 | `deploy/ansible/group_vars/all.yml` | `openviking_local_embedder_model` / `_dimension` / `_dir` / `_url` / `_sha256` / `_port` / `_threads` |
-| the image | a layer in `Dockerfile.j2` (interpolating the group_vars) and in `docker/daemon/Dockerfile` (its `LOCAL_EMBEDDER_*` ARG defaults) |
+| the image | the memory image, `docker/memory/Dockerfile` (its `LOCAL_EMBEDDER_*` ARG defaults, which a VM-side build is fed from the group_vars), and `docker/daemon/Dockerfile` (the plain Docker path) |
 
 The model layer downloads the file **at build time** and fails the build
 unless `sha256sum -c` passes, so a running container never fetches a model

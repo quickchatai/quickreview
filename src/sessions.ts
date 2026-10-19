@@ -125,7 +125,7 @@ const ARCHIVED_UNKNOWN_LOG_KEYS = 10_000;
  * The target is the pi HOME's own `.gitconfig` — the same file git would have
  * found by searching — and not `/dev/null`: the container's entrypoint writes
  * a `credential.helper` shell snippet into the global config
- * (deploy/ansible/templates/entrypoint.sh.j2), and `fetch` is deliberately on
+ * (docker/entrypoint.sh, daemon mode), and `fetch` is deliberately on
  * the session's read-verb allowlist because refusing it would wedge a review.
  * The pinned file's own `credential.helper` is still read and still invoked
  * (`git credential fill`), so nothing legitimate changes.

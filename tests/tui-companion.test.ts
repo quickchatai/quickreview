@@ -1115,30 +1115,30 @@ describe("companion image", () => {
   // reviewer session should be able to reach for mid-round, so the VM image
   // deliberately does NOT get this registration.
   it("keeps the skill set off the VM image — reviewer passes are leaves", () => {
-    const vmEntrypoint = readFileSync(
-      resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"),
-      "utf8",
-    );
+    // The release image's entrypoint serves the VM (daemon mode) and the
+    // companion; the companion's registration is its own function, which the
+    // daemon mode never calls.
+    const image = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
+    const vmEntrypoint = image.slice(0, image.indexOf("provision_companion_settings() {"));
     expect(vmEntrypoint).not.toMatch(/settings\.skills/);
     expect(vmEntrypoint).not.toMatch(/enableSkillCommands/);
     expect(vmEntrypoint).not.toMatch(/\.claude\/skills/);
+    const daemon = image.slice(
+      image.indexOf("mode_daemon() {"),
+      image.indexOf("provision_companion_settings() {"),
+    );
+    expect(daemon).not.toContain("provision_companion_settings");
   });
 
   it("registers no memory extension in the entrypoint either", () => {
     expect(entrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
     expect(entrypoint).not.toMatch(/extensions\.push/);
     // The VM image carries no such registration either.
-    const vmEntrypoint = readFileSync(
-      resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"),
-      "utf8",
-    );
+    const vmEntrypoint = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
     expect(vmEntrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
-    const vmDockerfile = readFileSync(
-      resolve(root, "deploy/ansible/templates/Dockerfile.j2"),
-      "utf8",
-    );
-    expect(vmDockerfile).not.toMatch(/npm install -g \{\{ pi_memory_package \}\}/);
-    expect(vmDockerfile).not.toMatch(/npm install -g \{\{ qmd_npm_package \}\}/);
+    const vmDockerfile = readFileSync(resolve(root, "docker/Dockerfile"), "utf8");
+    expect(vmDockerfile).not.toMatch(/npm install -g \S*pi-memory/);
+    expect(vmDockerfile).not.toMatch(/npm install -g \S*qmd/);
     const gv = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
     expect(gv).not.toMatch(/^pi_memory_version:/m);
     expect(gv).not.toMatch(/^qmd_version:/m);

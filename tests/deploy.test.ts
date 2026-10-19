@@ -3,7 +3,7 @@
 // real ansible asset, and no live deploy ever runs: every case stops at
 // --dry-run or at a refusal.
 import { afterEach, describe, expect, it } from "vitest";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -63,7 +63,16 @@ interface LocalEmbedderPin {
   threads: string;
 }
 
-const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
+/** The scratch tree's memory shape. A shipping mode needs the sidecar (the
+ * release image has no OpenViking), so by default both sides say `remote`;
+ * `legacy` is the older, endpoint-less spelling the `verify`-side cases keep. */
+interface Shape {
+  legacy?: boolean;
+  /** `[tui] remote_sandbox_root`; null leaves the key out. */
+  tuiRoot?: string | null;
+}
+
+const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins, shape: Shape = {}) =>
   [
     "---",
     "sandbox_root: /opt/quickreview",
@@ -74,7 +83,11 @@ const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
     `pi_version: "${piVersion}"`,
     ...(ov?.version === undefined ? [] : [`openviking_version: "${ov.version}"`]),
     ...(ov?.llama === undefined ? [] : [`llama_cpp_python_version: "${ov.llama}"`]),
-    ...(ov?.endpoint === undefined ? [] : [`openviking_endpoint: "${ov.endpoint}"`]),
+    ...(ov?.endpoint !== undefined
+      ? [`openviking_endpoint: "${ov.endpoint}"`]
+      : shape.legacy
+        ? []
+        : ['openviking_endpoint: "remote"']),
     ...(ov?.memoryContainer === undefined ? [] : [`memory_container_name: ${ov.memoryContainer}`]),
     ...(ov?.port === undefined ? [] : [`openviking_port: ${ov.port}`]),
     ...(ov?.auth === undefined ? [] : [`openviking_auth_mode: "${ov.auth}"`]),
@@ -107,7 +120,7 @@ const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
     "",
   ].join("\n");
 
-const CONFIG = (piVersion: string, ov?: OvPins) =>
+const CONFIG = (piVersion: string, ov?: OvPins, shape: Shape = {}) =>
   [
     "dry_run = true",
     "",
@@ -115,46 +128,61 @@ const CONFIG = (piVersion: string, ov?: OvPins) =>
     'package = "@earendil-works/pi-coding-agent"',
     `version = "${piVersion}"`,
     'session_dir = "state/pi-sessions"',
-    ...(ov === undefined
+    ...(shape.tuiRoot === null
+      ? []
+      : ["", "[tui]", `remote_sandbox_root = "${shape.tuiRoot ?? "/opt/qcr"}"`]),
+    ...(ov === undefined && shape.legacy
       ? []
       : [
           "",
           "[openviking]",
-          ...(ov.version === undefined ? [] : [`version = "${ov.version}"`]),
-          ...(ov.llama === undefined ? [] : [`llama_cpp_python_version = "${ov.llama}"`]),
-          ...(ov.endpoint === undefined ? [] : [`endpoint = "${ov.endpoint}"`]),
-          ...(ov.host === undefined ? [] : [`host = "${ov.host}"`]),
-          ...(ov.port === undefined ? [] : [`port = ${ov.port}`]),
-          ...(ov.extension === undefined ? [] : [`extension_commit = "${ov.extension}"`]),
-          ...(ov.auth === undefined ? [] : [`auth_mode = "${ov.auth}"`]),
-          ...(ov.rootKeyFile === undefined ? [] : [`root_key_file = "${ov.rootKeyFile}"`]),
-          ...(ov.reviewerKeyFile === undefined
-            ? []
-            : [`reviewer_key_file = "${ov.reviewerKeyFile}"`]),
-          ...(ov.users === undefined
+          ...(ov?.endpoint === undefined && !shape.legacy ? ['endpoint = "remote"'] : []),
+          ...(ov?.host === undefined && !shape.legacy && (ov?.endpoint ?? "remote") === "remote"
+            ? ['host = "quickreview-memory"']
+            : []),
+          ...(ov === undefined
             ? []
             : [
-                `provision_users = [${ov.users
-                  .split(",")
-                  .map((u) => `"${u}"`)
-                  .join(", ")}]`,
+                ...(ov.version === undefined ? [] : [`version = "${ov.version}"`]),
+                ...(ov.llama === undefined ? [] : [`llama_cpp_python_version = "${ov.llama}"`]),
+                ...(ov.endpoint === undefined ? [] : [`endpoint = "${ov.endpoint}"`]),
+                ...(ov.host === undefined ? [] : [`host = "${ov.host}"`]),
+                ...(ov.port === undefined ? [] : [`port = ${ov.port}`]),
+                ...(ov.extension === undefined ? [] : [`extension_commit = "${ov.extension}"`]),
+                ...(ov.auth === undefined ? [] : [`auth_mode = "${ov.auth}"`]),
+                ...(ov.rootKeyFile === undefined ? [] : [`root_key_file = "${ov.rootKeyFile}"`]),
+                ...(ov.reviewerKeyFile === undefined
+                  ? []
+                  : [`reviewer_key_file = "${ov.reviewerKeyFile}"`]),
+                ...(ov.users === undefined
+                  ? []
+                  : [
+                      `provision_users = [${ov.users
+                        .split(",")
+                        .map((u) => `"${u}"`)
+                        .join(", ")}]`,
+                    ]),
+                ...(ov.embedProvider === undefined
+                  ? []
+                  : [`embedding_provider = "${ov.embedProvider}"`]),
+                ...(ov.embedModel === undefined ? [] : [`embedding_model = "${ov.embedModel}"`]),
+                ...(ov.embedDimension === undefined
+                  ? []
+                  : [`embedding_dimension = ${ov.embedDimension}`]),
+                ...(ov.embedKeyFile === undefined
+                  ? []
+                  : [`embedding_key_file = "${ov.embedKeyFile}"`]),
+                ...(ov.localEmbedder === undefined
+                  ? []
+                  : [
+                      `local_embedder_file = "${ov.localEmbedder.dir}/${ov.localEmbedder.model}.gguf"`,
+                      `local_embedder_url = "${ov.localEmbedder.url}"`,
+                      `local_embedder_sha256 = "${ov.localEmbedder.sha}"`,
+                      `local_embedder_port = ${ov.localEmbedder.port}`,
+                      `local_embedder_threads = ${ov.localEmbedder.threads}`,
+                    ]),
+                ...(ov.configLines ?? []),
               ]),
-          ...(ov.embedProvider === undefined ? [] : [`embedding_provider = "${ov.embedProvider}"`]),
-          ...(ov.embedModel === undefined ? [] : [`embedding_model = "${ov.embedModel}"`]),
-          ...(ov.embedDimension === undefined
-            ? []
-            : [`embedding_dimension = ${ov.embedDimension}`]),
-          ...(ov.embedKeyFile === undefined ? [] : [`embedding_key_file = "${ov.embedKeyFile}"`]),
-          ...(ov.localEmbedder === undefined
-            ? []
-            : [
-                `local_embedder_file = "${ov.localEmbedder.dir}/${ov.localEmbedder.model}.gguf"`,
-                `local_embedder_url = "${ov.localEmbedder.url}"`,
-                `local_embedder_sha256 = "${ov.localEmbedder.sha}"`,
-                `local_embedder_port = ${ov.localEmbedder.port}`,
-                `local_embedder_threads = ${ov.localEmbedder.threads}`,
-              ]),
-          ...(ov.configLines ?? []),
         ]),
     "",
   ].join("\n");
@@ -194,6 +222,8 @@ function makeScratch(opts: {
   configAt?: "home" | "checkout";
   /** Files in the config home, path relative to it → contents. */
   homeFiles?: Record<string, string>;
+  /** The memory shape and `[tui]` root the scratch config carries. */
+  shape?: Shape;
 }): Env {
   const dir = mkdtempSync(join(tmpdir(), "qcr-deploy-"));
   const sandbox = join(dir, "sandbox");
@@ -210,7 +240,7 @@ function makeScratch(opts: {
 
   writeFileSync(
     join(opts.configAt === "checkout" ? sandbox : home, "config.toml"),
-    CONFIG(opts.configPi, opts.configOv) +
+    CONFIG(opts.configPi, opts.configOv, opts.shape) +
       (opts.github === undefined
         ? ""
         : [
@@ -233,7 +263,12 @@ function makeScratch(opts: {
   }
   writeFileSync(
     join(ansible, "group_vars", "all.yml"),
-    GROUP_VARS(opts.groupVarsPi, opts.sandboxSrc ?? true, opts.groupVarsOv ?? opts.configOv),
+    GROUP_VARS(
+      opts.groupVarsPi,
+      opts.sandboxSrc ?? true,
+      opts.groupVarsOv ?? opts.configOv,
+      opts.shape,
+    ),
   );
   if (opts.upstreamCommit !== undefined) {
     mkdirSync(join(sandbox, "extensions", "vendor", "openviking-pi"), { recursive: true });
@@ -1216,6 +1251,346 @@ describe("deploy.sh — OpenViking pin drift", () => {
   });
 });
 
+// ---- release <version>, dev, and the cutover --------------------------------
+//
+// The VM runs the release image in daemon mode. `release` pulls it, `sync`/`dev`
+// builds the same Dockerfile on the VM, and the first run on the legacy image is
+// a guarded cutover. Everything here is a dry run, a refusal, or a stub
+// ansible-playbook/ssh on PATH: nothing leaves the machine.
+describe("deploy.sh — release <version>, dev and the cutover", () => {
+  const scratch = (extra: Partial<Parameters<typeof makeScratch>[0]> = {}): Env =>
+    makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", ...extra });
+
+  const git = (e: Env, ...args: string[]): string =>
+    execFileSync("git", ["-C", e.sandbox, ...args], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
+    }).trim();
+
+  /** Run for real against stub ansible-playbook and ssh; returns what the stubs saw. */
+  function realRun(
+    e: Env,
+    args: string[],
+    extraEnv: Record<string, string> = {},
+  ): { code: number; stderr: string; ansible: string } {
+    const bin = join(e.dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    const seen = join(e.dir, "ansible-argv");
+    writeFileSync(
+      join(bin, "ansible-playbook"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" > '${seen}'\nexit 7\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(join(bin, "ssh"), "#!/bin/sh\nexit 255\n", { mode: 0o755 });
+    const r = run(e, args, { PATH: `${bin}:${process.env.PATH ?? ""}`, ...extraEnv });
+    return {
+      code: r.code,
+      stderr: r.stderr,
+      ansible: existsSync(seen) ? readFileSync(seen, "utf8") : "",
+    };
+  }
+
+  it("plans a release: the images by version, no rsync, no build, the legacy image kept for the way back", () => {
+    env = scratch();
+    const r = run(env, ["--dry-run", "release", "0.1.0"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("plan — deploy.sh release 0.1.0");
+    expect(r.stdout).toContain("ghcr.io/quickchatai/quickreview:0.1.0");
+    expect(r.stdout).toContain("ghcr.io/quickchatai/quickreview-memory:0.1.0");
+    expect(r.stdout).toContain("no rsync, no build");
+    expect(r.stdout).toContain("the legacy image quickreview-sandbox:v1 stays on the VM");
+    const vars = planVars(r.stdout);
+    expect(vars.image_source).toBe("release");
+    expect(vars.release_version).toBe("0.1.0");
+    expect(vars.force_restart).toBe("true");
+    expect(vars.config_home_src).toBe(realpathSync(env.home));
+    // A release ships no checkout and builds nothing from it.
+    expect(vars.sandbox_src).toBeUndefined();
+    expect(vars.build_sha).toBeUndefined();
+    expect(r.stdout).toContain("--start-at-task Image source and version");
+    // The CI stamp, not a local one, is what the deploy tab will read.
+    expect(r.stdout).toContain("BUILD_SHA is CI's");
+  });
+
+  it("plans a dev build: the checkout is synced and built on the VM, stamped with HEAD", () => {
+    env = scratch();
+    const head = git(env, "rev-parse", "--short", "HEAD");
+    for (const verb of ["sync", "dev", undefined]) {
+      const r = run(env, ["--dry-run", ...(verb ? [verb] : [])]);
+      expect(r.code, r.stderr).toBe(0);
+      // `dev` is the new name of the same run.
+      expect(r.stdout).toContain("plan — deploy.sh sync");
+      const vars = planVars(r.stdout);
+      expect(vars.image_source).toBe("dev");
+      expect(vars.build_sha).toBe(head);
+      expect(vars.sandbox_src).toBe(env.sandbox);
+      expect(vars.rebuild_image).toBeUndefined();
+      expect(r.stdout).toContain("build docker/Dockerfile on the VM");
+      expect(r.stdout).toContain(`image quickreview-sandbox:dev, built on the VM at ${head}`);
+    }
+    const rebuild = planVars(run(env, ["--dry-run", "rebuild"]).stdout);
+    expect(rebuild.image_source).toBe("dev");
+    expect(rebuild.rebuild_image).toBe("true");
+    expect(rebuild.build_sha).toBe(head);
+  });
+
+  it("builds nothing on the controller: the old npm build and the BUILD_SHA marker are gone", () => {
+    const text = readFileSync(deploySh, "utf8");
+    expect(text).not.toContain("npm run build");
+    expect(text).not.toContain("verify-dist");
+    expect(text).not.toMatch(/> "\$SANDBOX_DIR\/BUILD_SHA"/);
+  });
+
+  it("REFUSES a release with no version, a non-version, or latest — it names an image tag", () => {
+    env = scratch();
+    for (const [args, msg] of [
+      [["release"], "release needs a version"],
+      [["release", "latest"], "there is no latest tag"],
+      [["release", "v0.1.0"], "is not X.Y.Z"],
+      [["release", "0.1"], "is not X.Y.Z"],
+      [["release", "0.1.0; rm"], "is not X.Y.Z"],
+      [["release", "0.1.0", "sync"], "two modes given"],
+    ] as const) {
+      const r = run(env, ["--dry-run", ...args]);
+      expect(r.code, args.join(" ")).toBe(1);
+      expect(r.stderr, args.join(" ")).toContain(msg);
+    }
+    expect(run(env, ["--dry-run", "release", "0.1.0-rc.1"]).code).toBe(0);
+  });
+
+  it("REFUSES a config whose [tui] remote_sandbox_root is not the image's app root, for every shipping mode", () => {
+    for (const shape of [{ tuiRoot: null }, { tuiRoot: "/opt/quickreview/sandbox" }]) {
+      env = scratch({ shape });
+      for (const args of [["sync"], ["rebuild"], ["release", "0.1.0"]]) {
+        const r = run(env, ["--dry-run", ...args]);
+        expect(r.code, `${JSON.stringify(shape)} ${args.join(" ")}`).toBe(1);
+        expect(r.stderr).toContain("[tui] remote_sandbox_root mismatch");
+        expect(r.stderr).toContain('remote_sandbox_root = "/opt/qcr"');
+      }
+      // verify ships nothing and reads whatever the locator found.
+      expect(run(env, ["--dry-run", "verify"]).code).toBe(0);
+      rmSync(env.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("verify checks the image stamp, pi's bash-guard registration and the reviewer stub, in the container", () => {
+    env = scratch();
+    const r = run(env, ["--dry-run", "verify"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(
+      "sudo docker exec quickreview-sandbox grep -q bash-guard /home/qcr/.pi/agent/settings.json",
+    );
+    expect(r.stdout).toContain("/opt/qcr/AGENTS.override.md");
+    expect(r.stdout).toContain("= 444");
+    expect(r.stdout).toContain('{{index .Config.Labels "qcr.build-sha"}}');
+    // Every in-container path is the image's app root, none the legacy one.
+    expect(r.stdout).not.toContain("/opt/quickreview/sandbox");
+  });
+
+  it("verify FAILS when pi's settings do not register bash-guard or the stub is not the 12-line one — checked after the heartbeat", () => {
+    const STARTED = "2026-10-03T09:55:40.000000000Z";
+    const NOW = "2026-10-03T09:57:00Z";
+    const fresh = `printf '%s\\n%s\\n%s' '${STARTED}' '${NOW}' '{"written_at":"2026-10-03T09:56:50.000Z","prs":[]}'`;
+    const probes = {
+      QC_HEARTBEAT_PROBE_CMD: fresh,
+      QC_HEARTBEAT_WAIT_S: "0",
+      QC_MEMORY_PROBE_CMD: "true",
+      QC_MEMORY_SEARCH_CMD: "true",
+    };
+    for (const [needle, shown] of [
+      ["bash-guard", "grep -q bash-guard"],
+      ["AGENTS.override.md", "AGENTS.override.md"],
+    ] as const) {
+      env = scratch();
+      const bin = join(env.dir, "bin");
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "ssh"),
+        `#!/bin/sh\ncase "$*" in *'${needle}'*) echo missing >&2; exit 1 ;; esac\necho stub-ok\n`,
+        { mode: 0o755 },
+      );
+      const r = run(env, ["verify"], { PATH: `${bin}:${process.env.PATH ?? ""}`, ...probes });
+      expect(r.code, needle).toBe(1);
+      expect(r.stderr).toContain("CHECK FAILED");
+      expect(r.stderr).toContain(shown);
+      // The heartbeat check ran first and passed; only the boot-time check failed.
+      expect(r.stderr).not.toContain("no fresh heartbeat");
+      rmSync(env.dir, { recursive: true, force: true });
+    }
+    env = scratch();
+    const bin = join(env.dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "ssh"), "#!/bin/sh\necho stub-ok\n", { mode: 0o755 });
+    expect(run(env, ["verify"], { PATH: `${bin}:${process.env.PATH ?? ""}`, ...probes }).code).toBe(
+      0,
+    );
+  });
+
+  describe("the cutover guard", () => {
+    const LEGACY = (sha: string) =>
+      `printf 'image=quickreview-sandbox:v1\\nlabel=\\nmarker=%s\\n' '${sha}'`;
+    const RELEASE = (sha: string) =>
+      `printf 'image=ghcr.io/quickchatai/quickreview:0.1.0\\nlabel=%s\\nmarker=\\n' '${sha}'`;
+
+    /** A scratch tree with an old commit (what the VM runs) and a newer one. */
+    function history(): { env: Env; old: string; landed: string; head: string } {
+      const e = scratch();
+      const old = git(e, "rev-parse", "HEAD");
+      writeFileSync(join(e.sandbox, "landed.txt"), "P1.8\n");
+      git(e, "add", "-A");
+      git(e, "commit", "-qm", "the phase 1 deploy");
+      const landed = git(e, "rev-parse", "HEAD");
+      writeFileSync(join(e.sandbox, "later.txt"), "later\n");
+      git(e, "add", "-A");
+      git(e, "commit", "-qm", "head");
+      return { env: e, old, landed, head: git(e, "rev-parse", "HEAD") };
+    }
+
+    it("the plan names the VM's current image, and a release-layout VM needs no guard", () => {
+      const h = history();
+      env = h.env;
+      const r = run(env, ["--dry-run", "release", "0.1.0"], {
+        QC_VM_LAYOUT_CMD: RELEASE(h.landed),
+      });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain(
+        `vm now       ghcr.io/quickchatai/quickreview:0.1.0 (layout release, build ${h.landed})`,
+      );
+      expect(r.stdout).not.toContain("  cutover  ");
+      const real = realRun(env, ["release", "0.1.0"], { QC_VM_LAYOUT_CMD: RELEASE(h.landed) });
+      // Past the guard: the (stub) ansible-playbook ran, with the release vars.
+      expect(real.ansible).toContain("-e image_source=release -e release_version=0.1.0");
+    });
+
+    it("refuses the first run on the legacy image unless the prerequisite deploys are named", () => {
+      const h = history();
+      env = h.env;
+      const probe = { QC_VM_LAYOUT_CMD: LEGACY(h.landed) };
+      const plan = run(env, ["--dry-run", "release", "0.1.0"], probe);
+      // A plan only says so: it exists to be reviewed.
+      expect(plan.code).toBe(0);
+      expect(plan.stdout).toContain("layout legacy");
+      expect(plan.stdout).toContain("REFUSED in a real run");
+      const real = realRun(env, ["release", "0.1.0"], probe);
+      expect(real.code).toBe(1);
+      expect(real.stderr).toContain("refusing the cutover");
+      expect(real.stderr).toContain("QCR_CUTOVER_REQUIRES");
+      expect(real.ansible).toBe("");
+    });
+
+    it("reads the VM's image through the real ssh command (quoting included), legacy and release", () => {
+      const h = history();
+      env = h.env;
+      const bin = join(env.dir, "probe-bin");
+      mkdirSync(bin);
+      // ssh runs the remote command locally; sudo is transparent; docker answers
+      // like a daemon would for the two inspect formats the probe asks.
+      writeFileSync(
+        join(bin, "ssh"),
+        '#!/bin/sh\nfor a; do last="$a"; done\nexec sh -c "$last"\n',
+        { mode: 0o755 },
+      );
+      writeFileSync(join(bin, "sudo"), '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
+      writeFileSync(
+        join(bin, "docker"),
+        [
+          "#!/bin/sh",
+          '[ "$1" = inspect ] || exit 1',
+          'case "$3" in',
+          "  *Labels*) printf '%s\\n' \"$STUB_LABEL\" ;;",
+          "  *) printf '%s\\n' \"$STUB_IMAGE\" ;;",
+          "esac",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const base = { PATH: `${bin}:${process.env.PATH ?? ""}` };
+      const legacy = run(env, ["--dry-run", "release", "0.1.0"], {
+        ...base,
+        STUB_IMAGE: "quickreview-sandbox:v1",
+        STUB_LABEL: "",
+      });
+      expect(legacy.stdout).toContain("vm now       quickreview-sandbox:v1 (layout legacy");
+      const release = run(env, ["--dry-run", "release", "0.1.0"], {
+        ...base,
+        STUB_IMAGE: "ghcr.io/quickchatai/quickreview:0.1.0",
+        STUB_LABEL: h.landed,
+      });
+      expect(release.stdout).toContain(
+        `vm now       ghcr.io/quickchatai/quickreview:0.1.0 (layout release, build ${h.landed})`,
+      );
+      // No container at all (a fresh VM): not a cutover, nothing to compare.
+      const none = run(env, ["--dry-run", "release", "0.1.0"], {
+        ...base,
+        STUB_IMAGE: "",
+        STUB_LABEL: "",
+      });
+      expect(none.stdout).toContain("(layout none");
+      expect(none.stdout).not.toContain("  cutover  ");
+    });
+
+    it("lets the cutover run once every named commit is an ancestor of the VM's deployed build", () => {
+      const h = history();
+      env = h.env;
+      const probe = {
+        QC_VM_LAYOUT_CMD: LEGACY(h.head),
+        QCR_CUTOVER_REQUIRES: `${h.old} ${h.landed}`,
+      };
+      const plan = run(env, ["--dry-run", "release", "0.1.0"], probe);
+      expect(plan.stdout).toContain("first run on the legacy image");
+      const real = realRun(env, ["release", "0.1.0"], probe);
+      expect(real.stderr).not.toContain("refusing the cutover");
+      expect(real.ansible).toContain("image_source=release");
+    });
+
+    it("refuses when a named commit is NOT in what the VM runs — it would arrive inside the image", () => {
+      const h = history();
+      env = h.env;
+      const real = realRun(env, ["release", "0.1.0"], {
+        QC_VM_LAYOUT_CMD: LEGACY(h.old),
+        QCR_CUTOVER_REQUIRES: h.landed,
+      });
+      expect(real.code).toBe(1);
+      expect(real.stderr).toContain(`does not contain ${h.landed}`);
+      expect(real.ansible).toBe("");
+    });
+
+    it("refuses a deployed build it cannot compare, a requirement that is no commit, and an unreadable VM", () => {
+      const h = history();
+      env = h.env;
+      const unknown = realRun(env, ["sync"], {
+        QC_VM_LAYOUT_CMD: LEGACY("deadbee"),
+        QCR_CUTOVER_REQUIRES: h.old,
+      });
+      expect(unknown.stderr).toContain("is not a commit of this checkout");
+      const bogus = realRun(env, ["sync"], {
+        QC_VM_LAYOUT_CMD: LEGACY(h.head),
+        QCR_CUTOVER_REQUIRES: "nonesuch",
+      });
+      expect(bogus.stderr).toContain("QCR_CUTOVER_REQUIRES names 'nonesuch'");
+      // The stub ssh fails: the layout is unknown, and the cutover cannot be ruled out.
+      const dark = realRun(env, ["rebuild"]);
+      expect(dark.code).toBe(1);
+      expect(dark.stderr).toContain("could not be read");
+      expect(dark.ansible).toBe("");
+    });
+
+    it("the same guard covers a dev build: pre-release fixes do not skip it", () => {
+      const h = history();
+      env = h.env;
+      const real = realRun(env, ["dev"], { QC_VM_LAYOUT_CMD: LEGACY(h.head) });
+      expect(real.code).toBe(1);
+      expect(real.stderr).toContain("refusing the cutover");
+    });
+  });
+});
+
 // ---- drain advisory — WARN only, never a refusal ----------------------------
 //
 // The heartbeat read is seamed through QC_STATUS_JSON_CMD so no test ever
@@ -1640,35 +2015,91 @@ describe("deploy — the stale-image outage", () => {
 
   const playbook = () => readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
 
-  it("a sync starts at the stale-image guard, which precedes the rsync", () => {
+  it("a sync or release starts at the image source check, which precedes the pull, the rsync and the build", () => {
     const text = playbook();
     const start = /SYNC_START_TASK="([^"]+)"/.exec(readFileSync(deploySh, "utf8"))![1]!;
-    expect(start).toBe("Build context fingerprint");
-    const guard = text.indexOf(`- name: ${start}`);
-    const fail = text.indexOf('- name: "Fail: the image predates this build context');
+    expect(start).toBe("Image source and version");
+    const check = text.indexOf(`- name: ${start}`);
+    const pull = text.indexOf("- name: Pull the release images");
     const rsync = text.indexOf("- name: Sync the local sandbox working copy");
-    expect(guard).toBeGreaterThan(0);
-    expect(fail).toBeGreaterThan(guard);
-    expect(rsync).toBeGreaterThan(fail);
+    const build = text.indexOf("- name: Build the sandbox image (dev)");
+    expect(check).toBeGreaterThan(0);
+    expect(pull).toBeGreaterThan(check);
+    expect(rsync).toBeGreaterThan(check);
+    expect(build).toBeGreaterThan(rsync);
+    // Nothing the run needs lives before the start task: host setup and the
+    // secrets copies are the only tasks a sync skips.
+    for (const skipped of ["Directory layout", "Secrets into place", "Base packages"]) {
+      expect(text.indexOf(`- name: ${skipped}`), skipped).toBeLessThan(check);
+    }
   });
 
-  it("the guard refuses only outside a rebuild, on an existing image, on a stamp mismatch (a missing stamp included)", () => {
+  it("the source check refuses a non-version, a dev run with no commit, and a local memory endpoint", () => {
     const text = playbook();
-    const at = text.indexOf('- name: "Fail: the image predates this build context');
-    const block = text.slice(at, text.indexOf("- name:", at + 1));
-    expect(block).toContain("not (rebuild_image | default(false) | bool)");
-    expect(block).toContain("image_on_vm.images | length > 0");
-    expect(block).toContain(".get('qcr.build-context') != build_context_sha");
+    const at = text.indexOf("- name: Image source and version");
+    const block = text.slice(at, text.indexOf("\n    - name:", at + 1));
+    expect(block).toContain("image_source in ['release', 'dev']");
+    expect(block).toContain("openviking_endpoint == 'remote'");
+    expect(block).toContain("is match('^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?$')");
+    expect(block).toContain("is match('^[0-9a-f]{7,40}$')");
   });
 
-  it("the image build stamps the same fingerprint the guard compares", () => {
+  it("refuses an image that carries no CI or build stamp, so the legacy image never gets the new container shape", () => {
     const text = playbook();
-    const at = text.indexOf("- name: Build the sandbox image");
-    const block = text.slice(at, text.indexOf("- name:", at + 1));
-    expect(block).toContain('qcr.build-context: "{{ build_context_sha }}"');
-    // …and the fingerprint covers both baked-in files.
-    expect(text).toContain("lookup('ansible.builtin.template', 'Dockerfile.j2')");
-    expect(text).toContain("lookup('ansible.builtin.template', 'entrypoint.sh.j2')");
+    const at = text.indexOf('- name: "Fail: that is not a release-layout image"');
+    const block = text.slice(at, text.indexOf("\n    - name:", at + 1));
+    expect(block).toContain("daemon_image_info.images | length == 1");
+    expect(block).toContain("get('qcr.build-sha', '') not in ['', 'unstamped']");
+    // A dev build must carry the commit it was just built from.
+    expect(block).toContain("get('qcr.build-sha') == build_sha");
+    // …and it sits before anything is stopped, started or recreated.
+    expect(at).toBeGreaterThan(text.indexOf("- name: Build the sandbox image (dev)"));
+    expect(at).toBeLessThan(text.indexOf("- name: Memory sidecar network"));
+    expect(at).toBeLessThan(text.indexOf("- name: Run the sandbox container"));
+  });
+
+  it("the dev build stamps its commit and passes the pins the Dockerfile mirrors, from group_vars", () => {
+    const text = playbook();
+    const at = text.indexOf("- name: Build the sandbox image (dev)");
+    const block = text.slice(at, text.indexOf("\n    - name:", at + 1));
+    expect(block).toContain("docker/Dockerfile");
+    expect(block).toContain('DOCKER_BUILDKIT: "1"');
+    expect(block).toContain("when: image_source == 'dev'");
+    const dockerfile = readFileSync(join(root, "docker", "Dockerfile"), "utf8");
+    for (const [arg, key] of [
+      ["NODE_MAJOR", "node_major"],
+      ["TMUX_VERSION", "tmux_version"],
+      ["PI_PACKAGE", "pi_npm_package"],
+      ["PI_VERSION", "pi_version"],
+      ["BUILD_SHA", "build_sha"],
+    ] as const) {
+      expect(block, arg).toContain(`"${arg}={{ ${key} }}"`);
+      expect(dockerfile, `ARG ${arg}`).toMatch(new RegExp(`^ARG ${arg}\\b`, "m"));
+    }
+    // The dockerignore that narrows the context is BuildKit's, so BuildKit is checked first.
+    expect(text.indexOf("- name: BuildKit available for the dev build?")).toBeLessThan(at);
+  });
+
+  it("the release pull names no tag but the version, and a failed pull stops before anything changes", () => {
+    const text = playbook();
+    const at = text.indexOf("- name: Pull the release images");
+    const block = text.slice(at, text.indexOf("\n    - name:", at + 1));
+    expect(block).toContain("when: image_source == 'release'");
+    expect(block).toContain("source: pull");
+    expect(block).toContain("rescue:");
+    expect(block).toContain("docker login ghcr.io");
+    const refs = text.slice(
+      text.indexOf("- name: Image references"),
+      text.indexOf("- name: Pull the release images"),
+    );
+    expect(refs).toContain("release_image ~ ':' ~ release_version");
+    expect(refs).toContain("release_memory_image ~ ':' ~ release_version");
+    // The rsync is a dev-only step: a release ships no checkout.
+    const sync = text.slice(
+      text.indexOf("- name: Sync the local sandbox working copy"),
+      text.indexOf("- name: Ship the install's config home"),
+    );
+    expect(sync).toContain("when: image_source == 'dev' and sandbox_src is defined");
   });
 
   it("host setup refreshes the apt cache only when a base package is missing", () => {
@@ -1771,10 +2202,15 @@ describe("deployment identity and Slack token configuration", () => {
     expect(planVars(res.stdout).slack_bot_token_file).toBe("slack_bot_token");
   });
 
-  it("builds the image user with the UID used for provisioned ownership", () => {
-    // MUTATION: replace {{ container_uid }} with 1001 in useradd; this fails.
-    const dockerfile = readFileSync(join(root, "deploy/ansible/templates/Dockerfile.j2"), "utf8");
-    expect(dockerfile).toContain("useradd --create-home --uid {{ container_uid }} review");
+  it("runs the container as the UID used for provisioned ownership", () => {
+    // MUTATION: replace {{ container_uid }} with 1001 in the container's user; this fails.
+    // The release image has no passwd entry for the user it runs as: the caller picks it.
+    const text = readFileSync(join(root, "deploy/ansible/playbook.yml"), "utf8");
+    const at = text.indexOf("- name: Run the sandbox container");
+    const block = text.slice(at);
+    expect(block).toContain('user: "{{ container_uid }}:{{ container_uid }}"');
+    // …and it is the uid the secrets and the mounted directories are given to.
+    expect(text).toContain('owner: "{{ container_uid }}"');
   });
 });
 
@@ -1853,13 +2289,16 @@ describe("deploy — the memory sidecar", () => {
       const r = run(env, ["--dry-run", "sync"]);
       expect(r.code).toBe(0);
       expect(r.stdout).toMatch(
-        /containers\s+quickreview-sandbox \(daemon\) \+ quickreview-memory \(memory sidecar/,
+        /containers\s+quickreview-sandbox \(daemon, image quickreview-sandbox:dev, built on the VM at [0-9a-f]+\) \+ quickreview-memory \(memory sidecar/,
       );
       expect(r.stdout).toContain("port 1933 unpublished");
       expect(r.stdout).toContain("endpoint remote (config.toml == ansible)");
       expect(r.stdout).toContain("checksum-verified ONCE");
       expect(r.stdout).toContain("never wiped");
-      expect(r.stdout).toContain('to "local", then deploy.sh sync');
+      // The way back is no longer a flag: it is the legacy image and the old playbook.
+      expect(r.stdout).toContain(
+        "rollback     the legacy image quickreview-sandbox:v1 stays on the VM",
+      );
     });
 
     it("lists the sidecar's own post-deploy checks: running, /ready, and a search from the daemon's container", () => {
@@ -1871,28 +2310,41 @@ describe("deploy — the memory sidecar", () => {
         "(polled) sudo docker exec quickreview-memory curl -fsS http://127.0.0.1:1933/ready",
       );
       expect(r.stdout).toContain(
-        "(polled) sudo docker exec quickreview-sandbox node /opt/quickreview/sandbox/scripts/memory-search-check.mjs --base http://quickreview-memory:1933 --key-file /opt/quickreview/secrets/openviking_reviewer_key",
+        "(polled) sudo docker exec quickreview-sandbox node /opt/qcr/scripts/memory-search-check.mjs --base http://quickreview-memory:1933 --key-file /opt/quickreview/secrets/openviking_reviewer_key",
       );
     });
 
-    it("endpoint local plans ONE container and no sidecar check", () => {
+    it("endpoint local plans ONE container and no sidecar check in verify, which ships nothing", () => {
       env = scratch(OV_LOCAL);
-      const r = run(env, ["--dry-run", "sync"]);
+      const r = run(env, ["--dry-run", "verify"]);
       expect(r.code).toBe(0);
       expect(r.stdout).toMatch(/containers\s+quickreview-sandbox only \(endpoint local/);
       expect(r.stdout).not.toContain("quickreview-memory");
       expect(r.stdout).not.toContain("memory-search-check");
     });
 
-    it("a config and a group_vars that predate the sidecar read as local, and agree", () => {
+    it("every shipping mode REFUSES endpoint local: the release image carries no OpenViking", () => {
+      env = scratch(OV_LOCAL);
+      for (const args of [["sync"], ["rebuild"], ["release", "0.1.0"]]) {
+        const r = run(env, ["--dry-run", ...args]);
+        expect(r.code, args.join(" ")).toBe(1);
+        expect(r.stderr).toContain("the release image carries no OpenViking");
+        expect(r.stderr).toContain('endpoint to "remote"');
+      }
+    });
+
+    it("a config and a group_vars that predate the sidecar read as local, and agree (verify only)", () => {
       env = makeScratch({
         configPi: "0.84.1",
         groupVarsPi: "0.84.1",
-        configOv: { version: "0.4.15", llama: "0.3.35" },
+        configOv: { version: "0.4.15", llama: "0.3.35", endpoint: undefined },
+        shape: { legacy: true },
       });
-      const r = run(env, ["--dry-run"]);
+      const r = run(env, ["--dry-run", "verify"]);
       expect(r.code).toBe(0);
       expect(r.stdout).toMatch(/containers\s+quickreview-sandbox only/);
+      // …and shipping them is refused, not read as the sidecar.
+      expect(run(env, ["--dry-run", "sync"]).code).toBe(1);
     });
 
     it("honours a renamed sidecar (group_vars memory_container_name) in the checks", () => {
@@ -1928,6 +2380,7 @@ describe("deploy — the memory sidecar", () => {
         configPi: "0.84.1",
         groupVarsPi: "0.84.1",
         groupVarsOv: OV_REMOTE,
+        shape: { legacy: true },
       });
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(1);
@@ -2074,14 +2527,13 @@ describe("deploy — the memory sidecar", () => {
     };
 
     it("carries every sidecar task in a sync: after the start-at task, before the daemon's container", () => {
-      const start = at("- name: Build context fingerprint");
+      const start = at("- name: Image source and version");
       const daemon = at("- name: Run the sandbox container");
       for (const task of [
         "- name: Memory sidecar network",
         "- name: Seed the sidecar's store from the daemon's (first flip only)",
         "- name: Build the memory sidecar image",
         "- name: Run the memory sidecar",
-        "- name: Memory sidecar stopped (openviking_endpoint = local)",
       ]) {
         const i = at(task);
         expect(i, task).toBeGreaterThan(start);
@@ -2089,15 +2541,13 @@ describe("deploy — the memory sidecar", () => {
       }
     });
 
-    it("starts the sidecar before the daemon boots against it, and stops it on the way back to local", () => {
+    it("starts the sidecar before the daemon boots against it; the playbook has no way back to local", () => {
       expect(at("- name: Run the memory sidecar")).toBeLessThan(
         at("- name: Run the sandbox container"),
       );
-      const stopped = playbook.slice(
-        at("- name: Memory sidecar stopped (openviking_endpoint = local)"),
-      );
-      expect(stopped).toMatch(/state: stopped/);
-      expect(stopped).toMatch(/when: openviking_endpoint != 'remote'/);
+      // The release image cannot supervise OpenViking: the way back is the legacy
+      // image and the old playbook, so no task stops the sidecar here.
+      expect(playbook).not.toContain("Memory sidecar stopped");
     });
 
     it("copies the store once, verifies it by checksum, marks it, and only then", () => {
@@ -2136,7 +2586,7 @@ describe("deploy — the memory sidecar", () => {
       );
       // Nothing anywhere in the sidecar tasks removes anything.
       const all = playbook.slice(
-        at("- name: Check the memory endpoint knob"),
+        at("- name: Memory sidecar network"),
         at("- name: Run the sandbox container"),
       );
       expect(all).not.toMatch(
@@ -2173,7 +2623,7 @@ describe("deploy — the memory sidecar", () => {
     it("publishes NO port for the sidecar, mounts secrets and config read-only, and caps it", () => {
       const block = playbook.slice(
         at("- name: Run the memory sidecar"),
-        at("- name: Memory sidecar stopped (openviking_endpoint = local)"),
+        at("- name: Run the sandbox container"),
       );
       expect(block).not.toMatch(/published_ports\s*:/);
       expect(block).toContain('"{{ sandbox_root }}/secrets:/opt/quickreview/secrets:ro"');
@@ -2190,7 +2640,7 @@ describe("deploy — the memory sidecar", () => {
     it("passes the sidecar entrypoint exactly the knobs it reads, from the daemon's group_vars", () => {
       const block = playbook.slice(
         at("- name: Run the memory sidecar"),
-        at("- name: Memory sidecar stopped (openviking_endpoint = local)"),
+        at("- name: Run the sandbox container"),
       );
       const entrypoint = readFileSync(join(root, "docker", "memory", "entrypoint.sh"), "utf8");
       const passed = [...block.matchAll(/^\s+(QCR_OPENVIKING_[A-Z0-9_]+):/gm)].map((m) => m[1]!);
@@ -2215,13 +2665,10 @@ describe("deploy — the memory sidecar", () => {
       }
     });
 
-    it("joins the daemon to the sidecar's network only under remote, keeps its published webhook port, and tells its entrypoint", () => {
+    it("joins the daemon to the sidecar's network and keeps its published webhook port", () => {
       const daemon = playbook.slice(at("- name: Run the sandbox container"));
-      expect(daemon).toContain(
-        "networks: \"{{ [{'name': memory_network}] if openviking_endpoint == 'remote' else omit }}\"",
-      );
+      expect(daemon).toMatch(/networks:\s*\n\s+- name: "\{\{ memory_network \}\}"/);
       expect(daemon).toContain('"127.0.0.1:{{ webhook_port }}:{{ webhook_port }}"');
-      expect(daemon).toContain('QCR_OPENVIKING_ENDPOINT: "{{ openviking_endpoint }}"');
     });
 
     it("restarts the sidecar on a rebuild or a changed config home, not on every sync", () => {
@@ -2248,6 +2695,12 @@ describe("deploy — the memory sidecar", () => {
         "memory_state_dir",
         "memory_container_cpus",
         "memory_container_memory",
+        "image_source",
+        "dev_image_tag",
+        "release_image",
+        "release_memory_image",
+        "app_root",
+        "legacy_sandbox_root",
       ]) {
         expect(groupVars, key).toMatch(new RegExp(`^${key}:`, "m"));
         expect(playbook, key).toContain(key);
@@ -2260,107 +2713,104 @@ describe("deploy — the memory sidecar", () => {
     });
   });
 
-  describe("the daemon's entrypoint", () => {
-    const tpl = readFileSync(
-      join(root, "deploy", "ansible", "templates", "entrypoint.sh.j2"),
-      "utf8",
-    );
+  describe("the daemon container (the release image in daemon mode)", () => {
+    const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8")
+      .split("\n")
+      .filter((l) => !/^\s*#/.test(l))
+      .join("\n");
+    const daemon = playbook.slice(playbook.indexOf("- name: Run the sandbox container"));
+    const block = daemon.slice(0, daemon.indexOf("\n    - name:", 10));
+    const volumes = [...block.matchAll(/^\s+- "([^"]+:[^"]+)"$/gm)].map((m) => m[1]!);
 
-    /** Run the real template's memory block (from the endpoint switch to the pi
-     * extension merge) under bash with `node` stubbed: what it would have started. */
-    function bootMemory(endpoint: string | undefined): {
-      status: number | null;
-      stdout: string;
-      stderr: string;
-      calls: string[];
-      home: string;
-      workspace: boolean;
-    } {
-      const dir = mkdtempSync(join(tmpdir(), "qcr-ep-boot-"));
-      try {
-        const home = join(dir, "home");
-        const ovHome = join(dir, "store");
-        const sandbox = join(dir, "sandbox");
-        mkdirSync(home);
-        mkdirSync(join(sandbox, "scripts"), { recursive: true });
-        for (const f of ["openviking-reembed.mjs", "openviking-provision.mjs"]) {
-          writeFileSync(join(sandbox, "scripts", f), "");
-        }
-        const start = tpl.indexOf("OV_SIDECAR=0");
-        const end = tpl.indexOf("# pi extensions", start);
-        const fragment = tpl
-          .slice(start, end)
-          .replace("{{ openviking_home }}", ovHome)
-          .replace(/\{\{[^}]*\}\}/g, "X");
-        const calls = join(dir, "calls");
-        const script =
-          `set -euo pipefail\nSANDBOX='${sandbox}'\nSECRETS='${dir}/secrets'\n` +
-          `node() { printf 'node %s\\n' "$*" >> '${calls}'; cat >/dev/null || true; }\n` +
-          fragment;
-        const r = spawnSync("bash", ["-c", script], {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: home,
-            ...(endpoint === undefined ? {} : { QCR_OPENVIKING_ENDPOINT: endpoint }),
-          },
-        });
-        return {
-          status: r.status,
-          stdout: r.stdout,
-          stderr: r.stderr,
-          calls: existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [],
-          home,
-          workspace: existsSync(join(ovHome, "workspace")),
-        };
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    }
-
-    it("skips every memory boot step under remote — decided at run time, so the flip is a sync", () => {
-      const r = bootMemory("remote");
-      expect(r.status, r.stderr).toBe(0);
-      expect(r.stderr).toContain("endpoint = remote — the memory sidecar owns the store");
-      // No render, no migration check, no provisioning: not one node process.
-      expect(r.calls).toEqual([]);
-      // …and the old store directory is neither created into nor linked.
-      expect(r.workspace).toBe(false);
+    it("keeps the container's name, port, caps and restart policy, and runs the image's daemon mode", () => {
+      expect(block).toContain('name: "{{ image_name }}"');
+      expect(block).toContain('image: "{{ daemon_image }}"');
+      expect(block).toContain('command: ["daemon"]');
+      expect(block).toContain("restart_policy: unless-stopped");
+      expect(block).toContain("init: true");
+      expect(block).toContain('cpus: "{{ container_cpus | float }}"');
+      expect(block).toContain('memory: "{{ container_memory }}"');
+      expect(block).toContain('"127.0.0.1:{{ webhook_port }}:{{ webhook_port }}"');
+      // Joined to the sidecar's network: that is how [openviking] host resolves.
+      expect(block).toMatch(/networks:\s*\n\s+- name: "\{\{ memory_network \}\}"/);
     });
 
-    it("runs the whole memory boot under local, and when the endpoint is unset (a container from before the sidecar)", () => {
-      for (const endpoint of ["local", undefined]) {
-        const r = bootMemory(endpoint);
-        expect(r.status, r.stderr).toBe(0);
-        expect(r.stderr).not.toContain("memory sidecar owns the store");
-        expect(r.workspace).toBe(true);
-        // ov.conf render, the embedder migration check, then provisioning.
-        expect(r.calls.length).toBe(3);
-        expect(r.calls[1]).toContain("openviking-reembed.mjs prepare");
-        expect(r.calls[2]).toContain("openviking-provision.mjs");
+    it("mounts the SAME host directories the legacy container used: state, pihome, secrets, config-home", () => {
+      expect(volumes).toContain("{{ sandbox_root }}/state:{{ app_root }}/state");
+      expect(volumes).toContain("{{ sandbox_root }}/pihome:/home/qcr/.pi");
+      expect(volumes).toContain("{{ sandbox_root }}/secrets:/opt/quickreview/secrets:ro");
+      expect(volumes).toContain("{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro");
+    });
+
+    it("mounts every runtime directory of the old sandbox root into the read-only app root, and creates each first", () => {
+      const dirs = ["wt", "archive", "commands", "digest", "inject", "verdict"];
+      for (const d of dirs) {
+        expect(volumes, d).toContain(`{{ sandbox_root }}/sandbox/${d}:{{ app_root }}/${d}`);
+      }
+      expect(volumes).toContain(
+        "{{ sandbox_root }}/sandbox/{{ base_clone_dir | mandatory }}:{{ app_root }}/{{ base_clone_dir }}",
+      );
+      // Docker would create a missing source as root: each is made for the container user first.
+      const made = playbook.slice(
+        playbook.indexOf("- name: Runtime directories the container mounts"),
+        playbook.indexOf("- name: Memory sidecar network"),
+      );
+      for (const d of [...dirs, "{{ base_clone_dir | mandatory }}"]) {
+        expect(made.includes(`- ${d}\n`) || made.includes(`- "${d}"`), d).toBe(true);
+      }
+      expect(made).toContain('owner: "{{ container_uid }}"');
+      // Every runtime dir the deploy script reserves is either mounted or not a runtime dir of the image.
+      const reserved = /BASE_CLONE_RESERVED=\(([^)]*)\)/.exec(readFileSync(deploySh, "utf8"))![1]!;
+      for (const d of dirs) expect(reserved.split(/\s+/), d).toContain(d);
+    });
+
+    it("mounts the worktrees and the base clone a second time at their legacy path, so recorded absolute paths resolve", () => {
+      expect(volumes).toContain("{{ sandbox_root }}/sandbox/wt:{{ legacy_sandbox_root }}/wt");
+      expect(volumes).toContain(
+        "{{ sandbox_root }}/sandbox/{{ base_clone_dir | mandatory }}:{{ legacy_sandbox_root }}/{{ base_clone_dir }}",
+      );
+      const groupVars = parseYaml(
+        readFileSync(join(root, "deploy", "ansible", "group_vars", "all.yml"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(groupVars.legacy_sandbox_root).toBe("/opt/quickreview/sandbox");
+      expect(groupVars.app_root).toBe("/opt/qcr");
+    });
+
+    it("never mounts the app root itself, the docker socket or a home directory: the tree is the image's", () => {
+      expect(block).not.toMatch(
+        /docker\.sock|\/\.ssh|:\{\{ app_root \}\}["/]?$|sandbox:\{\{ app_root/m,
+      );
+      for (const v of volumes) {
+        expect(v.split(":")[1], v).not.toBe("{{ app_root }}");
       }
     });
 
-    it("never reuses the flag that tells the daemon to run memory-less", () => {
-      const start = tpl.indexOf("OV_SIDECAR=0");
-      const switchBlock = tpl.slice(start, tpl.indexOf("# OpenViking — the context store"));
-      expect(switchBlock).not.toMatch(/export\s+QCR_OPENVIKING_BOOT_DISABLED/);
-    });
-
-    it("renders to valid bash under both endpoints", () => {
-      const rendered = tpl.replace(/\{\{[^}]*\}\}/g, "X").replace(/\{%[^%]*%\}/g, "");
-      const dir = mkdtempSync(join(tmpdir(), "qcr-ep-"));
-      try {
-        const file = join(dir, "entrypoint.sh");
-        writeFileSync(file, rendered);
-        execFileSync("bash", ["-n", file]);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
+    it("sets only the env the image's daemon mode reads, and no OpenViking endpoint knob", () => {
+      const env = block.slice(block.indexOf("env:"));
+      for (const name of ["TZ", "QC_REVIEW_PORT", "QC_BIND_HOST", "QCR_CONFIG"]) {
+        expect(env, name).toContain(`${name}:`);
       }
+      // The legacy entrypoint read this to skip its memory boot; the image has no such boot.
+      expect(env).not.toContain("QCR_OPENVIKING_ENDPOINT");
+      // Nothing in env is a token (rule 3, D39).
+      expect(env).not.toMatch(/TOKEN|SECRET|PASSWORD|PEM/);
     });
 
-    it("an unset endpoint is local: a container started before the sidecar keeps its old boot", () => {
-      expect(tpl).toContain("${QCR_OPENVIKING_ENDPOINT:-local}");
+    it("the image's daemon mode does what the legacy entrypoint did: bash-guard merge (FATAL when absent), the stub, the agents link", () => {
+      const entry = readFileSync(join(root, "docker", "entrypoint.sh"), "utf8");
+      const daemonMode = entry.slice(
+        entry.indexOf("mode_daemon() {"),
+        entry.indexOf("mode_companion() {"),
+      );
+      expect(daemonMode).toContain('QCR_PI_REQUIRE_EXT="$APP/extensions/bash-guard.ts"');
+      expect(entry).toContain('console.error("FATAL: pi extension missing: " + p)');
+      expect(daemonMode).toContain("assert_subagent_example");
+      expect(daemonMode).toContain('QCR_PI_AGENTS_TARGET="$STATE/agents"');
+      expect(daemonMode).toContain("AGENTS.override.md");
+      expect(daemonMode).toContain('exec node "$APP/dist/src/wire.js"');
+      // The image bakes the stub, read-only, in the engine's cwd.
+      const dockerfile = readFileSync(join(root, "docker", "Dockerfile"), "utf8");
+      expect(dockerfile).toContain("COPY deploy/reviewer/AGENTS.override.md ./AGENTS.override.md");
     });
   });
 });

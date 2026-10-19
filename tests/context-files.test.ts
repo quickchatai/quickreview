@@ -105,11 +105,6 @@ function checkoutFs(dir: string, exclude: readonly string[] = []): ContextFs {
   return fs;
 }
 
-/** The `--exclude=/NAME` entries of the deploy sync: names an rsync leaves out. */
-function syncExcludes(playbook: string): string[] {
-  return [...playbook.matchAll(/"--exclude=\/([^"/{]+)"/g)].map((m) => m[1]!);
-}
-
 /**
  * What an entrypoint installs into the sandbox root: the `install` lines that
  * copy a file named AGENTS.override.md (or any context file) out of the deploy
@@ -467,44 +462,43 @@ beforeAll(async () => {
   before = { root: snapshot(ROOT), repo: snapshot(reviewedRepo) };
 
   const playbook = read("deploy/ansible/playbook.yml");
-  const vmEntrypoint = read("deploy/ansible/templates/entrypoint.sh.j2");
   const daemonEntrypoint = read("docker/daemon/entrypoint.sh");
-  const vmDockerfile = read("deploy/ansible/templates/Dockerfile.j2");
   const daemonDockerfile = read("docker/daemon/Dockerfile");
   const benchDockerfile = read("bench/aacr/Dockerfile");
   const companionDockerfile = read("docker/companion/Dockerfile");
   const releaseDockerfile = read("docker/Dockerfile");
 
-  // -- the tmux-hosted bot: VM and docker daemon ---------------------------------
+  // -- the tmux-hosted bot: the VM (the release image in daemon mode) and docker daemon
   const tmuxRun = await captureTmuxSession();
   ran.push("vm-bot", "daemon-bot");
-  const vmRoot = mustMatch(vmEntrypoint, /^SANDBOX=(\S+)/m, "VM entrypoint SANDBOX");
+  const vmRoot = [...releaseDockerfile.matchAll(/^WORKDIR\s+(\S+)/gm)].pop()![1]!;
   const daemonRoot = mustMatch(daemonEntrypoint, /^SANDBOX=(\S+)/m, "daemon entrypoint SANDBOX");
-  expect(mustMatch(vmDockerfile, /^WORKDIR\s+(\S+)/m, "VM WORKDIR")).toBe(vmRoot);
+  expect(vmRoot).toBe("/opt/qcr");
   expect(mustMatch(daemonDockerfile, /^WORKDIR\s+(\S+)/m, "daemon WORKDIR")).toBe(daemonRoot);
   // tmux panes inherit the tmux server's environment, so what the pane's pi
   // sees as HOME / agentDir is the container's, unless the spawn pushes one.
   expect(tmuxRun.paneEnv.filter((e) => /^(HOME|PI_CODING_AGENT_DIR)=/.test(e))).toEqual([]);
-  // The VM's container user is created with its default home; the pihome
-  // volume is mounted over its .pi (playbook.yml: …/pihome:/home/review/.pi).
-  const vmHome = mustMatch(
-    vmDockerfile,
-    /useradd\s+--create-home[^\n]*\s(\w+)\s*$/m,
-    "VM container user",
-  );
-  const vmAgentDir = join("/home", vmHome, ".pi", "agent");
-  expect(playbook).toContain(`:/home/${vmHome}/.pi"`);
+  // The VM container runs as any uid under the image's fixed HOME; the pihome
+  // volume is mounted over its .pi (playbook.yml: …/pihome:/home/qcr/.pi).
+  const vmHome = mustMatch(releaseDockerfile, /^ENV HOME=(\S+)/m, "release HOME");
+  const vmAgentDir = join(vmHome, ".pi", "agent");
   const daemonAgentDir = join(
     mustMatch(daemonDockerfile, /^ENV HOME=(\S+)/m, "daemon HOME"),
     ".pi",
     "agent",
   );
+  expect(playbook).toContain(`:${vmHome}/.pi"`);
+  // The playbook's app root is the image's: the cwd the engine and the tmux
+  // panes start from.
+  expect(
+    mustMatch(read("deploy/ansible/group_vars/all.yml"), /^app_root:\s*(\S+)/m, "app_root"),
+  ).toBe(vmRoot);
 
-  // The VM tree is the synced checkout (minus the sync's excludes) plus what
-  // the entrypoint installs; the daemon's is the operator's own checkout plus
-  // whatever ITS entrypoint installs (nothing, by design).
-  const vmFs = checkoutFs(vmRoot, syncExcludes(playbook));
-  for (const [src, dest] of entrypointInstalls(vmEntrypoint)) vmFs.set(join(vmRoot, dest), src);
+  // The VM tree is the release image (the stub COPY'd into the app dir, which
+  // the daemon mode only re-installs if it is missing); the daemon's is the
+  // operator's own checkout plus whatever ITS entrypoint installs (nothing, by
+  // design).
+  const vmFs = dockerfileContext(releaseDockerfile);
   const daemonFs = checkoutFs(daemonRoot);
   for (const [src, dest] of entrypointInstalls(daemonEntrypoint))
     daemonFs.set(join(daemonRoot, dest), src);
@@ -513,7 +507,7 @@ beforeAll(async () => {
     cwd: at(tmuxRun.cwd, tmuxRun.root, vmRoot),
     agentDir: vmAgentDir,
     argv: tmuxRun.argv,
-    note: "The reviewer stub, installed at boot into the VM's synced deploy tree (entrypoint.sh.j2) and kept by the sync's anchored exclude.",
+    note: "The reviewer stub, baked into the release image's app dir (docker/Dockerfile) and re-installed 0444 by the daemon mode if missing; the dev build's rsync keeps its own anchored exclude.",
   });
   observed.routes["vm-lens"] = { ...observed.routes["vm-bot"], note: LENS_NOTE };
   observed.routes["daemon-bot"] = row(daemonFs, {
@@ -875,18 +869,24 @@ describe("the one install site", () => {
       .sort();
   }
 
-  it("only the VM entrypoint installs a context file, and only into the synced deploy tree", () => {
-    const installers = mentions().filter((f) => entrypointInstalls(read(f)).length > 0);
-    expect(installers).toEqual(["deploy/ansible/templates/entrypoint.sh.j2"]);
-    expect(entrypointInstalls(read(installers[0]!))).toEqual([[STUB, "AGENTS.override.md"]]);
+  it("only the release image's daemon mode installs a context file, and only into its own baked app root", () => {
+    // No entrypoint installs into a synced sandbox root any more (the VM's
+    // used to, into the rsynced deploy tree): the stub is in the image.
+    expect(mentions().filter((f) => entrypointInstalls(read(f)).length > 0)).toEqual([]);
+    const ep = read("docker/entrypoint.sh");
+    expect(ep.match(/^\s*install\b[^\n]*"\$stub"/gm)).toHaveLength(1);
+    expect(ep).toContain(
+      'stub_src="$APP/deploy/reviewer/AGENTS.override.md" stub="$APP/AGENTS.override.md"',
+    );
+    // The playbook's dev rsync keeps whatever the image's app dir stands for out of the delete.
+    expect(read("deploy/ansible/playbook.yml")).toContain('- "--exclude=/AGENTS.override.md"');
   });
 
   it("every other file naming it copies it into an image, excludes it, reserves it or guards it", () => {
     expect(mentions()).toEqual([
       "bench/aacr/Dockerfile", // COPY into the image's cwd
       "bench/aacr/bench.sh", // the build's allowlist
-      "deploy/ansible/playbook.yml", // the sync's anchored exclude
-      "deploy/ansible/templates/entrypoint.sh.j2", // the install
+      "deploy/ansible/playbook.yml", // the dev rsync's anchored exclude
       "docker/Dockerfile", // COPY into the release image's cwd
       "docker/Dockerfile.dockerignore", // the build's allowlist
       "docker/daemon/entrypoint.sh", // a comment: it refuses to install
