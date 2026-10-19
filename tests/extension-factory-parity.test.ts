@@ -8,6 +8,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Extension, ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import {
+  bashGuardConfigFromEnv,
+  createBashGuard,
+  type BashGuardConfig,
+} from "../extensions/bash-guard.js";
 import { createFindingClusters } from "../extensions/finding-clusters.js";
 import { createLedgerPin, ledgerPinConfigFromEnv } from "../extensions/ledger-pin.js";
 import { createOpenViking } from "../extensions/vendor/openviking-pi/index.js";
@@ -79,8 +84,63 @@ function readExisting(path: string): string | null {
   }
 }
 
+/** P3.3: bash-guard. The shim reads the sandbox root, replay and the secrets dirs
+ * from env at activation; the factory takes them as config. What the guard
+ * answers for the same calls (the /proc denies, a secrets dir named in the env,
+ * a sanctioned script from and away from the root) must match. */
+function bashGuardCase(): ParityCase<BashGuardConfig> {
+  const dir = mkdtempSync(join(tmpdir(), "qcr-parity-guard-"));
+  process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+  const env = {
+    QCR_SANDBOX_ROOT: dir,
+    QCR_REPLAY: undefined,
+    HOME: "/home/parity",
+    XDG_CONFIG_HOME: undefined,
+    QCR_INSTALL: "acme",
+    QCR_CONFIG: undefined,
+    QCR_CONFIG_HOME: undefined,
+    QCR_SECRETS_MOUNT: "/mnt/parity-secrets",
+    QC_SECRETS_DIR: undefined,
+  };
+  const setEnv = Object.fromEntries(
+    Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined),
+  );
+  return {
+    shimPath: join(ROOT, "extensions", "bash-guard.ts"),
+    env,
+    config: bashGuardConfigFromEnv(setEnv, dir),
+    factory: createBashGuard,
+    resolved: {
+      fromEnv: (e) => bashGuardConfigFromEnv(e, dir),
+      fromConfig: (c) => c,
+    },
+    probe: async (ext) => {
+      const guard = ext.handlers.get("tool_call")![0]!;
+      const call = (toolName: string, input: Record<string, unknown>, cwd = dir) =>
+        guard({ type: "tool_call", toolCallId: "t", toolName, input } as never, { cwd } as never);
+      const verdicts: Record<string, unknown> = {};
+      for (const command of [
+        "git status",
+        "cat /proc/self/environ",
+        "head -c 9 /proc/1/mem",
+        "cat /mnt/parity-secrets/app_id",
+        "cat $HOME/.config/qcr/$QCR_INSTALL/secrets/app.pem",
+        "scripts/pr-context.sh 1",
+        "gh pr review 5 --approve",
+      ])
+        verdicts[command] = (await call("bash", { command })) ?? null;
+      verdicts["script away from the root"] =
+        (await call("bash", { command: "scripts/pr-context.sh 1" }, tmpdir())) ?? null;
+      verdicts["read tool"] = (await call("read", { path: "/mnt/parity-secrets/x" })) ?? null;
+      verdicts["write tool"] = (await call("write", { path: ".git/config" })) ?? null;
+      return verdicts;
+    },
+  };
+}
+
 const CASES: Record<string, ParityCase<never>> = {
   "ledger-pin": ledgerPinCase(),
+  "bash-guard": bashGuardCase() as never,
   "finding-clusters": {
     shimPath: join(ROOT, "extensions", "finding-clusters.ts"),
     env: {},
@@ -181,6 +241,24 @@ describe("extension factory parity", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("bash-guard hooks tool_call only, and refuses the /proc reads and the secrets dirs", async () => {
+    const factory = await loadFactory(CASES["bash-guard"]!);
+    expect(factory.registration.events).toEqual({ tool_call: 1 });
+    const verdicts = factory.probe as Record<string, { block?: boolean } | null>;
+    expect(verdicts["git status"]).toBeNull();
+    for (const denied of [
+      "cat /proc/self/environ",
+      "head -c 9 /proc/1/mem",
+      "cat /mnt/parity-secrets/app_id",
+      "cat $HOME/.config/qcr/$QCR_INSTALL/secrets/app.pem",
+      "script away from the root",
+      "read tool",
+      "write tool",
+    ])
+      expect(verdicts[denied]?.block, denied).toBe(true);
+    expect(verdicts["scripts/pr-context.sh 1"]).toBeNull();
   });
 
   it("finding-clusters registers its two tools, with schemas", async () => {
