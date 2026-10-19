@@ -30,9 +30,9 @@ import {
 } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
 import {
+  entryDisposition,
   findingMarker,
   findingRecordKey,
-  normalizeDisposition,
   recordNumber,
   recordSide,
   recordString,
@@ -183,13 +183,13 @@ export function recordPostingKeys(
 const num = recordNumber;
 
 /** Is this findings-record entry `posted`, under every spelling the record
- * parser folds onto it (src/findingkey.ts `normalizeDisposition`)? The
+ * parser folds onto it (src/findingkey.ts `entryDisposition`)? The
  * one test the posting cut and the renderer both apply. */
 function isPostedEntry(e: unknown): e is Record<string, unknown> {
   return (
     typeof e === "object" &&
     e !== null &&
-    normalizeDisposition((e as Record<string, unknown>).disposition) === "posted"
+    entryDisposition(e as Record<string, unknown>) === "posted"
   );
 }
 

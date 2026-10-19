@@ -25,7 +25,13 @@
 //     `post-check`, `merged_into` the lead) and its site is listed in the
 //     lead's body. Nothing is deleted: the record keeps every entry.
 
-import { findingRecordKey, normalizeDisposition, recordNumber, recordSide } from "./findingkey.js";
+import {
+  entryDisposition,
+  findingRecordKey,
+  normalizeDisposition,
+  recordNumber,
+  recordSide,
+} from "./findingkey.js";
 import { bareTag, ordinaryPostTag } from "./severity.js";
 import { severityRank } from "./severityrank.js";
 
@@ -406,7 +412,7 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       (x): x is { e: Record<string, unknown>; i: number } =>
         typeof x.e === "object" &&
         x.e !== null &&
-        normalizeDisposition((x.e as Record<string, unknown>).disposition) === "posted" &&
+        entryDisposition(x.e as Record<string, unknown>) === "posted" &&
         !s((x.e as Record<string, unknown>).same_as) &&
         !!s((x.e as Record<string, unknown>).path) &&
         recordNumber((x.e as Record<string, unknown>).line) !== null,
@@ -472,8 +478,7 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       fol.disposition = "merged";
       fol.word = "post-check";
       fol.merged_into = leadId;
-      for (const entry of byKey.values())
-        if (s(entry.same_as) === folId) entry.same_as = leadId;
+      for (const entry of byKey.values()) if (s(entry.same_as) === folId) entry.same_as = leadId;
       fol.reason =
         `Merged by the post-check into ${leadId}: same file, anchors within ${POST_CHECK_LINES} lines, a shared identifier. ${s(fol.reason)}`.trim();
       const folLine = recordNumber(fol.line)!;

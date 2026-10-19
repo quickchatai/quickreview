@@ -33,7 +33,7 @@ import { postedSeverityTag, RENDER_RECORD_FIELDS } from "../reviewrender.js";
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, POSTING_TAG_WORDS } from "../severity.js";
 import type { PrFileEntry } from "../github.js";
 import { parseHunkHeader } from "../hunkheader.js";
-import { normalizeDisposition, recordSide } from "../findingkey.js";
+import { entryDisposition, recordSide } from "../findingkey.js";
 
 // ---- the case set -------------------------------------------------------------
 
@@ -1090,8 +1090,7 @@ export function placePosted(
   );
   const inBody: Array<{ site: BenchSite; posted: number }> = [];
   const near = (site: BenchSite, x: BenchSite): boolean =>
-    x.path === site.path &&
-    spanDistance(site, x) <= NEAR_LINES;
+    x.path === site.path && spanDistance(site, x) <= NEAR_LINES;
   return sites.map((site, i): PostedPlace | null => {
     if (!site) return null;
     const c = pairs[i];
@@ -1180,7 +1179,7 @@ export function bodyPostedFindings(
       : [];
   const posted = rows
     .map((row) => (typeof row === "object" && row !== null ? row : {}) as Record<string, unknown>)
-    .filter((r) => normalizeDisposition(r["disposition"]) === "posted");
+    .filter((r) => entryDisposition(r) === "posted");
   const places = placePosted(posted, reviewMd, inline);
   const lines = reviewMd.split("\n");
   const used = new Set<number>();
@@ -1387,7 +1386,6 @@ export interface Stages {
   calls: StageCall[];
   phases: { delta: StageTotals; sweep: StageTotals };
 }
-
 
 /**
  * Split one review's pi `--mode json` stream into its subagent calls, each

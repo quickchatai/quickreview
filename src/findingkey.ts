@@ -109,6 +109,22 @@ export function normalizeDisposition(raw: unknown): FindingDisposition {
 }
 
 /**
+ * The disposition a record ENTRY acts on. A validator `downgrade` keeps the
+ * finding at the severity it names (src/templates.ts
+ * renderValidatorOutputNote), so a `downgraded` entry that went out under a
+ * tag (`posted_as`) is a posted survivor: the downgrade's `word` and `axis`
+ * stay on the entry, and it counts, renders and dedups as `posted`. Without a
+ * `posted_as` it stays `downgraded`, never posted. Every reader that asks
+ * "was this entry posted?" of a raw entry asks it here.
+ */
+export function entryDisposition(entry: Record<string, unknown>): FindingDisposition {
+  const d = normalizeDisposition(entry.disposition);
+  if (d !== "downgraded") return d;
+  const tag = entry.posted_as;
+  return typeof tag === "string" && tag.trim() !== "" ? "posted" : d;
+}
+
+/**
  * The per-round key of the record entry at `index` of its `findings` array:
  * the session's own handle (`id`, else `key`), and when it wrote neither, the
  * stable fallback `<lens>@<path>:<line>#<index>`. This IS the parser's rule

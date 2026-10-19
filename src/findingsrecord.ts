@@ -23,6 +23,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DOUBT_WORDS } from "./doubtwords.js";
 import {
+  entryDisposition,
   findingRecordKey,
   normalizeDisposition,
   recordNumber,
@@ -415,7 +416,7 @@ export function parseFindingsRecord(
     const path = str(e.path);
     const line = num(e.line);
     const word = str(e.word) ?? str(e.reason_word) ?? null;
-    const written = normalizeDisposition(e.disposition);
+    const written = entryDisposition(e);
     if (written === "unknown") unknownDisposition++;
     // A validity veto recorded as a kill is still a doubt.
     const disposition: FindingDisposition =
