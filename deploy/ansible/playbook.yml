@@ -459,7 +459,10 @@
     # under another embedder is the SIDECAR's boot to handle (`prepare` moves
     # the collection aside and the re-embed rebuilds it) — never a wipe here.
     # If any step fails the daemon container is started again before the
-    # play stops.
+    # play stops. The stop waits up to 90 s (not the module's 10 s) so the
+    # supervised OpenViking child flushes before the copy is taken. The marker
+    # also means the copy never repeats: flipping back to remote after the
+    # daemon wrote memories needs the marker deleted (runbook, "Rollback").
     - name: Seed the sidecar's store from the daemon's (first flip only)
       when: openviking_endpoint == 'remote' and not memory_seed.stat.exists
       block:
@@ -467,6 +470,7 @@
           community.docker.docker_container:
             name: "{{ image_name }}"
             state: stopped
+            stop_timeout: 90
 
         - name: Copy the store (rsync -a: additive, deletes nothing on either side)
           ansible.builtin.command:
