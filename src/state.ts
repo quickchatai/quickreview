@@ -2664,20 +2664,44 @@ export class StateStore {
 
   /** A worker's spend report for its command (P8.9). Overwrites: the figures only
    * grow within a worker, so the latest is the fullest. A closed report is never
-   * reopened by a late partial. */
+   * reopened by a late partial.
+   *
+   * The closing report is the last thing a worker sends, so the round's usage
+   * measurement (fired when the verdict is applied) usually ran first and fell back
+   * to the transcripts. Closing the report therefore re-states `rounds.est_usd` of an
+   * already-measured round from the workers' figures; the tokens stay the
+   * transcripts'. A round not yet measured needs nothing: its measurement reads the
+   * report. */
   recordCommandUsage(
     commandId: string,
     usage: { est_usd: number; lens_usd: number | null; final: boolean },
   ): boolean {
-    return (
+    const changed =
       this.db
         .prepare(
           `UPDATE session_commands
               SET est_usd = ?, lens_usd = ?, usage_final = ?, updated_at = ?
             WHERE id = ? AND usage_final = 0`,
         )
-        .run(usage.est_usd, usage.lens_usd, usage.final ? 1 : 0, this.ts(), commandId).changes > 0
-    );
+        .run(usage.est_usd, usage.lens_usd, usage.final ? 1 : 0, this.ts(), commandId).changes > 0;
+    if (changed && usage.final) this.restateMeasuredRoundUsd(commandId);
+    return changed;
+  }
+
+  /** Re-state the est_usd of the (already measured) round a command belongs to from
+   * the workers' reports, when they now cover it. Tokens are left alone. */
+  private restateMeasuredRoundUsd(commandId: string): void {
+    const rounds = this.db
+      .prepare(
+        `SELECT r.id FROM rounds r JOIN session_commands c ON c.pr = r.pr AND c.round_no = r.round_no
+          WHERE c.id = ? AND c.kind = 'round' AND r.tokens_in IS NOT NULL`,
+      )
+      .all(commandId) as { id: number }[];
+    for (const { id } of rounds) {
+      const reported = this.workerReportedUsd(id);
+      if (reported !== null)
+        this.db.prepare("UPDATE rounds SET est_usd = ? WHERE id = ?").run(reported, id);
+    }
   }
 
   /** What the workers of a round reported it cost, or null when the transcripts

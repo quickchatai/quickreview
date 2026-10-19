@@ -197,6 +197,38 @@ describe("rounds", () => {
     expect(store.workerReportedUsd(round)).toBeCloseTo(0.7, 9);
   });
 
+  it("a closing report re-states est_usd of an already-measured round only (P8.9)", () => {
+    store.upsertPr(prRow(7, { state: "reviewing", head_sha: "h" }));
+    const round = store.startRound(7, "initial", [], 45);
+    store.createSessionCommand({
+      id: "cmd-r",
+      pr: 7,
+      session: "pr-7",
+      kind: "round",
+      round_no: 1,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/p.md",
+      inject_path: "/i.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.claimSessionCommand("cmd-r", "w", T0.toISOString());
+    const est = (): number | null =>
+      (store.db.prepare("SELECT est_usd FROM rounds WHERE id = ?").get(round) as any).est_usd;
+    // Not measured yet: the measurement will read the report, nothing is written now.
+    store.recordCommandUsage("cmd-r", { est_usd: 0.9, lens_usd: 0, final: true });
+    expect(est()).toBeNull();
+    // Measured from the transcripts, then a re-run: the report is no longer a closed
+    // single-worker one for the round, so the transcript figure stands.
+    store.db.prepare("UPDATE session_commands SET usage_final = 0, redeliveries = 1").run();
+    store.recordRoundUsage(round, { tokens_in: 10, tokens_out: 1, est_usd: 0.5 });
+    store.recordCommandUsage("cmd-r", { est_usd: 0.9, lens_usd: 0, final: true });
+    expect(est()).toBe(0.5);
+    // A single-worker closed report on a measured round replaces the figure.
+    store.db.prepare("UPDATE session_commands SET usage_final = 0, redeliveries = 0").run();
+    store.recordCommandUsage("cmd-r", { est_usd: 0.9, lens_usd: 0, final: true });
+    expect(est()).toBeCloseTo(0.9, 9);
+  });
+
   it("totalSpend sums est_usd — the ONE spend field; measurement supersedes the finish figure", () => {
     const a = store.startRound(7, "initial", [], 45);
     const b = store.startRound(8, "initial", [], 45);

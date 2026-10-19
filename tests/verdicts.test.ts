@@ -688,6 +688,19 @@ describe("measured round usage", () => {
       expect(await estOf(112, roundId)).toBeCloseTo(0.5, 9);
     });
 
+    it("re-states est_usd when the closing report lands after the round was measured", async () => {
+      // The production order: the verdict is applied while the session still runs,
+      // and `done` comes last (after the turns, compaction and the warm-up fold).
+      const roundId = reviewingRound(114);
+      command(114, "cmd-114");
+      store.recordCommandUsage("cmd-114", { est_usd: 0.4, lens_usd: 0.1, final: false });
+      expect(await estOf(114, roundId)).toBeCloseTo(0.5, 9); // measured first: the transcripts'
+      store.recordCommandUsage("cmd-114", { est_usd: 0.53, lens_usd: 0.2, final: true });
+      const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+      expect(round.est_usd).toBeCloseTo(0.53, 9);
+      expect(round.tokens_in).toBe(500); // the tokens stay the transcripts'
+    });
+
     it("falls back on the tmux routes, which report nothing", async () => {
       const roundId = reviewingRound(113);
       command(113, "cmd-113");
