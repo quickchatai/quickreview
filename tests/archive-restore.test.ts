@@ -870,12 +870,15 @@ describe("both birth paths await the restore, and wire.ts connects it", () => {
     const src = join(import.meta.dirname, "..", "src");
     const wire = readFileSync(join(src, "wire.ts"), "utf8");
     expect(wire).toMatch(/sessions\.setBeforeBirth\(\(pr\) => archiveRef\.beforeBirth\(pr\)\);/);
-    const sessions = readFileSync(join(src, "sessions.ts"), "utf8");
-    const birth = sessions.slice(sessions.indexOf("private async birthPrSession("));
+    const lifecycle = readFileSync(join(src, "pr-session-lifecycle.ts"), "utf8");
+    const birth = lifecycle.slice(lifecycle.indexOf("private async birth("));
     expect(birth.slice(0, birth.indexOf("\n  }\n"))).toMatch(
       /^[\s\S]{0,200}await this\.awaitBeforeBirth\(pr\);/,
     );
+    const sessions = readFileSync(join(src, "sessions.ts"), "utf8");
     const wake = sessions.slice(sessions.indexOf("private async ensureSessionForWake("));
-    expect(wake.slice(0, wake.indexOf("\n  }\n"))).toContain("await this.awaitBeforeBirth(pr);");
+    expect(wake.slice(0, wake.indexOf("\n  }\n"))).toContain(
+      "await this.lifecycle.awaitBeforeBirth(pr);",
+    );
   });
 });
