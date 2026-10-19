@@ -38,6 +38,7 @@ import {
 } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
 import { paneSurface } from "./viewer.js";
+import { viewerInputRow, type ViewerInputView } from "./viewerinput.js";
 import type { Health } from "./poll.js";
 import {
   lensForAgent,
@@ -89,6 +90,8 @@ export interface BoardView {
   piFocus?: boolean;
   /** Extra line rendered on the pi pane header (quick-message state). */
   noticeLine?: string;
+  /** The viewer's input line (the transcript viewer's pane only). */
+  viewerInput?: ViewerInputView;
   /** Replaces the pi pane while the message box is open. */
   inputBox?: { target: string; text: string };
   /** Wall clock for age rendering; injected for testability. */
@@ -1000,6 +1003,8 @@ export const HELP_LINES = [
   "g              open the PR on GitHub (PR numbers are Ctrl+clickable links)",
   "[ / ]          a worker-hosted PR's pane is a transcript viewer, not a terminal: previous / next stream (main, then each lens); a click on a progress row picks its lens",
   "< / >          past / later round in the viewer; PgUp / wheel parks it, End follows the tail again",
+  "               its input line (focused pane): ⏎ steers the running round, or sends a message to an idle PR; Alt-⏎ queues a follow-up",
+  "               Alt-p marks the next message may-post (shown, reset after send); Ctrl-c asks to abort the round (y confirms); [ ] < > are keys only while the line is empty",
   "m              quick-message the selected PR's session",
   "u              unwedge: cancel the running round and re-queue it (nothing posted, no GitHub write)",
   "e              events overlay (j/k scroll, e/Esc close; click an event → its PR)",
@@ -1047,7 +1052,7 @@ function viewerHeaderTail(
       ? `${FG.accent} · ↑ ${pane.offset} rows back${RESET}${FG.dim} · End follows${RESET}`
       : `${FG.dim} · following${RESET}`;
   const keys = " · [ ] stream · < > round";
-  const mode = focused ? " · read-only · Ctrl-q back to board" : "";
+  const mode = focused ? " · Ctrl-q back to board" : "";
   return `${FG.dim} · ${round} · ${stream}${state ? ` · ${state}` : ""}${RESET}${follow}${FG.dim}${keys}${mode}${RESET}`;
 }
 
@@ -1354,9 +1359,21 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     ]);
     // Width comes from piPaneSize so the rectangle tmux is resized to and the
     // rectangle the capture is painted into cannot drift apart.
-    const body = piBody(panePr, view.pi, piPaneSize(cols, rows, barRows)?.cols ?? 0, piLines);
-    for (let i = 0; i < piLines; i++)
+    const paneCols = piPaneSize(cols, rows, barRows)?.cols ?? 0;
+    // The viewer keeps its last row for its input line (the PR-pane rule): the
+    // transcript above it, so a mirror's rows are untouched.
+    const line =
+      piLines > 1 && view.pi?.viewer && view.pi.pr === panePr && view.viewerInput?.pr === panePr
+        ? view.viewerInput
+        : undefined;
+    const bodyLines = line ? piLines - 1 : piLines;
+    const body = piBody(panePr, view.pi, paneCols, bodyLines);
+    for (let i = 0; i < bodyLines; i++)
       frame.boxRow(piTop + 2 + i, [{ text: ` ${body[i] ?? ""}`, width: cols - 2 }]);
+    if (line)
+      frame.boxRow(piTop + 2 + bodyLines, [
+        { text: ` ${viewerInputRow(line, paneCols)}`, width: cols - 2 },
+      ]);
     // Clicking anywhere in the region (divider, header or body) gives the pane
     // the keyboard, in place — nothing on the board takes the whole terminal.
     if (panePr !== undefined) {

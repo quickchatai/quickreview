@@ -9,6 +9,7 @@
 // session is idle), never read as lost.
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
+import { LiveControlSender, type ControlOutcome, type ControlSender } from "./livecontrol.js";
 import { shellQuote, type SshRunner } from "./remote.js";
 import { resultReason } from "./unwedge.js";
 
@@ -135,15 +136,82 @@ export interface MessageOutcome {
   label: string;
 }
 
-export function installMessageHooks(app: App, sender?: MessageSender): void {
+/**
+ * Where a message to a PR goes, by the PR's `runtime` in status.json. The route
+ * is the PR's, never the operator's choice:
+ *
+ *   worker, answer, idle   the operator control route (`message`), which the
+ *                          daemon hands to the PR's host;
+ *   debug, takeover        none: the PR's pane is a pi terminal, so the message
+ *                          is typed into pi, and the operator is told to focus it;
+ *   absent, tmux (or any   today's tmux inject path, until the cutover deletes
+ *   runtime not known)     it (P9.6), so the owner's hot-reloading TUI keeps
+ *                          messaging the legacy VM.
+ */
+export type MessageRoute = "control" | "terminal" | "tmux";
+
+export function messageRoute(runtime: string | undefined): MessageRoute {
+  switch (runtime) {
+    case "worker":
+    case "answer":
+    case "idle":
+      return "control";
+    case "debug":
+    case "takeover":
+      return "terminal";
+    default:
+      return "tmux";
+  }
+}
+
+/** A control outcome as the quick-message strip words it. */
+function deliveryOf(outcome: ControlOutcome): MessageOutcome {
+  const label = outcome.label;
+  switch (outcome.state) {
+    case "handled":
+      return { state: "delivered", label };
+    case "queued":
+      return { state: "queued", label };
+    case "refused":
+    case "failed":
+      return { state: "undelivered", label };
+    default:
+      return { state: "unconfirmed", label };
+  }
+}
+
+export function installMessageHooks(
+  app: App,
+  sender?: MessageSender,
+  control?: ControlSender,
+): void {
   const s = sender ?? new InjectSender(app.cfg, app.ssh);
+  const c = control ?? new LiveControlSender(app.cfg, app.ssh);
   app.hooks.message = (session, theApp) => theApp.openMessageBox(session);
   app.hooks.sendMessage = async (session, text, theApp) => {
     let last: MessageOutcome = {
       state: "unconfirmed",
       label: `? msg ${session} unconfirmed (the sender gave no outcome)`,
     };
+    const pr = /^pr-(\d+)$/.exec(session)?.[1];
+    const route = pr === undefined ? "tmux" : messageRoute(theApp.runtimeOf(Number(pr)));
+    if (route === "terminal") {
+      last = {
+        state: "undelivered",
+        label: `✖ msg ${session} not sent: #${pr} runs inside pi (${theApp.runtimeOf(Number(pr))}) — focus its pane (⏎) and type in pi`,
+      };
+      theApp.notice(last.label);
+      return last;
+    }
     try {
+      if (route === "control") {
+        const outcome = await c.send({ kind: "message", pr: Number(pr), text }, (state, label) => {
+          if (state === "pending") theApp.notice(label);
+        });
+        last = deliveryOf(outcome);
+        theApp.notice(last.label);
+        return last;
+      }
       await s.send(session, text, (state, label) => {
         theApp.notice(label);
         if (state !== "pending") last = { state, label };

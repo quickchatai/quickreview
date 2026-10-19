@@ -107,6 +107,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/lens-prompt-parity.test.ts", // a real pi child per agent, against a loopback endpoint
   "tests/lens-yield.test.ts",
   "tests/levers.test.ts",
+  "tests/live-control.test.ts", // the TUI's real write and probe scripts under sh
   "tests/localreview-readonly.test.ts",
   "tests/memory-image.test.ts",
   "tests/onboard-llmauth.test.ts",
