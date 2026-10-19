@@ -3091,5 +3091,5 @@ export function createBashGuard(config: BashGuardConfig): ExtensionFactory {
 
 /** pi activation: the env shim. The env is read here, once, at activation. */
 export default function activate(pi: ExtensionAPI): void {
-  createBashGuard(bashGuardConfigFromEnv(process.env))(pi);
+  void createBashGuard(bashGuardConfigFromEnv(process.env))(pi);
 }

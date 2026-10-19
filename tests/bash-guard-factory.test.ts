@@ -173,7 +173,7 @@ describe("[createBashGuard] the config", () => {
   type Handler = (e: unknown, ctx: unknown) => unknown;
   const handlerOf = (config: BashGuardConfig): Handler => {
     let h: Handler | undefined;
-    createBashGuard(config)({
+    void createBashGuard(config)({
       on: (name: string, fn: Handler) => {
         if (name === "tool_call") h = fn;
       },

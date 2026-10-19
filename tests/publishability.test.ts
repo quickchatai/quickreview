@@ -334,6 +334,12 @@ const ALLOWLIST: AllowlistEntry[] = [
       "the release image's companion mode provisions the same [companion] git identity (its commit email) — a port of docker/companion/entrypoint.sh until P7.8 replaces that image",
   },
   {
+    path: ".github/workflows/release.yml",
+    tokens: ["quickchat"],
+    reason:
+      "names the release and memory-sidecar images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
     path: "tests/tui-companion.test.ts",
     tokens: ["quickchat"],
     reason:
