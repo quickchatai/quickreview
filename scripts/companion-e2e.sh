@@ -7,10 +7,9 @@
 #      feed/alerts bind mounts and a tmux server;
 #   3. a "model turn" inside the container can write a schema-valid alert file
 #      into /alerts, and the host sees it;
-#   4. the TUI-side consumer routes that alert: status line + notify + overseer
-#      inject (both side effects captured into log files, nothing is sent
-#      anywhere — the real notify-send and the real ssh inject are replaced by
-#      fakes, so this script can never message the VM);
+#   4. the TUI-side consumer routes that alert: status line + notify (the side
+#      effect captured into a log file, nothing is sent anywhere — the real
+#      notify-send is replaced by a fake);
 #   5. a canned feed change is classified meaningful, an unchanged board is
 #      not, and the ambient feed never mints a `wake` marker (the ambient
 #      feed never wakes pi);
@@ -136,20 +135,17 @@ const { COMPANION_DEFAULTS } = await import(join(root, "dist/src/config.js"));
 
 // ---- 4. alert routing -------------------------------------------------------
 const notifyLog = join(state, "notify.log");
-const injectLog = join(state, "inject.log");
 const notices = [];
 const consumer = new AlertConsumer(alerts, new AlertPolicy(20, () => new Date(), filePolicyStore(join(state, "alert-policy.json"))), {
   notice: (t) => notices.push(t),
   badge: () => {},
   // Fakes on purpose: the real ones would light up KDE and message the VM.
   notify: (title, body) => writeFileSync(notifyLog, `${title}\n${body}\n`),
-  inject: (text) => writeFileSync(injectLog, text),
 });
 consumer.scanOnce();
 check(consumer.badge.count === 1, "alert routed (badge count 1)");
 check(notices.some((n) => n.includes("#5012")), "status line names the PR");
 check(existsSync(notifyLog) && readFileSync(notifyLog, "utf8").includes("overdue"), "tier alert → desktop notification");
-check(existsSync(injectLog) && readFileSync(injectLog, "utf8").startsWith("[companion alert]"), "tier alert → overseer inject payload");
 check(readdirSync(join(alerts, ".done")).length === 1, "consumed alert archived to .done/");
 
 // ---- 5. a feed change is classified, and the ambient feed never wakes pi ----

@@ -8,8 +8,9 @@
 #   1. the image builds / is present
 #   2. qcr companion up → status running → adopt is idempotent
 #   3. pi auth persisted on the pihome volume (SKIPPED until /login has run)
-#   4. the container holds no VM credential (ssh to the VM fails) and
-#      reaches OpenViking through the memory forward instead
+#   4. the container holds no key file (only the agent socket, ssh config and
+#      known_hosts, rule 8), ssh to the VM works through the agent when the
+#      host has one, and OpenViking is reached through the memory forward
 #   5. an overseer inject lands in the daemon's inject dir — DRY BY DEFAULT:
 #      prints the exact command; only --live actually writes to the VM
 #   6. daily rollover on a faked date (QCR_FAKE_TODAY) against the real
@@ -102,15 +103,25 @@ else
   skip "auth.json absent — run: docker exec -it $CONTAINER tmux attach -t $SESSION, then /login"
 fi
 
-# --- 4. no ssh from inside the container; memory reachable instead -----------
-# The companion has no ~/.ssh mount and no agent socket: it holds no VM
-# credential. So ssh working in here is a FAILURE, and the container's window
-# onto the VM is the OpenViking forward.
-step "companion holds no VM credential"
-if docker exec "$CONTAINER" ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_HOST" true >"$WORK/ssh.log" 2>&1; then
-  fail "ssh $SSH_HOST works inside the container — the credential boundary (rule 8) has regressed"
+# --- 4. full ssh through the agent, no key in the container; memory reachable --
+# Rule 8: the companion holds the owner's full ssh
+# to the VM as the host's agent socket, ssh config and known_hosts, mounted
+# read-only. A key FILE in the container is the failure; ssh itself working is
+# expected whenever the host has an agent.
+step "companion holds no key file"
+keys="$(docker exec "$CONTAINER" sh -c 'ls -A "$HOME/.ssh" 2>/dev/null' | grep -vxE 'config|known_hosts' || true)"
+if [ -n "$keys" ]; then
+  fail "~/.ssh in the container holds more than config and known_hosts: $keys (rule 8: never a key file)"
 else
-  pass "ssh $SSH_HOST refused inside the container (expected — no VM credential)"
+  pass "~/.ssh holds at most config and known_hosts"
+fi
+step "ssh to the VM through the host's agent"
+if [ -z "${SSH_AUTH_SOCK:-}" ]; then
+  skip "no ssh agent on this host — the companion gets none either"
+elif docker exec "$CONTAINER" ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_HOST" true >"$WORK/ssh.log" 2>&1; then
+  pass "ssh $SSH_HOST works inside the container, through the agent"
+else
+  fail "ssh $SSH_HOST failed inside the container (see $WORK/ssh.log) — is the agent mounted? (rule 8)"
 fi
 
 step "memory reachable from inside the container"

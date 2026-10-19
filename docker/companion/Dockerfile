@@ -111,11 +111,12 @@ RUN printf '%s\n' "${BUILD_SHA}" > /opt/qcr/BUILD_SHA
 # config, and runs `node /opt/qcr/dist/src/cli.js scan … --foreground`
 # through the entrypoint's one-shot mode.
 #
-# There is NO ssh mount and NO agent socket (CLAUDE.md rule 8): the
-# container holds no VM credential. Its one reach into the VM is OpenViking
-# memory, over a forward owned by the host (scripts/companion-memory-forward.mjs),
-# reached at OPENVIKING_ENDPOINT on the qcr-memory docker bridge with the two
-# USER keys docker passes in via --env-file.
+# Its ssh to the VM (CLAUDE.md rule 8, full ssh) is the host's agent socket,
+# ssh config and known_hosts, mounted read-only by src/tui/companion.ts — never
+# a key file. Memory does not ride it: OpenViking is reached over a forward
+# owned by the host (scripts/companion-memory-forward.mjs), at
+# OPENVIKING_ENDPOINT on the qcr-memory docker bridge with the two USER keys
+# docker passes in via --env-file.
 VOLUME ["/home/companion/.pi"]
 
 USER companion

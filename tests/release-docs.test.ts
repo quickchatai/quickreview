@@ -129,8 +129,7 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
         checked++;
       }
     }
-    // A floor, not a count: each landing marks its section LANDED and takes its
-    // `current` block out of the check (P7.13's rule 3 carve-out took one more).
+    // The floor only proves the parse found blocks: it falls as drafts land.
     expect(checked).toBeGreaterThan(5);
   });
 
@@ -155,6 +154,15 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
     const r7 = rules.find((b) => b.body.startsWith("7."))!.body;
     expect(r7).toContain("SSH only\n   triggers the update");
     expect(r7).not.toMatch(/\bPart [ABC]\b/);
+  });
+
+  it("rule 8 and rule 11's first bullet sit in CLAUDE.md word for word, as ratified", () => {
+    const sec = sections.find((x) => x.startsWith("Rule 8 "))!;
+    const proposed = [...sec.matchAll(FENCE)].filter((m) => m[1] === "proposed");
+    expect(proposed).toHaveLength(2);
+    for (const m of proposed) expect(read("CLAUDE.md")).toContain(m[3]!);
+    expect(read("CLAUDE.md")).not.toContain("never runs `scripts/deploy.sh`");
+    expect(read("CLAUDE.md")).not.toContain("No `~/.ssh` and no ssh-agent socket are ever mounted");
   });
 
   it("states plainly that the companion's model can run any command on the VM", () => {

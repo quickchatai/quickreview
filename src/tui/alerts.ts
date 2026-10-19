@@ -8,7 +8,8 @@
 //
 // Policy:
 //   tier `notice` → TUI status line only;
-//   tier `alert`  → status line + KDE notify-send + an overseer inject;
+//   tier `alert`  → status line + KDE notify-send (no overseer inject: the
+//                   overseer is retired, rule 8);
 //   one notification per distinct cause per `cooldown_min`, repeats inside the
 //   window fold into a counter on the status line, and a genuine escalation
 //   (notice → alert) of a folded cause may break the cooldown exactly once a
@@ -301,15 +302,6 @@ export interface AlertSinks {
   badge(badge: AlertBadge): void;
   /** KDE notification; alert tier only. */
   notify: NotifyRunner;
-  /** Prose message to the VM overseer; alert tier only. */
-  inject(text: string): void;
-}
-
-/** The overseer message body — prefixed so the overseer can tell instantly
- * that a machine on the owner's PC wrote it, not the owner. */
-export function overseerMessage(alert: AlertRecord): string {
-  const where = alert.pr !== null ? ` (PR #${alert.pr})` : "";
-  return `[companion alert] ${alert.title}${where}\n\ncause: ${alert.cause}\n\n${alert.body}`.trim();
 }
 
 export function statusLine(alert: AlertRecord, folds: number): string {
@@ -431,7 +423,6 @@ export class AlertConsumer {
     this.sinks.badge(this.badgeState);
     if (alert.tier === "alert") {
       this.sinks.notify(alert.title, alert.body || alert.cause);
-      this.sinks.inject(overseerMessage(alert));
     }
   }
 
@@ -475,7 +466,7 @@ export interface PiAuthAlertMemory {
  * Bridge from the polled status.json flag (`pi_auth_expired`, written by the
  * daemon's passive src/authwatch.ts) into the alert pipeline: write one
  * alert-tier file per fresh detection into the alerts dir the AlertConsumer
- * already watches — badge, notify-send, overseer inject and per-cause
+ * already watches — badge, notify-send and per-cause
  * cooldown all come from the existing machinery. Writes at most one file per
  * distinct `last_at`, and nothing when the flag is absent or stale.
  */
@@ -515,11 +506,10 @@ export interface MemoryAlertMemory {
 
 /**
  * Bridge from status.json `memory` into the alert pipeline: ONE alert-tier
- * file per TRANSITION into `auth_failed` or `down` — badge, notify-send,
- * overseer inject and the per-cause cooldown all come from the existing
- * consumer, exactly like `maybeWritePiAuthAlert`. This is the desktop
- * notification half of reaching a person — telling only the overseer is not
- * enough.
+ * file per TRANSITION into `auth_failed` or `down` — badge, notify-send
+ * and the per-cause cooldown all come from the existing consumer, exactly
+ * like `maybeWritePiAuthAlert`. This is the desktop notification half of
+ * reaching a person.
  *
  * Sourced from the daemon's snapshot, NEVER from OpenViking (the thing that is
  * down), and only from FRESH data: `fresh` is the poller's verdict — a stale

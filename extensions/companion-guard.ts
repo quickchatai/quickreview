@@ -1,10 +1,11 @@
 // companion-guard — the companion's bright lines, made structural.
 //
-// The companion's boundary (CLAUDE.md rule 8) is mostly structural already: no
-// GitHub WRITE credential (its token is read-only), no VM credential, no gh
-// binary in the image. Three bright lines would otherwise be held by PROMPT
-// alone; this extension turns them into tool_call vetoes the model cannot
-// talk itself past:
+// The companion's boundary (CLAUDE.md rule 8) is partly structural: no GitHub
+// WRITE credential (its token is read-only), no App key, no gh binary in the
+// image. It does hold the owner's full ssh to the VM and may deploy, and this
+// guard cannot see inside a remote shell. Three
+// bright lines would otherwise be held by PROMPT alone; this extension turns
+// them into tool_call vetoes the model cannot talk itself past:
 //
 //   1. Rule 6 — the frozen seeds. The companion edits the real checkout on
 //      master, live (rule 11), and prompts/ + agents/ seeded content is
@@ -15,12 +16,14 @@
 //      exactly "frozen". The two registry fixtures are frozen too: the
 //      manifest itself, and ratified-divergence.json, whose two sanctioned
 //      writers (a human; the TUI rubric-accept path) do not include us.
-//   2. Rule 8 — never a GitHub WRITE, never the gate, never deploy.sh:
-//      `git push`, `gh`, the gate's shell route (post-review.sh and kin,
-//      mint-token.sh) and `scripts/deploy.sh` are refused by name, not just
-//      by missing credentials. The companion holds a READ-ONLY App token
-//      (src/tui/ghread.ts); write-shaped API calls made with it are refused
-//      here too, though GitHub would refuse them anyway.
+//   2. Rule 8 — never a GitHub WRITE, never the gate: `git push`, `gh` and
+//      the gate's shell route (post-review.sh and kin, mint-token.sh) are
+//      refused by name, not just by missing credentials. The companion holds
+//      a READ-ONLY App token (src/tui/ghread.ts); write-shaped API calls made
+//      with it are refused here too, though GitHub would refuse them anyway.
+//      `scripts/deploy.sh` runs only in the modes rule 8 grants (`release`,
+//      `provision`, `verify`, each with or without `--dry-run`); any other
+//      mode is refused by name.
 //   3. Rule 11 — the shared checkout is other actors' desk too: `git stash`,
 //      `git reset --hard`, `git checkout --`/`git checkout .`, `git restore`
 //      (worktree-discarding form) and `git clean` destroy uncommitted work
@@ -63,10 +66,14 @@ export const BASH_RULES: BashRule[] = [
       "rule 8: no gh here — it is not installed, and this guard keeps it a boundary rather than an accident of the image. GitHub reads go through the read-only token in $QCR_GITHUB_READ_ENV.",
   },
   {
+    // Refused when RUN in a mode rule 8 does not grant; the granted modes
+    // (`release`, `provision`, `verify`, optionally behind `--dry-run`) pass.
+    // Spaces and tabs only between the words: a newline ends the command, so
+    // `deploy.sh` on its own line is a bare call (deploy.sh's default mode).
     pattern:
-      /(^|[;&|\n(`{]|\$\(|-exec(dir)?\s)\s*(([A-Za-z_]\w*=\S*|sudo|env|exec|nohup|command|time|eval|xargs|bash|sh|zsh|dash|source|\.|timeout(\s+-\S+)*\s+\S+)(\s+-\S+)*\s+)*['"]?(\S*\/)?deploy\.sh\b/,
+      /(^|[;&|\n(`{]|\$\(|-exec(dir)?\s)\s*(([A-Za-z_]\w*=\S*|sudo|env|exec|nohup|command|time|eval|xargs|bash|sh|zsh|dash|source|\.|timeout(\s+-\S+)*\s+\S+)(\s+-\S+)*\s+)*['"]?(\S*\/)?deploy\.sh\b(?!['"]?[ \t]+(--dry-run[ \t]+)?(release|provision|verify)(?![\w-]))/,
     reason:
-      "rule 8: the companion never runs scripts/deploy.sh. Deploys are the owner's, via the deploying skill.",
+      "rule 8: the companion runs scripts/deploy.sh only as `release <version>`, `provision` or `verify` (each may take --dry-run first), following the deploying skill: drain first, a version CI already built. Any other mode (sync, rebuild, a bare call) is the owner's.",
   },
   {
     // The gate's shell route. The companion holds no App key, so these would

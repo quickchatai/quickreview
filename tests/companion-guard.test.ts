@@ -445,4 +445,27 @@ describe("git argument boundaries in the shared checkout", () => {
   ])("still refuses deploy execution: %s", (cmd) =>
     expect(bashBlockReason(cmd), cmd).toMatch(/rule 8/),
   );
+  // Rule 8: full ssh, so the companion may deploy — in the release-world
+  // modes only.
+  it.each([
+    "scripts/deploy.sh verify",
+    "scripts/deploy.sh provision",
+    "scripts/deploy.sh release 1.4.0",
+    "./scripts/deploy.sh --dry-run release 1.4.0",
+    "bash scripts/deploy.sh --dry-run provision",
+    "ssh vm sudo qcr-update 1.4.0",
+  ])("allows the deploy modes rule 8 grants: %s", (cmd) =>
+    expect(bashBlockReason(cmd), cmd).toBeUndefined(),
+  );
+  it.each([
+    "scripts/deploy.sh",
+    "scripts/deploy.sh rebuild",
+    "scripts/deploy.sh releasex 1",
+    "scripts/deploy.sh verify; scripts/deploy.sh sync",
+    "scripts/deploy.sh\nrelease 1.4.0",
+    "scripts/deploy.sh \n verify",
+    "scripts/deploy.sh\r\nprovision",
+  ])("refuses every other deploy mode: %j", (cmd) =>
+    expect(bashBlockReason(cmd), cmd).toMatch(/rule 8/),
+  );
 });

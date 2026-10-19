@@ -394,6 +394,10 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
             "This is the writer the `.inject(pr, …)` grep above structurally CANNOT see (MC-10), which is why this fence exists.",
         },
         {
+          file: "src/tui/remote.ts",
+          why: "names the bot's companion inbox (inject/companion-inbox/) for the TUI's pull and ack of its items — never a session's drop-box and never a pr-<n> directory (rule 8)",
+        },
+        {
           file: "src/tui/companion.ts",
           why: "the COMPANION session's dir (/workspace/inject/<companion session>) — a different container on the operator's PC, never a pr-<n> session (rule 8)",
         },

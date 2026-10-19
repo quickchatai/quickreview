@@ -45,14 +45,16 @@
 # The TUI (D35) is two containers and no docker.sock anywhere:
 #   the companion   started, adopted or recreated HERE, on the host, from the
 #                   `docker run` the image prints (`qcr companion plan`, so the
-#                   mount list lives in one place, src/tui/companion.ts). It has
-#                   no ssh agent, no ~/.ssh and no docker.sock (rule 8). Its tmux
+#                   mount list lives in one place, src/tui/companion.ts). It gets
+#                   the ssh agent socket and ~/.ssh/config and known_hosts,
+#                   read-only, as the TUI does (rule 8: full ssh to the VM), and
+#                   never ~/.ssh whole, a key file or docker.sock. Its tmux
 #                   server listens on a socket in the qcr-companion tmux volume.
 #   the TUI         shares that volume and drives the companion with `tmux -S`
-#                   instead of `docker exec`. It alone gets the ssh agent socket
-#                   and ~/.ssh/config and known_hosts, read-only, for the ssh
-#                   runner that reaches the VM. When it quits, this wrapper stops
-#                   the companion unless another TUI is still using it.
+#                   instead of `docker exec`. It gets the same three ssh
+#                   sources, read-only, for the ssh runner that reaches the VM.
+#                   When it quits, this wrapper stops the companion unless
+#                   another TUI is still using it.
 # The owner's dev TUI with hot reload (rule 11) stays on the clone route.
 #
 # POSIX sh: it runs under macOS's /bin/sh and under dash.
@@ -394,15 +396,42 @@ trap 'exit 143' TERM
 
 # ---- the companion (D35) ----------------------------------------------------------
 
+# The host's ssh agent socket as docker can bind it, or nothing. Docker Desktop
+# relays the host agent at a fixed path inside its VM.
+host_ssh_agent() {
+  if [ "$(uname -s)" = Darwin ]; then
+    [ -z "${SSH_AUTH_SOCK:-}" ] || echo /run/host-services/ssh-auth.sock
+  elif [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
+    mountable "$SSH_AUTH_SOCK"
+    echo "$SSH_AUTH_SOCK"
+  fi
+}
+
 # Start, adopt or recreate the companion container from `qcr companion plan`.
 # Sets companion_name, tui_mounts, tui_volumes and tui_env (newline lists) for
 # the TUI container. Returns non-zero when the companion cannot be run.
 ensure_companion() {
+  # The companion's ssh sources (rule 8): the planner sees none of the host's
+  # files, so the present ones are named to it and it mounts them read-only.
+  ssh_agent="$(host_ssh_agent)"
+  ssh_cfg=''
+  ssh_kh=''
+  if [ -f "$HOME/.ssh/config" ]; then
+    mountable "$HOME/.ssh/config"
+    ssh_cfg="$HOME/.ssh/config"
+  fi
+  if [ -f "$HOME/.ssh/known_hosts" ]; then
+    mountable "$HOME/.ssh/known_hosts"
+    ssh_kh="$HOME/.ssh/known_hosts"
+  fi
   plan="$(docker run --rm --init --user "$uid:$gid" --cap-drop ALL \
     --security-opt no-new-privileges -e "QCR_IMAGE=$IMAGE" -e "QCR_HOST_HOME=$HOME" \
     -e "QCR_HOST_XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}" \
     -e "QCR_HOST_XDG_STATE_HOME=${XDG_STATE_HOME:-$HOME/.local/state}" \
     ${QCR_INSTALL:+-e "QCR_INSTALL=$QCR_INSTALL"} \
+    ${ssh_agent:+-e "QCR_HOST_SSH_AUTH_SOCK=$ssh_agent"} \
+    ${ssh_cfg:+-e "QCR_HOST_SSH_CONFIG=$ssh_cfg"} \
+    ${ssh_kh:+-e "QCR_HOST_SSH_KNOWN_HOSTS=$ssh_kh"} \
     "$IMAGE" cli companion plan 2>/dev/null)" || return 1
   [ -n "$plan" ] || return 1
   name=''
@@ -619,16 +648,9 @@ fi
 
 if [ "$mode" = tui ]; then
   set -- "$@" --label qcr.role=tui
-  # The ssh runner reaches the VM through the agent and the user's ssh config:
-  # this container alone gets them, read-only. The companion never does.
-  agent=''
-  if [ "$(uname -s)" = Darwin ]; then
-    # Docker Desktop relays the host agent at a fixed path inside its VM.
-    [ -z "${SSH_AUTH_SOCK:-}" ] || agent=/run/host-services/ssh-auth.sock
-  elif [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
-    agent="$SSH_AUTH_SOCK"
-    mountable "$agent"
-  fi
+  # The ssh runner reaches the VM through the agent and the user's ssh config,
+  # read-only (the companion gets the same three, through its plan).
+  agent="$(host_ssh_agent)"
   if [ -n "$agent" ]; then
     set -- "$@" --mount "type=bind,src=$agent,dst=/run/qcr-ssh-agent"
     set -- "$@" -e SSH_AUTH_SOCK=/run/qcr-ssh-agent

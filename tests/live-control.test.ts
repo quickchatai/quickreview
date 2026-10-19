@@ -318,3 +318,51 @@ describe("the hook", () => {
     expect(lost.label).toContain("ssh died");
   });
 });
+
+// ---- the companion's tier, down the same route (rule 8) ------------------------
+
+describe("a forwarded command of the companion's tier", () => {
+  it("lands as the parsed command, byte for byte, in the operator directory and reads the ack", async () => {
+    const r = rig(() => ({ ok: true, ack: "handled" }));
+    const out = await r.sender.sendCommand({ command: "drain", on: true }, r.on);
+    expect(out).toEqual({ state: "handled", label: "✓ drain delivered" });
+    const [name] = readdirSync(join(root, "commands", "operator"));
+    const body = readFileSync(join(root, "commands", "operator", name!), "utf8");
+    expect(body).toBe(`${JSON.stringify({ command: "drain", on: true }, null, 2)}\n`);
+    // the sealed channel takes it; a session's file could not spell the controls
+    expect(validateCommand(JSON.parse(body), { issuer: "operator" }).ok).toBe(true);
+  });
+
+  it("names a PR's command by its PR, and carries the daemon's refusal", async () => {
+    const r = rig(() => ({ ok: false, reason: "no round running" }));
+    const out = await r.sender.sendCommand({ command: "abort-round", pr: 7 }, r.on);
+    expect(out).toEqual({ state: "refused", label: "✖ abort-round #7 refused (no round running)" });
+  });
+
+  it("the hook forwards through a sender that can, and reports a throw as unconfirmed", async () => {
+    const notices: string[] = [];
+    const app = { cfg, ssh: undefined, hooks: {}, notice: (t: string) => notices.push(t) } as never;
+    const hooks = (
+      app as unknown as {
+        hooks: {
+          operatorCommand?: (c: unknown, a: unknown) => Promise<{ state: string; label: string }>;
+        };
+      }
+    ).hooks;
+    // a sender without sendCommand installs no forward
+    installLiveControlHooks(app, { send: async () => ({ state: "handled", label: "" }) });
+    expect(hooks.operatorCommand).toBeUndefined();
+    installLiveControlHooks(app, {
+      send: async () => ({ state: "handled", label: "" }),
+      async sendCommand(): Promise<never> {
+        throw new Error("ssh died");
+      },
+    });
+    const lost = await hooks.operatorCommand!({ command: "takeover", pr: 3 }, app);
+    expect(lost).toEqual({
+      state: "unacked",
+      label: "? takeover #3 unconfirmed (ssh died) — check before re-sending",
+    });
+    expect(notices).toEqual([lost.label]);
+  });
+});

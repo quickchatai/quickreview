@@ -22,8 +22,10 @@
 // with the companion at the same path, so the config both derive from the same
 // env resolves identically on either side.
 //
-// What the plan never contains: ~/.ssh, an ssh agent socket, docker.sock (rule 8
-// and D35: the agent goes to the TUI container alone, the wrapper adds it).
+// The companion's ssh access (rule 8: full ssh) is
+// the three sources the wrapper found on the host and named in `HOST_SSH_ENV`
+// (agent socket, ssh config, known_hosts), mounted read-only by the plan. What
+// the plan never contains: ~/.ssh whole, a private key, docker.sock.
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
 import { COMPANION_DEFAULTS, type CompanionConfig } from "../config.js";
@@ -31,6 +33,7 @@ import { operatorStateHome } from "../install.js";
 import {
   CompanionLifecycle,
   CONTAINER,
+  HOST_SSH_ENV,
   companionInjectDir,
   tmuxVolume,
   type CompanionFs,
@@ -80,6 +83,12 @@ export function laptopInstallEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     QCR_STATE_HOME: join(xdgState, "qcr", "home"),
     ...(env["QCR_INSTALL"] ? { QCR_INSTALL: env["QCR_INSTALL"] } : {}),
     ...(env["QCR_CONFIG"] ? { QCR_CONFIG: env["QCR_CONFIG"] } : {}),
+    // The host's ssh sources the wrapper found (rule 8), for the plan's mounts.
+    ...Object.fromEntries(
+      Object.values(HOST_SSH_ENV)
+        .filter((name) => (env[name] ?? "").trim() !== "")
+        .map((name) => [name, env[name]]),
+    ),
   };
 }
 
@@ -178,7 +187,15 @@ export function companionPlan(env: NodeJS.ProcessEnv): CompanionPlan {
     homes.github,
   ];
   const run = lc.runArgv();
-  const hash = createHash("sha256").update(run.join("\n")).digest("hex").slice(0, 16);
+  // The agent socket's path moves with every login, so the hash names that the
+  // companion has one, not where: a TUI started from another shell adopts the
+  // running companion. A dead socket fails `docker start`, and the wrapper
+  // recreates the container then.
+  const agent = lc.sshSources().agent;
+  const hashed = run.map((a) =>
+    agent !== undefined && a.startsWith(`${agent}:`) ? `<ssh-agent>${a.slice(agent.length)}` : a,
+  );
+  const hash = createHash("sha256").update(hashed.join("\n")).digest("hex").slice(0, 16);
   // After `run --detach`: the label is read back by the wrapper to tell a
   // current container from a drifted one.
   run.splice(2, 0, "--label", `qcr.plan=${hash}`);

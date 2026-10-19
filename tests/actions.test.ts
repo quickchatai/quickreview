@@ -17,11 +17,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   ACTION_TEXT_MAX,
   executeTuiAction,
+  parseCompanionCommand,
   parseTuiAction,
   processTuiActions,
   type TuiAction,
   type TuiDriver,
 } from "../src/tui/actions.js";
+import { tierVerbs, type Command } from "../src/commands.js";
 
 function mockDriver(overrides: Partial<TuiDriver> = {}): {
   calls: Array<[string, ...unknown[]]>;
@@ -41,14 +43,14 @@ function mockDriver(overrides: Partial<TuiDriver> = {}): {
       calls.push(["msgSession", session, text]);
       return Promise.resolve(`✓ msg ${session} delivered`);
     },
-    overseerInject: (text) => {
-      calls.push(["overseerInject", text]);
-      return Promise.resolve("✓ msg overseer delivered");
-    },
     deployTab: (action) => calls.push(["deployTab", action]),
     memoryPin: (entry, pin) => {
       calls.push(["memoryPin", entry, pin]);
       return Promise.resolve(`moved ${entry}`);
+    },
+    operatorCommand: (command) => {
+      calls.push(["operatorCommand", command]);
+      return Promise.resolve(`✓ ${command.command} delivered`);
     },
     ...overrides,
   };
@@ -143,21 +145,14 @@ describe("parseTuiAction — valid requests, every verb", () => {
     });
   });
 
-  it("msg_session — the msg.ts session-name rule", () => {
-    for (const session of ["pr-5312", "overseer", "main"]) {
+  it("msg_session — the msg.ts session-name rule, less the retired overseer", () => {
+    for (const session of ["pr-5312", "main"]) {
       expect(ok({ verb: "msg_session", params: { session, text: "hi" } })).toEqual({
         verb: "msg_session",
         session,
         text: "hi",
       });
     }
-  });
-
-  it("overseer_inject", () => {
-    expect(ok({ verb: "overseer_inject", params: { text: "check pr 5312" } })).toEqual({
-      verb: "overseer_inject",
-      text: "check pr 5312",
-    });
   });
 
   it("deploy_tab", () => {
@@ -171,8 +166,9 @@ describe("parseTuiAction — valid requests, every verb", () => {
 
   it("text at exactly the cap passes; trimming applies before the length check", () => {
     const text = "x".repeat(ACTION_TEXT_MAX);
-    expect(ok({ verb: "overseer_inject", params: { text } })).toEqual({
-      verb: "overseer_inject",
+    expect(ok({ verb: "msg_session", params: { session: "main", text } })).toEqual({
+      verb: "msg_session",
+      session: "main",
       text,
     });
     expect(ok({ verb: "msg_session", params: { session: "main", text: `  hi  ` } })).toEqual({
@@ -246,7 +242,17 @@ describe("parseTuiAction — refusals, never a throw", () => {
   });
 
   it("msg_session enforces the isValidSessionName rule", () => {
-    for (const session of ["pr-x", "pr5312", "pr-", "root", "overseer2", "MAIN", "", 5]) {
+    for (const session of [
+      "pr-x",
+      "pr5312",
+      "pr-",
+      "root",
+      "overseer",
+      "overseer2",
+      "MAIN",
+      "",
+      5,
+    ]) {
       expect(err({ verb: "msg_session", params: { session, text: "hi" } })).toContain("session");
     }
   });
@@ -258,8 +264,10 @@ describe("parseTuiAction — refusals, never a throw", () => {
     expect(err({ verb: "msg_session", params: { session: "main", text: "   " } })).toContain(
       "2000",
     );
-    expect(err({ verb: "overseer_inject", params: { text: over } })).toContain("2000");
-    expect(err({ verb: "overseer_inject", params: {} })).toContain("2000");
+  });
+
+  it("overseer_inject is gone: the overseer is retired, so the verb is unknown", () => {
+    expect(err({ verb: "overseer_inject", params: { text: "look" } })).toContain("unknown verb");
   });
 
   it("deploy_tab refuses unknown actions", () => {
@@ -285,7 +293,6 @@ describe("executeTuiAction — driver dispatch + traces", () => {
       executeTuiAction({ verb: "memory_filter", tag: "bug" }, driver),
       executeTuiAction({ verb: "memory_filter", tag: null }, driver),
       executeTuiAction({ verb: "msg_session", session: "pr-5312", text: "hello" }, driver),
-      executeTuiAction({ verb: "overseer_inject", text: "look" }, driver),
       executeTuiAction({ verb: "deploy_tab", action: "stop" }, driver),
     ]);
     expect(calls).toEqual([
@@ -301,7 +308,6 @@ describe("executeTuiAction — driver dispatch + traces", () => {
       ["setMemoryFilter", "bug"],
       ["setMemoryFilter", null],
       ["msgSession", "pr-5312", "hello"],
-      ["overseerInject", "look"],
       ["deployTab", "stop"],
     ]);
     expect(traces).toEqual([
@@ -317,7 +323,6 @@ describe("executeTuiAction — driver dispatch + traces", () => {
       "companion ▸ memory filter → #bug",
       "companion ▸ memory filter cleared",
       "companion ▸ msg pr-5312 (5 chars) → ✓ msg pr-5312 delivered",
-      "companion ▸ overseer inject (4 chars) → ✓ msg overseer delivered",
       "companion ▸ deploy tab → stop",
     ]);
   });
@@ -442,7 +447,7 @@ describe("memory_pin — pin/unpin through the TUI's one store", () => {
 // A message's result says what became of it: the sender's last word, not
 // that it was handed over. MUTATION: fire-and-forget the send and return the
 // trace at once — red (the undelivered message reads ok).
-describe("msg_session / overseer_inject — the result waits for delivery", () => {
+describe("msg_session — the result waits for delivery", () => {
   it("an undelivered message is a failed result, a delivered one carries its label", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tui-actions-msg-"));
     try {
@@ -451,11 +456,14 @@ describe("msg_session / overseer_inject — the result waits for delivery", () =
         JSON.stringify({ verb: "msg_session", params: { session: "pr-7", text: "hi" } }),
       );
       writeFileSync(
-        join(dir, "2026-10-07T10-00-01-ov.json"),
-        JSON.stringify({ verb: "overseer_inject", params: { text: "look" } }),
+        join(dir, "2026-10-07T10-00-01-ok.json"),
+        JSON.stringify({ verb: "msg_session", params: { session: "main", text: "look" } }),
       );
       const { driver } = mockDriver({
-        msgSession: () => Promise.reject(new Error("✖ msg pr-7 undelivered (write failed)")),
+        msgSession: (session) =>
+          session === "pr-7"
+            ? Promise.reject(new Error("✖ msg pr-7 undelivered (write failed)"))
+            : Promise.resolve("✓ msg main delivered"),
       });
       const [msg, ov] = await processTuiActions(dir, driver);
       expect(msg).toMatchObject({ ok: false, message: expect.stringContaining("undelivered") });
@@ -608,5 +616,179 @@ describe("processTuiActions — the sweep", () => {
     expect(done.length).toBe(200); // 206 present after the sweep archived one, oldest 6 dropped
     expect(done).toContain("2026-08-20T12-00-00Z-tick.json");
     expect(done).not.toContain("2026-08-19T00-00-00Z-0000.json");
+  });
+});
+
+// ---- the companion's tier (rule 8: everything the owner can) -----------------
+
+/** One valid command per verb of the companion's tier. Keyed by the tier's own
+ * list, so a verb added to the owner's column without a sample here fails. */
+const TIER_SAMPLES: Record<string, Record<string, unknown>> = {
+  "rerun-round": { command: "rerun-round", pr: 7 },
+  "pause-pr": { command: "pause-pr", pr: 12, reason: "same-head staleness churn" },
+  "resume-pr": { command: "resume-pr", pr: 12 },
+  "flag-owner": { command: "flag-owner", message: "look at this" },
+  "restart-session": { command: "restart-session", pr: 12 },
+  "resolve-terminal-failure": {
+    command: "resolve-terminal-failure",
+    pr: 12,
+    incident_id: "review-failure:cmd-1",
+    command_id: "cmd-1",
+    head_sha: "0123456789abcdef0123456789abcdef01234567",
+  },
+  "file-improvement-pr": {
+    command: "file-improvement-pr",
+    title: "t",
+    body: "b",
+    branch: "wip/fix",
+    slug: "fix",
+  },
+  "file-issue": { command: "file-issue", title: "t", body: "b" },
+  slack_reply: { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
+  drain: { command: "drain", on: true },
+  "retry-thread-decision": { command: "retry-thread-decision", comment_id: 3856996601 },
+  "eod-curation-receipt": { command: "eod-curation-receipt", day: "2026-10-07", decisions: [] },
+  steer: { command: "steer", pr: 5049, text: "look at the lock order" },
+  "follow-up": { command: "follow-up", pr: 5049, text: "then the migration" },
+  "abort-round": { command: "abort-round", pr: 5049 },
+  message: { command: "message", pr: 5050, text: "post the summary", may_post: true },
+  takeover: { command: "takeover", pr: 5050 },
+  release: { command: "release", pr: 5050 },
+  "debug-round": { command: "debug-round", pr: 5050 },
+};
+
+describe("operator_command — the companion's tier, forwarded", () => {
+  it("has a sample for every verb of the tier, and nothing outside it", () => {
+    expect(Object.keys(TIER_SAMPLES).sort()).toEqual([...tierVerbs("companion")].sort());
+  });
+
+  it.each(Object.entries(TIER_SAMPLES))("forwards %s", async (verb, command) => {
+    const parsed = parseTuiAction(
+      JSON.stringify({ verb: "operator_command", params: { command } }),
+    );
+    expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
+    if (!parsed.ok) return;
+    const { calls, driver } = mockDriver();
+    const trace = await executeTuiAction(parsed.action, driver);
+    const sent = calls.find((c) => c[0] === "operatorCommand")?.[1] as Command;
+    expect(sent.command).toBe(verb);
+    expect(trace).toBe(`companion ▸ ✓ ${verb} delivered`);
+  });
+
+  it("carries may_post on a message", () => {
+    const res = parseTuiAction(
+      JSON.stringify({ verb: "operator_command", params: { command: TIER_SAMPLES["message"] } }),
+    );
+    expect(res.ok && res.action.verb === "operator_command" && res.action.command).toMatchObject({
+      command: "message",
+      may_post: true,
+    });
+  });
+
+  it.each([
+    [{ command: "lessons-off" }, /not available to the companion/],
+    [{ command: "archive-run" }, /not available to the companion/],
+    [{ command: "no-such-verb" }, /operator_command/],
+    [{ command: "steer", pr: 5049 }, /operator_command/],
+    [{ command: "steer", pr: 0, text: "x" }, /operator_command/],
+    ["steer", /operator_command/],
+    [undefined, /operator_command/],
+  ])("refuses a malformed or out-of-tier command: %j", (command, why) => {
+    expect(err({ verb: "operator_command", params: { command } })).toMatch(why);
+  });
+
+  it("opens the pane of a takeover or debug round it asked for", async () => {
+    for (const verb of ["takeover", "debug-round"]) {
+      const { calls, driver } = mockDriver();
+      await executeTuiAction(
+        ok({ verb: "operator_command", params: { command: TIER_SAMPLES[verb] } }),
+        driver,
+      );
+      expect(calls.map((c) => c[0])).toEqual(["operatorCommand", "selectPr"]);
+      expect(calls[1]).toEqual(["selectPr", 5050]);
+    }
+    const { calls, driver } = mockDriver();
+    await executeTuiAction(
+      ok({ verb: "operator_command", params: { command: TIER_SAMPLES["release"] } }),
+      driver,
+    );
+    expect(calls.map((c) => c[0])).toEqual(["operatorCommand"]);
+  });
+
+  it("a refused command is a failed result, and a busy TUI does not undo a delivered takeover", async () => {
+    const refused = mockDriver({
+      operatorCommand: () => Promise.reject(new Error("✖ steer #5049 refused (no round running)")),
+    });
+    await expect(
+      executeTuiAction(
+        ok({ verb: "operator_command", params: { command: TIER_SAMPLES["steer"] } }),
+        refused.driver,
+      ),
+    ).rejects.toThrow(/refused/);
+    const busy = mockDriver({
+      selectPr: () => {
+        throw new Error("operator input open");
+      },
+    });
+    await expect(
+      executeTuiAction(
+        ok({ verb: "operator_command", params: { command: TIER_SAMPLES["takeover"] } }),
+        busy.driver,
+      ),
+    ).resolves.toMatch(/takeover delivered/);
+  });
+});
+
+describe("the companion's commands/ directory", () => {
+  let dir = "";
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = "";
+  });
+
+  it("reads a bare command as operator_command, with the same refusals", () => {
+    const res = parseCompanionCommand(JSON.stringify(TIER_SAMPLES["eod-curation-receipt"]));
+    expect(res.ok && res.action).toMatchObject({
+      verb: "operator_command",
+      command: { command: "eod-curation-receipt", day: "2026-10-07" },
+    });
+    expect(parseCompanionCommand("{nope")).toEqual({ ok: false, error: "not JSON" });
+    expect(parseCompanionCommand(JSON.stringify({ command: "lessons-on" }))).toMatchObject({
+      ok: false,
+    });
+  });
+
+  it("ingests an eod-curation-receipt and forwards it once", async () => {
+    dir = mkdtempSync(join(tmpdir(), "companion-commands-"));
+    writeFileSync(
+      join(dir, "2026-10-07T18-30-00Z-eod-curation-receipt.json"),
+      JSON.stringify(TIER_SAMPLES["eod-curation-receipt"]),
+    );
+    const { calls, driver } = mockDriver();
+    const first = await processTuiActions(dir, driver, parseCompanionCommand);
+    expect(first).toHaveLength(1);
+    expect(first[0]!.ok).toBe(true);
+    const second = await processTuiActions(dir, driver, parseCompanionCommand);
+    expect(second).toEqual([]);
+    const sent = calls.filter((c) => c[0] === "operatorCommand");
+    expect(sent).toHaveLength(1);
+    expect((sent[0]![1] as Command).command).toBe("eod-curation-receipt");
+    const result = JSON.parse(
+      readFileSync(join(dir, "2026-10-07T18-30-00Z-eod-curation-receipt.result.json"), "utf8"),
+    );
+    expect(result.ok).toBe(true);
+    expect(readdirSync(join(dir, ".done"))).toEqual([
+      "2026-10-07T18-30-00Z-eod-curation-receipt.json",
+    ]);
+  });
+
+  it("refuses a malformed file with a result, and forwards nothing", async () => {
+    dir = mkdtempSync(join(tmpdir(), "companion-commands-"));
+    writeFileSync(join(dir, "a.json"), JSON.stringify({ command: "eod-curation-receipt" }));
+    const { calls, driver } = mockDriver();
+    const out = await processTuiActions(dir, driver, parseCompanionCommand);
+    expect(out[0]!.ok).toBe(false);
+    expect(calls.filter((c) => c[0] === "operatorCommand")).toEqual([]);
+    expect(existsSync(join(dir, "a.result.json"))).toBe(true);
   });
 });

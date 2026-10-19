@@ -1,7 +1,8 @@
 // Remote access layer for qcr tui — every VM touch goes through here, and
 // every command it can produce is read-only against the box except the
 // user-initiated writes (inject files in msg.ts, and `sendKeysArgv` typing
-// into the board's focused pi pane). There is no interactive attach: the TUI
+// into the board's focused pi pane) and the one bookkeeping delete, the
+// companion inbox's ack (`inboxAckArgv`). There is no interactive attach: the TUI
 // never takes a pty to a VM tmux session — the board's PR pane and the
 // companion column are the only terminals, both embedded. Rubric proposals do
 // not ride this runner: they are local state/rubric/ dirs (companion-authored)
@@ -57,6 +58,48 @@ function cliArgv(cfg: TuiConfig, ...args: string[]): string[] {
 /** A shell script run inside the container: `[sudo] docker exec <container> sh -c <script>`. */
 export function dockerShArgv(cfg: TuiConfig, script: string): string[] {
   return [...dockerPrefix(cfg), cfg.container, "sh", "-c", script];
+}
+
+/** The bot's companion inbox (src/companioninbox.ts), inside the container. */
+export function inboxDirFor(cfg: TuiConfig): string {
+  return `${cfg.remote_sandbox_root}/inject/companion-inbox`;
+}
+
+/** Items one pull reads at most: a backlog drains over a few polls rather
+ * than as one transfer of every EOD sweep the companion missed. */
+export const INBOX_PULL_MAX = 20;
+
+/**
+ * Print the pending inbox items, one JSON object per line (an item is written
+ * with `JSON.stringify`, so it is a single line), oldest file names first and
+ * at most `INBOX_PULL_MAX`. An absent directory prints nothing: a bot that has
+ * not written an item yet is an empty inbox. Reads only.
+ */
+export function inboxListArgv(cfg: TuiConfig): string[] {
+  const dir = shellQuote(inboxDirFor(cfg));
+  return dockerShArgv(
+    cfg,
+    `d=${dir}; [ -d "$d" ] || exit 0; n=0; for f in "$d"/*.json; do [ -f "$f" ] || continue; ` +
+      `[ "$n" -lt ${INBOX_PULL_MAX} ] || break; { cat "$f" && echo; } 2>/dev/null; n=$((n+1)); done; exit 0`,
+  );
+}
+
+/** One id the TUI will put in a shell script: the bot's own item-id shape. */
+const INBOX_ID = /^[a-z0-9][a-z0-9._-]{0,95}$/;
+
+/**
+ * Acknowledge delivered items: delete their files. This is the one write the
+ * pull makes against the bot, and only for ids that came back from the bot's
+ * own listing and passed the item-id shape, so no path or option can ride in.
+ * `rm -f` of an id that is already gone is the normal answer of a second TUI.
+ */
+export function inboxAckArgv(cfg: TuiConfig, ids: readonly string[]): string[] {
+  for (const id of ids) if (!INBOX_ID.test(id)) throw new Error(`not an inbox item id: ${id}`);
+  const dir = shellQuote(inboxDirFor(cfg));
+  return dockerShArgv(
+    cfg,
+    `cd ${dir} 2>/dev/null || exit 0; rm -f -- ${ids.map((id) => `'${id}.json'`).join(" ")}`,
+  );
 }
 
 /** VM state is host-mounted; local Compose state lives in a named Docker volume. */

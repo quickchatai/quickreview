@@ -21,9 +21,21 @@
 // the companion writes its own entries with its own keys, and no other
 // memory write may be requested through a file.
 //
+// The companion's tier (rule 8: everything the owner can). `operator_command` carries one command of that tier — steer,
+// follow-up, abort-round, takeover, debug-round, release, message (with
+// `may_post`), drain and the rest of the owner's column — and the TUI forwards
+// it down the operator route the viewer's own input line uses
+// (src/tui/livecontrol.ts). The command is validated here against the
+// daemon's own schema (`validateCommand`, as the operator channel would) and
+// authorised against the companion's tier (`authorizeCompanionCommand`), so a
+// malformed or out-of-tier verb is refused before anything is written. The
+// companion's `commands/` directory (`/qcr-state/commands/`, where the seeded
+// EOD sweep writes its receipt) is swept the same way: each file is one bare
+// command, read by `parseCompanionCommand` and forwarded once.
+//
 // Idempotency (archive before execute): a request is archived to `.done/`
 // BEFORE it is executed — a crash mid-execute must not re-run it on the next
-// sweep (msg_session/overseer_inject would double-send, deploy_tab would
+// sweep (msg_session would double-send, deploy_tab would
 // double-arm). A crash after archive but before execute
 // loses one request; the companion sees the missing result and re-requests —
 // the safer failure. Results are written to `<name>.result.json` beside the
@@ -40,6 +52,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { authorizeCompanionCommand, validateCommand, type Command } from "../commands.js";
 import type { BoardFilter } from "./filters.js";
 import { STATE_GLYPHS } from "./model.js";
 import { isValidSessionName } from "./msg.js";
@@ -68,13 +81,15 @@ export interface TuiDriver {
   memoryPin(entry: string, pin: boolean): Promise<string>;
   setBoardFilter(f: BoardFilter | null): void;
   setMemoryFilter(tag: string | null): void;
-  /** A quick-message to `session` (`overseerInject`: to the overseer).
-   * Resolves with the sender's label — delivered, queued behind a busy
+  /** A quick-message to `session`. Resolves with the sender's label — delivered, queued behind a busy
    * session, or unconfirmed; REJECTS only on a definite non-delivery, so a
    * failed result file never asks for a re-send of a message still queued. */
   msgSession(session: string, text: string): Promise<string>;
-  overseerInject(text: string): Promise<string>;
   deployTab(action: DeployTabAction): void;
+  /** Forward one validated command of the companion's tier down the operator
+   * route. Resolves with the daemon's answer (queued, handled, or unconfirmed);
+   * REJECTS when the daemon refused it or the write failed. */
+  operatorCommand(command: Command): Promise<string>;
 }
 
 // ---- the schema -------------------------------------------------------------
@@ -97,8 +112,8 @@ export type TuiAction =
   | { verb: "memory_filter"; tag: string | null }
   | { verb: "memory_pin"; entry: string; pin: boolean }
   | { verb: "msg_session"; session: string; text: string }
-  | { verb: "overseer_inject"; text: string }
-  | { verb: "deploy_tab"; action: DeployTabAction };
+  | { verb: "deploy_tab"; action: DeployTabAction }
+  | { verb: "operator_command"; command: Command };
 
 export const ACTION_TEXT_MAX = 2000;
 
@@ -258,18 +273,14 @@ export function parseTuiAction(
     }
     case "msg_session": {
       const session = p["session"];
-      if (typeof session !== "string" || !isValidSessionName(session))
-        return { ok: false, error: "msg_session session must be pr-<n>, overseer, or main" };
+      // The overseer is retired (rule 8: the companion injects into no session
+      // of its own); a PR's session or the main one is all that is left to name.
+      if (typeof session !== "string" || session === "overseer" || !isValidSessionName(session))
+        return { ok: false, error: "msg_session session must be pr-<n> or main" };
       const text = boundedText(p["text"]);
       if (text === undefined)
         return { ok: false, error: `msg_session text must be 1..${ACTION_TEXT_MAX} chars` };
       return { ok: true, action: { verb, session, text } };
-    }
-    case "overseer_inject": {
-      const text = boundedText(p["text"]);
-      if (text === undefined)
-        return { ok: false, error: `overseer_inject text must be 1..${ACTION_TEXT_MAX} chars` };
-      return { ok: true, action: { verb, text } };
     }
     case "deploy_tab": {
       const action = p["action"];
@@ -277,9 +288,37 @@ export function parseTuiAction(
         return { ok: false, error: `deploy_tab needs action: ${DEPLOY_TAB_ACTIONS.join("|")}` };
       return { ok: true, action: { verb, action } };
     }
+    case "operator_command":
+      return companionCommand(p["command"]);
     default:
       return { ok: false, error: `unknown verb '${verb}'` };
   }
+}
+
+/** One command of the companion's tier: valid by the daemon's own schema as
+ * the operator channel validates it, and within the companion's tier. */
+function companionCommand(
+  raw: unknown,
+): { ok: true; action: TuiAction } | { ok: false; error: string } {
+  const valid = validateCommand(raw, { issuer: "operator" });
+  if (!valid.ok) return { ok: false, error: `operator_command: ${valid.reason}` };
+  const tier = authorizeCompanionCommand(valid.command);
+  if (!tier.ok) return { ok: false, error: `operator_command: ${tier.reason}` };
+  return { ok: true, action: { verb: "operator_command", command: valid.command } };
+}
+
+/** One file of the companion's `commands/` directory: a bare command (the
+ * shape the seeded EOD sweep writes), forwarded as `operator_command`. */
+export function parseCompanionCommand(
+  text: string,
+): { ok: true; action: TuiAction } | { ok: false; error: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "not JSON" };
+  }
+  return companionCommand(raw);
 }
 
 // ---- execution --------------------------------------------------------------
@@ -333,13 +372,27 @@ export function executeTuiAction(a: TuiAction, driver: TuiDriver): string | Prom
       return driver
         .msgSession(a.session, a.text)
         .then((label) => `companion ▸ msg ${a.session} (${a.text.length} chars) → ${label}`);
-    case "overseer_inject":
-      return driver
-        .overseerInject(a.text)
-        .then((label) => `companion ▸ overseer inject (${a.text.length} chars) → ${label}`);
     case "deploy_tab":
       driver.deployTab(a.action);
       return `companion ▸ deploy tab → ${a.action}`;
+    case "operator_command":
+      return driver.operatorCommand(a.command).then((label) => {
+        // A takeover or debug round the companion asked for opens its pane in
+        // the owner's TUI. The command is already delivered: a TUI too busy to
+        // switch now leaves the PR where the owner can open it.
+        const pr = (a.command as { pr?: unknown }).pr;
+        if (
+          (a.command.command === "takeover" || a.command.command === "debug-round") &&
+          typeof pr === "number"
+        ) {
+          try {
+            driver.selectPr(pr);
+          } catch {
+            /* delivered either way */
+          }
+        }
+        return `companion ▸ ${label}`;
+      });
   }
 }
 
@@ -365,6 +418,7 @@ const DONE_KEEP = 200;
 export async function processTuiActions(
   dir: string,
   driver: TuiDriver,
+  parse: (text: string) => ReturnType<typeof parseTuiAction> = parseTuiAction,
 ): Promise<ProcessedAction[]> {
   const out: ProcessedAction[] = [];
   if (!existsSync(dir)) return out;
@@ -384,7 +438,7 @@ export async function processTuiActions(
     let ok = false;
     let message: string;
     let trace: string | undefined;
-    const parsed = parseTuiAction(text);
+    const parsed = parse(text);
     if (!parsed.ok) {
       message = `refused: ${parsed.error}`;
     } else {

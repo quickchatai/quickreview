@@ -46,6 +46,7 @@ import { ClipboardSink } from "./clipboard.js";
 import { PiMirror } from "./pipane.js";
 import { TranscriptViewer, paneSurface, surfaceSession, type PaneSurface } from "./viewer.js";
 import type { ControlOutcome, ControlRequest } from "./livecontrol.js";
+import type { Command } from "../commands.js";
 import { newViewerInput, viewerInputKey, type ViewerInput } from "./viewerinput.js";
 import { PANE_ESCAPE, isEndKey, keysToTmux } from "./termmirror.js";
 import { Poller } from "./poll.js";
@@ -109,6 +110,10 @@ export interface AppHooks {
    * daemon answered. The viewer's input line and `msg.ts` ride it
    * (src/tui/livecontrol.ts). */
   liveControl?: (req: ControlRequest, app: App) => Promise<ControlOutcome>;
+  /** Forward one command of the companion's tier (every operator verb, root
+   * CLAUDE.md rule 8), already validated and authorised, down the same
+   * operator route, and resolve with the daemon's answer. */
+  operatorCommand?: (command: Command, app: App) => Promise<ControlOutcome>;
   /** The board's `I` — ask the companion to run its setup skill
    * (an inject into its own column, src/tui/setupentry.ts) and focus it. */
   setup?: (app: App) => void;

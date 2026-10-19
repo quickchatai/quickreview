@@ -169,6 +169,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/tool-uid-container.test.ts",
   "tests/tool-uid.test.ts",
   "tests/tui-deploy-process.test.ts",
+  "tests/tui-inboxpull.test.ts",
   "tests/tui-openurl.test.ts",
   "tests/tui-rollover.test.ts",
   "tests/tui-socket-mode.test.ts",

@@ -27,7 +27,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import {
   companionConfigMirrorDir,
   CONFIG_FILE,
@@ -214,11 +214,39 @@ export function tmuxSocketPath(cfg: Pick<CompanionConfig, "session">): string {
  * entrypoint starts the tmux server on (docker/entrypoint.sh). */
 export const TMUX_SOCKET_ENV = "QCR_TMUX_SOCKET";
 
-// No `~/.ssh` and no ssh-agent socket are mounted, on purpose: the companion's
-// only reach into the VM is OpenViking memory over a forward the host owns
-// (systemd --user, see scripts/companion-memory-forward.mjs), so the container
-// holds no VM ssh credential of any kind and cannot ssh anywhere. Never mount
-// either — the boundary is structural, not prompted (root CLAUDE.md rule 8).
+/** The companion's ssh access to the VM (root CLAUDE.md rule 8: full ssh, so
+ * it may deploy). Exactly three host
+ * sources, each read-only and each only when the host has it: the ssh agent's
+ * socket, the ssh config and `known_hosts` — the shape the containerised TUI
+ * gets (D35). Never `~/.ssh` whole, never a private key file, never
+ * `docker.sock`: the keys stay in the host's agent. */
+export const SSH = {
+  agent: "/run/qcr-ssh-agent",
+  config: `${CONTAINER.home}/.ssh/config`,
+  knownHosts: `${CONTAINER.home}/.ssh/known_hosts`,
+} as const;
+
+/** In `tmux-socket` mode this process sees none of the host's files, so the
+ * host wrapper checks the three ssh sources itself and names the present ones
+ * in these env vars (scripts/qcr-host.sh); the planner mounts what they name. */
+export const HOST_SSH_ENV = {
+  agent: "QCR_HOST_SSH_AUTH_SOCK",
+  config: "QCR_HOST_SSH_CONFIG",
+  knownHosts: "QCR_HOST_SSH_KNOWN_HOSTS",
+} as const;
+
+/** The host's ssh sources the companion is given, present ones only. */
+export interface SshSources {
+  agent?: string;
+  config?: string;
+  knownHosts?: string;
+}
+
+/** An absolute single-line path, else undefined. */
+function hostPath(v: string | undefined): string | undefined {
+  const t = (v ?? "").trim();
+  return t !== "" && isAbsolute(t) && !/[\n\r]/.test(t) ? t : undefined;
+}
 
 /** How long a containerised TUI waits for the wrapper-run companion's tmux
  * server (the wrapper starts the container just before it starts the TUI). */
@@ -232,7 +260,7 @@ const VENDOR_EXTENSION = "extensions/vendor/openviking-pi/index.ts";
 // ---- the memory forward -----------------------------------------------------
 
 /**
- * Constants of the host-owned memory path. The companion never speaks ssh:
+ * Constants of the host-owned memory path. Memory never rides ssh:
  * a systemd --user forward on the owner's PC listens on a docker bridge the
  * companion is attached to and relays to OpenViking inside the VM container.
  *
@@ -560,11 +588,9 @@ export class CompanionLifecycle {
 
   // ---- pure argv ----------------------------------------------------------
 
-  /** `docker run` for a cold start: every mount the companion needs.
-   *
-   * There is deliberately no ssh mount and no agent socket: the one
-   * thing the companion reaches on the VM is OpenViking, through the docker
-   * network the host-owned forward listens on. */
+  /** `docker run` for a cold start: every mount the companion needs,
+   * the three ssh sources among them (`SSH`, rule 8). Memory still rides the
+   * docker network the host-owned forward listens on, never ssh. */
   runArgv(): string[] {
     const argv = [
       "run",
@@ -594,6 +620,8 @@ export class CompanionLifecycle {
     // pi's default model, set by the entrypoint on every start.
     argv.push("--env", `QCR_PI_DEFAULT_MODEL=${this.cfg.model}`);
     if (this.socketPath !== undefined) argv.push("--env", `${TMUX_SOCKET_ENV}=${this.socketPath}`);
+    // The agent is reached by its mounted socket; no key is in the container.
+    if (this.sshSources().agent !== undefined) argv.push("--env", `SSH_AUTH_SOCK=${SSH.agent}`);
     // The release image, in its companion mode (docker/entrypoint.sh).
     argv.push(this.cfg.image, COMPANION_MODE);
     return argv;
@@ -1048,24 +1076,31 @@ export class CompanionLifecycle {
    * Bind mounts are frozen at creation, so a container that predates a mount
    * change keeps the old set forever — `docker start` on it silently resurrects
    * the old boundary. That is not cosmetic: a stale container can carry a
-   * mount (an `~/.ssh`, an ssh-agent socket) that defeats a boundary root
-   * CLAUDE.md rule 8 means to be structural.
+   * mount the boundary does not grant (an `~/.ssh` whole, a key file, a dead
+   * agent socket) — root CLAUDE.md rule 8 means its mounts to be structural.
    *
    * So: compare what the container has against what `runArgv()` asks for, and
    * report the drift. Named volumes are compared by name, binds by host path.
-   * Extra mounts count as drift (that is the ssh case); an unreadable inspect
+   * Extra mounts count as drift (an `~/.ssh` whole is that case); an unreadable inspect
    * reports nothing.
    */
   mountDrift(actual: Map<string, string>): string[] {
     if (actual.size === 0) return [];
     const drift: string[] = [];
+    // An agent socket moves with every login and differs between shells: a
+    // container on another agent socket that is still live keeps its ssh, so
+    // a TUI started from another shell never recreates a running companion.
+    // A dead one is drift like any other.
+    const liveAgent = (dest: string, have: string | undefined): boolean =>
+      dest === SSH.agent && have !== undefined && this.fs.exists(have);
     for (const [dest, source] of this.expectedMounts()) {
       const have = actual.get(dest);
       if (have === undefined) drift.push(`missing ${dest}`);
-      else if (have !== source) drift.push(`${dest} points at ${have}, expected ${source}`);
+      else if (have !== source && !liveAgent(dest, have))
+        drift.push(`${dest} points at ${have}, expected ${source}`);
     }
-    for (const dest of actual.keys()) {
-      if (!this.expectedMounts().has(dest)) drift.push(`stale ${dest}`);
+    for (const [dest, have] of actual) {
+      if (!this.expectedMounts().has(dest) && !liveAgent(dest, have)) drift.push(`stale ${dest}`);
     }
     return drift;
   }
@@ -1137,7 +1172,42 @@ export class CompanionLifecycle {
       : undefined;
     if (adjacent && adjacent !== homes.profiles && this.fs.exists(adjacent))
       spec.push({ dest: `${CONTAINER.configLive}/profiles`, source: adjacent, mode: "rw" });
+    // The VM access (rule 8): exactly these three, read-only, present ones
+    // only. An agent socket moves with every login, so a new path is mount
+    // drift and the container is recreated onto it.
+    const ssh = this.sshSources();
+    if (ssh.agent !== undefined) spec.push({ dest: SSH.agent, source: ssh.agent, mode: "ro" });
+    if (ssh.config !== undefined) spec.push({ dest: SSH.config, source: ssh.config, mode: "ro" });
+    if (ssh.knownHosts !== undefined)
+      spec.push({ dest: SSH.knownHosts, source: ssh.knownHosts, mode: "ro" });
     return spec;
+  }
+
+  /**
+   * The host's ssh sources the companion is given (`SSH`): the agent socket
+   * `SSH_AUTH_SOCK` names, and `config` and `known_hosts` under the
+   * configured `ssh_dir` — each only when it exists. In `tmux-socket` mode
+   * this process cannot see the host, so the wrapper names them
+   * (`HOST_SSH_ENV`).
+   */
+  sshSources(): SshSources {
+    const out: SshSources = {};
+    const set = (key: keyof SshSources, path: string | undefined): void => {
+      if (path !== undefined) out[key] = path;
+    };
+    if (this.socketPath !== undefined) {
+      set("agent", hostPath(this.env[HOST_SSH_ENV.agent]));
+      set("config", hostPath(this.env[HOST_SSH_ENV.config]));
+      set("knownHosts", hostPath(this.env[HOST_SSH_ENV.knownHosts]));
+      return out;
+    }
+    const present = (path: string | undefined): string | undefined =>
+      path !== undefined && this.fs.exists(path) ? path : undefined;
+    const dir = hostPath(this.cfg.ssh_dir);
+    set("agent", present(hostPath(this.env["SSH_AUTH_SOCK"])));
+    set("config", present(dir === undefined ? undefined : join(dir, "config")));
+    set("knownHosts", present(dir === undefined ? undefined : join(dir, "known_hosts")));
+    return out;
   }
 
   /** `dest -> source` for every mount `runArgv()` declares. */

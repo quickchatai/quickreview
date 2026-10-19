@@ -69,6 +69,7 @@ import {
   scanAuthMissing,
 } from "./engine/auth.js";
 import {
+  COMPANION_COMMANDS_DIR,
   configHome,
   installName,
   operatorStateHome,
@@ -201,6 +202,10 @@ export function scanMounts(p: ScanBoxPlan): ScanMount[] {
     { dest: SCANBOX.reviewedRepo, source: p.reviewedRepo, mode: "ro" },
     ...p.gitDirs.map((d) => ({ dest: d, source: d, mode: "ro" as const })),
     { dest: SCANBOX.stateHome, source: p.stateHome, mode: "rw" },
+    // The companion's commands/ is forwarded by the TUI at the companion's
+    // tier (rule 8): a scan's models must never reach it, so it is covered
+    // by an empty tmpfs only root can write.
+    { dest: `${SCANBOX.stateHome}/${COMPANION_COMMANDS_DIR}`, source: "", tmpfs: true },
     ...loginMounts(p.pihomeVolume),
     { dest: SCANBOX.configLive, source: p.configMirror, mode: "ro" },
     { dest: SCANBOX.profiles, source: p.profiles, mode: "ro" },
@@ -684,7 +689,8 @@ export function dockerDetach<R = unknown>(
     sweepStarted(join(home, STARTED_DIR), timeoutMs);
     try {
       // Created here, never by docker: a source docker invents is root-owned.
-      for (const d of [join(home, STARTED_DIR), profiles]) mkdirSync(d, { recursive: true });
+      for (const d of [join(home, STARTED_DIR), join(home, COMPANION_COMMANDS_DIR), profiles])
+        mkdirSync(d, { recursive: true });
     } catch (err) {
       return refuse(`the scan container's directories cannot be made: ${String(err)}`);
     }

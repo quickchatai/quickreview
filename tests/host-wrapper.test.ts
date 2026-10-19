@@ -716,7 +716,7 @@ describe("the TUI and its companion (D35)", () => {
     expect(r.calls(true).at(-1)!.slice(0, 2)).toEqual(["stop", NAME]);
   });
 
-  it("the TUI container gets the agent socket, ssh config, known_hosts and the tmux volume; the companion gets none of the ssh", async () => {
+  it("the TUI container gets the agent socket, ssh config, known_hosts and the tmux volume; the planner is told the same three for the companion", async () => {
     const r = rig();
     ssh(r);
     const agent = await agentSocket(r.dir);
@@ -746,10 +746,59 @@ describe("the TUI and its companion (D35)", () => {
     );
     expect(envs(tui)).toContain(`QCR_STATE_HOME=${state}/qcr/home`);
     expect(envs(tui)).toContain(`QCR_HOST_HOME=${r.home}`);
-    // the companion: no agent, no ~/.ssh, nothing of ssh at all
-    const flat = companionRun(r).join("\n");
-    expect(flat).not.toMatch(/ssh|agent|known_hosts|SSH_AUTH_SOCK/i);
-    expect(flat).not.toContain(agent.path);
+    // the companion's ssh (rule 8: full ssh): the planner sees none of the
+    // host's files, so the wrapper names the three present sources to it — by
+    // env, never by a mount — and the plan mounts them read-only
+    const [plan] = r.calls(true);
+    expect(mounts(plan!)).toEqual([]);
+    expect(envs(plan!)).toEqual(
+      expect.arrayContaining([
+        `QCR_HOST_SSH_AUTH_SOCK=${agent.path}`,
+        `QCR_HOST_SSH_CONFIG=${r.home}/.ssh/config`,
+        `QCR_HOST_SSH_KNOWN_HOSTS=${r.home}/.ssh/known_hosts`,
+      ]),
+    );
+    // never ~/.ssh whole, never a key file
+    expect(companionRun(r).join("\n")).not.toMatch(/\.ssh(,|:|$)|id_(rsa|ed25519|ecdsa)/m);
+  });
+
+  it("the plan mounts exactly the three ssh sources it is named, read-only, and points SSH_AUTH_SOCK at the agent", () => {
+    const home = "/h";
+    const base = {
+      QCR_HOST_HOME: home,
+      QCR_HOST_XDG_CONFIG_HOME: `${home}/.config`,
+      QCR_HOST_XDG_STATE_HOME: `${home}/.local/state`,
+      QCR_IMAGE: IMAGE,
+    };
+    const run = companionPlan({
+      ...base,
+      QCR_HOST_SSH_AUTH_SOCK: "/run/user/1/agent.sock",
+      QCR_HOST_SSH_CONFIG: `${home}/.ssh/config`,
+      QCR_HOST_SSH_KNOWN_HOSTS: `${home}/.ssh/known_hosts`,
+    }).run;
+    const volumes = opt(run, "--volume");
+    expect(volumes.filter((v) => /ssh/.test(v))).toEqual([
+      "/run/user/1/agent.sock:/run/qcr-ssh-agent:ro",
+      `${home}/.ssh/config:/home/qcr/.ssh/config:ro`,
+      `${home}/.ssh/known_hosts:/home/qcr/.ssh/known_hosts:ro`,
+    ]);
+    expect(opt(run, "--env")).toContain("SSH_AUTH_SOCK=/run/qcr-ssh-agent");
+    // with none named, there is no ssh at all, and the plan's hash differs
+    const bare = companionPlan(base);
+    expect(bare.run.join("\n")).not.toMatch(/ssh/i);
+    expect(bare.hash).not.toBe(
+      companionPlan({ ...base, QCR_HOST_SSH_CONFIG: `${home}/.ssh/config` }).hash,
+    );
+    // the agent's path moves with every login: the hash names that there is
+    // one, not where, so another shell's TUI adopts the running companion
+    const agentAt = (p: string): string =>
+      companionPlan({ ...base, QCR_HOST_SSH_AUTH_SOCK: p }).hash;
+    expect(agentAt("/run/user/1/a.sock")).toBe(agentAt("/tmp/ssh-x/agent.9"));
+    expect(agentAt("/run/user/1/a.sock")).not.toBe(bare.hash);
+    // a relative or multi-line path is no path
+    expect(
+      companionPlan({ ...base, QCR_HOST_SSH_AUTH_SOCK: "agent.sock" }).run.join("\n"),
+    ).not.toMatch(/ssh/i);
   });
 
   it("no container of any call mounts docker.sock, whatever the verb", async () => {
@@ -769,9 +818,14 @@ describe("the TUI and its companion (D35)", () => {
       expect(argv.join("\n")).not.toMatch(/docker\.sock|\/var\/run\/docker/);
       expect(argv).not.toContain("--privileged");
     }
-    // the agent reaches the TUI container and no other
-    const withAgent = all.filter((c) => c.join("\n").includes(agent.path));
+    // the agent is MOUNTED into the TUI container and no other call here (the
+    // companion's comes from its plan, which the planner call only names it to)
+    const withAgent = all.filter((c) => mounts(c).some((m) => m.includes(agent.path)));
     expect(withAgent.map((c) => c.includes("qcr.role=tui"))).toEqual([true]);
+    const named = all.filter((c) => envs(c).includes(`QCR_HOST_SSH_AUTH_SOCK=${agent.path}`));
+    expect(named.map((c) => c.slice(c.indexOf(IMAGE)).join(" "))).toEqual([
+      `${IMAGE} cli companion plan`,
+    ]);
   });
 
   it("adopts a running companion that matches the plan, and creates nothing", () => {

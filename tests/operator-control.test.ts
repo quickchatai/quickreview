@@ -272,11 +272,20 @@ describe("the CLAUDE.md anchors", () => {
     while (end < lines.length && !lines[end]!.startsWith("- ") && lines[end]!.trim() !== "") end++;
     return { text: lines.slice(at, end).join(" ").replace(/\s+/g, " "), at: at + 1 };
   };
+  /** The 1-based line range of the `## <title>` section: a bullet's home is
+   * pinned by section, so a longer rule above it moves no anchor. */
+  const section = (title: string): { from: number; to: number } => {
+    const from = lines.findIndex((l) => l.startsWith(`## ${title}`));
+    expect(from, title).toBeGreaterThan(-1);
+    const next = lines.findIndex((l, i) => i > from && l.startsWith("## "));
+    return { from: from + 1, to: next === -1 ? lines.length : next };
+  };
+  const ratified = section("Ratified design decisions");
 
   it("the PR-pane bullet is the viewer's rule, part 1: the line sends a message when no round runs", () => {
     const b = bullet("- **An embedded pi surface is a TERMINAL");
-    expect(b.at).toBeGreaterThanOrEqual(640);
-    expect(b.at).toBeLessThanOrEqual(650);
+    expect(b.at).toBeGreaterThan(ratified.from);
+    expect(b.at).toBeLessThan(ratified.to);
     expect(b.text).toContain("Never add a TUI-side input box");
     expect(b.text).toContain("LIVE VIEWER");
     expect(b.text).toContain("operator steer (rule 9's one exception)");
@@ -290,8 +299,8 @@ describe("the CLAUDE.md anchors", () => {
 
   it("the unwedge bullet names the viewer's writes and no longer the overseer's pi", () => {
     const b = bullet("- **The operator can always unwedge from the board");
-    expect(b.at).toBeGreaterThanOrEqual(745);
-    expect(b.at).toBeLessThanOrEqual(755);
+    expect(b.at).toBeGreaterThan(ratified.from);
+    expect(b.at).toBeLessThan(ratified.to);
     expect(b.text).toContain("the viewer's input line (steer, follow-up, abort-round, message)");
     expect(b.text).toContain("**`commands/operator/`, created and written AS ROOT");
     expect(b.text).toContain("through a model turn");
