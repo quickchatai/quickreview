@@ -158,6 +158,9 @@ RUN cd /opt/qcr \
     && [ "${global}" = "${PI_VERSION}" ] && [ "${local_}" = "${PI_VERSION}" ] && [ "${pinned}" = "${PI_VERSION}" ] \
     || { echo "FATAL: pi versions disagree (ARG ${PI_VERSION}, global ${global:-?}, node_modules ${local_:-?}, config ${pinned:-?})" >&2; exit 1; }
 RUN ! command -v claude
+# setpriv (util-linux): the engine starts pi through it, as another uid with no
+# capabilities, so the model's tools cannot read the token-holding process (D32).
+RUN setpriv --version >/dev/null
 
 # Root-owned, world-readable, writable by no runtime uid. The stub is 0444 on
 # its own account: it is a policy surface, not data.
@@ -175,7 +178,11 @@ RUN install -d -m 1777 /opt/qcr/state && chmod 0555 /opt/qcr/docker/entrypoint.s
 RUN install -d -m 1777 /home/qcr
 ENV HOME=/home/qcr
 
-# A default for a bare `docker run`; the wrapper always passes --user.
+# A default for a bare `docker run`; the wrapper always passes --user. A per-call
+# run that reaches a model starts as root instead (--user 0:0 --cap-drop ALL
+# --cap-add SETUID --cap-add SETGID): the entrypoint drops to QCR_RUN_UID and
+# runs the model's tools as QCR_TOOLS_AS (D32, docker/entrypoint.sh). Started as
+# any other uid, the engine refuses to spawn pi unless QCR_ALLOW_SHARED_TOOL_UID=1.
 USER 1000:1000
 WORKDIR /opt/qcr
 

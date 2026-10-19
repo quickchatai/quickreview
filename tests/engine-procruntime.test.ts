@@ -44,6 +44,26 @@ function recordingPi(body: string): { bin: string; calls: string; stdin: string 
   return { bin, calls, stdin };
 }
 
+describe("procRuntime and the tool uid (D32)", () => {
+  const saved = process.env["QCR_TOOL_UID_REQUIRED"];
+  afterEach(() => {
+    if (saved === undefined) delete process.env["QCR_TOOL_UID_REQUIRED"];
+    else process.env["QCR_TOOL_UID_REQUIRED"] = saved;
+  });
+
+  it("refuses to start pi when the entrypoint could not split the uid, and says why", async () => {
+    const { bin, calls } = recordingPi("echo done");
+    process.env["QCR_TOOL_UID_REQUIRED"] = "1";
+    const session = await procRuntime({ bin }).create(specIn());
+    const r = await session.prompt("prompt");
+    await session.dispose();
+    expect(r.code).toBeNull();
+    expect(r.streamError).toContain("--cap-add SETUID");
+    expect(() => readFileSync(calls)).toThrow(); // pi never ran
+    expect(readFileSync(join(dir, "pi-stderr.log"), "utf8")).toContain("pi not started");
+  });
+});
+
 describe("procRuntime event stream", () => {
   it("writes the same events file the pre-port runPi wrote, byte for byte", async () => {
     const session = await procRuntime({ bin: FAKE_PI }).create(

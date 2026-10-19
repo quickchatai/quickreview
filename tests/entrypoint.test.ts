@@ -9,9 +9,11 @@
 //     the installed pi package;
 //   - the daemon mode carries the bash-guard registration, its FATAL on a
 //     missing extension and on a missing examples/subagent, and the 0444
-//     reviewer stub; the per-call modes register no bash-guard (D32 - the
-//     uid separation that is meant to replace it is NOT implemented or tested
-//     here);
+//     reviewer stub; the per-call cli mode registers no bash-guard and
+//     instead runs the model's tools as another uid (D32: the entrypoint's
+//     privilege drop, the engine's setpriv launch, and - in a user namespace,
+//     where available - the kernel refusing the tools the token holder's
+//     /proc);
 //   - <root>/state must be writable, and a cli mode's stdout is the command's.
 import { afterEach, describe, expect, it } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
@@ -32,6 +34,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/config.js";
 import { loginInPi } from "../src/scanbox.js";
+import { toolIsolation } from "../src/engine/procruntime.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRYPOINT = join(root, "docker", "entrypoint.sh");
@@ -53,6 +56,8 @@ interface Rig {
 const rigs: Rig[] = [];
 afterEach(() => {
   for (const r of rigs.splice(0)) {
+    // what the namespace's uids created is owned by uids the test is not
+    if (r.dir.startsWith(NS_BASE)) spawnSync(NS[0]!, [...NS.slice(1), "rm", "-rf", r.dir]);
     if (existsSync(join(r.app, "state"))) chmodSync(join(r.app, "state"), 0o755);
     rmSync(r.dir, { recursive: true, force: true });
   }
@@ -64,8 +69,8 @@ function put(path: string, text: string, mode = 0o644): void {
 }
 
 /** A scratch /opt/qcr holding the real script's inputs and stub dist files. */
-function rig(): Rig {
-  const dir = mkdtempSync(join(tmpdir(), "qcr-entrypoint-"));
+function rig(base = tmpdir()): Rig {
+  const dir = mkdtempSync(join(base, "qcr-entrypoint-"));
   const app = join(dir, "opt-qcr");
   const home = join(dir, "home");
   const bin = join(dir, "bin");
@@ -416,7 +421,7 @@ describe("daemon mode", () => {
   });
 });
 
-describe("per-call modes register no bash-guard (D32 half: the uid separation is pending, not checked here)", () => {
+describe("per-call modes register no bash-guard (D32; the uid split is checked below)", () => {
   it.each([
     ["cli", ["version"]],
     ["login", ["login"]],
@@ -442,6 +447,217 @@ describe("per-call modes register no bash-guard (D32 half: the uid separation is
     );
     expect(text.match(/extensions\/bash-guard\.ts/g)).toHaveLength(2); // the knob, and a comment
     expect(daemon).toContain('QCR_PI_REQUIRE_EXT="$APP/extensions/bash-guard.ts"');
+  });
+});
+
+// A user namespace in which this test process is root and a range of other uids
+// exists, so the privilege drop and the setpriv launch run for real. Absent on
+// a host that forbids unprivileged namespaces: those tests skip.
+const NS = [
+  "unshare",
+  "--user",
+  "--map-user=0",
+  "--map-users=auto",
+  "--map-group=0",
+  "--map-groups=auto",
+  "--",
+];
+const hasNs = ((): boolean => {
+  if (!existsSync("/dev/shm")) return false;
+  const o = spawnSync(
+    NS[0]!,
+    [...NS.slice(1), "setpriv", "--reuid=1000", "--regid=1000", "--clear-groups", "id", "-u"],
+    {
+      encoding: "utf8",
+    },
+  );
+  return o.status === 0 && o.stdout.trim() === "1000";
+})();
+
+/** Where a namespace rig lives: the namespace's uids cannot walk the test tmp
+ * dir's path (it sits under a home directory), but they can walk /dev/shm. */
+const NS_BASE = "/dev/shm";
+const nsRig = (): Rig => {
+  const r = rig(NS_BASE);
+  // the test runner's PATH may lead through a home directory they cannot walk
+  r.env["PATH"] = `${r.bin}:/usr/local/bin:/usr/bin:/bin`;
+  return r;
+};
+
+/** The script, copied inside the rig, which the namespace's uids must traverse. */
+function nsEntrypoint(r: Rig): string {
+  chmodSync(r.dir, 0o755);
+  const copy = join(r.app, "docker/entrypoint.sh");
+  copyFileSync(ENTRYPOINT, copy);
+  chmodSync(copy, 0o755);
+  return copy;
+}
+
+describe("D32: the model's tools run as another uid", () => {
+  const ALLOW = { QCR_ALLOW_SHARED_TOOL_UID: "" };
+
+  it("a cli start that is not root cannot split: it marks the uid as required and exports no tool uid", () => {
+    const r = rig();
+    put(
+      join(r.app, "dist/src/cli.js"),
+      `console.log(JSON.stringify({ uid: process.env.QCR_TOOL_UID ?? null, req: process.env.QCR_TOOL_UID_REQUIRED ?? null }));\n`,
+    );
+    const out = run(r, ["review"], { QCR_TOOL_UID: "1234", QCR_TOOL_GID: "1234", ...ALLOW });
+    expect(out.status, out.stderr).toBe(0);
+    expect(JSON.parse(out.stdout)).toEqual({ uid: null, req: "1" });
+  });
+
+  it("only the cli mode asks for the split: the daemon and the companion are untouched", () => {
+    const r = rig();
+    const wire = JSON.parse(run(r, ["daemon"], withConfig(r)).stdout) as Record<string, unknown>;
+    expect(wire["ran"]).toBe("wire");
+    const text = read("docker/entrypoint.sh");
+    expect(text).toContain('[ "$mode" = cli ] || return 0');
+    expect(text).not.toMatch(/QCR_TOOL_UID_REQUIRED[^\n]*daemon/);
+  });
+
+  it("the engine's launch: setpriv to the tool uid, no capabilities, no new privileges", () => {
+    const env = { QCR_TOOL_UID: "65534", QCR_TOOL_GID: "1000" };
+    expect(toolIsolation("pi", ["-p", "--mode", "json"], env)).toEqual({
+      bin: "setpriv",
+      argv: [
+        "--reuid=65534",
+        "--regid=1000",
+        "--clear-groups",
+        "--inh-caps=-all",
+        "--ambient-caps=-all",
+        "--no-new-privs",
+        "--",
+        "pi",
+        "-p",
+        "--mode",
+        "json",
+      ],
+    });
+  });
+
+  it("without the split nothing changes; with it required and absent, pi is refused", () => {
+    expect(toolIsolation("pi", ["-p"], {})).toEqual({ bin: "pi", argv: ["-p"] });
+    const refused = toolIsolation("pi", ["-p"], { QCR_TOOL_UID_REQUIRED: "1" });
+    expect(refused).toHaveProperty("refused");
+    expect((refused as { refused: string }).refused).toContain("--cap-add SETUID");
+    // the owner's explicit acceptance of the shared uid
+    expect(
+      toolIsolation("pi", ["-p"], { QCR_TOOL_UID_REQUIRED: "1", QCR_ALLOW_SHARED_TOOL_UID: "1" }),
+    ).toEqual({ bin: "pi", argv: ["-p"] });
+  });
+
+  it("a tool id that is not a non-zero number is refused, never passed to setpriv", () => {
+    for (const bad of [
+      { QCR_TOOL_UID: "0", QCR_TOOL_GID: "1000" },
+      { QCR_TOOL_UID: "x", QCR_TOOL_GID: "1" },
+      { QCR_TOOL_UID: "5" },
+    ]) {
+      expect(toolIsolation("pi", [], bad)).toHaveProperty("refused");
+    }
+  });
+
+  it.skipIf(!hasNs)(
+    "started as root it drops to the run uid with ambient setuid/setgid and exports the tool uid",
+    () => {
+      const r = nsRig();
+      // the namespace's uids are not the test's own: the rig must be writable by them
+      for (const d of [r.app, r.home, join(r.app, "state")]) chmodSync(d, 0o1777);
+      const script = nsEntrypoint(r);
+      put(
+        join(r.app, "dist/src/cli.js"),
+        `import { readFileSync } from "node:fs";
+const status = readFileSync("/proc/self/status", "utf8");
+const cap = (k) => status.split("\\n").find((l) => l.startsWith(k + ":")).split(/[ \t]+/)[1];
+console.log(JSON.stringify({
+  uid: process.getuid(), gid: process.getgid(), groups: process.getgroups(),
+  toolUid: process.env.QCR_TOOL_UID, toolGid: process.env.QCR_TOOL_GID,
+  required: process.env.QCR_TOOL_UID_REQUIRED ?? null, capAmb: cap("CapAmb"),
+}));\n`,
+      );
+      const out = spawnSync(NS[0]!, [...NS.slice(1), script, "review"], {
+        cwd: r.dir,
+        env: { ...r.env, QCR_RUN_UID: "1000", QCR_RUN_GID: "1000", QCR_TOOL_UID: "0" },
+        encoding: "utf8",
+        timeout: 30_000,
+      });
+      expect(out.status, out.stderr).toBe(0);
+      const seen = JSON.parse(out.stdout) as Record<string, unknown>;
+      expect(seen).toMatchObject({
+        uid: 1000,
+        gid: 1000,
+        toolUid: "65534",
+        toolGid: "1000",
+        required: null,
+      });
+      expect(seen["groups"]).toEqual([1000]);
+      expect(seen["capAmb"]).toBe("00000000000000c0"); // CAP_SETGID (6) and CAP_SETUID (7)
+      // the files it provisioned are reachable by the tool uid through the shared gid
+      expect(statSync(join(r.home, ".pi/agent/settings.json")).mode & 0o060).toBe(0o060);
+    },
+  );
+
+  it.skipIf(!hasNs)("a tool uid equal to the run uid is refused at boot", () => {
+    const r = nsRig();
+    const out = spawnSync(NS[0]!, [...NS.slice(1), nsEntrypoint(r), "review"], {
+      cwd: r.dir,
+      env: { ...r.env, QCR_RUN_UID: "1000", QCR_RUN_GID: "1000", QCR_TOOLS_AS: "1000" },
+      encoding: "utf8",
+    });
+    expect(out.status).not.toBe(0);
+    expect(out.stderr).toContain("must differ from the run uid");
+  });
+
+  // The point of it all, end to end: a process like the Node one (run uid,
+  // holding a secret in its environment, ambient setuid/setgid) starts "pi" the
+  // way the engine does, and what pi runs cannot read that process.
+  it.skipIf(!hasNs)("the kernel refuses the tools the token holder's /proc", () => {
+    const probe =
+      'echo "uid=$(id -u)"; grep -E "^(CapEff|CapPrm|CapAmb|NoNewPrivs):" /proc/self/status | tr -s "\\t " " "; ' +
+      'cat "/proc/$HOLDER/environ" 2>&1 | head -c 200; echo; head -c 4 "/proc/$HOLDER/mem" 2>&1 | head -c 100';
+    const iso = toolIsolation("sh", ["-c", probe], { QCR_TOOL_UID: "1001", QCR_TOOL_GID: "1000" });
+    if ("refused" in iso) throw new Error(iso.refused);
+    const holder = (launch: string[]): { status: number | null; stdout: string } => {
+      const o = spawnSync(
+        NS[0]!,
+        [
+          ...NS.slice(1),
+          "setpriv",
+          "--reuid=1000",
+          "--regid=1000",
+          "--clear-groups",
+          "--inh-caps=+setuid,+setgid",
+          "--ambient-caps=+setuid,+setgid",
+          "--",
+          "sh",
+          "-c",
+          // $$ is the holder, whose environment holds the secret; the launch
+          // runs as its child, as pi does (the `;` stops sh exec'ing it)
+          'HOLDER=$$ "$@"; exit $?',
+          "holder",
+          ...launch,
+        ],
+        {
+          cwd: "/",
+          env: { PATH: "/usr/bin:/bin", GITHUB_TOKEN: "ghs_secret" },
+          encoding: "utf8",
+          timeout: 30_000,
+        },
+      );
+      return { status: o.status, stdout: o.stdout };
+    };
+    // control: the same probe, same uid as the holder - the secret is readable
+    const same = holder(["sh", "-c", probe]);
+    expect(same.stdout).toContain("uid=1000");
+    expect(same.stdout).toContain("ghs_secret");
+    // the split: other uid, nothing readable, no capabilities, no new privileges
+    const split = holder([iso.bin, ...iso.argv]);
+    expect(split.stdout).toContain("uid=1001");
+    expect(split.stdout).not.toContain("ghs_secret");
+    expect(split.stdout).toMatch(/Permission denied/);
+    for (const cap of ["CapEff", "CapPrm", "CapAmb"])
+      expect(split.stdout).toContain(`${cap}: 0000000000000000`);
+    expect(split.stdout).toContain("NoNewPrivs: 1");
   });
 });
 

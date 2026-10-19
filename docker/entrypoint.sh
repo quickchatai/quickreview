@@ -28,18 +28,26 @@
 #
 # bash-guard (extensions/bash-guard.ts) is registered in pi's global settings
 # by the daemon mode only (the companion never registered it globally either:
-# its guard rides per-spawn argv). D32 drops it from the per-call modes (cli,
-# login, tui, the Action), which run in a throwaway container that is the
-# sandbox, and rules that the model's tools run as a separate unprivileged uid
-# so the kernel keeps them off the token-holding Node process.
-#
-# TODO(D32): THAT UID SEPARATION IS NOT IMPLEMENTED YET. Nothing in this
-# script, the Dockerfile or the engine switches uid, so today the per-call
-# modes run with NO guard and the model's bash can read /proc/<pid>/mem and
-# environ of the token-holding Node process. It needs CAP_SETUID/CAP_SETGID
-# (a setuid launcher, or the engine spawning tools under another uid), which
-# conflicts with `--cap-drop ALL`: an owner design ruling is pending. Until it
-# lands, do not point this image at a real model in a per-call mode.
+# its guard rides per-spawn argv). D32 drops it from the per-call cli mode,
+# which runs in a throwaway container that is the sandbox, and puts the model's
+# tools under another uid instead, so the kernel keeps them off the
+# token-holding Node process (/proc/<pid>/mem and environ):
+#   - started as root (--user 0:0 --cap-drop ALL --cap-add SETUID --cap-add
+#     SETGID), the cli mode re-executes this script as QCR_RUN_UID:QCR_RUN_GID
+#     (default 1000:1000) with CAP_SETUID/CAP_SETGID as ambient capabilities,
+#     and exports QCR_TOOL_UID/QCR_TOOL_GID (QCR_TOOLS_AS, default 65534, and the run gid);
+#   - the engine's one pi spawn (src/engine/procruntime.ts toolIsolation) then
+#     goes through setpriv: pi and every bash it runs get the tool uid, no
+#     capabilities and no_new_privs. The tool uid shares the run gid, which is
+#     how it reaches the group-writable state and its own pi home; it is a
+#     different uid, so /proc/<node pid>/mem and environ are closed to it;
+#   - started as any other uid, no separation is possible: the cli mode says
+#     so, exports QCR_TOOL_UID_REQUIRED=1, and the engine then refuses to
+#     start pi unless QCR_ALLOW_SHARED_TOOL_UID=1 (version, doctor and every
+#     other verb that spawns no pi are unaffected).
+# The login and tui modes run no engine and hold no GitHub token: they are
+# not separated. pi holds its own OAuth token as the tools' uid, which no
+# split hides from the tools it runs; the split protects the GitHub token.
 #
 # The daemon is the live bot and keeps the guard, the `examples/subagent`
 # check and the reviewer context stub it has always had
@@ -82,6 +90,37 @@ case "$mode" in
     fi
     ;;
 esac
+
+# ---- D32: the model's tools run as another uid ---------------------------------
+
+# Only the cli mode runs the engine. See the header for the contract; the
+# host wrapper (P6.6) owns the docker flags that make the root start possible.
+isolate_tools() {
+  [ "$mode" = cli ] || return 0
+  if [ -n "${QCR_TOOLS_ISOLATED:-}" ]; then
+    # Second pass, already the run uid. Group-writable files are how the tool
+    # uid (same gid, different uid) shares state and pi's home with this one.
+    umask 002
+    return 0
+  fi
+  # Whatever the caller exported, only a split made here counts.
+  unset QCR_TOOL_UID QCR_TOOL_GID
+  if [ "$(id -u)" != 0 ]; then
+    export QCR_TOOL_UID_REQUIRED=1
+    return 0
+  fi
+  local run_uid="${QCR_RUN_UID:-1000}" run_gid="${QCR_RUN_GID:-1000}" tool_uid="${QCR_TOOLS_AS:-65534}"
+  [[ "$run_uid$run_gid$tool_uid" =~ ^[0-9]+$ && "$run_uid" != 0 && "$run_gid" != 0 && "$tool_uid" != 0 ]] ||
+    die "QCR_RUN_UID/QCR_RUN_GID/QCR_TOOLS_AS must be non-zero numeric ids"
+  [ "$run_uid" != "$tool_uid" ] || die "the tool uid must differ from the run uid ($run_uid)"
+  command -v setpriv >/dev/null || die "setpriv (util-linux) is needed for the tool uid split"
+  export QCR_TOOLS_ISOLATED=1 QCR_TOOL_UID="$tool_uid" QCR_TOOL_GID="$run_gid"
+  exec setpriv --reuid="$run_uid" --regid="$run_gid" --clear-groups \
+    --inh-caps=+setuid,+setgid --ambient-caps=+setuid,+setgid \
+    -- "${BASH_SOURCE[0]}" cli "$@"
+}
+
+isolate_tools "$@"
 
 # ---- the pi pin ----------------------------------------------------------------
 
@@ -492,6 +531,8 @@ assert_state_writable
 case "$mode" in
   cli)
     QCR_PI_TRUST_DIR="$APP" provision_pi_settings >&2
+    # pi's home is read by the tool uid (settings, trust, auth), written by pi.
+    [ -z "${QCR_TOOLS_ISOLATED:-}" ] || chmod -R g+rwX "$HOME/.pi" 2>/dev/null || true
     exec node "$APP/dist/src/cli.js" "$@"
     ;;
   tui)
