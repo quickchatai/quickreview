@@ -8,7 +8,12 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import type { Runtime } from "../src/engine/port.js";
-import { checkLensRuntime, parseRuntimeKind, selectRuntime } from "../src/engine/select.js";
+import {
+  checkLensNeedsSdk,
+  checkLensRuntime,
+  parseRuntimeKind,
+  selectRuntime,
+} from "../src/engine/select.js";
 import { scanLeafRunner } from "../extensions/setup-scan.js";
 import type { CaseRunner, CaseSpec } from "../src/setup/engine.js";
 
@@ -64,6 +69,13 @@ describe("selectRuntime", () => {
     expect(() => checkLensRuntime("native", "review")).not.toThrow();
     expect(() => checkLensRuntime("engine", "review", true)).not.toThrow();
     expect(() => checkLensRuntime("engine", "bench")).toThrow(/not available on the bench route/);
+  });
+
+  it("lens_runtime = engine without runtime = sdk is refused, not run as the proc baseline", () => {
+    expect(() => checkLensNeedsSdk("engine", "sdk")).not.toThrow();
+    expect(() => checkLensNeedsSdk("native", "proc")).not.toThrow();
+    expect(() => checkLensNeedsSdk("native", "sdk")).not.toThrow();
+    expect(() => checkLensNeedsSdk("engine", "proc")).toThrow(/needs \[engine\] runtime = sdk/);
   });
 
   it("--runtime accepts proc and sdk only", () => {

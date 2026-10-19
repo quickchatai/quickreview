@@ -8,7 +8,9 @@
 //             [--allow-customised]   run although the profile replaces shipped
 //                                    agents or prompts (refused otherwise)
 //             [--config a.b=v,c.d=w]   config levers for this run (runner.ts)
-//             [--runtime proc|sdk]     what hosts pi (default [engine] runtime; sdk is refused until the bench has an SDK host)
+//             [--runtime proc|sdk]     what hosts pi (default [engine] runtime). sdk runs each case's session
+//                                      in-process, in its own host process (src/bench/casehost.ts); the lens
+//                                      tool is [pi] lens_runtime (native | engine), set with --config
 //             [--phase all|init|case|finish]   arm.sh's one-container-per-case split;
 //             every case ends with a `result: <id> <status> retry= limited=` line
 //   results   --set <file> --out DIR     rebuild result files from case dirs
@@ -55,7 +57,8 @@
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):
 //   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
 //                 [--model openai-codex/gpt-6-sol:high] [--concurrency 3] [--resume] [--label L]
-//                 [--runtime proc|sdk]   what hosts the judge (default proc)
+//                 [--runtime proc|sdk]   what hosts the judge (default [engine] runtime); on sdk each
+//                                        judged case runs in its own host process
 //   defect-report --set <file> --defects <file> --out RUN_DIR [--label L]   rescore, no model calls
 //
 // Nothing here can reach GitHub except `prefetch` (anonymous, read-only), and
@@ -108,6 +111,8 @@ import { PRAGENT_DEFAULTS, renderPragentReport, runPragentReview } from "./prage
 import { GIT_ISOLATION_ENV, run as runCmd } from "./exec.js";
 import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
+  applyConfigOverrides,
+  benchConfig,
   benchCustomisation,
   buildBenchAgents,
   contextFor,
@@ -132,9 +137,22 @@ import {
 } from "./defects.js";
 import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectjudge.js";
 import { codexCommand } from "./codexcli.js";
-import type { EngineRuntimeKind, LensRuntimeKind } from "../config.js";
+import { LENS_RUNTIME_KINDS, type EngineRuntimeKind, type LensRuntimeKind } from "../config.js";
 import type { Runtime } from "../engine/port.js";
-import { checkLensRuntime, parseRuntimeKind, selectRuntime } from "../engine/select.js";
+import {
+  checkLensNeedsSdk,
+  checkLensRuntime,
+  parseRuntimeKind,
+  selectRuntime,
+} from "../engine/select.js";
+import {
+  CASE_HOST_AUTH_STOP,
+  exitWithParent,
+  judgeCaseHosted,
+  killCaseHosts,
+  reviewCaseHosted,
+  type HostPool,
+} from "./casehost.js";
 import { caseTokenCounts, runCostUsd } from "./cost.js";
 
 const DEFAULTS = {
@@ -167,16 +185,69 @@ function flags(argv: string[]): {
   };
 }
 
-/** The runtime a bench command hosts pi on: `--runtime`, else `fallback`.
- * Undefined is the process runtime each runner already defaults to. */
-function benchRuntime(
+/** The runtime kind a bench command hosts pi on: `--runtime`, else `fallback`
+ * (the config's `[engine] runtime`, which a `--config` lever may have set to
+ * anything: it is checked here like the flag). */
+function benchRuntimeKind(
   f: { get: (k: string) => string | undefined },
-  fallback: EngineRuntimeKind,
-  lens: LensRuntimeKind = "native",
-): Runtime | undefined {
-  checkLensRuntime(lens, "bench");
-  const flag = f.get("--runtime");
-  return selectRuntime(flag === undefined ? fallback : parseRuntimeKind(flag), "bench");
+  fallback: string,
+): EngineRuntimeKind {
+  return parseRuntimeKind(f.get("--runtime") ?? fallback);
+}
+
+/** `[pi] lens_runtime`, checked (a `--config` lever is not parsed by the config
+ * loader). The bench has the engine's lens tool, so both values stand. */
+function benchLensKind(raw: string): LensRuntimeKind {
+  if (!(LENS_RUNTIME_KINDS as readonly string[]).includes(raw))
+    throw new Error(
+      `[pi] lens_runtime must be ${LENS_RUNTIME_KINDS.join(" | ")} (got ${JSON.stringify(raw)})`,
+    );
+  const kind = raw as LensRuntimeKind;
+  checkLensRuntime(kind, "bench", true);
+  return kind;
+}
+
+/** An SDK runtime that is built when its first session is asked for: a bench
+ * command that never opens a session, and a pool parent that only starts hosts,
+ * never load the pi SDK. */
+function lazyRuntime(make: () => Promise<Runtime>): Runtime {
+  let built: Promise<Runtime> | undefined;
+  const load = (): Promise<Runtime> => (built ??= make());
+  return {
+    create: async (spec) => (await load()).create(spec),
+    resume: async (file, spec) => (await load()).resume(file, spec),
+  };
+}
+
+/** The runtime a bench command hosts the review's main session on: undefined on
+ * proc (each runner's own process runtime), the SDK runtime on sdk. */
+function benchRuntime(kind: EngineRuntimeKind, lens: LensRuntimeKind): Runtime | undefined {
+  return selectRuntime(kind, "bench", () =>
+    lazyRuntime(() => import("../engine/benchsdk.js").then((m) => m.benchSdkRuntime({ lens }))),
+  );
+}
+
+/** The runtime the defect judge's session runs on. */
+function judgeRuntime(kind: EngineRuntimeKind): Runtime | undefined {
+  return selectRuntime(kind, "bench", () =>
+    lazyRuntime(() => import("../engine/benchsdk.js").then((m) => m.judgeSdkRuntime())),
+  );
+}
+
+/** The pool's way of starting a case host: this very script, with this
+ * process's own flags. */
+function hostPool(what: string): HostPool {
+  log(`${what}: runtime sdk — each case runs in a host process of its own`);
+  const entry = process.argv[1];
+  if (entry === undefined) throw new Error("bench: cannot find the script to host a case with");
+  // A parent that is stopped takes its hosts with it.
+  for (const sig of ["SIGTERM", "SIGINT"] as const)
+    process.once(sig, () => {
+      killCaseHosts();
+      process.exit(sig === "SIGINT" ? 130 : 143);
+    });
+  process.once("exit", () => killCaseHosts());
+  return { argv: process.argv.slice(2), entry, execArgv: process.execArgv, log };
 }
 
 function log(line: string): void {
@@ -246,6 +317,7 @@ async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Prom
 
 async function main(): Promise<number> {
   const f = flags(process.argv.slice(2));
+  if (f.has("--case-host")) exitWithParent();
   const root = resolve(f.get("--root") ?? DEFAULTS.root);
   const store = resolve(f.get("--store") ?? DEFAULTS.store);
 
@@ -349,14 +421,27 @@ async function main(): Promise<number> {
     // `--config review.profile=<name>` chooses the profile as `--profile` does.
     const profile = base.cfg.review.profile;
     const bench = benchCustomisation(root, profile, f.has("--allow-customised"));
+    const runtimeKind = benchRuntimeKind(f, base.cfg.engine.runtime);
+    const lensKind = benchLensKind(base.cfg.pi.lens_runtime);
+    checkLensNeedsSdk(lensKind, runtimeKind);
     const ctx = {
       ...base,
-      fingerprint: runFingerprint(base.cfg, profile, overrides, bench.custom),
+      fingerprint: runFingerprint(base.cfg, profile, overrides, bench.custom, {
+        runtime: runtimeKind,
+        lens_runtime: lensKind,
+      }),
       ...(bench.readFile ? { readFile: bench.readFile } : {}),
     };
     const authSrc = f.get("--auth-src") ?? DEFAULTS.authSrc;
     const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
-    const runtime = benchRuntime(f, base.cfg.engine.runtime, base.cfg.pi.lens_runtime);
+    // `--case-host`: this process was started by a pool (below) to host ONE
+    // case, which the pool has already prepared the login and the agents for.
+    const caseHost = f.has("--case-host");
+    // On sdk a whole run (`--phase all`) puts each case in a host process of its
+    // own, so a crash or a frozen loop costs that case. arm.sh's `--phase case`
+    // is already one container, hence one process, per case.
+    const hosted = runtimeKind === "sdk" && phase === "all" && !caseHost;
+    const runtime = hosted ? undefined : benchRuntime(runtimeKind, lensKind);
     // A case container always resumes: its run was set up (and, if fresh,
     // cleared) by the init phase, so a finished case it finds is this run's.
     const resume = f.has("--resume") || phase === "case";
@@ -376,6 +461,7 @@ async function main(): Promise<number> {
       ...(bench.custom.customised
         ? { customised: true, profile_overrides: ctx.fingerprint.profile_overrides }
         : {}),
+      ...(ctx.fingerprint.engine ? { engine: ctx.fingerprint.engine } : {}),
       pi: ctx.cfg.pi.version,
       qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
       cases: cases.map((c) => c.instance_id),
@@ -399,16 +485,21 @@ async function main(): Promise<number> {
         return 0;
       }
     }
-    const agents = buildBenchAgents(
-      root,
-      ctx.cfg,
-      join(root, ".pi", "agents"),
-      bench.readFile ? { readFile: bench.readFile } : {},
-    );
-    log(
-      `review: ${agents} lens agents built (profile ${profile || "(generic)"}), ${cases.length} case(s)`,
-    );
+    // A case host finds the agents its pool built; rebuilding them under its
+    // siblings' feet would empty the dir while they read it.
+    if (!caseHost) {
+      const agents = buildBenchAgents(
+        root,
+        ctx.cfg,
+        join(root, ".pi", "agents"),
+        bench.readFile ? { readFile: bench.readFile } : {},
+      );
+      log(
+        `review: ${agents} lens agents built (profile ${profile || "(generic)"}), ${cases.length} case(s)`,
+      );
+    }
     const timeoutMs = Number(f.get("--timeout-min") ?? DEFAULTS.timeoutMin) * 60_000;
+    const hosts = hosted ? hostPool("review") : undefined;
     const summaries: CaseSummary[] = [];
     let authStop: string | null = null;
     await pool(cases, Number(f.get("--concurrency") ?? "1"), async (c) => {
@@ -419,7 +510,7 @@ async function main(): Promise<number> {
         const same = JSON.stringify(s.fingerprint ?? null) === JSON.stringify(ctx.fingerprint);
         if (s.status === "ok" && same) {
           log(`review: ${c.instance_id} already done — skipped (--resume)`);
-          log(resultLine(s, true));
+          if (!caseHost) log(resultLine(s, true));
           summaries.push(s);
           return;
         }
@@ -429,7 +520,8 @@ async function main(): Promise<number> {
       // A fresh, refresh-disabled copy of the live token before every case;
       // stop the whole run (not case after case) when it would expire.
       try {
-        syncBenchAuth({ srcDir: authSrc, dstDir: agentDir, root, needMs: timeoutMs });
+        if (!caseHost)
+          syncBenchAuth({ srcDir: authSrc, dstDir: agentDir, root, needMs: timeoutMs });
       } catch (err) {
         if (!(err instanceof AuthExpiring)) throw err;
         authStop = err.message;
@@ -445,26 +537,34 @@ async function main(): Promise<number> {
         const error = String(err instanceof Error ? err.message : err);
         log(error);
         const s = recordUnprefetched(outDir, c, error, ctx.fingerprint);
-        log(resultLine(s));
+        if (!caseHost) log(resultLine(s));
         summaries.push(s);
         return;
       }
-      const s = await reviewCase(
-        c,
-        meta,
-        {
-          root,
-          store,
-          outDir,
-          agentDir,
-          timeoutMs,
-          ...(runtime !== undefined ? { runtime } : {}),
-          keepTree: f.has("--keep-tree"),
-          log,
-        },
-        ctx,
-      );
-      log(resultLine(s));
+      const s = hosts
+        ? await reviewCaseHosted(c, hosts, {
+            root,
+            outDir,
+            fingerprint: ctx.fingerprint,
+            timeoutMs,
+          })
+        : await reviewCase(
+            c,
+            meta,
+            {
+              root,
+              store,
+              outDir,
+              agentDir,
+              timeoutMs,
+              ...(runtime !== undefined ? { runtime } : {}),
+              keepTree: f.has("--keep-tree"),
+              log,
+            },
+            ctx,
+          );
+      // A case host leaves the line to its pool, which reads the summary.
+      if (!caseHost) log(resultLine(s));
       summaries.push(s);
     });
     const ok = summaries.filter((s) => s.status === "ok").length;
@@ -999,28 +1099,22 @@ async function main(): Promise<number> {
       const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
       const timeoutMs = Number(f.get("--timeout-min") ?? "30") * 60_000;
       const resume = f.has("--resume");
-      const runtime = benchRuntime(f, "proc");
+      // The judge's runtime is the config's, as the review's is; `--runtime`
+      // overrides it. On sdk each judged case is hosted by a process of its own
+      // (`--case-host` is that process, told its one case by the pool).
+      const runtimeKind = benchRuntimeKind(
+        f,
+        applyConfigOverrides(benchConfig(""), f.get("--config") ?? "").engine.runtime,
+      );
+      const caseHost = f.has("--case-host");
+      const hosts = runtimeKind === "sdk" && !caseHost ? hostPool("defect-judge") : undefined;
+      const runtime = hosts ? undefined : judgeRuntime(runtimeKind);
       mkdirSync(judgeDir, { recursive: true });
       let authStop: string | null = null;
       const unjudged: string[] = [];
-      await pool(cases, Number(f.get("--concurrency") ?? "3"), async (c) => {
-        if (authStop) return;
-        try {
-          syncBenchAuth({ srcDir: authSrc, dstDir: agentDir, root, needMs: timeoutMs });
-        } catch (err) {
-          if (!(err instanceof AuthExpiring)) throw err;
-          authStop = err.message;
-          log(`defect-judge: STOPPED — ${err.message}`);
-          return;
-        }
+      /** One case in this process. False when it could not be prepared. */
+      const judgeHere = async (c: BenchCase): Promise<boolean> => {
         const safe = safeId(c.instance_id);
-        // A case the review never reached (the run stopped early) has no
-        // summary: judging it would score a harness stop as a reviewer miss.
-        if (!existsSync(join(outDir, "cases", safe, "case-summary.json"))) {
-          log(`defect-judge: ${c.instance_id} was never reviewed in this run — not judged`);
-          unjudged.push(c.instance_id);
-          return;
-        }
         const tree = join(root, "wt", `judge-${safe}`);
         const tmpDir = join(root, "wt", `judge-${safe}.tmp`);
         // One case that cannot be prepared (not prefetched, a broken store)
@@ -1073,15 +1167,48 @@ async function main(): Promise<number> {
               },
             },
           });
+          return true;
         } catch (err) {
           log(
             `defect-judge: ${c.instance_id} — ERROR ${String(err instanceof Error ? err.message : err)}`,
           );
-          unjudged.push(c.instance_id);
+          return false;
+        } finally {
+          rmSync(tree, { recursive: true, force: true });
+          rmSync(tmpDir, { recursive: true, force: true });
         }
-        rmSync(tree, { recursive: true, force: true });
-        rmSync(tmpDir, { recursive: true, force: true });
+      };
+      await pool(cases, Number(f.get("--concurrency") ?? "3"), async (c) => {
+        if (authStop) return;
+        try {
+          // A case host's pool synced the login just before starting it.
+          if (!caseHost)
+            syncBenchAuth({ srcDir: authSrc, dstDir: agentDir, root, needMs: timeoutMs });
+        } catch (err) {
+          if (!(err instanceof AuthExpiring)) throw err;
+          authStop = err.message;
+          log(`defect-judge: STOPPED — ${err.message}`);
+          return;
+        }
+        // A case the review never reached (the run stopped early) has no
+        // summary: judging it would score a harness stop as a reviewer miss.
+        if (!existsSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"))) {
+          log(`defect-judge: ${c.instance_id} was never reviewed in this run — not judged`);
+          unjudged.push(c.instance_id);
+          return;
+        }
+        if (hosts) {
+          const r = await judgeCaseHosted(c, hosts, { root, rounds, timeoutMs });
+          if (r === "auth-stop") {
+            authStop = `a case host stopped: the login would expire inside the case (${c.instance_id})`;
+            log(`defect-judge: STOPPED — ${authStop}`);
+          } else if (r === "unjudged") unjudged.push(c.instance_id);
+          return;
+        }
+        if (!(await judgeHere(c))) unjudged.push(c.instance_id);
       });
+      // A case host reports to its pool by exit status and scores nothing.
+      if (caseHost) return authStop ? CASE_HOST_AUTH_STOP : unjudged.length > 0 ? 1 : 0;
       if (unjudged.length)
         log(`defect-judge: ${unjudged.length} case(s) NOT judged: ${unjudged.join(", ")}`);
       if (authStop) return 1;

@@ -68,7 +68,13 @@ import { createHash } from "node:crypto";
 import {} from "node:child_process";
 import {} from "node:readline";
 import { dirname, join } from "node:path";
-import { DEFAULT_SUBAGENT_CACHE_STAGGER_MS, REVIEW_DEFAULTS, type Config } from "../config.js";
+import {
+  DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
+  REVIEW_DEFAULTS,
+  type Config,
+  type EngineRuntimeKind,
+  type LensRuntimeKind,
+} from "../config.js";
 import {} from "../dispatch.js";
 import type { PrOwnedDelta } from "../worktrees.js";
 import { benchDelta, benchPriorFindings, decideBenchFollowUp } from "./followup.js";
@@ -261,6 +267,10 @@ export interface RunFingerprint {
   /** The profile's `[posting]` policy. Absent at the default posting, so a run
    * without one keeps its fingerprint. */
   posting?: PostingPolicy;
+  /** Present only on an SDK run (`[engine] runtime = "sdk"`), with the lens tool
+   * it ran: a proc run keeps its fingerprint, and `--resume` never mixes a
+   * case reviewed on one host with one reviewed on the other. */
+  engine?: { runtime: "sdk"; lens_runtime: LensRuntimeKind };
   /** Set only on a run whose profile replaced shipped agents or prompts and
    * was allowed to (`--allow-customised`); an uncustomised run keeps its
    * fingerprint. */
@@ -315,6 +325,8 @@ export function runFingerprint(
   profile: string,
   overrides = "",
   custom?: Customisation,
+  /** What hosts the sessions, when it is not the process runtime. */
+  host?: { runtime: EngineRuntimeKind; lens_runtime: LensRuntimeKind },
 ): RunFingerprint {
   // A lever at its shipped default is left out, so a run fingerprints the
   // same as one from before the lever existed.
@@ -381,6 +393,9 @@ export function runFingerprint(
             sha256: o.sha256,
           })),
         }
+      : {}),
+    ...(host?.runtime === "sdk"
+      ? { engine: { runtime: "sdk" as const, lens_runtime: host.lens_runtime } }
       : {}),
     settings_sha256: reviewSettingsDigest(cfg),
   };
@@ -767,7 +782,7 @@ export async function runJudgeSession(
  * patches, the event stream (the cost reader prices it whatever the
  * attempt's outcome) — so nothing this attempt did not produce is read as
  * its review, by the scorer, a results rebuild or the defect judge. */
-function clearAttemptFiles(caseDir: string): void {
+export function clearAttemptFiles(caseDir: string): void {
   for (const f of [
     ...Object.values(CASE_FILES),
     ...POLICED_ORIGINALS,
@@ -1163,6 +1178,32 @@ export function recordUnprefetched(
     join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
     JSON.stringify(s, null, 2) + "\n",
   );
+  return s;
+}
+
+/** A case whose host process died, was killed or outlived its wall clock
+ * (src/bench/casehost.ts): a failed case with an EMPTY result file, as an
+ * unprefetched one has (the scorer would otherwise drop it from both
+ * denominators). Unlike `recordUnprefetched` it keeps what the dead host wrote
+ * into the case dir — the event stream above all, which the cost reader prices:
+ * the caller cleared the attempt's files before the host started, so what is
+ * there is this attempt's. */
+export function recordHostFailure(
+  outDir: string,
+  c: BenchCase,
+  error: string,
+  fingerprint: RunFingerprint,
+  durationSeconds: number,
+): CaseSummary {
+  const s: CaseSummary = {
+    ...emptyCaseSummary(c, fingerprint),
+    error,
+    duration_seconds: durationSeconds,
+  };
+  const caseDir = join(outDir, "cases", safeId(c.instance_id));
+  mkdirSync(caseDir, { recursive: true });
+  writeResults(outDir, c, [], s);
+  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(s, null, 2) + "\n");
   return s;
 }
 

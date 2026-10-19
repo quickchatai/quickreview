@@ -34,18 +34,27 @@ import { applyEnvApiKeys, engineCredentials, type EngineAuth } from "./auth.js";
 import { PiHost, type PiHostOptions } from "./pisdk.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
 import { roundSdkExtras, type RoundLensTools } from "./roundsdk.js";
-import { sdkRuntime } from "./sdkruntime.js";
+import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
 
 export interface ReviewSdkOptions {
   /** Builds the host. Omitted: a PiHost that owns this process (installs pi's
    * HTTP dispatcher) over the run's private agent dir. */
   makeHost?: (o: PiHostOptions) => Promise<PiHost>;
-  /** The round's lens tool, given the spec it serves. Omitted: today's native
-   * one (see the header). */
-  lens?: (spec: SessionSpec) => RoundLensTools;
+  /** The round's lens tool, given the spec it serves and the host its passes
+   * run on. Omitted: today's native one (see the header). */
+  lens?: (spec: SessionSpec, host: PiHost) => RoundLensTools;
   /** The process env the native lens tool's children inherit. Omitted:
    * `process.env`. */
   processEnv?: NodeJS.ProcessEnv;
+  /** Names of the spec's env, besides the QCR_* names and the agent dir, that
+   * the process env carries for the native lens tool's children (the bench: its
+   * spill dir and git isolation). */
+  childEnv?: (name: string) => boolean;
+  /** Replaces the round's extras (the extension factories, tool allowlist and
+   * context stub of a main session) for a session that is not a round's, such
+   * as the defect judge's. Such a session has no native lens children, so the
+   * process env is left alone. */
+  extras?: (spec: SessionSpec) => SessionExtras;
 }
 
 /** `SessionSpec.env` names this dir: the run's private pi agent dir. */
@@ -78,7 +87,11 @@ function nativeLens(): RoundLensTools {
 
 /** Puts the round's env where the native lens tool and its children read it, and
  * takes the GitHub tokens out; returns the undo. */
-function scopeProcessEnv(target: NodeJS.ProcessEnv, spec: SessionSpec): { restore: () => void } {
+function scopeProcessEnv(
+  target: NodeJS.ProcessEnv,
+  spec: SessionSpec,
+  extra?: (name: string) => boolean,
+): { restore: () => void } {
   const saved = new Map<string, string | undefined>();
   const set = (name: string, value: string | undefined): void => {
     if (!saved.has(name)) saved.set(name, target[name]);
@@ -86,7 +99,10 @@ function scopeProcessEnv(target: NodeJS.ProcessEnv, spec: SessionSpec): { restor
     else target[name] = value;
   };
   for (const [name, value] of Object.entries(spec.env))
-    if ((name.startsWith("QCR_") || name === AGENT_DIR_ENV) && value !== undefined)
+    if (
+      (name.startsWith("QCR_") || name === AGENT_DIR_ENV || extra?.(name) === true) &&
+      value !== undefined
+    )
       set(name, value);
   for (const name of GITHUB_TOKEN_ENVS) set(name, undefined);
   return {
@@ -156,7 +172,10 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): Runtime {
         };
         const host = await (options.makeHost ?? PiHost.create)(hostOptions);
         return sdkRuntime(host, {
-          extras: (s) => roundSdkExtras({ lens: (options.lens ?? nativeLens)(s) })(s),
+          extras:
+            options.extras ??
+            ((s) =>
+              roundSdkExtras({ lens: options.lens ? options.lens(s, host) : nativeLens() })(s)),
         });
       })();
       // A host that failed to build is not kept: the next ask tries again.
@@ -174,7 +193,10 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): Runtime {
     const rt = await runtimeFor(spec);
     // Before the session: the native lens factory reads the env as the session
     // is made. A route that hands its own lens tool has no such children.
-    const scoped = options.lens === undefined ? scopeProcessEnv(procEnv, spec) : null;
+    const scoped =
+      options.lens === undefined && options.extras === undefined
+        ? scopeProcessEnv(procEnv, spec, options.childEnv)
+        : null;
     try {
       const session = await start(rt);
       return scoped === null ? session : releasing(session, scoped.restore);
