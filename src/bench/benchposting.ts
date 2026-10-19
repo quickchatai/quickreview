@@ -46,7 +46,7 @@ import {
   recordPostingKeys,
   withheldReason,
 } from "../reviewrender.js";
-import { normalizeDisposition, recordSide } from "../findingkey.js";
+import { entryDisposition, recordSide } from "../findingkey.js";
 import { stripSanctionedTags } from "../severity.js";
 import {
   benchPath,
@@ -224,7 +224,7 @@ export function policeBenchOutput(args: {
         (e): e is Record<string, unknown> => typeof e === "object" && e !== null,
       )
     : [];
-  const posted = entries.filter((e) => normalizeDisposition(e["disposition"]) === "posted");
+  const posted = entries.filter((e) => entryDisposition(e) === "posted");
   const keys = recordPostingKeys(entries);
 
   const items: Item[] = [];
