@@ -33,6 +33,30 @@ export interface PiPaneView {
   /** Scrollback: how many lines above the live tail the pane is parked.
    * 0 = following the bottom. The board drops this many lines off `lines`. */
   offset: number;
+  /** The tmux session the capture is of, when it is not `pr-<n>`: a debug
+   * round's or a takeover's pi terminal (`paneSurface`). */
+  session?: string;
+  /** Set on the transcript viewer's pane (viewer.ts): `lines` are the rendered
+   * transcript, not a capture, and nothing is typed into them. */
+  viewer?: ViewerInfo;
+}
+
+/** Where the transcript viewer is in a PR's logs, for the pane header. */
+export interface ViewerInfo {
+  /** The round shown; undefined before any round has a log. */
+  round: number | undefined;
+  /** Rounds that have a log, and the shown one's place among them (1-based). */
+  rounds: number;
+  roundIndex: number;
+  /** The newest round is shown, so a new one is followed. */
+  atLatest: boolean;
+  /** `main`, or the lens shown (the agent's name when known). */
+  stream: string;
+  /** The stream's place among `main` and the round's lenses (1-based). */
+  streamIndex: number;
+  streams: number;
+  /** An agent turn is running in the shown stream; undefined when unknown. */
+  live: boolean | undefined;
 }
 
 /**
@@ -51,16 +75,33 @@ export class PiMirror {
    * session's own size rather than guessing one. */
   private paneSize: { cols: number; rows: number } | undefined;
 
+  /** The tmux session each cached capture is of. */
+  private readonly sessions = new Map<number, string>();
+
+  /** `sessionOf` names the tmux session a PR's pane mirrors: `pr-<n>` unless the
+   * PR is in a debug round or a takeover (viewer.ts `paneSurface`). */
   constructor(
     private readonly cfg: TuiConfig,
     private readonly ssh: SshRunner,
     private readonly onUpdate: () => void = () => {},
     private readonly debounceMs = 300,
+    private readonly sessionOf: (pr: number) => string = (pr) => `pr-${pr}`,
   ) {}
+
+  /** A PR whose session changed (a debug round began) keeps nothing of the old
+   * one's capture: it would paint another terminal's text. */
+  private follow(pr: number): string {
+    const session = this.sessionOf(pr);
+    const had = this.sessions.get(pr);
+    if (had !== undefined && had !== session) this.invalidate(pr);
+    this.sessions.set(pr, session);
+    return session;
+  }
 
   /** What the board should paint for `pr` right now (never throws, never waits). */
   view(pr: number | undefined): PiPaneView | undefined {
     if (pr === undefined) return undefined;
+    const session = this.follow(pr);
     const lines = this.cache.get(pr);
     const missing = this.missing.has(pr);
     return {
@@ -69,6 +110,7 @@ export class PiMirror {
       missing,
       stale: missing && (lines?.length ?? 0) > 0,
       offset: this.offsetFor(pr),
+      ...(session !== `pr-${pr}` ? { session } : {}),
     };
   }
 
@@ -135,7 +177,7 @@ export class PiMirror {
       const range = scrolledRange(offset);
       const res = await this.ssh(
         this.cfg.ssh_host,
-        captureArgv(this.cfg, `pr-${pr}`, range, this.paneSize),
+        captureArgv(this.cfg, this.follow(pr), range, this.paneSize),
         { timeoutMs: 5_000 },
       );
       if (!res.ok) {
