@@ -343,6 +343,18 @@ const ALLOWLIST: AllowlistEntry[] = [
       "names the release and memory-sidecar images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
   },
   {
+    path: "docs/action/qcr-review.yml",
+    tokens: ["quickchat"],
+    reason:
+      "the workflow template names the Action under the publishing org (quickchatai/quickreview@v1), the one line a user copies; the Action's repository moves at the public leg",
+  },
+  {
+    path: "docs/action.md",
+    tokens: ["quickchat"],
+    reason:
+      "the Action's user doc names it under the publishing org (quickchatai/quickreview@v1), as the template does",
+  },
+  {
     path: "plugins/qcr/scripts/qcr-setup.sh",
     tokens: ["quickchat"],
     reason:

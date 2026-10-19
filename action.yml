@@ -1,0 +1,127 @@
+# The qcr review Action (the private leg: it lives in the image's own repository).
+#
+# A composite: it checks that this repository can pull the private release
+# image, logs in to the registry, and runs the image's `review` once for one
+# pull request, posting a comment-only review. Everything it does is in
+# scripts/action.sh (one verb per step), so it can be read, tested with a fake
+# docker, and linted outside a workflow. docs/action.md says how to use it;
+# docs/action/qcr-review.yml is the workflow to copy.
+#
+# The review container gets: the checkout read-only, a generated config
+# (dry_run = false, memory off), the pi login read-only, QCR_ROUTE=action (no
+# default cost cap, nothing asked) and the GitHub token as a read-once file in
+# $RUNNER_TEMP, never in the environment or the command line (D39).
+name: qcr review
+description: Review a pull request with qcr and post the findings as a comment-only review.
+
+inputs:
+  pr:
+    description: The pull request number. Default is the number of the pull_request or issue_comment event.
+    required: false
+    default: ""
+  repo:
+    description: The repository of the pull request, OWNER/NAME.
+    required: false
+    default: ${{ github.repository }}
+  github-token:
+    description: >-
+      The token the review reads the pull request and posts with. It needs
+      pull-requests: write. It is also the registry login unless registry-token is set.
+    required: false
+    default: ${{ github.token }}
+  registry-token:
+    description: >-
+      A registry-only secret (a token with the read:packages scope and nothing else),
+      for repositories the private package does not grant access to under "Manage
+      Actions access". Used for docker login and the preflight only.
+    required: false
+    default: ""
+  registry-user:
+    description: The user docker logs in as.
+    required: false
+    default: ${{ github.actor }}
+  limit:
+    description: A cost limit in USD for this review. There is no default limit; with none, the review is not capped.
+    required: false
+    default: ""
+  pi-auth:
+    description: The contents of a pi auth.json (a model login), as a secret. Not needed when an API key is given.
+    required: false
+    default: ""
+  openai-api-key:
+    description: A model API key, as a secret.
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: A model API key, as a secret.
+    required: false
+    default: ""
+  gemini-api-key:
+    description: A model API key, as a secret.
+    required: false
+    default: ""
+  digitalocean-api-key:
+    description: A model API key, as a secret.
+    required: false
+    default: ""
+  image:
+    description: >-
+      An image reference to run instead of the release image at this action's ref
+      (ghcr.io/OWNER/NAME:VERSION from package.json).
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check the runner
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" != Linux ]; then
+          echo "::error::qcr runs a Docker image: use a Linux runner"
+          exit 1
+        fi
+        command -v docker >/dev/null || { echo "::error::docker is not installed on this runner"; exit 1; }
+
+    - name: Check this repository can pull the image
+      shell: bash
+      env:
+        QCR_ACTION_PATH: ${{ github.action_path }}
+        QCR_ACTION_IMAGE: ${{ inputs.image }}
+        QCR_ACTION_REGISTRY_USER: ${{ inputs.registry-user }}
+        QCR_ACTION_REGISTRY_TOKEN: ${{ inputs.registry-token }}
+        QCR_ACTION_GH_TOKEN: ${{ inputs.github-token }}
+      run: bash "$QCR_ACTION_PATH/scripts/action.sh" preflight
+
+    - name: Log in to the registry
+      shell: bash
+      env:
+        QCR_ACTION_PATH: ${{ github.action_path }}
+        QCR_ACTION_IMAGE: ${{ inputs.image }}
+        QCR_ACTION_REGISTRY_USER: ${{ inputs.registry-user }}
+        QCR_ACTION_REGISTRY_TOKEN: ${{ inputs.registry-token }}
+        QCR_ACTION_GH_TOKEN: ${{ inputs.github-token }}
+      run: bash "$QCR_ACTION_PATH/scripts/action.sh" login
+
+    - name: Review the pull request
+      shell: bash
+      env:
+        QCR_ACTION_PATH: ${{ github.action_path }}
+        QCR_ACTION_IMAGE: ${{ inputs.image }}
+        QCR_ACTION_PR: ${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+        QCR_ACTION_REPO: ${{ inputs.repo }}
+        QCR_ACTION_LIMIT: ${{ inputs.limit }}
+        QCR_ACTION_GH_TOKEN: ${{ inputs.github-token }}
+        QCR_ACTION_PI_AUTH: ${{ inputs.pi-auth }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        DIGITALOCEAN_API_KEY: ${{ inputs.digitalocean-api-key }}
+      run: bash "$QCR_ACTION_PATH/scripts/action.sh" run
+
+    - name: Remove what the action staged
+      if: always()
+      shell: bash
+      env:
+        QCR_ACTION_PATH: ${{ github.action_path }}
+      run: bash "$QCR_ACTION_PATH/scripts/action.sh" cleanup
