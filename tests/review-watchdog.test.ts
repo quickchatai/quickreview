@@ -13,7 +13,8 @@ import {
   WATCHDOG_EXIT_CODE,
   type WatchdogDeps,
 } from "../src/reviewdetach.js";
-import { HEARTBEAT_FILE, type Beat } from "../src/heartbeat.js";
+import { HEARTBEAT_FILE, readBeat, type Beat } from "../src/heartbeat.js";
+import { sdkStubArgs, writeSdkDriverStub } from "./helpers/sdk-driver-stub.js";
 import { watchdogCommand } from "../src/reviewcli.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "review-watchdog-"));
@@ -245,4 +246,58 @@ const t = setInterval(() => { beat(); if (seq >= 5) { clearInterval(t); for (;;)
       }
     }
   });
+});
+
+describe("an SDK driver stuck in a synchronous loop mid-turn", () => {
+  it("is killed by the watchdog within deadline + grace: the turn's deadline reached the beat before the loop froze", async () => {
+    const { dir } = runDir();
+    const DEADLINE_MS = 1_500;
+    const GRACE_MS = 500;
+    const stub = writeSdkDriverStub(dir);
+    const t0 = Date.now();
+    const launched = launchDetached({
+      command: process.execPath,
+      args: [stub, ...sdkStubArgs({ dir, key: "k" }, "freeze", process.cwd(), DEADLINE_MS)],
+      dir,
+      env: process.env,
+    });
+    expect(launched.ok).toBe(true);
+    const pid = (launched as { pid: number }).pid;
+    try {
+      // The beat names the turn's deadline once the session's turn has begun,
+      // and then stops advancing: the loop is frozen, and with it every timer.
+      let beat = readBeat(join(dir, HEARTBEAT_FILE));
+      for (let i = 0; i < 200 && beat?.deadline_at == null; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        beat = readBeat(join(dir, HEARTBEAT_FILE));
+      }
+      expect(beat?.deadline_at).not.toBeNull();
+      const r = await runWatchdog(
+        { dir, key: "k", pid },
+        {
+          now: Date.now,
+          sleep: (ms) => new Promise((res) => setTimeout(res, ms)),
+          alive,
+          kill: (pgid, sig) => process.kill(-pgid, sig),
+          pollMs: 50,
+          graceMs: GRACE_MS,
+          staleMs: 300,
+        },
+      );
+      expect(r).toBe("killed");
+      expect(Date.now() - beat!.deadline_at!).toBeGreaterThanOrEqual(GRACE_MS);
+      expect(Date.now() - t0).toBeLessThan(DEADLINE_MS + GRACE_MS + 10_000);
+      await new Promise((res) => setTimeout(res, 200));
+      expect(alive(pid)).toBe(false);
+      expect(JSON.parse(readFileSync(join(dir, "exit.json"), "utf8")).code).toBe(
+        WATCHDOG_EXIT_CODE,
+      );
+    } finally {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // gone
+      }
+    }
+  }, 30_000);
 });

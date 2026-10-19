@@ -199,10 +199,13 @@ describe("heartbeat", () => {
       const stop = startHeartbeat(file, { intervalMs: 100, now: () => clock, pgids: () => [42] });
       expect(readBeat(file)).toMatchObject({ seq: 1, at: 1_000, deadline_at: null, pgids: [42] });
       const b = make(fakeTarget(), { timeoutMs: 5_000, backstop: vi.fn() });
+      // tracking the deadline writes a beat at once, not at the next interval
+      expect(readBeat(file)).toMatchObject({ seq: 2, at: 1_000 });
+      expect(readBeat(file)?.deadline_at).toBeGreaterThan(0);
       clock = 1_100;
       await vi.advanceTimersByTimeAsync(100);
       const beat = readBeat(file);
-      expect(beat?.seq).toBe(2);
+      expect(beat?.seq).toBe(3);
       expect(beat?.at).toBe(1_100);
       expect(beat?.deadline_at).toBeGreaterThan(0);
       b.end();
@@ -210,7 +213,7 @@ describe("heartbeat", () => {
       expect(readBeat(file)?.deadline_at).toBeNull();
       stop();
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(readBeat(file)?.seq).toBe(3);
+      expect(readBeat(file)?.seq).toBe(4);
       expect(readBeat(join(dir, "missing.json"))).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });

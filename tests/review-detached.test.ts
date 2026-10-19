@@ -2,10 +2,19 @@
 // plugins. Time, pids, the launcher and the review itself are injected; one
 // test really spawns a detached node stub to show the run outlives its starter.
 import { afterAll, describe, expect, it } from "vitest";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sdkStubArgs, writeSdkDriverStub, type SdkStubMode } from "./helpers/sdk-driver-stub.js";
 import {
   identifyTarget,
   launchDetached,
@@ -373,6 +382,25 @@ describe("runDetachedChild", () => {
     });
     expect(during).toMatchObject({ seq: 1, pid: process.pid, deadline_at: null, pgids: [] });
   });
+
+  it("writes a beat the moment a turn's deadline is tracked, so a loop that freezes at once still leaves it", async () => {
+    const { trackDeadline } = await import("../src/heartbeat.js");
+    const dir = join(tmp, "child", "runs", "c3");
+    mkdirSync(dir, { recursive: true });
+    let during: { seq: number; deadline_at: number | null } | null = null;
+    await runDetachedChild({
+      dir,
+      key: "k",
+      run: async () => {
+        const read = () => JSON.parse(readFileSync(join(dir, "heartbeat.json"), "utf8"));
+        const release = trackDeadline(4_242_424);
+        during = read();
+        release();
+        return 0;
+      },
+    });
+    expect(during).toMatchObject({ seq: 2, deadline_at: 4_242_424 });
+  });
 });
 
 describe("driverSignals", () => {
@@ -473,4 +501,152 @@ await runDetachedChild({ dir, key, run: async () => {
     for (let i = 0; i < 100 && pids.some(alive); i++) await new Promise((r) => setTimeout(r, 50));
     expect(pids.filter(alive)).toEqual([]);
   }, 20_000);
+});
+
+describe("driverSignals on the SDK runtime", () => {
+  const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+  it("the first signal aborts, then disposes, then exits 130; pi's groups are SIGTERMed too", async () => {
+    const calls: string[] = [];
+    const onSignal = driverSignals({
+      killPi: (sig) => calls.push(`kill ${sig}`),
+      halt: () => calls.push("halt"),
+      exit: (code) => calls.push(`exit ${code}`),
+      sdk: () => true,
+      stopSessions: async () => {
+        calls.push("abort");
+        await flush();
+        calls.push("dispose");
+      },
+    });
+    onSignal();
+    expect(calls).toEqual(["halt", "kill SIGTERM", "abort"]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toEqual(["halt", "kill SIGTERM", "abort", "dispose", "exit 130"]);
+  });
+
+  it("exits 130 even when the stop throws, and a second signal exits at once, mid-stop", async () => {
+    const calls: string[] = [];
+    const never = new Promise<void>(() => {});
+    const wedged = driverSignals({
+      killPi: (sig) => calls.push(`kill ${sig}`),
+      halt: () => {},
+      exit: (code) => calls.push(`exit ${code}`),
+      sdk: () => true,
+      stopSessions: () => never,
+    });
+    wedged();
+    await flush();
+    expect(calls).toEqual(["kill SIGTERM"]);
+    wedged();
+    expect(calls).toEqual(["kill SIGTERM", "kill SIGKILL", "exit 130"]);
+
+    const calls2: string[] = [];
+    const throwing = driverSignals({
+      killPi: () => {},
+      halt: () => {},
+      exit: (code) => calls2.push(`exit ${code}`),
+      sdk: () => true,
+      stopSessions: () => Promise.reject(new Error("boom")),
+    });
+    throwing();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls2).toEqual(["exit 130"]);
+  });
+
+  it("a process run does not exit on the first signal: its run unwinds on its own", async () => {
+    const calls: string[] = [];
+    const onSignal = driverSignals({
+      killPi: (sig) => calls.push(`kill ${sig}`),
+      halt: () => calls.push("halt"),
+      exit: (code) => calls.push(`exit ${code}`),
+      sdk: () => false,
+      stopSessions: async () => void calls.push("abort"),
+    });
+    onSignal();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toEqual(["halt", "kill SIGTERM"]);
+  });
+});
+
+describe("a detached review on the SDK runtime", () => {
+  const alive = (p: number): boolean => {
+    try {
+      process.kill(p, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const until = async (cond: () => boolean, ms = 10_000): Promise<boolean> => {
+    for (let i = 0; i < ms / 50 && !cond(); i++) await new Promise((r) => setTimeout(r, 50));
+    return cond();
+  };
+  const readNum = (file: string): number | null => {
+    try {
+      const n = Number(readFileSync(file, "utf8").trim());
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch {
+      return null;
+    }
+  };
+  /** Real deps over a stub driver in `mode`; the registry is `name`'s. */
+  async function rig(name: string, mode: SdkStubMode) {
+    const home = join(tmp, name);
+    mkdirSync(home, { recursive: true });
+    const stub = writeSdkDriverStub(home);
+    const lines: string[] = [];
+    let pid = 0;
+    const deps: DetachDeps = {
+      home,
+      out: (l) => lines.push(l),
+      now: Date.now,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      newId: () => name,
+      alive,
+      kill: (p, s) => process.kill(-p, s),
+      identify: () => ({ ok: true, key: `branch:o/r@${name}`, label: name }),
+      launch: (l) => {
+        const r = launchDetached({
+          command: process.execPath,
+          args: [stub, ...sdkStubArgs(l, mode, process.cwd())],
+          dir: l.dir,
+          env: process.env,
+        });
+        if (r.ok) pid = r.pid;
+        return r;
+      },
+    };
+    const dir = join(home, "runs", name);
+    return { deps, dir, pid: () => pid, lines };
+  }
+
+  it("stop aborts the session mid-turn, disposes it and exits 130: no driver, no bash child, no lock left; status says stopped", async () => {
+    const r = await rig("sdk-stop", "hang");
+    expect(await runDetachedVerb("start", [], true, r.deps)).toBe(0);
+    const driver = r.pid();
+    expect(await until(() => readNum(join(r.dir, "bash-pid")) !== null)).toBe(true);
+    const bash = readNum(join(r.dir, "bash-pid"))!;
+    expect(alive(driver) && alive(bash)).toBe(true);
+
+    expect(await runDetachedVerb("stop", [], true, r.deps)).toBe(0);
+    expect(await until(() => !alive(driver) && !alive(bash))).toBe(true);
+    expect(readFileSync(join(r.dir, "exit-code"), "utf8")).toBe("130");
+
+    // the run is stopped, its target is free again
+    r.lines.length = 0;
+    expect(await runDetachedVerb("status", [], true, r.deps)).toBe(1);
+    expect(JSON.parse(r.lines[0]!)).toMatchObject({ state: "stopped", run_id: "sdk-stop" });
+    expect(readdirSync(join(r.deps.home, "locks"))).toEqual([]);
+  }, 30_000);
+
+  it("a run that ends on its own leaves no handle: the process exits by itself, with its result recorded", async () => {
+    const r = await rig("sdk-ok", "ok");
+    expect(await runDetachedVerb("start", [], true, r.deps)).toBe(0);
+    const driver = r.pid();
+    expect(await until(() => !alive(driver), 20_000)).toBe(true);
+    expect(readFileSync(join(r.dir, "exit-code"), "utf8")).toBe("0");
+    expect(JSON.parse(readFileSync(join(r.dir, "exit.json"), "utf8"))).toEqual({ code: 0 });
+    expect(readdirSync(join(r.deps.home, "locks"))).toEqual([]);
+  }, 30_000);
 });

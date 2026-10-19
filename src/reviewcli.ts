@@ -79,6 +79,7 @@ import { prepareHostRun } from "./hostroute.js";
 import { AuthExpiring } from "./engine/auth.js";
 import type { Runtime } from "./engine/port.js";
 import { checkLensRuntime, selectRuntime } from "./engine/select.js";
+import { markSdkRoute } from "./engine/livesessions.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
@@ -1197,6 +1198,26 @@ export function watchdogCommand(
   };
 }
 
+/** The runtime `[engine] runtime` selects for `qcr review`: undefined on proc
+ * (the review keeps its process runtime), the SDK runtime on sdk. Throws where
+ * the config asks for what the route cannot do. */
+export function selectReviewRuntime(cfg: Pick<Config, "engine" | "pi">): Runtime | undefined {
+  checkLensRuntime(cfg.pi.lens_runtime, "review");
+  return selectRuntime(cfg.engine.runtime, "review", () => {
+    // The SDK host loads on the first session, not at startup: a preview, a
+    // refusal and `review status` never pay for the pi SDK. A stop signal that
+    // arrives before it is built already ends the run as an SDK stop.
+    markSdkRoute();
+    let host: Promise<Runtime> | undefined;
+    const load = (): Promise<Runtime> =>
+      (host ??= import("./engine/reviewsdk.js").then((m) => m.reviewSdkRuntime()));
+    return {
+      create: async (spec) => (await load()).create(spec),
+      resume: async (file, spec) => (await load()).resume(file, spec),
+    };
+  });
+}
+
 /** The terminal side: the real repo, root, login and a prompt on stdin. */
 export async function cmdReview(
   rest: string[],
@@ -1309,8 +1330,7 @@ export async function cmdReview(
     );
   let runtime: Runtime | undefined;
   try {
-    checkLensRuntime(cfg.pi.lens_runtime, "review");
-    runtime = selectRuntime(cfg.engine.runtime, "review");
+    runtime = selectReviewRuntime(cfg);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     return 1;

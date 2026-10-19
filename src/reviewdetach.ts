@@ -36,6 +36,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { haltPi, killPiGroups } from "./oneshot.js";
 import { livePiGroupIds } from "./engine/procruntime.js";
+import { onSdkRoute, stopLiveSessions } from "./engine/livesessions.js";
 import { HEARTBEAT_FILE, readBeat, startHeartbeat } from "./heartbeat.js";
 import { originRepo, resolveBranch, resolveUncommitted } from "./localreview.js";
 import { parsePrTarget } from "./prtarget.js";
@@ -179,8 +180,12 @@ function observe(home: string, runId: string, deps: Pick<DetachDeps, "alive">): 
   const exit = readJson<{ code: number }>(join(dir, "exit.json"));
   const stopped = existsSync(join(dir, "stopped.json"));
   let state: RunState;
-  if (exit !== null) state = exit.code === 0 ? "done" : "failed";
+  // A run that was stopped and unwinds records a failing exit of its own on the
+  // way out (an aborted turn has no result); `stop` is what ended it, so that
+  // is what it reports. A run that finished cleanly stays done.
+  if (exit !== null && exit.code === 0) state = "done";
   else if (stopped) state = "stopped";
+  else if (exit !== null) state = "failed";
   else if (run.pid === null || deps.alive(run.pid)) state = "running";
   else state = "failed";
   let result: unknown = null;
@@ -434,13 +439,23 @@ export function launchDetached(o: {
   }
 }
 
-/** The driver's SIGINT/SIGTERM (what `qcr review stop` sends): the first halts
- * the run and kills every pi's process group, which the kill aimed at the
- * driver's own group never reaches; a second kills them outright and exits. */
+/** The driver's SIGINT/SIGTERM (what `qcr review stop` sends).
+ *
+ * On a process runtime the first halts the run and kills every pi's process
+ * group, which the kill aimed at the driver's own group never reaches; the run
+ * then unwinds on its own. On the SDK runtime the sessions are in this process,
+ * so the first aborts them, disposes them and exits 130 (`stopSessions`); the
+ * native lens tool's children share the driver's group, which `stop`'s kill
+ * reaches, and the abort stops them through the tool call's signal. A second
+ * signal, on either, kills the pi groups outright and exits. */
 export function driverSignals(io: {
   killPi: (sig: NodeJS.Signals) => void;
   halt: () => void;
   exit: (code: number) => void;
+  /** The run is on the SDK runtime. Default: it is not. */
+  sdk?: () => boolean;
+  /** Abort, then dispose, the running SDK sessions. */
+  stopSessions?: () => Promise<void>;
 }): () => void {
   let seen = 0;
   return () => {
@@ -449,6 +464,11 @@ export function driverSignals(io: {
       io.halt();
       io.killPi("SIGTERM");
       setTimeout(() => io.killPi("SIGKILL"), 5_000).unref();
+      if (io.sdk?.() === true && io.stopSessions !== undefined)
+        void io
+          .stopSessions()
+          .catch(() => {})
+          .finally(() => io.exit(130));
       return;
     }
     try {
@@ -475,6 +495,8 @@ export async function runDetachedChild(o: {
     killPi: killPiGroups,
     halt: haltPi,
     exit: (code) => proc.exit(code),
+    sdk: onSdkRoute,
+    stopSessions: () => stopLiveSessions(),
   });
   proc.on("SIGINT", onSignal);
   proc.on("SIGTERM", onSignal);

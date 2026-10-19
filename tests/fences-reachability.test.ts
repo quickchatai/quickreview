@@ -73,14 +73,6 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "factories (P3) take it. Delete this entry with the first import.",
     },
     {
-      file: "src/engine/roundsdk.ts",
-      why:
-        "what a review round's main session carries on the SDK runtime (P5.2): the bash-guard, ledger-pin " +
-        "and finding-clusters factories, the tool allowlist and the D34 stub as data. Driven by " +
-        "tests/round.test.ts and canary 10 (full) until a route builds an SDK runtime for the one-shot " +
-        "(P5.5 qcr review, P5.3 bench). Delete this entry with the first production import.",
-    },
-    {
       file: "src/engine/lens/registry.ts",
       why:
         "the lens agent registry (P4.1): loads the built agents the SDK lens tool names. It is read only " +
