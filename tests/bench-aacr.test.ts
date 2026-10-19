@@ -1018,6 +1018,52 @@ describe("the sandbox cannot post", () => {
     }
   });
 
+  it("the image is the release image plus the harness: no build stage of its own", () => {
+    const docker = readFileSync(join(ROOT, "bench", "aacr", "Dockerfile"), "utf8");
+    const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
+    const code = docker
+      .split("\n")
+      .filter((l) => !l.trimStart().startsWith("#"))
+      .join("\n");
+    // the only base is the release image; every other stage builds on `runtime`
+    const froms = [...code.matchAll(/^FROM\s+(\S+)\s+AS\s+(\S+)$/gm)].map((m) => [m[1], m[2]]);
+    expect(froms[0]).toEqual(["${RELEASE_IMAGE}", "runtime"]);
+    expect(froms.slice(1).every(([base]) => base === "runtime")).toBe(true);
+    // no compile, no npm ci, no copy of the app's source or its dependencies
+    expect(code).not.toMatch(/COPY --from=build|npm ci|tsc -p|AS build\b/);
+    expect(code).not.toMatch(/^COPY\s+(?:package|tsconfig|src|extensions|prompts|agents)\b/m);
+    // the release's gh and scripts/ go; the check runs in every stage
+    expect(code).toMatch(/apt-get purge -y gh/);
+    expect(code).toMatch(/rm -rf \/opt\/quickreview\/sandbox\/scripts/);
+    for (const stage of ["runtime", "codex", "opencode", "pireview", "ocr", "claude", "pragent"]) {
+      const at = docker.indexOf(`AS ${stage}\n`);
+      const next = docker.indexOf("\nFROM ", at + 1);
+      expect(docker.slice(at, next < 0 ? undefined : next), stage).toMatch(
+        /! test -e scripts && ! command -v gh/,
+      );
+    }
+    // the tree sits at the VM's own path, where the inventory's bench row has it
+    expect(code).toMatch(/mv \/opt\/qcr \/opt\/quickreview\/sandbox/);
+    expect(code).toContain("WORKDIR /opt/quickreview/sandbox");
+    // bench.sh builds the release image first, from the checkout's docker/Dockerfile
+    const build = sh.slice(sh.indexOf("\n  build)"), sh.indexOf("\n  prefetch)"));
+    expect(build.indexOf("docker/Dockerfile")).toBeGreaterThan(0);
+    expect(build.indexOf("docker/Dockerfile")).toBeLessThan(
+      build.indexOf('docker build --target "$TARGET"'),
+    );
+    expect(build).toContain('--build-arg "RELEASE_IMAGE=$RELEASE_IMAGE"');
+    // …and the bookworm release is the default, the trixie one only for ocr, claude, pragent
+    expect(docker).toContain("ARG RELEASE_IMAGE=qcr-release:bookworm");
+    const trixie = [...sh.matchAll(/^\s*(\w+)\) IMAGE=[^\n]*\n\s*DISTRO=trixie;/gm)].map(
+      (m) => m[1],
+    );
+    expect(trixie.sort()).toEqual(["claude", "ocr", "pragent"]);
+    // the release Dockerfile takes the distro, defaulting to bookworm
+    const release = readFileSync(join(ROOT, "docker", "Dockerfile"), "utf8");
+    expect(release).toMatch(/^ARG NODE_DISTRO=bookworm$/m);
+    expect(release).toMatch(/^FROM node:\$\{NODE_MAJOR\}-\$\{NODE_DISTRO\}-slim AS release$/m);
+  });
+
   it("the image ships AGENTS.md — pi loads it before CLAUDE.md, as production's reviewers do", () => {
     const docker = readFileSync(join(ROOT, "bench", "aacr", "Dockerfile"), "utf8");
     const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
@@ -1421,11 +1467,13 @@ describe("the open-code-review baseline arm", () => {
     expect(ocrStage).toContain("v[2] >= 41");
     expect(ocrStage).toContain("codex_bridge.py --self-test");
     expect(ocrStage).toMatch(/! test -e scripts && ! command -v gh/);
-    expect(docker).toMatch(/^FROM \$\{RUNTIME_BASE\} AS runtime$/m);
+    expect(docker).toMatch(/^FROM \$\{RELEASE_IMAGE\} AS runtime$/m);
     const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
     expect(sh).toContain('qcr) IMAGE="${QCR_BENCH_IMAGE:-qcr-bench:latest}"; TARGET=runtime');
     expect(sh).toContain('ocr) IMAGE="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"; TARGET=ocr');
-    expect(sh).toContain("RUNTIME_BASE=node:22-trixie");
+    // trixie is the release image's NODE_DISTRO, for the arms that need it
+    expect(sh).toContain("DISTRO=trixie");
+    expect(sh).toContain('--build-arg "NODE_DISTRO=$DISTRO"');
     expect(sh).toContain('docker build --target "$TARGET"');
     const tarList = sh.slice(sh.indexOf("tar -cf -"), sh.indexOf("| tar -xf -"));
     expect(tarList).toContain("bench/aacr/codex_bridge.py");
