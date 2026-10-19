@@ -1768,7 +1768,11 @@ export class StateStore {
     this.db.pragma("journal_mode = WAL");
     // The inject bridge is a second WAL writer. A short daemon-side wait keeps
     // routine cross-process commits from turning into partial handoffs while
-    // preserving a finite failure that supervisor health can expose.
+    // preserving a finite failure that supervisor health can expose. The wait
+    // covers autocommit statements and BEGIN IMMEDIATE only: a deferred
+    // transaction that reads before it writes upgrades its lock without the
+    // busy handler and throws SQLITE_BUSY at once, so such a transaction runs
+    // `.immediate()` (tests/state-cross-writer-busy.test.ts).
     this.db.pragma("busy_timeout = 2000");
     this.db.exec(SCHEMA);
     // Additive columns. Each ALTER is independent so a
@@ -2447,7 +2451,9 @@ export class StateStore {
    * and its `round_fanout_started` event commit together: a stamp alone would
    * make every later call a no-op, so the budget reset could never be written. */
   recordRoundFanoutStarted(id: number, commandId: string, startedAt: string): boolean {
-    return this.db.transaction(() => this.recordRoundFanoutStartedTx(id, commandId, startedAt))();
+    return this.db
+      .transaction(() => this.recordRoundFanoutStartedTx(id, commandId, startedAt))
+      .immediate();
   }
 
   private recordRoundFanoutStartedTx(id: number, commandId: string, startedAt: string): boolean {
@@ -5713,18 +5719,20 @@ export class StateStore {
   }
 
   observeTriggerLevel(pr: number, kind: "label" | "team_request", present: boolean): void {
-    this.db.transaction(() => {
-      if (present && this.triggerLevel(pr, kind) === false && this.getPr(pr)?.state !== "closed")
+    this.db
+      .transaction(() => {
+        if (present && this.triggerLevel(pr, kind) === false && this.getPr(pr)?.state !== "closed")
+          this.db
+            .prepare("INSERT OR IGNORE INTO trigger_edges (pr,kind,requested_at) VALUES (?,?,?)")
+            .run(pr, kind, this.ts());
         this.db
-          .prepare("INSERT OR IGNORE INTO trigger_edges (pr,kind,requested_at) VALUES (?,?,?)")
-          .run(pr, kind, this.ts());
-      this.db
-        .prepare(
-          `INSERT INTO trigger_levels (pr, kind, present, observed_at) VALUES (?, ?, ?, ?)
+          .prepare(
+            `INSERT INTO trigger_levels (pr, kind, present, observed_at) VALUES (?, ?, ?, ?)
         ON CONFLICT(pr, kind) DO UPDATE SET present=excluded.present, observed_at=excluded.observed_at`,
-        )
-        .run(pr, kind, present ? 1 : 0, this.ts());
-    })();
+          )
+          .run(pr, kind, present ? 1 : 0, this.ts());
+      })
+      .immediate();
   }
 
   triggerEdgePending(pr: number, kind: "label" | "team_request"): boolean {
@@ -5913,15 +5921,17 @@ export class StateStore {
     action: string | null,
     payload: string,
   ): boolean {
-    return this.db.transaction(() => {
-      if (this.webhookInbox(guid) || !this.recordDelivery(guid, event, action)) return false;
-      this.db
-        .prepare(
-          "INSERT INTO webhook_inbox (guid,event,action,payload,received_at) VALUES (?,?,?,?,?)",
-        )
-        .run(guid, event, action, payload, this.ts());
-      return true;
-    })();
+    return this.db
+      .transaction(() => {
+        if (this.webhookInbox(guid) || !this.recordDelivery(guid, event, action)) return false;
+        this.db
+          .prepare(
+            "INSERT INTO webhook_inbox (guid,event,action,payload,received_at) VALUES (?,?,?,?,?)",
+          )
+          .run(guid, event, action, payload, this.ts());
+        return true;
+      })
+      .immediate();
   }
 
   webhookInbox(guid: string): WebhookInboxRow | undefined {
@@ -5944,17 +5954,19 @@ export class StateStore {
   }
 
   webhookLocalOnce<T>(guid: string | undefined, run: () => T): T {
-    if (!guid) return this.db.transaction(run)();
-    return this.db.transaction(() => {
-      const row = this.webhookInbox(guid);
-      if (!row) throw new Error("webhook delivery has no durable inbox receipt");
-      if (row.local_result !== null) return (JSON.parse(row.local_result) as { value: T }).value;
-      const value = run();
-      this.db
-        .prepare("UPDATE webhook_inbox SET local_result=? WHERE guid=?")
-        .run(JSON.stringify({ value }), guid);
-      return value;
-    })();
+    if (!guid) return this.db.transaction(run).immediate();
+    return this.db
+      .transaction(() => {
+        const row = this.webhookInbox(guid);
+        if (!row) throw new Error("webhook delivery has no durable inbox receipt");
+        if (row.local_result !== null) return (JSON.parse(row.local_result) as { value: T }).value;
+        const value = run();
+        this.db
+          .prepare("UPDATE webhook_inbox SET local_result=? WHERE guid=?")
+          .run(JSON.stringify({ value }), guid);
+        return value;
+      })
+      .immediate();
   }
 
   deferWebhookDelivery(guid: string, error: string, now: number): void {
