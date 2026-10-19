@@ -1273,14 +1273,19 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       });
       openviking.start();
       const supervisor = openviking;
-      reembed = new ReembedDriver({
-        cfg: cfg.openviking,
-        repoRoot: root,
-        keyPath: join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET),
-        ready: () => supervisor.status().ready,
-        log,
-      });
-      reembed.start();
+      // Under the memory sidecar (endpoint = remote) the store, its journal
+      // and the re-embed migration live in the sidecar, which runs its own
+      // driver at its boot: this daemon has neither the journal nor ov.conf.
+      if (cfg.openviking.endpoint === "local") {
+        reembed = new ReembedDriver({
+          cfg: cfg.openviking,
+          repoRoot: root,
+          keyPath: join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET),
+          ready: () => supervisor.status().ready,
+          log,
+        });
+        reembed.start();
+      }
 
       // Bind the daemon's durable command slot before any PR session is
       // adopted or born. Pending rows reconstruct their exact inject bytes;

@@ -118,10 +118,16 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       // whatever the pi extensions reach into. `smoke-session.ts` is a root
       // rather than an orphan because `npm run smoke:session` launches it;
       // `bench/cli.ts` because the qcr-bench sandbox image's entrypoint
-      // (bench/aacr/in-container.sh) launches it.
-      const roots = ["src/wire.ts", "src/cli.ts", "src/smoke-session.ts", "src/bench/cli.ts"].map(
-        (p) => join(ROOT, p),
-      );
+      // (bench/aacr/in-container.sh) launches it; `openviking/sidecar-main.ts`
+      // because the memory image's entrypoint (docker/memory/entrypoint.sh)
+      // execs it out of dist/.
+      const roots = [
+        "src/wire.ts",
+        "src/cli.ts",
+        "src/smoke-session.ts",
+        "src/bench/cli.ts",
+        "src/openviking/sidecar-main.ts",
+      ].map((p) => join(ROOT, p));
       for (const f of tsFiles(join(ROOT, "extensions"))) {
         for (const m of stripComments(readFileSync(f, "utf8")).matchAll(
           /["'](\.[^"']+)\.js["']/g,

@@ -431,6 +431,12 @@ context_quotas = { experiences = 24 }
 # Every path below is a CONTAINER path. On a dev PC the binary is absent: the
 # supervisor logs once, reports unavailable, and never crash-loops.
 enabled = true
+# Who runs the server. "local" (the default): the daemon supervises it, and the
+# local embedder, as children of this container. "remote": the memory sidecar
+# (docker/memory/) runs both on `host`:`port` — set host to the sidecar's name
+# on the container network — and the daemon only probes its health. The sidecar
+# owns the boot provisioning and the embedder re-embed. Never publish its port.
+endpoint = "local"
 version = "0.4.15"
 # The vendored pi extension's upstream base commit (extensions/vendor/
 # openviking-pi). Pinned beside the server version so a bump re-verifies the

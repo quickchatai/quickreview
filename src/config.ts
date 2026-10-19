@@ -1173,6 +1173,13 @@ export const MODELS_TIER_DEFAULTS: Pick<
 export interface OpenVikingConfig {
   /** Off ⇒ the supervisor is never constructed and status.json says so. */
   enabled: boolean;
+  /** Who runs the server. `local` (the default, and what every live daemon
+   * does) supervises it, and the local embedder, as children of this process.
+   * `remote` is the memory sidecar (docker/memory/): `host`:`port` names a
+   * server some other container runs, the daemon only probes its health, and
+   * the sidecar owns the processes, the boot provisioning and the re-embed
+   * migration. */
+  endpoint: OpenVikingEndpoint;
   /** The pinned server version (mirror 1 of 3). */
   version: string;
   /** Pinned llama-cpp-python: an OPTIONAL extra openviking does not declare,
@@ -1296,6 +1303,9 @@ export interface OpenVikingConfig {
    * review round to run. Mirrored as `openviking_local_embedder_threads`. */
   local_embedder_threads: number;
 }
+
+export const OPENVIKING_ENDPOINTS = ["local", "remote"] as const;
+export type OpenVikingEndpoint = (typeof OPENVIKING_ENDPOINTS)[number];
 
 export const EMBEDDING_PROVIDERS = ["local", "openai"] as const;
 export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
@@ -1577,6 +1587,7 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
  * configuration, exactly like [tui]/[companion]. */
 export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   enabled: true,
+  endpoint: "local",
   version: "0.4.15",
   llama_cpp_python_version: "0.3.35",
   extension_commit: "d436baa23c83938b22bb0aab08b0ce48568b5ff4",
@@ -1624,6 +1635,11 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
  */
 export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig {
   const merged = { ...OPENVIKING_DEFAULTS, ...(raw as Partial<OpenVikingConfig>) };
+  if (!(OPENVIKING_ENDPOINTS as readonly string[]).includes(merged.endpoint)) {
+    throw new Error(
+      `config.toml: [openviking] endpoint must be one of ${OPENVIKING_ENDPOINTS.join(", ")} (got '${String(merged.endpoint)}')`,
+    );
+  }
   // Bounded, never a tight loop or an unbounded wait.
   merged.search_timeout_ms = clampMs(
     merged.search_timeout_ms,

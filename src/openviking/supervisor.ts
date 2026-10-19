@@ -20,6 +20,13 @@
 //
 // Monitoring only: RSS/CPU ride the heartbeat, with no RSS watchdog and no
 // auto-restart on a memory budget. Do not add one.
+//
+// `[openviking] endpoint = "remote"` is the memory sidecar (docker/memory/):
+// the server is some other container's process. This class then supervises
+// nothing — no binary check, no spawn, no restart ladder — and keeps only the
+// health loop, so the heartbeat, `onReady` and memory health read the sidecar
+// the same way they read the child. `local` (the default) never reaches that
+// branch: its code path is the one that was here before the switch.
 import { existsSync } from "node:fs";
 import { spawn as nodeSpawn } from "node:child_process";
 import { openVikingBaseUrl, type OpenVikingConfig } from "../config.js";
@@ -121,6 +128,10 @@ export interface SupervisorDeps {
    * (the daemon materializes the memory root here). A throw is logged and
    * swallowed: a callback cannot take the health loop down. */
   onReady?: () => void;
+  /** The address the spawned server binds (`--host`), when it differs from
+   * the address the daemon probes (`cfg.host`). The sidecar binds every
+   * interface of its private network and probes itself on loopback. */
+  bindHost?: string;
   /** A precondition for the first spawn — the local embedder the
    * server's `/ready` probes. Polled every `pollMs` until `open()` holds or
    * `maxWaitMs` has passed; past the bound the server starts anyway, said
@@ -147,6 +158,8 @@ export class OpenVikingSupervisor {
   private readonly schedule: Schedule;
   private readonly onReady: (() => void) | undefined;
   private readonly startGate: SupervisorDeps["startGate"];
+  private readonly bindHost: string;
+  private readonly remote: boolean;
   private waitingSince: number | null = null;
   private cancelGate: (() => void) | null = null;
 
@@ -180,6 +193,8 @@ export class OpenVikingSupervisor {
     this.schedule = deps.schedule ?? defaultSchedule;
     this.onReady = deps.onReady;
     this.startGate = deps.startGate;
+    this.bindHost = deps.bindHost ?? deps.cfg.host;
+    this.remote = deps.cfg.endpoint === "remote";
   }
 
   /** Spawn the server and arm the health loop. Synchronous and non-blocking:
@@ -189,6 +204,16 @@ export class OpenVikingSupervisor {
     this.started = true;
     if (!this.cfg.enabled) {
       this.log("openviking: disabled in config.toml — the daemon runs memory-less");
+      return;
+    }
+    if (this.remote) {
+      // The memory sidecar owns the server. Nothing to spawn, nothing to
+      // restart — a down sidecar is the container runtime's to restart —
+      // and the first probe is fired, never awaited.
+      this.log(
+        `openviking: endpoint = remote — the memory sidecar serves ${openVikingBaseUrl(this.cfg)}; the daemon only probes it`,
+      );
+      void this.poll().finally(() => this.armHealthLoop());
       return;
     }
     // A dev PC has no venv. Report unavailable ONCE and stop; the binary will
@@ -252,7 +277,7 @@ export class OpenVikingSupervisor {
       "--config",
       this.cfg.config_file,
       "--host",
-      this.cfg.host,
+      this.bindHost,
       "--port",
       String(this.cfg.port),
     ];
@@ -387,7 +412,8 @@ export class OpenVikingSupervisor {
     try {
       const base: OpenVikingStatus = {
         enabled: this.cfg.enabled && !this.unavailable,
-        running: this.child !== null,
+        // A remote server has no child here: "running" is "answering".
+        running: this.remote ? (this.health?.reachable ?? false) : this.child !== null,
         reachable: this.health?.reachable ?? false,
         ready: this.health?.ready ?? false,
         not_ready_polls: this.notReadyPolls,
@@ -397,6 +423,7 @@ export class OpenVikingSupervisor {
       const version = this.health?.version;
       return {
         ...base,
+        ...(this.remote ? { endpoint: "remote" as const } : {}),
         ...(this.childPid !== undefined ? { pid: this.childPid } : {}),
         ...(version ? { version, version_drift: version !== this.cfg.version } : {}),
         ...(this.startedAt !== null ? { started_at: new Date(this.startedAt).toISOString() } : {}),
