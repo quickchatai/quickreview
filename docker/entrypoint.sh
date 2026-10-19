@@ -508,17 +508,21 @@ mode_companion() {
     say "memory watcher idle: no OpenViking endpoint configured for this container"
   fi
 
-  tmux start-server
-
   # Stay alive, and DIE PROMPTLY when asked: PID 1 has no default signal
-  # dispositions, so without a trap `docker stop` waits its full timeout.
+  # dispositions, so without a trap `docker stop` waits its full timeout. The
+  # trap goes in before anything is started, and `child` is set up front: a
+  # TERM landing before `sleep` is forked would otherwise hit an unbound
+  # variable under `set -u` and exit 1.
   # `sleep &` + `wait`, because a foreground child would block the trap.
-  local child
+  local child=""
   term() {
-    kill "$child" 2>/dev/null || true
+    [ -z "$child" ] || kill "$child" 2>/dev/null || true
     exit 0
   }
   trap term TERM INT
+
+  tmux start-server
+
   sleep infinity &
   child=$!
   # `|| true`: a signal makes `wait` return 128+N, which under `set -e` would
