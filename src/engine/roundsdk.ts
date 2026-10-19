@@ -56,15 +56,20 @@ export interface RoundSdkOptions {
 export const BASH_ENV_ALLOW = ["GIT_*", "QCR_*"] as const;
 
 /** The reviewer stub (D34) as a context file at `<cwd>/AGENTS.override.md`. A
- * round without the stub fails here, loudly: a context file is never dropped
- * silently. */
+ * checkout keeps it at `deploy/reviewer/`; the release and bench images install
+ * it at the tree's root (docker/Dockerfile, bench/aacr/Dockerfile), so both
+ * places are tried. A round without the stub fails here, loudly: a context file
+ * is never dropped silently. */
 export function reviewerStub(root: string, cwd: string): { path: string; content: string } {
-  const source = join(root, REVIEWER_STUB);
-  try {
-    return { path: join(cwd, HOST_CONTEXT_STUB), content: readFileSync(source, "utf8") };
-  } catch (e) {
-    throw new Error(`the reviewer context stub is missing at ${source}`, { cause: e });
+  const sources = [join(root, REVIEWER_STUB), join(root, HOST_CONTEXT_STUB)];
+  for (const source of sources) {
+    try {
+      return { path: join(cwd, HOST_CONTEXT_STUB), content: readFileSync(source, "utf8") };
+    } catch {
+      // try the next place
+    }
   }
+  throw new Error(`the reviewer context stub is missing at ${sources.join(" and ")}`);
 }
 
 /** The per-session pieces of a round's main session on the SDK runtime. */
