@@ -9,7 +9,9 @@
 //     with bash-guard OFF the lower layers hold (the token is in no env, no
 //     file; the mount dir is empty; /proc/<ppid>/mem fails wherever Yama's
 //     ptrace_scope is >= 1), with bash-guard ON the same commands are denied
-//     whatever the kernel says.
+//     whatever the kernel says;
+//   - the wiring: cli.ts's main() takes the token before any verb runs, and a
+//     file it cannot take is a one-line failure (JSON under --json).
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -24,7 +26,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import {
   HANDOFF_FILE_ENV,
@@ -37,6 +39,7 @@ import {
 } from "../src/ghcred.js";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import bashGuard from "../extensions/bash-guard.js";
+import { main } from "../src/cli.js";
 import { type HostRig, createHostRig, useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -128,6 +131,76 @@ describe("takeHandoffToken", () => {
       expect(handedToken()).toBeNull();
       chmodSync(indir, 0o700);
       expect(readFileSync(file, "utf8")).toBe(TOKEN);
+    },
+  );
+});
+
+describe("the cli takes the token first (main() wiring)", () => {
+  const ROOT = join(import.meta.dirname, "..");
+  const DIST_CLI = join(ROOT, "dist/src/cli.js");
+
+  afterEach(() => {
+    delete process.env[HANDOFF_FILE_ENV];
+    process.exitCode = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it("main() unlinks the file and drops the variable before the verb runs", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { file } = stageIn();
+    process.env[HANDOFF_FILE_ENV] = file;
+    await main(["version"]);
+    expect(existsSync(file)).toBe(false);
+    expect(process.env[HANDOFF_FILE_ENV]).toBeUndefined();
+    expect(handedToken()).toBe(TOKEN);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("a named file that cannot be taken fails main() in one line, and runs no verb", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    process.env[HANDOFF_FILE_ENV] = join(dir, "nope");
+    await main(["version"]);
+    expect(process.exitCode).toBe(1);
+    expect(process.env[HANDOFF_FILE_ENV]).toBeUndefined();
+    expect(handedToken()).toBeNull();
+    expect(log).not.toHaveBeenCalled(); // `version` never ran
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(String(err.mock.calls[0]?.[0])).toMatch(
+      /^qcr: the GitHub token handoff failed: .*ENOENT/,
+    );
+  });
+
+  it("under --json the failure is a JSON error on stdout", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    process.env[HANDOFF_FILE_ENV] = join(dir, "nope");
+    await main(["version", "--json"]);
+    expect(process.exitCode).toBe(1);
+    expect(err).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledTimes(1);
+    const out = JSON.parse(String(log.mock.calls[0]?.[0])) as { error: string };
+    expect(out.error).toMatch(/^the GitHub token handoff failed: .*ENOENT/);
+  });
+
+  it.skipIf(!existsSync(DIST_CLI))(
+    "the built cli: the file is gone after start, and a missing file exits 1 without a stack trace",
+    () => {
+      const { file } = stageIn();
+      const ok = spawnSync("node", [DIST_CLI, "version"], {
+        env: { ...process.env, [HANDOFF_FILE_ENV]: file },
+        encoding: "utf8",
+      });
+      expect(ok.status, ok.stderr).toBe(0);
+      expect(existsSync(file)).toBe(false);
+
+      const bad = spawnSync("node", [DIST_CLI, "version"], {
+        env: { ...process.env, [HANDOFF_FILE_ENV]: join(dir, "nope") },
+        encoding: "utf8",
+      });
+      expect(bad.status).toBe(1);
+      expect(bad.stderr.trim().split("\n")).toHaveLength(1);
+      expect(bad.stderr).toMatch(/^qcr: the GitHub token handoff failed:/);
     },
   );
 });
