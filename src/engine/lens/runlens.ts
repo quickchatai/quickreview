@@ -15,6 +15,16 @@
 //     Its system prompt is pi's base plus the agent's body appended, and the D34
 //     context files ride as data; the pass reads the same bytes a native child
 //     reads (tests/lens-prompt-parity.test.ts).
+//   - Cache-grouped, when asked (config.cache, D7). The passes of one group, per
+//     model, share ONE session id, which is what routes their requests to one
+//     provider cache. Disposing a session closes the transports held for its id,
+//     so a grouped session is kept until the group's last pass is done and the
+//     group is disposed together (cache-run.ts): one pass finishing never ends
+//     a sibling's stream. With a context pack the group's first pass starts a
+//     warm-up (no permit, the pack and "reply OK") that every pass of the group
+//     waits for, at most 30 s; without one, later passes start after a stagger.
+//   - Staggered. Sessions are created sessionGapMs apart, per host: building a
+//     wave at once blocks the event loop for seconds (docs/cpu-gate.md, finding 4).
 //   - Bounded in time. With a deadline, an attempt the timer ends is aborted and
 //     retried once on a FRESH session; a second timeout answers timedOut.
 //   - Never fatal. runLens does not reject. A host that cannot build the
@@ -47,7 +57,16 @@ import {
 import type { LiveSink } from "../../live/writer.js";
 import type { BashEnvOptions, HostSessionSpec, PiHost } from "../pisdk.js";
 import type { AgentsFile } from "../port.js";
+import {
+  CacheGroups,
+  WARMUP_REPLY_TASK,
+  WARMUP_WAIT_MS,
+  delay,
+  settledWithin,
+  type CacheLease,
+} from "./cache-run.js";
 import { passTimeoutMessage, runUnderDeadline } from "./deadline.js";
+import { leafCache } from "./leaf-cache.js";
 import type { AgentRegistry, LensAgent } from "./registry.js";
 import { WeightedSemaphore } from "./semaphore.js";
 
@@ -63,6 +82,23 @@ export interface LensProgressSink {
   runStartedAt: string;
   commandId?: string;
 }
+
+/** Lens cache groups (D7). */
+export interface LensCacheConfig {
+  /** Passes per group, per model; below 1 there are no groups. */
+  size: number;
+  /** How long a pack-less group's later passes start after its first. */
+  staggerMs: number;
+  /** The round's context pack text. Present: each group is warmed with it and
+   * every request is rewritten pack-first. Absent: the stagger applies. */
+  pack?: string;
+  /** How long a pass waits for its group's warm-up. Default 30 s. */
+  warmupWaitMs?: number;
+}
+
+/** Gap between session creations on one host. Creating a wave at once blocks
+ * the loop for seconds (0.7 to 2.5 s for 8 to 20 sessions). */
+export const DEFAULT_SESSION_GAP_MS = 25;
 
 export interface LensRunConfig {
   host: PiHost;
@@ -86,6 +122,11 @@ export interface LensRunConfig {
   defaultModel?: string;
   /** Per-attempt deadline. Omitted: none. */
   deadlineMs?: number;
+  /** Cache groups. Omitted: every pass has a session id of its own. */
+  cache?: LensCacheConfig;
+  /** Minimum gap between two session creations on this host. 0 turns the
+   * stagger off. Default DEFAULT_SESSION_GAP_MS. */
+  sessionGapMs?: number;
   progress?: LensProgressSink;
   /** The lens session's LiveEvent log (`lens-<id>.jsonl`): given the run's id
    * and agent, returns the sink the session's events are fed to. Closed when
@@ -133,6 +174,22 @@ export function lensSemaphoreFor(host: PiHost, permits: number): WeightedSemapho
       `this host already runs lenses under a cap of ${held.permits}, not ${permits}: one cap per host`,
     );
   return held;
+}
+
+const creationClocks = new WeakMap<PiHost, { nextFree: number }>();
+
+/** Wait for this host's next session-creation slot, `gapMs` after the last one
+ * handed out. Slots are spaced on the real clock, never the injected one. */
+async function awaitCreationSlot(host: PiHost, gapMs: number, signal?: AbortSignal): Promise<void> {
+  if (gapMs <= 0) return;
+  let clock = creationClocks.get(host);
+  if (clock === undefined) {
+    clock = { nextFree: 0 };
+    creationClocks.set(host, clock);
+  }
+  const at = Math.max(Date.now(), clock.nextFree);
+  clock.nextFree = at + gapMs;
+  await delay(at - Date.now(), signal);
 }
 
 const THINKING_LEVELS: ReadonlySet<string> = new Set([
@@ -213,9 +270,21 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   const now = config.now ?? Date.now;
   const newId = config.newId ?? randomUUID;
   const warn = config.warn ?? ((m: string): void => console.error(`[lens] ${m}`));
-  /** Ids of the sessions alive now: a host that handed two passes one id
-   * would cut one's websocket when the other is disposed (canary 1). */
-  const live = new Set<string>();
+  /** Sessions streaming now, by id. A host that handed two ungrouped passes
+   * one id would cut one's websocket when the other is disposed (canary 1);
+   * a cache group shares its id on purpose and disposes together. */
+  const live = new Map<string, number>();
+  const enter = (sessionId: string): void => {
+    live.set(sessionId, (live.get(sessionId) ?? 0) + 1);
+  };
+  const leave = (sessionId: string): void => {
+    const n = (live.get(sessionId) ?? 0) - 1;
+    if (n > 0) live.set(sessionId, n);
+    else live.delete(sessionId);
+  };
+  const cache = config.cache !== undefined && config.cache.size >= 1 ? config.cache : undefined;
+  const groups = cache !== undefined ? new CacheGroups(cache.size, cache.staggerMs) : undefined;
+  const sessionGapMs = config.sessionGapMs ?? DEFAULT_SESSION_GAP_MS;
 
   const transition = (id: string, entry: ProgressTransition): void => {
     const p = config.progress;
@@ -235,12 +304,17 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     }
   };
 
-  const record = (id: string, result: LensResult, startedAtMs: number): void => {
+  const record = (
+    id: string,
+    result: LensResult,
+    startedAtMs: number,
+    kind: "lens" | "warmup" = "lens",
+  ): void => {
     try {
       mkdirSync(dirname(config.ledgerPath), { recursive: true });
       appendFileSync(
         config.ledgerPath,
-        serializeLedgerLine(ledgerLineOf("lens", id, result, { endedAtMs: now(), startedAtMs })),
+        serializeLedgerLine(ledgerLineOf(kind, id, result, { endedAtMs: now(), startedAtMs })),
       );
     } catch (e) {
       warn(`ledger append failed for ${id}: ${String(e)}`);
@@ -310,8 +384,140 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     return finish(out);
   }
 
-  /** The attempts of one pass, under its permit. Never throws. */
+  /** The pass under its permit: joins its cache group, if any, and leaves it
+   * once its last attempt is done. Never throws. */
   async function execute(id: string, agent: LensAgent, request: LensRequest): Promise<LensRun> {
+    const modelSpec = agent.modelId ?? config.defaultModel;
+    const lease =
+      groups !== undefined && modelSpec !== undefined ? groups.join(modelSpec, now()) : undefined;
+    try {
+      return await executeIn(id, agent, request, lease);
+    } finally {
+      lease?.release();
+    }
+  }
+
+  /** Session spec the warm-up and the passes share: the host-facing part. */
+  const baseSpec = (
+    agent: LensAgent,
+    modelSpec: string,
+    extensions: ExtensionFactory[],
+  ): HostSessionSpec => ({
+    cwd: config.cwd,
+    env: config.env,
+    model: modelSpec,
+    ...(agent.thinking !== null
+      ? { thinkingLevel: agent.thinking as HostSessionSpec["thinkingLevel"] }
+      : {}),
+    ...(config.agentsFiles ? { agentsFiles: config.agentsFiles } : {}),
+    extensions,
+    ...(agent.tools ? { tools: agent.tools } : {}),
+    ...(config.bashEnv ? { bashEnv: config.bashEnv } : {}),
+  });
+
+  /** A group's warm-up: the first pass's model and tools, no lens text, the
+   * pack and "reply OK", under the group's session id. It takes no permit (it
+   * runs beside the first pass, which holds one) and never rejects: the group
+   * is released when it finishes, whatever happened. Its session is kept for
+   * the group's disposal. One ledger line, kind "warmup". */
+  async function warmUp(
+    agent: LensAgent,
+    modelSpec: string,
+    lease: CacheLease,
+    pack: string,
+    keep: (s: AgentSession) => void,
+    hardStopMs: number,
+  ): Promise<void> {
+    const id = newId();
+    const startedAt = now();
+    const stop = AbortSignal.timeout(hardStopMs);
+    let spent = ZERO_USAGE;
+    let session: AgentSession | undefined;
+    let failure: string | undefined;
+    let unexpected = false;
+    try {
+      await awaitCreationSlot(config.host, sessionGapMs, stop);
+      stop.throwIfAborted();
+      session = await config.host.makeSession({
+        ...baseSpec(agent, modelSpec, [
+          config.bashGuard,
+          leafCache({ pack, cacheKey: lease.key, onUnexpected: () => (unexpected = true) }),
+        ]),
+        sessionId: lease.key,
+        onExtensionError: (e) => config.onExtensionError?.("warmup", id, e),
+      });
+      keep(session);
+      stop.throwIfAborted();
+      const s = session;
+      const onStop = (): void => void s.abort().catch(() => {});
+      stop.addEventListener("abort", onStop, { once: true });
+      try {
+        await s.prompt(`Task: ${WARMUP_REPLY_TASK}`);
+      } finally {
+        stop.removeEventListener("abort", onStop);
+      }
+      const read = readSession(s);
+      spent = addUsage(spent, read.usage);
+      if (stop.aborted) failure = "warm-up stopped after its time limit";
+      else if (read.reading.stopReason === "error" || read.reading.stopReason === "aborted")
+        failure = read.reading.errorMessage ?? `warm-up ended ${read.reading.stopReason}`;
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+      if (session !== undefined) {
+        try {
+          spent = addUsage(spent, readSession(session).usage);
+        } catch {
+          // nothing readable
+        }
+      }
+    }
+    if (unexpected) warn(`warm-up ${id}: request shape not as expected; sent unchanged`);
+    record(
+      id,
+      {
+        agent: "warmup",
+        model: agent.model ?? config.defaultModel ?? "unknown",
+        usage: spent,
+        messages: [],
+        exitCode: failure === undefined ? 0 : 1,
+        ...(failure !== undefined ? { stopReason: "error", errorMessage: failure } : {}),
+      },
+      startedAt,
+      "warmup",
+    );
+  }
+
+  /** Wait until the pass's group is ready for it. With a pack: the group's
+   * warm-up (started by the first pass), at most the wait; a warm-up that
+   * fails or runs late releases the group all the same. Without: the stagger
+   * after the group's first pass, an awaited delay. */
+  async function groupReady(
+    agent: LensAgent,
+    modelSpec: string,
+    lease: CacheLease,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const pack = cache?.pack;
+    if (pack === undefined || !pack.trim()) {
+      await delay(lease.delayMs, signal);
+      return;
+    }
+    const waitMs = cache?.warmupWaitMs ?? WARMUP_WAIT_MS;
+    const warm = lease.first
+      ? lease.startWarmup((keep) => warmUp(agent, modelSpec, lease, pack, keep, waitMs * 2))
+      : lease.warmup();
+    if (warm === undefined) return;
+    if (!(await settledWithin(warm, waitMs, signal)) && !signal?.aborted)
+      warn(`warm-up for cache group ${lease.key} still running after ${waitMs} ms; lenses go on`);
+  }
+
+  /** The attempts of one pass, under its permit. Never throws. */
+  async function executeIn(
+    id: string,
+    agent: LensAgent,
+    request: LensRequest,
+    lease: CacheLease | undefined,
+  ): Promise<LensRun> {
     let spent = ZERO_USAGE;
     const modelSpec = agent.modelId ?? config.defaultModel;
     const thinking = agent.thinking;
@@ -334,26 +540,34 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     if (thinking !== null && !THINKING_LEVELS.has(thinking))
       return fail(`agent ${agent.name} asks for an unknown thinking level "${thinking}"`);
 
+    /** Dispose a finished session: now, or with its cache group, which shares
+     * its id and so its transports. */
+    const retire = (s: AgentSession): void => {
+      if (lease !== undefined) lease.keep(s);
+      else s.dispose();
+    };
+
     const attempt = async (signal: AbortSignal): Promise<Reading> => {
       let session: AgentSession | undefined;
       let sessionId: string | undefined;
+      let entered = false;
       let sink: LiveSink | undefined;
       let unsubscribe: (() => void) | undefined;
       try {
+        const pack = cache?.pack;
         const spec: HostSessionSpec = {
-          cwd: config.cwd,
-          env: config.env,
-          model: modelSpec,
-          ...(thinking !== null
-            ? { thinkingLevel: thinking as HostSessionSpec["thinkingLevel"] }
-            : {}),
+          ...baseSpec(agent, modelSpec, [
+            config.bashGuard,
+            ...(lease !== undefined && pack !== undefined
+              ? [leafCache({ pack, cacheKey: lease.key, body: agent.body })]
+              : []),
+          ]),
           appendSystemPrompt: [agent.body],
-          ...(config.agentsFiles ? { agentsFiles: config.agentsFiles } : {}),
-          extensions: [config.bashGuard],
-          ...(agent.tools ? { tools: agent.tools } : {}),
-          ...(config.bashEnv ? { bashEnv: config.bashEnv } : {}),
+          ...(lease !== undefined ? { sessionId: lease.key } : {}),
           onExtensionError: (e) => config.onExtensionError?.(agent.name, id, e),
         };
+        await awaitCreationSlot(config.host, sessionGapMs, signal);
+        signal.throwIfAborted();
         session = await config.host.makeSession(spec);
         sessionId = session.sessionId;
         if (config.live !== undefined) {
@@ -365,9 +579,12 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
             warn(`live log for ${id} not started: ${String(e)}`);
           }
         }
-        if (live.has(sessionId))
+        if (lease === undefined && live.has(sessionId))
           throw new Error(`session id ${sessionId} is already live: lens sessions need unique ids`);
-        live.add(sessionId);
+        if (lease !== undefined && sessionId !== lease.key)
+          throw new Error(`session id ${sessionId} is not its cache group's ${lease.key}`);
+        enter(sessionId);
+        entered = true;
         signal.throwIfAborted();
         const turn = session.prompt(`Task: ${request.task}`).then(
           () => undefined,
@@ -399,8 +616,9 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         if (repeat !== undefined) clearInterval(repeat);
         const { reading, usage } = readSession(session);
         spent = addUsage(spent, usage);
-        session.dispose();
-        live.delete(sessionId);
+        retire(session);
+        leave(sessionId);
+        entered = false;
         session = undefined;
         // Ended by a signal, not by the model: the deadline decides what that means.
         signal.throwIfAborted();
@@ -415,17 +633,19 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
             // nothing readable: the spend is unknown, not guessed
           }
           try {
-            session.dispose();
+            retire(session);
           } catch {
             // already disposed
           }
-          if (sessionId !== undefined) live.delete(sessionId);
+          if (sessionId !== undefined && entered) leave(sessionId);
         }
       }
     };
 
     let outcome: Reading | "timed_out";
     try {
+      if (lease !== undefined) await groupReady(agent, modelSpec, lease, request.signal);
+      request.signal?.throwIfAborted();
       outcome =
         config.deadlineMs !== undefined
           ? await runUnderDeadline(attempt, request.signal, config.deadlineMs)

@@ -73,6 +73,13 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "factories (P3) take it. Delete this entry with the first import.",
     },
     {
+      file: "src/engine/lens/cache-run.ts",
+      why:
+        "Cache groups for the SDK lens runner (P4.4): group lifetime, warm-up and stagger. It is reached " +
+        "only through runlens.ts, so it follows that entry. Delete this entry with the first production " +
+        "import of runlens.ts.",
+    },
+    {
       file: "src/engine/lens/registry.ts",
       why:
         "the lens agent registry (P4.1): loads the built agents the SDK lens tool names. It is read only " +
