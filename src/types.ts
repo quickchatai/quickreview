@@ -303,6 +303,11 @@ export interface RoundOrder {
    * candidates with the `cluster_findings` tool before the validator. Absent
    * ⇒ no merge step renders. */
   dedup_merge?: boolean;
+  /** `[pi] lens_runtime = engine` (src/launchvocab.ts): the order is written for
+   * an engine route's main session, which launches lenses through `lens` and
+   * `lens_wave`. Absent ⇒ native (`subagent`, `launch_plan`): the tmux bot's
+   * orders never carry it. */
+  lens_runtime?: "engine";
   /** `[review] validate_compact`: the validator answers with a decision
    * table keyed by candidate id. Absent ⇒ no compact-answer instruction
    * renders. */

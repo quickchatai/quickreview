@@ -458,9 +458,9 @@ describe("shipped round templates", () => {
     it(`${tplFile} dispatches via the subagent tool, no bash fan-out, no spend_usd`, () => {
       // spend_usd is gone from the verdict contract — the daemon measures usage.
       expect(text).not.toContain("spend_usd");
-      // Launch mechanism: the subagent tool, one turn; the bash fan-out is only
-      // ever mentioned as forbidden.
-      expect(text).toContain("`subagent` tool");
+      // Launch mechanism: the lens tool (`subagent` natively, src/launchvocab.ts),
+      // one turn; the bash fan-out is only ever mentioned as forbidden.
+      expect(text).toContain("`{{lens_tool}}` tool");
       expect(text).toMatch(/ONE assistant turn/);
       expect(text).toMatch(/no\n?`pi --no-session`/);
       // An unregistered pass agent must never be improvised around — generic

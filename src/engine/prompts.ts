@@ -26,6 +26,7 @@ import type { Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "../contextpack.js";
 import { identityVars } from "../include.js";
+import { lensRuntimeOf } from "../launchvocab.js";
 import { lensEnabled } from "../lenstuning.js";
 import { MEMORY_LESS, type RoundMemory } from "../memory/context.js";
 import { renderPassTasks } from "../passtasks.js";
@@ -210,9 +211,10 @@ export function renderOneShotPrompts(args: {
   const order: RoundOrder = taskFiles.length
     ? {
         ...unrendered,
+        ...lensRuntimeOf(cfg),
         pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
       }
-    : unrendered;
+    : { ...unrendered, ...lensRuntimeOf(cfg) };
   const template = readPrompt(roundTemplateFile("first"));
   const rendered = renderRoundPrompt(
     template,
@@ -226,6 +228,7 @@ export function renderOneShotPrompts(args: {
     rendered +
     "\n\n" +
     benchAppendix({
+      ...lensRuntimeOf(cfg),
       repo: target.repo,
       pr: target.number,
       headSha: target.headSha,
@@ -473,6 +476,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
   const { render_outputs: _renderedByBench, ...unrendered } = built;
   const order = {
     ...unrendered,
+    ...lensRuntimeOf(cfg),
     ...(taskFiles.length
       ? { pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
       : {}),
@@ -502,6 +506,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
     rendered +
     "\n\n" +
     benchAppendix({
+      ...lensRuntimeOf(cfg),
       repo: target.repo,
       pr: target.number,
       headSha: target.headSha,
