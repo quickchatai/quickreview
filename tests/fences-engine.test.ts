@@ -199,6 +199,30 @@ describe("[P5.7] no pi process hosts an SDK session: extensions/ never reach an 
     );
   });
 
+  it("lets extensions/lens.ts reach the host builder and nothing else, and no other extension", () => {
+    planted(
+      {
+        "extensions/lens.ts": `import { H } from "../src/engine/pisdk.js";\nimport "../src/engine/sdkruntime.js";\n`,
+        "extensions/other.ts": `import "../src/engine/pisdk.js";\n`,
+        "src/engine/pisdk.ts": `export const H = 1;\n`,
+        "src/engine/sdkruntime.ts": `export const r = 1;\n`,
+      },
+      (root) =>
+        expect(extensionsReachSdkHost(root)).toEqual([
+          "extensions/lens.ts > src/engine/sdkruntime.ts",
+          "extensions/other.ts > src/engine/pisdk.ts",
+        ]),
+    );
+    planted(
+      {
+        "extensions/lens.ts": `import { x } from "../src/engine/lens/tool.js";\n`,
+        "src/engine/lens/tool.ts": `import type { H } from "../pisdk.js";\nexport const x = 1;\n`,
+        "src/engine/pisdk.ts": `export const H = 1;\n`,
+      },
+      (root) => expect(extensionsReachSdkHost(root)).toEqual([]),
+    );
+  });
+
   it("ignores a commented-out import", () => {
     planted(
       {

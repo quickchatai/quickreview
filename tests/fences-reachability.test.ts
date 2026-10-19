@@ -73,25 +73,12 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "factories (P3) take it. Delete this entry with the first import.",
     },
     {
-      file: "src/engine/lens/cache-run.ts",
+      file: "src/engine/lens/engine-tools.ts",
       why:
-        "Cache groups for the SDK lens runner (P4.4): group lifetime, warm-up and stagger. It is reached " +
-        "only through runlens.ts, so it follows that entry. Delete this entry with the first production " +
-        "import of runlens.ts.",
-    },
-    {
-      file: "src/engine/lens/registry.ts",
-      why:
-        "the lens agent registry (P4.1): loads the built agents the SDK lens tool names. It is read only " +
-        "by tests/lens-registry.test.ts until the lens runner (P4.4) takes it. Delete this entry with the " +
-        "first import.",
-    },
-    {
-      file: "src/engine/lens/runlens.ts",
-      why:
-        "runLens (P4.3): a lens pass as an SDK session under one cap per host. It is driven only by " +
-        "tests/lens-runner.test.ts until the lens tool (P4.5) takes it. Delete this entry with the " +
-        "first production import.",
+        "the lens tools of an engine route's main session (P4.5): `lens` and `lens_wave` over one runner and " +
+        "one wave, handed over as customTools. Driven only by tests/lens-tool.test.ts until a route takes it " +
+        "(P5.4, behind `[pi] lens_runtime = engine`; src/engine/reviewsdk.ts keeps the native tool as its default). " +
+        "Delete this entry with the first production import.",
     },
     {
       file: "src/piauthcopy.ts",

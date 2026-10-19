@@ -20,14 +20,16 @@
 //                the process env, so for the sessions' life the process env
 //                carries the round's QCR_* names and PI_CODING_AGENT_DIR, and
 //                no GitHub token (a lens child runs the model's bash, rule 3).
-//                The engine's own lens tool (P4.5) takes this slot.
+//                The engine's own tools (`lens`, `lens_wave`: engineLensTools,
+//                src/engine/lens/engine-tools.ts) take this slot through the
+//                `lens` option; the route's selection key (P5.1) flips the default.
 //
 // Stopping: every session is in the live registry (livesessions.ts), which the
 // detached driver's signal handler aborts and disposes before it exits.
-import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
 import subagents from "../../extensions/subagents.js";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
+import { agentDirSettings } from "./agentdir.js";
 import { applyEnvApiKeys, engineCredentials, type EngineAuth } from "./auth.js";
 import { PiHost, type PiHostOptions } from "./pisdk.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
@@ -64,25 +66,6 @@ function checkToolUid(env: NodeJS.ProcessEnv): void {
         "which this container asks for: use [engine] runtime = proc here, or set " +
         "QCR_ALLOW_SHARED_TOOL_UID=1 to accept the shared uid",
     );
-}
-
-/** What the process route's pi reads from the agent dir's settings.json and an
- * SDK host must be given instead (it takes in-memory settings only). */
-function agentDirSettings(agentDir: string): PiHostOptions["settings"] {
-  try {
-    const s = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8")) as Record<
-      string,
-      unknown
-    >;
-    return {
-      ...(s["retry"] !== undefined ? { retry: s["retry"] } : {}),
-      ...(typeof s["httpIdleTimeoutMs"] === "number"
-        ? { httpIdleTimeoutMs: s["httpIdleTimeoutMs"] }
-        : {}),
-    } as PiHostOptions["settings"];
-  } catch {
-    return {};
-  }
 }
 
 /** The native lens tool as a factory. */

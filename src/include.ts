@@ -217,6 +217,8 @@ const AGENT_SPAWN_TOOLS = new Set([
   "subagent",
   "subagents",
   "launch_plan", // launches the round's lens task files
+  "lens", // the engine routes' tools (D3): never in a pass's list
+  "lens_wave",
   "task",
   "agent",
   "agents",

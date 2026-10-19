@@ -136,9 +136,24 @@ export const SDK_HOST_MODULES = [
 ];
 
 /**
+ * The one extension that hosts SDK sessions in a pi process, and the one host
+ * module it may reach (P4.5). extensions/lens.ts runs the lens passes of an
+ * interactive pi (a debug round, the companion) in-process, on a PiHost built
+ * over that pi's own agent dir, with the CLI pi's HTTP dispatcher left alone
+ * (PiHostOptions.ownsProcess false). It reaches the builder only: never the
+ * runtime over it (sdkruntime.ts) nor the scan's runner (caserunner-sdk.ts),
+ * which host a MAIN session. The tmux bot does not load it
+ * (tests/lens-tool.test.ts).
+ */
+export const EXTENSION_SDK_HOST_ALLOWED: Readonly<Record<string, readonly string[]>> = {
+  "extensions/lens.ts": ["src/engine/pisdk.ts"],
+};
+
+/**
  * Chains "extensions/x.ts > ... > host module" from any extension's import
  * closure (static, re-export and dynamic imports alike) to an SDK host module,
- * one per host module reached per extension. Empty when the fence holds.
+ * one per host module reached per extension. Empty when the fence holds. A
+ * chain EXTENSION_SDK_HOST_ALLOWED names is not reported.
  */
 export function extensionsReachSdkHost(root: string): string[] {
   const files = new Set([
@@ -156,7 +171,8 @@ export function extensionsReachSdkHost(root: string): string[] {
         const chain: string[] = [];
         for (let c: string | null = f; c; c = parent.get(c) ?? null)
           chain.unshift(relative(root, c));
-        hits.push(chain.join(" > "));
+        if (!EXTENSION_SDK_HOST_ALLOWED[chain[0]!]?.includes(chain[chain.length - 1]!))
+          hits.push(chain.join(" > "));
         continue;
       }
       for (const n of importsOf(f, readFileSync(f, "utf8"), files)) {
