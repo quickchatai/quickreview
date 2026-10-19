@@ -311,7 +311,7 @@ export function createLedgerPin(config: LedgerPinConfig): ExtensionFactory {
 
 /** Env shim with injectable deps: the env is read at activation, as before. */
 export function activateWith(pi: ExtensionAPI, deps: LedgerPinDeps = {}): void {
-  createLedgerPin(ledgerPinConfigFromEnv(process.env, deps))(pi);
+  registerLedgerPin(pi, ledgerPinConfigFromEnv(process.env, deps));
 }
 
 function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
