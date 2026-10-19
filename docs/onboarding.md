@@ -490,7 +490,8 @@ fails: a probe that cannot tell reach from refusal is never a pass.
 
 The memory engine is never published on a host port, on either route: this
 machine reaches it through the memory forward (`scripts/companion-memory-forward.mjs`,
-`--local` on the laptop route), and when nothing answers the step says which
+`--local` on the laptop route, where it bridges into the compose `memory`
+service, the container the engine runs in), and when nothing answers the step says which
 command starts one. On the server route the daemon reads the copy of the reviewer
 key a deploy shipped, and only a `rebuild` copies the secrets dir (a `sync`
 never does): step 72 compares the server's copy with yours by hash — never the

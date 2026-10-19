@@ -83,7 +83,7 @@ import { CHOICE_KEYS, MEMORY_CHOICE_IDS, type MemoryChoice } from "../choices.js
 import { deliverConfigChange } from "./configdelivery.js";
 import { configMountOf } from "./bringup.js";
 import {
-  DAEMON_SERVICE,
+  MEMORY_SERVICE,
   interviewConfigPath,
   readTextOrNull,
   rootOf,
@@ -664,7 +664,8 @@ function daemonMounts(ctx: StepContext): string[] {
 /**
  * The forward's own flags for THIS install: the alias, container and sudo the
  * transport reads from config.toml ([tui] container / sudo_docker), on the
- * laptop route the compose daemon's container name. Rendered in full — the
+ * laptop route the compose memory sidecar's container name (the engine runs
+ * there, not in the daemon). Rendered in full — the
  * script's built-in defaults name the maintainers' own host, never yours —
  * and `install` writes the same flags into the systemd unit.
  */
@@ -680,20 +681,20 @@ export function forwardFlags(ctx: StepContext): string {
       ...sudo,
     ].join(" ");
   }
-  // The compose container's NAME (stable across a recreate, unlike its id),
-  // resolved by the operator's shell from the repo root.
+  // The memory sidecar's container NAME (stable across a recreate, unlike its
+  // id), resolved by the operator's shell from the repo root.
   return [
     "--local",
     "--container",
-    `"$(${facts.sudo ? "sudo " : ""}docker compose ps --format '{{.Name}}' ${DAEMON_SERVICE})"`,
+    `"$(${facts.sudo ? "sudo " : ""}docker compose ps --format '{{.Name}}' ${MEMORY_SERVICE})"`,
     ...sudo,
   ].join(" ");
 }
 
 /** Why nothing answered at `base`, and the one thing that makes it answer: the
  * memory forward, in the mode this topology needs, with this install's own
- * flags. The engine listens on the daemon container's own loopback on both
- * routes and is never published. */
+ * flags. The engine listens on its own container's loopback (the compose
+ * `memory` sidecar on the laptop route) and is never published. */
 function serverUnreachableDetail(ctx: StepContext, base: string, why: string): string {
   const root = shellQuote(rootOf(ctx.adapters));
   const flags = forwardFlags(ctx);
@@ -701,7 +702,7 @@ function serverUnreachableDetail(ctx: StepContext, base: string, why: string): s
     `\`cd ${root} && node scripts/companion-memory-forward.mjs ${sub} ${flags}\``;
   return (
     `no OpenViking answering at ${base} (${why}). The root key is in place, which is what the daemon needs at boot. ` +
-    "The memory engine listens only on the daemon container's own loopback, so this machine reaches it through the memory " +
+    "The memory engine listens only on its own container's loopback (the memory sidecar on the laptop route), so this machine reaches it through the memory " +
     "forward: bring the stack up if it is not, then start the forward in another terminal, from the repo root — " +
     `${cmd("run")} — or install it as the systemd unit with the same flags, ${cmd("install")}, or open \`qcr tui\`, which ` +
     "starts one — and run this step again: the two user keys are minted and placed. Nothing is lost by waiting."

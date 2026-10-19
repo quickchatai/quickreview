@@ -98,7 +98,18 @@ async function toolingChecks(ctx: StepContext): Promise<CheckResult[]> {
   // route builds on the server: bring-up's pull is the hard gate, and carries
   // the same fix.
   if (docker.code === 0 && compose.code === 0) {
-    const image = releaseImage(releaseVersion(rootOf(ctx.adapters)));
+    const version = releaseVersion(rootOf(ctx.adapters));
+    if (version === "") {
+      checks.push({
+        name: "images",
+        ok: true,
+        detail:
+          "no release version to probe the image for: QCR_VERSION is not in the project .env and this wizard has no package version. " +
+          "Fix: set QCR_VERSION in .env to the release you run (there is no floating `latest` tag); bring-up needs it",
+      });
+      return checks;
+    }
+    const image = releaseImage(version);
     const manifest = await runner.run("docker", ["manifest", "inspect", image]);
     checks.push(
       manifest.code === 0

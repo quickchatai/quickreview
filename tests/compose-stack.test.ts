@@ -17,6 +17,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import { parse as parseToml } from "smol-toml";
+import { memoryEndpointPatch } from "../src/onboard/steps/bringup.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string): string => readFileSync(join(root, rel), "utf8");
@@ -139,12 +141,14 @@ describe("the mounts land on the release image's own paths", () => {
     );
   });
 
-  it("the daemon's config tells it where the memory service is", () => {
-    // bring-up writes [openviking] endpoint = "remote", host = "memory": the
-    // compose service name, on the compose network.
-    expect(Object.keys(doc.services)).toContain("memory");
-    expect(composeText).toMatch(/endpoint = "remote"/);
-    expect(composeText).toMatch(/host = "memory"/);
+  it("the config bring-up writes tells the daemon where the memory service is", () => {
+    // bring-up's patch names the compose service, on the compose network
+    const patched = memoryEndpointPatch("[openviking]\nenabled = true\n");
+    expect(patched).not.toBeNull();
+    const openviking = (parseToml(patched!) as { openviking: Record<string, unknown> }).openviking;
+    expect(openviking.endpoint).toBe("remote");
+    expect(openviking.host).toBe("memory");
+    expect(Object.keys(doc.services)).toContain(openviking.host);
   });
 });
 

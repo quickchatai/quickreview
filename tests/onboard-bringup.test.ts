@@ -494,6 +494,9 @@ describe("no Docker where the wizard runs (D16)", () => {
     const detail = result.checks.find((c) => c.name === "host-commands")!.detail;
     const order = [
       "mkdir -p ~/qcr-bot && cd ~/qcr-bot",
+      'mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/qcr/',
+      "# Put config.toml in ",
+      'host = "memory"',
       "docker run --rm --entrypoint tar ghcr.io/quickchatai/quickreview:",
       "cat > .env <<'QCR_ENV'",
       "QCR_UID=1234",
@@ -509,6 +512,23 @@ describe("no Docker where the wizard runs (D16)", () => {
     expect(detail).not.toMatch(/ghp_|github_pat_|BEGIN .*PRIVATE KEY/);
     expect(detail).toMatch(/QCR_SECRETS_DIR=/);
     expect(detail).toMatch(/XDG_CONFIG_HOME/);
+  });
+
+  it("hostCommands creates the directories and says what to place there when given them", () => {
+    const cmds = hostCommands({
+      version: "1.2.3",
+      projectDir: "~/qcr-bot",
+      env: ["QCR_VERSION=1.2.3"],
+      dirs: ['"$HOME/c"', '"$HOME/c/secrets"'],
+      notes: ["# put config.toml there"],
+      profile: "",
+    });
+    expect(cmds.slice(0, 4)).toEqual([
+      "mkdir -p ~/qcr-bot && cd ~/qcr-bot",
+      'mkdir -p "$HOME/c" "$HOME/c/secrets"',
+      "# put config.toml there",
+      extractCommand("1.2.3"),
+    ]);
   });
 
   it("hostCommands is pure: image, directory, env and profile in, five commands out", () => {

@@ -103,7 +103,10 @@ export function readEnvText(root: string): string {
 
 /** The image tag the stack runs: the project `.env`'s QCR_VERSION (the pin an
  * earlier bring-up wrote, which a later wizard run must not silently move),
- * else the version of the package this wizard is running from. */
+ * else the version of the package this wizard is running from. "" when
+ * neither gives one: there is no floating `latest` tag (release.yml), so the
+ * caller reports a failed check ("set QCR_VERSION") rather than name an image
+ * that does not exist. */
 export function releaseVersion(root: string): string {
   const pinned = (readEnvKey(readEnvText(root), "QCR_VERSION") ?? "").trim();
   if (pinned !== "") return pinned;
@@ -113,9 +116,9 @@ export function releaseVersion(root: string): string {
     };
     if (typeof pkg.version === "string" && pkg.version !== "") return pkg.version;
   } catch {
-    // no package.json to read: the floating tag below, which the pull then reports on
+    // no package.json to read: the empty answer below, which callers turn into a failed check
   }
-  return "latest";
+  return "";
 }
 
 export function releaseImage(version: string): string {
@@ -421,6 +424,12 @@ export interface HostCommandsInput {
   projectDir: string;
   /** The project .env's lines, `KEY=value`, in order. */
   env: readonly string[];
+  /** Host directories to create first, as shell words (`mkdir -p`), so Docker
+   * never creates the bind-mount sources as root. */
+  dirs?: readonly string[];
+  /** Shell-comment lines printed after the directories: what only the
+   * operator can place there (the config and the secrets). */
+  notes?: readonly string[];
   /** The compose profile the ingress step chose; "" is the daemon alone. */
   profile: string;
 }
@@ -434,8 +443,11 @@ export interface HostCommandsInput {
 export function hostCommands(input: HostCommandsInput): string[] {
   const profile = input.profile === "" ? [] : ["--profile", input.profile];
   const compose = ["docker", "compose", ...profile].join(" ");
+  const dirs = input.dirs ?? [];
   return [
     `mkdir -p ${input.projectDir} && cd ${input.projectDir}`,
+    ...(dirs.length > 0 ? [`mkdir -p ${dirs.join(" ")}`] : []),
+    ...(input.notes ?? []),
     extractCommand(input.version),
     ["cat > .env <<'QCR_ENV'", ...input.env, "QCR_ENV"].join("\n"),
     `${compose} pull --ignore-buildable`,

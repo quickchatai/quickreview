@@ -145,9 +145,18 @@ export function memoryEndpointPatch(configText: string): string | null {
   return patchToml(configText, edits);
 }
 
+/** The host's own default config home and secrets dir for this install, as
+ * shell words (the install locator's answer for that account). */
+function hostPaths(configText: string): { home: string; secrets: string } {
+  const home = `\${XDG_CONFIG_HOME:-$HOME/.config}/qcr/${installName()}`;
+  const configured = (readTomlKey(configText, "github", "secrets_dir") ?? "").trim();
+  return { home, secrets: configured.startsWith("/") ? configured : `${home}/secrets` };
+}
+
 /** The project `.env` lines the host commands write, for a host this process
- * cannot see: paths are the host's own defaults (the install locator's answer
- * for that account), spelled with shell variables the heredoc expands. */
+ * cannot see: paths are the host's own defaults, spelled with shell variables.
+ * The heredoc that writes them is quoted, so the variables land literally in
+ * the file and Docker Compose expands them when it reads it. */
 function hostEnvLines(
   ctx: StepContext,
   version: string,
@@ -155,9 +164,7 @@ function hostEnvLines(
   profile: string,
   configText: string,
 ): string[] {
-  const home = `\${XDG_CONFIG_HOME:-$HOME/.config}/qcr/${installName()}`;
-  const configured = (readTomlKey(configText, "github", "secrets_dir") ?? "").trim();
-  const secrets = configured.startsWith("/") ? configured : `${home}/secrets`;
+  const { home, secrets } = hostPaths(configText);
   const lines: string[] = [
     `QCR_VERSION=${version}`,
     `QCR_UID=${uid}`,
@@ -208,6 +215,16 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       const checks: CheckResult[] = [];
       const hasDocker = await composeAvailable(ctx.adapters.runner);
       const version = releaseVersion(root);
+      if (version === "") {
+        checks.push({
+          name: "version",
+          ok: false,
+          detail:
+            "no release version to run: QCR_VERSION is not in the project .env and this wizard has no package version — " +
+            "Fix: set QCR_VERSION in .env to the release you want (the image tag; there is no floating `latest`), then run this step again",
+        });
+        return { ok: false, checks };
+      }
       if (hasDocker) {
         checks.push(composeFileCheck(root, version));
         if (!checks[0]!.ok) return { ok: false, checks };
@@ -285,10 +302,17 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       if (!hasDocker) {
         // D16: no Docker here, so nothing is started from here. The commands
         // for the host, exactly, and a red step until the stack is seen up.
+        const paths = hostPaths(configText);
         const commands = hostCommands({
           version,
           projectDir: "~/qcr-bot",
           env: hostEnvLines(ctx, version, uid, profile, configText),
+          dirs: [`"${paths.home}"`, `"${paths.secrets}"`],
+          notes: [
+            `# Put ${basename(ctx.adapters.paths.configPath)} in ${paths.home} and your secrets in ${paths.secrets}:`,
+            "# the config this wizard filled in is " +
+              `${ctx.adapters.paths.configPath} where the wizard runs, with [openviking] endpoint = "remote" and host = "${MEMORY_HOST}".`,
+          ],
           profile,
         });
         for (const line of commands) log(ctx, line);

@@ -141,10 +141,7 @@ const DENYLIST: { token: string; why: string }[] = [
   { token: t("oper", "ator-box"), why: "the private shared operator terminal's host name" },
   { token: t("your-dev-", "project"), why: "the private GCP project id" },
   { token: t("issue-", "tracker"), why: "the private issue tracker's repository and paths" },
-  {
-    token: t("/home/", "user"),
-    why: "the original operator's home directory (absolute private paths)",
-  },
+  { token: t("/home/", "user"), why: "the original operator's home directory (absolute private paths)" },
   {
     token: t("-home-", "user"),
     why: "the operator's home directory in dashed form (Claude Code project dirs)",
@@ -388,6 +385,12 @@ const ALLOWLIST: AllowlistEntry[] = [
     reason: "pins the manifest probe's image name (ghcr.io/quickchatai/...)",
   },
   {
+    path: "tests/compose-stack.test.ts",
+    tokens: ["quickchat"],
+    reason:
+      "pins the image names the compose file pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
     path: "tests/onboarding-docs.test.ts",
     tokens: ["quickchat"],
     reason:
@@ -479,16 +482,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "tests/publishability.test.ts",
-    tokens: [
-      "owner_legacy",
-      "quickchat",
-      "gfrost",
-      "jbennett",
-      "dwinchester",
-      "avasquez-",
-      "pmercier",
-      "review.example.com",
-    ],
+    tokens: ["owner_legacy", "quickchat", "gfrost", "jbennett", "dwinchester", "avasquez-", "pmercier", "review.example.com"],
     reason:
       "this lint — the denylist itself plus the negative-control plants (the operator-specific tokens are built from parts, so the file never spells them)",
   },
