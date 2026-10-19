@@ -313,6 +313,48 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   });
 });
 
+// The release image's entrypoint (docker/entrypoint.sh, daemon mode) carries
+// the plain boot's no-stall and guard invariants over unchanged; the executed
+// per-mode checks are tests/entrypoint.test.ts. What it drops is the plain
+// boot's checkout dance: no state symlink, no npm build, and no OpenViking
+// (the memory sidecar owns that, P6.12).
+describe("release entrypoint (daemon mode) — same invariants as the plain boot", () => {
+  const release = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
+
+  it("keeps the no-stall trust layers: defaultProjectTrust=always + a pre-seeded trust.json", () => {
+    expect(release).toContain('settings.defaultProjectTrust = "always"');
+    expect(release).toContain("trust[trustDir] = true");
+    expect(release).toContain('QCR_PI_TRUST_DIR="$APP"');
+  });
+
+  it("registers ONLY bash-guard globally, hard-failing when it is missing", () => {
+    expect(release).toContain("FATAL: pi extension missing");
+    expect([...release.matchAll(/QCR_PI_REQUIRE_EXT="([^"]+)"/g)].map((m) => m[1])).toEqual([
+      "$APP/extensions/bash-guard.ts",
+    ]);
+  });
+
+  it("links the pi user agents dir at the built state/agents, never clobbering a real directory", () => {
+    expect(release).toContain('QCR_PI_AGENTS_TARGET="$STATE/agents"');
+    expect(release).toContain("is not a symlink — NOT touching it");
+  });
+
+  it("names the secrets mount to the install locator and links <config home>/secrets to it", () => {
+    expect(release).toMatch(/^\s+export QCR_SECRETS_MOUNT="\$secrets"$/m);
+    expect(release).toContain('ln -sfn "$secrets" "$secrets_home"');
+  });
+
+  it("keeps the examples/subagent FATAL until the lens tool replaces it", () => {
+    expect(release).toContain("does not ship examples/extensions/subagent");
+  });
+
+  it("has none of the checkout dance: no state symlink, no boot-time npm build", () => {
+    expect(release).not.toMatch(/npm (ci|run build)/);
+    expect(release).not.toMatch(/ln -sfn [^\n]*state/);
+    expect(release).not.toContain(".build-lock-hash");
+  });
+});
+
 // The boot build, checked by execution: the block is lifted out of the
 // entrypoint and run against a temp checkout with a stub npm that logs its
 // argv. The checkout is bind-mounted, so a source change must reach dist/

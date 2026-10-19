@@ -11,7 +11,14 @@
 // spawned for them.
 
 import { spawn } from "node:child_process";
-import { createWriteStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  appendFileSync,
+  createWriteStream,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
@@ -85,6 +92,56 @@ export function haltPi(): void {
   piHalted = true;
 }
 
+/** How pi is started when the model's tools must not share a uid with this
+ * process (D32). The release image's cli mode (docker/entrypoint.sh) runs qcr as
+ * an unprivileged uid that holds the GitHub token, with CAP_SETUID/CAP_SETGID
+ * as ambient capabilities, and names the uid the model's tools run as in
+ * QCR_TOOL_UID/QCR_TOOL_GID. pi (and so every bash the model runs) is then
+ * started through setpriv, which switches to that uid and drops every
+ * capability and the ability to gain one back, so the kernel refuses the
+ * tools /proc/<this pid>/mem and /environ. Node's own `uid` spawn option is
+ * not used: it would leave the ambient capabilities on the child.
+ *
+ * `QCR_TOOL_UID_REQUIRED` is set by the same entrypoint when it could not
+ * arrange the separation (it was not started as root): pi then is not
+ * spawned at all, unless QCR_ALLOW_SHARED_TOOL_UID=1 says the shared uid is
+ * accepted. Outside the image neither variable is set and nothing changes. */
+export function toolIsolation(
+  bin: string,
+  argv: string[],
+  procEnv: NodeJS.ProcessEnv = process.env,
+): { bin: string; argv: string[] } | { refused: string } {
+  const uid = procEnv["QCR_TOOL_UID"];
+  const gid = procEnv["QCR_TOOL_GID"];
+  if (uid || gid) {
+    if (!/^[1-9][0-9]*$/.test(uid ?? "") || !/^[1-9][0-9]*$/.test(gid ?? ""))
+      return { refused: `QCR_TOOL_UID/QCR_TOOL_GID must be non-zero numeric ids (${uid}:${gid})` };
+    return {
+      bin: "setpriv",
+      argv: [
+        `--reuid=${uid}`,
+        `--regid=${gid}`,
+        "--clear-groups",
+        "--inh-caps=-all",
+        "--ambient-caps=-all",
+        "--no-new-privs",
+        "--",
+        bin,
+        ...argv,
+      ],
+    };
+  }
+  if (procEnv["QCR_TOOL_UID_REQUIRED"] && procEnv["QCR_ALLOW_SHARED_TOOL_UID"] !== "1")
+    return {
+      refused:
+        "the model's tools would share this process's uid and could read its token through /proc: " +
+        "start the container as root with --cap-drop ALL --cap-add SETUID --cap-add SETGID " +
+        "(docker/entrypoint.sh drops to QCR_RUN_UID and runs the tools as QCR_TOOL_UID), " +
+        "or set QCR_ALLOW_SHARED_TOOL_UID=1 to accept the shared uid",
+    };
+  return { bin, argv };
+}
+
 /** The ONE pi spawn (tests/single-shepherd.test.ts S2): the review round and
  * the defect judge both go through it, by way of procRuntime. */
 export function runPi(
@@ -111,11 +168,21 @@ export function runPi(
       resolve({ code: null, timedOut: false, streamError: "stopped" });
       return;
     }
+    const launch = toolIsolation(bin, argv);
+    if ("refused" in launch) {
+      try {
+        appendFileSync(stderrPath, `pi not started: ${launch.refused}\n`);
+      } catch {
+        // the refusal is in the result either way
+      }
+      resolve({ code: null, timedOut: false, streamError: launch.refused });
+      return;
+    }
     const events = createWriteStream(eventsPath, { flags: "a" });
     const errs = createWriteStream(stderrPath, { flags: "a" });
     // detached: its own process group, so a timeout kills the lens children
     // with it rather than orphaning six pi processes on the model API.
-    const child = spawn(bin, argv, {
+    const child = spawn(launch.bin, launch.argv, {
       cwd,
       env,
       stdio: [stdinText === undefined ? "ignore" : "pipe", "pipe", "pipe"],
