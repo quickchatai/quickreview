@@ -66,8 +66,8 @@ describe("cluster_findings on both routes", () => {
       /join\(this\.root, "extensions", "finding-clusters\.ts"\)/,
     );
   });
-  it("the bench session loads it (oneshot.ts session spec)", () => {
-    expect(readFileSync(join(root, "src/oneshot.ts"), "utf8")).toMatch(
+  it("the bench session loads it (round.ts session spec)", () => {
+    expect(readFileSync(join(root, "src/engine/round.ts"), "utf8")).toMatch(
       /extensions: \[[^\]]*join\(root, "extensions", "finding-clusters\.ts"\)/,
     );
   });

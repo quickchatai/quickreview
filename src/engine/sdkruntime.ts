@@ -29,6 +29,7 @@ import {
 } from "node:fs";
 import type { WriteStream } from "node:fs";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { splitModelSpec, type ThinkingLevel } from "../config.js";
 import { TurnBudget } from "./budget.js";
 import type { HostSessionSpec, PiHost } from "./pisdk.js";
 import {
@@ -45,10 +46,12 @@ import {
 
 /** What only the route knows about a session, beyond the port's plain data: the
  * extension factories and tools it carries (P3's factories, the lens tool), the
- * model's bash environment, the thinking level. Called once per session. */
+ * tool allowlist those tools join, the model's bash environment, the context
+ * files it hands over as data, the thinking level. Called once per session. A
+ * field here wins over the spec's own. */
 export type SessionExtras = Pick<
   HostSessionSpec,
-  "extensions" | "customTools" | "bashEnv" | "thinkingLevel"
+  "extensions" | "customTools" | "tools" | "agentsFiles" | "bashEnv" | "thinkingLevel"
 >;
 
 export interface SdkRuntimeOptions {
@@ -116,7 +119,10 @@ class SdkSession implements RuntimeSession {
     if (this.prompted)
       throw new RuntimeUnsupportedError("a second prompt (a session continues by followUp)");
     this.prompted = true;
-    return this.turn(text, options);
+    // The process runtime hands the first message to pi on stdin, and pi trims
+    // piped stdin (main.js readPipedStdin): the provider sees the trimmed text.
+    // A follow-up rides `-p`, which pi does not trim, so only this one is.
+    return this.turn(text.trim(), options);
   }
 
   async followUp(text: string, options?: TurnOptions): Promise<Delivery> {
@@ -285,10 +291,14 @@ export function sdkRuntime(host: PiHost, options: SdkRuntimeOptions = {}): Runti
       throw new RuntimeUnsupportedError("extension paths on an SDK session (pass factories)");
     // The two files exist from the start, as they do for a spawned pi.
     for (const f of [spec.eventsFile, spec.stderrFile]) closeSync(openSync(f, "a"));
+    // `provider/id:level` is pi's spelling of a model and its thinking level
+    // (--model takes it whole); the host takes them apart.
+    const { model, thinking } = splitModelSpec(spec.model);
     const hostSpec: HostSessionSpec = {
       cwd: spec.cwd,
       env: spec.env,
-      model: spec.model,
+      model,
+      ...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
       ...(spec.systemPromptFile !== undefined
         ? { systemPrompt: stripBom(readFileSync(spec.systemPromptFile, "utf8")) }
         : {}),
