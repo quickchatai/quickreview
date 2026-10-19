@@ -43,6 +43,7 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  *     that does not exist.
  */
 export const PROCESS_SUITES: readonly string[] = [
+  "tests/action.test.ts",
   "tests/archive-evidence-shell.test.ts",
   "tests/bash-guard-sed-differential.test.ts",
   "tests/bench-apikey.test.ts",

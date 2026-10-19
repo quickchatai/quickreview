@@ -1,0 +1,87 @@
+# qcr review: copy this file to .github/workflows/qcr-review.yml in the
+# repository to review. docs/action.md says what to set up first.
+#
+# Every push to a pull request is reviewed (opened, synchronize, ready for
+# review). Drafts and pull requests from forks are skipped, and a new push
+# cancels the review still running for the same pull request.
+#
+# Request-only: set the repository variable QCR_REQUEST_ONLY to true and a
+# review starts only when someone adds the label qcr-review to the pull
+# request or comments /qcr on it (members, owners and collaborators only).
+# Both ways of asking work in the every-push mode too.
+#
+# There is no cost cap. To set one, pass `limit` (US dollars) below.
+name: qcr review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  # Pulling the private qcr image with this repository's token.
+  packages: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # One review per pull request: a newer run cancels the one in flight. On the
+    # job, not the workflow, so a comment that is not /qcr (which skips this
+    # job) cancels nothing.
+    concurrency:
+      group: qcr-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
+    if: >-
+      (github.event_name == 'pull_request'
+      && github.event.pull_request.draft == false
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && ((github.event.action == 'labeled' && github.event.label.name == 'qcr-review')
+      || (github.event.action != 'labeled' && vars.QCR_REQUEST_ONLY != 'true')))
+      || (github.event_name == 'issue_comment'
+      && github.event.issue.pull_request
+      && startsWith(github.event.comment.body, '/qcr')
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+    steps:
+      # A comment event carries no draft or fork flag: look the pull request up.
+      - name: Look up the pull request
+        id: pr
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          info="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository --jq '[.state, .isDraft, .isCrossRepository] | @tsv')"
+          read -r state draft fork <<<"$info"
+          if [ "$state" = OPEN ] && [ "$draft" = false ] && [ "$fork" = false ]; then
+            echo "review=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "::notice::not reviewing #$PR: state $state, draft $draft, from a fork $fork"
+            echo "review=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      # The base commit, never the pull request's own code: the review fetches
+      # the pull request itself, and the repository's .qcr/ profile is read
+      # from the base.
+      - uses: actions/checkout@v4
+        if: github.event_name != 'issue_comment' || steps.pr.outputs.review == 'true'
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: quickchatai/quickreview@v1
+        if: github.event_name != 'issue_comment' || steps.pr.outputs.review == 'true'
+        with:
+          # The model login: the contents of a pi auth.json, as a repository
+          # secret. Or give an API key instead (openai-api-key, anthropic-api-key,
+          # gemini-api-key, digitalocean-api-key).
+          pi-auth: ${{ secrets.QCR_PI_AUTH }}
+          # limit: "5"
+          # A repository the package does not grant access to: a read:packages
+          # token as a secret, used only for docker login.
+          # registry-token: ${{ secrets.QCR_REGISTRY_TOKEN }}
