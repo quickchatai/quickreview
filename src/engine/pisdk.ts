@@ -31,7 +31,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join, isAbsolute } from "node:path";
+import { dirname, join, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -347,7 +347,13 @@ export interface HostSessionSpec {
   /** The tool allowlist, exact names. Omitted: pi's four defaults. */
   tools?: readonly string[];
   bashEnv?: BashEnvOptions;
-  /** Default: an in-memory manager with a fresh unique id. */
+  /** Persist the session's JSONL: at an exact file (a new session, written from
+   * its first user message on, as pi's `--session <path>` does), or under a
+   * directory pi names the file in (`--session-dir`). Omitted: in memory. */
+  persist?: { sessionFile: string } | { sessionDir: string };
+  /** An already-built manager, for a caller that needs one pi's own way
+   * (canaries). Wins over `persist`; give one or the other. Default: an
+   * in-memory manager with a fresh unique id. */
   sessionManager?: SessionManager;
   /** Called for every extension error pi reports instead of throwing. */
   onExtensionError?: (error: ExtensionError) => void;
@@ -368,6 +374,27 @@ function resolveModel(runtime: ModelRuntime, model: string | Model<Api>): Model<
   const found = at > 0 ? runtime.getModel(model.slice(0, at), model.slice(at + 1)) : undefined;
   if (!found) throw new Error(`model ${JSON.stringify(model)} is not known to the host`);
   return found;
+}
+
+/** The session manager a spec asks for. A session file that already exists is a
+ * resume, not a create, and is refused here: nothing opens an old session by
+ * accident. */
+function sessionManagerFor(spec: HostSessionSpec): SessionManager {
+  const { persist, sessionManager } = spec;
+  if (sessionManager) {
+    if (persist) throw new Error("give a sessionManager or persist, not both");
+    return sessionManager;
+  }
+  if (persist && "sessionFile" in persist) {
+    const file = persist.sessionFile;
+    if (!isAbsolute(file)) throw new Error(`a session file must be absolute, got ${file}`);
+    if (existsSync(file)) throw new Error(`session file ${file} already exists`);
+    // open() on a path that does not exist yet is how pi starts a session at a
+    // chosen file; the cwd override keeps the header's cwd the spec's.
+    return SessionManager.open(file, dirname(file), spec.cwd);
+  }
+  if (persist) return SessionManager.create(spec.cwd, persist.sessionDir);
+  return SessionManager.inMemory(spec.cwd, { id: randomUUID() });
 }
 
 export class PiHost {
@@ -428,6 +455,7 @@ export class PiHost {
   async makeSession(spec: HostSessionSpec): Promise<AgentSession> {
     const tools = [...(spec.tools ?? DEFAULT_TOOLS)];
     checkToolAllowlist(tools);
+    const sessionManager = sessionManagerFor(spec);
     const settingsManager = this.settings();
     const resourceLoader = new IsolatedResourceLoader({
       cwd: spec.cwd,
@@ -452,8 +480,7 @@ export class PiHost {
       ...(spec.thinkingLevel ? { thinkingLevel: spec.thinkingLevel } : {}),
       modelRuntime: this.modelRuntime,
       resourceLoader,
-      sessionManager:
-        spec.sessionManager ?? SessionManager.inMemory(spec.cwd, { id: randomUUID() }),
+      sessionManager,
       settingsManager,
       tools,
       customTools: [bash as unknown as ToolDefinition, ...(spec.customTools ?? [])],
