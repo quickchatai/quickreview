@@ -1,12 +1,13 @@
 // A validator `downgrade` keeps a finding at the severity it names, so a
 // `downgraded` entry that went out under a tag is a posted survivor. The
-// renderer, the post-check and the record parser used to read only `posted`,
-// which dropped these silently (dbeaver D2 on smoke10, about five comments a
-// run — tracker plan/final1-vs-master-2026-10-19.md).
+// renderer, the post-check, the record parser and the bench readers used to
+// read only `posted`, which dropped these survivors silently.
 import { describe, expect, it } from "vitest";
 import { entryDisposition } from "../src/findingkey.js";
 import { parseFindingsRecord } from "../src/findingsrecord.js";
-import { renderReviewFromRecord } from "../src/reviewrender.js";
+import { applyPostingPolicyToRecord, renderReviewFromRecord } from "../src/reviewrender.js";
+import { policeBenchOutput } from "../src/bench/benchposting.js";
+import { DEFAULT_POSTING_POLICY } from "../src/postingpolicy.js";
 
 function entry(over: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -79,5 +80,35 @@ describe("a validator-downgraded survivor reaches the PR", () => {
     expect(row.disposition).toBe("posted");
     expect(row.word).toBe("inflated");
     expect(row.axis).toBe("severity");
+  });
+});
+
+describe("the posting policy applies to a downgraded survivor like any posted entry", () => {
+  const nitsOff = { ...DEFAULT_POSTING_POLICY, nits: "off" as const };
+
+  it("production: nits-off withholds it, so nothing renders", () => {
+    const out = applyPostingPolicyToRecord(record([entry(downgraded)]), nitsOff);
+    expect(out.withheld).toHaveLength(1);
+    expect(renderReviewFromRecord(out.record as Record<string, unknown>).comments).toHaveLength(0);
+  });
+
+  it("bench export: nits-off withholds a body-only downgraded survivor", () => {
+    const out = policeBenchOutput({
+      comments: [],
+      reviewMd: "",
+      record: record([entry({ ...downgraded, inline: false })]),
+      outcome: { verdict: "COMMENT", summary: "s" },
+      policy: nitsOff,
+    });
+    expect(out.report.withheld).toHaveLength(1);
+    const f = (out.record as { findings: Array<Record<string, unknown>> }).findings[0]!;
+    expect(entryDisposition(f)).toBe("withheld");
+  });
+});
+
+describe("a downgraded entry with no tag is never silent", () => {
+  it("the renderer reports it as a problem", () => {
+    const r = renderReviewFromRecord(record([entry({ ...downgraded, posted_as: undefined })]));
+    expect(r.problems.some((p) => /downgraded with no posted_as/.test(p))).toBe(true);
   });
 });

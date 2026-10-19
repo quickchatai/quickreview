@@ -33,6 +33,7 @@ import {
   entryDisposition,
   findingMarker,
   findingRecordKey,
+  normalizeDisposition,
   recordNumber,
   recordSide,
   recordString,
@@ -329,6 +330,17 @@ export function renderReviewFromRecord(
   };
   const entries = entriesOf(rec) ?? [];
   if (entriesOf(rec) === null) problems.push("the record has no findings array");
+  entries.forEach((e, index) => {
+    if (typeof e !== "object" || e === null) return;
+    const raw = e as Record<string, unknown>;
+    if (
+      normalizeDisposition(raw.disposition) === "downgraded" &&
+      entryDisposition(raw) !== "posted"
+    )
+      problems.push(
+        `${findingRecordKey(raw, index)}: downgraded with no posted_as — a validator downgrade survivor needs the tag it goes out under; not posted`,
+      );
+  });
   const posted = entries
     // The index in the WHOLE findings array is what the record parser keys a
     // key-less entry by, so it is taken before the filter.

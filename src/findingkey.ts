@@ -44,7 +44,11 @@ export function recordSide(val: unknown): "LEFT" | "RIGHT" {
  *
  * - `posted` — it survived validation and went out on the PR (the RAISE side,
  *   the half adjudication actually needs).
- * - `killed` / `downgraded` — the validator vetoed or moved it.
+ * - `killed` — the validator vetoed it.
+ * - `downgraded` — the validator moved it (severity, confidence or
+ *   reachability). A `downgrade` survivor still goes out: recorded with its
+ *   `posted_as` it reads as posted (`entryDisposition`); without one it
+ *   is never posted, and the renderer reports it.
  * - `doubted` — the validator could not stand behind the CLAIM (`DOUBT_WORDS`:
  *   refuted, unverifiable, bad anchor). A validity veto is a mark, not a
  *   deletion — kept here as "may not be valid", never posted on the PR,
