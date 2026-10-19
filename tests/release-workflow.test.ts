@@ -1,7 +1,7 @@
 // The release workflow (.github/workflows/release.yml). Running it needs
 // GitHub, docker, two architectures and a model, so the suite pins what can be
 // read without any of them:
-//   - the triggers (a v* tag or a manual dispatch, nothing else);
+//   - the triggers (a vX.Y.Z tag or a manual dispatch, nothing else);
 //   - the gate order: nothing but `publish` logs in or pushes, and publish
 //     needs the build and the e2e;
 //   - the paid e2e: its own environment, and the only job that reads a secret;
@@ -49,7 +49,7 @@ const needs = (name: string): string[] => [wf.jobs[name]!.needs ?? []].flat();
 describe("release.yml — triggers and permissions", () => {
   it("runs on a v* tag or a manual dispatch and nothing else", () => {
     expect(Object.keys(wf.on).sort()).toEqual(["push", "workflow_dispatch"]);
-    expect(wf.on.push).toEqual({ tags: ["v*"] });
+    expect(wf.on.push).toEqual({ tags: ["v*.*.*"] });
     expect(Object.keys(wf.on.workflow_dispatch.inputs).sort()).toEqual([
       "publish",
       "run_e2e",

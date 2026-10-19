@@ -4,7 +4,8 @@
 #
 #   plan -> build (image x arch) -> e2e (release-e2e) -> publish (image)
 #
-# Triggers: a v* tag pushed by hand, or workflow_dispatch. Nothing here runs
+# Triggers: a vX.Y.Z tag pushed by hand (the floating v1 does not match, so
+# moving it starts nothing), or workflow_dispatch. Nothing here runs
 # on a branch push or a pull request (ci.yml owns those), and no job but
 # `publish` ever logs in to a registry or pushes.
 #
@@ -13,7 +14,9 @@
 #   ghcr.io/quickchatai/quickreview-memory:<version>   the memory sidecar
 # <version> is the tag without its leading v, and equals package.json's
 # version (the image's own `version --json`). Each is one multi-arch index
-# over linux/amd64 and linux/arm64. There is no `latest` tag, and the floating
+# over linux/amd64 and linux/arm64. Each architecture is also pushed under
+# <version>-amd64 and <version>-arm64 so the index can be assembled from
+# digests; those are plumbing, not tags to pin. There is no `latest` tag, and the floating
 # v1 major tag of the Action is moved by hand, not by this workflow.
 #
 # ARM runners (D15): native by default, so the arm64 smoke runs on real arm64
@@ -45,7 +48,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
       version:
@@ -285,7 +288,12 @@ jobs:
             { echo "::error::the e2e review did not finish ok"; exit 1; }
       - name: remove the login from the runner
         if: always()
-        run: rm -rf "$RUNNER_TEMP/e2e"
+        # pi runs as the tool uid, so what it wrote under the mounted ~/.pi may
+        # not be deletable by the runner uid; a failed cleanup must not fail
+        # a job whose review passed (the hosted runner is destroyed anyway).
+        run: |
+          rm -f "$RUNNER_TEMP/e2e/home/agent/auth.json" || true
+          rm -rf "$RUNNER_TEMP/e2e" || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
