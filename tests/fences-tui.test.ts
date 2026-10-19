@@ -526,10 +526,29 @@ describe("[T7] every repo path a script or doc points at exists", () => {
   it("scripts/ and docs/ name no path that is missing", () => {
     const roots = ["scripts", "docs"];
     const missing: string[] = [];
+    // The rule-text drafts cite paths their landing tickets have yet to create.
+    // The draft's own "Landing checklist" lists each one, and
+    // tests/release-docs.test.ts holds every other cited path to the tree, so
+    // the paths listed there (in that file only) are exempt here.
+    const draftsRel = "docs/rule-text-drafts.md";
+    const draftText = existsSyncSafe(join(ROOT, draftsRel))
+      ? readFileSync(join(ROOT, draftsRel), "utf8")
+      : "";
+    const checklistAt = draftText.indexOf("\n## Landing checklist");
+    const onChecklist = new Set(
+      checklistAt < 0
+        ? []
+        : [
+            ...draftText
+              .slice(checklistAt)
+              .matchAll(/`((?:src|deploy|docker|extensions|prompts|agents)\/[A-Za-z0-9._/-]+)`/g),
+          ].map((m) => m[1]!),
+    );
     for (const dir of roots) {
       for (const f of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
         if (!f.isFile()) continue;
         const text = readFileSync(join(ROOT, dir, f.name), "utf8");
+        const listed = `${dir}/${f.name}` === draftsRel ? onChecklist : new Set<string>();
         for (const line of text.split("\n")) {
           // A doc that records a deletion names the path it deleted, and that
           // is the documentation working, not a broken pointer. Narrow, and
@@ -546,7 +565,7 @@ describe("[T7] every repo path a script or doc points at exists", () => {
             const rel = m[0];
             // dist/ is a build product: absent on a clean checkout, and its
             // presence is `scripts/verify-dist.mjs`'s job, not this fence's.
-            if (rel.startsWith("dist/")) continue;
+            if (rel.startsWith("dist/") || listed.has(rel)) continue;
             if (!existsSyncSafe(join(ROOT, rel))) missing.push(`${dir}/${f.name} → ${rel}`);
           }
         }
