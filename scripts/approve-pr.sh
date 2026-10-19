@@ -22,6 +22,14 @@ set -euo pipefail
 
 API="${GITHUB_API:-https://api.github.com}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# A host the daemon runs (round worker, answer worker, debug pi) holds no GitHub
+# credential and no config: the daemon posts for it. With the worker socket and
+# the capability fd in env this script is only a thin client of the daemon's
+# post endpoint (src/ipc/postshim.ts), and everything below is not run. The
+# shell route below stays for the legacy tmux bot until P9.3 deletes it.
+if [[ -n "${QCR_IPC_SOCKET:-}" && -n "${QCR_IPC_CAP_FD:-}" ]]; then
+  exec node "$ROOT/dist/src/ipc/postshim.js" approval "$@"
+fi
 # The install locator decides — $QCR_CONFIG, else the install's config home.
 # Never a path built here.
 . "$ROOT/scripts/install-locator.sh"

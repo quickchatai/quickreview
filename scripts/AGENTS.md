@@ -25,6 +25,14 @@ stay behaviourally identical to the TS side:
   which renames the pending outbox job aside only while no receipt exists, so
   the session's COMMENT under the same round key is accepted and the outbox
   never delivers the refused approval.
+- **On a daemon-run host the three posting scripts are a thin client.** With
+  `QCR_IPC_SOCKET` and `QCR_IPC_CAP_FD` in env (round worker, answer worker,
+  debug pi) `post-review.sh`, `approve-pr.sh` and `reply-thread.sh` `exec` the
+  Node client `dist/src/ipc/postshim.js` before reading any config: it names
+  the result files and the daemon (`src/postops.ts`) validates the paths,
+  builds the intent and posts through the one gate with the receipt and
+  outbox. Everything below that branch is the legacy tmux route, which P9.3
+  deletes with `guards.sh`.
 - Parity is test-enforced: `tests/guards-shell-*.test.ts` runs the real scripts
   against a loopback stub over the same cases as `tests/guards.test.ts` runs
   the gate. Change a guard on one side → change it on both + both tests.

@@ -124,6 +124,30 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "Read only by tests/ipc.test.ts until P7.2 (post ops), P8.3 (botworker) and P8.5 (WorkerSupervisor) " +
         "import it; launcher.ts is the pane-side entry point tmux runs for a takeover or debug pi.",
     })),
+    // The daemon's post ops (P7.2). The daemon does not start the worker socket yet: that is the
+    // WorkerSupervisor's (P8.5), which mints the commands the socket authenticates, and P8.7 wires these
+    // ops onto it. Delete each entry with the first production import.
+    {
+      file: "src/postops.ts",
+      why:
+        "the daemon's post.review / post.approval / post.reply ops on the worker socket (P7.2). Read only " +
+        "by tests/post-ops.test.ts until the WorkerSupervisor (P8.5) starts the socket and P8.7 registers " +
+        "these ops on it. Delete this entry with that import.",
+    },
+    {
+      file: "src/posting-journal.ts",
+      why:
+        "the TypeScript writer of a round's receipt and outbox job (P7.2), the twin of " +
+        "scripts/posting-receipt.py. Read only by src/postops.ts, which is itself unreached until P8.5/P8.7. " +
+        "Delete this entry with that import.",
+    },
+    {
+      file: "src/ipc/postshim.ts",
+      why:
+        "the Node post client behind scripts/post-review.sh, approve-pr.sh and reply-thread.sh (P7.2). Driven " +
+        "by those scripts, which exec it out of dist/ whenever QCR_IPC_SOCKET and QCR_IPC_CAP_FD are in " +
+        "env: a real driver this static scan cannot follow, not an orphan.",
+    },
   ];
 
   it(

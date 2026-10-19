@@ -49,6 +49,11 @@ export const IPC_ERROR_CODES = [
   "wrong_pr", // the request names another PR than the command's
   "unknown_op",
   "forbidden", // the role may not call this op
+  "lease_takeover", // the PR is under a takeover lease: it can post nothing
+  "may_post_required", // an answer worker whose message did not carry may_post
+  "bad_path", // a result file outside the PR's own dir, or not a plain readable file
+  "blocked", // the gate or a guard refused the mutation: nothing was posted
+  "post_failed", // GitHub answered the post with a refusal
   "internal",
   "closed", // client side: the connection ended
   "timeout", // client side
@@ -314,8 +319,11 @@ export interface CommandState {
   generation: number;
   /** True while the command has an active (pending or running) row. */
   active: boolean;
-  /** Set only by the operator's message; the post ops of an answer worker need it. */
+  /** Set only by the operator's message; the post ops of an ANSWER worker need it. */
   may_post: boolean;
+  /** True for an idle-PR answer worker's command (P8.17): its posts are refused
+   * unless `may_post`. Absent for a round, takeover or debug command. */
+  answer?: boolean;
   /** A takeover refuses every post; a debug round may post (D38). */
   lease: "none" | "takeover" | "debug";
 }
