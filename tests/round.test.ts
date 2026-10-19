@@ -13,6 +13,8 @@ import { dirname, join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { AuthExpiring } from "../src/engine/auth.js";
+import { LIVE_MAIN_FILE, liveRoundDir, readLiveEvents } from "../src/live/events.js";
+import { projectRoundProgress } from "../src/live/projection.js";
 import { PiHost } from "../src/engine/pisdk.js";
 import type { Runtime } from "../src/engine/port.js";
 import { procRuntime } from "../src/engine/procruntime.js";
@@ -310,6 +312,43 @@ describe.each([proc, sdk])("runRound on the $name runtime", (h) => {
   it("does not take an auth-looking tool output for a refusal", async () => {
     const { result: r } = await run(h, [{ write: FULL }]);
     expect(r.authError).toBeUndefined();
+  });
+
+  it("writes the round's LiveEvent log when asked, numbered and in order", async () => {
+    const live = { root: join(tmp, `live-${h.name}-${n++}`), key: "review-x", round: 3 };
+    const { result: r } = await run(h, [{ write: FULL, cost: 0.25 }], { live });
+    expect(r.error).toBeUndefined();
+    const events = readLiveEvents(
+      join(liveRoundDir(live.root, live.key, live.round), LIVE_MAIN_FILE),
+    ).events;
+    expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
+    expect(events[0]).toMatchObject({
+      type: "session_start",
+      stream: "main",
+      key: "review-x",
+      round: 3,
+      pr: TARGET.number,
+      session: `oneshot-${TARGET.number}`,
+    });
+    const ends = events.filter((e) => e.type === "message_end");
+    expect(ends.length).toBeGreaterThan(0);
+    expect(ends.at(-1)).toMatchObject({ role: "assistant", usage: { cost_usd: 0.25 } });
+    if (h.name === "sdk") {
+      // the SDK session streams the whole lifecycle: the projection settles
+      const types = events.map((e) => e.type);
+      expect(types).toContain("agent_start");
+      expect(types.at(-1)).toBe("agent_settled");
+      expect(projectRoundProgress(events)?.snapshot).toMatchObject({
+        version: 2,
+        pr: TARGET.number,
+        parent_status: "settled",
+      });
+    }
+  });
+
+  it("writes no live log unless asked", async () => {
+    const { outDir } = await run(h, [{ write: FULL }]);
+    expect(existsSync(join(outDir, "state"))).toBe(false);
   });
 
   it("refuses a login that would expire inside the run, before writing anything", async () => {

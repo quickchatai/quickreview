@@ -44,6 +44,7 @@ import {
   type LiveAgentStatus,
   type ProgressTransition,
 } from "../../round-progress.js";
+import type { LiveSink } from "../../live/writer.js";
 import type { BashEnvOptions, HostSessionSpec, PiHost } from "../pisdk.js";
 import type { AgentsFile } from "../port.js";
 import { passTimeoutMessage, runUnderDeadline } from "./deadline.js";
@@ -86,6 +87,10 @@ export interface LensRunConfig {
   /** Per-attempt deadline. Omitted: none. */
   deadlineMs?: number;
   progress?: LensProgressSink;
+  /** The lens session's LiveEvent log (`lens-<id>.jsonl`): given the run's id
+   * and agent, returns the sink the session's events are fed to. Closed when
+   * the attempt ends. A sink that cannot be made is a warning, never a failure. */
+  live?: (id: string, agent: string) => LiveSink;
   /** Hears every extension error pi reports instead of throwing. */
   onExtensionError?: (agent: string, id: string, error: ExtensionError) => void;
   /** A ledger or progress write that failed (diagnostic only; never fatal). */
@@ -332,6 +337,8 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     const attempt = async (signal: AbortSignal): Promise<Reading> => {
       let session: AgentSession | undefined;
       let sessionId: string | undefined;
+      let sink: LiveSink | undefined;
+      let unsubscribe: (() => void) | undefined;
       try {
         const spec: HostSessionSpec = {
           cwd: config.cwd,
@@ -349,6 +356,15 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         };
         session = await config.host.makeSession(spec);
         sessionId = session.sessionId;
+        if (config.live !== undefined) {
+          try {
+            const made = config.live(id, agent.name);
+            sink = made;
+            unsubscribe = session.subscribe((event) => made.feed(event));
+          } catch (e) {
+            warn(`live log for ${id} not started: ${String(e)}`);
+          }
+        }
         if (live.has(sessionId))
           throw new Error(`session id ${sessionId} is already live: lens sessions need unique ids`);
         live.add(sessionId);
@@ -390,6 +406,8 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         signal.throwIfAborted();
         return { ...reading, failure };
       } finally {
+        unsubscribe?.();
+        sink?.close();
         if (session !== undefined) {
           try {
             spent = addUsage(spent, readSession(session).usage);

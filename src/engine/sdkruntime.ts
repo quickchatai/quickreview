@@ -41,6 +41,7 @@ import {
   type SessionEvent,
   type SessionSpec,
   type SessionStats,
+  type SubscribeOptions,
   type TurnOptions,
   type TurnResult,
 } from "./port.js";
@@ -81,6 +82,8 @@ const stripBom = (s: string): string => (s.charCodeAt(0) === 0xfeff ? s.slice(1)
 
 class SdkSession implements RuntimeSession {
   private readonly listeners = new Set<(event: SessionEvent) => void>();
+  /** The listeners that also hear the update events. */
+  private readonly updateListeners = new Set<(event: SessionEvent) => void>();
   private readonly events: WriteStream;
   private readonly unsubscribe: () => void;
   /** The turn in flight and everything queued behind it. */
@@ -161,9 +164,13 @@ class SdkSession implements RuntimeSession {
     await this.session.abort().catch(() => {});
   }
 
-  subscribe(listener: (event: SessionEvent) => void): () => void {
+  subscribe(listener: (event: SessionEvent) => void, options?: SubscribeOptions): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    if (options?.updates) this.updateListeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+      this.updateListeners.delete(listener);
+    };
   }
 
   stats(): SessionStats {
@@ -265,7 +272,17 @@ class SdkSession implements RuntimeSession {
     // The cap reads the lens children's spend off the updates, so it sees them;
     // the file and the listeners do not.
     this.budget?.observe(event);
-    if (isUpdate(event)) return;
+    if (isUpdate(event)) {
+      // Not written, and not parsed: an update listener reads the event itself.
+      for (const l of this.updateListeners) {
+        try {
+          l(event);
+        } catch {
+          // a listener's failure is not the session's
+        }
+      }
+      return;
+    }
     this.write(JSON.stringify(event));
   }
 

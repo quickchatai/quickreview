@@ -20,6 +20,8 @@ import {
   type LensRunConfig,
 } from "../src/engine/lens/runlens.js";
 import { loadBuiltAgents } from "../src/engine/lens/registry.js";
+import { lensLogName, readLiveEvents } from "../src/live/events.js";
+import { createLiveWriter } from "../src/live/writer.js";
 import { parseLedger } from "../src/lensresult.js";
 import {
   FakeTransport,
@@ -221,6 +223,42 @@ describe("[runLens] a pass", () => {
     });
     expect(lines[1]).toMatchObject({ execution_id: result.id, status: "completed" });
     expect(bad.result.exitCode, "an unknown agent never started").toBe(1);
+  });
+
+  it("logs the pass's own session to lens-<id>.jsonl when given a live sink", async () => {
+    rig.faux.setResponses([() => fauxAssistantMessage("found nothing")]);
+    const writer = createLiveWriter({ dir: join(dir, "live") });
+    const runner = createLensRunner(
+      config({
+        live: (id, agent) =>
+          writer.lens(id, { key: "pr-7", round: 1, pr: 7, session: "pr-7", agent }),
+      }),
+    );
+    const { result } = await runner.run({ agent: "pass-a", task: "go" });
+    const events = readLiveEvents(join(dir, "live", lensLogName(result.id!))).events;
+    expect(events[0]).toMatchObject({
+      type: "session_start",
+      stream: "lens",
+      lens_id: result.id,
+      agent: "pass-a",
+    });
+    expect(events.map((e) => e.type)).toEqual(
+      expect.arrayContaining(["agent_start", "message_end", "agent_settled"]),
+    );
+    expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
+  });
+
+  it("a live sink that cannot be made costs the pass nothing", async () => {
+    rig.faux.setResponses([() => fauxAssistantMessage("ok")]);
+    const runner = createLensRunner(
+      config({
+        live: () => {
+          throw new Error("no disk");
+        },
+        warn: () => {},
+      }),
+    );
+    expect((await runner.run({ agent: "pass-a", task: "go" })).result.exitCode).toBe(0);
   });
 
   it("a failed provider turn is a failed lens, with its ledger line", async () => {

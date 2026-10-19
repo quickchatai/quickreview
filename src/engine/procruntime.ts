@@ -32,6 +32,7 @@ import {
   type SessionEvent,
   type SessionSpec,
   type SessionStats,
+  type SubscribeOptions,
   type TurnOptions,
   type TurnResult,
 } from "./port.js";
@@ -160,6 +161,9 @@ export function runPi(
    * stream, and the group kill once the child exists. */
   hooks?: {
     onEvent?: (line: string) => void;
+    /** A `*_update` line: held out of the events file, but a listener that asked
+     * for updates hears it. */
+    onUpdate?: (line: string) => void;
     onSpawn?: (kill: (sig: NodeJS.Signals) => void) => void;
   },
 ): Promise<PiRun> {
@@ -230,8 +234,10 @@ export function runPi(
       if (
         line.startsWith('{"type":"tool_execution_update"') ||
         line.startsWith('{"type":"message_update"')
-      )
+      ) {
+        hooks?.onUpdate?.(line);
         return;
+      }
       events.write(line + "\n");
       hooks?.onEvent?.(line);
     });
@@ -291,6 +297,8 @@ const ABORT_GRACE_MS = 5_000;
 class ProcSession implements RuntimeSession {
   private readonly argv: string[];
   private readonly listeners = new Set<(event: SessionEvent) => void>();
+  /** The listeners that also hear the `*_update` events. */
+  private readonly updateListeners = new Set<(event: SessionEvent) => void>();
   private readonly generatedId = randomUUID();
   private killRunning: ((sig: NodeJS.Signals) => void) | null = null;
   /** The turn in flight and everything queued behind it. */
@@ -370,9 +378,13 @@ class ProcSession implements RuntimeSession {
     if (this.killRunning) termThenKill(this.killRunning, ABORT_GRACE_MS);
   }
 
-  subscribe(listener: (event: SessionEvent) => void): () => void {
+  subscribe(listener: (event: SessionEvent) => void, options?: SubscribeOptions): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    if (options?.updates) this.updateListeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+      this.updateListeners.delete(listener);
+    };
   }
 
   stats(): SessionStats {
@@ -413,7 +425,8 @@ class ProcSession implements RuntimeSession {
           onSpawn: (kill) => {
             this.killRunning = kill;
           },
-          onEvent: (line) => this.emit(line),
+          onEvent: (line) => this.emit(line, this.listeners),
+          onUpdate: (line) => this.emit(line, this.updateListeners),
         },
       );
       this.killRunning = null;
@@ -429,15 +442,15 @@ class ProcSession implements RuntimeSession {
     return run;
   }
 
-  private emit(line: string): void {
-    if (this.listeners.size === 0) return;
+  private emit(line: string, listeners: ReadonlySet<(event: SessionEvent) => void>): void {
+    if (listeners.size === 0) return;
     let event: SessionEvent;
     try {
       event = JSON.parse(line) as SessionEvent;
     } catch {
       return;
     }
-    for (const l of this.listeners) {
+    for (const l of listeners) {
       try {
         l(event);
       } catch {

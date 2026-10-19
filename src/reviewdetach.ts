@@ -39,6 +39,7 @@ import { livePiGroupIds } from "./engine/procruntime.js";
 import { onSdkRoute, stopLiveSessions } from "./engine/livesessions.js";
 import { HEARTBEAT_FILE, readBeat, startHeartbeat } from "./heartbeat.js";
 import { originRepo, resolveBranch, resolveUncommitted } from "./localreview.js";
+import { latestLiveRound, viewRound } from "./live/read.js";
 import { parsePrTarget } from "./prtarget.js";
 import { parseReviewArgs } from "./reviewcli.js";
 import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
@@ -218,27 +219,72 @@ function allRuns(home: string, deps: Pick<DetachDeps, "alive">): Observed[] {
     .sort((a, b) => a.run.started_at - b.run.started_at);
 }
 
-/** How far a run got, from the stage record its review keeps. */
-function progress(dir: string): { lenses_started: string[] } | null {
+/** What a running review is doing, from its LiveEvent log projected to
+ * round-progress v2 (src/live/): the same snapshot the bot's supervisor reads. */
+interface LiveProgress {
+  round: number;
+  parent_status: "active" | "settled";
+  last_activity: string;
+  updated_at: string;
+  active_tool?: string;
+  agents: Array<{
+    agent: string;
+    status: string;
+    duration_ms: number;
+    tool_count: number;
+    current_tool?: string;
+  }>;
+}
+
+interface Progress {
+  lenses_started: string[];
+  live?: LiveProgress;
+}
+
+/** How far a run got: the lenses its stage record names (written when the round
+ * ends) and, while it runs, its live log. */
+function progress(dir: string): Progress | null {
+  const work = join(dir, "work");
+  let dirs: string[] = [];
   try {
-    const work = join(dir, "work");
-    for (const d of readdirSync(work)) {
-      const stages = readJson<{ calls?: Array<{ agents?: string[]; kind?: string }> }>(
-        join(work, d, "out", "stages.json"),
-      );
-      if (stages)
-        return {
-          lenses_started: [
-            ...new Set(
-              (stages.calls ?? []).filter((c) => c.kind === "lens").flatMap((c) => c.agents ?? []),
-            ),
-          ],
-        };
-    }
+    dirs = readdirSync(work);
   } catch {
-    // not planning yet
+    return null;
   }
-  return null;
+  const started = new Set<string>();
+  let known = false;
+  let live: LiveProgress | undefined;
+  for (const d of dirs) {
+    const stages = readJson<{ calls?: Array<{ agents?: string[]; kind?: string }> }>(
+      join(work, d, "out", "stages.json"),
+    );
+    if (stages) {
+      known = true;
+      for (const c of stages.calls ?? [])
+        if (c.kind === "lens") for (const a of c.agents ?? []) started.add(a);
+    }
+    const ref = latestLiveRound(join(work, d));
+    const snapshot = ref ? viewRound(ref).snapshot : undefined;
+    if (ref && snapshot) {
+      known = true;
+      for (const a of snapshot.agents) started.add(a.agent);
+      live = {
+        round: ref.round,
+        parent_status: snapshot.parent_status,
+        last_activity: snapshot.last_activity,
+        updated_at: snapshot.updated_at,
+        ...(snapshot.active_tool ? { active_tool: snapshot.active_tool } : {}),
+        agents: snapshot.agents.map((a) => ({
+          agent: a.agent,
+          status: a.status,
+          duration_ms: a.duration_ms,
+          tool_count: a.tool_count,
+          ...(a.current_tool ? { current_tool: a.current_tool } : {}),
+        })),
+      };
+    }
+  }
+  return known ? { lenses_started: [...started], ...(live ? { live } : {}) } : null;
 }
 
 function view(o: Observed, now: number): Record<string, unknown> {
@@ -258,8 +304,17 @@ function view(o: Observed, now: number): Record<string, unknown> {
 
 function text(v: Record<string, unknown>): string {
   const bits = [`Review ${String(v["run_id"])} (${String(v["target"])}): ${String(v["state"])}`];
-  const p = v["progress"] as { lenses_started?: string[] } | null | undefined;
+  const p = v["progress"] as Partial<Progress> | null | undefined;
   if (p?.lenses_started?.length) bits.push(`lenses started: ${p.lenses_started.join(", ")}`);
+  if (p?.live) {
+    const by = (s: string): string[] =>
+      p.live!.agents.filter((a) => a.status === s).map((a) => a.agent);
+    for (const s of ["running", "completed", "failed"]) {
+      const names = by(s);
+      if (names.length > 0) bits.push(`${s}: ${names.join(", ")}`);
+    }
+    bits.push(`now: ${p.live.last_activity}`);
+  }
   const errs = v["errors"] as string[] | undefined;
   if (errs) bits.push(...errs);
   return bits.join("\n");
