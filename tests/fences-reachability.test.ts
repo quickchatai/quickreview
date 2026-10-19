@@ -93,6 +93,13 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "round session runs and which execs it out of dist/ — a real driver this static scan cannot follow.",
     },
     {
+      file: "src/resumecheck.ts",
+      why:
+        "the static half of the resume rehearsal (P8.4): what a PR's session JSONL looks like before a worker " +
+        "resumes it. Read only by the rehearsal tests and helpers until the cutover preflight (P8.4b) imports " +
+        "it. Delete this entry with that import.",
+    },
+    {
       file: "src/memory/import.ts",
       why:
         "the one-time curated import. Driven by scripts/import-pi-memory.mjs, which loads it out of dist/ " +
