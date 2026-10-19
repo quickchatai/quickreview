@@ -9,15 +9,20 @@
 // when there is no worker to reach, it is ending, or it did not answer: never a
 // silent success.
 //
-// takeover, release, message and debug-round are other tickets' verbs (P8.13,
+// takeover and release (P8.13) are served by the TakeoverManager (src/takeover.ts):
+// the daemon grants the lease and starts the operator's pi, or stops it and frees the
+// lease once it is gone. message and debug-round are other tickets' verbs (P8.13b,
 // P8.17): they go to `other` when the daemon has one, and are otherwise refused with
 // a reason.
 import type { ControlCommand } from "./commands.js";
 import type { FileOutcome } from "./improvements.js";
+import type { TakeoverManager, TakeoverResult } from "./takeover.js";
 import type { ControlResult, WorkerSupervisor } from "./workersupervisor.js";
 
 export interface WorkerControlDeps {
   supervisor: Pick<WorkerSupervisor, "control" | "abortRound">;
+  /** The takeover lease (P8.13). Omitted: takeover and release go to `other`. */
+  takeover?: Pick<TakeoverManager, "grant" | "release">;
   other?: (command: ControlCommand, file: string) => Promise<FileOutcome> | FileOutcome;
 }
 
@@ -25,6 +30,24 @@ const outcome = (r: ControlResult): FileOutcome =>
   r.ok
     ? { ok: true, ack: r.ack, command_id: r.command_id, ...(r.killed ? { killed: true } : {}) }
     : { ok: false, reason: r.reason };
+
+const takeoverOutcome = (r: TakeoverResult): FileOutcome =>
+  r.ok
+    ? { ok: true, ack: "handled", session: r.session, command_id: r.command_id, message: r.message }
+    : { ok: false, reason: r.reason };
+
+async function notServed(
+  deps: WorkerControlDeps,
+  command: ControlCommand,
+  file: string,
+): Promise<FileOutcome> {
+  return (
+    (await deps.other?.(command, file)) ?? {
+      ok: false,
+      reason: `${command.command} is not served by the worker host yet`,
+    }
+  );
+}
 
 export function workerOperatorControl(
   deps: WorkerControlDeps,
@@ -37,13 +60,14 @@ export function workerOperatorControl(
         return outcome(await deps.supervisor.control(command.pr, "follow_up", command.text));
       case "abort-round":
         return outcome(await deps.supervisor.abortRound(command.pr));
+      case "takeover":
+        if (deps.takeover) return takeoverOutcome(await deps.takeover.grant(command.pr));
+        return notServed(deps, command, file);
+      case "release":
+        if (deps.takeover) return takeoverOutcome(await deps.takeover.release(command.pr));
+        return notServed(deps, command, file);
       default:
-        return (
-          (await deps.other?.(command, file)) ?? {
-            ok: false,
-            reason: `${command.command} is not served by the worker host yet`,
-          }
-        );
+        return notServed(deps, command, file);
     }
   };
 }

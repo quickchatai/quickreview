@@ -89,6 +89,9 @@ export const DAEMON_ROOTS = [
   "src/workersupervisor.ts",
   // The worker host (P8.6) is the SessionHooks the daemon speaks over that supervisor.
   "src/worker-session-host.ts",
+  // The takeover lease (P8.13) starts the operator's pi in tmux by path. Its pane side
+  // (src/takeoverpi.ts) borrows the login through the engine and is not a daemon module.
+  "src/takeover.ts",
 ];
 
 /**

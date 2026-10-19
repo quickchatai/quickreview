@@ -145,6 +145,18 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "tests/worker-control.test.ts until the daemon's wiring constructs the worker host. Delete this " +
         "entry with that import.",
     })),
+    // The takeover lease (P8.13): the daemon's manager, which starts the operator's pi in tmux, and the
+    // pane's entry that manager runs by path. The daemon's wiring constructs the manager (it hands it to
+    // `workerOperatorControl`, its `hostGate` to the supervisor and its `lookup` to the IPC server) when
+    // the worker world is wired into wire.ts. Delete each entry with that import.
+    ...["takeover.ts", "takeoverpi.ts"].map((f) => ({
+      file: `src/${f}`,
+      why:
+        "the takeover lease (P8.13, D27): TakeoverManager grants the SQLite lease and starts the operator's " +
+        "interactive pi on the PR's real session in tmux takeover-pr-<n>; takeoverpi.ts is the entry tmux runs " +
+        "(the borrowed login, pi's argv and env). Read only by tests/takeover.test.ts and " +
+        "tests/takeover-pane.test.ts until the daemon's wiring constructs the manager. Delete this entry with that import.",
+    })),
     // The daemon's post ops (P7.2). The WorkerSupervisor (P8.5) serves them on the worker socket (P8.7);
     // the daemon does not start the supervisor until P8.6. Delete each entry with that import.
     {

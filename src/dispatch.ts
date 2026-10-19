@@ -2066,6 +2066,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
     }
     const active = store.blockingSessionCommand(`pr-${row.number}`);
     if (active) return `skipped — session command ${active.id} is ${active.status}`;
+    // The operator holds the session (src/takeover.ts): the round waits for the release.
+    const lease = store.hostLease(row.number);
+    if (lease) return `skipped — under a ${lease.kind} lease (${lease.holder})`;
     if (store.hasHeldWakes(row.number))
       return "skipped — held conversational wakes must drain first";
     return null;

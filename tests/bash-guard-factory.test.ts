@@ -246,14 +246,14 @@ describe("[createBashGuard] the config", () => {
 });
 
 describe("[createBashGuard] the policy is not an input", () => {
-  it("BashGuardConfig carries no policy field, only the host's three facts", () => {
+  it("BashGuardConfig carries no policy field, only the host's facts", () => {
     const src = readFileSync(
       join(import.meta.dirname, "..", "extensions", "bash-guard.ts"),
       "utf8",
     );
     const body = /export interface BashGuardConfig \{([\s\S]*?)\n\}/.exec(src)![1]!;
     const fields = [...body.matchAll(/^\s{2}(\w+)\??:/gm)].map((m) => m[1]);
-    expect(fields).toEqual(["sandboxRoot", "replay", "secretDirs", "pathEnv"]);
+    expect(fields).toEqual(["sandboxRoot", "replay", "noPost", "secretDirs", "pathEnv"]);
   });
 
   it("no profile layer imports the guard", () => {
