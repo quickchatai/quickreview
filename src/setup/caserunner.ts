@@ -203,6 +203,92 @@ export function resolvedReadPath(raw: string, cwd: string, home: string = homedi
   return posix.resolve(cwd, p);
 }
 
+/** What one case's event stream says, fed event by event: the last assistant
+ * text, pi's own per-message cost summed, how the model stopped, and the files
+ * its `read`/`grep` calls opened. One reader for both hosts of a leaf — the
+ * child process (`piCaseRunner`) and the in-process session
+ * (src/engine/caserunner-sdk.ts) emit the same events. */
+export function caseReadout(
+  cwd: string,
+  onCost?: (spentSoFar: number) => void,
+): {
+  feed(event: unknown): void;
+  readonly final: string;
+  readonly failure: string | null;
+  readonly reads: string[];
+  /** The summed cost; null when no message priced itself. */
+  spent(): number | null;
+} {
+  let final = "";
+  let cost = 0;
+  let priced = false;
+  let failure: string | null = null;
+  const reads: string[] = [];
+  // Started reads by call id, credited only when the call succeeds.
+  const attempted = new Map<string, string>();
+  return {
+    feed(raw: unknown): void {
+      if (typeof raw !== "object" || raw === null) return;
+      const event = raw as {
+        type?: string;
+        message?: Record<string, unknown>;
+        toolName?: unknown;
+        toolCallId?: unknown;
+        args?: unknown;
+        isError?: unknown;
+      };
+      const read = readPathOf(event);
+      if (read !== null && typeof event.toolCallId === "string")
+        attempted.set(event.toolCallId, resolvedReadPath(read, cwd));
+      const done = readSucceeded(event);
+      if (done !== null && attempted.has(done)) {
+        reads.push(attempted.get(done)!);
+        attempted.delete(done);
+      }
+      const msg = event.message;
+      if (event.type !== "message_end" || !msg || msg.role !== "assistant") return;
+      const usage = msg.usage as { cost?: { total?: unknown } } | undefined;
+      if (typeof usage?.cost?.total === "number") {
+        cost += usage.cost.total;
+        priced = true;
+        try {
+          onCost?.(cost);
+        } catch {
+          // A listener's fault never ends the case.
+        }
+      }
+      const parts = Array.isArray(msg.content)
+        ? (msg.content as Array<{ type?: string; text?: string }>)
+        : [];
+      const text = parts
+        .filter((p) => p.type === "text" && typeof p.text === "string")
+        .map((p) => p.text)
+        .join("\n");
+      if (text.trim() !== "") final = text;
+      if (msg.stopReason === "error" || msg.stopReason === "aborted") {
+        failure =
+          typeof msg.errorMessage === "string"
+            ? msg.errorMessage
+            : `the model stopped: ${String(msg.stopReason)}`;
+      } else {
+        failure = null;
+      }
+    },
+    get final(): string {
+      return final;
+    },
+    get failure(): string | null {
+      return failure;
+    },
+    get reads(): string[] {
+      return reads;
+    },
+    spent(): number | null {
+      return priced ? cost : null;
+    },
+  };
+}
+
 /** What a leaf's pi process may inherit, by exact name. The leaf's model runs
  * bash, so the process env is allowlisted rather than copied: no GitHub
  * credential (src/envstrip.ts) and nothing else of the driver's reaches it. */
@@ -430,64 +516,14 @@ export function piCaseRunner(opts: {
         const withTranscript = <T extends CaseOutcome>(o: T): T =>
           transcript === undefined ? o : { ...o, transcript };
         return await new Promise<CaseOutcome>((resolve) => {
-          let final = "";
-          let cost = 0;
-          let priced = false;
-          let failure: string | null = null;
           let stderr = "";
           let buffer = "";
-          const reads: string[] = [];
-          // Started reads by call id, credited only when the call succeeds.
-          const attempted = new Map<string, string>();
+          const readout = caseReadout(opts.cwd, (c) => onCost?.(c));
           const onLine = (line: string): void => {
-            let event: {
-              type?: string;
-              message?: Record<string, unknown>;
-              toolName?: unknown;
-              toolCallId?: unknown;
-              args?: unknown;
-              isError?: unknown;
-            };
             try {
-              event = JSON.parse(line) as typeof event;
+              readout.feed(JSON.parse(line));
             } catch {
-              return;
-            }
-            const read = readPathOf(event);
-            if (read !== null && typeof event.toolCallId === "string")
-              attempted.set(event.toolCallId, resolvedReadPath(read, opts.cwd));
-            const done = readSucceeded(event);
-            if (done !== null && attempted.has(done)) {
-              reads.push(attempted.get(done)!);
-              attempted.delete(done);
-            }
-            const msg = event.message;
-            if (event.type !== "message_end" || !msg || msg.role !== "assistant") return;
-            const usage = msg.usage as { cost?: { total?: unknown } } | undefined;
-            if (typeof usage?.cost?.total === "number") {
-              cost += usage.cost.total;
-              priced = true;
-              try {
-                onCost?.(cost);
-              } catch {
-                // A listener's fault never ends the case.
-              }
-            }
-            const parts = Array.isArray(msg.content)
-              ? (msg.content as Array<{ type?: string; text?: string }>)
-              : [];
-            const text = parts
-              .filter((p) => p.type === "text" && typeof p.text === "string")
-              .map((p) => p.text)
-              .join("\n");
-            if (text.trim() !== "") final = text;
-            if (msg.stopReason === "error" || msg.stopReason === "aborted") {
-              failure =
-                typeof msg.errorMessage === "string"
-                  ? msg.errorMessage
-                  : `the model stopped: ${String(msg.stopReason)}`;
-            } else {
-              failure = null;
+              // Not an event: the stream is read line by line, noise skipped.
             }
           };
           let child: ReturnType<SpawnFn>;
@@ -530,7 +566,7 @@ export function piCaseRunner(opts: {
           };
           // What a case that ended without an answer had spent: a failure
           // costs money too, and a caller holding a budget must count it.
-          const spent = (): number | null => (priced ? cost : null);
+          const spent = (): number | null => readout.spent();
           child.on("error", (err) =>
             finish({ ok: false, reason: `pi failed to run: ${err.message}`, cost_usd: spent() }),
           );
@@ -545,14 +581,20 @@ export function piCaseRunner(opts: {
                 cost_usd: spent(),
               });
             }
-            if (failure !== null) return finish({ ok: false, reason: failure, cost_usd: spent() });
-            if (final.trim() === "")
+            if (readout.failure !== null)
+              return finish({ ok: false, reason: readout.failure, cost_usd: spent() });
+            if (readout.final.trim() === "")
               return finish({
                 ok: false,
                 reason: "the subagent gave no answer",
                 cost_usd: spent(),
               });
-            finish({ ok: true, output: final, cost_usd: priced ? cost : null, reads });
+            finish({
+              ok: true,
+              output: readout.final,
+              cost_usd: readout.spent(),
+              reads: readout.reads,
+            });
           });
         });
       } finally {

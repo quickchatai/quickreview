@@ -117,4 +117,64 @@ describe("the scan leaf runner under [engine] runtime", () => {
     });
     expect(i.calls()).toBe(0);
   });
+
+  it("runs on the driver's SDK leaves on sdk, built once and never on the process runner", async () => {
+    const i = inner();
+    const built: number[] = [];
+    const sdk: CaseRunner = { run: async () => ({ ok: true, output: "sdk", cost_usd: null }) };
+    const env = envWith(`${FIXTURE}\n[engine]\nruntime = "sdk"\n`);
+    const runner = scanLeafRunner(i.runner, ROOT, env, () => {
+      built.push(1);
+      return sdk;
+    });
+    const signal = new AbortController().signal;
+    expect(await runner.run(spec, signal)).toMatchObject({ ok: true, output: "sdk" });
+    expect(await runner.run(spec, signal)).toMatchObject({ ok: true, output: "sdk" });
+    expect(built).toHaveLength(1);
+    expect(i.calls()).toBe(0);
+  });
+
+  it("a proc scan never builds the SDK leaves", async () => {
+    const i = inner();
+    const runner = scanLeafRunner(i.runner, ROOT, envWith(FIXTURE), () => {
+      throw new Error("built");
+    });
+    expect(await runner.run(spec, new AbortController().signal)).toEqual({
+      ok: false,
+      reason: "inner",
+    });
+  });
+
+  it("refuses the case when the SDK leaves cannot be built, and tries again at the next", async () => {
+    const i = inner();
+    let attempts = 0;
+    const env = envWith(`${FIXTURE}\n[engine]\nruntime = "sdk"\n`);
+    const runner = scanLeafRunner(i.runner, ROOT, env, () => {
+      attempts++;
+      throw new Error("no host");
+    });
+    const signal = new AbortController().signal;
+    for (let n = 1; n <= 2; n++)
+      expect(await runner.run(spec, signal)).toMatchObject({
+        ok: false,
+        reason: expect.stringMatching(/could not be built: no host/),
+        cost_usd: 0,
+      });
+    expect(attempts).toBe(2);
+    expect(i.calls()).toBe(0);
+  });
+
+  it("lens_runtime = engine stays refused on scan, SDK leaves or not", async () => {
+    const i = inner();
+    const env = envWith(
+      underPi(`${FIXTURE}\n[engine]\nruntime = "sdk"\n`, 'lens_runtime = "engine"'),
+    );
+    const runner = scanLeafRunner(i.runner, ROOT, env, () => ({
+      run: async () => ({ ok: false, reason: "sdk" }),
+    }));
+    expect(await runner.run(spec, new AbortController().signal)).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/lens_runtime = engine is not available on the scan route/),
+    });
+  });
 });

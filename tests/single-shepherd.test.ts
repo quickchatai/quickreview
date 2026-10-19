@@ -258,13 +258,21 @@ describe("daemon topology", () => {
     // case runner in the operator's own one-shot process (as the companion
     // drives it in its container). It holds only while nothing but the CLI's
     // dispatch reaches it, which the check after this one pins.
-    const operatorEntries = ["/src/scancli.ts"];
+    // src/engine/caserunner-sdk.ts is the same runner's SDK twin (P5.7): it
+    // reads the leaf's agent file and event stream with the process runner's
+    // own helpers, so it reaches setup/caserunner.js at runtime. Only
+    // scancli.ts loads it (on demand, in the detached driver), pinned below.
+    const operatorEntries = ["/src/scancli.ts", "/src/engine/caserunner-sdk.ts"];
     const reachesScanCli = srcFiles(src)
       .filter((f) => !f.endsWith("/src/cli.ts"))
       .filter((f) => /["'][^"']*\/scancli\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanCli).toEqual([]);
     // The scan sandbox's pi allowance above holds only while `qcr scan` is
     // the one module that reaches it.
+    const reachesSdkLeaves = srcFiles(src)
+      .filter((f) => !f.endsWith("/src/scancli.ts"))
+      .filter((f) => /["'][^"']*\/caserunner-sdk\.js["']/.test(readFileSync(f, "utf8")));
+    expect(reachesSdkLeaves).toEqual([]);
     const reachesScanBox = srcFiles(src)
       .filter((f) => !f.endsWith("/src/scancli.ts"))
       .filter((f) => /["'][^"']*\/scanbox\.js["']/.test(readFileSync(f, "utf8")));

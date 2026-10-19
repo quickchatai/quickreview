@@ -5,6 +5,8 @@
 //   daemon / engine   no daemon module's import closure reaches src/engine/,
 //                     which keeps the process-global HTTP dispatcher out of
 //                     the daemon
+//   SDK host          no extension's import closure (the companion's pi, the
+//                     tmux bot's) reaches an SDK host module [P5.7]
 //   packageability    src/engine/** carries no image-only path and reads no
 //                     QCR_STATE_HOME, so a post-v1 pi package stays possible
 //
@@ -17,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   daemonReachesEngine,
   engineImageOnlyPaths,
+  extensionsReachSdkHost,
   importsSdkAtRuntime,
   runtimeSdkImporters,
 } from "./helpers/engine-fences.js";
@@ -157,6 +160,52 @@ describe("[P2.1] packageability (R22): src/engine/** holds no image-only path", 
         "src/other.ts": `export const APP = "/opt/qcr";\n`,
       },
       (root) => expect(engineImageOnlyPaths(root)).toEqual([]),
+    );
+  });
+});
+
+describe("[P5.7] no pi process hosts an SDK session: extensions/ never reach an SDK host module", () => {
+  /**
+   * MUTATION: add `import "../src/engine/caserunner-sdk.js"` (or pisdk.js,
+   * sdkruntime.js) to any extension, or to anything an extension imports —
+   * src/scancli.ts included — and the chain appears here. scancli loads the
+   * scan's SDK leaf runner only inside the detached driver, by a dynamic
+   * import that no extension reaches.
+   */
+  it("holds on the tree", { timeout: HEAVY_TIMEOUT_MS }, () => {
+    expect(extensionsReachSdkHost(ROOT)).toEqual([]);
+  });
+
+  it("fails on a planted import, direct, transitive and dynamic", () => {
+    planted(
+      {
+        "extensions/setup.ts": `import { scan } from "../src/scan.js";\nimport "../src/engine/pisdk.js";\n`,
+        "extensions/other.ts": `const m = await import("../src/lazy.js");\n`,
+        "extensions/clean.ts": `import { a } from "../src/engine/auth.js";\n`,
+        "src/scan.ts": `export { x } from "./engine/caserunner-sdk.js";\n`,
+        "src/lazy.ts": `import("./engine/sdkruntime.js");\n`,
+        "src/engine/pisdk.ts": `export const p = 1;\n`,
+        "src/engine/sdkruntime.ts": `export const r = 1;\n`,
+        "src/engine/caserunner-sdk.ts": `export const c = 1;\n`,
+        "src/engine/auth.ts": `export const a = 1;\n`,
+      },
+      (root) => {
+        expect(extensionsReachSdkHost(root)).toEqual([
+          "extensions/other.ts > src/lazy.ts > src/engine/sdkruntime.ts",
+          "extensions/setup.ts > src/engine/pisdk.ts",
+          "extensions/setup.ts > src/scan.ts > src/engine/caserunner-sdk.ts",
+        ]);
+      },
+    );
+  });
+
+  it("ignores a commented-out import", () => {
+    planted(
+      {
+        "extensions/setup.ts": `// import "../src/engine/pisdk.js";\n`,
+        "src/engine/pisdk.ts": `export const p = 1;\n`,
+      },
+      (root) => expect(extensionsReachSdkHost(root)).toEqual([]),
     );
   });
 });

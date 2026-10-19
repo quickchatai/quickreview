@@ -40,7 +40,7 @@ import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.
 import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
 import { scanCasesForEnv } from "../src/engine/auth.js";
-import { checkLensRuntime, selectRuntime } from "../src/engine/select.js";
+import { checkLensRuntime } from "../src/engine/select.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { CaseRunner, Refusal, SetupEngine } from "../src/setup/engine.js";
 import type {
@@ -1070,25 +1070,55 @@ export function watchTuiRequests(
 
 // ---- assembly ------------------------------------------------------------------
 
+/** Where the scan driver's SDK leaves come from: built on first use, by
+ * whoever owns the process they run in (scancli's detached driver). */
+export type SdkLeaves = (o: {
+  agentsDir: string;
+  cwd: string;
+  transcriptDir: string;
+  env: NodeJS.ProcessEnv;
+  onExpired: (reason: string) => void;
+}) => CaseRunner | Promise<CaseRunner>;
+
 /** The scan leaf runner under `[engine] runtime`: the process runner
- * (`piCaseRunner`) on proc, and on sdk a refusal of every case until the scan
- * has an SDK leaf runner. The key is read per case, as `settingsOf` reads the
- * live config; an unreadable config is proc, the runner's behaviour before the
- * key existed. */
-export function scanLeafRunner(proc: CaseRunner, root: string, env: NodeJS.ProcessEnv): CaseRunner {
+ * (`piCaseRunner`) on proc, and on sdk the driver's SDK runner (`sdkLeaves`,
+ * built on first use). A process that has none — the companion's own pi, which
+ * must never host SDK sessions — refuses every case instead. The key is read
+ * per case, as `settingsOf` reads the live config; an unreadable config is
+ * proc, the runner's behaviour before the key existed. */
+export function scanLeafRunner(
+  proc: CaseRunner,
+  root: string,
+  env: NodeJS.ProcessEnv,
+  sdkLeaves?: () => CaseRunner | Promise<CaseRunner>,
+): CaseRunner {
+  let sdk: Promise<CaseRunner> | undefined;
   return {
-    run(spec, signal, onCost) {
+    async run(spec, signal, onCost) {
       const loaded = loadScanConfig(root, env);
       try {
         if (loaded.ok) checkLensRuntime(loaded.cfg.pi.lens_runtime, "scan");
-        selectRuntime(loaded.ok ? loaded.cfg.engine.runtime : "proc", "scan");
       } catch (err) {
-        return Promise.resolve({
-          ok: false,
-          reason: err instanceof Error ? err.message : String(err),
-        });
+        return { ok: false, reason: err instanceof Error ? err.message : String(err) };
       }
-      return proc.run(spec, signal, onCost);
+      if (!loaded.ok || loaded.cfg.engine.runtime === "proc") return proc.run(spec, signal, onCost);
+      if (sdkLeaves === undefined)
+        return {
+          ok: false,
+          reason:
+            "[engine] runtime = sdk is not available on the scan route in this process: scan leaves run on the SDK only in the `qcr scan` driver. Set it to proc here",
+        };
+      try {
+        sdk ??= Promise.resolve(sdkLeaves());
+        return (await sdk).run(spec, signal, onCost);
+      } catch (err) {
+        sdk = undefined;
+        return {
+          ok: false,
+          reason: `the SDK leaf runner could not be built: ${err instanceof Error ? err.message : String(err)}`,
+          cost_usd: 0,
+        };
+      }
     },
   };
 }
@@ -1106,6 +1136,10 @@ export function buildScan(
   /** The driver lease; default the state home's file lease, shared with every
    * other runner over it. */
   lease: ScanLease | null = null,
+  /** The SDK leaf runner, in a process that may host one (scancli's detached
+   * driver). Omitted — the companion's pi — a scan on `[engine] runtime = sdk`
+   * refuses its cases. */
+  sdkLeaves?: SdkLeaves,
 ): {
   scan: ScanRunner;
   findings: FindingsStore;
@@ -1122,6 +1156,12 @@ export function buildScan(
     return loaded.ok ? scanSettings(loaded.cfg) : null;
   };
   const findings = new FindingsStore(state);
+  const transcriptDir = join(home, SCAN_TRANSCRIPTS_DIR);
+  // A token a case would not outlive stops the run, on either host.
+  const stopOnExpired = (reason: string): void => {
+    console.error(`scan: stopping — ${reason}`);
+    scan.stop();
+  };
   // Assigned below: the triage reads the runner's runs, the runner closes
   // the triage's tickets at every run's end.
   let triage: ScanTriage | null = null;
@@ -1132,15 +1172,14 @@ export function buildScan(
     // the companion's login; a token a case would not outlive stops the run.
     cases: scanCasesForEnv(
       scanLeafRunner(
-        piCaseRunner({ agentsDir, cwd: root, transcriptDir: join(home, SCAN_TRANSCRIPTS_DIR) }),
+        piCaseRunner({ agentsDir, cwd: root, transcriptDir }),
         root,
         env,
+        sdkLeaves &&
+          (() => sdkLeaves({ agentsDir, cwd: root, transcriptDir, env, onExpired: stopOnExpired })),
       ),
       env,
-      (reason) => {
-        console.error(`scan: stopping — ${reason}`);
-        scan.stop();
-      },
+      stopOnExpired,
     ),
     source: gitScanSource(reviewedRepo, home),
     savedCut: () => {

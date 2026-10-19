@@ -123,6 +123,53 @@ export function daemonReachesEngine(root: string): string[] {
 }
 
 /**
+ * The modules that host an SDK session: the builder, the runtime over it, and
+ * the scan's leaf runner on it. A pi process (the companion's, the tmux bot's)
+ * loads extensions/ and must never carry one of these: the SDK's process-global
+ * HTTP dispatcher and its sessions belong to a disposable host (scancli's
+ * detached driver, a bench case), not to a long-lived pi.
+ */
+export const SDK_HOST_MODULES = [
+  "src/engine/pisdk.ts",
+  "src/engine/sdkruntime.ts",
+  "src/engine/caserunner-sdk.ts",
+];
+
+/**
+ * Chains "extensions/x.ts > ... > host module" from any extension's import
+ * closure (static, re-export and dynamic imports alike) to an SDK host module,
+ * one per host module reached per extension. Empty when the fence holds.
+ */
+export function extensionsReachSdkHost(root: string): string[] {
+  const files = new Set([
+    ...tsFilesUnder(join(root, "src")),
+    ...tsFilesUnder(join(root, "extensions")),
+  ]);
+  const hosts = new Set(SDK_HOST_MODULES.map((m) => join(root, m)));
+  const hits: string[] = [];
+  for (const entry of tsFilesUnder(join(root, "extensions"))) {
+    const parent = new Map<string, string | null>([[entry, null]]);
+    const queue = [entry];
+    while (queue.length > 0) {
+      const f = queue.shift()!;
+      if (hosts.has(f)) {
+        const chain: string[] = [];
+        for (let c: string | null = f; c; c = parent.get(c) ?? null)
+          chain.unshift(relative(root, c));
+        hits.push(chain.join(" > "));
+        continue;
+      }
+      for (const n of importsOf(f, readFileSync(f, "utf8"), files)) {
+        if (parent.has(n)) continue;
+        parent.set(n, f);
+        queue.push(n);
+      }
+    }
+  }
+  return hits.sort();
+}
+
+/**
  * Image-only paths and state-home reads, which src/engine/** must not carry:
  * the engine is what a post-v1 pi package would ship, so every
  * path reaches it through SessionSpec or config. Matched on code with

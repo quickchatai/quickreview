@@ -93,6 +93,10 @@ export { DETACH_TIMEOUT_MS, DRIVER_LOG, DRIVER_LOG_MAX };
 /** How often `status --wait` and `stop` look again. */
 export const POLL_MS = 2000;
 
+/** The SDK leaf host's private agent dir, under the state home: its own models
+ * list lives here, never in the operator's pi home. */
+const SCAN_SDK_AGENT_DIR = "scan/sdk-agent";
+
 export interface FindingsQuery {
   state?: string;
   lens?: string;
@@ -1021,9 +1025,9 @@ export function sendStarted(
 }
 
 /** A foreground driver's SIGINT/SIGTERM: the first stops the run (in-flight
- * cases aborted, their pi children killed by the case runner); a second
- * kills the driver's whole process group — the pi children with it — and
- * exits. */
+ * cases aborted: a pi child is killed by the case runner, an SDK leaf session
+ * is aborted and disposed in this process); a second kills the driver's whole
+ * process group — any pi children with it — and exits. */
 export function foregroundSignals(
   scan: Pick<ScanRunner, "stop">,
   io: { killGroup: () => void; exit: (code: number) => void; log: (line: string) => void },
@@ -1062,6 +1066,14 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
     env.QCR_REVIEWED_REPO!,
     env,
     shared,
+    null,
+    // This process is the scan's disposable driver (or a one-shot CLI that
+    // never runs a case): the one place scan leaves may be SDK sessions, loaded
+    // on first use. The companion's pi builds its scan without this.
+    async (o) => {
+      const { scanSdkCases } = await import("./engine/caserunner-sdk.js");
+      return scanSdkCases({ ...o, agentDir: join(home, SCAN_SDK_AGENT_DIR) });
+    },
   );
   return runScanCli(rest, json, {
     scan,
