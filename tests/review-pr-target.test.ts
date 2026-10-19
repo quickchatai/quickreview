@@ -169,12 +169,12 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
           : [],
     );
 
-  it("only the local review route imports the credential chain", () => {
+  it("only the local review route (and cli.ts's startup handoff read) imports the credential chain", () => {
     const importers = srcFiles(join(ROOT, "src"))
       .filter((f) => /from "[^"]*\/ghcred\.js"|from "\.\/ghcred\.js"/.test(readFileSync(f, "utf8")))
       .map((f) => f.slice(ROOT.length + 1))
       .sort();
-    expect(importers).toEqual(["src/prtarget.ts", "src/reviewcli.ts"].sort());
+    expect(importers).toEqual(["src/cli.ts", "src/prtarget.ts", "src/reviewcli.ts"].sort());
   });
 
   it("the daemon's GitHub code reads no personal token", () => {

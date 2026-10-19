@@ -717,6 +717,31 @@ describe("the image wires it", () => {
   });
 });
 
+describe("the token handoff (D39)", () => {
+  it("records Yama's ptrace_scope in the debug log, and only there", () => {
+    const r = rig();
+    const quiet = run(r, ["version"]);
+    expect(quiet.stderr).not.toContain("ptrace_scope");
+    const loud = run(r, ["version"], { QCR_DEBUG: "1" });
+    expect(loud.stderr).toMatch(/debug: kernel\.yama\.ptrace_scope=(\d+|absent)/);
+    expect(loud.stdout).not.toContain("ptrace_scope");
+  });
+
+  it("never reads, prints or exports the token file's path: the Node process takes it", () => {
+    const r = rig();
+    const out = run(r, ["version"], { QCR_GH_TOKEN_FILE: join(r.dir, "does-not-exist") });
+    expect(out.status, out.stderr).toBe(0);
+    expect(out.stderr).not.toContain("does-not-exist");
+  });
+
+  it("the image carries no GitHub token env: not in the Dockerfile, not in the entrypoint", () => {
+    for (const f of ["docker/Dockerfile", "docker/entrypoint.sh"]) {
+      const text = read(f).replace(/^\s*#.*$/gm, "");
+      expect(text, f).not.toMatch(/\b(GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN)\b/);
+    }
+  });
+});
+
 const hasDist = existsSync(join(root, "dist/src/cli.js"));
 describe.skipIf(!hasDist)("the real cli, through the entrypoint (no model)", () => {
   it("review --preview --json on a fixture repo", () => {
