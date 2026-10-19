@@ -236,6 +236,10 @@ describe("the companion image build", () => {
       () => {},
       { exists: () => true, read: () => undefined, mode: () => undefined },
       () => "0123456789abcdef",
+      "docker",
+      // The assembled release context is the checkout itself here, so the
+      // argv names the app root (the copy is tui-companion.test.ts's case).
+      (ctx) => ctx,
     );
     await lc.buildImage();
     expect(calls).toEqual([

@@ -16,15 +16,17 @@
 //   the conversation and the pi home survive both on their volumes.
 import { spawn } from "node:child_process";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   companionConfigMirrorDir,
@@ -457,6 +459,38 @@ export function appImageBuildArgv(image: string, ctx: string, stamp: string): st
   ];
 }
 
+/** The paths of the release image's build context (docker/Dockerfile): the
+ * Dockerfile and its own ignore file, then every `!path` that ignore file
+ * admits. Only BuildKit reads a per-Dockerfile ignore file; the legacy
+ * builder (a Docker without buildx) reads the root .dockerignore, which is the
+ * scan sandbox's narrower allowlist, so the context is assembled from this
+ * list instead of relying on either — as bench/aacr/bench.sh does. */
+export function releaseContextPaths(ignoreText: string): string[] {
+  const admitted = ignoreText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("!"))
+    .map((l) => l.slice(1).replace(/^\/+/, ""))
+    .filter((l) => l !== "");
+  return ["docker/Dockerfile", "docker/Dockerfile.dockerignore", ...admitted];
+}
+
+/** Copy the release image's context out of `ctx` into a fresh temp dir
+ * (node_modules, .git and tsbuildinfo files left out); the caller removes it. */
+export function assembleReleaseContext(ctx: string): string {
+  const out = mkdtempSync(join(tmpdir(), "qcr-companion-ctx-"));
+  const ignore = readFileSync(join(ctx, "docker", "Dockerfile.dockerignore"), "utf8");
+  for (const rel of releaseContextPaths(ignore)) {
+    const from = join(ctx, rel);
+    if (!existsSync(from)) continue;
+    cpSync(from, join(out, rel), {
+      recursive: true,
+      filter: (src) => !/(^|\/)(node_modules|\.git)(\/|$)|\.tsbuildinfo$/.test(src),
+    });
+  }
+  return out;
+}
+
 /** `uid:gid` the companion container runs as: the invoking host user, so the
  * host bind mounts it writes (/workspace, /tracker, /feed, /alerts) stay
  * writable and its files stay yours. The release image bakes no user. */
@@ -492,6 +526,9 @@ export class CompanionLifecycle {
     private readonly stampOf: (root: string) => string = appStamp,
     /** How the tmux server is reached — see `CompanionMode`. */
     readonly mode: CompanionMode = "docker",
+    /** Builds the image's context from the app root (`assembleReleaseContext`);
+     * injectable so the build argv is assertable without copying a tree. */
+    private readonly assembleContext: (ctx: string) => string = assembleReleaseContext,
   ) {}
 
   /** How long `ensureUp` waits, in `tmux-socket` mode, for the wrapper-run
@@ -899,9 +936,18 @@ export class CompanionLifecycle {
     this.checkBuildable();
     const ctx = this.cfg.build_context;
     onProgress?.(`building ${this.cfg.image} image (first run — takes a few minutes)…`);
-    const res = await this.docker(appImageBuildArgv(this.cfg.image, ctx, this.stampOf(ctx)), {
-      timeoutMs: 1_800_000,
-    });
+    // The stamp is the checkout's; the build reads an assembled copy of the
+    // release context, so it works on the legacy builder too.
+    const stamp = this.stampOf(ctx);
+    const built = this.assembleContext(ctx);
+    let res;
+    try {
+      res = await this.docker(appImageBuildArgv(this.cfg.image, built, stamp), {
+        timeoutMs: 1_800_000,
+      });
+    } finally {
+      if (built !== ctx) rmSync(built, { recursive: true, force: true });
+    }
     if (!res.ok) throw new Error(`docker build ${this.cfg.image} failed: ${errText(res)}`);
     onProgress?.(`${this.cfg.image} image built`);
   }
