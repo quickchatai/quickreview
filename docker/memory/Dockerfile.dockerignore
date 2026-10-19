@@ -1,0 +1,14 @@
+# The memory sidecar's build context (docker/memory/Dockerfile). BuildKit reads
+# this file in preference to the root .dockerignore. Admits only what the image
+# copies; everything else in the checkout stays out.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!src
+!extensions
+!scripts
+!config.example.toml
+!docker/memory/entrypoint.sh
+**/node_modules
+**/.git

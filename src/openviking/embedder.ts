@@ -24,6 +24,12 @@
 // binary on a dev PC — it will not appear without a rebuild, so retrying is
 // noise.
 //
+// UNDER THE MEMORY SIDECAR (`[openviking] endpoint = "remote"`) the sidecar
+// runs this service beside the server, with this same class: the daemon has
+// nothing to supervise, so it reports `off` with that reason and spawns
+// nothing. Whether the sidecar's embedder serves is read from the server's
+// own `/ready`, which probes it.
+//
 // The same three properties as the server's supervisor: start() never blocks,
 // a crash respawns on the capped ladder forever, status() is synchronous,
 // cached and total.
@@ -195,6 +201,10 @@ export function memoryServing(
   return { ok: true };
 }
 
+/** Why the daemon runs no embedder when the memory sidecar serves memory. */
+export const REMOTE_EMBEDDER_REASON =
+  "the memory sidecar runs it ([openviking] endpoint = remote); its health is the server's /ready";
+
 /** How often a not-yet-ready child is probed — the gate waits on this. */
 export const EMBEDDER_FAST_POLL_MS = 500;
 /** How long the server's first start waits for the embedder before starting
@@ -279,6 +289,12 @@ export class LocalEmbedderSupervisor {
     this.started = true;
     if (!this.cfg.enabled) {
       this.reason = "memory is disabled in config.toml";
+      return;
+    }
+    if (this.cfg.endpoint === "remote") {
+      this.reason = REMOTE_EMBEDDER_REASON;
+      if (this.cfg.embedding_provider === "local")
+        this.log(`openviking: local embedder NOT started — ${REMOTE_EMBEDDER_REASON}`);
       return;
     }
     const off = localEmbedderOffReason(this.cfg, this.readOvConf());

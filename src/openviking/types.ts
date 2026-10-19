@@ -117,6 +117,10 @@ export interface LocalEmbedderStatus {
  */
 export interface OpenVikingStatus {
   enabled: boolean;
+  /** Present (as "remote") only when the server is the memory sidecar's:
+   * the daemon probes it and supervises nothing, so `running` means
+   * "reachable". Absent for the in-container server. */
+  endpoint?: "remote";
   /** The supervisor believes a child process is alive. */
   running: boolean;
   pid?: number;
