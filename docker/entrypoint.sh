@@ -27,13 +27,28 @@
 # every runtime uid, and <root>/state is a world-writable mount point.
 #
 # bash-guard (extensions/bash-guard.ts) is registered in pi's global settings
-# by the daemon mode only. The per-call modes (cli, login, the Action) run in
-# a throwaway container that is the sandbox, and the model's tools run as a
-# separate unprivileged uid so the kernel keeps them off the token-holding
-# Node process (D32); the daemon is the live bot and keeps the guard, the
-# `examples/subagent` check and the reviewer context stub it has always had
+# by the daemon mode only (the companion never registered it globally either:
+# its guard rides per-spawn argv). D32 drops it from the per-call modes (cli,
+# login, tui, the Action), which run in a throwaway container that is the
+# sandbox, and rules that the model's tools run as a separate unprivileged uid
+# so the kernel keeps them off the token-holding Node process.
+#
+# TODO(D32): THAT UID SEPARATION IS NOT IMPLEMENTED YET. Nothing in this
+# script, the Dockerfile or the engine switches uid, so today the per-call
+# modes run with NO guard and the model's bash can read /proc/<pid>/mem and
+# environ of the token-holding Node process. It needs CAP_SETUID/CAP_SETGID
+# (a setuid launcher, or the engine spawning tools under another uid), which
+# conflicts with `--cap-drop ALL`: an owner design ruling is pending. Until it
+# lands, do not point this image at a real model in a per-call mode.
+#
+# The daemon is the live bot and keeps the guard, the `examples/subagent`
+# check and the reviewer context stub it has always had
 # (docker/daemon/entrypoint.sh, deploy/ansible/templates/entrypoint.sh.j2),
 # unchanged until the lens tool replaces the subagent example (P9.4).
+#
+# Every mode that reaches pi needs a writable <root>/state and a writable HOME
+# (pi settings are merged under ~/.pi on every cli start, `version` included):
+# a read-only rootfs without a state mount and a writable HOME is refused here.
 #
 # Every line this script prints goes to stderr: a cli mode's stdout is the
 # command's (--json), never ours.

@@ -9,7 +9,9 @@
 //     the installed pi package;
 //   - the daemon mode carries the bash-guard registration, its FATAL on a
 //     missing extension and on a missing examples/subagent, and the 0444
-//     reviewer stub; the per-call modes register no bash-guard (D32);
+//     reviewer stub; the per-call modes register no bash-guard (D32 - the
+//     uid separation that is meant to replace it is NOT implemented or tested
+//     here);
 //   - <root>/state must be writable, and a cli mode's stdout is the command's.
 import { afterEach, describe, expect, it } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
@@ -414,7 +416,7 @@ describe("daemon mode", () => {
   });
 });
 
-describe("per-call modes carry no bash-guard (D32)", () => {
+describe("per-call modes register no bash-guard (D32 half: the uid separation is pending, not checked here)", () => {
   it.each([
     ["cli", ["version"]],
     ["login", ["login"]],
