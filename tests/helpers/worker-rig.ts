@@ -20,6 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CapabilityStore, socketPathOf } from "../../src/ipc/capability.js";
+import { CONTROL_ACK_OP, parseControlAck, type ControlAck } from "../../src/ipc/control.js";
 import { IpcClient } from "../../src/ipc/client.js";
 import { PermitBroker, permitOps } from "../../src/ipc/permits.js";
 import type { CommandState, IpcEventKind } from "../../src/ipc/protocol.js";
@@ -246,6 +247,8 @@ export class FakeDaemon {
   /** Runs inside `wakes.take`, before it answers; a test drops the connection here. */
   onTake: (() => Promise<void>) | undefined;
   readonly acked: string[] = [];
+  /** The worker's `control.ack`s (P8.12), in arrival order. */
+  readonly controlAcks: ControlAck[] = [];
   /** The daemon's real permit broker (P8.10), no stagger: a worker's passes ask it. */
   readonly permits = new PermitBroker({ ceiling: 20, staggerMs: 0 });
   /** The lens ids that asked the broker for a permit, in order. */
@@ -280,6 +283,13 @@ export class FakeDaemon {
             const spec = this.specs.get(ctx.commandId);
             if (!spec) throw new Error("no spec");
             return spec;
+          },
+        },
+        [CONTROL_ACK_OP]: {
+          roles: ["worker"],
+          handle: (_ctx, body) => {
+            this.controlAcks.push(parseControlAck(body));
+            return {};
           },
         },
         [WAKES_TAKE_OP]: {
@@ -342,6 +352,11 @@ export class FakeDaemon {
     });
     this.clients.push(client);
     return client;
+  }
+
+  /** Push the operator's control to a command's worker, as the supervisor does. */
+  control(commandId: string, kind: string, body: Record<string, unknown>): number {
+    return this.server.push(commandId, kind, body);
   }
 
   kinds(): IpcEventKind[] {

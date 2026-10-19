@@ -18,6 +18,13 @@
 //   permit-crash  ready, accepted, takes two lens permits from the broker (P8.10),
 //             records the answers, then SIGKILL on itself
 //
+//   controls  ready, accepted, then heartbeats until the daemon pushes a control (P8.12):
+//             steer and follow_up are recorded and acked `queued`; abort is recorded,
+//             acked `handled`, followed by a `failed` event and exit 6
+//   refuse    as controls, but acks every steer and follow_up `refused`
+//   deaf      ready, accepted, heartbeats, and ignores controls and SIGTERM: only
+//             the SIGKILL of the group ends it
+//
 // FAKE_WORKER_OUT is a directory it may write to; FAKE_WORKER_BEAT_MS the beat.
 import { spawn } from "node:child_process";
 import { readSync, writeFileSync } from "node:fs";
@@ -40,7 +47,7 @@ const capability = buf.subarray(0, n).toString("utf8").trim();
 let generation = Number(env.QCR_IPC_GENERATION);
 
 if (mode === "term-ok") process.on("SIGTERM", () => process.exit(143));
-if (mode === "busy" || mode === "group") process.on("SIGTERM", () => {});
+if (mode === "busy" || mode === "group" || mode === "deaf") process.on("SIGTERM", () => {});
 if (mode === "env") {
   record("env.json", { env, argv, cwd: process.cwd() });
   record("cap.txt", capability);
@@ -71,6 +78,7 @@ sock.on("data", (chunk) => {
     if (m.type === "hello_ok") onHello(m);
     else if (m.type === "response") waiting.get(m.id)?.(m);
     else if (m.type === "error") errors.push(m.error.code);
+    else if (m.type === "control") onControl(m);
   }
 });
 sock.on("close", () => process.exit(75));
@@ -80,6 +88,23 @@ if (mode !== "mute")
   );
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const seen = [];
+async function onControl(m) {
+  if (mode !== "controls" && mode !== "refuse") return;
+  seen.push({ kind: m.kind, body: m.body });
+  record("controls.json", seen);
+  const id = m.body.id;
+  if (m.kind === "abort") {
+    await request("control.ack", generation, { id, ack: "handled" });
+    event("failed", { code: 6, reason: "the round was aborted by the operator" });
+    await new Promise((r) => sock.write("", r));
+    process.exit(6);
+  }
+  if (mode === "refuse")
+    await request("control.ack", generation, { id, ack: "refused", reason: "the round is ending" });
+  else await request("control.ack", generation, { id, ack: "queued" });
+}
 
 async function onHello(m) {
   generation = m.generation;
@@ -129,7 +154,7 @@ async function onHello(m) {
     await sleep(100);
     for (;;);
   }
-  if (mode === "term-ok") {
+  if (mode === "term-ok" || mode === "controls" || mode === "refuse" || mode === "deaf") {
     setInterval(() => event("progress", { stage: "heartbeat" }), beatMs);
     await sleep(60_000);
   }

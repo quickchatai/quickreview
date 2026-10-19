@@ -8032,6 +8032,7 @@ export function buildStatusSnapshot(
   archive?: ArchiveStatus,
   loginRefresh?: LoginRefreshStatus,
   permits?: PermitStatus,
+  runtimeOf?: (pr: number) => PrRuntime | undefined,
 ): StatusSnapshot {
   const at = now();
   const today = at.toISOString().slice(0, 10);
@@ -8098,6 +8099,10 @@ export function buildStatusSnapshot(
             },
           }
         : {}),
+      ...(() => {
+        const runtime = runtimeOf?.(p.number);
+        return runtime === undefined ? {} : { runtime };
+      })(),
       number: p.number,
       state: p.state,
       title: p.title,

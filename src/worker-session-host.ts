@@ -29,6 +29,7 @@ import type { Config } from "./config.js";
 import type { OvSessionLifecycle } from "./memory/ovsession.js";
 import { PrSessionLifecycle, prSessionName, type PrSessionHost } from "./pr-session-lifecycle.js";
 import { verifiedPayload } from "./session-command-payload.js";
+import { restoreRotatedFiles, rotateSessionFiles } from "./sessionjsonl.js";
 import {
   sameSessionCommandOwner,
   sessionCommandMarker,
@@ -82,8 +83,10 @@ export class WorkerSessionHost implements SessionHooks {
   private readonly store: StateStore;
   private readonly supervisor: WorkerSupervisor;
   private readonly log: (msg: string) => void;
+  private readonly now: () => Date;
 
   constructor(opts: WorkerSessionHostOptions) {
+    this.now = opts.now ?? (() => new Date());
     this.root = opts.root;
     this.store = opts.store;
     this.supervisor = opts.supervisor;
@@ -488,6 +491,25 @@ export class WorkerSessionHost implements SessionHooks {
   async killSession(pr: number, expected?: SessionCommandOwnership): Promise<void | boolean> {
     const fenced = await this.fenceSession(pr, expected);
     return expected ? fenced : undefined;
+  }
+
+  /** The operator's restart-session, after the kill: rotate the PR's JSONLs aside
+   * so the next worker births a fresh session (a worker resumes the newest JSONL,
+   * where a killed tmux pi was simply born again). Refused while a worker of the
+   * session runs; returns the undo. The review ledger is not touched: the next
+   * round order re-hands it (src/ledgercarry.ts). */
+  rotateSession(pr: number): () => void {
+    const session = prSessionName(pr);
+    if (this.supervisor.runs(session))
+      throw new Error(`session ${session} has a worker; not rotating its JSONL beside it`);
+    const stamp = this.now()
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace(/\.\d+Z$/, "Z");
+    const moves = rotateSessionFiles(this.lifecycle.sessionDir(session), stamp);
+    this.store.logEvent("session_rotated", pr, { files: moves.length, stamp });
+    this.log(`rotated ${moves.length} JSONL(s) of ${session}`);
+    return () => restoreRotatedFiles(moves);
   }
 
   private async fenceSession(

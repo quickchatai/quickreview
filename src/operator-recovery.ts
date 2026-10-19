@@ -25,6 +25,12 @@ export interface OperatorRecoveryDeps {
    * `restart-session` releases ownership only once none runs. Absent = the
    * caller has no worker host to ask. */
   workerRuns?: (pr: number) => boolean | null;
+  /** Worker-hosted PRs only (P8.12): a fresh worker RESUMES the newest JSONL, so
+   * restart-session must rotate it away or it would resume the very conversation
+   * the operator is replacing. Called once the old worker is proven gone and before
+   * the blocking command is released; returns the undo, run if the release fails.
+   * The tmux host births a fresh session after a kill and needs none. */
+  rotateSession?: (pr: number) => Promise<() => void> | (() => void);
   now?: () => Date;
 }
 
@@ -163,6 +169,7 @@ async function recoverPrForOperatorNow(
     // quarantined files and leave the winner untouched.
     const quarantined: Array<{ commandId: string; injectPath: string; quarantinePath: string }> =
       [];
+    let unrotate: (() => void) | undefined;
     try {
       for (const { command } of payloads) {
         if (!existsSync(command.inject_path)) continue;
@@ -174,6 +181,7 @@ async function recoverPrForOperatorNow(
           quarantinePath,
         });
       }
+      if (deps.rotateSession) unrotate = await deps.rotateSession(pr);
       reset = deps.store.cancelBlockingSessionCommandsForOperator(
         pr,
         payloads
@@ -183,6 +191,7 @@ async function recoverPrForOperatorNow(
         blockers.map((command) => command.id),
       );
     } catch (error) {
+      unrotate?.();
       const stillBlocking = new Set(
         deps.store.blockingSessionCommandsForPr(pr).map((command) => command.id),
       );

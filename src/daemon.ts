@@ -94,6 +94,19 @@ export type DaemonAdapter = DispatchAdapter &
   Partial<CiAdapter> &
   Partial<ConversationAdapter>;
 
+/** A per-PR runtime reader that cannot take the status write down with it. */
+function runtimeReader(
+  read: (pr: number) => import("./state.js").PrRuntime | undefined,
+): (pr: number) => import("./state.js").PrRuntime | undefined {
+  return (pr) => {
+    try {
+      return read(pr);
+    } catch {
+      return undefined;
+    }
+  };
+}
+
 export interface DaemonDeps {
   /** Finished-review delivery, through the existing guarded adapter. Absent
    * in stub-wired daemons: never guess a mutation route from a partial stub. */
@@ -218,6 +231,9 @@ export interface DaemonDeps {
    * wire.ts hands the broker's `status()` once the WorkerSupervisor runs in the
    * daemon (P8.6). Absent ⇒ no `permits` key. */
   permitStatus?: () => import("./ipc/permits.js").PermitStatus | undefined;
+  /** What hosts each PR's session, for status.json's per-PR `runtime` (P8.12,
+   * src/workerruntime.ts). Absent: no PR reports one, which readers take as tmux. */
+  runtimeOf?: (pr: number) => import("./state.js").PrRuntime | undefined;
   /**
    * Seams of the daemon's event-loop watch (src/eventloop.ts):
    * the sampler, the cpu.stat reader, the clock and the evaluation timer.
@@ -1045,6 +1061,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         archive,
         loginRefresh,
         permits,
+        deps.runtimeOf && runtimeReader(deps.runtimeOf),
       );
       if (postingOutbox)
         for (const pr of snapshot.prs) {

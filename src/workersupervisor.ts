@@ -34,6 +34,11 @@
 //     PRs within 15 minutes drain the bot. A drained bot or a parked PR starts no
 //     worker, of any mode: `launch` refuses and `launchPending` skips. An end by the
 //     daemon's own stop or by the operator is not a failure.
+//   - CONTROL (P8.12). `control` forwards the operator's steer and follow-up to the
+//     round's worker over its own connection and answers with the worker's ack
+//     (queued, handled or refused); `abortRound` and the recovery `fence` ask the
+//     worker to abort and, when it has not gone within the grace period, SIGKILL its
+//     group (a lease the process table no longer confirms is never signalled).
 //   - RESTART. On a daemon restart every leased group is killed and its round is
 //     requeued under the same command id (`recover`), so the fresh worker resumes
 //     the JSONL and continues instead of sending the order again (D22).
@@ -57,6 +62,13 @@ import {
   type CommandState,
   type IpcEventKind,
 } from "./ipc/protocol.js";
+import {
+  CONTROL_ACK_OP,
+  controlText,
+  parseControlAck,
+  type ControlAck,
+  type ControlKind,
+} from "./ipc/control.js";
 import { type PermitBroker, permitOps } from "./ipc/permits.js";
 import type { EventHandler, OpHandler, RequestContext } from "./ipc/server.js";
 import {
@@ -138,6 +150,12 @@ export interface WorkerLimits {
   wallGraceMs: number;
   /** SIGTERM to SIGKILL. */
   killGraceMs: number;
+  /** An abort asked of a worker (the operator's abort-round, the recovery fence) to
+   * the SIGKILL of its group: the worker stops its session and exits inside it, or
+   * is killed. */
+  abortGraceMs: number;
+  /** How long a steer or follow-up waits for the worker's ack. */
+  controlAckMs: number;
   /** Times a round is handed to a fresh worker after its worker died. */
   maxRequeues: number;
   /** How often `start()` runs `tick`. */
@@ -155,6 +173,8 @@ export const DEFAULT_WORKER_LIMITS: WorkerLimits = {
   stallAllowanceMs: 5_000,
   wallGraceMs: 30_000,
   killGraceMs: 10_000,
+  abortGraceMs: 5_000,
+  controlAckMs: 5_000,
   maxRequeues: 3,
   tickMs: 1_000,
   fenceWaitMs: 15_000,
@@ -208,7 +228,7 @@ export function decideOutcome(x: {
   if (x.killedFor !== undefined)
     return { kind: "requeue", reason: `the worker was ended: ${x.killedFor}` };
   if (x.code === 0) return { kind: "acked" };
-  if (x.code !== null && x.code >= 1 && x.code <= 5)
+  if (x.code !== null && x.code >= 1 && x.code <= 6)
     return { kind: "failed", reason: x.failedReason ?? `the worker exited ${x.code}` };
   return {
     kind: "requeue",
@@ -301,6 +321,10 @@ export interface WorkerSupervisorDeps {
   /** The refresher's hold while a login rewrites auth.json (P8.22): a spawn waits. */
   loginGate?: { paused(): boolean; whenResumed(timeoutMs: number): Promise<boolean> };
   loginWaitMs?: number;
+  /** Sends a control message down a command's worker connection (IpcServer.push);
+   * returns how many connections it reached. Omitted: no control can be forwarded,
+   * and an abort goes straight to the group. */
+  push?: (commandId: string, kind: string, body?: unknown) => number;
   /** Told of every worker event after the supervisor has acted on it. */
   observe?: (o: WorkerObservation) => void;
   spawn?: typeof nodeSpawn;
@@ -331,6 +355,10 @@ interface LiveWorker {
   spawnError: string | undefined;
   killedFor: KillReason | undefined;
   killTimer: NodeJS.Timeout | undefined;
+  /** Controls pushed and not yet acked, by id. */
+  controls: Map<string, (ack: ControlAck) => void>;
+  /** The group was sent SIGKILL because an abort was not obeyed in time. */
+  forceKilled: boolean;
   settled: boolean;
   /** Resolves when the worker's row has been dealt with. */
   done: Promise<void>;
@@ -353,6 +381,11 @@ export interface RecoverResult {
   requeued: string[];
   failed: string[];
 }
+
+/** What a control came to: the worker's ack, or why it was not delivered. */
+export type ControlResult =
+  | { ok: true; ack: "queued" | "handled"; command_id: string; killed?: boolean }
+  | { ok: false; reason: string };
 
 export interface WorkerStatus {
   command_id: string;
@@ -439,6 +472,16 @@ export class WorkerSupervisor {
             throw new IpcError("command_inactive", "no live worker for this command");
           return rec.spec;
         },
+      },
+    };
+    ops[CONTROL_ACK_OP] = {
+      roles: ["worker"],
+      handle: (ctx, body) => {
+        const ack = parseControlAck(body);
+        const rec = this.byCommand.get(ctx.commandId);
+        // An ack for a control nobody waits for any more is not an error.
+        rec?.controls.get(ack.id)?.(ack);
+        return {};
       },
     };
     if (this.deps.post) Object.assign(ops, postOps(this.deps.post));
@@ -720,6 +763,8 @@ export class WorkerSupervisor {
       spawnError: undefined,
       killedFor: undefined,
       killTimer: undefined,
+      controls: new Map(),
+      forceKilled: false,
       settled: false,
       done,
       finish,
@@ -845,6 +890,8 @@ export class WorkerSupervisor {
     if (rec.settled) return;
     rec.settled = true;
     if (rec.killTimer) clearTimeout(rec.killTimer);
+    for (const [id, resolve] of [...rec.controls])
+      resolve({ id, ack: "refused", reason: "the worker ended" });
     const { store } = this.deps;
     try {
       // The leader is gone; whatever it left in its group goes with it.
@@ -1042,16 +1089,25 @@ export class WorkerSupervisor {
     while (this.launching.has(session) && Date.now() < end) await sleep(5);
     const rec = this.bySession.get(session);
     if (rec) {
-      this.end(rec, "fence");
-      let timer: NodeJS.Timeout | undefined;
-      await Promise.race([
-        rec.done,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, Math.max(0, end - Date.now()));
-          timer.unref();
-        }),
-      ]);
-      clearTimeout(timer);
+      // Abort first (the worker stops its session and the passes it started, and
+      // exits); the group is sent SIGKILL when that has not happened in the grace.
+      this.startAbort(rec, "fence");
+      await this.exited(rec, Math.max(0, end - Date.now()));
+    } else {
+      // No child of ours, but a lease may still name a group (a worker the boot
+      // could not end, another daemon's). It is killed only while its leader still
+      // has the lease's start time in the lease's boot and container (judgeLease):
+      // a recycled pid or pgid is a stranger's and is left alone.
+      const held = this.leases.read(session);
+      if (held) {
+        const out = await killLease(held, {
+          proc: this.proc,
+          signal: this.signal,
+          graceMs: 0,
+          pollMs: 10,
+        });
+        if (!out.survivors) this.leases.forget(session);
+      }
     }
     return !this.runs(session);
   }
@@ -1067,6 +1123,132 @@ export class WorkerSupervisor {
       expectedAttempt,
       this.iso(this.now() + this.limits.readyMs),
     );
+  }
+
+  // ---- the operator's controls (P8.12) ---------------------------------------
+
+  /** The PR's worker, if it can be controlled: running, past `ready`, and not
+   * already on its way out. A refusal says why. */
+  private controllable(pr: number): LiveWorker | string {
+    const rec = this.bySession.get(`pr-${pr}`);
+    if (!rec || rec.settled) return `no worker is running for #${pr}`;
+    if (rec.killedFor !== undefined) return `the worker of #${pr} is ending`;
+    if (rec.readyAt === undefined) return `the worker of #${pr} has not opened its session yet`;
+    return rec;
+  }
+
+  /** Push `kind` to the worker and say when its ack comes: null when the worker
+   * is not reachable, the ack otherwise (a settled worker acks `refused`). */
+  private forward(
+    rec: LiveWorker,
+    kind: ControlKind,
+    text: string | undefined,
+    waitMs: number,
+  ): { sent: number; ack: Promise<ControlAck | null>; id: string } {
+    const id = randomUUID();
+    let timer: NodeJS.Timeout | undefined;
+    const ack = new Promise<ControlAck | null>((resolve) => {
+      rec.controls.set(id, (a) => resolve(a));
+      timer = setTimeout(() => resolve(null), waitMs);
+      timer.unref();
+    }).finally(() => {
+      clearTimeout(timer);
+      rec.controls.delete(id);
+    });
+    const sent = this.deps.push?.(rec.row.id, kind, {
+      id,
+      ...(text !== undefined ? { text } : {}),
+    });
+    if (!sent)
+      rec.controls.get(id)?.({ id, ack: "refused", reason: "the worker is not connected" });
+    return { sent: sent ?? 0, ack, id };
+  }
+
+  /**
+   * Forward the operator's steer or follow-up to the PR's running worker and answer
+   * with the worker's word: `queued` (the session has it and acts when its turn
+   * allows), `handled` (it acted now), or a refusal with the reason. The text is
+   * validated here as well as by the command's schema. A worker that does not answer
+   * in `controlAckMs` is reported unacknowledged, never as delivered.
+   */
+  async control(pr: number, kind: "steer" | "follow_up", text: unknown): Promise<ControlResult> {
+    let checked: string;
+    try {
+      checked = controlText(text);
+    } catch (e) {
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    }
+    if (!this.deps.push) return { ok: false, reason: "this daemon cannot reach its workers" };
+    const rec = this.controllable(pr);
+    if (typeof rec === "string") return { ok: false, reason: rec };
+    const { ack } = this.forward(rec, kind, checked, this.limits.controlAckMs);
+    const got = await ack;
+    if (got === null)
+      return { ok: false, reason: `the worker of #${pr} did not answer; check the session` };
+    if (got.ack === "refused")
+      return { ok: false, reason: got.reason ?? `the worker of #${pr} refused it` };
+    return { ok: true, ack: got.ack, command_id: rec.row.id };
+  }
+
+  /**
+   * The operator's abort-round: ask the worker to stop its session (and the lens
+   * passes it started) and end. The command's row fails as ended by the operator
+   * (`decideOutcome`). A worker that has not exited within `abortGraceMs`, or that
+   * cannot be reached, has its group sent SIGKILL.
+   */
+  async abortRound(pr: number): Promise<ControlResult> {
+    const rec = this.bySession.get(`pr-${pr}`);
+    if (!rec || rec.settled) return { ok: false, reason: `no worker is running for #${pr}` };
+    if (rec.killedFor !== undefined)
+      return { ok: true, ack: "handled", command_id: rec.row.id, killed: rec.forceKilled };
+    const { ack, sent } = this.startAbort(rec, "operator");
+    // An ack ends the wait. So does the exit. No ack in the grace period (or a worker
+    // that could not be asked) means the SIGKILL is due: wait for it to land.
+    const got = sent > 0 ? await Promise.race([ack, rec.done]) : null;
+    if (got === null || got === undefined) await this.exited(rec, this.limits.fenceWaitMs);
+    return { ok: true, ack: "handled", command_id: rec.row.id, killed: rec.forceKilled };
+  }
+
+  /** Resolve when `rec` has been reaped or after `ms`, whichever is first. */
+  private async exited(rec: LiveWorker, ms: number): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      rec.done,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms);
+        timer.unref();
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
+  /** Ask `rec`'s worker to abort and arm the SIGKILL of its group for when it has
+   * not exited in the grace period (at once, when it cannot be asked). The row
+   * follows the exit as `why` says. */
+  private startAbort(
+    rec: LiveWorker,
+    why: "operator" | "fence",
+  ): { ack: Promise<ControlAck | null>; sent: number } {
+    const fresh = rec.killedFor === undefined;
+    if (fresh) {
+      rec.killedFor = why;
+      this.log(`aborting worker ${rec.row.id} (${why})`);
+      this.deps.store.logEvent("worker_ending", rec.row.pr, { command_id: rec.row.id, why });
+    }
+    const { sent, ack } = this.forward(rec, "abort", undefined, this.limits.abortGraceMs);
+    if (fresh) {
+      rec.killTimer = setTimeout(
+        () => {
+          if (rec.settled) return;
+          rec.forceKilled = true;
+          this.log(`worker ${rec.row.id} did not stop on abort: SIGKILL to its group`);
+          this.signalGroup(rec, "SIGKILL");
+        },
+        sent > 0 ? this.limits.abortGraceMs : 0,
+      );
+      rec.killTimer.unref();
+    }
+    return { ack, sent };
   }
 
   // ---- views ---------------------------------------------------------------

@@ -35,6 +35,7 @@ import {
   type WorkerDeps,
 } from "../src/botworker.js";
 import { createCapabilityFd, ipcEnv, runDirOf } from "../src/ipc/capability.js";
+import { LIVE_MAIN_FILE, liveRoundDir } from "../src/live/events.js";
 import { DISABLED_REFRESH } from "../src/engine/auth.js";
 import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
 import { parseWorkerSpec, type WorkerSpec } from "../src/ipc/workerspec.js";
@@ -45,6 +46,7 @@ import { pricedFaux } from "./helpers/priced-faux.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 import {
   FakeDaemon,
+  SESSION,
   buildWorld,
   writeTasks,
   type WorkerEvent,
@@ -771,5 +773,149 @@ describe("[P8.3] a round that fails", () => {
     });
     expect(code).toBe(EXIT.failed);
     expect(String(daemon.of("failed")[0]!.body["reason"])).toMatch(/wall-clock/);
+  });
+});
+
+// ---- [P8.12] the operator's controls, on the real SDK over the faux provider ------
+
+async function until(cond: () => boolean, what: string, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+/** A faux model step that holds the turn open until `release()`, or until the turn is aborted. */
+function held(text: string): { step: Step; release: () => void } {
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const step: Step = async (_c, options) => {
+    await new Promise<void>((resolve) => {
+      void gate.then(resolve);
+      const s = options?.signal;
+      if (!s) return;
+      if (s.aborted) return resolve();
+      s.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return fauxAssistantMessage(text);
+  };
+  return { step, release };
+}
+
+describe("[P8.12] steer, follow-up and abort reach the running session", () => {
+  it("a steer lands after the turn in flight: the model's next request carries it", async () => {
+    const first = held("first answer");
+    const second: string[] = [];
+    const next: Step = (ctx) => {
+      second.push(JSON.stringify(ctx.messages));
+      return fauxAssistantMessage("after the steer");
+    };
+    const running = round("ORDER\n", script([first.step, next]), {}, "cmd-s");
+    await until(() => daemon.of("accepted").length > 0, "the turn to start");
+    expect(daemon.control("cmd-s", "steer", { id: "c1", text: "look at the lock order" })).toBe(1);
+    await until(() => daemon.controlAcks.length === 1, "the steer's ack");
+    // The session has it; it acts when the turn allows.
+    expect(daemon.controlAcks[0]).toEqual({ id: "c1", ack: "queued" });
+    first.release();
+
+    const { code } = await running;
+    expect(code).toBe(EXIT.ok);
+    expect(second).toHaveLength(1);
+    expect(second[0]).toContain("look at the lock order");
+    const text = readFileSync(newestSessionFile(world.sessionDir)!, "utf8");
+    const at = (needle: string): number => text.indexOf(needle);
+    expect(at("first answer")).toBeGreaterThan(-1);
+    expect(at("first answer")).toBeLessThan(at("look at the lock order"));
+    expect(at("look at the lock order")).toBeLessThan(at("after the steer"));
+    expect(daemon.of("done")[0]!.body["controls"]).toEqual({ steer: 1, follow_up: 0, abort: 0 });
+    // The viewer sees it too: the steer is in the round's LiveEvent log (state/live/).
+    const live = readFileSync(join(liveRoundDir(world.root, SESSION, 1), LIVE_MAIN_FILE), "utf8");
+    expect(live).toContain("look at the lock order");
+  });
+
+  it("a follow-up runs after the run, and the worker waits for it before it compacts and exits", async () => {
+    const first = held("run done");
+    const followed: Step = fauxAssistantMessage("migration checked");
+    const running = round("ORDER\n", script([first.step, followed]), {}, "cmd-f");
+    await until(() => daemon.of("accepted").length > 0, "the turn to start");
+    daemon.control("cmd-f", "follow_up", { id: "c1", text: "also check the migration" });
+    await until(() => daemon.controlAcks.length === 1, "the follow-up's ack");
+    expect(daemon.controlAcks[0]).toEqual({ id: "c1", ack: "queued" });
+    first.release();
+
+    const { code } = await running;
+    expect(code).toBe(EXIT.ok);
+    const text = readFileSync(newestSessionFile(world.sessionDir)!, "utf8");
+    const at = (needle: string): number => text.indexOf(needle);
+    expect(at("run done")).toBeLessThan(at("also check the migration"));
+    expect(at("also check the migration")).toBeLessThan(at("migration checked"));
+    // The follow-up's turn is part of the round: compaction and done come after it.
+    expect(daemon.of("done")[0]!.body).toMatchObject({
+      controls: { steer: 0, follow_up: 1, abort: 0 },
+      turns: 2,
+    });
+    expect(daemon.kinds().indexOf("compacted")).toBeLessThan(daemon.kinds().indexOf("done"));
+  });
+
+  it("an abort settles as aborted: acked handled, the exit is the aborted one, nothing is posted or compacted", async () => {
+    const hang = held("never said");
+    const running = round("ORDER\n", script([hang.step]), {}, "cmd-a");
+    await until(() => daemon.of("accepted").length > 0, "the turn to start");
+    daemon.control("cmd-a", "abort", { id: "c1" });
+
+    const { code } = await running;
+    expect(code).toBe(EXIT.aborted);
+    expect(daemon.controlAcks).toEqual([{ id: "c1", ack: "handled" }]);
+    expect(daemon.of("failed")[0]!.body).toMatchObject({
+      code: EXIT.aborted,
+      reason: expect.stringMatching(/aborted by the operator/),
+    });
+    for (const kind of ["done", "compacted", "posted"] as const)
+      expect(daemon.kinds(), kind).not.toContain(kind);
+  });
+
+  it("refuses a steer that arrives before the session is open", async () => {
+    let open = (): void => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const running = round("ORDER\n", script([say("done")]), {}, "cmd-e", {
+      makeHost: async (o) => {
+        await gate;
+        const host = await PiHost.create({
+          agentDir: o.agentDir,
+          settings: {
+            compaction: { enabled: false, keepRecentTokens: 300 },
+            retry: { enabled: false },
+          },
+          configureModels: (r) => {
+            r.registerNativeProvider(faux.provider);
+          },
+        });
+        hosts.push(host);
+        return host;
+      },
+    });
+    await until(() => daemon.requests.some((r) => r.op === "worker.spec"), "the handshake");
+    daemon.control("cmd-e", "steer", { id: "c1", text: "too early" });
+    await until(() => daemon.controlAcks.length === 1, "the refusal");
+    expect(daemon.controlAcks[0]).toMatchObject({
+      id: "c1",
+      ack: "refused",
+      reason: expect.stringMatching(/not open yet/),
+    });
+    open();
+    expect((await running).code).toBe(EXIT.ok);
+  });
+
+  it("refuses a control it cannot read, naming the id when there is one", async () => {
+    const hang = held("fine");
+    const running = round("ORDER\n", script([hang.step]), {}, "cmd-b");
+    await until(() => daemon.of("accepted").length > 0, "the turn to start");
+    daemon.control("cmd-b", "steer", { id: "c1" }); // no text
+    await until(() => daemon.controlAcks.length === 1, "the refusal");
+    expect(daemon.controlAcks[0]).toMatchObject({ id: "c1", ack: "refused" });
+    hang.release();
+    expect((await running).code).toBe(EXIT.ok);
+    expect(daemon.of("done")[0]!.body["controls"]).toEqual({ steer: 0, follow_up: 0, abort: 0 });
   });
 });

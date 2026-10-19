@@ -19,7 +19,9 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CONTROL_TEXT_MAX as OPERATOR_TEXT_MAX } from "../src/commands.js";
 import { CapabilityStore } from "../src/ipc/capability.js";
+import { CONTROL_TEXT_MAX } from "../src/ipc/control.js";
 import { IpcClient } from "../src/ipc/client.js";
 import { PermitBroker } from "../src/ipc/permits.js";
 import { IpcServer, type OpHandler } from "../src/ipc/server.js";
@@ -139,7 +141,8 @@ async function rig(o: RigOptions = {}) {
       FAKE_WORKER_OUT: join(base, "out"),
       ...o.extraEnv,
     },
-    limits: { tickMs: 20, killGraceMs: 200, wallGraceMs: 0, ...o.limits },
+    limits: { tickMs: 20, killGraceMs: 200, abortGraceMs: 200, wallGraceMs: 0, ...o.limits },
+    push: (id, kind, body) => servers[0]?.push(id, kind, body) ?? 0,
     observe: (x) => observed.push(x),
     ...(o.permits ? { permits: o.permits } : {}),
     ...(o.now ? { now: o.now } : {}),
@@ -157,6 +160,7 @@ async function rig(o: RigOptions = {}) {
     commands: (id) => current.sup.lookup(id),
     ops: {
       "worker.spec": delegate("worker.spec"),
+      "control.ack": delegate("control.ack"),
       ...(o.permits
         ? {
             "permits.acquire": delegate("permits.acquire"),
@@ -498,7 +502,7 @@ describe("[P8.5] the fences", () => {
 
   it("serves held wakes through the ops when the daemon gives it a source", async () => {
     const r = await rig();
-    expect(Object.keys(r.sup.ops())).toEqual(["worker.spec"]);
+    expect(Object.keys(r.sup.ops())).toEqual(["worker.spec", "control.ack"]);
     const acked: string[] = [];
     const withWakes = new WorkerSupervisor({
       ...(r.sup["deps"] as ConstructorParameters<typeof WorkerSupervisor>[0]),
@@ -1168,5 +1172,230 @@ describe("[P8.10] the permit broker behind the supervisor", () => {
     expect(again.generation).toBe(2);
     await until(finished(r.sup));
     expect(broker.status().in_use).toBe(0);
+  });
+});
+
+// ---- [P8.12] the operator's controls, the abort and the fence ------------------
+
+const controlsSeen = (r: Rig, id: string): Array<{ kind: string; body: Record<string, unknown> }> =>
+  JSON.parse(r.out(id, "controls.json") || "[]");
+
+/** A worker in `mode`, launched and past `ready`. */
+async function liveWorker(mode: string, limits: Partial<WorkerLimits> = {}) {
+  const r = await rig({ mode, limits });
+  const row = r.submit();
+  const info = await r.sup.launch(row.id);
+  await until(() => r.observed.some((o) => o.kind === "accepted"));
+  return { r, row, info };
+}
+
+describe("[P8.12] steer and follow-up are forwarded and acked", () => {
+  it("pushes a steer over IPC and answers with the worker's ack", async () => {
+    const { r, row } = await liveWorker("controls");
+    expect(await r.sup.control(PR, "steer", "look at the lock order")).toEqual({
+      ok: true,
+      ack: "queued",
+      command_id: row.id,
+    });
+    expect(await r.sup.control(PR, "follow_up", "then the migration")).toMatchObject({
+      ok: true,
+      ack: "queued",
+    });
+    await until(() => controlsSeen(r, row.id).length === 2);
+    const seen = controlsSeen(r, row.id);
+    expect(seen.map((c) => c.kind)).toEqual(["steer", "follow_up"]);
+    expect(seen[0]!.body).toMatchObject({ text: "look at the lock order" });
+    expect(seen[1]!.body).toMatchObject({ text: "then the migration" });
+    // Each control carries its own id, which its ack names.
+    expect(new Set(seen.map((c) => c.body["id"])).size).toBe(2);
+  });
+
+  it("reports the worker's refusal with its reason", async () => {
+    const { r } = await liveWorker("refuse");
+    expect(await r.sup.control(PR, "steer", "now")).toEqual({
+      ok: false,
+      reason: "the round is ending",
+    });
+  });
+
+  it("says unanswered, never delivered, when the worker does not ack in time", async () => {
+    const { r } = await liveWorker("deaf", { controlAckMs: 150 });
+    const res = await r.sup.control(PR, "steer", "hello?");
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ reason: expect.stringMatching(/did not answer/) });
+  });
+
+  it("validates the text before it forwards anything", async () => {
+    const { r, row } = await liveWorker("controls");
+    for (const bad of ["", "   ", 7, undefined, "x".repeat(CONTROL_TEXT_MAX + 1)])
+      expect(await r.sup.control(PR, "steer", bad)).toMatchObject({ ok: false });
+    await new Promise((res) => setTimeout(res, 100));
+    expect(controlsSeen(r, row.id)).toEqual([]);
+  });
+
+  it("refuses when no worker runs, when it is not past ready, and when it is ending", async () => {
+    const r = await rig({ mode: "controls" });
+    expect(await r.sup.control(PR, "steer", "x")).toEqual({
+      ok: false,
+      reason: `no worker is running for #${PR}`,
+    });
+    const row = r.submit();
+    await r.sup.launch(row.id);
+    // Before the worker's `ready`: the session is not open to take a steer.
+    expect(await r.sup.control(PR, "steer", "x")).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/not opened its session/),
+    });
+    await until(() => r.observed.some((o) => o.kind === "accepted"));
+    r.sup.kill(row.id, "operator");
+    expect(await r.sup.control(PR, "steer", "x")).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/is ending/),
+    });
+  });
+
+  it("refuses for a daemon that cannot reach its workers", async () => {
+    const { r } = await liveWorker("controls");
+    delete (r.sup["deps"] as { push?: unknown }).push;
+    expect(await r.sup.control(PR, "steer", "x")).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/cannot reach/),
+    });
+  });
+
+  it("an ack for a control nobody waits for, or one of a stranger's, changes nothing", async () => {
+    const { r, row } = await liveWorker("controls");
+    const ops = r.sup.ops();
+    const ctx = { commandId: row.id } as never;
+    expect(ops["control.ack"]!.handle(ctx, { id: "unknown", ack: "queued" })).toEqual({});
+    expect(() => ops["control.ack"]!.handle(ctx, { id: "x", ack: "maybe" })).toThrow(/ack/);
+    expect(() => ops["control.ack"]!.handle(ctx, null)).toThrow(/object/);
+  });
+
+  it("settles a control still waiting when the worker ends", async () => {
+    const { r } = await liveWorker("deaf", { controlAckMs: 10_000 });
+    const pending = r.sup.control(PR, "steer", "are you there");
+    await new Promise((res) => setTimeout(res, 50));
+    r.sup.kill(r.sup.workers()[0]!.command_id, "operator");
+    expect(await pending).toMatchObject({ ok: false, reason: "the worker ended" });
+  });
+
+  it("the text bound is the operator command's", () => {
+    expect(CONTROL_TEXT_MAX).toBe(OPERATOR_TEXT_MAX);
+  });
+});
+
+describe("[P8.12] abort-round: the worker settles it, or the group is killed", () => {
+  it("asks the worker to abort; its row fails as ended by the operator, with no SIGKILL", async () => {
+    const { r, row, info } = await liveWorker("controls");
+    const res = await r.sup.abortRound(PR);
+    expect(res).toEqual({ ok: true, ack: "handled", command_id: row.id, killed: false });
+    await until(finished(r.sup));
+    expect(controlsSeen(r, row.id).map((c) => c.kind)).toEqual(["abort"]);
+    expect(alive(info.pid)).toBe(false);
+    expect(r.store.getSessionCommand(row.id)).toMatchObject({
+      status: "failed",
+      failure: "the worker was ended by the operator",
+    });
+    // The worker exited by itself (6), not by a signal.
+    expect(r.events("worker_exited")[0]).toMatchObject({
+      code: 6,
+      signal: null,
+      outcome: "failed",
+    });
+    // An operator's abort is not a worker failure: the breaker counts nothing.
+    expect(r.sup.breaker.gate(PR).ok).toBe(true);
+  });
+
+  it("kills the group when the worker does not obey in the grace period", async () => {
+    const { r, row, info } = await liveWorker("deaf", { abortGraceMs: 150 });
+    const started = Date.now();
+    const res = await r.sup.abortRound(PR);
+    expect(res).toMatchObject({ ok: true, ack: "handled", killed: true });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(140);
+    await until(finished(r.sup));
+    expect(alive(info.pid)).toBe(false);
+    expect(r.events("worker_exited")[0]).toMatchObject({ signal: "SIGKILL", outcome: "failed" });
+    expect(r.store.getSessionCommand(row.id)!.status).toBe("failed");
+  });
+
+  it("kills at once a worker that cannot be asked (not connected)", async () => {
+    const r = await rig({ mode: "mute", limits: { abortGraceMs: 60_000 } });
+    const row = r.submit();
+    const info = await r.sup.launch(row.id);
+    const res = await r.sup.abortRound(PR);
+    expect(res).toMatchObject({ ok: true, killed: true });
+    await until(finished(r.sup));
+    expect(alive(info.pid)).toBe(false);
+  });
+
+  it("refuses when no worker runs, and a second abort of the same worker is fine", async () => {
+    const r = await rig({ mode: "deaf" });
+    expect(await r.sup.abortRound(PR)).toEqual({
+      ok: false,
+      reason: `no worker is running for #${PR}`,
+    });
+    const row = r.submit();
+    await r.sup.launch(row.id);
+    await until(() => r.observed.some((o) => o.kind === "accepted"));
+    const first = r.sup.abortRound(PR);
+    expect(await r.sup.abortRound(PR)).toMatchObject({ ok: true });
+    await first;
+  });
+});
+
+describe("[P8.12] the recovery fence: abort, then a group SIGKILL", () => {
+  it("lets a worker that obeys the abort go by itself and leaves its row", async () => {
+    const { r, row, info } = await liveWorker("controls");
+    expect(await r.sup.fence(SESSION)).toBe(true);
+    expect(alive(info.pid)).toBe(false);
+    expect(controlsSeen(r, row.id).map((c) => c.kind)).toEqual(["abort"]);
+    // Exited by its own hand: no signal was needed.
+    expect(r.events("worker_exited")[0]).toMatchObject({ outcome: "leave", code: 6, signal: null });
+    expect(r.store.getSessionCommand(row.id)).toMatchObject({ status: "running" });
+  });
+
+  it("sends SIGKILL to the group of a worker that ignores the abort and SIGTERM", async () => {
+    const { r, info } = await liveWorker("deaf", { abortGraceMs: 100 });
+    expect(await r.sup.fence(SESSION)).toBe(true);
+    expect(alive(info.pid)).toBe(false);
+    expect(r.events("worker_exited")[0]).toMatchObject({ outcome: "leave", signal: "SIGKILL" });
+  });
+
+  it("takes the group's members with their leader", async () => {
+    const r = await rig({ mode: "group", limits: { abortGraceMs: 50 } });
+    const row = r.submit();
+    await r.sup.launch(row.id);
+    await until(() => r.out(row.id, "grandchild.txt") !== "");
+    const grandchild = Number(r.out(row.id, "grandchild.txt"));
+    expect(alive(grandchild)).toBe(true);
+    expect(await r.sup.fence(SESSION)).toBe(true);
+    await until(() => !alive(grandchild));
+  });
+
+  it("kills a leased group that no child of ours owns, when the lease still names it", async () => {
+    const r = await rig();
+    const group = stranger();
+    plantLease(r.sup.leases, { pid: group.pid! });
+    expect(r.sup.runs(SESSION)).toBe(true);
+    expect(await r.sup.fence(SESSION)).toBe(true);
+    await until(() => !alive(group.pid!));
+    expect(r.sup.leases.read(SESSION)).toBeUndefined();
+  });
+
+  it("leaves a process alone when the lease names its pid but not its start time", async () => {
+    const r = await rig();
+    const bystander = stranger();
+    plantLease(r.sup.leases, { pid: bystander.pid!, start_time: "1" });
+    expect(await r.sup.fence(SESSION)).toBe(true);
+    expect(alive(bystander.pid!)).toBe(true);
+  });
+
+  it("leaves a process alone when the lease was written in another boot or container", async () => {
+    const r = await rig();
+    const bystander = stranger();
+    plantLease(r.sup.leases, { pid: bystander.pid!, boot_id: "another-container" });
+    expect(await r.sup.fence(SESSION)).toBe(true);
+    expect(alive(bystander.pid!)).toBe(true);
   });
 });

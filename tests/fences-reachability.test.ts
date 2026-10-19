@@ -133,6 +133,18 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "tests/worker-session-host.test.ts and the conformance suite until the daemon's wiring constructs " +
         "the host. Delete this entry with that import.",
     })),
+    // The operator's controls on a worker-hosted PR (P8.12): the daemon's operatorControl handler and
+    // status.json's per-PR runtime reader. Read only by tests/worker-control.test.ts until the daemon's
+    // wiring constructs the worker host (it hands `workerOperatorControl` to the command deps and
+    // `runtimeOfPr` to DaemonDeps.runtimeOf). Delete each entry with that import.
+    ...["workercontrol.ts", "workerruntime.ts"].map((f) => ({
+      file: `src/${f}`,
+      why:
+        "the worker host's operator controls and runtime status (P8.12): steer, follow-up and abort-round " +
+        "forwarded to the PR's worker, and the per-PR runtime in status.json. Read only by " +
+        "tests/worker-control.test.ts until the daemon's wiring constructs the worker host. Delete this " +
+        "entry with that import.",
+    })),
     // The daemon's post ops (P7.2). The WorkerSupervisor (P8.5) serves them on the worker socket (P8.7);
     // the daemon does not start the supervisor until P8.6. Delete each entry with that import.
     {
