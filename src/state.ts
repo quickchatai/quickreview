@@ -674,6 +674,21 @@ export interface SlackCooldownRow {
   bypassed: number;
 }
 
+/** The `reason` of the drain the worker crash-loop breaker sets (P8.5b). */
+export const WORKER_FAILURES_DRAIN_REASON = "worker_failures";
+
+/** One PR's worker crash-loop breaker row (P8.5b). */
+export interface WorkerBreakerRow {
+  pr: number;
+  /** Consecutive failed workers since the last success. */
+  failures: number;
+  /** Set once the PR is parked: no worker is spawned for it until an operator unparks it. */
+  parked_at: string | null;
+  last_error: string | null;
+  last_failure_at: string | null;
+  last_command_id: string | null;
+}
+
 /** Deploy-window drain state — one persistent row. Read back
  * through `drainState()` it is already folded against the hold's expiry: a
  * lapsed session drain reads `draining: false`. The union makes
@@ -695,6 +710,10 @@ export type DrainState =
       issued_by: LeverIssuer;
       /** When the hold lapses; null = until lifted (operator only). */
       expires_at: string | null;
+      /** Why a SYSTEM engaged it (`worker_failures`, the crash-loop breaker); null
+       * for a hand-set drain. A drain with a reason is lifted only by an explicit
+       * `drain off`, never by a boot's first reconcile pass. */
+      reason: string | null;
     };
 
 const SESSION_COMMAND_COLUMNS_SQL = `(
@@ -1182,6 +1201,26 @@ CREATE TABLE IF NOT EXISTS drain_state (
   drained_deliveries INTEGER NOT NULL DEFAULT 0,
   since              TEXT,
   updated_at         TEXT NOT NULL
+);
+-- Worker crash-loop breaker (P8.5b): consecutive worker failures per PR. A PR
+-- with parked_at set gets no worker until the operator's rerun-round or
+-- restart-session clears the row. worker_breaker_global.epoch ticks at every
+-- worker success (and at the lift of the breaker's drain); a failure counts
+-- toward the global drain only while it carries the current epoch.
+CREATE TABLE IF NOT EXISTS worker_breaker (
+  pr              INTEGER PRIMARY KEY,
+  failures        INTEGER NOT NULL DEFAULT 0,
+  parked_at       TEXT,
+  last_error      TEXT,
+  last_failure_at TEXT,
+  last_command_id TEXT,
+  failure_epoch   INTEGER NOT NULL DEFAULT 0,
+  updated_at      TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS worker_breaker_global (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  epoch      INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
 );
 -- Session lever grants: every bounded drain / pause a SESSION was
 -- granted, with the minutes it drew from that day's budget. The per-day cap
@@ -1837,6 +1876,8 @@ export class StateStore {
       // have been, and the fail-safe one: nothing lapses that nobody bounded.
       "ALTER TABLE drain_state ADD COLUMN issued_by TEXT",
       "ALTER TABLE drain_state ADD COLUMN expires_at TEXT",
+      // Why a system engaged the drain (the worker crash-loop breaker) — nullable, additive.
+      "ALTER TABLE drain_state ADD COLUMN reason TEXT",
       "ALTER TABLE pr_state ADD COLUMN pause_issuer TEXT",
       "ALTER TABLE pr_state ADD COLUMN pause_expires_at TEXT",
       "ALTER TABLE pr_state ADD COLUMN pause_reason TEXT",
@@ -6452,7 +6493,7 @@ export class StateStore {
   drainState(): DrainState {
     const row = this.db
       .prepare(
-        "SELECT draining, drained_deliveries, since, issued_by, expires_at FROM drain_state WHERE id = 1",
+        "SELECT draining, drained_deliveries, since, issued_by, expires_at, reason FROM drain_state WHERE id = 1",
       )
       .get() as
       | {
@@ -6461,6 +6502,7 @@ export class StateStore {
           since: string | null;
           issued_by: LeverIssuer | null;
           expires_at: string | null;
+          reason: string | null;
         }
       | undefined;
     if (!row) return { draining: false, drained_deliveries: 0 };
@@ -6473,6 +6515,7 @@ export class StateStore {
       since: row.since,
       issued_by: hold.issuer,
       expires_at: hold.expires_at,
+      reason: row.reason,
     };
   }
 
@@ -6491,7 +6534,10 @@ export class StateStore {
    * narrows an operator's, a repeat from the same issuer only widens — and
    * keeps the window it found. Returns the state that now stands.
    */
-  engageDrain(grant: LeverGrant): { outcome: HoldOutcome; state: DrainState } {
+  engageDrain(
+    grant: LeverGrant,
+    reason: string | null = null,
+  ): { outcome: HoldOutcome; state: DrainState } {
     const standing = this.drainState();
     const merged = mergeHold(
       standing.draining ? { issuer: standing.issued_by, expires_at: standing.expires_at } : null,
@@ -6502,17 +6548,18 @@ export class StateStore {
     if (merged.outcome === "engaged") {
       this.db
         .prepare(
-          `INSERT INTO drain_state (id, draining, drained_deliveries, since, issued_by, expires_at, updated_at)
-           VALUES (1, 1, 0, @ts, @issuer, @expires, @ts)
-           ON CONFLICT(id) DO UPDATE SET draining = 1, drained_deliveries = 0, since = @ts, issued_by = @issuer, expires_at = @expires, updated_at = @ts`,
+          `INSERT INTO drain_state (id, draining, drained_deliveries, since, issued_by, expires_at, reason, updated_at)
+           VALUES (1, 1, 0, @ts, @issuer, @expires, @reason, @ts)
+           ON CONFLICT(id) DO UPDATE SET draining = 1, drained_deliveries = 0, since = @ts, issued_by = @issuer, expires_at = @expires, reason = @reason, updated_at = @ts`,
         )
-        .run({ ts, issuer: merged.hold.issuer, expires: merged.hold.expires_at });
+        .run({ ts, issuer: merged.hold.issuer, expires: merged.hold.expires_at, reason });
     } else {
+      // An upgrade or an extension keeps the standing reason unless one is given.
       this.db
         .prepare(
-          "UPDATE drain_state SET issued_by = ?, expires_at = ?, updated_at = ? WHERE id = 1",
+          "UPDATE drain_state SET issued_by = ?, expires_at = ?, reason = COALESCE(?, reason), updated_at = ? WHERE id = 1",
         )
-        .run(merged.hold.issuer, merged.hold.expires_at, ts);
+        .run(merged.hold.issuer, merged.hold.expires_at, reason, ts);
     }
     return { outcome: merged.outcome, state: this.drainState() };
   }
@@ -6532,9 +6579,12 @@ export class StateStore {
     }
     this.db
       .prepare(
-        "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, updated_at = ? WHERE id = 1",
+        "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, reason = NULL, updated_at = ? WHERE id = 1",
       )
       .run(this.ts());
+    // The breaker's drain lifted: its failures are answered for, so they stop
+    // counting toward the next one.
+    if (standing.reason === WORKER_FAILURES_DRAIN_REASON) this.resetWorkerFailureWindow();
     return { changed: true, dropped: standing.drained_deliveries };
   }
 
@@ -6548,7 +6598,7 @@ export class StateStore {
     const drain =
       this.db
         .prepare(
-          "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, updated_at = ? WHERE id = 1 AND draining = 1 AND expires_at IS NOT NULL AND expires_at <= ?",
+          "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, reason = NULL, updated_at = ? WHERE id = 1 AND draining = 1 AND expires_at IS NOT NULL AND expires_at <= ?",
         )
         .run(now, now).changes > 0;
     const pauses = (
@@ -6567,6 +6617,112 @@ export class StateStore {
         .run(now, ...pauses);
     }
     return { drain, pauses };
+  }
+
+  // ---- worker crash-loop breaker (P8.5b) ----------------------------------
+
+  workerBreaker(pr: number): WorkerBreakerRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT pr, failures, parked_at, last_error, last_failure_at, last_command_id FROM worker_breaker WHERE pr = ?",
+      )
+      .get(pr) as WorkerBreakerRow | undefined;
+  }
+
+  /** Every PR with a failure on record or a park, for status.json. */
+  workerBreakerRows(): WorkerBreakerRow[] {
+    return this.db
+      .prepare(
+        "SELECT pr, failures, parked_at, last_error, last_failure_at, last_command_id FROM worker_breaker WHERE failures > 0 OR parked_at IS NOT NULL ORDER BY pr",
+      )
+      .all() as WorkerBreakerRow[];
+  }
+
+  isWorkerParked(pr: number): boolean {
+    return this.workerBreaker(pr)?.parked_at != null;
+  }
+
+  /**
+   * One more consecutive worker failure for `pr`. The PR is parked when the count
+   * reaches `parkAfter`; `parked` says whether it stands parked now and
+   * `newlyParked` whether THIS failure parked it (the caller raises the anomaly
+   * once).
+   */
+  recordWorkerFailure(
+    pr: number,
+    o: { commandId: string; error: string; at: string; parkAfter: number },
+  ): { failures: number; parked: boolean; newlyParked: boolean } {
+    return this.db.transaction(() => {
+      const row = this.workerBreaker(pr);
+      const failures = (row?.failures ?? 0) + 1;
+      const wasParked = row?.parked_at != null;
+      const parkedAt = wasParked ? row!.parked_at : failures >= o.parkAfter ? o.at : null;
+      this.db
+        .prepare(
+          `INSERT INTO worker_breaker (pr, failures, parked_at, last_error, last_failure_at, last_command_id, failure_epoch, updated_at)
+           VALUES (@pr, @failures, @parked, @error, @at, @command, @epoch, @at)
+           ON CONFLICT(pr) DO UPDATE SET failures = @failures, parked_at = @parked, last_error = @error,
+             last_failure_at = @at, last_command_id = @command, failure_epoch = @epoch, updated_at = @at`,
+        )
+        .run({
+          pr,
+          failures,
+          parked: parkedAt,
+          error: o.error,
+          at: o.at,
+          command: o.commandId,
+          epoch: this.workerEpoch(),
+        });
+      return { failures, parked: parkedAt !== null, newlyParked: !wasParked && parkedAt !== null };
+    }).immediate();
+  }
+
+  /** A worker for `pr` served its round: its consecutive count restarts, and the
+   * global window (failures across PRs "with no success") restarts too. A parked PR
+   * stays parked: an answer served before the park must not undo it. */
+  recordWorkerSuccess(pr: number, at: string): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          "UPDATE worker_breaker SET failures = 0, updated_at = ? WHERE pr = ? AND parked_at IS NULL",
+        )
+        .run(at, pr);
+      this.resetWorkerFailureWindow();
+    })();
+  }
+
+  /** The operator's unpark (rerun-round, restart-session): the row goes. */
+  clearWorkerBreaker(pr: number): boolean {
+    return this.db.prepare("DELETE FROM worker_breaker WHERE pr = ?").run(pr).changes > 0;
+  }
+
+  /** PRs whose latest worker failure is at or after `since` and since the last
+   * success (or the last lift of the breaker's drain). */
+  failedWorkerPrsSince(since: string): number[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT pr FROM worker_breaker WHERE failures > 0 AND last_failure_at >= ? AND failure_epoch = ? ORDER BY pr",
+        )
+        .all(since, this.workerEpoch()) as Array<{ pr: number }>
+    ).map((r) => r.pr);
+  }
+
+  private workerEpoch(): number {
+    const row = this.db.prepare("SELECT epoch FROM worker_breaker_global WHERE id = 1").get() as
+      | { epoch: number }
+      | undefined;
+    return row?.epoch ?? 0;
+  }
+
+  /** Start the global failure window afresh: earlier failures stop counting. */
+  resetWorkerFailureWindow(): void {
+    this.db
+      .prepare(
+        `INSERT INTO worker_breaker_global (id, epoch, updated_at) VALUES (1, 1, @ts)
+         ON CONFLICT(id) DO UPDATE SET epoch = epoch + 1, updated_at = @ts`,
+      )
+      .run({ ts: this.ts() });
   }
 
   /** Charge a session grant to `day`'s budget. `pr` is null for a drain. */
@@ -7626,6 +7782,15 @@ export interface StatusSnapshot {
           since: string | null;
           expires_at: string | null;
         };
+        /** The worker crash-loop breaker (P8.5b): present while the PR has
+         * consecutive worker failures on record or is parked. `parked_at` set means
+         * no worker is spawned for it until rerun-round or restart-session. */
+        worker_crash?: {
+          failures: number;
+          parked_at: string | null;
+          last_error: string | null;
+          last_at: string | null;
+        };
       }
   >;
   running_rounds: number;
@@ -7679,6 +7844,8 @@ export interface StatusSnapshot {
    * absent for the operator's until-lifted hold. Present only while draining. */
   draining_by?: LeverIssuer;
   draining_until?: string;
+  /** Why a system engaged the drain (`worker_failures`); absent for a hand-set one. */
+  draining_reason?: string;
   /** Terminal FAILED_LOUD obligations are visible during drain but do not
    * count as live rounds; operator recovery remains dormant until drain lifts. */
   drain_failed_loud?: number;
@@ -7863,6 +8030,7 @@ export function buildStatusSnapshot(
   const failures = store.openReviewFailures();
   const failureByPr = new Map(failures.map((failure) => [failure.pr, failure]));
   const pipeline = pipelineFrom(store, at, failures, roundStageSupervisor);
+  const crashByPr = new Map(store.workerBreakerRows().map((row) => [row.pr, row]));
   return {
     written_at: at.toISOString(),
     dry_run: dryRun,
@@ -7931,6 +8099,16 @@ export function buildStatusSnapshot(
             },
           }
         : {}),
+      ...(crashByPr.get(p.number)
+        ? {
+            worker_crash: {
+              failures: crashByPr.get(p.number)!.failures,
+              parked_at: crashByPr.get(p.number)!.parked_at,
+              last_error: crashByPr.get(p.number)!.last_error,
+              last_at: crashByPr.get(p.number)!.last_failure_at,
+            },
+          }
+        : {}),
       ...(failureByPr.get(p.number)
         ? {
             review_failure: {
@@ -7980,6 +8158,7 @@ export function buildStatusSnapshot(
           ...(drain.since ? { draining_since: drain.since } : {}),
           draining_by: drain.issued_by,
           ...(drain.expires_at ? { draining_until: drain.expires_at } : {}),
+          ...(drain.reason ? { draining_reason: drain.reason } : {}),
           drain_failed_loud: failures.length,
         }
       : {}),

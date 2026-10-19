@@ -8,6 +8,8 @@
 //   term-ok   ready, accepted, heartbeats until SIGTERM, then exit 143
 //   silent    ready, then nothing at all, alive for a minute
 //   crash     ready, accepted, then SIGKILL on itself
+//   exit2     ready, accepted, then exit 2 with no `failed` event (a non-zero exit)
+//   posted-crash  ready, accepted, a `posted` event, then SIGKILL on itself
 //   fail      ready, a `failed` event, exit 1
 //   env       writes its env and the capability it read to FAKE_WORKER_OUT, then ok
 //   stale     sends a request and an event for generation - 1, records the codes, then ok
@@ -104,6 +106,12 @@ async function onHello(m) {
     record("stale-event.txt", errors.join(","));
   }
   if (mode === "crash") process.kill(process.pid, "SIGKILL");
+  if (mode === "exit2") process.exit(2);
+  if (mode === "posted-crash") {
+    event("posted", { script: "post-review.sh" });
+    await sleep(50);
+    process.kill(process.pid, "SIGKILL");
+  }
   if (mode === "group") {
     const child = spawn("sleep", ["300"], { stdio: "ignore" });
     record("grandchild.txt", String(child.pid));

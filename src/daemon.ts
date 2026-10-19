@@ -879,7 +879,13 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       );
       if (report.errors.length === 0 && firstHealthyReconcileAt === null)
         firstHealthyReconcileAt = deps.now ? deps.now() : new Date();
-      if (bootFirstPass && report.errors.length === 0 && store.drainState().draining) {
+      const standing = store.drainState();
+      if (bootFirstPass && standing.draining && standing.reason !== null) {
+        // A drain a system set for a reason (the worker crash-loop breaker,
+        // `worker_failures`) is not a deploy window: a restart does not clear what
+        // made it. Only an explicit `drain off` does.
+        log(`drain stands — held for ${standing.reason}; only an explicit drain off lifts it`);
+      } else if (bootFirstPass && report.errors.length === 0 && standing.draining) {
         // The operator's lift: this is the deploy flow's drain completing, so
         // it clears whatever hold stands — a session's included.
         const { dropped } = store.liftDrain("operator");

@@ -29,6 +29,7 @@ import { AUTH_FLAG_FRESH_MS } from "../authwatch.js";
 import { zoneDateString } from "../eod.js";
 import { curationNeedsAttention } from "../learner/status.js";
 import { memoryStatusLine, type MemoryStatus } from "../memory/health.js";
+import type { StatusSnapshot } from "../state.js";
 
 export type AlertTier = "notice" | "alert";
 
@@ -599,4 +600,61 @@ export function maybeWriteCurationAlert(
   );
   mem.lastWritten = key;
   return name;
+}
+
+// ---- a PR parked by the worker crash-loop breaker → the same alert pipeline ----
+
+export interface WorkerCrashAlertMemory {
+  /** `<pr>@<parked_at>` of every park a file was already written for. */
+  written: Set<string>;
+}
+
+/**
+ * Bridge from status.json (`prs[].worker_crash.parked_at`, and `draining_reason`
+ * `worker_failures`) into the alert pipeline: ONE alert-tier file per park, and
+ * one per breaker drain, keyed by when they began so a TUI that opens later does
+ * not repeat what a running one already said. Fresh snapshots only.
+ */
+export function maybeWriteWorkerCrashAlerts(
+  alertsDir: string,
+  snapshot:
+    | Pick<StatusSnapshot, "prs" | "draining" | "draining_reason" | "draining_since">
+    | undefined,
+  fresh: boolean,
+  mem: WorkerCrashAlertMemory,
+  now: () => Date = () => new Date(),
+): string[] {
+  if (!fresh || !snapshot) return [];
+  const names: string[] = [];
+  const write = (key: string, cause: string, pr: number | null, title: string, body: string): void => {
+    if (mem.written.has(key)) return;
+    mem.written.add(key);
+    const name = `${now().toISOString().replace(/[:.]/g, "-")}-${cause}${pr === null ? "" : `-${pr}`}.json`;
+    mkdirSync(alertsDir, { recursive: true });
+    writeFileSync(
+      join(alertsDir, name),
+      JSON.stringify({ tier: "alert", cause, pr, title, body, ts: now().toISOString() }),
+    );
+    names.push(name);
+  };
+  for (const pr of snapshot.prs) {
+    const crash = pr.worker_crash;
+    if (!crash?.parked_at) continue;
+    write(
+      `${pr.number}@${crash.parked_at}`,
+      "worker-crash-loop",
+      pr.number,
+      `PR #${pr.number} parked: its workers keep failing`,
+      `${crash.failures} consecutive worker failures; no worker starts for it until rerun-round or restart-session. Last error: ${crash.last_error ?? "unknown"}`,
+    );
+  }
+  if (snapshot.draining && snapshot.draining_reason === "worker_failures")
+    write(
+      `drain@${snapshot.draining_since ?? ""}`,
+      "worker-failures-drain",
+      null,
+      "workers failing on several PRs: the bot is draining",
+      "Workers failed on three PRs within 15 minutes with no success, so the bot drains: no round, answer or debug worker starts. Fix the cause, then run drain off.",
+    );
+  return names;
 }

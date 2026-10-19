@@ -131,7 +131,10 @@ function pauseChip(pr: SnapshotPr): string {
 
 /** A PR row's verdict chip: a held review failure, else the last verdict. */
 function rowChip(pr: SnapshotPr): string {
-  return pr.review_failure ? `${FG.anomaly}FAILED_LOUD${RESET}` : verdictChip(pr.last_verdict);
+  if (pr.review_failure) return `${FG.anomaly}FAILED_LOUD${RESET}`;
+  // The worker crash-loop breaker parked it: no worker starts until rerun-round / restart-session.
+  if (pr.worker_crash?.parked_at) return `${FG.anomaly}PARKED${RESET}`;
+  return verdictChip(pr.last_verdict);
 }
 
 /** A PR title as one inert line — it is the author's text, and the row is
@@ -476,7 +479,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   // expiry. An older daemon that reports neither is shown as such rather than
   // guessed at.
   const drainSeg = s?.draining
-    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${RESET}`
+    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${s.draining_reason === "worker_failures" ? " · workers keep failing, drain off lifts it" : ""}${RESET}`
     : "";
   const td = s?.thread_decisions;
   const breakerSeg =
