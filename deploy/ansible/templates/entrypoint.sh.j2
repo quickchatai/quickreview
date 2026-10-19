@@ -39,6 +39,22 @@ if [[ -r "$SECRETS/openai_api_key" ]]; then
   export OPENAI_API_KEY
 fi
 
+# OpenViking under the MEMORY SIDECAR (`openviking_endpoint = remote`, passed as
+# QCR_OPENVIKING_ENDPOINT by the playbook): the store, ov.conf, the embedder
+# migration and the user provisioning all belong to the sidecar container
+# (docker/memory/entrypoint.sh), which owns a copy of the store. This container
+# must not touch the old directory — a second writer would fork the store — so
+# every boot step below is skipped and the daemon only probes the sidecar. A
+# rollback to `local` re-runs them over the store this container last held.
+# Decided at RUN time, not at render time: flipping the endpoint is then a
+# `sync`, never an image rebuild. (A plain variable, NOT
+# QCR_OPENVIKING_BOOT_DISABLED: that one tells the daemon to run memory-less.)
+OV_SIDECAR=0
+if [[ "${QCR_OPENVIKING_ENDPOINT:-local}" == remote ]]; then
+  OV_SIDECAR=1
+  echo "openviking: endpoint = remote — the memory sidecar owns the store; no boot steps run here" >&2
+fi
+
 # OpenViking — the context store the DAEMON supervises as a child
 # process on loopback {{ openviking_port }}. This block prepares its state and
 # configuration and provisions its users; it never leaves a server RUNNING
@@ -52,10 +68,10 @@ fi
 # ~/.openviking is a SYMLINK onto the state volume, so memories, the vector db
 # and ov.conf all survive an image rebuild.
 OV_HOME={{ openviking_home }}
-mkdir -p "$OV_HOME/workspace" || echo "openviking: could not create $OV_HOME/workspace" >&2
+[[ "$OV_SIDECAR" == 1 ]] || mkdir -p "$OV_HOME/workspace" || echo "openviking: could not create $OV_HOME/workspace" >&2
 # Same migration idiom as the state symlink above: a real directory that
 # accumulated content is folded onto the volume once, then replaced by the link.
-if [[ -e "$HOME/.openviking" && ! -L "$HOME/.openviking" ]]; then
+if [[ -e "$HOME/.openviking" && ! -L "$HOME/.openviking" && "${OV_SIDECAR:-0}" != 1 ]]; then
   if cp -a "$HOME/.openviking/." "$OV_HOME/" && rm -rf "$HOME/.openviking"; then
     :
   else
@@ -63,13 +79,14 @@ if [[ -e "$HOME/.openviking" && ! -L "$HOME/.openviking" ]]; then
     echo "openviking: migration failed; original memory retained, reviewer starts with memory disabled for this boot" >&2
   fi
 fi
-if [[ "${QCR_OPENVIKING_BOOT_DISABLED:-}" != 1 ]] && ! { [[ -L "$HOME/.openviking" ]] || ln -sfn "$OV_HOME" "$HOME/.openviking"; }; then
+if [[ "${QCR_OPENVIKING_BOOT_DISABLED:-}" != 1 && "${OV_SIDECAR:-0}" != 1 ]] && ! { [[ -L "$HOME/.openviking" ]] || ln -sfn "$OV_HOME" "$HOME/.openviking"; }; then
   export QCR_OPENVIKING_BOOT_DISABLED=1
   echo "openviking: state link failed; reviewer starts with memory disabled for this boot" >&2
 fi
 
-# OpenViking boot preparation only runs over a complete migration.
-if [[ "${QCR_OPENVIKING_BOOT_DISABLED:-}" != 1 ]]; then
+# OpenViking boot preparation only runs over a complete migration (and never
+# under the sidecar, which runs it in its own container).
+if [[ "${QCR_OPENVIKING_BOOT_DISABLED:-}" != 1 && "${OV_SIDECAR:-0}" != 1 ]]; then
 
 # ov.conf is TEMPLATED on every boot, so a knob change ships with a restart
 # rather than a hand-edit on the VM. Rendered by node because ov.conf is JSON

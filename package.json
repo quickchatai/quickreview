@@ -51,7 +51,8 @@
     "prettier": "3.9.6",
     "typescript": "5.9.3",
     "typescript-eslint": "8.69.0",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "yaml": "2.9.0"
   },
   "pi": {
     "//": "pi and pi-ai are exact dependencies above (types for the extensions, and the VM boot's plain `npm ci` installs them beside the global CLI the image carries). This block is the mirror a bare checkout without config.toml reads: package and version must equal the dependencies, the lockfile, config.toml [pi], ansible group_vars and every Dockerfile ARG (tests/fences.test.ts [T12], tests/docker-daemon.test.ts). Subagents are pi's own first-party extension, shipped inside this package (examples/extensions/subagent) — no extra extension pin exists any more.",

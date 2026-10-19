@@ -384,17 +384,53 @@ describe("the memory forward", () => {
     expect(forward.DEFAULTS.port).toBe(MEMORY.port);
   });
 
-  it("relays into the VM container's own netns — nothing is published on the VM", () => {
+  it("relays into the memory SIDECAR's own netns — nothing is published on the VM", () => {
     const argv = forward.relayArgv(cfg) as string[];
     const remote = argv[argv.length - 1]!;
     expect(argv[argv.length - 2]).toBe("my-vm");
-    expect(remote).toContain("sudo docker exec -i quickreview-sandbox node -e");
+    expect(remote).toContain("sudo docker exec -i quickreview-memory node -e");
     // The last hop is loopback INSIDE that container: no VM port, no bridge IP.
     expect(remote).toContain('connect(1933,"127.0.0.1")');
     // A shared control connection, or every HTTP request pays an ssh login.
     expect(argv).toContain("ControlMaster=auto");
     expect(argv).toContain("ControlPersist=4h");
     expect(argv).toContain("BatchMode=yes");
+  });
+
+  it("the ssh default target is the sidecar the playbook runs, and rolling back is one flag", () => {
+    const groupVars = readFileSync(
+      join(root, "deploy", "ansible", "group_vars", "all.yml"),
+      "utf8",
+    );
+    const name = /^memory_container_name:\s*(\S+)/m.exec(groupVars)?.[1];
+    expect(forward.DEFAULTS.container).toBe(name);
+    const dflt = forward.parseArgs(["run"], {} as NodeJS.ProcessEnv).cfg;
+    expect(dflt.container).toBe("quickreview-memory");
+    // [openviking] endpoint = "local": OpenViking is the daemon container's child again.
+    const back = forward.parseArgs(
+      ["run", "--container", "quickreview-sandbox"],
+      {} as NodeJS.ProcessEnv,
+    ).cfg;
+    expect(forward.relayArgv(back).at(-1)).toContain("docker exec -i quickreview-sandbox node -e");
+    const viaEnv = forward.parseArgs(["run"], {
+      QCR_VM_CONTAINER: "quickreview-sandbox",
+    } as NodeJS.ProcessEnv).cfg;
+    expect(viaEnv.container).toBe("quickreview-sandbox");
+  });
+
+  it("a one-machine (--local) forward keeps the daemon container as its default: the sidecar is opt-in there", () => {
+    const local = forward.parseArgs(["run", "--local"], {} as NodeJS.ProcessEnv).cfg;
+    expect(local.container).toBe("quickreview-sandbox");
+    const withSidecar = forward.parseArgs(
+      ["run", "--local", "--container", "qcr-memory-box"],
+      {} as NodeJS.ProcessEnv,
+    ).cfg;
+    expect((forward.localRelayArgv(withSidecar) as string[]).includes("qcr-memory-box")).toBe(true);
+  });
+
+  it("the unit the installer writes carries the container it relays into", () => {
+    const unit = forward.unitText({ ...cfg, unit: "qcr-memory-forward" }, {}) as string;
+    expect(unit).toMatch(/--container quickreview-memory\b/);
   });
 
   it("keeps the remote bridge free of single quotes (it is single-quoted for the remote shell)", () => {

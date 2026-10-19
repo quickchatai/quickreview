@@ -45,7 +45,17 @@ pi_version: "1.3.0"
 openviking_version: "0.4.15"
 llama_cpp_python_version: "0.3.35"
 openviking_venv: /opt/openviking/venv
-openviking_port: 1933                 # loopback only — NEVER a published port
+openviking_port: 1933                 # never a published port: loopback in the container that runs it
+# WHO RUNS THE SERVER. "remote" (the VM's value) is the memory SIDECAR: a
+# second container beside the daemon's (docker/memory/, the `memory_*` knobs
+# below) runs OpenViking and its local embedder, owns the boot provisioning and
+# the embedder re-embed, and holds its own copy of the store. The daemon then
+# only probes it, and its entrypoint skips every memory boot step. "local" is
+# the pre-sidecar layout — OpenViking a child of the daemon's container — and
+# the ROLLBACK: flip this and config.toml [openviking] endpoint together
+# (scripts/deploy.sh refuses them apart), then `scripts/deploy.sh sync`.
+# MIRRORS config.toml [openviking] endpoint.
+openviking_endpoint: "remote"
 # ~/.openviking is symlinked here at boot, so memory lives on the state volume
 # and survives an image rebuild. Must equal config.toml [openviking] home.
 openviking_home: /opt/quickreview/state/openviking
@@ -118,6 +128,28 @@ openviking_reviewer_key_file: "openviking_reviewer_key"
 # Users boot provisioning ENSURES exist — created if absent, left alone if
 # present, never rotated (a rotation orphans the distributed keys).
 openviking_provision_users: "reviewer,companion"
+
+# The memory sidecar (used under openviking_endpoint: remote). The container
+# name is also its DNS name on the network below, so it MIRRORS config.toml
+# [openviking] host (scripts/deploy.sh refuses drift). The port is
+# openviking_port above, on the container network only — never published.
+memory_container_name: quickreview-memory
+memory_image_name: quickreview-memory
+memory_image_tag: v1
+# A user-defined bridge, because Docker resolves container names only there.
+# The daemon's container joins it (and keeps its published webhook port); the
+# network is not internal — the daemon still needs the internet.
+memory_network: quickreview-memory
+# The sidecar's OWN copy of the store, on the VM. Seeded ONCE from the daemon's
+# `openviking_home` while the daemon container is stopped, verified file by
+# file, and never deleted or overwritten afterwards (the .seeded marker). The
+# old directory stays untouched as the rollback's store.
+memory_state_dir: /opt/quickreview/memory-state
+# Hard caps like the daemon's. PROVISIONAL: sized from the daemon container's
+# 2 CPU / 8 GiB, which carried the server and the embedder as children; re-size
+# from `docker stats quickreview-memory` once it has run under load.
+memory_container_cpus: "1"
+memory_container_memory: "3g"
 
 # tmux ≥3.5 for csi-u extended keys end-to-end:
 # Ubuntu 24.04 apt ships 3.4, so the image builds this release from source.

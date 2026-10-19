@@ -1425,12 +1425,20 @@ export async function cmdMemory(rest: string[]): Promise<number> {
   });
   for (const r of results) console.log(`  ${r.user}: ${r.status} — ${r.detail}`);
   if (ok) {
+    // The journal lives with the store: in the daemon container, or in the
+    // memory sidecar (whose app root is /opt/qcr) under `endpoint = "remote"`.
+    const { tuiMemoryContainer } = await import("./tui/memforward.js");
+    const memoryContainer = tuiMemoryContainer(cfg.tui);
+    const script =
+      memoryContainer === cfg.tui.container
+        ? "/opt/quickreview/sandbox/scripts/openviking-reembed.mjs"
+        : "/opt/qcr/scripts/openviking-reembed.mjs";
     console.log(
       "done. The daemon's journal still lists these namespaces as awaiting you; receipt them in the container so the heartbeat stops naming them:\n" +
         users
           .map(
             (u) =>
-              `  docker exec ${cfg.tui.container} node /opt/quickreview/sandbox/scripts/openviking-reembed.mjs settle --home ${cfg.openviking.home} --user ${u}`,
+              `  docker exec ${memoryContainer} node ${script} settle --home ${cfg.openviking.home} --user ${u}`,
           )
           .join("\n"),
     );
