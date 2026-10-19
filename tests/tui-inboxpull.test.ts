@@ -125,8 +125,8 @@ describe("pullCompanionInbox", () => {
   it("an anomaly and an EOD item reach the faux companion and the alerts feed, then are acked", async () => {
     bot.add("anomaly", "[anomaly] verdict_malformed on PR #7\n\nround 2 wrote no verdict");
     bot.add("login", "pi login expired on the bot; run /login");
-    bot.eodWriter()("EOD sweep for 2026-10-19\n\nRun today's end-of-day sweep.", "2026-10-19");
-    bot.heartbeatWriter()("daily heartbeat: all quiet", "2026-10-19");
+    await bot.eodWriter()("EOD sweep for 2026-10-19\n\nRun today's end-of-day sweep.", "2026-10-19");
+    await bot.heartbeatWriter()("daily heartbeat: all quiet", "2026-10-19");
     const { ssh } = localRunner();
 
     const res = await pullCompanionInbox(deps(ssh));
@@ -166,7 +166,7 @@ describe("pullCompanionInbox", () => {
 
   it("the alert feed routes: a login alert notifies, an EOD sweep only reaches the status line", async () => {
     bot.add("login", "pi login expired on the bot; run /login");
-    bot.eodWriter()("EOD sweep for 2026-10-19", "2026-10-19");
+    await bot.eodWriter()("EOD sweep for 2026-10-19", "2026-10-19");
     const { ssh } = localRunner();
     await pullCompanionInbox(deps(ssh));
     const notices: string[] = [];

@@ -6668,7 +6668,7 @@ export class StateStore {
       const row = this.workerBreaker(pr);
       const failures = (row?.failures ?? 0) + 1;
       const wasParked = row?.parked_at != null;
-      const parkedAt = wasParked ? row!.parked_at : failures >= o.parkAfter ? o.at : null;
+      const parkedAt = wasParked ? row.parked_at : failures >= o.parkAfter ? o.at : null;
       this.db
         .prepare(
           `INSERT INTO worker_breaker (pr, failures, parked_at, last_error, last_failure_at, last_command_id, failure_epoch, updated_at)
