@@ -282,33 +282,54 @@ describe("tmuxSocketRunner: docker exec argv, run on the shared socket", () => {
     expect(ran).toEqual([["-S", "/run/qcr-tmux/c.sock", "has-session"]]);
   });
 
-  it("runs a sh -c script inside the companion's tmux server", async () => {
-    const { runner, ran } = rig(() => ({ ...OK, stdout: "/home/qcr/.pi/x.jsonl\n" }));
-    const res = await runner([
-      "exec",
-      "qcr-companion",
-      "sh",
-      "-c",
-      "ls -t /home/qcr/.pi | head -1",
-    ]);
-    expect(ran).toEqual([
-      ["-S", "/run/qcr-tmux/c.sock", "run-shell", "ls -t /home/qcr/.pi | head -1"],
-    ]);
-    expect(res.stdout).toBe("/home/qcr/.pi/x.jsonl\n");
+  // A fake tmux that behaves like a server: run-shell runs the script, which
+  // loads its output into a named buffer; show-buffer and delete-buffer read it.
+  function scriptRig(output: string, status: number) {
+    const buffers = new Map<string, string>();
+    const r = rig((argv) => {
+      const word = argv[2];
+      if (word === "run-shell") {
+        const name = /load-buffer -b (\S+) -/.exec(argv[3]!)?.[1];
+        buffers.set(name!, `${output}x${status}`);
+        return OK;
+      }
+      if (word === "show-buffer") return { ...OK, stdout: buffers.get(argv[4]!) ?? "" };
+      if (word === "delete-buffer") {
+        buffers.delete(argv[4]!);
+        return OK;
+      }
+      return FAIL;
+    });
+    return { ...r, buffers };
+  }
+
+  it("runs a sh -c script inside the companion's tmux server and reads its stdout from a buffer", async () => {
+    const { runner, ran, buffers } = scriptRig("/home/qcr/.pi/x.jsonl\n", 0);
+    const script = "ls -t /home/qcr/.pi | head -1";
+    const res = await runner(["exec", "qcr-companion", "sh", "-c", script]);
+    expect(ran.map((a) => a[2])).toEqual(["run-shell", "show-buffer", "delete-buffer"]);
+    expect(ran.every((a) => a[0] === "-S" && a[1] === "/run/qcr-tmux/c.sock")).toBe(true);
+    expect(ran[0]![3]).toContain(`sh -c '${script}'`);
+    expect(res).toEqual({ ok: true, stdout: "/home/qcr/.pi/x.jsonl\n", stderr: "", code: 0 });
+    expect(buffers.size).toBe(0);
   });
 
-  it("a failing script leaves its own output and an exit code, not tmux's 'returned N'", async () => {
-    const script = "echo partial; exit 3";
-    const { runner } = rig(() => ({
-      ok: false,
-      stdout: `partial\n'${script}' returned 3\n`,
-      stderr: "",
-      code: 3,
-    }));
-    const res = await runner(["exec", "qcr-companion", "sh", "-c", script]);
-    expect(res.ok).toBe(false);
-    expect(res.stdout).toBe("partial\n");
-    expect(res.stderr).toBe("exit 3");
+  it("a failing script leaves its own output and an exit code", async () => {
+    const { runner } = scriptRig("partial\n", 3);
+    const res = await runner(["exec", "qcr-companion", "sh", "-c", "echo partial; exit 3"]);
+    expect(res).toEqual({ ok: false, stdout: "partial\n", stderr: "exit 3", code: 3 });
+  });
+
+  it("quotes a script that holds single quotes", async () => {
+    const { runner, ran } = scriptRig("", 0);
+    await runner(["exec", "qcr-companion", "sh", "-c", "echo 'a b'"]);
+    expect(ran[0]![3]).toContain(String.raw`sh -c 'echo '\''a b'\'''`);
+  });
+
+  it("a run-shell that fails (no server) is returned as it is", async () => {
+    const { runner } = rig(() => FAIL);
+    const res = await runner(["exec", "qcr-companion", "sh", "-c", "true"]);
+    expect(res).toEqual(FAIL);
   });
 
   it.each(["new-session", "new", "start-server"])(
