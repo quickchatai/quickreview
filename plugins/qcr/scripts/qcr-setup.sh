@@ -16,14 +16,17 @@
 #   exit 1   a step failed (the message names the fix)
 #   exit 10  a step needs the human at a terminal (the command is printed)
 #
-# Environment: QCR_IMAGE (default ghcr.io/quickchatai/quickreview:latest; a local
-# tag is passed to the installer so the wrapper pins it), QCR_SETUP_BIN_DIR
+# Environment: QCR_IMAGE (default ghcr.io/quickchatai/quickreview:<version>, the
+# release this plugin ships with — the registry has no `latest` tag; a named
+# image is passed to the installer so the wrapper pins it), QCR_SETUP_BIN_DIR
 # (default ~/.local/bin), QCR_SETUP_INTERACTIVE=1|0 (default: whether stdin is a
 # terminal). It makes no model call.
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-IMAGE="${QCR_IMAGE:-ghcr.io/quickchatai/quickreview:latest}"
+# Kept equal to plugin.json's and package.json's version; a test checks it.
+RELEASE_VERSION=0.1.0
+IMAGE="${QCR_IMAGE:-ghcr.io/quickchatai/quickreview:$RELEASE_VERSION}"
 DEST="${QCR_SETUP_BIN_DIR:-$HOME/.local/bin}"
 case "${QCR_SETUP_INTERACTIVE:-auto}" in
   1) interactive=1 ;;
@@ -55,7 +58,9 @@ say "docker answers"
 
 # ---- 2. pull auth ---------------------------------------------------------------
 step 2 "access to $IMAGE"
-if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  say "the image is already on this machine"
+elif docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
   say "the registry lets you pull it"
 else
   command -v gh >/dev/null 2>&1 ||

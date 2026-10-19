@@ -36,8 +36,10 @@ an explicit `--to pr`, which the skill passes only when the user asks.
 Pull access is `gh auth refresh -s read:packages`, then
 `gh auth token | docker login ghcr.io`. The two steps that need a person (the
 browser sign-in and pi's `/login`) run only on a terminal; without one the script
-prints the command and exits 10. `QCR_IMAGE` names another image (a local tag).
-It makes no model call.
+prints the command and exits 10. The image defaults to
+`ghcr.io/<owner>/quickreview:<version>` (the publishing org's namespace, set in the script), the release the plugin ships with
+(the registry has no `latest` tag); `QCR_IMAGE` names another image, and a tag
+already on the machine skips the pull check. It makes no model call.
 
 ## Tests
 

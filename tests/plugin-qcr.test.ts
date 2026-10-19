@@ -286,7 +286,10 @@ const FAKE_DOCKER = `#!/bin/sh
 echo "docker $*" >> "$FAKE_LOG"
 case "$1" in
   info) [ -z "\${FAKE_DOCKER_DOWN-}" ] || exit 1; exit 0 ;;
+  image) [ -n "\${FAKE_LOCAL_IMAGE-}" ]; exit $? ;;
   manifest)
+    # a tag that exists only on this machine is not in any registry
+    [ -z "\${FAKE_LOCAL_IMAGE-}" ] || { echo "no such manifest" >&2; exit 1; }
     if [ -f "$FAKE_DIR/logged-in" ] || [ -z "\${FAKE_NO_PULL-}" ]; then exit 0; fi
     echo "unauthorized" >&2; exit 1 ;;
   login) cat > "$FAKE_DIR/login-stdin"; : > "$FAKE_DIR/logged-in"; exit 0 ;;
@@ -460,7 +463,13 @@ describe("qcr-setup — the order on a fresh machine", () => {
     const install = log[idx(log, /^docker run .* install$/)]!;
     expect(install).toContain(`-v ${rig.dest}:/out`);
     expect(install).toMatch(/--user \d+:\d+/);
-    expect(install).toMatch(/ghcr\.io\/[^/ ]+\/quickreview:latest/);
+    const pkgVersion = (
+      JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }
+    ).version;
+    expect(install).toMatch(
+      new RegExp(`ghcr\\.io/[^/ ]+/quickreview:${pkgVersion.replace(/\./g, "\\.")} install$`),
+    );
+    expect(install).not.toContain(":latest");
     expect(r.stdout).toMatch(/ready: qcr 0\.1\.0/);
     // no gh config, no docker.sock, no model: nothing but the one -v
     expect(log.join("\n")).not.toMatch(/docker\.sock|\.config\/gh/);
@@ -473,6 +482,41 @@ describe("qcr-setup — the order on a fresh machine", () => {
     const install = rig.log()[idx(rig.log(), /^docker run .* install$/)]!;
     expect(install).toContain("-e QCR_IMAGE=qcr-local:dev");
     expect(install.endsWith("qcr-local:dev install")).toBe(true);
+  });
+});
+
+describe("qcr-setup — the image to pull", () => {
+  it("the default release tag is the plugin's and the package's version", () => {
+    const sh = readFileSync(join(root, "plugins/qcr/scripts/qcr-setup.sh"), "utf8");
+    const pinned = /^RELEASE_VERSION=(\S+)$/m.exec(sh)?.[1];
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string };
+    const plugin = JSON.parse(
+      readFileSync(join(root, "plugins/qcr/.claude-plugin/plugin.json"), "utf8"),
+    ) as {
+      version: string;
+    };
+    expect(pinned).toBe(pkg.version);
+    expect(plugin.version).toBe(pkg.version);
+    expect(sh).not.toMatch(/quickreview:latest/);
+  });
+
+  it("a local-only QCR_IMAGE skips the registry check and the gh path", () => {
+    const rig = setupRig();
+    const r = rig.run({
+      env: {
+        QCR_IMAGE: "qcr-local:dev",
+        FAKE_LOCAL_IMAGE: "1",
+        FAKE_LOGIN_PRESENT: "1",
+        QCR_SETUP_INTERACTIVE: "0",
+      },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const log = rig.log();
+    expect(idx(log, "docker image inspect qcr-local:dev")).toBeGreaterThanOrEqual(0);
+    expect(idx(log, "docker manifest inspect")).toBe(-1);
+    expect(calls(log, "gh ")).toEqual([]);
+    expect(idx(log, "docker login")).toBe(-1);
+    expect(existsSync(join(rig.dest, "qcr"))).toBe(true);
   });
 });
 
