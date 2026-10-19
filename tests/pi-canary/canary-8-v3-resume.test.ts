@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { PiHost } from "../../src/engine/pisdk.js";
 import { type Rig, createRig, useOfflineGuard } from "./harness.js";
 
 useOfflineGuard();
@@ -21,6 +22,7 @@ const FIXTURE_ID = "0192a3c4-5d6e-7f80-9a1b-2c3d4e5f6a7b";
 
 let rig: Rig;
 let sessionDir: string;
+const hosts: PiHost[] = [];
 
 beforeEach(async () => {
   rig = await createRig();
@@ -28,7 +30,23 @@ beforeEach(async () => {
   mkdirSync(sessionDir, { recursive: true });
 });
 
-afterEach(() => rig.close());
+afterEach(() => {
+  for (const h of hosts.splice(0)) h.dispose();
+  rig.close();
+});
+
+/** A PiHost whose provider is the rig's faux one. */
+const hostOnRig = async (): Promise<PiHost> => {
+  const host = await PiHost.create({
+    agentDir: join(rig.dir, "host-agent"),
+    settings: { compaction: { enabled: false }, retry: { enabled: false } },
+    configureModels: (r) => {
+      r.registerNativeProvider(rig.faux.provider);
+    },
+  });
+  hosts.push(host);
+  return host;
+};
 
 const lines = (file: string): Record<string, unknown>[] =>
   readFileSync(file, "utf8")
@@ -104,5 +122,48 @@ describe("[canary 8] resume of a v3 JSONL", () => {
     );
     expect(JSON.stringify(after.slice(original.length))).toContain("round 3 ok");
     expect(readdirSync(sessionDir).filter((f) => f.endsWith(".jsonl"))).toHaveLength(1);
+  });
+
+  it("PiHost's resumeFile route does the same: the fixture's id, history and file", async () => {
+    const file = join(sessionDir, `2026-10-12T09-00-00-000Z_${FIXTURE_ID}.jsonl`);
+    copyFileSync(FIXTURE, file);
+    const original = lines(file);
+    let seen: { sessionId?: string; texts: string } | undefined;
+    rig.faux.setResponses([
+      (ctx, options) => {
+        seen = { sessionId: options?.sessionId, texts: JSON.stringify(ctx.messages) };
+        return fauxAssistantMessage("round 3 ok");
+      },
+    ]);
+    const host = await hostOnRig();
+    const resumed = await host.makeSession({
+      cwd: rig.dir,
+      env: {},
+      model: rig.model,
+      persist: { resumeFile: file },
+    });
+    expect(resumed.sessionId).toBe(FIXTURE_ID);
+    expect(resumed.sessionFile).toBe(file);
+    await resumed.prompt("Round 3.");
+    expect(seen?.sessionId).toBe(FIXTURE_ID);
+    expect(seen?.texts).toContain("Round 2 done.");
+    const after = lines(file);
+    expect(after.slice(0, original.length)).toEqual(original);
+    expect(JSON.stringify(after.slice(original.length))).toContain("round 3 ok");
+    expect(readdirSync(sessionDir).filter((f) => f.endsWith(".jsonl"))).toHaveLength(1);
+  });
+
+  it("PiHost never opens a missing or headerless file as a fresh session", async () => {
+    const missing = join(sessionDir, "gone.jsonl");
+    const host = await hostOnRig();
+    await expect(
+      host.makeSession({
+        cwd: rig.dir,
+        env: {},
+        model: rig.model,
+        persist: { resumeFile: missing },
+      }),
+    ).rejects.toThrow(/not a session/);
+    expect(readdirSync(sessionDir)).toEqual([]);
   });
 });

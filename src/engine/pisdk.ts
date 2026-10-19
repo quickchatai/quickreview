@@ -28,7 +28,7 @@
 // match exactly, and installs it only when the route says it owns the process.
 // Inside a CLI pi (the debug round, the companion) the dispatcher is pi's, and
 // PiHost leaves it alone. Canary 6 pins the function and its settings.
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, isAbsolute } from "node:path";
@@ -349,8 +349,10 @@ export interface HostSessionSpec {
   bashEnv?: BashEnvOptions;
   /** Persist the session's JSONL: at an exact file (a new session, written from
    * its first user message on, as pi's `--session <path>` does), or under a
-   * directory pi names the file in (`--session-dir`). Omitted: in memory. */
-  persist?: { sessionFile: string } | { sessionDir: string };
+   * directory pi names the file in (`--session-dir`), or by reopening an
+   * existing file under its own id (`resumeFile`; new turns append to it).
+   * Omitted: in memory. */
+  persist?: { sessionFile: string } | { sessionDir: string } | { resumeFile: string };
   /** An already-built manager, for a caller that needs one pi's own way
    * (canaries). Wins over `persist`; give one or the other. Default: an
    * in-memory manager with a fresh unique id. */
@@ -376,14 +378,54 @@ function resolveModel(runtime: ModelRuntime, model: string | Model<Api>): Model<
   return found;
 }
 
+/** The id a session JSONL's header carries; null when the file does not start
+ * with a session header. */
+function headerId(file: string): string | null {
+  let first: string | undefined;
+  try {
+    // The header is the first line; a transcript can run to megabytes.
+    const fd = openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(64 * 1024);
+      first = buf.toString("utf8", 0, readSync(fd, buf, 0, buf.length, 0)).split("\n", 1)[0];
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+  try {
+    const h = JSON.parse(first ?? "") as { type?: unknown; id?: unknown };
+    return h.type === "session" && typeof h.id === "string" && h.id !== "" ? h.id : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The session manager a spec asks for. A session file that already exists is a
- * resume, not a create, and is refused here: nothing opens an old session by
- * accident. */
+ * resume, not a create, and is refused for `sessionFile`: nothing opens an old
+ * session by accident. A resume names its file as `resumeFile`, which must hold
+ * a session header: pi would otherwise start a fresh session (a new id, so a
+ * cold prompt cache) at a missing or empty path. */
 function sessionManagerFor(spec: HostSessionSpec): SessionManager {
   const { persist, sessionManager } = spec;
   if (sessionManager) {
     if (persist) throw new Error("give a sessionManager or persist, not both");
     return sessionManager;
+  }
+  if (persist && "resumeFile" in persist) {
+    const file = persist.resumeFile;
+    if (!isAbsolute(file)) throw new Error(`a session file must be absolute, got ${file}`);
+    const id = headerId(file);
+    if (id === null) throw new Error(`${file} is not a session JSONL to resume`);
+    // The cwd override keeps the session in the spec's cwd (the header's belongs
+    // to the machine that wrote it); the header on disk is not rewritten.
+    const manager = SessionManager.open(file, dirname(file), spec.cwd);
+    if (manager.getSessionId() !== id)
+      throw new Error(
+        `resuming ${file} changed the session id (${id} -> ${manager.getSessionId()})`,
+      );
+    return manager;
   }
   if (persist && "sessionFile" in persist) {
     const file = persist.sessionFile;

@@ -3,7 +3,15 @@
 // network); what only a live, file-backed session has is tested after it, under
 // the runtime's own name. The wire parity with a real `pi` CLI child, on a local
 // OpenAI-compatible endpoint, is the last group.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -116,7 +124,7 @@ const sdk: PortHarness = {
   name: "sdkRuntime",
   model: "faux/m",
   steer: "delivered",
-  resume: "unsupported",
+  resume: "supported",
   agentsFiles: "supported",
   recordedStream: false,
   runtime: fauxRuntime,
@@ -232,6 +240,34 @@ describe("[sdkRuntime] what is its own", () => {
       writeFileSync(old, "{}\n");
       await expect(open("echo", { sessionFile: old })).rejects.toThrow(/already exists/);
       expect(readFileSync(old, "utf8")).toBe("{}\n");
+    });
+  });
+
+  describe("resume of a file interactive pi wrote", () => {
+    const FIXTURE = join(import.meta.dirname, "pi-canary", "fixtures", "interactive-v3.jsonl");
+    const FIXTURE_ID = "0192a3c4-5d6e-7f80-9a1b-2c3d4e5f6a7b";
+
+    it("keeps its id and its history, and the new turn lands in the same file", async () => {
+      const sessions = join(dir, "sessions");
+      mkdirSync(sessions);
+      const file = join(sessions, `2026-10-12T09-00-00-000Z_${FIXTURE_ID}.jsonl`);
+      copyFileSync(FIXTURE, file);
+      const original = lines(file);
+      const s = await sdk.runtime(dir, "echo").resume(file, spec());
+      expect(s.id).toBe(FIXTURE_ID);
+      expect(s.sessionFile).toBe(file);
+      expect((await s.prompt("Round 3.")).code).toBe(0);
+      await s.dispose();
+      const after = lines(file);
+      expect(after.slice(0, original.length)).toEqual(original);
+      expect(after.length).toBeGreaterThan(original.length);
+      expect(JSON.stringify(after.slice(original.length))).toContain("Round 3.");
+      expect(readdirSync(sessions)).toHaveLength(1);
+      // The events file opens with the resumed session's own header.
+      expect(lines(join(dir, "events.jsonl"))[0]).toMatchObject({
+        type: "session",
+        id: FIXTURE_ID,
+      });
     });
   });
 
