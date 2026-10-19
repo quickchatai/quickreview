@@ -98,8 +98,8 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   QCR_LEDGER_FILE: {
     kind: "extension-config",
-    readers: ["ledger-pin.ts"],
-    note: "ledger mirror file override",
+    readers: ["ledger-pin.ts", "lens.ts"],
+    note: "ledger mirror file override; lens.ts keeps its lens-ledger.jsonl beside it",
   },
   QCR_SESSION_BRIDGE_GENERATION: {
     kind: "extension-config",

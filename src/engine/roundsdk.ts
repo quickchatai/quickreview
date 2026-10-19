@@ -24,7 +24,7 @@
 // `roundSdkExtras()` is the `extras` option of `sdkRuntime(host, { extras })`.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { bashGuardConfigFromEnv, createBashGuard } from "../../extensions/bash-guard.js";
 import {
   FINDING_CLUSTERS_TOOLS,
@@ -36,10 +36,12 @@ import { DEFAULT_TOOLS } from "./pisdk.js";
 import type { SessionSpec } from "./port.js";
 import type { SessionExtras } from "./sdkruntime.js";
 
-/** The lens tool of a round: the factories that register it and the tool names
- * they add to the allowlist. */
+/** The lens tool of a round: the factories that register it (the native tool is
+ * a file's extension) or the definitions handed over as `customTools` (our own,
+ * src/engine/lens/engine-tools.ts), and the tool names they add to the allowlist. */
 export interface RoundLensTools {
   factories: readonly ExtensionFactory[];
+  customTools?: readonly ToolDefinition[];
   toolNames: readonly string[];
 }
 
@@ -88,6 +90,7 @@ export function roundSdkExtras(
         ...(lens?.toolNames ?? []),
         ...FINDING_CLUSTERS_TOOLS.map((t) => t.name),
       ],
+      ...(lens?.customTools?.length ? { customTools: lens.customTools } : {}),
       agentsFiles: [reviewerStub(root, spec.cwd)],
       bashEnv: { allow: BASH_ENV_ALLOW },
     };

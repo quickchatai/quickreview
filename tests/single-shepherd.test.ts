@@ -459,6 +459,15 @@ describe("stripAgentSpawnTools", () => {
     expect(stripAgentSpawnTools("tools: read, launch_plan, grep\n")).toBe("tools: read, grep\n");
   });
 
+  it("drops the engine routes' lens tools (D3) the same way", () => {
+    expect(stripAgentSpawnTools("tools: read, lens, grep\n")).toBe("tools: read, grep\n");
+    expect(stripAgentSpawnTools("tools: read, lens_wave, grep\n")).toBe("tools: read, grep\n");
+    expect(stripAgentSpawnTools("tools: read, Lens_Wave, lens, bash\n")).toBe(
+      "tools: read, bash\n",
+    );
+    expect(stripAgentSpawnTools("name: x\ntools: lens, lens_wave\n")).not.toContain("tools:");
+  });
+
   it("leaves a clean tools line untouched", () => {
     expect(stripAgentSpawnTools("name: x\ntools: read, bash, grep, glob\n")).toBe(
       "name: x\ntools: read, bash, grep, glob\n",
@@ -501,6 +510,26 @@ describe("buildAgents — built passes cannot launch agents", () => {
       expect(frontmatter).toContain("read, bash, grep");
       expect(text).toContain("You are a leaf");
       expect(text).toContain("never launch another agent");
+    }
+  });
+
+  it("strips the engine routes' lens tools a seed might grow (D3)", () => {
+    const src = join(dir, "agents");
+    const out = join(dir, "built");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(
+      join(src, "pass-baseline.md"),
+      "---\nname: pass-baseline\ntools: read, lens, bash, lens_wave, grep\nmodel: openai/x\n---\n\nbody\n",
+    );
+    for (const agent of buildAgents(src, out, { riskPasses: [], validateTier: "terra-med" })) {
+      const text = readFileSync(agent.output, "utf8");
+      const tools = /^tools:[ \t]*(.*)$/m
+        .exec(text)![1]!
+        .split(",")
+        .map((t) => t.trim());
+      expect(tools).toEqual(expect.arrayContaining(["read", "bash", "grep"]));
+      expect(tools).not.toContain("lens");
+      expect(tools).not.toContain("lens_wave");
     }
   });
 
@@ -558,7 +587,7 @@ describe("subagents glue is never registered globally", () => {
     expect(paths).toEqual(["$APP/extensions/bash-guard.ts"]);
     for (const p of paths) {
       expect(p, `${p} must not hand children an agent launcher or memory`).not.toMatch(
-        /subagent|openviking|register-lens/,
+        /subagent|openviking|register-lens|extensions\/lens/,
       );
     }
   });
@@ -570,9 +599,20 @@ describe("subagents glue is never registered globally", () => {
       expect(paths.length).toBeGreaterThan(0);
       for (const p of paths) {
         expect(p, `${p} must not hand children an agent launcher or memory`).not.toMatch(
-          /subagent|openviking|register-lens/,
+          /subagent|openviking|register-lens|extensions\/lens/,
         );
       }
+    });
+  }
+
+  // extensions/lens.ts hosts SDK lens sessions in an interactive pi (a debug
+  // round, the companion once it moves, P7.8). The tmux bot runs the native
+  // pair through extensions/subagents.ts and never loads it: the argv lists
+  // that start its sessions and the bench's must not name it.
+  for (const file of ["src/sessions.ts", "src/tui/companion.ts", "src/bench/runner.ts"]) {
+    it(`${file}: the tmux bot's and the bench's pi never load extensions/lens.ts`, () => {
+      const text = readFileSync(join(root, file), "utf8");
+      expect(text).not.toMatch(/extensions\/lens\b|["']lens\.ts["']/);
     });
   }
 });
