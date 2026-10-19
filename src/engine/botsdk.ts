@@ -37,6 +37,12 @@
 //                            (src/live/), and its round-progress v2 projection
 //                            is published beside it for the supervisor
 //
+// An idle-PR answer worker (P8.17, botworker.ts `--mode answer`) builds the same
+// session with `answer` set: the read-only repo tools and the memory lookups, no
+// lens tool, no finding tools, and the capability fd and bash only when the
+// operator marked the message may-post (src/engine/answerguard.ts adds that an
+// answer commits no verdict).
+//
 // Bot mode refuses a GitHub token in the session's env or in the host's own
 // (rule 3): the bot mints per command from the App credential, so a token in an
 // env is a leak waiting for the model's bash.
@@ -57,6 +63,7 @@ import {
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import { LIVE_COALESCE_MS, type LiveSink } from "../live/writer.js";
 import { RoundProgressPublisher, roundProgressPath } from "../live/publish.js";
+import { createAnswerGuard } from "./answerguard.js";
 import { openRoundSink, type RoundLive } from "./livewire.js";
 import { DEFAULT_TOOLS } from "./pisdk.js";
 import type { PiHost } from "./pisdk.js";
@@ -88,6 +95,21 @@ export const OPENVIKING_TOOL_NAMES = [
   "viking_archive_expand",
 ] as const;
 
+/** pi's read-only built-ins: what an idle-PR answer worker reads the repo with. */
+export const ANSWER_READ_TOOLS = ["read", "grep", "find", "ls"] as const;
+
+/** The memory tools that only read (P8.17): the answer worker looks things up and
+ * writes nothing into the PR's notes. */
+export const ANSWER_MEMORY_TOOLS = [
+  "viking_search",
+  "viking_read",
+  "viking_browse",
+  "viking_archive_expand",
+] as const;
+
+/** No lens tool, no factory: the answer worker's `lens` slot. */
+export const NO_LENS: RoundLensTools = { factories: [], toolNames: [] };
+
 type Env = Readonly<Record<string, string | undefined>>;
 
 export interface BotSdkOptions {
@@ -97,6 +119,13 @@ export interface BotSdkOptions {
   /** The post tools of the route (P8.7), as definitions. They join `customTools`
    * and the allowlist. */
   postTools?: readonly ToolDefinition[];
+  /** An idle-PR answer worker's session (P8.17, rule 9): read-only repo tools and
+   * the memory lookups, no lens tool, no finding tools, no verdict. With `mayPost`
+   * (the operator marked the message) it also gets bash, for the post scripts, and
+   * the capability fd those scripts read; without it the session has neither, so
+   * it can run nothing and a post is out of its reach before the daemon refuses
+   * it. Give `lens` as NO_LENS. */
+  answer?: { mayPost: boolean };
   /** The host's own env, checked for a GitHub token. Omitted: `process.env`. */
   processEnv?: NodeJS.ProcessEnv;
   /** Where the round's LiveEvent log goes. Omitted: none is written, and no
@@ -169,7 +198,8 @@ export function botSdkExtras(options: BotSdkOptions): (spec: SessionSpec) => Ses
     const home = spec.env["HOME"];
     if (home === undefined) throw new Error("a bot session's env names its pi HOME (HOME)");
     const pin = gitPin(spec.env);
-    const inheritFds = capabilityFds(spec.env);
+    const answer = options.answer;
+    const inheritFds = answer && !answer.mayPost ? [] : capabilityFds(spec.env);
     const memory = openVikingConfigFromEnv({
       env: spec.env,
       argv: ["--approve"],
@@ -178,6 +208,22 @@ export function botSdkExtras(options: BotSdkOptions): (spec: SessionSpec) => Ses
       extensionDir: join(root, "extensions", "vendor", "openviking-pi"),
     });
     const lens = options.lens;
+    if (answer) {
+      if (lens.factories.length > 0 || lens.toolNames.length > 0 || options.postTools?.length)
+        throw new Error("an answer session carries no lens tool and no post tool of its own");
+      return {
+        extensions: [
+          createBashGuard(bashGuardConfigFromEnv(spec.env, spec.cwd)),
+          createLedgerPin(ledgerPinConfigFromEnv(spec.env)),
+          createAnswerGuard(),
+          createOpenViking((options.openViking ?? ((c) => c))(memory)),
+        ],
+        tools: [...ANSWER_READ_TOOLS, ...ANSWER_MEMORY_TOOLS, ...(answer.mayPost ? ["bash"] : [])],
+        agentsFiles: [reviewerStub(root, spec.cwd)],
+        bashEnv: { allow: BOT_BASH_ENV_ALLOW, set: pin },
+        ...(inheritFds.length > 0 ? { inheritFds } : {}),
+      };
+    }
     const customTools = [...(lens.customTools ?? []), ...(options.postTools ?? [])];
     const extensions: ExtensionFactory[] = [
       // The tmux bot's `--extension` order, bash-guard first (it rides pi's
@@ -212,6 +258,9 @@ function withLiveLog(
   spec: SessionSpec,
   live: RoundLive,
   warn: ((message: string) => void) | undefined,
+  /** False for an answer worker: its turns are in the log a viewer reads, but they
+   * are no round, so the PR's round-progress snapshot is left as the round left it. */
+  progress = true,
 ): RuntimeSession {
   const { pr, session: name } = prOf(spec.env);
   const root = live.root;
@@ -223,18 +272,20 @@ function withLiveLog(
     warn?.(`live log not started: ${String(err).slice(0, 200)}`);
     return session;
   }
-  const publisher = new RoundProgressPublisher({
-    logPath: sink.path,
-    snapshotPath: roundProgressPath(root, pr),
-    who: { pr, session: name },
-    ...(warn ? { warn } : {}),
-  });
+  const publisher = progress
+    ? new RoundProgressPublisher({
+        logPath: sink.path,
+        snapshotPath: roundProgressPath(root, pr),
+        who: { pr, session: name },
+        ...(warn ? { warn } : {}),
+      })
+    : undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const publish = (): void => {
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
     sink.flush();
-    publisher.catchUp();
+    publisher?.catchUp();
   };
   const unhear = session.subscribe(
     (event) => {
@@ -251,7 +302,7 @@ function withLiveLog(
     unhear();
     publish();
     sink.close();
-    publisher.catchUp();
+    publisher?.catchUp();
   });
 }
 
@@ -261,7 +312,9 @@ export function botSdkRuntime(host: PiHost, options: BotSdkOptions): Runtime {
   const inner = sdkRuntime(host, { extras: botSdkExtras(options) });
   const live = options.live;
   const attach = (session: RuntimeSession, spec: SessionSpec): RuntimeSession =>
-    live === undefined ? session : withLiveLog(session, spec, live, options.warn);
+    live === undefined
+      ? session
+      : withLiveLog(session, spec, live, options.warn, options.answer === undefined);
   return {
     create: async (spec) => attach(await inner.create(spec), spec),
     resume: async (file, spec) => attach(await inner.resume(file, spec), spec),

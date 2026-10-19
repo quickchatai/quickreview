@@ -51,8 +51,8 @@ every row in one turn does not reliably do so.
 
 **S4 — One instruction at a time per main pi.** A round in flight is never
 interleaved with another instruction to the same session. Wakes that arrive
-mid-round are held and delivered when the round ends. The one exception is an
-operator's steer, below.
+mid-round are held and delivered by the round's own worker before it exits. The
+exceptions are the operator's, below: a steer, and a message to an idle PR.
 
 ## Audit against the shipped code (2026-08-17)
 
@@ -134,31 +134,37 @@ Known and accepted: the wake is *rendered* at claim time, so its ping-pong
 discipline counter reflects the moment the reply arrived. That counter only
 advances when the bot replies, which cannot happen while the wake is held.
 
-## Transitional amendment (D9, ratified at P-1)
+## Amendment: workers, the answer worker and the permit broker
 
 CLAUDE.md rule 9 is the authority for the wording; this section says what it
-covers while the tmux bot and the engine routes coexist.
+covers while the tmux bot and the worker routes coexist.
 
 - **Two lens tools, one rule.** On the tmux bot `extensions/subagents.ts` stays
   the lens tool (`subagent` / `launch_plan`) until the bot moves to workers. On
-  engine (SDK) routes our own lens tool runs: `lens` / `lens_wave`, in
-  `src/engine/lens/`. Both are called by the PR's main session, and nothing
-  else schedules a lens.
+  engine (SDK) routes and in workers our own lens tool runs: `lens` /
+  `lens_wave`, in `src/engine/lens/`. Both are called by the PR's main session,
+  and nothing else schedules a lens.
 - **Exactly two launchers.** The round's engine starts the *planned discovery
   wave* — the task files the engine wrote for this round — at round start.
   Everything else (rows the session raises, lenses it adds, the validator) is
-  launched by the PR's main session. The daemon launches nothing and the
-  engine never launches pass-validate. If the interim P7.11 is chosen (D36), a
-  kill-switched tmux-pi extension command launches the planned wave through the
-  native subagent path; it is the engine's launch, not a third launcher.
+  launched by the PR's main session. The daemon launches no agent and the
+  engine never launches pass-validate.
 - **Lenses are leaves by construction.** A lens session is never given a lens
   tool, and `include.ts` strips agent-spawning tools at build time (G1), so a
-  pass cannot fan out on either route.
-- **Held wakes stay held.** Mid-round daemon wakes go to `pending_wakes` and
-  flush at round end (`src/wakes.ts`, G3); the new routes do not add a second
-  wake channel.
-- **The operator-steer exception.** A steer an operator sends from the viewer
-  goes straight to the running session, like the quick-message box above. It is
-  human-initiated, never automatic and carries no verdict. It applies with the
-  daemon's own wakes still held: the exception is for the operator, not for the
-  daemon.
+  pass cannot fan out on any route.
+- **Held wakes stay held.** Mid-round daemon wakes go to `pending_wakes` and are
+  flushed by the round's own worker before it exits (`src/wakes.ts`, G3, D22);
+  the worker routes add no second wake channel.
+- **The operator's two exceptions.** A steer an operator sends from the viewer
+  goes straight to the running session, like the quick-message box above. A
+  message to an idle PR is answered now, not held: a short answer worker resumes
+  the session under the same id, replies and exits. It has read and chat tools
+  and no lens tool; it posts only when the operator marked the message
+  `may_post`, through the one gate, and may then approve with the guards. Both
+  are human-initiated, never automatic, and neither carries a verdict. They
+  apply with the daemon's own wakes still held: the exceptions are for the
+  operator, not for the daemon.
+- **The permit broker grants, it launches nothing.** The daemon hands out a slot
+  per lens across workers (`[daemon] lens_permits`, 20 on the VM), FIFO and
+  staggered. Holding the slots is not scheduling an agent: which lens runs, and
+  when, stays with the engine and the main session.

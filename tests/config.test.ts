@@ -141,6 +141,19 @@ describe("parseConfig", () => {
       expect(() => parseConfig(set(bad)), bad).toThrow(/lens_grant_stagger_ms/);
   });
 
+  it("the idle-PR answer worker's caps default to 600 s and $2, and are checked (P8.17)", () => {
+    expect(cfg.daemon.answer_timeout_s).toBe(600);
+    expect(cfg.daemon.answer_cap_usd).toBe(2);
+    const set = (line: string) =>
+      readFileSync(configPath, "utf8").replace(/^\[daemon\]$/m, `[daemon]\n${line}`);
+    expect(parseConfig(set("answer_timeout_s = 120")).daemon.answer_timeout_s).toBe(120);
+    expect(parseConfig(set("answer_cap_usd = 0.5")).daemon.answer_cap_usd).toBe(0.5);
+    for (const bad of ["answer_timeout_s = 0", "answer_timeout_s = -5", 'answer_timeout_s = "600"'])
+      expect(() => parseConfig(set(bad)), bad).toThrow(/answer_timeout_s/);
+    for (const bad of ["answer_cap_usd = 0", 'answer_cap_usd = "2"'])
+      expect(() => parseConfig(set(bad)), bad).toThrow(/answer_cap_usd/);
+  });
+
   it("expands secrets_dir to an absolute path", () => {
     expect(cfg.github.secrets_dir.startsWith("~")).toBe(false);
     expect(cfg.github.secrets_dir).toBe(resolve(homedir(), ".config/example-review-bot"));

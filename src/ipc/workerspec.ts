@@ -65,6 +65,14 @@ export interface WorkerSpec {
   compact?: boolean;
   /** Milliseconds between the worker's heartbeat events. Omitted: 15 000. */
   heartbeat_ms?: number;
+  /** An answer worker only (P8.17): the operator marked the message may-post, so
+   * the session also gets the bash tool for the post scripts. The daemon sets it
+   * from its own record of the command; it is never read from the payload alone. */
+  may_post?: boolean;
+  /** An answer worker only (P8.17): the round whose live log (`state/live/<key>/r<round>`)
+   * its turns are appended to, so a viewer following the PR sees the answer. The
+   * PR's newest round; omitted when it has none, and then no live log is written. */
+  live_round?: number;
 }
 
 /** A coalesced delivery of held wakes: one user message for the session. */
@@ -168,6 +176,11 @@ export function parseWorkerSpec(raw: unknown): WorkerSpec {
     const beat = nat(raw, "heartbeat_ms");
     if (beat === 0) return bad("`heartbeat_ms` must be positive");
     spec.heartbeat_ms = beat;
+  }
+  if (raw["live_round"] !== undefined) spec.live_round = nat(raw, "live_round");
+  if (raw["may_post"] !== undefined) {
+    if (typeof raw["may_post"] !== "boolean") return bad("`may_post` must be a boolean");
+    spec.may_post = raw["may_post"];
   }
   return spec;
 }

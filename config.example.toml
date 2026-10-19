@@ -151,6 +151,13 @@ session_compaction_max_s = 600
 # 0 turns the spacing off. status.json `permits` shows the use and the queue.
 lens_permits = 20
 lens_grant_stagger_ms = 250
+# The idle-PR answer worker: an operator's message to a PR with no running
+# worker is answered at once by a short worker that resumes the PR's session,
+# replies and exits. It is ended at answer_timeout_s of wall clock and stops at
+# answer_cap_usd of its own spend. It posts only when the message carried
+# may_post (the viewer's Alt-p, `qcr message --may-post`), through the one gate.
+answer_timeout_s = 600
+answer_cap_usd = 2
 round_stage_supervisor_stale_s = 180
 # The daemon watches its own event loop (status.json
 # `daemon.event_loop`, `qcr status`, the TUI board). One delay of

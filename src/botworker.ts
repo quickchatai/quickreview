@@ -3,6 +3,18 @@
 //
 //     node dist/src/botworker.js --command <id> --mode round|answer
 //
+// `--mode answer` (P8.17, rule 9's second exception) serves an operator's message
+// to an idle PR instead of a round: the same handshake, login and resume under the
+// same session id, then ONE user turn marked with operator provenance, and the
+// reply goes back in the `done` event. Its tools are the read-only repo tools and
+// the memory lookups (src/engine/botsdk.ts `answer`), no lens tool, no verdict,
+// and no wave, wake or permit: the daemon's own wakes stay held for the round.
+// Only a message the operator marked may-post also gets bash, for the post
+// scripts, and the capability they read; the daemon refuses any other post in any
+// case. It compacts before it exits like a round, and the daemon bounds it by
+// `[daemon] answer_timeout_s` and `answer_cap_usd`. The numbered round below is the
+// round mode's; an answer runs 1 to 3, the one turn, then 6 and 7.
+//
 // The daemon starts it with the command's capability on an inherited fd
 // (QCR_IPC_CAP_FD, src/ipc/capability.ts), the socket path, the command id and
 // the generation in env (QCR_IPC_*), and a small allowlisted env of its own. It
@@ -37,7 +49,7 @@
 //
 // Exit codes: 0 the round was served (a verdict may or may not have been
 // written: `done` says), 1 a turn failed (timeout, cap, stream, refused
-// login), 2 bad usage or an answer-mode run before P8.17, 3 the handshake or the
+// login), 2 bad usage, 3 the handshake or the
 // payload could not be trusted, 4 the login was refused up front, 5 the session
 // could not be opened, 75 the daemon went away, 76 the daemon fenced this
 // worker (a stale generation or an inactive command), 143 terminated.
@@ -52,7 +64,7 @@ import {
   type EngineAuth,
 } from "./engine/auth.js";
 import { agentDirSettings } from "./engine/agentdir.js";
-import { botSdkRuntime } from "./engine/botsdk.js";
+import { NO_LENS, botSdkRuntime } from "./engine/botsdk.js";
 import { engineLensTools, type EngineLensTools } from "./engine/lens/engine-tools.js";
 import type { Permits } from "./engine/lens/permits.js";
 import { planLaunch, type LaunchUnit } from "./engine/lens/launch-plan.js";
@@ -80,6 +92,7 @@ import {
   type WorkerSpec,
 } from "./ipc/workerspec.js";
 import { WorkerControls, ackSender } from "./botcontrol.js";
+import { operatorMayPost } from "./operatormessage.js";
 import { sessionCommandMarker } from "./session-command.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
@@ -114,6 +127,13 @@ const IPC_ENV = [
   "QCR_IPC_COMMAND_ID",
   "QCR_IPC_GENERATION",
 ] as const;
+
+/** What an answer's reply is cut to in the `done` event (the wire line is 1 MiB). */
+const MAX_REPLY_CHARS = 100_000;
+/** The names of a round's identity in the session env. An answer has no round, so
+ * the model's bash (and the post scripts it may run) carries none of them: a post
+ * would claim a round and the daemon would refuse it. */
+const ROUND_ONLY_ENV = ["QCR_ROUND_NO", "QCR_EXPECTED_HEAD", "QCR_POSTING_KEY"] as const;
 
 export interface WorkerArgs {
   command: string;
@@ -168,6 +188,17 @@ export function continuationText(marker: string): string {
   ].join("\n");
 }
 
+/** What a continuing answer worker tells the session. */
+export function answerContinuationText(marker: string): string {
+  return [
+    "The worker that was answering the operator's message stopped before it finished; this conversation is intact. Finish the answer.",
+    "",
+    "Before you repeat a step, check what is already done: a review or reply you posted stays posted (the post scripts tell you when it is). Never post the same thing twice.",
+    "",
+    `The operator's message is the one above that carries ${marker}.`,
+  ].join("\n");
+}
+
 /** Does the session JSONL already hold `marker`? An unreadable file holds none. */
 export function jsonlHasMarker(file: string, marker: string): boolean {
   try {
@@ -189,6 +220,9 @@ class RoundWatch {
   posted = 0;
   /** The provider's error on the newest assistant message, if that is how it ended. */
   lastError: string | undefined;
+  /** The text of the newest assistant message that did not end in a tool call:
+   * what the model said last, which is an answer's reply. */
+  replyText: string | undefined;
   private readonly commands = new Map<string, string>();
 
   constructor(private readonly report: (kind: IpcEventKind, body?: unknown) => void) {}
@@ -197,6 +231,11 @@ class RoundWatch {
     if (event["type"] === "message_end") {
       const message = event["message"] as
         { role?: unknown; stopReason?: unknown; errorMessage?: unknown } | undefined;
+      if (message?.role === "assistant") {
+        const full = event["message"] as { content?: unknown; stopReason?: unknown };
+        if (full.stopReason !== "toolUse" && full.stopReason !== "error")
+          this.replyText = textOf(full.content);
+      }
       if (message?.role === "assistant")
         this.lastError =
           message.stopReason === "error"
@@ -230,6 +269,23 @@ class RoundWatch {
   }
 }
 
+/** The text blocks of an assistant message's content, joined. */
+function textOf(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((b: unknown) =>
+      typeof b === "object" &&
+      b !== null &&
+      (b as { type?: unknown }).type === "text" &&
+      typeof (b as { text?: unknown }).text === "string"
+        ? [(b as { text: string }).text]
+        : [],
+    )
+    .join("\n")
+    .trim();
+}
+
 /** `: <the file's last line>` for a failure's reason, or nothing. */
 function lastLineOf(file: string): string {
   try {
@@ -252,7 +308,8 @@ class Stop extends Error {
 /** The PR's session, opened. */
 interface Opened {
   session: RuntimeSession;
-  tools: EngineLensTools;
+  /** The round's lens tools; none for an answer worker. */
+  tools: EngineLensTools | undefined;
   resumed: boolean;
   /** The JSONL it was resumed from; undefined at birth. */
   file: string | undefined;
@@ -266,10 +323,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
   const log = deps.log ?? ((): void => {});
   const now = deps.now ?? Date.now;
   const env = deps.env;
-  if (args.mode === "answer") {
-    log("botworker: --mode answer lands with P8.17; nothing was started");
-    return EXIT.usage;
-  }
+  const answering = args.mode === "answer";
   if (env["QCR_IPC_COMMAND_ID"] !== args.command) {
     log("botworker: --command is not the command id the daemon put in env");
     return EXIT.usage;
@@ -346,6 +400,10 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       "the command's payload",
     );
     if (!verified.ok) throw new Stop(EXIT.handshake, verified.why);
+    // An answer posts only when the operator marked the message: the daemon's word
+    // (the spec) and the sealed payload both have to say so.
+    const mayPost =
+      answering && spec.may_post === true && operatorMayPost(verified.payload.toString("utf8"));
 
     // The login: borrowed, blanked, and checked against this worker's own cap.
     let auth: EngineAuth;
@@ -377,10 +435,21 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       });
       // The lens cap is the daemon's, over every worker (D25): a pass asks the broker.
       const permits = brokerPermits(client, (m) => log(`botworker: ${m}`));
-      opened = await openSession(host, spec, env, wave, marker, deps, log, permits, (run) => {
-        lensUsd += run.result.usage.cost;
-        lensRuns++;
-      });
+      opened = await openSession(
+        host,
+        spec,
+        env,
+        wave,
+        marker,
+        deps,
+        log,
+        permits,
+        (run) => {
+          lensUsd += run.result.usage.cost;
+          lensRuns++;
+        },
+        answering ? { mayPost } : undefined,
+      );
     } catch (e) {
       throw new Stop(EXIT.session, `could not open the session: ${errText(e)}`);
     }
@@ -492,67 +561,82 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
 
     // The round's turn. The engine starts the planned wave first, so the lenses
     // are in flight while the session reads. A continuation does not: the rows ran
-    // in the worker that is gone, and the session is told so.
-    if (continuing) {
-      report("progress", { stage: "continuing" });
-      await deliver(continuationText(marker), "the continuation");
-    } else {
-      const planned = plannedWave(spec, env);
-      if (planned.note) log(`botworker: ${planned.note}`);
-      const section = engineLensSection(
-        planned.dir,
-        spec.planned_wave && planned.units.length
-          ? { dir: planned.dir, agents: planned.units.map((u) => u.agent) }
-          : null,
-      );
-      if (spec.planned_wave && planned.units.length) {
-        const stop = new AbortController();
-        const rows: WaveRow[] = launchWave(wave, tools.runner, planned.units, stop.signal);
-        report("progress", { stage: "wave_started", rows: rows.length });
-        endWave = async () => {
-          stop.abort();
-          let timer: NodeJS.Timeout | undefined;
-          await Promise.race([
-            Promise.allSettled(rows.map((row) => row.done)),
-            new Promise((resolve) => (timer = setTimeout(resolve, WAVE_SETTLE_MS))),
-          ]);
-          clearTimeout(timer);
-          endWave = async () => {};
-        };
-      }
-      const order = verified.payload.toString("utf8");
-      report("progress", { stage: "round_order_sent" });
-      settle(
-        await live.prompt(withMarker(`${order.trimEnd()}\n\n${section}`, marker), turnLimits()),
-        "the round",
-      );
-    }
-    // Whatever the operator steered or followed up with runs to its end first.
-    await settleControls(false);
-    // The turns are over: a wave row nobody joined is not wanted any more.
-    await endWave();
-
-    // The wakes held while the round ran, in arrival order.
+    // in the worker that is gone, and the session is told so. An answer is one
+    // turn: the operator's message, no wave and no wakes (the daemon's own wakes
+    // stay held for the round).
     let wakesDelivered = 0;
-    for (let pass = 0; pass < MAX_WAKE_PASSES; pass++) {
-      let batches;
-      try {
-        batches = parseWakesTaken(await client.request(WAKES_TAKE_OP, {})).batches;
-      } catch (e) {
-        if (e instanceof IpcError && e.code === "unknown_op") break;
-        throw e;
+    if (answering) {
+      const message = verified.payload.toString("utf8");
+      if (continuing) {
+        report("progress", { stage: "continuing" });
+        await deliver(answerContinuationText(marker), "the continuation");
+      } else {
+        report("progress", { stage: "message_sent" });
+        settle(await live.prompt(withMarker(message, marker), turnLimits()), "the answer");
       }
-      if (batches.length === 0) break;
-      for (const batch of batches) {
-        const mark = wakeMarker(batch.id);
-        const file = live.sessionFile;
-        // A batch an earlier worker delivered and died before acking is acked, not sent again.
-        if (!(file !== null && jsonlHasMarker(file, mark)))
-          await deliver(withMarker(batch.message, mark), `wake ${batch.id}`);
-        await client.request(WAKES_ACK_OP, { id: batch.id });
-        wakesDelivered++;
+    } else {
+      if (continuing) {
+        report("progress", { stage: "continuing" });
+        await deliver(continuationText(marker), "the continuation");
+      } else {
+        const planned = plannedWave(spec, env);
+        if (planned.note) log(`botworker: ${planned.note}`);
+        const section = engineLensSection(
+          planned.dir,
+          spec.planned_wave && planned.units.length
+            ? { dir: planned.dir, agents: planned.units.map((u) => u.agent) }
+            : null,
+        );
+        if (spec.planned_wave && planned.units.length) {
+          const stop = new AbortController();
+          if (tools === undefined)
+            throw new Stop(EXIT.session, "a round opens with its lens tools");
+          const rows: WaveRow[] = launchWave(wave, tools.runner, planned.units, stop.signal);
+          report("progress", { stage: "wave_started", rows: rows.length });
+          endWave = async () => {
+            stop.abort();
+            let timer: NodeJS.Timeout | undefined;
+            await Promise.race([
+              Promise.allSettled(rows.map((row) => row.done)),
+              new Promise((resolve) => (timer = setTimeout(resolve, WAVE_SETTLE_MS))),
+            ]);
+            clearTimeout(timer);
+            endWave = async () => {};
+          };
+        }
+        const order = verified.payload.toString("utf8");
+        report("progress", { stage: "round_order_sent" });
+        settle(
+          await live.prompt(withMarker(`${order.trimEnd()}\n\n${section}`, marker), turnLimits()),
+          "the round",
+        );
       }
-      report("progress", { stage: "wakes_delivered", delivered: wakesDelivered });
+      // Whatever the operator steered or followed up with runs to its end first.
+      await settleControls(false);
+      // The turns are over: a wave row nobody joined is not wanted any more.
+      await endWave();
+
+      // The wakes held while the round ran, in arrival order.
+      for (let pass = 0; pass < MAX_WAKE_PASSES; pass++) {
+        let batches;
+        try {
+          batches = parseWakesTaken(await client.request(WAKES_TAKE_OP, {})).batches;
+        } catch (e) {
+          if (e instanceof IpcError && e.code === "unknown_op") break;
+          throw e;
+        }
+        if (batches.length === 0) break;
+        for (const batch of batches) {
+          const mark = wakeMarker(batch.id);
+          const file = live.sessionFile;
+          // A batch an earlier worker delivered and died before acking is acked, not sent again.
+          if (!(file !== null && jsonlHasMarker(file, mark)))
+            await deliver(withMarker(batch.message, mark), `wake ${batch.id}`);
+          await client.request(WAKES_ACK_OP, { id: batch.id });
+          wakesDelivered++;
+        }
+        report("progress", { stage: "wakes_delivered", delivered: wakesDelivered });
+      }
     }
 
     // Nothing is steered into a round that is closing; an abort still is.
@@ -569,9 +653,18 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     }
 
     checkpoint();
-    foldLensLedger(meter, lensLedgerOf(spec));
+    if (!answering) foldLensLedger(meter, lensLedgerOf(spec));
     usage();
     report("done", {
+      mode: args.mode,
+      ...(answering
+        ? {
+            // What the model said last, for the operator: the daemon writes it to the
+            // command's result file.
+            reply: (watch.replyText ?? "").slice(0, MAX_REPLY_CHARS),
+            may_post: mayPost,
+          }
+        : {}),
       session_id: live.id,
       resumed,
       continued: continuing,
@@ -649,15 +742,23 @@ function plannedWave(
 
 /** The main session's spec: the daemon's env, plus the IPC names the post shims
  * read from the model's bash. A lens pass never gets those. */
-function sessionSpecOf(spec: WorkerSpec, env: NodeJS.ProcessEnv): SessionSpec {
+function sessionSpecOf(
+  spec: WorkerSpec,
+  env: NodeJS.ProcessEnv,
+  answer?: { mayPost: boolean },
+): SessionSpec {
   const ipc: Record<string, string> = {};
-  for (const name of IPC_ENV) {
-    const value = env[name];
-    if (value !== undefined) ipc[name] = value;
-  }
+  // An answer that may not post is given no way to reach the daemon at all.
+  if (!answer || answer.mayPost)
+    for (const name of IPC_ENV) {
+      const value = env[name];
+      if (value !== undefined) ipc[name] = value;
+    }
+  const own: Record<string, string> = { ...spec.env };
+  if (answer) for (const name of ROUND_ONLY_ENV) delete own[name];
   return {
     cwd: spec.cwd,
-    env: { ...spec.env, ...ipc },
+    env: { ...own, ...ipc },
     model: spec.model,
     systemPromptFile: spec.system_prompt_file,
     name: spec.session,
@@ -700,7 +801,9 @@ async function openSession(
   log: (line: string) => void,
   permitPort: Permits,
   tap: (run: LensRun) => void,
+  answer?: { mayPost: boolean },
 ): Promise<Opened> {
+  if (answer) return openAnswerSession(host, spec, env, marker, deps, log, answer);
   const round = spec.round_no ?? 0;
   const lensDir = lensDirOf(spec);
   const lensSpec: SessionSpec = {
@@ -749,6 +852,46 @@ async function openSession(
     throw new Error(`the resumed session id ${resumed.id} is not the JSONL's ${id}`);
   }
   return { session: resumed, tools, resumed: true, file, continuing: jsonlHasMarker(file, marker) };
+}
+
+/** An answer worker's session: the PR's newest JSONL resumed under its own id (an
+ * answer never births one), with the read-only tool set and no lens tool. */
+async function openAnswerSession(
+  host: PiHost,
+  spec: WorkerSpec,
+  env: NodeJS.ProcessEnv,
+  marker: string,
+  deps: WorkerDeps,
+  log: (line: string) => void,
+  answer: { mayPost: boolean },
+): Promise<Opened> {
+  const file = newestSessionFile(spec.session_dir);
+  if (file === undefined)
+    throw new Error(`#${spec.pr} has no session to resume: an answer never births one`);
+  const liveRound = spec.round_no ?? spec.live_round;
+  const runtime = botSdkRuntime(host, {
+    lens: NO_LENS,
+    answer,
+    processEnv: env,
+    ...(liveRound !== undefined
+      ? { live: { root: spec.root, key: spec.session, round: liveRound } }
+      : {}),
+    warn: (m) => log(`botworker: ${m}`),
+    ...(deps.openViking ? { openViking: deps.openViking } : {}),
+  });
+  const id = headerId(file);
+  const resumed = await runtime.resume(file, sessionSpecOf(spec, env, answer));
+  if (id !== null && resumed.id !== id) {
+    await resumed.dispose();
+    throw new Error(`the resumed session id ${resumed.id} is not the JSONL's ${id}`);
+  }
+  return {
+    session: resumed,
+    tools: undefined,
+    resumed: true,
+    file,
+    continuing: jsonlHasMarker(file, marker),
+  };
 }
 
 async function main(): Promise<void> {

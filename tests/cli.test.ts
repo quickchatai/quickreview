@@ -4,7 +4,9 @@ import {
   cancellationsOn,
   main,
   parseBackfillArgs,
+  cmdMessage,
   parseDrainArgs,
+  parseMessageArgs,
   parseReembedArgs,
   parseRelayoutArgs,
   rebuildCompanion,
@@ -387,6 +389,64 @@ describe("qcr memory reembed — flags", () => {
       ["--user", "a", "--force"],
     ])
       expect(() => parseReembedArgs(rest), rest.join(" ")).toThrow(/usage: qcr memory reembed/);
+  });
+});
+
+describe("[P8.17] qcr message", () => {
+  it("takes the PR and the words, and may_post only from the explicit flag", () => {
+    expect(parseMessageArgs(["12", "is", "this", "safe?"])).toEqual({
+      pr: 12,
+      text: "is this safe?",
+      mayPost: false,
+    });
+    expect(parseMessageArgs(["--may-post", "#12", "approve", "it"])).toEqual({
+      pr: 12,
+      text: "approve it",
+      mayPost: true,
+    });
+    expect(parseMessageArgs(["12", "--may-post", "approve"])).toMatchObject({ mayPost: true });
+    // A flag spelled inside the words is words: the mark is never taken from the text.
+    expect(parseMessageArgs(["12", "say", "--may-post"])).toEqual({
+      pr: 12,
+      text: "say --may-post",
+      mayPost: false,
+    });
+    for (const rest of [[], ["12"], ["x", "hello"], ["0", "hello"], ["--may-post"], ["12", "  "]])
+      expect(() => parseMessageArgs(rest), rest.join(" ")).toThrow(/usage: qcr message/);
+  });
+
+  it("sends a message request through the operator channel and exits 0 only when the daemon took it", async () => {
+    const lines: string[] = [];
+    for (const [state, code] of [
+      ["queued", 0],
+      ["handled", 0],
+      ["refused", 1],
+      ["unacked", 1],
+    ] as const) {
+      const seen: unknown[] = [];
+      const exit = await cmdMessage(["12", "--may-post", "hi"], {
+        sender: {
+          send: async (req, onState) => {
+            seen.push(req);
+            onState("pending", "→ message #12 pending…");
+            return { state, label: state };
+          },
+        },
+        log: (l) => lines.push(l),
+      });
+      expect(exit, state).toBe(code);
+      expect(seen).toEqual([{ kind: "message", pr: 12, text: "hi", may_post: true }]);
+    }
+    expect(lines).toContain("→ message #12 pending…");
+    // No flag, no mark on the wire.
+    const seen: unknown[] = [];
+    await cmdMessage(["12", "hi"], {
+      sender: {
+        send: async (req) => (seen.push(req), { state: "queued", label: "q" }),
+      },
+      log: () => {},
+    });
+    expect(seen).toEqual([{ kind: "message", pr: 12, text: "hi" }]);
   });
 });
 

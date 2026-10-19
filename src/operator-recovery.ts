@@ -185,7 +185,7 @@ async function recoverPrForOperatorNow(
       reset = deps.store.cancelBlockingSessionCommandsForOperator(
         pr,
         payloads
-          .filter(({ command }) => command.kind !== "round")
+          .filter(({ command }) => command.kind !== "round" && command.kind !== "answer")
           .map(({ command, text }) => ({ id: command.id, payload: text })),
         "restart-session",
         blockers.map((command) => command.id),
