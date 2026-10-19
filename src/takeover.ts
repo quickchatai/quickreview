@@ -200,16 +200,17 @@ export class TakeoverManager {
   }
 
   /** The IPC server's view of a takeover command: active while its lease is held,
-   * and always `lease: "takeover"`, which is what makes the post ops refuse it. */
+   * and always `lease: "takeover"`, which is what makes the post ops refuse it. A
+   * debug round's command is the debug manager's to answer (src/debuground.ts). */
   readonly lookup: CommandLookup = (commandId) => {
     for (const row of this.deps.store.hostLeases()) {
-      if (row.command_id !== commandId) continue;
+      if (row.kind !== "takeover" || row.command_id !== commandId) continue;
       return {
         pr: row.pr,
         generation: 1,
         active: row.state === "held",
         may_post: false,
-        lease: row.kind === "takeover" ? "takeover" : "debug",
+        lease: "takeover",
       };
     }
     return null;
@@ -341,6 +342,9 @@ export class TakeoverManager {
   async release(pr: number, why = "released by the operator"): Promise<TakeoverResult> {
     const row = this.deps.store.hostLease(pr);
     if (!row) return refuse(`PR #${pr} has no takeover lease to release`);
+    // A debug round's lease is the debug manager's: its pi is a different one.
+    if (row.kind !== "takeover")
+      return refuse(`PR #${pr} is under a ${row.kind} lease, not a takeover`);
     this.deps.store.endHostLease(pr, row.token, this.iso(), why);
     const gone = await this.finish(this.deps.store.hostLease(pr) ?? row, why);
     if (!gone)
@@ -365,37 +369,28 @@ export class TakeoverManager {
   }
 
   private async stop(row: HostLeaseRow, why: string): Promise<boolean> {
-    const { store, tmux } = this.deps;
+    const { store } = this.deps;
     const session = takeoverSession(row.pr);
     // The capability goes first: a post from the dying pi finds no command.
     this.deps.capabilities.revoke(row.command_id);
-    await tmux.killSession(session).catch(() => undefined);
-    const lease = this.leases.read(session);
-    let survivors = false;
-    if (lease) {
-      const out = await killLease(lease, {
-        proc: this.proc,
-        signal: this.signal,
-        graceMs: this.deps.killGraceMs ?? 3_000,
-        sleep: this.sleep,
-        now: this.now,
-      });
-      survivors = out.survivors;
-      // A leader that is gone may leave members of its group.
-      if (!survivors) {
-        const again = judgeLease(lease, this.proc);
-        survivors = again.kind === "group" || again.kind === "members";
-      }
-    }
-    // Confirm tmux no longer lists it; a tmux that cannot be asked proves nothing.
-    const names = await tmux.listSessionsKnown();
-    const listed = names === null ? true : names.includes(session);
-    if (survivors || listed) {
+    const out = await killHostPane(session, {
+      tmux: this.deps.tmux,
+      leases: this.leases,
+      proc: this.proc,
+      signal: this.signal,
+      graceMs: this.deps.killGraceMs ?? 3_000,
+      sleep: this.sleep,
+      now: this.now,
+    });
+    if (!out.gone) {
       this.log(`takeover: #${row.pr} pi still alive after the kill (${why}); the lease stands`);
-      store.logEvent("takeover_pi_alive", row.pr, { why, survivors, listed });
+      store.logEvent("takeover_pi_alive", row.pr, {
+        why,
+        survivors: out.survivors,
+        listed: out.listed,
+      });
       return false;
     }
-    this.leases.forget(session);
     this.files.delete(row.pr);
     store.releaseHostLease(row.pr, row.token);
     this.log(`takeover: #${row.pr} released (${why})`);
@@ -501,6 +496,70 @@ export class TakeoverManager {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
   }
+}
+
+export interface PaneKillDeps {
+  tmux: Pick<Tmux, "killSession" | "listSessionsKnown">;
+  /** The process leases the pane's pi was recorded in. */
+  leases: WorkerLeases;
+  proc: ProcView;
+  signal: SignalFn;
+  graceMs: number;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+}
+
+/**
+ * Stop the tmux session `session` and the process group its pi leads, and say
+ * whether it is CONFIRMED gone: tmux no longer lists it and the process lease
+ * names no survivor. `gone` is false when a process outlived the kill, or when
+ * tmux could not be asked (a failed look proves nothing). A pi that is gone has
+ * its process lease forgotten. Shared by the takeover (src/takeover.ts) and the
+ * debug round (src/debuground.ts): both owe a worker the same promise, that two
+ * writers never append to one JSONL.
+ */
+export async function killHostPane(
+  session: string,
+  d: PaneKillDeps,
+): Promise<{ gone: boolean; survivors: boolean; listed: boolean }> {
+  await d.tmux.killSession(session).catch(() => undefined);
+  const lease = d.leases.read(session);
+  let survivors = false;
+  if (lease) {
+    const out = await killLease(lease, {
+      proc: d.proc,
+      signal: d.signal,
+      graceMs: d.graceMs,
+      sleep: d.sleep,
+      now: d.now,
+    });
+    survivors = out.survivors;
+    // A leader that is gone may leave members of its group.
+    if (!survivors) {
+      const again = judgeLease(lease, d.proc);
+      survivors = again.kind === "group" || again.kind === "members";
+    }
+  }
+  // Confirm tmux no longer lists it; a tmux that cannot be asked proves nothing.
+  const names = await d.tmux.listSessionsKnown();
+  const listed = names === null ? true : names.includes(session);
+  const gone = !survivors && !listed;
+  if (gone) d.leases.forget(session);
+  return { gone, survivors, listed };
+}
+
+/** One host gate over several: the first that has a reason to keep a worker out
+ * of the PR's session gives it. */
+export function composeHostGates(
+  ...gates: Array<(pr: number) => string | null>
+): (pr: number) => string | null {
+  return (pr) => {
+    for (const gate of gates) {
+      const why = gate(pr);
+      if (why !== null) return why;
+    }
+    return null;
+  };
 }
 
 function refuse(reason: string): TakeoverResult {

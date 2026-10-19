@@ -13,17 +13,23 @@
 // the daemon grants the lease and starts the operator's pi, or stops it and frees the
 // lease once it is gone. message is the idle-PR answer worker's (P8.17,
 // src/answerworker.ts): a round running makes it a steer, an idle PR gets a short
-// worker. debug-round is another ticket's verb (P8.13b): it goes to `other` when the
-// daemon has one, and is otherwise refused with a reason.
+// worker. debug-round (P8.13b) is served by the DebugRoundManager (src/debuground.ts):
+// it arms the PR's next round to run in interactive pi, and a drained bot or a parked PR
+// is refused (`code: "drained"` or `"parked"`). `release` frees whichever lease the PR
+// is under.
 import type { ControlCommand } from "./commands.js";
 import type { FileOutcome } from "./improvements.js";
 import type { TakeoverManager, TakeoverResult } from "./takeover.js";
+import type { DebugResult, DebugRoundManager } from "./debuground.js";
 import type { ControlResult, WorkerSupervisor } from "./workersupervisor.js";
 
 export interface WorkerControlDeps {
   supervisor: Pick<WorkerSupervisor, "control" | "abortRound">;
   /** The takeover lease (P8.13). Omitted: takeover and release go to `other`. */
   takeover?: Pick<TakeoverManager, "grant" | "release">;
+  /** The debug round (P8.13b). Omitted: debug-round goes to `other`, and a release
+   * is a takeover's. */
+  debug?: Pick<DebugRoundManager, "arm" | "release" | "holds">;
   /** The answer host's `message` (P8.17). Omitted: a message goes to `other`. */
   message?: (
     command: Extract<ControlCommand, { command: "message" }>,
@@ -40,6 +46,11 @@ const takeoverOutcome = (r: TakeoverResult): FileOutcome =>
   r.ok
     ? { ok: true, ack: "handled", session: r.session, command_id: r.command_id, message: r.message }
     : { ok: false, reason: r.reason };
+
+const debugOutcome = (r: DebugResult): FileOutcome =>
+  r.ok
+    ? { ok: true, ack: "handled", session: r.session, command_id: r.command_id, message: r.message }
+    : { ok: false, reason: r.reason, code: r.code };
 
 async function notServed(
   deps: WorkerControlDeps,
@@ -68,7 +79,12 @@ export function workerOperatorControl(
       case "takeover":
         if (deps.takeover) return takeoverOutcome(await deps.takeover.grant(command.pr));
         return notServed(deps, command, file);
+      case "debug-round":
+        if (deps.debug) return debugOutcome(await deps.debug.arm(command.pr));
+        return notServed(deps, command, file);
       case "release":
+        if (deps.debug?.holds(command.pr))
+          return debugOutcome(await deps.debug.release(command.pr));
         if (deps.takeover) return takeoverOutcome(await deps.takeover.release(command.pr));
         return notServed(deps, command, file);
       case "message":

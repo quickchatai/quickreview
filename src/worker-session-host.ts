@@ -21,6 +21,9 @@
 //     is gone is flushed by `inject`, which starts a wake worker for it.
 //   - The fence is the supervisor's `fence`: end the worker, answer once it is
 //     reaped, leave the row to the caller (as a tmux kill leaves it).
+//   - A PR armed for a debug round (P8.13b, src/debuground.ts) is handed its round
+//     order in interactive pi: `start` gives the order to the debug manager in a
+//     worker's place, and the supervisor's host gate keeps every worker out.
 //
 // The tmux host (src/sessions.ts) survives only until P9.2 deletes it.
 import { existsSync, statSync } from "node:fs";
@@ -46,6 +49,7 @@ import {
   type SessionCommandRetryResult,
   type SessionHooks,
 } from "./types.js";
+import type { DebugRoundManager } from "./debuground.js";
 import type { WorktreeManager } from "./worktrees.js";
 import { WorkerLaunchError, type WorkerSupervisor } from "./workersupervisor.js";
 
@@ -61,6 +65,9 @@ export interface WorkerSessionHostOptions {
   /** The durable command store the daemon and the supervisor share. */
   store: StateStore;
   supervisor: WorkerSupervisor;
+  /** The debug round (P8.13b): a round order of a PR whose lease is armed for one goes
+   * to its interactive pi, in a worker's place. Omitted: every round goes to a worker. */
+  debugRounds?: Pick<DebugRoundManager, "claims" | "deliver">;
   ovSessions?: OvSessionLifecycle;
   now?: () => Date;
   log?: (msg: string) => void;
@@ -82,6 +89,7 @@ export class WorkerSessionHost implements SessionHooks {
   private readonly root: string;
   private readonly store: StateStore;
   private readonly supervisor: WorkerSupervisor;
+  private readonly debugRounds: WorkerSessionHostOptions["debugRounds"];
   private readonly log: (msg: string) => void;
   private readonly now: () => Date;
 
@@ -90,6 +98,7 @@ export class WorkerSessionHost implements SessionHooks {
     this.root = opts.root;
     this.store = opts.store;
     this.supervisor = opts.supervisor;
+    this.debugRounds = opts.debugRounds;
     this.worktrees = opts.worktrees;
     this.log = opts.log ?? ((msg) => console.log(`[quickreviewd] worker-host: ${msg}`));
     this.lifecycle = new PrSessionLifecycle({
@@ -214,6 +223,20 @@ export class WorkerSessionHost implements SessionHooks {
    * row stays the one obligation, the supervisor's own checks recover it, and the
    * event says why. */
   private async start(command: SessionCommandRow): Promise<void> {
+    // A PR armed for a debug round (P8.13b) takes its round order in a pi, not a worker.
+    if (this.debugRounds?.claims(command)) {
+      const delivered = await this.debugRounds.deliver(command);
+      if (!delivered.ok) {
+        this.store.logEvent("debug_round_deferred", command.pr, {
+          command_id: command.id,
+          error: delivered.reason.slice(0, 300),
+        });
+        this.log(
+          `command ${command.id} (round) of #${command.pr} not delivered to the debug pi: ${delivered.reason}`,
+        );
+      }
+      return;
+    }
     try {
       await this.supervisor.launch(command.id);
     } catch (err) {

@@ -1174,19 +1174,31 @@ async function cmdDrain(rest: string[]): Promise<number> {
 
 // ---- takeover (P8.13, D27) -----------------------------------------------------
 //
-// `qcr takeover <pr>` and `qcr release <pr>` are two of the operator's control
-// commands (src/commands.ts CONTROL_COMMANDS), sent down the same root-sealed
-// operator route the TUI's input line uses (src/tui/livecontrol.ts). The daemon
-// grants the lease and starts interactive pi on the PR's real session in tmux
-// `takeover-pr-<n>` (src/takeover.ts); this verb only asks, and says how to attach.
+// `qcr takeover <pr>`, `qcr debug-round <pr>` (P8.13b) and `qcr release <pr>` are three
+// of the operator's control commands (src/commands.ts CONTROL_COMMANDS), sent down the
+// same root-sealed operator route the TUI's input line uses (src/tui/livecontrol.ts).
+// The daemon grants the lease and starts interactive pi on the PR's real session in tmux
+// `takeover-pr-<n>` (src/takeover.ts), or arms the PR's next round to run in tmux
+// `debug-pr-<n>` (src/debuground.ts); this verb only asks, and says how to attach.
 
-export const TAKEOVER_USAGE = "usage: qcr <takeover|release> <pr-number>";
+export const TAKEOVER_USAGE = "usage: qcr <takeover|debug-round|release> <pr-number>";
 
 /** `qcr takeover|release`'s arguments: exactly one PR number. */
 export function parseTakeoverArgs(rest: readonly string[]): number {
   if (rest.length !== 1 || !/^\d+$/.test(rest[0]!) || Number(rest[0]) <= 0)
     throw new Error(TAKEOVER_USAGE);
   return Number(rest[0]);
+}
+
+/** The lines that follow a granted debug round (P8.13b): the lease is armed for the
+ * PR's next round, which a worker would otherwise take. */
+export function debugRoundAttachLines(pr: number): string[] {
+  const session = `debug-pr-${pr}`;
+  return [
+    `the PR's next round runs in interactive pi: tmux attach -t ${session}`,
+    `(on the VM: docker exec -it quickreview-sandbox tmux attach -t ${session})`,
+    `it posts like any round, through the gate with the install's dry_run. \`qcr release ${pr}\` ends it; it ends with the verdict commit, and the round after goes back to a worker.`,
+  ];
 }
 
 /** The lines that follow a granted takeover: how to reach the pi. */
@@ -1199,7 +1211,10 @@ export function takeoverAttachLines(pr: number): string[] {
   ];
 }
 
-async function cmdTakeover(kind: "takeover" | "release", rest: string[]): Promise<number> {
+async function cmdTakeover(
+  kind: "takeover" | "release" | "debug-round",
+  rest: string[],
+): Promise<number> {
   const pr = parseTakeoverArgs(rest);
   const cfg = loadConfig();
   const { runnerFor } = await import("./tui/remote.js");
@@ -1212,6 +1227,7 @@ async function cmdTakeover(kind: "takeover" | "release", rest: string[]): Promis
   );
   const ok = outcome.state === "handled" || outcome.state === "queued";
   if (ok && kind === "takeover") for (const line of takeoverAttachLines(pr)) console.log(line);
+  if (ok && kind === "debug-round") for (const line of debugRoundAttachLines(pr)) console.log(line);
   return ok ? 0 : 1;
 }
 
@@ -2103,13 +2119,14 @@ export async function main(argv: string[]): Promise<void> {
       return cmdAttach(rest[0]);
     }
     case "takeover":
+    case "debug-round":
     case "release": {
       process.exitCode = await cmdTakeover(cmd, rest);
       return;
     }
     default:
       console.log(
-        "usage: qcr <version|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|release <n>|tui [pr|overseer]|drain <on|off>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on|off>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

@@ -82,6 +82,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/context-files.test.ts",
   "tests/cpu-gate.test.ts",
   "tests/debug-pi.test.ts",
+  "tests/debug-round-bot-smoke.test.ts", // the real pane chain and the real pi CLI in a pty, on a loopback endpoint
   "tests/deploy.test.ts",
   "tests/docker-daemon.test.ts",
   "tests/engine-port-contract.test.ts",

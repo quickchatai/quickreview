@@ -157,6 +157,20 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "(the borrowed login, pi's argv and env). Read only by tests/takeover.test.ts and " +
         "tests/takeover-pane.test.ts until the daemon's wiring constructs the manager. Delete this entry with that import.",
     })),
+    // The bot's debug round (P8.13b): the daemon's manager, which arms a PR's next round to run in
+    // interactive pi in tmux and delivers the order to it, and the pane's entry that manager runs by
+    // path. The daemon's wiring constructs the manager (it hands it to `workerOperatorControl` and to
+    // the worker host, its `hostGate` to the supervisor and its `lookup` to the IPC server) when the
+    // worker world is wired into wire.ts. Delete each entry with that import.
+    ...["debuground.ts", "debugroundpi.ts"].map((f) => ({
+      file: `src/${f}`,
+      why:
+        "the bot's debug round (P8.13b, D38): DebugRoundManager takes the PR's host lease in debug mode " +
+        "and delivers its next round to interactive pi in tmux debug-pr-<n>; debugroundpi.ts is the entry " +
+        "tmux runs (the borrowed login, the round order, pi's argv and env). Read only by " +
+        "tests/debug-round-bot.test.ts until the daemon's wiring constructs the manager. Delete this entry " +
+        "with that import.",
+    })),
     // The idle-PR answer worker's daemon side (P8.17): the `message` handler (a steer during a round, an
     // answer worker for an idle PR, the refusals with their reasons) and the result file it writes when
     // the worker settles. The daemon's wiring hands `host.message` to `workerOperatorControl` and
