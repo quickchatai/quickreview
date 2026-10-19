@@ -84,6 +84,11 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
     readers: ["bash-guard.ts"],
     note: "the worker-daemon socket (P7.2a); its directory is the IPC run dir bash-guard closes to reads",
   },
+  QCR_IPC_CAP_FD: {
+    kind: "extension-config",
+    readers: ["debug-round.ts"],
+    note: "the fd number of the round's IPC capability (P7.2a); a bot debug round's bash hands that fd to each command",
+  },
   QCR_SECRETS_MOUNT: {
     kind: "extension-config",
     readers: ["bash-guard.ts"],
@@ -120,6 +125,26 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
     kind: "extension-config",
     readers: ["debug-round.ts"],
     note: "the task dir whose rows a debug round launches as its planned wave",
+  },
+  QCR_DEBUG_STATUS_FILE: {
+    kind: "extension-config",
+    readers: ["debug-round.ts"],
+    note: "where a bot debug round (P8.13b) records its progress; the daemon reads order_sent_at off it",
+  },
+  QCR_DEBUG_PACK_FILE: {
+    kind: "extension-config",
+    readers: ["debug-round.ts"],
+    note: "the round's context pack, which a bot debug round keeps in its pass dir, not beside the ledger",
+  },
+  QCR_DEBUG_STUB_FILE: {
+    kind: "extension-config",
+    readers: ["debug-round.ts"],
+    note: "the reviewer stub (D34) a bot debug round's lens passes carry; the production tree's cwd holds none",
+  },
+  QCR_DEBUG_LENS_DIR: {
+    kind: "extension-config",
+    readers: ["debug-round.ts"],
+    note: "where a bot debug round keeps its lens ledger and lens JSONLs (D10)",
   },
   QCR_SESSION_BRIDGE_GENERATION: {
     kind: "extension-config",

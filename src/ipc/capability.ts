@@ -260,6 +260,25 @@ export class LaunchFiles {
     return revoked;
   }
 
+  /** Remove the unclaimed launch files of `commandId`, if any: its host is being
+   * stopped. The capability is the caller's to revoke. A claimed file is already
+   * gone. */
+  cancel(commandId: string): number {
+    let n = 0;
+    for (const [path, entry] of this.pending) {
+      if (entry.commandId !== commandId) continue;
+      try {
+        unlinkSync(path);
+      } catch {
+        /* claimed in the meantime */
+      }
+      clearTimeout(entry.timer);
+      this.pending.delete(path);
+      n++;
+    }
+    return n;
+  }
+
   /** Files created and neither claimed nor expired yet. */
   outstanding(): number {
     return this.pending.size;

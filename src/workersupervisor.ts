@@ -43,6 +43,10 @@
 //     session no worker starts for it, of any mode (`hostGate`): the command waits
 //     as it does behind a drain, and the lease is freed only once the takeover pi
 //     is confirmed gone. The lease is granted only when no worker command is active.
+//   - HOSTED COMMANDS (P8.13b). A round the debug round runs in interactive pi
+//     (src/debuground.ts) has no worker process, but its row is still this module's to
+//     write: the debug manager asks for the claim, the start mark and the settlement
+//     (`claimHosted`, `markHostedStarted`, `settleHosted`).
 //   - RESTART. On a daemon restart every leased group is killed and its round is
 //     requeued under the same command id (`recover`), so the fresh worker resumes
 //     the JSONL and continues instead of sending the order again (D22).
@@ -921,6 +925,49 @@ export class WorkerSupervisor {
     this.deps.capabilities.revoke(id);
     if (leased) this.leases.remove(session, token);
     this.finishFailed(id, token, why);
+  }
+
+  // ---- commands another host runs (P8.13b) ---------------------------------
+
+  /** A round order claimed for a host that is no worker process of ours: the debug
+   * round's interactive pi (src/debuground.ts). The supervisor stays the single writer
+   * of the rows, so the host asks for the claim, the start mark and the settlement
+   * here. `ownerToken` is the host's lease token; the row follows it as a worker's
+   * follows its spawn's. Undefined when another claimed the row first. */
+  claimHosted(
+    commandId: string,
+    ownerToken: string,
+    nextCheckAt: string,
+  ): SessionCommandRow | undefined {
+    return this.deps.store.claimSessionCommand(commandId, ownerToken, nextCheckAt);
+  }
+
+  /** The hosted round's order reached its session: the row is started. */
+  markHostedStarted(commandId: string, ownerToken: string, nextCheckAt: string): boolean {
+    return this.deps.store.markSessionCommandStarted(commandId, ownerToken, nextCheckAt);
+  }
+
+  /**
+   * The hosted command's host is gone (confirmed by the caller). Served: the round's
+   * verdict was committed, so the row is acked. Otherwise the row goes back to
+   * `pending` for a worker, which resumes the session and continues (D22/D23), or
+   * fails once the requeues are spent or its round has ended. Nothing counts against
+   * the PR's crash-loop breaker: a person ended it.
+   */
+  settleHosted(
+    commandId: string,
+    ownerToken: string,
+    outcome: { served: true } | { served: false; reason: string },
+  ): "acked" | "requeued" | "failed" | "gone" {
+    const { store } = this.deps;
+    const row = store.getSessionCommand(commandId);
+    if (!row || row.status !== "running" || row.owner_token !== ownerToken) return "gone";
+    if (outcome.served) {
+      store.markSessionCommandStarted(commandId, ownerToken, this.iso(this.now()));
+      if (store.finishSessionCommand(commandId, ownerToken, "acked")) return "acked";
+    }
+    const reason = outcome.served ? "the round could not be marked served" : outcome.reason;
+    return this.requeueOrFail(commandId, ownerToken, reason) ? "requeued" : "failed";
   }
 
   // ---- watching ------------------------------------------------------------

@@ -225,12 +225,19 @@ describe("daemon topology", () => {
     // the lease's manager (src/takeover.ts) on the operator's `takeover` command. It is not
     // a scheduled agent: it holds the session's lease, so no worker runs beside it, it has
     // the read tools only, and it posts nothing. No daemon module imports it.
+    // debugroundpi.ts is the pane side of the bot's debug round (P8.13b, D38): the PR's own
+    // round, delivered to an interactive pi in tmux `debug-pr-<n>` by the lease's manager
+    // (src/debuground.ts) in a worker's place, on the operator's `debug-round` command. It is
+    // the PR's main session, not a second agent: the lease keeps every worker out, the round
+    // is the command's own (one capability, one generation), and it posts through the daemon's
+    // one gate. No daemon module imports it.
     const allowedPaths = [
       "/src/oneshot.ts",
       "/src/reviewcli.ts",
       "/src/opencli.ts",
       "/src/engine/debugpi.ts",
       "/src/takeoverpi.ts",
+      "/src/debugroundpi.ts",
       "/src/bench/runner.ts",
       "/src/setup/caserunner.ts",
       "/src/scanbox.ts",

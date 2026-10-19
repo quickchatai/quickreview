@@ -6706,7 +6706,8 @@ export class StateStore {
 
   /**
    * Take the PR's host lease. Granted only when no lease stands and no worker
-   * command owns the session (`pending` or `running`), both read in the
+   * command owns the session (`pending` or `running`; a debug lease may adopt a
+   * pending round order), both read in the
    * transaction that writes the row, so a worker's claim and this grant cannot
    * both win. A worker that is already running without a row (an orphan the
    * boot has not reaped) is the caller's check, by its process lease.
@@ -6729,7 +6730,12 @@ export class StateStore {
             reason: `PR #${o.pr} is already under a ${held.kind} lease (${held.holder}, ${held.state})`,
           };
         const command = this.activeSessionCommand(`pr-${o.pr}`);
-        if (command)
+        // A debug round (P8.13b) is armed for the PR's NEXT round, so a round order
+        // submitted and not yet claimed by anyone is the one it will take. A claimed
+        // command (running), and any other kind, is a worker's.
+        const adoptable =
+          o.kind === "debug" && command?.kind === "round" && command.status === "pending";
+        if (command && !adoptable)
           return {
             ok: false,
             why: "worker",

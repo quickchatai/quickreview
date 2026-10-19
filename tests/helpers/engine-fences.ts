@@ -92,6 +92,9 @@ export const DAEMON_ROOTS = [
   // The takeover lease (P8.13) starts the operator's pi in tmux by path. Its pane side
   // (src/takeoverpi.ts) borrows the login through the engine and is not a daemon module.
   "src/takeover.ts",
+  // The bot's debug round (P8.13b) delivers a round order to an interactive pi in tmux by path.
+  // Its pane side (src/debugroundpi.ts) borrows the login through the engine and is not a daemon module.
+  "src/debuground.ts",
 ];
 
 /**
