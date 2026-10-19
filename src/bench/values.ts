@@ -15,6 +15,7 @@ export function bridgeApiBase(url: string): string {
 
 /** Child usage accepts either a scalar cost or a total-bearing object. */
 export function usageCost(value: unknown): number {
-  return finiteNumber(typeof value === "object" && value !== null
-    ? (value as { total?: unknown }).total : value);
+  return finiteNumber(
+    typeof value === "object" && value !== null ? (value as { total?: unknown }).total : value,
+  );
 }

@@ -479,7 +479,10 @@ describe("connection triage", () => {
   };
   it("recognizes the probe's own timeout text instead of recommending a key", async () => {
     const { classifyConnection } = await import("../src/tui/sshtriage.js");
-    const diagnosis = classifyConnection({ ...base, connect: { ok: false, stderr: "timed out after 5000ms", timedOut: false } });
+    const diagnosis = classifyConnection({
+      ...base,
+      connect: { ok: false, stderr: "timed out after 5000ms", timedOut: false },
+    });
     expect(diagnosis.kind).toBe("host-unreachable");
   });
 

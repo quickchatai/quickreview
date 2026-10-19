@@ -77,3 +77,10 @@ bench/aacr/**/*.json
 
 # Recorded prompt output (tests/golden-prompts.test.ts): byte-exact, never reformatted.
 tests/fixtures/golden-prompts/
+
+# Recorded golden outputs, compared byte for byte by their tests (UPDATE_GOLDEN
+# writes them as JSON.stringify(…, null, 2)); a formatter rewriting them would
+# fail the comparison.
+tests/fixtures/lens-registry-golden.json
+tests/fixtures/openviking-local-transcript.json
+tests/fixtures/result-shape-compat/golden.json

@@ -1137,7 +1137,8 @@ export class ScanRunner {
 
     const abort = new AbortController();
     // Publish the handle before a case can synchronously request stop().
-    const done = Promise.resolve().then(() => this.drive(file, run, jobs, tree, settings, abort))
+    const done = Promise.resolve()
+      .then(() => this.drive(file, run, jobs, tree, settings, abort))
       .catch((err: unknown) => {
         // Belt: drive() records its own failures; this catches a bug in it.
         run.problems.push(`the scan stopped on an internal error: ${clean(err)}`);

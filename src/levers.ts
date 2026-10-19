@@ -217,37 +217,41 @@ export async function drainLever(
     await afterLift();
     return { ok: true, draining: false, issuer, dropped_deliveries: res.dropped };
   }
-  return atomicCommandEffect(store, commandEffectKey("drain", deps.deliveryKey, { on, issuer, forMin }), () => {
-    const resolved = grantFor(deps, "drain", null, issuer, forMin);
-    if (!resolved.ok) return { ok: false, reason: resolved.reason };
-    const res = store.engageDrain(resolved.grant);
-    const state = res.state;
-    if (!state.draining) {
-      // Structurally unreachable — a grant that merged has a holder — but the
-      // union does not know that, and a lie here ("draining") would be worse
-      // than a loud refusal.
+  return atomicCommandEffect(
+    store,
+    commandEffectKey("drain", deps.deliveryKey, { on, issuer, forMin }),
+    () => {
+      const resolved = grantFor(deps, "drain", null, issuer, forMin);
+      if (!resolved.ok) return { ok: false, reason: resolved.reason };
+      const res = store.engageDrain(resolved.grant);
+      const state = res.state;
+      if (!state.draining) {
+        // Structurally unreachable — a grant that merged has a holder — but the
+        // union does not know that, and a lie here ("draining") would be worse
+        // than a loud refusal.
+        return {
+          ok: false,
+          reason: "drain did not take: the store reads not draining after the grant",
+        };
+      }
+      if (res.outcome !== "unchanged") {
+        resolved.charge();
+        store.logEvent("drain_on", null, {
+          by: issuer,
+          outcome: res.outcome,
+          expires_at: state.expires_at,
+        });
+      }
       return {
-        ok: false,
-        reason: "drain did not take: the store reads not draining after the grant",
-      };
-    }
-    if (res.outcome !== "unchanged") {
-      resolved.charge();
-      store.logEvent("drain_on", null, {
-        by: issuer,
+        ok: true,
+        draining: true,
         outcome: res.outcome,
+        issuer: state.issued_by,
         expires_at: state.expires_at,
-      });
-    }
-    return {
-      ok: true,
-      draining: true,
-      outcome: res.outcome,
-      issuer: state.issued_by,
-      expires_at: state.expires_at,
-      running_rounds: store.runningRounds().length,
-    };
-  });
+        running_rounds: store.runningRounds().length,
+      };
+    },
+  );
 }
 
 /** The `pause-pr` handler: hold one PR out of dispatch and re-trigger. */
@@ -258,29 +262,33 @@ export function pauseLever(
   issuer: LeverIssuer,
   forMin: number | undefined,
 ): FileOutcome {
-  return atomicCommandEffect(deps.store, commandEffectKey("pause", deps.deliveryKey, { pr, reason, issuer, forMin }), () => {
-    const { store } = deps;
-    if (!store.getPr(pr)) return { ok: false, reason: `unknown PR #${pr}` };
-    const resolved = grantFor(deps, "pause", pr, issuer, forMin);
-    if (!resolved.ok) return { ok: false, reason: resolved.reason };
-    const res = store.pausePr(pr, resolved.grant, reason);
-    if (res.outcome !== "unchanged") {
-      resolved.charge();
-      store.logEvent("pr_paused", pr, {
-        reason,
-        by: issuer,
+  return atomicCommandEffect(
+    deps.store,
+    commandEffectKey("pause", deps.deliveryKey, { pr, reason, issuer, forMin }),
+    () => {
+      const { store } = deps;
+      if (!store.getPr(pr)) return { ok: false, reason: `unknown PR #${pr}` };
+      const resolved = grantFor(deps, "pause", pr, issuer, forMin);
+      if (!resolved.ok) return { ok: false, reason: resolved.reason };
+      const res = store.pausePr(pr, resolved.grant, reason);
+      if (res.outcome !== "unchanged") {
+        resolved.charge();
+        store.logEvent("pr_paused", pr, {
+          reason,
+          by: issuer,
+          outcome: res.outcome,
+          expires_at: res.hold.expires_at,
+        });
+      }
+      return {
+        ok: true,
+        paused: pr,
         outcome: res.outcome,
+        issuer: res.hold.issuer,
         expires_at: res.hold.expires_at,
-      });
-    }
-    return {
-      ok: true,
-      paused: pr,
-      outcome: res.outcome,
-      issuer: res.hold.issuer,
-      expires_at: res.hold.expires_at,
-    };
-  });
+      };
+    },
+  );
 }
 
 /** The `resume-pr` handler: a session cannot lift an operator's pause. */

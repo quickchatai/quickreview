@@ -895,33 +895,50 @@ describe("an unreadable transcript makes the usage UNKNOWN", () => {
 });
 
 describe("partial transcript evidence", () => {
-  it.each(["error", "eof"])("retains parsed violations and unknown usage on an incomplete later read (%s)", async (failure) => {
-    const first = bashCall(at(1), "python denied.py") + "\n";
-    const fs = new MemoryTranscriptFs({ "/s/a.jsonl": first + assistant(at(2), { input: 5 }) }, {}, Date.parse(END));
-    const open = fs.open.bind(fs);
-    fs.open = async (path) => {
-      const handle = await open(path);
-      return { ...handle, read: async (buffer, offset, length, position) => {
-        if (position >= Buffer.byteLength(first)) {
-          if (failure === "eof") return { bytesRead: 0 };
-          throw new Error("EIO after parsed prefix");
-        }
-        return handle.read(buffer, offset, length, position);
-      } };
-    };
-    const result = await new TranscriptIndex({ fs, chunkBytes: Buffer.byteLength(first) }).measure(window("/s"));
-    expect(result.usage).toBeNull();
-    expect(result.unreadable).toHaveLength(1);
-    expect(result.violations).toEqual([{ command: "python denied.py", kind: "interpreter" }]);
-  });
+  it.each(["error", "eof"])(
+    "retains parsed violations and unknown usage on an incomplete later read (%s)",
+    async (failure) => {
+      const first = bashCall(at(1), "python denied.py") + "\n";
+      const fs = new MemoryTranscriptFs(
+        { "/s/a.jsonl": first + assistant(at(2), { input: 5 }) },
+        {},
+        Date.parse(END),
+      );
+      const open = fs.open.bind(fs);
+      fs.open = async (path) => {
+        const handle = await open(path);
+        return {
+          ...handle,
+          read: async (buffer, offset, length, position) => {
+            if (position >= Buffer.byteLength(first)) {
+              if (failure === "eof") return { bytesRead: 0 };
+              throw new Error("EIO after parsed prefix");
+            }
+            return handle.read(buffer, offset, length, position);
+          },
+        };
+      };
+      const result = await new TranscriptIndex({
+        fs,
+        chunkBytes: Buffer.byteLength(first),
+      }).measure(window("/s"));
+      expect(result.usage).toBeNull();
+      expect(result.unreadable).toHaveLength(1);
+      expect(result.violations).toEqual([{ command: "python denied.py", kind: "interpreter" }]);
+    },
+  );
   it("rereads an uncommitted suffix even if size and mtime remain unchanged", async () => {
     const prefix = bashCall(at(1), "git diff") + "\n";
     const old = bashCall(at(2), "python old.py");
     const next = bashCall(at(2), "python new.py");
     const fs = new MemoryTranscriptFs({ "/s/a.jsonl": prefix + old }, {}, Date.parse(END));
     const index = new TranscriptIndex({ fs, now: () => Date.parse(END) + TRANSCRIPT_RACY_MS + 1 });
-    expect((await index.measure(window("/s"))).violations.map((v) => v.command)).toEqual(["python old.py"]);
+    expect((await index.measure(window("/s"))).violations.map((v) => v.command)).toEqual([
+      "python old.py",
+    ]);
     Buffer.from(next).copy(fs.bytesOf("/s/a.jsonl"), Buffer.byteLength(prefix));
-    expect((await index.measure(window("/s"))).violations.map((v) => v.command)).toEqual(["python new.py"]);
+    expect((await index.measure(window("/s"))).violations.map((v) => v.command)).toEqual([
+      "python new.py",
+    ]);
   });
 });

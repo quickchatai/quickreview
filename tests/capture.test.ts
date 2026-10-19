@@ -920,10 +920,20 @@ it("rolls back a captured comment if its required audit event cannot persist", (
   const store = trackedStore();
   try {
     const comment = capturedFromReviewComment(PR, {
-      id: 991234, user: "alice", body: "please reconsider", path: "app.ts", line: 1,
+      id: 991234,
+      user: "alice",
+      body: "please reconsider",
+      path: "app.ts",
+      line: 1,
     } as ReviewCommentFull);
-    vi.spyOn(store, "logEvent").mockImplementation(() => { throw new Error("audit unavailable"); });
+    vi.spyOn(store, "logEvent").mockImplementation(() => {
+      throw new Error("audit unavailable");
+    });
     expect(() => recordCapturedComment(store, comment, "webhook")).toThrow("audit unavailable");
-    expect(store.db.prepare("SELECT 1 FROM pr_comments WHERE comment_id = ?").get(comment.comment_id)).toBeUndefined();
-  } finally { store.close(); }
+    expect(
+      store.db.prepare("SELECT 1 FROM pr_comments WHERE comment_id = ?").get(comment.comment_id),
+    ).toBeUndefined();
+  } finally {
+    store.close();
+  }
 });

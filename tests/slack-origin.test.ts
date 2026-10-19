@@ -437,14 +437,20 @@ describe("OriginStore", () => {
         store.bind(rec, join(inject, wake));
       };
 
-      it.each([false, true])("keeps an accepted guest restricted behind a queued owner after restart (prune %s)", (prune) => {
-        accept(slackTurn(1, "U0GUEST", "anyone"));
-        at(1_000);
-        slackTurn(2, "U0MAT", "owner");
-        if (prune) { at(ORIGIN_TTL_MS + 2_000); served.prune(); }
-        expect(reboot().latestAny()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
-        expect(reboot().latest()).toBeNull();
-      });
+      it.each([false, true])(
+        "keeps an accepted guest restricted behind a queued owner after restart (prune %s)",
+        (prune) => {
+          accept(slackTurn(1, "U0GUEST", "anyone"));
+          at(1_000);
+          slackTurn(2, "U0MAT", "owner");
+          if (prune) {
+            at(ORIGIN_TTL_MS + 2_000);
+            served.prune();
+          }
+          expect(reboot().latestAny()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+          expect(reboot().latest()).toBeNull();
+        },
+      );
 
       // MUTATION: drop `bootQueued` from `latestAny()` — the newest record on
       // disk is the daemon's, so the guest's queued turn runs beltless.

@@ -322,14 +322,20 @@ describe("derivables", () => {
     await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
     const compose = readFileSync(join(REPO_ROOT, "docker-compose.yml"), "utf8");
     const project = /^name:\s*(\S+)/m.exec(compose)?.[1];
-    expect(compose).toMatch(/^  daemon:/m);
+    expect(compose).toMatch(/^ {2}daemon:/m);
     expect(producedConfig().tui.container).toBe(`${project}-daemon-1`);
     // A previously filled VM default must also recover when rerun locally.
     const path = join(root, "config.toml");
-    writeFileSync(path, readFileSync(path, "utf8").replace(`${project}-daemon-1`, "quickreview-sandbox"));
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(`${project}-daemon-1`, "quickreview-sandbox"),
+    );
     await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
     expect(producedConfig().tui.container).toBe(`${project}-daemon-1`);
-    writeFileSync(path, readFileSync(path, "utf8").replace(`${project}-daemon-1`, "operator-daemon"));
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(`${project}-daemon-1`, "operator-daemon"),
+    );
     await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
     expect(producedConfig().tui.container).toBe("operator-daemon");
   });

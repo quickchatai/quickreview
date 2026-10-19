@@ -321,7 +321,7 @@ export interface VerdictDeps {
   findingsDir?: string;
   /** Told when a round's findings record lands (the lesson shadow ledger's
    * matcher). Absent ⇒ nothing is told. Must not throw. */
-  onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => void;
+  onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => unknown;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
   /** Partial-write tolerance (`src/settledread.ts`): how long an

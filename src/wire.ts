@@ -1732,10 +1732,14 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         },
         async restartSession(target, deliveryKey) {
           if (target === "overseer") {
-            return asyncCommandEffect(d.store, commandEffectKey("restart-overseer", deliveryKey, target), async () => {
-              const name = await sessions.rotateOverseer();
-              return { ok: true, respawned: name };
-            });
+            return asyncCommandEffect(
+              d.store,
+              commandEffectKey("restart-overseer", deliveryKey, target),
+              async () => {
+                const name = await sessions.rotateOverseer();
+                return { ok: true, respawned: name };
+              },
+            );
           }
           return recoverPrForOperator(
             {

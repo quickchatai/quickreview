@@ -997,9 +997,8 @@ describe("qcr review <PR>", () => {
   it("--debug-pi posts nothing even when the repo's saved default is pr", async () => {
     const repo = cwdRepo("pr-debug-nopost");
     setLimit(repo, 1000);
-    const { saveDefaultDestinations, loadDefaultDestinations } = await import(
-      "../src/reviewdest.js"
-    );
+    const { saveDefaultDestinations, loadDefaultDestinations } =
+      await import("../src/reviewdest.js");
     saveDefaultDestinations(repo, ["pr"]);
     const pi = happyPi("pr-debug-nopost");
     const { runOneShot } = await import("../src/oneshot.js");

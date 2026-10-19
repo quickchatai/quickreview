@@ -817,7 +817,8 @@ export class GitHubAdapter {
     );
     const files = res.files ?? [];
     const out: FileList = files.map(fileEntry);
-    if (files.length >= COMPARE_FILES_CAP || res.status === "behind" || res.status === "diverged") out.truncated = true;
+    if (files.length >= COMPARE_FILES_CAP || res.status === "behind" || res.status === "diverged")
+      out.truncated = true;
     return out;
   }
 
@@ -832,19 +833,25 @@ export class GitHubAdapter {
     const out: CheckSummary[] = [];
     const enc = encodeURIComponent(ref);
     const runs = await this.completeCheckPages<any>(
-      `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs`, "check_runs",
+      `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs`,
+      "check_runs",
     );
     for (const r of runs)
       out.push({
-        name: r.name ?? "check", source: "check_run", status: r.status ?? "",
-        conclusion: r.conclusion ?? null, started_at: r.started_at ?? null,
+        name: r.name ?? "check",
+        source: "check_run",
+        status: r.status ?? "",
+        conclusion: r.conclusion ?? null,
+        started_at: r.started_at ?? null,
       });
     const statuses = await this.completeCheckPages<any>(
-      `/repos/${this.owner}/${this.repo}/commits/${enc}/status`, "statuses",
+      `/repos/${this.owner}/${this.repo}/commits/${enc}/status`,
+      "statuses",
     );
     for (const s of statuses)
       out.push({
-        name: s.context ?? "status", source: "status",
+        name: s.context ?? "status",
+        source: "status",
         status: s.state === "pending" ? "pending" : "completed",
         conclusion: s.state === "pending" ? null : s.state === "success" ? "success" : "failure",
       });
@@ -856,7 +863,10 @@ export class GitHubAdapter {
     const rows: T[] = [];
     let expected: number | undefined;
     for (let page = 1; page <= 10; page++) {
-      const result = await this.request<Record<string, unknown>>("GET", `${path}?per_page=100&page=${page}`);
+      const result = await this.request<Record<string, unknown>>(
+        "GET",
+        `${path}?per_page=100&page=${page}`,
+      );
       const count = result.total_count;
       if (count !== undefined) {
         if (typeof count !== "number" || !Number.isInteger(count) || count < 0)
@@ -867,7 +877,7 @@ export class GitHubAdapter {
       }
       const batch = result[field];
       if (!Array.isArray(batch)) throw new Error(`unreadable ${field} page`);
-      rows.push(...batch as T[]);
+      rows.push(...(batch as T[]));
       if (expected !== undefined && rows.length > expected)
         throw new Error(`incomplete ${field}: rows exceed advertised count`);
       if (batch.length < 100 || (expected !== undefined && rows.length === expected)) {

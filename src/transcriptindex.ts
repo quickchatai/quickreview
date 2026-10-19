@@ -227,7 +227,10 @@ interface FileView {
 
 /** Preserve confirmed line contributions while refusing a partial usage total. */
 class PartialTranscriptRead extends Error {
-  constructor(readonly view: FileView, cause: unknown) {
+  constructor(
+    readonly view: FileView,
+    cause: unknown,
+  ) {
     super(reasonOf(cause), { cause });
   }
 }
@@ -563,7 +566,13 @@ export class TranscriptIndex {
     // mtime clear of the racy window: no byte read. (A scan this query waited
     // on may have seen MORE than `st` — lines appended since, which a later
     // read would also have seen.) A racily clean one is probed by `scan`.
-    if (cached && cached.committed === cached.scanned && sameInode(cached, st) && unmoved(cached, st) && !this.racy(cached)) {
+    if (
+      cached &&
+      cached.committed === cached.scanned &&
+      sameInode(cached, st) &&
+      unmoved(cached, st) &&
+      !this.racy(cached)
+    ) {
       this.counters.hits++;
       this.touch(path, cached);
       return { records: cached.records, n: cached.records.length, pending: cached.pending };

@@ -38,8 +38,16 @@ it("panel fallback never attaches an unpathed borrowed location to the canonical
     status: "ok",
     findings: [],
     sourceFindings: [
-      { id: "lead", reviewerId: "r1", finding: { summary: "Lead", actionable: true, path: "a.ts" } },
-      { id: "anchor", reviewerId: "r2", finding: { summary: "Anchor", actionable: false, location: { startLine: 30 } } },
+      {
+        id: "lead",
+        reviewerId: "r1",
+        finding: { summary: "Lead", actionable: true, path: "a.ts" },
+      },
+      {
+        id: "anchor",
+        reviewerId: "r2",
+        finding: { summary: "Anchor", actionable: false, location: { startLine: 30 } },
+      },
     ],
     confirmedClusters: [
       { id: "c", summary: "Merged", confirmed: true, sourceFindingIds: ["lead", "anchor"] },

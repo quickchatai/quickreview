@@ -134,10 +134,24 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
   });
   it("keeps existing repeat-site followers in the surviving post-check root cause", () => {
     const input = rec();
-    const follower = { id: "repeat", disposition: "posted", posted_as: "nit", same_as: "F1",
-      path: "a.ts", line: 90, title: "A repeated site", body: "same cause" };
-    const { record } = postCheckRecord({ ...input, findings: [...input.findings.slice(0, 2), follower] });
-    const rendered = renderReviewFromRecord(record, { verdict: "REQUEST_CHANGES", bodyMode: "verdict" });
+    const follower = {
+      id: "repeat",
+      disposition: "posted",
+      posted_as: "nit",
+      same_as: "F1",
+      path: "a.ts",
+      line: 90,
+      title: "A repeated site",
+      body: "same cause",
+    };
+    const { record } = postCheckRecord({
+      ...input,
+      findings: [...input.findings.slice(0, 2), follower],
+    });
+    const rendered = renderReviewFromRecord(record, {
+      verdict: "REQUEST_CHANGES",
+      bodyMode: "verdict",
+    });
     expect(rendered.body.split("\n")[0]).toContain("1 blocker");
     expect(rendered.body.split("\n")[0]).not.toContain("nit");
   });

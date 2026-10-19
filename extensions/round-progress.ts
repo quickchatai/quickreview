@@ -115,7 +115,7 @@ function subagentExecutions(
     // Native calls receive the same canonical task-file pointers as launch_plan.
     // Free-form/legacy tasks stay unclassified rather than guessing a sweep.
     const pointer = text(task?.task)?.match(
-      /^Task file: [^\n]*[\/]tasks(-sweep|-optional)?[\/][^\n]+\. Read it first;/,
+      /^Task file: [^\n]*\/tasks(-sweep|-optional)?\/[^\n]+\. Read it first;/,
     );
     const phase: PassExecutionPhase | undefined = pointer
       ? pointer[1] === "-sweep"
@@ -436,7 +436,7 @@ export default function activate(pi: ExtensionAPI): void {
           agents.set(key, {
             execution_id: key,
             agent,
-            ...(executions[index]?.phase ? { phase: executions[index]!.phase } : {}),
+            ...(executions[index]?.phase ? { phase: executions[index].phase } : {}),
             status: "running",
             duration_ms: 0,
             tool_count: 0,

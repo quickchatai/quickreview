@@ -307,7 +307,8 @@ export class SlackSocketClient implements SlackSocket {
     let frame: SocketFrame;
     try {
       frame = JSON.parse(typeof raw === "string" ? raw : String(raw)) as SocketFrame;
-      if (frame === null || typeof frame !== "object" || Array.isArray(frame)) throw new Error("invalid frame");
+      if (frame === null || typeof frame !== "object" || Array.isArray(frame))
+        throw new Error("invalid frame");
     } catch {
       this.log("slack.socket.bad_frame");
       return;

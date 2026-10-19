@@ -292,16 +292,19 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
 
 /** The known mechanically authored COMMENT bodies carry no round verdict. */
 function mechanicalReviewBody(body: string): boolean {
-  return body.startsWith(`${ESCALATION_TAG} @`) ||
+  return (
+    body.startsWith(`${ESCALATION_TAG} @`) ||
     (body.startsWith("### Migration numbering — renumber needed (mechanics, not a blocker)\n") &&
-      body.includes("This is posted as a comment on purpose:"));
+      body.includes("This is posted as a comment on purpose:"))
+  );
 }
 
 function oldReviewFetcher(adapter: GitHubAdapter, botLogin: string) {
   return async (pr: number): Promise<ReviewSnapshot | null> => {
     const reviews = (await adapter.listReviewsFull(pr)).filter(
       (r) =>
-        r.user === botLogin && ["APPROVED", "CHANGES_REQUESTED", "COMMENTED"].includes(r.state) &&
+        r.user === botLogin &&
+        ["APPROVED", "CHANGES_REQUESTED", "COMMENTED"].includes(r.state) &&
         !(r.state === "COMMENTED" && mechanicalReviewBody(r.body)),
     );
     const latest = reviews[reviews.length - 1];

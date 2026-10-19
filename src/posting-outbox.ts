@@ -247,14 +247,23 @@ function permanentRejection(e: HttpError): boolean {
 }
 
 /** The exact published snapshot, allowing only confirmed approval softening. */
-function receiptMatchesJob(receipt: ReturnType<typeof readPostingReceipt>, job: PostingJob): boolean {
-  if (!receipt || receipt.posting_key !== job.posting_key ||
-    receipt.head_sha.toLowerCase() !== job.head_sha.toLowerCase()) return false;
+function receiptMatchesJob(
+  receipt: ReturnType<typeof readPostingReceipt>,
+  job: PostingJob,
+): boolean {
+  if (
+    !receipt ||
+    receipt.posting_key !== job.posting_key ||
+    receipt.head_sha.toLowerCase() !== job.head_sha.toLowerCase()
+  )
+    return false;
   if (receipt.status === "skipped") return true; // terminal refusal, never a replay
-  return receipt.payload_sha256.toLowerCase() === job.payload_sha256 &&
+  return (
+    receipt.payload_sha256.toLowerCase() === job.payload_sha256 &&
     receipt.intended_event === job.intended_event &&
     (receipt.actual_event === job.payload.event ||
-      (receipt.status === "confirmed" && receipt.actual_event === "COMMENT"));
+      (receipt.status === "confirmed" && receipt.actual_event === "COMMENT"))
+  );
 }
 
 /** The deferred receipt of this job, when its receipt says `deferred`. */
@@ -297,8 +306,12 @@ export class PostingOutbox {
         if (!/^pr-\d+-round-\d+\.outbox\.json$/.test(name)) continue;
         const path = join(this.deps.dir, name),
           job = readPostingJob(path);
-        if (job && outboxProcesses(job, this.deps.repo) && job.deferred_at &&
-          !this.recoverDeferredHandoff(path, job)) {
+        if (
+          job &&
+          outboxProcesses(job, this.deps.repo) &&
+          job.deferred_at &&
+          !this.recoverDeferredHandoff(path, job)
+        ) {
           this.deps.log("posting deferred handoff unconfirmed — ordinary replay withheld", job);
           continue;
         }
@@ -332,11 +345,23 @@ export class PostingOutbox {
     try {
       const fresh = readPostingJob(path);
       const receipt = readPostingReceipt(this.deps.dir, job.pr, job.round_no);
-      if (!fresh || !outboxProcesses(fresh, this.deps.repo) || !fresh.deferred_at ||
-        fresh.posting_key !== job.posting_key || !receiptMatchesJob(receipt, fresh) || !receipt) return false;
+      if (
+        !fresh ||
+        !outboxProcesses(fresh, this.deps.repo) ||
+        !fresh.deferred_at ||
+        fresh.posting_key !== job.posting_key ||
+        !receiptMatchesJob(receipt, fresh) ||
+        !receipt
+      )
+        return false;
       if (receipt.status !== "prepared") return true;
-      if (receipt.payload_sha256 !== fresh.payload_sha256 || receipt.head_sha !== fresh.head_sha ||
-        receipt.intended_event !== fresh.intended_event || receipt.actual_event !== fresh.payload.event) return false;
+      if (
+        receipt.payload_sha256 !== fresh.payload_sha256 ||
+        receipt.head_sha !== fresh.head_sha ||
+        receipt.intended_event !== fresh.intended_event ||
+        receipt.actual_event !== fresh.payload.event
+      )
+        return false;
       writePostingFile(receiptPath, {
         ...receipt,
         status: "deferred",

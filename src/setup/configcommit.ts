@@ -148,9 +148,7 @@ function parseRequest(text: string): CommitRequest | string {
       typeof r.hashes !== "object" ||
       Array.isArray(r.hashes) ||
       Object.keys(r.hashes).length !== r.paths.length ||
-      r.paths.some(
-        (p) => typeof r.hashes![p] !== "string" || !/^[a-f0-9]{64}$/.test(r.hashes![p]!),
-      ))
+      r.paths.some((p) => typeof r.hashes![p] !== "string" || !/^[a-f0-9]{64}$/.test(r.hashes![p])))
   )
     return "the request's hashes do not describe every requested path";
   return {

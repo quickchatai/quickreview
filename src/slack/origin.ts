@@ -259,10 +259,13 @@ export class OriginStore {
   /** The bridge's last accepted wake, independent of later queued writes. */
   private acceptedDiskName(names: readonly string[]): string | undefined {
     if (this.deliveredDir === null) return undefined;
-    return names.filter((name) => {
-      const stem = name.replace(/\.json$/, "");
-      return !this.isPending(stem) && existsSync(join(this.deliveredDir!, `${stem}.md`));
-    }).sort().at(-1);
+    return names
+      .filter((name) => {
+        const stem = name.replace(/\.json$/, "");
+        return !this.isPending(stem) && existsSync(join(this.deliveredDir!, `${stem}.md`));
+      })
+      .sort()
+      .at(-1);
   }
 
   /** A wake named `<stem>.md` is still in the bridge's pending queue. */

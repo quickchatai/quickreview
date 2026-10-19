@@ -1555,7 +1555,9 @@ describe("durable lever delivery", () => {
       tick(5);
       expect(pauseLever(d, 11, "fixture", "session", 10)).toEqual(first);
       expect(store.leverMinutesUsed("pause", "2026-09-02", 11)).toBe(10);
-    } finally { store.close(); }
+    } finally {
+      store.close();
+    }
   });
   it("does not extend or recharge an accepted drain delivery replayed later", async () => {
     const { store, tick, now } = clocked();
@@ -1565,20 +1567,34 @@ describe("durable lever delivery", () => {
       tick(5);
       expect(await drainLever(d, true, "session", 10, async () => {})).toEqual(first);
       expect(store.leverMinutesUsed("drain", "2026-09-02", null)).toBe(10);
-    } finally { store.close(); }
+    } finally {
+      store.close();
+    }
   });
-  it.each(["pause", "drain"])("rolls back a %s hold when recording its budget charge fails", async (kind) => {
-    const { store, now } = clocked();
-    try {
-      queue(store, 11);
-      vi.spyOn(store, "recordLeverGrant").mockImplementation(() => { throw new Error("ledger unavailable"); });
-      if (kind === "pause") {
-        expect(() => pauseLever(deps(store, now), 11, "fixture", "session", 10)).toThrow("ledger unavailable");
-        expect(store.getPr(11)?.paused).toBe(0);
-      } else {
-        await expect(drainLever(deps(store, now), true, "session", 10, async () => {})).rejects.toThrow("ledger unavailable");
-        expect(store.drainState().draining).toBe(false);
+  it.each(["pause", "drain"])(
+    "rolls back a %s hold when recording its budget charge fails",
+    async (kind) => {
+      const { store, now } = clocked();
+      try {
+        queue(store, 11);
+        vi.spyOn(store, "recordLeverGrant").mockImplementation(() => {
+          throw new Error("ledger unavailable");
+        });
+        if (kind === "pause") {
+          expect(() => pauseLever(deps(store, now), 11, "fixture", "session", 10)).toThrow(
+            "ledger unavailable",
+          );
+          expect(store.getPr(11)?.paused).toBe(0);
+        } else {
+          await expect(
+            drainLever(deps(store, now), true, "session", 10, async () => {}),
+          ).rejects.toThrow("ledger unavailable");
+          expect(store.drainState().draining).toBe(false);
+        }
+      } finally {
+        store.close();
+        vi.restoreAllMocks();
       }
-    } finally { store.close(); vi.restoreAllMocks(); }
-  });
+    },
+  );
 });

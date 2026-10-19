@@ -30,7 +30,13 @@ function py(code: string, ...args: string[]): unknown {
       `import sys, json; sys.path.insert(0, 'bench/aacr'); import hf_export as h\n${code}`,
       ...args,
     ],
-    { env: { ...process.env, QCR_SCRUB_HOME: "/home/alice", QCR_SCRUB_RUNS_DIR: "/home/alice/projects/qcr-bench-runs" } },
+    {
+      env: {
+        ...process.env,
+        QCR_SCRUB_HOME: "/home/alice",
+        QCR_SCRUB_RUNS_DIR: "/home/alice/projects/qcr-bench-runs",
+      },
+    },
   );
   return JSON.parse(out.toString());
 }

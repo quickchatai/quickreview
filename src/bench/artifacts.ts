@@ -9,7 +9,11 @@ export const CASE_FILES = {
 /** Session comments accept both historical bare arrays and wrapped arrays. */
 export function commentsEnvelope(raw: unknown): unknown[] {
   if (Array.isArray(raw)) return raw;
-  if (typeof raw === "object" && raw !== null && Array.isArray((raw as { comments?: unknown }).comments))
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    Array.isArray((raw as { comments?: unknown }).comments)
+  )
     return (raw as { comments: unknown[] }).comments;
   return [];
 }
@@ -25,8 +29,15 @@ export function prDescription(meta: { title: string | null; body: string | null 
   ];
 }
 
-export function singleLineComment(path: string, line: number, content: string): {
-  path: string; start_line: number; end_line: number; content: string;
+export function singleLineComment(
+  path: string,
+  line: number,
+  content: string,
+): {
+  path: string;
+  start_line: number;
+  end_line: number;
+  content: string;
 } {
   return { path, start_line: line, end_line: line, content };
 }
