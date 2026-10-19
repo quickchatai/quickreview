@@ -21,6 +21,12 @@
 //                            edit can drop it (the pin and the guard together
 //                            are the exec boundary, src/sessions.ts
 //                            sessionGitConfigPins)
+//   the IPC capability fd    named by QCR_IPC_CAP_FD in the session's env (a bot
+//                            worker's, src/botworker.ts): every bash command
+//                            inherits it at the same number, because the post
+//                            scripts under it read the capability from that fd.
+//                            Node closes any descriptor a child is not listed
+//                            with, so it is handed over explicitly
 //   the D34 reviewer stub    handed to the resource loader as data (its
 //                            agentsFilesOverride), never read from or written
 //                            into a checkout. A resumed PR JSONL does not store
@@ -34,6 +40,7 @@
 // Bot mode refuses a GitHub token in the session's env or in the host's own
 // (rule 3): the bot mints per command from the App credential, so a token in an
 // env is a leak waiting for the model's bash.
+import { fstatSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createBashGuard, bashGuardConfigFromEnv } from "../../extensions/bash-guard.js";
@@ -111,6 +118,21 @@ export function refuseGithubToken(where: string, env: Env): void {
     );
 }
 
+/** The descriptor the model's bash commands inherit: the IPC capability the
+ * session's env names, which must be open in this process. */
+function capabilityFds(env: Env): number[] {
+  const named = env["QCR_IPC_CAP_FD"];
+  if (named === undefined || named === "") return [];
+  const fd = /^\d{1,4}$/.test(named) ? Number(named) : 0;
+  if (fd < 3) throw new Error(`QCR_IPC_CAP_FD is not an fd number (${JSON.stringify(named)})`);
+  try {
+    fstatSync(fd);
+  } catch {
+    throw new Error(`QCR_IPC_CAP_FD names fd ${fd}, which is not open in this process`);
+  }
+  return [fd];
+}
+
 /** The PR a bot session serves, from its name. */
 function prOf(env: Env): { session: string; pr: number } {
   const session = env["QCR_SESSION_NAME"]?.trim() ?? "";
@@ -147,6 +169,7 @@ export function botSdkExtras(options: BotSdkOptions): (spec: SessionSpec) => Ses
     const home = spec.env["HOME"];
     if (home === undefined) throw new Error("a bot session's env names its pi HOME (HOME)");
     const pin = gitPin(spec.env);
+    const inheritFds = capabilityFds(spec.env);
     const memory = openVikingConfigFromEnv({
       env: spec.env,
       argv: ["--approve"],
@@ -177,6 +200,7 @@ export function botSdkExtras(options: BotSdkOptions): (spec: SessionSpec) => Ses
       ...(customTools.length > 0 ? { customTools } : {}),
       agentsFiles: [reviewerStub(root, spec.cwd)],
       bashEnv: { allow: BOT_BASH_ENV_ALLOW, set: pin },
+      ...(inheritFds.length > 0 ? { inheritFds } : {}),
     };
   };
 }

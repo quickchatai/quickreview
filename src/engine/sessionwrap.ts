@@ -17,6 +17,7 @@ export function releasing(session: RuntimeSession, after: () => void): RuntimeSe
     steer: (text) => session.steer(text),
     abort: () => session.abort(),
     subscribe: (listener, options) => session.subscribe(listener, options),
+    ...(session.compact ? { compact: () => session.compact!() } : {}),
     stats: () => session.stats(),
     dispose: async () => {
       try {

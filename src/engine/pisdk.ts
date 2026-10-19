@@ -74,7 +74,7 @@ import {
   type ImageSniffer,
   type ToolFence,
 } from "./toolfence.js";
-import { isolatedBashOperations, type ToolIds } from "./tooluid.js";
+import { inheritingBashOperations, isolatedBashOperations, type ToolIds } from "./tooluid.js";
 
 // ---- the HTTP dispatcher (D4) -------------------------------------------------
 
@@ -414,6 +414,11 @@ export interface HostSessionSpec {
   /** The tool allowlist, exact names. Omitted: pi's four defaults. */
   tools?: readonly string[];
   bashEnv?: BashEnvOptions;
+  /** Descriptors of this process that each of the model's bash commands gets at
+   * the same number, and nothing else (Node closes every other one): the bot
+   * worker's IPC capability, which the post scripts read (P8.3). Each must be
+   * open now. */
+  inheritFds?: readonly number[];
   /** Persist the session's JSONL: at an exact file (a new session, written from
    * its first user message on, as pi's `--session <path>` does), or under a
    * directory pi names the file in (`--session-dir`), or by reopening an
@@ -457,7 +462,7 @@ function resolveModel(runtime: ModelRuntime, model: string | Model<Api>): Model<
 
 /** The id a session JSONL's header carries; null when the file does not start
  * with a session header. */
-function headerId(file: string): string | null {
+export function headerId(file: string): string | null {
   let first: string | undefined;
   try {
     // The header is the first line; a transcript can run to megabytes.
@@ -639,8 +644,16 @@ export class PiHost {
         env: buildBashEnv(spec.env, ctx.env, spec.bashEnv),
       }),
       ...(this.options.toolUid
-        ? { operations: isolatedBashOperations(this.options.toolUid, this.options.setprivBin) }
-        : {}),
+        ? {
+            operations: isolatedBashOperations(
+              this.options.toolUid,
+              this.options.setprivBin,
+              spec.inheritFds,
+            ),
+          }
+        : spec.inheritFds?.length
+          ? { operations: inheritingBashOperations(spec.inheritFds) }
+          : {}),
     });
     const files = await this.fileTools(spec.cwd, tools);
     const { session } = await createAgentSession({

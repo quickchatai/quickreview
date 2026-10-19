@@ -46,6 +46,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/action.test.ts",
   "tests/archive-evidence-shell.test.ts",
   "tests/bash-guard-sed-differential.test.ts",
+  "tests/bash-inherit-fds.test.ts", // the model's bash commands under the host's spawn, with descriptors handed over
   "tests/bench-apikey.test.ts",
   "tests/bench-arm-compare.test.ts",
   "tests/bench-armrun.test.ts",
@@ -68,6 +69,8 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/bench-rerun-all.test.ts",
   "tests/bench-runpi-flush.test.ts",
   "tests/bench-whatif.test.ts",
+  "tests/botworker-process.test.ts", // the built worker as a child, with the capability on an inherited fd
+  "tests/botworker.test.ts", // the model's bash runs the real verdict and post scripts, through the worker
   "tests/ci-clone-smoke.test.ts",
   "tests/ci-image-smoke.test.ts",
   "tests/collect-secrets.test.ts",

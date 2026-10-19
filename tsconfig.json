@@ -49,9 +49,17 @@
     // true, and with the buildinfo out of dist/ nothing else in that tree
     // moves on a failing build either.
     "noEmitOnError": true,
+    // P8.3: the bot worker runs from dist/ and loads the vendored OpenViking
+    // extension's compiled .js, which imports its own plain-JS helpers
+    // (`shared/*.mjs`, `lib/*.mjs`). tsc emits no .mjs it was not given, and pi
+    // (which loads the .ts sources through jiti) never needed them in dist/. With
+    // allowJs and the include below tsc copies them over (re-emitted, not
+    // type-checked: `checkJs` stays off, and the `.d.mts` beside each one is
+    // what TypeScript reads). scripts/verify-dist.mjs checks they are there.
+    "allowJs": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "extensions/**/*.ts"],
+  "include": ["src/**/*.ts", "extensions/**/*.ts", "extensions/vendor/openviking-pi/**/*.mjs"],
   // One VENDORED-VERBATIM extension is excluded from the BUILD only — pi
   // loads its .ts source via jiti at runtime, and it uses pi API surface our
   // deliberately-minimal ambient pi-api.d.ts does not declare. Typechecking

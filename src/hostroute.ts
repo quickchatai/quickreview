@@ -34,12 +34,10 @@ import { buildBenchAgents } from "./bench/runner.js";
 import { benchSettings } from "./bench/auth.js";
 import { copyPiAuth } from "./engine/auth.js";
 import type { ProfileLookup } from "./profiles.js";
+import { HOST_CONTEXT_STUB, REVIEWER_STUB } from "./reviewerstub.js";
 
-/** The reviewer stub, relative to the production tree. */
-export const REVIEWER_STUB = join("deploy", "reviewer", "AGENTS.override.md");
-
-/** The name pi loads it under from the cwd (first of its candidates). */
-export const HOST_CONTEXT_STUB = "AGENTS.override.md";
+// The two names live in a neutral module (the bot worker imports them without this file's closure).
+export { HOST_CONTEXT_STUB, REVIEWER_STUB };
 
 /** pi's candidates in one directory, in the order it tries them. */
 const CONTEXT_CANDIDATES = [
