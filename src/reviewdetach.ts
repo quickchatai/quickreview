@@ -20,6 +20,16 @@
 // heartbeat (src/heartbeat.ts) and kills the driver's group, and the pi groups
 // the beat names, once the deadline plus a grace has passed and the beat has
 // stopped advancing.
+//
+// In the release image (P6.8) a run is a container of its own, started by the
+// host wrapper (scripts/qcr-host.sh): `start` is a short call that only claims
+// the target and writes the run (QCR_REVIEW_CONTAINER names the container the
+// wrapper is about to start, QCR_RUN_ID is the id it chose); the wrapper then
+// starts the driver as `review --container-run ID`. The container is the
+// hard-kill backstop, so there is no watchdog and no pid: the run is alive
+// while its container is up, which the wrapper tells every call it makes in
+// QCR_LIVE_REVIEWS, and `stop` marks the run stopped and leaves the killing
+// to the wrapper's `docker stop`, then `docker kill`.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -63,13 +73,17 @@ export interface DetachDeps {
   kill: (pid: number, signal: NodeJS.Signals) => void;
   /** Which target a `start` is of, without running anything. */
   identify: (rest: readonly string[]) => Identified;
-  /** Start the detached child; it must outlive this process. */
+  /** Start the detached child; it must outlive this process. A run whose
+   * container is its process returns no pid, and the container's name. */
   launch: (l: {
     runId: string;
     dir: string;
     key: string;
     argv: string[];
-  }) => { ok: true; pid: number } | { ok: false; error: string };
+  }) => { ok: true; pid: number | null; container?: string } | { ok: false; error: string };
+  /** The names of the review containers that are up, for runs that are one
+   * (null: not told, so such a run is taken to be alive). */
+  liveContainers?: () => ReadonlySet<string> | null;
   /** Start the run's watchdog once the child has a pid. A failure to start it
    * leaves the run without that backstop, which is no reason to refuse it. */
   watch?: (w: { dir: string; key: string; pid: number }) => void;
@@ -83,12 +97,46 @@ interface RunRecord {
   label: string;
   argv: string[];
   pid: number | null;
+  /** The container that is this run, when it is one (the release image). */
+  container?: string;
   started_at: number;
 }
 
 type Emit = (code: number, human: string, data: Record<string, unknown>) => number;
 
 const POLL_MS = 2000;
+
+/** The wrapper starts a run's container after the call that claimed the run
+ * returns; until then the run is claimed and its container is not up. */
+export const CONTAINER_START_GRACE_MS = 30_000;
+
+/** The names of the review containers that are up, as the wrapper lists them
+ * (space or newline separated) in QCR_LIVE_REVIEWS; null when it did not. */
+export function liveContainersFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): ReadonlySet<string> | null {
+  const v = env["QCR_LIVE_REVIEWS"];
+  return v === undefined ? null : new Set(v.split(/\s+/).filter(Boolean));
+}
+
+/** Whether a run is still going, by the pid it has or by the container it is. */
+export function runIsAlive(
+  run: { pid: number | null; container?: string; started_at?: number },
+  deps: Pick<DetachDeps, "alive" | "liveContainers"> & { now?: () => number },
+): boolean {
+  if (run.container !== undefined) {
+    const live = deps.liveContainers?.() ?? null;
+    if (live === null || live.has(run.container)) return true;
+    return (
+      run.started_at !== undefined &&
+      deps.now !== undefined &&
+      deps.now() - run.started_at < CONTAINER_START_GRACE_MS
+    );
+  }
+  return run.pid === null || deps.alive(run.pid);
+}
+
+type Liveness = Pick<DetachDeps, "alive" | "liveContainers" | "now">;
 
 const runsDir = (home: string): string => join(home, "runs");
 const lockPath = (home: string, key: string): string =>
@@ -172,7 +220,7 @@ interface Observed {
   result: unknown;
 }
 
-function observe(home: string, runId: string, deps: Pick<DetachDeps, "alive">): Observed | null {
+function observe(home: string, runId: string, deps: Liveness): Observed | null {
   // a run id from the command line never leaves the registry
   if (!/^[A-Za-z0-9._-]+$/.test(runId) || runId.startsWith(".")) return null;
   const dir = join(runsDir(home), runId);
@@ -187,7 +235,7 @@ function observe(home: string, runId: string, deps: Pick<DetachDeps, "alive">): 
   if (exit !== null && exit.code === 0) state = "done";
   else if (stopped) state = "stopped";
   else if (exit !== null) state = "failed";
-  else if (run.pid === null || deps.alive(run.pid)) state = "running";
+  else if (runIsAlive(run, deps)) state = "running";
   else state = "failed";
   let result: unknown = null;
   try {
@@ -206,7 +254,7 @@ function observe(home: string, runId: string, deps: Pick<DetachDeps, "alive">): 
   return { run, dir, state, exitCode: exit?.code ?? null, result };
 }
 
-function allRuns(home: string, deps: Pick<DetachDeps, "alive">): Observed[] {
+function allRuns(home: string, deps: Liveness): Observed[] {
   let ids: string[] = [];
   try {
     ids = readdirSync(runsDir(home));
@@ -365,6 +413,7 @@ export async function runDetachedVerb(
       return refuse([`review ${o.run.run_id} is not running (${o.state})`]);
     writeFileSync(join(o.dir, "stopped.json"), JSON.stringify({ at: deps.now() }));
     try {
+      // a container run has no pid: the wrapper stops the container after this
       if (o.run.pid !== null) deps.kill(o.run.pid, "SIGTERM");
     } catch {
       // already gone
@@ -418,6 +467,8 @@ function start(
   const id = deps.identify(rest);
   if (!id.ok) return refuse([id.error]);
   const runId = deps.newId();
+  if (existsSync(join(runsDir(deps.home), runId)))
+    return refuse([`the run id ${runId} is already used`]);
   const lock = lockPath(deps.home, id.key);
   mkdirSync(dirname(lock), { recursive: true });
   for (let attempt = 0; ; attempt++) {
@@ -453,9 +504,16 @@ function start(
     rmSync(dir, { recursive: true, force: true });
     return refuse([`the review could not be started: ${l.error}`]);
   }
-  writeFileSync(join(dir, "run.json"), JSON.stringify({ ...run, pid: l.pid }));
+  writeFileSync(
+    join(dir, "run.json"),
+    JSON.stringify({
+      ...run,
+      pid: l.pid,
+      ...(l.container !== undefined ? { container: l.container } : {}),
+    }),
+  );
   try {
-    deps.watch?.({ dir, key: id.key, pid: l.pid });
+    if (l.pid !== null) deps.watch?.({ dir, key: id.key, pid: l.pid });
   } catch {
     // see DetachDeps.watch
   }
@@ -468,6 +526,23 @@ function start(
 }
 
 // ---- the child -----------------------------------------------------------------
+
+/** What a container run was claimed with, for the driver the wrapper starts in
+ * that container (`review --container-run ID`): the run's directory, its target
+ * key and the review's own arguments. Null when the run is not a container run
+ * of this container, or has already ended. */
+export function readContainerRun(
+  home: string,
+  runId: string,
+  container: string,
+): { dir: string; key: string; argv: string[] } | null {
+  if (!/^[A-Za-z0-9._-]+$/.test(runId) || runId.startsWith(".")) return null;
+  const dir = join(runsDir(home), runId);
+  const run = readJson<RunRecord>(join(dir, "run.json"));
+  if (run === null || run.container !== container) return null;
+  if (existsSync(join(dir, "exit.json")) || existsSync(join(dir, "stopped.json"))) return null;
+  return { dir, key: run.key, argv: run.argv };
+}
 
 /** Launch a command as a detached process-group leader that outlives this one,
  * its output going to the run's own log. */

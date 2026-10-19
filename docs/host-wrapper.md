@@ -95,6 +95,41 @@ and the two containers meet in a named volume.
 be had, or a companion that will not run, does the same, with one line saying
 so. The owner's dev TUI with hot reload (rule 11) stays on the clone route.
 
+## A review run is a container (P6.8)
+
+`qcr review start` is a detached run, and in the image the run is a container.
+The wrapper makes it in two calls, so that the lock and the target logic of
+`src/reviewdetach.ts` are the ones the clone route has:
+
+1. **The claim**, a short foreground container with no token (it only reads
+   git, so `--uncommitted` works over the read-only `/repo`). It identifies the
+   target, takes the lock, writes the run (`run.json` names the container and has
+   no pid) and answers as `start` always did, in the caller's `--json` or text. A
+   refusal (a target already under review, a bad target) is the call's answer and
+   nothing else starts. The wrapper chose the run id and the container name and
+   handed both over (`QCR_RUN_ID`, `QCR_REVIEW_CONTAINER`).
+2. **The driver**, `docker run -d --rm --name qcr-review-<id>` with the labels
+   `qcr.role=review` and `qcr.review.run=<id>`, the token handed over as for any
+   review, running `review --container-run <id>`: it runs what the claim wrote,
+   records its end in `exit.json`, and keeps its own output in the run's
+   `driver.log`. If it cannot be started the wrapper runs `review stop` on the
+   claim and fails the call.
+
+There is no pid and no in-image watchdog: the container is the process group
+and the hard-kill backstop. `status` and `stop` are throwaway containers that
+read the run on the state volume; since the image cannot see docker, the wrapper
+lists the review containers that are up in `QCR_LIVE_REVIEWS` (for `start`,
+`status`, `stop` and `live`), and a run is alive while its container is listed
+(a run claimed less than 30 s ago is taken to be starting). A run whose container
+is gone without a result is `failed`.
+
+`qcr review stop [RUN_ID]` has the image mark the run stopped and free its
+target, then `docker stop -t <grace>` and `docker kill`: the driver gets the grace
+(`QCR_STOP_GRACE`, default 10 s) to abort its sessions and unwind, and a driver
+whose loop is frozen, which no signal reaches, is killed with its container at
+the grace's end. With no id it stops the newest review container that is up. A
+review that is not detached (`qcr review …`) is unchanged.
+
 ## The login
 
 `qcr login` is pi's own `/login`, typed for you in a throwaway container: the
@@ -142,6 +177,14 @@ environment.
   companion"); `qcr tui [pr|overseer]` the same with arguments.
 - `qcr login [provider]` runs pi's own `/login` over the `qcr-login` volume
   (see "The login" below).
+- `qcr review start|status|stop` make a run a container of its own (see "A
+  review run is a container").
+- `qcr open` and `qcr review --debug-pi` are pi's own interactive UI: with a
+  terminal on both ends they run `-it`, on the same state volume. `open` is handed
+  no GitHub token (pi on a kept session reads none); `--debug-pi` is (the round
+  reads the PR) and is told to accept the shared tool uid
+  (`QCR_ALLOW_SHARED_TOOL_UID=1`), because pi's bash there runs in the Node
+  process's own uid, in the terminal of the person who asked to watch it.
 - `qcr scan …` runs in the call's own container, which is the scan sandbox
   (`QCR_IN_SCAN_SANDBOX=1`); `scan start` and `scan stage2 start` get
   `--foreground`, because a driver detached in a throwaway container would end

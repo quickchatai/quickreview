@@ -77,7 +77,20 @@ case "$1" in
     ;;
   stop) sed -i 's/^true/false/' "$FAKE_DIR/companion-state"; exit 0 ;;
   rm) rm -f "$FAKE_DIR/companion-state"; exit 0 ;;
-  ps) printf '%s' "\${FAKE_TUI_PS-}"; exit 0 ;;
+  kill) exit 0 ;;
+  ps)
+    # the review containers (P6.8): their names, or their run ids as labelled
+    case " $* " in
+      *"qcr.role=review"*)
+        case "$*" in
+          *Label*) printf '%s' "\${FAKE_REVIEW_IDS-}" ;;
+          *) printf '%s' "\${FAKE_REVIEW_PS-}" ;;
+        esac
+        ;;
+      *) printf '%s' "\${FAKE_TUI_PS-}" ;;
+    esac
+    exit 0
+    ;;
   manifest)
     case "$3" in
       *:latest) printf '%s' "\${FAKE_LATEST-same}" ;;
@@ -126,6 +139,9 @@ if [ "$last" = install ] && [ -n "\${outdir-}" ]; then
 fi
 case " $* " in
   *" cli version --json "*) printf '%s\\n' '{"schema_version":1,"image":{"version":"2.0.0","build_sha":null},"schemas":{"review":1,"scan":1},"pi":null}'; exit 0 ;;
+esac
+case " $* " in
+  *" --container-run "*) exit "\${FAKE_DRIVER_RC-0}" ;;
 esac
 exit "\${FAKE_RC-0}"
 `;
@@ -262,7 +278,7 @@ function rig(): Rig {
 
 /** A call the wrapper makes for the companion rather than for the verb. */
 const companionCall = (c: string[]): boolean =>
-  ["inspect", "start", "stop", "rm", "ps"].includes(c[0]!) ||
+  ["inspect", "start", "stop", "kill", "rm", "ps"].includes(c[0]!) ||
   (c[0] === "run" && (c[1] === "--detach" || c.slice(-3).join(" ") === "cli companion plan"));
 
 const opt = (argv: string[], flag: string): string[] =>
@@ -947,4 +963,268 @@ describe("qcr-host.sh", () => {
     expect(code.match(/--cap-drop ALL/g)?.length).toBeGreaterThanOrEqual(2);
     expect(code.match(/no-new-privileges/g)?.length).toBeGreaterThanOrEqual(2);
   });
+});
+
+/** Which docker call (counting every one, the companion's too) an argv was. */
+const callIndex = (r: Rig, argv: string[]): number =>
+  r.calls(true).findIndex((c) => c.join("\n") === argv.join("\n"));
+
+// ---- a review run is a container (P6.8) -------------------------------------------
+
+describe("qcr review start | status | stop: the run is a detached container", () => {
+  /** The image runs: `run` calls that are not the companion's. */
+  const runs = (r: Rig): string[][] => r.calls().filter((c) => c[0] === "run");
+  const verbs = (r: Rig): string[] => r.calls(true).map((c) => c[0]!);
+  const tail = (argv: string[]): string[] => argv.slice(argv.indexOf(IMAGE));
+
+  it("start is two calls: a claim with no token, then the driver as a detached container", () => {
+    const r = rig();
+    const out = r.run(["review", "start", "--uncommitted", "--json"], {
+      env: { GITHUB_TOKEN: TOKEN },
+    });
+    expect(out.status, out.stderr).toBe(0);
+    const [claim, driver] = runs(r);
+    expect(runs(r)).toHaveLength(2);
+
+    // the claim: a short foreground call that only reads git, so it holds no token
+    const id = envs(claim!)
+      .find((e) => e.startsWith("QCR_RUN_ID="))!
+      .slice("QCR_RUN_ID=".length);
+    expect(id).toMatch(/^\d{14}-[0-9a-f]{6}$/);
+    expect(claim!.slice(0, 4)).toEqual(["run", "--rm", "-i", "--init"]);
+    expect(envs(claim!)).toContain(`QCR_REVIEW_CONTAINER=qcr-review-${id}`);
+    expect(mounts(claim!).join(" ")).not.toContain("/run/qcr-in");
+    expect(envs(claim!).join(" ")).not.toContain("QCR_GH_TOKEN_FILE");
+    expect(mounts(claim!).join(" ")).toContain("dst=/repo,readonly");
+    expect(tail(claim!)).toEqual([IMAGE, "cli", "review", "start", "--uncommitted", "--json"]);
+
+    // the driver: detached, named and labelled, the run the claim wrote, with the token
+    expect(driver!.slice(0, 5)).toEqual(["run", "--rm", "-d", "--init", "--name"]);
+    expect(driver).not.toContain("-i");
+    expect(opt(driver!, "--name")).toEqual([`qcr-review-${id}`]);
+    expect(opt(driver!, "--label")).toEqual(["qcr.role=review", `qcr.review.run=${id}`]);
+    expect(envs(driver!)).toContain(`QCR_RUN_ID=${id}`);
+    expect(envs(driver!)).toContain(`QCR_REVIEW_CONTAINER=qcr-review-${id}`);
+    expect(driver!.join(" ")).toContain("--cap-drop ALL --cap-add SETUID --cap-add SETGID");
+    expect(tail(driver!)).toEqual([IMAGE, "cli", "review", "--container-run", id]);
+    const t = r.token(callIndex(r, driver!))!;
+    expect(t.content).toBe(TOKEN);
+    expect(existsSync(t.dir)).toBe(false);
+    // the state and the login are the foreground review's own, for both
+    for (const argv of [claim!, driver!]) {
+      expect(mounts(argv)).toContain("type=volume,src=qcr-state,dst=/opt/qcr/state");
+      expect(mounts(argv)).toContain("type=volume,src=qcr-login,dst=/qcr-login,readonly");
+    }
+    // nobody else hears of the driver's container id
+    expect(out.stdout).toBe("");
+  });
+
+  it("a refused claim is the call's answer, and no driver starts", () => {
+    const r = rig();
+    const out = r.run(["review", "start"], { env: { FAKE_RC: "1" } });
+    expect(out.status).toBe(1);
+    expect(runs(r)).toHaveLength(1);
+  });
+
+  it("a driver that cannot start frees the claimed target and fails the call", () => {
+    const r = rig();
+    const out = r.run(["review", "start", "--base", "main"], { env: { FAKE_DRIVER_RC: "125" } });
+    expect(out.status).not.toBe(0);
+    expect(out.stderr).toContain("the review container could not be started");
+    const rs = runs(r);
+    const id = envs(rs[0]!)
+      .find((e) => e.startsWith("QCR_RUN_ID="))!
+      .slice("QCR_RUN_ID=".length);
+    // claim, driver, then the same stop a person would run
+    expect(rs).toHaveLength(3);
+    expect(tail(rs[2]!)).toEqual([IMAGE, "cli", "review", "stop", id]);
+  });
+
+  it("start --help is one plain call: nothing is claimed", () => {
+    const r = rig();
+    r.run(["review", "start", "--help"]);
+    expect(runs(r)).toHaveLength(1);
+    expect(tail(runs(r)[0]!)).toEqual([IMAGE, "cli", "review", "start", "--help"]);
+    expect(envs(runs(r)[0]!).filter((e) => e.startsWith("QCR_RUN_ID"))).toEqual([]);
+  });
+
+  it("tells every call which review containers are up, by name", () => {
+    const r = rig();
+    const live = "qcr-review-20261019080000-aaaaaa\nqcr-review-20261019080100-bbbbbb\n";
+    for (const verb of ["status", "stop"])
+      r.run(["review", verb, "20261019080000-aaaaaa"], { env: { FAKE_REVIEW_PS: live } });
+    for (const argv of runs(r))
+      expect(envs(argv)).toContain(
+        "QCR_LIVE_REVIEWS=qcr-review-20261019080000-aaaaaa qcr-review-20261019080100-bbbbbb ",
+      );
+    // a foreground review does not ask
+    const r2 = rig();
+    r2.run(["review", "--preview"]);
+    expect(envs(runs(r2)[0]!).join(" ")).not.toContain("QCR_LIVE_REVIEWS");
+    expect(verbs(r2)).not.toContain("ps");
+  });
+
+  it("stop ends the container after the image has marked the run: docker stop -t <grace>, then docker kill", () => {
+    const r = rig();
+    const out = r.run(["review", "stop", "20261019080000-aaaaaa"], {
+      env: { QCR_STOP_GRACE: "3" },
+    });
+    expect(out.status, out.stderr).toBe(0);
+    const calls = r.calls(true);
+    const iRun = calls.findIndex((c) => c[0] === "run");
+    const iStop = calls.findIndex((c) => c[0] === "stop");
+    const iKill = calls.findIndex((c) => c[0] === "kill");
+    expect(iRun).toBeLessThan(iStop);
+    expect(iStop).toBeLessThan(iKill);
+    expect(calls[iStop]).toEqual(["stop", "-t", "3", "qcr-review-20261019080000-aaaaaa"]);
+    expect(calls[iKill]).toEqual(["kill", "qcr-review-20261019080000-aaaaaa"]);
+  });
+
+  it("the grace defaults to 10 seconds and a value that is not a number is not used", () => {
+    for (const grace of [undefined, "ten", "-1", "1;rm"]) {
+      const r = rig();
+      r.run(
+        ["review", "stop", "run1"],
+        grace === undefined ? {} : { env: { QCR_STOP_GRACE: grace } },
+      );
+      expect(r.calls(true).find((c) => c[0] === "stop")).toEqual([
+        "stop",
+        "-t",
+        "10",
+        "qcr-review-run1",
+      ]);
+    }
+  });
+
+  it("stop without an id stops the newest review container that is up", () => {
+    const r = rig();
+    r.run(["review", "stop"], {
+      env: { FAKE_REVIEW_IDS: "20261019080100-bbbbbb\n20261019080000-aaaaaa\n" },
+    });
+    expect(tail(runs(r)[0]!)).toEqual([IMAGE, "cli", "review", "stop", "20261019080100-bbbbbb"]);
+    expect(r.calls(true).find((c) => c[0] === "stop")![3]).toBe("qcr-review-20261019080100-bbbbbb");
+  });
+
+  it("stop with nothing up leaves the answer to the image and stops nothing", () => {
+    const r = rig();
+    r.run(["review", "stop"]);
+    expect(tail(runs(r)[0]!)).toEqual([IMAGE, "cli", "review", "stop"]);
+    expect(verbs(r)).not.toContain("stop");
+    expect(verbs(r)).not.toContain("kill");
+  });
+
+  it("stop of a run the image refuses stops no container", () => {
+    const r = rig();
+    const out = r.run(["review", "stop", "run1"], { env: { FAKE_RC: "1" } });
+    expect(out.status).toBe(1);
+    expect(verbs(r)).not.toContain("stop");
+    expect(verbs(r)).not.toContain("kill");
+  });
+
+  it("an id that is not a run id never names a container", () => {
+    const r = rig();
+    r.run(["review", "stop", "x;rm"]);
+    expect(verbs(r)).not.toContain("stop");
+  });
+
+  it("a plain foreground review is untouched: one --rm -i call, no name, no label", () => {
+    const r = rig();
+    r.run(["review", "--preview"], { env: { GITHUB_TOKEN: TOKEN } });
+    expect(runs(r)).toHaveLength(1);
+    const argv = runs(r)[0]!;
+    expect(argv).not.toContain("--name");
+    expect(argv).not.toContain("--label");
+    expect(argv).not.toContain("-d");
+    expect(envs(argv).filter((e) => e.startsWith("QCR_RUN_ID"))).toEqual([]);
+  });
+
+  it("an internal phase cannot be named without a run id", () => {
+    const r = rig();
+    const out = r.run(["review", "status"], { env: { QCR_WRAPPER_PHASE: "driver" } });
+    expect(out.status).not.toBe(0);
+    expect(runs(r)).toHaveLength(0);
+  });
+});
+
+// qcr open and qcr review --debug-pi are pi's own interactive UI: a terminal on
+// both ends gives -it, on the state volume the runs are kept in.
+const HAS_SCRIPT = spawnSync("script", ["--version"]).status === 0;
+describe("open and --debug-pi: -it on the state volume", () => {
+  const tail = (argv: string[]): string[] => argv.slice(argv.indexOf(IMAGE));
+  /** The wrapper under a pty (util-linux script), as a person at a terminal. */
+  function inPty(r: Rig, args: string[], env: Record<string, string> = {}): number | null {
+    const line = ["sh", r.wrapper, ...args].map((a) => `'${a}'`).join(" ");
+    return spawnSync("script", ["-qec", line, "/dev/null"], {
+      cwd: r.repo,
+      encoding: "utf8",
+      timeout: 30_000,
+      input: "",
+      env: {
+        PATH: `${r.bin}:/usr/bin:/bin`,
+        HOME: r.home,
+        XDG_RUNTIME_DIR: join(r.dir, "run"),
+        TMPDIR: r.dir,
+        FAKE_DIR: r.dir,
+        QCR_NO_COMPANION: "1",
+        TERM: "xterm",
+        ...env,
+      },
+    }).status;
+  }
+  const runCall = (r: Rig): string[] => r.calls().find((c) => c[0] === "run")!;
+
+  it.skipIf(!HAS_SCRIPT)(
+    "qcr open in a pty is -it, on the state volume, with no GitHub token",
+    () => {
+      const r = rig();
+      expect(
+        inPty(r, ["open", "20261019080000-aaaaaa", "--lens", "x"], { GITHUB_TOKEN: TOKEN }),
+      ).toBe(0);
+      const argv = runCall(r);
+      expect(argv.slice(0, 4)).toEqual(["run", "--rm", "-it", "--init"]);
+      expect(mounts(argv)).toContain("type=volume,src=qcr-state,dst=/opt/qcr/state");
+      expect(envs(argv)).toContain("TERM");
+      // pi on a kept session needs no GitHub: none is staged, none is in the container
+      expect(mounts(argv).join(" ")).not.toContain("/run/qcr-in");
+      expect(envs(argv).join(" ")).not.toContain("QCR_GH_TOKEN_FILE");
+      expect(argv.join("\n")).not.toContain(TOKEN);
+      expect(r.token(callIndex(r, argv))).toBeNull();
+      expect(tail(argv)).toEqual([IMAGE, "cli", "open", "20261019080000-aaaaaa", "--lens", "x"]);
+    },
+  );
+
+  it.skipIf(!HAS_SCRIPT)(
+    "qcr review --debug-pi in a pty is -it on the state volume, and accepts the shared tool uid",
+    () => {
+      const r = rig();
+      expect(inPty(r, ["review", "--debug-pi", "12"], { GITHUB_TOKEN: TOKEN })).toBe(0);
+      const argv = runCall(r);
+      expect(argv.slice(0, 4)).toEqual(["run", "--rm", "-it", "--init"]);
+      expect(mounts(argv)).toContain("type=volume,src=qcr-state,dst=/opt/qcr/state");
+      // the person watches this session in their own terminal: pi's bash runs in the
+      // process's own uid, which the image's tool-uid check refuses without this
+      expect(envs(argv)).toContain("QCR_ALLOW_SHARED_TOOL_UID=1");
+      // the round reads the PR: the token goes by the file, as for any review
+      expect(r.token(callIndex(r, argv))!.content).toBe(TOKEN);
+      expect(tail(argv)).toEqual([IMAGE, "cli", "review", "--debug-pi", "12"]);
+    },
+  );
+
+  it("without a terminal neither is given one (docker refuses -t on a pipe)", () => {
+    const r = rig();
+    r.run(["open"]);
+    r.run(["review", "--debug-pi"]);
+    for (const argv of r.calls().filter((c) => c[0] === "run")) expect(argv[2]).toBe("-i");
+  });
+
+  it.skipIf(!HAS_SCRIPT)(
+    "a plain review in a pty stays without -t, and only --debug-pi allows the shared uid",
+    () => {
+      const r = rig();
+      expect(inPty(r, ["review", "--preview"])).toBe(0);
+      const argv = runCall(r);
+      expect(argv[2]).toBe("-i");
+      expect(envs(argv).join(" ")).not.toContain("QCR_ALLOW_SHARED_TOOL_UID");
+    },
+  );
 });
