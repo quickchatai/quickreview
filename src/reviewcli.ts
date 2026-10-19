@@ -73,12 +73,8 @@ import {
   type Destination,
   type DestinationChoice,
 } from "./reviewdest.js";
-import {
-  renderOneShotPrompts,
-  runOneShot,
-  type OneShotPrompts,
-  type OneShotResult,
-} from "./oneshot.js";
+import { runOneShot, type OneShotResult } from "./oneshot.js";
+import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { prepareHostRun } from "./hostroute.js";
 import { AuthExpiring } from "./piauthcopy.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
@@ -1227,7 +1223,7 @@ export async function cmdReview(
   }
   const { sandboxRoot, loadConfig } = await import("./config.js");
   const { stateHome } = await import("./install.js");
-  const { contextFor } = await import("./bench/runner.js");
+  const { contextFor } = await import("./engine/context.js");
   const { createInterface } = await import("node:readline/promises");
   const { homedir } = await import("node:os");
   const { openReviewMemory } = await import("./reviewmemory.js");
