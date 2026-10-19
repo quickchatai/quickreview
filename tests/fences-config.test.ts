@@ -109,7 +109,6 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
     "catchup_max_age_s",
     "queue_concurrency",
     "soft_exchange_limit",
-    "ssh_dir",
     "storm_corrections",
     "tickets_effort",
   ];

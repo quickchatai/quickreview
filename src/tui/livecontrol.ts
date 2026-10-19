@@ -17,7 +17,7 @@
 // `ok: false` with a reason. No result by the deadline is `unacked`, and the
 // operator is told so rather than shown a success.
 import { randomUUID } from "node:crypto";
-import type { ControlCommandName } from "../commands.js";
+import type { Command, ControlCommandName } from "../commands.js";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { SshRunner } from "./remote.js";
@@ -67,11 +67,26 @@ export interface ControlSender {
   ): Promise<ControlOutcome>;
 }
 
+/** Any command of the companion's tier (every operator verb, rule 8), already
+ * validated by the caller, sent down the same operator route. */
+export interface CommandSender {
+  sendCommand(
+    command: Command,
+    onState: (state: ControlState, label: string) => void,
+  ): Promise<ControlOutcome>;
+}
+
+/** `steer #12`, `drain`: how a command names itself on the notice line. */
+export function commandLabel(command: Command): string {
+  const pr = (command as { pr?: unknown }).pr;
+  return typeof pr === "number" ? `${command.command} #${pr}` : command.command;
+}
+
 /** How often the result file is read: a steer is typed live, so this is far
  * quicker than the unwedge channel's 2 s. */
 const POLL_MS = 500;
 
-export class LiveControlSender implements ControlSender {
+export class LiveControlSender implements ControlSender, CommandSender {
   private seq = 0;
   private readonly clientId = `control-${randomUUID().slice(0, 8)}`;
 
@@ -96,10 +111,32 @@ export class LiveControlSender implements ControlSender {
       return say("failed", `✖ ${what} refused (bad PR number)`);
     if (TEXT_KINDS.includes(req.kind) && (req.text ?? "").trim() === "")
       return say("failed", `✖ ${what} refused (nothing to send)`);
+    return this.deliver(controlPayload(req), what, onState);
+  }
+
+  /** A validated command of the companion's tier, as the operator's file. The
+   * payload is the parsed command re-serialised, never the caller's text. */
+  async sendCommand(
+    command: Command,
+    onState: (state: ControlState, label: string) => void,
+  ): Promise<ControlOutcome> {
+    return this.deliver(`${JSON.stringify(command, null, 2)}\n`, commandLabel(command), onState);
+  }
+
+  /** Write one operator command file and read the daemon's verdict back. */
+  private async deliver(
+    payload: string,
+    what: string,
+    onState: (state: ControlState, label: string) => void,
+  ): Promise<ControlOutcome> {
+    const say = (state: ControlOutcome["state"], label: string): ControlOutcome => {
+      onState(state, label);
+      return { state, label };
+    };
     const name = commandFileName(this.now(), this.seq++, this.clientId);
     onState("pending", `→ ${what} pending…`);
     const write = await this.ssh(this.cfg.ssh_host, liveControlArgv(this.cfg, name), {
-      stdin: controlPayload(req),
+      stdin: payload,
     });
     if (!write.ok) {
       const why = write.stderr.trim().split("\n").at(-1) ?? "";
@@ -147,10 +184,26 @@ export class LiveControlSender implements ControlSender {
   }
 }
 
-/** Bind the viewer's input line to the control route. Same shape as
- * `installUnwedgeHooks`: the sender is injectable so tests never spawn ssh. */
-export function installLiveControlHooks(app: App, sender?: ControlSender): void {
+/** Bind the viewer's input line to the control route, and the companion's
+ * forwarded commands (`operatorCommand`) to the same sender when it can carry
+ * them. Same shape as `installUnwedgeHooks`: the sender is injectable so tests
+ * never spawn ssh. */
+export function installLiveControlHooks(
+  app: App,
+  sender?: ControlSender & Partial<CommandSender>,
+): void {
   const s = sender ?? new LiveControlSender(app.cfg, app.ssh);
+  const forward = s.sendCommand?.bind(s);
+  if (forward)
+    app.hooks.operatorCommand = async (command, theApp) => {
+      try {
+        return await forward(command, (_state, label) => theApp.notice(label));
+      } catch (err) {
+        const label = `? ${commandLabel(command)} unconfirmed (${err instanceof Error ? err.message : String(err)}) — check before re-sending`;
+        theApp.notice(label);
+        return { state: "unacked", label };
+      }
+    };
   app.hooks.liveControl = async (req, theApp) => {
     let last: ControlOutcome = {
       state: "unacked",

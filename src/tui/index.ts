@@ -297,6 +297,16 @@ export function buildTuiDriver(
       app.repaint();
     },
     msgSession: (session, text) => deliverMessage(app, session, text),
+    // The companion's tier (rule 8): the same operator route the viewer's input
+    // line uses. A refusal or a failed write rejects, so the result file says
+    // so; an unconfirmed send resolves, and its label says to check first.
+    operatorCommand: async (command) => {
+      const send = app.hooks.operatorCommand;
+      if (!send) throw new Error("the operator command route is not wired in this TUI");
+      const out = await send(command, app);
+      if (out.state === "refused" || out.state === "failed") throw new Error(out.label);
+      return out.label;
+    },
     deployTab: (action) => {
       prep();
       app.tab = "deploy";
@@ -1265,17 +1275,27 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // processTuiActions itself archives-before-execute and writes the result
     // files. Each executed action's trace lands on the notice line — actions
     // execute instantly, with no confirm gate.
-    const { processTuiActions } = await import("./actions.js");
+    const { processTuiActions, parseCompanionCommand } = await import("./actions.js");
     const tuiActionsDir = join(full.companion.alerts_dir, "tui-actions");
+    // The companion's commands/ (rule 8): under the state home it mounts rw,
+    // where the seeded EOD sweep writes its receipt. Each file is one command
+    // of the companion's tier, forwarded once down the operator route.
+    const companionCommandsDir = join(companion.hostHomes().state, "commands");
     const driver = buildTuiDriver(app, learning, metricsView, deployState);
     let tuiActBusy = false;
     chainOnPoll(app, (a) => {
       if (tuiActBusy) return;
       tuiActBusy = true;
       void processTuiActions(tuiActionsDir, driver)
-        .then((done) => {
+        .then(async (done) => {
           for (const r of done)
             a.notice(r.trace ?? `companion tui-action ${r.file}: ✖ ${r.message}`);
+          for (const r of await processTuiActions(
+            companionCommandsDir,
+            driver,
+            parseCompanionCommand,
+          ))
+            a.notice(r.trace ?? `companion command ${r.file}: ✖ ${r.message}`);
         })
         .catch(() => {
           /* best-effort — never break the poll loop */

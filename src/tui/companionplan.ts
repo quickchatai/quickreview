@@ -22,8 +22,10 @@
 // with the companion at the same path, so the config both derive from the same
 // env resolves identically on either side.
 //
-// What the plan never contains: ~/.ssh, an ssh agent socket, docker.sock (rule 8
-// and D35: the agent goes to the TUI container alone, the wrapper adds it).
+// The companion's ssh access (rule 8: full ssh) is
+// the three sources the wrapper found on the host and named in `HOST_SSH_ENV`
+// (agent socket, ssh config, known_hosts), mounted read-only by the plan. What
+// the plan never contains: ~/.ssh whole, a private key, docker.sock.
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
 import { COMPANION_DEFAULTS, type CompanionConfig } from "../config.js";
@@ -31,6 +33,7 @@ import { operatorStateHome } from "../install.js";
 import {
   CompanionLifecycle,
   CONTAINER,
+  HOST_SSH_ENV,
   companionInjectDir,
   tmuxVolume,
   type CompanionFs,
@@ -80,6 +83,12 @@ export function laptopInstallEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     QCR_STATE_HOME: join(xdgState, "qcr", "home"),
     ...(env["QCR_INSTALL"] ? { QCR_INSTALL: env["QCR_INSTALL"] } : {}),
     ...(env["QCR_CONFIG"] ? { QCR_CONFIG: env["QCR_CONFIG"] } : {}),
+    // The host's ssh sources the wrapper found (rule 8), for the plan's mounts.
+    ...Object.fromEntries(
+      Object.values(HOST_SSH_ENV)
+        .filter((name) => (env[name] ?? "").trim() !== "")
+        .map((name) => [name, env[name]]),
+    ),
   };
 }
 

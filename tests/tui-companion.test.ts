@@ -38,6 +38,7 @@ import {
   PUBLIC_DNS,
   COMPANION_MODE,
   LENS,
+  SSH,
   hostUser,
   type CompanionFs,
   type DockerResult,
@@ -211,8 +212,8 @@ describe("CompanionLifecycle argv", () => {
     const argv = lc.runArgv();
     expect(argv.slice(0, 4)).toEqual(["run", "--detach", "--name", "qcr-companion"]);
     const mounts = argv.filter((_, i) => argv[i - 1] === "--volume");
-    // No ~/.ssh mount: the companion's reach into the VM is OpenViking memory
-    // over a HOST-owned forward, nothing else.
+    // No ssh mount here: this host has no agent, config or known_hosts (the
+    // fs seam says so), and ~/.ssh is never mounted whole.
     expect(mounts).toEqual([
       `companion-pihome:${CONTAINER.piHome}`,
       `/host/review-sandbox:${CONTAINER.workspace}:rw`,
@@ -251,12 +252,54 @@ describe("CompanionLifecycle argv", () => {
     expect(argv.indexOf("--workdir")).toBeLessThan(argv.lastIndexOf(COMPANION_DEFAULTS.image));
   });
 
-  it("never forwards the ssh agent socket, even when the host has one", () => {
-    const { lc: withAgent } = lifecycle([], { SSH_AUTH_SOCK: "/tmp/agent.sock" });
-    const argv = withAgent.runArgv().join(" ");
+  it("gives the companion the host's ssh agent, config and known_hosts, read-only (rule 8: full ssh)", () => {
+    const present = new Set(["/tmp/agent.sock", "/host/.ssh/config", "/host/.ssh/known_hosts"]);
+    const fs: CompanionFs = {
+      exists: (p) => present.has(p),
+      read: () => undefined,
+      mode: () => undefined,
+    };
+    const { runner } = fakeDocker([]);
+    const withSsh = new CompanionLifecycle(
+      CFG,
+      runner,
+      { ...HOST_ENV, SSH_AUTH_SOCK: "/tmp/agent.sock" },
+      noDirs,
+      fs,
+    );
+    const argv = withSsh.runArgv();
+    const mounts = argv.filter((_, i) => argv[i - 1] === "--volume");
+    expect(mounts.filter((m) => /ssh|agent/.test(m))).toEqual([
+      `/tmp/agent.sock:${SSH.agent}:ro`,
+      `/host/.ssh/config:${SSH.config}:ro`,
+      `/host/.ssh/known_hosts:${SSH.knownHosts}:ro`,
+    ]);
+    expect(argv.filter((_, i) => argv[i - 1] === "--env")).toContain(`SSH_AUTH_SOCK=${SSH.agent}`);
+    // never ~/.ssh whole, never a key file
+    expect(mounts.some((m) => m.startsWith("/host/.ssh:"))).toBe(false);
+    expect(argv.join(" ")).not.toMatch(/id_(rsa|ed25519|ecdsa)/);
+    // the drift check expects them, so a container without them is recreated
+    expect(withSsh.expectedMounts().get(SSH.agent)).toBe("/tmp/agent.sock");
+  });
+
+  it("mounts only the ssh sources the host has: a dead agent path is no mount", () => {
+    const fs: CompanionFs = {
+      exists: (p) => p === "/host/.ssh/known_hosts",
+      read: () => undefined,
+      mode: () => undefined,
+    };
+    const { runner } = fakeDocker([]);
+    const lc2 = new CompanionLifecycle(
+      CFG,
+      runner,
+      { ...HOST_ENV, SSH_AUTH_SOCK: "/tmp/gone.sock" },
+      noDirs,
+      fs,
+    );
+    const argv = lc2.runArgv().join(" ");
+    expect(argv).toContain(`/host/.ssh/known_hosts:${SSH.knownHosts}:ro`);
+    expect(argv).not.toContain("gone.sock");
     expect(argv).not.toContain("SSH_AUTH_SOCK");
-    expect(argv).not.toContain("agent.sock");
-    expect(argv).not.toContain(".ssh");
   });
 
   it("spawns pi inside tmux with the QCR_* vars on the command line", () => {
