@@ -30,6 +30,7 @@
 import { CASE_FILES, commentsEnvelope, prDescription, singleLineComment } from "./artifacts.js";
 import { usageCost } from "./values.js";
 import { isLensTool, LENS_WAVE_TOOL, lensIdOf, LensOnce, lensResultsOf } from "../lensresult.js";
+import { launchVocab } from "../launchvocab.js";
 import { postedSeverityTag, RENDER_RECORD_FIELDS } from "../reviewrender.js";
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, POSTING_TAG_WORDS } from "../severity.js";
 import type { PrFileEntry } from "../github.js";
@@ -694,6 +695,9 @@ export interface AppendixArgs {
   privateReplay?: boolean;
   /** A follow-up replay — the head the previous round reviewed. */
   prevHead?: string;
+  /** `[pi] lens_runtime = engine`: the step names the engine's lens tool, as
+   * the round order above does (src/launchvocab.ts). Absent ⇒ native. */
+  lens_runtime?: "engine";
 }
 
 /** Output files the session writes, relative to its case dir. */
@@ -731,7 +735,7 @@ export function benchAppendix(a: AppendixArgs): string {
   L.push("**What stays exactly as written above:**");
   L.push("");
   L.push(
-    "- Steps 1–4 — Sync, Dispatch passes (the `subagent` tool, the pass plan, raise/add protocols, pass-validate last), Merge, Validate.",
+    `- Steps 1–4 — Sync, Dispatch passes (the \`${launchVocab(a).lens}\` tool, the pass plan, raise/add protocols, pass-validate last), Merge, Validate.`,
   );
   L.push(
     "- The verdict logic of step 5 on the merits (any surviving `[blocker]` ⇒ REQUEST_CHANGES, otherwise APPROVE), the posting map and the reachability gate.",
