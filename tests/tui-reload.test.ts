@@ -439,7 +439,10 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
       scripts: Record<string, string>;
     };
     expect(build.scripts.build).toContain("verify-dist.mjs");
-    for (const script of ["scripts/dev-tui.sh", "scripts/deploy.sh"]) {
+    // deploy.sh no longer rsyncs a locally built dist/ for the VM to run: the
+    // image build compiles its own from the shipped sources (docker/Dockerfile),
+    // and the same artefact check stands between that compile and the image.
+    for (const script of ["scripts/dev-tui.sh", "docker/Dockerfile"]) {
       expect(
         readFileSync(join(process.cwd(), script), "utf8"),
         `${script} runs dist/ without checking it is complete`,
@@ -451,17 +454,25 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
   // that it is FRESH. The build info sits under node_modules/, which every
   // worktree reaches through a symlink, so a worktree's build rewrites this
   // checkout's: merged here, its sources read as already emitted and an
-  // incremental build writes nothing over the OLD compiled daemon.
-  // MUTATION: drop the `rm -f` line from deploy.sh, or move it below the
-  // build — this fails.
-  it("deploy.sh builds cold: it removes the shared build info before it rebuilds dist/", () => {
+  // incremental build writes nothing over the OLD compiled daemon. deploy.sh
+  // used to dodge that with a cold local build before its rsync; it now ships
+  // no compiled output at all (the VM's image build, or a published release,
+  // compiles in a fresh container).
+  // MUTATION: let deploy.sh build locally again, or let the image build's
+  // context carry node_modules (and with it a stale build info) — this fails.
+  it("deploy.sh ships no local build, and the image build compiles cold", () => {
     const deploy = readFileSync(join(process.cwd(), "scripts", "deploy.sh"), "utf8");
-    const info = String(tsconfig.compilerOptions.tsBuildInfoFile);
-    const removal = deploy.indexOf(`rm -f "$SANDBOX_DIR/${info}"`);
-    const build = deploy.indexOf("npm run build)");
-    expect(removal, `deploy.sh never removes ${info}`).toBeGreaterThan(-1);
-    expect(build).toBeGreaterThan(-1);
-    expect(removal).toBeLessThan(build);
+    expect(deploy).not.toContain("npm run build");
+    const ignore = readFileSync(join(process.cwd(), "docker", "Dockerfile.dockerignore"), "utf8");
+    expect(ignore.split("\n")).toContain("**/node_modules");
+    const dockerfile = readFileSync(join(process.cwd(), "docker", "Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/RUN npx tsc -p tsconfig\.json && node scripts\/verify-dist\.mjs/);
+    // …and the build stage's COPY lines do not bring a build info along.
+    const build = dockerfile.slice(
+      dockerfile.indexOf("AS build"),
+      dockerfile.indexOf("AS release"),
+    );
+    expect(build).not.toMatch(/COPY[^\n]*node_modules/);
   });
 
   it("that check reports a missing artefact rather than trusting tsc's exit code", async () => {

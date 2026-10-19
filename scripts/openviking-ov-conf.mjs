@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Renders OpenViking's ov.conf for the memory sidecar (docker/memory/).
 //
-// The daemon images render the same file with an inline node heredoc in their
-// entrypoints (docker/daemon/entrypoint.sh, deploy/ansible/templates/
-// entrypoint.sh.j2); the sidecar has no such entrypoint to share, so the
-// render lives here. It is the SAME document: tests/memory-image.test.ts runs
+// The plain Docker path's daemon image renders the same file with an inline node
+// heredoc in its entrypoint (docker/daemon/entrypoint.sh; the VM's retired
+// templated entrypoint did too); the sidecar has no such entrypoint to share,
+// so the render lives here. It is the SAME document: tests/memory-image.test.ts runs
 // the plain entrypoint's heredoc and this script over one environment and
 // holds the two outputs equal, so a knob changed in one place and not the
 // other refuses.

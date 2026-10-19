@@ -1,7 +1,7 @@
 # Local companion container.
 #
-# Unlike the VM runtime image (deploy/ansible/templates/Dockerfile.j2, built by
-# ansible) this one is a plain `docker build` on the owner's PC, from the app
+# Unlike the VM runtime image (the release image, docker/Dockerfile, pulled or
+# built by ansible) this one is a plain `docker build` on the owner's PC, from the app
 # root (`qcr companion rebuild` runs it, after `npm run build`):
 #
 #   docker build -t qcr-companion -f docker/companion/Dockerfile \

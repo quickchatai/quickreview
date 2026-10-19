@@ -74,6 +74,18 @@ describe("deploy tab argv + parsing", () => {
     expect(PLAN_ARGV).toEqual(["bash", "scripts/deploy.sh", "--dry-run", "sync"]);
   });
 
+  it("reads the release image's marker at its app root, and the bare CI sha it holds parses", () => {
+    // After the VM moved onto the release image the TUI's remote_sandbox_root is
+    // the image's app root, where the build stamp is one bare sha, not a
+    // `<sha> <iso> <mode>` line.
+    const cfg = { ...TUI_DEFAULTS, remote_sandbox_root: "/opt/qcr" };
+    expect(buildShaArgv(cfg).at(-1)).toContain("cat '/opt/qcr/BUILD_SHA'");
+    const full = "0123456789abcdef0123456789abcdef01234567";
+    expect(parseBuildSha(`${full}\n`)).toEqual({ sha: full, at: undefined, mode: undefined });
+    // A local, unstamped image says nothing about what it runs.
+    expect(parseBuildSha("unstamped\n")).toBeUndefined();
+  });
+
   it("parses BUILD_SHA lines and rejects garbage", () => {
     expect(parseBuildSha("540a9d0 2026-08-14T13:10:00Z sync\n")).toEqual({
       sha: "540a9d0",

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Review-sandbox container entrypoint — plain Docker path.
 #
-# Non-templated equivalent of deploy/ansible/templates/entrypoint.sh.j2: every
-# Jinja variable becomes an env knob with the SAME default the group_vars
-# carry, so `docker compose up` with no environment reproduces the VM boot.
-# tests/docker-daemon.test.ts pins the invariants shared with the templated
-# boot (no interactive wizard, no vlm section, root key from the secrets
-# mount, degrade-never-block, trust layers).
+# Non-templated equivalent of the retired deploy/ansible/templates/entrypoint.sh.j2
+# (the VM now runs the release image, docker/entrypoint.sh): every Jinja
+# variable became an env knob with the SAME default the group_vars carry.
+# tests/docker-daemon.test.ts pins the invariants it kept (no interactive
+# wizard, no vlm section, root key from the secrets mount, degrade-never-block,
+# trust layers).
 set -euo pipefail
 
 SANDBOX=/opt/quickreview/sandbox

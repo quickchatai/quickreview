@@ -19,8 +19,9 @@ for a managed VM; both run the same daemon.
 > [../../docs/onboarding.md](../../docs/onboarding.md).
 
 This directory's `Dockerfile` and `entrypoint.sh` are not part of that stack.
-They are the Ansible route's non-templated image, kept until the VM moves onto
-the release image.
+They were the Ansible route's non-templated image; the VM now runs the release
+image (`deploy/ansible/`), and they stay only until the plain-Docker route's
+tests are retargeted at the release and memory images.
 
 ## Quick start
 

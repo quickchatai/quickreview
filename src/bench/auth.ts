@@ -226,7 +226,7 @@ export const BENCH_RETRY = {
 } as const;
 
 /** pi's global settings for the sandbox — what the VM entrypoint provisions
- * (deploy/ansible/templates/entrypoint.sh.j2): bash-guard registered globally
+ * (docker/entrypoint.sh, daemon mode): bash-guard registered globally
  * so lens children load it too; pi's built-in extensions switched off
  * (src/pibuiltins.ts — the reviewed checkout is exactly the untrusted ground a
  * `.pi/mcp.json` would come from); every project trusted so no modal can stall

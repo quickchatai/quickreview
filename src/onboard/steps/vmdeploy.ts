@@ -30,7 +30,9 @@
 //
 // FIRST DEPLOY IS `rebuild`, LATER ONES ARE `sync`. A machine with no image
 // needs one built against the pins; after that the image is the pinned
-// artifact and a code change ships with an rsync + container recreate. Bumping
+// artifact and a code change ships with an rsync, a cached image build on the
+// server and a container recreate. (`deploy.sh release <version>` pulls a
+// published image instead; the wizard does not drive it yet.) Bumping
 // a pin is the deliberate act that calls for `rebuild` again, and the operator
 // can always ask for it by name.
 import { existsSync } from "node:fs";

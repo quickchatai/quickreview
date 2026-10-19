@@ -28,16 +28,18 @@ describe("reviewer context stub", () => {
     expect(existsSync(join(ROOT, "AGENTS.md"))).toBe(true);
   });
 
-  it("the VM installs it before the daemon starts any session, and a deploy sync never deletes it", () => {
-    const ep = read("deploy/ansible/templates/entrypoint.sh.j2");
-    const install = ep.indexOf(
-      'install -m 0444 "$SANDBOX/deploy/reviewer/AGENTS.override.md" "$SANDBOX/AGENTS.override.md"',
-    );
+  it("the VM image bakes it read-only into the engine's cwd, and the daemon mode re-installs it before any session starts", () => {
+    const dockerfile = read("docker/Dockerfile");
+    expect(dockerfile).toContain("COPY deploy/reviewer/AGENTS.override.md ./AGENTS.override.md");
+    expect(dockerfile).toMatch(/chmod 0444 \/opt\/qcr\/AGENTS\.override\.md/);
+    const ep = read("docker/entrypoint.sh");
+    const daemon = ep.slice(ep.indexOf("mode_daemon() {"), ep.indexOf("mode_companion() {"));
+    const install = daemon.indexOf('install -m 0444 "$stub_src" "$stub"');
     expect(install).toBeGreaterThan(-1);
-    expect(install).toBeLessThan(ep.indexOf("tmux new-session"));
-    expect(install).toBeLessThan(ep.indexOf('exec node "$SANDBOX/dist/src/wire.js"'));
+    expect(install).toBeLessThan(daemon.indexOf("tmux new-session"));
+    expect(install).toBeLessThan(daemon.indexOf('exec node "$APP/dist/src/wire.js"'));
     // ANCHORED: an unanchored pattern would also skip the stub's SOURCE under
-    // deploy/reviewer/ and the VM would install a stale copy.
+    // deploy/reviewer/ and a dev build would copy a stale one.
     expect(read("deploy/ansible/playbook.yml")).toContain('- "--exclude=/AGENTS.override.md"');
   });
 
