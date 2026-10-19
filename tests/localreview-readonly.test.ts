@@ -43,6 +43,10 @@ function dirtyRepo(name: string): string {
   const repo = join(tmp, name);
   mkdirSync(join(repo, "src"), { recursive: true });
   git(repo, "init", "-q", "-b", "main");
+  // the test's own `chmod -R a-w` changes every file's ctime; git compares it
+  // at one-second resolution, so without this the stat check passes or fails
+  // with the clock and a failed one re-hashes (and freshens) a stored object
+  git(repo, "config", "core.trustctime", "false");
   writeFileSync(join(repo, "src", "a.ts"), "export const a = 1;\nexport const z = 0;\n");
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "base");
