@@ -53,7 +53,8 @@ export async function recoverPrForOperator(
   mode: OperatorRecoveryMode,
 ): Promise<OperatorRecoveryResult> {
   return asyncCommandEffect(deps.store, commandEffectKey(mode, deps.deliveryKey, pr), () =>
-    recoverPrForOperatorNow(deps, pr, mode));
+    recoverPrForOperatorNow(deps, pr, mode),
+  );
 }
 
 async function recoverPrForOperatorNow(

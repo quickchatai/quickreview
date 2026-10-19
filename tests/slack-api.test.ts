@@ -57,7 +57,9 @@ describe("chat.postMessage", () => {
     expect(await p).toMatchObject({ ok: false, ambiguous: true });
   });
   it("preserves ambiguity for callers after a lost create response", async () => {
-    const fetchFn = (async () => { throw new Error("ECONNRESET"); }) as SlackFetchFn;
+    const fetchFn = (async () => {
+      throw new Error("ECONNRESET");
+    }) as SlackFetchFn;
     const p = build(fetchFn).postMessage({ channel: "C1", text: "one announcement" });
     await vi.advanceTimersByTimeAsync(10_000);
     expect(await p).toMatchObject({ ok: false, ambiguous: true });

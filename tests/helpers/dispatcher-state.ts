@@ -24,7 +24,14 @@ export interface DispatcherState {
 export function saveDispatcherState(): DispatcherState {
   const g = globalThis as Record<symbol, unknown>;
   let saved:
-    | { slot1: unknown; slot2: unknown; marker: unknown; fetch: typeof fetch; cli?: string; title: string }
+    | {
+        slot1: unknown;
+        slot2: unknown;
+        marker: unknown;
+        fetch: typeof fetch;
+        cli?: string;
+        title: string;
+      }
     | undefined;
   const need = (): NonNullable<typeof saved> => {
     if (!saved) throw new Error("call prime() in beforeAll first");

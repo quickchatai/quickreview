@@ -97,7 +97,9 @@ describe("Socket Mode envelopes", () => {
   it("ignores a JSON null frame and still processes the next envelope", async () => {
     const h = harness();
     const events: SlackInboundEvent[] = [];
-    await h.client.startSocket((event) => { events.push(event); });
+    await h.client.startSocket((event) => {
+      events.push(event);
+    });
     const ws = h.sockets[0]!;
     expect(() => ws.push(null)).not.toThrow();
     ws.push(messageEnvelope("after-null"));

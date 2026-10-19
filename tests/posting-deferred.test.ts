@@ -303,30 +303,39 @@ it("recovers the job-first interrupted deferral before ordinary delivery can ado
   writeDeferred();
   const path = postingReceiptPath(dir, 12, 1);
   const receipt = JSON.parse(readFileSync(path, "utf8"));
-  receipt.status = "prepared"; delete receipt.deferred_at; delete receipt.defer_reason;
+  receipt.status = "prepared";
+  delete receipt.deferred_at;
+  delete receipt.defer_reason;
   writeFileSync(path, JSON.stringify(receipt));
   await worker().tick();
   expect(readPostingReceipt(dir, 12, 1)?.status).toBe("deferred");
   expect(store.postingRetry(key)?.first_failed_at).toBe(new Date(t0).toISOString());
   expect(deliver).not.toHaveBeenCalled();
-  at(4); await worker().tick();
+  at(4);
+  await worker().tick();
   expect(deliver).toHaveBeenCalledTimes(1);
   expect(createReview).not.toHaveBeenCalled();
 });
 
-it.each(["missing", "prepared-mismatch", "deferred-mismatch", "deferred-event"])("withholds ordinary replay for an unproven deferred handoff (%s)", async (kind) => {
-  writeDeferred();
-  const path = postingReceiptPath(dir, 12, 1);
-  if (kind === "missing") rmSync(path);
-  else {
-    const receipt = JSON.parse(readFileSync(path, "utf8"));
-    receipt.status = kind === "prepared-mismatch" ? "prepared" : "deferred";
-    if (kind === "deferred-event") receipt.actual_event = "COMMENT";
-    else receipt.payload_sha256 = "c".repeat(64);
-    writeFileSync(path, JSON.stringify(receipt));
-  }
-  for (const minute of [0, 4, 60]) { at(minute); await worker().tick(); }
-  expect(createReview).not.toHaveBeenCalled();
-  expect(deliver).not.toHaveBeenCalled();
-  expect(store.postingRetry(key)).toBeUndefined();
-});
+it.each(["missing", "prepared-mismatch", "deferred-mismatch", "deferred-event"])(
+  "withholds ordinary replay for an unproven deferred handoff (%s)",
+  async (kind) => {
+    writeDeferred();
+    const path = postingReceiptPath(dir, 12, 1);
+    if (kind === "missing") rmSync(path);
+    else {
+      const receipt = JSON.parse(readFileSync(path, "utf8"));
+      receipt.status = kind === "prepared-mismatch" ? "prepared" : "deferred";
+      if (kind === "deferred-event") receipt.actual_event = "COMMENT";
+      else receipt.payload_sha256 = "c".repeat(64);
+      writeFileSync(path, JSON.stringify(receipt));
+    }
+    for (const minute of [0, 4, 60]) {
+      at(minute);
+      await worker().tick();
+    }
+    expect(createReview).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+    expect(store.postingRetry(key)).toBeUndefined();
+  },
+);

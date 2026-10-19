@@ -127,9 +127,12 @@ export function detectLoosenedAssertions(files: readonly PrFile[]): LoosenedHit[
       }
       for (const [ri, r] of h.removed.entries()) {
         if (unchanged.has(ri) || !isCheck(r.text)) continue;
-        const ai = h.added.findIndex((a, i) =>
-          !usedAdded.has(i) && COMMENT_PREFIX_RE.test(a.text) &&
-          norm(a.text.replace(COMMENT_PREFIX_RE, "")) === norm(r.text));
+        const ai = h.added.findIndex(
+          (a, i) =>
+            !usedAdded.has(i) &&
+            COMMENT_PREFIX_RE.test(a.text) &&
+            norm(a.text.replace(COMMENT_PREFIX_RE, "")) === norm(r.text),
+        );
         if (ai >= 0) {
           commented.set(ri, h.added[ai]!);
           usedAdded.add(ai);

@@ -509,7 +509,9 @@ describe("⑨ restart recovery", () => {
 
 describe("table + exit code + manual items", () => {
   it("reports outstanding manual checks separately from automated failures", () => {
-    const rows: ProbeResult[] = [{ item: "③", name: "live test PR", pass: false, detail: "manual", manual: true }];
+    const rows: ProbeResult[] = [
+      { item: "③", name: "live test PR", pass: false, detail: "manual", manual: true },
+    ];
     expect(exitCodeFor(rows)).toBe(0);
     expect(renderTable(rows)).toContain("all 0 automated items PASS");
     expect(renderTable(rows)).toContain("guided-manual items pending: ③");

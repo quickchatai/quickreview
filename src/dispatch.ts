@@ -1450,8 +1450,7 @@ export async function decideFollowUp(
   const { cfg, store } = deps;
   const full = (reason: FollowUpFullReason, detail?: Record<string, unknown>) =>
     ({ kind: "full", reason, ...(detail ? { detail } : {}) }) as const;
-  if (!deltaFollowUpEnabled(cfg))
-    return full("follow_up_full");
+  if (!deltaFollowUpEnabled(cfg)) return full("follow_up_full");
   if (!args.markHead) return full("no-reviewed-head");
   if (!args.tree || !args.tree.merge_base || !deps.prOwnedDelta) return full("no-adapter");
   // The merge base the reviewed head's round recorded (the latest live round

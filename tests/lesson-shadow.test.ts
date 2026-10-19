@@ -1397,15 +1397,18 @@ describe("the shadow report over a fixture joined with fates", () => {
       .run();
   }
 
-  it.each([11, 12])("drops superseded marks when the newest record disables lessons (id %i)", (roundId) => {
-    seed();
-    markRound(ledger, store, 100, 1);
-    expect(ledger.marks(100, 1).length).toBeGreaterThan(0);
-    const previous = ledger.roundRow(11)!;
-    ledger.recordRound({ ...previous, round_id: roundId, state: "lessons_off", mode: "off" }, []);
-    expect(markRound(ledger, store, 100, 1)).toBeNull();
-    expect(ledger.marks(100, 1)).toEqual([]);
-  });
+  it.each([11, 12])(
+    "drops superseded marks when the newest record disables lessons (id %i)",
+    (roundId) => {
+      seed();
+      markRound(ledger, store, 100, 1);
+      expect(ledger.marks(100, 1).length).toBeGreaterThan(0);
+      const previous = ledger.roundRow(11)!;
+      ledger.recordRound({ ...previous, round_id: roundId, state: "lessons_off", mode: "off" }, []);
+      expect(markRound(ledger, store, 100, 1)).toBeNull();
+      expect(ledger.marks(100, 1)).toEqual([]);
+    },
+  );
 
   function candidate(id: number, source: string, cls: string, pr: number, at: string): void {
     store.db

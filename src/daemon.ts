@@ -121,11 +121,7 @@ export interface DaemonDeps {
   lessons?: import("./lessonselect.js").RoundLessonHook;
   /** Told when a round's findings record lands (the lesson shadow ledger's
    * matcher). */
-  onFindingsRecorded?: (target: {
-    pr: number;
-    roundNo: number;
-    roundId: number | null;
-  }) => unknown;
+  onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => unknown;
   /** Renderer for the recheck nudge (prompts/round-recheck.md); default JSON. */
   renderRecheckPrompt?: (order: RecheckOrder) => string;
   /** Profile lens-heuristics extension: the selected repo profile's
@@ -386,7 +382,13 @@ export async function serveAuthorReply(
     // The message is already claimed: the wake is held before the
     // injection is awaited and stays held if it fails, or no redelivery
     // can ever answer it.
-    { holdOnFailure: true, claim: () => { claimed = pingpong.claimAuthorMessage(event); return claimed; } },
+    {
+      holdOnFailure: true,
+      claim: () => {
+        claimed = pingpong.claimAuthorMessage(event);
+        return claimed;
+      },
+    },
   );
   if (!claimed) return;
   if (disposition === "held")

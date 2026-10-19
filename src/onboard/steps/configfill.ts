@@ -478,7 +478,11 @@ export interface Derivable {
    * loader-side cascade / code default that this step must simply LEAVE ALONE.
    * `fresh` is false when the source document is the operator's OWN config: a
    * fill-time default returns null there rather than overwriting their choice. */
-  write(facts: FillFacts, fresh: boolean, existing?: Config): { section: string; key: string; value: string } | null;
+  write(
+    facts: FillFacts,
+    fresh: boolean,
+    existing?: Config,
+  ): { section: string; key: string; value: string } | null;
   /** True ⇒ the derivation is an invariant re-checked at verify time. False ⇒
    * it is only a fill-time default the operator is free to change afterwards. */
   stable: boolean;
@@ -625,7 +629,8 @@ export const DERIVABLES: readonly Derivable[] = [
   {
     id: "tui_container",
     path: "[tui] container",
-    explain: "the bundled local Compose project runs service daemon as quickreview-daemon-1; preserve an operator's custom container",
+    explain:
+      "the bundled local Compose project runs service daemon as quickreview-daemon-1; preserve an operator's custom container",
     write: (f, fresh, existing) =>
       f.topology === "local" && (fresh || existing?.tui.container === TUI_DEFAULTS.container)
         ? { section: "tui", key: "container", value: tomlString("quickreview-daemon-1") }

@@ -81,9 +81,18 @@ describe("collectPriorFindings — what is still open", () => {
     ingest(7, r1, [blocker("human", 10, { posted_as: "ask your human", severity: "P1" })]);
     const list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r1 + 1);
     expect(list.findings[0]?.blocking).toBe(true);
-    const assigned = assignPriorFindings(list, [
-      { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
-    ], new Set());
+    const assigned = assignPriorFindings(
+      list,
+      [
+        {
+          lens: "pass-baseline",
+          agent: "pass-baseline--sol-med",
+          tier: "sol-med",
+          raisable_to: [],
+        },
+      ],
+      new Set(),
+    );
     const task = renderPriorTaskSection(assigned[0]!.priors);
     expect(task).toContain("why human");
     expect(task).toContain("evidence human");
@@ -92,9 +101,18 @@ describe("collectPriorFindings — what is still open", () => {
     const r1 = deliveredRound(7);
     ingest(7, r1, [blocker("context", 10)]);
     const list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r1 + 1);
-    const assigned = assignPriorFindings(list, [
-      { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
-    ], new Set());
+    const assigned = assignPriorFindings(
+      list,
+      [
+        {
+          lens: "pass-baseline",
+          agent: "pass-baseline--sol-med",
+          tier: "sol-med",
+          raisable_to: [],
+        },
+      ],
+      new Set(),
+    );
     const task = renderPriorTaskSection(assigned[0]!.priors);
     expect(task).toContain("why context");
     expect(task).toContain("evidence context");

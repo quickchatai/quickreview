@@ -135,7 +135,8 @@ export function parseUnifiedDiff(text: string): PrFileEntry[] {
       to ??= renameTo;
       from ??= renameFrom;
     }
-    const filename = to ?? from ?? gitDiffHeaderPaths((lines[0] ?? "").slice("diff --git ".length)).b;
+    const filename =
+      to ?? from ?? gitDiffHeaderPaths((lines[0] ?? "").slice("diff --git ".length)).b;
     if (filename === null) continue;
     const entry: PrFileEntry = { filename, additions, deletions, status };
     if (hunkAt >= 0) entry.patch = lines.slice(hunkAt).join("\n").replace(/\n+$/, "");

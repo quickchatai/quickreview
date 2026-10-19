@@ -137,7 +137,11 @@ export function scoredOcrComments(result: Record<string, unknown>): number {
 
 /** OCR stdout is JSON when parseable, otherwise retained verbatim for diagnosis. */
 function parseOcrStdout(stdout: string): unknown {
-  try { return JSON.parse(stdout) as unknown; } catch { return stdout; }
+  try {
+    return JSON.parse(stdout) as unknown;
+  } catch {
+    return stdout;
+  }
 }
 
 /** reviewers/ocr.py `save_result`: the parsed JSON when stdout is JSON, else

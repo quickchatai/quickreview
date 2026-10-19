@@ -155,7 +155,9 @@ export function buildWhatifCase(
   let rebuilds: boolean | null = null;
   if (existsSync(join(caseDir, CASE_FILES.comments))) {
     const collected = collectComments(caseDir).comments.filter((x) => x.side !== "LEFT");
-    const want = scoredTuples({ review: { comments: collected.map((x) => singleLineComment(x.path, x.line, x.body)) } });
+    const want = scoredTuples({
+      review: { comments: collected.map((x) => singleLineComment(x.path, x.line, x.body)) },
+    });
     rebuilds = JSON.stringify(want) === JSON.stringify(scoredTuples(posted));
   }
 

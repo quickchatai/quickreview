@@ -528,8 +528,7 @@ async function runReview(
     ]);
   // A saved default that posts does not apply to a target with no PR. A debug
   // round posts nothing, so it neither reads the saved default nor asks.
-  const savedAll =
-    explicit.length > 0 || cmd.debugPi ? null : loadDefaultDestinations(deps.cwd);
+  const savedAll = explicit.length > 0 || cmd.debugPi ? null : loadDefaultDestinations(deps.cwd);
   const savedUse =
     savedAll === null || cmd.pr !== undefined ? savedAll : savedAll.filter((d) => d !== "pr");
   const saved = savedUse !== null && savedUse.length > 0 ? savedUse : null;

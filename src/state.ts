@@ -6850,17 +6850,24 @@ export class StateStore {
   }
 
   commandEffectReceipt(key: string): { result: string | null } | undefined {
-    return this.db.prepare("SELECT result FROM command_effect_receipts WHERE delivery_key = ?")
+    return this.db
+      .prepare("SELECT result FROM command_effect_receipts WHERE delivery_key = ?")
       .get(key) as { result: string | null } | undefined;
   }
 
   reserveCommandEffect(key: string): boolean {
-    return this.db.prepare("INSERT OR IGNORE INTO command_effect_receipts (delivery_key) VALUES (?)")
-      .run(key).changes === 1;
+    return (
+      this.db
+        .prepare("INSERT OR IGNORE INTO command_effect_receipts (delivery_key) VALUES (?)")
+        .run(key).changes === 1
+    );
   }
 
   settleCommandEffect(key: string, result: unknown): void {
-    this.db.prepare("UPDATE command_effect_receipts SET result = ? WHERE delivery_key = ? AND result IS NULL")
+    this.db
+      .prepare(
+        "UPDATE command_effect_receipts SET result = ? WHERE delivery_key = ? AND result IS NULL",
+      )
       .run(JSON.stringify(result), key);
   }
 
@@ -7276,9 +7283,13 @@ export class StateStore {
 
   /** A definitive missing-message response can release only that exact old receipt. */
   forgetMissingSlackMessage(idemKey: string, ts: string): boolean {
-    return this.db.prepare(
-      "UPDATE slack_posts SET ts = NULL, ok = 0, error = 'message_not_found' WHERE idem_key = ? AND ts = ? AND ok = 1",
-    ).run(idemKey, ts).changes === 1;
+    return (
+      this.db
+        .prepare(
+          "UPDATE slack_posts SET ts = NULL, ok = 0, error = 'message_not_found' WHERE idem_key = ? AND ts = ? AND ok = 1",
+        )
+        .run(idemKey, ts).changes === 1
+    );
   }
 
   queueSlackReopening(row: SlackReopeningRow): void {

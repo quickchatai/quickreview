@@ -573,11 +573,7 @@ export interface FindingsCheckDeps {
    * its durable obligation is retried until the callback returns successfully.
    * A returned promise is awaited; synchronous callbacks stay accepted.
    */
-  onRecorded?: (target: {
-    pr: number;
-    roundNo: number;
-    roundId: number | null;
-  }) => unknown;
+  onRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => unknown;
 }
 
 export interface FindingsCheckTarget {

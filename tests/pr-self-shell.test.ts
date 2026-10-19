@@ -183,7 +183,10 @@ describe("scripts/pr-self.sh — reviews", () => {
 
   it("refuses a saturated review page limit instead of presenting a truncated history", async () => {
     reviews = Array.from({ length: 3000 }, (_, i) => ({
-      id: i + 1, user: { login: "example-review[bot]" }, state: "COMMENTED", commit_id: HEAD,
+      id: i + 1,
+      user: { login: "example-review[bot]" },
+      state: "COMMENTED",
+      commit_id: HEAD,
     }));
     const res = await run(["5180", "reviews"]);
     expect(res.ok).toBe(false);

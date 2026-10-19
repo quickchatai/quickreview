@@ -1618,9 +1618,13 @@ describe("serveAuthorReply: the ping-pong wake carries the replied file's repo f
         "CREATE TRIGGER fail_author_wake BEFORE INSERT ON pending_wakes BEGIN SELECT RAISE(FAIL,'wake persistence unavailable'); END",
       );
       await expect(serveAuthorReply(w.deps, reply)).rejects.toThrow("wake persistence unavailable");
-      expect(w.deps.pingpong.hasClaim(reply.pr, reply.in_reply_to_id, reply.comment_id)).toBe(false);
+      expect(w.deps.pingpong.hasClaim(reply.pr, reply.in_reply_to_id, reply.comment_id)).toBe(
+        false,
+      );
       expect(w.injected).toEqual([]);
-    } finally { w.store.close(); }
+    } finally {
+      w.store.close();
+    }
   });
 
   it("asks for the thread's file, appends the facts — and is the plain wake, byte for byte, without them", async () => {

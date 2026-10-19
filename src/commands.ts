@@ -171,7 +171,10 @@ export interface CommandContext {
 /** Handlers the daemon wires; each may reject by returning {ok:false, reason}. */
 export interface CommandDeps {
   rerunRound(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
-  restartSession(target: number | "overseer", deliveryKey?: string): Promise<FileOutcome | void> | FileOutcome | void;
+  restartSession(
+    target: number | "overseer",
+    deliveryKey?: string,
+  ): Promise<FileOutcome | void> | FileOutcome | void;
   resolveTerminalFailure(
     payload: TerminalFailurePayload,
   ): Promise<FileOutcome | void> | FileOutcome | void;
@@ -694,7 +697,12 @@ export async function executeCommand(
     case "rerun-round":
       return normalize(await deps.rerunRound(command.pr));
     case "restart-session":
-      return normalize(await deps.restartSession(command.pr, ...(ctx.delivery_key ? [ctx.delivery_key] as [string] : [])));
+      return normalize(
+        await deps.restartSession(
+          command.pr,
+          ...(ctx.delivery_key ? ([ctx.delivery_key] as [string]) : []),
+        ),
+      );
     case "resolve-terminal-failure":
       return normalize(
         await deps.resolveTerminalFailure({
@@ -705,7 +713,15 @@ export async function executeCommand(
         }),
       );
     case "pause-pr":
-      return normalize(await deps.pausePr(command.pr, command.reason, ctx.issuer, command.for_min, ...(ctx.delivery_key ? [ctx.delivery_key] as [string] : [])));
+      return normalize(
+        await deps.pausePr(
+          command.pr,
+          command.reason,
+          ctx.issuer,
+          command.for_min,
+          ...(ctx.delivery_key ? ([ctx.delivery_key] as [string]) : []),
+        ),
+      );
     case "resume-pr":
       return normalize(await deps.resumePr(command.pr, ctx.issuer));
     case "flag-owner":
@@ -748,7 +764,14 @@ export async function executeCommand(
     }
     case "drain": {
       if (!deps.drain) return { ok: false, reason: "drain is not wired on this daemon" };
-      return normalize(await deps.drain(command.on, ctx.issuer, command.for_min, ...(ctx.delivery_key ? [ctx.delivery_key] as [string] : [])));
+      return normalize(
+        await deps.drain(
+          command.on,
+          ctx.issuer,
+          command.for_min,
+          ...(ctx.delivery_key ? ([ctx.delivery_key] as [string]) : []),
+        ),
+      );
     }
     case "retry-thread-decision": {
       if (!deps.retryThreadDecision)

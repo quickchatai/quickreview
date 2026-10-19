@@ -1238,10 +1238,13 @@ it.each(["read", "write"])(
 it("publishes the active handle before an initial synchronous auth refusal stops it", async () => {
   let scan: ScanRunner;
   let stopped: unknown;
-  const cases: FakeRunner = { specs: [], run: async () => {
-    stopped = scan.stop();
-    return { ok: false, reason: "auth expired", cost_usd: 0 };
-  } };
+  const cases: FakeRunner = {
+    specs: [],
+    run: async () => {
+      stopped = scan.stop();
+      return { ok: false, reason: "auth expired", cost_usd: 0 };
+    },
+  };
   scan = new ScanRunner(ports(cases));
   const preview = await previewOf(scan);
   expect((await scan.start({ key: preview.key })).ok).toBe(true);

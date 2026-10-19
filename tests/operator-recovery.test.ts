@@ -701,10 +701,18 @@ describe("restart command delivery receipts", () => {
   it("retains an uncertain restart rather than repeating a potentially completed kill", async () => {
     const { store } = setup();
     const pump = vi.fn(async () => {});
-    const killSession = vi.fn().mockRejectedValueOnce(new Error("kill acknowledgement lost")).mockResolvedValue(undefined);
+    const killSession = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("kill acknowledgement lost"))
+      .mockResolvedValue(undefined);
     const deps = { store, pump, killSession, deliveryKey: "watcher/restart/version-2" };
-    await expect(recoverPrForOperator(deps, 5409, "restart-session")).rejects.toThrow("kill acknowledgement lost");
-    expect(await recoverPrForOperator(deps, 5409, "restart-session")).toMatchObject({ ok: false, reason: expect.stringMatching(/unknown/) });
+    await expect(recoverPrForOperator(deps, 5409, "restart-session")).rejects.toThrow(
+      "kill acknowledgement lost",
+    );
+    expect(await recoverPrForOperator(deps, 5409, "restart-session")).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/unknown/),
+    });
     expect(killSession).toHaveBeenCalledTimes(1);
   });
 });

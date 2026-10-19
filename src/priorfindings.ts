@@ -315,8 +315,12 @@ export function computePriorFindings(input: ComputePriorInput): PriorFindingsLis
           .filter((t) => t !== null)
           .pop() ?? null,
       blocking:
-        bareTag(latest.posted_as) !== "deferred" && ordinaryPostTag(
-          bareTag(latest.posted_as), latest.severity, latest.confidence, latest.reachability,
+        bareTag(latest.posted_as) !== "deferred" &&
+        ordinaryPostTag(
+          bareTag(latest.posted_as),
+          latest.severity,
+          latest.confidence,
+          latest.reachability,
         ) === "blocker",
       last_status: openReport?.status ?? null,
       last_status_round: openReport?.round ?? null,
