@@ -1,5 +1,7 @@
 // `qcr open [RUN | DIR | FILE.jsonl] [--lens ID] [--write] [--print] [--json]` -
 // open a finished review session in pi's own interactive UI (D10).
+// `qcr open pr N [--round R] [--lens ID]` opens the bot's session for a PR: pulled
+// read-only from the bot's box first (src/openpr.ts), then forked here.
 //
 // RUN is a detached run id (`qcr review start`), a `qcr review` run directory
 // name, a bench case dir, a scan run (`scan` or `scan:<run>`, then `--lens`
@@ -31,9 +33,11 @@ import {
   type LensSessionRef,
   type OpenMeta,
 } from "./engine/openable.js";
+import { openPrOptions, type OpenPrOptions, type PrPull } from "./openpr.js";
 
 export const OPEN_USAGE =
-  "usage: qcr open [RUN_ID | DIR | FILE.jsonl | scan[:RUN]] [--lens ID] [--write] [--print] [--json]";
+  "usage: qcr open [RUN_ID | DIR | FILE.jsonl | scan[:RUN]] [--lens ID] [--write] [--print] [--json]\n" +
+  "       qcr open pr <N> [--round R] [--lens ID] [--print] [--json]";
 
 export function openHelp(): string {
   return [
@@ -49,6 +53,13 @@ export function openHelp(): string {
     "",
     "Pi loads the extensions the round had, minus anything that posts, on a private copy of",
     "your login that is never refreshed, with no GitHub token in its environment.",
+    "",
+    "qcr open pr N opens the bot's session for PR N. It is read from the box that hosts the bot",
+    "over the TUI's ssh runner (or, for a PR closed for 14 days, from its archive, verified like",
+    "`qcr archive extract`), copied read-only into your state home, and forked here: the box",
+    "does no work and nothing on it is written. --round R keeps the session as it stood when",
+    "round R finished. --lens ID opens a kept lens pass of the PR (workers keep them, P8.3).",
+    'A run dir literally named "pr" is opened as ./pr.',
   ].join("\n");
 }
 
@@ -64,6 +75,11 @@ export const MAIN_OPEN_EXTENSIONS = [
 
 /** A lens pass is a leaf: the guard, and no lens tool. */
 export const LENS_OPEN_EXTENSIONS = ["bash-guard.ts"] as const;
+
+/** The bot's own session (`qcr open pr`): the guard alone. The bot's tools are
+ * the tmux era's subagent/launch_plan, which this machine does not run, and the
+ * posting path is the daemon's, so there is none to carry. */
+export const BOT_OPEN_EXTENSIONS = LENS_OPEN_EXTENSIONS;
 
 export type OpenMode = "fork" | "write";
 
@@ -135,6 +151,9 @@ export interface OpenDeps {
     cwd: string;
     cleanup: () => void;
   };
+  /** `qcr open pr`: pulls the bot's session for a PR into a local run dir
+   * (src/openpr.ts). Omitted: the verb is unavailable. */
+  fetchPr?: (o: OpenPrOptions) => Promise<PrPull>;
   /** Runs pi on the terminal; resolves its exit code. */
   spawn: (cmd: {
     bin: string;
@@ -276,8 +295,9 @@ export async function runOpen(
   json: boolean,
   deps: OpenDeps,
 ): Promise<number> {
-  let arg: string | undefined;
+  const positional: string[] = [];
   let lens: string | undefined;
+  let round: string | undefined;
   let mode: OpenMode = "fork";
   let print = false;
   let help = false;
@@ -294,19 +314,49 @@ export async function runOpen(
     else if (a === "--lens") {
       lens = rest[++i];
       if (lens === undefined || lens.startsWith("--")) return usage("--lens needs a value");
-    } else if (!a.startsWith("-") && arg === undefined) arg = a;
+    } else if (a === "--round") {
+      round = rest[++i];
+      if (round === undefined || round.startsWith("--")) return usage("--round needs a value");
+    } else if (!a.startsWith("-")) positional.push(a);
     else return usage(`unknown argument ${a}`);
   }
   if (help) {
     deps.out(openHelp());
     return 0;
   }
+  const botPr = positional[0] === "pr";
+  if (!botPr && (round !== undefined || positional.length > 1))
+    return usage(
+      round !== undefined ? "--round goes with `pr N`" : `unknown argument ${positional[1]}`,
+    );
+  let arg: string | undefined = positional[0];
+  if (botPr) {
+    if (positional.length > 2) return usage(`unknown argument ${positional[2]}`);
+    if (mode === "write")
+      return usage(
+        "a bot session opens as a fork of a local copy; --write has nothing to write to",
+      );
+    const asked = openPrOptions(positional[1], round, lens);
+    if (!asked.ok) return usage(asked.error);
+    if (!deps.fetchPr) return usage("qcr open pr is not available here");
+    const pulled = await deps.fetchPr(asked.value);
+    if (!pulled.ok) {
+      deps.out(json ? JSON.stringify({ ok: false, errors: [pulled.error] }) : `✗ ${pulled.error}`);
+      return 1;
+    }
+    if (!json) deps.out(pulled.note);
+    arg = pulled.dir;
+  }
   const found = findSession(arg, lens, deps);
   if (!found.ok) {
     deps.out(json ? JSON.stringify({ ok: false, errors: [found.error] }) : `✗ ${found.error}`);
     return 1;
   }
-  const names = found.kind === "main" ? MAIN_OPEN_EXTENSIONS : LENS_OPEN_EXTENSIONS;
+  const names = botPr
+    ? BOT_OPEN_EXTENSIONS
+    : found.kind === "main"
+      ? MAIN_OPEN_EXTENSIONS
+      : LENS_OPEN_EXTENSIONS;
   const extensions = names.map((n) => join(deps.root, "extensions", n));
   const meta = readOpenMeta(found.roundDir);
   const bin = deps.piBin ?? "pi";
@@ -401,6 +451,22 @@ export async function cmdOpen(rest: string[], json: boolean): Promise<number> {
     cwd: process.cwd(),
     env: process.env,
     out: (l) => console.log(l),
+    fetchPr: async (o) => {
+      // The bot's box, over the TUI's own runner: `[tui] ssh_host` / `target`.
+      const cfg = loadConfig();
+      const { runnerFor } = await import("./tui/remote.js");
+      const { pullPrSession } = await import("./openpr.js");
+      const { extractPr } = await import("./archive/extract.js");
+      const { archivePolicy } = await import("./archive/archiver.js");
+      const bytesPerS = archivePolicy(cfg.archive).maxBytesPerS;
+      return pullPrSession(o, {
+        cfg: cfg.tui,
+        sessionDir: cfg.pi.session_dir,
+        ssh: runnerFor(cfg.tui),
+        home,
+        extract: (x) => extractPr({ ...x, bytesPerS }),
+      });
+    },
     prepare: ({ roundDir, copyRound }) => {
       const cfg0 = loadConfig();
       const { cfg } = contextFor(root, cfg0.review.profile);
