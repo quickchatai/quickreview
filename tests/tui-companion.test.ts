@@ -30,6 +30,7 @@ import {
 } from "../src/install.js";
 import {
   appImageBuildArgv,
+  releaseContextPaths,
   CompanionLifecycle,
   CONTAINER,
   MEMORY,
@@ -136,6 +137,7 @@ function withRepo(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.Process
 function withBuiltApp(
   answers: Parameters<typeof fakeDocker>[0],
   env: NodeJS.ProcessEnv = HOST_ENV,
+  assemble: (ctx: string) => string = (ctx) => ctx,
 ) {
   const { runner, calls } = fakeDocker(answers);
   const fs: CompanionFs = {
@@ -143,7 +145,10 @@ function withBuiltApp(
     read: () => undefined,
     mode: () => undefined,
   };
-  return { lc: new CompanionLifecycle(CFG, runner, env, noDirs, fs, () => "stamp"), calls };
+  return {
+    lc: new CompanionLifecycle(CFG, runner, env, noDirs, fs, () => "stamp", "docker", assemble),
+    calls,
+  };
 }
 
 /** ensureUp() resolves the memory wiring first (docker network …).
@@ -831,6 +836,28 @@ describe("CompanionLifecycle state machine", () => {
     // No uid is baked: the container is started as the host user instead.
     expect(build.some((a) => a.startsWith("COMPANION_UID="))).toBe(false);
     expect(progress.some((l) => l.includes("building"))).toBe(true);
+  });
+
+  it("builds from an assembled release context, so a Docker without buildx works", async () => {
+    const { lc, calls } = withBuiltApp(
+      [
+        inspect("absent"),
+        (argv) =>
+          argv[0] === "image"
+            ? { ok: false, stdout: "", stderr: "No such image", code: 1 }
+            : undefined,
+        okFor("build"),
+        okFor("run"),
+      ],
+      HOST_ENV,
+      () => "/assembled",
+    );
+    await lc.ensureUp();
+    const build = calls.find((c) => c[0] === "build")!;
+    expect(build[build.indexOf("-f") + 1]).toBe("/assembled/docker/Dockerfile");
+    expect(build[build.length - 1]).toBe("/assembled");
+    // The stamp is still the checkout's.
+    expect(build).toContain("BUILD_SHA=stamp");
   });
 
   it("is idempotent: a second TUI adopts, it never twins", async () => {
@@ -1610,4 +1637,22 @@ it("mounts supported profiles beside an explicit config override", () => {
   );
   expect(lc.expectedMounts().get(`${CONTAINER.configLive}/profiles`)).toBe("/custom/profiles");
   expect(lc.expectedMounts().get(CONTAINER.profiles)).toBe(HOMES.profiles);
+});
+
+describe("releaseContextPaths — the release image's context, from its own ignore file", () => {
+  it("is the Dockerfile, its ignore file, then every admitted path", () => {
+    const text = "# comment\n*\n!package.json\n!src\n!/scripts\n**/node_modules\n";
+    expect(releaseContextPaths(text)).toEqual([
+      "docker/Dockerfile",
+      "docker/Dockerfile.dockerignore",
+      "package.json",
+      "src",
+      "scripts",
+    ]);
+  });
+
+  it("admits tsconfig.json from the real release ignore file", () => {
+    const real = readFileSync(resolve(root, "docker", "Dockerfile.dockerignore"), "utf8");
+    expect(releaseContextPaths(real)).toContain("tsconfig.json");
+  });
 });
