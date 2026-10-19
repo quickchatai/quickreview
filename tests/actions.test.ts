@@ -41,10 +41,6 @@ function mockDriver(overrides: Partial<TuiDriver> = {}): {
       calls.push(["msgSession", session, text]);
       return Promise.resolve(`✓ msg ${session} delivered`);
     },
-    overseerInject: (text) => {
-      calls.push(["overseerInject", text]);
-      return Promise.resolve("✓ msg overseer delivered");
-    },
     deployTab: (action) => calls.push(["deployTab", action]),
     memoryPin: (entry, pin) => {
       calls.push(["memoryPin", entry, pin]);
@@ -143,21 +139,14 @@ describe("parseTuiAction — valid requests, every verb", () => {
     });
   });
 
-  it("msg_session — the msg.ts session-name rule", () => {
-    for (const session of ["pr-5312", "overseer", "main"]) {
+  it("msg_session — the msg.ts session-name rule, less the retired overseer", () => {
+    for (const session of ["pr-5312", "main"]) {
       expect(ok({ verb: "msg_session", params: { session, text: "hi" } })).toEqual({
         verb: "msg_session",
         session,
         text: "hi",
       });
     }
-  });
-
-  it("overseer_inject", () => {
-    expect(ok({ verb: "overseer_inject", params: { text: "check pr 5312" } })).toEqual({
-      verb: "overseer_inject",
-      text: "check pr 5312",
-    });
   });
 
   it("deploy_tab", () => {
@@ -171,8 +160,9 @@ describe("parseTuiAction — valid requests, every verb", () => {
 
   it("text at exactly the cap passes; trimming applies before the length check", () => {
     const text = "x".repeat(ACTION_TEXT_MAX);
-    expect(ok({ verb: "overseer_inject", params: { text } })).toEqual({
-      verb: "overseer_inject",
+    expect(ok({ verb: "msg_session", params: { session: "main", text } })).toEqual({
+      verb: "msg_session",
+      session: "main",
       text,
     });
     expect(ok({ verb: "msg_session", params: { session: "main", text: `  hi  ` } })).toEqual({
@@ -246,7 +236,7 @@ describe("parseTuiAction — refusals, never a throw", () => {
   });
 
   it("msg_session enforces the isValidSessionName rule", () => {
-    for (const session of ["pr-x", "pr5312", "pr-", "root", "overseer2", "MAIN", "", 5]) {
+    for (const session of ["pr-x", "pr5312", "pr-", "root", "overseer", "overseer2", "MAIN", "", 5]) {
       expect(err({ verb: "msg_session", params: { session, text: "hi" } })).toContain("session");
     }
   });
@@ -258,8 +248,10 @@ describe("parseTuiAction — refusals, never a throw", () => {
     expect(err({ verb: "msg_session", params: { session: "main", text: "   " } })).toContain(
       "2000",
     );
-    expect(err({ verb: "overseer_inject", params: { text: over } })).toContain("2000");
-    expect(err({ verb: "overseer_inject", params: {} })).toContain("2000");
+  });
+
+  it("overseer_inject is gone: the overseer is retired, so the verb is unknown", () => {
+    expect(err({ verb: "overseer_inject", params: { text: "look" } })).toContain("unknown verb");
   });
 
   it("deploy_tab refuses unknown actions", () => {
@@ -285,7 +277,6 @@ describe("executeTuiAction — driver dispatch + traces", () => {
       executeTuiAction({ verb: "memory_filter", tag: "bug" }, driver),
       executeTuiAction({ verb: "memory_filter", tag: null }, driver),
       executeTuiAction({ verb: "msg_session", session: "pr-5312", text: "hello" }, driver),
-      executeTuiAction({ verb: "overseer_inject", text: "look" }, driver),
       executeTuiAction({ verb: "deploy_tab", action: "stop" }, driver),
     ]);
     expect(calls).toEqual([
@@ -301,7 +292,6 @@ describe("executeTuiAction — driver dispatch + traces", () => {
       ["setMemoryFilter", "bug"],
       ["setMemoryFilter", null],
       ["msgSession", "pr-5312", "hello"],
-      ["overseerInject", "look"],
       ["deployTab", "stop"],
     ]);
     expect(traces).toEqual([
@@ -317,7 +307,6 @@ describe("executeTuiAction — driver dispatch + traces", () => {
       "companion ▸ memory filter → #bug",
       "companion ▸ memory filter cleared",
       "companion ▸ msg pr-5312 (5 chars) → ✓ msg pr-5312 delivered",
-      "companion ▸ overseer inject (4 chars) → ✓ msg overseer delivered",
       "companion ▸ deploy tab → stop",
     ]);
   });
@@ -442,7 +431,7 @@ describe("memory_pin — pin/unpin through the TUI's one store", () => {
 // A message's result says what became of it: the sender's last word, not
 // that it was handed over. MUTATION: fire-and-forget the send and return the
 // trace at once — red (the undelivered message reads ok).
-describe("msg_session / overseer_inject — the result waits for delivery", () => {
+describe("msg_session — the result waits for delivery", () => {
   it("an undelivered message is a failed result, a delivered one carries its label", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tui-actions-msg-"));
     try {
@@ -451,11 +440,14 @@ describe("msg_session / overseer_inject — the result waits for delivery", () =
         JSON.stringify({ verb: "msg_session", params: { session: "pr-7", text: "hi" } }),
       );
       writeFileSync(
-        join(dir, "2026-10-07T10-00-01-ov.json"),
-        JSON.stringify({ verb: "overseer_inject", params: { text: "look" } }),
+        join(dir, "2026-10-07T10-00-01-ok.json"),
+        JSON.stringify({ verb: "msg_session", params: { session: "main", text: "look" } }),
       );
       const { driver } = mockDriver({
-        msgSession: () => Promise.reject(new Error("✖ msg pr-7 undelivered (write failed)")),
+        msgSession: (session) =>
+          session === "pr-7"
+            ? Promise.reject(new Error("✖ msg pr-7 undelivered (write failed)"))
+            : Promise.resolve("✓ msg main delivered"),
       });
       const [msg, ov] = await processTuiActions(dir, driver);
       expect(msg).toMatchObject({ ok: false, message: expect.stringContaining("undelivered") });

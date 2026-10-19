@@ -20,7 +20,6 @@ import { App } from "../src/tui/app.js";
 import {
   AlertConsumer,
   AlertPolicy,
-  overseerMessage,
   parseAlert,
   statusLine,
   type AlertBadge,
@@ -390,23 +389,19 @@ function fakeSinks(): {
   sinks: AlertSinks;
   notices: string[];
   notified: string[][];
-  injected: string[];
   badges: AlertBadge[];
 } {
   const notices: string[] = [];
   const notified: string[][] = [];
-  const injected: string[] = [];
   const badges: AlertBadge[] = [];
   return {
     notices,
     notified,
-    injected,
     badges,
     sinks: {
       notice: (t) => notices.push(stripAnsi(t)),
       badge: (b) => badges.push({ ...b }),
       notify: (title, body) => notified.push([title, body]),
-      inject: (text) => injected.push(text),
     },
   };
 }
@@ -430,11 +425,10 @@ describe("AlertConsumer", () => {
     c.scanOnce();
     expect(f.notices).toHaveLength(1);
     expect(f.notified).toEqual([]);
-    expect(f.injected).toEqual([]);
     expect(f.badges.at(-1)).toMatchObject({ count: 1, latest: { tier: "notice" } });
   });
 
-  it("routes an alert to the status line + notify-send + an overseer inject", () => {
+  it("routes an alert to the status line + notify-send, and injects nothing (no overseer)", () => {
     const f = fakeSinks();
     const c = new AlertConsumer(dir, new AlertPolicy(20), f.sinks);
     dropAlert(dir, "2026-08-14T10-00-00Z-stuck.json", {
@@ -447,9 +441,6 @@ describe("AlertConsumer", () => {
     });
     c.scanOnce();
     expect(f.notified).toEqual([["round 3 overdue", "40m past deadline"]]);
-    expect(f.injected).toHaveLength(1);
-    expect(f.injected[0]).toContain("[companion alert]");
-    expect(f.injected[0]).toContain("PR #5012");
     expect(f.notices[0]).toContain("round 3 overdue");
   });
 
@@ -477,7 +468,6 @@ describe("AlertConsumer", () => {
     });
     c.scanOnce();
     expect(f.notified).toHaveLength(1); // no second KDE popup
-    expect(f.injected).toHaveLength(1); // and no second overseer inject
     expect(f.notices.at(-1)).toContain("×2");
     expect(f.badges.at(-1)).toMatchObject({ count: 1, folds: 1 });
   });
@@ -575,7 +565,6 @@ describe("AlertConsumer", () => {
     c.scanOnce();
     expect(theirs.notified).toHaveLength(1);
     expect(mine.notified).toEqual([]);
-    expect(mine.injected).toEqual([]);
     expect(mine.notices).toEqual([]);
   });
 
@@ -610,7 +599,7 @@ describe("AlertConsumer", () => {
     expect(f.notices).toHaveLength(before);
   });
 
-  it("formats the overseer message and the status line", () => {
+  it("formats the status line", () => {
     const a: AlertRecord = {
       tier: "alert",
       cause: "round-overdue",
@@ -620,10 +609,6 @@ describe("AlertConsumer", () => {
       ts: "x",
       file: "f.json",
     };
-    expect(overseerMessage(a).startsWith("[companion alert] round 3 overdue (PR #5012)")).toBe(
-      true,
-    );
-    expect(overseerMessage(a)).toContain("cause: round-overdue");
     expect(stripAnsi(statusLine(a, 0))).toBe("▲ #5012 round 3 overdue");
     expect(stripAnsi(statusLine(a, 2))).toContain("(×3)");
   });

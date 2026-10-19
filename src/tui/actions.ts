@@ -23,7 +23,7 @@
 //
 // Idempotency (archive before execute): a request is archived to `.done/`
 // BEFORE it is executed — a crash mid-execute must not re-run it on the next
-// sweep (msg_session/overseer_inject would double-send, deploy_tab would
+// sweep (msg_session would double-send, deploy_tab would
 // double-arm). A crash after archive but before execute
 // loses one request; the companion sees the missing result and re-requests —
 // the safer failure. Results are written to `<name>.result.json` beside the
@@ -68,12 +68,10 @@ export interface TuiDriver {
   memoryPin(entry: string, pin: boolean): Promise<string>;
   setBoardFilter(f: BoardFilter | null): void;
   setMemoryFilter(tag: string | null): void;
-  /** A quick-message to `session` (`overseerInject`: to the overseer).
-   * Resolves with the sender's label — delivered, queued behind a busy
+  /** A quick-message to `session`. Resolves with the sender's label — delivered, queued behind a busy
    * session, or unconfirmed; REJECTS only on a definite non-delivery, so a
    * failed result file never asks for a re-send of a message still queued. */
   msgSession(session: string, text: string): Promise<string>;
-  overseerInject(text: string): Promise<string>;
   deployTab(action: DeployTabAction): void;
 }
 
@@ -97,7 +95,6 @@ export type TuiAction =
   | { verb: "memory_filter"; tag: string | null }
   | { verb: "memory_pin"; entry: string; pin: boolean }
   | { verb: "msg_session"; session: string; text: string }
-  | { verb: "overseer_inject"; text: string }
   | { verb: "deploy_tab"; action: DeployTabAction };
 
 export const ACTION_TEXT_MAX = 2000;
@@ -258,18 +255,14 @@ export function parseTuiAction(
     }
     case "msg_session": {
       const session = p["session"];
-      if (typeof session !== "string" || !isValidSessionName(session))
-        return { ok: false, error: "msg_session session must be pr-<n>, overseer, or main" };
+      // The overseer is retired (rule 8: the companion injects into no session
+      // of its own); a PR's session or the main one is all that is left to name.
+      if (typeof session !== "string" || session === "overseer" || !isValidSessionName(session))
+        return { ok: false, error: "msg_session session must be pr-<n> or main" };
       const text = boundedText(p["text"]);
       if (text === undefined)
         return { ok: false, error: `msg_session text must be 1..${ACTION_TEXT_MAX} chars` };
       return { ok: true, action: { verb, session, text } };
-    }
-    case "overseer_inject": {
-      const text = boundedText(p["text"]);
-      if (text === undefined)
-        return { ok: false, error: `overseer_inject text must be 1..${ACTION_TEXT_MAX} chars` };
-      return { ok: true, action: { verb, text } };
     }
     case "deploy_tab": {
       const action = p["action"];
@@ -333,10 +326,6 @@ export function executeTuiAction(a: TuiAction, driver: TuiDriver): string | Prom
       return driver
         .msgSession(a.session, a.text)
         .then((label) => `companion ▸ msg ${a.session} (${a.text.length} chars) → ${label}`);
-    case "overseer_inject":
-      return driver
-        .overseerInject(a.text)
-        .then((label) => `companion ▸ overseer inject (${a.text.length} chars) → ${label}`);
     case "deploy_tab":
       driver.deployTab(a.action);
       return `companion ▸ deploy tab → ${a.action}`;

@@ -297,7 +297,6 @@ export function buildTuiDriver(
       app.repaint();
     },
     msgSession: (session, text) => deliverMessage(app, session, text),
-    overseerInject: (text) => deliverMessage(app, "overseer", text),
     deployTab: (action) => {
       prep();
       app.tab = "deploy";
@@ -1167,8 +1166,6 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
 
     const { AlertConsumer, AlertPolicy, filePolicyStore, notifySendRunner } =
       await import("./alerts.js");
-    const { InjectSender } = await import("./msg.js");
-    const overseer = new InjectSender(cfg, runner);
     // Persisted per-cause memory: "already told you" survives a TUI restart
     // inside the same ops day, and resets with the day.
     const policy = new AlertPolicy(
@@ -1177,18 +1174,39 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       filePolicyStore(policyStatePath),
       full.ops.timezone,
     );
+    // No overseer inject: the overseer is retired (rule 8). An alert is the
+    // status line, the badge and the desktop notification.
     const consumer = new AlertConsumer(full.companion.alerts_dir, policy, {
       notice: (text) => app.notice(text),
       badge: (badge) => app.setAlertBadge(badge),
       notify: notifySendRunner,
-      inject: (text) => void overseer.send("overseer", text, (_state, label) => app.notice(label)),
     });
     consumer.start(Math.max(1, cfg.poll_interval_s) * 1000);
     alerts = consumer;
 
+    // The bot's companion inbox (anomalies, heartbeat, login alerts, the EOD
+    // sweep): pulled over the TUI's one runner into the companion's inject dir
+    // and the alerts feed above, then acked back. Rule 8, src/tui/inboxpull.ts.
+    const { InboxPuller } = await import("./inboxpull.js");
+    const { companionInjectDir: injectDirOf } = await import("./companion.js");
+    const inboxPuller = new InboxPuller(
+      {
+        cfg,
+        ssh: runner,
+        injectDir: injectDirOf(full.companion),
+        alertsDir: full.companion.alerts_dir,
+      },
+      (line) => app.notice(line),
+    );
+    chainOnPoll(app, () => {
+      void inboxPuller.tick().catch(() => {
+        /* best-effort — never break the poll loop */
+      });
+    });
+
     // Daemon-detected pi auth failures (status.json `pi_auth_expired`) ride
     // the same pipeline: on each poll, bridge a fresh flag into one alert
-    // file; the consumer above does badge + notify + inject + cooldown.
+    // file; the consumer above does badge + notify + cooldown.
     const { maybeWritePiAuthAlert, maybeWriteMemoryAlert, maybeWriteCurationAlert } =
       await import("./alerts.js");
     const piAuthMem = { lastWritten: "" };

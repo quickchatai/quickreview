@@ -53,7 +53,10 @@ export const INBOX_MAX_TEXT_CHARS = 400_000;
 /** Classes that are evicted only when nothing routine is left to drop. */
 const KEEP_CLASSES: ReadonlySet<InboxClass> = new Set(["login", "eod"]);
 
-const ID_RE = /^[a-z0-9][a-z0-9._-]{0,95}$/;
+/** An item id is a file name on the bot and in the TUI's shell scripts: this
+ * shape is all either side ever builds a path or a command from. */
+export const INBOX_ID_RE = /^[a-z0-9][a-z0-9._-]{0,95}$/;
+const ID_RE = INBOX_ID_RE;
 
 /** The inbox directory under a root — the TUI's runner reads the same path. */
 export function companionInboxDir(root: string): string {
@@ -73,7 +76,7 @@ function defaultId(cls: InboxClass, text: string): string {
   return `${cls}-${createHash("sha256").update(`${cls}\n${text}`).digest("hex").slice(0, 16)}`;
 }
 
-function isItem(value: unknown): value is InboxItem {
+export function isItem(value: unknown): value is InboxItem {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return (
@@ -83,6 +86,17 @@ function isItem(value: unknown): value is InboxItem {
     typeof v.created_at === "string" &&
     INBOX_CLASSES.includes(v.class as InboxClass)
   );
+}
+
+/** One item out of its file text (what the TUI's pull reads off the bot), or
+ * null when it is not an item. The same check the bot's own reader applies. */
+export function parseInboxItem(text: string): InboxItem | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return isItem(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface CompanionInboxOptions {

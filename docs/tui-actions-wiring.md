@@ -139,7 +139,6 @@ const driver: import("./actions.js").TuiDriver = {
   // Resolve on delivered, queued or unconfirmed; reject definite non-delivery.
   // The result trace preserves the label; queued/unconfirmed must not be re-sent.
   msgSession: (session, text) => deliverMessage(app, session, text),
-  overseerInject: (text) => deliverMessage(app, "overseer", text),
   deployTab: (action) => {
     app.tab = "deploy";
     app.repaint();
