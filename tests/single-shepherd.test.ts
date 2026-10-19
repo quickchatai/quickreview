@@ -218,11 +218,17 @@ describe("daemon topology", () => {
     // opencli.ts is `qcr open` and engine/debugpi.ts is `qcr review --debug-pi`:
     // the operator's own terminal, pi on its interactive UI over a finished or a
     // starting round (P5.9). Only cli.ts and reviewcli.ts import them (dynamically).
+    // takeoverpi.ts is the pane side of the takeover lease (P8.13, D27): the operator's own
+    // interactive pi on a PR's real session, in tmux `takeover-pr-<n>`, started by path by
+    // the lease's manager (src/takeover.ts) on the operator's `takeover` command. It is not
+    // a scheduled agent: it holds the session's lease, so no worker runs beside it, it has
+    // the read tools only, and it posts nothing. No daemon module imports it.
     const allowedPaths = [
       "/src/oneshot.ts",
       "/src/reviewcli.ts",
       "/src/opencli.ts",
       "/src/engine/debugpi.ts",
+      "/src/takeoverpi.ts",
       "/src/bench/runner.ts",
       "/src/setup/caserunner.ts",
       "/src/scanbox.ts",

@@ -678,6 +678,27 @@ export interface SlackCooldownRow {
 /** The `reason` of the drain the worker crash-loop breaker sets (P8.5b). */
 export const WORKER_FAILURES_DRAIN_REASON = "worker_failures";
 
+/** The kinds of host lease: the operator's takeover, and (P8.13b) a debug round. */
+export type HostLeaseKind = "takeover" | "debug";
+
+/** One PR's host lease row (P8.13). */
+export interface HostLeaseRow {
+  pr: number;
+  kind: HostLeaseKind;
+  state: "held" | "ending";
+  token: string;
+  command_id: string;
+  holder: string;
+  granted_at: string;
+  touched_at: string;
+  ending_at: string | null;
+  ending_why: string | null;
+}
+
+/** Why a host lease was not granted. */
+export type HostLeaseGrant =
+  { ok: true; row: HostLeaseRow } | { ok: false; why: "held" | "worker"; reason: string };
+
 /** One PR's worker crash-loop breaker row (P8.5b). */
 export interface WorkerBreakerRow {
   pr: number;
@@ -1222,6 +1243,25 @@ CREATE TABLE IF NOT EXISTS worker_breaker_global (
   id         INTEGER PRIMARY KEY CHECK (id = 1),
   epoch      INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL
+);
+-- The host lease (P8.13, D27): who holds a PR's session while the operator works
+-- in it. One row per PR, so a PR has one holder. It is granted only while no worker
+-- command owns the session (the grant checks session_commands in its own
+-- transaction), it holds dispatch and parks wakes while it stands, and a worker
+-- is refused while it does. state 'ending' is a lease whose pi was told to stop
+-- and not yet seen gone: it stays, and keeps every worker out, until the daemon has
+-- confirmed the process is gone (two writers never append to one JSONL).
+CREATE TABLE IF NOT EXISTS pr_host_leases (
+  pr         INTEGER PRIMARY KEY,
+  kind       TEXT NOT NULL,       -- 'takeover' (a debug round shares the table, P8.13b)
+  state      TEXT NOT NULL,       -- 'held' | 'ending'
+  token      TEXT NOT NULL,       -- fences the row: only the grant's holder updates it
+  command_id TEXT NOT NULL,       -- the host's IPC command id (its capability)
+  holder     TEXT NOT NULL,       -- who asked, for a person reading status
+  granted_at TEXT NOT NULL,
+  touched_at TEXT NOT NULL,       -- the last activity the daemon saw
+  ending_at  TEXT,
+  ending_why TEXT
 );
 -- Session lever grants: every bounded drain / pause a SESSION was
 -- granted, with the minutes it drew from that day's budget. The per-day cap
@@ -6629,6 +6669,97 @@ export class StateStore {
         .run(now, ...pauses);
     }
     return { drain, pauses };
+  }
+
+  // ---- host lease (P8.13) -------------------------------------------------
+
+  hostLease(pr: number): HostLeaseRow | undefined {
+    return this.db.prepare("SELECT * FROM pr_host_leases WHERE pr = ?").get(pr) as
+      HostLeaseRow | undefined;
+  }
+
+  hostLeases(): HostLeaseRow[] {
+    return this.db.prepare("SELECT * FROM pr_host_leases ORDER BY pr").all() as HostLeaseRow[];
+  }
+
+  /**
+   * Take the PR's host lease. Granted only when no lease stands and no worker
+   * command owns the session (`pending` or `running`), both read in the
+   * transaction that writes the row, so a worker's claim and this grant cannot
+   * both win. A worker that is already running without a row (an orphan the
+   * boot has not reaped) is the caller's check, by its process lease.
+   */
+  grantHostLease(o: {
+    pr: number;
+    kind: HostLeaseKind;
+    token: string;
+    commandId: string;
+    holder: string;
+    at: string;
+  }): HostLeaseGrant {
+    return this.db
+      .transaction((): HostLeaseGrant => {
+        const held = this.hostLease(o.pr);
+        if (held)
+          return {
+            ok: false,
+            why: "held",
+            reason: `PR #${o.pr} is already under a ${held.kind} lease (${held.holder}, ${held.state})`,
+          };
+        const command = this.activeSessionCommand(`pr-${o.pr}`);
+        if (command)
+          return {
+            ok: false,
+            why: "worker",
+            reason: `a worker command (${command.kind} ${command.id}, ${command.status}) owns PR #${o.pr}'s session: abort the round or wait for it`,
+          };
+        this.db
+          .prepare(
+            `INSERT INTO pr_host_leases (pr, kind, state, token, command_id, holder, granted_at, touched_at)
+           VALUES (@pr, @kind, 'held', @token, @commandId, @holder, @at, @at)`,
+          )
+          .run(o);
+        this.logEvent("host_lease_granted", o.pr, { kind: o.kind, holder: o.holder });
+        return { ok: true, row: this.hostLease(o.pr)! };
+      })
+      .immediate();
+  }
+
+  /** Record activity on a lease the token owns. False for any other row. */
+  touchHostLease(pr: number, token: string, at: string): boolean {
+    return (
+      this.db
+        .prepare(
+          "UPDATE pr_host_leases SET touched_at = ? WHERE pr = ? AND token = ? AND touched_at < ?",
+        )
+        .run(at, pr, token, at).changes > 0
+    );
+  }
+
+  /** The host was told to stop. The row stays, and keeps workers out, until
+   * `releaseHostLease`. */
+  endHostLease(pr: number, token: string, at: string, why: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE pr_host_leases SET state = 'ending', ending_at = COALESCE(ending_at, ?),
+             ending_why = COALESCE(ending_why, ?) WHERE pr = ? AND token = ?`,
+        )
+        .run(at, why, pr, token).changes > 0
+    );
+  }
+
+  /** Free the lease: the host is confirmed gone. */
+  releaseHostLease(pr: number, token: string): boolean {
+    return this.db
+      .transaction(() => {
+        const row = this.hostLease(pr);
+        if (!row || row.token !== token) return false;
+        this.db.prepare("DELETE FROM pr_host_leases WHERE pr = ? AND token = ?").run(pr, token);
+        this.logEvent("host_lease_released", pr, { kind: row.kind, why: row.ending_why });
+        return true;
+      })
+      .immediate();
   }
 
   // ---- worker crash-loop breaker (P8.5b) ----------------------------------

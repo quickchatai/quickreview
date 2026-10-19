@@ -39,6 +39,10 @@
 //     (queued, handled or refused); `abortRound` and the recovery `fence` ask the
 //     worker to abort and, when it has not gone within the grace period, SIGKILL its
 //     group (a lease the process table no longer confirms is never signalled).
+//   - TAKEOVER LEASE (P8.13, src/takeover.ts). While the operator holds a PR's
+//     session no worker starts for it, of any mode (`hostGate`): the command waits
+//     as it does behind a drain, and the lease is freed only once the takeover pi
+//     is confirmed gone. The lease is granted only when no worker command is active.
 //   - RESTART. On a daemon restart every leased group is killed and its round is
 //     requeued under the same command id (`recover`), so the fresh worker resumes
 //     the JSONL and continues instead of sending the order again (D22).
@@ -318,6 +322,10 @@ export interface WorkerSupervisorDeps {
    * permits return when a worker's capability is revoked (the worker exited) or
    * its command goes stale, and `start`/`stop` run and end its reaper. */
   permits?: PermitBroker;
+  /** Why no worker may start for a PR, or null (P8.13): a takeover lease stands,
+   * or its pi is not yet confirmed gone. Asked with the breaker's gate before
+   * every spawn, of any mode; the row is left as it was. */
+  hostGate?: (pr: number) => string | null;
   /** The refresher's hold while a login rewrites auth.json (P8.22): a spawn waits. */
   loginGate?: { paused(): boolean; whenResumed(timeoutMs: number): Promise<boolean> };
   loginWaitMs?: number;
@@ -626,6 +634,7 @@ export class WorkerSupervisor {
       // A drained bot or a parked PR starts nothing; the command waits, and the
       // refusal is not logged every pass.
       if (!this.breaker.gate(row.pr).ok) continue;
+      if (this.deps.hostGate?.(row.pr)) continue; // a takeover holds the session: the command waits
       try {
         out.push(await this.launch(row.id));
       } catch (e) {
@@ -639,11 +648,15 @@ export class WorkerSupervisor {
     return out;
   }
 
-  /** The breaker's no: a drained bot or a parked PR starts no worker (round or
-   * answer; the debug round asks `breaker.gate` itself). The row is left as it was. */
+  /** The no of the breaker (a drained bot, a parked PR: no worker of any mode; the
+   * debug round asks `breaker.gate` itself) and of the host lease (a PR under a
+   * takeover). The row is left as it was. */
   private mayStart(row: SessionCommandRow): void {
     const verdict = this.breaker.gate(row.pr);
     if (!verdict.ok) throw new WorkerLaunchError(verdict.reason);
+    // A takeover holds the PR's session: two writers must never append to its JSONL.
+    const held = this.deps.hostGate?.(row.pr);
+    if (held) throw new WorkerLaunchError(held);
   }
 
   private async launchHeld(commandId: string, session: string): Promise<LaunchInfo> {

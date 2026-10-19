@@ -10,6 +10,10 @@
 // `pending_wakes`), and the round-end paths flush them in arrival order.
 // Nothing is dropped silently — the per-PR cap logs what it evicts.
 //
+// A PR under a takeover lease (src/takeover.ts) holds its wakes the same way: the
+// operator is in the session, so nothing is injected until the lease is freed
+// (the release flushes what was parked).
+//
 // The cap never evicts an author reply: each one is a claimed obligation
 // nothing else will raise again. What the cap may evict goes push recheck
 // nudges first (their claim is
@@ -80,7 +84,8 @@ export async function wakeOrHold(
     if (
       (opts.deferWhilePaused && store.getPr(pr)?.paused) ||
       store.hasRunningRound(pr) ||
-      store.blockingSessionCommand(`pr-${pr}`)
+      store.blockingSessionCommand(`pr-${pr}`) ||
+      store.hostLease(pr)
     )
       return "held";
     // No network/process action runs inside the claim transaction.
@@ -97,7 +102,11 @@ export async function wakeOrHold(
     store.logEvent("wake_deferred_paused", pr, { reason });
     return "held";
   }
-  if (!store.hasRunningRound(pr) && !store.blockingSessionCommand(`pr-${pr}`)) {
+  if (
+    !store.hasRunningRound(pr) &&
+    !store.blockingSessionCommand(`pr-${pr}`) &&
+    !store.hostLease(pr)
+  ) {
     // An existing backlog goes first (arrival order): queue behind it and
     // flush oldest-first, rather than letting this wake take the slot ahead of
     // wakes still waiting for the stranded-wake sweep. The flush may carry
@@ -389,6 +398,7 @@ async function flushHeldWakeBatches(
   while (true) {
     if (store.hasRunningRound(pr)) break;
     if (store.blockingSessionCommand(`pr-${pr}`)) break;
+    if (store.hostLease(pr)) break; // a takeover holds the session: the wakes stay parked
     const claimed = claimNextDelivery(store, pr);
     if (!claimed) break;
     const { wakes, ids, token } = claimed;

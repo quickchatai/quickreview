@@ -203,6 +203,11 @@ interface GuardPolicy {
    * in it at all: the relative-spelling rule alone was reachable by
    * `cd <sandbox root> && bash scripts/post-review.sh …`. */
   replay: boolean;
+  /** A takeover (P8.13, `QCR_TAKEOVER=1` on its pi's own environment, which no bash
+   * command can change): the operator works in the PR's real session and nothing
+   * is posted from it. The scripts that post are not sanctioned there; the
+   * reading ones are. The daemon refuses a takeover's posts as well. */
+  noPost: boolean;
   /** The secret-path context minus the cwd, which is per call. */
   secrets: Omit<SecretPathContext, "cwd">;
 }
@@ -215,9 +220,31 @@ function sanctionedScript(
   const m = SCRIPT_PATH_RE.exec(token);
   if (!m) return { sanctioned: false };
   return {
-    sanctioned: !policy.replay && trustedScriptCwd(cwd, policy) && SANCTIONED_SCRIPTS.has(m[1]!),
+    sanctioned:
+      !policy.replay &&
+      !(policy.noPost && POST_SCRIPTS.has(m[1]!)) &&
+      trustedScriptCwd(cwd, policy) &&
+      SANCTIONED_SCRIPTS.has(m[1]!),
     name: m[1]!,
   };
+}
+
+/** The sanctioned scripts that post to GitHub: review, approval and thread reply. */
+const POST_SCRIPTS: ReadonlySet<string> = new Set([
+  "post-review.sh",
+  "approve-pr.sh",
+  "reply-thread.sh",
+]);
+
+const TAKEOVER_NO_POST =
+  "exec policy: a takeover posts nothing — the operator works in the session with read tools; a review, an approval or a reply goes out from a round";
+
+/** Why a script is refused: the replay's or the takeover's own reason where one
+ * applies, else `fallback`. */
+function notSanctioned(policy: GuardPolicy, name: string | undefined, fallback: string): string {
+  if (policy.replay) return REPLAY_NO_SCRIPTS;
+  if (policy.noPost && name !== undefined && POST_SCRIPTS.has(name)) return TAKEOVER_NO_POST;
+  return fallback;
 }
 
 /** Only the daemon-selected checkout owns the sanctioned script bytes. */
@@ -1020,7 +1047,7 @@ function checkProgram(
     return direct.sanctioned
       ? { allowed: true }
       : block(
-          policy.replay ? REPLAY_NO_SCRIPTS : `exec policy: '${prog}' is not a sanctioned script`,
+          notSanctioned(policy, direct.name, `exec policy: '${prog}' is not a sanctioned script`),
         );
   }
   const base = prog.slice(prog.lastIndexOf("/") + 1);
@@ -1047,12 +1074,15 @@ function checkProgram(
     // after the script is the script's own argument).
     for (const a of args) {
       if (!a.startsWith("-")) {
-        return sanctionedScript(a, cwd, policy).sanctioned
+        const script = sanctionedScript(a, cwd, policy);
+        return script.sanctioned
           ? { allowed: true }
           : block(
-              policy.replay
-                ? REPLAY_NO_SCRIPTS
-                : `exec policy: 'bash ${a}' is not a sanctioned scripts/*.sh`,
+              notSanctioned(
+                policy,
+                script.name,
+                `exec policy: 'bash ${a}' is not a sanctioned scripts/*.sh`,
+              ),
             );
       }
       if (/^-[A-Za-z]*c/.test(a)) {
@@ -3015,6 +3045,8 @@ export interface BashGuardConfig {
   sandboxRoot: string;
   /** A regression replay session: no sandbox script is sanctioned at all. */
   replay: boolean;
+  /** A takeover (P8.13): the scripts that post are not sanctioned. Omitted: false. */
+  noPost?: boolean;
   /** Every secrets dir this install could be using, absolute. The container
    * mount (`CONTAINER_SECRETS_DIR`) is always added. */
   secretDirs: readonly string[];
@@ -3030,6 +3062,7 @@ function policyFromConfig(config: BashGuardConfig): GuardPolicy {
   return {
     sandboxRoot: config.sandboxRoot,
     replay: config.replay,
+    noPost: config.noPost === true,
     secrets: {
       env: config.pathEnv ?? {},
       dirs: [...dirs]
@@ -3041,7 +3074,7 @@ function policyFromConfig(config: BashGuardConfig): GuardPolicy {
 }
 
 /** The config the env describes: QCR_SANDBOX_ROOT (else the cwd), QCR_REPLAY,
- * and the secrets dirs `defaultSecretPathContext` resolves from the same env. */
+ * QCR_TAKEOVER, and the secrets dirs `defaultSecretPathContext` resolves from the same env. */
 export function bashGuardConfigFromEnv(
   env: Readonly<Record<string, string | undefined>> = process.env,
   cwd: string = process.cwd(),
@@ -3049,6 +3082,7 @@ export function bashGuardConfigFromEnv(
   return {
     sandboxRoot: env.QCR_SANDBOX_ROOT ?? cwd,
     replay: env.QCR_REPLAY === "1",
+    noPost: env.QCR_TAKEOVER === "1",
     secretDirs: defaultSecretPathContext(env, cwd).dirs,
     pathEnv: {
       HOME: env.HOME,
@@ -3068,6 +3102,7 @@ function ambientPolicy(): GuardPolicy {
   return {
     sandboxRoot: process.env.QCR_SANDBOX_ROOT ?? process.cwd(),
     replay: process.env.QCR_REPLAY === "1",
+    noPost: process.env.QCR_TAKEOVER === "1",
     secrets,
   };
 }

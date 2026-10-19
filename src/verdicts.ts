@@ -3661,6 +3661,8 @@ export class VerdictWatcher {
       // Owed FAILED_LOUD review work keeps its wakes behind it.
       if (store.openReviewFailure(pr)) continue;
       if (store.blockingSessionCommand(`pr-${pr}`)) continue;
+      // A takeover holds the session: its release flushes what was parked.
+      if (store.hostLease(pr)) continue;
       // A paused PR holding only deferred rechecks waits for the resume,
       // quietly: the next tick after the pause lifts delivers them.
       if (pauseDefersAllHeldWakes(store, pr)) continue;

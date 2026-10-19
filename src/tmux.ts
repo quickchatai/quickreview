@@ -171,6 +171,30 @@ export class Tmux {
     await runOrThrow(this.exec, this.bin, args, { env: opts.env, cwd: opts.cwd });
   }
 
+  /** The pid of the session's active pane (the leader of its process group), or
+   * undefined when there is no such session. */
+  async panePid(name: string): Promise<number | undefined> {
+    const res = await this.exec(this.bin, ["list-panes", "-t", `=${name}:`, "-F", "#{pane_pid}"]);
+    if (res.code !== 0) return undefined;
+    const pid = Number(res.stdout.split("\n")[0]?.trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  }
+
+  /** When the session last had client or pane activity, in epoch milliseconds;
+   * undefined when tmux does not say. */
+  async lastActivityMs(name: string): Promise<number | undefined> {
+    const res = await this.exec(this.bin, [
+      "display-message",
+      "-p",
+      "-t",
+      `=${name}:`,
+      "#{session_activity}",
+    ]);
+    if (res.code !== 0) return undefined;
+    const seconds = Number(res.stdout.trim());
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined;
+  }
+
   async killSession(name: string): Promise<void> {
     await this.exec(this.bin, ["kill-session", "-t", `=${name}`]);
   }

@@ -94,6 +94,11 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
     readers: ["bash-guard.ts"],
     note: "=1 on a replay pi's own env, which no bash command can set",
   },
+  QCR_TAKEOVER: {
+    kind: "extension-config",
+    readers: ["bash-guard.ts"],
+    note: "=1 on a takeover pi's own env (P8.13): the post scripts are not sanctioned there",
+  },
 
   // ---- QCR_*: the inject bridge and the ledger mirror
   QCR_INJECT_DIR: {
