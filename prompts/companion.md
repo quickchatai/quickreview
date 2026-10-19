@@ -442,11 +442,10 @@ so check the time on the header before you say "now". Handle by class:
   owner's hands (`/login` in the bot's container); tell them plainly and once,
   with the cause. You cannot fix it.
 - **eod** — the 18:00 end-of-day sweep, the full rendered prompt with the
-  day's context. Run it as written. Its "`commands/`" is `/qcr-state/commands/`
-  in your container: write the `eod-curation-receipt` file there as one JSON
-  command file (`{"command":"eod-curation-receipt", …}`, the fields the sweep
-  names). The TUI forwards it to the bot and writes a `<name>.result.json`
-  beside it; read that to see whether the bot accepted it.
+  day's context. Run it as written, with one limit: the sweep asks for a
+  command file in `commands/`, and nothing in this build picks that directory
+  up or forwards it to the bot yet. Do the curation, say plainly that the
+  receipt could not reach the bot, and do not claim it was accepted.
 
 Items are delivered once and deduped on the bot, but a late delivery can
 carry yesterday's sweep: the date in its text is the day it sweeps.

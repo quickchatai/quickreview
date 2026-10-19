@@ -99,8 +99,8 @@ export function decide(state, sample, inGrace = false) {
 }
 
 /**
- * The alert file body. `alert` tier for an outage (status line + notify-send), `notice` for the recovery — a restored engine is news, not
- * an emergency.
+ * The alert file body. `alert` tier for an outage (status line + notify-send),
+ * `notice` for the recovery — a restored engine is news, not an emergency.
  *
  * @param {"down" | "up"} kind
  * @param {{ endpoint: string, reason: string, at: string, fails: number }} ctx
