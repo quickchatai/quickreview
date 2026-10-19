@@ -47,6 +47,7 @@ import { loginSourceDirs } from "./toolfence.js";
 import { checkToolUid, toolIdsOf } from "./tooluid.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
 import { BASH_ENV_ALLOW, reviewerStub, roundSdkExtras, type RoundLensTools } from "./roundsdk.js";
+import { releasing } from "./sessionwrap.js";
 import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
 
 export interface ReviewSdkOptions {
@@ -134,31 +135,6 @@ function scopeProcessEnv(
       for (const [name, value] of saved) {
         if (value === undefined) delete target[name];
         else target[name] = value;
-      }
-    },
-  };
-}
-
-/** A session that runs `after` once, when it is disposed. */
-function releasing(session: RuntimeSession, after: () => void): RuntimeSession {
-  return {
-    get id() {
-      return session.id;
-    },
-    get sessionFile() {
-      return session.sessionFile;
-    },
-    prompt: (text, options) => session.prompt(text, options),
-    followUp: (text, options) => session.followUp(text, options),
-    steer: (text) => session.steer(text),
-    abort: () => session.abort(),
-    subscribe: (listener) => session.subscribe(listener),
-    stats: () => session.stats(),
-    dispose: async () => {
-      try {
-        await session.dispose();
-      } finally {
-        after();
       }
     },
   };

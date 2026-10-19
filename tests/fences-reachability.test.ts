@@ -73,6 +73,19 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "factories (P3) take it. Delete this entry with the first import.",
     },
     {
+      file: "src/engine/botsdk.ts",
+      why:
+        "the bot worker's SDK session factory (P8.2). It is read only by its tests " +
+        "(tests/bot-sdk.test.ts, canary 10 bot shape) until botworker.ts (P8.3) builds the PR session with it. " +
+        "Delete this entry with that import.",
+    },
+    {
+      file: "src/live/publish.ts",
+      why:
+        "the round-progress publisher the bot worker's session feeds (P8.2, through src/engine/botsdk.ts). " +
+        "Delete this entry with the worker's import.",
+    },
+    {
       file: "src/piauthcopy.ts",
       why:
         "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +
